@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft (answers: Q1-Q8, 2026-11-09: Q2 by the owner, the rest by Chat, Q6 re-decided after review; no question open) |
+| Status | Draft (answers: Q1-Q8, 2026-11-09: Q2 by the owner, the rest by Chat, Q6 re-decided and Decided 9 (H before phase 1) after review; no question open) |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | none here (docs); plugin (3.N.P) for bots-dsh; desktop (3.N) for the shell; herdr (3.N.P) for the chat engine |
 | Created | 2026-11-09 |
@@ -90,15 +90,21 @@ each as this RFC recommended:
    description). A safe interim: the rendered view **shows** approval dialogs but **never answers
    them by typing keys**, because a late key can approve the next dialog, which the owner never
    saw. The owner answers in Code mode, the real terminal, where the exact dialog is on the
-   screen. This holds until herdr-core has a conditional key call (keys typed only if the screen
-   still shows that dialog); then the view may answer, with an "Answered elsewhere" receipt when
-   it did not (phase 4, (b)).
+   screen. This holds until herdr-core has a conditional key call (herdrdev/herdr-core#122);
+   then the view may answer, with an "Answered elsewhere" receipt when it did not (phase 4,
+   (b)).
 7. **Other people in the view** (teams of humans, an instance rail). Decided by Chat: not in
    this RFC. When it comes, its own RFC with Buzz's gate: owner-only by default, an allowlist,
    never "anyone" for the main bot, stop and cancel owner-only ((f)).
 8. **A message that begins with an hc tag.** Decided by Chat: refused with a reason, so nothing
    typed in the view reads as a bot's words to Chat ((f)). Review widened the check to a tag
    anywhere in the message, since one in the middle spoofs as well.
+
+Decided by Chat after review, 2026-11-09:
+
+9. **Delivery H comes before phase 1.** The link scoping to the shown seat, a mask on macOS
+   (only Linux has one today, bwrap) and ssh coverage land before the view does. The owner is not
+   asked to sign off the link's reach as a phase-0 risk ((f), "The link's reach"; Deliveries).
 
 Rejected, recorded so it is not proposed again:
 
@@ -207,15 +213,19 @@ the key went in at another status or turn; that is a report after the fact, not 
 
 **Until herdr-core has a conditional key call** (keys typed only if the screen still shows that
 dialog, or the terminal is still blocked on that turn), the rendered face sends no approval or
-answer keys. The call is filed upstream (Decided, 6). Then phase 4 lets the view answer: allow
-and deny only (Decided, 3), through the conditional call, which refuses when the dialog changed.
+answer keys. The call is herdrdev/herdr-core#122, "terminal.keys: an atomic precondition (if
+blocked, same turn and status_ms) so a client never answers a prompt nobody saw": optional
+`if_blocked`, `if_turn` and `if_status_ms` on `terminal.keys`, checked atomically in the core
+with the press, and a `precondition_failed` refusal when any no longer holds (Decided, 6). Then
+phase 4 lets the view answer: allow and deny only (Decided, 3), through that call, which refuses
+when the dialog changed.
 The view's receipt then never guesses: "Answered here: Allow, 14:02" when its key went in,
 "Answered elsewhere" when the dialog closed without it, whoever answered.
 
 **The phone has the same window today.** Pocket's Chat tab answers approvals with the same engine
-(#574, #655). This RFC does not change the phone. Bringing the phone under the same rule is a
-change to RFC 0015, which the owner and the Mobile squad decide; the risk is named here so it is
-not forgotten.
+(#574, #655). This RFC does not change the phone: #852 ("pocket: a late approval or question
+tap can answer the next, unseen dialog") tracks it, as a change under RFC 0015 that the owner
+and the Mobile squad decide.
 
 ### (c) The Code mode switch: one session, two faces
 
@@ -392,8 +402,9 @@ are not used:
 **The link's reach: a risk, recorded plainly.** Any process that can reach the box's hc can type
 into Chat's terminal: `hc send`, `hc keys` and `hc exec --on <box>` work for every process of the
 owner's account on a computer that holds the machine link, with no caller unless it sets one.
-Once the desktop holds that link (phase 0), that includes the shell and command tools of the
-DSH Bots in the same desktop app. A page a DSH Bot read can then lead it to type into the bot
+On the owner's computer, that includes the shell and command tools of the DSH Bots in the same
+desktop app, and the same shells can reach the box over ssh where the account has a key for
+it. A page a DSH Bot read can then lead it to type into the bot
 that runs the team and merges pull requests, and an untagged message lands as "typed in the
 terminal", which Chat may take for the owner's words. `exec` reaches further still: it runs
 commands on the box.
@@ -408,10 +419,14 @@ commands on the box.
   allows only the view's calls (`events.subscribe`, `terminal.attach`, `terminal.send`,
   `terminal.keys`, `terminal.interrupt` and `terminal.read` on the shown seat's terminal, and
   `file.read` of its transcript under the folder rule), with `exec`, `run` and every other
-  terminal refused; #631's proxy method table is the starting point. On the owner's computer, the
-  link's credential is readable only by the desktop app's host process, and DSH Bots' commands
-  run with hc and the core socket masked, as #631's DSH-lane runner mask does for sandboxed panes.
-- The risk comes with the link, not with the view, so delivery H waits for no phase.
+  terminal refused. No such scoping exists today: a machine link is all or nothing, and #628
+  (scope hc send, keys and attach to a sandboxed bot's own team) and #631's proxy method table
+  are the work it starts from. On the owner's computer, the link's credential is readable only
+  by the desktop app's host process, and DSH Bots' commands run with hc, the core socket, the
+  link's credential and `~/.ssh` masked. Only Linux has that mask today (bwrap, #631's DSH-lane
+  runner); the owner's desktop runs macOS, so H includes a macOS mask.
+- **H comes before phase 1** (Decided, 9). The view never runs on an unscoped link, and the
+  owner is not asked to accept the reach as a phase-0 risk.
 
 **What it reads, and keeps.** Transcripts under the folder rule only. Rows live in the host's
 memory while a window watches and 10 minutes after (`LINGER_MS`); they are never written to disk
@@ -462,8 +477,10 @@ that computer to the box. (f) gives the detail; in short:
   gives every process of the owner's account on that computer `hc send`, `hc keys` and
   `hc exec --on <box>`, the shells of DSH Bots in the same app included. Today's guards (the
   per-team send guard and #631's proxy, which no bot is opted into yet) sit in the box's bot
-  panes and do not cover this path. It is recorded as a risk of phase 0; delivery H scopes the
-  link to the shown seat and keeps it to the owner's desktop ((f), "The link's reach").
+  panes and do not cover this path, nor ssh from the same shells. Delivery H, which lands before
+  phase 1 (Decided, 9), scopes the link to the shown seat, keeps it to the owner's desktop and
+  masks hc, the link and `~/.ssh` from DSH Bots' commands, on macOS too ((f), "The link's
+  reach").
 - **What it can send.** From the rendered face: cleaned text under the draft hold, through
   `terminal.send`, whose condition keeps it off a dialog; one interrupt; no approval or answer
   keys until phase 4 (Decided, 6), and then allow and deny only, through the conditional call,
@@ -480,16 +497,38 @@ that computer to the box. (f) gives the detail; in short:
 
 ## Deliveries
 
-Each phase is one PR per lane. A PR never mixes the plugin and desktop lanes.
+Each phase is one PR per lane. A PR never mixes the plugin and desktop lanes. The order is 0,
+H, 1, 2, 3, 4 (Decided, 9).
 
 0. **The prerequisites** (no release). Chat's terminal on the box carries `agent.session` and
-   `agent.transcript` (the briefing hook, RFC 0015 delivery 2), and the owner's computer reaches
-   the box with `hc machine`. The link's reach ((f)) is a known risk from this step until
-   delivery H. *Check:* `hc get` on Chat's terminal, from the owner's computer, shows both labels
-   and the transcript path passes the folder rule's remote check. *Rollback:* remove the link.
-1. **The view of the main bot, with Code mode** (plugin; the desktop lane for #843 and #845,
-   which must merge first; needs RFC 0014 delivery 3 for the listing, or the `front` bot alone
-   ahead of it). The `live-chat/` copy and its gate check (new: no such check exists yet); the
+   `agent.transcript` (the briefing hook, RFC 0015 delivery 2). *Check:* `hc get` on Chat's
+   terminal shows both labels, and the transcript path passes the folder rule's remote check.
+   *Rollback:* nothing to undo.
+
+H. **The scoped link** (before phase 1, Decided 9; (f) "The link's reach"). The link the
+   desktop uses is send-scoped to the shown seat: on the box, only the view's calls on that
+   seat's terminal and the transcript read under the folder rule, with `exec`, `run` and every
+   other terminal refused. On the owner's computer, only the desktop app's host can read the
+   link's credential, and DSH Bots' commands run with hc, the core socket, the credential and
+   `~/.ssh` masked. Its lanes (herdr-core for the link's scope, herdr, the desktop) are set
+   when it is filed.
+   *Acceptance (from review, required):*
+   - Link scoping is built, not assumed: no hc link can be scoped to one terminal today. It
+     starts from #628 (scope hc send, keys and attach to a team) and #631's proxy method table,
+     and is filed upstream where it needs herdr-core.
+   - A macOS mask: only Linux has one today (bwrap, #631's DSH-lane runner). DSH Bots' commands
+     on macOS get the same masks.
+   - ssh is covered: a DSH Bot's shell cannot reach the box with the account's ssh keys or
+     config.
+
+   *Check:* from a DSH Bot's shell in the desktop app, on macOS and on Linux, `hc send`,
+   `hc keys` and `hc exec` to the box are refused, and `ssh` to the box finds no key; through the
+   view's link, `hc exec` on the box and a send to another terminal are refused; the view's own
+   calls still work. *Rollback:* none that reopens the reach while the view is installed: the
+   view refuses an unscoped link, and reverting H reverts the view with it.
+1. **The view of the main bot, with Code mode** (plugin; after H; the desktop lane for #843 and
+   #845, which must merge first; needs RFC 0014 delivery 3 for the listing, or the `front` bot
+   alone ahead of it). The `live-chat/` copy and its gate check (new: no such check exists yet); the
    host engine, which spawns the computer's own `hc connect` (`hc.js`); the renderer, with the
    rendered face read-only and approval and question cards that show and never answer (Decided,
    6); `front` read from the home file and set in settings, with `front` added to
@@ -504,12 +543,17 @@ Each phase is one PR per lane. A PR never mixes the plugin and desktop lanes.
    - A repo file that sets `front` has it dropped by the parser; the home file's is kept.
    - The Codex and omp cards are status only with Answer in Code mode, as (d)'s table says,
      since they have no dialog reader.
+   - The host route exposes no answer path before phase 4: the engine's `answer` (and its
+     question steps) is not wired to the window's route at all, so no client, request or
+     plugin can reach it, not only that the client hides the buttons.
+   - The view refuses to start on a link H has not scoped.
 
    *Check:* the plugin gate; the copy check fails on a one-byte change; with a fake hc and temp
    homes (never a live Herdr), a remote seat's transcript rows render, an `<img>` and a
    `<script>` render as text, a tagged row renders as the bot's; an approval card has no Allow
    or Deny and its Answer in Code mode flips the view, and no approval or answer key is ever
-   sent (the fake hc records no `terminal.keys` from the rendered face); switching Code mode on
+   sent (the fake hc records no `terminal.keys` from the rendered face), and a hand-made answer
+   request to the host route is refused as unknown; switching Code mode on
    opens one attach with the pane's size and `history`, switching it off closes it, and neither
    sends anything (no `terminal.send`, no `terminal.keys`, no `run`, no RESIZE); keys typed in
    Code mode reach the attached terminal; the engine and the attach are not callable as a DSH
@@ -536,25 +580,17 @@ Each phase is one PR per lane. A PR never mixes the plugin and desktop lanes.
    written to `state.json` and cannot be mentioned into a group; a DSH Bot's chat is unchanged;
    Code mode works on every listed seat. *Rollback:* a plugin release that lists only the
    `front` bot again.
-4. **Answers from the view** (herdr, then plugin; after herdr-core ships a conditional key
-   call, filed upstream per Decided 6). The engine answers through that call (keys typed only
-   while the screen still shows that dialog, or the terminal is still blocked on that turn);
-   the rendered face gets Allow and Deny on Claude Code's cards (no allow-always, Decided 3) and
-   the paced answers to questions, each step conditional. *Check:* with a fake hc that closes
-   the dialog during the quiet gap: no key is typed, and the card closes with "Answered
-   elsewhere"; with the dialog still open, the key goes in and the card says "Answered here".
-   *Rollback:* a plugin release without the buttons; cards return to show-only.
-
-H. **The scoped link** (box side and the desktop; waits for no phase, (f) "The link's reach").
-   The link the desktop uses is send-scoped to the shown seat: on the box, only the view's calls
-   on that seat's terminal and the transcript read under the folder rule, with `exec`, `run`
-   and every other terminal refused (#631's proxy method table as the start). On the owner's
-   computer, only the desktop app's host can read the link's credential, and DSH Bots' commands
-   run with hc and the core socket masked. Its lanes (herdr, the desktop, and herdr-core if the
-   link itself needs a scope) are set when it is filed. *Check:* from a DSH Bot's shell in the
-   desktop app, `hc send`, `hc keys` and `hc exec` to the box are refused; through the view's
-   link, `hc exec` on the box and a send to another terminal are refused; the view still works.
-   *Rollback:* the unscoped link as in phase 0, with the risk back.
+4. **Answers from the view** (herdr, then plugin; after herdr-core ships
+   herdrdev/herdr-core#122, Decided 6). The engine answers through `terminal.keys` with
+   `if_blocked`, `if_turn` and `if_status_ms` from the card it showed, checked atomically with
+   the press; a `precondition_failed` refusal closes the card as "Answered elsewhere". The host
+   route gains its answer path only here. The rendered face gets Allow and Deny on Claude
+   Code's cards (no allow-always, Decided 3) and the paced answers to questions, each step
+   conditional. *Check:* with a fake hc that closes the dialog during the quiet gap: no key is
+   typed, and the card closes with "Answered elsewhere"; with the dialog still open, the key
+   goes in and the card says "Answered here".
+   *Rollback:* a plugin release without the buttons and without the route's answer path; cards
+   return to show-only.
 
 The render cases fixture lands with phase 1 (herdr side) and Pocket reads its copy in its next
 pocket patch.
@@ -562,7 +598,8 @@ pocket patch.
 ## Open questions
 
 None. The eight questions this RFC asked were decided on 2026-11-09 (Decided, 1 to 8): Q2 by the
-owner, the rest by Chat as recommended.
+owner, the rest by Chat as recommended, Q6 re-decided after review. Decided 9 (H before phase
+1) came from review the same day.
 
 ## Links
 
@@ -580,8 +617,9 @@ owner, the rest by Chat as recommended.
   `apps/pocket/android/app/src/main/java/ai/namastex/automagik/` (`ChatScreen.kt`,
   `ChatClient.kt`, `TerminalScreen.kt`, `CoreClient.kt`); `apps/welcome-dsh/package.json`
   (the `@xterm/xterm` pin); `herdr/mods/am-sidebar/hcProxy.md`.
-- Issues and pull requests: #574 and #655 (Pocket's chat view); #206 (remote Bots); #631 (the
-  per-pane hc proxy); #842, #843, #844, #845, #846 (the desktop P0s).
+- Issues and pull requests: #574 and #655 (Pocket's chat view); #206 (remote Bots); #628
+  (team-scoped hc); #631 (the per-pane hc proxy); #852 (the same window on the phone); #842,
+  #843, #844, #845, #846 (the desktop P0s); herdrdev/herdr-core#122 (the conditional key call).
 - Outside projects, read as research and not copied: dsh-herdr-bridge (MIT), a DSH plugin that
   mirrors DSH sessions into hc terminals; Buzz (Apache-2.0), its `buzz-acp` author gate; two
   plugins both named dsh-herdr (one MIT, embedding a terminal in DSH; one Apache-2.0,
