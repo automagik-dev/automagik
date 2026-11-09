@@ -129,8 +129,25 @@ describe('the plugin lane', () => {
     expect(meterHeld(contract.replace('"enum": ["branch_window"]', '"enum": ["branch_window", "task_interval", "actor_interval"]'))).toBe(false);
     expect(meterHeld(precision({ enum: ['branch_window', 'task_interval'] }))).toBe(true);
     expect(meterHeld(precision({ oneOf: [{ const: 'branch_window' }, { const: 'actor_interval' }] }))).toBe(false);
-    // actor_interval elsewhere than a precision is not the widening; no contract, or one that does not parse, holds.
-    expect(meterHeld(JSON.stringify({ description: 'actor_interval', properties: { by: { enum: ['actor_interval'] } } }))).toBe(true);
+    // A $ref'd attribution, or a row picked by its precision (oneOf branches), opens it too.
+    expect(meterHeld(JSON.stringify({ $defs: { attribution: { properties: { precision: { enum: ['branch_window', 'actor_interval'] } } } }, properties: { attribution: { $ref: '#/$defs/attribution' } } }))).toBe(false);
+    expect(meterHeld(JSON.stringify({ properties: { attribution: { properties: { precision: { $ref: '#/$defs/p' } } } }, $defs: { p: { anyOf: [{ const: 'branch_window' }, { const: 'actor_interval' }] } } }))).toBe(false);
+    // Decoys keep it held: actor_interval in another field named precision, a mention, a field named
+    // otherwise, a negation (not) or a condition (if) on attribution.precision.
+    const decoys = [
+      { description: 'actor_interval', properties: { by: { enum: ['actor_interval'] } } },
+      { properties: { tokens: { properties: { precision: { enum: ['actor_interval'] } } }, attribution: { properties: { precision: { enum: ['branch_window'] } } } } },
+      { properties: { attribution: { properties: { precision: { enum: ['branch_window'], not: { const: 'actor_interval' } } } } } },
+      { properties: { attribution: { properties: { precision: { enum: ['branch_window'] }, actor_precision: { const: 'actor_interval' } } } } },
+      { not: { properties: { attribution: { properties: { precision: { const: 'actor_interval' } } } } } },
+      { if: { properties: { attribution: { properties: { precision: { const: 'actor_interval' } } } } }, then: {} },
+    ];
+    for (const decoy of decoys) expect(meterHeld(JSON.stringify(decoy))).toBe(true);
+    // The real contract with a decoy precision elsewhere naming actor_interval: still held.
+    const decoyed = JSON.parse(contract);
+    decoyed.properties.decoy = { type: 'object', properties: { precision: { enum: ['actor_interval'] } } };
+    expect(meterHeld(JSON.stringify(decoyed))).toBe(true);
+    // No contract, or one that does not parse, holds.
     expect(meterHeld(undefined)).toBe(true);
     expect(meterHeld('{')).toBe(true);
   });

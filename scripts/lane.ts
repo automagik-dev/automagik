@@ -157,21 +157,40 @@ export const METER = { test: (path: string) => METER_PATHS.some(pattern => patte
 export const METER_CONTRACT = 'meter/schema/query/v1/envelope.schema.json';
 /**
  * Whether the meter lane is held shut: true while the contract (its schema's text, or undefined when
- * there is none) names no `actor_interval` among any `precision` property's values (`enum` or
- * `const`), or does not parse. Fails closed: no contract, no meter release.
+ * there is none) allows no `actor_interval` in `attribution.precision`, or does not parse. Only an
+ * `attribution` object's own `properties.precision` counts: its `enum`, its `const`, and those of its
+ * `oneOf`/`anyOf` branches, with a local `$ref` followed. Another field named `precision`, a mention in
+ * a description, and anything under `not` or `if` (a negation, or a condition) never open it. Fails
+ * closed: no contract, no meter release.
  */
 export function meterHeld(contract: string | undefined): boolean {
   if (contract === undefined) return true;
   let schema: unknown;
   try { schema = JSON.parse(contract); } catch { return true; }
-  const values = (node: unknown): unknown[] => {
-    if (!node || typeof node !== 'object') return [];
-    const own = node as Record<string, unknown>;
-    return [...(Array.isArray(own.enum) ? own.enum : []), ...('const' in own ? [own.const] : []), ...Object.values(own).flatMap(values)];
+  const object = (node: unknown): node is Record<string, unknown> => !!node && typeof node === 'object' && !Array.isArray(node);
+  // A local `$ref` ("#/$defs/x"), followed a few hops at most.
+  const resolve = (node: unknown, hops = 0): unknown => {
+    if (!object(node) || typeof node.$ref !== 'string' || !node.$ref.startsWith('#/') || hops > 8) return node;
+    const target = node.$ref.slice(2).split('/').reduce<unknown>((at, key) => (object(at) ? at[key.replace(/~1/g, '/').replace(/~0/g, '~')] : undefined), schema);
+    return resolve(target, hops + 1);
   };
+  // What a precision schema allows: its enum and const, and its oneOf/anyOf branches'.
+  const allowed = (node: unknown): unknown[] => {
+    const own = resolve(node);
+    if (!object(own)) return [];
+    return [...(Array.isArray(own.enum) ? own.enum : []), ...('const' in own ? [own.const] : []),
+      ...['oneOf', 'anyOf'].flatMap(key => (Array.isArray(own[key]) ? (own[key] as unknown[]).flatMap(allowed) : []))];
+  };
+  // Every attribution object's precision, wherever a row is defined; never under `not` or `if`.
   const precisions = (node: unknown): unknown[] => {
-    if (!node || typeof node !== 'object') return [];
-    return Object.entries(node as Record<string, unknown>).flatMap(([key, value]) => [...(key === 'precision' ? values(value) : []), ...precisions(value)]);
+    if (Array.isArray(node)) return node.flatMap(precisions);
+    if (!object(node)) return [];
+    return Object.entries(node).flatMap(([key, value]) => {
+      if (key === 'not' || key === 'if') return [];
+      const attribution = key === 'attribution' ? resolve(value) : undefined;
+      const precision = object(attribution) && object(attribution.properties) ? attribution.properties.precision : undefined;
+      return [...(precision === undefined ? [] : allowed(precision)), ...precisions(value)];
+    });
   };
   return !precisions(schema).includes('actor_interval');
 }
