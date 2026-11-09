@@ -790,8 +790,9 @@ test("Antigravity #823: start and restart write a private permission file and pa
   assert.equal(statSync(join(s.app, "automagik-herdr/agy-settings")).mode & 0o777, 0o700, "in a private folder");
   const data = JSON.parse(readFileSync(path, "utf8"));
   assert.ok(data.permissions.allow.includes("command(hc)"));
-  assert.ok(data.permissions.allow.includes("command(mkdir)"));
-  assert.ok(data.permissions.allow.includes("command(chmod)"));
+  for (const rule of ["command(mkdir)", "command(chmod)", "command(rg)", "command(sort)", "command(uniq)", "command(sed -n)"]) {
+    assert.ok(data.permissions.allow.includes(rule), `writer seat allow ${rule}`);
+  }
   for (const tool of AGY_SHELL_READ) {
     assert.ok(data.permissions.allow.includes(`command(${tool})`), `seat allow command(${tool})`);
   }
@@ -825,7 +826,7 @@ test("Antigravity #823: start and restart write a private permission file and pa
   assert.ok(again.permissions.allow.includes("command(bun publish)"));
   assert.equal(statSync(path).mode & 0o777, 0o600);
   for (const rule of AGY_FIXED_DENY) assert.ok(again.permissions.deny.includes(rule));
-  // A reviewer seat (#840) gets all read-only shell tools, no write_file, no mkdir/chmod, no launchers.
+  // A reviewer seat (#840) gets all 24 read-only shell tools, no write_file, no writer-only tools, no launchers.
   const revStarted = s.cli(["start", "Dev"]);
   assert.equal(revStarted.code, 0, revStarted.err);
   const revData = JSON.parse(readFileSync(agySettingsPath(s, ID.dev), "utf8"));
@@ -833,8 +834,9 @@ test("Antigravity #823: start and restart write a private permission file and pa
     assert.ok(revData.permissions.allow.includes(`command(${tool})`), `reviewer seat allow command(${tool})`);
   }
   assert.equal(revData.permissions.allow.some((r) => r.startsWith("write_file(")), false);
-  assert.equal(revData.permissions.allow.includes("command(mkdir)"), false);
-  assert.equal(revData.permissions.allow.includes("command(chmod)"), false);
+  for (const rule of ["command(mkdir)", "command(chmod)", "command(rg)", "command(sort)", "command(uniq)", "command(sed -n)"]) {
+    assert.equal(revData.permissions.allow.includes(rule), false, `reviewer seat excludes ${rule}`);
+  }
   for (const bad of ["command(bash)", "command(sh)", "command(env)", "command(xargs)",
     "command(find)", "command(awk)", "command(tee)", "command(sed)"]) {
     assert.equal(revData.permissions.allow.includes(bad), false, `reviewer seat never allows ${bad}`);

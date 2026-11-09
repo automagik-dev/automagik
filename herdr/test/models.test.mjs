@@ -309,9 +309,12 @@ test("ownPromptIn, hermes: a value on the lines below the key counts; a key foll
 
 test("Antigravity #840: default read-only shell tools in writer and read-only --settings plans; no shell launchers", () => {
   const shellRead = [
-    "ls", "cat", "head", "tail", "grep", "rg", "wc", "diff", "pwd", "echo",
-    "sort", "uniq", "cut", "tr", "jq", "printf", "basename", "dirname", "true",
-    "which", "stat", "realpath", "readlink", "date", "nl", "comm", "column", "sed -n",
+    "ls", "cat", "head", "tail", "grep", "wc", "diff", "pwd", "echo", "cut", "tr", "jq", "printf",
+    "basename", "dirname", "true", "which", "stat", "realpath", "readlink", "date", "nl", "comm",
+    "column",
+  ];
+  const writerOnly = [
+    "command(mkdir)", "command(chmod)", "command(rg)", "command(sort)", "command(uniq)", "command(sed -n)",
   ];
   const forbidden = [
     "command(bash)", "command(sh)", "command(env)", "command(xargs)",
@@ -343,12 +346,10 @@ test("Antigravity #840: default read-only shell tools in writer and read-only --
     }
   }
   for (const perms of [writerSeat, writerWorker]) {
-    assert.ok(perms.allow.includes("command(mkdir)"));
-    assert.ok(perms.allow.includes("command(chmod)"));
+    for (const rule of writerOnly) assert.ok(perms.allow.includes(rule), `writer includes ${rule}`);
   }
   for (const perms of [reviewerSeat, reviewWorker]) {
-    assert.equal(perms.allow.includes("command(mkdir)"), false);
-    assert.equal(perms.allow.includes("command(chmod)"), false);
+    for (const rule of writerOnly) assert.equal(perms.allow.includes(rule), false, `read-only excludes ${rule}`);
     assert.equal(perms.allow.some((r) => r.startsWith("write_file(")), false);
   }
 });

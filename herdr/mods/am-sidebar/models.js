@@ -498,25 +498,32 @@ const AGY_GATES = ["node --test", "node --check", "bun test", "node scripts/priv
   "node scripts/version.mjs", "node scripts/entries.mjs", "node scripts/parts.mjs", "node scripts/catalog.mjs",
   "node scripts/lane.ts", "node scripts/test-guard.mjs", "node ../scripts/privacy-check.mjs", "node ../scripts/am-copies.mjs"];
 
-// The plain read-only shell tools every Antigravity seat and worker gets by default (#840).
-// Plain `sed` stays out (it can edit files in place); only `sed -n` is here. Shell launchers
-// and wrappers that run arbitrary commands or write files (`bash`, `sh`, `env`, `xargs`, `find`,
-// `awk`, `tee`, plain `sed`) are never in any default list.
+// The 24 plain read-only shell tools every Antigravity seat and worker gets by default (#840).
+// On GNU/Linux, `sed -n` runs a program (GNU `e` command) and writes (`w` command, `-i`),
+// `rg --pre` runs a program, `sort --compress-program` runs one, and `sort -o` and `uniq IN OUT`
+// write files: those four stay on writing roles only (alongside `mkdir` and `chmod`, where `node`
+// is already allowed) and out of `AGY_SHELL_READ` / `AGY_READ_ALLOW`. Shell launchers and
+// wrappers (`bash`, `sh`, `env`, `xargs`, `find`, `awk`, `tee`, plain `sed`) are never in any
+// default list.
 export const AGY_SHELL_READ = Object.freeze([
-  "ls", "cat", "head", "tail", "grep", "rg", "wc", "diff", "pwd", "echo", "sort", "uniq", "cut",
-  "tr", "jq", "printf", "basename", "dirname", "true", "which", "stat", "realpath", "readlink",
-  "date", "nl", "comm", "column", "sed -n",
+  "ls", "cat", "head", "tail", "grep", "wc", "diff", "pwd", "echo", "cut", "tr", "jq", "printf",
+  "basename", "dirname", "true", "which", "stat", "realpath", "readlink", "date", "nl", "comm",
+  "column",
 ]);
 
-// A seat or worker that writes: the shell tools the task needs (mkdir and chmod only when the
-// role writes), and the gates to prove it.
+// A seat or worker that writes: the shell tools the task needs (`mkdir`, `chmod`, `rg`, `sort`,
+// `uniq` and `sed -n` only when the role writes, since writers already have `node`), and the
+// gates to prove it.
 export const AGY_WRITE_ALLOW = Object.freeze(["hc", "git", "node", "bun", "mkdir", "chmod",
-  ...AGY_SHELL_READ, ...AGY_GH_READ, ...AGY_GH_WRITE, ...AGY_GATES].map((v) => `command(${v})`));
-// A read-only seat (rank reviewer) or worker (role review): hc, the read-only shell tools, the
-// test checks and a short list of git subcommands and gh reads. A subcommand is allowed with
+  "rg", "sort", "uniq", "sed -n", ...AGY_SHELL_READ, ...AGY_GH_READ, ...AGY_GH_WRITE,
+  ...AGY_GATES].map((v) => `command(${v})`));
+// A read-only seat (rank reviewer) or worker (role review): hc, the 24 read-only shell tools,
+// the test checks and a short list of git subcommands and gh reads. A subcommand is allowed with
 // every argument it is given, so some can write (`git diff --output=file`): like the whole list,
-// this is a guardrail, not a boundary. hc and the test runners stay because they read (and hc is
-// how a worker reports).
+// this is a guardrail, not a boundary. A reviewer seat or review worker needs `hc` (`hc ls`,
+// `hc get`, `hc read`, `hc wait`, `hc send`) to inspect panes and report its verdict; as a
+// word-prefix rule `command(hc)` also matches `hc run`, while `hcGuard` and `hcProxy` are the
+// boundary that refuse `hc run` and `hc exec` inside a bot or worker pane.
 export const AGY_READ_ALLOW = Object.freeze(["hc", ...AGY_SHELL_READ, "git log", "git diff",
   "git show", "git status", "git rev-parse", "git ls-files", "git blame", "git describe",
   "git merge-base", "git rev-list", "git cat-file", ...AGY_GH_READ, "node --test", "node --check",

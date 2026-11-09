@@ -547,8 +547,9 @@ test("worker #823: an Antigravity worker writes its 0600 permission file (its wo
   const data = JSON.parse(readFileSync(path, "utf8"));
   assert.ok(data.permissions.allow.includes(`write_file(${cwd})`), "it writes in its worktree");
   assert.equal(data.permissions.allow.some((rule) => rule.startsWith("write_file(") && rule !== `write_file(${cwd})`), false);
-  assert.ok(data.permissions.allow.includes("command(mkdir)"));
-  assert.ok(data.permissions.allow.includes("command(chmod)"));
+  for (const rule of ["command(mkdir)", "command(chmod)", "command(rg)", "command(sort)", "command(uniq)", "command(sed -n)"]) {
+    assert.ok(data.permissions.allow.includes(rule), `worker allow ${rule}`);
+  }
   for (const tool of AGY_SHELL_READ) {
     assert.ok(data.permissions.allow.includes(`command(${tool})`), `worker allow command(${tool})`);
   }
@@ -572,8 +573,9 @@ test("worker #823: an Antigravity worker writes its 0600 permission file (its wo
   const review = JSON.parse(readFileSync(path2, "utf8"));
   assert.equal(review.permissions.allow.some((rule) => rule.startsWith("write_file(")), false, "a review worker writes nothing");
   assert.equal(review.permissions.allow.includes("command(git)"), false, "no writer shell at all");
-  assert.equal(review.permissions.allow.includes("command(mkdir)"), false);
-  assert.equal(review.permissions.allow.includes("command(chmod)"), false);
+  for (const rule of ["command(mkdir)", "command(chmod)", "command(rg)", "command(sort)", "command(uniq)", "command(sed -n)"]) {
+    assert.equal(review.permissions.allow.includes(rule), false, `review worker excludes ${rule}`);
+  }
   assert.ok(review.permissions.allow.includes("command(git diff)"));
   for (const tool of AGY_SHELL_READ) {
     assert.ok(review.permissions.allow.includes(`command(${tool})`), `review worker allow command(${tool})`);

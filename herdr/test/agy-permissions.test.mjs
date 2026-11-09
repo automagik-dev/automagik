@@ -4,6 +4,7 @@
 // read from the real home.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import {
   AGY_FIXED_DENY, AGY_READ_ALLOW, AGY_SHELL_READ, AGY_WRITE_ALLOW,
@@ -18,9 +19,12 @@ const SEAT = "/work/proj";
 const APP = "/home/u/.config/herdr-app";
 const SETTINGS = agySettingsDir(APP);
 const SHELL_READ = Object.freeze([
-  "ls", "cat", "head", "tail", "grep", "rg", "wc", "diff", "pwd", "echo",
-  "sort", "uniq", "cut", "tr", "jq", "printf", "basename", "dirname", "true",
-  "which", "stat", "realpath", "readlink", "date", "nl", "comm", "column", "sed -n",
+  "ls", "cat", "head", "tail", "grep", "wc", "diff", "pwd", "echo", "cut", "tr", "jq", "printf",
+  "basename", "dirname", "true", "which", "stat", "realpath", "readlink", "date", "nl", "comm",
+  "column",
+]);
+const WRITER_ONLY_SHELL = Object.freeze([
+  "command(mkdir)", "command(chmod)", "command(rg)", "command(sort)", "command(uniq)", "command(sed -n)",
 ]);
 const FORBIDDEN_SHELL = Object.freeze([
   "command(bash)", "command(sh)", "command(env)", "command(xargs)",
@@ -56,7 +60,7 @@ test("normalizeAgyPermissions: trims, dedupes, keeps the good rules and says wha
 
 test("agyPermissionPlan: a writer seat gets its project's write_file, tools, gates, PR-writing gh verbs and every fixed deny", () => {
   const plan = agyPermissionPlan({ bot: BOT, scope: "seat", folder: SEAT });
-  for (const rule of ["command(hc)", "command(git)", "command(node)", "command(bun)", "command(mkdir)", "command(chmod)",
+  for (const rule of ["command(hc)", "command(git)", "command(node)", "command(bun)", ...WRITER_ONLY_SHELL,
     "command(gh pr view)", "command(gh pr create)", "command(gh pr edit)", "command(gh pr comment)",
     "command(node --test)", "command(node --check)", "command(bun test)", "command(node scripts/privacy-check.mjs)",
     "command(node ../scripts/am-copies.mjs)", `write_file(${SEAT})`]) {
@@ -88,8 +92,9 @@ test("agyPermissionPlan: a reviewer seat and a review worker are read-only: no w
     assert.ok(plan.allow.includes("command(git diff)"));
     assert.ok(!plan.allow.includes("command(git)"), "no git subcommand at all");
     assert.ok(!plan.allow.includes("command(node)"), "no generic node");
-    assert.ok(!plan.allow.includes("command(mkdir)"), "no mkdir on read-only roles");
-    assert.ok(!plan.allow.includes("command(chmod)"), "no chmod on read-only roles");
+    for (const rule of WRITER_ONLY_SHELL) {
+      assert.equal(plan.allow.includes(rule), false, `no ${rule} on read-only roles`);
+    }
     assert.ok(plan.allow.includes("command(node --test)"), "the test runners stay: they read");
     assert.ok(plan.allow.includes("command(bun test)"));
     assert.ok(plan.allow.includes("command(gh pr view)"), "reads stay");
@@ -98,13 +103,17 @@ test("agyPermissionPlan: a reviewer seat and a review worker are read-only: no w
     }
     assert.deepEqual(plan.deny, [...AGY_FIXED_DENY]);
   }
-  // The writer roles keep the write_file, the review role (and only it) doesn't.
+  // The writer roles keep write_file and the writer-only shell tools; the review role doesn't.
   for (const role of ["dev", "test", "fix"]) {
-    assert.ok(agyPermissionPlan({ bot: BOT, scope: "worker", role, folder: "/work/wt" }).allow.includes("write_file(/work/wt)"), role);
+    const w = agyPermissionPlan({ bot: BOT, scope: "worker", role, folder: "/work/wt" });
+    assert.ok(w.allow.includes("write_file(/work/wt)"), role);
+    for (const rule of WRITER_ONLY_SHELL) assert.ok(w.allow.includes(rule), `${role} gets ${rule}`);
+    for (const tool of SHELL_READ) assert.ok(w.allow.includes(`command(${tool})`), `${role} gets command(${tool})`);
+    for (const bad of FORBIDDEN_SHELL) assert.equal(w.allow.includes(bad), false, `${role} excludes ${bad}`);
   }
 });
 
-test("AGY_SHELL_READ (#840): 28 read-only shell tools in both default allow lists; no shell launchers or wrappers", () => {
+test("AGY_SHELL_READ (#840): 24 read-only shell tools in both default allow lists; writer-only tools and launchers excluded", () => {
   assert.deepEqual(AGY_SHELL_READ, SHELL_READ);
   for (const tool of SHELL_READ) {
     assert.ok(AGY_WRITE_ALLOW.includes(`command(${tool})`), `AGY_WRITE_ALLOW includes command(${tool})`);
@@ -114,10 +123,23 @@ test("AGY_SHELL_READ (#840): 28 read-only shell tools in both default allow list
     assert.equal(AGY_WRITE_ALLOW.includes(bad), false, `AGY_WRITE_ALLOW excludes ${bad}`);
     assert.equal(AGY_READ_ALLOW.includes(bad), false, `AGY_READ_ALLOW excludes ${bad}`);
   }
-  assert.ok(AGY_WRITE_ALLOW.includes("command(mkdir)"));
-  assert.ok(AGY_WRITE_ALLOW.includes("command(chmod)"));
-  assert.equal(AGY_READ_ALLOW.includes("command(mkdir)"), false);
-  assert.equal(AGY_READ_ALLOW.includes("command(chmod)"), false);
+  for (const rule of WRITER_ONLY_SHELL) {
+    assert.ok(AGY_WRITE_ALLOW.includes(rule), `AGY_WRITE_ALLOW includes ${rule}`);
+    assert.equal(AGY_READ_ALLOW.includes(rule), false, `AGY_READ_ALLOW excludes ${rule}`);
+  }
+});
+
+test("README (#840): Antigravity permission caveat documents writer-only tools, prefix caveats, pipeline checks on agy 1.5.3, and hcGuard/hcProxy", () => {
+  const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
+  assert.match(readme, /sed -n.*GNU `sed`'s `e` command.*`w` command.*`-i`/s);
+  assert.match(readme, /`rg --pre`/);
+  assert.match(readme, /`sort --compress-program`/);
+  assert.match(readme, /`sort -o`/);
+  assert.match(readme, /`uniq IN OUT`/);
+  assert.match(readme, /`echo`\/`printf` with a shell redirection/);
+  assert.match(readme, /observed on\s+`agy 1\.5\.3`, not documented by agy/);
+  assert.match(readme, /`command\(hc\)` matches `hc run`/);
+  assert.match(readme, /`hcGuard` and `hcProxy`/);
 });
 
 test("agySettingsPlan: a roster allow identical to a fixed deny never cancels the deny", () => {
