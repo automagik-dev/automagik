@@ -874,7 +874,8 @@ export function uninstallDshTui(options = {}) {
 
 /** Recognize the actual worker transport, never a switch or an env marker supplied by a pane. */
 export function workerProxyTransport(socketPath, terminal, timeoutMs = 750) {
-  if (!socketPath || !isAbsolute(socketPath)) return Promise.resolve(false);
+  if (typeof terminal !== "string" || !terminal.trim()
+    || !socketPath || !isAbsolute(socketPath)) return Promise.resolve(false);
   return new Promise((done) => {
     const socket = net.connect(socketPath);
     let buffer = "", finished = false;

@@ -2118,3 +2118,27 @@ test("worker transport rejects a mismatched terminal for core id and routing", a
   assert.match(r.err, /hc guard: refused run:/);
   assert.equal(s.runs().length, 0);
 });
+
+test("unset caller terminal keeps server.status and the guard route", async (t) => {
+  const s = scene(t);
+  const socketPath = join(s.root, "missing-terminal.sock");
+  let probes = 0;
+  const server = net.createServer((socket) => socket.on("data", () => {
+    probes++;
+    socket.end(JSON.stringify({ jsonrpc: "2.0", id: 1,
+      result: { v: 1, core: { id: "wrong-core" } } }) + "\n");
+  }));
+  await new Promise((done) => server.listen(socketPath, done));
+  t.after(() => new Promise((done) => server.close(done)));
+  const env = { ...s.env, PATH: `${GUARD_DIR}:${s.env.PATH}`, HC_SOCKET: socketPath };
+  delete env.HC_TERMINAL_ID;
+  const result = await new Promise((done) => execFile(process.execPath,
+    [CLI, "whois", "t1", "--json"], { cwd: s.project, env, encoding: "utf8" },
+    (error, stdout, stderr) => done({ code: error?.code ?? 0, stdout, stderr })));
+  assert.equal(s.calls().filter((args) => args[0] === "server").length, 1,
+    "an unset caller terminal must keep the server.status core-id lookup");
+  assert.notEqual(result.code, 0);
+  assert.match(result.stderr, /hc guard: refused a command without HC_TERMINAL_ID/);
+  assert.equal(s.runs().length, 0, "no unguarded worker route is selected");
+  assert.equal(probes, 0, "an unset expected terminal is refused before connecting");
+});
