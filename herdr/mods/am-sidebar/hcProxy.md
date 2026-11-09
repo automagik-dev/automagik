@@ -193,12 +193,27 @@ those four optional RPC env keys are allowed, each matching `[A-Za-z0-9._+-]{1,6
 keys and bad values refuse. Only `caller` is overwritten with the verified pane's identity.
 A forged `parent` or `worker.of` is refused before forwarding; neither is overwritten.
 
-The proxy refuses these starts:
+The proxy refuses these starts and transport requests:
 
-- Every worker start after re-approval until the pane restarts, including helper workers.
-- A template or agent name absent from the approved snapshot.
-- An env override outside the four bounded terminal variables or the exact generated login wrapper.
-- Any argv that differs from the command rebuilt from the approved snapshot and core template text.
+- **A worker start after a re-approval, until the pane restarts** — every start, including
+  dsh-tui helper workers. The running pane's allowance is pinned to the approved record it
+  started with; a new approval can have widened the roster or worker defaults, and the sandbox
+  binds the data root read-only, so the pane can never re-verify it. Fail closed.
+- **A `worker.template` or `worker.agent` name the approved snapshot does not hold** — only names
+  in the snapshot are approved; a live roster edit, an unapproved template or agent, or a
+  template the core no longer has cannot become a program.
+- **Any caller env beyond the four bounded terminal variables** (`TERM`, `COLORTERM`,
+  `TERM_PROGRAM`, `TERM_PROGRAM_VERSION`), plus the one generated Claude login wrapper — only
+  those identity vars ride the real worker wire; anything else changes the launch the owner
+  approved.
+- **Any argv that differs from the command rebuilt from the approved snapshot and core template
+  text** — the request contributes only the task text and checked metadata; extra args, changed
+  programs or assignments are a different start than the approved one.
+- **A forged `parent` or `worker.of` label** — identity belongs to the verified pane; a forged
+  label would attach the worker to another bot or pane. Both are checked and never overwritten.
+- **An unbound pane asking for the worker transport** — only a bound bot pane (the helper's seat
+  or a by-hand ledger row) has a verified bot identity; an unbound pane gets no transport
+  identity, keeps the guard route and cannot use the approved worker allowance.
 
 The CLI skips the PATH guard only when the actual transport answers the proxy's local
 `proxy.workerTransport` request for this pane. That single reply supplies both the verified
