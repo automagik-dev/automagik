@@ -50,6 +50,7 @@ Security gaps are named by title only until their fix merges. Details go to a pr
 | [0018](0018-meter-query-contract.md) | The meter query contract | Draft | none (ships outside the five milestones) |
 | [0019](0019-gitlab-mirror.md) | The GitLab mirror | Draft (answers: 1-11, 2026-11-09; GitLab canonical, the switch gated on G1-G8) | none (ships outside the five milestones) |
 | [0020](0020-unfold-plugins-leave.md) | Unfold plugins leave Automagik | Draft (answers: Q1-Q5, 2026-11-09; no question open) | none (ships outside the five milestones) |
+| [0021](0021-meter-attribution.md) | Meter attribution | Draft | none (ships outside the five milestones) |
 
 Milestones, in the owner's order:
 
@@ -61,8 +62,8 @@ Milestones, in the owner's order:
 
 Personal customization (0009) is scheduled after milestone 2; it is Draft until then. Herdr,
 Genie Publish, Platform, Desktop sandbox, `am` and parts, the work and code switch, the shared
-Bot registry, the live chat projection and usagemeter's move stay at the RFC stage until their
-questions are answered.
+Bot registry, the live chat projection, usagemeter's move and meter attribution stay at the RFC
+stage until their questions are answered.
 Milestones and one issue per delivery are created after the PR that lands these RFCs merges.
 
 ### Fixes without an RFC
