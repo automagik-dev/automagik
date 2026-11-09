@@ -1143,7 +1143,7 @@ the test checks; `hc` and the test runners stay, because they read. `gh pr merge
 lists. The fixed deny rules are always present and a roster's `agyPermissions` can only add:
 `git push --force`, `git push --force-with-lease`, `git push -f`, `git push origin --force`,
 `git push origin -f`, `git push origin +`, `git push --mirror`, `git push --delete`,
-`git reset --hard`, `git branch -D`, `git clean`, `git rebase -`, `git stash`,
+`git reset --hard`, `git branch -D`, `git clean`, `git rebase`, `git stash`,
 `git checkout --`, `git -C`, `rm -rf`, `gh pr merge`, `gh release`.
 
 These lists are a guardrail against accidents, not a security boundary. A deny rule matches the

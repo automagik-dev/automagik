@@ -433,7 +433,7 @@ export const AGY_FIXED_DENY = Object.freeze([
   "command(git reset --hard)",
   "command(git branch -D)",
   "command(git clean)",
-  "command(git rebase -)",
+  "command(git rebase)",
   "command(git stash)",
   "command(git checkout --)",
   "command(git -C)",

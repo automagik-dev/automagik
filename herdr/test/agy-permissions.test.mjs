@@ -59,7 +59,7 @@ test("agyPermissionPlan: a writer seat gets its project's write_file, tools, gat
   for (const rule of ["command(git push --force)", "command(git push --force-with-lease)", "command(git push -f)",
     "command(git push origin --force)", "command(git push origin -f)", "command(git push origin +)",
     "command(git push --mirror)", "command(git push --delete)", "command(git reset --hard)",
-    "command(git branch -D)", "command(git clean)", "command(git rebase -)", "command(git stash)",
+    "command(git branch -D)", "command(git clean)", "command(git rebase)", "command(git stash)",
     "command(git checkout --)", "command(git -C)", "command(rm -rf)", "command(gh pr merge)",
     "command(gh release)"]) assert.ok(plan.deny.includes(rule), rule);
   assert.deepEqual(plan.warnings, []);
