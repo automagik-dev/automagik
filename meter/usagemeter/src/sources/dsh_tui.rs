@@ -185,18 +185,14 @@ fn is_copy(ctx: &FileCtx, ts_ms: i64) -> bool {
 
 pub fn parse_line(line: &[u8], ctx: &mut FileCtx, out: &mut Vec<UsageEvent>) -> Line {
     let is_session = memmem::find(line, b"\"type\":\"session\"").is_some();
-    if memmem::find(line, b"\"type\":\"session/end-seed\"").is_some() {
-        // The inherited cut: `{inherited: true}` in a fork. A `{}` marks a resume and changes
-        // nothing.
-        if let Some(Row {
-            data:
-                Some(Data {
-                    inherited: Some(true),
-                    ..
-                }),
-            ..
-        }) = from_line::<Row>(line)
-        {
+    // The inherited cut: `{inherited: true}` in a fork; a `{}` marks a resume and changes
+    // nothing. Only the line's own `type` makes it a marker: a call whose content quotes one
+    // (a tool call's arguments) is still a call.
+    if memmem::find(line, b"session/end-seed").is_some()
+        && let Some(row) = from_line::<Row>(line)
+        && row.ty.as_deref() == Some("session/end-seed")
+    {
+        if row.data.and_then(|d| d.inherited) == Some(true) {
             ctx.seed_cut = true;
         }
         return Line::Ignored;
@@ -507,6 +503,18 @@ mod tests {
         );
         assert_eq!(ev[0].session.as_deref(), Some("sess-child"));
         assert_eq!(ev[0].parent_session.as_deref(), Some("sess-a"));
+    }
+
+    #[test]
+    fn a_call_quoting_a_seed_marker_is_still_a_call() {
+        let mut ctx = FileCtx::default();
+        run(&[HEADER], &mut ctx);
+        let quoting = r#"{"type":"assistant/message","seq":0,"time":1767261660000,"data":{"message":{"role":"assistant","content":[{"type":"toolCall","name":"x","arguments":{"type":"session/end-seed","data":{"inherited":true}}}],"source":{"model":"model-d"},"id":"m0"},"usage":{"inputTokens":50,"totalTokens":50}}}"#;
+        let (r, ev) = run(&[quoting], &mut ctx);
+        assert_eq!(r, [Line::Usage]);
+        assert_eq!(ev.len(), 1);
+        assert_eq!(ev[0].tokens.input_uncached, 50);
+        assert!(!ctx.seed_cut, "a quoted marker is no cut");
     }
 
     #[test]
