@@ -70,6 +70,25 @@ Carried, not new:
   ambiguity stays unknown and a bot is never guessed; anything captured comes from fork-and-exit
   runs (the sync) or from records Herdr already writes at start time.
 
+Decided by Chat, 2026-11-09, for this RFC's six questions. They are technical, and they serve the
+owner's ask to compare bots across agents:
+
+1. **Squad** is the head of the launching bot's lead chain, frozen in the start row at launch (e).
+   Decided by Chat, 2026-11-09: one rule for every bot, stable for history.
+2. **Herdr chooses Claude session ids**, with `--session-id` on every fresh Claude launch (f).
+   Decided by Chat, 2026-11-09: it removes the timing race for the best-covered harness.
+3. **No earlier route to machines**: no upstream bridge release; attribution waits for RFC 0017's
+   deliveries 4 and 6. Decided by Chat, 2026-11-09: a bridge would break the freeze RFC 0017 set.
+4. **The backfill**: the operator runs it once per machine after delivery 7, back to the oldest
+   ledger row; earlier hours stay unknown. Decided by Chat, 2026-11-09: explicit and bounded.
+5. **dsh-tui seats stay unlinked for now.** Decided by Chat, 2026-11-09: no record ties them to a
+   terminal, and DSH's live session index is a private file whose format may change. Later,
+   either DSH records the terminal it runs in, or Herdr labels a dsh-tui pane with its session id
+   when it learns it (a resume), which (f) 5 then writes as a session row.
+6. **Linked-machine panes are unknown** until a fleet query is designed (RFC 0018's question 3):
+   such a launch has its rows on one computer and its logs on another. Decided by Chat,
+   2026-11-09: neither meter can link it without guessing.
+
 Proposed here: everything else.
 
 ## Design
@@ -97,7 +116,7 @@ overwrite what the start row recorded.
 | claude | session (start or session row); label; worktree | session (start or session row); label |
 | codex | worktree; label (`revive.session`) | label; session row when Herdr learns it |
 | omp | worktree; label (`revive.session`) | label; session row when Herdr learns it |
-| dsh-tui | worktree (the header's `cwd`) | none yet (question 5) |
+| dsh-tui | worktree (the header's `cwd`) | none yet (Decided, 5) |
 | agy | later: the conversation's workspace folder | later |
 
 - **Claude** sessions are the best covered: Herdr can choose a new Claude session's id itself
@@ -111,7 +130,7 @@ overwrite what the start row recorded.
   `revive.session` or `agent.session` label seen at a sync, or from a session row Herdr writes
   whenever it sets that label (f).
 - **dsh-tui** workers resolve by worktree from the session header's `cwd`. A dsh-tui seat has no
-  session-to-terminal record yet; question 5 says how one could come.
+  session-to-terminal record yet; Decided 5 says how one could come.
 - **agy** is later: the meter has no agy source yet. Its conversations record their workspace
   folder, so its workers resolve by worktree once Herdr launches agy workers with start rows.
 
@@ -255,8 +274,8 @@ another link of the same session covers part of that span, the overlap is ambigu
 **History.** Re-tagging the past is a rebuild from the native logs, and it is
 `usagemeter sync --evidence-backfill --days <n>` from RFC 0018 (b), now also recomputing
 attribution: explicit, bounded by the retention and the read budget, chunked and resumable, a
-generation kept first, never automatic and never on a read. Recommended: the operator runs it
-once per machine after attribution ships, back to the oldest ledger row (question 4). What stays
+generation kept first, never automatic and never on a read. The operator runs it once per
+machine after attribution ships, back to the oldest ledger row (Decided, 4). What stays
 unknown for good: hours before the ledgers existed, logs already deleted, and calls whose session
 no record names.
 
@@ -292,12 +311,12 @@ release. Otherwise the same change makes contract 2. Either way genie reviews it
 | Stable for history | yes, written in the start row | only while the label is set | n/a |
 | Meaning | one rule for every bot | whatever whoever set it meant | n/a |
 
-**Recommended: A.** Herdr writes `squad` in every start row: the id of the bot heading the
+**Decided: A** (Decided, 1). Herdr writes `squad` in every start row: the id of the bot heading the
 launching bot's chain of effective leads (the last bot before the main bot, by the registry's
 `lead` and the pack's `effectiveLead`), the bot itself when it leads others and reports to the main
 bot, and null for the main bot. It is frozen at launch, because the registry changes. The pane
-label stays a display hint the meter only records in the snapshot. If the owner prefers named
-squads (question 1), the registry gains a `squad` field and the start row copies it instead.
+label stays a display hint the meter only records in the snapshot. Named squads (a `squad`
+field in the registry, copied into the start row) would need a later amendment.
 
 ### (f) Herdr-side changes
 
@@ -378,7 +397,9 @@ parent's file is gone, the session the fork's header names as its seed, if DSH r
 
 Each is one pull request with an independent review. Order: 1, then 2 and 3 in parallel; 4 after
 3; 5 after 4 and with RFC 0018's M3 (it is M3's evidence table); 6 after 5; 7 is RFC 0017's; 8
-after 6 and 7.
+after 6 and 7. RFC 0017's delivery 4 (the meter lane) is scheduled right after this RFC merges,
+in parallel with deliveries 2 and 3; delivery 2 still merges before it cuts the first meter
+release.
 
 1. **This RFC** (docs; cuts nothing).
    *Check:* `bun scripts/lane.ts ships` on the merge says no.
@@ -425,23 +446,7 @@ agy follows once the meter has an agy source and Herdr launches agy workers with
 
 ## Open questions
 
-1. **What is a squad?** Recommended: the head of the launching bot's lead chain, frozen in the
-   start row (e). The alternatives are a named `squad` field in the registry, or deferring the
-   column.
-2. **Herdr choosing Claude session ids.** Recommended: yes, with `--session-id` on every fresh
-   Claude launch, since it removes the timing race for the best-covered harness. The alternative
-   keeps session rows from the hook alone.
-3. **An earlier route to machines.** Recommended: none; attribution waits for RFC 0017's
-   deliveries 4 and 6. An upstream bridge release would break the freeze RFC 0017 decided.
-4. **The backfill.** Recommended: the operator runs it once per machine after delivery 7, back to
-   the oldest ledger row; earlier hours stay unknown.
-5. **dsh-tui seats.** Recommended: unlinked for now. Later, either DSH records the terminal it runs
-   in, or Herdr labels a dsh-tui pane with its session id when it learns it (a resume), which (f)
-   5 then writes as a session row. Reading DSH's own live session index at sync is possible, but
-   it is a private file whose format may change.
-6. **Panes on a linked machine.** A launch started from one computer onto a linked machine has its
-   rows here and its logs there, so neither meter can link it. Recommended: unknown until a fleet
-   query is designed (RFC 0018's question 3).
+None. The six questions this RFC asked were decided by Chat on 2026-11-09 (Decided, 1 to 6).
 
 ## Links
 
