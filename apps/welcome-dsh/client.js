@@ -9171,14 +9171,16 @@ var PT_BR = {
   "Continue with {who}": "Continuar com {who}",
   " and ": " e ",
   // Claude Code and Codex (acp-agents.js), in Connect AI and in Settings
-  "Coding agents": "Agentes de código",
-  "Claude Code and Codex run on this computer with your own sign-in, and show up in DSH's model picker.": "O Claude Code e o Codex rodam neste computador com o seu próprio login e aparecem no seletor de modelos do DSH.",
   "Claude Code and Codex": "Claude Code e Codex",
   "Use the coding agents you already have as models in DSH. Each runs your own CLI, with your own sign-in and settings.": "Use os agentes de código que você já tem como modelos no DSH. Cada um roda a sua própria CLI, com o seu login e as suas configurações.",
   "Looking at what this computer has…": "Vendo o que este computador tem…",
   "The ACP agents plugin is not running in this DSH.": "O plugin de agentes ACP não está rodando neste DSH.",
   "Your own {cli} CLI, as a model in DSH": "Sua própria CLI {cli}, como modelo no DSH",
   "Not installed": "Não instalado",
+  "Installing": "Instalando",
+  "Updating": "Atualizando",
+  "Sign-in needed": "Falta entrar",
+  "Check sign-in": "Verificar login",
   "Off": "Desligado",
   "Setting up": "Configurando",
   "Needs a retry": "Precisa tentar de novo",
@@ -9187,8 +9189,19 @@ var PT_BR = {
   "The {cli} CLI is not on this computer. Install it, sign in, then check again.": "A CLI {cli} não está neste computador. Instale, faça login e verifique de novo.",
   "Install {name}": "Instalar o {name}",
   "Found the {cli} CLI on this computer.": "A CLI {cli} está neste computador.",
+  "Found the {cli} CLI on this computer (version {version}).": "A CLI {cli} está neste computador (versão {version}).",
+  "Installing {name} automatically…": "Instalando o {name} automaticamente…",
+  "Updating {name} automatically…": "Atualizando o {name} automaticamente…",
+  "The {name} installation or update failed: {error}": "A instalação ou atualização do {name} falhou: {error}",
+  "The {name} installation or update failed.": "A instalação ou atualização do {name} falhou.",
   "Signed in to {name}.": "Login feito no {name}.",
-  "Not signed in. Run {command} in a terminal, then check again.": "Sem login. Rode {command} em um terminal e verifique de novo.",
+  "Not signed in to {name}. Sign in from a Bot's chat.": "Sem login no {name}. Entre pelo chat de um Bot.",
+  "Or run {command} in a terminal, then check again.": "Ou rode {command} em um terminal e verifique de novo.",
+  "The sign-in to {name} has not been checked yet.": "O login no {name} ainda não foi verificado.",
+  "Sign in": "Entrar",
+  "No Bot chat to sign in from here. Run {command} in a terminal instead.": "Não há chat de Bot para entrar por aqui. Rode {command} em um terminal.",
+  "Sign in from the Bot's chat, then come back to finish setting up.": "Entre pelo chat do Bot e volte para terminar a configuração.",
+  "Back to setup": "Voltar à configuração",
   "Off. Turn it on to use {name} as a model in DSH.": "Desligado. Ligue para usar o {name} como modelo no DSH.",
   "Installing its connector in the background. This takes a minute or two.": "Instalando o conector em segundo plano. Leva um ou dois minutos.",
   "The connector did not install: {error}": "O conector não foi instalado: {error}",
@@ -9226,8 +9239,9 @@ var PT_BR = {
   "Draw again": "Desenhar de novo",
   "Bring it to life": "Dar vida",
   "Drawn with your ChatGPT plan (gpt-image-2)": "Desenhado com o seu plano do ChatGPT (gpt-image-2)",
+  "Drawn with Codex on your ChatGPT plan": "Desenhado com o Codex no seu plano do ChatGPT",
   "Drawn with your OpenAI key (gpt-image-1)": "Desenhado com a sua chave da OpenAI (gpt-image-1)",
-  "Drawing a companion needs ChatGPT or an OpenAI key. Connect one in the AI step, then come back from Settings. For now, pick one.": "Para desenhar uma companhia, é preciso o ChatGPT ou uma chave da OpenAI. Conecte um dos dois no passo de IA e volte por Configurações. Por enquanto, escolha um personagem.",
+  "Drawing a companion needs Codex signed in or an OpenAI key. Connect one in the AI step, then come back from Settings. For now, pick one.": "Para desenhar uma companhia, é preciso o Codex conectado ou uma chave da OpenAI. Conecte um dos dois no passo de IA e volte por Configurações. Por enquanto, escolha um personagem.",
   "Character": "Personagem",
   "Color": "Cor",
   "Its name": "Nome",
@@ -9271,15 +9285,17 @@ var PT_BR = {
   "How to connect {name}": "Como conectar {name}",
   "Sign in to {name}": "Entrar no {name}",
   "With your plan, in the browser": "Com o seu plano, no navegador",
+  "With your plan, in a Bot's chat": "Com o seu plano, no chat de um Bot",
   "Use an API key": "Usar uma chave de API",
   "Billed per use": "Cobrado por uso",
   "This DSH offers no {name} sign-in.": "Este DSH não oferece login no {name}.",
   "Ollama is not running on this computer. Start it, then flip this again.": "O Ollama não está rodando neste computador. Inicie o Ollama e clique de novo no botão de ligar.",
   "Also connected through {via}; Omni uses {name} here.": "Também conectado por {via}; aqui o Omni usa {name}.",
   " Its models are hidden.": " Os modelos dessa conexão estão ocultos.",
+  "DSH sign-in": "login do DSH",
   "Use only this {name}": "Usar só este {name}",
   // What the host says about each AI (src/host/ais.js keeps it English; aiText reads it here)
-  "Your Claude Pro or Max plan, or an Anthropic API key": "Seu plano Claude Pro ou Max, ou uma chave de API da Anthropic",
+  "Your Claude Pro or Max plan through Claude Code, or an Anthropic API key": "Seu plano Claude Pro ou Max pelo Claude Code, ou uma chave de API da Anthropic",
   "Your ChatGPT Plus or Pro plan, through Codex": "Seu plano ChatGPT Plus ou Pro, pelo Codex",
   "With your API key, or your DeepSeek account": "Com a sua chave de API, ou a sua conta DeepSeek",
   "Your Kimi Code plan": "Seu plano Kimi Code",
@@ -9545,7 +9561,7 @@ function bakeMarkup(shape, color) {
 
 // src/client/clay.js
 var CLAY_TOKENS = `
-.oai-overlay,.oai-acp-page{
+.oai-overlay,.oai-acp-page,.oai-aside{
   --oai-bg:#f6eee2;--oai-card:#fbf5ec;--oai-clay:#f2e6d5;--oai-niche:#ebdecb;
   --oai-ink:#3c3049;--oai-ink2:#6c5f71;--oai-line:#e0d0bd;
   --oai-accent:#1b7f96;--oai-accent-2:#b4498f;--oai-bad:#b93a32;--oai-ok:#2f8a63;--oai-warn:#a8700f;
@@ -9556,7 +9572,7 @@ var CLAY_TOKENS = `
   --oai-font:"DM Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
   --oai-head:Manrope,"DM Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
   color-scheme:light}
-body[data-ds-dark-theme] .oai-overlay,body[data-ds-dark-theme] .oai-acp-page{
+body[data-ds-dark-theme] .oai-overlay,body[data-ds-dark-theme] .oai-acp-page,body[data-ds-dark-theme] .oai-aside{
   --oai-bg:#1e1923;--oai-card:#2a2330;--oai-clay:#322a39;--oai-niche:#16121a;
   --oai-ink:#f3e9dd;--oai-ink2:#bcadb8;--oai-line:#40364a;
   --oai-accent:#7fd8ea;--oai-accent-2:#f2a6dc;--oai-bad:#ff9a8f;--oai-ok:#7ad9a8;--oai-warn:#f2c25b;
@@ -9867,6 +9883,15 @@ function noteShowing(scope = globalThis) {
     scope[SHOWING] -= 1;
   };
 }
+function StepAside({ text, back, onBack }) {
+  (0, import_react2.useEffect)(() => noteShowing(), []);
+  return (0, import_react_dom.createPortal)((0, import_react2.createElement)(
+    "div",
+    { className: "oai-aside", role: "status" },
+    (0, import_react2.createElement)("span", null, text),
+    (0, import_react2.createElement)("button", { type: "button", onClick: onBack }, back)
+  ), document.body);
+}
 function Stage({ title, speech, at: at2, glitching, hero, mark = "AUTOMAGIK", wide = false, children }) {
   const titleRef = (0, import_react2.useRef)(null);
   (0, import_react2.useEffect)(() => {
@@ -10012,8 +10037,8 @@ function CompanionStep(props) {
         "div",
         { className: "oai-row" },
         (0, import_react3.createElement)("button", { type: "button", className: "oai-primary", disabled: drawing || description.trim().length < 3 || !generating.ready, onClick: draw }, drawing ? t("Drawing…") : image ? t("Draw again") : t("Bring it to life")),
-        (0, import_react3.createElement)("span", { className: "oai-muted" }, generating.kind === "chatgpt" ? t("Drawn with your ChatGPT plan (gpt-image-2)") : t("Drawn with your OpenAI key (gpt-image-1)"))
-      ) : (0, import_react3.createElement)("p", { className: "oai-note" }, t("Drawing a companion needs ChatGPT or an OpenAI key. Connect one in the AI step, then come back from Settings. For now, pick one.")),
+        (0, import_react3.createElement)("span", { className: "oai-muted" }, generating.kind === "codex" ? t("Drawn with Codex on your ChatGPT plan") : generating.kind === "chatgpt" ? t("Drawn with your ChatGPT plan (gpt-image-2)") : t("Drawn with your OpenAI key (gpt-image-1)"))
+      ) : (0, import_react3.createElement)("p", { className: "oai-note" }, t("Drawing a companion needs Codex signed in or an OpenAI key. Connect one in the AI step, then come back from Settings. For now, pick one.")),
       drawing ? (0, import_react3.createElement)("div", { className: "oai-drawing", "aria-hidden": "true" }) : null
     ) : (0, import_react3.createElement)(
       "div",
@@ -11771,28 +11796,67 @@ var import_react7 = require("react");
 var CLI_OF = { "acp-claude": "claude", "acp-codex": "codex" };
 var LOGO_OF = { "acp-claude": "CC", "acp-codex": "CX" };
 var SIGN_IN_OF = { "acp-claude": "claude auth login", "acp-codex": "codex login" };
+var CHAT_LOGIN = /* @__PURE__ */ Symbol.for("automagik.cli-login");
+function openChatLogin(provider, scope = globalThis) {
+  if (!Object.hasOwn(CLI_OF, provider)) return false;
+  try {
+    return scope[CHAT_LOGIN]?.open?.(provider) === true;
+  } catch {
+    return false;
+  }
+}
 var POLL_MS2 = 2e3;
 var SETTINGS_SECTION = "acp-agents";
+var cliBusy = (agent) => agent.cli.state === "installing" || agent.cli.updating === true;
+function stateOf(agent) {
+  if (agent.cli.state === "installing") return "installing";
+  if (agent.cli.updating === true) return "updating";
+  if (agent.cli.state === "failed" || !agent.cli.found && agent.cli.error) return "failed";
+  if (!agent.cli.found) return "no-cli";
+  if (!agent.on) return "off";
+  if (agent.connector.state !== "ready") return agent.connector.state;
+  if (agent.restartNeeded) return "restart";
+  if (agent.signedIn !== true) return agent.signedIn === false ? "login-required" : "sign-in-unknown";
+  return "ready";
+}
 function badgeOf(agent) {
-  if (!agent.cli.found) return t("Not installed");
-  if (!agent.on) return t("Off");
-  const state = agent.connector.state;
-  if (state === "installing") return t("Setting up");
+  const state = stateOf(agent);
+  if (state === "no-cli") return t("Not installed");
+  if (state === "off") return t("Off");
+  if (state === "installing") return agent.cli.state === "installing" ? t("Installing") : t("Setting up");
+  if (state === "updating") return t("Updating");
   if (state === "failed") return t("Needs a retry");
-  if (state === "ready") return agent.restartNeeded ? t("Restart needed") : t("Ready");
+  if (state === "restart") return t("Restart needed");
+  if (state === "login-required") return t("Sign-in needed");
+  if (state === "sign-in-unknown") return t("Check sign-in");
+  if (state === "ready") return t("Ready");
   return null;
 }
 function agentLines(agent) {
   const name = agent.name;
   const cli = CLI_OF[agent.id] ?? agent.key;
   const lines = [];
+  if (cliBusy(agent)) {
+    lines.push({ tone: "wait", text: agent.cli.updating ? t("Updating {name} automatically…", { name }) : t("Installing {name} automatically…", { name }) });
+  } else if (agent.cli.state === "failed" || agent.cli.error) {
+    lines.push({
+      tone: "bad",
+      text: agent.cli.error ? t("The {name} installation or update failed: {error}", { name, error: redactText(agent.cli.error) }) : t("The {name} installation or update failed.", { name }),
+      action: "retry",
+      ...agent.cli.diagnostic ? { details: { diagnostic: redactText(agent.cli.diagnostic), ...agent.cli.logPath ? { logPath: agent.cli.logPath } : {} } } : {}
+    });
+  }
   if (!agent.cli.found) {
-    lines.push({ tone: "muted", text: t("The {cli} CLI is not on this computer. Install it, sign in, then check again.", { cli }), ...agent.cli.installUrl ? { link: { href: agent.cli.installUrl, text: t("Install {name}", { name }) } } : {}, action: "check" });
+    if (lines.length === 0) lines.push({ tone: "muted", text: t("The {cli} CLI is not on this computer. Install it, sign in, then check again.", { cli }), ...agent.cli.installUrl ? { link: { href: agent.cli.installUrl, text: t("Install {name}", { name }) } } : {}, action: "check" });
     return lines;
   }
-  lines.push({ tone: "ok", text: t("Found the {cli} CLI on this computer.", { cli }) });
+  lines.push({ tone: "ok", text: agent.cli.version ? t("Found the {cli} CLI on this computer (version {version}).", { cli, version: agent.cli.version }) : t("Found the {cli} CLI on this computer.", { cli }) });
   if (agent.signedIn === true) lines.push({ tone: "ok", text: t("Signed in to {name}.", { name }) });
-  if (agent.signedIn === false) lines.push({ tone: "bad", text: t("Not signed in. Run {command} in a terminal, then check again.", { command: SIGN_IN_OF[agent.id] ?? cli }), action: "check" });
+  if (agent.signedIn === false && !cliBusy(agent)) {
+    lines.push({ tone: "bad", text: t("Not signed in to {name}. Sign in from a Bot's chat.", { name }), action: "login" });
+    lines.push({ tone: "muted", text: t("Or run {command} in a terminal, then check again.", { command: SIGN_IN_OF[agent.id] ?? cli }), action: "check" });
+  }
+  if (agent.signedIn === void 0 && !cliBusy(agent)) lines.push({ tone: "muted", text: t("The sign-in to {name} has not been checked yet.", { name }), action: "check" });
   if (!agent.on) {
     lines.push({ tone: "muted", text: t("Off. Turn it on to use {name} as a model in DSH.", { name }) });
     return lines;
@@ -11812,11 +11876,12 @@ function agentLines(agent) {
   }
   if (state === "ready") {
     lines.push({ tone: "ok", text: version ? t("Connector ready (version {version}).", { version }) : t("Connector ready.") });
-    lines.push(agent.restartNeeded ? { tone: "bad", text: t("Restart DSH to see {name} in the model picker.", { name }) } : { tone: "ok", text: t("Ready: pick {name} in the model picker.", { name }), ready: true });
+    if (agent.restartNeeded) lines.push({ tone: "bad", text: t("Restart DSH to see {name} in the model picker.", { name }) });
+    else if (stateOf(agent) === "ready") lines.push({ tone: "ok", text: t("Ready: pick {name} in the model picker.", { name }), ready: true });
   }
   return lines;
 }
-function useAcp(request2 = call) {
+function useAcp(request2 = call, { onLoginOpen, open = openChatLogin } = {}) {
   const [view, setView] = (0, import_react7.useState)(null);
   const [busy, setBusy] = (0, import_react7.useState)(null);
   const [problems, setProblems] = (0, import_react7.useState)({});
@@ -11840,7 +11905,7 @@ function useAcp(request2 = call) {
   (0, import_react7.useEffect)(() => {
     void load(true);
   }, [load]);
-  const settling = view?.agents?.some((agent) => agent.on && agent.cli.found && agent.connector.state === "installing" || wanted[agent.id] !== void 0 && wanted[agent.id] !== agent.on) === true;
+  const settling = view?.agents?.some((agent) => cliBusy(agent) || agent.on && agent.cli.found && agent.connector.state === "installing" || wanted[agent.id] !== void 0 && wanted[agent.id] !== agent.on) === true;
   (0, import_react7.useEffect)(() => {
     if (!settling) return void 0;
     const timer = setInterval(() => {
@@ -11875,10 +11940,24 @@ function useAcp(request2 = call) {
       }
     },
     retry: (agent) => act(agent.id, "acp-retry", { id: agent.id }),
-    check: (agent) => act(agent.id, "acp", { refresh: true })
+    check: (agent) => act(agent.id, "acp", { refresh: true }),
+    refresh: () => load(true),
+    // Reads the agents again without asking the CLIs (after the host changed a switch).
+    reload: () => load(false),
+    // Opens the sign-in row in a Bot's chat; nothing is asked of the host here. Without the Bot
+    // team (or a Bot), the row says to use the terminal.
+    login: (agent) => {
+      say(agent.id, null);
+      if (!open(agent.id)) {
+        say(agent.id, t("No Bot chat to sign in from here. Run {command} in a terminal instead.", { command: SIGN_IN_OF[agent.id] ?? CLI_OF[agent.id] ?? agent.key }));
+        return false;
+      }
+      onLoginOpen?.(agent);
+      return true;
+    }
   };
 }
-function Line({ line, agent, acp, busy }) {
+function AcpLine({ line, agent, acp, busy }) {
   return (0, import_react7.createElement)(
     "div",
     { className: "oai-acp-line-block" },
@@ -11888,6 +11967,7 @@ function Line({ line, agent, acp, busy }) {
       line.text,
       line.link ? [" ", (0, import_react7.createElement)("a", { key: "link", className: "oai-link", href: line.link.href, target: "_blank", rel: "noreferrer" }, line.link.text)] : null,
       line.action === "retry" ? (0, import_react7.createElement)("button", { type: "button", className: "oai-ghost oai-acp-act", disabled: busy, onClick: () => acp.retry(agent) }, t("Retry")) : null,
+      line.action === "login" ? (0, import_react7.createElement)("button", { type: "button", className: "oai-ghost oai-acp-act", disabled: busy, onClick: () => acp.login(agent) }, t("Sign in")) : null,
       line.action === "check" ? (0, import_react7.createElement)("button", { type: "button", className: "oai-ghost oai-acp-act", disabled: busy, onClick: () => acp.check(agent) }, t("Check again")) : null
     ),
     line.details ? (0, import_react7.createElement)(
@@ -11906,7 +11986,7 @@ function AcpAgentRow({ agent, acp }) {
   const lines = agentLines(agent);
   return (0, import_react7.createElement)(
     "div",
-    { className: `oai-ai oai-acp${on2 ? " oai-ai-on" : ""}`, "data-acp": agent.id, "data-state": agent.cli.found ? agent.on ? agent.connector.state : "off" : "no-cli" },
+    { className: `oai-ai oai-acp${on2 ? " oai-ai-on" : ""}`, "data-acp": agent.id, "data-state": stateOf({ ...agent, on: on2 }) },
     (0, import_react7.createElement)(
       "div",
       { className: "oai-ai-row" },
@@ -11920,22 +12000,20 @@ function AcpAgentRow({ agent, acp }) {
       badge ? (0, import_react7.createElement)("em", { className: "oai-found" }, badge) : null,
       (0, import_react7.createElement)("button", { type: "button", role: "switch", className: "oai-switch", "aria-checked": on2 ? "true" : "false", "aria-label": agent.name, disabled: busy, onClick: () => acp.flip(agent) })
     ),
-    (0, import_react7.createElement)("div", { className: "oai-acp-lines" }, lines.map((line, i) => (0, import_react7.createElement)(Line, { key: i, line, agent, acp, busy }))),
+    (0, import_react7.createElement)("div", { className: "oai-acp-lines" }, lines.map((line, i) => (0, import_react7.createElement)(AcpLine, { key: i, line, agent, acp, busy }))),
     acp.problems[agent.id] ? (0, import_react7.createElement)("p", { className: "oai-error oai-ai-problem", role: "alert" }, acp.problems[agent.id]) : null
   );
 }
-function AcpAgents({ acp, heading = true }) {
+function AcpAgents({ acp }) {
   if (acp.view?.available !== true || acp.view.agents.length === 0) return null;
   return (0, import_react7.createElement)(
     "section",
-    { className: "oai-group oai-acp-group", "aria-label": t("Coding agents") },
-    heading ? (0, import_react7.createElement)("h2", null, t("Coding agents")) : null,
-    heading ? (0, import_react7.createElement)("p", { className: "oai-muted oai-acp-intro" }, t("Claude Code and Codex run on this computer with your own sign-in, and show up in DSH's model picker.")) : null,
+    { className: "oai-group oai-acp-group", "aria-label": t("Claude Code and Codex") },
     (0, import_react7.createElement)("div", { className: "oai-list" }, acp.view.agents.map((agent) => (0, import_react7.createElement)(AcpAgentRow, { key: agent.id, agent, acp })))
   );
 }
-function AcpSettingsSection() {
-  const acp = useAcp();
+function AcpSettingsSection({ close } = {}) {
+  const acp = useAcp(void 0, { onLoginOpen: () => close?.() });
   return (0, import_react7.createElement)(
     "div",
     { className: "oai-acp-page" },
@@ -11944,7 +12022,7 @@ function AcpSettingsSection() {
       { className: "oai-card" },
       (0, import_react7.createElement)("h1", null, t("Claude Code and Codex")),
       (0, import_react7.createElement)("p", null, t("Use the coding agents you already have as models in DSH. Each runs your own CLI, with your own sign-in and settings.")),
-      acp.view === null ? (0, import_react7.createElement)("p", { className: "oai-muted oai-waiting" }, t("Looking at what this computer has…")) : acp.view.available ? (0, import_react7.createElement)(AcpAgents, { acp, heading: false }) : (0, import_react7.createElement)("p", { className: "oai-muted" }, t("The ACP agents plugin is not running in this DSH."))
+      acp.view === null ? (0, import_react7.createElement)("p", { className: "oai-muted oai-waiting" }, t("Looking at what this computer has…")) : acp.view.available ? (0, import_react7.createElement)(AcpAgents, { acp }) : (0, import_react7.createElement)("p", { className: "oai-muted" }, t("The ACP agents plugin is not running in this DSH."))
     )
   );
 }
@@ -11984,7 +12062,6 @@ var ACP_CSS = `
 .oai-acp-log{margin:0;font-size:12px;overflow-wrap:anywhere}
 .oai-acp-page{padding:8px 0;font-family:var(--oai-font);color:var(--oai-ink)}
 .oai-acp-page .oai-card{max-width:680px}
-.oai-acp-group .oai-acp-intro{margin:0 0 8px!important}
 .oai-acp-lines{padding:0 14px 12px 60px;display:grid;gap:4px}
 .oai-card p.oai-acp-line{margin:0;font-size:13px;line-height:1.45;color:var(--oai-ink2)}
 .oai-card p.oai-acp-ok::before{content:"✓ ";color:var(--oai-ok);font-weight:700}
@@ -11994,6 +12071,9 @@ var ACP_CSS = `
 .oai-acp[data-state="ready"] .oai-found{background:color-mix(in srgb,var(--oai-cyan) 45%,var(--oai-card));color:var(--oai-cyan-ink)}
 .oai-acp[data-state="failed"] .oai-found{background:color-mix(in srgb,var(--oai-bad) 22%,var(--oai-card));color:var(--oai-bad)}
 @media (max-width:520px){.oai-acp-lines{padding-left:14px}}
+.oai-aside{position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:2000;display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;max-width:calc(100vw - 32px);box-sizing:border-box;padding:10px 12px 10px 16px;border-radius:var(--oai-r-sm);${raised("var(--oai-card)", 3)};color:var(--oai-ink);font:500 13px/1.4 var(--oai-font)}
+.oai-aside button{border:0;border-radius:var(--oai-r-sm);padding:6px 12px;${raised("var(--oai-cyan)", 2)};color:var(--oai-cyan-ink);font:inherit;font-weight:600;cursor:pointer}
+.oai-aside button:focus-visible{outline:3px solid var(--oai-ring);outline-offset:2px}
 `;
 
 // src/client/connect-ai.js
@@ -12188,7 +12268,37 @@ function SignInOrKey({ row, provider, onSaved, onClose }) {
     (0, import_react8.createElement)("button", { type: "button", onClick: () => setWay("key") }, (0, import_react8.createElement)("strong", null, t("Use an API key")), (0, import_react8.createElement)("span", null, t("Billed per use")))
   );
 }
-function Setup({ row, onSaved, onClose }) {
+var CLI_ROWS = { claude: "acp-claude", chatgpt: "acp-codex" };
+function cliAgentOf(row, acp) {
+  const id = CLI_ROWS[row.id];
+  if (id === void 0) return void 0;
+  return acp?.view?.agents?.find((agent) => agent.id === id) ?? (row.cli?.cli ? row.cli : void 0);
+}
+var acpBusy = (acp) => acp ? acp.busy !== null : false;
+var canSignIn = (agent) => agent.cli.found === true && agent.cli.state !== "installing" && agent.cli.state !== "failed" && agent.cli.updating !== true;
+function CliSetup({ row, agent, acp, onSaved, onClose }) {
+  const [way, setWay] = (0, import_react8.useState)(null);
+  if (way === "key" || agent === void 0 && row.keyUrl) return (0, import_react8.createElement)(KeyForm, { row, provider: providerOf(row), onSaved });
+  if (agent === void 0) return (0, import_react8.createElement)("p", null, t("This DSH offers no {name} sign-in.", { name: row.name }));
+  const busy = acpBusy(acp);
+  const lines = canSignIn(agent) ? [] : agentLines(agent);
+  const problem = acp?.problems?.[agent.id];
+  return (0, import_react8.createElement)(
+    "div",
+    { className: "oai-signin" },
+    (0, import_react8.createElement)(
+      "div",
+      { className: "oai-choices", role: "group", "aria-label": t("How to connect {name}", { name: row.name }) },
+      canSignIn(agent) ? (0, import_react8.createElement)("button", { type: "button", disabled: busy || !acp, onClick: () => acp?.login(agent) }, (0, import_react8.createElement)("strong", null, t("Sign in to {name}", { name: agent.name })), (0, import_react8.createElement)("span", null, t("With your plan, in a Bot's chat"))) : null,
+      row.keyUrl ? (0, import_react8.createElement)("button", { type: "button", onClick: () => setWay("key") }, (0, import_react8.createElement)("strong", null, t("Use an API key")), (0, import_react8.createElement)("span", null, t("Billed per use"))) : null
+    ),
+    lines.length ? (0, import_react8.createElement)("div", { className: "oai-acp-lines" }, lines.map((line, i) => (0, import_react8.createElement)(AcpLine, { key: i, line, agent, acp, busy }))) : null,
+    problem ? (0, import_react8.createElement)("p", { className: "oai-error", role: "alert" }, problem) : null,
+    (0, import_react8.createElement)("button", { type: "button", className: "oai-quiet", onClick: onClose }, t("Cancel"))
+  );
+}
+function Setup({ row, acp, onSaved, onClose }) {
+  if (Object.hasOwn(CLI_ROWS, row.id)) return (0, import_react8.createElement)(CliSetup, { row, agent: cliAgentOf(row, acp), acp, onSaved, onClose });
   if (row.kind === "key") return (0, import_react8.createElement)(KeyForm, { row, provider: providerOf(row), onSaved });
   if (row.kind === "signin") {
     if (row.signIn && row.keyUrl) return (0, import_react8.createElement)(SignInOrKey, { row, provider: providerOf(row), onSaved, onClose });
@@ -12202,7 +12312,7 @@ function Setup({ row, onSaved, onClose }) {
   } });
   return null;
 }
-var PROVIDER_OF = { claude: "anthropic", chatgpt: "openai-codex", kimi: "kimi-coding", copilot: "github-copilot", grok: "xai", openai: "openai", openrouter: "openrouter", zai: "zai", moonshot: "moonshotai", opencode: "opencode", deepseek: "deepseek" };
+var PROVIDER_OF = { claude: "anthropic", kimi: "kimi-coding", copilot: "github-copilot", grok: "xai", openai: "openai", openrouter: "openrouter", zai: "zai", moonshot: "moonshotai", opencode: "opencode", deepseek: "deepseek" };
 var providerOf = (row) => PROVIDER_OF[row.id] ?? row.id;
 function Duplicates({ row, onDedupe }) {
   if (!row.duplicates?.length) return null;
@@ -12213,14 +12323,16 @@ function Duplicates({ row, onDedupe }) {
     row.duplicates.map((duplicate) => (0, import_react8.createElement)(
       "p",
       { key: `${duplicate.via}:${duplicate.provider}`, className: "oai-muted" },
-      t("Also connected through {via}; Omni uses {name} here.", { via: duplicate.via, name: row.name }),
+      t("Also connected through {via}; Omni uses {name} here.", { via: t(duplicate.via), name: row.name }),
       duplicate.hidden ? t(" Its models are hidden.") : null
     )),
     shown.length && row.on ? (0, import_react8.createElement)("button", { type: "button", className: "oai-ghost", onClick: onDedupe }, t("Use only this {name}", { name: row.name })) : null
   );
 }
-function Row({ row, open, busy, problem, onFlip, onSaved, onClose, onDedupe }) {
+function Row({ row, acp, open, busy, problem, onFlip, onSaved, onClose, onDedupe }) {
   const logo = LOGOS[row.id] ?? row.name.slice(0, 1);
+  const agent = cliAgentOf(row, acp);
+  const settling = !row.on && !open && agent?.on === true && agent.signedIn === true && agent.cli.found === true;
   return (0, import_react8.createElement)(
     "div",
     { className: `oai-ai${row.on ? " oai-ai-on" : ""}` },
@@ -12237,7 +12349,8 @@ function Row({ row, open, busy, problem, onFlip, onSaved, onClose, onDedupe }) {
       row.found ? (0, import_react8.createElement)("em", { className: "oai-found" }, aiText(row.found)) : null,
       (0, import_react8.createElement)("button", { type: "button", role: "switch", className: "oai-switch", "aria-checked": row.on ? "true" : "false", "aria-label": row.name, disabled: busy, onClick: onFlip })
     ),
-    open && !row.on ? (0, import_react8.createElement)("div", { className: "oai-ai-setup" }, (0, import_react8.createElement)(Setup, { row, onSaved, onClose })) : null,
+    open && !row.on ? (0, import_react8.createElement)("div", { className: "oai-ai-setup" }, (0, import_react8.createElement)(Setup, { row, acp, onSaved, onClose })) : null,
+    settling ? (0, import_react8.createElement)("div", { className: "oai-acp-lines" }, agentLines(agent).map((line, i) => (0, import_react8.createElement)(AcpLine, { key: i, line, agent, acp, busy: busy || acpBusy(acp) }))) : null,
     problem ? (0, import_react8.createElement)("p", { className: "oai-error oai-ai-problem", role: "alert" }, problem) : null,
     (0, import_react8.createElement)(Duplicates, { row, onDedupe })
   );
@@ -12253,7 +12366,8 @@ function ConnectAiStep(props) {
   const [busy, setBusy] = (0, import_react8.useState)(null);
   const [problems, setProblems] = (0, import_react8.useState)({});
   const [showAll, setShowAll] = (0, import_react8.useState)(false);
-  const acp = useAcp();
+  const [aside, setAside] = (0, import_react8.useState)(false);
+  const acp = useAcp(void 0, { onLoginOpen: () => setAside(true) });
   const refresh = (0, import_react8.useCallback)(async () => {
     const reply = await call("ais").catch(() => ({ rows: [], subscriptions: null }));
     setRows(reply.rows ?? []);
@@ -12261,11 +12375,21 @@ function ConnectAiStep(props) {
   }, []);
   (0, import_react8.useEffect)(() => {
     void refresh();
-  }, [refresh]);
+  }, [refresh, acp.view]);
   (0, import_react8.useEffect)(() => {
     if (state) glitch();
   }, [state, glitch]);
   if (!state) return null;
+  if (aside) {
+    return (0, import_react8.createElement)(StepAside, {
+      text: t("Sign in from the Bot's chat, then come back to finish setting up."),
+      back: t("Back to setup"),
+      onBack: () => {
+        setAside(false);
+        void acp.refresh().then(refresh);
+      }
+    });
+  }
   const say = (id, message) => setProblems((previous) => ({ ...previous, [id]: message }));
   const flip = async (row) => {
     const action = flipAction(row);
@@ -12279,6 +12403,7 @@ function ConnectAiStep(props) {
       if (row.kind === "subscription") await call("ai-subscription", { provider: row.tile.provider, on: action === "on" });
       else await call("ai-switch", { id: row.id, on: action === "on" });
       if (action === "on") glitch();
+      if (row.cli) await acp.reload();
       await refresh();
     } catch (error) {
       say(row.id, error.message);
@@ -12305,18 +12430,17 @@ function ConnectAiStep(props) {
     state,
     rows,
     subscriptions: subs,
-    acp,
     open,
     showAll,
     glitching,
-    rowProps: (row) => ({ busy: busy !== null, problem: problems[row.id], onFlip: () => flip(row), onSaved: saved(row), onClose: () => setOpen(null), onDedupe: dedupe(row) }),
+    rowProps: (row) => ({ acp, busy: busy !== null, problem: problems[row.id], onFlip: () => flip(row), onSaved: saved(row), onClose: () => setOpen(null), onDedupe: dedupe(row) }),
     onShowAll: () => setShowAll(true),
     onSkip: () => finish2(),
     onModels: () => finish2("models"),
     onContinue: () => proceed()
   });
 }
-function ConnectAiView({ state, rows, subscriptions, acp, open, showAll, glitching, rowProps, onShowAll, onSkip, onModels, onContinue }) {
+function ConnectAiView({ state, rows, subscriptions, open, showAll, glitching, rowProps, onShowAll, onSkip, onModels, onContinue }) {
   const all = rows === null ? null : [...rows, ...subscriptionRows(subscriptions)];
   const count = all ? onCount(all) : 0;
   const { found, others } = sections(all ?? []);
@@ -12338,7 +12462,6 @@ function ConnectAiView({ state, rows, subscriptions, acp, open, showAll, glitchi
         (0, import_react8.createElement)("h2", null, t("Found on this computer")),
         (0, import_react8.createElement)("div", { className: "oai-list" }, found.map(rowOf))
       ) : null,
-      (0, import_react8.createElement)(AcpAgents, { key: "acp", acp }),
       (0, import_react8.createElement)(
         "section",
         { key: "others", className: "oai-group", "aria-label": another },

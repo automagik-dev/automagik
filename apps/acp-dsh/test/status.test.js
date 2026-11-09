@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { apply, Config, dshToolsOn, flagOf, SERVICE } from '../index.js'
+import { apply, Config, dshToolsOn, flagOf, INSPECT_TTL_MS, SERVICE, SIGNED_IN_TTL_MS } from '../index.js'
 import { AGENTS, signedInOf } from '../src/host/agents.js'
 
 // A live setting, as the running fiber holds it: a reference DSH's settings service rewrites.
@@ -267,7 +267,7 @@ test('a connector ready but not in the picker says a restart is needed', async (
 
 test('sign-in comes from the CLI itself: loggedIn only, exit codes for Codex, unknown when it cannot tell', async () => {
   const runs = []
-  const run = answer => (file, args, options, done) => { runs.push({ file, args, path: options.env.PATH }); setImmediate(() => answer(done)) }
+  const run = answer => (file, args, options, done) => { runs.push({ file, args, path: options.env.PATH, updates: options.env.DISABLE_UPDATES }); setImmediate(() => answer(done)) }
   const exit = (code, stdout = '') => done => done(code === 0 ? null : Object.assign(new Error('exit'), { code }), stdout)
   const env = { PATH: '/usr/bin' }
   assert.equal(await signedInOf(CLAUDE, '/me/.local/bin/claude', { env, run: run(exit(0, JSON.stringify({ loggedIn: true, email: 'someone@example.com', orgId: 'x' }))) }), true)
@@ -280,6 +280,8 @@ test('sign-in comes from the CLI itself: loggedIn only, exit codes for Codex, un
   assert.equal(await signedInOf(CODEX, '/gone/codex', { env, run: run(done => done(Object.assign(new Error('nope'), { code: 'ENOENT' }))) }), undefined)
   assert.equal(await signedInOf(CODEX, undefined, { env, run: run(exit(0)) }), undefined)
   assert.deepEqual(runs.slice(0, 1).map(r => [r.file, r.args]), [['/me/.local/bin/claude', ['auth', 'status', '--json']]])
+  // A status check never updates the CLI itself (DISABLE_UPDATES, as clis.js asks --version).
+  assert.ok(runs.every(r => r.updates === '1'))
   assert.deepEqual(runs[3].args, ['login', 'status'])
   // The CLI's own folder leads PATH, so a Node-script CLI finds its Node.
   assert.equal(runs[3].path.split(':')[0], '/me/.nvm/bin')
@@ -324,4 +326,165 @@ test('dispose stops the adapter installs', () => {
   assert.ok(!h.log.some(([what]) => what === 'store disposed'))
   h.ctx.emit('stop')
   assert.ok(h.log.some(([what]) => what === 'store disposed'))
+})
+
+// The Bot team's check before it puts a Bot on an agent (bots-dsh models.js `modelAccess`):
+// one agent's row with a fresh sign-in answer. Read-only: no install, no switch, no login.
+test('inspect probes only the requested CLI, without installing or starting anything', async () => {
+  const signedIn = { codex: false, claude: true }
+  const h = harness({
+    clis: { claude: '/bin/claude', codex: '/bin/codex' }, signedIn,
+    bins: { [CODEX.adapter]: '/adapters/codex', [CLAUDE.adapter]: '/adapters/claude' },
+  })
+  const config = { claude: live(true), codex: live(true) }
+  apply(h.ctx, config, h.deps)
+  const service = h.services[SERVICE]
+  const before = await service.inspect('acp-codex')
+  assert.equal(before.signedIn, false)
+  assert.equal(before.connector.state, 'ready')
+  assert.equal(before.on, true)
+  assert.deepEqual(h.probes, [['codex', '/bin/codex']])
+  assert.equal(await service.inspect('not-an-agent'), undefined)
+  assert.equal(h.probes.length, 1)
+  assert.deepEqual(h.installs, [])
+  assert.equal(flagOf(config.codex), true, 'the switch is left as it was')
+  h.ctx.emit('stop')
+})
+
+test('inspect shares one probe between checks a moment apart, and a refresh asks again', async () => {
+  const signedIn = { codex: false }
+  const h = harness({ clis: { codex: '/bin/codex' }, signedIn, bins: { [CODEX.adapter]: '/adapters/codex' } })
+  apply(h.ctx, { claude: live(false), codex: live(true) }, h.deps)
+  const service = h.services[SERVICE]
+  const [one, two] = await Promise.all([service.inspect('acp-codex'), service.inspect('acp-codex')])
+  assert.equal(one.signedIn, false)
+  assert.equal(two.signedIn, false)
+  assert.equal((await service.inspect('acp-codex')).signedIn, false, 'within the TTL: the same answer')
+  assert.equal(h.probes.length, 1)
+  signedIn.codex = true
+  await service.refresh()
+  assert.equal((await service.inspect('acp-codex')).signedIn, true, 'after a refresh the answer is new')
+  h.ctx.emit('stop')
+})
+
+// F5: `auth status` spawns the whole CLI and a Bot's turn asks before its first call. A confirmed
+// sign-in stands for minutes; the agent's own auth_required (MODEL_ACCESS_REQUIRED) drops it.
+test('inspect keeps a confirmed sign-in for minutes, a signed-out answer for seconds, and drops it on auth_required', async (t) => {
+  let now = 10_000_000
+  t.mock.method(Date, 'now', () => now)
+  const signedIn = { codex: true, claude: false }
+  const h = harness({ clis: { codex: '/bin/codex', claude: '/bin/claude' }, signedIn, bins: { [CODEX.adapter]: '/adapters/codex', [CLAUDE.adapter]: '/adapters/claude' } })
+  apply(h.ctx, { claude: live(true), codex: live(true) }, h.deps)
+  const service = h.services[SERVICE]
+  const count = key => h.probes.filter(([probe]) => probe === key).length
+  assert.equal((await service.inspect('acp-codex')).signedIn, true)
+  assert.equal((await service.inspect('acp-claude')).signedIn, false)
+  now += INSPECT_TTL_MS + 1
+  assert.equal((await service.inspect('acp-codex')).signedIn, true)
+  assert.equal(count('codex'), 1, 'a confirmed sign-in is not asked again after a few seconds')
+  await service.inspect('acp-claude')
+  assert.equal(count('claude'), 2, 'a signed-out answer is asked again')
+  now += SIGNED_IN_TTL_MS
+  await service.inspect('acp-codex')
+  assert.equal(count('codex'), 2, 'after its minutes, asked again')
+  // The agent says it is signed out: the cached yes goes at once, and the status says so.
+  signedIn.codex = false
+  h.registered.adapter.onSignedOut('acp-codex')
+  assert.equal(byId(await service.status(), 'acp-codex').signedIn, false)
+  assert.equal((await service.inspect('acp-codex')).signedIn, false)
+  assert.equal(count('codex'), 3)
+  h.registered.adapter.onSignedOut('not-an-agent')
+  h.ctx.emit('stop')
+})
+
+// Only the sign-in answer is kept: the setting, the CLI and the connector are read on every
+// inspect, so an agent turned off within a confirmed sign-in's minutes is never reported on.
+test('inspect keeps only the sign-in answer: an agent turned off within its minutes says on:false at once', async (t) => {
+  let now = 10_000_000
+  t.mock.method(Date, 'now', () => now)
+  const signedIn = { codex: true }
+  const h = harness({ clis: { codex: '/bin/codex' }, signedIn, bins: { [CODEX.adapter]: '/adapters/codex' } })
+  const config = { claude: live(false), codex: live(true) }
+  apply(h.ctx, config, h.deps)
+  const service = h.services[SERVICE]
+  const first = await service.inspect('acp-codex')
+  assert.equal(first.signedIn, true)
+  assert.equal(first.on, true)
+  assert.equal(first.connector.state, 'ready')
+  config.codex.set(false)
+  now += 1000
+  const off = await service.inspect('acp-codex')
+  assert.equal(off.on, false, 'the setting is read again')
+  assert.equal(off.connector.state, 'off')
+  assert.equal(h.probes.length, 1, 'the sign-in answer itself is still kept')
+  config.codex.set(true)
+  assert.equal((await service.inspect('acp-codex')).on, true)
+  assert.equal(h.probes.length, 1)
+  h.ctx.emit('stop')
+})
+
+test('inspect reports a connector that is not ready without triggering its installer', async () => {
+  const h = harness({ clis: { codex: '/bin/codex' }, signedIn: { codex: true } })
+  apply(h.ctx, { claude: live(false), codex: live(true) }, h.deps)
+  const status = await h.services[SERVICE].inspect('acp-codex')
+  assert.equal(status.cli.found, true)
+  assert.notEqual(status.connector.state, 'ready')
+  assert.deepEqual(h.installs, [])
+  h.ctx.emit('stop')
+})
+
+// Sign-in through the service (login.js; plan v3 2.3): the Bot team's owner-only route calls
+// these. A fake CLI process and clock; nothing real runs.
+test('a sign-in through the service records the confirmed CLI, refreshes inspect and announces ready and the busy count', async () => {
+  const { EventEmitter } = await import('node:events')
+  const { PassThrough } = await import('node:stream')
+  const signedIn = { codex: false }
+  const h = harness({ clis: { codex: '/bin/codex' }, signedIn, bins: { [CODEX.adapter]: '/adapters/codex' } })
+  const children = []
+  const timers = { now: () => 5_000_000, setTimeout: () => ({ unref() {} }), clearTimeout() {} }
+  const loginSpawn = (file, args) => {
+    const child = new EventEmitter()
+    child.stdin = new PassThrough()
+    child.stdout = new PassThrough()
+    child.stderr = new PassThrough()
+    child.writes = []
+    child.stdin.on('data', chunk => child.writes.push(String(chunk)))
+    child.kill = () => true
+    children.push({ file, args, child })
+    return child
+  }
+  apply(h.ctx, { claude: live(false), codex: live(true) }, { ...h.deps, loginSpawn, loginTimers: timers })
+  const service = h.services[SERVICE]
+  assert.equal((await service.inspect('acp-codex')).signedIn, false)
+  assert.equal(service.loginActive(), 0)
+  assert.equal(service.loginCurrent('acp-codex'), undefined)
+  const started = service.loginStart('acp-codex', { label: 'first-bot' })
+  assert.equal(service.loginActive(), 1)
+  assert.deepEqual(h.emitted.filter(([name]) => name === 'acp-dsh/login-active').map(([, value]) => value), [{ active: 1 }])
+  const settle = () => new Promise(resolve => setImmediate(resolve))
+  await settle()
+  const { child, file } = children[0]
+  assert.equal(file, '/bin/codex')
+  const sent = () => child.writes.flatMap(chunk => chunk.trim().split('\n')).filter(Boolean).map(line => JSON.parse(line))
+  child.stdout.write(`${JSON.stringify({ id: sent()[0].id, result: {} })}\n`)
+  await settle()
+  const login = sent().find(row => row.method === 'account/login/start')
+  child.stdout.write(`${JSON.stringify({ id: login.id, result: { type: 'chatgptDeviceCode', loginId: 'login-1', verificationUrl: 'https://auth.openai.com/codex/device', userCode: 'ABCD-1234' } })}\n`)
+  await settle()
+  // A second view (another window or Bot) reads the same attempt, never a new one.
+  assert.equal(service.loginStart('acp-codex', { label: 'second-bot' }).attemptId, started.attemptId)
+  assert.equal(service.loginCurrent('acp-codex').userCode, 'ABCD-1234')
+  assert.equal(children.length, 1)
+  signedIn.codex = true
+  child.stdout.write(`${JSON.stringify({ method: 'account/login/completed', params: { loginId: 'login-1', success: true } })}\n`)
+  await settle()
+  await settle()
+  assert.equal(service.loginStatus('acp-codex', started.attemptId).status, 'ready')
+  assert.deepEqual(h.emitted.filter(([name]) => name === 'acp-dsh/login-ready').map(([, value]) => value), [{ id: 'acp-codex' }])
+  assert.deepEqual(h.emitted.filter(([name]) => name === 'acp-dsh/login-active').map(([, value]) => value), [{ active: 1 }, { active: 0 }])
+  // The cached "signed out" answer is dropped with the ready sign-in.
+  assert.equal((await service.inspect('acp-codex')).signedIn, true)
+  assert.equal(service.loginActive(), 0)
+  assert.equal(service.loginTextMatches('nothing here'), false)
+  h.ctx.emit('stop')
 })

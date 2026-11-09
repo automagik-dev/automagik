@@ -12,8 +12,9 @@ import { LlmAdapter, boundContextSummary, createUserMessage, isAgentLoopRequest 
 import { AgentRun, valuesOf } from './acp.js'
 import { recordDrift } from './backchannel.js'
 import { DEFAULT_MODEL } from './catalog.js'
-import { BRIDGE_NAME, CREDENTIAL_ENV, SYNTHETIC_KIND, URL_ENV } from './names.js'
-import { agentRoute, boundaryNotice, lastProviderOf, replayBlocks, turnStart } from './switch.js'
+import { BRIDGE_NAME, CREDENTIAL_ENV, isAuthRequired, MODEL_ACCESS_REQUIRED, SYNTHETIC_KIND, URL_ENV } from './names.js'
+import { agentRoute, answered, boundaryNotice, isHandoff, lastProviderOf, missedBy, replayBlocks, turnStart } from './switch.js'
+import { ImageLinks, savedPathsOf } from './agent-image.js'
 import { callArguments, levelOf, mirrorTool, TOOL_NAME } from './tool.js'
 
 const CANCEL_WAIT_MS = 5000
@@ -51,6 +52,10 @@ function settle(tool, ms) {
 const failure = (message, code = 'ACP_AGENT') => ({ message, code })
 const finish = (kind, message, code) => ({ type: 'finish', reason: message === undefined ? { kind } : { kind, failure: failure(message, code) } })
 const FINISH = { end_turn: 'stop', max_tokens: 'max-tokens', max_turn_requests: 'stop', refusal: 'stop' }
+// An agent whose CLI is not signed in says so with ACP's `auth_required`, at the start of its
+// session or of a prompt. The turn fails with its own code, never ACP_AGENT: a sign-in answers
+// it, another model does not (the Bot team never falls back on it).
+const signInFailure = (name, error) => finish('error', `${name} is not signed in: ${error?.message ?? error}`, MODEL_ACCESS_REQUIRED)
 
 // The blocks of one model step: text and reasoning open as they come, close before a tool call.
 class Blocks {
@@ -99,13 +104,17 @@ export function freshSessionNotice(name) {
 
 // What the person said this turn: the user messages after the last assistant or tool one.
 // DSH's own context notes (its tool and file policies) are for its own loop, not the agent's,
-// and the new-session notice is for the person.
-export function promptOf(messages) {
+// and the new-session notice is for the person. A Bot part's handoff package is the record the
+// part carries on from, so it stays beside the person's words (in its place) rather than being
+// dropped for them; it is a crossing of earlier text, so it passes the redactor.
+export function promptOf(messages, redact = text => text) {
   let start = messages.length
   while (start > 0 && messages[start - 1].role === 'user') start--
   const turn = messages.slice(start).filter(message => message.source?.kind !== NOTICE_KIND)
-  const own = turn.filter(message => message.source?.kind === 'user')
-  const text = (own.length > 0 ? own : turn).map(message => textOf(message.content)).filter(Boolean).join('\n\n')
+  const own = turn.filter(message => message.source?.kind === 'user' || isHandoff(message))
+  const text = (own.length > 0 ? own : turn)
+    .map(message => (isHandoff(message) ? redact(textOf(message.content)) : textOf(message.content)))
+    .filter(Boolean).join('\n\n')
   return [{ type: 'text', text }]
 }
 
@@ -290,15 +299,17 @@ export class AcpAdapter extends LlmAdapter {
    * @param {import('@deepseek-ai/cordis').Context} ctx
    * @param {Map<string, { name: string, catalog: import('./catalog.js').Catalog, installed?(): boolean, spawn(): { command: string, args?: string[], env?: Record<string, string> } }>} agents
    */
-  constructor(ctx, agents, { dshTools = () => false, backchannel, redactor } = {}) {
+  constructor(ctx, agents, { dshTools = () => false, backchannel, redactor, onSignedOut, images = () => undefined } = {}) {
     super()
+    // Told which agent answered ACP's auth_required, so a cached "signed in" is dropped at once.
+    this.onSignedOut = onSignedOut
     this.ctx = ctx
     this.agents = agents
     this.dshTools = dshTools
     this.backchannel = backchannel
     this.redact = redactor ?? (text => text)
     this.live = new Map()
-    this.tool = mirrorTool({ runOf: sessionId => this.live.get(sessionId), approval: () => ctx.get?.('approval'), sandboxPolicy: () => ctx.get?.('sandboxPolicy'), permissionPresets: () => ctx.get?.('permissionPresets') })
+    this.tool = mirrorTool({ runOf: sessionId => this.live.get(sessionId), approval: () => ctx.get?.('approval'), sandboxPolicy: () => ctx.get?.('sandboxPolicy'), permissionPresets: () => ctx.get?.('permissionPresets'), images })
     // A new chat's first model step lists its tools after `agent/created`: register the mirror
     // tool there in every agent's own scope, with the step condition that admits it only on
     // this adapter's routes. A chat is created on DSH's default route and may be picked to an
@@ -362,6 +373,15 @@ export class AcpAdapter extends LlmAdapter {
     const setting = this.dshTools()
     if (setting === true || setting === false) return setting
     return this.bridgeDefault(agent)
+  }
+
+  /**
+   * Whether the chat crosses to an agent with it (plan A-5): independent of the bridge, so
+   * Codex replays by default too. Only an explicit `dshTools: false`, the kill switch, keeps
+   * the 2026-11-03 path, where an agent sees no transcript but its own session's.
+   */
+  replayOn() {
+    return this.dshTools() !== false
   }
 
   /**
@@ -491,7 +511,7 @@ export class AcpAdapter extends LlmAdapter {
     live.run.dispose()
     if (live.bridge !== undefined && this.backchannel !== undefined) this.backchannel.revoke(live.bridge)
     try {
-      session.append?.('user/message', boundaryNotice('Now answered by DSH'), { surfaceOp: 'append' })
+      session.append?.('user/message', boundaryNotice('Switching to DSH'), { surfaceOp: 'append' })
     } catch (error) {
       try { this.ctx.logger?.warn?.(`acp-dsh: the provider-boundary row was not written: ${error?.message ?? error}`) } catch {}
     }
@@ -532,6 +552,10 @@ export class AcpAdapter extends LlmAdapter {
     return agent
   }
 
+  signedOut(id) {
+    try { this.onSignedOut?.(id) } catch {}
+  }
+
   async *stream(options) {
     const agent = this.agents.get(options.provider)
     if (agent === undefined) return yield finish('error', `No ACP agent is set up as ${options.provider}`, 'NO_ADAPTER')
@@ -546,6 +570,13 @@ export class AcpAdapter extends LlmAdapter {
     }
     const blocks = new Blocks()
     let live = this.live.get(sessionId)
+    // The agent's links to the images it saved locally leave its text before DSH writes it
+    // (agent-image.js): the chat shows the image in its own card instead.
+    const links = new ImageLinks(() => savedPathsOf(live?.run?.tools?.values()))
+    const shown = function* () {
+      const rest = links.flush()
+      if (rest !== '') yield* blocks.add('text', rest)
+    }
     const last = options.messages.at(-1)
     const continuing = last?.role === 'tool' && live?.provider === options.provider && live.calls.has(last.toolCallId) && live.open
     if (!continuing) {
@@ -563,9 +594,13 @@ export class AcpAdapter extends LlmAdapter {
       let fresh = false
       let crossing = false
       const prior = lastProviderOf(options.messages)
+      // The transcript before this turn: what a replay carries (plan A-5, independent of the
+      // bridge; only the kill switch turns it off).
+      const history = options.messages.slice(0, turnStart(options.messages))
+      const replaying = this.replayOn()
       if (live === undefined) {
-        crossing = this.bridgeOn(agent) && prior !== undefined && prior !== options.provider
-        const state = { provider: options.provider, name: agent.name, run: undefined, calls: new Set(), open: false, dshAgent, bridge: undefined, replay: undefined, drifted: false }
+        crossing = replaying && prior !== undefined && prior !== options.provider
+        const state = { provider: options.provider, name: agent.name, run: undefined, calls: new Set(), open: false, dshAgent, bridge: undefined, replay: undefined, owed: undefined, drifted: false }
         try {
           const spec = await agent.spawn()
           if (this.bridgeOn(agent)) {
@@ -591,17 +626,45 @@ export class AcpAdapter extends LlmAdapter {
           state.run?.dispose()
           if (state.bridge !== undefined) this.backchannel?.revoke(state.bridge)
           this.live.delete(sessionId)
+          if (isAuthRequired(error)) {
+            this.signedOut(options.provider)
+            return yield signInFailure(agent.name, error)
+          }
           return yield finish('error', `${agent.name} did not start: ${error?.message ?? error}`, error?.code === 'acp_bridge_missing' ? 'acp_bridge_missing' : undefined)
         }
         live = state
         fresh = true
         if (crossing) {
           this.appendBoundary(dshAgent, agent, options.provider)
-          live.replay = replayBlocks(options.messages.slice(0, turnStart(options.messages)), {
-            redact: this.redact,
-            from: this.agents.get(prior)?.name ?? 'DSH',
-            to: agent.name,
-          })
+          live.owed = { from: this.agents.get(prior)?.name ?? 'DSH' }
+          live.replay = replayBlocks(history, { redact: this.redact, to: agent.name, ...live.owed })
+        } else if (replaying && answered(history)) {
+          // A new session of the same agent in a chat that already has answers (a restart, a
+          // session ended by a crossing or a flip, the first real turn of a Bot part whose
+          // handoff turn the Bot team answered itself) is a crossing too: the chat, the handoff
+          // package included, reaches it. No boundary row: the chat did not change providers.
+          const blocks = replayBlocks(history, { redact: this.redact, to: agent.name, renewed: true })
+          if (blocks.length > 1) {
+            live.owed = { renewed: true }
+            live.replay = blocks
+          }
+        }
+      } else if (replaying && live.replay !== undefined) {
+        // The last turn never reached its prompt (a refused model, a busy agent): its replay is
+        // still owed, read again over the chat as it is now. Its row is already written.
+        const source = live.owed?.missed === true ? missedBy(history, options.provider) : history
+        if (source !== undefined) live.replay = replayBlocks(source, { redact: this.redact, to: agent.name, ...live.owed })
+      } else if (replaying) {
+        // A live session resumed after the chat answered elsewhere (an agent whose session a
+        // move off it keeps, Codex by default): the turns it missed are replayed before the
+        // prompt, so Codex -> API -> Codex loses nothing, and the move back writes its row.
+        const missed = missedBy(history, options.provider)
+        const owed = { from: this.agents.get(prior)?.name ?? 'DSH', missed: true }
+        const blocks = missed === undefined ? [] : replayBlocks(missed, { redact: this.redact, to: agent.name, ...owed })
+        if (blocks.length > 1) {
+          if (prior !== undefined && prior !== options.provider) this.appendBoundary(dshAgent, agent, options.provider)
+          live.owed = owed
+          live.replay = blocks
         }
       }
       // A preset or level change since the last turn: the bridge serves the new set, and an
@@ -641,17 +704,18 @@ export class AcpAdapter extends LlmAdapter {
       // A new agent session in a chat that already has answers says so once, in a row of its
       // own before the reply (bots-dsh's fallback.js writes its notice the same way). The
       // prompt below was read before it, and promptOf leaves it out of later ones.
-      if (fresh && !crossing && options.messages.some(message => message.role === 'assistant')) {
+      if (fresh && live.replay === undefined && options.messages.some(message => message.role === 'assistant')) {
         try {
           dshAgent?.session?.append?.('user/message', freshSessionNotice(agent.name), { surfaceOp: 'append' })
         } catch (error) {
           try { this.ctx.logger?.warn?.(`acp-dsh: the new-session notice was not written: ${error?.message ?? error}`) } catch {}
         }
       }
-      const prompt = fresh && live.replay !== undefined
-        ? [...live.replay, ...promptOf(options.messages)]
-        : promptOf(options.messages)
+      const prompt = live.replay !== undefined
+        ? [...live.replay, ...promptOf(options.messages, this.redact)]
+        : promptOf(options.messages, this.redact)
       live.replay = undefined
+      live.owed = undefined
       live.drifted = false
       live.open = true
       live.run.prompt(prompt).catch(() => {})
@@ -664,9 +728,13 @@ export class AcpAdapter extends LlmAdapter {
       // Inbound text is logged as the agent said it: DSH does not redact at ingest, and neither
       // does this plugin. The redactor runs at each provider crossing instead — the replay out
       // (`replayBlocks`) and the transcript handed back to a native provider (`crossed`).
-      if (event.type === 'text') yield* blocks.add('text', event.text)
-      else if (event.type === 'thought') yield* blocks.add('reasoning', event.text)
-      else if (event.type === 'tool') {
+      if (event.type === 'text') {
+        const text = links.push(event.text)
+        if (text !== '') yield* blocks.add('text', text)
+      } else if (event.type === 'thought') {
+        yield* shown()
+        yield* blocks.add('reasoning', event.text)
+      } else if (event.type === 'tool') {
         const tool = live.run.tools.get(event.id)
         // A DSH tool call is not a mirror call: the bridge writes its rows and DSH draws the one
         // card from them. On `acp-codex` no structured name is proven, so any MCP call there is
@@ -677,31 +745,44 @@ export class AcpAdapter extends LlmAdapter {
           || tool.structuredName === 'ToolSearch'
           || (agent.refresh === 'fork' && tool.mcp === true)
         if (this.bridgeOn(agent) && skip) continue
+        yield* shown()
         await settle(tool, DETAIL_WAIT_MS)
         const id = `acp_${randomUUID()}`
         live.calls.add(id)
         yield* blocks.toolCall(id, TOOL_NAME, JSON.stringify(callArguments(tool)))
         return yield finish('tool-calls')
       } else if (event.type === 'end') {
+        yield* shown()
         yield* blocks.close()
         if (event.stopReason === 'cancelled') return yield finish('aborted', 'Stopped', 'ABORTED')
         return yield finish(FINISH[event.stopReason] ?? 'stop')
       } else if (event.type === 'error') {
+        yield* shown()
         yield* blocks.close()
+        if (isAuthRequired(event)) {
+          this.signedOut(options.provider)
+          return yield signInFailure(agent.name, event)
+        }
         return yield finish('error', `${agent.name}: ${event.message}`)
       } else if (event.type === 'aborted') {
         live.open = false
         await live.run.cancel()
+        yield* shown()
         yield* blocks.close()
         return yield finish('aborted', 'Stopped', 'ABORTED')
       }
     }
   }
 
-  /** The row that says which provider answered from here on, written before the reply. */
+  /**
+   * The row that says the chat is moving to another provider. It is written before the reply,
+   * and the call can still fail after it, so it claims no answer (plan A-4): "Switching to X",
+   * never "Now answered by X". Whether X answered is read from the next assistant message's
+   * source, never from this row.
+   */
   appendBoundary(dshAgent, agent, provider) {
     try {
-      dshAgent?.session?.append?.('user/message', boundaryNotice(`Now answered by ${agent.name} (${provider})`), { surfaceOp: 'append' })
+      dshAgent?.session?.append?.('user/message', boundaryNotice(`Switching to ${agent.name} (${provider})`), { surfaceOp: 'append' })
     } catch (error) {
       try { this.ctx.logger?.warn?.(`acp-dsh: the provider-boundary row was not written: ${error?.message ?? error}`) } catch {}
     }

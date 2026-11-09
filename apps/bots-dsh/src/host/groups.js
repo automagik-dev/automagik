@@ -427,7 +427,7 @@ export function install(rt) {
       const content = Array.isArray(message.content) ? message.content : []
       const text = textOf(content)
       if (text === '' || content.some(block => block?.type !== 'text') || text.includes('dsh-session:')) break
-      lines.push({ id: message.id, text })
+      lines.push({ id: message.id, text, exchangeId: message.source?.exchangeId })
     }
     return lines
   })
@@ -441,7 +441,18 @@ export function install(rt) {
   function drainRoomInbox(room, round, index, agent) {
     // The greeting's prompt tells the admin the user has not written yet.
     if (round.kickoff) return
-    const lines = waitingLines(agent).filter(line => agent.inbox.remove(line.id))
+    // A message that carries a sign-in code the chat showed leaves the inbox and goes no
+    // further: not into the room's log, a reply or a member's prompt (cli-login.js; the
+    // group Session's own step drops it the same way when no round runs).
+    const lines = waitingLines(agent).filter((line) => {
+      if (rt.loginTextMatches?.(line.text) !== true) return agent.inbox.remove(line.id)
+      agent.inbox.remove(line.id)
+      if (typeof line.exchangeId === 'string' && line.exchangeId !== '') {
+        try { rt.forgetDelivery?.(line.exchangeId) } catch {}
+      }
+      rt.warn('ds-bot: a message in %s carried a sign-in code and was not sent', agent.id)
+      return false
+    })
     if (lines.length === 0) return
     const members = room.members.map(rt.botOf).filter(Boolean)
     for (const line of lines) {

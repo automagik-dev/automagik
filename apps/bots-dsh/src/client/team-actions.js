@@ -1,11 +1,23 @@
 import { countCards, detailsSubject, heldCardKey } from './sources.js'
 import { noteClientError } from './diagnostics.js'
+import { CLI_NAMES, cliLoginBotOf, cliProviderOf } from './cli-login-model.js'
 
 // The actions every window that draws the Bot views shares: dialogs and panels (the `ui`
 // source), requests to the host, and the notes the transcript keeps. The shell around the
 // views adds navigation and its own panels. `after` reads the team again once a request
 // is done; `partFor` maps a Bot id, or any part of its chat, to its current part.
-export function teamActions({ call, after, partFor, roster, ui, live, cards, heldCards, turnClock }) {
+export function teamActions({ call, after, partFor, roster, ui, live, cards, heldCards, turnClock, openSession, loginState }) {
+  // The sign-in row of a Bot's chat (cli-login.js): an explicit entry opens that Bot's chat and
+  // its row; `ref` is the model the person chose, applied by the host once signed in.
+  const openCliLogin = (botId, provider, ref) => {
+    const bot = cliLoginBotOf(roster.getSnapshot(), botId)
+    const manager = loginState?.()
+    if (!bot || !manager || !Object.hasOwn(CLI_NAMES, provider)) return false
+    openSession?.(bot.id)
+    void manager.open({ botId: bot.id, provider, ref: cliProviderOf(ref) === provider ? ref : undefined })
+    return true
+  }
+  const loginPayload = (botId, provider, extra = {}) => ({ botId, provider, ...extra })
   // A memory is a Bot's or a group chat's; both are opened by id.
   const memoryOf = id => (roster.getSnapshot().roomsById[id] ? { roomId: id } : { botId: id })
   // The panel on a side chat's view, on the chat the strip tab or menu named.
@@ -91,6 +103,23 @@ export function teamActions({ call, after, partFor, roster, ui, live, cards, hel
     deleteAvatar: id => call('avatar-delete', { id }),
     createRoom: (members, options = {}) => after(call('create-room', { members, ...options })),
     updateBot: (id, patch) => after(call('update-bot', { id, ...patch })),
+    // A model chosen in a Bot's chat (rule 2): an agent that is signed out opens the sign-in row
+    // in that chat instead of failing; the Bot keeps its model until the sign-in is done.
+    // `patch` goes with the model in the same update (its thinking level).
+    chooseModelInChat: async (id, ref, patch = {}) => {
+      try { return await after(call('update-bot', { id, ...patch, model: ref })) } catch (error) {
+        const provider = cliProviderOf(ref)
+        if (error?.code === 'bot/sign-in-required' && provider && openCliLogin(id, provider, ref)) return undefined
+        throw error
+      }
+    },
+    openCliLogin,
+    cliLoginStart: (botId, provider, model) => call('cli-login-start', loginPayload(botId, provider, model === undefined ? {} : { model })),
+    cliLoginCurrent: (botId, provider) => call('cli-login-current', loginPayload(botId, provider)),
+    cliLoginStatus: (botId, provider, attemptId, signal) => call('cli-login-status', loginPayload(botId, provider, { attemptId }), signal),
+    cliLoginAnswer: (botId, provider, attemptId, value) => call('cli-login-answer', loginPayload(botId, provider, { attemptId, value })),
+    cliLoginCancel: (botId, provider, attemptId) => call('cli-login-cancel', loginPayload(botId, provider, { attemptId })),
+    cliLoginConnections: () => call('cli-login-connections', {}),
     contextStatus: botId => call('context-status', { botId }),
     usageStats: (botId, sessionId) => call('usage-stats', { botId, sessionId }),
     memoryReviewStatus: botId => call('memory-review-status', { botId }),
@@ -159,6 +188,8 @@ export function teamActions({ call, after, partFor, roster, ui, live, cards, hel
       noteClientError(where, error)
       ui.set(state => ({ ...state, toast: { text: error?.message ?? String(error), token: Date.now() } }))
     },
+    // A notice that is no failure (a refused paste of a sign-in code): a toast, not a diagnostic.
+    showNotice: text => ui.set(state => ({ ...state, toast: { text, token: Date.now() } })),
     dismissToast: token => ui.set(state => (state.toast && (token === undefined || state.toast.token === token) ? { ...state, toast: null } : state)),
     noteTurnTime: (sessionId, turn, key, time) => {
       if (sessionId === undefined || !Number.isFinite(turn) || !Number.isFinite(time)) return

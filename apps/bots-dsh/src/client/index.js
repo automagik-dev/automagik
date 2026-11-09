@@ -44,6 +44,9 @@ import { createBotBrowsers, serveBrowserReads } from './bot-browsers.js'
 import { BROWSER_CSS } from './browser-pane.js'
 import { SECRET_CSS, SecretDock } from './secret-card.js'
 import { MODEL_CSS, ModelChoiceDock, ModelLineTail, DeepSeekSignIn } from './model-menu.js'
+import { CLI_LOGIN_CSS, CliLoginConversation, installCliLoginBridge, installKnownStateGuard } from './cli-login.js'
+import { createCliLogin } from './cli-login-state.js'
+import { cliLoginBotOf } from './cli-login-model.js'
 import { BOT_SETTINGS_CSS } from './bot-settings.js'
 import { AVATAR_LIBRARY_CSS } from './avatar-library.js'
 import { GROUP_SETTINGS_CSS } from './group-settings.js'
@@ -449,8 +452,9 @@ export function apply(ctx) {
       })
     }
   }
+  let cliLogin
   const actions = {
-    ...teamActions({ call, after, partFor, roster, ui, live, cards, heldCards, turnClock }),
+    ...teamActions({ call, after, partFor, roster, ui, live, cards, heldCards, turnClock, openSession: id => actions.openSession(id), loginState: () => cliLogin }),
     // The full-pane overlays sit above the conversation, so opening one must dismiss them
     // or the click appears to do nothing.
     isAgentSession: id => isAgentSessionId(id),
@@ -656,6 +660,23 @@ export function apply(ctx) {
       browserGiveBack: (botId, answer = {}) => call('browser-give-back', { botId, ...answer }),
     })
   }
+  // The sign-in rows of the Bots' chats (cli-login.js): this page's views of the attempts the
+  // host holds. Disposing them never cancels an attempt.
+  cliLogin = createCliLogin({ actions, modelOf: botId => work.getSnapshot().models?.[botId]?.selected })
+  actions.cliLogin = cliLogin
+  // A sign-in row about a provider its Bot has left closes by itself (cli-login-state.js).
+  ctx.effect(() => work.subscribe(() => cliLogin.followModels()), 'ds-bot: CLI sign-in rows follow the Bots\' models')
+  actions.inputActionsOf = sessionId => ctx.sessions.binding?.(sessionId)?.props?.inputActions
+  ctx.effect(() => () => cliLogin.dispose(), 'ds-bot: CLI sign-in rows')
+  ctx.effect(() => installKnownStateGuard({ onRefused: () => actions.showNotice(t('This message contains a sign-in code, so it was not sent. Paste the code only in the sign-in step.')) }), 'ds-bot: sign-in code guard')
+  ctx.effect(() => installCliLoginBridge({
+    selectedBot: () => cliLoginBotOf(roster.getSnapshot(), mainView()),
+    mainBot: () => {
+      const snapshot = roster.getSnapshot()
+      return [...(snapshot.mainBotIds ?? []), snapshot.mainBotId].map(id => cliLoginBotOf(snapshot, id)).find(Boolean)
+    },
+    openLogin: (botId, provider) => actions.openCliLogin(botId, provider),
+  }), 'ds-bot: CLI sign-in bridge')
   // Whether AccountLauncher holds the shell's settings seat; FooterAccount steps aside if so.
   actions.signInEntry = () => ctx.slots.entries?.('settings.models.sign-in')?.[0] ?? null
   actions.canSignIn = () => Boolean(actions.signInEntry())
@@ -704,6 +725,9 @@ export function apply(ctx) {
     wakeUpdate()
   }
   actions.freshConversation = botId => after(call('bot-fresh', { id: botId }))
+  // Each Bot's model state (the host's model-state.js), as the last state answer carried it.
+  actions.subscribeWork = listener => work.subscribe(listener)
+  actions.modelStateOf = botId => work.getSnapshot().models?.[botId]
   const browserPages = browsers?.pages ?? createSource({})
   const browserTabs = browsers?.tabs ?? createSource({})
   const browserHolds = browsers?.holds ?? hostHolds
@@ -892,7 +916,7 @@ export function apply(ctx) {
     () => installCompiledStyles(SHELL_CSS, 'shell'),
     () => installCompiledStyles(SIDEBAR_CSS, 'sidebar'),
     () => installCompiledStyles(SECRET_CSS, 'secrets'),
-    () => installCompiledStyles(MODEL_CSS + FOLDER_CSS + BOT_SETTINGS_CSS + GROUP_SETTINGS_CSS + AVATAR_LIBRARY_CSS, 'models'),
+    () => installCompiledStyles(MODEL_CSS + CLI_LOGIN_CSS + FOLDER_CSS + BOT_SETTINGS_CSS + GROUP_SETTINGS_CSS + AVATAR_LIBRARY_CSS, 'models'),
     () => installCompiledStyles(USAGE_CSS, 'usage'),
     () => installCompiledStyles(SCHEDULE_CSS, 'schedules'),
     () => installCompiledStyles(FEEDBACK_CSS, 'feedback'),
@@ -1049,6 +1073,8 @@ export function apply(ctx) {
     }, TeamApproval),
     () => shadow('conversation.input.dock', { id: 'bot-members', order: -120, inject: face }, MemberDock),
     () => shadow('conversation.input.dock', { id: 'bot-model', order: -110, inject: face }, ModelChoiceDock),
+    // Draws nothing in the dock: it seats a Bot's sign-in row in its transcript (cli-login.js).
+    () => shadow('conversation.input.dock', { id: 'bot-cli-login', order: -109, inject: face }, CliLoginConversation),
     () => shadow('conversation.input.dock', { id: 'bot-question', order: -100, inject: face }, QuestionDock),
     () => shadow('conversation.input.dock', { id: 'bot-view', order: -95, inject: face }, WidgetDock),
     () => shadow('conversation.input.dock', { id: 'bot-secret', order: -90, inject: face }, SecretDock),

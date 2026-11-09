@@ -180,8 +180,10 @@ test('state reports the flags and whether an AI is already connected', async () 
   assert.equal(value.aiConnected, true)
   // A route with nothing behind it (a sign-in that never finished) is not an AI.
   assert.equal((await host({ entries: withPiAi({ 'kimi-coding': {} }) }).handle('state')).value.aiConnected, false)
-  // Claude signed in, on its keyless anthropic route, is.
-  assert.equal((await host({ entries: withPiAi({ anthropic: {} }), records: ['llm-pi-ai/anthropic'] }).handle('state')).value.aiConnected, true)
+  // DSH's own Claude sign-in on its keyless anthropic route is not: Claude is Claude Code's
+  // sign-in now, or an Anthropic key (ais.test.js has a CLI that connects the step).
+  assert.equal((await host({ entries: withPiAi({ anthropic: {} }), records: ['llm-pi-ai/anthropic'] }).handle('state')).value.aiConnected, false)
+  assert.equal((await host({ entries: withPiAi({ anthropic: { apiKeyEnv: 'ANTHROPIC_API_KEY' } }), credentials: { ANTHROPIC_API_KEY: 'x' } }).handle('state')).value.aiConnected, true)
 
   assert.equal((await host({ credentials: { DEEPSEEK_API_KEY: 'x' } }).handle('state')).value.deepseek, true)
   assert.equal((await host({ records: ['deepseek-account-platform/default'] }).handle('state')).value.deepseek, true)

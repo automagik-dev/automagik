@@ -5,10 +5,64 @@ import { piAiRoutes, routeOf } from '../shared/routes.js'
 import { refusal } from './refusal.js'
 import { normalize, splitRef } from './text.js'
 import { install as installHostModels } from './host-models.js'
-import { PI_AI_CLAUDE, supersededClaude } from './claude-models.js'
+import { PI_AI_CLAUDE, claudeFamilyOf, supersededClaude } from './claude-models.js'
 
 const CATALOG_TTL_MS = 10_000
+// What a refused model says, by case; `{connection}` is the agent's name and route. The client
+// words each template in the interface language (i18n.js hostText).
+export const ACCESS_MESSAGES = Object.freeze({
+  off: 'Turn on {connection} in Settings → Claude Code and Codex before using this model.',
+  installing: 'Wait for {connection} to finish installing, or retry it in Settings → Claude Code and Codex.',
+  signIn: 'Sign in to {connection} before using this model.',
+})
 const ROUTE_WAIT_MS = 30_000
+// How often an agent whose sign-in acp-dsh has not checked yet is asked once, in the
+// background: the menu reads acp-dsh's last answer and never spawns a check when it opens.
+const SIGN_IN_CHECK_MS = 5 * 60_000
+// How long a fresh catalog waits on acp-dsh's status before it keeps the last answer.
+const STATUS_WAIT_MS = 1000
+
+// A connection's name in the model menu: the brand, without the route's id. How it is
+// connected (`via`) is worded by the menu (API key, sign-in); an agent is its CLI's name.
+const BRANDS = Object.freeze({ anthropic: 'Anthropic', openai: 'OpenAI', 'openai-codex': 'ChatGPT', 'acp-claude': 'Claude Code', 'acp-codex': 'Codex' })
+function brandOf(provider, directory) {
+  if (BRANDS[provider.id] !== undefined) return BRANDS[provider.id]
+  const name = typeof provider.name === 'string' && provider.name !== '' && provider.name !== provider.id ? provider.name : undefined
+  if (routeOf(provider.id).connectedBy === 'acp') return (name ?? provider.id).replace(/\s*\(ACP\)$/, '')
+  return name ?? directory.find(entry => entry?.provider === provider.id)?.displayName ?? provider.id
+}
+// The agent that serves a subscription DSH could also sign in to: ChatGPT and Claude Pro/Max
+// sign in only through their CLIs (D-a), so a Bot runs a plan through Claude Code or Codex
+// (D-c), never DSH's own sign-in route. That route is `covered`: no Bot connection, shown only
+// as the model a Bot is still on. The jobs beside the chats keep it (D-g).
+const CLI_OF_SIGNIN = Object.freeze({ 'openai-codex': 'acp-codex', anthropic: 'acp-claude' })
+const PLAN_NAMES = Object.freeze({ 'openai-codex': 'ChatGPT', anthropic: 'Claude' })
+const coveredBy = entry => (entry.via === 'signin' ? CLI_OF_SIGNIN[entry.provider] : undefined)
+// What a Bot's own chat can start on: a provider with its key, an agent that is signed in, a
+// sign-in route of another provider that is stored, and never a route a CLI covers.
+export const configured = entry => !entry.needsKey && !entry.needsSignIn && !entry.covered
+// The model of a covered sign-in route on its agent, among `usable`: the same id, else the same
+// Claude family (Claude Code names its models `opus`, `sonnet`, `haiku`, or a versioned id such
+// as `claude-fable-5-1[1m]`), else the agent's own
+// `default`, else its first. Undefined when the agent offers nothing that can run.
+function cliPeerOf(entry, usable) {
+  const agent = CLI_OF_SIGNIN[entry?.provider]
+  const own = agent === undefined ? [] : usable.filter(item => item.provider === agent)
+  if (own.length === 0) return undefined
+  const family = entry.provider === PI_AI_CLAUDE ? claudeFamilyOf(`claude-code/${entry.id}`) : undefined
+  const sameFamily = family === undefined ? undefined : own.find(item => item.id === family) ?? own.find(item => claudeFamilyOf(`claude-code/${item.id}`) === family)
+  return own.find(item => item.id === entry.id) ?? sameFamily ?? own.find(item => item.id === 'default') ?? own[0]
+}
+
+// The model an agent's own `default` runs on, when its catalog says (acp-dsh catalog.js
+// describes that row "Its own setting: <model>"): the menu names the row "Default (<model>)"
+// rather than the agent's name twice.
+const OWN_SETTING = /^Its own setting: (.+)$/
+function resolvedDefault(provider, model) {
+  if (model?.id !== 'default' || routeOf(provider).connectedBy !== 'acp') return {}
+  const name = OWN_SETTING.exec(typeof model.description === 'string' ? model.description : '')?.[1]?.trim()
+  return name ? { resolvesTo: name } : {}
+}
 
 export function install(rt) {
   const { ctx, state } = rt
@@ -39,10 +93,40 @@ export function install(rt) {
     return value
   }
 
+  // Each agent's sign-in as acp-dsh last saw it: true, false, or absent while unknown. A
+  // fresh catalog (a menu about to open) reads acp-dsh's `status()`, which spawns nothing; any
+  // other catalog keeps the last answer. An unknown agent ready to run is checked once in the
+  // background (acp-dsh's `inspect`, one `auth status`), at most every SIGN_IN_CHECK_MS.
+  const agentSignIn = new Map()
+  const signInChecks = new Map()
+  const acpAgents = () => { try { return ctx.get?.('acpAgents') } catch { return undefined } }
+  async function readAgentSignIns() {
+    const agents = acpAgents()
+    if (typeof agents?.status !== 'function') return
+    let timer
+    const late = new Promise((resolve) => { timer = setTimeout(resolve, STATUS_WAIT_MS) })
+    let rows
+    try { rows = (await Promise.race([Promise.resolve().then(() => agents.status()), late]))?.agents } catch {} finally { clearTimeout(timer) }
+    if (!Array.isArray(rows)) return
+    for (const row of rows) {
+      if (typeof row?.id !== 'string') continue
+      if (typeof row.signedIn === 'boolean') { agentSignIn.set(row.id, row.signedIn); continue }
+      agentSignIn.delete(row.id)
+      const last = signInChecks.get(row.id)
+      if (row.on === false || row.connector?.state !== 'ready' || typeof agents.inspect !== 'function' || (last !== undefined && Date.now() - last < SIGN_IN_CHECK_MS)) continue
+      signInChecks.set(row.id, Date.now())
+      void Promise.resolve().then(() => agents.inspect(row.id)).then((seen) => {
+        if (typeof seen?.signedIn !== 'boolean') return
+        agentSignIn.set(row.id, seen.signedIn)
+        catalogCache = { at: 0, value: [] }
+      }, () => {})
+    }
+  }
+
   // A provider's model list can change in DSH settings without any event, so a picker
   // that is about to be used asks for a `fresh` one. Entries for models a Bot uses
   // also carry their `reasoning`, so the picker can offer thinking levels.
-  async function catalog({ fresh = false } = {}) {
+  async function catalog({ fresh = false, remember = true } = {}) {
     if (!fresh && Date.now() - catalogCache.at < CATALOG_TTL_MS && catalogCache.value.length > 0) return catalogCache.value
     const listed = []
     let directory = []
@@ -55,11 +139,12 @@ export function install(rt) {
         listed.push({
           ref: `${provider.id}/${model.id}`,
           provider: provider.id,
-          providerName: provider.name ?? provider.id,
+          providerName: brandOf(provider, directory),
           id: model.id,
           name: model.name ?? model.id,
           route: routeOf(provider.id, { piAi }),
           ...(model.inputModalities ? { input: [...model.inputModalities] } : {}),
+          ...resolvedDefault(provider.id, model),
         })
       }
     }
@@ -73,7 +158,22 @@ export function install(rt) {
     // turn on them fails.
     const missing = await rt.missingKeys?.([...new Set(entries.map(entry => entry.provider))]) ?? new Set()
     for (const entry of entries) if (missing.has(entry.provider)) entry.needsKey = true
-    noteConnected(entries)
+    // How each route is connected (providers.js routeAuth) and whether it can run: a plan
+    // route with no stored sign-in, or an agent whose CLI is signed out, `needsSignIn`.
+    const providers = [...new Set(entries.map(entry => entry.provider))]
+    const agentsListed = entries.some(entry => routeOf(entry.provider).connectedBy === 'acp')
+    const [auth] = await Promise.all([
+      Promise.resolve().then(() => rt.routeAuth?.(providers)).catch(() => undefined).then(value => value ?? new Map()),
+      fresh && agentsListed ? readAgentSignIns() : undefined,
+    ])
+    for (const entry of entries) {
+      const how = routeOf(entry.provider).connectedBy === 'acp' ? { via: 'cli', ...(agentSignIn.get(entry.provider) === false ? { needsSignIn: true } : {}) } : auth.get(entry.provider)
+      if (how?.via) entry.via = how.via
+      if (how?.needsSignIn) entry.needsSignIn = true
+    }
+    // DSH's own ChatGPT or Claude sign-in: its CLI serves that plan, signed in or not.
+    for (const entry of entries) if (coveredBy(entry) !== undefined) entry.covered = true
+    if (remember) noteConnected(entries)
     await Promise.all(entries.filter(entry => used.has(entry.ref)).map(async (entry) => {
       const reasoning = await reasoningOf(entry.ref)
       if (reasoning !== undefined) entry.reasoning = reasoning
@@ -102,11 +202,18 @@ export function install(rt) {
   // connected here. Within a provider, a `default` alias comes after the models it names, and
   // a superseded model (an older Claude) after the current ones.
   // Nothing can run: none, and a Bot made then waits for one.
-  function pickDefault(entries) {
-    const usable = entries.filter(entry => !entry.needsKey)
+  // `canRun`: what counts as able to run. A Bot's own model skips a sign-in that is missing
+  // and a route a CLI covers; the jobs beside the chats keep their own rule.
+  // DSH's default on a ChatGPT or Claude sign-in it cannot run that way is read as the same
+  // model on that plan's CLI, when the CLI can run.
+  function pickDefault(entries, canRun = configured) {
+    const usable = entries.filter(canRun)
     const ref = defaultRef()
     const chosen = usable.find(entry => entry.ref === ref)
     if (chosen) return chosen.ref
+    const signIn = entries.find(entry => entry.ref === ref && entry.covered === true)
+    const peer = signIn === undefined ? undefined : cliPeerOf(signIn, usable)
+    if (peer) return peer.ref
     const seen = Array.isArray(state.providersSeen) ? state.providersSeen : []
     const rank = entry => (seen.includes(entry.provider) ? seen.indexOf(entry.provider) : seen.length)
     const ordered = usable.map((entry, index) => ({ entry, index })).sort((a, b) => rank(a.entry) - rank(b.entry) || a.index - b.index).map(({ entry }) => entry)
@@ -127,25 +234,84 @@ export function install(rt) {
     const aside = entries.filter(answersAside)
     const chosen = state.prefs?.backgroundModel
     if (typeof chosen === 'string' && aside.some(entry => entry.ref === chosen && !entry.needsKey)) return chosen
-    return pickDefault(aside)
+    return pickDefault(aside, entry => !entry.needsKey)
   }
   const backgroundModel = async () => pickBackground(await catalog())
   /** Whether a `provider/model` ref can answer a job beside the chats (not an ACP agent). */
   const answersAsideRef = ref => typeof ref === 'string' && ref.includes('/') && routeOf(ref.split('/')[0]).connectedBy !== 'acp'
 
+  // A ChatGPT or Claude plan runs a Bot only through its CLI (D-a, D-c), whoever picks the model
+  // (the menu, a tool, the API, Pocket): a covered sign-in route is read as the closest model on
+  // that plan's agent (cliPeerOf, as the one-time move maps it), signed in or not, so the
+  // agent's own sign-in answers. `keep`, the model the Bot is on now, stays as it is. With no
+  // model of that agent served (its CLI off), the pick is refused.
+  function onPlanCli(ref, entries, keep) {
+    const entry = entries.find(item => item.ref === ref)
+    if (entry?.covered !== true || ref === keep) return ref
+    const peer = cliPeerOf(entry, entries.filter(item => !item.covered && !item.needsKey))
+    if (peer !== undefined) return peer.ref
+    const plan = PLAN_NAMES[entry.provider] ?? entry.provider
+    const cli = BRANDS[CLI_OF_SIGNIN[entry.provider]] ?? CLI_OF_SIGNIN[entry.provider]
+    throw refusal(`A ${plan} plan runs Bots only through ${cli}. Turn ${cli} on, then pick one of its models.`)
+  }
+
   // A full `provider/model` ref, or a model id or name that only one provider serves.
-  async function resolveModel(text) {
-    const entries = await catalog({ fresh: true })
+  // `checkAccess`: a model that cannot run now (modelAccess) is refused here, before anything
+  // is written. `remember: false` leaves the team's record of connected providers alone, so a
+  // refused pick changes nothing. `keep`: the Bot's current model, never moved (onPlanCli).
+  async function resolveModel(text, { checkAccess = false, remember = true, keep } = {}) {
+    const entries = await catalog({ fresh: true, remember })
     const wanted = String(text ?? '').trim()
     const exact = entries.find(entry => entry.ref === wanted)
-    if (exact) return exact.ref
-    const key = normalize(wanted)
-    const named = entries.filter(entry => normalize(entry.id) === key || normalize(entry.name) === key)
-    if (named.length === 1) return named[0].ref
+    const named = exact ? [] : entries.filter(entry => normalize(entry.id) === normalize(wanted) || normalize(entry.name) === normalize(wanted))
+    const picked = exact?.ref ?? (named.length === 1 ? named[0].ref : undefined)
+    if (picked !== undefined) {
+      const found = onPlanCli(picked, entries, keep)
+      if (checkAccess) await assertModelAccess(found)
+      return found
+    }
     const known = entries.map(entry => entry.ref).join(', ') || 'none'
     throw refusal(named.length > 1
       ? `Model ${wanted} is served by more than one provider; use one of ${named.map(entry => entry.ref).join(', ')}`
       : `Model ${wanted} is not available. Available models: ${known}`)
+  }
+
+  // Whether a model can run now, read-only: nothing is installed, enabled or signed in, and no
+  // model is called. An agent over ACP (Claude Code, Codex) is asked through acp-dsh's
+  // `inspect` (a fresh `auth status` of that CLI only); its connection must be on, installed
+  // and not signed out. A sign-in DSH cannot read (`signedIn` unknown, an older acp-dsh, a
+  // failed check) does not refuse: the agent's own answer decides then, and a signed-out agent
+  // fails its turn as MODEL_ACCESS_REQUIRED. Any other provider keeps the catalog's own marks
+  // (a missing key shows in the picker) and is not refused here.
+  // `{ ready: true }` or `{ ready: false, code, message }`; `code` is `bot/sign-in-required`
+  // only when the CLI says it is signed out, the one case a sign-in answers.
+  async function modelAccess(ref) {
+    const route = splitRef(ref)
+    if (route === undefined || route.model === '') return { ready: false, code: 'bot/refused', message: 'Choose an available model.' }
+    const { provider } = route
+    if (routeOf(provider).connectedBy !== 'acp') return { ready: true, provider }
+    const agents = ctx.get?.('acpAgents')
+    if (typeof agents?.inspect !== 'function') return { ready: true, provider }
+    let agent
+    try {
+      agent = await agents.inspect(provider)
+    } catch (error) {
+      rt.warn('ds-bot: the sign-in of %s could not be checked: %s', provider, error?.message ?? error)
+      return { ready: true, provider }
+    }
+    if (agent === undefined) return { ready: true, provider }
+    const connection = `${agent.name ?? provider} (${provider})`
+    const denied = (template, code = 'bot/refused') => ({ ready: false, provider, code, template, message: template.replace('{connection}', connection) })
+    if (agent.on === false) return denied(ACCESS_MESSAGES.off)
+    if (agent.cli?.found === false || agent.connector?.state === 'installing' || agent.connector?.state === 'failed' || agent.connector?.state === 'no-cli') return denied(ACCESS_MESSAGES.installing)
+    if (agent.signedIn === false) return denied(ACCESS_MESSAGES.signIn, 'bot/sign-in-required')
+    return { ready: true, provider }
+  }
+
+  async function assertModelAccess(ref) {
+    const access = await modelAccess(ref)
+    if (!access.ready) throw refusal(access.message, { code: access.code })
+    return access
   }
 
   // A Bot with no model yet waits for the user to pick one and changes nothing. A
@@ -275,7 +441,7 @@ export function install(rt) {
 
   Object.assign(rt, {
     catalog, cachedCatalog: () => catalogCache.value, cachedDefault: () => pickDefault(catalogCache.value),
-    defaultRef, defaultModel, defaultEffort, resolveModel, desiredModel, reasoningOf, resolveEffort, desiredEffort,
+    defaultRef, defaultModel, defaultEffort, resolveModel, modelAccess, assertModelAccess, desiredModel, reasoningOf, resolveEffort, desiredEffort,
     backgroundModel, cachedBackground: () => pickBackground(catalogCache.value), answersAside: answersAsideRef,
     selectSessionModel, applyModel, waitForModel, syncModels,
     dropCatalog: () => { catalogCache = { at: 0, value: [] } },

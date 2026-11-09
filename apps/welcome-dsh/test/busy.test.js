@@ -52,3 +52,34 @@ test('a welcome that reloads while agents work counts them from the start', () =
   ctx.emit('agent/status', { agent: { id: 'a' }, status: 'idle' })
   assert.equal(read(file).running, 0)
 })
+
+test('a CLI sign-in starting or waiting counts as running, so the app does not restart DSH under it', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'omni-ai-busy-')), 'busy.json')
+  const { ctx } = fakeContext()
+  let clock = 1
+  watchBusy(ctx, { env: { AUTOMAGIK_BUSY_FILE: file }, now: () => clock })
+  assert.deepEqual(read(file), { running: 0, at: 1 })
+  clock = 2
+  ctx.emit('acp-dsh/login-active', { active: 1 })
+  assert.deepEqual(read(file), { running: 1, at: 2 })
+  clock = 3
+  ctx.emit('agent/status', { agent: { id: 'a' }, status: 'running' })
+  ctx.emit('acp-dsh/login-active', { active: 2 })
+  assert.deepEqual(read(file), { running: 3, at: 3 })
+  clock = 4
+  ctx.emit('acp-dsh/login-active', { active: 0 })
+  assert.deepEqual(read(file), { running: 1, at: 4 })
+  // A malformed count is no attempt.
+  ctx.emit('acp-dsh/login-active', { active: 'many' })
+  ctx.emit('acp-dsh/login-active', { active: -3 })
+  assert.equal(read(file).running, 1)
+})
+
+test('a welcome that reloads while a sign-in waits counts it from the start', () => {
+  const file = join(mkdtempSync(join(tmpdir(), 'omni-ai-busy-')), 'busy.json')
+  const { ctx } = fakeContext({ services: { acpAgents: { loginActive: () => 1 } } })
+  watchBusy(ctx, { env: { AUTOMAGIK_BUSY_FILE: file }, now: () => 9 })
+  assert.deepEqual(read(file), { running: 1, at: 9 })
+  ctx.emit('acp-dsh/login-active', { active: 0 })
+  assert.equal(read(file).running, 0)
+})

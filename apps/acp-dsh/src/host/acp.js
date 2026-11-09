@@ -186,7 +186,7 @@ export class AgentRun {
     const run = this.conn.prompt({ sessionId: this.sessionId, prompt })
     this.prompting = Promise.race([run, this.gone]).then(
       result => this.endPrompt({ type: 'end', stopReason: result?.stopReason ?? 'end_turn' }),
-      error => this.endPrompt({ type: 'error', message: error?.message ?? String(error) }),
+      error => this.endPrompt({ type: 'error', message: error?.message ?? String(error), ...(error?.code === undefined ? {} : { code: error.code }) }),
     )
     return this.prompting
   }

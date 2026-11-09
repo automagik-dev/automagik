@@ -25,19 +25,21 @@ back after a restart. A step whose flag is already set completes without showing
 
 Connect AI is a list of switches, and several can be on. What this computer already has
 comes first, under **Found on this computer**: a key in DSH's store
-or in the environment, a sign-in DSH already holds, a CLIProxyAPI route, Ollama answering
-on `127.0.0.1:11434`. **Add another** shows four more, then the rest on demand. Continue
+or in the environment, a sign-in DSH already holds, Claude Code or Codex signed in, a
+CLIProxyAPI route, Ollama answering on `127.0.0.1:11434`. **Add another** shows four more, then the rest on demand. Continue
 needs one AI really on; Skip finishes the step either way.
 
 Flipping a switch on turns on what is set up, or opens its setup in the row: a key field,
-the provider's own sign-in in DSH, or, for a provider that takes both (Claude, Grok), a
-choice of the sign-in or a key. Off stops
-using an AI and keeps its key, sign-in or account:
+the provider's own sign-in in DSH, or, for a provider that takes both (Grok), a choice of the
+sign-in or a key. Claude and ChatGPT sign in only through their CLIs (Claude Code, Codex; see
+below): their setup offers the CLI's **Sign in**, and for Claude an Anthropic API key. Off
+stops using an AI and keeps its key, sign-in or account:
 
 | Kind | On | Off |
 |---|---|---|
 | Key | writes the pi-ai route that names the key | removes the route; the key stays |
 | Sign-in | the route is written once the sign-in succeeds; with no sign-in, a key the row also takes | removes the route; the sign-in and the key stay |
+| Claude, ChatGPT | signed in to the CLI: turns on acp-dsh's `claude` or `codex` switch; else (Claude) the Anthropic key's route | turns that switch off, for every Bot on that agent, and removes the key's route; the CLI's sign-in and the key stay |
 | CLIProxyAPI | the gateway form writes its route | removes the route; the key stays |
 | Ollama | lists its models into a local OpenAI-compatible route | removes the route |
 | dsh-subscriptions | shows the vendor's models again | hides them in that plugin's picker settings; the account stays |
@@ -104,20 +106,32 @@ Omni's version: they install as a git source from Omni's repository at the relea
 
 | AI | Through | Not offered |
 |---|---|---|
-| Claude | pi-ai's `anthropic` route: DSH's Claude Pro/Max sign-in (`llm-pi-ai/anthropic`), or an Anthropic API key (`ANTHROPIC_API_KEY`) | dsh-subscriptions' `claude` |
-| ChatGPT | DSH's sign-in (`openai-codex`) | dsh-subscriptions' `codex` |
+| Claude | Claude Code's own sign-in (acp-dsh's `acp-claude`), or an Anthropic API key on pi-ai's `anthropic` route (`ANTHROPIC_API_KEY`) | DSH's Claude Pro/Max sign-in (`llm-pi-ai/anthropic`) |
+| ChatGPT | Codex's own sign-in (acp-dsh's `acp-codex`) | DSH's ChatGPT sign-in (`openai-codex`) as a chat route |
 | Kimi | DSH's sign-in (`kimi-coding`) | dsh-subscriptions' `kimi` |
 | Copilot | DSH's sign-in (`github-copilot`) | dsh-subscriptions' `copilot` |
 | Grok | DSH's sign-in (`xai`), or an `XAI_API_KEY` | dsh-subscriptions' `grok` |
 | DeepSeek | DSH's key or account | pi-ai's `deepseek` route |
 | Ollama | a local pi-ai route | dsh-subscriptions' `ollama` |
 
-The route a Claude sign-in adds does not retry a 429 (`retryPolicy` without `RATE_LIMIT`):
-a plan at its limit answers with one, and the Bot team's fallback model takes the turn at once
-instead of after DSH's five retries. A route on an API key keeps DSH's
-default retries, also one a sign-in made before the key: saving the key drops the sign-in's
-policy (a policy set by hand stays). Turning Claude off and on again in Connect AI writes the
-sign-in's policy back.
+A pi-ai route still on DSH's own sign-in for Claude or ChatGPT (`openai-codex`, or `anthropic`
+naming no key while DSH holds its Claude sign-in) is a duplicate of the CLI: the row says
+*Also connected through DSH sign-in*, and once the CLI can answer, turning the row on (or
+**Use only this**) removes that route, but only after the Bot team (bots-dsh's `omniTeam`,
+`moveSubscriptionBots`) has moved the Bots on it to the CLI's route. While any Bot (its model,
+or the model a pending switch goes back to) or the team's background jobs still run on it, or
+the team cannot be read, the route stays and stays listed. Only the route: the sign-in record
+stays, and so does any route that names a key. `signin-start` (and the other `signin-*`
+endpoints) refuse `anthropic` and `openai-codex`: nothing here starts DSH's own Claude or
+ChatGPT plan sign-in. Images and the companion's drawing on a ChatGPT plan go through Codex's
+own sign-in (acp-dsh's `generateImage`); an `openai-codex` record an earlier version stored is
+still read as a last resort, and an OpenAI API key draws as before. dsh-subscriptions no
+longer ships `claude` or `codex` (0.7.21-omni.1), so nothing stands for them.
+
+The route earlier versions added for DSH's Claude sign-in did not retry a 429 (`retryPolicy`
+without `RATE_LIMIT`). A route on an API key keeps DSH's default retries, also one such a
+sign-in made before the key: saving the key drops the sign-in's policy (a policy set by hand
+stays).
 
 dsh-subscriptions keeps the vendors nothing else reaches (Cursor, Kiro, GLM, Qwen,
 Perplexity, JetBrains, Cody, Replit and the rest). When an AI is turned on, the other ways
@@ -127,23 +141,41 @@ connected another way.
 
 ### Claude Code and Codex
 
-With [`@automagik/acp-dsh`](../acp-dsh) in the DSH, Connect AI has a **Coding agents** section
-after what was found, and DSH's Settings (and the Bot team's) have a **Claude Code and Codex**
-page with the same rows. Without acp-dsh Connect AI shows nothing of it, and the Settings page
-says the ACP agents plugin is not running. Each row says:
+With [`@automagik/acp-dsh`](../acp-dsh) in the DSH, Connect AI's Claude and ChatGPT rows are
+these CLIs, and DSH's Settings (and the Bot team's) have a **Claude Code and Codex** page with
+a row for each agent. Connect AI has no section of its own for them. Without acp-dsh, Claude
+takes only its API key, ChatGPT is not offered a sign-in, and the Settings page says the ACP
+agents plugin is not running. Each Settings row says (and a Connect AI row shows the same lines
+while its CLI is missing, installing or failed, or signed in but not answering yet):
 
-- whether the agent's CLI (`claude`, `codex`) is on this computer, with its install link and
-  **Check again** when it is not;
+- whether the agent's CLI (`claude`, `codex`) is on this computer, as acp-dsh's own store has
+  it: installing or updating it by itself, failed with its error and **Retry**, or found with
+  its version; with its install link and **Check again** when it is missing;
 - whether the CLI is signed in, as the CLI itself says (`claude auth status`, `codex login
-  status`; only yes or no is read), and the command to sign in when it is not;
+  status`; only yes or no is read). Signed out, the row has **Sign in**, and the command to run
+  in a terminal as the other way (`claude auth login`, `codex login`); not checked yet, it says
+  so, with **Check again**;
 - the connector acp-dsh installs in the background: installing, failed with its last error and
   **Retry**, or ready with its version;
-- once ready, *Ready: pick Claude Code in the model picker*. The model appears without a restart;
-  a DSH that has not loaded acp-dsh's routes says to restart instead.
+- once ready and signed in, *Ready: pick Claude Code in the model picker*. The model appears
+  without a restart; a DSH that has not loaded acp-dsh's routes says to restart instead.
 
-The switch is acp-dsh's own `claude` or `codex` setting, written through DSH's settings service.
-These rows are not counted as an AI on: the companions' model comes from the rows above. Their
-copy is in the `welcome.team` namespace, in English and pt-BR.
+**Sign in** (in Connect AI, **Sign in to Claude Code** or **Sign in to Codex**) opens the sign-in row in a Bot's chat (the selected Bot, or else the Main Bot), through
+the Bot team's bridge (`Symbol.for('automagik.cli-login')`, [`@automagik/bots-dsh`](../bots-dsh)).
+The row in the chat runs the CLI's own sign-in: a link to open on any device, then Codex's code
+to type there or Claude's code to paste back in that row. This page only opens the chat: it starts
+no sign-in, picks no model and never sees a link, a code or a credential. In Connect AI the step
+steps aside while the chat is in front (a small **Back to setup** brings it back) and is not
+completed by it; Settings closes its panel. Without the Bot team or a Bot the row says to run the
+command in a terminal instead. While a sign-in waits, the busy file (`src/host/busy.js`, `AUTOMAGIK_BUSY_FILE`) counts it, so an
+automatic plugin update does not restart DSH in the middle of it.
+
+The switch is acp-dsh's own `claude` or `codex` setting, written through DSH's settings service,
+and Connect AI's Claude and ChatGPT switches are that same setting: off there is off for every
+Bot on that agent. An agent that can answer (CLI found, switched on, connector ready, no restart
+pending, signed in) is an AI on: its row is on, it counts for Continue and for `aiConnected`.
+A signed-out or still-installing CLI does not. Their copy is in the `welcome.team` namespace, in
+English and pt-BR.
 
 ### Subscription sign-ins and vendor terms
 
@@ -218,7 +250,7 @@ The shape was read from DSH 0.2.1-rc.2:
 | `provider-key`, `signin-*` | see `src/host/providers.js` | A key, or a sign-in run through DSH's authorization service. |
 | `omni-plugins` | none | The Omni plugins (`@automagik/bots-dsh`, `@automagik/omni-channels-dsh`, `-canvas-dsh`): each one's version and whether it is installed, `ready` once they run here, and the install in progress. |
 | `omni-plugins-install` | none | Installs the missing ones in order through DSH's plugin manager (`installBundle`: the Bot team from this plugin's own source pointed at its sibling, else this release's tarball; Omni's from Omni's repository at the pinned release), switching on any that are off. Pressing Omni's power button in the team step calls it. |
-| `acp` | `{ refresh? }` | Claude Code and Codex, from acp-dsh's `acpAgents` service: `{ available, agents: [{ id, key, name, on, cli: { found, installUrl? }, connector: { state, version?, error? }, signedIn?, listed, restartNeeded }] }`. `refresh` looks for the CLIs again and asks each whether it is signed in. `{ available: false }` without acp-dsh. |
+| `acp` | `{ refresh? }` | Claude Code and Codex, from acp-dsh's `acpAgents` service: `{ available, agents: [{ id, key, name, on, cli: { found, installUrl?, state?, version?, updating?, error?, diagnostic?, logPath? }, connector: { state, version?, error? }, signedIn?, listed, restartNeeded }] }`. `refresh` looks for the CLIs again and asks each whether it is signed in. `{ available: false }` without acp-dsh. |
 | `acp-switch` | `{ id, on }` | Writes acp-dsh's `claude` or `codex` setting in the entry its service names (`settingsEntry`, else `acp-dsh`) at the revision `describe()` gave. |
 | `acp-retry` | `{ id }` | Starts a failed connector install again. |
 | `bot-type` | `{ type: 'omni' }` | What the Omni Bot starts with, as groups: model and thinking (DSH's default), plugins with versions, tool groups with their switches, skills, folder and permissions. |

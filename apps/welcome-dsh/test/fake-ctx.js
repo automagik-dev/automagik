@@ -13,7 +13,9 @@ export function mergeLayers(under, over) {
 
 // `env` holds references DSH would read from the environment rather than its own store.
 // `recordValues` are the stored records a plugin reads whole (a sign-in's grant), by key.
-export function fakeContext({ entries = {}, credentials = {}, records = [], recordValues = {}, services = {}, env = {} } = {}) {
+// A record's described kind is its value's `kind`, else `recordKinds[key]`, else a sign-in
+// grant (as DSH's store describes pi-ai's records: `grant` or `api-key`).
+export function fakeContext({ entries = {}, credentials = {}, records = [], recordValues = {}, recordKinds = {}, services = {}, env = {} } = {}) {
   const forms = new Map(Object.entries(entries).map(([ns, value]) => [ns, { value: structuredClone(value), revision: 3 }]))
   const secrets = new Map(Object.entries(credentials))
   const stored = new Set(records)
@@ -81,7 +83,9 @@ export function fakeContext({ entries = {}, credentials = {}, records = [], reco
       },
       resolve: async ref => (secrets.has(ref) ? { value: secrets.get(ref), source: 'file' } : undefined),
       describe: async ref => (secrets.has(ref) ? { configured: true, source: 'file', writable: true } : Object.hasOwn(env, ref) ? { configured: true, source: 'env', writable: true } : { configured: false, writable: true }),
-      describeRecord: async key => ({ configured: stored.has(key) || Object.hasOwn(recordValues, key), writable: true }),
+      describeRecord: async key => (stored.has(key) || Object.hasOwn(recordValues, key)
+        ? { configured: true, kind: recordValues[key]?.kind ?? recordKinds[key] ?? 'grant', writable: true }
+        : { configured: false, writable: true }),
       readRecord: async key => (Object.hasOwn(recordValues, key) ? structuredClone(recordValues[key]) : undefined),
     },
     connection: {
