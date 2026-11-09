@@ -404,6 +404,20 @@ describe('the plugin lane', () => {
     expect(kindOf(['apps/bots-dsh/client.js'], none, none, ['herdr/README.md'])).toBe('plugins');
   });
 
+  test('a root .genie/ plan ships nothing: it never makes a full release', () => {
+    const none = () => false;
+    const plan = ['.genie/wishes/restore-official-sidebar-with-advanced-b/WISH.md'];
+    // Alone: no release at all, and no part carries it.
+    expect(ships(plan, none)).toBe(false);
+    expect(herdrShips(plan)).toBe(false);
+    expect(pocketShips(plan)).toBe(false);
+    // Beside a plugin: that plugin's patch, no desktop build.
+    expect(ships([...plan, 'apps/bots-dsh/client.js'], none)).toBe(true);
+    expect(kindOf([...plan, 'apps/bots-dsh/client.js'], none)).toBe('plugins');
+    // The plan alone falls back to the plugin rule, never a full release.
+    expect(kindOf(plan, none)).toBe('plugins');
+  });
+
   test('a scheduler-only change (herdr/scheduler/, vendored) cuts no release and never reaches the pack', () => {
     const none = () => false;
     const scheduler = ['herdr/scheduler/main.go', 'herdr/scheduler/internal/daemon/daemon.go', 'herdr/scheduler/go.mod',
