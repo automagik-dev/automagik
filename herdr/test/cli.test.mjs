@@ -964,6 +964,36 @@ test("Antigravity #884 M1: a reviewer seat and a review worker are never auto-tr
   const cap = s.cli(["show", "Captain", "--json"]).json();
   assert.deepEqual(cap.agyPermissions.trustedWorkspaces, [s.project]);
   assert.deepEqual(cap.workerAgyPermissions.trustedWorkspaces, ["<worktree>"]);
+  // #884 Low B: plain show names the worker default's trusted folder too: "-" for a review
+  // worker, the worktree placeholder for a writer's.
+  assert.match(s.cli(["show", "Genie"]).out, /worker agy trusted  -/);
+  assert.match(s.cli(["show", "Captain"]).out, /worker agy trusted  <worktree>/);
+  // Follow-up: the reviewer seat's own start writes no trustedWorkspaces key at all, so the
+  // person's saved trust list is never overwritten with an empty one.
+  const started = s.cli(["start", "Genie"]);
+  assert.equal(started.code, 0, started.err);
+  const seatFile = JSON.parse(readFileSync(agySettingsPath(s, ID.main), "utf8"));
+  assert.equal("trustedWorkspaces" in seatFile, false, "the reviewer seat's file leaves the key out");
+  assert.equal(seatFile.permissions.allow.some((rule) => rule.startsWith("write_file(")), false, "and writes nothing");
+});
+
+test("Antigravity #884 Low A: a project at the home folder trusts nothing and leaves the key out", (t) => {
+  const s = scene(t);
+  // The home folder is itself the project: its key resolves to HOME, which agy must never trust.
+  git(s.home, "init", "-q");
+  git(s.home, "commit", "-q", "--allow-empty", "-m", "start");
+  const f = team();
+  f.bots[0].agent = "antigravity";
+  mkdirSync(join(s.home, ".herdr"), { recursive: true });
+  writeFileSync(join(s.home, ".herdr/bots.json"), `${JSON.stringify(f, null, 2)}\n`);
+  const show = s.cli(["show", "Genie", "--json"], { cwd: s.home }).json();
+  assert.deepEqual(show.agyPermissions.trustedWorkspaces, [], "the home folder is never trusted");
+  assert.match(s.cli(["show", "Genie"], { cwd: s.home }).out, /agy trusted  -/);
+  const started = s.cli(["start", "Genie"], { cwd: s.home });
+  assert.equal(started.code, 0, started.err);
+  const data = JSON.parse(readFileSync(agySettingsPath(s, ID.main), "utf8"));
+  assert.equal("trustedWorkspaces" in data, false, "the file leaves the key out");
+  assert.ok(data.permissions.allow.includes(`write_file(${s.home})`), "the writer rule still names the project");
 });
 
 test("Antigravity #884: restart --cwd writes DIR into the seat's permission file, never the project", (t) => {

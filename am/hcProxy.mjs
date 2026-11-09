@@ -279,7 +279,8 @@ function approvedWorkerProblem(p, snapshot, bot, templates) {
   // #884: a symlinked worktree is trusted and written by its canonical path, as every local
   // launch does (models.js agyTrustedWorkspaces/agyPermissionPlan take the injected realpath).
   const agySettingsFor = () => agySettingsPlan({ bot, scope: "worker", role, folder: realOrNull(p.cwd) ?? p.cwd,
-    settingsDir: approvedSettingsDir(snapshot.approvalEnv ?? process.env), realpath: realOrNull });
+    settingsDir: approvedSettingsDir(snapshot.approvalEnv ?? process.env), realpath: realOrNull,
+    homeDir: homedir() });
   let templateArgv = null;
   let login = [];
   if (plan.template) {

@@ -990,14 +990,14 @@ function describe(project, bot, view, hcError) {
   // #823: the effective permission lists the launch carries: a seat's on the project folder,
   // and a worker default's (its task worktree is added at its launch).
   const seatAgy = bot.agent === "antigravity"
-    ? agyPermissionPlan({ bot, scope: "seat", folder: project.key, realpath: realDir }) : null;
+    ? agyPermissionPlan({ bot, scope: "seat", folder: project.key, realpath: realDir, homeDir: home() }) : null;
   const workerAgent = !worker ? resolveAgent(bot.agent) : worker.template ? null : resolveAgent(worker.agent ?? bot.agent);
   // #884 M1: a review worker is read-only and is never auto-trusted, so its trusted folder is
   // named as empty; a writer role's worktree is only known at launch, so its plan names it as such.
   const workerRoleOf = workerRole(bot).role;
   const workerTrusted = workerRoleOf === "review" ? [] : ["<worktree>"];
   const workerAgy = workerAgent === "antigravity"
-    ? agyPermissionPlan({ bot, scope: "worker", role: workerRoleOf, folder: null, realpath: realDir }) : null;
+    ? agyPermissionPlan({ bot, scope: "worker", role: workerRoleOf, folder: null, realpath: realDir, homeDir: home() }) : null;
   const out = {
     id: bot.id, name: bot.name, kind: bot.kind, ...placeOf(project),
     lead: lead.lead || null, leadName: file.bots.find((b) => b.id === lead.lead)?.name ?? null,
@@ -1336,8 +1336,9 @@ releases -- plus the bot's \`agyPermissions\` additions, never a fixed deny drop
 also lists a writer launch's own folder in \`trustedWorkspaces\` -- the project folder for a
 seat, the worker's worktree for a worker, never a parent or the home folder -- so agy's
 first-run trust question is already answered. A read-only review launch (a review worker, a
-reviewer seat) is never auto-trusted: its \`trustedWorkspaces\` is empty, so agy asks before
-it loads that checkout's project configuration. The pack never passes
+reviewer seat) is never auto-trusted: it has no trusted folder, so the file leaves
+\`trustedWorkspaces\` out instead of writing an empty list, and agy asks before it loads that
+checkout's project configuration. The pack never passes
 --dangerously-skip-permissions and never writes agy's own saved settings, so the rest of its
 trust list and saved settings stay the person's. Its first prompt goes through -i, its resume
 through --conversation <id> (--fresh starts new).
@@ -1842,7 +1843,8 @@ async function cmdShow(opts, [ref]) {
     ...(info.agyPermissions ? [`  agy trusted  ${(info.agyPermissions.trustedWorkspaces ?? []).join(", ") || "-"}`,
       `  agy allow    ${info.agyPermissions.allow.join(", ") || "-"}`,
       `  agy deny     ${info.agyPermissions.deny.join(", ") || "-"}`] : []),
-    ...(info.workerAgyPermissions ? [`  worker agy allow  ${info.workerAgyPermissions.allow.join(", ")}`,
+    ...(info.workerAgyPermissions ? [`  worker agy trusted  ${(info.workerAgyPermissions.trustedWorkspaces ?? []).join(", ") || "-"}`,
+      `  worker agy allow  ${info.workerAgyPermissions.allow.join(", ")}`,
       `  worker agy deny   ${info.workerAgyPermissions.deny.join(", ")}`] : []),
     `  status       ${info.status}${info.terminal ? ` in ${info.terminal} (since ${info.since})` : ""}`,
     `  look         ${info.look.character} in ${info.look.colour}`, `  role         ${info.role || "-"}`,
@@ -2621,7 +2623,8 @@ async function seatOnMachine(project, bot, over = {}) {
   if (agentKey === "antigravity") {
     const agyHome = await launchHomeOn(machine, bot, paneEnv, "its Antigravity permission list");
     if (!agyHome.dir) throw new CliError(`${agyHome.warning}. Nothing was started.`);
-    agySettings = agySettingsPlan({ bot, scope: "seat", folder: over.cwd ?? key, settingsDir: agySettingsDir(agyHome.dir) });
+    agySettings = agySettingsPlan({ bot, scope: "seat", folder: over.cwd ?? key, settingsDir: agySettingsDir(agyHome.dir),
+      homeDir: home() });
     try { await ownFileOn(machine, agySettings.path, agySettings.text); }
     catch (e) {
       throw new CliError(`${bot.name} wasn't started on ${machine}: its Antigravity permission list couldn't be written `
@@ -2944,7 +2947,7 @@ async function launchSeat(project, bot, over = {}) {
   // a restart's plan names the same file, so it is written again with the roster as it is now.
   const agySettings = agentKey === "antigravity"
     ? (over.agySettings ?? agySettingsPlan({ bot, scope: "seat", folder: cwd, settingsDir: agySettingsDir(appHome()),
-      realpath: realDir })) : null;
+      realpath: realDir, homeDir: home() })) : null;
   if (agySettings) writeAgySettingsFile(agySettings, bot);
   // A1: the effective lead's live terminal as parent, outliving it; the main bot has none.
   const lead = bot.kind === "member" ? effectiveLead(file, bot.id).lead : "";
@@ -3581,7 +3584,7 @@ async function treePlans({ project, bot, old, helpers, view, ledger, agents, kno
     for (const k of ["agent.session", "revive.session"]) holdId(h.labels?.[k]);
     holdId(knownSession(h, agentKey)?.session);
     return { ...helperPlan({ get: h, worker, session: knownSession(h, agentKey)?.session ?? null,
-      agents, fresh, agy: { appHomeDir: appHome(), bot: agyBot, realpath: realDir } }), worker, binding, proxyIdentity,
+      agents, fresh, agy: { appHomeDir: appHome(), bot: agyBot, realpath: realDir, homeDir: home() } }), worker, binding, proxyIdentity,
       createdMs: Number.isSafeInteger(h.created_ms) ? h.created_ms : null };
   };
   let tree = doomed.map((h) => planOf(h));
@@ -3699,7 +3702,7 @@ async function cmdRestart(opts, [ref]) {
     runningAgent, session: known?.session ?? null,
     fresh: opts.fresh || !old, agent: entry ? entry.agent : undefined, model: entry ? (entry.model ?? "") : undefined,
     template: oldTemplate?.command ? { name: oldTemplate.name, command: oldTemplate.command } : null,
-    agy: { appHomeDir: appHome(), folder: cwd, realpath: realDir },
+    agy: { appHomeDir: appHome(), folder: cwd, realpath: realDir, homeDir: home() },
     // A new conversation on Claude runs on an id chosen here (RFC 0021 (f) 2); a resume keeps its own.
     newSession: newSessionId(),
   };
@@ -5127,6 +5130,9 @@ async function cmdWorker(opts, rest) {
       place = await makeBranchWorktree(now, opts.base, project.key, warnings);
     }
     worktree = realDir(place.worktree) ?? place.worktree;
+    // #884 Low C: --cwd, the launch words and the settings file name all take the resolved
+    // worktree, so a symlinked folder is the same path everywhere.
+    place = { ...place, worktree };
     base = await baseCommit(place, project.key);
     // Only the actual proxy transport can authorize skipping the PATH guard. Caller-added flags
     // and working roster edits cannot do so; the same socket still checks terminal.run.
@@ -5140,7 +5146,8 @@ async function cmdWorker(opts, rest) {
     const settingsDir = proxied ? approvedSettingsDir() : agySettingsDir(appHome());
     let agySettings = null;
     if (plan.agent === "antigravity" || (plan.template && runs === "antigravity")) {
-      agySettings = agySettingsPlan({ bot, scope: "worker", role, folder: worktree, settingsDir, realpath: realDir });
+      agySettings = agySettingsPlan({ bot, scope: "worker", role, folder: worktree, settingsDir, realpath: realDir,
+        homeDir: home() });
       if (agySettings?.warnings.length) warnings.push(...agySettings.warnings);
       if (agySettings && !proxied) writeAgySettingsFile(agySettings, bot);
       if (plan.template && runs === "antigravity") {
@@ -5490,11 +5497,12 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
       // The effective allow and deny lists each Antigravity launch of this bot carries: its
       // seat's, and its worker defaults' (a task's worktree is added to a worker's at launch).
       const seatAgy = agent?.agent === "antigravity" && projectKey
-        ? agyPermissionPlan({ bot: agent, scope: "seat", folder: projectKey, realpath: realDir }) : null;
+        ? agyPermissionPlan({ bot: agent, scope: "seat", folder: projectKey, realpath: realDir, homeDir: home() }) : null;
       const workerAgent = agent && !agent.worker?.template ? resolveAgent(agent.worker?.agent ?? agent.agent) : null;
       const workerRoleOf = agent ? workerRole(agent).role : null;
       const workerAgy = workerAgent === "antigravity"
-        ? agyPermissionPlan({ bot: agent, scope: "worker", role: workerRoleOf, folder: null, realpath: realDir }) : null;
+        ? agyPermissionPlan({ bot: agent, scope: "worker", role: workerRoleOf, folder: null, realpath: realDir,
+          homeDir: home() }) : null;
       // #884 M1: a review worker is read-only and is never auto-trusted (it stops at agy's trust
       // question); a writer role's worktree is only known at launch, so the plan names it as such.
       const workerTrusted = workerRoleOf === "review" ? [] : ["<worktree>"];

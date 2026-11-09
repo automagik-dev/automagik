@@ -104,10 +104,11 @@ export function withoutPrompt(args) {
  * (agentKeyOfArgv), null when unknown or when nothing runs; `session`: the old pane's session id
  * (its agent.session label, or the ledger's); `fresh`, `agent`, `model`: the options (undefined:
  * not given); `template`: the hc template the old pane ran and hc still lists, with its CURRENT
- * command ({ name, command }), or null; `agy`: { appHomeDir, folder, realpath } when this launch
- * may write the Antigravity permission list (#823), null for a caller that writes it itself (a
- * linked machine's start). `realpath` is the caller's `(path) => string` (fs.realpathSync): a
- * symlinked folder is trusted and written by its canonical path (#884). A template owns its
+ * command ({ name, command }), or null; `agy`: { appHomeDir, folder, realpath, homeDir } when
+ * this launch may write the Antigravity permission list (#823), null for a caller that writes
+ * it itself (a linked machine's start). `realpath` is the caller's `(path) => string`
+ * (fs.realpathSync): a symlinked folder is trusted and written by its canonical path (#884).
+ * `homeDir` is the person's home folder, never trusted (#884 Low A). A template owns its
  * command (#213): the replacement runs that command, never the pane's copy of it, with the
  * agent's own resume words when it resumes.
  * An --agent or --model is a swap, always fresh: a conversation doesn't cross agents, and the
@@ -135,7 +136,7 @@ export function restartPlan({ bot, run, runningAgent = null, session = null, fre
   const modeWords = agyModeArgs(key, bot.agyMode ?? null);
   const settings = agy && key === "antigravity"
     ? agySettingsPlan({ bot, scope: "seat", folder: agy.folder ?? "", settingsDir: agySettingsDir(agy.appHomeDir),
-      realpath: agy.realpath ?? null }) : null;
+      realpath: agy.realpath ?? null, homeDir: agy.homeDir ?? null }) : null;
   const settingsWords = agySettingsArgs(key, settings?.path);
   // The source a pane's launch is compared with names no settings file: that one is this
   // launch's own, never a change a restart should report.
@@ -414,10 +415,11 @@ export function restartRefusal({ name, old, helpers = [], force = false, tree = 
 /**
  * What Restart --tree runs again for one helper that ends with the bot's pane (#213): `get`, its
  * hc get; `worker`, the workers ledger's start row for its terminal (null: not a worker);
- * `session`, its known session id; `agents`, Herdr's table; `agy`: { appHomeDir, bot, realpath }
- * when an Antigravity helper's permission list (#823) may be written here (the bot it serves),
- * null when the caller doesn't write one. `realpath` is the caller's `(path) => string`
- * (fs.realpathSync): the helper's folder is resolved to its canonical path first (#884).
+ * `session`, its known session id; `agents`, Herdr's table; `agy`: { appHomeDir, bot,
+ * realpath, homeDir } when an Antigravity helper's permission list (#823) may be written here
+ * (the bot it serves), null when the caller doesn't write one. `realpath` is the caller's
+ * `(path) => string` (fs.realpathSync): the helper's folder is resolved to its canonical path
+ * first (#884). `homeDir` is the person's home folder, never trusted (#884 Low A).
  * A worker's command is rebuilt from its row (its task, the last word hc was given, isn't sent
  * twice) unless a template owns it;
  * any other helper's is its own launch command (paneCommand). Returns { name, replaced, cwd,
@@ -458,7 +460,7 @@ export function helperPlan({ get, worker = null, session = null, agents, fresh =
   let settings = agy?.bot && agent === "antigravity"
     ? agySettingsPlan({ bot: agy.bot, scope: isWorker ? "worker" : "helper",
       role: worker?.role ?? labels[WORKER_ROLE_LABEL] ?? "dev", folder: cwd, settingsDir: agySettingsDir(agy.appHomeDir),
-      realpath: agy.realpath ?? null })
+      realpath: agy.realpath ?? null, homeDir: agy.homeDir ?? null })
     : null;
   const settingsWords = agySettingsArgs(agent, settings?.path);
   const id = agent ? sessionFor(agent, session) : null;

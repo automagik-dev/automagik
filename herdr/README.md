@@ -1158,10 +1158,11 @@ project?" (`agy` 1.5.3 reads `TrustedWorkspaces []string json:"trustedWorkspaces
 top-level key of `--settings`). Trusting a folder lets agy load that folder's project
 customizations, such as its `.agents/` agents, rules, hooks and MCP servers, without asking. A
 read-only review launch (a worker with `role: "review"`, a seat with `rank: "reviewer"`) is
-therefore never auto-trusted: its `trustedWorkspaces` is `[]`, so reviewing a contributor's or
-fork's tree never loads that tree's project configuration without asking, and agy stops at the
-trust question instead. Never a parent folder and never the home folder is listed, and the pack
-never writes agy's own `settings.json`, so its saved trust list stays the person's.
+therefore never auto-trusted: it has no trusted folder, so the file leaves `trustedWorkspaces`
+out entirely (a writer's saved list is never overwritten with an empty one), reviewing a
+contributor's or fork's tree never loads that tree's project configuration without asking, and
+agy stops at the trust question instead. Never a parent folder and never the home folder is listed,
+and the pack never writes agy's own `settings.json`, so its saved trust list stays the person's.
 
 The allow list is as narrow as the launch
 needs: a dev bot's project (or a worker's worktree) as `write_file`, `hc`, `git`, `node`,

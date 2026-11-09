@@ -544,29 +544,39 @@ function agyResolvedFolder(folder, realpath) {
   return folder;
 }
 
+/** `path` as a trust-list entry: trimmed, trailing slashes stripped, and resolved by the injected
+ * `realpath` when that gives an absolute answer; "" for the root or nothing usable (#879). */
+function agyCanonicalPath(path, realpath) {
+  const clean = path.trim().replace(/\/+$/, "");
+  if (!clean || typeof realpath !== "function") return clean;
+  try {
+    const real = realpath(clean);
+    if (typeof real === "string" && real.trim().startsWith("/")) return real.trim().replace(/\/+$/, "");
+  } catch { /* a synthetic test path: the path as given */ }
+  return clean;
+}
+
 /**
  * The folders a launch's `--settings` file lists in `trustedWorkspaces` (#879). agy trusts a
  * folder by exact path, so a new writer worktree would stop at its first-run question, "Do you
  * trust the contents of this project?". `realpath` (optional): a `(path) => string` callback
  * that resolves the folder to its canonical path, so a symlinked folder is trusted by the
- * folder it really is; null, or a callback that throws, keeps it as given. Only `folder` itself
- * is listed, never a parent folder and never the home folder; anything but a trimmed absolute
- * path (the root included, a line-broken one, a non-string) lists nothing. A read-only review
- * launch never calls this (agyPermissionPlan gives it no trusted folder). The pack never writes
- * agy's saved settings.
+ * folder it really is; null, or a callback that throws, keeps it as given. `homeDir` (optional):
+ * the person's home folder, normalized and resolved the same way; a folder that resolves to it
+ * lists nothing, so the home folder is never trusted. Only `folder` itself is listed, never a
+ * parent folder; anything but a trimmed absolute path (the root included, a line-broken one, a
+ * non-string) lists nothing. A read-only review launch never calls this (agyPermissionPlan gives
+ * it no trusted folder). The pack never writes agy's saved settings.
  */
-export function agyTrustedWorkspaces(folder, realpath = null) {
+export function agyTrustedWorkspaces(folder, realpath = null, homeDir = null) {
   if (typeof folder !== "string") return [];
   const path = folder.trim();
   if (!path.startsWith("/") || !path.replace(/\/+$/, "") || /[\n\r\0]/.test(folder)) return [];
-  let clean = path.replace(/\/+$/, "");
-  if (typeof realpath === "function") {
-    try {
-      const real = realpath(clean);
-      if (typeof real === "string" && real.trim().startsWith("/")) clean = real.trim().replace(/\/+$/, "");
-    } catch { /* a synthetic test path: the folder as given */ }
-  }
-  return clean ? [clean] : [];
+  const clean = agyCanonicalPath(path, realpath);
+  if (!clean) return [];
+  if (typeof homeDir === "string" && homeDir.trim() && !/[\n\r\0]/.test(homeDir)
+    && clean === agyCanonicalPath(homeDir, realpath)) return [];
+  return [clean];
 }
 
 /**
@@ -577,17 +587,18 @@ export function agyTrustedWorkspaces(folder, realpath = null) {
  * `write_file` opens to a writer and that a writer launch's settings file trusts (#879);
  * `realpath` (optional): a `(path) => string` callback that resolves `folder` to its canonical
  * path for both the `write_file` rule and `trustedWorkspaces`, so a symlinked folder is named
- * by the folder it really is. A read-only launch (a review worker, a reviewer seat) is never
- * auto-trusted (#884 M1): `trustedWorkspaces` is `[]`, so agy stops at its trust question
- * rather than loading a contributor's or fork's review tree's project configuration. The fixed
- * deny rules are always there; nothing drops them. These lists are a guardrail against
- * accidents, not a security boundary: a rule matches word prefixes only, and allowing `node`,
- * `bun` or `git` with any arguments lets a determined agent do anything. Returns
- * { allow, deny, trustedWorkspaces, warnings }.
+ * by the folder it really is. `homeDir` (optional): the person's home folder; a folder that
+ * resolves to it lists nothing (agyTrustedWorkspaces). A read-only launch (a review worker, a
+ * reviewer seat) is never auto-trusted (#884 M1): `trustedWorkspaces` is `[]`, so agy stops at
+ * its trust question rather than loading a contributor's or fork's review tree's project
+ * configuration. The fixed deny rules are always there; nothing drops them. These lists are a
+ * guardrail against accidents, not a security boundary: a rule matches word prefixes only, and
+ * allowing `node`, `bun` or `git` with any arguments lets a determined agent do anything.
+ * Returns { allow, deny, trustedWorkspaces, warnings }.
  */
-export function agyPermissionPlan({ bot, scope = "seat", role = null, folder = null, realpath = null }) {
+export function agyPermissionPlan({ bot, scope = "seat", role = null, folder = null, realpath = null, homeDir = null }) {
   const readOnly = scope === "worker" ? role === "review" : bot?.rank === "reviewer";
-  const trustedWorkspaces = readOnly ? [] : agyTrustedWorkspaces(folder, realpath);
+  const trustedWorkspaces = readOnly ? [] : agyTrustedWorkspaces(folder, realpath, homeDir);
   const allow = [...(readOnly ? AGY_READ_ALLOW : AGY_WRITE_ALLOW)];
   const warnings = [];
   if (!readOnly && typeof folder === "string" && folder) {
@@ -638,19 +649,22 @@ export function agySettingsFile(dir, botId, scope = "seat", role = null, folder 
  * The settings file an Antigravity launch of `bot` gets: { path, text, allow, deny,
  * trustedWorkspaces, warnings }, or null for a bot with no id. `settingsDir` is the folder it
  * goes in (agySettingsDir under the app home; the proxy's own folder under the data root for an
- * approved worker). `realpath` (optional): a `(path) => string` callback that resolves `folder`
- * to its canonical path for the file's rules and trust list (agyPermissionPlan). `text` is the
- * JSON agy reads from `--settings`: permissions.allow and permissions.deny, both arrays in full
- * (agy replaces its saved lists field by field), and trustedWorkspaces, the writer launch's own
- * folder (agy trusts folders by exact path, #879), so agy asks no first-run trust question.
- * A read-only review launch's trustedWorkspaces is `[]` (#884 M1): agy asks, and a contributor's
- * or fork's review tree is never loaded as trusted project configuration.
+ * approved worker). `realpath` and `homeDir` (optional) are agyPermissionPlan's: the folder's
+ * canonical path, and the home folder that is never trusted. `text` is the JSON agy reads from
+ * `--settings`: permissions.allow and permissions.deny, both arrays in full (agy replaces its
+ * saved lists field by field), and, only when there is one, trustedWorkspaces, the writer
+ * launch's own folder (agy trusts folders by exact path, #879), so agy asks no first-run trust
+ * question. A read-only review launch (and any launch with no trusted folder) omits the key
+ * entirely (#884 M1): agy then asks, and a contributor's or fork's review tree is never loaded
+ * as trusted project configuration, nor is a person's saved trust list overwritten with [].
  */
-export function agySettingsPlan({ bot, scope = "seat", role = null, folder = null, settingsDir, realpath = null }) {
+export function agySettingsPlan({ bot, scope = "seat", role = null, folder = null, settingsDir, realpath = null, homeDir = null }) {
   if (!bot?.id || !settingsDir) return null;
-  const plan = agyPermissionPlan({ bot, scope, role, folder, realpath });
+  const plan = agyPermissionPlan({ bot, scope, role, folder, realpath, homeDir });
   const path = agySettingsFile(settingsDir, bot.id, scope, role, folder);
-  const text = `${JSON.stringify({ permissions: { allow: plan.allow, deny: plan.deny }, trustedWorkspaces: plan.trustedWorkspaces }, null, 2)}\n`;
+  const settings = { permissions: { allow: plan.allow, deny: plan.deny },
+    ...(plan.trustedWorkspaces.length ? { trustedWorkspaces: plan.trustedWorkspaces } : {}) };
+  const text = `${JSON.stringify(settings, null, 2)}\n`;
   return { path, text, allow: plan.allow, deny: plan.deny, trustedWorkspaces: plan.trustedWorkspaces, warnings: plan.warnings };
 }
 

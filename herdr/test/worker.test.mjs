@@ -594,12 +594,11 @@ test("worker #823: an Antigravity worker writes its 0600 permission file (its wo
     "command(find)", "command(awk)", "command(tee)", "command(sed)"]) {
     assert.equal(review.permissions.allow.includes(bad), false, `review worker never allows ${bad}`);
   }
-  // #884 M1: a review launch is never auto-trusted: agy stops at its trust question instead of
-  // loading a contributor's or fork's review tree's project configuration.
-  assert.deepEqual(review.trustedWorkspaces, [], "a review worker trusts nothing");
-  for (const wrong of [cwd2, s2.project, dirname(cwd2), s2.env.HOME, "/"]) {
-    assert.equal(review.trustedWorkspaces.includes(wrong), false, `review worker never trusts ${wrong}`);
-  }
+  // #884 M1/follow-up: a review launch is never auto-trusted, and its file leaves the key out
+  // entirely (an empty trustedWorkspaces would overwrite the person's saved list with []):
+  // agy stops at its trust question instead of loading a contributor's or fork's tree.
+  assert.equal("trustedWorkspaces" in review, false, "a review worker's settings leave the key out");
+  assert.equal(readFileSync(path2, "utf8").includes("trustedWorkspaces"), false, "not even as an empty list");
 });
 
 test("worker #879: a fake agy reads --settings and trusts only its session cwd, never a saved trust list", (t) => {
