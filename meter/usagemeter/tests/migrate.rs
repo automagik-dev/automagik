@@ -64,16 +64,8 @@ impl Home {
 
     /// Runs the binary and returns what it printed and its exit status, success or not.
     fn output(&self, args: &[&str], state_dir: Option<&Path>) -> Output {
-        let mut c = std::process::Command::new(env!("CARGO_BIN_EXE_usagemeter"));
-        c.args(args)
-            .env("HOME", self.home())
-            .env("METER_HC", self.env.dir.path().join("no-hc"))
-            .env_remove("METER_STATE_DIR")
-            .env_remove("METER_TRACE")
-            .env_remove("AM_HOME")
-            .env_remove("XDG_STATE_HOME")
-            .env_remove("CLAUDE_CONFIG_DIR")
-            .env_remove("CODEX_HOME");
+        let mut c = self.env.command();
+        c.args(args);
         if let Some(d) = state_dir {
             c.env("METER_STATE_DIR", d);
         }

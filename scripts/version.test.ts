@@ -98,8 +98,11 @@ describe('one version for the repository', () => {
     const toml = ['[package]', 'name = "usagemeter"', 'version = "0.5.0"', '', '[dependencies]', 'x = { version = "0.5.0" }', '[workspace.package]', 'version = "9.9.9"'];
     expect(cargoVersionLine(toml, 'toml', 'usagemeter')).toBe(2);
     expect(cargoVersionLine(['[dependencies]', 'version = "1"'], 'toml', 'usagemeter')).toBe(-1);
-    const lock = ['version = 4', '', '[[package]]', 'name = "memchr"', 'version = "0.5.0"', '', '[[package]]', 'name = "usagemeter"', 'version = "0.5.0"', 'dependencies = [', ' "memchr",', ']'];
-    expect(cargoVersionLine(lock, 'lock', 'usagemeter')).toBe(8);
+    // A crate whose name starts with the crate's is another crate: the name matches whole.
+    const lock = ['version = 4', '', '[[package]]', 'name = "memchr"', 'version = "0.5.0"', '', '[[package]]', 'name = "usagemeter-core"', 'version = "9.9.9"', '', '[[package]]', 'name = "usagemeter"', 'version = "0.5.0"', 'dependencies = [', ' "memchr",', ']'];
+    expect(cargoVersionLine(lock, 'lock', 'usagemeter')).toBe(12);
+    expect(cargoVersionLine(lock, 'lock', 'usagemeter-core')).toBe(8);
+    expect(cargoVersionLine(lock, 'lock', 'usage')).toBe(-1);
     expect(cargoVersionLine(lock, 'lock', 'other')).toBe(-1);
     // A crate whose version line is gone stops set before any file is written.
     const root = copyRoot();
@@ -111,13 +114,15 @@ describe('one version for the repository', () => {
   });
 
   test("a crate's lock entry with no version line stops set, never borrows the next entry's", () => {
-    const lock = ['version = 4', '', '[[package]]', 'name = "usagemeter"', 'dependencies = [', ' "memchr",', ']', '', '[[package]]', 'name = "memchr"', 'version = "2.8.3"', ''];
+    // A lock can hold two packages of one name (the crate, and a registry crate it depends on):
+    // the second one's version is not the crate's.
+    const lock = ['version = 4', '', '[[package]]', 'name = "usagemeter"', 'dependencies = [', ' "usagemeter 2.8.3",', ']', '', '[[package]]', 'name = "usagemeter"', 'version = "2.8.3"', 'source = "registry+https://github.com/rust-lang/crates.io-index"', ''];
     expect(cargoVersionLine(lock, 'lock', 'usagemeter')).toBe(-1);
     const root = copyRoot();
     writeFileSync(join(root, 'meter/usagemeter/Cargo.lock'), lock.join('\n'));
     const pkg = readFileSync(join(root, 'package.json'), 'utf8');
     expect(() => setVersion('3.7.2', root)).toThrow(/no package\[usagemeter\]\.version line in meter\/usagemeter\/Cargo\.lock/);
-    // Nothing was written: the root keeps its version and memchr keeps its own.
+    // Nothing was written: the root keeps its version and the registry crate keeps its own.
     expect(readFileSync(join(root, 'package.json'), 'utf8')).toBe(pkg);
     expect(readFileSync(join(root, 'meter/usagemeter/Cargo.lock'), 'utf8')).toBe(lock.join('\n'));
   });

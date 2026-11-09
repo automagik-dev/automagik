@@ -1,6 +1,6 @@
 [package]
 name = "usagemeter"
-version = "3.108.7"
+version = "3.108.8"
 edition = "2024"
 rust-version = "1.89"
 description = "Counts coding-agent token usage per machine as ae/1 rows and publishes a summary doc to herdr-core"
@@ -17,6 +17,8 @@ path = "src/lib.rs"
 
 [dependencies]
 memchr = "2"
+# dsh-tui sessions are multi-frame zstd. Decoder only, pure Rust, no transitive dependencies.
+ruzstd = { version = "0.9.1", default-features = false, features = ["std"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

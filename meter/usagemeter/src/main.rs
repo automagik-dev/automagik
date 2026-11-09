@@ -15,8 +15,8 @@ Usage:
                    [--window d1|d7|d30] [--contract 1] [--stale-after SECONDS]
   usagemeter --version
 
-sync      Read new harness usage (omp, Claude Code, Codex) into the local store and publish
-          the summary doc to herdr-core. Does nothing within 10 minutes of a complete sync.
+sync      Read new harness usage (omp, Claude Code, Codex, dsh-tui) into the local store and
+          publish the summary doc to herdr-core. Does nothing within 10 minutes of a complete sync.
   --force         Run even if the last sync is recent.
   --backfill      Re-import the full history (slow; resumes across runs).
   --days N        Import window in days (default 30). A wider window re-imports.
