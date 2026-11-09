@@ -39,6 +39,17 @@ fn a_killed_run_resumes_without_double_counting() {
     assert_ne!(partial, want, "the kill should land mid-import");
     assert!(spawn().wait().unwrap().success());
     assert_eq!(env.totals()["model-a"], want);
+    // The evidence resumed with the rows (the Fixer's L3 on PR 849): one row per counted call,
+    // none twice, and the rollups are what the evidence holds.
+    let store = env.store();
+    assert_eq!(
+        store.count("evidence").unwrap(),
+        store.count("seen").unwrap()
+    );
+    assert_eq!(
+        meter::evidence::implied_rollups(&store.conn).unwrap(),
+        meter::evidence::stored_rollups(&store.conn, i64::MIN).unwrap()
+    );
 }
 
 #[test]
