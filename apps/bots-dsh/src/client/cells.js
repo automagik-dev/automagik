@@ -8,7 +8,7 @@ import { colorOf, toolState, BotMark, RoomAvatar } from './mark.js'
 import { SettledQuestion, PendingQuestion } from './questions.js'
 import { AnsweredReply, WidgetCell } from './widget-cell.js'
 import { SecretToolCell } from './secret-card.js'
-import { ImageCell } from './image-cell.js'
+import { agentPromptOf, ImageCell, isAgentImageCall } from './image-cell.js'
 import { HandoffCall } from './handoff-card.js'
 import { dateLocale, t } from './i18n.js'
 import { call } from './api.js'
@@ -1021,6 +1021,8 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
 const DRAWN = new Set(['start_task', 'message_bot', 'stop_bot', 'create_bot', 'update_bot', 'delete_bot', 'group_relay', 'create_group', 'update_group', 'delete_group', 'post_to_group', 'ask_user', 'request_secret', 'ask_user_question', 'read_group_chat', 'remember', 'forget', 'show_view', 'browser_handoff', 'generate_image'])
 // Calls whose card a dock above the composer carries when the call is not drawn.
 const CARDS = new Set(['ask_user', 'request_secret', 'show_view', 'browser_handoff'])
+// An image an agent makes with its own tool draws as the image card (image-cell.js).
+const agentImage = call => isAgentImageCall({ name: toolName(call), image: toolArgs(call).value('image'), done: call.kind === 'tool-result', content: call.kind === 'tool-result' ? contentText(call.content) : '' })
 
 // The root and its sub-calls in dispatch order, each call once.
 export function callTree(root) {
@@ -1123,6 +1125,10 @@ function renderCall(call, { sessionId, roster, actions, useUi, useWork, useSessi
       return h(WidgetCell, { sessionId, callId: call.callId, args: { text: arg, value: argValue }, done, isError: call.isError, roster, actions, heldCards })
     case 'generate_image':
       return h(ImageCell, { callId: call.callId, prompt: arg('prompt'), size: arg('size'), done, content: done ? contentText(call.content) : '', isError: call.isError })
+    case 'acp_tool':
+      return agentImage(call)
+        ? h(ImageCell, { callId: call.callId, prompt: agentPromptOf(argValue('input')), done, content: done ? contentText(call.content) : '', isError: call.isError })
+        : null
     case 'request_secret':
       return h(SecretToolCell, { sessionId, callId: call.callId, name: arg('name'), done, content: call.content, roster, actions, heldCards })
     case 'browser_handoff':
@@ -1159,7 +1165,7 @@ export function ToolCell({ node, sessionId, useRoster, useUi, useWork, useSessio
   // A plugin that loads after the transcript drew still gets its cards drawn.
   useSyncExternalStore(toolCards.source.subscribe, toolCards.source.getSnapshot)
   const calls = hidden ? [] : callTree(root)
-  const drawn = calls.filter(call => DRAWN.has(toolName(call)) || toolCards.renderer(toolName(call)))
+  const drawn = calls.filter(call => DRAWN.has(toolName(call)) || toolCards.renderer(toolName(call)) || agentImage(call))
   // The newest call still running names the work, so a program reads as the tool it is in.
   const running = root.kind === 'tool-result' ? undefined : calls.findLast(call => call.kind !== 'tool-result')
   const note = running ? toolActivity(toolName(running), toolArgs(running).text, findBot, roster.byId[sessionId]) : null

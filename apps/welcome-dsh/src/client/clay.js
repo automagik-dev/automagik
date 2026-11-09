@@ -12,7 +12,7 @@
 // outside the overlay.
 
 export const CLAY_TOKENS = `
-.oai-overlay,.oai-acp-page{
+.oai-overlay,.oai-acp-page,.oai-aside{
   --oai-bg:#f6eee2;--oai-card:#fbf5ec;--oai-clay:#f2e6d5;--oai-niche:#ebdecb;
   --oai-ink:#3c3049;--oai-ink2:#6c5f71;--oai-line:#e0d0bd;
   --oai-accent:#1b7f96;--oai-accent-2:#b4498f;--oai-bad:#b93a32;--oai-ok:#2f8a63;--oai-warn:#a8700f;
@@ -23,7 +23,7 @@ export const CLAY_TOKENS = `
   --oai-font:"DM Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
   --oai-head:Manrope,"DM Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
   color-scheme:light}
-body[data-ds-dark-theme] .oai-overlay,body[data-ds-dark-theme] .oai-acp-page{
+body[data-ds-dark-theme] .oai-overlay,body[data-ds-dark-theme] .oai-acp-page,body[data-ds-dark-theme] .oai-aside{
   --oai-bg:#1e1923;--oai-card:#2a2330;--oai-clay:#322a39;--oai-niche:#16121a;
   --oai-ink:#f3e9dd;--oai-ink2:#bcadb8;--oai-line:#40364a;
   --oai-accent:#7fd8ea;--oai-accent-2:#f2a6dc;--oai-bad:#ff9a8f;--oai-ok:#7ad9a8;--oai-warn:#f2c25b;

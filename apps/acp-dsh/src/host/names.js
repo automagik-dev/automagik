@@ -13,3 +13,14 @@ export const mcpName = (server, tool) => `mcp__${server}__${tool}`
 
 /** Whether a structured tool name belongs to the bridge. */
 export const isBridgeName = (name, server = BRIDGE_NAME) => typeof name === 'string' && name.startsWith(`mcp__${server}__`)
+
+// The failure code of a turn an agent refused because its CLI is not signed in (ACP's
+// `auth_required`). The Bot team reads it by name: such a turn never moves to a fallback model
+// and asks for a sign-in instead (bots-dsh, fallback.js and models.js).
+export const MODEL_ACCESS_REQUIRED = 'MODEL_ACCESS_REQUIRED'
+// ACP's `auth_required` error (RequestError.authRequired in the SDK): JSON-RPC -32000, whose
+// message starts "Authentication required". -32000 alone is any server error.
+const AUTH_REQUIRED_CODE = -32000
+
+/** Whether an error an agent raised says its CLI must sign in first. */
+export const isAuthRequired = error => error?.code === AUTH_REQUIRED_CODE && /^authentication required/i.test(String(error?.message ?? ''))

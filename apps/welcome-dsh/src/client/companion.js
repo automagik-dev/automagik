@@ -110,8 +110,8 @@ export function CompanionStep(props) {
           generating
             ? h('div', { className: 'oai-row' },
                 h('button', { type: 'button', className: 'oai-primary', disabled: drawing || description.trim().length < 3 || !generating.ready, onClick: draw }, drawing ? t('Drawing…') : image ? t('Draw again') : t('Bring it to life')),
-                h('span', { className: 'oai-muted' }, generating.kind === 'chatgpt' ? t('Drawn with your ChatGPT plan (gpt-image-2)') : t('Drawn with your OpenAI key (gpt-image-1)')))
-            : h('p', { className: 'oai-note' }, t('Drawing a companion needs ChatGPT or an OpenAI key. Connect one in the AI step, then come back from Settings. For now, pick one.')),
+                h('span', { className: 'oai-muted' }, generating.kind === 'codex' ? t('Drawn with Codex on your ChatGPT plan') : generating.kind === 'chatgpt' ? t('Drawn with your ChatGPT plan (gpt-image-2)') : t('Drawn with your OpenAI key (gpt-image-1)')))
+            : h('p', { className: 'oai-note' }, t('Drawing a companion needs Codex signed in or an OpenAI key. Connect one in the AI step, then come back from Settings. For now, pick one.')),
           drawing ? h('div', { className: 'oai-drawing', 'aria-hidden': 'true' }) : null)
       : h('div', { className: 'oai-pick' },
           h('div', { className: 'oai-shapes', role: 'radiogroup', 'aria-label': t('Character') },

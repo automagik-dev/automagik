@@ -119,7 +119,8 @@ export function signedInOf(spec, cli, { env = process.env, run = execFile } = {}
   return new Promise((done) => {
     try {
       // A CLI npm installed on Windows is a batch file (codex.cmd): through cmd.exe (batch-spawn.js).
-      run(...batchSafe(cli, spec.signIn.args, { env: { ...env, PATH: [dirname(cli), env.PATH].filter(Boolean).join(delimiter), NO_COLOR: '1' }, timeout: SIGN_IN_TIMEOUT_MS, maxBuffer: 1 << 20, windowsHide: true }), (error, stdout) => {
+      // DISABLE_UPDATES, as for --version (clis.js): a status check never updates the CLI itself.
+      run(...batchSafe(cli, spec.signIn.args, { env: { ...env, PATH: [dirname(cli), env.PATH].filter(Boolean).join(delimiter), NO_COLOR: '1', DISABLE_UPDATES: '1' }, timeout: SIGN_IN_TIMEOUT_MS, maxBuffer: 1 << 20, windowsHide: true }), (error, stdout) => {
         const code = error ? (typeof error.code === 'number' ? error.code : undefined) : 0
         if (error && code === undefined) return done(undefined)
         try { done(spec.signIn.read({ code, stdout: String(stdout ?? '') })) } catch { done(undefined) }

@@ -10,12 +10,23 @@
 // agent/request may no longer move it (dsh 0.2.2): the choice is recorded on the Agent with
 // agent.model.select() and the continuing turn is woken with agent.followup(). This plugin
 // used to rewrite agent/request, which dsh 0.2.2 rejects before the request is admitted.
+//
+// The followup waits for the Agent to be idle. Sent from agent/request-error, the failed turn
+// still runs: DSH puts the notice in the next turn's inbox and latches no wake for it (only
+// maintenance or an abort latch one), so it would sit there as a queued message, the fallback
+// would never answer, and the person's next message would carry it along. Sent once the failed
+// turn ended, it opens the fallback turn. A turn that started meanwhile (the person wrote
+// again) already ran on the fallback, so the notice is not sent then.
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { splitRef } from './text.js'
+import { MODEL_ACCESS_REQUIRED, switchFailure, switchPending } from './model-state.js'
 
 // Failures another model cannot answer better: the conversation is too long (parts.js moves
-// it on), the person stopped it, or an image has to leave the request first.
-export const KEEP_CODES = new Set(['CONTEXT_WINDOW_EXCEEDED', 'ABORTED', 'IMAGE_OFFLOAD_REQUIRED'])
+// it on), the person stopped it, an image has to leave the request first, or the model's
+// account needs a sign-in (an agent whose CLI is signed out: model-state.js; the Bot stays on
+// its pick and the person is asked to sign in, never moved silently to another model). Any
+// other failure of an agent (ACP_AGENT) falls back like any model's, with its notice.
+export const KEEP_CODES = new Set(['CONTEXT_WINDOW_EXCEEDED', 'ABORTED', 'IMAGE_OFFLOAD_REQUIRED', MODEL_ACCESS_REQUIRED])
 
 const sameRoute = (a, b) => a?.provider === b?.provider && a?.model === b?.model
 const label = route => `${route.provider}/${route.model}`
@@ -48,13 +59,28 @@ export function install(rt) {
   // Agent id -> the route the Bot answers on again, and the turn that failed: the fallback
   // turn ends after it, so the Bot's own route comes back once that turn is over.
   const restore = new Map()
+  // Session id -> the failed turn whose fallback turn has not ended yet: parts.js waits for that
+  // turn before it takes a fresh part's switch back (rt.fallbackArmed).
+  const armed = new Map()
+  // Agent id -> the notice that waits for the failed turn to end.
+  const waking = new Map()
   const fallbackRoute = async () => splitRef(config.fallbackModel ?? await rt.defaultModel())
+  // A switch that cannot run (switchFailure) goes back instead: the Bot's own chat with a switch
+  // not yet confirmed (model-state.js) or a fresh part still waiting for its first answer
+  // (parts.js, revertSwitch). Nothing runs again on its own there, so no fallback turn is woken.
+  const goesBack = (sessionId, failure) => {
+    if (sessionId === undefined || !switchFailure(failure)) return false
+    if (rt.awaitingFirstAnswer?.(sessionId) === true) return true
+    const botId = rt.chatOwners?.get?.(sessionId)
+    return botId !== undefined && switchPending(rt.botOf?.(botId))
+  }
 
   ctx.on('agent/request-error', async (payload, next) => {
     const decided = await next()
     if (decided !== undefined || payload.signal?.aborted) return decided
     const { agent, failure, turn } = payload
     if (!rt.isBotSession(agent.id)) return decided
+    if (goesBack(agent.session?.id ?? agent.id, failure)) return decided
     const failed = agent.session.requestHeader?.()?.config
     const fallback = fallbackFor({ failure, failed, fallback: await fallbackRoute().catch(() => undefined) })
     if (fallback === undefined) return decided
@@ -74,28 +100,72 @@ export function install(rt) {
         : failed?.provider !== undefined && failed.model !== undefined
           ? { provider: failed.provider, model: failed.model }
           : undefined
-      if (route !== undefined) restore.set(agent.id, { agent, route, failedTurn: turn })
+      if (route !== undefined) restore.set(agent.id, { agent, route, fallback, failedTurn: turn })
     }
+    const sessionId = agent.session?.id
+    if (sessionId !== undefined && typeof turn === 'number') armed.set(sessionId, turn)
     rt.warn(
       'ds-bot: %s failed on %s (%s); the next turn continues on %s',
       rt.botOf?.(agent.id)?.name ?? agent.id, label(failed), failure.code, label(fallback),
     )
-    try {
-      agent.followup(fallbackNotice(failed, fallback, failure))
-    } catch (error) {
-      rt.warn('ds-bot: the fallback turn was not woken: %s', error)
-    }
+    wake(agent, fallbackNotice(failed, fallback, failure), turn)
     return decided
   })
 
+  // A notice that was not sent opens no fallback turn: nothing is armed any more.
+  function unarm(agent, error) {
+    const sessionId = agent.session?.id
+    if (sessionId !== undefined) armed.delete(sessionId)
+    rt.warn('ds-bot: the fallback turn was not woken: %s', error)
+  }
+  function send(agent, notice) {
+    try {
+      agent.followup(notice)
+    } catch (error) {
+      unarm(agent, error)
+    }
+  }
+  // The notice opens the fallback turn once the failed one has ended (see the header). Never
+  // awaited here: a request-error listener that waits for its own Agent to be idle never returns.
+  function wake(agent, notice, failedTurn) {
+    if (typeof agent.whenIdle !== 'function') return send(agent, notice)
+    const entry = { agent, failedTurn }
+    waking.set(agent.id, entry)
+    void Promise.resolve()
+      .then(() => agent.whenIdle())
+      .then(() => {
+        if (waking.get(agent.id) !== entry) return
+        waking.delete(agent.id)
+        send(agent, notice)
+      }, (error) => {
+        if (waking.get(agent.id) !== entry) return
+        waking.delete(agent.id)
+        unarm(agent, error)
+      })
+  }
+
+  rt.fallbackArmed = sessionId => armed.has(sessionId)
+
   // The turn after the failed one (the fallback turn) ends: the Bot answers on its own
-  // model again. The failed turn's own end comes first and is passed over.
+  // model again. The failed turn's own end comes first and is passed over. A turn that starts
+  // after the failed one (the person wrote again) takes the waiting notice's place. A selection
+  // made meanwhile (a switch that went back to the model before it, the person's own pick) is
+  // left as it is: only the fallback route is undone.
   ctx.on('session/event', (session, event) => {
-    if (event?.type !== 'turn/end' || typeof event.data?.turn !== 'number') return
+    const type = event?.type
+    if ((type !== 'turn/end' && type !== 'turn/start') || typeof event.data?.turn !== 'number') return
+    for (const [id, pending] of waking) {
+      if (pending.agent.session?.id === session?.id && event.data.turn > pending.failedTurn) waking.delete(id)
+    }
+    if (type !== 'turn/end') return
+    const failedTurn = armed.get(session?.id)
+    if (failedTurn !== undefined && event.data.turn > failedTurn) armed.delete(session.id)
     for (const [id, pending] of restore) {
       const sameSession = pending.agent.session?.id === session?.id
       if (!sameSession || event.data.turn <= pending.failedTurn) continue
       restore.delete(id)
+      const current = pending.agent.model.current?.()
+      if (current?.provider !== undefined && pending.fallback !== undefined && !sameRoute(current, pending.fallback)) continue
       try {
         pending.agent.model.select(pending.route)
       } catch (error) {

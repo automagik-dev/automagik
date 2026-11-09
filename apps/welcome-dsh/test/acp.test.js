@@ -117,6 +117,28 @@ test('an unknown connector state from a newer acp-dsh reads as installing', () =
   assert.equal(agentView(agent('acp-claude', { connector: { state: 'warming' } })).connector.state, 'installing')
 })
 
+test('the CLI\'s own state reaches the page, redacted, and nothing it does not draw', async () => {
+  const token = ['ghp_', 'a'.repeat(24)].join('')
+  const raw = agent('acp-claude', { cli: {
+    found: false, state: 'failed', version: '2.1.319', updating: true, managed: true,
+    error: `download failed: Bearer ${token}`, diagnostic: `NPM_TOKEN=${token}`,
+    logPath: join(homedir(), '.automagik', 'acp', 'clis', 'logs', 'claude.log'),
+    privateCommand: '/private/cli',
+  } })
+  const { value } = await host({ acp: fakeAcp([raw]) }).handle('acp')
+  const cli = value.agents[0].cli
+  assert.equal(cli.state, 'failed')
+  assert.equal(cli.version, '2.1.319')
+  assert.equal(cli.updating, true)
+  assert.equal(cli.found, false)
+  assert.ok(!JSON.stringify(cli).includes(token))
+  assert.ok(!JSON.stringify(cli).includes(homedir()))
+  assert.match(cli.logPath, /^~[/\\]/)
+  assert.equal(cli.privateCommand, undefined)
+  assert.equal(cli.managed, undefined)
+  assert.equal(agentView(agent('acp-codex', { cli: { found: true, state: 'unknown' } })).cli.state, undefined)
+})
+
 // ---- The page -------------------------------------------------------------------------------
 
 const bundle = await build({
@@ -224,7 +246,7 @@ function findAll(node, match, out = []) {
 const view = agents => ({ available: true, agents: agents.map(agentView) })
 const acpOf = (agents, over = {}) => {
   const acted = []
-  return { acted, view: view(agents), busy: null, problems: {}, isOn: row => row.on, flip: row => acted.push(['flip', row.id]), retry: row => acted.push(['retry', row.id]), check: row => acted.push(['check', row.id]), ...over }
+  return { acted, view: view(agents), busy: null, problems: {}, isOn: row => row.on, flip: row => acted.push(['flip', row.id]), retry: row => acted.push(['retry', row.id]), check: row => acted.push(['check', row.id]), login: row => acted.push(['login', row.id]), ...over }
 }
 const rowOf = (row, acp = acpOf([row])) => render(ui.AcpAgentRow({ agent: agentView(row), acp }))
 const buttons = (tree, label) => findAll(tree, node => node.type === 'button' && textOf(node) === label)
@@ -409,11 +431,117 @@ test('ready and signed in: where to find it in the model picker', () => {
   assert.equal(toggle.props['aria-checked'], 'true')
 })
 
-test('signed out: how to sign in, in a terminal; the page never asks for credentials', () => {
-  const tree = rowOf(agent('acp-codex', { signedIn: false }))
-  assert.match(textOf(tree), /Not signed in\. Run codex login in a terminal/)
+test('signed out: Sign in opens a Bot chat, the terminal stays the other way, and no field asks for credentials', () => {
+  const acp = acpOf([])
+  const tree = rowOf(agent('acp-codex', { signedIn: false }), acp)
+  assert.equal(tree.props['data-state'], 'login-required')
+  assert.match(textOf(tree), /Sign-in needed/)
+  assert.match(textOf(tree), /Not signed in to Codex\. Sign in from a Bot's chat\./)
+  assert.match(textOf(tree), /Or run codex login in a terminal, then check again\./)
+  assert.doesNotMatch(textOf(tree), /Ready: pick/)
   assert.deepEqual(findAll(tree, node => node.type === 'input'), [])
-  assert.match(textOf(rowOf(agent('acp-claude', { signedIn: false }))), /Run claude auth login/)
+  buttons(tree, 'Sign in')[0].props.onClick()
+  buttons(tree, 'Check again')[0].props.onClick()
+  assert.deepEqual(acp.acted, [['login', 'acp-codex'], ['check', 'acp-codex']])
+  assert.match(textOf(rowOf(agent('acp-claude', { signedIn: false }))), /Or run claude auth login in a terminal/)
+})
+
+test('signed in, or not checked yet: no Sign in button', () => {
+  assert.deepEqual(buttons(rowOf(agent('acp-codex')), 'Sign in'), [])
+  const unknown = rowOf(agent('acp-codex', { signedIn: undefined }))
+  assert.deepEqual(buttons(unknown, 'Sign in'), [])
+  assert.equal(unknown.props['data-state'], 'sign-in-unknown')
+  assert.match(textOf(unknown), /Check sign-in/)
+  assert.match(textOf(unknown), /The sign-in to Codex has not been checked yet/)
+  assert.doesNotMatch(textOf(unknown), /Ready: pick/)
+})
+
+test('a CLI installing, updating or failed says so, and offers no sign-in meanwhile', () => {
+  const installing = rowOf(agent('acp-claude', { on: false, cli: { found: false, state: 'installing' }, connector: { state: 'off' }, signedIn: undefined }))
+  assert.equal(installing.props['data-state'], 'installing')
+  assert.match(textOf(installing), /Installing Claude Code automatically/)
+  assert.doesNotMatch(textOf(installing), /Not installed|Install it, sign in/)
+  const updating = rowOf(agent('acp-codex', { cli: { found: true, state: 'ready', version: '0.167.0', updating: true }, signedIn: false }))
+  assert.equal(updating.props['data-state'], 'updating')
+  assert.match(textOf(updating), /Updating Codex automatically/)
+  assert.match(textOf(updating), /version 0\.167\.0/)
+  assert.deepEqual(buttons(updating, 'Sign in'), [])
+  const acp = acpOf([])
+  const failed = rowOf(agent('acp-claude', { cli: { found: false, error: 'download failed' }, signedIn: undefined }), acp)
+  assert.equal(failed.props['data-state'], 'failed')
+  assert.match(textOf(failed), /Needs a retry/)
+  assert.match(textOf(failed), /installation or update failed: download failed/)
+  buttons(failed, 'Retry')[0].props.onClick()
+  assert.deepEqual(acp.acted, [['retry', 'acp-claude']])
+})
+
+test('a found CLI whose update failed still runs: Ready or Sign in, with the Retry line', () => {
+  const acp = acpOf([])
+  const stale = rowOf(agent('acp-claude', { cli: { found: true, state: 'ready', version: '2.1.319', error: 'registry unreachable' } }), acp)
+  assert.equal(stale.props['data-state'], 'ready')
+  assert.match(textOf(stale), /installation or update failed: registry unreachable/)
+  assert.match(textOf(stale), /Ready: pick Claude Code in the model picker/)
+  buttons(stale, 'Retry')[0].props.onClick()
+  assert.deepEqual(acp.acted, [['retry', 'acp-claude']])
+  const signedOut = rowOf(agent('acp-codex', { cli: { found: true, state: 'ready', version: '0.167.0', error: 'registry unreachable' }, signedIn: false }))
+  assert.equal(signedOut.props['data-state'], 'login-required')
+  assert.equal(buttons(signedOut, 'Sign in').length, 1)
+  assert.equal(buttons(signedOut, 'Retry').length, 1)
+})
+
+test('the bridge takes only the two CLIs, and a missing or refusing bridge is a no', () => {
+  const opened = []
+  const scope = { [ui.CHAT_LOGIN]: { open: (provider) => { opened.push(provider); return true } } }
+  assert.equal(ui.CHAT_LOGIN, Symbol.for('automagik.cli-login'))
+  assert.equal(ui.openChatLogin('acp-codex', scope), true)
+  assert.equal(ui.openChatLogin('acp-claude', scope), true)
+  assert.equal(ui.openChatLogin('openai-codex', scope), false)
+  assert.equal(ui.openChatLogin('__proto__', scope), false)
+  assert.deepEqual(opened, ['acp-codex', 'acp-claude'])
+  assert.equal(ui.openChatLogin('acp-codex', {}), false)
+  assert.equal(ui.openChatLogin('acp-codex', { [ui.CHAT_LOGIN]: { open: () => { throw new Error('x') } } }), false)
+})
+
+test('login asks nothing of the host, and tells the page only when a chat took it', async () => {
+  const calls = []
+  const row = agentView(agent('acp-codex', { signedIn: false }))
+  const request = async (endpoint) => { calls.push(endpoint); return { available: true, agents: [row] } }
+  let answer = false
+  const shown = []
+  const run = runHook(() => ui.useAcp(request, { open: () => answer, onLoginOpen: agent => shown.push(agent.id) }))
+  try {
+    await run.settle()
+    const before = [...calls]
+    assert.equal(run.current.login(row), false)
+    await run.settle()
+    assert.deepEqual(shown, [])
+    assert.match(run.current.problems['acp-codex'], /Run codex login in a terminal instead/)
+    answer = true
+    assert.equal(run.current.login(row), true)
+    await run.settle()
+    assert.deepEqual(shown, ['acp-codex'])
+    assert.equal(run.current.problems['acp-codex'], null)
+    assert.deepEqual(calls, before)
+  } finally {
+    run.done()
+  }
+})
+
+test('Settings closes its panel once a Bot chat took the sign-in', async () => {
+  let closed = 0
+  const row = agent('acp-codex', { signedIn: false })
+  sandbox.fetch = async () => ({ ok: true, json: async () => ({ ok: true, value: { available: true, agents: [agentView(row)] } }) })
+  sandbox[ui.CHAT_LOGIN] = { open: provider => provider === 'acp-codex' }
+  const run = runHook(() => ui.AcpSettingsSection({ close: () => { closed++ } }))
+  try {
+    await run.settle()
+    buttons(render(run.current), 'Sign in')[0].props.onClick()
+    assert.equal(closed, 1)
+  } finally {
+    delete sandbox[ui.CHAT_LOGIN]
+    delete sandbox.fetch
+    run.done()
+  }
 })
 
 test('ready but missing from the picker: a plain restart note', () => {
@@ -481,12 +609,13 @@ test('an accepted switch that has not settled yet keeps polling until acp-dsh sa
   }
 })
 
-test('without acp-dsh the Connect AI section draws nothing', () => {
+test('without acp-dsh the agents\' list draws nothing', () => {
   assert.equal(ui.AcpAgents({ acp: { view: { available: false, agents: [] } } }), null)
   assert.equal(ui.AcpAgents({ acp: { view: null } }), null)
   const section = render(ui.AcpAgents({ acp: acpOf([agent('acp-claude'), agent('acp-codex')]) }))
   assert.equal(findAll(section, node => node.props?.['data-acp']).length, 2)
-  assert.match(textOf(section), /Coding agents/)
+  // No heading of its own: Settings' page has one, and Connect AI draws no list of them.
+  assert.doesNotMatch(textOf(section), /Coding agents/)
 })
 
 test('the Settings section is always there, and says so when acp-dsh is not running', async () => {
@@ -513,7 +642,9 @@ test('the rows read in pt-BR once it is the DSH language', () => {
   try {
     const text = textOf(rowOf(agent('acp-codex', { connector: { state: 'failed', error: 'npm answered 503' }, signedIn: false })))
     assert.match(text, /A CLI codex está neste computador/)
-    assert.match(text, /Sem login\. Rode codex login em um terminal/)
+    assert.match(text, /Sem login no Codex\. Entre pelo chat de um Bot\./)
+    assert.match(text, /Ou rode codex login em um terminal e verifique de novo\./)
+    assert.match(text, /Entrar/)
     assert.match(text, /O conector não foi instalado: npm answered 503/)
     assert.match(text, /Tentar de novo/)
   } finally {

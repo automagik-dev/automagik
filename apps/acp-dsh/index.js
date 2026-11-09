@@ -22,7 +22,10 @@ import { Backchannel } from './src/host/backchannel.js'
 import { Catalog, cliStamp, DEFAULT_MODEL } from './src/host/catalog.js'
 import { CliStore, CLI_CHECK_EVERY_MS } from './src/host/clis.js'
 import { AdapterStore, CHECK_EVERY_MS } from './src/host/install.js'
+import { drawImage, imageRefusal, SIGNED_OUT, UNAVAILABLE } from './src/host/image.js'
+import { CliLogins } from './src/host/login.js'
 import { CREDENTIAL_ENV, URL_ENV } from './src/host/names.js'
+import { enginesFor, pressureGuard } from './src/host/pressure.js'
 import { redactorFor } from './src/host/redact.js'
 import { agentRoute, carryEffort, crossed } from './src/host/switch.js'
 
@@ -30,7 +33,8 @@ export const name = 'acp-dsh'
 export const inject = ['llm', 'agents']
 
 // The bridge, its DSH approval, the drift detector and live switching: an absent key takes the
-// per-agent default (Claude on; Codex only on an explicit true), and false is the kill switch.
+// per-agent default for the bridge (Claude on; Codex only on an explicit true), the transcript
+// replay reaches both agents unless the key is false (plan A-5), and false is the kill switch.
 // The key is public (installed teams keep it in their profile patch). DSH_TOOLS_DEFAULT is the
 // Claude/service view used for the bridge probe, crossings and effort carry; it is not a schema
 // default, so an absent key still reaches the adapter as absent.
@@ -55,10 +59,11 @@ export const Config = z.object({
   dshTools: z.boolean().volatile().hidden().description([
     "Hand DSH's own tools to the agent over a per-session MCP bridge named dsh (the Session's",
     "preset, filtered by its level), approve every DSH tool call in DSH whatever the agent's own",
-    "rules say, turn the agent's built-in tools off where its adapter allows, and carry the",
-    'transcript when a Session moves between providers. On by default for Claude Code; an agent',
-    "whose adapter cannot drop its own tools (Codex) bridges only on an explicit true. False is",
-    'the kill switch and the behaviour without it: each agent keeps its own tools and approvals.',
+    "rules say, and turn the agent's built-in tools off where its adapter allows. On by default",
+    "for Claude Code; an agent whose adapter cannot drop its own tools (Codex) bridges only on an",
+    'explicit true. The transcript reaches either agent when a Session moves to it, whatever the',
+    'bridge, unless this is false. False is the kill switch and the behaviour without it: each',
+    'agent keeps its own tools and approvals, and sees only its own session.',
   ].join(' ')),
 })
 
@@ -67,6 +72,12 @@ const FIRST_CHECK_MS = 5000
 // A failed probe is retried after this long in the same process; a new process starts with an
 // empty cache, so the next app start also retries. A success is kept for its adapter version.
 export const PROBE_RETRY_MS = 10 * 60 * 1000
+// How long one fresh sign-in check (`inspect`) stands for the same agent.
+export const INSPECT_TTL_MS = 3000
+// How long a confirmed "signed in" stands: `auth status` spawns the whole CLI, and a Bot's turn
+// asks before its first call. A sign-in that ends meanwhile is caught by the agent itself: its
+// ACP `auth_required` is MODEL_ACCESS_REQUIRED (adapter.js) and drops this answer at once.
+export const SIGNED_IN_TTL_MS = 5 * 60 * 1000
 
 // A live field is a reference ({ get() }) in the running fiber; a plain value elsewhere (tests).
 export const flagOf = value => (typeof value?.get === 'function' ? value.get() : value)
@@ -88,10 +99,11 @@ export function nodeCommand() {
  * @param {any} ctx
  * @param {{ claude?: any, codex?: any, sideModel?: any, fakeAgent?: string, dshTools?: any }}
  *   [config]
- * @param {{ store?: any, cliStore?: any, find?: typeof findCommand, signedIn?: typeof signedInOf, catalogHome?: string }} [deps]
+ * @param {{ store?: any, cliStore?: any, find?: typeof findCommand, signedIn?: typeof signedInOf, catalogHome?: string, loginSpawn?: typeof spawn, loginTimers?: any }} [deps]
  *   catalogHome: where each agent's models and efforts are kept (beside the adapters by default).
+ *   loginSpawn, loginTimers: tests only, a fake CLI process and clock for sign-in attempts.
  */
-export function apply(ctx, config = {}, { store = new AdapterStore({ log: message => info(ctx, message) }), cliStore = !config.fakeAgent && (process.env.AUTOMAGIK_APP_BROWSER === '1' || process.env.AUTOMAGIK_PNPM) ? new CliStore({ log: message => info(ctx, message) }) : undefined, find = name => findCommand(name), signedIn = signedInOf, catalogHome = store.home ? join(dirname(store.home), 'catalog') : undefined } = {}) {
+export function apply(ctx, config = {}, { store = new AdapterStore({ log: message => info(ctx, message) }), cliStore = !config.fakeAgent && (process.env.AUTOMAGIK_APP_BROWSER === '1' || process.env.AUTOMAGIK_PNPM) ? new CliStore({ log: message => info(ctx, message) }) : undefined, find = name => findCommand(name), signedIn = signedInOf, catalogHome = store.home ? join(dirname(store.home), 'catalog') : undefined, loginSpawn, loginTimers } = {}) {
   const agents = new Map()
   const log = message => info(ctx, message)
   if (config.fakeAgent) {
@@ -109,11 +121,16 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   }
   const backchannel = new Backchannel({ ctx, log })
   const redact = redactorFor(ctx)
+  // The chat's image keeper (`keepImages`): where an image an agent makes in a chat is kept so the
+  // chat can show it. One at a time; the Bot team registers its images folder.
+  let imageKeeper
   const adapter = new AcpAdapter(ctx, agents, {
+    images: () => imageKeeper,
     // The raw tri-state: an absent setting takes each agent's own switch in AcpAdapter.
     dshTools: () => flagOf(config.dshTools),
     backchannel,
     redactor: redact,
+    onSignedOut: id => signedOut(id),
   })
   // The kill switch is live: any change of `dshTools` ends the agent sessions and revokes their
   // bridges, so a credential minted while it was on cannot keep calling DSH tools and a Session
@@ -249,6 +266,40 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     if (clis.get(id) === cli) signIns.set(id, authenticated)
   }
   const probeAll = () => Promise.all(Object.keys(AGENTS).map(probe))
+  // One agent's status with a fresh sign-in check, for a Bot that is about to be put on it
+  // (bots-dsh models.js). Read-only: it asks the CLI `auth status` and nothing else, never
+  // installs, enables or starts a login. Only that sign-in check is shared and kept: checks a
+  // few at once share one probe, and its answer stands for INSPECT_TTL_MS (a confirmed sign-in
+  // for SIGNED_IN_TTL_MS) for the same CLI, so a burst of picks, or a Bot's turns, spawn the CLI
+  // once. Everything else in the row (the setting, the CLI, the connector) is read again on every
+  // inspect: an agent turned off or a connector that failed is never reported ready from cache.
+  const inspections = new Map()
+  // The agent itself said it is signed out (ACP auth_required): the cached answer goes, and the
+  // next check asks the CLI again.
+  const signedOut = (id) => {
+    if (disposed || !Object.hasOwn(AGENTS, id)) return
+    inspections.delete(id)
+    if (signIns.get(id) !== false) {
+      signIns.set(id, false)
+      publish()
+    }
+  }
+  const inspect = async (id) => {
+    if (!Object.hasOwn(AGENTS, id)) return undefined
+    reconcile({ kick: false })
+    const cli = clis.get(id)
+    let entry = inspections.get(id)
+    if (entry === undefined || entry.cli !== cli || (entry.at !== undefined && Date.now() - entry.at >= entry.ttl)) {
+      const fresh = { at: undefined, ttl: INSPECT_TTL_MS, cli, promise: undefined }
+      fresh.promise = probe(id).then(() => {
+        if (signIns.get(id) === true) fresh.ttl = SIGNED_IN_TTL_MS
+      }).finally(() => { fresh.at = Date.now() })
+      fresh.promise.catch(() => { if (inspections.get(id) === fresh) inspections.delete(id) })
+      inspections.set(id, entry = fresh)
+    }
+    await entry.promise
+    return statusOf(id)
+  }
 
   // Required desktop tools are independent of model switches and onboarding. Installing
   // them never starts authentication; the existing explicit refresh owns sign-in checks.
@@ -441,9 +492,104 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     return { on: true, probesPass: await entry.promise }
   }
 
+  // Sign-in attempts (login.js): one per agent, owned here, read by any owner view. A ready
+  // sign-in is recorded only for the executable that confirmed it (the update loop may have
+  // installed a newer CLI meanwhile), and announced on the plugin context, as the dshTools flip
+  // is, so the Bot team can apply the model the person chose (`acp-dsh/login-ready`). The
+  // number at work is announced too (`acp-dsh/login-active`): the welcome adds it to the busy
+  // file, so the app's own restarts wait for an attempt to end.
+  const logins = new CliLogins({
+    ...(loginSpawn ? { spawn: loginSpawn } : {}),
+    ...(loginTimers ? { timers: loginTimers, now: () => loginTimers.now() } : {}),
+    signedIn,
+    resolve(id) {
+      reconcile({ kick: false })
+      return { cli: clis.get(id), env: { ...process.env, ...cliEnvironment(AGENTS[id], cliDetails.get(id)) } }
+    },
+    onReady(id, selected) {
+      if (disposed) return
+      if (clis.get(id) === selected.cli) signIns.set(id, true)
+      inspections.delete(id)
+      publish()
+      try {
+        ctx.emit?.('acp-dsh/login-ready', { id })
+      } catch (error) {
+        warn(ctx, `the sign-in of ${id} was not announced: ${error?.message ?? error}`)
+      }
+    },
+    onChange(active) {
+      try {
+        ctx.emit?.('acp-dsh/login-active', { active })
+      } catch (error) {
+        warn(ctx, `the sign-in count was not announced: ${error?.message ?? error}`)
+      }
+    },
+  })
+
+  // Images on the person's ChatGPT plan, through the Codex CLI's own sign-in (image.js). Ready
+  // means: Codex is on and found, its connector installed, and its CLI says it is signed in. An
+  // unknown sign-in is asked once (`codex login status`, read-only); nothing else is spawned.
+  const IMAGE_AGENT = 'acp-codex'
+  const imageAccess = async () => {
+    reconcile({ kick: false })
+    const agent = agents.get(IMAGE_AGENT)
+    if (agent === undefined || agent.installed?.() !== true) return { ready: false }
+    if (signIns.get(IMAGE_AGENT) === undefined) await probe(IMAGE_AGENT).catch(() => {})
+    const signedIn = signIns.get(IMAGE_AGENT)
+    return { ready: signedIn === true, ...(signedIn === undefined ? {} : { signedIn }) }
+  }
+  const generateImage = async ({ prompt, size, quality, background, signal, timeoutMs } = {}) => {
+    const access = await imageAccess()
+    if (!access.ready) {
+      if (access.signedIn === false) throw imageRefusal(SIGNED_OUT, 'Codex is not signed in. Sign in to Codex from a Bot\'s chat, or add an OpenAI key, then try again.')
+      throw imageRefusal(UNAVAILABLE, 'Codex cannot draw images here yet: it is off, not installed, or its sign-in could not be checked.')
+    }
+    try {
+      return await drawImage({ spawn: () => agents.get(IMAGE_AGENT).spawn(), prompt, size, quality, background, signal, ...(timeoutMs === undefined ? {} : { timeoutMs }), name: AGENTS[IMAGE_AGENT].defaultName })
+    } catch (error) {
+      // A run refused as signed out says the CLI's sign-in ended: the next check asks again.
+      if (error?.code === SIGNED_OUT) signIns.delete(IMAGE_AGENT)
+      throw error
+    }
+  }
+
   const service = {
     settingsEntry: name,
     status,
+    // Sign-in, for the DSH owner's views only (the Bot team's owner-only route): never tools,
+    // never listed by status(), and nothing here writes into a conversation or a model setting.
+    // `label` names the view that opens an attempt (a Bot id) for the cancel confirmation.
+    loginStart: (id, { label } = {}) => logins.start(id, { label }),
+    /** The attempt at work for this agent, from any view, or undefined. Never starts or cancels one. */
+    loginCurrent: id => logins.current(id),
+    loginStatus: (id, attemptId) => logins.status(id, attemptId),
+    loginAnswer: (id, attemptId, value) => logins.answer(id, attemptId, value),
+    loginCancel: (id, attemptId) => logins.cancel(id, attemptId),
+    /** Whether a text carries a Claude sign-in state shown in the last day. Only a boolean. */
+    loginTextMatches: text => logins.textMatches(text),
+    /** How many sign-in attempts are starting or waiting (the busy signal). */
+    loginActive: () => logins.activeAttempts(),
+    /**
+     * Whether Codex can draw an image now, on its own ChatGPT sign-in: { ready, signedIn? }.
+     * Never starts a sign-in and never reads a credential.
+     */
+    imageAccess,
+    /**
+     * Draws one image with the Codex CLI (image.js): { prompt, size?, quality?, background?,
+     * signal?, timeoutMs? } -> { base64, mimeType }. Refusals carry an `acp/image-*` code and a
+     * message to show as it is.
+     */
+    generateImage,
+    /**
+     * Where an image an agent makes in a chat goes (agent-image.js): `keeper` is
+     * { start?({ callId, sessionId, via }), keep({ callId, sessionId, base64, mimeType, via }) ->
+     * Promise<{ file }>, fail?({ callId, sessionId, error }) }. The PNG comes from the agent's own
+     * tool update, never from a file it saved. Returns the disposer; a later keeper replaces it.
+     */
+    keepImages(keeper) {
+      imageKeeper = keeper
+      return () => { if (imageKeeper === keeper) imageKeeper = undefined }
+    },
     /**
      * What the Bot team gates its one-time Claude move on: whether DSH's tools reach an agent
      * here (`dshTools`), and whether this machine's bridge really answers `initialize` and
@@ -453,8 +599,15 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     async bridge() {
       return bridgeStatus()
     },
+    /**
+     * One agent's status (`status()`'s row) with a fresh sign-in check: what the Bot team reads
+     * before it puts a Bot on that agent. Read-only; undefined for an id that is no agent here.
+     * @param {string} id
+     */
+    inspect,
     /** Looks for the CLIs again (one installed since DSH started) and asks each whether it is signed in. */
     async refresh() {
+      inspections.clear()
       reconcile()
       await probeAll()
       return status()
@@ -497,6 +650,21 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     (previous, next) => agentRoute(agents, previous.provider) || agentRoute(agents, next.provider),
   )
   ctx.on?.('session/event', (session, event) => { void carry(session, event) })
+  // The model-switch guard: an agent destination needs no compaction (pressure.js). Adopted when
+  // an agent is created, and again on its requests, so an engine made after the agent (a
+  // reloaded compaction plugin) is covered before its guard prices the next switch. The
+  // request listener is not prepended: compaction-basic's prepended listener calls `next()`
+  // (this one) before it prices the switch.
+  const pressure = pressureGuard({ agentDestination: provider => agentRoute(agents, provider) })
+  const adoptPressure = (agent) => {
+    if (agent === undefined || agent === null) return
+    for (const engine of enginesFor(ctx, agent)) pressure.adopt(engine)
+  }
+  ctx.on?.('agent/created', ({ agent } = {}) => adoptPressure(agent))
+  ctx.on?.('agent/request', (payload, next) => {
+    adoptPressure(payload?.agent)
+    return next()
+  })
   // The newest adapter releases, at start and daily after; a Session already running keeps its own.
   const refresh = () => {
     for (const [id, spec] of Object.entries(AGENTS)) if (agents.has(id)) void install(spec)
@@ -510,9 +678,12 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   // Cordis 4 has no 'dispose' event: an effect's cleanup is what runs when the plugin stops.
   ctx.effect?.(() => () => {
     disposed = true
+    // First, so a throwing cleanup below never leaves the wrapper on a live engine.
+    pressure.dispose()
     clearTimeout(first)
     clearInterval(daily)
     clearInterval(cliChecks)
+    logins.dispose()
     // A running adapter install would otherwise outlive DSH and keep writing into its home.
     store.dispose?.()
     cliStore?.dispose?.()

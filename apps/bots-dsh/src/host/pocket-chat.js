@@ -242,11 +242,14 @@ const globalOnly = bot => bot?.project == null
  *   registryIdOf?: (bot: { id: string, name?: string, project?: string | null }) => string | null,
  *   timers?: typeof realTimers, pollMs?: number, listMs?: number,
  *   keep?: number, maxFollowed?: number, log?: (...args: any[]) => void, writable?: boolean,
- *   shown?: (bot: { id: string, project?: string | null, machine?: string, placeUnknown?: true }) => boolean, chatOwner?: (sessionId: string) => string | undefined, now?: () => number }} options
+ *   shown?: (bot: { id: string, project?: string | null, machine?: string, placeUnknown?: true }) => boolean, chatOwner?: (sessionId: string) => string | undefined, now?: () => number,
+ *   carriesSignInCode?: (text: string) => boolean }} options
  */
 export class DshChatSource {
-  constructor({ adapter, bots, timers = realTimers, pollMs = STATE_POLL_MS, listMs = LIST_STATE_MS, keep = KEEP_ROWS, maxFollowed = MAX_FOLLOWED, log = () => {}, writable = false, shown = globalOnly, registryIdOf = () => null, chatOwner, now = Date.now }) {
+  constructor({ adapter, bots, timers = realTimers, pollMs = STATE_POLL_MS, listMs = LIST_STATE_MS, keep = KEEP_ROWS, maxFollowed = MAX_FOLLOWED, log = () => {}, writable = false, shown = globalOnly, registryIdOf = () => null, chatOwner, now = Date.now, carriesSignInCode = () => false }) {
     Object.assign(this, { adapter, bots, timers, pollMs, listMs, keep, maxFollowed, log, shown, registryIdOf, now })
+    /** Whether a text carries a Claude sign-in code the computer showed (cli-login.js). Never throws. */
+    this.carriesSignInCode = (text) => { try { return carriesSignInCode(text) === true } catch { return false } }
     /** Writes need the adapter's prompt and cancel, and the answerer listeners wired (install). */
     this.writable = writable === true && typeof adapter?.prompt === 'function' && typeof adapter?.cancel === 'function'
     this.chatOwner = chatOwner ?? (sessionId => [...this.entries.values()].find(entry => entry.sessionId === sessionId)?.botId)
@@ -570,6 +573,13 @@ export class DshChatSource {
     if (bytes(message.text) > SEND_TEXT_MAX) return refused('too-long', { id })
     const cleaned = cleanChatText(message.text)
     if (!cleaned.ok) return refused('empty', { id })
+    // A pasted sign-in code is refused before DSH's prompt: that would write it into the
+    // Session's record ahead of any step (plan v3, rule 3). An existing reason, so Pocket says
+    // it was not sent without a new wording; the log names the kind only.
+    if (this.carriesSignInCode(message.text)) {
+      this.log('pocket chat: a send carried a sign-in code and was not sent')
+      return refused('invalid', { id, message: 'sign-in-code' })
+    }
     const requestId = id.startsWith(REQUEST_PREFIX) ? id : `${REQUEST_PREFIX}${id}`
     if (this.sent.get(entry.sessionId)?.includes(requestId)) return { ok: true, state: 'sent', id, repeat: true }
     const gate = await this.stillServed(entry)
@@ -624,6 +634,10 @@ export class DshChatSource {
       // Withdrawn and a newer request open in its place: the row was replaced, not answered.
       const replaced = settled?.outcome === 'withdrawn' && (open?.size ?? 0) > 0
       return settled && !replaced ? refused('settled', { receipt: settled }) : refused('changed', { message: 'The question changed' })
+    }
+    if (typeof text === 'string' && this.carriesSignInCode(text)) {
+      this.log('pocket chat: an answer carried a sign-in code and was not sent')
+      return refused('invalid', { message: 'sign-in-code' })
     }
     const value = request.row.kind === 'approval' ? approvalAnswer(choice, text) : questionAnswer(request, choice, text)
     if (!value.ok) return refused(value.reason)
@@ -855,6 +869,7 @@ export function install(rt) {
       source = new DshChatSource({
         adapter: createAdapter(controller), bots: ownBots(rt, reader), shown: reader.shown, registryIdOf: reader.registryIdOf,
         log: (...args) => rt.warn?.(...args), writable, chatOwner,
+        carriesSignInCode: text => rt.loginTextMatches?.(text) === true,
       })
       socket = await startPocketSocket({ home: rt.home, source, log: (...args) => rt.warn?.(...args) })
       if (stopped) await socket.close()

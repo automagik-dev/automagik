@@ -96,30 +96,44 @@ test('two starts at once begin one sign-in; a cancelled one leaves no route behi
 
 test('a sign-in adds the route, relays its notice and question, takes the answer and ends authorized', async () => {
   const fake = host()
-  const started = await fake.handle('signin-start', { provider: 'openai-codex' })
+  const started = await fake.handle('signin-start', { provider: 'kimi-coding' })
   assert.equal(started.value.status, 'running')
-  assert.equal(fake.valueOf('llm-pi-ai').providers['openai-codex'], undefined)
+  assert.equal(fake.valueOf('llm-pi-ai').providers['kimi-coding'], undefined)
   const [attempt] = fake.authorization.begun
-  assert.equal(attempt.key, 'llm-pi-ai/openai-codex')
+  assert.equal(attempt.key, 'llm-pi-ai/kimi-coding')
   assert.equal(attempt.method, 'oauth')
 
   attempt.interaction.notify({ message: 'Enter this code', url: 'https://auth.example/device', code: 'AB12-CD34' })
   const answer = attempt.interaction.prompt({ kind: 'select', message: 'How?', options: [{ id: 'device', label: 'Device code' }, { id: 'browser', label: 'Browser' }] })
-  const status = (await fake.handle('signin-status', { provider: 'openai-codex' })).value
+  const status = (await fake.handle('signin-status', { provider: 'kimi-coding' })).value
   assert.deepEqual(status.notice, { message: 'Enter this code', url: 'https://auth.example/device', code: 'AB12-CD34' })
   assert.equal(status.prompt.kind, 'select')
-  assert.equal((await fake.handle('signin-answer', { provider: 'openai-codex', promptId: status.prompt.id, value: 'nope' })).error.code, 'omni-ai/invalid')
-  assert.equal((await fake.handle('signin-answer', { provider: 'openai-codex', promptId: status.prompt.id, value: 'device' })).ok, true)
+  assert.equal((await fake.handle('signin-answer', { provider: 'kimi-coding', promptId: status.prompt.id, value: 'nope' })).error.code, 'omni-ai/invalid')
+  assert.equal((await fake.handle('signin-answer', { provider: 'kimi-coding', promptId: status.prompt.id, value: 'device' })).ok, true)
   assert.equal(await answer, 'device')
   // An answered question is closed.
-  assert.equal((await fake.handle('signin-answer', { provider: 'openai-codex', promptId: status.prompt.id, value: 'device' })).error.code, 'omni-ai/refused')
+  assert.equal((await fake.handle('signin-answer', { provider: 'kimi-coding', promptId: status.prompt.id, value: 'device' })).error.code, 'omni-ai/refused')
 
   attempt.settle({ status: 'authorized' })
   await tick()
   await tick()
-  assert.equal((await fake.handle('signin-status', { provider: 'openai-codex' })).value.status, 'authorized')
+  assert.equal((await fake.handle('signin-status', { provider: 'kimi-coding' })).value.status, 'authorized')
   // The route arrives with the finished sign-in.
-  assert.deepEqual(fake.valueOf('llm-pi-ai').providers['openai-codex'], {})
+  assert.deepEqual(fake.valueOf('llm-pi-ai').providers['kimi-coding'], {})
+})
+
+test('Claude and ChatGPT plans are not signed in here: they sign in through their CLIs', async () => {
+  const fake = host({ authorization: fakeAuthorization(['llm-pi-ai/anthropic', 'llm-pi-ai/openai-codex']) })
+  for (const provider of ['anthropic', 'openai-codex']) {
+    for (const endpoint of ['signin-start', 'signin-status', 'signin-answer', 'signin-cancel']) {
+      assert.equal((await fake.handle(endpoint, { provider })).error.code, 'omni-ai/invalid', `${endpoint} ${provider}`)
+    }
+  }
+  assert.equal(fake.authorization.begun.length, 0)
+  assert.equal(fake.updates.length, 0)
+  const value = (await fake.handle('providers')).value
+  assert.equal(value['openai-codex'], undefined)
+  assert.equal(value.anthropic.signIn, undefined)
 })
 
 test('a second start while one runs joins it; cancel withdraws the attempt and its question', async () => {
@@ -159,34 +173,6 @@ test('providers reports, per tile, a stored key, a sign-in and whether this DSH 
   assert.equal(value['kimi-coding'].signedIn, true)
   assert.equal(value['kimi-coding'].signIn, true)
   assert.equal(value['github-copilot'].signIn, false)
-})
-
-test('Claude signs in through pi-ai\'s anthropic flow (Pro/Max), and the finished sign-in adds a route that names no key and does not retry the plan\'s 429', async () => {
-  const fake = host({ authorization: fakeAuthorization(['llm-pi-ai/anthropic']) })
-  assert.equal((await fake.handle('signin-start', { provider: 'anthropic' })).value.status, 'running')
-  const [attempt] = fake.authorization.begun
-  assert.deepEqual([attempt.key, attempt.method], ['llm-pi-ai/anthropic', 'oauth'])
-  attempt.settle({ status: 'authorized' })
-  await tick()
-  await tick()
-  // No key, and the plan's 429 is not retried: the turn moves to the fallback model at once.
-  assert.deepEqual(fake.valueOf('llm-pi-ai').providers.anthropic, { retryPolicy: { mode: 'normal', retryableCodes: ['EMPTY_RESPONSE', 'SERVER', 'TIMEOUT', 'TRANSPORT'] } })
-  assert.equal((await fake.handle('providers')).value.anthropic.signIn, true)
-  // A route already on an Anthropic API key keeps it: the key runs, the sign-in sits beneath it.
-  const keyed = host({ entries: withPiAi({ anthropic: { apiKeyEnv: 'ANTHROPIC_API_KEY' } }), authorization: fakeAuthorization(['llm-pi-ai/anthropic']) })
-  await keyed.handle('signin-start', { provider: 'anthropic' })
-  keyed.authorization.begun[0].settle({ status: 'authorized' })
-  await tick()
-  await tick()
-  assert.deepEqual(keyed.valueOf('llm-pi-ai').providers.anthropic, { apiKeyEnv: 'ANTHROPIC_API_KEY' })
-  // A route an older version added for the sign-in (no key, no policy) takes the policy at
-  // the next sign-in, and keeps what else it holds.
-  const older = host({ entries: withPiAi({ anthropic: { displayName: 'Claude' } }), authorization: fakeAuthorization(['llm-pi-ai/anthropic']) })
-  await older.handle('signin-start', { provider: 'anthropic' })
-  older.authorization.begun[0].settle({ status: 'authorized' })
-  await tick()
-  await tick()
-  assert.deepEqual(older.valueOf('llm-pi-ai').providers.anthropic, { displayName: 'Claude', retryPolicy: { mode: 'normal', retryableCodes: ['EMPTY_RESPONSE', 'SERVER', 'TIMEOUT', 'TRANSPORT'] } })
 })
 
 // The review of #196: a sign-in's route that then takes a key is a key's route, and a key's

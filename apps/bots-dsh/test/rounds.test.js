@@ -181,6 +181,41 @@ test('a message the composer queues mid-round joins the round and leaves the Ses
   assert.deepEqual(inboxOf(room.id).nextTurn, [])
 })
 
+test('a sign-in code typed mid-round leaves the queue and reaches no log, reply, prompt or file', async (t) => {
+  const { call, emit, userMessage, compose, relay, inboxOf, answer, stop, sent, rt, home } = start()
+  t.after(stop)
+  const room = await team(call, sent)
+  // acp-dsh knows the state it showed (cli-login.js); only this text carries it.
+  const pasted = 'auth-code-1234#shown-state-5678'
+  rt.loginTextMatches = text => typeof text === 'string' && text.includes('#shown-state-5678')
+  const warnings = []
+  const warn = rt.warn
+  rt.warn = (...args) => { warnings.push(args.map(String).join(' ')); return warn?.(...args) }
+
+  await emit(room.id, userMessage('Tell me a long story'))
+  const running = relay(room.id, 'relay')
+  const first = await turnFor(sent)
+  assert.ok(first, 'the admin gets the first turn')
+  await compose(room.id, pasted, 'steer')
+  await answer(first.sessionId, first.message.source.exchangeId, 'Once upon a time...', 1)
+  const second = await turnFor(sent, first)
+  assert.ok(second, 'the round goes on')
+  assert.doesNotMatch(second.message.content[0].text, /shown-state-5678|auth-code-1234/)
+  await answer(second.sessionId, second.message.source.exchangeId, 'The end.', 2)
+  const result = JSON.parse(await running)
+  assert.deepEqual(result.replies.map(reply => reply.name ?? 'User'), ['Omni', 'Writer'], 'no user line joins the round')
+  assert.deepEqual(inboxOf(room.id).nextStep, [], 'the message left the queue')
+  assert.ok(sent.every(entry => !JSON.stringify(entry.message).includes('shown-state-5678')), 'no member prompt carries it')
+  const stored = (await call('state', {})).value
+  assert.doesNotMatch(JSON.stringify(stored), /shown-state-5678|auth-code-1234/)
+  await settle()
+  for (const file of ['state.json']) {
+    const path = join(home, file)
+    if (existsSync(path)) assert.doesNotMatch(readFileSync(path, 'utf8'), /shown-state-5678|auth-code-1234/)
+  }
+  assert.ok(warnings.some(line => /sign-in code/.test(line)) && warnings.every(line => !line.includes('shown-state-5678')), 'said once, without the code')
+})
+
 test('a plain message steered mid-round is answered by everyone, admin first, inside the round', async (t) => {
   const { call, emit, userMessage, compose, relay, inboxOf, answer, stop, sent } = start()
   t.after(stop)
