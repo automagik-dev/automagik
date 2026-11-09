@@ -45,22 +45,25 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { verifyLane, ROOT as REPO_ROOT, type Lane } from './lane';
 
 const REPO = 'automagik-dev/automagik';
 const PUBLIC_REPO = `https://github.com/${REPO}`;
 
-/** The host this was written for; every path can be overridden from the environment. */
+/** This host's home directory, the base of every default path below. */
+const HOME = homedir();
+
+/** The host layout; every path can be overridden from the environment. */
 export const DEFAULTS = {
-  automagikHome: '/home/namastex/prod/automagik',
-  dshHome: '/home/namastex/.automagik/web/dsh',
+  automagikHome: join(HOME, 'prod', 'automagik'),
+  dshHome: join(HOME, '.automagik', 'web', 'dsh'),
   profile: 'web',
   service: 'automagik-web',
   publicUrl: 'https://ia.escoladofluxo.com/',
   healthUrl: 'http://127.0.0.1:8080',
-  backupRoot: '/home/namastex/prod/automagik/backups',
+  backupRoot: join(HOME, 'prod', 'automagik', 'backups'),
 } as const;
 
 /** A release's plugins.json (also the shape docs/upgrade.md describes). */

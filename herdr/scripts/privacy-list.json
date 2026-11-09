@@ -133,13 +133,19 @@
       "file": "apps/pocket/android/app/src/test/java/ai/namastex/automagik/SpendTest.kt",
       "text": "git@github.com",
       "why": "a deliberate SpendTest fixture: a git remote URL"
+    },
+    {
+      "file": "docs/rfcs/0012-am-cli-and-parts.md",
+      "text": "/home/automagik",
+      "why": "the documented home of the WSL container guest, a public product path"
+    },
+    {
+      "file": "docs/rfcs/0016-windows-wslc.md",
+      "text": "/home/automagik",
+      "why": "the documented volume path of the WSL container guest, a public product path"
     }
   ],
   "pending": [
-    {
-      "folder": ".genie",
-      "issue": "#795"
-    },
     {
       "folder": "apps/bots-dsh",
       "issue": "#795"
@@ -177,15 +183,7 @@
       "issue": "#795"
     },
     {
-      "folder": "docs",
-      "issue": "#795"
-    },
-    {
       "folder": "meter",
-      "issue": "#795"
-    },
-    {
-      "folder": "scripts",
       "issue": "#795"
     },
     {

@@ -1,6 +1,6 @@
 # DSH pt-BR copy fixes (dropped from the pack, kept for upstream)
 
-Felipe ratified the locale shrink as-is: **one Portuguese row, DSH's own `pt`** (dates `11/6`,
+The owner ratified the locale shrink as-is: **one Portuguese row, DSH's own `pt`** (dates `11/6`,
 thousands `1,000`), and the pack's `pt-BR` entry and the four DSH-namespace overrides stay
 dropped until upstream carries the Brazilian copy. This file preserves exactly what was dropped,
 with the upstream file and key for each string, so the fixes can be offered to DeepSeek Harness

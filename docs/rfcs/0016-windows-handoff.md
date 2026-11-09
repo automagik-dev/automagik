@@ -8,13 +8,13 @@ yours, in which order, and how to work with the team.
 ## How to reach us
 
 Ask questions as a comment on your own PR, or as an issue in
-[automagik-dev/automagik](https://github.com/automagik-dev/automagik/issues), and mention Felipe
-there (`@namastex888`). Send them to Felipe directly too. Wherever this page says "ask", it means
+[automagik-dev/automagik](https://github.com/automagik-dev/automagik/issues), and mention the owner
+there (`@namastex888`). Send them to the owner directly too. Wherever this page says "ask", it means
 this.
 
 ## What exists
 
-- **The RFC.** Accepted by Felipe on 2026-11-04. Its open questions are answered (Q1-Q9 under
+- **The RFC.** Accepted by the owner on 2026-11-04. Its open questions are answered (Q1-Q9 under
   "Decided"). Where this page and the RFC disagree, the RFC wins; tell us.
 - **Delivery 2, the image and the launcher.** The DSH squad is building it, on GitHub's Linux
   runners, with no Windows. It makes the Linux image and `dsh-launch`, the guest launcher with
@@ -24,19 +24,19 @@ this.
   is RFC 0012 delivery 6, which nobody is assigned to yet. Delivery 4 needs both.
 - **Not started:** delivery 1 (the spike), 3 (the Windows boundary), 4 (herdr on Windows),
   5 (uninstall) and 6 (Windows ships). There is no `automagik-wslc.exe` yet.
-- **No Windows CI runner.** Whether to have one, and where, is Felipe's call (see "Owner-held").
+- **No Windows CI runner.** Whether to have one, and where, is the owner's call (see "Owner-held").
   Until one exists, Windows checks run by hand on your PC.
 - **Windows publishing is off** (D38). No Windows build reaches users until delivery 6.
 
 ## Your part, in order
 
-Felipe gave you the spike and the Windows deliveries (RFC, Decided, 2026-11-04): 1, 3, 4a and
+The owner gave you the spike and the Windows deliveries (RFC, Decided, 2026-11-04): 1, 3, 4a and
 5, in that order. 4b, on the herdr lane, is the team's; it is below so you know what 4a meets.
 Each delivery is one PR to `dev`. The check and the rollback are the RFC's own ("Deliveries").
 
 ### 1. The spike (no lane; docs only)
 
-It runs on your own Windows x86_64 PC (Felipe's answer, in the RFC's Decided). An ARM VM on the
+It runs on your own Windows x86_64 PC (the owner's answer, in the RFC's Decided). An ARM VM on the
 Mac would measure the wrong hardware. Measure what the RFC marks **[unverified]**. Write each
 number and how you took it.
 
@@ -102,7 +102,7 @@ image's download (Q5) and its trial.
   screen.
 - *Where the check runs:* until a self-hosted Windows runner exists, the WSL 3.0.1 run is by
   hand on your PC; write in the PR what you ran and what you saw. The no-WSL run and the policy
-  gates are not for your PC: they remove or turn off the WSL your distro needs. Felipe says
+  gates are not for your PC: they remove or turn off the WSL your distro needs. The owner says
   where they run (the RFC says the same).
 - *Rollback:* revert; nothing was published.
 
@@ -156,7 +156,7 @@ Keep, backup and Delete.
 
 ### 6. Windows ships again (owner-gated)
 
-Felipe decides when. It needs signed Windows builds (Q6), and signing is owner-held. You do
+The owner decides when. It needs signed Windows builds (Q6), and signing is owner-held. You do
 not start it. *Check:* a release's Windows asset installs on a clean machine through delivery
 3's check. *Rollback:* turn the Windows build off again; installed apps keep running on the
 last image.
@@ -185,7 +185,7 @@ last image.
 - Each PR gets an independent review from the team. You never merge.
 - A merge into `dev` releases to installed macOS and Linux apps. A desktop PR keeps them working
   as they are: Windows code stays off their path.
-- **Owner-held** (Felipe's; ask Felipe before anything that touches them): signing keys, release
+- **Owner-held** (ask the owner before anything that touches them): signing keys, release
   publishing, Pocket's versionCodes, every secret, and the Windows CI runner (whether to have
   one, its cost, and its registration; not decided).
 - Nothing is published to npm.
@@ -207,7 +207,7 @@ no gets the command and its output. Share no keys, tokens or account names.
 
 ## Stop and ask
 
-Stop and ask Felipe before you:
+Stop and ask the owner before you:
 
 - change or remove your existing WSL2 distro, or do anything that might;
 - make an admin policy or registry change you are unsure about, on your own PC;

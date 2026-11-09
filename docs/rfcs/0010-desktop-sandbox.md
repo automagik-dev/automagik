@@ -13,12 +13,12 @@ The desktop wrapper (D12, D13) has to run DSH, Omni and later Herdr's code mode 
 safe sandbox". This RFC compares what Unfold 0.5, Omni's `sandbox run --embedded` and our
 Electron app do today, layer by layer. It names the gaps all three share and proposes six
 deliveries. Each delivery is small and can be reverted, and none of them waits for Arca.
-Felipe's answers (D19) are under Decided. They defer secret swapping and egress control to a
+The owner's answers (D19) are under Decided. They defer secret swapping and egress control to a
 later phase.
 
 ## Motivation
 
-Felipe says Unfold's approach is "still missing something". Unfold's shipped layer is a
+The owner says Unfold's approach is "still missing something". Unfold's shipped layer is a
 well-built supervisor, but it is not a sandbox. Six things are missing:
 
 - **Parent-death.** No PDEATHSIG or kqueue watch, so a SIGKILLed Unfold leaves DSH and Omni
@@ -194,7 +194,7 @@ DESIGN.md already lists the first two).
 
 ## Decided
 
-Felipe answered these on 2026-11-03 (D19).
+The owner answered these on 2026-11-03 (D19).
 
 1. **Shell-env API keys.** They keep passing through to DSH's environment, as today. Agents
    can read them. Header-swapped secrets (the broker in Design and delivery 2) are deferred to
