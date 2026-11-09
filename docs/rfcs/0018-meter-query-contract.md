@@ -107,6 +107,9 @@ usagemeter query --repo <host/owner/repo> --branch <b> [--branch <b> ...] --json
 - **The caller names the contract it reads.** `--contract` defaults to 1. A meter that does not
   serve the asked version exits 14 and lists the versions it does serve. Once contract 2 exists,
   the meter keeps serving contract 1 for at least one compatibility release.
+- **Rows by bot** (RFC 0021 (d)). `--by bot` answers one row per bot key, with
+  `attribution.precision: actor_interval`, the branches named becoming an optional filter;
+  without it, rows are by branch, as above.
 
 #### The envelope
 
@@ -126,15 +129,17 @@ never has to tell a v1 refusal from an old meter's error by stderr text. The sch
 | `ingestion` | `watermark` (when the last successful sync finished; null while a reset's re-import has not finished a run), `counted_from`, `evidence_from` (start of per-call evidence, null until M3), `complete`, `backlog` (`bytes`, `files`; each null when unknown, and then `complete` is false), `stale` and the `stale_after_s` used (proposed default 7200) |
 | `window` | `name`, `requested_start` (`end` less the window's days), the effective `start` (clipped to `counted_from`), `end` (the end of the hour holding the watermark; while the watermark is null, the end of the hour holding `generated_at`), `clipped` |
 | `sources[]` | per harness: `status` (`ok`, `degraded`, `unsupported`, `absent`; `absent` when the harness's log folder is not on this machine), `reason`, `last_success`, `stale`. dsh-tui is `degraded` when a usage line or frame could not be read (a call with no readable total, a frame whose checksum does not match) or when bytes at the end of a session that stopped growing are not a whole frame, and `unsupported` while a session is in a format the meter does not read. Then, when the folder before the state move holds usage this store never counts (an older meter wrote there after the move, or a store of its own is there), one more entry, `legacy-store`, `degraded`, with the reason: that usage is reported, never folded in |
-| `unattributed` | usage in this repo and window with no recorded branch: `tokens_total` and `harnesses` (today only OMP's). Zero when there is none. |
+| `unattributed` | usage in this repo and window with no branch, neither logged nor filled from the start row of the worker launch it resolves to (RFC 0021): `tokens_total` and `harnesses` (OMP's and dsh-tui's, whose logs carry none). Zero when there is none. |
+| `actor_unattributed` | RFC 0021 (d): the repo's usage in the window that no bot row holds (ambiguous, unlinked, before `evidence_from`), each part with its reason and harnesses. Present exactly when the meter reports actors; null on a refusal |
 | `pricing` | the table's `origin` (`bundled`, `override`, later `fetched`), `date`, `source`, `label`, `sha256` (of an override's bytes, null for the bundled table); `reported_wins` (always true); `long_prompt_tiers` (false until M4) |
-| `query` | the request echoed back: `repo`, `window`, `branch_count` (duplicates counted), `branches` as given (duplicates kept), `branches_complete`, and `request_sha256` (the sha256 of the UTF-8 of `repo`, `window` and each branch in order, each followed by a line feed). A refusal caps the echo (below), and a repo past its 512 bytes is echoed cut at a whole character with `repo_complete: false`; `query` is null only when the arguments do not parse. |
-| `rows[]` | one per distinct branch named (below) |
+| `query` | the request echoed back: `repo`, `window`, `by` (RFC 0021: present only for `--by bot`), `branch_count` (duplicates counted), `branches` as given (duplicates kept), `branches_complete`, and `request_sha256` (the sha256 of the UTF-8 of `repo`, `window`, the line `by bot` for a bot query, and each branch in order, each followed by a line feed). A refusal caps the echo (below), and a repo past its 512 bytes is echoed cut at a whole character with `repo_complete: false`; `query` is null only when the arguments do not parse. |
+| `rows[]` | one per distinct branch named (below); for `--by bot`, bot rows instead (RFC 0021 (d)) |
 
-On a refusal, `rows` and `sources` are empty and `as_of`, `ingestion`, `window`, `unattributed`
-and `pricing` are null, whatever the meter read before it refused. Only two fields carry what the
-store said: `store` once its `schema_version` was read (exit 12, 13 and 15, and exit 1 when the
-failure came after that read), and `machine` on exit 15 alone. Both are null on exit 2, 10, 11 and
+On a refusal, `rows` and `sources` are empty and `as_of`, `ingestion`, `window`, `unattributed`,
+`actor_unattributed` when present, and `pricing` are null, whatever the meter read before it
+refused. Only two fields carry what the store said: `store` once its `schema_version` was read
+(exit 12, 13 and 15, and exit 1 when the failure came after that read), and `machine` on exit 15
+alone. Both are null on exit 2, 10, 11 and
 14. `query` is null only on an exit 2 whose arguments do not parse; every other refusal echoes the
 request, capped (below). The schema enforces each of these, and the crate's contract test checks
 them on every example and on the meter's own refusals.
@@ -149,7 +154,7 @@ A row:
 | `tokens` | `input`, `cache_read`, `cache_write_5m`, `cache_write_1h`, `output`, `reasoning` (inside `output`, never added; null when a harness that counted toward the row logs no reasoning split, dsh-tui today), `unsplit` (known only as a total), `total`. Every field is present, zeros included. Null when nothing was measured. |
 | `cost` | `state` (`priced`, `partial`, `unpriced`, `zero`); `usd` (the known part), `usd_reported` (what the harness reported), `usd_estimated` (from the table); `tokens_priced`, `tokens_reported`, `tokens_unpriced`, which add up to `tokens.total`; `unpriced_models`, and `unpriced_models_omitted`, how many the list leaves out past its 8 (always present, 0 when none is left out; above 0, the list holds all 8) |
 | `token_precision` | `exact`, `mixed` or `total_only` (Codex threads with no split) |
-| `attribution` | `precision`: `branch_window` in v1, the repo and branch total over the window; `exclusive`: always false in v1; `shared`; `coverage`: `complete`, or `partial` while `unattributed` is above zero |
+| `attribution` | `precision`: `branch_window` on a branch row, the repo and branch total over the window (`actor_interval` is a bot row's, and `task_interval` M3's task row's, RFC 0021); `exclusive`: always false in v1; `shared`; `coverage`: `complete`, or `partial` while `unattributed` is above zero; `actor`, when the meter reports actors (RFC 0021 (d)) |
 | `activity` | `first_hour`, `last_hour`, `hours` (distinct hours with usage, not elapsed time), `harnesses` |
 | `incomplete_sources` | harnesses whose health means this row may undercount |
 
@@ -169,9 +174,9 @@ null, never 0; `zero` only on a zero row. Amounts are rounded to four decimals, 
 amount above 0 that would round to 0 keeps its exact value: a 0 is shown only when the cost truly
 is zero. Null or unknown never becomes 0, in the meter or in a reader.
 
-**Usage with no branch.** OMP logs no branch, so its usage reaches the store with its repo known
-and its branch null, and it could belong to any branch of that repo. While the repo has any such
-usage in the window (`unattributed.tokens_total` above zero):
+**Usage with no branch.** OMP and dsh-tui log no branch, so their usage reaches the store with
+its repo known and its branch null, and it could belong to any branch of that repo. While the
+repo has any such usage in the window (`unattributed.tokens_total` above zero):
 
 - no row of that call is `zero`: a branch with nothing of its own is `missing` with
   `branch_unattributed`;
@@ -363,8 +368,8 @@ For those hours the branch-window total is still there, labelled as such.
 
 **Session ids stay machine-local.** They live only in the meter's state folder (mode 0600) and
 genie's machine-local capture ledger. They never enter git-tracked state, the `herdr-meter` doc,
-a query envelope (v1 rows are per branch; later task rows count sessions, they do not name
-them), or any telemetry target unless an operator names one.
+a query envelope (v1 rows are per branch or, RFC 0021, per bot; later task rows count
+sessions, they do not name them), or any telemetry target unless an operator names one.
 
 ### (c) The ownership map
 
@@ -584,7 +589,9 @@ genie's side of the boundary, built in genie and named here only so the order is
 
 - `envelope.schema.json`, the contract.
 - `repo-normalization.json`, the remote-to-`--repo` cases.
-- `examples/`, one envelope per case.
+- `examples/`, one envelope per case. RFC 0021's delivery 2 adds seven, listed there, which are
+  schema-only until its delivery 6: they validate and pass the crate's sum checks, but no meter
+  answer is compared with them while the crate writes none of their fields.
 
 | Example | Case | Exit |
 |---|---|---|
