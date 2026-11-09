@@ -107,8 +107,12 @@ const INSTALL_FIELDS = ['name', 'dependencies', 'peerDependencies', 'optionalDep
 // The vendored scheduler (herdr/scheduler/, a byte-identical copy of DnzzL/herdr-automations, its own
 // UPSTREAM.md) is Go source, not pack code: its binary ships from its own release lane
 // (.github/workflows/scheduler-release.yml), so no release here packs or rebuilds it, and a scheduler
-// refresh alone cuts nothing. Its check scripts (herdr/scripts/scheduler-upstream.mjs,
-// herdr/scripts/scheduler-pin.mjs) are tooling and ship nowhere either.
+// refresh alone cuts nothing.
+// herdr/scripts/ is the repository's tooling, which no pack carries: the workflow's checks and gates,
+// the asset fetcher (release-assets.mjs), the generators whose committed output is what ships
+// (themes.mjs), the catalog mod managers read from dev (catalog.mjs), the manifest and entry checks,
+// the scheduler's pin checks, the privacy scan and its list, and herdr-ax's dev tool. The one
+// exception is pack.mjs, which builds the attached tarball (HERDR_SHIPPING_SCRIPTS).
 // The Windows helper's Linux image and its guest launcher (apps/desktop/wslc/: the Dockerfile,
 // dsh-launch, the CI smoke and their tests; RFC 0016 delivery 2) are built by CI alone, and no
 // shipped app reads them yet: the desktop build packages src/ and the build/ resources only. When
@@ -129,8 +133,13 @@ const INSTALL_FIELDS = ['name', 'dependencies', 'peerDependencies', 'optionalDep
 // the install/check helper) rides the herdr pack's release, copied byte-equal by the pack at
 // enablement; no release here carries it, so a change to it alone cuts no release, and it must
 // never become a plugin tarball.
+// The only file under herdr/scripts/ that ships through: release.yml runs the tag's own
+// herdr/scripts/pack.mjs ("Pack the herdr pack") to build the attached tarball, so a change to it
+// alters what a release builds and ships. Every other file under herdr/scripts/ is tooling the pack
+// never carries (the blanket rule below).
+export const HERDR_SHIPPING_SCRIPTS = /^herdr\/scripts\/pack\.mjs$/;
 const NEVER_SHIPPED = [/^am\/[^/]+\.md$/, /^\.github\//, /^scripts\//, /^plugin-lane\//, /(^|\/)test\//, /^[^/]+\.md$/, /^\.gitignore$/, /^apps\/automagik-pets\//, /^docs\//, /^apps\/unfold-[^/]+\//,
-  /^herdr\/[^/]+\.md$/, /^herdr\/NOTICE$/, /^herdr\/(\.genie|docs|mockup|catalog)\//, /^herdr\/scheduler\//, /^herdr\/scripts\/scheduler-upstream\.mjs$/, /^herdr\/scripts\/scheduler-pin\.mjs$/,
+  /^herdr\/[^/]+\.md$/, /^herdr\/NOTICE$/, /^herdr\/(\.genie|docs|mockup|catalog)\//, /^herdr\/scheduler\//, /^herdr\/scripts\//,
   /^herdr-layout\/(RECIPE\.md|preview\.png)$/,
   /^apps\/pocket\/[^/]+\.md$/, /^apps\/pocket\/(docs|android\/scripts)\//, /^apps\/desktop\/wslc\//,
   /^meter\/(statusline|schema)\//, /^meter\/usagemeter\/[^/]+\.md$/, /^meter\/usagemeter\/tests\//,
@@ -272,7 +281,8 @@ export function sequenceOf(version: string): number {
 }
 
 const LOCKFILE = /(^|\/)(bun\.lock|package-lock\.json|pnpm-lock\.yaml)$/;
-const neverShipped = (path: string) => path === 'marketplace/automagik.json' || NEVER_SHIPPED.some(pattern => pattern.test(path));
+// The pack build is the one herdr/scripts/ file that ships through; everything else there never ships.
+const neverShipped = (path: string) => !HERDR_SHIPPING_SCRIPTS.test(path) && (path === 'marketplace/automagik.json' || NEVER_SHIPPED.some(pattern => pattern.test(path)));
 
 /**
  * A file inside a plugin that its package does not carry (not in its package.json `files`), such
