@@ -254,7 +254,10 @@ impl Store {
             )
             .optional()?;
         if view.as_deref() != Some(VIEW) {
-            conn.execute_batch(&format!("DROP VIEW IF EXISTS ae_usage; {VIEW};"))?;
+            // One transaction: a second open racing this one waits, then replaces it whole.
+            conn.execute_batch(&format!(
+                "BEGIN IMMEDIATE; DROP VIEW IF EXISTS ae_usage; {VIEW}; COMMIT;"
+            ))?;
         }
         // An older store without a version stays without one, so `sync` sees it is outdated and
         // keeps a generation before it resets it.
