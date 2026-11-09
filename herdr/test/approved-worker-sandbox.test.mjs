@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { approveProject } from "../mods/am-sidebar/approved.js";
+import { approveProject, readApprovedRecord } from "../mods/am-sidebar/approved.js";
 
 const wrapper = fileURLToPath(new URL("../mods/am-sidebar/bin/hc-socket-mask.mjs", import.meta.url));
 
@@ -66,7 +66,7 @@ runBwrap(result.args);
     "--proc", "/proc", "--dev", "/dev", "--bind", root, root, "--chdir", root,
     "--", "/fixture-node", probe, approved.path, incoming, join(root, "writable")];
   const run = (mask) => {
-    writeFileSync(incoming, "replacement");
+    writeFileSync(incoming, "replacement", { mode: 0o600 });
     return spawnSync(process.execPath, [harness, ...args], { encoding: "utf8", timeout: 15000,
       env: { ...env, DSH_SANDBOX_MASK: mask, AM_HC_REAL_SOCKET: real, AM_HC_PROXY_SOCKET: proxy } });
   };
@@ -74,6 +74,7 @@ runBwrap(result.args);
   assert.equal(control.status, 0, `unmasked fixture control: ${control.stderr}`);
   assert.deepEqual(JSON.parse(control.stdout), { write: "allowed", rename: "allowed" });
   writeFileSync(approved.path, before);
+  assert.equal(readApprovedRecord({ project, env }).text, before, "the masked fixture is valid approval");
   const masked = run("1");
   assert.equal(masked.status, 0, `sandbox wrapper probe: ${masked.stderr}`);
   const results = JSON.parse(masked.stdout);
