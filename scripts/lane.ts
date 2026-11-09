@@ -14,8 +14,10 @@
  * Omni's market serves them without an Omni release. The signature is ed25519 over the exact
  * bytes of lane.json, detached, base64; the public keys are plugin-lane/keys.json.
  *
- *   bun scripts/lane.ts kind <last-full-tag> [<last-tag>]       am | herdr | pocket | plugins | full: what the commits since need
+ *   bun scripts/lane.ts kind <last-full-tag> [<last-tag>]       am | meter | herdr | pocket | plugins | full: what the commits since need
  *   bun scripts/lane.ts herdr <last-tag>                         yes | no: whether the release rebuilds the herdr pack
+ *   bun scripts/lane.ts meter <tag>                              yes | no: whether the release builds usagemeter
+ *   bun scripts/lane.ts meter-since <last-tag> [<lane-version>]  the tag the meter's changes are measured from
  *   bun scripts/lane.ts pocket <tag>                             yes | no: whether the release rebuilds Pocket's app
  *   bun scripts/lane.ts pocket-since <last-tag> [<lane-version>] the tag Pocket's changes are measured from
  *   bun scripts/lane.ts ships <last-tag>                         yes | no: whether anything since it reaches an install
@@ -47,6 +49,17 @@
  * make a release more than it is otherwise: herdr/ and am/ together (a herdr change resyncing
  * am's copies of the pack's CLI) is a `herdr` patch, and an am change beside plugin changes is
  * still a plugin patch.
+ *
+ * usagemeter, the token meter (meter/usagemeter/, docs/rfcs/0017-usagemeter-crate.md), is a binary
+ * part with a lane of its own the same way: a release whose shipping changes since the last release
+ * are all the meter's (with or without am's) is a `meter` patch, 3.N.P with the meter's four binaries
+ * alone. The meter never makes a release more than it is otherwise: meter with herdr/ is a `herdr`
+ * patch, with apps/pocket/ a `pocket` patch, beside plugins a plugin patch. Any release with a
+ * shipping meter/usagemeter/ change since the build machines have (the version meter-lane names,
+ * `meter-since`) builds the meter (`meter`), whatever its kind. meter/statusline and meter/schema
+ * never ship. The lane is held shut while the query contract's `attribution.precision` lacks
+ * `actor_interval` (RFC 0021 delivery 2 widens it before the first meter release): until then the
+ * crate ships nothing, as before this lane (`meterHeld`).
  */
 import { createHash, createPrivateKey, createPublicKey, sign as signBytes, verify as verifyBytes } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -54,7 +67,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { ReleasePlugins } from './release-plugins';
-import { FIELDS, MAX_PART, VERSION } from './version';
+import { CRATES, FIELDS, MAX_PART, VERSION, cargoVersionLine } from './version';
 
 export const ROOT = join(import.meta.dir, '..');
 export const LANE_RELEASE = 'plugin-lane';
@@ -84,8 +97,12 @@ const INSTALL_FIELDS = ['name', 'dependencies', 'peerDependencies', 'optionalDep
 // docs/, .genie/ plans, the mockup) and its catalog, which installed mod managers read from dev
 // directly, not from a release; and the layout entry's RECIPE.md and preview.png.
 // In Pocket: its notes (*.md at its top) and docs/, and the Android project's scripts (the terminal
-// page's test and the vendoring script), which no APK carries. Meter's local tools (meter/: the Claude
-// status line and the limits logger it wraps) run from a checkout on the owner's machine; no release carries them.
+// page's test and the vendoring script), which no APK carries. Meter's local tools (meter/statusline: the
+// Claude status line and the limits logger it wraps) run from a checkout on the owner's machine, and the
+// herdr-meter doc's and the query contract's keeper (meter/schema) is read by tests and by other
+// repositories at a commit: no release carries either. Inside the crate (meter/usagemeter/), its notes
+// (*.md at its top) and its tests/ (Rust's name, which (^|/)test/ does not match) ship nothing; a change
+// anywhere else in it rebuilds the meter (RFC 0017, "What never ships").
 // The vendored scheduler (herdr/scheduler/, a byte-identical copy of DnzzL/herdr-automations, its own
 // UPSTREAM.md) is Go source, not pack code: its binary ships from its own release lane
 // (.github/workflows/scheduler-release.yml), so no release here packs or rebuilds it, and a scheduler
@@ -114,7 +131,8 @@ const INSTALL_FIELDS = ['name', 'dependencies', 'peerDependencies', 'optionalDep
 const NEVER_SHIPPED = [/^am\/[^/]+\.md$/, /^\.github\//, /^scripts\//, /^plugin-lane\//, /(^|\/)test\//, /^[^/]+\.md$/, /^\.gitignore$/, /^apps\/automagik-pets\//, /^docs\//, /^apps\/unfold-[^/]+\//,
   /^herdr\/[^/]+\.md$/, /^herdr\/NOTICE$/, /^herdr\/(\.genie|docs|mockup|catalog)\//, /^herdr\/scheduler\//, /^herdr\/scripts\/scheduler-upstream\.mjs$/, /^herdr\/scripts\/scheduler-pin\.mjs$/,
   /^herdr-layout\/(RECIPE\.md|preview\.png)$/,
-  /^apps\/pocket\/[^/]+\.md$/, /^apps\/pocket\/(docs|android\/scripts)\//, /^meter\//, /^apps\/desktop\/wslc\//,
+  /^apps\/pocket\/[^/]+\.md$/, /^apps\/pocket\/(docs|android\/scripts)\//, /^apps\/desktop\/wslc\//,
+  /^meter\/(statusline|schema)\//, /^meter\/usagemeter\/[^/]+\.md$/, /^meter\/usagemeter\/tests\//,
   /^apps\/landing\//, /^server\//, /^apps\/dsh-sandbox\//];
 /**
  * The herdr part: everything under herdr/ (the pack's mods, installer and tooling) and its layout's
@@ -128,6 +146,35 @@ export const globPattern = (glob: string) =>
 export const amPaths = (manifest = JSON.parse(readFileSync(join(ROOT, 'am', 'part.json'), 'utf8')) as { paths: string[] }) => manifest.paths.map(globPattern);
 const AM_PATHS = amPaths();
 export const AM = { test: (path: string) => AM_PATHS.some(pattern => pattern.test(path)) };
+/** The meter part (RFC 0017): the paths meter/usagemeter/part.json names. */
+export const meterPaths = (manifest = JSON.parse(readFileSync(join(ROOT, 'meter', 'usagemeter', 'part.json'), 'utf8')) as { paths: string[] }) => manifest.paths.map(globPattern);
+const METER_PATHS = meterPaths();
+export const METER = { test: (path: string) => METER_PATHS.some(pattern => pattern.test(path)) };
+/**
+ * The query contract the meter answers (RFC 0018), whose `attribution.precision` RFC 0021 delivery 2
+ * widens before the first meter release: once a release carries contract 1, widening it is contract 2.
+ */
+export const METER_CONTRACT = 'meter/schema/query/v1/envelope.schema.json';
+/**
+ * Whether the meter lane is held shut: true while the contract (its schema's text, or undefined when
+ * there is none) names no `actor_interval` among any `precision` property's values (`enum` or
+ * `const`), or does not parse. Fails closed: no contract, no meter release.
+ */
+export function meterHeld(contract: string | undefined): boolean {
+  if (contract === undefined) return true;
+  let schema: unknown;
+  try { schema = JSON.parse(contract); } catch { return true; }
+  const values = (node: unknown): unknown[] => {
+    if (!node || typeof node !== 'object') return [];
+    const own = node as Record<string, unknown>;
+    return [...(Array.isArray(own.enum) ? own.enum : []), ...('const' in own ? [own.const] : []), ...Object.values(own).flatMap(values)];
+  };
+  const precisions = (node: unknown): unknown[] => {
+    if (!node || typeof node !== 'object') return [];
+    return Object.entries(node as Record<string, unknown>).flatMap(([key, value]) => [...(key === 'precision' ? values(value) : []), ...precisions(value)]);
+  };
+  return !precisions(schema).includes('actor_interval');
+}
 /** The Pocket part: the phone app and its docs. Pocket Link is under herdr/. */
 export const POCKET = /^apps\/pocket\//;
 
@@ -203,6 +250,22 @@ export const herdrShips = (changed: string[], inert: (path: string) => boolean =
 export const pocketShips = (changed: string[], inert: (path: string) => boolean = () => false) =>
   changed.some(path => POCKET.test(path) && !neverShipped(path) && !inert(path));
 
+/** Whether any of `changed` (since the meter-since tag) ships in the meter: the release builds it. */
+export const meterShips = (changed: string[], inert: (path: string) => boolean = () => false) =>
+  changed.some(path => METER.test(path) && !neverShipped(path) && !inert(path));
+
+/**
+ * The tag the meter's changes are measured from: the release machines have, the version meter-lane's
+ * meter.json names, when that is a tag here. Else `last`, the last release, once a release has carried
+ * the meter; but '' (build it) when the lane was still held at `last` (`heldAtLast`), since no release
+ * has carried the meter then, and what changed in it while held must not be lost.
+ */
+export function meterSince(last: string, laneVersion: string | undefined, tags: string[], heldAtLast: boolean): string {
+  const tag = laneVersion && VERSION.test(laneVersion) ? `v${laneVersion}` : '';
+  if (tag && tags.includes(tag)) return tag;
+  return heldAtLast ? '' : last;
+}
+
 /**
  * The tag Pocket's changes are measured from: the release whose build phones have, the version
  * pocket-lane's latest.json names, when that is a tag here; else `last`, the last release (before
@@ -215,22 +278,24 @@ export function pocketSince(last: string, laneVersion: string | undefined, tags:
 }
 
 /**
- * `herdr` when everything shipping in `sinceLast` (the changes since the last release, any tag) is
- * under herdr/: the pack alone, no app and no plugin. `pocket` when it is all under apps/pocket/,
+ * `am` when everything shipping in `sinceLast` (the changes since the last release, any tag) is am's,
+ * `meter` when it is the meter's (with or without am's): that part alone. `herdr` when it is
+ * under herdr/ (with or without the meter's and am's): the pack alone, no app and no plugin. `pocket` when it is all under apps/pocket/,
  * or under apps/pocket/ and the herdr part (herdr/, herdr-layout/): Pocket's app (the pack along when herdr/ shipped). Otherwise whether the changes since the last
  * full release are the plugins' alone: every changed path inside a plugin, or under herdr/ or apps/pocket/ (no app
  * build reads it), or one no app build reads (the market index and the version bumps the releases
  * themselves write, the release tooling, tests, `inert` ones), none in a plugin's dev/harness (that
  * moves DSH), no lockfile, and no field a plugin is installed or admitted by.
  */
-export function kindOf(changed: string[], installChanged: (plugin: string) => boolean, inert: (path: string) => boolean = () => false, sinceLast?: string[]): 'am' | 'herdr' | 'pocket' | 'plugins' | 'full' {
+export function kindOf(changed: string[], installChanged: (plugin: string) => boolean, inert: (path: string) => boolean = () => false, sinceLast?: string[]): 'am' | 'meter' | 'herdr' | 'pocket' | 'plugins' | 'full' {
   const shipping = (sinceLast ?? []).filter(path => !neverShipped(path) && !inert(path));
   if (shipping.length > 0 && shipping.every(path => AM.test(path))) return 'am';
-  if (shipping.length > 0 && shipping.every(path => HERDR.test(path) || AM.test(path))) return 'herdr';
-  if (shipping.length > 0 && shipping.every(path => HERDR.test(path) || POCKET.test(path) || AM.test(path))) return 'pocket';
+  if (shipping.length > 0 && shipping.every(path => METER.test(path) || AM.test(path))) return 'meter';
+  if (shipping.length > 0 && shipping.every(path => HERDR.test(path) || METER.test(path) || AM.test(path))) return 'herdr';
+  if (shipping.length > 0 && shipping.every(path => HERDR.test(path) || POCKET.test(path) || METER.test(path) || AM.test(path))) return 'pocket';
   if (changed.length === 0) return 'full';
   for (const path of changed) {
-    if (neverShipped(path) || inert(path) || HERDR.test(path) || POCKET.test(path) || AM.test(path)) continue;
+    if (neverShipped(path) || inert(path) || HERDR.test(path) || POCKET.test(path) || METER.test(path) || AM.test(path)) continue;
     const plugin = PLUGINS.find(name => path.startsWith(`apps/${name}/`));
     if (!plugin) return 'full';
     const inside = path.slice(`apps/${plugin}/`.length);
@@ -240,6 +305,46 @@ export function kindOf(changed: string[], installChanged: (plugin: string) => bo
 }
 
 const pick = (json: Record<string, unknown>) => JSON.stringify(INSTALL_FIELDS.map(field => json[field] ?? null));
+
+const CARGO_RELEASE_VERSION = /^version = "\d+\.\d+\.\d+"$/;
+
+/**
+ * Whether `path` changed only in the version fields a release's own bump writes (scripts/version.ts),
+ * `before` being its text at the last tag and `after` its text now (undefined when either is missing:
+ * then it is a real change). A JSON file with its version fields removed is the same before and
+ * after; a plain-text one is a version alone in both; a crate's Cargo.toml or Cargo.lock (RFC 0017,
+ * "Version") is the same with the crate's own version line removed, each an X.Y.Z, and nothing else
+ * moved: so a `chore(release)` bump cuts no meter release, while a dependency or any other line does.
+ */
+export function versionOnly(path: string, before: string | undefined, after: string | undefined): boolean {
+  if (before === undefined || after === undefined) return false;
+  const crate = CRATES.find(({ dir }) => path === `${dir}/Cargo.toml` || path === `${dir}/Cargo.lock`);
+  if (crate) {
+    const kind = path.endsWith('.toml') ? 'toml' : 'lock';
+    const strip = (text: string) => {
+      const lines = text.split('\n');
+      const index = cargoVersionLine(lines, kind, crate.name);
+      if (index < 0 || !CARGO_RELEASE_VERSION.test(lines[index])) return null;
+      lines.splice(index, 1);
+      return lines.join('\n');
+    };
+    const was = strip(before);
+    return was !== null && was === strip(after);
+  }
+  const fields = FIELDS.filter(field => field.file === path);
+  if (fields.length === 0) return false;
+  // A plain-text field (the herdr pack's VERSION) is the version alone, before and after.
+  if (fields.some(field => field.path.length === 0)) return [before, after].every(text => /^\d+\.\d+\.\d+$/.test(text.trim()));
+  const blank = (text: string) => {
+    const json = JSON.parse(text);
+    for (const { path: at } of fields) {
+      const parent = at.slice(0, -1).reduce((node, key) => node?.[key], json);
+      if (parent) delete parent[at[at.length - 1]];
+    }
+    return JSON.stringify(json);
+  };
+  try { return blank(before) === blank(after); } catch { return false; }
+}
 
 /**
  * The next patch: 3.N.(highest P of the newest 3.N + 1). Refused past 3.N.999 (Pocket's versionCode,
@@ -356,37 +461,33 @@ const git = (...args: string[]) => execFileSync('git', args, { cwd: ROOT, encodi
 
 if (import.meta.main) {
   const [command, ...args] = process.argv.slice(2);
-  if (command === 'kind' || command === 'ships' || command === 'herdr' || command === 'pocket') {
+  if (command === 'kind' || command === 'ships' || command === 'herdr' || command === 'pocket' || command === 'meter') {
     const last = args[0];
+    const contractAt = (ref: string) => { try { return git('show', `${ref}:${METER_CONTRACT}`); } catch { return undefined; } };
+    // Held while the contract lacks actor_interval (RFC 0021 delivery 2): the crate then ships nothing.
+    const held = meterHeld(contractAt('HEAD'));
+    if (command === 'meter' && held) {
+      console.error(`meter lane: held until ${METER_CONTRACT}'s attribution.precision names actor_interval (RFC 0021 delivery 2): no meter release`);
+      console.log('no');
+      process.exit(0);
+    }
     if (!last) { console.log(command === 'kind' ? 'full' : 'yes'); process.exit(0); }
     const diff = (from: string) => git('diff', '--name-only', `${from}..HEAD`).split('\n').filter(Boolean);
     const changed = diff(last);
     const before = (path: string) => git('show', `${last}:${path}`);
+    const read = (get: () => string) => { try { return get(); } catch { return undefined; } };
     const unpacked = unpackedIn(Object.fromEntries(PLUGINS.map(plugin => [plugin, JSON.parse(readFileSync(join(ROOT, 'apps', plugin, 'package.json'), 'utf8')).files ?? []])));
-    // A file only the version fields of changed in (a release's own bump).
-    const versionOnly = (path: string) => {
-      const fields = FIELDS.filter(field => field.file === path);
-      if (fields.length === 0) return false;
-      // A plain-text field (the herdr pack's VERSION) is the version alone, before and after.
-      if (fields.some(field => field.path.length === 0)) {
-        try { return [before(path), readFileSync(join(ROOT, path), 'utf8')].every(text => /^\d+\.\d+\.\d+$/.test(text.trim())); } catch { return false; }
-      }
-      const blank = (text: string) => {
-        const json = JSON.parse(text);
-        for (const { path: at } of fields) {
-          const parent = at.slice(0, -1).reduce((node, key) => node?.[key], json);
-          if (parent) delete parent[at[at.length - 1]];
-        }
-        return JSON.stringify(json);
-      };
-      try { return blank(before(path)) === blank(readFileSync(join(ROOT, path), 'utf8')); } catch { return false; }
-    };
+    // A file only the version fields of changed in (a release's own bump), or the held meter's.
+    const bumped = (path: string) => versionOnly(path, read(() => before(path)), read(() => readFileSync(join(ROOT, path), 'utf8')));
+    const inert = (path: string) => bumped(path) || (held && METER.test(path));
     if (command === 'ships') {
-      console.log(ships(changed, path => versionOnly(path) || unpacked(path)) ? 'yes' : 'no');
+      console.log(ships(changed, path => inert(path) || unpacked(path)) ? 'yes' : 'no');
     } else if (command === 'herdr') {
-      console.log(herdrShips(changed, versionOnly) ? 'yes' : 'no');
+      console.log(herdrShips(changed, inert) ? 'yes' : 'no');
     } else if (command === 'pocket') {
-      console.log(pocketShips(changed, versionOnly) ? 'yes' : 'no');
+      console.log(pocketShips(changed, inert) ? 'yes' : 'no');
+    } else if (command === 'meter') {
+      console.log(meterShips(changed, inert) ? 'yes' : 'no');
     } else {
       const installChanged = (plugin: string) => {
         const path = `apps/${plugin}/package.json`;
@@ -401,10 +502,15 @@ if (import.meta.main) {
       // The changes since the last release of any kind: a herdr-only run of them is a herdr patch, and
       // a run under apps/pocket/ (with herdr/ or alone) a pocket patch.
       const sinceLast = args[1] ? diff(args[1]) : undefined;
-      console.log(kindOf(changed, installChanged, path => versionOnly(path) || addonPins(path) || unpacked(path), sinceLast));
+      console.log(kindOf(changed, installChanged, path => inert(path) || addonPins(path) || unpacked(path), sinceLast));
     }
   } else if (command === 'pocket-since' && (args.length === 1 || args.length === 2)) {
     console.log(pocketSince(args[0], args[1], git('tag', '--list', 'v3.*').split('\n').filter(Boolean)));
+  } else if (command === 'meter-since' && (args.length === 1 || args.length === 2)) {
+    // No release has carried the meter while the lane was held at the last release's tag.
+    let heldAtLast = true;
+    try { heldAtLast = meterHeld(git('show', `${args[0]}:${METER_CONTRACT}`)); } catch { /* no contract there: held */ }
+    console.log(meterSince(args[0], args[1], git('tag', '--list', 'v3.*').split('\n').filter(Boolean), heldAtLast));
   } else if (command === 'next-patch') {
     console.log(nextPatch(git('tag', '--list', 'v3.*').split('\n').filter(Boolean)));
   } else if (command === 'pack-addons' && args.length === 1) {
@@ -429,7 +535,7 @@ if (import.meta.main) {
     const lane = verifyLane(readFileSync(args[0]), readFileSync(args[1], 'utf8'), keys);
     console.log(`lane ${lane.version} (sequence ${lane.sequence}) is signed by ${lane.keyId}`);
   } else {
-    console.error('usage: bun scripts/lane.ts kind <last-full-tag> [<last-tag>] | ships <last-tag> | herdr <last-tag> | pocket <tag> | pocket-since <last-tag> [<lane-version>] | next-patch | pack-addons <dir> | manifest <plugins.json> <base> <issuedAt> [addons.json] | sign <lane.json> | verify <lane.json> <sig>');
+    console.error('usage: bun scripts/lane.ts kind <last-full-tag> [<last-tag>] | ships <last-tag> | herdr <last-tag> | pocket <tag> | pocket-since <last-tag> [<lane-version>] | meter <tag> | meter-since <last-tag> [<lane-version>] | next-patch | pack-addons <dir> | manifest <plugins.json> <base> <issuedAt> [addons.json] | sign <lane.json> | verify <lane.json> <sig>');
     process.exit(2);
   }
 }

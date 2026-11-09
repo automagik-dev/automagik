@@ -3,7 +3,9 @@ import { createHash, generateKeyPairSync } from 'node:crypto';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { AM, addonPinsOnly, amPaths, globPattern, herdrShips, kindOf, LANE_ADDONS, manifest, nextPatch, pocketShips, pocketSince, sequenceOf, ships, signLane, unpackedIn, verifyLane } from './lane';
+import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { AM, METER, METER_CONTRACT, addonPinsOnly, amPaths, globPattern, herdrShips, kindOf, LANE_ADDONS, manifest, meterHeld, meterPaths, meterShips, meterSince, nextPatch, pocketShips, pocketSince, sequenceOf, ships, signLane, unpackedIn, verifyLane, versionOnly } from './lane';
 
 describe('the plugin lane', () => {
   test('only changes inside the plugins ride the lane; anything the app or an install sees is a full release', () => {
@@ -23,18 +25,137 @@ describe('the plugin lane', () => {
     expect(kindOf(['meter/statusline/automagik-statusline.mjs', 'meter/statusline/test/statusline.test.mjs', 'apps/bots-dsh/client.js'], none)).toBe('plugins');
   });
 
-  test('the usagemeter crate ships nothing until the meter lane (RFC 0017 delivery 2)', () => {
+  test('the usagemeter crate ships on the meter lane, its notes and tests never (RFC 0017 delivery 4)', () => {
     const none = () => false;
-    // The import and its CI: the crate, its version lines, the installer, the tooling and the RFCs.
-    const importing = ['meter/usagemeter/src/main.rs', 'meter/usagemeter/Cargo.toml', 'meter/usagemeter/Cargo.lock',
-      'meter/usagemeter/install.sh', 'meter/usagemeter/tests/install.sh', 'meter/usagemeter/README.md', 'meter/usagemeter/.gitignore',
-      '.github/workflows/ci.yml', 'scripts/version.ts', 'scripts/import-usagemeter.sh', 'docs/rfcs/0017-usagemeter-crate.md', 'AGENTS.md'];
-    expect(ships(importing, none)).toBe(false);
-    expect(herdrShips(importing)).toBe(false);
-    expect(pocketShips(importing)).toBe(false);
+    const crate = ['meter/usagemeter/src/main.rs', 'meter/usagemeter/install.sh', 'meter/usagemeter/part.json', 'meter/usagemeter/.gitignore'];
+    for (const path of crate) expect(ships([path], none)).toBe(true);
+    expect(meterShips(crate)).toBe(true);
+    // Its top-level notes and its tests/ (Rust's name) never ship; a nested .md in src/ is the crate's.
+    const notes = ['meter/usagemeter/README.md', 'meter/usagemeter/CHANGELOG.md', 'meter/usagemeter/tests/install.sh', 'meter/usagemeter/tests/fixtures/a.jsonl'];
+    expect(ships(notes, none)).toBe(false);
+    expect(meterShips(notes)).toBe(false);
+    expect(meterShips(['meter/usagemeter/src/notes.md'])).toBe(true);
+    expect(herdrShips(crate)).toBe(false);
+    expect(pocketShips(crate)).toBe(false);
     expect(AM.test('meter/usagemeter/src/main.rs')).toBe(false);
-    // Beside a plugin it is still a plugin patch: the crate never makes a release more than it is.
-    expect(kindOf([...importing, 'apps/bots-dsh/client.js'], none)).toBe('plugins');
+  });
+
+  test('a statusline-only or schema-only change ships nothing; the meter part is meter/usagemeter alone', () => {
+    const none = () => false;
+    const local = ['meter/statusline/automagik-statusline.mjs', 'meter/statusline/claude-limits-statusline.mjs', 'meter/statusline/README.md'];
+    const schema = ['meter/schema/query/v1/envelope.schema.json', 'meter/schema/query/v1/examples/usage.json', 'meter/schema/query/v1/repo-normalization.json'];
+    for (const changed of [local, schema, [...local, ...schema]]) {
+      expect(ships(changed, none)).toBe(false);
+      expect(meterShips(changed)).toBe(false);
+    }
+    expect(METER.test('meter/statusline/automagik-statusline.mjs')).toBe(false);
+    expect(METER.test('meter/schema/query/v1/envelope.schema.json')).toBe(false);
+    expect(METER.test('meter/usagemeterx/a')).toBe(false);
+    expect(meterPaths({ paths: ['meter/usagemeter/**'] }).map(String)).toEqual(['/^meter\\/usagemeter\\/.*$/']);
+    // A file directly under meter/ matches no part and is a full release, on purpose (RFC 0017).
+    expect(ships(['meter/Cargo.toml'], none)).toBe(true);
+    expect(kindOf(['meter/Cargo.toml'], none, none, ['meter/Cargo.toml'])).toBe('full');
+  });
+
+  test('a meter-only change is a meter patch; the meter never makes a release more than it is otherwise', () => {
+    const none = () => false;
+    const meter = ['meter/usagemeter/src/main.rs', 'meter/usagemeter/Cargo.toml'];
+    expect(kindOf(meter, none, none, meter)).toBe('meter');
+    // With what ships nothing (its notes, tests, the tooling, the statusline), still a meter patch.
+    const withNotes = [...meter, 'meter/usagemeter/README.md', 'meter/usagemeter/tests/install.sh', 'meter/statusline/automagik-statusline.mjs', 'scripts/lane.ts', 'docs/rfcs/0017-usagemeter-crate.md'];
+    expect(kindOf(withNotes, none, none, withNotes)).toBe('meter');
+    // With am: a meter patch, am along (every release carries it).
+    expect(kindOf([...meter, 'am/bin/am.mjs'], none, none, [...meter, 'am/bin/am.mjs'])).toBe('meter');
+    // With herdr/: a herdr patch, and it builds both.
+    const withHerdr = [...meter, 'herdr/mods/am-sidebar/meterFleet.js'];
+    expect(kindOf(withHerdr, none, none, withHerdr)).toBe('herdr');
+    expect(herdrShips(withHerdr)).toBe(true);
+    expect(meterShips(withHerdr)).toBe(true);
+    // With Pocket: a pocket patch; beside plugins: a plugin patch; beside the app: a full release.
+    const withPocket = [...meter, 'apps/pocket/android/app/build.gradle.kts'];
+    expect(kindOf(withPocket, none, none, withPocket)).toBe('pocket');
+    expect(kindOf(['apps/bots-dsh/client.js', ...meter], none, none, ['apps/bots-dsh/client.js', ...meter])).toBe('plugins');
+    expect(kindOf(['apps/desktop/src/main.js', ...meter], none, none, ['apps/desktop/src/main.js', ...meter])).toBe('full');
+    // The plugin loop skips the meter as it skips herdr/, apps/pocket/ and am/: never a full release on its own.
+    expect(kindOf(meter, none)).toBe('plugins');
+    // A meter change since the last full release, but nothing shipping since the last release: the plugin rule.
+    expect(kindOf(['apps/bots-dsh/client.js', ...meter], none, none, ['meter/usagemeter/README.md'])).toBe('plugins');
+  });
+
+  test('a chore(release) bump of the crate\'s two version lines cuts no meter release; a real crate change does', () => {
+    const toml = readFileSync(join(import.meta.dir, '..', 'meter', 'usagemeter', 'Cargo.toml'), 'utf8');
+    const lock = readFileSync(join(import.meta.dir, '..', 'meter', 'usagemeter', 'Cargo.lock'), 'utf8');
+    const bump = (text: string) => text.replace(/^version = "\d+\.\d+\.\d+"$/m, 'version = "3.999.998"');
+    const bumpLock = (text: string) => text.replace(/(\[\[package\]\]\nname = "usagemeter"\nversion = )"[^"]*"/, '$1"3.999.998"');
+    expect(bump(toml)).not.toBe(toml);
+    expect(bumpLock(lock)).not.toBe(lock);
+    expect(versionOnly('meter/usagemeter/Cargo.toml', toml, bump(toml))).toBe(true);
+    expect(versionOnly('meter/usagemeter/Cargo.lock', lock, bumpLock(lock))).toBe(true);
+    // The release's own commit: the crate's two lines and the other version files.
+    const bumped = ['meter/usagemeter/Cargo.toml', 'meter/usagemeter/Cargo.lock', 'package.json', 'am/VERSION', 'herdr/package.json'];
+    const after: Record<string, string> = { 'meter/usagemeter/Cargo.toml': bump(toml), 'meter/usagemeter/Cargo.lock': bumpLock(lock) };
+    const before: Record<string, string> = { 'meter/usagemeter/Cargo.toml': toml, 'meter/usagemeter/Cargo.lock': lock };
+    const inert = (path: string) => path in after ? versionOnly(path, before[path], after[path]) : !METER.test(path);
+    expect(meterShips(bumped, inert)).toBe(false);
+    expect(ships(bumped.filter(path => METER.test(path)), inert)).toBe(false);
+    // A real change: a dependency moved beside the version, another crate's lock entry, or any other line.
+    const dep = bump(toml).replace(/^serde_json = "1"$/m, 'serde_json = "1.0.200"');
+    expect(dep).not.toBe(bump(toml));
+    expect(versionOnly('meter/usagemeter/Cargo.toml', toml, dep)).toBe(false);
+    const memchr = bumpLock(lock).replace(/(name = "memchr"\nversion = )"[^"]*"/, '$1"9.9.9"');
+    expect(memchr).not.toBe(bumpLock(lock));
+    expect(versionOnly('meter/usagemeter/Cargo.lock', lock, memchr)).toBe(false);
+    expect(versionOnly('meter/usagemeter/Cargo.toml', toml, toml.replace('edition = "2024"', 'edition = "2021"'))).toBe(false);
+    after['meter/usagemeter/Cargo.toml'] = dep;
+    expect(meterShips(bumped, inert)).toBe(true);
+    // Only a release version: a fourth part, or a version line gone, is a real change.
+    expect(versionOnly('meter/usagemeter/Cargo.toml', toml, toml.replace(/^version = "[^"]*"$/m, 'version = "3.1.2.3"'))).toBe(false);
+    expect(versionOnly('meter/usagemeter/Cargo.toml', toml, toml.replace(/^version = "[^"]*"\n/m, ''))).toBe(false);
+    // A file missing on either side is a real change; the JSON and plain-text rules stand as they were.
+    expect(versionOnly('meter/usagemeter/Cargo.toml', undefined, toml)).toBe(false);
+    expect(versionOnly('herdr/mods/am-sidebar/VERSION', '3.1.0\n', '3.1.1\n')).toBe(true);
+    expect(versionOnly('herdr/mods/am-sidebar/VERSION', '3.1.0\n', 'oops\n')).toBe(false);
+    expect(versionOnly('package.json', '{"name":"a","version":"3.1.0"}', '{"name":"a","version":"3.1.1"}')).toBe(true);
+    expect(versionOnly('package.json', '{"name":"a","version":"3.1.0"}', '{"name":"b","version":"3.1.1"}')).toBe(false);
+    expect(versionOnly('meter/usagemeter/src/main.rs', 'a', 'a')).toBe(false);
+  });
+
+  test('the meter lane is held shut until RFC 0021 delivery 2 widens attribution.precision', () => {
+    const contract = readFileSync(join(import.meta.dir, '..', METER_CONTRACT), 'utf8');
+    const precision = (values: unknown) => JSON.stringify({ properties: { rows: { items: { properties: { attribution: { properties: { precision: values } } } } } } });
+    // Today's contract names branch_window alone: held, so the crate ships nothing yet.
+    expect(contract).toContain('"enum": ["branch_window"]');
+    expect(meterHeld(contract)).toBe(true);
+    expect(meterHeld(contract.replace('"enum": ["branch_window"]', '"enum": ["branch_window", "task_interval", "actor_interval"]'))).toBe(false);
+    expect(meterHeld(precision({ enum: ['branch_window', 'task_interval'] }))).toBe(true);
+    expect(meterHeld(precision({ oneOf: [{ const: 'branch_window' }, { const: 'actor_interval' }] }))).toBe(false);
+    // actor_interval elsewhere than a precision is not the widening; no contract, or one that does not parse, holds.
+    expect(meterHeld(JSON.stringify({ description: 'actor_interval', properties: { by: { enum: ['actor_interval'] } } }))).toBe(true);
+    expect(meterHeld(undefined)).toBe(true);
+    expect(meterHeld('{')).toBe(true);
+  });
+
+  test('lane.ts meter, as the release runs it, says no with the reason while the committed contract holds the lane', () => {
+    const root = join(import.meta.dir, '..');
+    const committed = spawnSync('git', ['show', `HEAD:${METER_CONTRACT}`], { cwd: root, encoding: 'utf8' });
+    const held = meterHeld(committed.status === 0 ? committed.stdout : undefined);
+    // '' is meter-since's "no release has carried the meter": build it, unless the lane is held.
+    const run = spawnSync('bun', [join(import.meta.dir, 'lane.ts'), 'meter', ''], { cwd: root, encoding: 'utf8' });
+    expect(run.status).toBe(0);
+    expect(run.stdout.trim()).toBe(held ? 'no' : 'yes');
+    if (held) expect(run.stderr).toMatch(/meter lane: held until .*attribution\.precision names actor_interval \(RFC 0021 delivery 2\): no meter release/);
+  }, 30_000);
+
+  test('the meter is measured from the build meter-lane names, else the last release once one carried it', () => {
+    const tags = ['v3.109.0', 'v3.109.1', 'v3.109.2', 'v3.110.0'];
+    expect(meterSince('v3.110.0', '3.109.1', tags, false)).toBe('v3.109.1');
+    expect(meterSince('v3.110.0', '3.110.0', tags, false)).toBe('v3.110.0');
+    // No lane yet (keys not listed), unreadable, or naming no tag here: the last release.
+    for (const lane of [undefined, '', 'null', '0.3.0', '3.111.0']) expect(meterSince('v3.110.0', lane, tags, false)).toBe('v3.110.0');
+    // No release has carried the meter while the lane was held at the last release: build it ('').
+    expect(meterSince('v3.110.0', undefined, tags, true)).toBe('');
+    // A posted lane wins over the hold: a release carried the meter, and the lane names it.
+    expect(meterSince('v3.110.0', '3.109.2', tags, true)).toBe('v3.109.2');
   });
 
   test('a .gitignore-only change cuts no release', () => {

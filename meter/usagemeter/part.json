@@ -1,0 +1,49 @@
+{
+  "id": "automagik.usagemeter",
+  "title": "usagemeter, the token meter",
+  "kind": "binary",
+  "paths": [
+    "meter/usagemeter/**"
+  ],
+  "provides": [
+    "meter.usage@1"
+  ],
+  "requires": [],
+  "os": [
+    "macos",
+    "linux"
+  ],
+  "targets": "fleet",
+  "artifact": {
+    "darwin-arm64": "usagemeter-darwin-arm64",
+    "darwin-x86_64": "usagemeter-darwin-x86_64",
+    "linux-x86_64": "usagemeter-linux-x86_64",
+    "linux-aarch64": "usagemeter-linux-aarch64"
+  },
+  "entry": {
+    "install": [
+      "am",
+      "meter",
+      "install",
+      "--local"
+    ],
+    "uninstall": [
+      "am",
+      "meter",
+      "uninstall",
+      "--local"
+    ],
+    "doctor": [
+      "am",
+      "meter",
+      "doctor"
+    ]
+  },
+  "writes": [
+    "~/.local/bin/usagemeter",
+    "~/.automagik/meter/**"
+  ],
+  "set": [
+    "code"
+  ]
+}

@@ -279,7 +279,8 @@ Three ways to make that pointer trustworthy:
   carries `pack-keys.json` and the plugin lane's keys, kept equal by `scripts/am-copies.mjs`. The
   pack carries one beside `meterFleet.js`, and `herdr/install.sh` embeds it, kept equal by a test.
 - `meter-lane.ts check-key` runs before the tag when the release builds the meter: once keys are
-  listed, a secret that is missing or none of them stops the release there. `meter-lane.ts posted`
+  listed, a secret that is set but none of them stops the release there (a missing one warns, as
+  below). `meter-lane.ts posted`
   never posts a lower sequence than a posted pointer that verifies. It fails closed: an
   unreadable or unverifiable posted pointer stops the post unless the release is dispatched with
   `replace_unverified_meter_pointer`. The post is a job of its own (`meter-lane`, after the build),
@@ -466,7 +467,9 @@ takes through its copies); 8 when RFC 0018 says; 9 after 6 and 7.
    version lines cuts no meter release while a real crate change does;
    `meter-lane.test.ts` with a per-run key refuses a
    lower sequence and an unverified posted pointer; the first meter release carries all four
-   assets, `usagemeter-darwin-x86_64` included.
+   assets, `usagemeter-darwin-x86_64` included; and RFC 0021 delivery 2 merged (enum widened)
+   before the first meter release: the lane stays held while the query contract's
+   `attribution.precision` lacks `actor_interval` (`lane.ts` `meterHeld`).
    *Rollback:* revert; installs keep the pin.
 5. **Keys** (the owner). `meter-lane.ts keygen`; `meter-keys.json` and its copies in am and the
    pack.
