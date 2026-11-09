@@ -2623,8 +2623,11 @@ async function seatOnMachine(project, bot, over = {}) {
   if (agentKey === "antigravity") {
     const agyHome = await launchHomeOn(machine, bot, paneEnv, "its Antigravity permission list");
     if (!agyHome.dir) throw new CliError(`${agyHome.warning}. Nothing was started.`);
+    // #884 Low A: a linked machine's home folder, derived from its own app home (never this
+    // computer's home(), and no extra remote exec): ~/.config/herdr-app sits in it.
+    const remoteHome = agyHome.dir.endsWith("/.config/herdr-app") ? agyHome.dir.slice(0, -"/.config/herdr-app".length) : null;
     agySettings = agySettingsPlan({ bot, scope: "seat", folder: over.cwd ?? key, settingsDir: agySettingsDir(agyHome.dir),
-      homeDir: home() });
+      homeDir: remoteHome });
     try { await ownFileOn(machine, agySettings.path, agySettings.text); }
     catch (e) {
       throw new CliError(`${bot.name} wasn't started on ${machine}: its Antigravity permission list couldn't be written `
@@ -2649,12 +2652,12 @@ async function seatOnMachine(project, bot, over = {}) {
   // The briefing there, as a local start has it (#582), in that machine's app home while it is
   // there (briefingHomeOn: asked only when a file or the hook needs one; never made).
   const needsHome = !briefingOwnConfig(agentKey) && (briefingWay(agentKey) === "file" || briefingHook(agentKey));
-  const home = needsHome ? await briefingHomeOn(machine, bot, paneEnv) : { dir: null, warnings: [] };
-  const briefed = await briefedOn(machine, project, bot, agentKey, there.argv, home.dir,
+  const briefingHome = needsHome ? await briefingHomeOn(machine, bot, paneEnv) : { dir: null, warnings: [] };
+  const briefed = await briefedOn(machine, project, bot, agentKey, there.argv, briefingHome.dir,
     agentKey === "dsh-tui" ? Boolean(remoteGuard) : null);
   const argv = briefed.argv;
   // The hook goes in before the session starts, so Claude Code reads it at startup.
-  const hook = briefingHook(agentKey) && home.dir ? await briefingHookOn(machine, bot, over.cwd ?? key, home.dir)
+  const hook = briefingHook(agentKey) && briefingHome.dir ? await briefingHookOn(machine, bot, over.cwd ?? key, briefingHome.dir)
     : { written: false, warnings: [] };
   const env = { ...(paneEnv.appHome ? { HERDR_APP_HOME: paneEnv.appHome } : {}), ...briefed.env };
   const carry = over.carry ?? {};
@@ -2670,7 +2673,7 @@ async function seatOnMachine(project, bot, over = {}) {
     // No hc parent: hc run's default is the terminal it is started from, and the pane would end with it.
     parent: ["--no-parent"], argv, labels, path: there.path, env, agent: agentKey, guard: remoteGuard });
   args.splice(1, 0, "--on", machine);
-  const warnings = [...paneEnv.warnings, ...there.warnings, ...guardWarnings, ...home.warnings, ...briefed.warnings, ...hook.warnings,
+  const warnings = [...paneEnv.warnings, ...there.warnings, ...guardWarnings, ...briefingHome.warnings, ...briefed.warnings, ...hook.warnings,
     ...(agySettings?.warnings ?? [])];
   const run = async () => {
     if (deadlineLeft() < DEADLINE_MARGIN_MS) throw tooLate(bot, machine, key, DEADLINE_MARGIN_MS, place?.spare ? place.space : null);
