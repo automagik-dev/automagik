@@ -423,9 +423,9 @@ And the cases across time:
   `-wal` and `-shm` files), checks and fsyncs each copy, and never renames it; the old `meter.db*`
   files stay in the old folder as the recoverable generation. A later sync that succeeds with its
   backlog caught up removes them, under the old folder's lock, and only if each one's length and
-  SHA-256 still match the snapshot taken when the move started. `query` never moves anything: it reads the current path, then the
-  legacy path, read-only, and says which in `store.location`. `METER_STATE_DIR` is honoured by
-  both and never moved.
+  SHA-256 still match the snapshot taken when the move started. `query` never moves anything: it
+  reads the current path, then the legacy path, read-only, and says which in `store.location`.
+  `METER_STATE_DIR` is honoured by both and never moved.
 - **An old meter after the move** still finds its store at its old path while the generation is
   kept, and writes into it; once a caught-up sync has removed the generation, it finds no store
   there and starts a fresh one. Nothing is lost, because the new path is untouched. When the newer
