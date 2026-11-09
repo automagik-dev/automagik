@@ -8,8 +8,6 @@ use std::time::Duration;
 
 use common::*;
 
-const TS: &str = "2026-01-15T10:15:00.000Z";
-
 #[test]
 fn a_killed_run_resumes_without_double_counting() {
     let env = Env::new();
@@ -80,18 +78,40 @@ fn sync_exits_0_when_there_is_nothing_new_to_read() {
     assert_eq!(env.totals(), totals);
 }
 
+/// Hermetic like the rest of the suite: git and the meter's own `git config` call run in an
+/// environment holding only PATH, the temp HOME, `GIT_CONFIG_GLOBAL=/dev/null` and
+/// `GIT_CONFIG_NOSYSTEM=1`, so no git config of the machine running the tests is read. Decoys
+/// stand in for one: a global config in the temp HOME and a system config named by
+/// `GIT_CONFIG_SYSTEM`, each with an origin of its own that would come before the repo's.
 #[test]
 fn repo_key_strips_credentials_and_collapses_worktrees() {
+    let env = Env::new();
+    let decoy = |level: &str| {
+        format!("[remote \"origin\"]\n\turl = https://decoy.example.com/leak/{level}.git\n")
+    };
+    fs::create_dir_all(env.home()).unwrap();
+    fs::write(env.home().join(".gitconfig"), decoy("global")).unwrap();
+    let system = env.dir.path().join("system.gitconfig");
+    fs::write(&system, decoy("system")).unwrap();
+    let no_machine_config = |c: &mut std::process::Command| {
+        c.env("GIT_CONFIG_SYSTEM", &system)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1");
+    };
     let git = |dir: &std::path::Path, args: &[&str]| {
-        std::process::Command::new("git")
-            .arg("-C")
+        let mut c = std::process::Command::new("git");
+        c.env_clear().env("HOME", env.home());
+        if let Some(path) = std::env::var_os("PATH") {
+            c.env("PATH", path);
+        }
+        no_machine_config(&mut c);
+        c.arg("-C")
             .arg(dir)
             .args(args)
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false)
     };
-    let env = Env::new();
     let repo = env.dir.path().join("src/app");
     fs::create_dir_all(repo.join("sub")).unwrap();
     if !git(&repo, &["init", "-q"]) {
@@ -107,6 +127,8 @@ fn repo_key_strips_credentials_and_collapses_worktrees() {
             "https://someone:FAKE-TOKEN-123@Git.Example.com/acme/app.git?x=FAKE#y"
         ]
     ));
+    // The binary runs at the real time: an hour ago is inside the import window.
+    let ts = meter::time::format_rfc3339(meter::time::now_ms() - 3_600_000);
     let f = env.claude("-src-app/sess-1.jsonl");
     let gone = repo.join(".claude/worktrees/agent-1"); // a deleted worktree inside the repo
     let mut lines = Vec::new();
@@ -114,7 +136,7 @@ fn repo_key_strips_credentials_and_collapses_worktrees() {
         let l = claude_line(
             &format!("msg_{i}"),
             &format!("req_{i}"),
-            TS,
+            &ts,
             "model-a",
             &U1,
             0,
@@ -129,9 +151,21 @@ fn repo_key_strips_credentials_and_collapses_worktrees() {
         lines.push(l);
     }
     write_lines(&f, &lines);
-    let mut o = env.opts();
-    o.resolve_repos = true;
-    env.run(&o);
+    // A spawned sync, so the meter's git inherits this environment and not the test process's.
+    let mut c = env.command();
+    c.args(["sync", "--force", "--no-publish"])
+        .env("METER_STATE_DIR", env.state());
+    no_machine_config(&mut c);
+    let out = {
+        let _serial = serial();
+        c.output().unwrap()
+    };
+    assert!(
+        out.status.success(),
+        "sync exited {:?}: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
     let rows = env.store().rows_since(i64::MIN).unwrap();
     assert_eq!(
         rows.len(),
@@ -140,7 +174,8 @@ fn repo_key_strips_credentials_and_collapses_worktrees() {
     );
     assert_eq!(
         rows[0].key.repo.as_deref(),
-        Some("git.example.com/acme/app")
+        Some("git.example.com/acme/app"),
+        "the repo's own origin, never a machine-level config's"
     );
     let db = fs::read(env.state().join("meter.db")).unwrap();
     assert!(!String::from_utf8_lossy(&db).contains("FAKE-TOKEN-123"));
