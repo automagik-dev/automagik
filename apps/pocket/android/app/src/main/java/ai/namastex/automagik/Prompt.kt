@@ -154,6 +154,8 @@ object Prompt {
 
     /** Nothing was pressed because the dialog on screen is no longer the one the button was made from. */
     const val CHANGED = "Answered elsewhere or changed; look again"
+    /** Nothing was pressed because the dialog above the menu was blank on one side, so there was no text to check. */
+    const val NOT_READABLE = "Pocket can't read this dialog; open the agent to answer"
 
     /**
      * A tapped option, through [call] (the core's terminal.get, terminal.read and terminal.keys): the agent is read
@@ -168,7 +170,9 @@ object Prompt {
         val now = CoreTerminal.parse(call("terminal.get", JSONObject().put("terminal", address)))
         if (!now.attention || now.message != msg) return CHANGED
         val menu = menu(call("terminal.read", JSONObject().put("terminal", address).put("lines", 0)).optString("text"))
-        if (menu == null || !sameDialog(dialog, menu)) return CHANGED
+        if (menu == null) return CHANGED
+        if (dialog.isBlank() || menu.dialog.isBlank()) return NOT_READABLE
+        if (!sameDialog(dialog, menu)) return CHANGED
         if (!unchanged(options, menu)) return "Not sent: its options changed. Open the agent to answer."
         call("terminal.keys", JSONObject().put("terminal", address).put("keys", JSONArray(keys(menu, index))))
         val deadline = clock() + verifyMs
