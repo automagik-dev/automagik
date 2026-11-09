@@ -764,6 +764,10 @@ function explicitKeyHits(s) {
       const rest = m[3].slice(KEY_PROPS.exec(m[3])[0].length).replace(/(?:^|[ \t])#.*$/, '')
       if (!credentialName(rest)) continue
     }
+    // #530: a plain name of several words (`? password db`) is more than the one token the gap
+    // rules read, so its `:` line right under it is taken here even with nothing in the gap.
+    const plain = m[3].slice(KEY_PROPS.exec(m[3])[0].length).replace(/(?:^|[ \t])#.*$/, '')
+    const several = !/^["']/.test(plain) && /\S[ \t]+\S/.test(plain)
     const keyIndent = m[2].length
     let cursor = m.index + m[0].length
     if (s.startsWith('\r\n', cursor)) cursor += 2
@@ -777,7 +781,7 @@ function explicitKeyHits(s) {
       const lead = /^[ \t]*/.exec(line)[0]
       const content = line.slice(lead.length)
       if (content && content[0] === ':' && lead.length >= keyIndent) {
-        if (seen) hits.push(...explicitColonHits(s, line, cursor, end))
+        if (seen || several) hits.push(...explicitColonHits(s, line, cursor, end))
         break
       }
       if (content && content[0] !== '#' && lead.length > keyIndent) {

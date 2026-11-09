@@ -250,3 +250,24 @@ test('#507: a plain multi-word non-credential name still serves its indented lin
   assert.equal(redactText(input), input)
   assert.deepEqual(secretsIn(input), [])
 })
+
+// 10. #530: a plain name of several words whose credential word comes first, with its value on
+// the `:` line right under it and nothing in the gap: the value is hidden and remembered.
+const FIRST = ['password db', 'api_key prod', 'token for ci']
+for (const name of FIRST) {
+  test(`#530: a multi-word name with the credential word first hides and remembers its ':' line (${name})`, () => {
+    const input = `? ${name}\n: ${VALUE}\n`
+    const served = redactText(input)
+    const kept = secretsIn(input)
+    assert.ok(!served.includes(VALUE), 'the value is hidden')
+    assert.ok(served.includes(`? ${name}\n`), 'the question line is kept')
+    assert.ok(kept.includes(VALUE), 'the value is remembered')
+    assert.ok(!masked(later(VALUE), kept).includes(VALUE), 'a later bare occurrence is masked')
+  })
+}
+
+test('#530: a plain multi-word non-credential name still serves its colon line', () => {
+  const input = '? db host\n: 5432\n'
+  assert.equal(redactText(input), input)
+  assert.deepEqual(secretsIn(input), [])
+})
