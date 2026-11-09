@@ -72,6 +72,19 @@ export function offeredTools(ctx, agent) {
     }))
 }
 
+/**
+ * The Session's current provider route, for the source of a block written on its behalf. A
+ * Session before its first request has none; the block only needs a producer-owned source kind.
+ * @returns {{ provider?: string, model?: string }}
+ */
+function routeOf(session) {
+  try {
+    const config = session?.requestHeader?.()?.config
+    if (typeof config?.provider === 'string' && typeof config?.model === 'string') return { provider: config.provider, model: config.model }
+  } catch {}
+  return {}
+}
+
 /** A stable fingerprint of what the bridge would list: preset, level (Auto and Full included) and every tool's schema. */
 export function signatureOf(ctx, agent) {
   const level = levelOf(ctx?.get?.('approval'), agent?.session, ctx?.get?.('sandboxPolicy'), ctx?.get?.('permissionPresets'))
@@ -86,9 +99,9 @@ export function signatureOf(ctx, agent) {
 }
 
 /**
- * The turn and step the Session is in, for the `tool/call` and `tool/result` rows the bridge
- * writes on the Session's behalf. DSH's own loop puts them on every tool row; a call that runs
- * outside the loop (this one) reads them from the log it already committed.
+ * The turn and step the Session is in, as the log last committed them, for a reader that needs
+ * the position whether or not the step is still open. `Backchannel.call` requires an open step
+ * (`openStepOf`) because a tool row outside one is not a loadable v4 shape.
  */
 export function positionOf(ctx, session) {
   const turn = (() => {
@@ -112,8 +125,8 @@ export function positionOf(ctx, session) {
 }
 
 /**
- * The step a call can open in, if one is still open. Auto review requires it: its snapshot
- * reads the pending call's `turn`/`step` from the step the Session log has not closed.
+ * The step a bridge call can record in, if one is still open. A row written after its step
+ * closed does not load, and Auto review's snapshot reads the pending call from this step.
  * @returns {{ turn: number, step: number } | undefined}
  */
 export function openStepOf(session) {
@@ -393,6 +406,7 @@ export class Backchannel {
   async call(record, { name, arguments: args, callId }) {
     const error = (text) => ({ content: [{ type: 'text', text }], isError: true })
     const unavailable = (code, text) => ({ ...error(text), error: { name: 'AutoReviewUnavailableError', code } })
+    const recordFailed = (text, code = 'BRIDGE_RECORD_FAILED') => ({ ...error(text), error: { name: 'BridgeRecordError', code } })
     // A revoked bridge (or one whose session ended) may not even write a row.
     if (record.closed || record.abort.signal.aborted) return { revoked: true }
     const session = record.agent?.session
@@ -404,35 +418,46 @@ export class Backchannel {
     const raw = JSON.stringify(args ?? {})
     const approval = this.ctx?.get?.('approval')
     const level = levelOf(approval, session, this.ctx?.get?.('sandboxPolicy'), this.ctx?.get?.('permissionPresets'))
-    // Auto review reads the pending call from the model surface and the Session log. A bridge
-    // call is out-of-band, so it gets the one synthetic assistant block the reviewer reads,
-    // with the same turn/step, id, name and raw arguments the tool/call row carries. The block
-    // is marked synthetic and replaced once the call settles: it is for that review only and
-    // never crosses to a provider (switch.js also skips it).
+    // A bridge call is out-of-band: DSH's loop never writes the assistant block that advertises
+    // a tool call, and the v4 Session loader requires one before every tool/call row (#842).
+    // Write that block for every level, with the same turn/step, id, name and raw arguments the
+    // tool/call row carries; Auto review reads the same block. It is marked synthetic and
+    // replaced once the call settles, so it never crosses to a provider (switch.js also skips
+    // it). A call with no open step cannot be recorded in a loadable shape: refuse it.
     let review
     if (level.auto) {
       review = reviewRouteOf(session, name)
       if (review.error !== undefined) return unavailable(review.error.code, review.error.text)
     }
-    const { turn, step } = review?.step ?? positionOf(this.ctx, session)
-    let syntheticSeq
-    if (review !== undefined) {
-      try {
-        syntheticSeq = session.append('assistant/message', {
-          turn,
-          step,
-          stream: [],
-          message: createAssistantMessage({
-            content: [{ type: 'tool-call', id, name, arguments: raw }],
-            source: { provider: review.provider, model: review.model, bridge: true, synthetic: SYNTHETIC_KIND },
-          }),
-        }, { surfaceOp: 'append' }).seq
-      } catch (cause) {
-        return unavailable('AUTO_REVIEW_FAILED', `Auto review could not see this call: ${cause?.message ?? cause}`)
-      }
+    const position = review?.step ?? openStepOf(session)
+    if (position === undefined) {
+      return review === undefined
+        ? recordFailed('The bridge cannot record this call: the Session has no open step.', 'BRIDGE_NO_STEP')
+        : unavailable('AUTO_REVIEW_NO_STEP', 'Auto review cannot see this call: the Session has no open step.')
     }
-    // The synthetic block is for the review only. Replace it with an empty developer message:
-    // it derives to no model message, so no later request or crossing sees the fake call.
+    const { turn, step } = position
+    const route = review === undefined
+      ? routeOf(session)
+      : { provider: review.provider, model: review.model }
+    let syntheticSeq
+    try {
+      syntheticSeq = session.append('assistant/message', {
+        turn,
+        step,
+        stream: [],
+        message: createAssistantMessage({
+          content: [{ type: 'tool-call', id, name, arguments: raw }],
+          source: { ...route, bridge: true, synthetic: SYNTHETIC_KIND },
+        }),
+      }, { surfaceOp: 'append' }).seq
+    } catch (cause) {
+      return review === undefined
+        ? recordFailed(`The bridge could not advertise ${name}: ${cause?.message ?? cause}`)
+        : unavailable('AUTO_REVIEW_FAILED', `Auto review could not see this call: ${cause?.message ?? cause}`)
+    }
+    // The synthetic block is for the advertisement (and the review on Auto) only. Replace it
+    // with an empty developer message: it derives to no model message, so no later request or
+    // crossing sees the fake call.
     const hideSynthetic = () => {
       if (syntheticSeq === undefined) return
       const seq = syntheticSeq
@@ -451,13 +476,11 @@ export class Backchannel {
     try {
       callSeq = session.append('tool/call', { turn, step, callId: id, name, arguments: raw }).seq
     } catch (cause) {
-      // Auto cannot review a call that has no row: close the synthetic block and refuse. A
-      // Manual or Full call keeps the old log-and-go behaviour, where DSH has no Auto gate.
-      if (review !== undefined) {
-        hideSynthetic()
-        return unavailable('AUTO_REVIEW_FAILED', `Auto review could not record this call: ${cause?.message ?? cause}`)
-      }
-      this.log(`bridge call row failed: ${cause?.message ?? cause}`)
+      // A call without its row cannot be reviewed or shown: close the advertisement and refuse.
+      hideSynthetic()
+      return review === undefined
+        ? recordFailed(`The bridge could not record ${name}: ${cause?.message ?? cause}`)
+        : unavailable('AUTO_REVIEW_FAILED', `Auto review could not record this call: ${cause?.message ?? cause}`)
     }
     const settle = (content, isError, info) => {
       try {

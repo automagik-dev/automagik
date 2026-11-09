@@ -49,13 +49,16 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   (a preset or level change) is announced on `acp-claude` and arrives through `session/fork`
   plus `session/close` on `acp-codex`; a bridge that never lists its tools fails the turn
   (`acp_bridge_missing`) before the prompt. **Auto:** DSH's Auto preset is full access's sandbox
-  with asks answered by auto-review. A bridge call adds one marked, tool-only assistant block
-  for the reviewer, removes it from the surface once the call settles, and never replays it to
+  with asks answered by auto-review. A bridge call adds one marked, tool-only assistant block:
+  the advertisement the Session format requires before its tool/call row, which the reviewer
+  reads too, and which is removed from the surface once the call settles and never replayed to
   another provider; the reviewer sees the bridge tool, its redacted arguments and its schema
   before the body runs. A denial is `AUTO_REVIEW_DENIED`, a failed reviewer refuses with
   `AUTO_REVIEW_FAILED`, a review past its deadline is `AUTO_REVIEW_TIMEOUT`, and the call never
-  runs. The reviewer goes to the same non-agent side model as a Session title. Manual asks (one
-  dialog), Full access does not. A Session that moves between providers carries its transcript
+  runs. A Manual or Full call with no open step is `BRIDGE_NO_STEP`; one whose advertisement or
+  call row cannot be written is `BRIDGE_RECORD_FAILED`, and the call does not run. The reviewer
+  goes to the same non-agent side model as a Session title. Manual asks (one dialog), Full
+  access does not. A Session that moves between providers carries its transcript
   redacted at each crossing — the replay out to an agent, and the transcript handed back to a
   native provider — and each crossing writes a provider-boundary row the chat shows. The
   reasoning effort the Session ran on crosses with it, both ways, when the target model offers

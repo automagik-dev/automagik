@@ -6,7 +6,8 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { apply as applyAutoReview } from '@deepseek-ai/dsh-experimental-auto-review'
-import { Session, pluginRecordOf } from '@deepseek-ai/dsh-session'
+import { KNOWN_SESSION_EVENT_TYPES, Session, pluginRecordOf } from '@deepseek-ai/dsh-session'
+import { restoreReleasedV4Artifact } from '@deepseek-ai/dsh-session-format-v3-to-v4'
 import { aside } from '../src/host/adapter.js'
 import { Backchannel, offeredTools, positionOf, recordDrift, signatureOf } from '../src/host/backchannel.js'
 import { SYNTHETIC_KIND } from '../src/host/names.js'
@@ -19,17 +20,18 @@ const TOOLS = [
   { name: 'read', description: 'Read a file', parameters: { type: 'object', properties: { file_path: { type: 'string' } } } },
 ]
 
-function host({ sandbox = 'workspace-write', policy = 'ask', answer = 'allowed-once', tools = TOOLS, preset = 'standard', definitions = tools } = {}) {
+function host({ sandbox = 'workspace-write', policy = 'ask', answer = 'allowed-once', tools = TOOLS, preset = 'standard', definitions = tools, turn = 3 } = {}) {
   const session = Session.create('s1')
-  session.append('turn/start', { turn: 3 })
-  session.append('step/start', { turn: 3, step: 1 })
+  session.append('turn/start', { turn })
+  session.append('step/start', { turn, step: 1 })
   // Auto review reads the tool schema from the request header; Manual and Full ignore it.
   session.append('request/header', { header: { config: { provider: 'acp-fake', model: 'default' }, tools: definitions }, reason: 'initial' })
   const agent = { session }
   const asked = []
   const executed = []
+  const position = { turn }
   const ctx = {
-    agents: { turnBoundaryOf: () => ({ lastTurn: 3 }) },
+    agents: { turnBoundaryOf: () => ({ lastTurn: position.turn }) },
     get: (name) => {
       if (name === 'tools') {
         return {
@@ -58,7 +60,7 @@ function host({ sandbox = 'workspace-write', policy = 'ask', answer = 'allowed-o
     },
   }
   const backchannel = new Backchannel({ ctx })
-  return { ctx, agent, session, asked, executed, backchannel }
+  return { ctx, agent, session, asked, executed, backchannel, position }
 }
 
 async function serve() {
@@ -78,6 +80,15 @@ async function serve() {
   }
   return { ...host_, bc, record, post }
 }
+
+// The finished Session through the same v4 loader a desktop reload runs. A bridge call that
+// wrote no assistant advertisement used to fail here with `tool/call ... has no advertised tool
+// lifecycle` (#842).
+const assertLoadable = session => restoreReleasedV4Artifact({
+  header: { version: 4, id: session.id, createdAt: 0, isSeeded: false, delegationDepth: 0 },
+  events: session.snapshotEvents(),
+  inheritedEventCount: 0,
+}, KNOWN_SESSION_EVENT_TYPES)
 
 // Auto review's real pre-execute listener, over the same Session the bridge writes to. The fake
 // tools.execute mirrors the pipeline's prepare stage: it runs the listener before the body and
@@ -401,6 +412,105 @@ test('each level gates a bridge call as DSH gates its own tools: Manual asks, Fu
   assert.equal(full.body.isError, false)
   assert.deepEqual(full.executed.map(entry => entry.name), ['bash'])
   oneCard(full)
+})
+
+test('a bridged tool call advertises its lifecycle, so a Manual or Full session loads after a second turn', async () => {
+  for (const [label, level] of [
+    ['Manual', { sandbox: 'workspace-write', policy: 'ask' }],
+    ['Full', { sandbox: 'danger-full-access', policy: 'never' }],
+  ]) {
+    const h = host({ ...level, turn: 1 })
+    await h.backchannel.listen()
+    const record = h.backchannel.mint({ sessionId: 's1', agent: h.agent, name: 'Fake agent' })
+    h.backchannel.announce(record)
+    const call = async (callId) => {
+      const response = await fetch(h.backchannel.urlFor(record), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${record.credential}` },
+        body: JSON.stringify({ op: 'call', name: 'bash', arguments: {}, callId }),
+      })
+      const body = await response.json()
+      assert.equal(body.isError, false, `${label}: ${callId} ran`)
+    }
+    try {
+      await call('bridge-first')
+      // The first turn closes and the Session goes on; the second bridge call is in turn 2.
+      h.session.append('step/end', { turn: 1, step: 1 })
+      h.session.append('turn/end', { turn: 1, reason: 'stop' })
+      h.session.append('turn/start', { turn: 2 })
+      h.session.append('step/start', { turn: 2, step: 1 })
+      h.position.turn = 2
+      await call('bridge-second')
+      h.session.append('step/end', { turn: 2, step: 1 })
+      h.session.append('turn/end', { turn: 2, reason: 'stop' })
+
+      const events = h.session.snapshotEvents()
+      const calls = events.filter(event => event.type === 'tool/call')
+      assert.equal(calls.length, 2, `${label}: two cards`)
+      for (const call of calls) {
+        const advertisement = events.find(event => event.type === 'assistant/message'
+          && event.data.message.content.some(block => block.type === 'tool-call' && block.id === call.data.callId))
+        assert.ok(advertisement, `${label}: ${call.data.callId} is advertised`)
+        assert.equal(advertisement.data.message.source.synthetic, SYNTHETIC_KIND)
+        assert.equal(advertisement.data.message.source.bridge, true)
+        assert.equal(h.session.surface.nodes.includes(advertisement.seq), false, `${label}: the advertisement left the surface`)
+      }
+      assert.equal(events.filter(event => event.type === 'developer/message').length, 2, `${label}: each advertisement is replaced`)
+      assert.doesNotThrow(() => assertLoadable(h.session), `${label}: the finished session loads`)
+    } finally {
+      h.backchannel.dispose()
+    }
+  }
+})
+
+test('a bridge call whose advertisement cannot be written never runs or leaves a card row', async () => {
+  const h = host()
+  const append = h.session.append.bind(h.session)
+  h.session.append = (type, data, options) => {
+    if (type === 'assistant/message') throw new Error('advertisement failed')
+    return append(type, data, options)
+  }
+  await h.backchannel.listen()
+  const record = h.backchannel.mint({ sessionId: 's1', agent: h.agent, name: 'Fake agent' })
+  h.backchannel.announce(record)
+  try {
+    const response = await fetch(h.backchannel.urlFor(record), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${record.credential}` },
+      body: JSON.stringify({ op: 'call', name: 'bash', arguments: {}, callId: 'bridge-no-ad' }),
+    })
+    const body = await response.json()
+    assert.equal(body.isError, true)
+    assert.equal(body.error.code, 'BRIDGE_RECORD_FAILED')
+    assert.equal(h.executed.length, 0, 'the body did not run')
+    const events = h.session.snapshotEvents()
+    assert.equal(events.filter(event => event.type === 'tool/call').length, 0, 'no card row')
+    assert.equal(events.filter(event => event.type === 'tool/result').length, 0, 'no result row')
+  } finally {
+    h.backchannel.dispose()
+  }
+})
+
+test('a bridge call with no open step is refused, not written into a closed step', async () => {
+  const h = host()
+  h.session.append('step/end', { turn: 3, step: 1 })
+  await h.backchannel.listen()
+  const record = h.backchannel.mint({ sessionId: 's1', agent: h.agent, name: 'Fake agent' })
+  h.backchannel.announce(record)
+  try {
+    const response = await fetch(h.backchannel.urlFor(record), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${record.credential}` },
+      body: JSON.stringify({ op: 'call', name: 'bash', arguments: {}, callId: 'bridge-no-step' }),
+    })
+    const body = await response.json()
+    assert.equal(body.isError, true)
+    assert.equal(body.error.code, 'BRIDGE_NO_STEP')
+    assert.equal(h.executed.length, 0, 'the body did not run')
+    assert.equal(h.session.snapshotEvents().filter(event => event.type === 'tool/call').length, 0, 'no card row')
+  } finally {
+    h.backchannel.dispose()
+  }
 })
 
 // --- Auto review of a bridge call ---------------------------------------------------------
