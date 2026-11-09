@@ -21,7 +21,8 @@
 // pinned code.
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import test from 'node:test'
@@ -466,8 +467,9 @@ test('the real WorkspaceRegistry does not activate over the unpatched listing, a
   }
   assert.deepEqual([...activated.registry.headers.keys()], [SESSION])
   assert.equal(activated.registry.entities.size, 1, 'the registry activates and groups the valid session')
-  // Windows may keep a short (8.3) spelling of tmpdir on one side; compare canonical paths.
-  assert.equal(realpathSync(activated.registry.sessionPaths.get(SESSION)), realpathSync(cwd))
+  // Windows may keep a short (8.3) spelling of tmpdir on one side; normalize exactly as the registry
+  // does. fs.realpathSync does not expand the short name here, but fs/promises realpath does.
+  assert.equal(await realpath(activated.registry.sessionPaths.get(SESSION)), await realpath(cwd))
   assert.equal(activated.state().initialized, true)
   assert.equal(activated.warnings.length, 0)
   assert.equal(warnings.length, 2, 'the backup folder and the stray file are reported')
