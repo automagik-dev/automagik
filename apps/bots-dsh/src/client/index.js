@@ -1149,11 +1149,10 @@ export function apply(ctx) {
           return main
         }).catch(error => {
           console.warn('[ds-bot] bot-session-adopt', error)
-          if (mainView() === main) {
-            // Failure must not hide a stranded native Session behind Main.
-            chosen = main
-            actions.reportError(error, 'bot-session-adopt')
-          }
+          // Failure must not hide a stranded native Session behind Main, and the reason
+          // reaches the person even if the native view already moved on.
+          if (mainView() === main) chosen = main
+          actions.reportError(error, 'bot-session-adopt')
           throw error
         }).finally(() => {
           if (pendingBot.get(main) === operation) pendingBot.delete(main)
