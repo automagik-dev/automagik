@@ -374,7 +374,7 @@ object Spend {
         else -> "${ms / DAY_MS} d"
     }
 
-    /** "2 of 6 machines reporting · g9 data 3 h old · vps: update the meter · no meter on ryzen". */
+    /** "2 of 6 machines reporting · desktop data 3 h old · vps: update the meter · no meter on workstation". */
     fun coverageLine(c: Coverage): String = buildList {
         add("${c.reporting} of ${c.machines.size} ${if (c.machines.size == 1) "machine" else "machines"} reporting")
         c.machines.filter { it.state == State.STALE }.forEach { add("${it.name} data ${age(it.ageMs ?: 0)} old") }
