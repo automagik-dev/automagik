@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Draft (amended 2026-11-09 by [RFC 0024](0024-automagik-cloud.md): questions 2, 6 and 7, and the threat model's Authentication line) |
 | Milestone | not scheduled |
 | Lanes | desktop (3.N); release tooling |
 | Created | 2026-10-30 |
@@ -72,7 +72,10 @@ boundary in the roadmap.
 - **What it can do.** Everything the DSH runtime can do as its user: run commands, read and
   write files, use stored credentials.
 - **Authentication.** OIDC as above. Every plugin route is behind the sign-in. No route is
-  exempt for convenience.
+  exempt for convenience. *Amended by RFC 0024 (2026-11-09):* an Automagik gate in front of a
+  DSH bound to loopback, on every route and WebSocket: a passkey session after the owner's
+  local claim on a self-hosted web instance, or a Cloud workspace token. The desktop app's own
+  local DSH stays on OS-user trust with its per-launch token.
 - **The desktop client.** It stores tokens in OS secure storage and shows which instance it is
   connected to.
 - **install.sh.** Pinned versions, checksum and signature checks, no unchecked download.
@@ -90,7 +93,10 @@ and a rollback when this RFC is accepted.
 1. **Who hosts official web instances?** Recommended: self-hosted first, on the user's own
    server through `install.sh --headless`. A hosted offer later, as its own RFC.
 2. **Which sign-in provider?** Recommended: any standard OIDC provider the instance owner
-   configures, with one documented default.
+   configures, with one documented default. *Amended by RFC 0024 (2026-11-09):* a self-hosted
+   web instance signs its one owner in with a local claim and passkeys, checked by the instance
+   itself; Automagik Cloud signs people in through Pocket ID. An optional external OIDC provider
+   for self-hosters is not planned.
 3. **How is install.sh signed?** Recommended: reuse the release signing that the plugin lane
    already has, with a key of its own, and publish the public key in this repository.
 4. **Windows signing.** Recommended: ship unsigned preview builds, clearly labelled, until a
@@ -98,12 +104,17 @@ and a rollback when this RFC is accepted.
 5. **WSL: headless or desktop?** Recommended: headless inside WSL, opened from the Windows
    browser. Windows users who want an app use the Windows build.
 6. **Can the desktop app hold several instances?** Recommended: one at a time, with a switcher
-   later if people ask.
+   later if people ask. *Amended by RFC 0024 (2026-11-09):* the Cloud workspace rail is that
+   switcher, for a signed-in, entitled person.
 7. **Local and remote together?** Recommended: no. The app runs either a local DSH or a remote
-   one, so the user always knows where the work runs.
+   one, so the user always knows where the work runs. *Amended by RFC 0024 (2026-11-09):* yes on
+   the desktop: "This computer" is the rail's first tile beside Cloud workspaces, one tile is
+   active at a time and its name is in the window's header.
 
 ## Links
 
 - [0003](0003-model-routes-and-acp.md) pinned adapters, [0004](0004-composer-chat-kinds.md)
   "where it runs", [0006](0006-herdr-terminal-mode.md) relay
 - [docs/upgrade.md](../upgrade.md) upgrading an installed host
+- [0024](0024-automagik-cloud.md) Automagik Cloud, which amends questions 2, 6 and 7 and the
+  threat model
