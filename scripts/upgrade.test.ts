@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'bun:test';
+import { homedir } from 'node:os';
+import { join, relative, sep } from 'node:path';
 import {
   backupDirName,
   compareVersions,
+  DEFAULTS,
   deepEqual,
   deepSubset,
   handEditViolations,
@@ -79,6 +82,18 @@ describe('release version handling', () => {
 
   test('names a timestamped backup directory without ever reusing it', () => {
     expect(backupDirName('3.49.0', utcStamp(new Date('2026-10-30T01:05:09Z')))).toBe('upgrade-3.49.0-20261030-010509Z');
+  });
+});
+
+describe('host defaults', () => {
+  test('start at the home directory and keep every folder relative to it', () => {
+    const home = homedir();
+    expect(DEFAULTS.automagikHome).toBe(join(home, 'prod', 'automagik'));
+    expect(DEFAULTS.dshHome).toBe(join(home, '.automagik', 'web', 'dsh'));
+    expect(DEFAULTS.backupRoot).toBe(join(home, 'prod', 'automagik', 'backups'));
+    expect(relative(home, DEFAULTS.automagikHome).split(sep)).toEqual(['prod', 'automagik']);
+    expect(relative(home, DEFAULTS.dshHome).split(sep)).toEqual(['.automagik', 'web', 'dsh']);
+    expect(relative(home, DEFAULTS.backupRoot).split(sep)).toEqual(['prod', 'automagik', 'backups']);
   });
 });
 

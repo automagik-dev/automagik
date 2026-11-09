@@ -482,7 +482,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Whether meter/ changed
+      - name: Whether meter/statusline/ changed
         id: changed
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -490,10 +490,10 @@ jobs:
           set -euo pipefail
           if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
             echo "meter=true" >> "$GITHUB_OUTPUT"
-          elif git diff --name-only "${BASE}...HEAD" | grep -qE '^(meter/|\.github/workflows/ci\.yml$)'; then
+          elif git diff --name-only "${BASE}...HEAD" | grep -qE '^(meter/statusline/|\.github/workflows/ci\.yml$)'; then
             echo "meter=true" >> "$GITHUB_OUTPUT"
           else
-            echo "meter/ did not change: nothing to test"
+            echo "meter/statusline/ did not change: nothing to test"
           fi
 
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
@@ -511,10 +511,10 @@ jobs:
   usagemeter:
     # usagemeter, the Rust token meter (meter/usagemeter/, imported with its history by RFC 0017
     # delivery 2): format, clippy with warnings denied and the tests, on Linux and macOS, then its
-    # standalone installer's test against the binary just built. No release ships it yet
-    # (scripts/lane.ts NEVER_SHIPPED; the meter lane is RFC 0017 delivery 4). The toolchain is
-    # pinned so a new clippy lint never fails an unchanged crate; moving it is a change of its own.
-    # Only when the crate, the herdr-meter doc's keeper (meter/schema/), the workflows that test
+    # standalone installer's test against the binary just built. It ships on the meter lane (RFC
+    # 0017 delivery 4: scripts/lane.ts, and release.yml's meter jobs build its release binaries).
+    # The toolchain is pinned so a new clippy lint never fails an unchanged crate; moving it is a
+    # change of its own. Only when the crate, the herdr-meter doc's keeper (meter/schema/), the workflows that test
     # and release it, or the lane and version tooling changed.
     name: usagemeter (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

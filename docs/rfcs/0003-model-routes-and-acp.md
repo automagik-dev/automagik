@@ -310,7 +310,7 @@ are milestone 3 (Other agents in the same chat).
 
 ### RFC 0003 (model routes and ACP): DSH's tool set on ACP routes, and live switching
 
-Owner decision (Felipe, 2026-11-06, tracker #516), on the council's recommendation
+Owner decision (2026-11-06, tracker #516), on the council's recommendation
 ([dsh-022-council.md](../research/dsh-022-council.md)): **an ACP agent runs the same DSH tool set
 as a vanilla Session, and DSH approves every DSH tool call.** This reverses the 2026-11-03
 decision for tools and approvals (Design's "Claude Code keeps the person's own settings" bullet

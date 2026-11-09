@@ -278,15 +278,19 @@ Three ways to make that pointer trustworthy:
 - Trust anchors: `meter-keys.json` ships with the meter's installers. am carries a copy, as it
   carries `pack-keys.json` and the plugin lane's keys, kept equal by `scripts/am-copies.mjs`. The
   pack carries one beside `meterFleet.js`, and `herdr/install.sh` embeds it, kept equal by a test.
-- `meter-lane.ts check-key` runs before the tag when the release builds the meter: once keys are
-  listed, a secret that is missing or none of them stops the release there. `meter-lane.ts posted`
+- `meter-lane.ts check-key` runs before the tag when the release builds the meter, which the lane
+  allows only once a key is listed (below): a secret that is missing or none of the listed keys
+  stops the release there. `meter-lane.ts posted`
   never posts a lower sequence than a posted pointer that verifies. It fails closed: an
   unreadable or unverifiable posted pointer stops the post unless the release is dispatched with
   `replace_unverified_meter_pointer`. The post is a job of its own (`meter-lane`, after the build),
   so its refusals stop no other lane.
-- While `meter-keys.json` lists no key, or the secret is not set: the release attaches the meter's
-  assets, posts no `meter-lane`, and says so in a `::warning::`, the rule am follows. Installers
-  then keep the pin (below), so nothing installs on integrity alone in that window.
+- The key comes first (decided by Chat, 2026-11-09: no public unsigned meter binary). While
+  `meter-keys.json` lists no key, the meter lane is held: no release builds, attaches or signs the
+  meter, and the crate's changes ship nothing (`lane.ts` `meterHeld`, which also holds it until RFC
+  0021 delivery 2's contract is in). Every meter build a release attaches carries its signed
+  `meter.json` and `meter.json.sig` on `vX.Y.Z`, a prerelease's included. Installers keep the pin
+  (below) until then.
 - No downgrade, on the installing side: an installer refuses a pointer whose version is older than
   the installed binary's `usagemeter --version` or whose sequence is lower than the one it
   recorded, and keeps the shared-binary rule that a newer or unversioned binary is left alone.
@@ -301,12 +305,13 @@ Today `meterFleet.js` (the pack's, and am's byte-equal copy) installs `USAGEMETE
 `automagik-dev/usagemeter`: each machine downloads its asset and the release's `SHA256SUMS`,
 checks both against the pinned sha256, and renames into place. The move, in order:
 
-1. The first release here that carries the meter's assets. The pin moves to it in a herdr patch:
-   `USAGEMETER.repo` becomes this repository, `version` and `sha256` that release's, the
-   checksums file `usagemeter.SHA256SUMS`, and `install.sh`, `usagemeter-pin.mjs` and the tests
-   follow. This is the bridge while no key is listed.
-2. The owner runs `meter-lane.ts keygen`; `meter-keys.json` and its copies merge; the next meter
-   release posts `meter-lane`.
+1. The owner runs `meter-lane.ts keygen`, and `meter-keys.json` merges. The key comes first
+   (Chat, 2026-11-09): that merge opens the meter lane, so the first release here that carries the
+   meter's assets is already signed and posts `meter-lane`. The copies of `meter-keys.json` in am
+   and the pack follow.
+2. The pin moves to that release in a herdr patch: `USAGEMETER.repo` becomes this repository,
+   `version` and `sha256` that release's, the checksums file `usagemeter.SHA256SUMS`, and
+   `install.sh`, `usagemeter-pin.mjs` and the tests follow. This is the bridge until step 3.
 3. `meterFleet.js` reads the pointer on the machine running it, verifies it with its
    `meter-keys.json`, and picks each machine's asset by `uname -sm`. The far side keeps its fixed
    script: it downloads the asset from `vX.Y.Z` and checks it against the sha256 passed as an
@@ -466,7 +471,10 @@ takes through its copies); 8 when RFC 0018 says; 9 after 6 and 7.
    version lines cuts no meter release while a real crate change does;
    `meter-lane.test.ts` with a per-run key refuses a
    lower sequence and an unverified posted pointer; the first meter release carries all four
-   assets, `usagemeter-darwin-x86_64` included.
+   assets, `usagemeter-darwin-x86_64` included; and RFC 0021 delivery 2 merged (enum widened)
+   before the first meter release: the lane stays held while the query contract's
+   `attribution.precision` lacks `actor_interval`, and while `meter-keys.json` lists no key
+   (`lane.ts` `meterHeld`), so delivery 5's key comes before the first meter release.
    *Rollback:* revert; installs keep the pin.
 5. **Keys** (the owner). `meter-lane.ts keygen`; `meter-keys.json` and its copies in am and the
    pack.

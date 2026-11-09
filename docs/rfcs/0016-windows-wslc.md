@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (2026-11-04, by Felipe; answers: D38, D39, Q1-Q9) |
+| Status | Accepted (2026-11-04, by the owner; answers: D38, D39, Q1-Q9) |
 | Milestone | not scheduled |
 | Lanes | desktop (3.N); herdr (3.N.P) for the pack's split install; am (3.N.P) |
 | Created | 2026-11-04 |
@@ -22,7 +22,7 @@ not.
 
 ## Motivation
 
-Native Windows did not work well enough to ship. Felipe pulled it (D38): the v3.69.0 Windows
+Native Windows did not work well enough to ship. The owner pulled it (D38): the v3.69.0 Windows
 assets were removed and Windows publishing stopped. The tools the product runs on are weakest
 there: Claude Code's sandboxing is "not supported" on native Windows and WSL1, and is supported
 on WSL2 **[doc]** ([Claude Code setup](https://code.claude.com/docs/en/setup)). Codex's Windows
@@ -39,12 +39,12 @@ here). No Windows machine was used for it, so every number below is a source's o
 
 ## Decided
 
-- **D38** (Felipe 2026-11-04): native Windows is pulled. Windows comes back only as a
+- **D38** (the owner, 2026-11-04): native Windows is pulled. Windows comes back only as a
   Linux-sandboxed build. It supersedes D36 and D37 for shipping.
-- **D39** (Felipe 2026-11-04): WSLC, WSL 3.0.1+; only the Electron window and herdr-app run
+- **D39** (the owner, 2026-11-04): WSLC, WSL 3.0.1+; only the Electron window and herdr-app run
   natively; one UAC prompt at first run, plus a restart only if Virtual Machine Platform was
   off; no WSL means explain and stop; projects live inside the Linux disk (`\\wsl.localhost`).
-- **Spike venue and the Windows deliveries** (Felipe 2026-11-04, answering where the spike
+- **Spike venue and the Windows deliveries** (the owner, 2026-11-04, answering where the spike
   runs): "i got a coworker with windows, one we can hand off this specific task to, for him to
   finish. hes currently using automagik herdr via wsl", and later "the pr with context and
   handoff for my windows dev to finish the wslc". So the spike (delivery 1) runs on that
@@ -66,7 +66,7 @@ support is reported only by the press **[press]**
 The research's `wsl.exe -d automagik` commands belong to the distro design and are not used
 here.
 
-Two parts of D39 the design could not promise. Felipe settled both:
+Two parts of D39 the design could not promise. The owner settled both:
 
 - **`\\wsl.localhost`.** That share lists WSL distros, and a WSLC session is not one, so the
   projects volume may not show there (Design, "Projects"). Q1 below decides what happens then.
@@ -75,9 +75,9 @@ Two parts of D39 the design could not promise. Felipe settled both:
   `hc --via` link. herdr-app may also need a bridge `hc` on Windows to reach the guest's core.
   This RFC reads D39 as: **app-internal helpers that hold no terminals and run no tools count
   as the app.** Both the helper and a bridge `hc` pass that test; every terminal, agent, shell
-  and tool still runs in Linux. Felipe confirmed the reading (Q3 below).
+  and tool still runs in Linux. The owner confirmed the reading (Q3 below).
 
-**Answers to the open questions** (Felipe, 2026-11-04, each as the draft recommended; Q3 also
+**Answers to the open questions** (the owner, 2026-11-04, each as the draft recommended; Q3 also
 says the helpers ship on the app's lane and version). The numbers are the draft's question
 numbers.
 
@@ -454,7 +454,7 @@ GitHub's hosted Windows runners have no nested virtualization, so WSLC cannot st
 Options:
 
 - **A coworker's own Windows x86_64 PC.** No cost and real hardware, but by hand and not
-  for CI. Best for the spike, since it measures the hardware people have. Not Felipe's Mac: a
+  for CI. Best for the spike, since it measures the hardware people have. Not the owner's Mac: a
   Windows on ARM VM there would measure the wrong hardware.
 - **A self-hosted Windows box** registered as a runner, with snapshot restore for the "no WSL"
   state. Real timings and a stable CI venue. Costs one machine, and its runner must never take
@@ -463,7 +463,7 @@ Options:
   check before buying]**). On demand and scriptable, with timings from a VM inside a VM, so
   RAM and cold-start numbers read high.
 
-Decided (Felipe, 2026-11-04, "Spike venue"): the spike runs on a coworker's own Windows x86_64
+Decided (the owner, 2026-11-04, "Spike venue"): the spike runs on a coworker's own Windows x86_64
 PC (the handoff, [0016-windows-handoff.md](0016-windows-handoff.md)). Recommended for CI: a
 self-hosted box, with Azure as the spare. Not decided: the CI runner is the owner's call (its
 cost and registration). Until it exists, the Windows checks run by hand on the coworker's PC,
@@ -504,7 +504,7 @@ The guest half (delivery 2) runs on hosted Linux runners and gates every PR.
 
 ## Open questions
 
-None left. Felipe answered all nine on 2026-11-04, each as the draft recommended: Q1-Q9 in
+None left. The owner answered all nine on 2026-11-04, each as the draft recommended: Q1-Q9 in
 Decided. The spike's numbers still pick between Q1's (a) and (b), and decide Q4's Windows 10.
 
 ## Links
