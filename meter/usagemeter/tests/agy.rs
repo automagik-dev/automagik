@@ -491,11 +491,16 @@ fn a_reset_with_reused_indices_counts_the_new_generation() {
     env.run(&env.opts());
     assert_eq!(env.totals()["gemini-4-argon"].total(), 5_250);
 
-    // The conversation is reset and reuses index 0 for a new, smaller call.
+    // The conversation is reset and reuses index 0 for a new call with a new step time.
     let c = Connection::open(&path).unwrap();
     c.execute("DELETE FROM gen_metadata", []).unwrap();
+    c.execute(
+        "INSERT INTO steps(idx, step_type, status, metadata) VALUES(10, 15, 3, ?1)",
+        [step_metadata(at("2026-01-15T11:00:00Z") / 1000)],
+    )
+    .unwrap();
     drop(c);
-    put_gen(&path, 0, &gemini_gen(&usage(2000, 0, 0, 100, 20), &[1, 2]));
+    put_gen(&path, 0, &gemini_gen(&usage(2000, 0, 0, 100, 20), &[10]));
     env.run(&env.opts());
     let t = env.totals();
     assert_eq!(t["gemini-4-argon"].total(), 5_250 + 2_100);
@@ -650,16 +655,18 @@ fn a_bad_row_does_not_stop_the_valid_rows_after_it() {
         assert!(!t.contains_key("gemini-4-argon"), "run {run}");
         assert_eq!(t["claude-opus-5-5"].total(), 6_600, "run {run}");
     }
-    // The refusals are held, not skipped again: the stored counter does not grow.
-    let skipped = env
+    // The refusals and re-reads do not grow the stored counters: one call, counted once.
+    let health = env
         .store()
         .health()
         .unwrap()
         .into_iter()
         .find(|(s, _, _)| s == "agy")
-        .map(|(_, _, h)| h.skipped_lines)
-        .unwrap_or(0);
-    assert_eq!(skipped, 0);
+        .map(|(_, _, h)| h)
+        .unwrap();
+    assert_eq!(health.skipped_lines, 0);
+    assert_eq!(health.usage_lines, 1, "re-reads must not count as lines");
+    assert_eq!(health.duplicates, 0, "re-reads are not duplicate lines");
 
     // Once the bad row is readable, it counts and the status clears.
     put_gen(
@@ -698,4 +705,128 @@ fn a_quiet_placeholder_is_final_and_later_rows_count() {
     assert!(!t.contains_key("gemini-4-argon"));
     let opus = t.get("claude-opus-5-5").map(|x| x.total()).unwrap_or(0);
     assert_eq!(opus, 6_600, "{t:?} {reason}");
+}
+
+#[test]
+fn a_re_read_row_with_changed_bytes_is_not_counted_again() {
+    let env = Env::new();
+    let path = env.agy("conv-byte-rewrite.db");
+    base_db(&path, at("2026-01-15T09:55:00Z"));
+    put_gen(&path, 0, &gemini_gen(&[], &[1, 2]));
+    put_gen(&path, 1, &opus_gen(&usage(500, 6000, 0, 100, 60), &[3]));
+    let r = env.run(&env.opts());
+    assert_eq!(r.health.events, 1);
+    assert_eq!(env.totals()["claude-opus-5-5"].total(), 6_600);
+
+    // The row behind the held one is rewritten with the same usage and an extra field.
+    let mut g = opus_gen(&usage(500, 6000, 0, 100, 60), &[3]);
+    g.extend(bytes(99, b"x"));
+    put_gen(&path, 1, &g);
+    let r = env.run(&env.opts());
+    assert_eq!(r.health.events, 0, "{r:?}");
+    assert_eq!(env.totals()["claude-opus-5-5"].total(), 6_600);
+}
+
+#[test]
+fn a_rewind_plus_a_rewrite_is_not_counted_again() {
+    let env = Env::new();
+    let path = env.agy("conv-rewind-rewrite.db");
+    write_db(&path, at("2026-01-15T09:55:00Z"));
+    env.run(&env.opts());
+    let c = Connection::open(&path).unwrap();
+    c.execute("DELETE FROM gen_metadata WHERE idx = 1", [])
+        .unwrap();
+    drop(c);
+    let mut g = gemini_gen(&usage(1000, 4000, 50, 200, 120), &[1, 2]);
+    g.extend(bytes(99, b"x"));
+    put_gen(&path, 0, &g);
+    let r = env.run(&env.opts());
+    assert_eq!(r.health.events, 0, "{r:?}");
+    assert_eq!(env.totals()["gemini-4-argon"].total(), 5_250);
+    assert_eq!(env.totals()["claude-opus-5-5"].total(), 6_600);
+}
+
+#[test]
+fn a_partial_output_row_waits_for_its_fill() {
+    let env = Env::new();
+    let path = env.agy("conv-partial-fill.db");
+    base_db(&path, at("2026-01-15T09:55:00Z"));
+    put_gen(&path, 0, &gemini_gen(&usage(1000, 4000, 50, 0, 0), &[1, 2]));
+    let r = env.run(&env.opts());
+    let (status, reason) = agy_source(&r.summary.expect("a summary"));
+    assert_eq!(status, "degraded", "{reason}");
+    assert!(env.totals().is_empty());
+
+    put_gen(
+        &path,
+        0,
+        &gemini_gen(&usage(1000, 4000, 50, 200, 120), &[1, 2]),
+    );
+    let r = env.run(&env.opts());
+    assert_eq!(r.health.events, 1, "{r:?}");
+    assert_eq!(env.totals()["gemini-4-argon"].total(), 5_250);
+    let (status, reason) = agy_source(&r.summary.expect("a summary"));
+    assert_eq!(status, "ok", "{reason}");
+}
+
+#[test]
+fn a_partial_row_behind_a_held_row_counts_once_it_fills() {
+    let env = Env::new();
+    let path = env.agy("conv-partial-behind-hold.db");
+    base_db(&path, at("2026-01-15T09:55:00Z"));
+    put_gen(&path, 0, &gemini_gen(&[], &[1, 2]));
+    put_gen(&path, 1, &opus_gen(&usage(500, 0, 0, 0, 0), &[3]));
+    let r = env.run(&env.opts());
+    assert_eq!(r.health.events, 0, "{r:?}");
+
+    put_gen(&path, 1, &opus_gen(&usage(500, 0, 0, 100, 0), &[3]));
+    let r = env.run(&env.opts());
+    assert_eq!(r.health.events, 1, "{r:?}");
+    assert_eq!(env.totals()["claude-opus-5-5"].total(), 600);
+}
+
+#[test]
+fn a_recent_wal_keeps_a_placeholder_held() {
+    use std::time::{Duration, SystemTime};
+    let env = Env::new();
+    let path = env.agy("conv-wal-hold.db");
+    base_db(&path, at("2026-01-15T09:55:00Z"));
+    let writer = Connection::open(&path).unwrap();
+    writer.pragma_update(None, "journal_mode", "WAL").unwrap();
+    writer
+        .pragma_update(None, "wal_autocheckpoint", "0")
+        .unwrap();
+    let placeholder = gemini_gen(&[], &[1, 2]);
+    writer
+        .execute(
+            "INSERT INTO gen_metadata(idx, data, size) VALUES(0, ?1, ?2)",
+            params![placeholder, placeholder.len() as i64],
+        )
+        .unwrap();
+    let old = SystemTime::UNIX_EPOCH + Duration::from_millis(at("2026-01-15T09:00:00Z") as u64);
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+    let wal = path.with_file_name(format!(
+        "{}-wal",
+        path.file_name().unwrap().to_string_lossy()
+    ));
+    let recent = SystemTime::UNIX_EPOCH + Duration::from_millis(at("2026-01-15T10:02:00Z") as u64);
+    std::fs::File::options()
+        .write(true)
+        .open(&wal)
+        .unwrap()
+        .set_modified(recent)
+        .unwrap();
+    let mut o = env.opts();
+    o.now_ms = at("2026-01-15T10:03:00Z");
+    let r = env.run(&o);
+    drop(writer);
+    let (status, reason) = agy_source(&r.summary.expect("a summary"));
+    assert_eq!(status, "degraded", "{reason}");
+    assert!(reason.contains("still being written"), "{reason}");
+    assert!(!env.totals().contains_key("gemini-4-argon"));
 }

@@ -21,7 +21,6 @@ use std::time::Instant;
 
 use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use crate::event::{Precision, Tokens, UsageEvent};
 use crate::sources::clip;
@@ -44,7 +43,9 @@ const INCOMPLETE_MS: i64 = 30 * 60 * 1000;
 /// A conversation's read cursor, kept in the file row's JSON context.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgyCtx {
-    /// The highest `gen_metadata.idx` counted. Later runs read only rows above it.
+    /// The highest `gen_metadata.idx` read. A refused or incomplete row keeps this below itself,
+    /// so the next run reads it again; rows above it are read then too, and the dedupe key drops
+    /// the repeats.
     #[serde(default = "no_generation")]
     pub max_gen: i64,
 }
@@ -75,8 +76,6 @@ pub enum Failure {
 #[derive(Debug, Default)]
 pub struct Read {
     pub events: Vec<UsageEvent>,
-    /// Rows that carried usage, zero-token rows included.
-    pub usage_lines: i64,
     /// The highest `gen_metadata.idx` processed. A refused or incomplete row leaves it below
     /// that row, so the next sync reads it again instead of losing its usage.
     pub max_gen: i64,
@@ -506,7 +505,7 @@ pub fn read(path: &Path, cursor: i64, now: i64, deadline: Instant) -> Result<Rea
         }
     }
     drop(rows);
-    let mut decoded: Vec<(i64, String, Result<Decoded, String>)> = Vec::with_capacity(gens.len());
+    let mut decoded: Vec<(i64, Result<Decoded, String>)> = Vec::with_capacity(gens.len());
     let mut wanted: HashSet<i64> = HashSet::new();
     for (idx, data) in gens {
         let d = generation(&data);
@@ -516,8 +515,7 @@ pub fn read(path: &Path, cursor: i64, now: i64, deadline: Instant) -> Result<Rea
             }
             _ => {}
         }
-        let row = crate::event::hex(&Sha256::digest(&data)[..8]);
-        decoded.push((idx, row, d));
+        decoded.push((idx, d));
     }
     let mut wanted: Vec<i64> = wanted.into_iter().collect();
     wanted.sort_unstable();
@@ -560,7 +558,7 @@ pub fn read(path: &Path, cursor: i64, now: i64, deadline: Instant) -> Result<Rea
     };
     let mut next = from;
     let mut held_at: Option<i64> = None;
-    for (idx, row, dec) in decoded {
+    for (idx, dec) in decoded {
         let dec = match dec {
             Ok(d) => d,
             Err(why) => {
@@ -591,8 +589,14 @@ pub fn read(path: &Path, cursor: i64, now: i64, deadline: Instant) -> Result<Rea
                         held_at.get_or_insert(idx);
                         continue;
                     }
-                    out.usage_lines += 1;
                     next = idx;
+                    continue;
+                }
+                if tokens.output == 0 && db_recent {
+                    // A model call with no output yet is still being written: wait for its fill
+                    // rather than counting the prompt alone.
+                    out.held += 1;
+                    held_at.get_or_insert(idx);
                     continue;
                 }
                 let Some(ts) = ts else {
@@ -624,11 +628,11 @@ pub fn read(path: &Path, cursor: i64, now: i64, deadline: Instant) -> Result<Rea
                     held_at.get_or_insert(idx);
                     continue;
                 };
-                // The execution id is shared by every generation of a conversation, so it cannot
-                // tell two calls apart. The conversation id, the generation index and a hash of
-                // the row do: an unchanged row re-read after a rewind keeps its key, while a new
-                // call that reuses an index changes it.
-                let dedupe = format!("agy|{session}|{idx}|{row}");
+                // What identifies a call: its conversation, generation index and first step's
+                // time. A re-read row whose bytes change keeps its key, while a reused index with
+                // a new call gets a new step time. Keys written by earlier, unmerged builds are
+                // not migrated: no released store carries one.
+                let dedupe = format!("agy|{session}|{idx}|{ts}");
                 out.events.push(UsageEvent {
                     dedupe_key: dedupe,
                     ts_ms: ts,
@@ -645,7 +649,6 @@ pub fn read(path: &Path, cursor: i64, now: i64, deadline: Instant) -> Result<Rea
                     reported_usd: None,
                     copied: false,
                 });
-                out.usage_lines += 1;
                 next = idx;
             }
         }

@@ -1871,7 +1871,6 @@ fn read_agy_into_store(
     // byte offset, is where the next run resumes.
     state.offset = if read.stopped { 0 } else { state.size };
     let health = Health {
-        usage_lines: read.usage_lines,
         rewrites: i64::from(rewritten),
         ..Health::default()
     };
@@ -1879,7 +1878,7 @@ fn read_agy_into_store(
         .attribute(store, read.events, counted_from)
         .map_err(store_write)?;
     let applied = store
-        .apply_chunk(state, &attributed, health, now)
+        .apply_agy(state, &attributed, health, now)
         .map_err(store_write)?;
     report.health.add(&applied);
     report.files_read += 1;
