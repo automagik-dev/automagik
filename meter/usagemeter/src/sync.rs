@@ -1397,7 +1397,8 @@ fn resolver(
     let mut r = Resolver::new(core, snapshot)
         .walk(opts.project_ledgers)
         .walk_within(opts.walk_within.clone())
-        .keyed(key);
+        .keyed(key)
+        .at(opts.now_ms);
     if let Some(home) = &opts.app_home {
         r.load_app_home(home);
     }
@@ -1491,6 +1492,44 @@ impl Snapshot {
 /// The `meta` key of the last attribution inputs' fingerprint.
 const INPUTS_META: &str = "attribution_inputs";
 
+/// The derivation's version, the fingerprint's first input: a sync compares its inputs against the
+/// stored fingerprint, so changing what a launch's tags are derived from (RFC 0026 delivery 3
+/// added the label claims) revisits every launch once, on the first sync after the upgrade,
+/// instead of waiting for a ledger or the snapshot to change.
+const DERIVATION: &[u8] = b"labels-v1\x1e";
+
+/// The fingerprint of what the launches and links are derived from: the derivation's version,
+/// what hc showed, each ledger read (its path, size, modification time and first bytes) and the
+/// project app homes found.
+fn inputs_print(derivation: &[u8], snapshot: &str, files: &[PathBuf], homes: &[String]) -> String {
+    use sha2::Digest;
+    let mut print = sha2::Sha256::new();
+    print.update(derivation);
+    print.update(snapshot.as_bytes());
+    for f in files {
+        print.update(f.to_string_lossy().as_bytes());
+        if let Ok(m) = f.metadata() {
+            let mtime = m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_nanos());
+            print.update(format!("\x1f{}\x1f{mtime}", m.len()));
+        }
+        if let Ok(mut fh) = std::fs::File::open(f) {
+            use std::io::Read;
+            let mut head = [0u8; 4096];
+            let n = fh.read(&mut head).unwrap_or(0);
+            print.update(&head[..n]);
+        }
+        print.update([0x1e]);
+    }
+    for h in homes {
+        print.update(h.as_bytes());
+    }
+    crate::event::hex(&print.finalize())
+}
+
 /// Writes the launches and links this sync derived and queues the calls they change (RFC 0021
 /// (b)), in one transaction. When no ledger changed (its size, modification time and first bytes)
 /// and hc showed the same terminals, the diff is skipped: only what the snapshot saw is touched.
@@ -1501,37 +1540,13 @@ fn links_pass(
     now: i64,
     report: &mut Report,
 ) -> Result<(), Error> {
-    use sha2::Digest;
-    let mut print = sha2::Sha256::new();
-    print.update(snap.print.as_bytes());
-    for f in attr.resolver.files() {
-        print.update(f.to_string_lossy().as_bytes());
-        if let Ok(m) = f.metadata() {
-            let mtime = m
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map_or(0, |d| d.as_nanos());
-            print.update(format!("\x1f{}\x1f{mtime}", m.len()));
-        }
-        if let Ok(mut fh) = std::fs::File::open(&f) {
-            use std::io::Read;
-            let mut head = [0u8; 4096];
-            let n = fh.read(&mut head).unwrap_or(0);
-            print.update(&head[..n]);
-        }
-        print.update([0x1e]);
-    }
     let homes: Vec<String> = attr
         .resolver
         .homes()
         .iter()
         .map(|h| h.to_string_lossy().into_owned())
         .collect();
-    for h in &homes {
-        print.update(h.as_bytes());
-    }
-    let print = crate::event::hex(&print.finalize());
+    let print = inputs_print(DERIVATION, &snap.print, &attr.resolver.files(), &homes);
     let same = store.meta(INPUTS_META)?.as_deref() == Some(print.as_str());
     let tx = store.conn.transaction()?;
     if same {
@@ -2132,3 +2147,6 @@ fn codex_pass(
     )?;
     Ok(true)
 }
+
+#[cfg(test)]
+mod tests;

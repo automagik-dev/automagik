@@ -43,6 +43,7 @@ import { Overlays } from './overlays.js'
 import { createBotBrowsers, serveBrowserReads } from './bot-browsers.js'
 import { BROWSER_CSS } from './browser-pane.js'
 import { SECRET_CSS, SecretDock } from './secret-card.js'
+import { PermissionChoiceDock } from './permission-card.js'
 import { MODEL_CSS, ModelChoiceDock, ModelLineTail, DeepSeekSignIn } from './model-menu.js'
 import { announceCarried, CLI_LOGIN_CSS, CliLoginConversation, installCliLoginBridge, installKnownStateGuard } from './cli-login.js'
 import { createCliLogin } from './cli-login-state.js'
@@ -1088,6 +1089,8 @@ export function apply(ctx) {
     }, TeamApproval),
     () => shadow('conversation.input.dock', { id: 'bot-members', order: -120, inject: face }, MemberDock),
     () => shadow('conversation.input.dock', { id: 'bot-model', order: -110, inject: face }, ModelChoiceDock),
+    // The person's own choice of a Bot's level (permission-card.js): raised by this window alone.
+    () => shadow('conversation.input.dock', { id: 'bot-permission', order: -108, inject: face }, PermissionChoiceDock),
     // Draws nothing in the dock: it seats a Bot's sign-in row in its transcript (cli-login.js).
     () => shadow('conversation.input.dock', { id: 'bot-cli-login', order: -109, inject: face }, CliLoginConversation),
     () => shadow('conversation.input.dock', { id: 'bot-question', order: -100, inject: face }, QuestionDock),

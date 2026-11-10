@@ -90,6 +90,10 @@
       "to": "am/logins.js"
     },
     {
+      "from": "herdr/mods/am-sidebar/machineUpdates.js",
+      "to": "am/machineUpdates.js"
+    },
+    {
       "from": "herdr/mods/am-sidebar/meter-keys.json",
       "to": "am/meter-keys.json"
     },
