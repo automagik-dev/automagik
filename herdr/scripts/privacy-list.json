@@ -71,58 +71,13 @@
     },
     {
       "file": "apps/pocket/android/app/src/test/java/ai/namastex/automagik/ProjectsTest.kt",
-      "text": "git@github.com",
-      "why": "a deliberate ProjectsTest fixture: a git remote URL"
-    },
-    {
-      "file": "apps/pocket/android/app/src/test/java/ai/namastex/automagik/ProjectsTest.kt",
       "text": "secret@github.com",
       "why": "a deliberate ProjectsTest fixture: a git remote URL with a placeholder credential"
     },
     {
       "file": "apps/pocket/android/app/src/test/java/ai/namastex/automagik/ProjectsTest.kt",
-      "text": "git@github.com",
-      "why": "a deliberate ProjectsTest fixture: a git remote URL"
-    },
-    {
-      "file": "apps/pocket/android/app/src/test/java/ai/namastex/automagik/ProjectsTest.kt",
-      "text": "secret@github.com",
-      "why": "a deliberate ProjectsTest fixture: a git remote URL with a placeholder credential"
-    },
-    {
-      "file": "apps/pocket/android/app/src/test/java/ai/namastex/automagik/ProjectsTest.kt",
-      "text": "git@github.com",
-      "why": "a deliberate ProjectsTest fixture: a git remote URL"
-    },
-    {
-      "file": "apps/pocket/android/app/src/test/java/ai/namastex/automagik/ProjectsTest.kt",
       "text": "/home/brain",
       "why": "a deliberate ProjectsTest fixture: a project path"
-    },
-    {
-      "file": "apps/pocket/android/app/src/test/java/ai/namastex/automagik/ProjectsTest.kt",
-      "text": "/home/brain",
-      "why": "a deliberate ProjectsTest fixture: a project path"
-    },
-    {
-      "file": "apps/pocket/android/app/src/test/java/ai/namastex/automagik/ProjectsTest.kt",
-      "text": "/home/brain",
-      "why": "a deliberate ProjectsTest fixture: a project path"
-    },
-    {
-      "file": "apps/pocket/android/app/src/test/java/ai/namastex/automagik/ProjectsTest.kt",
-      "text": "/home/brain",
-      "why": "a deliberate ProjectsTest fixture: a project path"
-    },
-    {
-      "file": "apps/pocket/android/app/src/test/java/ai/namastex/automagik/ProjectsTest.kt",
-      "text": "git@github.com",
-      "why": "a deliberate ProjectsTest fixture: a git remote URL"
-    },
-    {
-      "file": "apps/pocket/android/app/src/test/java/ai/namastex/automagik/ProjectsTest.kt",
-      "text": "git@github.com",
-      "why": "a deliberate ProjectsTest fixture: a git remote URL"
     },
     {
       "file": "apps/pocket/android/app/src/main/java/ai/namastex/automagik/PocketViewModel.kt",

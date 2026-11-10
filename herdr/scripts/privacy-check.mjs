@@ -29,7 +29,11 @@
 // The same file lists what is not personal data: placeholder user names (`users`), placeholder
 // emails (`emails`), and exact text allowed in one named file (`lines`, whose `file` is relative
 // to the scan root); only that text is cut out of the line, the rest of the line is still
-// scanned. Folders still holding hits wait in `pending`, one entry per folder with the issue
+// scanned. The list holds one entry per file and text: a text is cut from every line of its
+// file, so a repeat would change nothing and is refused. A text that ends in a home path's user
+// name (a home path for the user `ana`) is cut only where the name ends there too: a longer one
+// in the same file (the same path for `anabel`) is not cut and is still a hit, so an entry never
+// hides the front of another path. Folders still holding hits wait in `pending`, one entry per folder with the issue
 // that will clean it (a whole top-level folder, or one part of `apps/` for its own squad); they
 // are skipped until then, and the list only shrinks (test/privacy-check.test.mjs holds the
 // folders it may still name, so adding one fails there).
@@ -120,9 +124,30 @@ function deniedNames(line, denied) {
   return kept.sort((a, b) => a.index - b.index);
 }
 
-/** `text` with every allowed span cut out (replaced by a space, so words do not join). */
+/** A character a home path's user name may hold (HOME's own class). */
+const NAME_CHAR = /[A-Za-z0-9._-]/;
+/** Whether an allowed text ends in a home path's user name, which a longer name could extend. */
+const endsInHomeName = (text) => [...text.matchAll(HOME)].some((m) => m.index + m[0].length === text.length);
+
+/**
+ * `line` with every allowed span cut out (replaced by a space, so words do not join). A span
+ * that ends in a home path's user name is cut only where that name ends: followed by a name
+ * character, it is the front of a longer path, which stays in the line and is still scanned.
+ */
 function cutAllowed(line, spans) {
-  for (const s of spans) if (s) line = line.split(s).join(" ");
+  for (const s of spans) {
+    if (!s) continue;
+    if (!endsInHomeName(s)) { line = line.split(s).join(" "); continue; }
+    let out = "";
+    let from = 0;
+    for (let at = line.indexOf(s); at !== -1; at = line.indexOf(s, from)) {
+      const end = at + s.length;
+      const longer = end < line.length && NAME_CHAR.test(line[end]);
+      out += line.slice(from, at) + (longer ? s : " ");
+      from = end;
+    }
+    line = out + line.slice(from);
+  }
   return line;
 }
 
@@ -232,8 +257,9 @@ const LIST_SHAPE = {
 /**
  * Checks a list's shape and returns it: an object whose keys are `deny`, `users`, `emails`,
  * `lines` and `pending` (each optional, each an array), with every entry's keys known and of
- * their type. Throws one `privacy-list: ...` line naming the key and the entry's index, never an
- * entry's text. pendingFolders checks what a pending folder and issue may be.
+ * their type, and no `lines` entry repeating another's file and text. Throws one
+ * `privacy-list: ...` line naming the key and the entry's index, never an entry's text.
+ * pendingFolders checks what a pending folder and issue may be.
  */
 export function checkList(list) {
   const fail = (what) => { throw new Error(`privacy-list: ${what}`); };
@@ -260,6 +286,13 @@ export function checkList(list) {
       }
     });
   }
+  // One entry per file and text: an allowed text is cut from every line of its file already.
+  const pairs = new Map();
+  (list.lines ?? []).forEach((entry, i) => {
+    const pair = JSON.stringify([entry.file, entry.text]);
+    if (pairs.has(pair)) fail(`lines[${i}] repeats lines[${pairs.get(pair)}]: one entry per file and text`);
+    pairs.set(pair, i);
+  });
   return list;
 }
 

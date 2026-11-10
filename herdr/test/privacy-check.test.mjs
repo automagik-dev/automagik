@@ -142,6 +142,55 @@ test("an allowed text is cut out of the line; the rest of the line is still scan
   assert.deepEqual(rules(LIST_FILE, '"text": "`wish/bots-q7`"', list), [], "the list may name what it allows");
 });
 
+test("an allowed path fragment is cut only where its user name ends: a longer path is still a hit (#819)", () => {
+  const brain = `${LINUX}brain`;
+  const list = { lines: [{ file: "t.kt", text: brain, why: "a fixture path" }] };
+  for (const after of ['"', "'", "`", "/src", " ", ",", ")", ""]) {
+    assert.deepEqual(rules("t.kt", `git("${brain}${after}`, list), [], `the fixture itself, then ${JSON.stringify(after)}`);
+  }
+  for (const more of ["storm", "2", ".old", "-x", "_y"]) {
+    assert.deepEqual(rules("t.kt", `at ${brain}${more}/notes`, list), [`home-path:${brain}${more}`], `${more} makes another user`);
+  }
+  assert.deepEqual(rules("t.kt", `${brain}/a and ${brain}storm/b and "${brain}"`, list), [`home-path:${brain}storm`],
+    "each place is judged on its own: the fixture is cut, the longer path between them is not");
+  // Every home-path form, and a text that goes on past the user name, which nothing can extend.
+  for (const home of [`${MAC}ana`, `${WIN}ana`]) {
+    const allow = { lines: [{ file: "t.kt", text: home, why: "a fixture path" }] };
+    assert.deepEqual(rules("t.kt", `x ${home} y`, allow), []);
+    assert.deepEqual(rules("t.kt", `x ${home}bel y`, allow), [`home-path:${home}bel`]);
+  }
+  const anchored = { lines: [{ file: "t.kt", text: `${brain}/`, why: "a fixture path" }] };
+  assert.deepEqual(rules("t.kt", `${brain}/src and ${brain}storm/src`, anchored), [`home-path:${brain}storm`]);
+  // A text that is no home path is cut wherever it is, as before.
+  const branch = { lines: [{ file: "t.kt", text: "wish/bots-q7", why: "a branch" }] };
+  assert.deepEqual(rules("t.kt", "wish/bots-q7x and `wish/bots-q7`", branch), []);
+});
+
+test("every home-path entry of the list: a longer path in its file is still a hit (#819)", () => {
+  const list = loadList();
+  const home = /(?:\/Users\/|\/home\/|[A-Za-z]:\\Users\\)[A-Za-z0-9._-]+/g;
+  let probed = 0;
+  list.lines.forEach((entry, i) => {
+    for (const m of entry.text.matchAll(home)) {
+      const end = m.index + m[0].length;
+      const longer = `${entry.text.slice(0, end)}zz${entry.text.slice(end)}`;
+      const hits = scan(entry.file, longer, list).filter((h) => h.rule === "home-path");
+      assert.equal(hits.length, 1, `lines[${i}] hides a longer path in ${entry.file}`);
+      probed += 1;
+    }
+  });
+  assert.ok(probed >= 20, `probed only ${probed} entries: the home-path entries were not found`);
+});
+
+test("the list holds one entry per file and text: a repeat is refused (#819)", () => {
+  const entry = { file: "a.md", text: "x", why: "a fixture" };
+  assert.throws(() => checkList({ lines: [entry, { ...entry, file: "b.md" }, { ...entry, why: "again" }] }),
+    { message: "privacy-list: lines[2] repeats lines[0]: one entry per file and text" });
+  assert.doesNotThrow(() => checkList({ lines: [entry, { ...entry, file: "b.md" }, { ...entry, text: "y" }] }));
+  const lines = loadList().lines;
+  assert.equal(new Set(lines.map((l) => JSON.stringify([l.file, l.text]))).size, lines.length);
+});
+
 test("the list is exempt at whatever path the chosen root gives it", () => {
   const list = { deny: DENY, lines: [{ file: "w.md", text: "`wish/bots-q7`" }] };
   const text = '"text": "`wish/bots-q7`"';
