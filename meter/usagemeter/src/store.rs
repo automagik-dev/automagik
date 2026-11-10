@@ -486,7 +486,28 @@ impl Store {
         health: Health,
         now_ms: i64,
     ) -> rusqlite::Result<Health> {
-        self.apply(Some(file), &file.source, None, events, health, now_ms)
+        self.apply(
+            Some(file),
+            &file.source,
+            None,
+            events,
+            health,
+            now_ms,
+            false,
+        )
+    }
+
+    /// Applies an Antigravity conversation's chunk. Its rows are re-read while a held row waits,
+    /// so a repeat is not a duplicate line and neither the duplicate nor the usage-line counters
+    /// grow; `usage_lines` is the number of new usage calls.
+    pub fn apply_agy(
+        &mut self,
+        file: &FileState,
+        events: &[Attributed],
+        health: Health,
+        now_ms: i64,
+    ) -> rusqlite::Result<Health> {
+        self.apply(Some(file), "agy", None, events, health, now_ms, true)
     }
 
     /// Applies usage that comes with no file (a Codex thread counted from its `tokens_used`) and
@@ -498,9 +519,10 @@ impl Store {
         health: Health,
         now_ms: i64,
     ) -> rusqlite::Result<Health> {
-        self.apply(None, "codex", Some(thread), events, health, now_ms)
+        self.apply(None, "codex", Some(thread), events, health, now_ms, false)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn apply(
         &mut self,
         file: Option<&FileState>,
@@ -509,8 +531,17 @@ impl Store {
         events: &[Attributed],
         health: Health,
         now_ms: i64,
+        quiet_duplicates: bool,
     ) -> rusqlite::Result<Health> {
-        let r = self.apply_tx(file, source, thread, events, health, now_ms);
+        let r = self.apply_tx(
+            file,
+            source,
+            thread,
+            events,
+            health,
+            now_ms,
+            quiet_duplicates,
+        );
         if r.is_err() {
             // An id it cached may belong to the rolled-back transaction.
             self.intern.clear();
@@ -518,6 +549,7 @@ impl Store {
         r
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn apply_tx(
         &mut self,
         file: Option<&FileState>,
@@ -526,6 +558,7 @@ impl Store {
         events: &[Attributed],
         mut health: Health,
         now_ms: i64,
+        quiet_duplicates: bool,
     ) -> rusqlite::Result<Health> {
         let tx = self.conn.transaction()?;
         let mut seq: i64 =
@@ -550,7 +583,9 @@ impl Store {
                 if !e.dedupe_key.is_empty() {
                     seq += 1;
                     if ins.execute(params![key_hash(&e.dedupe_key), seq])? == 0 {
-                        health.duplicates += 1;
+                        if !quiet_duplicates {
+                            health.duplicates += 1;
+                        }
                         continue;
                     }
                 }
@@ -576,6 +611,9 @@ impl Store {
                 }
                 entry.events += 1;
             }
+        }
+        if quiet_duplicates {
+            health.usage_lines = health.events;
         }
         upsert_rows(&tx, &rows, now_ms)?;
         if let Some(file) = file {

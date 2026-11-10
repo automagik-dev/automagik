@@ -2047,7 +2047,7 @@ fn rows_metadata_and_refusals_stay_within_the_budget_table() {
     );
     assert_eq!(
         v["sources"].as_array().unwrap().len(),
-        5,
+        6,
         "{}",
         v["sources"]
     );
