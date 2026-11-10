@@ -1,6 +1,7 @@
 import { createElement as h, Fragment, useEffect, useRef, useState } from 'react'
 import { AUTO } from '../shared/permission-levels.js'
 import { Segmented } from './motion.js'
+import { CheckIcon } from './icons.js'
 import { t } from './i18n.js'
 
 const LABELS = { 'read-only': 'Read only', 'workspace-write': 'Workspace', 'danger-full-access': 'Full access', [AUTO]: 'Auto review' }
@@ -12,11 +13,23 @@ export const presetName = (value, catalog) => (LABELS[value] ? t(LABELS[value]) 
 // A saved Auto that runs as workspace-write where Auto cannot hold (`permissionFallback`).
 export const PermissionFallback = ({ fallback }) => (fallback ? h('div', { className: 'bt-note' }, t('Runs as Workspace here')) : null)
 
-// The presets DeepSeek Harness offers, as one segmented choice; Auto review only while
-// DSH offers it. A pick shows at once and holds until the saved value catches up, or
-// falls back when `onPick` resolves false. `repick` lets the shown preset be picked
-// again. Auto review is experimental: picking it asks once before it is sent.
-export function PermissionPicker({ catalog, saved, onPick, repick = false }) {
+// What each level really does, in plain words. DSH's `ask` does not ask before each action: a
+// confined call runs at once, and the person is asked only when the Bot wants one action with
+// wider access. The file rules cover writes, not the network. A level these do not name (a
+// custom preset) shows what DSH's catalog says of it, or its name alone: nothing is made up.
+const TEXTS = {
+  'read-only': 'It cannot change files unless you allow that one action. It can still run commands and use the network and its other tools.',
+  'workspace-write': 'Changes files inside its folder and a temporary folder without asking. For other files it asks you first. It can still run commands and use the network and its other tools.',
+  [AUTO]: 'A model reviews each action first. You are asked only about the ones it stops. The rest run with full access, and it can let a wrong one through.',
+  'danger-full-access': 'Runs commands and changes files anywhere without asking you. Choose it only when you trust what you asked for.',
+}
+export const presetText = (value, catalog) => (Object.hasOwn(TEXTS, value) ? t(TEXTS[value]) : String(catalog?.options?.find(option => option.value === value)?.description ?? ''))
+
+// A pick shows at once and holds until the saved value catches up, or falls back when
+// `onPick` resolves false. `repick` lets the shown preset be picked again. Auto review is
+// experimental: picking it asks once before it is sent, and so does Full access where
+// `confirmFull` is set. `confirming` is the level waiting for that answer.
+export function usePermissionPick({ saved, onPick, repick = false, confirmFull = false }) {
   const [pending, setPending] = useState(null)
   const [confirming, setConfirming] = useState(false)
   // One save runs at a time. A pick made while one is in flight waits as `latest`
@@ -38,14 +51,37 @@ export function PermissionPicker({ catalog, saved, onPick, repick = false }) {
     })
   }
   const current = pending ?? saved
+  const asks = value => value === AUTO || (confirmFull && presetDanger(value))
   const pick = (value, confirmed = false) => {
     if (value === current && !repick) return
-    if (value === AUTO && !confirmed) { setConfirming(true); return }
+    if (asks(value) && !confirmed) { setConfirming(value); return }
     setConfirming(false)
     setPending(value)
     if (flight.current.value !== undefined) { flight.current.latest = value; return }
     send(value)
   }
+  return { current, pick, confirming, cancel: () => setConfirming(false) }
+}
+
+// The question asked before Auto review or Full access is sent; `name` is the Bot it is for.
+function PermissionConfirm({ value, name, onConfirm, onCancel }) {
+  if (value === AUTO) {
+    return h('div', { className: 'bt-perm-confirm', role: 'alert' },
+      h('span', { className: 'bt-note' }, t('Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.')),
+      h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: onConfirm }, t('Use Auto review')),
+      h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: onCancel }, t('Cancel')))
+  }
+  return h('div', { className: 'bt-perm-confirm', role: 'alert' },
+    h('span', { className: 'bt-note' }, h('span', { className: 'bt-danger' }, name === undefined ? presetText(value)
+      : `${t('Give {name} full access?', { name })} ${t('{name} will run commands and change files anywhere without asking you first.', { name })}`)),
+    h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: onConfirm }, t('Give full access')),
+    h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: onCancel }, t('Cancel')))
+}
+
+// The presets DeepSeek Harness offers, as one segmented choice; Auto review only while
+// DSH offers it (usePermissionPick).
+export function PermissionPicker({ catalog, saved, onPick, repick = false, confirmFull = false }) {
+  const { current, pick, confirming, cancel } = usePermissionPick({ saved, onPick, repick, confirmFull })
   const choice = h(Segmented, { label: t('Permissions'), value: current },
     catalog.options.map(option => h('button', {
       key: option.value, type: 'button', 'aria-pressed': option.value === current,
@@ -54,8 +90,42 @@ export function PermissionPicker({ catalog, saved, onPick, repick = false }) {
     }, presetName(option.value, catalog), option.value === AUTO ? h('span', { className: 'bt-perm-exp' }, t('Experimental')) : null)))
   if (!confirming) return choice
   return h(Fragment, null, choice,
-    h('div', { className: 'bt-perm-confirm', role: 'alert' },
-      h('span', { className: 'bt-note' }, t('Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.')),
-      h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: () => pick(AUTO, true) }, t('Use Auto review')),
-      h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: () => setConfirming(false) }, t('Cancel'))))
+    h(PermissionConfirm, { value: confirming, onConfirm: () => pick(confirming, true), onCancel: cancel }))
+}
+
+// Every level the catalog offers, in its order, each with what it does: the current one
+// marked, Full access in the danger ink. No letter keys: a stray key never moves a level.
+export function PermissionOptions({ catalog, current, onPick, disabled = false }) {
+  return h('div', { className: 'bt-q-list', role: 'group', 'aria-label': t('Permissions') },
+    catalog.options.map((option) => {
+      const danger = presetDanger(option.value) ? ' bt-danger' : ''
+      const text = presetText(option.value, catalog)
+      return h('button', {
+        key: option.value, type: 'button', className: 'bt-q-opt', disabled,
+        'aria-pressed': option.value === current, 'data-permission': option.value,
+        onClick: () => onPick(option.value),
+      },
+      h('span', { className: 'bt-q-body' },
+        h('span', { className: `bt-q-label${danger}` }, presetName(option.value, catalog), option.value === AUTO ? h('span', { className: 'bt-perm-exp' }, t('Experimental')) : null),
+        text ? h('span', { className: `bt-q-desc${danger}` }, text) : null),
+      option.value === current ? h('span', { className: 'bt-q-check', title: t('Selected') }, h(CheckIcon)) : null)
+    }))
+}
+
+// The explained list as the picker itself (Details): a click saves, as a segment did, through
+// the same one-save-at-a-time path; Auto review and Full access ask once first.
+export function PermissionList({ catalog, saved, onPick, repick = false, disabled = false, name }) {
+  const { current, pick, confirming, cancel } = usePermissionPick({ saved, onPick, repick, confirmFull: true })
+  return h(Fragment, null,
+    h(PermissionOptions, { catalog, current, onPick: value => pick(value), disabled }),
+    confirming && !disabled ? h(PermissionConfirm, { value: confirming, name, onConfirm: () => pick(confirming, true), onCancel: cancel }) : null)
+}
+
+// What every offered level does, as plain lines: for the places that keep the segmented choice.
+export function PermissionExplanations({ catalog }) {
+  return h('div', { className: 'bt-perm-about' }, catalog.options.map((option) => {
+    const text = presetText(option.value, catalog)
+    return h('div', { key: option.value, className: 'bt-note' },
+      h('span', { className: presetDanger(option.value) ? 'bt-danger' : undefined }, presetName(option.value, catalog)), text ? `: ${text}` : null)
+  }))
 }

@@ -8,6 +8,10 @@ const { contextBridge, ipcRenderer } = require('electron')
 const updates = Object.freeze({
   status: () => ipcRenderer.invoke('automagik-updates-status'),
   open: () => ipcRenderer.invoke('automagik-updates-open'),
+  // Check and nothing else: unlike `open`, it never restarts into an update or puts plugins in.
+  check: () => ipcRenderer.invoke('automagik-updates-check'),
+  // What this copy is: the app's version, its runtime's, its plugins', and whether it updates.
+  versions: () => ipcRenderer.invoke('automagik-updates-versions'),
   // The plugins the lane staged: put them in now (DSH restarts, the window stays), and whether
   // they go in by themselves once no agent is at work.
   applyPlugins: () => ipcRenderer.invoke('automagik-updates-apply-plugins'),
@@ -81,3 +85,53 @@ ipcRenderer.on('automagik-window', (_event, state) => {
   if (state?.fullScreen) root().dataset.automagikFullscreen = ''
   else delete root().dataset.automagikFullscreen
 })
+
+// The composer's unsent drafts (#141). DSH keeps each Session's draft in this origin's
+// localStorage, under `dsh.conversation.<session id>`, and the origin moves with dsh's port when
+// the one it had is taken. So the app keeps a copy outside the origin (main.js, drafts.js): here,
+// before any script of the page runs, the drafts kept on another origin are put back under DSH's
+// own keys (on the same origin, only the ones its storage has lost), and from then on the
+// page's are sent to main as they change. The values are DSH's strings, untouched; nothing is
+// exposed to the page, and nothing is ever submitted.
+const DRAFT_PREFIX = 'dsh.conversation.'
+const DRAFTS_EVERY_MS = 2000
+// DSH's Session entries hold a `draft`; its other keys under the prefix (a width) are not drafts.
+const isDraftEntry = (key, value) => {
+  if (typeof key !== 'string' || !key.startsWith(DRAFT_PREFIX) || typeof value !== 'string') return false
+  try {
+    const stored = JSON.parse(value)
+    return stored !== null && typeof stored === 'object' && 'draft' in stored
+  } catch { return false }
+}
+function keepDrafts() {
+  const storage = globalThis.localStorage
+  if (!storage || typeof ipcRenderer.sendSync !== 'function') return
+  // Main answers null to anything but dsh's own page: nothing is put back or sent then. A take
+  // or a storage that fails ends it too, so a broken load never replaces the copy with nothing.
+  const back = ipcRenderer.sendSync('automagik-drafts-take')
+  if (back === null || typeof back !== 'object' || back.entries === null || typeof back.entries !== 'object') return
+  // Kept on another origin (`moved`): the copy is the newest state of its Sessions. On this one,
+  // the page's storage is; the copy only fills in a key the storage has lost.
+  for (const [key, value] of Object.entries(back.entries)) {
+    if (isDraftEntry(key, value) && (back.moved === true || storage.getItem(key) === null)) storage.setItem(key, value)
+  }
+  let sent = null
+  const send = () => {
+    try {
+      const entries = {}
+      for (let i = 0; i < storage.length; i++) {
+        const key = storage.key(i)
+        const value = storage.getItem(key)
+        if (isDraftEntry(key, value)) entries[key] = value
+      }
+      const now = JSON.stringify(entries)
+      if (now === sent) return
+      ipcRenderer.send('automagik-drafts-keep', entries)
+      sent = now
+    } catch { /* storage unavailable: the copy stays as it was */ }
+  }
+  send()
+  setInterval(send, DRAFTS_EVERY_MS)
+  globalThis.addEventListener?.('pagehide', send)
+}
+try { keepDrafts() } catch { /* the page works without the copy */ }

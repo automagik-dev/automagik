@@ -71,6 +71,11 @@ export const WINDOW_ACTIONS = new Set(['minimize', 'maximize', 'close', 'menu'])
  * renders it as a check in progress instead of a failure; a client that reads the marker can
  * say "Retrying update check…".
  *
+ * A download carries `transferred` and `total` (bytes) beside `percent` when the updater counts
+ * them. The error phase's `failure` says what failed: `check` (the releases could not be read),
+ * `download` (the update did not arrive) or `verify` (what arrived is not what the release
+ * says); in each the running version stays as it is.
+ *
  * Given `lane` ({ changes, auto, applying }: the staged plugins as auto-apply.js changesOf names
  * them, the setting, and whether they are going in now), it also carries the app's update and
  * the plugins' apart, for a Bot team that names each plugin: `app` ({ phase, version?, percent?,
@@ -84,6 +89,30 @@ export function updatePresentation(update, { checking = false, failed = false, p
   return { ...legacy, app: legacyPresentation(update, { checking, failed }), plugins: pluginsPresentation({ lane, fetching }) }
 }
 
+const VERSION_TEXT = /^\d+\.\d+\.\d+[0-9A-Za-z.+-]{0,40}$/
+const versionText = value => (typeof value === 'string' && value.length <= 64 && VERSION_TEXT.test(value) ? value : null)
+
+/**
+ * What this copy of the app is, for the Bot team's About page (preload.cjs
+ * `omniDesktop.updates.versions`): `{ app, dsh, plugins: [{ name, version }], updates }`. `app`
+ * is the app's own version, `dsh` its runtime's, `plugins` the installed plugins of the
+ * publishers the app follows (lane.js installedVersions, by name), and `updates` whether this
+ * copy updates at all (update.js updateMode). Version text only: no path, no setting.
+ */
+export function versionsAnswer({ app, dsh, plugins, mode } = {}) {
+  const listed = Object.entries(plugins ?? {})
+    .map(([name, version]) => ({ name, version: versionText(version) }))
+    .filter(plugin => plugin.version !== null)
+  return { app: versionText(app), dsh: versionText(dsh), plugins: listed, updates: mode === 'auto' || mode === 'notify' }
+}
+
+/**
+ * Whether a check that found the app up to date still failed: a lane could not be read
+ * (`laneFailed`) and nothing is staged (`staged`), so "up to date" would not be true. Any other
+ * result (an update found or ready, an error, a retry) already says what it is.
+ */
+export const laneMissedOf = ({ result, laneFailed, staged }) => result === 'latest' && laneFailed === true && !staged
+
 function pluginsPresentation({ lane, fetching }) {
   const auto = lane.auto !== false
   if (lane.applying) return { phase: 'installing', changes: lane.changes ?? [], auto }
@@ -92,17 +121,26 @@ function pluginsPresentation({ lane, fetching }) {
   return { phase: 'idle', changes: [], auto }
 }
 
+// The download in bytes, when update.js counted them: { transferred, total }.
+function bytesOf(update) {
+  const { transferred, total } = update
+  return Number.isFinite(transferred) && Number.isFinite(total) && total > 0 ? { transferred, total } : {}
+}
+
 function legacyPresentation(update, { checking, failed, plugins, fetching }) {
   const version = update?.version ? { version: update.version } : {}
   if (update?.state === 'restarting') return { phase: 'installing', ...version }
   if (update?.state === 'ready') return { phase: 'ready', ...version }
   // Plugins the lane staged (lane.js) are ready too: a start puts them in, in a few seconds.
   if (plugins && update?.state !== 'downloading' && update?.state !== 'available') return { phase: 'ready', version: plugins, kind: 'plugins' }
-  if (update?.state === 'downloading') return { phase: 'downloading', ...version, percent: Math.floor(update.percent ?? 0) }
+  if (update?.state === 'downloading') return { phase: 'downloading', ...version, percent: Math.floor(update.percent ?? 0), ...bytesOf(update) }
   if (update?.state === 'available') return { phase: 'available', ...version }
   // Plugins the lane is downloading: the sidebar shows them coming, not only once staged.
   if (fetching) return { phase: 'downloading', version: fetching.version, percent: Math.floor(fetching.percent ?? 0), kind: 'plugins' }
   if (checking) return { phase: 'checking' }
+  // A download that did not arrive, or an update that could not be verified (update.js): the
+  // error phase with what failed, so a Bot team that knows only `phase` still shows a failure.
+  if (update?.state === 'failed') return { phase: 'error', failure: update.failure === 'verify' ? 'verify' : 'download', ...version }
   if (failed) return { phase: 'error', failure: 'check' }
   if (update?.state === 'retrying') return { phase: 'checking', retrying: true }
   return { phase: 'idle' }
