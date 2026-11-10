@@ -36,7 +36,7 @@ import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, 
   LEDGER_MODE, endRow, finishedEnds, launchKey, ledgerLine, ledgerPath, optionLike, paneArgs, readLedger, reapCandidates, reapPath, reapRow,
   sessionRow, stableGuardDir, stableRootOf,
   parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
-  taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, templateAgent, workerArgs, workerBranch, workerPlan, workerRole, worktreeFolder,
+  taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, templateAgent, workerArgs, workerBranch, workerKillRefusal, workerPlan, workerRole, worktreeFolder,
   workLeft, writesWorktree } from "../workers.js";
 import { SESSION_MASK, carriedLabels, maskSession, commandArgv, continueRefusal, doomedHelpers, helperArgs, helperPlan, launchChange, ledgerSession, maskedArgv,
   isPaneIdle, pendingDialog, paneCommand, planText as restartText, restartPlan, sharedFresh, claudeSlug, paneSession, restartRefusal, sameSessions, sessionFor, sessionId, sharedFolders } from "../restart.js";
@@ -1310,6 +1310,11 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 runs it on about one task in three, by rule. Each call then
                                 removes up to 5 worktrees this command made whose workers
                                 have all ended (reap)
+  worker kill <pane>            from a bot's pane: end one worker that bot started (its
+                                worker.of label names the calling bot) once its turn is over.
+                                Any other pane -- a bot's seat, another bot's worker, your own
+                                pane, a worker still working -- is refused. hc kill itself is
+                                for a project's main bot only
   reap                          remove every worktree a worker call made whose workers have
                                 all ended (killed or done), then git worktree prune. Kept, with
                                 one line naming the path and why: uncommitted changes, or
@@ -1375,10 +1380,16 @@ last cached list and the refusal says when there is none. Every Antigravity laun
 \`worker.agyMode\`, else auto. Each launch also writes its own session permission list, 0600
 under <app home>/automagik-herdr/agy-settings/, and passes it as \`--settings\`: a narrow allow
 list for its scope and the fixed denies --force pushes, hard resets, rm -rf, PR merges,
-releases, gh api writes, roster edits and restarts, hc keys/kill/interrupt/exec -- plus the
+releases, flag-first gh api writes, roster edits and restarts (automagik-herdr and am), hc
+keys/interrupt/exec -- plus the
 bot's \`agyPermissions\` additions, never a fixed deny dropped. Where agy can't run --mode auto
 it continues in manual mode, so every launch also passes --dangerously-skip-permissions, only
-ever beside that file: no prompt, and the deny list still refuses what it names (#955). The file
+ever beside that file: no prompt, and the deny list still refuses what it names (#955).
+Under that flag the allow list does nothing and no classifier runs: whatever the deny list
+doesn't name runs unasked (inline code, scripts, sh, curl, ssh, a plain push, a child agent).
+The lists are a guardrail against accidents; the boundary is the hc-proxy sandbox. A lead
+ends its own worker with \`worker kill <pane>\`: \`hc kill\` is denied to every worker and to
+every seat but a main bot's. The file
 also lists a writer launch's own folder in \`trustedWorkspaces\` -- the project folder for a
 seat, the worker's worktree for a worker, never a parent or the home folder -- so agy's
 first-run trust question is already answered. A read-only review launch (a review worker, a
@@ -5484,7 +5495,38 @@ async function cmdReap(opts, rest) {
   return lines.length ? lines.join("\n") : "No finished worker's worktree to remove.";
 }
 
+/**
+ * `worker kill <pane>` (#955): ends one worker the calling bot started, and nothing else. The
+ * caller is the bot the attach ledger binds this pane to (callingBot, from HC_TERMINAL_ID); the
+ * target must carry that bot's `worker.of` label and be no bot's seat (workers.js
+ * workerKillRefusal), and not mid-turn. `hc kill` itself is for a project's main bot only (the
+ * hc guard and Antigravity's deny list refuse it to every other seat and to workers), so this is
+ * how a lead ends a worker that has finished. On this computer only.
+ */
+async function cmdWorkerKill(opts, panes) {
+  if (panes.length !== 1 || optionLike(panes[0])) throw new CliError("worker kill takes one terminal: automagik-herdr worker kill <pane>.", 2);
+  const [pane] = panes;
+  if (pane.includes("/")) throw new CliError(`worker kill ends a worker on this computer only; ${pane} names another machine. Nothing was ended.`);
+  const { me, bot } = await callingBot(opts);
+  const self = me.address ?? process.env.HC_TERMINAL_ID;
+  const target = await hcGet(pane);
+  const address = target ? (target.address ?? pane) : pane;
+  const bound = target ? Boolean((await attachView()).byTerminal.get(address)?.binding?.bot) : false;
+  const why = workerKillRefusal({ target: target ? { ...target, address } : null, botId: bot.id, self, bound });
+  if (why) throw new CliError(`${why === "that isn't a terminal hc knows" ? `${pane} isn't a terminal hc knows` : why}. Nothing was ended.`);
+  if (target.state && target.state !== "live") {
+    return opts.json ? { terminal: address, ended: false, state: target.state } : `${address} has already ended (${target.state}).`;
+  }
+  // The real hc (in a sandbox, the proxy's socket, which ends only the caller's own worker):
+  // the pane's guard refuses a member's own `hc kill`, and this verb is the checked way around it.
+  const r = await hcReal(["kill", address]);
+  if (r.code !== 0) throw new CliError(`hc kill ${address} failed: ${hcSaid((r.stderr || r.stdout).trim())}`);
+  return opts.json ? { terminal: address, ended: true, branch: target.labels?.branch ?? null } : `${address} ended (${bot.name}'s worker${target.labels?.branch ? ` on ${target.labels.branch}` : ""}).`;
+}
+
 async function cmdWorker(opts, rest) {
+  // `worker kill <pane>`: a task call always names --branch or --worktree, so the two never mix.
+  if (rest[0] === "kill" && opts.branch === undefined && opts.worktree === undefined) return cmdWorkerKill(opts, rest.slice(1));
   const task = rest.join(" ").trim();
   if (!task) throw new CliError('worker needs the task text: automagik-herdr worker "<task>" --branch <name>.', 2);
   if (optionLike(task)) throw new CliError("The task text can't start with a dash; the agent would read it as an option.", 2);
@@ -5734,7 +5776,7 @@ async function cmdWorker(opts, rest) {
   const swapped = swap ? [`  swap      yes: ${bot.name}'s planned swap task`] : [];
   return [terminal, `  role      ${role}`, ...contract, `  worktree  ${place.worktree}`, `  branch    ${place.branch} (${how})`, ...what,
     ...swapped,
-    `End it once the task merges: hc kill ${terminal}`].join("\n");
+    `End it once the task merges: automagik-herdr worker kill ${terminal}`].join("\n");
 }
 
 // ---- updates (A14) ----

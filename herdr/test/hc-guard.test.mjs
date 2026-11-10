@@ -143,7 +143,7 @@ test("every allowed verb reaches the stub unchanged", (t) => {
   const s = scene(t);
   const allowed = [
     ["send", "t101", "hello"], ["read", "t101"], ["ls"], ["get", "t101"], ["wait", "t101"],
-    ["put", "t101", "/tmp/file"], ["label", "t105", "role=dev"], ["kill", "t101"], ["rm", "t101"],
+    ["put", "t101", "/tmp/file"], ["label", "t105", "role=dev"], ["rm", "t101"],
     ["events"], ["schema"], ["templates"],
   ];
   for (const args of allowed) {
@@ -396,19 +396,85 @@ test("a pm caller cannot send to a pane whose bot= is not listed", (t) => {
   assert.equal(calls(s).some((argv) => argv[0] === "send"), false, "an unlisted bot= target never reaches send");
 });
 
-test("the widening is send only: keys is refused and kill/rm keep today's unscoped pass", (t) => {
+test("the widening is send only: keys is refused, kill is the main bot's (#955) and rm keeps today's unscoped pass", (t) => {
   const s = sharedScene(t);
   writeFileSync(s.logPath, "");
   const keys = guardRun(s, ["keys", "t203", "enter"], { HC_TERMINAL_ID: "t200" });
   assertRefused(keys);
   assert.deepEqual(calls(s), [], "keys never reaches hc");
-  // #636 leaves kill and rm unscoped (#628 owns that scope); the widening does not touch them.
-  for (const args of [["kill", "t203"], ["rm", "t203"]]) {
+  // A pm is not the project's main bot: its kill is refused like any member's (#955).
+  writeFileSync(s.logPath, "");
+  assertRefused(guardRun(s, ["kill", "t203"], { HC_TERMINAL_ID: "t200" }));
+  assert.deepEqual(calls(s).filter((argv) => argv[0] === "kill"), []);
+  // #636 leaves rm unscoped (#628 owns that scope); the widening does not touch it.
+  for (const args of [["rm", "t203"]]) {
     writeFileSync(s.logPath, "");
     const r = guardRun(s, args, { HC_TERMINAL_ID: "t200" });
     assert.equal(r.status, 0, `${args[0]} is unchanged: ${r.stderr}`);
     assert.ok(calls(s).some((argv) => same(argv, args)), `${args[0]} arrives unchanged`);
   }
+});
+
+// ---- kill: a project's main bot only (#955, the owner's rule) ----
+
+/** The base scene with the main bot's and the captain's seats bound in the ledger too. */
+function killScene(t) {
+  const s = scene(t);
+  const bind = (terminal, id) => ({ v: 1, event: "attach", bot: id, project: s.project, terminal, core: "core",
+    created_ms: 100, machine: null, at: "2026-11-01T00:00:00.000Z", by: "start" });
+  const ledger = join(s.app, "automagik-herdr", "attach.jsonl");
+  appendFileSync(ledger, [["t103", ID.main], ["t101", ID.cap], ["t102", ID.junior]].map(([terminal, id]) => `${JSON.stringify(bind(terminal, id))}\n`).join(""));
+  chmodSync(ledger, 0o600);
+  return s;
+}
+const killsSeen = (s) => calls(s).filter((argv) => argv.includes("kill"));
+
+test("hc kill (#955): a main bot's seat ends a pane; the roster's kind decides, on any agent", (t) => {
+  // The guard never reads the agent: the same answer for a Claude, Codex, Antigravity or dsh-tui main bot.
+  for (const agent of ["claude", "codex", "antigravity", "dsh-tui"]) {
+    const s = killScene(t);
+    const file = team();
+    for (const b of file.bots) b.agent = agent;
+    writeFileSync(join(s.project, ".herdr", "bots.json"), `${JSON.stringify(file, null, 2)}\n`);
+    const main = guardRun(s, ["kill", "t105"], { HC_TERMINAL_ID: "t103" });
+    assert.equal(main.status, 0, `${agent} main: ${main.stderr}`);
+    assert.deepEqual(killsSeen(s), [["kill", "t105"]], `${agent}: the main bot's kill arrives unchanged`);
+    // A member that leads (the captain), a member that leads no one's squad (junior's lead dev), and a plain member.
+    for (const [who, terminal] of [["a member lead", "t101"], ["a member", "t100"], ["a member with no members", "t102"]]) {
+      writeFileSync(s.logPath, "");
+      const r = guardRun(s, ["kill", "t105"], { HC_TERMINAL_ID: terminal });
+      assertRefused(r);
+      assert.match(r.stderr, /refused kill: hc kill is for a project's main bot only; end a worker you started with automagik-herdr worker kill <pane>/, `${agent} ${who}`);
+      assert.deepEqual(killsSeen(s), [], `${agent} ${who}: nothing reached hc`);
+    }
+    // A worker, the main bot's own included, never kills.
+    writeFileSync(s.logPath, "");
+    const worker = guardRun(s, ["kill", "t110"], { HC_TERMINAL_ID: "t105" });
+    assertRefused(worker);
+    assert.match(worker.stderr, /hc kill is for a project's main bot only, never a worker/);
+    assert.deepEqual(killsSeen(s), []);
+  }
+});
+
+test("hc kill (#955): a flag before the command is refused for everyone, the main bot too; an unknown caller is refused", (t) => {
+  const s = killScene(t);
+  for (const terminal of ["t103", "t101", "t100", "t105"]) {
+    for (const args of [["--json", "kill", "t105"], ["--timeout", "5", "kill", "t105"], ["-q", "kill", "t105"]]) {
+      writeFileSync(s.logPath, "");
+      assertRefused(guardRun(s, args, { HC_TERMINAL_ID: terminal }));
+      assert.deepEqual(calls(s), [], `${args.join(" ")} from ${terminal} never reaches hc`);
+    }
+  }
+  // A pane that is neither bound nor a worker; and a bound bot its project's roster doesn't list.
+  writeFileSync(s.logPath, "");
+  assertRefused(guardRun(s, ["kill", "t105"], { HC_TERMINAL_ID: "t121" }));
+  const file = team();
+  file.bots = file.bots.filter((b) => b.id !== ID.main);
+  writeFileSync(join(s.project, ".herdr", "bots.json"), `${JSON.stringify(file, null, 2)}\n`);
+  const gone = guardRun(s, ["kill", "t105"], { HC_TERMINAL_ID: "t103" });
+  assertRefused(gone);
+  assert.match(gone.stderr, /the caller's bot is not in its project's bots\.json/);
+  assert.deepEqual(killsSeen(s), []);
 });
 
 test("a captain reaches its declared lead even when that lead is planned", (t) => {

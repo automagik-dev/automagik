@@ -298,6 +298,55 @@ test("worker #946: a bot's codexAuto false leaves its Codex workers on Codex's d
   assert.equal(s.runs()[1].includes("--approve-for-me"), false, "a per-task --agent codex keeps the opt-out");
 });
 
+test("worker kill (#955): a bot ends a worker it started and nothing else: a seat, another bot's worker, its own pane and a plain pane are refused", (t) => {
+  const s = scene(t);
+  const started = s.cli(["worker", "fix the login form", "--branch", "feat/login", "--json"]);
+  assert.equal(started.code, 0, started.err);
+  const mine = started.json().terminal;
+  const kills = () => s.calls().filter((c) => c[0] === "kill");
+  // Another bot (Captain, t4) may not end Dev's worker; neither a bot's seat, a plain pane nor the caller's own pane is ended.
+  for (const [args, from, why] of [[["worker", "kill", mine], "t4", /is another bot's worker; worker kill ends only a worker you started\. Nothing was ended\./],
+    [["worker", "kill", "t4"], "t1", /t4 is a bot's pane, not a worker/], [["worker", "kill", "t2"], "t1", /t2 isn't a worker/],
+    [["worker", "kill", "t1"], "t1", /t1 is your own pane/], [["worker", "kill", "t999"], "t1", /t999 isn't a terminal hc knows/],
+    [["worker", "kill", "vm/t9"], "t1", /on this computer only/]]) {
+    const r = s.cli(args, { from });
+    assert.equal(r.code, 1, `${args.join(" ")} from ${from}: ${r.err}`);
+    assert.match(r.err, why);
+  }
+  assert.deepEqual(kills(), [], "no refused call reached hc kill");
+  assert.equal(s.cli(["worker", "kill"]).code, 2, "it takes one terminal");
+  assert.equal(s.cli(["worker", "kill", mine, "t4"]).code, 2);
+  // A pane that isn't a bot's can't call it at all.
+  assert.equal(s.cli(["worker", "kill", mine], { from: "t2" }).code, 1);
+  assert.deepEqual(kills(), []);
+  // Mid-turn, even its own bot doesn't end it; once the turn is over it does.
+  const setStatus = (state) => {
+    const st = s.hcState();
+    st.terminals.find((x) => x.address === mine).status = { state };
+    writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  };
+  setStatus("working");
+  const busy = s.cli(["worker", "kill", mine]);
+  assert.equal(busy.code, 1);
+  assert.match(busy.err, /is still working; worker kill ends a worker that has finished its turn/);
+  assert.deepEqual(kills(), []);
+  setStatus("idle");
+  // Its own bot ends it: exactly one hc kill, of that terminal.
+  const r = s.cli(["worker", "kill", mine, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual([r.json().terminal, r.json().ended, r.json().branch], [mine, true, "feat/login"]);
+  assert.deepEqual(kills().map((c) => c.slice(0, 2)), [["kill", mine]]);
+  // Ended already: said, and no second kill.
+  const again = s.cli(["worker", "kill", mine]);
+  assert.equal(again.code, 0, again.err);
+  assert.match(again.out, /has already ended/);
+  assert.equal(kills().length, 1);
+  // A task whose text starts with "kill" is still a task: it names --branch.
+  const task = s.cli(["worker", "kill", "the", "flaky", "test", "--branch", "feat/kill-flaky", "--json"]);
+  assert.equal(task.code, 0, task.err);
+  assert.equal(kills().length, 1);
+});
+
 test("worker: a bot with no worker field runs its own agent, with that agent's default model and effort", (t) => {
   const file = team();
   delete file.bots[2].worker;
@@ -1099,13 +1148,14 @@ test("workers.js: hc run arguments, slugs, worktree list, base order, ledger row
   assert.equal(sessionChange(null, JSON.stringify({ session_id: "s2" })), null);
 });
 
-test("the bot briefing says a bot doesn't code: one worker per task, checked, ended with hc kill once merged", async () => {
+test("the bot briefing says a bot doesn't code: one worker per task, checked, ended with worker kill once merged", async () => {
   const { briefingText, WORKER_LINE, BRIEFING_LIMIT } = await import("../mods/am-sidebar/briefingText.mjs");
   const file = parseBots(JSON.stringify(team())).file;
   const text = briefingText({ self: { ...file.bots[2], instructions: "x".repeat(4000) }, file });
   assert.ok(text.includes(WORKER_LINE));
   assert.match(WORKER_LINE, /automagik-herdr worker/);
-  assert.match(WORKER_LINE, /hc kill/);
+  assert.match(WORKER_LINE, /end it with `automagik-herdr worker kill <terminal>` once the task merges/);
+  assert.doesNotMatch(WORKER_LINE, /hc kill/, "hc kill is the main bot's only (#955)");
   assert.ok(text.length <= BRIEFING_LIMIT);
 });
 

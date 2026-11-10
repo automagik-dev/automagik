@@ -493,6 +493,7 @@ automagik-herdr forget <project>
 automagik-herdr worker "<task>" (--branch B [--base REF] | --worktree DIR)
        [[--agent A] [--model M] [--effort E] | --template T] [--name N] [--role dev|test|review|fix]
        [--task ID [--lead BOT]]
+automagik-herdr worker kill <pane>   # from a bot's pane: end one worker that bot started; any other pane is refused
 automagik-herdr update [--check | --rollback]
 automagik-herdr meter install [--machine M | --linked | --local] | meter uninstall
 automagik-herdr dsh-tui install | update | uninstall | doctor
@@ -817,8 +818,9 @@ automagik-herdr worker "Fix the login redirect loop" --task gl-231 --worktree ..
   pane, or a worker on another machine, is peeked instead.
 - **Output:** the worker's terminal, then its role, worktree, branch, and agent, model and
   effort, or its template (`--json`: the same as data, with `role` and `template`).
-- **Lifecycle:** the bot checks the worker's result, and ends it with `hc kill <terminal>`
-  once the task merges. The bot's briefing says so. As an hc child, a worker
+- **Lifecycle:** the bot checks the worker's result, and ends it with
+  `automagik-herdr worker kill <terminal>` once the task merges (see
+  [Ending a worker](#ending-a-worker)). The bot's briefing says so. As an hc child, a worker
   also ends when its bot's program ends; its branch stays.
 - **Cleanup (#567):** a worktree this command made (`created` in the ledger) is removed
   (`git worktree remove`, no `--force`, then `git worktree prune`) once every worker that ran
@@ -1187,7 +1189,7 @@ the pack adds nothing to either.
 | --- | --- | --- |
 | Claude Code (`claude`) | `--permission-mode auto` | Claude Code's auto mode: its classifier answers permission requests. |
 | Codex (`codex`) | `--approve-for-me` | Codex's auto mode: its reviewer answers approval requests, inside the workspace-write sandbox (#946). A bot's `codexAuto: false` turns it off. |
-| Antigravity (`agy`) | `--dangerously-skip-permissions`, `--mode <agyMode>`, `--settings <file>` | No permission prompt; the file's deny list still refuses what it names, and its `trustedWorkspaces` answers the folder-trust question (see below). |
+| Antigravity (`agy`) | `--dangerously-skip-permissions`, `--mode <agyMode>`, `--settings <file>` | No permission prompt and no classifier: everything the file's deny list does not name runs (see [what runs without a prompt](#antigravitys-permission-list)). The file's `trustedWorkspaces` answers the folder-trust question. |
 | dsh-TUI (`dsh-tui`) | nothing | Its DSH profile on the machine it runs on sets the approval policy; dsh-tui takes no such flag. |
 | Oh My Pi (`omp`) | nothing | omp 18.14.2 has only skip-all flags (`--auto-approve`, `--approval-mode=yolo`). |
 | Hermes (`hermes`) | nothing | Hermes 0.22.5 has only a skip-all flag (`--yolo`). |
@@ -1217,8 +1219,8 @@ agy takes a permission list from
 start, restart and resume, a worker, a helper Restart --tree runs again — writes its own file
 0600 under `<app home>/automagik-herdr/agy-settings/` and passes it as `--settings <file>`.
 The pack never writes agy's own `settings.json`, so its saved settings stay the person's.
-Since every launch runs without prompts, the deny list is what stands between a bot and the
-commands it names; the allow list matters only to a launch without the flag.
+Since every launch runs without prompts, the deny list is the only thing agy still checks:
+see "What runs without a prompt" below for what that leaves open.
 
 The file is
 `{ "permissions": { "allow": [...], "deny": [...] }, "trustedWorkspaces": ["<folder>"] }`,
@@ -1236,54 +1238,75 @@ contributor's or fork's tree never loads that tree's project configuration witho
 agy stops at the trust question instead. Never a parent folder and never the home folder is listed,
 and the pack never writes agy's own `settings.json`, so its saved trust list stays the person's.
 
-The allow list is as narrow as the launch
-needs: a dev bot's project (or a worker's worktree) as `write_file`, `hc`, `git`, `node`,
-`bun`, the 24 read-only shell tools (`ls`, `cat`, `head`, `tail`, `grep`, `wc`, `diff`, `pwd`,
-`echo`, `cut`, `tr`, `jq`, `printf`, `basename`, `dirname`, `true`, `which`, `stat`, `realpath`,
-`readlink`, `date`, `nl`, `comm`, and `column`), the writer-only shell tools (`mkdir`, `chmod`,
-`rg`, `sort`, `uniq`, and `sed -n`), the read-only `gh` verbs, the PR-writing
-`gh pr create`/`gh pr edit`/`gh pr comment` (a dev worker opens and updates its own PR), and the
-repository's own gates (`node --test`, `node --check`, `bun test`, `scripts/privacy-check.mjs`,
-`scripts/am-copies.mjs`, the `version`/`entries`/`parts`/`catalog` checks, …). No release verb
-is offered to any launch: the fixed `gh release` deny wins over every one of them. A read-only
-seat (rank `reviewer`) or worker (role `review`) gets no `write_file`, no plain `git`/`node`,
-no bare `hc`, and none of `mkdir`, `chmod`, `rg`, `sort`, `uniq`, or `sed -n`; it lists only
-`hc ls`, `hc get`, `hc read`, `hc wait`, and `hc send` (never bare `hc`, so `hc run` and
-`hc exec` are not allowed on read-only roles), the 24 read-only shell tools, the test checks,
-the `gh` reads and a short list of git subcommands (`log`, `diff`, `show`, `status`, …). Those
-subcommands and shell tools are allowed with every argument they are given, so word-prefix rules
-do not stop program-running or file-writing forms (`git diff --output=file`, `sed -n` running a
-program via GNU `sed`'s `e` command or writing via its `w` command or `-i`, `rg --pre` running a
-program, `sort --compress-program` running a program and `sort -o` writing a file, `uniq IN OUT`
-writing a file, and `echo`/`printf` with a shell redirection writing if agy runs the line
-through a shell): like the whole list, this is a guardrail, not a boundary, which is why `rg`,
-`sort`, `uniq`, and `sed -n` stay on writing roles only alongside `mkdir` and `chmod` (where
-`node` is already allowed) and out of read-only roles. On pipelines and command lists, agy
-checks each command of a pipeline or list on its own (for example, a
-`git show ... | sed -n ...` line asks for `sed` separately while `git` is allowed), so
-`cat x | sh` or `ls; sh` still needs `sh` to be allowed; this per-command check was observed on
-`agy 1.5.3`, not documented by agy. Shell launchers and wrappers that run arbitrary commands or
-write in place (`bash`, `sh`, `env`, `xargs`, `find` with its `-exec` and `-delete`, `awk` with
-its `system()`, `tee`, and plain `sed`) are left out of every default list. `gh pr merge` is
-out of both lists. The fixed deny rules are always present and a roster's `agyPermissions` can only add:
-`git push --force`, `git push --force-with-lease`, `git push -f`, `git push origin --force`,
-`git push origin -f`, `git push --mirror`, `git push --delete`, `git reset --hard`,
-`git branch -D`, `git clean`, `git rebase`, `git stash`,
-`git checkout --`, `git -C`, `rm -rf`, `gh pr merge`, `gh release`, and, since every launch runs
-without prompts (#955), `gh api -X`, `gh api --method`, `gh api -f`, `gh api -F` (its writing
-forms), `automagik-herdr edit`, `automagik-herdr restart`, `automagik-herdr rm`,
-`automagik-herdr create`, `hc keys`, `hc kill`, `hc interrupt` and `hc exec`. The list is the
-same for a seat and for every worker role. An Antigravity lead that must end or restart a
-worker asks a person or a bot on another agent to do it.
+**What runs without a prompt.** Every launch carries `--dangerously-skip-permissions`, and
+under that flag agy asks nothing and runs no classifier: a command runs unless a
+`permissions.deny` rule names it. The allow rules do nothing under the flag. So all of this
+runs unasked, on a seat, a worker and a read-only review launch alike:
 
-These lists are a guardrail against accidents, not a security boundary. A deny rule matches the
-words' prefix only, so a quoted or reordered command, an absolute path or an interpreter can get
-past it. Two forms are not caught at all: a force refspec whose `+` is attached to the ref
-(`git push origin +main`) and combined short flags (`git push -fu`). A reset form that reaches
-`--hard` after other words (`git reset HEAD~1 --hard`) is not caught either; only the
-leading-word form is. Allowing `node`, `bun` or `git` with any arguments already lets a
-determined agent do anything. The boundary is the sandbox (the per-pane hc proxy), never this
-list. `dsh-tui doctor` prints the same reminder beside the lists.
+- inline code and scripts: `python3 -c`, `node -e`, `bash -c`, a heredoc, any script file;
+- shells and wrappers: `sh`, `bash`, `env`, `xargs`, `find -exec` and `-delete`, `awk`, `tee`,
+  `sed -i`, and so a pipeline such as `cat x | sh`;
+- the network and other machines: `curl`, `ssh`, `hc run --on`, `gh gist create`;
+- a plain (non-force) `git push`, to `dev` or `main` too: only GitHub's branch protection
+  stands there;
+- a child agent started by hand (`claude --dangerously-skip-permissions`, another `agy`,
+  `hc run -- ...`), and text typed into another pane with `hc send`;
+- a write to the launch's own settings file or to the roster (the next pack launch writes the
+  file again from the roster);
+- `gh api <endpoint> -X PUT ...` with the endpoint first, `--method=PUT`, `-XPUT` and
+  `gh api graphql -f ...`: only the forms with the flag right after `api` are denied, so such a
+  call can still merge a pull request;
+- reading any file the user can read, and anything else no deny rule names.
+
+A read-only launch (a seat with `rank: "reviewer"`, a worker with `role: "review"`) is therefore
+read-only by its brief only: once a person answers its trust question, nothing in agy keeps it
+from writing. The real boundary is the hc-proxy sandbox (the per-pane hc proxy, `hcProxy`),
+never these lists.
+
+The allow list is still written to the file, and it is what bounds a launch that runs without
+the flag (a `programs.json` run or an hc template that leaves it out): a dev bot's project (or a
+worker's worktree) as `write_file`, `hc`, `git`, `node`, `bun`, the 24 read-only shell tools
+(`ls`, `cat`, `head`, `tail`, `grep`, `wc`, `diff`, `pwd`, `echo`, `cut`, `tr`, `jq`, `printf`,
+`basename`, `dirname`, `true`, `which`, `stat`, `realpath`, `readlink`, `date`, `nl`, `comm`,
+and `column`), the writer-only shell tools (`mkdir`, `chmod`, `rg`, `sort`, `uniq`, and
+`sed -n`), the read-only `gh` verbs, `gh pr create`/`gh pr edit`/`gh pr comment`, and the
+repository's own gates (`node --test`, `node --check`, `bun test`, `scripts/privacy-check.mjs`,
+`scripts/am-copies.mjs`, the `version`/`entries`/`parts`/`catalog` checks, …). A read-only
+launch lists only `hc ls`, `hc get`, `hc read`, `hc wait`, `hc send`, the 24 read-only shell
+tools, the test checks, the `gh` reads and a short list of git subcommands (`log`, `diff`,
+`show`, `status`, …). No release verb and no `gh pr merge` is in either list.
+
+The fixed deny rules are always present, the same for a seat and for every worker role, and a
+roster's `agyPermissions` can only add to them:
+
+- pushes: `git push --force`, `--force-with-lease`, `-f`, `--mirror`, `--delete` right after
+  `push`; the same force flags after `origin`, after `-u` (and `--set-upstream --force`), and
+  after `origin main`, `origin dev`, `origin master` and `origin HEAD`;
+- lost work: `git reset --hard`, `git clean`, `git rebase`, `git stash`, `git checkout --`,
+  `git checkout -f`, `git checkout --force`, `git restore .`, `git branch -D`,
+  `git branch --delete --force` (and `--delete -f`, `-d --force`, `-d -f`), `rm -rf`, `rm -fr`,
+  `rm -r -f`, `rm -f -r`, `rm -Rf`, `rm -fR`, `rm -R -f`, `rm --recursive`;
+- git pointed elsewhere: `git -C`, `git -c`, `git --git-dir`;
+- landing and releasing: `gh pr merge`, `gh release`, and `gh api -X`, `gh api --method`,
+  `gh api -f`, `gh api -F` (flag first only);
+- the roster and other bots: `automagik-herdr edit`, `restart`, `rm` and `create`, and the same
+  four under `am` (`am edit`, `am restart`, `am rm`, `am create`), which runs the same CLI;
+- other panes: `hc keys`, `hc interrupt` and `hc exec`;
+- `hc kill` and `hc --json kill`, for every worker and for every seat whose bot is not the
+  project's main bot (see [Ending a worker](#ending-a-worker)). A main bot's seat does not
+  carry these two.
+
+A rule is whole words from the start of each command in a line, with no wildcard (checked on
+agy 1.5.4: `command(echo * two)` does not match `echo one two`, and a rule for `--flag` does not
+match `--flag=value`). agy resolves quotes and a leading `VAR=x` before matching, so those do
+not get around a rule; a reordered command, an absolute path, a wrapper or an interpreter does.
+Not caught at all: a force refspec whose `+` is attached to the ref (`git push origin +main`),
+combined short flags (`git push -fu`), `--force-with-lease=<ref>`, a force flag after a ref the
+list does not name (`git push origin my-branch --force`), a global option before the
+subcommand (`hc --timeout 5 kill t3`, `automagik-herdr --project /p restart`), and a reset that
+reaches `--hard` after other words (`git reset HEAD~1 --hard`). These lists are a guardrail
+against accidents, not a security boundary. `dsh-tui doctor` prints the same reminder beside
+the lists.
 
 The settings file's path is deterministic from the bot, the scope, the role and the worktree,
 so an approved-worker proxy plan and the argv it approves name the same file: the approved
@@ -1303,6 +1326,33 @@ launch, while a read-only review launch prints `-` because it trusts nothing), i
 one host-level row saying whether agy's terminal sandbox, and so `--mode`, can
 work here: Linux's user namespace controls, or macOS's `/usr/bin/sandbox-exec`. Unreadable evidence
 is a note, not a false warning.
+
+### Ending a worker
+
+`hc kill` is for the seat of a project's main bot only (`kind: "main"` in `bots.json`). Every
+other bot, a member that leads a squad included, ends a worker it started with:
+
+```sh
+automagik-herdr worker kill <pane>     # or: am worker kill <pane>
+```
+
+run from the bot's own pane. It ends one terminal and only when all of this holds: the
+terminal's `worker.of` label names the calling bot (the bot the attach ledger binds the
+caller's pane to), it is not a bot's seat, it is not the caller's own pane, it is on this
+computer, and hc does not report it as `working`. A worker stuck mid-turn is the main bot's to
+end.
+
+Where the rule is enforced, and where it is not:
+
+| Launch | `hc kill` from a worker or a non-main seat |
+| --- | --- |
+| dsh-TUI (the hc guard is first on its PATH) | refused by the guard, with one line naming `worker kill`. `hc --json kill` and any other flag before the command are refused too. |
+| A sandboxed pane (the per-pane hc proxy) | the proxy ends only the caller's own worker, for a main bot too; a worker's own kill is refused. |
+| Antigravity | `command(hc kill)` and `command(hc --json kill)` are in the launch's deny list; another flag before `kill`, or `hc` by an absolute path, is not caught. |
+| Claude Code, Codex and every other agent | **not enforced.** Nothing of the pack's sits between these agents and `hc`: the guard is on a dsh-TUI pane's PATH only, and the pack writes them no deny rule. Their briefing names `worker kill`, and that is all. |
+
+The guard and the deny list are guardrails: an absolute path to the real `hc` goes around
+both. The boundary is the hc-proxy sandbox.
 
 ### The briefing hook (Claude bots)
 

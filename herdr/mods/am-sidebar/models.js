@@ -543,14 +543,18 @@ export function agyModeWarning({ name = "the bot", explicit = null, sandbox = nu
 /**
  * The rules every Antigravity launch carries; a roster adds rules and can never drop one.
  *
- * This list is a guardrail against accidents, not a security boundary. A deny rule matches the
- * words' prefix only, so a quoted or reordered command, an absolute path or an interpreter call
- * can go around it. Two forms are not caught at all: a force refspec whose `+` is attached to
- * the ref (`git push origin +main`) and combined short flags (`git push -fu`). A reset form that
- * reaches `--hard` after other words (`git reset HEAD~1 --hard`) is not caught either; only the
- * leading-word form is. Allowing `node`, `bun` or `git` with any arguments already lets a
- * determined agent do anything. The real boundary is the sandbox (hcProxy). The list covers the
- * common ways a bot would lose work or land something it shouldn't.
+ * This list is a guardrail against accidents, not a security boundary. Every launch runs on
+ * --dangerously-skip-permissions (#955), so whatever no rule here names runs with no prompt and
+ * no classifier: inline code (python3 -c, node -e, bash -c), scripts, sh, env, curl, ssh, a
+ * plain push, a child agent, a write to the launch's own settings file. A rule matches whole
+ * words from the start of each part of a command line and takes no wildcard, so a reordered
+ * command, an absolute path, a wrapper or an interpreter call goes around it. Not caught at
+ * all: a force refspec whose `+` is attached to the ref (`git push origin +main`), combined
+ * short flags (`git push -fu`), a `--flag=value` spelling, a force flag after a ref the list
+ * doesn't name, `gh api <endpoint> -X ...` (only the flag-first forms are listed), and a reset
+ * that reaches `--hard` after other words (`git reset HEAD~1 --hard`). The real boundary is the
+ * sandbox (hcProxy). The list covers the common ways a bot would lose work or land something it
+ * shouldn't.
  */
 export const AGY_FIXED_DENY = Object.freeze([
   "command(git push --force)",
@@ -571,7 +575,7 @@ export const AGY_FIXED_DENY = Object.freeze([
   "command(gh pr merge)",
   "command(gh release)",
   // #955: every launch runs with no permission prompt, so what used to stop at one is named
-  // here. gh api's writing forms (its reads stay open to a roster's own allow rule):
+  // here. gh api's writing forms, flag first only (`gh api <endpoint> -X PUT` is not caught):
   "command(gh api -X)",
   "command(gh api --method)",
   "command(gh api -f)",
@@ -581,12 +585,57 @@ export const AGY_FIXED_DENY = Object.freeze([
   "command(automagik-herdr restart)",
   "command(automagik-herdr rm)",
   "command(automagik-herdr create)",
-  // and another pane's keys, life and commands:
+  // am runs the same CLI (am/bin/am.mjs), so the same four verbs under its name:
+  "command(am edit)",
+  "command(am restart)",
+  "command(am rm)",
+  "command(am create)",
+  // and another pane's keys and commands (its life is AGY_KILL_DENY's, by the bot's kind):
   "command(hc keys)",
-  "command(hc kill)",
   "command(hc interrupt)",
   "command(hc exec)",
+  // More spellings of the same accidents (#998 review). A rule is whole words from the start of
+  // the command, with no wildcard (checked on agy 1.5.4: `command(echo * two)` doesn't match
+  // `echo one two`, and `--flag` doesn't match `--flag=value`), so each form is listed: a force
+  // flag after -u or after a protected branch name, the other ways to write rm -rf, a forced
+  // branch delete, git's own config and git-dir overrides, and a checkout or restore that
+  // throws work away. A force flag after any other ref is still not caught.
+  "command(git push -u --force)",
+  "command(git push -u -f)",
+  "command(git push -u --force-with-lease)",
+  "command(git push --set-upstream --force)",
+  "command(git push origin --force-with-lease)",
+  ...["main", "dev", "master", "HEAD"].flatMap((ref) => ["--force", "-f", "--force-with-lease"]
+    .map((flag) => `command(git push origin ${ref} ${flag})`)),
+  "command(git branch --delete --force)",
+  "command(git branch --delete -f)",
+  "command(git branch -d --force)",
+  "command(git branch -d -f)",
+  "command(rm -fr)",
+  "command(rm -r -f)",
+  "command(rm -f -r)",
+  "command(rm -Rf)",
+  "command(rm -fR)",
+  "command(rm -R -f)",
+  "command(rm --recursive)",
+  "command(git -c)",
+  "command(git --git-dir)",
+  "command(git restore .)",
+  "command(git checkout -f)",
+  "command(git checkout --force)",
 ]);
+
+/**
+ * `hc kill` is for the seat of a project's main bot only (the owner's rule, #955): every worker,
+ * and every seat whose bot is not `kind: "main"` in the roster, carries these two rules; a main
+ * bot's seat does not. The second names the usual flag-before-verb spelling; another global
+ * flag before `kill` is not caught (a rule is whole words, no wildcard). A bot ends a worker it
+ * started with `automagik-herdr worker kill <pane>`.
+ */
+export const AGY_KILL_DENY = Object.freeze(["command(hc kill)", "command(hc --json kill)"]);
+
+/** Whether a launch of `bot` in `scope` may run `hc kill` itself: a main bot's seat, nothing else. */
+export const mayHcKill = (bot, scope = "seat") => scope === "seat" && bot?.kind === "main";
 
 /** The rule types agy 1.5.3 takes: a command prefix, or a folder its files are written under. */
 export const AGY_RULE_TYPES = Object.freeze(["command", "write_file"]);
@@ -736,7 +785,8 @@ export function agyTrustedWorkspaces(folder, realpath = null, homeDir = null) {
  * resolves to it lists nothing (agyTrustedWorkspaces). A read-only launch (a review worker, a
  * reviewer seat) is never auto-trusted (#884 M1): `trustedWorkspaces` is `[]`, so agy stops at
  * its trust question rather than loading a contributor's or fork's review tree's project
- * configuration. The fixed deny rules are always there; nothing drops them. These lists are a
+ * configuration. The fixed deny rules are always there; nothing drops them. `hc kill` is denied
+ * (AGY_KILL_DENY) to every worker and to every seat but a main bot's (`bot.kind === "main"`). These lists are a
  * guardrail against accidents, not a security boundary: a rule matches word prefixes only, and
  * allowing `node`, `bun` or `git` with any arguments lets a determined agent do anything.
  * Returns { allow, deny, trustedWorkspaces, warnings }.
@@ -755,7 +805,7 @@ export function agyPermissionPlan({ bot, scope = "seat", role = null, folder = n
   const roster = bot?.agyPermissions === undefined ? { allow: [], deny: [], problems: [] } : normalizeAgyPermissions(bot.agyPermissions);
   allow.push(...roster.allow);
   for (const why of roster.problems) warnings.push(`${bot?.name ?? bot?.id ?? "the bot"}: ${why}`);
-  const deny = [...AGY_FIXED_DENY, ...roster.deny];
+  const deny = [...AGY_FIXED_DENY, ...(mayHcKill(bot, scope) ? [] : AGY_KILL_DENY), ...roster.deny];
   return { allow: [...new Set(allow)], deny: [...new Set(deny)], trustedWorkspaces, warnings };
 }
 

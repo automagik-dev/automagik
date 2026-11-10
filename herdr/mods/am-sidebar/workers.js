@@ -306,6 +306,30 @@ export function workerPlan(bot, pick = {}, agents = AGENTS) {
 }
 
 /**
+ * Why the bot `botId`, calling from its own pane `self`, may not end the terminal `target`
+ * (its `hc get`), or null when it may (#955: `hc kill` is denied to an Antigravity launch, so
+ * `worker kill` is how a lead ends a worker it started). Only a worker of the caller's own bot:
+ * its `worker.of` label names that bot, it is no bot's seat (`bound`: the attach ledger ties it
+ * to a bot; a `bot` label counts too), it is never the caller's own pane, and it is not mid-turn
+ * (hc's status says `working`): a finished turn only. One line.
+ */
+export function workerKillRefusal({ target, botId, self = null, bound = false }) {
+  const address = target?.address ?? null;
+  if (!target || !address) return "that isn't a terminal hc knows";
+  if (self && address === self) return `${address} is your own pane; worker kill ends only a worker you started`;
+  const labels = target.labels ?? {};
+  if (bound || labels.bot) return `${address} is a bot's pane, not a worker; worker kill ends only a worker you started`;
+  const owner = labels[WORKER_OF_LABEL] ?? null;
+  if (!owner) return `${address} isn't a worker (it has no ${WORKER_OF_LABEL} label); worker kill ends only a worker you started`;
+  if (!botId || owner !== botId) return `${address} is another bot's worker; worker kill ends only a worker you started`;
+  // A worker mid-turn is not ended from here: its work would be lost. The project's main bot can.
+  if (target.state !== "finished" && target.status?.state === "working") {
+    return `${address} is still working; worker kill ends a worker that has finished its turn (hc wait ${address}), and only the project's main bot ends one mid-turn`;
+  }
+  return null;
+}
+
+/**
  * `hc run` arguments for a worker: in the background, a child of the bot's pane, in the
  * task worktree, with the usage labels and no `bot` label (a worker is never a bot, so the
  * sidebar folds it under its bot as a helper). The task text is the agent's last argument

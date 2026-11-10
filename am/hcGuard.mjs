@@ -10,6 +10,9 @@
 // writable by the bot; the team check is a
 // guardrail over that data, never a boundary. Apache-2.0.
 //
+// `hc kill` is for the seat of a project's main bot only (#955): a member's seat and every
+// worker are refused, and end their own workers with `automagik-herdr worker kill <pane>`.
+//
 // The caller comes from the attach ledger (attach.js), the authority: a worker pane has no
 // ledger row, so its `worker.of` label names its bot and its cwd's project is the team's
 // project. The target is resolved with the real hc: `hc ls` rows carry no labels, `hc get`
@@ -109,6 +112,11 @@ export async function runGuard(argv, env = process.env) {
     if (verb === "label") {
       const why = labelProblem(real, args, env, terminal, on);
       if (why) return refused(`label: ${why}`);
+      return passthrough(real, args, env);
+    }
+    if (verb === "kill") {
+      const why = killProblem(real, env, terminal);
+      if (why) return refused(`kill: ${why}`);
       return passthrough(real, args, env);
     }
     return passthrough(real, args, env);
@@ -543,6 +551,28 @@ function labelProblem(real, args, env, terminal, on) {
   const hit = targetOf(real, target, on.value, env);
   if (!hit) return "the target is not resolvable with hc";
   if (hit.get.parent !== terminal) return "the target is not the caller's own worker";
+  return null;
+}
+
+// ---- kill: a project's main bot only (#955, the owner's rule) ----
+
+/**
+ * `hc kill` is for the seat of a project's main bot (`kind: "main"` in bots.json) and no one
+ * else: a member's seat, a lead that isn't the main bot, and every worker are refused, whatever
+ * the target. The kind is the bots.json entry's, read through the attach ledger's binding of the
+ * caller's pane, never a label. A bot ends a worker it started with `automagik-herdr worker
+ * kill <pane>`, which checks the worker is its own. `hc --json kill` and any other flag before
+ * the command never get here: the guard refuses a call whose first word is an option.
+ */
+function killProblem(real, env, terminal) {
+  const caller = callerOf(real, env, terminal);
+  if (typeof caller === "string") return caller;
+  const own = "end a worker you started with automagik-herdr worker kill <pane>";
+  if (caller.worker) return `hc kill is for a project's main bot only, never a worker; ${own}`;
+  const file = readBots(caller.project);
+  const bot = file?.bots?.find((row) => row.id === caller.bot) ?? null;
+  if (!bot) return "the caller's bot is not in its project's bots.json";
+  if (bot.kind !== "main") return `hc kill is for a project's main bot only; ${own}`;
   return null;
 }
 
