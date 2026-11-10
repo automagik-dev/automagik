@@ -649,12 +649,15 @@ fn agy_health(
     store: &Store,
     root: &std::path::Path,
     shape: Option<String>,
+    pending: Option<String>,
     unreadable: Option<String>,
 ) -> rusqlite::Result<()> {
     let (status, reason) = if !root.is_dir() {
         ("absent", String::new())
     } else if let Some(why) = shape {
         ("unsupported", why)
+    } else if let Some(why) = pending {
+        ("degraded", why)
     } else if let Some(why) = unreadable {
         ("degraded", why)
     } else {
@@ -993,6 +996,7 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
         let mut stopped_at = candidates.len();
         // The first shape and read failures an agy conversation reported this run.
         let mut agy_shape: Option<String> = None;
+        let mut agy_pending: Option<String> = None;
         let mut agy_unreadable: Option<String> = None;
 
         trace.mark("discover");
@@ -1033,6 +1037,7 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
                     now,
                     &mut report,
                     &mut agy_shape,
+                    &mut agy_pending,
                     &mut agy_unreadable,
                 ) {
                     Ok(outcome) => {
@@ -1168,7 +1173,13 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
             store.set_meta(&format!("{}_status", s.harness()), status)?;
         }
         dsh_tui_health(&store, &opts.dsh_root, now)?;
-        agy_health(&store, &opts.agy_root, agy_shape, agy_unreadable)?;
+        agy_health(
+            &store,
+            &opts.agy_root,
+            agy_shape,
+            agy_pending,
+            agy_unreadable,
+        )?;
         for s in Source::ALL {
             let absent = match s {
                 Source::Omp => !opts.omp_root.is_dir(),
@@ -1823,17 +1834,13 @@ fn read_agy_into_store(
     now: i64,
     report: &mut Report,
     agy_shape: &mut Option<String>,
+    agy_pending: &mut Option<String>,
     agy_unreadable: &mut Option<String>,
 ) -> io::Result<ReadOutcome> {
-    let (cursor, epoch) = state
-        .ctx
-        .agy
-        .as_ref()
-        .map_or((-1, 0), |a| (a.max_gen, a.epoch));
+    let cursor = state.ctx.agy.as_ref().map_or(-1, |a| a.max_gen);
     let read = match crate::sources::agy::read(
         std::path::Path::new(&state.path),
         cursor,
-        epoch,
         now,
         limits.deadline,
     ) {
@@ -1851,17 +1858,20 @@ fn read_agy_into_store(
     };
     if let Some(why) = read.shape {
         agy_shape.get_or_insert(why);
+    } else if read.held > 0 {
+        agy_pending.get_or_insert(format!(
+            "{} agy generation(s) are still being written, so their usage is not counted yet",
+            read.held
+        ));
     }
     state.ctx.agy = Some(crate::sources::agy::AgyCtx {
         max_gen: read.max_gen,
-        epoch: read.epoch,
     });
     // A stopped read leaves bytes pending; a full one does not. The generation cursor, not the
     // byte offset, is where the next run resumes.
     state.offset = if read.stopped { 0 } else { state.size };
     let health = Health {
         usage_lines: read.usage_lines,
-        skipped_lines: read.skipped_lines,
         rewrites: i64::from(rewritten),
         ..Health::default()
     };

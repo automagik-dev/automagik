@@ -21,6 +21,7 @@ use std::time::Instant;
 
 use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::event::{Precision, Tokens, UsageEvent};
 use crate::sources::clip;
@@ -46,10 +47,6 @@ pub struct AgyCtx {
     /// The highest `gen_metadata.idx` counted. Later runs read only rows above it.
     #[serde(default = "no_generation")]
     pub max_gen: i64,
-    /// A database reset or compacted to lower indices starts a new epoch. Its reused indices are
-    /// new calls then, so they get new dedupe keys; epoch 0 keeps the keys earlier builds wrote.
-    #[serde(default)]
-    pub epoch: i64,
 }
 
 /// Before the first read nothing is counted, and the first row is index 0.
@@ -61,7 +58,6 @@ impl Default for AgyCtx {
     fn default() -> AgyCtx {
         AgyCtx {
             max_gen: no_generation(),
-            epoch: 0,
         }
     }
 }
@@ -81,13 +77,12 @@ pub struct Read {
     pub events: Vec<UsageEvent>,
     /// Rows that carried usage, zero-token rows included.
     pub usage_lines: i64,
-    /// Rows whose shape could not be read.
-    pub skipped_lines: i64,
     /// The highest `gen_metadata.idx` processed. A refused or incomplete row leaves it below
     /// that row, so the next sync reads it again instead of losing its usage.
     pub max_gen: i64,
-    /// The reset epoch of this read (see [`AgyCtx::epoch`]).
-    pub epoch: i64,
+    /// Rows refused or still being written. They hold the cursor, while the rows after them are
+    /// still counted; the next sync re-reads them.
+    pub held: i64,
     /// The deadline cut the read short; the next sync continues above [`Read::max_gen`].
     pub stopped: bool,
     /// A row or the file had an unknown shape. The rows already read still count.
@@ -361,6 +356,51 @@ fn step_time(metadata: &[u8]) -> Option<i64> {
     timestamp(t)
 }
 
+fn mtime_ms(path: &Path) -> Option<i64> {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as i64)
+}
+
+/// The newest write time of a database and its write-ahead log. A WAL-only row does not move the
+/// database file's mtime, so judging a generation's age by the main file alone would pass it. An
+/// empty WAL is ignored: a read-only open may create one, and it holds no row.
+fn newest_mtime_ms(path: &Path) -> Option<i64> {
+    let wal = path.file_name().and_then(|n| {
+        let p = path.with_file_name(format!("{}-wal", n.to_string_lossy()));
+        let m = std::fs::metadata(&p).ok()?;
+        (m.len() > 0).then(|| mtime_ms(&p)).flatten()
+    });
+    let main = mtime_ms(path);
+    match wal {
+        Some(w) => Some(main.map_or(w, |m| m.max(w))),
+        None => main,
+    }
+}
+
+/// Opens one conversation database read-only: no writes, no checkpoint on close, and a query-only
+/// connection as the second guard. A small helper so a test can assert the mode on a writable file.
+fn open_read_only(path: &Path) -> Result<Connection, Failure> {
+    let unreadable = || Failure::Unreadable("an agy transcript could not be read this time".into());
+    let conn = Connection::open_with_flags(
+        path,
+        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|_| Failure::Unreadable("an agy transcript could not be opened this time".into()))?;
+    conn.set_db_config(
+        rusqlite::config::DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE,
+        true,
+    )
+    .map_err(|_| unreadable())?;
+    conn.busy_timeout(std::time::Duration::from_secs(2))
+        .map_err(|_| unreadable())?;
+    conn.pragma_update(None, "query_only", "ON")
+        .map_err(|_| unreadable())?;
+    Ok(conn)
+}
+
 fn table_columns(conn: &Connection, table: &str) -> Result<HashSet<String>, Failure> {
     let mut stmt = conn
         .prepare(&format!("PRAGMA table_info({table})"))
@@ -405,35 +445,12 @@ fn check_shape(conn: &Connection) -> Result<(), Failure> {
 /// Reads every generation above `cursor` from one conversation database. The file is never
 /// written; `deadline` stops the read between rows. A refused or incomplete row keeps the cursor
 /// below it, so a later sync reads it again rather than losing its usage.
-pub fn read(
-    path: &Path,
-    cursor: i64,
-    epoch: i64,
-    now: i64,
-    deadline: Instant,
-) -> Result<Read, Failure> {
+pub fn read(path: &Path, cursor: i64, now: i64, deadline: Instant) -> Result<Read, Failure> {
     let unreadable = || Failure::Unreadable("an agy transcript could not be read this time".into());
-    // A row with no usage block yet waits while its database keeps changing, and is taken as a
-    // failed generation once the database has been quiet for INCOMPLETE_MS.
-    let db_recent = std::fs::metadata(path)
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-        .is_none_or(|d| now.saturating_sub(d.as_millis() as i64) < INCOMPLETE_MS);
-    let conn = Connection::open_with_flags(
-        path,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .map_err(|_| Failure::Unreadable("an agy transcript could not be opened this time".into()))?;
-    conn.set_db_config(
-        rusqlite::config::DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE,
-        true,
-    )
-    .map_err(|_| unreadable())?;
-    conn.busy_timeout(std::time::Duration::from_secs(2))
-        .map_err(|_| unreadable())?;
-    conn.pragma_update(None, "query_only", "ON")
-        .map_err(|_| unreadable())?;
+    // A row with no usage block yet waits while its database (or its WAL) keeps changing, and is
+    // taken as a failed generation once both have been quiet for INCOMPLETE_MS.
+    let db_recent = newest_mtime_ms(path).is_none_or(|t| now.saturating_sub(t) < INCOMPLETE_MS);
+    let conn = open_read_only(path)?;
     check_shape(&conn)?;
     let blob: Vec<u8> = conn
         .query_row(
@@ -464,13 +481,12 @@ pub fn read(
             r.get(0)
         })
         .map_err(|_| unreadable())?;
-    // A conversation reset or compacted to lower indices starts a new epoch and is read from
-    // index -1 (so 0 is included). The dedupe set still drops rows a reset copied, and the new
-    // epoch keeps a reused index from hiding a new call.
-    let (original_epoch, mut from, mut epoch) = (epoch, cursor, epoch);
+    // A conversation whose highest index fell below the cursor was reset, compacted or undone:
+    // read from index -1 (so 0 is included) and let the row hashes below drop the rows that did
+    // not change. A reused index whose row changed is a new call and counts.
+    let mut from = cursor;
     if max_db < cursor {
         from = -1;
-        epoch = epoch.saturating_add(1);
     }
     let mut stmt = conn
         .prepare("SELECT idx, data FROM gen_metadata WHERE idx > ?1 ORDER BY idx")
@@ -490,7 +506,7 @@ pub fn read(
         }
     }
     drop(rows);
-    let mut decoded: Vec<(i64, Result<Decoded, String>)> = Vec::with_capacity(gens.len());
+    let mut decoded: Vec<(i64, String, Result<Decoded, String>)> = Vec::with_capacity(gens.len());
     let mut wanted: HashSet<i64> = HashSet::new();
     for (idx, data) in gens {
         let d = generation(&data);
@@ -500,7 +516,8 @@ pub fn read(
             }
             _ => {}
         }
-        decoded.push((idx, d));
+        let row = crate::event::hex(&Sha256::digest(&data)[..8]);
+        decoded.push((idx, row, d));
     }
     let mut wanted: Vec<i64> = wanted.into_iter().collect();
     wanted.sort_unstable();
@@ -509,7 +526,6 @@ pub fn read(
         if Instant::now() >= deadline {
             return Ok(Read {
                 max_gen: cursor,
-                epoch: original_epoch,
                 stopped: true,
                 ..Read::default()
             });
@@ -539,29 +555,27 @@ pub fn read(
     }
     let mut out = Read {
         max_gen: from,
-        epoch,
         stopped,
         ..Read::default()
     };
     let mut next = from;
-    for (idx, dec) in decoded {
+    let mut held_at: Option<i64> = None;
+    for (idx, row, dec) in decoded {
         let dec = match dec {
             Ok(d) => d,
             Err(why) => {
-                out.skipped_lines += 1;
+                out.held += 1;
                 out.shape.get_or_insert(why);
-                break;
+                held_at.get_or_insert(idx);
+                continue;
             }
         };
         match dec {
-            Decoded::Incomplete { steps } => {
-                let recent = db_recent
-                    || steps
-                        .iter()
-                        .filter_map(|i| times.get(i))
-                        .any(|t| now.saturating_sub(*t) < INCOMPLETE_MS);
-                if recent {
-                    break;
+            Decoded::Incomplete { .. } => {
+                if db_recent {
+                    out.held += 1;
+                    held_at.get_or_insert(idx);
+                    continue;
                 }
                 next = idx;
             }
@@ -571,47 +585,50 @@ pub fn read(
                 steps,
             } => {
                 let ts = steps.iter().filter_map(|i| times.get(i)).min().copied();
-                let recent = ts.map_or(db_recent, |t| now.saturating_sub(t) < INCOMPLETE_MS);
                 if tokens.is_zero() {
-                    if recent {
-                        break;
+                    if db_recent {
+                        out.held += 1;
+                        held_at.get_or_insert(idx);
+                        continue;
                     }
                     out.usage_lines += 1;
                     next = idx;
                     continue;
                 }
                 let Some(ts) = ts else {
-                    out.skipped_lines += 1;
+                    out.held += 1;
                     out.shape.get_or_insert(
                         "an agy usage row has no step time, so its hour is unknown".into(),
                     );
-                    break;
+                    held_at.get_or_insert(idx);
+                    continue;
                 };
                 if ts > now + MAX_SKEW_MS {
-                    out.skipped_lines += 1;
+                    out.held += 1;
                     out.shape
                         .get_or_insert("an agy usage row is dated in the future".into());
-                    break;
+                    held_at.get_or_insert(idx);
+                    continue;
                 }
                 let Some(model) = model else {
-                    out.skipped_lines += 1;
+                    out.held += 1;
                     out.shape
                         .get_or_insert("an agy usage row names no model".into());
-                    break;
+                    held_at.get_or_insert(idx);
+                    continue;
                 };
                 let Some(session) = conversation.as_deref() else {
-                    out.skipped_lines += 1;
+                    out.held += 1;
                     out.shape
                         .get_or_insert("an agy transcript has no conversation id".into());
-                    break;
+                    held_at.get_or_insert(idx);
+                    continue;
                 };
                 // The execution id is shared by every generation of a conversation, so it cannot
-                // tell two calls apart. The conversation id, epoch and generation index do.
-                let dedupe = if epoch == 0 {
-                    format!("agy|{session}|{idx}")
-                } else {
-                    format!("agy|{session}|e{epoch}|{idx}")
-                };
+                // tell two calls apart. The conversation id, the generation index and a hash of
+                // the row do: an unchanged row re-read after a rewind keeps its key, while a new
+                // call that reuses an index changes it.
+                let dedupe = format!("agy|{session}|{idx}|{row}");
                 out.events.push(UsageEvent {
                     dedupe_key: dedupe,
                     ts_ms: ts,
@@ -632,6 +649,11 @@ pub fn read(
                 next = idx;
             }
         }
+    }
+    // Rows after a held one still count; the cursor only stops before the first held row, so the
+    // next sync re-reads it and its followers (the dedupe set drops the repeats).
+    if let Some(h) = held_at {
+        next = next.min(h.saturating_sub(1));
     }
     out.max_gen = next;
     Ok(out)
@@ -834,6 +856,45 @@ mod tests {
         assert_eq!(file_path("file://localhost/work/a"), Some("/work/a".into()));
         assert_eq!(file_path("https://example.com/a"), None);
         assert_eq!(file_path("file://relative/a"), None);
+    }
+
+    #[test]
+    fn a_writable_database_is_opened_read_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("conv.db");
+        Connection::open(&db)
+            .unwrap()
+            .execute_batch("CREATE TABLE t(x)")
+            .unwrap();
+        let conn = open_read_only(&db).unwrap();
+        assert!(
+            conn.is_readonly("main").unwrap(),
+            "the connection must be read-only even when the file is writable"
+        );
+        assert!(conn.execute("CREATE TABLE t2(x)", []).is_err());
+    }
+
+    #[test]
+    fn the_wal_mtime_counts_as_the_database_mtime() {
+        use std::time::{Duration, SystemTime};
+        let dir = tempfile::tempdir().unwrap();
+        let db = dir.path().join("conv.db");
+        let wal = dir.path().join("conv.db-wal");
+        std::fs::write(&db, b"db").unwrap();
+        std::fs::write(&wal, b"wal").unwrap();
+        let old = SystemTime::now() - Duration::from_secs(3 * 60 * 60);
+        std::fs::File::options()
+            .write(true)
+            .open(&db)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        let newest = newest_mtime_ms(&db).unwrap();
+        let wal_ms = mtime_ms(&wal).unwrap();
+        assert!(
+            newest >= wal_ms,
+            "the WAL write ({wal_ms}) must be newer than the main file ({newest})"
+        );
     }
 
     #[test]

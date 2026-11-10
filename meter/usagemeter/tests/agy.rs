@@ -458,12 +458,15 @@ fn a_placeholder_generation_is_read_once_its_usage_arrives() {
     o.now_ms = at("2026-01-15T10:03:00Z");
     let r = env.run(&o);
     let (status, reason) = agy_source(&r.summary.expect("a summary"));
-    assert_eq!(status, "ok", "{reason}");
+    assert_eq!(status, "degraded", "{reason}");
+    assert!(reason.contains("still being written"), "{reason}");
     assert_eq!(
-        r.health.events, 0,
-        "the incomplete row must hold the cursor"
+        r.health.events, 1,
+        "the row after the held one is still counted"
     );
-    assert!(env.totals().is_empty());
+    let t = env.totals();
+    assert!(!t.contains_key("gemini-4-argon"));
+    assert_eq!(t["claude-opus-5-5"].total(), 6_600);
 
     // The provider fills the row in place: the next sync must still read it.
     put_gen(
@@ -472,7 +475,7 @@ fn a_placeholder_generation_is_read_once_its_usage_arrives() {
         &gemini_gen(&usage(1000, 4000, 50, 200, 120), &[1, 2]),
     );
     let r = env.run(&o);
-    assert_eq!(r.health.events, 2, "{r:?}");
+    assert_eq!(r.health.events, 1, "only the filled row is new: {r:?}");
     let t = env.totals();
     assert_eq!(t["gemini-4-argon"].total(), 5_250);
     assert_eq!(t["claude-opus-5-5"].total(), 6_600);
@@ -505,11 +508,13 @@ fn an_unknown_only_usage_block_is_refused_by_name() {
     let path = env.agy("conv-unknown-usage.db");
     base_db(&path, at("2026-01-15T09:55:00Z"));
     put_gen(&path, 0, &gemini_gen(&uint(99, 3), &[1]));
-    let r = env.run(&env.opts());
-    let (status, reason) = agy_source(&r.summary.expect("a summary"));
-    assert_eq!(status, "unsupported", "{reason}");
-    assert!(reason.contains("none of the fields"), "{reason}");
-    assert!(env.totals().is_empty());
+    for run in 1..=2 {
+        let r = env.run(&env.opts());
+        let (status, reason) = agy_source(&r.summary.expect("a summary"));
+        assert_eq!(status, "unsupported", "run {run}: {reason}");
+        assert!(reason.contains("none of the fields"), "run {run}: {reason}");
+        assert!(env.totals().is_empty(), "run {run}");
+    }
 }
 
 #[test]
@@ -519,11 +524,13 @@ fn an_out_of_range_count_is_refused_by_name() {
     base_db(&path, at("2026-01-15T09:55:00Z"));
     let negative = [uint(2, u64::MAX), uint(3, 1)].concat();
     put_gen(&path, 0, &gemini_gen(&negative, &[1]));
-    let r = env.run(&env.opts());
-    let (status, reason) = agy_source(&r.summary.expect("a summary"));
-    assert_eq!(status, "unsupported", "{reason}");
-    assert!(reason.contains("out of range"), "{reason}");
-    assert!(env.totals().is_empty());
+    for run in 1..=2 {
+        let r = env.run(&env.opts());
+        let (status, reason) = agy_source(&r.summary.expect("a summary"));
+        assert_eq!(status, "unsupported", "run {run}: {reason}");
+        assert!(reason.contains("out of range"), "run {run}: {reason}");
+        assert!(env.totals().is_empty(), "run {run}");
+    }
 }
 
 #[test]
@@ -538,7 +545,8 @@ fn a_refused_timeless_row_is_read_when_its_step_arrives() {
     let r = env.run(&env.opts());
     let (status, reason) = agy_source(&r.summary.expect("a summary"));
     assert_eq!(status, "unsupported", "{reason}");
-    assert!(env.totals().is_empty());
+    // The row after the held one still counts; only the timeless Gemini row is missing.
+    assert_eq!(env.totals()["claude-opus-5-5"].total(), 6_600);
 
     // The step rows land after the generation row, as a live database may commit them.
     let c = Connection::open(&path).unwrap();
@@ -556,6 +564,7 @@ fn a_refused_timeless_row_is_read_when_its_step_arrives() {
     let r = env.run(&env.opts());
     let (status, reason) = agy_source(&r.summary.expect("a summary"));
     assert_eq!(status, "ok", "{reason}");
+    assert_eq!(r.health.events, 1, "the Opus row was already counted");
     let t = env.totals();
     assert_eq!(t["gemini-4-argon"].total(), 5_250);
     assert_eq!(t["claude-opus-5-5"].total(), 6_600);
@@ -585,9 +594,108 @@ fn a_malformed_model_blob_is_refused_through_sync() {
     base_db(&path, at("2026-01-15T09:55:00Z"));
     let g = [bytes(1, b"junk"), bytes(2, &[1])].concat();
     put_gen(&path, 0, &g);
+    for run in 1..=2 {
+        let r = env.run(&env.opts());
+        let (status, reason) = agy_source(&r.summary.expect("a summary"));
+        assert_eq!(status, "unsupported", "run {run}: {reason}");
+        assert!(
+            reason.contains("model metadata blob"),
+            "run {run}: {reason}"
+        );
+        assert!(env.totals().is_empty(), "run {run}");
+    }
+}
+
+#[test]
+fn a_rewind_does_not_double_count_the_rows_it_re_reads() {
+    let env = Env::new();
+    let path = env.agy("conv-rewind.db");
+    write_db(&path, at("2026-01-15T09:55:00Z"));
+    env.run(&env.opts());
+    let before = env.totals();
+
+    // agy removes its last generation (an undo): the highest index falls below the cursor.
+    let c = Connection::open(&path).unwrap();
+    c.execute("DELETE FROM gen_metadata WHERE idx = 1", [])
+        .unwrap();
+    drop(c);
+    let r = env.run(&env.opts());
+    let after = env.totals();
+    assert_eq!(
+        after["gemini-4-argon"].total(),
+        before["gemini-4-argon"].total()
+    );
+    assert_eq!(
+        after["claude-opus-5-5"].total(),
+        before["claude-opus-5-5"].total(),
+        "the remaining row was read again and counted twice"
+    );
+    assert_eq!(r.health.events, 0, "{r:?}");
+    let (status, reason) = agy_source(&r.summary.expect("a summary"));
+    assert_eq!(status, "ok", "{reason}");
+}
+
+#[test]
+fn a_bad_row_does_not_stop_the_valid_rows_after_it() {
+    let env = Env::new();
+    let path = env.agy("conv-bad-then-good.db");
+    base_db(&path, at("2026-01-15T09:55:00Z"));
+    put_gen(&path, 0, &gemini_gen(&uint(99, 3), &[1]));
+    put_gen(&path, 1, &opus_gen(&usage(500, 6000, 0, 100, 60), &[3]));
+    for run in 1..=3 {
+        let r = env.run(&env.opts());
+        let (status, reason) = agy_source(&r.summary.expect("a summary"));
+        assert_eq!(status, "unsupported", "run {run}: {reason}");
+        let t = env.totals();
+        assert!(!t.contains_key("gemini-4-argon"), "run {run}");
+        assert_eq!(t["claude-opus-5-5"].total(), 6_600, "run {run}");
+    }
+    // The refusals are held, not skipped again: the stored counter does not grow.
+    let skipped = env
+        .store()
+        .health()
+        .unwrap()
+        .into_iter()
+        .find(|(s, _, _)| s == "agy")
+        .map(|(_, _, h)| h.skipped_lines)
+        .unwrap_or(0);
+    assert_eq!(skipped, 0);
+
+    // Once the bad row is readable, it counts and the status clears.
+    put_gen(
+        &path,
+        0,
+        &gemini_gen(&usage(1000, 4000, 50, 200, 120), &[1]),
+    );
     let r = env.run(&env.opts());
     let (status, reason) = agy_source(&r.summary.expect("a summary"));
-    assert_eq!(status, "unsupported", "{reason}");
-    assert!(reason.contains("model metadata blob"), "{reason}");
-    assert!(env.totals().is_empty());
+    assert_eq!(status, "ok", "{reason}");
+    assert_eq!(env.totals()["gemini-4-argon"].total(), 5_250);
+}
+
+#[test]
+fn a_quiet_placeholder_is_final_and_later_rows_count() {
+    use std::time::{Duration, SystemTime};
+    let env = Env::new();
+    let path = env.agy("conv-quiet-placeholder.db");
+    base_db(&path, at("2026-01-15T09:55:00Z"));
+    put_gen(&path, 0, &gemini_gen(&[], &[1, 2]));
+    put_gen(&path, 1, &opus_gen(&usage(500, 6000, 0, 100, 60), &[3]));
+    // The database has been quiet for over 30 minutes on the sync's own clock.
+    let old = SystemTime::UNIX_EPOCH + Duration::from_millis(at("2026-01-15T09:00:00Z") as u64);
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+    let mut o = env.opts();
+    o.now_ms = at("2026-01-15T10:03:00Z");
+    let r = env.run(&o);
+    let (status, reason) = agy_source(&r.summary.expect("a summary"));
+    assert_eq!(status, "ok", "{reason}");
+    let t = env.totals();
+    assert!(!t.contains_key("gemini-4-argon"));
+    let opus = t.get("claude-opus-5-5").map(|x| x.total()).unwrap_or(0);
+    assert_eq!(opus, 6_600, "{t:?} {reason}");
 }
