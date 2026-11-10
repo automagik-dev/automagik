@@ -3240,7 +3240,7 @@ test("restart #597: a hand-started codex bot comes back from its source, not its
   assert.equal(r.code, 0, r.err);
   const run = runCall(s.calls());
   assert.deepEqual(plain(agentWords(run)), ["codex", "--approve-for-me", "resume", SID], "the source's command, resumed by its session");
-  assert.match(r.err, /Captain: its pane's command differs from its source now \(drops -m=\*\*\*, -c=\*\*\*\)/);
+  assert.match(r.err, /Captain: its pane's command differs from its source now \(drops -m=\*\*\*, -c=\*\*\*; adds --approve-for-me\)/);
   assert.equal(r.err.includes("gpt-a"), false, "the value is masked");
   assert.equal(r.json().session, "***"); // RFC 0021: masked
   assert.equal(run[run.indexOf("--cwd") + 1], s.project);
