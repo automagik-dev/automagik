@@ -38,7 +38,7 @@ describe("a release's plugins.json", () => {
     writeFileSync(join(dir, 'automagik-welcome-dsh-3.261024.1.tgz'), 'welcome');
     const commit = 'a'.repeat(40);
     const plugins = releasePlugins('3.261024.1', commit, dir, ['@automagik/bots-dsh', '@automagik/welcome-dsh']);
-    expect(plugins.repository).toBe('https://github.com/automagik-si/automagik');
+    expect(plugins.repository).toBe('https://github.com/automagik-dev/automagik');
     expect(plugins.commit).toBe(commit);
     expect(plugins.packages['@automagik/bots-dsh']).toEqual({
       version: '3.261024.1',

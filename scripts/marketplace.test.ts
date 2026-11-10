@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { INDEX_PATH, OLD_REPO_URL, REPO_URL, VETTED, checkIndex, pinIndex, unlisted } from './marketplace';
+import { INDEX_PATH, REPO_URL, VETTED, checkIndex, pinIndex, unlisted } from './marketplace';
 import { pluginNames } from './release-plugins';
 
 const repoDir = join(import.meta.dir, '..');
@@ -19,9 +19,7 @@ type IndexPlugin = { name: string; versions: { source: { url: string; path?: str
 describe('market index', () => {
   test('lists every plugin of this repository, by its folder, and otherwise only vetted forks', () => {
     const index = JSON.parse(readFileSync(INDEX_PATH, 'utf8'));
-    // Both orgs are ours while the move lands package by package.
-    const canonical = [REPO_URL, OLD_REPO_URL];
-    const ours = index.plugins.filter((plugin: IndexPlugin) => canonical.includes(plugin.versions[0]?.source.url));
+    const ours = index.plugins.filter((plugin: IndexPlugin) => plugin.versions[0]?.source.url === REPO_URL);
     const listed = ours.map((plugin: IndexPlugin) => plugin.name);
     // A plugin not released yet is listed by its first release's pin, from its automagik.market.
     for (const name of pluginNames().filter((name) => !listed.includes(name))) {
@@ -38,7 +36,7 @@ describe('market index', () => {
     expect(listed.filter((name: string) => !pluginNames().includes(name))).toEqual([]);
     for (const plugin of ours) {
       for (const entry of plugin.versions) {
-        expect(canonical).toContain(entry.source.url);
+        expect(entry.source.url).toBe(REPO_URL);
         expect(entry.source.path).toBe(`apps/${plugin.name.replace('@automagik/', '')}`);
       }
     }
@@ -61,10 +59,6 @@ describe('market index', () => {
 
   test('a commit that holds the package passes', () => {
     expect(checkIndex(indexWith({ type: 'git', url: REPO_URL, commit: head, path: 'apps/bots-dsh' }), repoDir)).toEqual([]);
-  });
-
-  test('an entry that still names the old org is ours, and still installs', () => {
-    expect(checkIndex(indexWith({ type: 'git', url: OLD_REPO_URL, commit: head, path: 'apps/bots-dsh' }), repoDir)).toEqual([]);
   });
 
   test('an entry lists the DSH range its package.json declares, which covers the DSH its tests run on', () => {
