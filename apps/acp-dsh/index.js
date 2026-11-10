@@ -27,6 +27,7 @@ import { adaptersHome, AdapterStore, CHECK_EVERY_MS } from './src/host/install.j
 import { drawImage, imageRefusal, imageSupport, SIGNED_OUT, UNAVAILABLE, unsupported } from './src/host/image.js'
 import { CliLogins } from './src/host/login.js'
 import { CREDENTIAL_ENV, URL_ENV } from './src/host/names.js'
+import { PermissionDiagnostics } from './src/host/permission-diagnostics.js'
 import { enginesFor, PRESSURE_METHOD, pressureGuard } from './src/host/pressure.js'
 import { redactorFor } from './src/host/redact.js'
 import { agentRoute, carryEffort, crossed } from './src/host/switch.js'
@@ -139,6 +140,9 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     onSignedOut: id => signedOut(id),
     access: id => consentGate(id),
   })
+  // What acted on each Session's permissions (permission-diagnostics.js): it only records.
+  const diagnostics = new PermissionDiagnostics()
+  adapter.diagnostics = backchannel.diagnostics = diagnostics
   // The kill switch is live: any change of `dshTools` ends the agent sessions and revokes their
   // bridges, so a credential minted while it was on cannot keep calling DSH tools and a Session
   // started with the bridge never runs on the old tool set. The next turn starts afresh.
@@ -789,6 +793,15 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       return () => { if (imageKeeper === keeper) imageKeeper = undefined }
     },
     /**
+     * What acted on one Session's permissions, for a diagnostics view (read-only, a fresh plain
+     * copy, undefined for a Session that ran no agent here): { version, agent, startedAt, active,
+     * bridge?: { on, why, at, open? }, modes?: { wanted, offered, chosen?, fellToStrict, at,
+     * current?, applied? }, lastCall?: { path, kind, at }, bridgeCall?: { at }, reviewer?:
+     * { provider, model, ok, code?, at }, review?: { code, at } }. Identifiers and fixed values
+     * only: never a credential, a prompt, a file's content or path, or an account.
+     */
+    permissionDiagnostics: sessionId => diagnostics.read(sessionId),
+    /**
      * What the Bot team gates its one-time Claude move on: whether DSH's tools reach an agent
      * here (`dshTools`), and whether this machine's bridge really answers `initialize` and
      * `tools/list` for a freshly minted per-session credential. The answer is cached per
@@ -827,7 +840,10 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   // The fake agent alone changes nothing reconcile counts.
   if (registration === undefined) publish()
   ctx.provide?.(SERVICE, service)
-  ctx.on?.('llm/stream', aside(agents, ctx, () => flagOf(config.sideModel) ?? SIDE_MODEL, redact))
+  ctx.on?.('llm/stream', aside(agents, ctx, () => flagOf(config.sideModel) ?? SIDE_MODEL, redact, diagnostics))
+  // The record goes with its Session, and reads the review code of a call DSH's own gate refused.
+  ctx.on?.('agent/disposed', ({ agent } = {}) => diagnostics.drop(agent?.session?.id))
+  ctx.on?.('tools/result', (exec, result) => diagnostics.result(exec, result))
   // The other crossing: a transcript that carries an agent's turn is redacted before it is
   // handed back to a native provider. Live switching's rule, so it follows `dshTools`.
   const crossing = crossed(agents, ctx, redact, () => dshToolsOn(config.dshTools))
@@ -899,6 +915,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     cliStore?.dispose?.()
     adapter.dispose()
     backchannel.dispose()
+    diagnostics.clear()
   })
 }
 
