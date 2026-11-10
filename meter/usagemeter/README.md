@@ -101,6 +101,13 @@ Several tools on a machine install and run the same usagemeter. They rely on thi
 | Antigravity (`agy`) | `~/.gemini/antigravity-cli/conversations/<conversation>.db` (or `$AGY_HOME/conversations`) | One SQLite database per conversation, opened read-only. `gen_metadata` carries the provider's token counts: input, cache read and write, output, and the thinking part of output; `trajectory_metadata_blob` carries the folder, repository and branch. Each generation is counted once by conversation and generation index, at the time of the first step it names. An unknown schema or row shape makes the source `unsupported` with a named reason; it is never counted as zero. No cost and no cache-write TTL are recorded, so cache writes count as 5-minute writes. Gemini models have no bundled price row: their tokens are visible as unpriced instead of a guessed $. The read-only open may create or update the `-wal` and `-shm` sidecars; it does not rewrite the database. |
 | Codex | `~/.codex/state_<N>.sqlite` (highest N) and the rollouts it names under `~/.codex/sessions` or `~/.codex/archived_sessions` (or `$CODEX_HOME`) | See below. |
 
+Antigravity:
+
+- A refused or incomplete generation holds the cursor before itself. Rows after it are still read
+  and counted, and the source reports `unsupported` or `degraded` until the row becomes readable.
+  One permanently bad row therefore keeps the source visibly not counted rather than hiding later
+  usage or vouching a zero.
+
 Codex:
 
 - The state database is opened read-only (`mode=ro`, busy timeout 2 s) for one indexed query on
