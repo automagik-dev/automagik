@@ -8,6 +8,10 @@ const { contextBridge, ipcRenderer } = require('electron')
 const updates = Object.freeze({
   status: () => ipcRenderer.invoke('automagik-updates-status'),
   open: () => ipcRenderer.invoke('automagik-updates-open'),
+  // Check and nothing else: unlike `open`, it never restarts into an update or puts plugins in.
+  check: () => ipcRenderer.invoke('automagik-updates-check'),
+  // What this copy is: the app's version, its runtime's, its plugins', and whether it updates.
+  versions: () => ipcRenderer.invoke('automagik-updates-versions'),
   // The plugins the lane staged: put them in now (DSH restarts, the window stays), and whether
   // they go in by themselves once no agent is at work.
   applyPlugins: () => ipcRenderer.invoke('automagik-updates-apply-plugins'),
