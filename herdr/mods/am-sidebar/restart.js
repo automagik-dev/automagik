@@ -498,14 +498,16 @@ export function restartRefusal({ name, old, helpers = [], force = false, tree = 
  * labels, agent, session, mode: "resume" | "fresh", resume, argv, agySettings (the file to write
  * first, or null), note }, or { name, replaced, error } when there is nothing to run.
  */
-export function helperPlan({ get, worker = null, session = null, agents, fresh = null, agy = null }) {
+export function helperPlan({ get, worker = null, session = null, agents, fresh = null, agy = null, launchAgent = false }) {
   const name = typeof get?.name === "string" && get.name ? get.name : null;
   const replaced = get?.address ?? null;
   // A worker's worktree first (the ledger's), then the pane's folder, then its program's,
   // resolved to its canonical path when the caller gave a realpath (a symlinked folder, #884).
   const cwd = realPathOf(agy?.realpath, worker?.worktree ?? get?.cwd ?? get?.foreground?.cwd ?? null);
   const labels = { ...(get?.labels ?? {}) };
-  const agent = agentKeyOfArgv(get?.foreground?.argv, agents) ?? (worker?.agent && agents[worker.agent] ? worker.agent : null);
+  // `launchAgent` (#939, revive: the pane is a bare shell hc kept): its agent by its launch command.
+  const agent = agentKeyOfArgv(get?.foreground?.argv, agents) ?? (worker?.agent && agents[worker.agent] ? worker.agent : null)
+    ?? (launchAgent ? agentKeyOfArgv(paneCommand(get)?.argv, agents) : null);
   const template = worker?.template ?? labels[WORKER_TEMPLATE_LABEL] ?? get?.template ?? null;
   const isWorker = Boolean(worker || labels[WORKER_OF_LABEL]);
   let command = null;

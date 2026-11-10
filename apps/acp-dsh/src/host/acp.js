@@ -11,6 +11,8 @@ import { PROTOCOL_VERSION, client, methods, ndJsonStream } from '@agentclientpro
 import { isBridgeName } from './names.js'
 
 const STDERR_KEEP = 4000
+// How long a closed connection waits for the agent's exit, which says why (start()).
+const EXIT_GRACE_MS = 500
 const TERMINAL = new Set(['completed', 'failed'])
 // SDK 2.x refuses an incoming message over 32 MiB by default and closes the connection on it.
 // An image call carries its picture twice (content and rawOutput), base64: one a little over the
@@ -118,8 +120,18 @@ export class AgentRun {
     try {
       await Promise.race([ready, gone])
     } catch (error) {
+      // An agent that dies at its start closes its output a moment before its exit is
+      // reported, and the closed connection says nothing of why. Its exit does (the code and
+      // what it wrote), so that is the failure when it follows at once.
+      let reason = error
+      if (this.exited === undefined && (child.stdout.readableEnded || child.stdout.destroyed)) {
+        let timer
+        const exit = await Promise.race([gone.catch(left => left), new Promise((resolve) => { timer = setTimeout(resolve, EXIT_GRACE_MS) })])
+        clearTimeout(timer)
+        if (exit !== undefined) reason = exit
+      }
       this.dispose()
-      throw error
+      throw reason
     } finally {
       this.letGo()
     }
@@ -241,6 +253,7 @@ export class AgentRun {
     const wanted = [modeIds].flat()
     const offered = new Set((this.modes?.availableModes ?? []).map(mode => mode.id))
     const modeId = wanted.find(id => offered.has(id))
+    try { this.spec.onMode?.({ wanted, offered: [...offered], chosen: modeId }) } catch {}
     if (modeId === undefined) throw new Error(`it offers none of the modes ${wanted.join(', ')} (it offers ${[...offered].join(', ') || 'no modes'})`)
     if (this.modes?.currentModeId === modeId) return
     await this.held(() => Promise.race([this.conn.setSessionMode({ sessionId: this.sessionId, modeId }), this.gone]))
