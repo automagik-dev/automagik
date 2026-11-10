@@ -213,9 +213,9 @@ const claimed = new Map();
 const entries = [];
 
 const entryForPack = {
-  owner: owner || "automagik-dev",
+  owner: owner || "automagik-si",
   repo: repo || "automagik",
-  fullName: fullName || "automagik-dev/automagik",
+  fullName: fullName || "automagik-si/automagik",
   url: fullName ? `https://github.com/${fullName}` : "",
   defaultBranch: branch,
   stars: 0,

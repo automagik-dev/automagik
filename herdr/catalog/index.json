@@ -6,10 +6,10 @@
   "source": "automagik-herdr",
   "mods": [
     {
-      "owner": "automagik-dev",
+      "owner": "automagik-si",
       "repo": "automagik",
-      "fullName": "automagik-dev/automagik",
-      "url": "https://github.com/automagik-dev/automagik",
+      "fullName": "automagik-si/automagik",
+      "url": "https://github.com/automagik-si/automagik",
       "defaultBranch": "dev",
       "stars": 0,
       "pushedAt": "2026-11-09T21:45:50-03:00",
