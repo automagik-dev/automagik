@@ -2,7 +2,8 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft (council review 2026-11-09: proceed with conditions, folded in; owner's answers: Q1 and Q9, 2026-11-09; amends RFC 0008; amended 2026-11-09 by [RFC 0025][25]) |
+| Status | Accepted (2026-11-10, by the owner; council review 2026-11-09: proceed with conditions, folded in; owner's answers: Q1 and Q9, 2026-11-09; amends RFC 0008; amended 2026-11-09 by [RFC 0025][25]) |
+| Goal | First goal (owner, 2026-11-10): by 23 Nov, the owner signs in and opens one hosted workspace in test mode, with no real charges: RFC 0024 deliveries 0-4 and RFC 0025 phase A. |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | none here (docs); desktop (3.N) for secure storage, sign-in and the rail; the server image and plugin (3.N.P) for the self-hosted gate and the web rail; the Cloud service outside this repository |
 | Created | 2026-11-09 |
@@ -470,8 +471,8 @@ host, for the Linux gates). The build host runs no workspace and holds no Cloud 
 identity-service admin key: team agents run there, with the root-equivalent reach RFC 0019
 records. On a workspace node, no agent account holds `incus-admin` or any group equal to root.
 
-**Isolation is its own review gate** (Decided 12), before any outside person joins. The proposal
-it reviews:
+**Isolation is its own review gate** (Decided 12), before any outside person joins. The unit is
+decided (Q3: one Incus VM per workspace); the gate reviews this shape:
 
 - one Incus virtual machine per workspace, not a shared kernel, since each runs arbitrary commands
   for people other than the operator (Tactu's rule: any non-owner is a tenant, paying or not); an
@@ -581,10 +582,10 @@ workspace is a separate step with its own decision (open question 10).
 
 Omni has its own: a passkey or a WhatsApp code on Omni's page, and one-time grants that
 `omni://connect` carries (`deeplink.js`). With this RFC the product would have three sign-ins.
-Recommended boundary (open question 12): Omni's sign-in stays Omni's, for an Omni a person
-connects to from outside; inside a Cloud workspace or behind a self-hosted gate, Omni's UI sits
-behind the gate and takes the gate's principal, with its own sign-in off, so one person signs in
-once per instance.
+Boundary (Decided by Automagik Chat, 2026-11-10; open question 12): Omni's sign-in stays Omni's,
+for an Omni a person connects to from outside; inside a Cloud workspace or behind a self-hosted
+gate, Omni's UI sits behind the gate and takes the gate's principal, with its own sign-in off, so
+one person signs in once per instance.
 
 ## Amendments to RFC 0008
 
@@ -814,8 +815,9 @@ principals are keyed by `(issuer, sub)`.
    - *Later.* Tactu and Arca re-bind their people to the new issuer when they move.
    Standing it up waits on the owner's separate OK.
 2. **Where Cloud roles live.** Decided by the council: Cloud's database ((e)). Kept for the record.
-3. **Isolation unit.** Recommended: an Incus VM per workspace; an unprivileged container only for
-   the operator's own; never privileged. Settled at the isolation review gate ((g)).
+3. **Isolation unit.** *Decided by the owner, 2026-11-10: one Incus VM per workspace.* An
+   unprivileged container only for the operator's own; never privileged. The isolation review
+   gate ((g)) reviews how it is built.
 4. **Who may invite.** Recommended: owners and admins, and the individual of a personal account;
    members and guests cannot ((e)).
 5. **Recovery.** Recommended: a second passkey at the claim, plus recovery codes as slow hashes,
@@ -823,8 +825,8 @@ principals are keyed by `(issuer, sub)`.
 6. **Session lifetimes.** Recommended: self-hosted sessions sliding with a 12-hour idle limit; Cloud
    workspace tokens 5 minutes; whether DSH's own multi-day cookie can stay behind the gate unchanged
    is an evidence gap for delivery 0.
-7. **IP-only LAN installs.** Recommended: no passkeys there; an SSH tunnel or pairing from a
-   signed-in session; no TOTP fallback without its own review ((c)).
+7. **IP-only LAN installs.** *Decided by Automagik Chat, 2026-11-10:* no passkeys there; an SSH
+   tunnel or pairing from a signed-in session; no TOTP fallback without its own review ((c)).
 8. **What is paid.** Recommended: hosted workspaces, per workspace per month, seats up to a limit,
    model usage on the workspace's keys at first; personal accounts free; self-hosted free and
    complete for one instance ((i)).
@@ -839,23 +841,26 @@ principals are keyed by `(issuer, sub)`.
    follow-up RFC, after the brainstorm on the economics ((i)).
    *Amended by [RFC 0025][25] (2026-11-09):* 0025 is that follow-up; inbound first, "being paid"
    deferred (0025, (j)).
-10. **Moving a self-hosted instance into Cloud.** Recommended: a separate, later decision; linking
-    moves no data ((j)).
-11. **DSH's authentication hook.** Recommended: the gate now; propose a hook upstream (as RFC 0023
-    does for its pieces) and move to it only once DSH ships one.
-12. **Omni's sign-in.** Recommended: a defined boundary: Omni keeps its own for outside Omnis;
-    behind a gate it takes the gate's principal with its own sign-in off ((k)).
+10. **Moving a self-hosted instance into Cloud.** *Decided by Automagik Chat, 2026-11-10:* a
+    separate, later decision; linking moves no data ((j)).
+11. **DSH's authentication hook.** *Decided by Automagik Chat, 2026-11-10:* the gate now; propose
+    a hook upstream (as RFC 0023 does for its pieces) and move to it only once DSH ships one.
+12. **Omni's sign-in.** *Decided by Automagik Chat, 2026-11-10:* a defined boundary: Omni keeps
+    its own for outside Omnis; behind a gate it takes the gate's principal with its own sign-in
+    off ((k)).
 13. **An optional external OIDC provider for self-hosters** (RFC 0008's old question 2).
-    Recommended: not planned; the principal contract leaves room for it later.
+    *Decided by Automagik Chat, 2026-11-10:* not planned; the principal contract leaves room for
+    it later.
 14. **Federation for company customers** (Google or Entra sign-in, SAML, SCIM). The council's
     dissent expects customers to ask; Pocket ID's support is unverified. Recommended: delivery 0
     checks it; if it is missing, decide before the first company customer, since a later issuer move
     re-binds every person.
-15. **Pocket and Pocket Link with a claimed instance.** Recommended: unchanged; Pocket pairs through
-    Pocket Link's own keys, outside the gate; any phone sign-in to a web instance is a passkey of
-    the same owner.
-16. **Is the Cloud service open source?** Recommended: its contracts (the principal, the workspace
-    token, the entitlements document, the rail's API) are public here; the service starts private.
+15. **Pocket and Pocket Link with a claimed instance.** *Decided by Automagik Chat, 2026-11-10:*
+    unchanged; Pocket pairs through Pocket Link's own keys, outside the gate; any phone sign-in
+    to a web instance is a passkey of the same owner.
+16. **Is the Cloud service open source?** *Decided by Automagik Chat, 2026-11-10:* its contracts
+    (the principal, the workspace token, the entitlements document, the rail's API) are public
+    here; the service starts private.
 17. **The desktop's Cloud credential and local Bots.** Recommended: build a delivery-H-style mask
     per OS (the secret store, the session bus, the app's data folder) and keep desktop Cloud sign-in
     off on an OS until it exists there. The alternative is the owner's written acceptance of the
