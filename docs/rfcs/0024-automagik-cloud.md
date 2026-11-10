@@ -655,6 +655,10 @@ All new; nothing existing is renamed or moved.
 - **Stripe**: Cloud's webhook endpoint and its signing secret, in the Cloud service only.
 - **The desktop rail's state**: the active tile and order, in the app's own home.
 - No new plugin id, route prefix or storage prefix in existing plugins.
+- **The version 1 page**: [docs/cloud/contracts-v1.md](../cloud/contracts-v1.md) pins the
+  principal, the owner record, the OIDC contract, the workspace token, the open code and its
+  exchange, revocation and the entitlements document. Frozen at merge; later changes are additive
+  only, with a version on each contract.
 
 ## Threat model
 
@@ -885,6 +889,8 @@ principals are keyed by `(issuer, sub)`. Arca keeps its own sign-in (its own pas
 
 Ledger pass (2026-11-10): the board links this RFC from its file.
 
+- Contracts: [docs/cloud/contracts-v1.md](../cloud/contracts-v1.md), version 1 (issue #904),
+  frozen at merge; later changes are additive only.
 - Open issues: #902, #903, #904, #905, #906, #907, #908, #909, #910, #911, #912.
 - Merged changes that cite this RFC: #866, #888, #913 (last merged 2026-11-10).
 
