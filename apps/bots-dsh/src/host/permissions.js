@@ -572,5 +572,50 @@ export function install(rt) {
     return true
   }
 
-  Object.assign(rt, { permissionCatalog, permissionFallbackOf, permissionKey, autoClosed, applyPermission, applyTaskPermission, levelHolds, reapplyTasks, capTasks, taskOfRoom, inToolCall, callerGroup, taskLevelOf, forgetTaskPermission, checkPreset, setPermission, inheritedPermission, cleanRoomPermission, setRoomPermission })
+  // What the diagnostics page shows of one Session (permission-diagnostics.js). It only
+  // reads: the owner's saved level, the preset DSH reports for `session` when the caller
+  // holds one (nothing is opened to read it), and a copy of the mark above. It sets, applies
+  // and retries nothing, lifts no mark, and loads nothing. A level that cannot be read
+  // is left out; any other failure is told as `failed`. Without the presets service the saved level of a Bot or a group is still
+  // told (`presets: false`); a task's needs the catalog, so it is left out.
+  function permissionFactsOf(sessionId, session) {
+    const out = { kind: 'other', source: 'none' }
+    try {
+      const service = presets()
+      if (service === undefined) out.presets = false
+      const task = taskOf(sessionId)
+      const group = rt.groupOwners.get(sessionId)
+      const chat = rt.chatOwners.get(sessionId)
+      if (task !== undefined) {
+        out.kind = 'task'
+        out.source = 'task'
+        out.botId = rt.botOf(task.from)?.id
+        out.roomId = task.roomId ? rt.roomOf(task.roomId)?.id : undefined
+        if (service !== undefined) {
+          try { out.saved = taskLevel(task, service) } catch {}
+        }
+      } else if (group !== undefined || chat !== undefined) {
+        const bot = rt.botOf(group?.botId ?? chat)
+        const room = group && rt.roomOf(group.roomId)
+        out.kind = group === undefined ? 'chat' : 'group'
+        out.botId = bot?.id
+        out.roomId = room?.id
+        out.saved = room?.permission ?? bot?.permission
+        out.source = room?.permission ? 'group' : bot?.permission ? 'bot' : 'none'
+      }
+      if (service !== undefined && session !== undefined) {
+        try { out.effective = service.current(session) } catch {}
+      }
+      const mark = unapplied.get(sessionId)
+      if (mark !== undefined) out.unapplied = { level: mark.level, at: mark.at }
+    } catch {
+      // Told, so that a read that failed is not taken for a Session with nothing to say.
+      out.failed = true
+    }
+    return out
+  }
+  // The Sessions that carry the mark now, as a fresh list.
+  const unappliedSessions = () => [...unapplied.keys()]
+
+  Object.assign(rt, { permissionFactsOf, unappliedSessions, permissionCatalog, permissionFallbackOf, permissionKey, autoClosed, applyPermission, applyTaskPermission, levelHolds, reapplyTasks, capTasks, taskOfRoom, inToolCall, callerGroup, taskLevelOf, forgetTaskPermission, checkPreset, setPermission, inheritedPermission, cleanRoomPermission, setRoomPermission })
 }
