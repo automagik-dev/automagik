@@ -128,6 +128,13 @@ and a rollback when this RFC is accepted.
    the desktop: "This computer" is the rail's first tile beside Cloud workspaces, one tile is
    active at a time and its name is in the window's header.
 
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: none.
+- Merged changes that cite this RFC: #866 (last merged 2026-11-09).
+
 ## Links
 
 - [0003](0003-model-routes-and-acp.md) pinned adapters, [0004](0004-composer-chat-kinds.md)

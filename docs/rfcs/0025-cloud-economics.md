@@ -995,6 +995,13 @@ pointer and the outcome, so the two RFCs do not drift into two homes.
 4. **Unattended spend beyond a day.** Recommended: keep the 24-hour maximum on Pre-approve; a
    longer unattended run needs a fresh owner step-up or a separate design, not a longer TTL.
 
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: #902, #910, #912.
+- Merged changes that cite this RFC: #888, #913 (last merged 2026-11-10).
+
 ## Links
 
 - RFCs: [0024](0024-automagik-cloud.md) (amended here: open question 8, Decided 14's "being

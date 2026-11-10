@@ -682,6 +682,13 @@ The six questions this RFC asked were decided by Chat on 2026-11-09 (Decided, 1 
 and 6 were reopened by the owner on 2026-11-10 and replaced above; their mechanisms are RFC 0026
 (d) and (e), and genie ACKed this amendment on 2026-11-10.
 
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: #897, #898, #899, #915.
+- Merged changes that cite this RFC: #817, #822, #825, #827, #834, #835, #875 (last merged 2026-11-10).
+
 ## Links
 
 - RFCs: [0017](0017-usagemeter-crate.md), the crate, the meter lane (deliveries 4 to 6) and the

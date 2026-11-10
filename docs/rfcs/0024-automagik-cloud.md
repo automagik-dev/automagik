@@ -880,6 +880,13 @@ principals are keyed by `(issuer, sub)`. Arca keeps its own sign-in (its own pas
     in the meantime, is not recommended: a Bot's tools change over time, and one mistake makes a
     member owner-equivalent ((f)).
 
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: #902, #903, #904, #905, #906, #907, #908, #909, #910, #911, #912.
+- Merged changes that cite this RFC: #866, #888, #913 (last merged 2026-11-10).
+
 ## Links
 
 - RFCs: [0008](0008-platform-and-web-instances.md) (amended here: its web sign-in, the desktop
