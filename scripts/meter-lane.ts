@@ -5,8 +5,8 @@
  * meter attaches its four binaries (meter/usagemeter/part.json `artifact`) and usagemeter.SHA256SUMS,
  * and installers read only two files from the rolling `meter-lane` release, which holds nothing else:
  *
- *   https://github.com/automagik-dev/automagik/releases/download/meter-lane/meter.json
- *   https://github.com/automagik-dev/automagik/releases/download/meter-lane/meter.json.sig
+ *   https://github.com/automagik-si/automagik/releases/download/meter-lane/meter.json
+ *   https://github.com/automagik-si/automagik/releases/download/meter-lane/meter.json.sig
  *
  * meter.json names the newest meter's release and, per target, its asset's name, URL, sha256 and
  * size; meter.json.sig is ed25519 over its exact bytes, detached, base64, made with the
@@ -61,6 +61,9 @@ export const SUMS = 'usagemeter.SHA256SUMS';
 export const SCHEMA_VERSION = 1;
 export const PART = 'automagik.usagemeter';
 export const KEY_ID = 'meter-2026-11';
+// Held at the old org: installed packs and am compare this URL exactly
+// (herdr/mods/am-sidebar/meterLane.mjs, am/meterLane.mjs), so the pointer keeps naming it until
+// their part takes the new one too.
 export const REPOSITORY = 'https://github.com/automagik-dev/automagik';
 const DOWNLOADS = `${REPOSITORY}/releases/download/`;
 /** The two secret slots a rotation alternates between; release.yml signs with the one METER_LANE_SIGNER names. */
@@ -292,7 +295,7 @@ if (import.meta.main) {
     if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, 'sign=yes\n');
   } else if (command === 'keygen') {
     // The owner's step (RFC 0017 delivery 5): it writes a repository secret and the keys file.
-    const repo = flag('--repo', 'automagik-dev/automagik');
+    const repo = flag('--repo', 'automagik-si/automagik');
     const keyId = flag('--key-id', KEY_ID);
     const keys = readKeys();
     if (keys.some(entry => entry.keyId === keyId)) throw new Error(`meter-keys.json already lists ${keyId}: pick a new --key-id to rotate`);

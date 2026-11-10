@@ -4,7 +4,7 @@ import { createProviderActions, saveRoute, unsetRoute } from './providers.js'
 import { createCompanionActions } from './companion.js'
 import { createBotTypeActions } from './bot-types.js'
 import { createAcpActions } from './acp.js'
-import { hostOf } from './host.js'
+import { hostOf, machineOf } from './host.js'
 import { preloadOf } from './preload.js'
 import { UNFOLD_BOT } from './companion.js'
 
@@ -13,7 +13,9 @@ import { UNFOLD_BOT } from './companion.js'
 //
 //   state              the done flags, whether an AI is already connected, the product
 //                      the desktop app was opened for (preload, src/host/preload.js) and the
-//                      host kind, when there is one (host, src/host/host.js)
+//                      host kind, when there is one (host, src/host/host.js), and the machine
+//                      DSH runs on: its OS family and whether it was launched over SSH
+//                      (machine, src/host/host.js; never its hostname)
 //   done { stepId, connected? }
 //                      keeps a step finished, in this plugin's own settings entry; Connect
 //                      AI finished with an AI on (`connected`) gives the companion, the Omni
@@ -147,7 +149,7 @@ const isConfigured = async (read) => {
   }
 }
 
-export function createActions(ctx, { fetch: fetchImpl = globalThis.fetch, anyOn, env = process.env } = {}) {
+export function createActions(ctx, { fetch: fetchImpl = globalThis.fetch, anyOn, env = process.env, platform = process.platform } = {}) {
   return {
     async state() {
       const rows = describeAll(ctx)
@@ -177,6 +179,7 @@ export function createActions(ctx, { fetch: fetchImpl = globalThis.fetch, anyOn,
         // Really on: a route that is set up, or a subscription account.
         aiConnected: anyOn ? await anyOn().catch(() => false) : deepseek || piAiRoutes.length > 0,
         preload,
+        machine: machineOf({ platform, env }),
         ...(host ? { host } : {}),
       }
     },

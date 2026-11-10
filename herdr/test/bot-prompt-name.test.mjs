@@ -1,4 +1,4 @@
-// Golden hashes recorded from origin/dev; the briefing and non-DSH rows must stay byte-equal.
+// Golden hashes from origin/dev, with #805 restart advice in the briefing.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -12,7 +12,7 @@ const self = { id: "b-guideaaaaa", name: "Team Guide", kind: "main", role: "Guid
 const file = { version: 1, bots: [self], categories: [] };
 const text = launchBriefingText({ self, file });
 
-test("the briefing and every other agent's launch row stay byte-equal to origin/dev goldens", () => {
+test("the briefing and every other agent's launch row match the restart-advice goldens", () => {
   assert.equal(hash(text), golden.text);
   for (const [agent, want] of Object.entries(golden.rows)) {
     assert.equal(hash(briefingLaunch(agent, { path: "/app/automagik-herdr/briefings/bot.md", text })), want, agent);

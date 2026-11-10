@@ -393,7 +393,7 @@ function describe(node) {
   return `${node.tag}${classes}${attrs}`
 }
 
-test('the bar drags the window, and its empty space still drags on every platform', () => {
+test('the bar drags the window, and its sanctioned empty surface still drags on every platform', () => {
   const barRule = RULES.find(rule => selectorsOf(rule.prelude).includes('.bar'))
   assert.ok(barRule, 'shell.css declares the bar rule')
   assert.equal(declaredValue(barRule), 'drag', 'the bar itself is the window drag region')
@@ -403,10 +403,12 @@ test('the bar drags the window, and its empty space still drags on every platfor
     const spacer = bar.children.find(child => child.classes.has('spacer'))
     assert.ok(spacer, `${platform}: the bar still has its empty spacer`)
     assert.equal(regionOf(spacer), 'drag', `${platform}: the spacer is empty bar space and drags`)
-    // The bar's own padding and gaps are its box, so they are inside this drag region too. A
-    // plain, unclassed element placed among them must not opt itself out.
+    // The bar's own padding and gaps are inside its drag region too. The .spacer is the one
+    // sanctioned empty child: any other child is no-drag by default, because a control that
+    // inherits the drag region swallows its own clicks (issue #845).
     const empty = append(bar, 'div', { class: 'future-empty-area' })
-    assert.equal(regionOf(empty), 'drag', `${platform}: a new empty area in the bar drags`)
+    assert.equal(regionOf(empty), 'no-drag',
+      `${platform}: a new unclassed area is no-drag by default, not a drag region`)
   }
 })
 
@@ -477,10 +479,18 @@ test('a new control of each kind in the bar is no-drag without a new rule', () =
     ['div', { role: 'menuitem' }],
     ['div', { 'aria-haspopup': 'menu' }],
     ['div', { 'data-menu': 'bar' }],
+    // Kinds the old enumerated allowlist did not name: the default must cover them instead.
+    ['details', {}],
+    ['option', {}],
+    ['video', { controls: '' }],
+    ['am-menu', {}],
+    ['am-button', {}],
+    ['div', { contenteditable: 'true' }],
   ]
   for (const platform of PLATFORMS) {
     for (const [tag, attrs] of additions) {
       const bar = barTree(platform)
+      const spacer = bar.children.find(child => child.classes.has('spacer'))
       const item = append(bar, tag, attrs)
       assert.equal(regionOf(item), 'no-drag',
         `${platform}: a new ${describe(item)} in the bar must take clicks, not drag the window`)
@@ -488,10 +498,36 @@ test('a new control of each kind in the bar is no-drag without a new rule', () =
       assert.ok(winner, `${platform}: the existing stylesheet covers a new ${describe(item)}`)
       assert.doesNotMatch(winner.selector, PLATFORM_CLASS,
         `the rule covering a new ${describe(item)} must cover every platform: ${winner.selector}`)
-      const empty = append(bar, 'div', { class: 'future-empty-area' })
-      assert.equal(regionOf(empty), 'drag',
+      // The sanctioned spacer still drags beside the new control, while a new unclassed filler
+      // is no-drag by default: control-safe, at the cost of an unknown empty filler being
+      // inert instead of dragging. A filler that must drag is .spacer.
+      assert.equal(regionOf(spacer), 'drag',
         `${platform}: the empty space beside a new ${describe(item)} still drags`)
+      const empty = append(bar, 'div', { class: 'future-empty-area' })
+      assert.equal(regionOf(empty), 'no-drag',
+        `${platform}: a new unclassed filler beside a new ${describe(item)} is inert`)
     }
+  }
+})
+
+// A structural guard over the real markup: the bar subtree may put only its own empty box and
+// the .spacer in the drag region. An unknown control, of a custom tag or any other kind, must
+// resolve no-drag without a new rule — the safe default the enumerated allowlist lacked.
+test('the real bar subtree has no drag surface for a control, only its empty surface drags', () => {
+  for (const platform of PLATFORMS) {
+    const bar = barTree(platform)
+    const spacer = bar.children.find(child => child.classes.has('spacer'))
+    assert.ok(spacer, `${platform}: the bar has its sanctioned empty spacer`)
+    assert.equal(regionOf(bar), 'drag', `${platform}: the bar's own box still drags`)
+    assert.equal(regionOf(spacer), 'drag', `${platform}: the spacer still drags`)
+    walk(bar, node => {
+      if (node === bar || node === spacer) return
+      assert.equal(regionOf(node), 'no-drag',
+        `${platform}: ${describe(node)} in the real bar must take clicks, not drag the window`)
+    })
+    const unknown = append(bar, 'am-menu', {})
+    assert.equal(regionOf(unknown), 'no-drag',
+      `${platform}: an unknown custom-element control is no-drag by default`)
   }
 })
 

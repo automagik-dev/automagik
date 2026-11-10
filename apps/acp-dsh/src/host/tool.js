@@ -5,7 +5,7 @@
 // for the agent's call to finish, and when the agent asks permission for it, asks DSH's
 // approval service and hands the agent the answer.
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { contentText, isTerminal } from './acp.js'
+import { contentImages, contentText, isTerminal } from './acp.js'
 import { agentImageOf, isImageCall, isPng, KEPT_TEXT } from './agent-image.js'
 
 export const TOOL_NAME = 'acp_tool'
@@ -38,15 +38,46 @@ export function callArguments(tool) {
   }
 }
 
-function resultOf(tool) {
+function resultText(tool) {
   const text = contentText(tool.content) || tool.output || (tool.rawOutput === undefined ? '' : typeof tool.rawOutput === 'string' ? tool.rawOutput : JSON.stringify(tool.rawOutput))
+  return text.length > OUTPUT_LIMIT ? `${text.slice(0, OUTPUT_LIMIT)}…` : text
+}
+
+// The image blocks of an agent's call as DSH image content. DSH keeps an image in a tool result
+// as a durable attachment (`{ type: 'image', attachment }`), never inline base64, so the bytes
+// are stored once through the attachment service and the result carries the reference a chat and
+// a replay can show. A block that already has an attachment is passed through; with no store (or
+// an image the store refuses) the call keeps its text result, as it did before.
+async function resultImages(tool, attachments) {
+  const blocks = []
+  for (const image of contentImages(tool.content)) {
+    if (image.attachment !== undefined) {
+      blocks.push({ type: 'image', attachment: image.attachment, ...(image.offloaded === true ? { offloaded: true } : {}) })
+      continue
+    }
+    if (typeof image.data !== 'string' || image.data === '' || typeof attachments?.saveImage !== 'function') continue
+    const mediaType = image.mimeType ?? image.mediaType
+    if (mediaType === undefined) continue
+    try {
+      const ref = await attachments.saveImage({ data: Buffer.from(image.data, 'base64'), mediaType })
+      blocks.push({ type: 'image', attachment: ref })
+    } catch {
+      // An image the store refuses (not an image, too large) leaves the text result as it was.
+    }
+  }
+  return blocks
+}
+
+async function resultOf(tool, attachments) {
   const diffs = diffsOf(tool.content)
+  const images = await resultImages(tool, attachments)
   return {
     title: tool.title,
     kind: tool.kind,
     status: tool.status,
-    text: text.length > OUTPUT_LIMIT ? `${text.slice(0, OUTPUT_LIMIT)}…` : text,
+    text: resultText(tool),
     ...(diffs.length ? { diffs } : {}),
+    ...(images.length ? { images } : {}),
   }
 }
 
@@ -97,9 +128,15 @@ const changed = (tool, signal) => new Promise((resolve) => {
   signal?.addEventListener('abort', done, { once: true })
 })
 
+// The executions whose mirror body started. DSH hands one `exec` object to its gates, to the body
+// and to `tools/result`, so the adapter can tell a call that was refused before the body (and
+// whose question from the agent nobody will answer here) from one this body is answering.
+export const entered = new WeakSet()
+
 /**
- * `images()` is the chat's image keeper (acpAgents.keepImages), or undefined.
- * @param {{ runOf(sessionId: string): { run: import('./acp.js').AgentRun, name: string } | undefined, approval(): any, sandboxPolicy?(): any, permissionPresets?(): any, images?(): { start?(call: object): void, keep(image: object): Promise<{ file: string }>, fail?(call: object): void } | undefined }} host
+ * `images()` is the chat's image keeper (acpAgents.keepImages), or undefined. `attachments()` is
+ * DSH's attachment store, where an image a call answers with is kept, or undefined.
+ * @param {{ runOf(sessionId: string): { run: import('./acp.js').AgentRun, name: string } | undefined, approval(): any, sandboxPolicy?(): any, permissionPresets?(): any, images?(): { start?(call: object): void, keep(image: object): Promise<{ file: string }>, fail?(call: object): void } | undefined, attachments?(): { saveImage?(input: { data: Buffer, mediaType: string }): Promise<any> } | undefined }} host
  */
 export function mirrorTool(host) {
   return defineTool({
@@ -124,12 +161,17 @@ export function mirrorTool(host) {
           status: { type: 'string', required: true },
           text: { type: 'string', required: true },
           diffs: { type: 'json' },
+          images: { type: 'json' },
         },
       },
-      render: (_args, value) => [{ type: 'text', text: value.text || `${value.title}: ${value.status}` }],
+      render: (_args, value) => [
+        { type: 'text', text: value.text || `${value.title}: ${value.status}` },
+        ...(Array.isArray(value.images) ? value.images : []),
+      ],
       presentationMeta: (_args, value) => value,
     },
     async execute(args, exec) {
+      entered.add(exec)
       const live = host.runOf(exec.agent?.session?.id)
       const tool = live?.run.tools.get(args.id)
       if (!tool) return { title: args.title, kind: args.kind, status: 'failed', text: 'The agent is no longer running this call.' }
@@ -153,9 +195,9 @@ export function mirrorTool(host) {
         await changed(tool, exec.signal)
       }
       // Only an image-generation call is answered as a kept image; any other call that answers
-      // with an image (a Read, a screenshot) keeps its own result.
+      // with an image (a Read, a screenshot) keeps its own result, image blocks included.
       if (isImageCall(tool)) return imageResult(host, live, tool, exec)
-      return resultOf(tool)
+      return resultOf(tool, host.attachments?.())
     },
     presentCall(args) {
       const title = typeof args?.title === 'string' ? args.title : 'Tool'

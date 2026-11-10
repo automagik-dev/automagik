@@ -5,10 +5,10 @@ Android 8.0 or newer. Not an official Herdr release.
 
 ## Install
 
-1. On your phone, open the [newest Pocket build](https://github.com/automagik-dev/automagik/releases/download/pocket-lane/latest.json)
+1. On your phone, open the [newest Pocket build](https://github.com/automagik-si/automagik/releases/download/pocket-lane/latest.json)
    and open its `url`: the `automagik-pocket-<version>.apk` on its Automagik release
-   ([all releases](https://github.com/automagik-dev/automagik/releases)). Builds up to v0.23.0 are on
-   the archived [automagik-pocket](https://github.com/automagik-dev/automagik-pocket/releases).
+   ([all releases](https://github.com/automagik-si/automagik/releases)). Builds up to v0.23.0 are on
+   the archived [automagik-pocket](https://github.com/automagik-si/automagik-pocket/releases).
 2. Have the old **Herdr Pocket** (`dev.herdr.pocket`) installed? Uninstall it first. It can't
    update to this app, and you'll pair again.
 3. Open the APK. Allow your browser to install apps when Android asks.

@@ -24,7 +24,7 @@ exports.default = async function afterPack(context) {
 
 function launcher(name) {
   return `#!/bin/sh
-# Automagik desktop launcher: see apps/desktop/scripts/after-pack.cjs in automagik-dev/automagik.
+# Automagik desktop launcher: see apps/desktop/scripts/after-pack.cjs in automagik-si/automagik.
 here=$(dirname "$(readlink -f "$0")")
 sandbox="$here/chrome-sandbox"
 restricted=$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo 0)

@@ -1,6 +1,7 @@
-//! Harness log parsers. Each turns one JSONL line into zero or more usage events and never keeps
-//! any text from the line beyond ids, the model name, the cwd and the branch.
+//! Harness readers. Most turn one JSONL line into zero or more usage events and never keep any text
+//! beyond ids, the model name, the cwd and the branch; `agy` reads a conversation database.
 
+pub mod agy;
 pub mod claude;
 pub mod codex;
 pub mod dsh_tui;
@@ -16,10 +17,17 @@ pub enum Source {
     Omp,
     Codex,
     DshTui,
+    Agy,
 }
 
 impl Source {
-    pub const ALL: [Source; 4] = [Source::Omp, Source::Claude, Source::Codex, Source::DshTui];
+    pub const ALL: [Source; 5] = [
+        Source::Omp,
+        Source::Claude,
+        Source::Codex,
+        Source::DshTui,
+        Source::Agy,
+    ];
 
     pub fn harness(self) -> &'static str {
         match self {
@@ -27,6 +35,7 @@ impl Source {
             Source::Omp => "omp",
             Source::Codex => "codex",
             Source::DshTui => dsh_tui::HARNESS,
+            Source::Agy => agy::HARNESS,
         }
     }
 
@@ -46,6 +55,8 @@ impl Source {
             Source::Omp => omp::parse_line(line, ctx, out),
             Source::Codex => codex::parse_line(line, ctx, out),
             Source::DshTui => dsh_tui::parse_line(line, ctx, out),
+            // A conversation database, not a line log: sync reads it with `agy::read`.
+            Source::Agy => Line::Ignored,
         }
     }
 }
@@ -80,6 +91,9 @@ pub struct FileCtx {
     /// it are all copies.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub seed_cut: bool,
+    /// An Antigravity conversation's highest counted `gen_metadata.idx`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agy: Option<agy::AgyCtx>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

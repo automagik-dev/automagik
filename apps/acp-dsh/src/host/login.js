@@ -104,6 +104,8 @@ function blockBrowser() {
  * resolve(id) snapshots { cli, env }; the same snapshot runs login and its confirmation.
  * Nothing is spawned until start(), and ordinary agent status never exposes these flows.
  * onChange() is told whenever the number of attempts at work changes (the busy signal).
+ * onReady(id, selected, { existing }) is told a confirmed sign-in; `existing` says the CLI was
+ * already signed in when the attempt started (no one signed in through it).
  */
 export class CliLogins {
   constructor({ resolve, signedIn = signedInOf, onReady = () => {}, onChange = () => {}, spawn = spawnProcess, now = Date.now, linkTtlMs = LINK_TTL_MS, startupMs = STARTUP_MS, answerMs = ANSWER_TIMEOUT_MS, retainMs = RETAIN_MS, stateTtlMs = STATE_TTL_MS, timers = globalThis } = {}) {
@@ -255,11 +257,20 @@ export class CliLogins {
     this.pruneStates()
     if (this.states.size === 0) return false
     const cleaned = text.slice(0, 1_000_000).replace(/[\p{Cf}]/gu, '')
+    // The cost of one call (#871): a token's prefix is hashed once however often the text
+    // repeats it, in either reading. So a call costs at most one HMAC per distinct prefix, and
+    // never more than 2 x 1,000,000 / (length + 1) of them for each state length shown (the
+    // lengths add up; Claude's states have one).
+    const tried = new Set()
     for (const candidate of new Set([cleaned, cleaned.replace(/\s+/gu, '')])) {
       for (const match of candidate.matchAll(/#([A-Za-z0-9_-]+)/g)) {
         const token = match[1]
         for (const length of this.stateLengths) {
-          if (token.length >= length && this.states.has(this.hashState(token.slice(0, length)))) return true
+          if (token.length < length) continue
+          const prefix = token.slice(0, length)
+          if (tried.has(prefix)) continue
+          tried.add(prefix)
+          if (this.states.has(this.hashState(prefix))) return true
         }
       }
     }
@@ -285,7 +296,8 @@ export class CliLogins {
     if (!this.active(flow)) return
     if (typeof selected?.cli !== 'string' || selected.cli === '') { this.finish(flow, 'failed', unavailableMessage); return }
     flow.selected = { cli: selected.cli, env: { ...selected.env } }
-    if (await this.check(flow)) { await this.ready(flow); return }
+    // `existing`: the CLI was signed in before this attempt, so nobody signed in here (#869).
+    if (await this.check(flow)) { flow.existing = true; await this.ready(flow); return }
     if (!this.active(flow)) return
     const args = flow.id === 'acp-codex' ? ['app-server', '--listen', 'stdio://'] : ['auth', 'login', '--claudeai']
     // DISABLE_UPDATES: a sign-in never updates the CLI on its own (clis.js asks --version the
@@ -319,7 +331,7 @@ export class CliLogins {
     if (!this.active(flow)) return
     // A notification or an exit alone is not proof: check() asked the same CLI and env. The
     // sign-in is recorded before any view can read `ready`.
-    try { await this.onReady(flow.id, flow.selected) } catch {}
+    try { await this.onReady(flow.id, flow.selected, { existing: flow.existing === true }) } catch {}
     this.finish(flow, 'ready')
   }
 

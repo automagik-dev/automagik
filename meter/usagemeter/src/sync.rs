@@ -67,6 +67,8 @@ pub struct Options {
     pub codex_home: PathBuf,
     /// `~/.dsh/sessions` (or `$DSH_HOME/sessions`).
     pub dsh_root: PathBuf,
+    /// `~/.gemini/antigravity-cli/conversations` (or `$AGY_HOME/conversations`).
+    pub agy_root: PathBuf,
     /// Herdr's global app home (`$HERDR_APP_HOME`, else `~/.config/herdr-app`): its workers and
     /// attach ledgers attribute usage. None reads neither.
     pub app_home: Option<PathBuf>,
@@ -136,6 +138,11 @@ impl Options {
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join(".dsh"))
             .join("sessions");
+        let agy_root = std::env::var_os("AGY_HOME")
+            .filter(|d| !d.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".gemini/antigravity-cli"))
+            .join("conversations");
         let app_home = crate::ledger::app_home(
             std::env::var_os(crate::ledger::APP_HOME_ENV),
             Some(home.clone()),
@@ -148,6 +155,7 @@ impl Options {
             claude_root,
             codex_home,
             dsh_root,
+            agy_root,
             app_home,
             workers_ledger,
             project_ledgers: true,
@@ -634,6 +642,31 @@ fn dsh_tui_health(store: &Store, root: &std::path::Path, now: i64) -> rusqlite::
     store.set_meta(&format!("{h}_reason"), &reason)
 }
 
+/// Antigravity's health after a run: `absent` with no conversation folder, `unsupported` when a
+/// transcript has a shape this meter does not know (its usage is unknown, never zero), `degraded`
+/// when one could not be read this time, else `ok`. The reason never names a path or account.
+fn agy_health(
+    store: &Store,
+    root: &std::path::Path,
+    shape: Option<String>,
+    pending: Option<String>,
+    unreadable: Option<String>,
+) -> rusqlite::Result<()> {
+    let (status, reason) = if !root.is_dir() {
+        ("absent", String::new())
+    } else if let Some(why) = shape {
+        ("unsupported", why)
+    } else if let Some(why) = pending {
+        ("degraded", why)
+    } else if let Some(why) = unreadable {
+        ("degraded", why)
+    } else {
+        ("ok", String::new())
+    };
+    store.set_meta("agy_status", status)?;
+    store.set_meta("agy_reason", &reason)
+}
+
 /// The version of the store at `db` when it is newer than this meter's. The caller holds the lock
 /// of the store's directory, so nothing writes while it reads.
 fn newer_version(db: &std::path::Path) -> Result<Option<i64>, Error> {
@@ -942,6 +975,7 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
         scan::discover(&opts.omp_root, Source::Omp, &mut candidates);
         scan::discover(&opts.claude_root, Source::Claude, &mut candidates);
         scan::discover(&opts.dsh_root, Source::DshTui, &mut candidates);
+        scan::discover(&opts.agy_root, Source::Agy, &mut candidates);
         let unread = crate::sources::dsh_tui::unread_generations(&opts.dsh_root);
         store.set_meta("dsh_unread", unread.as_deref().unwrap_or(""))?;
         // Newest first: recent usage is what people look at, and an old backlog can wait a run.
@@ -960,6 +994,10 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
             chunks_left: opts.chunk_limit.map(std::cell::Cell::new),
         };
         let mut stopped_at = candidates.len();
+        // The first shape and read failures an agy conversation reported this run.
+        let mut agy_shape: Option<String> = None;
+        let mut agy_pending: Option<String> = None;
+        let mut agy_unreadable: Option<String> = None;
 
         trace.mark("discover");
         for (i, c) in candidates.iter().enumerate() {
@@ -987,6 +1025,37 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
             // the header, so its own later calls are never taken for copies.
             if c.source == Source::DshTui && state.ctx.seeded && state.ctx.created_at.is_none() {
                 state.ctx.created_at = scan::dsh_header(&c.path).and_then(|h| h.created_at);
+            }
+            if c.source == Source::Agy {
+                match read_agy_into_store(
+                    &mut store,
+                    &mut attr,
+                    &mut state,
+                    rewritten,
+                    &limits,
+                    counted_from,
+                    now,
+                    &mut report,
+                    &mut agy_shape,
+                    &mut agy_pending,
+                    &mut agy_unreadable,
+                ) {
+                    Ok(outcome) => {
+                        if outcome.stopped {
+                            report.stopped_by_budget = true;
+                            report.pending_bytes += c.size.saturating_sub(state.offset);
+                            report.pending_files += 1;
+                            pending_sources.insert(c.source);
+                            stopped_at = i + 1;
+                            break;
+                        }
+                    }
+                    Err(e) => match store_failure(&e) {
+                        Some(err) => return Err(err),
+                        None => report.unreadable += 1,
+                    },
+                }
+                continue;
             }
             let res = read_into_store(
                 &mut store,
@@ -1104,12 +1173,20 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
             store.set_meta(&format!("{}_status", s.harness()), status)?;
         }
         dsh_tui_health(&store, &opts.dsh_root, now)?;
+        agy_health(
+            &store,
+            &opts.agy_root,
+            agy_shape,
+            agy_pending,
+            agy_unreadable,
+        )?;
         for s in Source::ALL {
             let absent = match s {
                 Source::Omp => !opts.omp_root.is_dir(),
                 Source::Claude => !opts.claude_root.is_dir(),
                 Source::Codex => !codex_read,
                 Source::DshTui => !opts.dsh_root.is_dir(),
+                Source::Agy => !opts.agy_root.is_dir(),
             };
             if !pending_sources.contains(&s) && !absent {
                 store.mark_success(s.harness(), now)?;
@@ -1287,6 +1364,7 @@ pub fn projected_growth(
     scan::discover(&opts.omp_root, Source::Omp, &mut logs);
     scan::discover(&opts.claude_root, Source::Claude, &mut logs);
     scan::discover(&opts.dsh_root, Source::DshTui, &mut logs);
+    scan::discover(&opts.agy_root, Source::Agy, &mut logs);
     for d in ["sessions", "archived_sessions"] {
         scan::discover(&opts.codex_home.join(d), Source::Codex, &mut logs);
     }
@@ -1741,6 +1819,79 @@ fn forks_last(store: &Store, candidates: &mut Vec<Candidate>) -> rusqlite::Resul
     rest.extend(forks.into_iter().map(|(_, c)| c));
     *candidates = rest;
     Ok(())
+}
+
+/// Reads one Antigravity conversation from its saved generation cursor. The database is opened
+/// read-only; a file whose shape is unknown is named and left uncounted, never counted as zero.
+#[allow(clippy::too_many_arguments)]
+fn read_agy_into_store(
+    store: &mut Store,
+    attr: &mut Attributor,
+    state: &mut FileState,
+    rewritten: bool,
+    limits: &ReadLimits,
+    counted_from: i64,
+    now: i64,
+    report: &mut Report,
+    agy_shape: &mut Option<String>,
+    agy_pending: &mut Option<String>,
+    agy_unreadable: &mut Option<String>,
+) -> io::Result<ReadOutcome> {
+    let (cursor, cursor_ts) = state
+        .ctx
+        .agy
+        .as_ref()
+        .map_or((-1, -1), |a| (a.max_gen, a.cursor_ts));
+    let read = match crate::sources::agy::read(
+        std::path::Path::new(&state.path),
+        cursor,
+        cursor_ts,
+        now,
+        limits.deadline,
+    ) {
+        Ok(r) => r,
+        Err(crate::sources::agy::Failure::Shape(why)) => {
+            agy_shape.get_or_insert(why);
+            report.unreadable += 1;
+            return Ok(ReadOutcome::default());
+        }
+        Err(crate::sources::agy::Failure::Unreadable(why)) => {
+            agy_unreadable.get_or_insert(why);
+            report.unreadable += 1;
+            return Ok(ReadOutcome::default());
+        }
+    };
+    if let Some(why) = read.shape {
+        agy_shape.get_or_insert(why);
+    } else if read.held > 0 {
+        agy_pending.get_or_insert(format!(
+            "{} agy generation(s) are still being written, so their usage is not counted yet",
+            read.held
+        ));
+    }
+    state.ctx.agy = Some(crate::sources::agy::AgyCtx {
+        max_gen: read.max_gen,
+        cursor_ts: read.cursor_ts,
+    });
+    // A stopped read leaves bytes pending; a full one does not. The generation cursor, not the
+    // byte offset, is where the next run resumes.
+    state.offset = if read.stopped { 0 } else { state.size };
+    let health = Health {
+        rewrites: i64::from(rewritten),
+        ..Health::default()
+    };
+    let attributed = attr
+        .attribute(store, read.events, counted_from)
+        .map_err(store_write)?;
+    let applied = store
+        .apply_agy(state, &attributed, health, now)
+        .map_err(store_write)?;
+    report.health.add(&applied);
+    report.files_read += 1;
+    Ok(ReadOutcome {
+        bytes: 0,
+        stopped: read.stopped,
+    })
 }
 
 /// Reads one file from its saved state, committing each chunk (rows, offset and, for Codex, the

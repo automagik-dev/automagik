@@ -106,7 +106,7 @@ test('a lane update of another plugin starts a fresh ACP check when DSH cycles',
   const tar = join(home, 'bots.tgz')
   execFileSync(tarOf(), ['-czf', tar, '-C', dirname(packed), 'package'])
   const bytes = readFileSync(tar)
-  await stage({ publisher: 'automagik', version: '3.105.1', sequence: 3105001, plugins: [{ name: BOTS, version: '3.105.1', url: 'https://github.com/automagik-dev/automagik/releases/download/v3.105.1/bots.tgz', size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), integrity: `sha512-${createHash('sha512').update(bytes).digest('base64')}` }] }, { home, fetch: async () => new Response(bytes) })
+  await stage({ publisher: 'automagik', version: '3.105.1', sequence: 3105001, plugins: [{ name: BOTS, version: '3.105.1', url: 'https://github.com/automagik-si/automagik/releases/download/v3.105.1/bots.tgz', size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), integrity: `sha512-${createHash('sha512').update(bytes).digest('base64')}` }] }, { home, fetch: async () => new Response(bytes) })
   let active = activation()
   t.mock.timers.tick(5000)
   await Promise.resolve()

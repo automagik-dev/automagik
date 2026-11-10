@@ -111,6 +111,13 @@ gives a terminal that survives the app, and the same session is visible in both 
    Automagik's own core session; mirrored spaces need the user's core and are skipped.
 4. **Who reviews a binary bump?** Recommended: the same review as any pinned add-on.
 
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: #250.
+- Merged changes that cite this RFC: none yet.
+
 ## Links
 
 - [0004](0004-composer-chat-kinds.md) chat kinds, [0003](0003-model-routes-and-acp.md) routes,

@@ -58,3 +58,31 @@ test('the streamed reply holds a link until it is whole, wherever the chunks spl
   assert.equal(links.push('![a'), '')
   assert.equal(links.flush(), '![a')
 })
+
+// #871 (L5): where the agent sends a structured name, a built-in tool is what its name says.
+test('a built-in call titled like image generation is not an image call; Codex and MCP calls are as before', () => {
+  // Claude Code names its calls: a command or a file read whose title starts like an image tool.
+  for (const structuredName of ['Bash', 'Read', 'Write']) {
+    const call = { title: 'generate_image.py --prompt fox', structuredName, content: [], rawOutput: { result: PNG, savedPath: '/tmp/out/fox.png' } }
+    assert.equal(isImageCall(call), false, structuredName)
+    assert.equal(agentImageOf(call), undefined, structuredName)
+    assert.deepEqual(savedPathsOf([call]), [], structuredName)
+  }
+  assert.equal(isImageCall({ title: 'Generate image of a fox', structuredName: 'Bash' }), false)
+  // A built-in whose own name is image generation is one.
+  assert.equal(isImageCall({ title: 'A fox', structuredName: 'generate_image' }), true)
+  assert.equal(isImageCall({ title: 'Generate image', structuredName: 'image_generation' }), true)
+  // Codex sends no name: its exact title, and the other spellings, as before.
+  assert.equal(isImageCall({ title: 'Image generation' }), true)
+  assert.equal(isImageCall({ title: 'generate_image' }), true)
+  assert.equal(isImageCall({ title: 'image_gen fox' }), true)
+  assert.equal(isImageCall({ title: 'generate_image', structuredName: '' }), true)
+  // Codex's exact title stays an image call whatever name an adapter may add later.
+  assert.equal(isImageCall({ title: 'Image generation', structuredName: 'imagegen' }), true)
+  assert.equal(agentImageOf({ title: 'Image generation', structuredName: 'imagegen', content: [], rawOutput: { result: PNG } }), PNG)
+  // An MCP call is known by its title, as before.
+  assert.equal(isImageCall({ title: 'generate_image', structuredName: 'mcp__studio__generate_image' }), true)
+  assert.equal(isImageCall({ title: 'Generate image of a fox', structuredName: 'mcp__studio__draw' }), true)
+  assert.equal(isImageCall({ title: 'List files', structuredName: 'mcp__studio__generate_image' }), false)
+  assert.equal(isImageCall({ structuredName: 'generate_image' }), false)
+})

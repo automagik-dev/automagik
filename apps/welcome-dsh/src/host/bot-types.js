@@ -156,7 +156,7 @@ export function installTargetOf(plugin, ownSource, version = PKG.version, omni =
   }
   const own = 'apps/welcome-dsh'
   if (typeof ownSource === 'string' && ownSource.includes(own)) return { spec: ownSource.replace(own, `apps/${plugin.dir}`), options: {} }
-  return { spec: `https://github.com/automagik-dev/automagik/releases/download/v${version}/automagik-${plugin.dir}-${version}.tgz`, options: {} }
+  return { spec: `https://github.com/automagik-si/automagik/releases/download/v${version}/automagik-${plugin.dir}-${version}.tgz`, options: {} }
 }
 
 // A plugin's row in the profile: under its name, else under its former one.
@@ -178,7 +178,7 @@ const resultProblem = (result) => {
 // Genie's skills (/wish and the rest) come with its command line: its installer writes them to
 // ~/.agents/skills, which DSH reads, once it finds DSH (genie#3173). The card offers the one
 // line that installs it while they are missing.
-export const GENIE_CLI_INSTALL = 'curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | GENIE_CHANNEL=dev bash'
+export const GENIE_CLI_INSTALL = 'curl -fsSL https://raw.githubusercontent.com/automagik-si/genie/main/install.sh | GENIE_CHANNEL=dev bash'
 export const hasGenieSkills = (home = homedir()) => existsSync(join(home, '.agents', 'skills', 'wish', 'SKILL.md'))
 
 // What an install in Unfold's instance says when a plugin its pack brings is not there.

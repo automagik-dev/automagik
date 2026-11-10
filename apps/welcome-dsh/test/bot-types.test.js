@@ -7,7 +7,7 @@ import { fakeContext } from './fake-ctx.js'
 
 const PKG = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 const OWN_LINK = 'link:/home/someone/automagik/apps/welcome-dsh'
-const OMNI_GIT = dir => `git+https://github.com/automagik-dev/omni.git#${OMNI_RELEASE.commit}&path:/apps/${dir}`
+const OMNI_GIT = dir => `git+https://github.com/automagik-si/omni.git#${OMNI_RELEASE.commit}&path:/apps/${dir}`
 const expectedSpec = plugin => (plugin.from === 'omni' ? OMNI_GIT(plugin.dir) : `link:/home/someone/automagik/apps/${plugin.dir}`)
 
 // DSH's plugin manager, as far as the team step uses it: a profile's bundles, and installs
@@ -65,13 +65,13 @@ test('the Bot team installs from the source this plugin came from, else its rele
   assert.deepEqual(installTargetOf(team, OWN_LINK), { spec: 'link:/home/someone/automagik/apps/bots-dsh', options: {} })
   const git = 'git+https://github.com/automagik-dev/automagik.git#21bcd8f&path:/apps/welcome-dsh'
   assert.equal(installTargetOf(team, git).spec, 'git+https://github.com/automagik-dev/automagik.git#21bcd8f&path:/apps/bots-dsh')
-  assert.deepEqual(installTargetOf(team, '3.261024.1', '3.261024.1'), { spec: 'https://github.com/automagik-dev/automagik/releases/download/v3.261024.1/automagik-bots-dsh-3.261024.1.tgz', options: {} })
-  assert.deepEqual(installTargetOf(team, undefined, '3.1.0'), { spec: 'https://github.com/automagik-dev/automagik/releases/download/v3.1.0/automagik-bots-dsh-3.1.0.tgz', options: {} })
+  assert.deepEqual(installTargetOf(team, '3.261024.1', '3.261024.1'), { spec: 'https://github.com/automagik-si/automagik/releases/download/v3.261024.1/automagik-bots-dsh-3.261024.1.tgz', options: {} })
+  assert.deepEqual(installTargetOf(team, undefined, '3.1.0'), { spec: 'https://github.com/automagik-si/automagik/releases/download/v3.1.0/automagik-bots-dsh-3.1.0.tgz', options: {} })
   // Omni's channels and canvases live in Omni's repository, at Omni's version, whatever this
   // plugin came from.
-  const omni = { repository: 'https://github.com/automagik-dev/omni', version: '2.261023.32', commit: 'c'.repeat(40) }
+  const omni = { repository: 'https://github.com/automagik-si/omni', version: '2.261023.32', commit: 'c'.repeat(40) }
   for (const own of [OWN_LINK, git, undefined]) {
-    assert.deepEqual(installTargetOf(channels, own, '3.1.0', omni), { spec: `git+https://github.com/automagik-dev/omni.git#${'c'.repeat(40)}&path:/apps/omni-channels-dsh`, options: {} })
+    assert.deepEqual(installTargetOf(channels, own, '3.1.0', omni), { spec: `git+https://github.com/automagik-si/omni.git#${'c'.repeat(40)}&path:/apps/omni-channels-dsh`, options: {} })
   }
   assert.equal(installTargetOf(canvas, undefined).spec, OMNI_GIT('omni-canvas-dsh'))
   assert.equal(versionOf(channels), OMNI_RELEASE.version)
@@ -235,7 +235,7 @@ const settleGenie = async (fake) => {
 }
 
 test('Genie installs from the pinned genie commit, after the Bot team when a plain DSH lacks it', async () => {
-  assert.equal(genieSpec(), `git+https://github.com/automagik-dev/genie.git#${GENIE_RELEASE.commit}&path:/plugins/genie-dsh`)
+  assert.equal(genieSpec(), `git+https://github.com/automagik-si/genie.git#${GENIE_RELEASE.commit}&path:/plugins/genie-dsh`)
   assert.match(GENIE_RELEASE.commit, /^[0-9a-f]{40}$/)
   const manager = fakeManager()
   const fake = host({ manager })
@@ -273,7 +273,7 @@ test('Genie\'s install keeps what it did and what pnpm printed, for the terminal
     '✓ git is here',
     '› Installing the Bot team (@automagik/bots-dsh)…',
     'Progress: resolved 1, added 1 (team)',
-    `› Installing Genie (@automagik/genie-dsh ${GENIE_RELEASE.version}, automagik-dev/genie@${GENIE_RELEASE.commit.slice(0, 7)})…`,
+    `› Installing Genie (@automagik/genie-dsh ${GENIE_RELEASE.version}, automagik-si/genie@${GENIE_RELEASE.commit.slice(0, 7)})…`,
     'Progress: resolved 1, added 1 (genie)',
     '✓ Genie is installed',
   ])
@@ -335,7 +335,7 @@ test('without git, Genie\'s install fails with what to run, before anything is i
 test('Genie\'s card says whether its skills are installed, and the one line that installs them', async () => {
   const missing = await value(host({ manager: fakeManager(), genieSkills: () => false }), 'genie-plugin')
   assert.equal(missing.skills, false)
-  assert.equal(missing.cli, 'curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | GENIE_CHANNEL=dev bash')
+  assert.equal(missing.cli, 'curl -fsSL https://raw.githubusercontent.com/automagik-si/genie/main/install.sh | GENIE_CHANNEL=dev bash')
   // The environment goes on bash, which runs the script; on curl it would not reach it.
   assert.match(missing.cli, /\| GENIE_CHANNEL=dev bash$/)
   assert.equal((await value(host({ manager: fakeManager(), genieSkills: () => true }), 'genie-plugin')).skills, true)

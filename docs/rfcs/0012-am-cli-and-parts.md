@@ -682,6 +682,13 @@ The owner answered the rest on 2026-11-03 (D35 additions, under Decided). One qu
    (handoff). Recommended: sign a usagemeter pointer as `herdr-lane` does, or pin its hash in
    the part.
 
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: #768, #815.
+- Merged changes that cite this RFC: #203, #205, #252, #254, #258, #263, #265, #288, #292, #300, #302, #330, #427, #751, #783, #806 (last merged 2026-11-09).
+
 ## Links
 
 - Handoffs: `~/.config/herdr-app/handoffs/pocket-into-automagik-monorepo.md` ("One `am` CLI",

@@ -92,6 +92,16 @@ impl Env {
         p
     }
 
+    /// An Antigravity conversation database at its real on-disk path.
+    pub fn agy(&self, rel: &str) -> PathBuf {
+        let p = self
+            .home()
+            .join(".gemini/antigravity-cli/conversations")
+            .join(rel);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        p
+    }
+
     /// The binary with an empty environment but PATH, HOME (the temp home) and METER_HC (an
     /// hc that does not exist): no harness home, state directory or ledger of the machine running
     /// the tests (DSH_HOME, CODEX_HOME, CLAUDE_CONFIG_DIR, HERDR_*, AM_HOME, XDG_STATE_HOME,
@@ -115,6 +125,7 @@ impl Env {
         o.claude_root = self.home().join(".claude/projects");
         o.codex_home = self.home().join(".codex");
         o.dsh_root = self.home().join(".dsh/sessions");
+        o.agy_root = self.home().join(".gemini/antigravity-cli/conversations");
         o.app_home = Some(self.home().join(".config/herdr-app"));
         o.workers_ledger = None;
         o.use_hc = false;
@@ -138,6 +149,10 @@ impl Env {
             (&mut o.claude_root, home.join(".claude/projects")),
             (&mut o.codex_home, home.join(".codex")),
             (&mut o.dsh_root, home.join(".dsh/sessions")),
+            (
+                &mut o.agy_root,
+                home.join(".gemini/antigravity-cli/conversations"),
+            ),
         ] {
             if !inside(root) {
                 *root = default;

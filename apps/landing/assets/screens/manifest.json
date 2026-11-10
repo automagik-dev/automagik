@@ -10,21 +10,21 @@
   "plugins": {
     "@automagik/bots-dsh": {
       "version": "3.52.1",
-      "repository": "https://github.com/automagik-dev/automagik",
+      "repository": "https://github.com/automagik-si/automagik",
       "commit": "9f81aeed5740953b8b8ba41cad747d2cfc036f22",
       "path": "apps/bots-dsh",
       "tree": "3a1055c45e408545b2c7a833c53e5f7e77691870"
     },
     "@automagik/welcome-dsh": {
       "version": "3.52.1",
-      "repository": "https://github.com/automagik-dev/automagik",
+      "repository": "https://github.com/automagik-si/automagik",
       "commit": "9f81aeed5740953b8b8ba41cad747d2cfc036f22",
       "path": "apps/welcome-dsh",
       "tree": "9c7cafa10fd0987bd4a781df643361d751657732"
     },
     "@automagik/genie-dsh": {
       "version": "0.1.4",
-      "repository": "https://github.com/automagik-dev/genie",
+      "repository": "https://github.com/automagik-si/genie",
       "commit": "39402fb18dd29e33f7c18cb9eb7d5d757c3a7273",
       "path": "plugins/genie-dsh",
       "tree": "e000b32f11cdb1f71770d117e49a2e6de33261c6"

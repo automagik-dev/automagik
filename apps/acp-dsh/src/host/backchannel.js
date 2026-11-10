@@ -16,6 +16,7 @@ import { createServer } from 'node:http'
 import { createAssistantMessage, createDeveloperMessage, createToolResultMessage } from '@deepseek-ai/dsh-llm'
 import { appendPluginRecord } from '@deepseek-ai/dsh-session'
 import { SYNTHETIC_KIND } from './names.js'
+import { contentImages } from './acp.js'
 import { levelOf, TOOL_NAME } from './tool.js'
 
 /** How long a bridge's long-poll waits before answering "nothing changed". */
@@ -36,6 +37,75 @@ const textOf = (content) => {
   if (typeof content === 'string') return content
   if (!Array.isArray(content)) return ''
   return content.map((block) => (block?.type === 'text' ? block.text ?? '' : block?.type === 'resource' ? block.resource?.text ?? '' : '')).filter(Boolean).join('\n')
+}
+
+// Inline image blocks are base64 text already, and one large or undecodable picture would
+// otherwise reach the agent's model whole: only the types every provider decodes, and at most
+// 5 MiB decoded.
+const INLINE_IMAGE_TYPES = Object.freeze(new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']))
+const MAX_INLINE_IMAGE_BYTES = 5 * 1024 * 1024
+
+// The decoded byte count of base64 text, from its length: the payload is sized, never decoded,
+// so checking a block does not cost its decode.
+const base64Bytes = (data) => Math.floor((data.length * 3) / 4) - (data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0)
+
+// Why an inline image block cannot go to the agent as image content, or undefined when it can:
+// its type is one the agent's model decodes and its payload is within the cap.
+function inlineImageProblem(block) {
+  if (!INLINE_IMAGE_TYPES.has(block.mimeType ?? block.mediaType)) return 'not a supported image type'
+  if (base64Bytes(block.data) > MAX_INLINE_IMAGE_BYTES) return 'larger than 5 MiB'
+  return undefined
+}
+
+// The MCP image content of one DSH image block, in the shape an ACP agent's model accepts:
+// `{ type: 'image', data, mimeType }`. Inline data is already base64 and passes through as it is
+// (never encoded twice) when it is a supported image type within the cap; a durable attachment
+// (`attachment`, DSH's own image block) is read and encoded once. Undefined when the bytes cannot
+// be recovered: unsupported or oversized inline data, no attachment store is mounted, or it
+// refused the reference.
+async function mcpImage(block, attachments) {
+  const mimeType = block.mimeType ?? block.mediaType ?? block.attachment?.mediaType
+  if (typeof block.data === 'string' && block.data !== '') {
+    // ACP image content needs a media type the model decodes, and no block may push an
+    // unbounded payload at it; an untyped, unsupported or oversized block is not guessed at.
+    if (inlineImageProblem(block) !== undefined) return undefined
+    return { type: 'image', data: block.data, mimeType }
+  }
+  if (block.attachment === undefined) return undefined
+  try {
+    const stored = await attachments?.readImage?.(block.attachment)
+    const storedType = stored?.ref?.mediaType ?? mimeType
+    if (stored === undefined || storedType === undefined) return undefined
+    return { type: 'image', data: Buffer.from(stored.data).toString('base64'), mimeType: storedType }
+  } catch {
+    return undefined
+  }
+}
+
+// The one-line text an image's place in the result becomes when its bytes cannot reach the
+// model: the media type it named, then why.
+function unavailableText(image) {
+  const type = image.mimeType ?? image.mediaType ?? 'unknown media type'
+  const reason = typeof image.data === 'string' && image.data !== ''
+    ? inlineImageProblem(image)
+    : 'the attachment could not be read'
+  return `[image unavailable: ${type}; ${reason}]`
+}
+
+// A DSH tool result as MCP content: its text exactly as before (one joined, truncated block),
+// then each image as MCP image content. An image whose bytes cannot be recovered becomes a text
+// placeholder, so the agent sees that the result had one instead of only an empty line.
+async function contentOf(content, attachments) {
+  const text = textOf(content)
+  const clipped = text.length > OUTPUT_LIMIT ? `${text.slice(0, OUTPUT_LIMIT)}…` : text
+  const images = contentImages(content)
+  if (images.length === 0) return [{ type: 'text', text: clipped }]
+  const blocks = text === '' ? [] : [{ type: 'text', text: clipped }]
+  for (const image of images) {
+    const mcp = await mcpImage(image, attachments)
+    blocks.push(mcp ?? { type: 'text', text: unavailableText(image) })
+  }
+  return blocks
 }
 
 /** The agent's preset, as the preset registry records it; `standard` when no registry composes. */
@@ -482,7 +552,7 @@ export class Backchannel {
         ? recordFailed(`The bridge could not record ${name}: ${cause?.message ?? cause}`)
         : unavailable('AUTO_REVIEW_FAILED', `Auto review could not record this call: ${cause?.message ?? cause}`)
     }
-    const settle = (content, isError, info) => {
+    const settle = async (content, isError, info) => {
       try {
         session.append('tool/result', {
           turn,
@@ -493,9 +563,8 @@ export class Backchannel {
       } catch (cause) {
         this.log(`bridge result row failed: ${cause?.message ?? cause}`)
       }
-      const text = textOf(content)
       return {
-        content: [{ type: 'text', text: text.length > OUTPUT_LIMIT ? `${text.slice(0, OUTPUT_LIMIT)}…` : text }],
+        content: await contentOf(content, this.ctx?.get?.('attachments')),
         isError,
         ...(info === undefined ? {} : { error: info }),
       }
@@ -529,19 +598,19 @@ export class Backchannel {
           // call is refused rather than answered with a dialog outcome. Its `tool/call` row was
           // already written, so the row is closed as an error (never left unanswered).
           if (record.closed || record.abort.signal.aborted) {
-            settle([{ type: 'text', text: `The bridge was revoked before ${name} ran.` }], true, { name: 'BridgeRevokedError', code: 'BRIDGE_REVOKED' })
+            await settle([{ type: 'text', text: `The bridge was revoked before ${name} ran.` }], true, { name: 'BridgeRevokedError', code: 'BRIDGE_REVOKED' })
             return { revoked: true }
           }
           const why = outcome === 'rejected' ? 'The person rejected' : 'DSH could not approve'
           const text = `${why} ${name}.`
-          return settle([{ type: 'text', text }], true, { name: 'ApprovalDeniedError', code: outcome.toUpperCase() })
+          return await settle([{ type: 'text', text }], true, { name: 'ApprovalDeniedError', code: outcome.toUpperCase() })
         }
       }
       // The ask may have been answered after the bridge was revoked (a grant that lost its
       // session): nothing may execute then. Checked again after any await, immediately before
       // dispatch, because the signal alone lets a tool body that ignores it run anyway.
       if (record.closed || record.abort.signal.aborted) {
-        settle([{ type: 'text', text: `The bridge was revoked before ${name} ran.` }], true, { name: 'BridgeRevokedError', code: 'BRIDGE_REVOKED' })
+        await settle([{ type: 'text', text: `The bridge was revoked before ${name} ran.` }], true, { name: 'BridgeRevokedError', code: 'BRIDGE_REVOKED' })
         return { revoked: true }
       }
       if (level.auto) {
@@ -592,7 +661,7 @@ export class Backchannel {
         })
       }
       if (levelChanged) {
-        return settle([{ type: 'text', text: `Auto review cannot finish ${name}: the permission level changed.` }], true, { name: 'AutoReviewUnavailableError', code: 'AUTO_REVIEW_LEVEL_CHANGED' })
+        return await settle([{ type: 'text', text: `Auto review cannot finish ${name}: the permission level changed.` }], true, { name: 'AutoReviewUnavailableError', code: 'AUTO_REVIEW_LEVEL_CHANGED' })
       }
       const signal = controller === undefined ? record.abort.signal : AbortSignal.any([record.abort.signal, controller.signal])
       let settled
@@ -604,14 +673,14 @@ export class Backchannel {
         })
       } catch (cause) {
         if (record.closed || record.abort.signal.aborted) {
-          settle([{ type: 'text', text: `The bridge was revoked before ${name} ran.` }], true, { name: 'BridgeRevokedError', code: 'BRIDGE_REVOKED' })
+          await settle([{ type: 'text', text: `The bridge was revoked before ${name} ran.` }], true, { name: 'BridgeRevokedError', code: 'BRIDGE_REVOKED' })
           return { revoked: true }
         }
         if (timedOut) {
-          return settle([{ type: 'text', text: `Auto review timed out before ${name} ran.` }], true, { name: 'AutoReviewTimeoutError', code: 'AUTO_REVIEW_TIMEOUT' })
+          return await settle([{ type: 'text', text: `Auto review timed out before ${name} ran.` }], true, { name: 'AutoReviewTimeoutError', code: 'AUTO_REVIEW_TIMEOUT' })
         }
         if (levelChanged) {
-          return settle([{ type: 'text', text: `Auto review cannot finish ${name}: the permission level changed.` }], true, { name: 'AutoReviewUnavailableError', code: 'AUTO_REVIEW_LEVEL_CHANGED' })
+          return await settle([{ type: 'text', text: `Auto review cannot finish ${name}: the permission level changed.` }], true, { name: 'AutoReviewUnavailableError', code: 'AUTO_REVIEW_LEVEL_CHANGED' })
         }
         const text = `Error: ${cause?.message ?? cause}`
         // The info lands in the tool/result row, which must be plain JSON: an Error with no
@@ -619,24 +688,24 @@ export class Backchannel {
         // refused, and the call would stay unresolved in the session log.
         const info = { name: typeof cause?.name === 'string' ? cause.name : 'Error' }
         if (typeof cause?.code === 'string') info.code = cause.code
-        return settle([{ type: 'text', text }], true, info)
+        return await settle([{ type: 'text', text }], true, info)
       }
       // A revocation, a timeout or a level change during the review wins over its result: the
       // body must not be reported as executed under a level or credential that no longer holds.
       if (record.closed || record.abort.signal.aborted) {
-        settle([{ type: 'text', text: `The bridge was revoked before ${name} ran.` }], true, { name: 'BridgeRevokedError', code: 'BRIDGE_REVOKED' })
+        await settle([{ type: 'text', text: `The bridge was revoked before ${name} ran.` }], true, { name: 'BridgeRevokedError', code: 'BRIDGE_REVOKED' })
         return { revoked: true }
       }
       if (timedOut) {
-        return settle([{ type: 'text', text: `Auto review timed out before ${name} ran.` }], true, { name: 'AutoReviewTimeoutError', code: 'AUTO_REVIEW_TIMEOUT' })
+        return await settle([{ type: 'text', text: `Auto review timed out before ${name} ran.` }], true, { name: 'AutoReviewTimeoutError', code: 'AUTO_REVIEW_TIMEOUT' })
       }
       if (levelChanged) {
-        return settle([{ type: 'text', text: `Auto review cannot finish ${name}: the permission level changed.` }], true, { name: 'AutoReviewUnavailableError', code: 'AUTO_REVIEW_LEVEL_CHANGED' })
+        return await settle([{ type: 'text', text: `Auto review cannot finish ${name}: the permission level changed.` }], true, { name: 'AutoReviewUnavailableError', code: 'AUTO_REVIEW_LEVEL_CHANGED' })
       }
       const result = settled?.results?.[0]?.result
-      if (result === undefined) return settle([{ type: 'text', text: 'The tool returned no result.' }], true)
+      if (result === undefined) return await settle([{ type: 'text', text: 'The tool returned no result.' }], true)
       const info = result.isError === true ? (result.error?.info ?? (typeof result.error?.code === 'string' ? result.error : undefined)) : undefined
-      return settle(result.content ?? [], result.isError === true, info)
+      return await settle(result.content ?? [], result.isError === true, info)
     } finally {
       clearTimeout(timer)
       unwatch?.()

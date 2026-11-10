@@ -112,14 +112,17 @@ pub struct Answer {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Window {
+pub(crate) enum Window {
     D1,
     D7,
     D30,
 }
 
 impl Window {
-    fn name(self) -> &'static str {
+    /// Contract 1's windows, in the order a report prints them.
+    pub(crate) const ALL: [Window; 3] = [Window::D1, Window::D7, Window::D30];
+
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Window::D1 => "d1",
             Window::D7 => "d7",
@@ -127,12 +130,46 @@ impl Window {
         }
     }
 
-    fn days(self) -> i64 {
+    pub(crate) fn days(self) -> i64 {
         match self {
             Window::D1 => 1,
             Window::D7 => 7,
             Window::D30 => 30,
         }
+    }
+
+    /// The window's place in contract 1's order.
+    pub(crate) fn index(self) -> usize {
+        match self {
+            Window::D1 => 0,
+            Window::D7 => 1,
+            Window::D30 => 2,
+        }
+    }
+}
+
+/// A window's bounds, as the query reads it: contract 1's `d1`/`d7`/`d30`, clipped to
+/// `counted_from` and ending at the end of the hour that holds the watermark (the generated time's
+/// hour while there is none). The coverage report prints the same numbers, so the two cannot
+/// disagree about what a window is.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Bounds {
+    pub(crate) requested_start: i64,
+    pub(crate) start: i64,
+    pub(crate) end: i64,
+    pub(crate) clipped: bool,
+}
+
+pub(crate) fn bounds(meta: &BTreeMap<String, String>, window: Window, now_ms: i64) -> Bounds {
+    let end = hour_start(watermark(meta).unwrap_or(now_ms)) + HOUR_MS;
+    let requested_start = end - window.days() * DAY_MS;
+    let counted_from = meta_i64(meta, "counted_from_ms").unwrap_or(requested_start);
+    let start = requested_start.max(counted_from);
+    Bounds {
+        requested_start,
+        start,
+        end,
+        clipped: start > requested_start,
     }
 }
 
@@ -140,10 +177,42 @@ impl Window {
 struct Request {
     repo: String,
     window: Window,
-    /// `--by bot`: bot rows (RFC 0021 (d)), the branches named becoming a filter.
-    by_bot: bool,
+    /// What a row is keyed by: the branch (default), the bot, or the task.
+    by: By,
     branches: Vec<String>,
     stale_after_s: i64,
+}
+
+/// What the answer's rows are keyed by (RFC 0018 (a); `--by bot` is RFC 0021 D1, `--by task` is
+/// RFC 0018 M3 and RFC 0021 D4). An answer holds one kind of row, by this (D2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum By {
+    /// The default: one row per distinct branch named.
+    Branch,
+    /// `--by bot`: bot rows, the branches named an optional filter (RFC 0021 (d)).
+    Bot,
+    /// `--by task`: task rows, the branches named an optional filter (RFC 0018 M3).
+    Task,
+}
+
+impl By {
+    /// The value `query.by` echoes: absent for branch rows.
+    fn echo(self) -> Option<&'static str> {
+        match self {
+            By::Branch => None,
+            By::Bot => Some("bot"),
+            By::Task => Some("task"),
+        }
+    }
+
+    /// The line `request_sha256` adds after the window: `by <by>` for a non-branch answer.
+    fn hash_line(self) -> Option<&'static str> {
+        match self {
+            By::Branch => None,
+            By::Bot => Some("by bot"),
+            By::Task => Some("by task"),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -245,9 +314,9 @@ struct WindowInfo {
 }
 
 #[derive(Serialize, Clone)]
-struct SourceInfo {
-    harness: String,
-    status: String,
+pub(crate) struct SourceInfo {
+    pub(crate) harness: String,
+    pub(crate) status: String,
     reason: Option<String>,
     last_success: Option<String>,
     stale: bool,
@@ -310,12 +379,14 @@ struct Echo {
     request_sha256: String,
 }
 
-/// A row is a branch row or, for `--by bot`, a bot row: never both in one answer.
+/// A row is a branch row, or, for `--by bot` or `--by task`, a bot or task row: one kind per
+/// answer, by `query.by` (RFC 0021 D2).
 #[derive(Serialize)]
 #[serde(untagged)]
 enum Row {
     Branch(Box<BranchRow>),
     Bot(Box<BotRow>),
+    Task(Box<TaskRow>),
 }
 
 #[derive(Serialize)]
@@ -333,7 +404,7 @@ struct BranchRow {
 }
 
 #[derive(Serialize, Clone, Copy)]
-struct TokensOut {
+pub(crate) struct TokensOut {
     input: i64,
     cache_read: i64,
     cache_write_5m: i64,
@@ -343,7 +414,7 @@ struct TokensOut {
     /// reasoning is inside `output` and unknown, never 0.
     reasoning: Option<i64>,
     unsplit: i64,
-    total: i64,
+    pub(crate) total: i64,
 }
 
 /// Nothing yet: every count 0, reasoning a known 0 until a row that does not log it is added.
@@ -396,6 +467,53 @@ struct BotRow {
     attribution: Attribution,
     activity: Activity,
     incomplete_sources: Vec<String>,
+}
+
+/// A task row (RFC 0018 M3, RFC 0021 D4): one task id's usage in the repo and window, with the
+/// launch tags that did the work. A task id the meter ties to more than one checkout of the repo
+/// is never summed: the row is `missing` with `task_ambiguous` and no numbers.
+#[derive(Serialize)]
+struct TaskRow {
+    task: String,
+    actors: Vec<TaskActor>,
+    /// Actor keys the row's bound left out past its byte budget: above 0, the task had more
+    /// workers than the row can name (the trailing ones in key order), never a silent cut.
+    actors_omitted: usize,
+    state: &'static str,
+    reason: Option<&'static str>,
+    tokens: Option<TokensOut>,
+    cost: Option<Cost>,
+    token_precision: Option<&'static str>,
+    attribution: Attribution,
+    activity: Option<Activity>,
+    incomplete_sources: Vec<String>,
+}
+
+/// One launch tag that did part of a task's work: the bot key a bot row is keyed by, without its
+/// numbers. The task row's tokens are theirs together, so several bots/roles are named, never
+/// one guessed.
+#[derive(Serialize)]
+struct TaskActor {
+    bot: String,
+    kind: &'static str,
+    role: Option<String>,
+    squad: Option<String>,
+    unrecorded: Vec<&'static str>,
+    harness: String,
+}
+
+impl TaskActor {
+    fn of(key: BotKey) -> TaskActor {
+        let unrecorded = key.unrecorded();
+        TaskActor {
+            bot: key.bot,
+            kind: "worker",
+            role: key.role,
+            squad: key.squad,
+            unrecorded,
+            harness: key.harness,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -503,7 +621,7 @@ fn json_bounded(s: &str, max: usize) -> String {
     out
 }
 
-fn quoted(s: &str) -> String {
+pub(crate) fn quoted(s: &str) -> String {
     let cut: String = s.chars().take(QUOTED_CHARS).collect();
     if cut.len() < s.len() {
         format!("\"{cut}…\"")
@@ -564,13 +682,14 @@ pub fn repo_ok(r: &str) -> bool {
             .all(|s| !s.is_empty() && !s.chars().any(|c| c.is_whitespace() || c == '\u{feff}'))
 }
 
-/// The request's hash: repo, window, the line `by bot` for a bot request (it holds a space, which
-/// no branch can, so it never reads as a branch), then each branch, each followed by a line feed.
-fn request_sha256(repo: &str, window: &str, by_bot: bool, branches: &[String]) -> String {
+/// The request's hash: repo, window, the line `by <by>` for a non-branch request (it holds a
+/// space, which no branch can, so it never reads as a branch), then each branch, each followed by
+/// a line feed.
+fn request_sha256(repo: &str, window: &str, by: By, branches: &[String]) -> String {
     let mut h = Sha256::new();
     for part in std::iter::once(repo)
         .chain(std::iter::once(window))
-        .chain(by_bot.then_some("by bot"))
+        .chain(by.hash_line())
         .chain(branches.iter().map(String::as_str))
     {
         h.update(part.as_bytes());
@@ -581,7 +700,7 @@ fn request_sha256(repo: &str, window: &str, by_bot: bool, branches: &[String]) -
 
 /// The request echoed back. A refusal keeps the leading names that fit in 4 KiB (each name
 /// counted as its JSON bytes plus a comma), cut at a whole name: at most 500, none past 255 bytes.
-fn echo(repo: &str, window: Window, by_bot: bool, branches: &[String], capped: bool) -> Echo {
+fn echo(repo: &str, window: Window, by: By, branches: &[String], capped: bool) -> Echo {
     let mut kept = Vec::new();
     let mut used = 0;
     for b in branches {
@@ -611,18 +730,18 @@ fn echo(repo: &str, window: Window, by_bot: bool, branches: &[String], capped: b
         repo: repo_echo,
         repo_complete,
         window: window.name(),
-        by: by_bot.then_some("bot"),
+        by: by.echo(),
         branch_count: branches.len(),
         branches_complete: kept.len() == branches.len(),
         branches: kept,
-        request_sha256: request_sha256(repo, window.name(), by_bot, branches),
+        request_sha256: request_sha256(repo, window.name(), by, branches),
     }
 }
 
 fn too_large_request(
     repo: &str,
     window: Window,
-    by_bot: bool,
+    by: By,
     branches: &[String],
     message: String,
     limit: usize,
@@ -635,7 +754,7 @@ fn too_large_request(
         code: exit::USAGE,
         status: "usage",
         error: e,
-        echo: Some(echo(repo, window, by_bot, branches, true)),
+        echo: Some(echo(repo, window, by, branches, true)),
         store: None,
         machine: None,
     }
@@ -646,7 +765,7 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
     let mut window: Option<Window> = None;
     let mut contract: Option<u64> = None;
     let mut stale: Option<i64> = None;
-    let mut by: Option<bool> = None;
+    let mut by: Option<By> = None;
     let mut branches: Vec<String> = Vec::new();
     let mut json = false;
     let mut it = args.iter();
@@ -668,17 +787,18 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
             "--branch" => branches.push(value("--branch", it.next())?),
             "--by" => {
                 let v = value("--by", it.next())?;
-                let bot = match v.as_str() {
-                    "bot" => true,
-                    "branch" => false,
+                let what = match v.as_str() {
+                    "branch" => By::Branch,
+                    "bot" => By::Bot,
+                    "task" => By::Task,
                     _ => {
                         return Err(Box::new(Refusal::usage(format!(
-                            "--by takes branch or bot, not {}",
+                            "--by takes branch, bot or task, not {}",
                             quoted(&v)
                         ))));
                     }
                 };
-                if by.replace(bot).is_some() {
+                if by.replace(what).is_some() {
                     return Err(Box::new(Refusal::usage("--by is given twice")));
                 }
             }
@@ -742,11 +862,11 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
         )));
     }
     let repo = repo.ok_or_else(|| Refusal::usage("--repo is required"))?;
-    let by_bot = by.unwrap_or(false);
-    // A bot query may name no branch: its branches are a filter (RFC 0021 D1).
-    if branches.is_empty() && !by_bot {
+    let by = by.unwrap_or(By::Branch);
+    // A bot or task query may name no branch: its branches are a filter (RFC 0021 D1).
+    if branches.is_empty() && by == By::Branch {
         return Err(Box::new(Refusal::usage(
-            "at least one --branch is required (or --by bot)",
+            "at least one --branch is required (or --by bot or --by task)",
         )));
     }
     if let Some(i) = branches.iter().position(|b| !branch_ok(b)) {
@@ -768,7 +888,7 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
         return Err(Box::new(too_large_request(
             &repo,
             window,
-            by_bot,
+            by,
             &branches,
             format!(
                 "--repo takes {} bytes; the most it takes is {MAX_REPO_BYTES}",
@@ -784,7 +904,7 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
             branches.len()
         ));
         r.error.code = "too_many_branches";
-        r.echo = Some(echo(&repo, window, by_bot, &branches, true));
+        r.echo = Some(echo(&repo, window, by, &branches, true));
         return Err(Box::new(r));
     }
     if let Some(long) = branches.iter().map(String::len).max()
@@ -793,7 +913,7 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
         return Err(Box::new(too_large_request(
             &repo,
             window,
-            by_bot,
+            by,
             &branches,
             format!("a branch name takes {long} bytes; the most one takes is {MAX_BRANCH_BYTES}"),
             MAX_BRANCH_BYTES,
@@ -805,7 +925,7 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
         return Err(Box::new(too_large_request(
             &repo,
             window,
-            by_bot,
+            by,
             &branches,
             format!(
                 "the branch names take {names} bytes; the most one call takes is \
@@ -826,7 +946,7 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
             code: exit::UNSUPPORTED_CONTRACT,
             status: "unsupported_contract",
             error: e,
-            echo: Some(echo(&repo, window, by_bot, &branches, true)),
+            echo: Some(echo(&repo, window, by, &branches, true)),
             store: None,
             machine: None,
         }));
@@ -834,7 +954,7 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
     Ok(Request {
         repo,
         window,
-        by_bot,
+        by,
         branches,
         stale_after_s: stale.unwrap_or(DEFAULT_STALE_AFTER_S),
     })
@@ -980,7 +1100,7 @@ pub const READ_ONLY_FOLDER: &str = "the state folder cannot be written and the s
      and -shm files, which SQLite needs to read it without writing; make the folder writable, or \
      read it where a reader already left them";
 
-fn is_busy(e: &rusqlite::Error) -> bool {
+pub(crate) fn is_busy(e: &rusqlite::Error) -> bool {
     matches!(e, rusqlite::Error::SqliteFailure(f, _)
         if matches!(f.code, ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked))
 }
@@ -989,26 +1109,31 @@ fn is_busy(e: &rusqlite::Error) -> bool {
 // Reading the snapshot.
 
 /// One hourly usage row of the repo, as the query reads it.
-struct UsageRead {
+pub(crate) struct UsageRead {
+    /// The row's repo: null for a folder that is not a checkout with a remote.
+    pub(crate) repo: Option<String>,
     /// The branch the row holds: logged, or filled from a worker's start row.
-    branch: Option<String>,
-    harness: String,
-    model: String,
-    hour_ms: i64,
-    tokens: TokensOut,
-    total_only: bool,
-    reported_usd: Option<f64>,
+    pub(crate) branch: Option<String>,
+    pub(crate) harness: String,
+    pub(crate) model: String,
+    pub(crate) hour_ms: i64,
+    pub(crate) tokens: TokensOut,
+    pub(crate) total_only: bool,
+    pub(crate) reported_usd: Option<f64>,
     /// How the row's calls were attributed, judged against `evidence_from`.
-    class: Class,
+    pub(crate) class: Class,
     /// `log`, `ledger` or `none`.
-    branch_basis: BranchBasis,
+    pub(crate) branch_basis: BranchBasis,
     /// The bot key, for an attributed row.
-    bot: Option<BotKey>,
+    pub(crate) bot: Option<BotKey>,
+    /// The rollup still carries a bot tag (its own `bot` column): on a row before evidence, the
+    /// old live-terminal definition's residue (RFC 0026 (a), `before_evidence_tagged`).
+    pub(crate) tagged: bool,
 }
 
 /// How a rollup row's calls count in the four actor counts (RFC 0021 (d)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Class {
+pub(crate) enum Class {
     /// Before `evidence_from` (or all of it while that is null), and every row written before
     /// schema 3 (`actor_state` null, the frozen tags): never attributed, whatever it names.
     Before,
@@ -1018,22 +1143,33 @@ enum Class {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Basis {
+pub(crate) enum Basis {
     Session,
     Label,
     Worktree,
 }
 
+impl Basis {
+    /// `0` session, `1` label, `2` worktree: the order `tokens_by_basis` reports.
+    pub(crate) fn index(self) -> usize {
+        match self {
+            Basis::Session => 0,
+            Basis::Label => 1,
+            Basis::Worktree => 2,
+        }
+    }
+}
+
 /// Why an unlinked call has no bot, in the schema's reason order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum Unlinked {
+pub(crate) enum Unlinked {
     NoRecord,
     DshTuiSeat,
     OtherMachine,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BranchBasis {
+pub(crate) enum BranchBasis {
     Log,
     Ledger,
     None,
@@ -1042,14 +1178,14 @@ enum BranchBasis {
 /// A bot row's key, in the order rows are sorted: byte order, null first, `unrecorded` in its
 /// enum's order.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct BotKey {
-    bot: String,
-    kind: String,
-    role: Option<String>,
-    squad: Option<String>,
+pub(crate) struct BotKey {
+    pub(crate) bot: String,
+    pub(crate) kind: String,
+    pub(crate) role: Option<String>,
+    pub(crate) squad: Option<String>,
     /// 0 `[]`, 1 `["role"]`, 2 `["squad"]`, 3 `["role", "squad"]`.
-    unrecorded: u8,
-    harness: String,
+    pub(crate) unrecorded: u8,
+    pub(crate) harness: String,
 }
 
 impl BotKey {
@@ -1061,6 +1197,38 @@ impl BotKey {
             _ => vec!["role", "squad"],
         }
     }
+}
+
+/// The bot key of an attributed row, or None when it cannot be read: no bot, a kind that is
+/// neither worker nor seat, or a bot past the contract's cap. The caller counts such a row as
+/// ambiguous, so every sum still holds and no bot is guessed (RFC 0021 (d)).
+fn bot_key(
+    bot: Option<String>,
+    kind: Option<String>,
+    role: Option<String>,
+    squad: Option<String>,
+    unrecorded: Option<String>,
+    harness: &str,
+) -> Option<BotKey> {
+    let bot = bot.filter(|b| crate::ledger::tag_fits(b))?;
+    let kind = kind.filter(|k| matches!(k.as_str(), "worker" | "seat"))?;
+    let listed = |k: &str| {
+        unrecorded
+            .as_deref()
+            .is_some_and(|u| u.split(',').any(|f| f == k))
+    };
+    // A role the start row left null is as unknown as one it left out, and one past the
+    // contract's cap (a store written before the cap) is unrecorded.
+    let no_role = listed("role") || role.as_ref().is_none_or(|r| !crate::ledger::tag_fits(r));
+    let no_squad = listed("squad") || squad.as_ref().is_some_and(|s| !crate::ledger::tag_fits(s));
+    Some(BotKey {
+        bot,
+        kind,
+        role: role.filter(|_| !no_role),
+        squad: squad.filter(|_| !no_squad),
+        unrecorded: u8::from(no_role) | (u8::from(no_squad) << 1),
+        harness: harness.to_string(),
+    })
 }
 
 /// The row's class from its stored attribution: before evidence when its hour is before
@@ -1097,6 +1265,8 @@ struct Snapshot {
     health: BTreeMap<String, Option<i64>>,
     /// Every row of the repo in the window, whatever its branch.
     rows: Vec<UsageRead>,
+    /// The repo's task-labelled calls in the window, for `--by task` only (RFC 0018 M3).
+    task_calls: Vec<TaskCall>,
     repo_seen: bool,
     /// The start of per-call evidence; None while the store has kept none.
     evidence_from: Option<i64>,
@@ -1143,10 +1313,298 @@ fn nonneg(v: Option<i64>) -> i64 {
     v.unwrap_or(0).max(0)
 }
 
+/// One task-labelled call, read from the evidence for `--by task` (RFC 0018 M3).
+struct TaskCall {
+    /// Genie's short task id, as the launch's start row recorded it.
+    task: String,
+    /// The main checkout the launch recorded, normalized: identity only, never printed.
+    project: String,
+    /// The launch tag that did the work.
+    bot: BotKey,
+    /// The branch the call holds: logged, or filled from the worker's start row.
+    branch: Option<String>,
+    branch_basis: BranchBasis,
+    class: Class,
+    hour_ms: i64,
+    harness: String,
+    model: String,
+    tokens: TokensOut,
+    total_only: bool,
+    reported_usd: Option<f64>,
+}
+
+impl TaskCall {
+    fn parts(&self) -> CallParts<'_> {
+        CallParts {
+            tokens: &self.tokens,
+            class: self.class,
+            branch_basis: self.branch_basis,
+            hour_ms: self.hour_ms,
+            harness: &self.harness,
+            model: &self.model,
+            reported_usd: self.reported_usd,
+            total_only: self.total_only,
+        }
+    }
+}
+
+/// One task id's calls: the checkouts that name it (the ambiguity rule is judged on them) and
+/// the accumulator and actor keys of the calls the branch filter keeps (RFC 0021 D4).
+#[derive(Default)]
+struct TaskEntry {
+    projects: BTreeSet<String>,
+    acc: Acc,
+    actors: BTreeSet<BotKey>,
+    in_filter: bool,
+}
+
+/// The most candidate session hashes or start-folder ids one evidence statement binds. SQLite's
+/// variable limit is far above it, and the task read stays a handful of indexed statements.
+const TASK_CANDIDATE_CHUNK: usize = 400;
+
+/// The evidence a task read may look at: the sessions linked to a launch started on a task, and
+/// the start folders of those launches. The stored attribution is still the authority; this only
+/// keeps the read off the whole evidence table (RFC 0018 M3).
+struct TaskCandidates {
+    sessions: Vec<Vec<u8>>,
+    cwds: Vec<i64>,
+}
+
+fn task_candidates(c: &Connection) -> rusqlite::Result<TaskCandidates> {
+    let mut sessions: BTreeSet<Vec<u8>> = BTreeSet::new();
+    {
+        let mut st = c.prepare(
+            "SELECT DISTINCT l.session FROM link l JOIN launch g ON g.lkey = l.lkey
+             WHERE g.task IS NOT NULL AND g.project IS NOT NULL",
+        )?;
+        let mut q = st.query([])?;
+        while let Some(r) = q.next()? {
+            let s: Vec<u8> = r.get(0)?;
+            if !s.is_empty() {
+                sessions.insert(s);
+            }
+        }
+    }
+    let worktrees: BTreeSet<String> = {
+        let mut out = BTreeSet::new();
+        let mut st = c.prepare(
+            "SELECT worktree FROM launch
+             WHERE task IS NOT NULL AND project IS NOT NULL AND worktree IS NOT NULL",
+        )?;
+        let mut q = st.query([])?;
+        while let Some(r) = q.next()? {
+            let w: String = r.get(0)?;
+            out.insert(crate::ledger::normalize(&w).to_string());
+        }
+        out
+    };
+    let mut cwds: Vec<i64> = Vec::new();
+    if !worktrees.is_empty() {
+        // Lexical, never opening the path: the launch row and the evidence row are compared as
+        // strings, as the resolver compares them.
+        let mut st = c.prepare("SELECT id, path FROM ev_cwd")?;
+        let mut q = st.query([])?;
+        while let Some(r) = q.next()? {
+            let id: i64 = r.get(0)?;
+            let path: String = r.get(1)?;
+            if worktrees.contains(crate::ledger::normalize(&path)) {
+                cwds.push(id);
+            }
+        }
+    }
+    Ok(TaskCandidates {
+        sessions: sessions.into_iter().collect(),
+        cwds,
+    })
+}
+
+/// The task-labelled calls of the repo in the window (RFC 0018 M3), read only from the evidence
+/// its task launches can name. The stored attribution stays the authority; the bound only keeps
+/// the read proportional to the tasks, not to the whole evidence table.
+fn task_calls(c: &Connection, repo: &str, from: i64, to: i64) -> rusqlite::Result<Vec<TaskCall>> {
+    let TaskCandidates { sessions, cwds } = task_candidates(c)?;
+    let mut kept: BTreeMap<i64, TaskCall> = BTreeMap::new();
+    // Three arms, one count per evidence id: a call's own session, its parent's (a sub-agent or a
+    // resumed child is tied through its parent, as the resolver ties it in ledger.rs), and its
+    // start folder. Each arm is one indexed column.
+    for chunk in sessions.chunks(TASK_CANDIDATE_CHUNK) {
+        read_task_calls(c, repo, from, to, TaskArm::Sessions(chunk), &mut kept)?;
+        read_task_calls(c, repo, from, to, TaskArm::Parents(chunk), &mut kept)?;
+    }
+    for chunk in cwds.chunks(TASK_CANDIDATE_CHUNK) {
+        read_task_calls(c, repo, from, to, TaskArm::Cwds(chunk), &mut kept)?;
+    }
+    Ok(kept.into_values().collect())
+}
+
+/// Which evidence column the candidates of one statement name.
+enum TaskArm<'a> {
+    /// `e.session`, through `evidence_session`.
+    Sessions(&'a [Vec<u8>]),
+    /// `e.parent`, through `evidence_parent`.
+    Parents(&'a [Vec<u8>]),
+    /// `e.session_cwd`, through `evidence_session_cwd`.
+    Cwds(&'a [i64]),
+}
+
+/// A task id the contract can print: not empty, no control character (no blank row, no row
+/// carrying an escape), and within the tag bound. Only that is checked; Genie's id shape is not.
+fn task_id_fits(task: &str) -> bool {
+    !task.is_empty() && !task.chars().any(char::is_control) && crate::ledger::tag_fits(task)
+}
+
+/// `n` numbered placeholders starting at `first`.
+fn placeholders(first: usize, n: usize) -> String {
+    (0..n)
+        .map(|i| format!("?{}", first + i))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn read_task_calls(
+    c: &Connection,
+    repo: &str,
+    from: i64,
+    to: i64,
+    arm: TaskArm<'_>,
+    kept: &mut BTreeMap<i64, TaskCall>,
+) -> rusqlite::Result<()> {
+    let mut values: Vec<rusqlite::types::Value> =
+        vec![from.into(), to.into(), repo.to_string().into()];
+    // A call is tied to its launch by its own session or by its parent's (ledger.rs), so the
+    // session hashes are matched against both columns. Matching only the own session drops a
+    // parent-only call with no count and can hide a second checkout from the ambiguity rule.
+    let predicate = match &arm {
+        TaskArm::Sessions(sessions) | TaskArm::Parents(sessions) => {
+            let list = placeholders(4, sessions.len());
+            for s in *sessions {
+                values.push(rusqlite::types::Value::Blob(s.clone()));
+            }
+            if matches!(arm, TaskArm::Parents(_)) {
+                format!("e.parent IS NOT NULL AND e.parent IN ({list})")
+            } else {
+                format!("e.session IN ({list})")
+            }
+        }
+        TaskArm::Cwds(ids) => {
+            let list = placeholders(4, ids.len());
+            for id in *ids {
+                values.push(rusqlite::types::Value::Integer(*id));
+            }
+            format!("e.session_cwd IN ({list})")
+        }
+    };
+    let sql = format!(
+        "SELECT e.id, d.branch, d.harness, d.model, e.ts_ms, e.input_uncached, e.cache_read,
+           e.cache_write_5m, e.cache_write_1h, e.output, e.reasoning, e.unsplit, d.precision,
+           e.reported_usd, a.state, a.basis, a.bot, a.kind, a.role, a.squad, a.unrecorded,
+           a.task, a.project, a.filled_branch
+         FROM evidence e JOIN ev_dim d ON d.id = e.dim JOIN ev_actor a ON a.id = e.actor
+         WHERE e.ts_ms >= ?1 AND e.ts_ms < ?2 AND d.repo = ?3
+           AND a.state = 'attributed' AND a.task IS NOT NULL AND a.task <> ''
+           AND a.project IS NOT NULL
+           AND {predicate}"
+    );
+    let mut st = c.prepare(&sql)?;
+    let mut q = st.query(rusqlite::params_from_iter(values))?;
+    while let Some(r) = q.next()? {
+        let id: i64 = r.get(0)?;
+        if kept.contains_key(&id) {
+            continue;
+        }
+        let branch: Option<String> = r.get::<_, Option<String>>(1)?.filter(|b| !b.is_empty());
+        let harness: String = r.get(2)?;
+        let model: String = r.get(3)?;
+        let ts_ms: i64 = r.get(4)?;
+        let mut tokens = TokensOut {
+            input: nonneg(r.get(5)?),
+            cache_read: nonneg(r.get(6)?),
+            cache_write_5m: nonneg(r.get(7)?),
+            cache_write_1h: nonneg(r.get(8)?),
+            output: nonneg(r.get(9)?),
+            reasoning: Source::from_harness(&harness)
+                .filter(|s| s.logs_reasoning())
+                .map(|_| nonneg(r.get(10).ok().flatten())),
+            unsplit: nonneg(r.get(11)?),
+            total: 0,
+        };
+        tokens.total = split_total(&tokens).saturating_add(tokens.unsplit);
+        if tokens.total == 0 {
+            continue;
+        }
+        let total_only: String = r.get(12)?;
+        let reported_usd: Option<f64> = r
+            .get::<_, Option<f64>>(13)?
+            .filter(|u| u.is_finite() && *u >= 0.0);
+        let state: Option<String> = r.get(14)?;
+        let basis: Option<String> = r.get(15)?;
+        let basis = match (state.as_deref(), basis.as_deref()) {
+            (Some("attributed"), Some("session")) => Basis::Session,
+            (Some("attributed"), Some("label")) => Basis::Label,
+            (Some("attributed"), Some("worktree")) => Basis::Worktree,
+            _ => continue,
+        };
+        let Some(bot) = bot_key(
+            r.get(16)?,
+            r.get(17)?,
+            r.get(18)?,
+            r.get(19)?,
+            r.get(20)?,
+            &harness,
+        ) else {
+            continue;
+        };
+        // A task is a worker launch's: a seat never records one (RFC 0021 (a)).
+        if bot.kind != "worker" {
+            continue;
+        }
+        let task: Option<String> = r.get(21)?;
+        let project: Option<String> = r.get(22)?;
+        let filled: Option<String> = r.get::<_, Option<String>>(23)?.filter(|f| !f.is_empty());
+        let (Some(task), Some(project)) = (task, project) else {
+            continue;
+        };
+        // Genie's task id is joined with its project; the id alone is not a key, and one the
+        // contract cannot print is never cut short. An empty id, or one with a control
+        // character, fails closed: no blank row, no row carrying an escape.
+        if !task_id_fits(&task) {
+            continue;
+        }
+        let logged = branch.is_some();
+        let branch = branch.or(filled);
+        let branch_basis = if logged {
+            BranchBasis::Log
+        } else if branch.is_some() {
+            BranchBasis::Ledger
+        } else {
+            BranchBasis::None
+        };
+        kept.insert(
+            id,
+            TaskCall {
+                task,
+                project: crate::ledger::normalize(&project).to_string(),
+                bot,
+                branch,
+                branch_basis,
+                class: Class::Attributed(basis),
+                hour_ms: hour_start(ts_ms),
+                harness,
+                model,
+                tokens,
+                total_only: total_only == "total_only",
+                reported_usd,
+            },
+        );
+    }
+    Ok(())
+}
+
 /// Reads everything the answer needs in one read transaction, so it is one snapshot.
 fn read(
     c: &Connection,
     repo: &str,
+    by: By,
     start: impl Fn(&BTreeMap<String, String>) -> (i64, i64),
 ) -> rusqlite::Result<Read> {
     c.execute_batch("BEGIN")?;
@@ -1184,6 +1642,46 @@ fn read(
     let evidence_from = meta_i64(&meta, crate::evidence::FROM_META);
     // Every row of the repo in the window, through `usage_repo_branch`: branch rows read the
     // branches named, and the actor counts (`actor_unattributed`, bot rows) the whole repo.
+    let mut rows = Vec::new();
+    scan_usage(c, Some(&[repo]), from, to, evidence_from, &mut |r| {
+        rows.push(r);
+    })?;
+    let repo_seen = rows.iter().any(|r| r.tokens.total > 0)
+        || c.query_row(
+            "SELECT EXISTS(SELECT 1 FROM usage WHERE repo = ?1)",
+            [repo],
+            |r| r.get::<_, bool>(0),
+        )?;
+    // The task rows read per-call evidence (RFC 0018 M3): the hourly rollups carry no task.
+    let task_calls = if by == By::Task {
+        task_calls(c, repo, from, to)?
+    } else {
+        Vec::new()
+    };
+    c.execute_batch("COMMIT")?;
+    Ok(Read::Snapshot(Box::new(Snapshot {
+        version,
+        meta,
+        health,
+        rows,
+        task_calls,
+        repo_seen,
+        evidence_from,
+    })))
+}
+
+/// Reads the usage rows in `from..to`, classified against `evidence_from`, one at a time: the
+/// query collects them, the coverage report sums them, so the two cannot read a row differently.
+/// `repos` names the repos to read; `None` reads every repo and the usage that has none (which
+/// the report shows beside the ratio, never in it). One read transaction is the caller's.
+pub(crate) fn scan_usage(
+    c: &Connection,
+    repos: Option<&[&str]>,
+    from: i64,
+    to: i64,
+    evidence_from: Option<i64>,
+    f: &mut dyn FnMut(UsageRead),
+) -> rusqlite::Result<()> {
     // A schema 3 store a meter before RFC 0021 delivery 6 wrote has no `reason` column until its
     // next sync adds it: its ambiguous and unlinked rows read as they were, with no reason.
     let reason: bool = c.query_row(
@@ -1191,118 +1689,115 @@ fn read(
         [],
         |r| r.get(0),
     )?;
-    let mut rows = Vec::new();
-    {
-        let mut st = c.prepare(&format!(
-            "SELECT branch, harness, model, hour_ms, input_uncached, cache_read, cache_write_5m,
-               cache_write_1h, output, reasoning, unsplit, precision, reported_usd, actor_state,
-               basis, branch_basis, {}, bot, kind, role, squad, unrecorded
-             FROM usage WHERE repo = ?1 AND hour_ms >= ?2 AND hour_ms < ?3",
-            if reason { "reason" } else { "NULL" }
-        ))?;
-        let mut q = st.query(rusqlite::params![repo, from, to])?;
-        while let Some(r) = q.next()? {
-            let harness: String = r.get(1)?;
-            let mut t = TokensOut {
-                input: nonneg(r.get(4)?),
-                cache_read: nonneg(r.get(5)?),
-                cache_write_5m: nonneg(r.get(6)?),
-                cache_write_1h: nonneg(r.get(7)?),
-                output: nonneg(r.get(8)?),
-                reasoning: crate::sources::Source::from_harness(&harness)
-                    .filter(|s| s.logs_reasoning())
-                    .map(|_| nonneg(r.get(9).ok().flatten())),
-                unsplit: nonneg(r.get(10)?),
-                total: 0,
-            };
-            t.total = split_total(&t).saturating_add(t.unsplit);
-            let hour_ms: i64 = r.get(3)?;
-            let branch: Option<String> = r.get::<_, Option<String>>(0)?.filter(|b| !b.is_empty());
-            let state: Option<String> = r.get(13)?;
-            let basis: Option<String> = r.get(14)?;
-            let reason: Option<String> = r.get(16)?;
-            let class = classify(
-                evidence_from,
-                hour_ms,
-                state.as_deref(),
-                basis.as_deref(),
-                reason.as_deref(),
-            );
-            let branch_basis = match (r.get::<_, Option<String>>(15)?.as_deref(), &branch) {
-                (_, None) => BranchBasis::None,
-                (Some("ledger"), Some(_)) => BranchBasis::Ledger,
-                _ => BranchBasis::Log,
-            };
-            let fits = |s: &String| crate::ledger::tag_fits(s);
-            let bot = match (
-                class,
-                r.get::<_, Option<String>>(17)?,
-                r.get::<_, Option<String>>(18)?,
-            ) {
-                (Class::Attributed(_), Some(bot), Some(kind))
-                    if matches!(kind.as_str(), "worker" | "seat") && fits(&bot) =>
-                {
-                    let role: Option<String> = r.get(19)?;
-                    let squad: Option<String> = r.get(20)?;
-                    let unrecorded: Option<String> = r.get(21)?;
-                    let listed = |k: &str| {
-                        unrecorded
-                            .as_deref()
-                            .is_some_and(|u| u.split(',').any(|f| f == k))
-                    };
-                    // A role the start row left null is as unknown as one it left out, and one
-                    // past the contract's cap (a store written before the cap) is unrecorded.
-                    let no_role = listed("role") || role.as_ref().is_none_or(|r| !fits(r));
-                    let no_squad = listed("squad") || squad.as_ref().is_some_and(|s| !fits(s));
-                    Some(BotKey {
-                        bot,
-                        kind,
-                        role: role.filter(|_| !no_role),
-                        squad: squad.filter(|_| !no_squad),
-                        unrecorded: u8::from(no_role) | (u8::from(no_squad) << 1),
-                        harness: harness.clone(),
-                    })
-                }
-                _ => None,
-            };
-            // An attributed row whose bot key cannot be read (no bot, a kind that is neither
-            // worker nor seat, a bot past the cap) names no bot row: it counts as ambiguous, so
-            // its tokens land in actor_unattributed and every sum holds.
-            let class = match (class, &bot) {
-                (Class::Attributed(_), None) => Class::Ambiguous,
-                _ => class,
-            };
-            rows.push(UsageRead {
-                branch,
-                harness,
-                model: r.get(2)?,
-                hour_ms,
-                tokens: t,
-                total_only: r.get::<_, String>(11)? == "total_only",
-                reported_usd: r
-                    .get::<_, Option<f64>>(12)?
-                    .filter(|u| u.is_finite() && *u >= 0.0),
-                class,
-                branch_basis,
-                bot,
-            });
-        }
+    let mut params: Vec<&dyn rusqlite::ToSql> = Vec::new();
+    for r in repos.unwrap_or(&[]) {
+        params.push(r);
     }
-    let repo_seen = rows.iter().any(|r| r.tokens.total > 0)
-        || c.query_row(
-            "SELECT EXISTS(SELECT 1 FROM usage WHERE repo = ?1)",
-            [repo],
-            |r| r.get::<_, bool>(0),
-        )?;
-    c.execute_batch("COMMIT")?;
-    Ok(Read::Snapshot(Box::new(Snapshot {
-        version,
-        meta,
-        health,
-        rows,
-        repo_seen,
-        evidence_from,
-    })))
+    let mut sql = String::from(
+        "SELECT repo, branch, harness, model, hour_ms, input_uncached, cache_read,
+           cache_write_5m, cache_write_1h, output, reasoning, unsplit, precision, reported_usd,
+           actor_state, basis, branch_basis, ",
+    );
+    sql.push_str(if reason { "reason" } else { "NULL" });
+    sql.push_str(", bot, kind, role, squad, unrecorded FROM usage WHERE ");
+    if let Some(rs) = repos.filter(|rs| !rs.is_empty()) {
+        let names: Vec<String> = (1..=rs.len()).map(|i| format!("?{i}")).collect();
+        sql.push_str(&format!("repo IN ({}) AND ", names.join(", ")));
+    }
+    let (from_at, to_at) = (params.len() + 1, params.len() + 2);
+    sql.push_str(&format!("hour_ms >= ?{from_at} AND hour_ms < ?{to_at}"));
+    params.push(&from);
+    params.push(&to);
+    let mut st = c.prepare(&sql)?;
+    let mut q = st.query(params.as_slice())?;
+    while let Some(r) = q.next()? {
+        let harness: String = r.get(2)?;
+        let mut t = TokensOut {
+            input: nonneg(r.get(5)?),
+            cache_read: nonneg(r.get(6)?),
+            cache_write_5m: nonneg(r.get(7)?),
+            cache_write_1h: nonneg(r.get(8)?),
+            output: nonneg(r.get(9)?),
+            reasoning: crate::sources::Source::from_harness(&harness)
+                .filter(|s| s.logs_reasoning())
+                .map(|_| nonneg(r.get(10).ok().flatten())),
+            unsplit: nonneg(r.get(11)?),
+            total: 0,
+        };
+        t.total = split_total(&t).saturating_add(t.unsplit);
+        let hour_ms: i64 = r.get(4)?;
+        let repo: Option<String> = r.get::<_, Option<String>>(0)?.filter(|p| !p.is_empty());
+        let branch: Option<String> = r.get::<_, Option<String>>(1)?.filter(|b| !b.is_empty());
+        let state: Option<String> = r.get(14)?;
+        let basis: Option<String> = r.get(15)?;
+        let reason: Option<String> = r.get(17)?;
+        let class = classify(
+            evidence_from,
+            hour_ms,
+            state.as_deref(),
+            basis.as_deref(),
+            reason.as_deref(),
+        );
+        let branch_basis = match (r.get::<_, Option<String>>(16)?.as_deref(), &branch) {
+            (_, None) => BranchBasis::None,
+            (Some("ledger"), Some(_)) => BranchBasis::Ledger,
+            _ => BranchBasis::Log,
+        };
+        let fits = |s: &String| crate::ledger::tag_fits(s);
+        let stored_bot: Option<String> = r.get(18)?;
+        let tagged = stored_bot.as_deref().is_some_and(|b| !b.is_empty());
+        let bot = match (class, stored_bot, r.get::<_, Option<String>>(19)?) {
+            (Class::Attributed(_), Some(bot), Some(kind))
+                if matches!(kind.as_str(), "worker" | "seat") && fits(&bot) =>
+            {
+                let role: Option<String> = r.get(20)?;
+                let squad: Option<String> = r.get(21)?;
+                let unrecorded: Option<String> = r.get(22)?;
+                let listed = |k: &str| {
+                    unrecorded
+                        .as_deref()
+                        .is_some_and(|u| u.split(',').any(|f| f == k))
+                };
+                // A role the start row left null is as unknown as one it left out, and one
+                // past the contract's cap (a store written before the cap) is unrecorded.
+                let no_role = listed("role") || role.as_ref().is_none_or(|r| !fits(r));
+                let no_squad = listed("squad") || squad.as_ref().is_some_and(|s| !fits(s));
+                Some(BotKey {
+                    bot,
+                    kind,
+                    role: role.filter(|_| !no_role),
+                    squad: squad.filter(|_| !no_squad),
+                    unrecorded: u8::from(no_role) | (u8::from(no_squad) << 1),
+                    harness: harness.clone(),
+                })
+            }
+            _ => None,
+        };
+        // An attributed row whose bot key cannot be read (no bot, a kind that is neither
+        // worker nor seat, a bot past the cap) names no bot row: it counts as ambiguous, so
+        // its tokens land in actor_unattributed and every sum holds.
+        let class = match (class, &bot) {
+            (Class::Attributed(_), None) => Class::Ambiguous,
+            _ => class,
+        };
+        f(UsageRead {
+            repo,
+            branch,
+            harness,
+            model: r.get(3)?,
+            hour_ms,
+            tokens: t,
+            total_only: r.get::<_, String>(12)? == "total_only",
+            reported_usd: r
+                .get::<_, Option<f64>>(13)?
+                .filter(|u| u.is_finite() && *u >= 0.0),
+            class,
+            branch_basis,
+            bot,
+            tagged,
+        });
+    }
+    Ok(())
 }
 
 fn split_total(t: &TokensOut) -> i64 {
@@ -1343,6 +1838,34 @@ impl TokensOut {
 
 // ---------------------------------------------------------------------------------------------
 // The answer.
+
+/// The fields one call contributes to an accumulator, whichever source it came from: an hourly
+/// rollup (RFC 0018 (a)) or a per-call evidence row (`--by task`, RFC 0018 M3).
+struct CallParts<'a> {
+    tokens: &'a TokensOut,
+    class: Class,
+    branch_basis: BranchBasis,
+    hour_ms: i64,
+    harness: &'a str,
+    model: &'a str,
+    reported_usd: Option<f64>,
+    total_only: bool,
+}
+
+impl UsageRead {
+    fn parts(&self) -> CallParts<'_> {
+        CallParts {
+            tokens: &self.tokens,
+            class: self.class,
+            branch_basis: self.branch_basis,
+            hour_ms: self.hour_ms,
+            harness: &self.harness,
+            model: &self.model,
+            reported_usd: self.reported_usd,
+            total_only: self.total_only,
+        }
+    }
+}
 
 /// What a branch's usage in the window adds up to.
 #[derive(Default)]
@@ -1389,15 +1912,15 @@ impl ActorOut {
 impl Acc {
     /// A row with no tokens adds nothing, not even a reported amount: a branch is found only by
     /// its tokens, and a row that is not found never carries a cost.
-    fn add(&mut self, r: &UsageRead, prices: &PriceTable) {
-        let t = &r.tokens;
+    fn add(&mut self, r: &CallParts<'_>, prices: &PriceTable) {
+        let t = r.tokens;
         if t.total == 0 {
             return;
         }
         self.tokens.add(t);
         self.actor.count(r.class, r.branch_basis, t.total);
         self.hours.insert(r.hour_ms);
-        self.harnesses.insert(r.harness.clone());
+        self.harnesses.insert(r.harness.to_string());
         if r.total_only {
             self.total_only = true;
         } else {
@@ -1406,7 +1929,7 @@ impl Acc {
         if let Some(u) = r.reported_usd {
             self.usd_reported += u;
             self.tokens_reported = self.tokens_reported.saturating_add(t.total);
-        } else if let Some(p) = prices.get(&r.model) {
+        } else if let Some(p) = prices.get(r.model) {
             let split = split_total(t);
             if split > 0 {
                 self.usd_estimated += p.cost(&t.as_event_tokens());
@@ -1415,7 +1938,7 @@ impl Acc {
             self.tokens_unpriced = self.tokens_unpriced.saturating_add(t.unsplit);
         } else {
             self.tokens_unpriced = self.tokens_unpriced.saturating_add(t.total);
-            let n = self.unpriced.entry(r.model.clone()).or_default();
+            let n = self.unpriced.entry(r.model.to_string()).or_default();
             *n = n.saturating_add(t.total);
         }
     }
@@ -1478,23 +2001,33 @@ impl Acc {
 }
 
 fn machine_of(meta: &BTreeMap<String, String>) -> Machine {
-    let id = meta
-        .get("machine")
+    Machine {
+        id: machine_id(meta),
+        scope: "local",
+    }
+}
+
+/// The store's machine name, as the query and the coverage report report it.
+pub(crate) fn machine_id(meta: &BTreeMap<String, String>) -> String {
+    meta.get("machine")
         .or_else(|| meta.get("machine_fallback"))
         .map(|s| chars(s, MACHINE_ID_CHARS))
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "unknown".into());
-    Machine { id, scope: "local" }
+        .unwrap_or_else(|| "unknown".into())
 }
 
-fn meta_i64(meta: &BTreeMap<String, String>, k: &str) -> Option<i64> {
+pub(crate) fn meta_i64(meta: &BTreeMap<String, String>, k: &str) -> Option<i64> {
     meta.get(k).and_then(|v| v.trim().parse().ok())
 }
 
 /// Source health, one entry per harness (by name), then the old folder's store if it holds usage
 /// this store does not.
-fn sources(
-    snap: &Snapshot,
+/// Every harness's health, then the old folder's store when it holds usage this store does not.
+/// The query puts it in the envelope and the coverage report reads it for its zero rule
+/// (RFC 0018: a zero is vouched for only when every source is `ok` or `absent`).
+pub(crate) fn sources(
+    meta: &BTreeMap<String, String>,
+    health: &BTreeMap<String, Option<i64>>,
     stray: Option<&'static str>,
     now: i64,
     stale_ms: i64,
@@ -1505,9 +2038,9 @@ fn sources(
         .into_iter()
         .map(|s| {
             let h = s.harness();
-            let (status, reason) = crate::sync::source_status(|k| snap.meta.get(k).cloned(), s);
+            let (status, reason) = crate::sync::source_status(|k| meta.get(k).cloned(), s);
             let reason = reason.map(|r| chars(&r, LABEL_CHARS));
-            let last = snap.health.get(h).copied().flatten();
+            let last = health.get(h).copied().flatten();
             let counts = matches!(status.as_str(), "ok" | "degraded");
             let stale = counts && last.is_none_or(|t| now - t > stale_ms);
             SourceInfo {
@@ -1620,7 +2153,7 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
         Ok(r) => r,
         Err(r) => return refuse(*r),
     };
-    let echo_capped = || Some(echo(&req.repo, req.window, req.by_bot, &req.branches, true));
+    let echo_capped = || Some(echo(&req.repo, req.window, req.by, &req.branches, true));
     let failure = |code: u8,
                    status: &'static str,
                    error: ErrorObj,
@@ -1702,13 +2235,10 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
     };
     let stale_ms = req.stale_after_s * 1000;
     let window_of = |meta: &BTreeMap<String, String>| -> (i64, i64) {
-        let w = watermark(meta);
-        let end = hour_start(w.unwrap_or(ctx.now_ms)) + HOUR_MS;
-        let requested = end - req.window.days() * DAY_MS;
-        let counted_from = meta_i64(meta, "counted_from_ms").unwrap_or(requested);
-        (requested.max(counted_from), end)
+        let b = bounds(meta, req.window, ctx.now_ms);
+        (b.start, b.end)
     };
-    let snap = match read(&conn, &req.repo, window_of) {
+    let snap = match read(&conn, &req.repo, req.by, window_of) {
         Ok(Read::Snapshot(s)) => s,
         Ok(Read::Absent) => return refuse(absent(failure)),
         Ok(Read::Version(v)) => {
@@ -1771,15 +2301,14 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
     let meta = &snap.meta;
     let w = watermark(meta);
     let counted_from = meta_i64(meta, "counted_from_ms").unwrap_or(0);
-    let (start, end) = window_of(meta);
-    let requested_start = end - req.window.days() * DAY_MS;
-    let clipped = start > requested_start;
+    let b = bounds(meta, req.window, ctx.now_ms);
+    let clipped = b.clipped;
     let window_info = WindowInfo {
         name: req.window.name(),
-        requested_start: format_rfc3339(requested_start),
-        start: format_rfc3339(start),
-        end: format_rfc3339(end),
-        clipped,
+        requested_start: format_rfc3339(b.requested_start),
+        start: format_rfc3339(b.start),
+        end: format_rfc3339(b.end),
+        clipped: b.clipped,
     };
     let backlog = Backlog {
         bytes: meta_i64(meta, "last_pending_bytes").map(|v| v.max(0)),
@@ -1787,7 +2316,7 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
     };
     let stale = w.is_none_or(|w| now - w > stale_ms);
     let complete = backlog.bytes == Some(0) && backlog.files == Some(0);
-    let srcs = sources(&snap, stray, now, stale_ms);
+    let srcs = sources(&snap.meta, &snap.health, stray, now, stale_ms);
     let harness_sources: Vec<&SourceInfo> =
         srcs.iter().filter(|s| s.harness != LEGACY_STORE).collect();
     let counting: Vec<&&SourceInfo> = harness_sources
@@ -1838,10 +2367,10 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
                 unattributed_by.insert(r.harness.clone());
             }
             Some(b) => {
-                if !req.by_bot
+                if req.by == By::Branch
                     && let Some(acc) = by_branch.get_mut(b)
                 {
-                    acc.add(r, &table);
+                    acc.add(&r.parts(), &table);
                 }
             }
         }
@@ -1859,11 +2388,29 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
             e.1.insert(r.harness.clone());
         }
         // A bot query filtered by branch counts only usage on a branch named, logged or filled.
-        if req.by_bot
+        if req.by == By::Bot
             && let Some(key) = &r.bot
             && (named.is_empty() || r.branch.as_deref().is_some_and(|b| named.contains(b)))
         {
-            by_bot.entry(key.clone()).or_default().add(r, &table);
+            by_bot
+                .entry(key.clone())
+                .or_default()
+                .add(&r.parts(), &table);
+        }
+    }
+    // A task answer reads the task-labelled calls of the repo in the window: one row per task
+    // id, its checkout set for the ambiguity rule (RFC 0021 D4), and the calls the branch filter
+    // keeps (as `--by bot`, the branches named are an optional filter).
+    let mut by_task: BTreeMap<String, TaskEntry> = BTreeMap::new();
+    if req.by == By::Task {
+        for call in &snap.task_calls {
+            let e = by_task.entry(call.task.clone()).or_default();
+            e.projects.insert(call.project.clone());
+            if named.is_empty() || call.branch.as_deref().is_some_and(|b| named.contains(b)) {
+                e.in_filter = true;
+                e.actors.insert(call.bot.clone());
+                e.acc.add(&call.parts(), &table);
+            }
         }
     }
     let coverage = if unattributed > 0 {
@@ -1886,7 +2433,7 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
         // 0018's zero conditions for the whole answer: ingestion complete and fresh with a
         // watermark, the window not clipped, every source ok or absent, the repo seen, and, under
         // a branch filter, no usage with no branch, which could be an absent bot's.
-        let absent_bot_is_zero = req.by_bot
+        let absent_bot_is_zero = req.by == By::Bot
             && total == 0
             && complete
             && !stale
@@ -1913,49 +2460,52 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
         }
     };
 
-    let rows: Vec<Row> = if req.by_bot {
-        // A bot query that names no branch counts usage with no branch in its rows itself, so
-        // they are complete; under a branch filter, that usage could be owed to a branch named.
-        let bot_coverage = if req.branches.is_empty() {
-            "complete"
-        } else {
-            coverage
-        };
-        by_bot
-            .into_iter()
-            .filter(|(_, acc)| acc.tokens.total > 0)
-            .map(|(key, acc)| {
-                let (state, reason) = if stale {
-                    ("stale", Some("ingestion_stale"))
-                } else {
-                    ("measured", None)
-                };
-                Row::Bot(Box::new(BotRow {
-                    unrecorded: key.unrecorded(),
-                    bot: key.bot,
-                    kind: key.kind,
-                    role: key.role,
-                    squad: key.squad,
-                    harness: key.harness,
-                    state,
-                    reason,
-                    tokens: acc.tokens,
-                    cost: acc.cost(),
-                    token_precision: acc.precision(),
-                    attribution: Attribution {
-                        precision: "actor_interval",
-                        exclusive: false,
-                        shared: false,
-                        coverage: bot_coverage,
-                        actor: Some(acc.actor),
-                    },
-                    activity: acc.activity(),
-                    incomplete_sources: incomplete.clone(),
-                }))
-            })
-            .collect()
-    } else {
-        branch_rows(
+    let rows: Vec<Row> = match req.by {
+        By::Bot => {
+            // A bot query that names no branch counts usage with no branch in its rows itself, so
+            // they are complete; under a branch filter, that usage could be owed to a branch
+            // named.
+            let bot_coverage = if req.branches.is_empty() {
+                "complete"
+            } else {
+                coverage
+            };
+            by_bot
+                .into_iter()
+                .filter(|(_, acc)| acc.tokens.total > 0)
+                .map(|(key, acc)| {
+                    let (state, reason) = if stale {
+                        ("stale", Some("ingestion_stale"))
+                    } else {
+                        ("measured", None)
+                    };
+                    Row::Bot(Box::new(BotRow {
+                        unrecorded: key.unrecorded(),
+                        bot: key.bot,
+                        kind: key.kind,
+                        role: key.role,
+                        squad: key.squad,
+                        harness: key.harness,
+                        state,
+                        reason,
+                        tokens: acc.tokens,
+                        cost: acc.cost(),
+                        token_precision: acc.precision(),
+                        attribution: Attribution {
+                            precision: "actor_interval",
+                            exclusive: false,
+                            shared: false,
+                            coverage: bot_coverage,
+                            actor: Some(acc.actor),
+                        },
+                        activity: acc.activity(),
+                        incomplete_sources: incomplete.clone(),
+                    }))
+                })
+                .collect()
+        }
+        By::Task => task_rows(&req, by_task, stale, coverage, &incomplete),
+        By::Branch => branch_rows(
             &req,
             &by_branch,
             &BranchCtx {
@@ -1969,7 +2519,7 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
                 coverage,
                 incomplete: &incomplete,
             },
-        )
+        ),
     };
 
     let env = Envelope {
@@ -2000,13 +2550,7 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
         }),
         actor_unattributed: Some(actor_unattributed),
         pricing: Some(pricing),
-        query: Some(echo(
-            &req.repo,
-            req.window,
-            req.by_bot,
-            &req.branches,
-            false,
-        )),
+        query: Some(echo(&req.repo, req.window, req.by, &req.branches, false)),
         rows,
     };
 
@@ -2166,6 +2710,78 @@ fn branch_rows(req: &Request, by_branch: &BTreeMap<&str, Acc>, c: &BranchCtx<'_>
         .collect()
 }
 
+/// One row per task id with usage under the filter (RFC 0018 M3, RFC 0021 D4). A task id the
+/// meter ties to more than one checkout of the repo is never summed: its row is missing with
+/// `task_ambiguous`, whatever the window's age (the identity, not the freshness, is unknown).
+fn task_rows(
+    req: &Request,
+    by_task: BTreeMap<String, TaskEntry>,
+    stale: bool,
+    coverage: &'static str,
+    incomplete: &[String],
+) -> Vec<Row> {
+    // A task query that names no branch counts usage with no branch in its rows itself, so they
+    // are complete; under a branch filter, that usage could be owed to a branch named (D3).
+    let task_coverage = if req.branches.is_empty() {
+        "complete"
+    } else {
+        coverage
+    };
+    by_task
+        .into_iter()
+        .filter(|(_, e)| e.in_filter)
+        .map(|(task, e)| {
+            let ambiguous = e.projects.len() > 1;
+            let found = !ambiguous && e.acc.tokens.total > 0;
+            let (state, reason) = if ambiguous {
+                ("missing", Some("task_ambiguous"))
+            } else if stale {
+                ("stale", Some("ingestion_stale"))
+            } else {
+                ("measured", None)
+            };
+            let cost = e.acc.cost();
+            let token_precision = e.acc.precision();
+            let activity = e.acc.activity();
+            let actor = e.acc.actor;
+            let mut row = TaskRow {
+                task,
+                actors: if found {
+                    e.actors.into_iter().map(TaskActor::of).collect()
+                } else {
+                    Vec::new()
+                },
+                actors_omitted: 0,
+                state,
+                reason,
+                tokens: found.then_some(e.acc.tokens),
+                cost: found.then_some(cost),
+                token_precision: found.then_some(token_precision),
+                attribution: Attribution {
+                    precision: "task_interval",
+                    exclusive: false,
+                    shared: false,
+                    coverage: task_coverage,
+                    actor: found.then_some(actor),
+                },
+                activity: found.then_some(activity),
+                incomplete_sources: incomplete.to_vec(),
+            };
+            fit_task_actors(&mut row);
+            Row::Task(Box::new(row))
+        })
+        .collect()
+}
+
+/// A row never grows past RFC 0018's row bound: the trailing actor keys are left out (and
+/// counted) rather than cut, so two bots never read as one and a reader shows "at least".
+fn fit_task_actors(row: &mut TaskRow) {
+    while json(row).len() > ROW_BYTES && !row.actors.is_empty() {
+        row.actors.pop();
+        row.actors_omitted += 1;
+    }
+}
+
 fn absent(
     failure: impl Fn(u8, &'static str, ErrorObj, Option<StoreInfo>, Option<Machine>) -> Refusal,
 ) -> Refusal {
@@ -2183,7 +2799,7 @@ fn absent(
 
 /// When the last sync finished its pass (a run that stopped at its time budget still finished;
 /// `ingestion.complete` and `backlog` say what it left).
-fn watermark(meta: &BTreeMap<String, String>) -> Option<i64> {
+pub(crate) fn watermark(meta: &BTreeMap<String, String>) -> Option<i64> {
     meta_i64(meta, "last_run_ms").or_else(|| meta_i64(meta, "last_success_ms"))
 }
 
@@ -2269,6 +2885,189 @@ mod tests {
         assert!(json_len(&b) <= MODEL_NAME_BYTES, "{b}");
         assert!(b.ends_with('…'));
         assert_eq!(json_bounded("short", MODEL_NAME_BYTES), "short");
+    }
+
+    #[test]
+    fn the_task_read_is_bounded_by_the_launches_started_on_a_task() {
+        use crate::store::Store;
+        let store = Store::open_in_memory().unwrap();
+        store
+            .conn
+            .execute_batch(
+                "INSERT INTO launch(lkey, task, project, worktree, source, updated_ms) VALUES
+                   ('a', 'gn-1', '/work/a', '/work/a/.worktrees/gn-1/', 'ledger', 0),
+                   ('b', NULL, '/work/b', '/work/b/.worktrees/x', 'ledger', 0);
+                 INSERT INTO link(harness, session, lkey, basis) VALUES
+                   ('claude', x'0101', 'a', 'session'),
+                   ('claude', x'0202', 'b', 'session');
+                 INSERT INTO ev_cwd(id, path) VALUES
+                   (1, '/work/a/.worktrees/gn-1'),
+                   (2, '/work/b/.worktrees/x'),
+                   (3, '/work/elsewhere');",
+            )
+            .unwrap();
+        let c = task_candidates(&store.conn).unwrap();
+        assert_eq!(
+            c.sessions,
+            vec![vec![1u8, 1]],
+            "only a task launch's session"
+        );
+        assert_eq!(
+            c.cwds,
+            vec![1],
+            "only a task launch's start folder, a trailing slash and all"
+        );
+    }
+
+    #[test]
+    fn a_sub_agent_is_read_into_its_task_through_its_parent_session() {
+        use crate::store::Store;
+        // A worker linked by its session, started in a folder that is not the launch's worktree
+        // string, and its sub-agent: the sub-agent's own session names no link and its start
+        // folder no worktree, so only its parent ties it to the task (as the resolver ties it).
+        let store = Store::open_in_memory().unwrap();
+        store
+            .conn
+            .execute_batch(
+                "INSERT INTO launch(lkey, task, project, worktree, source, updated_ms) VALUES
+                   ('a', 'gn-1', '/work/a', '/work/a/.worktrees/gn-1', 'ledger', 0);
+                 INSERT INTO link(harness, session, lkey, basis) VALUES
+                   ('claude', x'01', 'a', 'session');
+                 INSERT INTO ev_cwd(id, path) VALUES (1, '/work/a');
+                 INSERT INTO ev_dim(id, harness, model, machine, repo, branch, precision) VALUES
+                   (1, 'claude-code', 'claude-opus-5-5', 'machine-a1b2c3',
+                    'example.com/acme/widgets', 'feat/gn-1', 'exact');
+                 INSERT INTO ev_actor(id, state, bot, kind, role, task, project, basis) VALUES
+                   (1, 'attributed', 'kite', 'worker', 'dev', 'gn-1', '/work/a', 'session');
+                 INSERT INTO evidence(id, ts_ms, dim, actor, session, parent, session_cwd, output)
+                 VALUES
+                   (1, 1000, 1, 1, x'01', NULL, 1, 10),
+                   (2, 2000, 1, 1, x'02', x'01', 1, 10),
+                   (3, 3000, 1, 1, x'03', x'09', 1, 10);",
+            )
+            .unwrap();
+        let calls = task_calls(&store.conn, "example.com/acme/widgets", 0, 10_000).unwrap();
+        assert_eq!(
+            calls.len(),
+            2,
+            "the worker's call and its sub-agent's, each once; a stranger's child is not read"
+        );
+        assert_eq!(calls.iter().map(|c| c.tokens.total).sum::<i64>(), 20);
+        assert!(calls.iter().all(|c| c.task == "gn-1"));
+
+        // A call both arms name (its session and its parent are task sessions) counts once.
+        store
+            .conn
+            .execute_batch(
+                "INSERT INTO link(harness, session, lkey, basis) VALUES
+                   ('claude', x'02', 'a', 'session');",
+            )
+            .unwrap();
+        let calls = task_calls(&store.conn, "example.com/acme/widgets", 0, 10_000).unwrap();
+        assert_eq!(calls.len(), 2, "one count per evidence id");
+        assert_eq!(calls.iter().map(|c| c.tokens.total).sum::<i64>(), 20);
+    }
+
+    #[test]
+    fn a_task_id_the_contract_cannot_print_does_not_fit() {
+        for bad in ["", "gn\u{1b}[2J", "gn\n41", "gn\t41", "\u{7f}", "\u{85}"] {
+            assert!(!task_id_fits(bad), "{bad:?}");
+        }
+        assert!(!task_id_fits(&"t".repeat(65)));
+        for ok in ["gn-41", "GN 41", "tâche-7", &"t".repeat(64)] {
+            assert!(task_id_fits(ok), "{ok:?}");
+        }
+    }
+
+    #[test]
+    fn a_task_row_with_every_actor_at_its_largest_keeps_the_row_bound() {
+        let actor = |i: usize| TaskActor {
+            bot: format!("{i:02}{}", "b".repeat(62)),
+            kind: "worker",
+            role: Some("r".repeat(64)),
+            squad: Some("s".repeat(64)),
+            unrecorded: Vec::new(),
+            harness: "h".repeat(64),
+        };
+        let mut counts = ActorOut::default();
+        for n in [
+            &mut counts.tokens_attributed,
+            &mut counts.tokens_ambiguous,
+            &mut counts.tokens_unlinked,
+            &mut counts.tokens_before_evidence,
+        ] {
+            *n = i64::MAX;
+        }
+        let mut row = TaskRow {
+            task: "t".repeat(64),
+            actors: (0..20).map(actor).collect(),
+            actors_omitted: 0,
+            state: "measured",
+            reason: None,
+            tokens: Some(TokensOut {
+                input: i64::MAX,
+                cache_read: i64::MAX,
+                cache_write_5m: i64::MAX,
+                cache_write_1h: i64::MAX,
+                output: i64::MAX,
+                reasoning: Some(i64::MAX),
+                unsplit: i64::MAX,
+                total: i64::MAX,
+            }),
+            cost: Some(Cost {
+                state: "unpriced",
+                usd: None,
+                usd_reported: None,
+                usd_estimated: None,
+                tokens_priced: i64::MAX,
+                tokens_reported: i64::MAX,
+                tokens_unpriced: i64::MAX,
+                unpriced_models: (0..UNPRICED_MODELS_MAX).map(|i| format!("m{i}")).collect(),
+                unpriced_models_omitted: 0,
+            }),
+            token_precision: Some("exact"),
+            attribution: Attribution {
+                precision: "task_interval",
+                exclusive: false,
+                shared: false,
+                coverage: "partial",
+                actor: Some(counts),
+            },
+            activity: Some(Activity {
+                first_hour: Some("2026-11-08T10:00:00Z".into()),
+                last_hour: Some("2026-11-08T10:00:00Z".into()),
+                hours: 1,
+                harnesses: vec!["h".repeat(64)],
+            }),
+            incomplete_sources: Vec::new(),
+        };
+        let all: Vec<String> = row.actors.iter().map(|a| a.bot.clone()).collect();
+        let total = row.tokens.as_ref().unwrap().total;
+        fit_task_actors(&mut row);
+        assert!(
+            json(&row).len() <= ROW_BYTES,
+            "a task row of {} bytes",
+            json(&row).len()
+        );
+        assert_eq!(
+            row.actors.len() + row.actors_omitted,
+            all.len(),
+            "every actor key is either kept or counted"
+        );
+        assert!(
+            row.actors_omitted > 0,
+            "the bound left some actor keys out and said so"
+        );
+        assert_eq!(
+            row.actors.iter().map(|a| a.bot.clone()).collect::<Vec<_>>(),
+            all[..row.actors.len()],
+            "the kept keys are the leading ones, in order"
+        );
+        assert_eq!(
+            row.tokens.as_ref().unwrap().total,
+            total,
+            "the row's tokens are the task's, unchanged at the bound"
+        );
     }
 
     #[test]

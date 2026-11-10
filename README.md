@@ -10,15 +10,15 @@ Automagik's plugins for [DeepSeek Harness](https://github.com/deepseek-ai/deepse
 | [`apps/locale-pt-br-dsh`](apps/locale-pt-br-dsh/README.md) | `@automagik/locale-pt-br-dsh` | Português: the Bot team's Brazilian Portuguese under DSH's own Portuguese entry. Adds no language of its own, so Settings › General › Language keeps one Portuguese row; a pt-BR choice saved by an older pack moves to DSH's pt. |
 | [`apps/desktop`](apps/desktop/README.md) | (the app) | The Automagik desktop app: DSH of its own with the Bot team, the welcome and Omni's channels and canvases. `omni desktop` opens it with Omni preloaded, `genie desktop` with Genie. |
 
-Omni's own plugins (its channels and canvases) live with Omni, in [automagik-dev/omni](https://github.com/automagik-dev/omni) (`apps/omni-channels-dsh`, `apps/omni-canvas-dsh`), and carry Omni's version.
+Omni's own plugins (its channels and canvases) live with Omni, in [automagik-si/omni](https://github.com/automagik-si/omni) (`apps/omni-channels-dsh`, `apps/omni-canvas-dsh`), and carry Omni's version.
 
 ## Install
 
-- **The desktop app**: download it from [Releases](https://github.com/automagik-dev/automagik/releases/latest), or run `omni desktop`. See [apps/desktop](apps/desktop/README.md).
+- **The desktop app**: download it from [Releases](https://github.com/automagik-si/automagik/releases/latest), or run `omni desktop`. See [apps/desktop](apps/desktop/README.md).
 - **Into your own DSH**: add the Automagik market to DSH's plugin market and install from there:
 
   ```
-  https://raw.githubusercontent.com/automagik-dev/dsh-marketplace/main/index.json
+  https://raw.githubusercontent.com/automagik-si/dsh-marketplace/main/index.json
   ```
 
   Every Omni also serves a market at `https://<your-omni>/api/market/index.json` with the release of these plugins it was tested with.

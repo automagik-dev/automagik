@@ -32,7 +32,7 @@ omni desktop      # Omni's CLI: opens it with Omni preloaded
 genie desktop     # Genie's CLI: opens it with Genie preloaded
 ```
 
-downloads the build for this machine from this repository's releases, checks it against the release's `SHA256SUMS`, and opens it with `--preload=omni` or `--preload=genie`. Or download the dmg, AppImage or deb from [Releases](https://github.com/automagik-dev/automagik/releases).
+downloads the build for this machine from this repository's releases, checks it against the release's `SHA256SUMS`, and opens it with `--preload=omni` or `--preload=genie`. Or download the dmg, AppImage or deb from [Releases](https://github.com/automagik-si/automagik/releases).
 
 ### The preload
 

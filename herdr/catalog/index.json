@@ -1,18 +1,18 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-11-10T00:52:16.418Z",
+  "generatedAt": "2026-11-10T14:03:29.187Z",
   "modCount": 11,
   "repositoryCount": 4,
   "source": "automagik-herdr",
   "mods": [
     {
-      "owner": "automagik-dev",
+      "owner": "automagik-si",
       "repo": "automagik",
-      "fullName": "automagik-dev/automagik",
-      "url": "https://github.com/automagik-dev/automagik",
+      "fullName": "automagik-si/automagik",
+      "url": "https://github.com/automagik-si/automagik",
       "defaultBranch": "dev",
       "stars": 0,
-      "pushedAt": "2026-11-09T21:45:50-03:00",
+      "pushedAt": "2026-11-10T10:49:03-03:00",
       "headCommit": "",
       "path": "herdr",
       "name": "Automagik Herdr",

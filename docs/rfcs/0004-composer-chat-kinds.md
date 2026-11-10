@@ -118,6 +118,13 @@ browser work and everyday fixes of milestone 1.
 2. **Herdr kind in this milestone?** Recommended: no. The registry allows input-less kinds now;
    the Herdr kind itself waits for RFC 0006.
 
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: none.
+- Merged changes that cite this RFC: #187 (last merged 2026-11-03).
+
 ## Links
 
 - #88, #91, #136, #153

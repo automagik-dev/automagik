@@ -27,7 +27,7 @@ ARG HC_SHA256=5b2f97cb4b2a9d7a6b2cc5942628203ed9fbb7cc0c2b4b09ad8a6f5648e246b7
 
 LABEL org.opencontainers.image.title="Automagik Linux image" \
       org.opencontainers.image.description="DSH, its tools and the guest launcher, for the Automagik desktop app on WSLC (RFC 0016)" \
-      org.opencontainers.image.source="https://github.com/automagik-dev/automagik" \
+      org.opencontainers.image.source="https://github.com/automagik-si/automagik" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.version="${AUTOMAGIK_VERSION}"
 

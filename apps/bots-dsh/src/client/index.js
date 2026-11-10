@@ -44,7 +44,7 @@ import { createBotBrowsers, serveBrowserReads } from './bot-browsers.js'
 import { BROWSER_CSS } from './browser-pane.js'
 import { SECRET_CSS, SecretDock } from './secret-card.js'
 import { MODEL_CSS, ModelChoiceDock, ModelLineTail, DeepSeekSignIn } from './model-menu.js'
-import { CLI_LOGIN_CSS, CliLoginConversation, installCliLoginBridge, installKnownStateGuard } from './cli-login.js'
+import { announceCarried, CLI_LOGIN_CSS, CliLoginConversation, installCliLoginBridge, installKnownStateGuard } from './cli-login.js'
 import { createCliLogin } from './cli-login-state.js'
 import { cliLoginBotOf } from './cli-login-model.js'
 import { BOT_SETTINGS_CSS } from './bot-settings.js'
@@ -666,6 +666,21 @@ export function apply(ctx) {
   actions.cliLogin = cliLogin
   // A sign-in row about a provider its Bot has left closes by itself (cli-login-state.js).
   ctx.effect(() => work.subscribe(() => cliLogin.followModels()), 'ds-bot: CLI sign-in rows follow the Bots\' models')
+  // A turn refused because its agent's account waits for the person opens the row's account
+  // step in that Bot's chat (#869).
+  ctx.effect(() => work.subscribe(() => cliLogin.followFailures(work.getSnapshot().models)), 'ds-bot: CLI account step follows a refused turn')
+  // Once per upgrade: which CLI sign-in the Bots already use, shared with the terminal.
+  ctx.effect(() => {
+    let told = false
+    const tell = () => {
+      if (told || roster.getSnapshot().ready !== true) return
+      told = true
+      void announceCarried({ actions })
+    }
+    const off = roster.subscribe(tell)
+    tell()
+    return off
+  }, 'ds-bot: carried CLI sign-in notice')
   actions.inputActionsOf = sessionId => ctx.sessions.binding?.(sessionId)?.props?.inputActions
   ctx.effect(() => () => cliLogin.dispose(), 'ds-bot: CLI sign-in rows')
   ctx.effect(() => installKnownStateGuard({ onRefused: () => actions.showNotice(t('This message contains a sign-in code, so it was not sent. Paste the code only in the sign-in step.')) }), 'ds-bot: sign-in code guard')

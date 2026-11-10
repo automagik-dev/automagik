@@ -33,6 +33,17 @@ export function contentText(content) {
   return ''
 }
 
+// The image blocks of ACP content: a content block, or a tool call's content items. An image is
+// `{ type: 'image', data, mimeType }`, inside a `content` wrapper or not. The block is returned
+// as the agent sent it, so its base64 data is never decoded and encoded again; a durable DSH
+// image block (`attachment`) is returned too, for a tool result that already carries one.
+export function contentImages(content) {
+  if (content == null) return []
+  if (Array.isArray(content)) return content.flatMap(contentImages)
+  if (content.type === 'content') return contentImages(content.content)
+  return content.type === 'image' ? [content] : []
+}
+
 export class AgentRun {
   /**
    * @param {{ command: string, args?: string[], env?: Record<string, string>, cwd: string, name: string }} spec
@@ -336,6 +347,22 @@ export class AgentRun {
     for (const listener of tool.listeners) listener()
   }
 
+  /**
+   * DSH refused or cancelled the mirror call of the agent's tool `id` before its body ran, so
+   * nothing there will answer the agent's question for it: answer it here, with the agent's own
+   * reject option, or as cancelled when the call was stopped. A question that comes later gets
+   * the same answer (onPermission). It only ever refuses.
+   * @param {string} id
+   * @param {boolean} cancelled
+   */
+  refuse(id, cancelled) {
+    const tool = this.tools.get(id)
+    if (tool === undefined) return
+    tool.refused = cancelled ? 'cancelled' : 'rejected'
+    const permission = tool.permission
+    permission?.answer(refusal(tool.refused, permission.options))
+  }
+
   onPermission(params) {
     const known = this.tools.get(params.toolCall?.toolCallId)
     const tool = known ?? this.seeTool({ status: 'pending', ...params.toolCall })
@@ -350,6 +377,13 @@ export class AgentRun {
         ?? (params.options ?? []).find(option => option.kind === 'allow_always')
       return Promise.resolve(once === undefined ? { outcome: { outcome: 'cancelled' } } : { outcome: { outcome: 'selected', optionId: once.optionId } })
     }
+    // DSH already refused this call before the mirror's body could ask (refuse): no body is
+    // left to answer the agent, so the refusal is its answer.
+    if (tool.refused !== undefined) return Promise.resolve(refusal(tool.refused, params.options ?? []))
+    // A second question for the call while the first was not asked yet: the first is withdrawn,
+    // or nothing would ever answer it. One already in its dialog keeps the dialog's answer.
+    const earlier = tool.permission
+    if (earlier !== undefined && earlier.asked !== true) earlier.answer({ outcome: { outcome: 'cancelled' } })
     return new Promise((resolve) => {
       let done = false
       const permission = {
@@ -367,6 +401,15 @@ export class AgentRun {
       for (const listener of tool.listeners) listener()
     })
   }
+}
+
+// A refusal as the agent's own reject option; a stopped call, or an agent that offers no reject
+// option, is answered as cancelled.
+function refusal(kind, options) {
+  const chosen = kind === 'rejected'
+    ? options.find(option => option.kind === 'reject_once') ?? options.find(option => option.kind === 'reject_always')
+    : undefined
+  return chosen ? { outcome: { outcome: 'selected', optionId: chosen.optionId } } : { outcome: { outcome: 'cancelled' } }
 }
 
 /** The option of `category` among an agent's session config options. */

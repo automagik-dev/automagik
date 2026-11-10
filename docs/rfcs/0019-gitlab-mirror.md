@@ -1069,6 +1069,13 @@ G8's desktop feed is its own desktop delivery (question 7), on the desktop lane,
 
 None. All the owner's answers are under Decided (2026-11-09).
 
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: none.
+- Merged changes that cite this RFC: #790, #791 (last merged 2026-11-09).
+
 ## Links
 
 - RFC 0011 (parts, lanes, the signed rolling pointers, key rotation, Pocket's `latest.json` rule),

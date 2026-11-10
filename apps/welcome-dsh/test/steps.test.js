@@ -5,7 +5,9 @@ import { runInNewContext } from 'node:vm'
 import { build } from 'esbuild'
 
 // The client modules, with a React that records elements instead of rendering them.
-async function load(file) {
+// `scope` adds globals (a page's location and navigator); `gated` hands the next useState(undefined)
+// these values in turn, as a step's gate state once it has arrived.
+async function load(file, { scope = {}, gated = [] } = {}) {
   const bundle = await build({
     entryPoints: [fileURLToPath(new URL(`../src/client/${file}`, import.meta.url))],
     bundle: true, format: 'cjs', platform: 'node', write: false, logLevel: 'silent',
@@ -15,10 +17,12 @@ async function load(file) {
   const module = { exports: {} }
   const react = {
     createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity) }),
-    useState: initial => [typeof initial === 'function' ? initial() : initial, () => {}],
+    useState: initial => [initial === undefined && gated.length > 0 ? gated.shift() : typeof initial === 'function' ? initial() : initial, () => {}],
     useEffect: () => {}, useRef: current => ({ current }), useCallback: fn => fn,
+    // The team step reads its power store (power-store.js) through this hook.
+    useSyncExternalStore: (_subscribe, snapshot) => snapshot(),
   }
-  runInNewContext(bundle.outputFiles[0].text, { module, exports: module.exports, URL, setTimeout, clearTimeout, require: name => ({ react, 'react-dom': { createPortal: node => node } })[name] })
+  runInNewContext(bundle.outputFiles[0].text, { module, exports: module.exports, URL, setTimeout, clearTimeout, require: name => ({ react, 'react-dom': { createPortal: node => node } })[name], ...scope })
   return module.exports
 }
 // Values made inside the vm compare by shape, not by realm.
@@ -384,7 +388,8 @@ test('every phase happens inside the box: outside it, the card stays the same', 
   // Choices, not a form: each ready Omni, a new one here, one somewhere else.
   const tiles = tree => findAll(tree, byClass('oai-destiny-tile')).filter(node => node.type === 'button')
   const titles = tree => tiles(tree).map(node => textOf(findAll(node, node => node.type === 'strong')[0]))
-  assert.deepEqual(titles(found), ['Use your Omni on this computer', 'Connect omni.example.com', 'An Omni somewhere else'])
+  // No machine from the host and no page address here: the neutral name for DSH's machine.
+  assert.deepEqual(titles(found), ['Use your Omni on DSH\'s computer', 'Connect omni.example.com', 'An Omni somewhere else'])
   tiles(found)[1].props.onClick()
   assert.deepEqual(used, ['cli:work'])
   assert.match(textOf(found), /Not answering right now/)
@@ -393,7 +398,7 @@ test('every phase happens inside the box: outside it, the card stays the same', 
   let local = 0
   const none = card('none', { sandbox: null }, { local: () => { local += 1 } })
   assert.equal(textOf(findAll(none, byClass('oai-status'))[0]), 'Where should Omni live?')
-  assert.deepEqual(titles(none), ['Run Omni on this computer', 'An Omni somewhere else'])
+  assert.deepEqual(titles(none), ['Run Omni on DSH\'s computer', 'An Omni somewhere else'])
   assert.equal(findAll(none, node => node.type === 'input').length, 0, 'no address until "somewhere else" is chosen')
   tiles(none)[0].props.onClick()
   assert.equal(local, 1)
@@ -521,7 +526,7 @@ test('Genie\'s box says where it stands, and lights its plugin and its place on 
   assert.deepEqual(plain(team.genieLightsOf('failed')), [['power', 'on'], ['plugins', 'warn'], ['team', 'off']])
 })
 
-test("'Run Omni on this Mac' runs Omni's installer in the card and shows what it prints, until it is linked", async () => {
+test("'Run Omni on this computer' runs Omni's installer in the card and shows what it prints, until it is linked", async () => {
   const calls = []
   const reads = [
     { state: 'running', step: 'download-bun', data: 'Downloading Bun…\r\n', next: 1 },
@@ -636,4 +641,19 @@ test('an Omni nobody owns yet is told apart, with the command that connects it',
   assert.equal(team.isUnowned('Omni answered 500 at omni.example.com'), false)
   assert.equal(team.isUnowned(undefined), false)
   assert.equal(team.connectCommand('http://100.64.0.10:8882'), 'omni connect --url http://100.64.0.10:8882')
+})
+
+test('the machine DSH reports reaches the new-Omni tile, through the step and the card', async () => {
+  // A page on loopback in a Mac browser: the tile names DSH's own OS, not the viewer's.
+  const gated = []
+  const paged = await load('team.js', { scope: { location: { hostname: 'localhost' }, navigator: { platform: 'MacIntel' } }, gated })
+  const runTile = machine => textOf(findAll(render(paged.OmniCard({ power: { phase: 'none', detail: { omnis: [] }, busy: null, problem: null, use: () => {}, remote: () => {}, local: () => {}, cancelPairing: () => {}, machine }, onPower: () => {}, type: omniType, abilities: {}, onToggle: () => {}, live: null })), byClass('oai-destiny-sandbox'))[0])
+  assert.match(runTile({ os: 'linux' }), /^Run Omni on your Linux server/)
+  assert.match(runTile({ os: 'macos' }), /^Run Omni on this Mac/)
+  // The step hands the gate state's machine to Omni's card.
+  const machine = { os: 'linux', remoteHint: true }
+  gated.push({ machine, preload: null })
+  const step = paged.TeamStep({ stepId: 'omni-team', complete: () => {}, openSection: () => {} })
+  const [omniCard] = findAll(step, node => node.type === paged.OmniCard)
+  assert.equal(omniCard.props.power.machine, machine)
 })
