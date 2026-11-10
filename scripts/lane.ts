@@ -5,8 +5,8 @@
  * the welcome) is released as a patch (3.N.P) with the plugin tarballs alone, no desktop build;
  * every release, full or patch, then updates one signed manifest that every consumer reads:
  *
- *   https://github.com/automagik-dev/automagik/releases/download/plugin-lane/lane.json
- *   https://github.com/automagik-dev/automagik/releases/download/plugin-lane/lane.json.sig
+ *   https://github.com/automagik-si/automagik/releases/download/plugin-lane/lane.json
+ *   https://github.com/automagik-si/automagik/releases/download/plugin-lane/lane.json.sig
  *
  * The rolling `plugin-lane` release holds only those two files; the tarballs stay on their own
  * versioned release (immutable, so a consumer that cached a version can still serve it). The
@@ -74,7 +74,7 @@ export const ROOT = join(import.meta.dir, '..');
 export const LANE_RELEASE = 'plugin-lane';
 export const SCHEMA_VERSION = 1;
 export const KEY_ID = 'automagik-2026-10';
-const DOWNLOADS = 'https://github.com/automagik-dev/automagik/releases/download/';
+const DOWNLOADS = 'https://github.com/automagik-si/automagik/releases/download/';
 // The plugins this release lane ships and updates. None of Unfold's is one: they left this
 // repository for Unfold's own, whose release ships them (RFC 0020); this repository's releases
 // attach no tarball of any and its lane names none. Whoever installed one keeps it.

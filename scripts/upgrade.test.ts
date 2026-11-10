@@ -113,7 +113,7 @@ describe('PLUGINS.SHA256SUMS', () => {
 
 describe("a release's tarballs", () => {
   const release = {
-    repository: 'https://github.com/automagik-dev/automagik',
+    repository: 'https://github.com/automagik-si/automagik',
     version: '3.49.0',
     commit: 'c'.repeat(40),
     packages: {

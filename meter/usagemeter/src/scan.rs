@@ -62,6 +62,7 @@ fn is_log(source: Source, path: &Path) -> bool {
         Source::DshTui => path
             .file_name()
             .is_some_and(|n| dsh_tui::FILE_NAMES.iter().any(|f| n == *f)),
+        Source::Agy => path.extension().is_some_and(|x| x == "db"),
         _ => path.extension().is_some_and(|x| x == "jsonl"),
     }
 }
@@ -304,10 +305,41 @@ pub fn plan(c: &Candidate, prev: Option<FileState>) -> io::Result<Plan> {
                     .map(|s| s.chars().take(128).collect()),
                 ..FileCtx::default()
             },
+            // An Antigravity conversation's file name is its conversation id.
+            None if c.source == Source::Agy => FileCtx {
+                session: c
+                    .path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.chars().take(128).collect()),
+                agy: Some(Default::default()),
+                ..FileCtx::default()
+            },
             None => FileCtx::default(),
         },
         rewrites,
     };
+    // A conversation database is not an append-only log: its size and mtime move with WAL
+    // checkpoints, and rows can arrive without either. Read it every run; its cursor in the file
+    // context is the highest generation counted, so a run with nothing new still opens no rows.
+    if c.source == Source::Agy {
+        let same = prev
+            .as_ref()
+            .is_some_and(|p| p.dev == c.dev && p.ino == c.ino);
+        let rewrites = prev.as_ref().map_or(0, |p| p.rewrites + i64::from(!same));
+        let mut state = fresh(rewrites);
+        if same && let Some(p) = prev {
+            state.ctx = p.ctx;
+            state.offset = p.offset;
+        }
+        state.size = c.size;
+        state.mtime_ms = c.mtime_ms;
+        state.offset = state.size;
+        return Ok(Plan::Read {
+            state: Box::new(state),
+            rewritten: false,
+        });
+    }
     let Some(p) = prev else {
         return Ok(Plan::Read {
             state: Box::new(fresh(0)),
@@ -380,6 +412,11 @@ pub fn read_file<F>(
 where
     F: FnMut(&FileState, Vec<UsageEvent>, Health) -> io::Result<()>,
 {
+    if source == Source::Agy {
+        return Err(io::Error::other(
+            "an agy conversation is a database, not a line log",
+        ));
+    }
     let mut f = open_nofollow(Path::new(&state.path))?;
     let size_now = f.metadata()?.len();
     let skip = if state.head_len == 0 {

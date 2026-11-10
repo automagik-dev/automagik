@@ -123,8 +123,13 @@ export function BotSettingsForm({ bot, roster, actions, run }) {
   // row in this Bot's chat (rule 2). The chat opens only on this click.
   const [signIn, setSignIn] = useState(null)
   useEffect(() => { setSignIn(null) }, [bot.id, bot.model])
+  // A model whose agent is signed in to an account not confirmed for Bots (#869): the refusal
+  // shows as usual, and Confirm account opens the row's account step in this Bot's chat.
+  const [account, setAccount] = useState(null)
+  useEffect(() => { setAccount(null) }, [bot.id, bot.model])
   const pickModel = ref => run(actions.updateBot(bot.id, { model: ref }).catch((error) => {
     if (error?.code === 'bot/sign-in-required' && cliProviderOf(ref)) setSignIn(ref)
+    if (error?.code === 'bot/account-confirm-required' && cliProviderOf(ref)) setAccount(ref)
     throw error
   }))
   // What the model really did (the host's model state, with every state answer).
@@ -154,7 +159,10 @@ export function BotSettingsForm({ bot, roster, actions, run }) {
         h(ModelMenu, { bot, roster, actions, run, onPick: ref => (ref !== (bot.model ?? bot.appliedModel) || !bot.model ? pickModel(ref) : undefined) })),
       signIn && actions.openCliLogin ? h('div', { className: 'bt-set-row bt-bs-row' },
         h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-set-hint' }, t('This model needs a sign-in to its coding agent.'))),
-        h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: () => { actions.openCliLogin(bot.id, cliProviderOf(signIn), signIn); setSignIn(null) } }, t('Sign in'))) : null),
+        h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: () => { actions.openCliLogin(bot.id, cliProviderOf(signIn), signIn); setSignIn(null) } }, t('Sign in'))) : null,
+      account && actions.openCliLogin ? h('div', { className: 'bt-set-row bt-bs-row' },
+        h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-set-hint' }, t('This model needs you to confirm the account of its coding agent.'))),
+        h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: () => { actions.openCliLogin(bot.id, cliProviderOf(account), account); setAccount(null) } }, t('Confirm account'))) : null),
     h(Card, { title: t('Working folder') },
       h('div', { className: 'bt-set-row bt-bs-row' },
         h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, t('Folder'))),

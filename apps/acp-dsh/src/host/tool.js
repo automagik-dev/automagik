@@ -128,6 +128,11 @@ const changed = (tool, signal) => new Promise((resolve) => {
   signal?.addEventListener('abort', done, { once: true })
 })
 
+// The executions whose mirror body started. DSH hands one `exec` object to its gates, to the body
+// and to `tools/result`, so the adapter can tell a call that was refused before the body (and
+// whose question from the agent nobody will answer here) from one this body is answering.
+export const entered = new WeakSet()
+
 /**
  * `images()` is the chat's image keeper (acpAgents.keepImages), or undefined. `attachments()` is
  * DSH's attachment store, where an image a call answers with is kept, or undefined.
@@ -166,6 +171,7 @@ export function mirrorTool(host) {
       presentationMeta: (_args, value) => value,
     },
     async execute(args, exec) {
+      entered.add(exec)
       const live = host.runOf(exec.agent?.session?.id)
       const tool = live?.run.tools.get(args.id)
       if (!tool) return { title: args.title, kind: args.kind, status: 'failed', text: 'The agent is no longer running this call.' }

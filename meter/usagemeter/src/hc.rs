@@ -244,7 +244,7 @@ fn harness_name(h: &str) -> &str {
     harness_of(h).unwrap_or(h)
 }
 
-/// `claude` → claude-code, `omp` → omp, `dsh-tui` → dsh-tui, from the program's basename.
+/// `claude` → claude-code, `omp` → omp, `agy` → agy, from the program's basename.
 pub fn harness_of(program: &str) -> Option<&'static str> {
     let base = program.rsplit('/').next().unwrap_or(program);
     match base {
@@ -252,6 +252,7 @@ pub fn harness_of(program: &str) -> Option<&'static str> {
         "omp" => Some("omp"),
         "codex" => Some("codex"),
         "dsh-tui" => Some("dsh-tui"),
+        "agy" | "antigravity" => Some("agy"),
         _ => None,
     }
 }

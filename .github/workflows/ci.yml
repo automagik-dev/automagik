@@ -738,7 +738,7 @@ jobs:
           dir="${RUNNER_TEMP}/omni"
           commit=$(node -p "require('../desktop/omni.json').commit")
           git init -q "${dir}"
-          git -C "${dir}" remote add origin https://github.com/automagik-dev/omni
+          git -C "${dir}" remote add origin https://github.com/automagik-si/omni
           git -C "${dir}" sparse-checkout set --no-cone /apps/omni-channels-dsh/ /apps/omni-canvas-dsh/
           git -C "${dir}" fetch -q --depth 1 --filter=blob:none origin "${commit}"
           git -C "${dir}" checkout -q FETCH_HEAD

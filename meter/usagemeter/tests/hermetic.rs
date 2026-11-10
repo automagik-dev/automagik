@@ -16,10 +16,11 @@ const INNER: &str = "METER_TEST_DECOY_INNER";
 const DECOY: &str = "METER_TEST_DECOY_DIR";
 
 /// Every variable the meter reads a home, state directory or ledger from.
-const VARS: [(&str, &str); 8] = [
+const VARS: [(&str, &str); 9] = [
     ("DSH_HOME", "dsh"),
     ("CODEX_HOME", "codex"),
     ("CLAUDE_CONFIG_DIR", "claude"),
+    ("AGY_HOME", "agy"),
     ("HERDR_APP_HOME", "herdr"),
     (
         "HERDR_WORKERS_LEDGER",
@@ -52,6 +53,8 @@ fn populate(decoy: &Path) {
     write_lines(&claude, &[claude_line("m", "r", &ts, "model-a", &U1, 0)]);
     fs::create_dir_all(decoy.join("codex")).unwrap();
     fs::write(decoy.join("codex/state_5.sqlite"), "not a database").unwrap();
+    fs::create_dir_all(decoy.join("agy/conversations")).unwrap();
+    fs::write(decoy.join("agy/conversations/decoy.db"), "not a database").unwrap();
     fs::create_dir_all(decoy.join("herdr/automagik-herdr")).unwrap();
     // A ledger that would tag every call below as the decoy's bot, were it read.
     let ledger = decoy.join("herdr/automagik-herdr/workers.jsonl");
@@ -130,7 +133,12 @@ fn decoy_inner() {
     // CLAUDE_CONFIG_DIR, which point into the decoy here. Env::run (every in-process sync goes
     // through Env::sync) moves each harness root back under the temp home.
     let mut hand = meter::sync::Options::new(env.home(), env.state(), common::now());
-    for root in [&hand.dsh_root, &hand.codex_home, &hand.claude_root] {
+    for root in [
+        &hand.dsh_root,
+        &hand.codex_home,
+        &hand.claude_root,
+        &hand.agy_root,
+    ] {
         assert!(
             root.starts_with(&decoy),
             "the decoy reaches Options::new: {}",
@@ -156,7 +164,13 @@ fn decoy_inner() {
     );
     assert!(env.store().rows_since(i64::MIN).unwrap().is_empty());
     let o = env.hermetic(&hand);
-    for root in [&o.omp_root, &o.claude_root, &o.codex_home, &o.dsh_root] {
+    for root in [
+        &o.omp_root,
+        &o.claude_root,
+        &o.codex_home,
+        &o.dsh_root,
+        &o.agy_root,
+    ] {
         assert!(root.starts_with(env.home()), "{}", root.display());
     }
     assert!(o.app_home.unwrap().starts_with(env.home()));

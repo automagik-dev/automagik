@@ -10,7 +10,7 @@ the same rules apply. The monorepo's own contract is [AGENTS.md](../../AGENTS.md
 - Pocket Link, the Herdr desktop mod, is [herdr/mods/pocket-link](../../herdr/mods/pocket-link/README.md),
   beside the pack's mods but Pocket's: the pack never installs, updates or removes it.
 - The usage meter lives in its own repository,
-  [automagik-dev/usagemeter](https://github.com/automagik-dev/usagemeter); the Automagik Herdr pack
+  [automagik-si/usagemeter](https://github.com/automagik-si/usagemeter); the Automagik Herdr pack
   installs it. Pocket Link doesn't ([decision](docs/decisions/pocket-link-no-meter-installer.md)).
 - The version is the monorepo's one version (the root `package.json`, `bun scripts/version.ts`);
   the app's versionCode comes from it. CI is the root's `.github/workflows/` (`ci.yml`, `release.yml`).

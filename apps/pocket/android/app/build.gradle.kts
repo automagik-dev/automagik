@@ -56,7 +56,7 @@ android {
         // Where installed copies look for updates: latest.json on the monorepo's rolling pocket-lane release, which only a
         // Pocket release replaces (the APK stays on its vX.Y.Z release). A fork, or a local test server, points this at
         // its own with -Ppocket.updateUrl=.
-        val updates = providers.gradleProperty("pocket.updateUrl").orElse("https://github.com/automagik-dev/automagik/releases/download/pocket-lane/latest.json")
+        val updates = providers.gradleProperty("pocket.updateUrl").orElse("https://github.com/automagik-si/automagik/releases/download/pocket-lane/latest.json")
         buildConfigField("String", "UPDATE_URL", "\"${updates.get()}\"") }
     signingConfigs { if (signing.getProperty("storeFile") != null && signing.getProperty("password") != null) create("pocket") {
         storeFile = file(signing.getProperty("storeFile")); storePassword = signing.getProperty("password")

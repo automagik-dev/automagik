@@ -4,8 +4,8 @@
  * (scripts/herdr-lane.ts) is for the pack. Every release attaches automagik-am-<v>.tgz, and am's
  * updater reads only two files from the rolling `am-lane` release, which holds nothing else:
  *
- *   https://github.com/automagik-dev/automagik/releases/download/am-lane/am.json
- *   https://github.com/automagik-dev/automagik/releases/download/am-lane/am.json.sig
+ *   https://github.com/automagik-si/automagik/releases/download/am-lane/am.json
+ *   https://github.com/automagik-si/automagik/releases/download/am-lane/am.json.sig
  *
  * am.json names the newest am's release and its tarball's URL, sha256 and size; am.json.sig is
  * ed25519 over its exact bytes, detached, base64, made with the AM_LANE_KEY Actions secret, am's
@@ -41,6 +41,7 @@ import { spawnSync } from 'node:child_process';
 import { basename, join } from 'node:path';
 // @ts-expect-error am's plain JavaScript, no types
 import { LANE_RELEASE, PART, REPOSITORY, RELEASES, SCHEMA_VERSION, sequenceOf, tarballName, verifyPointer } from '../am/lib/lane.mjs';
+// The pointer's repository and tarball URL come from am/lib/lane.mjs (am's part): they move with it.
 import { keyIdOf, publicOf } from './herdr-lane';
 import { ROOT, signLane } from './lane';
 
@@ -179,7 +180,7 @@ if (import.meta.main) {
     console.log(verdict === 'skip' ? `::warning::am lane: ${message}` : `am lane: ${message}`);
     if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `sign=${verdict === 'sign' ? 'yes' : 'no'}\n`);
   } else if (command === 'keygen') {
-    const repo = flag('--repo', 'automagik-dev/automagik');
+    const repo = flag('--repo', 'automagik-si/automagik');
     const keyId = flag('--key-id', KEY_ID);
     const keys = readKeys();
     if (keys.some(entry => entry.keyId === keyId)) throw new Error(`am-keys.json already lists ${keyId}: pick a new --key-id to rotate`);

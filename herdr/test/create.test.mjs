@@ -1496,3 +1496,14 @@ test("the menu's Prompt saved twice in a worktree keeps the main checkout's tabs
     assert.equal(text, indented(JSON.parse(text), "\t"), `${words}: tabs kept`);
   }
 });
+
+test("menu Restart queued: an info toast names the pane and who must answer", async () => {
+  seed([MAIN, OMP]);
+  fakeCli({ queued: true, terminal: "t5", reason: "blocked", dialog: { question: "Do you want to proceed?", who: "the owner" } });
+  const { form, cx } = await menu({ live: "t5", terminal: "t5" });
+  form.restart({ key: project }, OMP, cx);
+  await cx.settle();
+  assert.equal(state.notes.length, 1);
+  assert.deepEqual(state.notes[0], { title: "Bots", level: "info", timeout: 15000,
+    body: `${OMP.name}: restart queued for t5 (blocked on "Do you want to proceed?" — the owner must answer); it will restart at its next idle.` });
+});

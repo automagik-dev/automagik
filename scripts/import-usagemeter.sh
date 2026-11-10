@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Imports automagik-dev/usagemeter (branch dev) under meter/usagemeter/, with its history, into the
+# Imports automagik-si/usagemeter (branch dev) under meter/usagemeter/, with its history, into the
 # branch checked out here (docs/rfcs/0017-usagemeter-crate.md, "The import").
 #
 #   scripts/import-usagemeter.sh [<source>] [<branch>] [<commit>]
 #
-# <source> defaults to https://github.com/automagik-dev/usagemeter.git, <branch> to dev and
+# <source> defaults to https://github.com/automagik-si/usagemeter.git, <branch> to dev and
 # <commit> to 61165ba1959c (chore(release): v0.5.0), the commit upstream froze at after its pull
 # requests 6 and 7 (RFC 0017, "Decided"). The commit must be the branch's tip or reachable from
 # it, else the run stops before anything is merged.
@@ -22,7 +22,7 @@
 # Needs git-filter-repo (`brew install git-filter-repo` or `pip install git-filter-repo`).
 set -euo pipefail
 
-SOURCE=${1:-https://github.com/automagik-dev/usagemeter.git}
+SOURCE=${1:-https://github.com/automagik-si/usagemeter.git}
 BRANCH=${2:-dev}
 COMMIT=${3:-61165ba1959c71b095c191c315850d81a00507a3}
 PREFIX=meter/usagemeter

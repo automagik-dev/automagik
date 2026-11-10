@@ -206,16 +206,33 @@ jobs:
           set -euo pipefail
           # The newest release, a full one or a plugin patch (calendar tags have six-digit minors).
           last=$(git tag --list 'v3.*' --sort=-v:refname | grep -E '^v3\.(0|[1-9][0-9]{0,3})\.(0|[1-9][0-9]{0,3})$' | head -1 || true)
-          # Commits since it other than the release's own (its version commit and index listing)
-          # and those that ship nothing (CI, docs, tests).
-          if [[ -n "${last}" && -z "$(git log --no-merges --format=%s "${last}..HEAD" | grep -vE '^(chore\(release\)|ci|docs|test)(\([^)]*\))?!?: ' || true)" ]]; then
-            echo "dev has nothing since ${last}: no release"
-          # Nor a change no install sees, whatever its commit says (a plugin's dev tools, its lint
-          # script: not in its package's files). A release of it would only ask every app to restart.
-          elif [[ -n "${last}" && "$(bun scripts/lane.ts ships "${last}")" == "no" ]]; then
-            echo "nothing since ${last} reaches an install: no release"
-          else
+          if [[ -z "${last}" ]]; then
+            # The first release: everything since the beginning ships.
             echo "release=true" >> "$GITHUB_OUTPUT"
+          else
+            # The path decision is authoritative, not the subjects: PR #759's test(pocket) squash
+            # merge touched Pocket's shipped Kotlin source while its subject looked inert (#767).
+            # Ask ships first; a failure stops the run instead of reading as "nothing reaches an
+            # install".
+            ships=$(bun scripts/lane.ts ships "${last}")
+            if [[ "${ships}" == "yes" ]]; then
+              echo "release=true" >> "$GITHUB_OUTPUT"
+            elif [[ "${ships}" != "no" ]]; then
+              echo "::error::scripts/lane.ts ships ${last} printed '${ships}', not yes or no"
+              exit 1
+            else
+              # The subjects are only a fast path to the wording: all inert (the release's own
+              # version commit and index listing, CI, docs, tests) with nothing shipping is "dev
+              # has nothing"; any other subject reaches no install either when the diff ships
+              # nothing (a plugin's dev tools, its lint script: not in its package's files).
+              subjects=$(git log --no-merges --format=%s "${last}..HEAD" \
+                | grep -vE '^(chore\(release\)|ci|docs|test)(\([^)]*\))?!?: ' || true)
+              if [[ -n "${subjects}" ]]; then
+                echo "nothing since ${last} reaches an install: no release"
+              else
+                echo "dev has nothing since ${last}: no release"
+              fi
+            fi
           fi
 
       - name: The gates the release stands on
@@ -495,12 +512,12 @@ jobs:
           METER: ${{ steps.lane.outputs.meter }}
         run: |
           set -euo pipefail
-          notes="\`@automagik/acp-dsh\`, \`@automagik/bots-dsh\`, \`@automagik/locale-pt-br-dsh\`, \`@automagik/welcome-dsh\` for DeepSeek Harness, and the Automagik desktop app. Install the plugins from the [Automagik market](https://github.com/automagik-dev/dsh-marketplace) or from an Omni's own market; \`plugins.json\` lists each tarball's integrity. The desktop builds follow when they are done."
+          notes="\`@automagik/acp-dsh\`, \`@automagik/bots-dsh\`, \`@automagik/locale-pt-br-dsh\`, \`@automagik/welcome-dsh\` for DeepSeek Harness, and the Automagik desktop app. Install the plugins from the [Automagik market](https://github.com/automagik-si/dsh-marketplace) or from an Omni's own market; \`plugins.json\` lists each tarball's integrity. The desktop builds follow when they are done."
           [[ "${KIND}" == "herdr" ]] && notes="The Automagik Herdr pack alone (no plugins, no desktop build)."
           [[ "${KIND}" == "pocket" ]] && notes="Automagik Pocket (no plugins, no desktop build)."
           [[ "${KIND}" == "am" ]] && notes="am, the Automagik command, alone (no plugins, no desktop build)."
           [[ "${KIND}" == "meter" ]] && notes="usagemeter, the Automagik token meter, alone (no plugins, no desktop build)."
-          [[ "${HERDR}" == "yes" ]] && notes="${notes} Automagik Herdr: \`automagik-herdr-pack-${VERSION}.tgz\` (its sha256 in \`.sha256\`); install with \`curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash\`, or run \`automagik-herdr update\`."
+          [[ "${HERDR}" == "yes" ]] && notes="${notes} Automagik Herdr: \`automagik-herdr-pack-${VERSION}.tgz\` (its sha256 in \`.sha256\`); install with \`curl -fsSL https://raw.githubusercontent.com/automagik-si/automagik/main/herdr/install.sh | bash\`, or run \`automagik-herdr update\`."
           notes="${notes} am: \`automagik-am-${VERSION}.tgz\` (its sha256 in \`.sha256\`); \`am update\` takes it from the signed am-lane."
           [[ "${METER}" == "yes" ]] && notes="${notes} usagemeter: \`usagemeter-darwin-arm64\`, \`usagemeter-darwin-x86_64\`, \`usagemeter-linux-x86_64\` and \`usagemeter-linux-aarch64\` follow (the meter jobs) with \`usagemeter.SHA256SUMS\` and their signed pointer, \`meter.json\` and \`meter.json.sig\`."
           [[ "${POCKET}" == "yes" ]] && notes="${notes} Automagik Pocket: \`automagik-pocket-${VERSION}.apk\` follows (the Pocket job) with \`latest.json\`; installed phones update on their own."
