@@ -168,9 +168,24 @@ export function install(rt) {
   // The endpoints whose text reaches a Bot or a model: one that carries a Claude sign-in state
   // acp-dsh showed is refused before anything is queued (cli-login.js, loginTextMatches).
   const CODE_GUARDED = new Set(['send', 'side-ask', 'answer-question', 'view-reply', 'memory-ask'])
-  const textsOf = (value, depth = 0, out = []) => {
-    if (typeof value === 'string') out.push(value)
-    else if (depth < 4 && value !== null && typeof value === 'object') for (const item of Object.values(value).slice(0, 200)) textsOf(item, depth + 1, out)
+  // Every string of the payload, at any depth and width, its keys included (#871): the walk
+  // stops at nothing, so no nesting hides a text. The payload is the parsed JSON body of one
+  // buffered request, so the walk is linear in a size DSH already bounds, and has no cycle
+  // (`seen` only keeps another caller's object from looping). None of these endpoints takes a
+  // file: an attachment reaches a Bot through DSH's own composer, never through this route.
+  const textsOf = (payload) => {
+    const out = []
+    const seen = new Set()
+    const stack = [payload]
+    while (stack.length > 0) {
+      const value = stack.pop()
+      if (typeof value === 'string') out.push(value)
+      else if (value !== null && typeof value === 'object' && !seen.has(value)) {
+        seen.add(value)
+        if (Array.isArray(value)) for (const item of value) stack.push(item)
+        else for (const key of Object.keys(value)) stack.push(key, value[key])
+      }
+    }
     return out
   }
 
