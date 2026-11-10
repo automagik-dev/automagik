@@ -375,7 +375,7 @@ fn an_unknown_transcript_schema_is_refused_by_name() {
 }
 
 #[test]
-fn a_usage_row_without_a_step_time_is_refused_by_name() {
+fn a_row_with_missing_steps_is_held() {
     let env = Env::new();
     let path = env.agy("conv-no-time.db");
     let created = at("2026-01-15T09:00:00Z");
@@ -386,9 +386,9 @@ fn a_usage_row_without_a_step_time_is_refused_by_name() {
     drop(c);
     let r = env.run(&env.opts());
     let doc = r.summary.expect("a summary");
-    assert_eq!(doc["sources"]["agy"]["status"], "unsupported", "{doc}");
+    assert_eq!(doc["sources"]["agy"]["status"], "degraded", "{doc}");
     let reason = doc["sources"]["agy"]["reason"].as_str().unwrap();
-    assert!(reason.contains("step time"), "{reason}");
+    assert!(reason.contains("still being written"), "{reason}");
     assert!(
         env.store()
             .rows_since(i64::MIN)
@@ -421,7 +421,7 @@ fn agy_source(doc: &serde_json::Value) -> (String, String) {
 }
 
 #[test]
-fn a_refused_row_stays_unsupported_after_a_second_sync() {
+fn a_held_row_stays_degraded_after_a_second_sync() {
     let env = Env::new();
     let path = env.agy("conv-refused.db");
     write_db(&path, at("2026-01-15T09:55:00Z"));
@@ -431,8 +431,11 @@ fn a_refused_row_stays_unsupported_after_a_second_sync() {
     for run in 1..=2 {
         let r = env.run(&env.opts());
         let (status, reason) = agy_source(&r.summary.expect("a summary"));
-        assert_eq!(status, "unsupported", "run {run}: {reason}");
-        assert!(reason.contains("step time"), "run {run}: {reason}");
+        assert_eq!(status, "degraded", "run {run}: {reason}");
+        assert!(
+            reason.contains("still being written"),
+            "run {run}: {reason}"
+        );
         assert!(
             env.store()
                 .rows_since(i64::MIN)
@@ -549,7 +552,7 @@ fn a_refused_timeless_row_is_read_when_its_step_arrives() {
     drop(c);
     let r = env.run(&env.opts());
     let (status, reason) = agy_source(&r.summary.expect("a summary"));
-    assert_eq!(status, "unsupported", "{reason}");
+    assert_eq!(status, "degraded", "{reason}");
     // The row after the held one still counts; only the timeless Gemini row is missing.
     assert_eq!(env.totals()["claude-opus-5-5"].total(), 6_600);
 
@@ -904,4 +907,68 @@ fn two_rewound_rows_refilled_before_a_sync_are_both_read() {
         env.totals()["claude-opus-5-5"].total(),
         6_600 + 2_000 + 1_000 + 3_000
     );
+}
+
+#[test]
+fn a_step_time_that_lands_later_does_not_double_count() {
+    let env = Env::new();
+    let path = env.agy("conv-late-step-time.db");
+    base_db(&path, at("2026-01-15T09:55:00Z"));
+    put_gen(
+        &path,
+        0,
+        &gemini_gen(&usage(1000, 4000, 50, 200, 120), &[1]),
+    );
+    put_gen(&path, 1, &opus_gen(&usage(500, 0, 0, 100, 0), &[2, 3]));
+    // An earlier step of the Opus row has no time on the first sync.
+    let c = Connection::open(&path).unwrap();
+    c.execute("UPDATE steps SET metadata = ?1 WHERE idx = 2", [uint(3, 2)])
+        .unwrap();
+    drop(c);
+
+    let r = env.run(&env.opts());
+    let (status, reason) = agy_source(&r.summary.expect("a summary"));
+    assert_eq!(status, "degraded", "{reason}");
+    assert!(!env.totals().contains_key("claude-opus-5-5"));
+
+    // The earlier step's time lands: the row is counted once, with a complete step set.
+    let c = Connection::open(&path).unwrap();
+    c.execute(
+        "UPDATE steps SET metadata = ?1 WHERE idx = 2",
+        [step_metadata(at("2026-01-15T10:02:00Z") / 1000)],
+    )
+    .unwrap();
+    drop(c);
+    let r = env.run(&env.opts());
+    assert_eq!(r.health.events, 1, "{r:?}");
+    assert_eq!(env.totals()["claude-opus-5-5"].total(), 600);
+    let (status, reason) = agy_source(&r.summary.expect("a summary"));
+    assert_eq!(status, "ok", "{reason}");
+
+    // The stored cursor names the complete step set, so a third sync reads nothing new.
+    let saved = env.store().file(&path.to_string_lossy()).unwrap().unwrap();
+    let ctx = saved.ctx.agy.expect("an agy cursor");
+    assert_eq!(ctx.max_gen, 1);
+    assert_eq!(ctx.cursor_ts, at("2026-01-15T10:02:00Z") + 250);
+    let r = env.run(&env.opts());
+    assert_eq!(r.health.events, 0, "{r:?}");
+    assert_eq!(env.totals()["claude-opus-5-5"].total(), 600);
+}
+
+#[test]
+fn a_counted_row_behind_a_hold_counts_once_when_its_output_grows() {
+    let env = Env::new();
+    let path = env.agy("conv-output-grows.db");
+    base_db(&path, at("2026-01-15T09:55:00Z"));
+    put_gen(&path, 0, &gemini_gen(&[], &[1, 2]));
+    put_gen(&path, 1, &opus_gen(&usage(500, 0, 0, 100, 0), &[3]));
+    let r = env.run(&env.opts());
+    assert_eq!(r.health.events, 1);
+    assert_eq!(env.totals()["claude-opus-5-5"].total(), 600);
+
+    // The counted row behind the held one grows its output: re-reading it must not re-count it.
+    put_gen(&path, 1, &opus_gen(&usage(500, 0, 0, 200, 0), &[3]));
+    let r = env.run(&env.opts());
+    assert_eq!(r.health.events, 0, "{r:?}");
+    assert_eq!(env.totals()["claude-opus-5-5"].total(), 600);
 }
