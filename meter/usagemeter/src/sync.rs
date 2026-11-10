@@ -208,6 +208,9 @@ pub struct Report {
     pub links_changed: usize,
     /// Calls whose attribution a launch or link learned this run changed, moved between rollups.
     pub calls_moved: u64,
+    /// Calls whose attribution changed but which no rollup row held, so were left where they
+    /// were rather than counted twice.
+    pub calls_refused: u64,
     /// Sessions and start folders still waiting for recompute (the budget ran out).
     pub attribution_backlog: i64,
     /// Evidence rows dropped by the retention bounds.
@@ -224,6 +227,9 @@ pub struct Backfilled {
     pub adopted: u64,
     /// Calls re-read that no pre-evidence row held with the same logging: left as they were.
     pub left_alone: u64,
+    /// Calls the rollups of the backfilled hours held beyond their evidence (pruned, and no log
+    /// gave it back), moved to those hours' frozen rows when the backfill ended: before evidence.
+    pub unbacked: u64,
     pub done: bool,
 }
 
@@ -1032,8 +1038,9 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
         let cwds = evidence::cwds(&store.conn)?;
         attr.resolver.look_above(cwds.iter().map(String::as_str));
         links_pass(&mut store, &mut attr, &snap, now, &mut report)?;
-        let (moved, left) = recompute(&mut store, &mut attr, deadline, now)?;
+        let (moved, refused, left) = recompute(&mut store, &mut attr, deadline, now)?;
         report.calls_moved = moved;
+        report.calls_refused = refused;
         report.attribution_backlog = left;
         if left > 0 {
             eprintln!(
@@ -1466,14 +1473,15 @@ const RECOMPUTE_KEYS: usize = 64;
 
 /// Recomputes the attribution of the calls whose sessions or start folders are queued, moving
 /// each changed call's tokens between rollups with its evidence row, one transaction per batch,
-/// until the queue is empty or `deadline` passes. Returns the calls moved and what is left.
+/// until the queue is empty or `deadline` passes. Returns the calls moved, the calls refused (no
+/// rollup row held them, so moving one would count it twice) and what is left.
 fn recompute(
     store: &mut Store,
     attr: &mut Attributor,
     deadline: Instant,
     now: i64,
-) -> Result<(u64, i64), Error> {
-    let mut moved = 0u64;
+) -> Result<(u64, u64, i64), Error> {
+    let (mut moved, mut refused) = (0u64, 0u64);
     while Instant::now() < deadline {
         let keys = evidence::dirty_batch(&store.conn, RECOMPUTE_KEYS)?;
         if keys.is_empty() {
@@ -1492,10 +1500,13 @@ fn recompute(
                 }
             }
         }
-        let r = (|| -> rusqlite::Result<()> {
+        let r = (|| -> rusqlite::Result<u64> {
             let tx = store.conn.transaction()?;
+            let mut n = 0;
             for (c, to) in &changes {
-                evidence::reattribute(&tx, &mut store.intern, c, to, now)?;
+                if evidence::reattribute(&tx, &mut store.intern, c, to, now)? {
+                    n += 1;
+                }
             }
             {
                 let mut del = tx.prepare_cached("DELETE FROM ev_dirty WHERE k = ?1")?;
@@ -1503,15 +1514,21 @@ fn recompute(
                     del.execute([k])?;
                 }
             }
-            tx.commit()
+            tx.commit()?;
+            Ok(n)
         })();
-        if let Err(e) = r {
-            store.intern.clear();
-            return Err(e.into());
+        match r {
+            Ok(n) => {
+                moved += n;
+                refused += changes.len() as u64 - n;
+            }
+            Err(e) => {
+                store.intern.clear();
+                return Err(e.into());
+            }
         }
-        moved += changes.len() as u64;
     }
-    Ok((moved, evidence::dirty_count(&store.conn)?))
+    Ok((moved, refused, evidence::dirty_count(&store.conn)?))
 }
 
 /// The evidence backfill (`sync --evidence-backfill --days N`, RFC 0018 (b), now recomputing
@@ -1664,6 +1681,10 @@ fn evidence_backfill(
     // queued for the recompute pass, which re-derives its attribution.
     let tx = store.conn.transaction()?;
     if from < evidence_from {
+        // What a rollup of those hours holds beyond its evidence (evidence the size or day bound
+        // pruned, that no log could give back: Codex, or a log gone) counts as before evidence,
+        // never as attributed with nothing behind it (the Reviewer's L2 on PR 875).
+        out.unbacked = evidence::freeze_unbacked(&tx, from, evidence_from, now)?;
         tx.execute(
             "INSERT INTO meta(k, v) VALUES(?1, ?2) ON CONFLICT(k) DO UPDATE SET v = excluded.v",
             [evidence::FROM_META, &from.to_string()],

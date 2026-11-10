@@ -616,48 +616,47 @@ pub fn calls_of(c: &Connection, key: &str) -> rusqlite::Result<Vec<Stored>> {
 }
 
 /// Moves one call to a new attribution: its evidence row points at the new actor, and its tokens
-/// leave the old rollup row for the new one. The caller holds the transaction.
+/// leave the old rollup row for the new one. The caller holds the transaction. When no rollup row
+/// holds the call it moves nothing, its evidence included, and says so (false): totals never
+/// change.
 pub fn reattribute(
     tx: &Transaction<'_>,
     intern: &mut Interner,
     call: &Stored,
     to: &Actor,
     now_ms: i64,
-) -> rusqlite::Result<()> {
+) -> rusqlite::Result<bool> {
+    let hour = crate::time::hour_start(call.ts_ms);
+    let (old, p) = rollup_key(&call.dim, &call.actor, hour);
+    let (new, _) = rollup_key(&call.dim, to, hour);
+    // The row that counted the call: its id now, and for an ambiguous or unlinked call also the id
+    // a meter before RFC 0021 delivery 6 gave it, which left the reason out of the key (a store
+    // that meter wrote, then upgraded).
+    let mut ids = vec![old.id(p)];
+    if old.attr.as_ref().is_some_and(|a| a.reason.is_some()) {
+        let mut pre = old.clone();
+        if let Some(a) = pre.attr.as_mut() {
+            a.reason = None;
+        }
+        ids.push(pre.id(p));
+    }
+    let mut from = None;
+    for id in ids {
+        if debit(tx, &id, call, now_ms)? {
+            from = Some(id);
+            break;
+        }
+    }
+    // No row holds the call's tokens: moving it would count it twice, so it stays as it is.
+    let Some(row) = from else {
+        return Ok(false);
+    };
+    tx.execute("DELETE FROM usage WHERE id = ?1 AND events <= 0", [&row])?;
     let id = intern.actor(tx, to)?;
     tx.execute(
         "UPDATE evidence SET actor = ?1 WHERE id = ?2",
         params![id, call.id],
     )?;
-    let hour = crate::time::hour_start(call.ts_ms);
-    let (old, p) = rollup_key(&call.dim, &call.actor, hour);
-    let (new, _) = rollup_key(&call.dim, to, hour);
-    let row = old.id(p);
-    tx.execute(
-        "UPDATE usage SET input_uncached = input_uncached - ?2, cache_read = cache_read - ?3,
-           cache_write_5m = cache_write_5m - ?4, cache_write_1h = cache_write_1h - ?5,
-           output = output - ?6, reasoning = reasoning - ?7, unsplit = unsplit - ?8,
-           events = events - 1,
-           usd_events = coalesce(usd_events, 0) - ?9,
-           reported_usd = CASE WHEN coalesce(usd_events, 0) - ?9 <= 0 THEN NULL
-                               ELSE reported_usd - coalesce(?10, 0) END,
-           updated_ms = ?11
-         WHERE id = ?1",
-        params![
-            row,
-            call.tokens.input_uncached,
-            call.tokens.cache_read,
-            call.tokens.cache_write_5m,
-            call.tokens.cache_write_1h,
-            call.tokens.output,
-            call.tokens.reasoning,
-            call.tokens.unsplit,
-            i64::from(call.reported_usd.is_some()),
-            call.reported_usd,
-            now_ms
-        ],
-    )?;
-    tx.execute("DELETE FROM usage WHERE id = ?1 AND events <= 0", [&row])?;
     let mut rows = BTreeMap::new();
     rows.insert(
         (new, p),
@@ -669,8 +668,46 @@ pub fn reattribute(
             events: 1,
         },
     );
-    crate::store::upsert_rows(tx, &rows, now_ms)
+    crate::store::upsert_rows(tx, &rows, now_ms)?;
+    Ok(true)
 }
+
+/// Takes `call` out of the rollup row `row`, only when that row still holds all of it (an event
+/// and at least its tokens). Whether it did.
+fn debit(tx: &Transaction<'_>, row: &str, call: &Stored, now_ms: i64) -> rusqlite::Result<bool> {
+    let t = &call.tokens;
+    let n = tx.execute(
+        "UPDATE usage SET input_uncached = input_uncached - ?2, cache_read = cache_read - ?3,
+           cache_write_5m = cache_write_5m - ?4, cache_write_1h = cache_write_1h - ?5,
+           output = output - ?6, reasoning = reasoning - ?7, unsplit = unsplit - ?8,
+           events = events - 1,
+           usd_events = coalesce(usd_events, 0) - ?9,
+           reported_usd = CASE WHEN coalesce(usd_events, 0) - ?9 <= 0 THEN NULL
+                               ELSE reported_usd - coalesce(?10, 0) END,
+           updated_ms = ?11
+         WHERE id = ?1 AND events >= 1 AND input_uncached >= ?2 AND cache_read >= ?3
+           AND cache_write_5m >= ?4 AND cache_write_1h >= ?5 AND output >= ?6
+           AND reasoning >= ?7 AND unsplit >= ?8",
+        params![
+            row,
+            t.input_uncached,
+            t.cache_read,
+            t.cache_write_5m,
+            t.cache_write_1h,
+            t.output,
+            t.reasoning,
+            t.unsplit,
+            i64::from(call.reported_usd.is_some()),
+            call.reported_usd,
+            now_ms
+        ],
+    )?;
+    Ok(n == 1)
+}
+
+/// The `meta` key set once every ambiguous and unlinked rollup is keyed with its reason (RFC 0021
+/// delivery 6): a store an older meter wrote is re-keyed on its first open by this one.
+pub const REASON_KEYED_META: &str = "rollups_reason_keyed";
 
 /// The `meta` key of an evidence backfill in progress: the start (ms) it re-reads the logs back
 /// to (`sync --evidence-backfill`, RFC 0018 (b) and RFC 0021 (c)).
@@ -1340,6 +1377,148 @@ pub fn actor_totals(
         }
     }
     Ok(out)
+}
+
+/// When an evidence backfill ends: what each schema 3 rollup of an hour from `from_ms` to `to_ms`
+/// (the old `evidence_from`) holds beyond what its evidence implies moves to that hour's frozen
+/// row (no attribution), so it counts as before evidence, never as attributed with no evidence
+/// behind it. That part is usage whose evidence a retention bound pruned and that no log gave
+/// back: a Codex thread (its deltas carry no request identity a rerun could adopt), or a log gone.
+/// Totals never change. Returns the calls moved.
+pub fn freeze_unbacked(
+    tx: &Transaction<'_>,
+    from_ms: i64,
+    to_ms: i64,
+    now_ms: i64,
+) -> rusqlite::Result<u64> {
+    let implied = implied_rollups(tx)?;
+    struct Row {
+        id: String,
+        key: RollupKey,
+        precision: Precision,
+        squad: Option<String>,
+        tokens: Tokens,
+        events: i64,
+        usd: Option<f64>,
+        usd_events: i64,
+    }
+    let rows: Vec<Row> = {
+        let mut st = tx.prepare(
+            "SELECT id, bot, role, harness, model, machine, repo, branch, hour_ms, precision, squad,
+                    input_uncached, cache_read, cache_write_5m, cache_write_1h, output, reasoning,
+                    unsplit, events, reported_usd, coalesce(usd_events, 0)
+             FROM usage WHERE actor_state IS NOT NULL AND hour_ms >= ?1 AND hour_ms < ?2",
+        )?;
+        st.query_map(params![from_ms, to_ms], |r| {
+            Ok(Row {
+                id: r.get(0)?,
+                key: RollupKey {
+                    bot: r.get(1)?,
+                    role: r.get(2)?,
+                    harness: r.get(3)?,
+                    model: r.get(4)?,
+                    machine: r.get(5)?,
+                    repo: r.get(6)?,
+                    branch: r.get(7)?,
+                    hour_ms: r.get(8)?,
+                    squad: None,
+                    attr: None,
+                },
+                precision: if r.get::<_, String>(9)? == "total_only" {
+                    Precision::TotalOnly
+                } else {
+                    Precision::Exact
+                },
+                squad: r.get(10)?,
+                tokens: Tokens {
+                    input_uncached: r.get(11)?,
+                    cache_read: r.get(12)?,
+                    cache_write_5m: r.get(13)?,
+                    cache_write_1h: r.get(14)?,
+                    output: r.get(15)?,
+                    reasoning: r.get(16)?,
+                    unsplit: r.get(17)?,
+                },
+                events: r.get(18)?,
+                usd: r.get(19)?,
+                usd_events: r.get(20)?,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?
+    };
+    let mut moved = 0u64;
+    for row in rows {
+        let (want, want_events) = implied.get(&row.id).copied().unwrap_or_default();
+        let t = &row.tokens;
+        let extra = Tokens {
+            input_uncached: t.input_uncached - want.input_uncached,
+            cache_read: t.cache_read - want.cache_read,
+            cache_write_5m: t.cache_write_5m - want.cache_write_5m,
+            cache_write_1h: t.cache_write_1h - want.cache_write_1h,
+            output: t.output - want.output,
+            reasoning: t.reasoning - want.reasoning,
+            unsplit: t.unsplit - want.unsplit,
+        };
+        let events = row.events - want_events;
+        let parts = [
+            extra.input_uncached,
+            extra.cache_read,
+            extra.cache_write_5m,
+            extra.cache_write_1h,
+            extra.output,
+            extra.reasoning,
+            extra.unsplit,
+        ];
+        // Nothing beyond the evidence, or a row its evidence outgrows (never written so): left.
+        if events <= 0 || parts.iter().any(|&n| n < 0) {
+            continue;
+        }
+        // A row with no evidence at all moves whole, its reported amount too; a row partly backed
+        // keeps its amount, which the calls behind its evidence reported.
+        let whole = want_events == 0;
+        let (usd, usd_events) = if whole {
+            (row.usd, row.usd_events)
+        } else {
+            (None, 0)
+        };
+        tx.execute(
+            "UPDATE usage SET input_uncached = input_uncached - ?2, cache_read = cache_read - ?3,
+               cache_write_5m = cache_write_5m - ?4, cache_write_1h = cache_write_1h - ?5,
+               output = output - ?6, reasoning = reasoning - ?7, unsplit = unsplit - ?8,
+               events = events - ?9, usd_events = coalesce(usd_events, 0) - ?10,
+               reported_usd = CASE WHEN ?11 THEN NULL ELSE reported_usd END, updated_ms = ?12
+             WHERE id = ?1",
+            params![
+                row.id,
+                extra.input_uncached,
+                extra.cache_read,
+                extra.cache_write_5m,
+                extra.cache_write_1h,
+                extra.output,
+                extra.reasoning,
+                extra.unsplit,
+                events,
+                usd_events,
+                whole,
+                now_ms
+            ],
+        )?;
+        tx.execute("DELETE FROM usage WHERE id = ?1 AND events <= 0", [&row.id])?;
+        let mut frozen = BTreeMap::new();
+        frozen.insert(
+            (row.key, row.precision),
+            crate::store::Pending {
+                squad: row.squad,
+                tokens: extra,
+                usd,
+                usd_events,
+                events,
+            },
+        );
+        crate::store::upsert_rows(tx, &frozen, now_ms)?;
+        moved += events as u64;
+    }
+    Ok(moved)
 }
 
 /// The rollups the evidence implies, per row id: what every schema 3 row of an hour from

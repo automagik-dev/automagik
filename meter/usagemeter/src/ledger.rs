@@ -988,6 +988,11 @@ impl Index {
                     .find(|(from, to, _)| *from <= t && to.is_none_or(|e| t < e))
             })
             .map(|(_, _, bot)| bot.clone());
+        // A binding to a bot past the cap cannot be read: the seat's call is Unknown, never the
+        // start row's bot or a shortened name.
+        if bound.as_deref().is_some_and(|b| !fits(b)) {
+            return Claim::Unknown;
+        }
         Claim::Tags(
             l.tags
                 .iter()
@@ -1542,9 +1547,22 @@ fn parse_start(row: &Map<String, Value>) -> Option<StartRow> {
     })
 }
 
+/// The most characters a bot, role or squad may have: the query contract prints each, capped at
+/// 64 (`envelope.schema.json`), and RFC 0018 bounds every printed string.
+pub const TAG_CHARS: usize = 64;
+
+fn fits(s: &str) -> bool {
+    s.chars().count() <= TAG_CHARS
+}
+
 fn parse_tag(row: &Map<String, Value>, kind: Kind) -> Option<Tag> {
     str_field(row, "terminal")?;
     let bot = owned(row, "bot").or_else(|| owned(row, "botId"))?;
+    // A bot past the cap is a record that cannot be read: the launch then claims its calls as
+    // Unknown (ambiguous), never under a shortened name another bot could share.
+    if !fits(&bot) {
+        return None;
+    }
     // Rows written before `branch` existed carried the branch in `task`.
     let (task, branch) = if row.contains_key("branch") {
         (owned(row, "task"), owned(row, "branch"))
@@ -1552,15 +1570,18 @@ fn parse_tag(row: &Map<String, Value>, kind: Kind) -> Option<Tag> {
         (None, owned(row, "task"))
     };
     let task = if kind == Kind::Seat { None } else { task };
+    // A role or squad past the cap is unrecorded: null and unknown, never cut short.
+    let long = |k: &str| str_field(row, k).is_some_and(|v| !fits(v));
     let unrecorded = ["role", "squad"]
         .into_iter()
-        .filter(|k| !row.contains_key(*k))
+        .filter(|k| !row.contains_key(*k) || long(k))
         .collect();
+    let field = |k: &str| owned(row, k).filter(|v| fits(v));
     Some(Tag {
         bot,
         kind,
-        role: owned(row, "role"),
-        squad: owned(row, "squad"),
+        role: field("role"),
+        squad: field("squad"),
         unrecorded,
         task,
         project: owned(row, "project"),

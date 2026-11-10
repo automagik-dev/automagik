@@ -211,8 +211,10 @@ impl Store {
                 }
                 conn.execute_batch(TABLES)?;
                 add_schema_3(&conn)?;
+                // A new store's rollups are keyed with their reason from the start (RFC 0021
+                // delivery 6): only a store an older meter made is ever re-keyed.
                 conn.execute(
-                    "INSERT INTO meta(k, v) VALUES('schema_version', ?1), (?2, ?3)
+                    "INSERT INTO meta(k, v) VALUES('schema_version', ?1), (?2, ?3), (?4, '1')
                      ON CONFLICT(k) DO NOTHING",
                     [
                         SCHEMA_VERSION.to_string(),
@@ -220,6 +222,7 @@ impl Store {
                         evidence::SessionKey::random()
                             .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?
                             .to_hex(),
+                        evidence::REASON_KEYED_META.to_string(),
                     ],
                 )?;
                 Ok(true)
@@ -247,6 +250,26 @@ impl Store {
             conn.execute_batch(
                 "ALTER TABLE files ADD COLUMN head_skip INTEGER NOT NULL DEFAULT 0",
             )?;
+        }
+        // A schema 3 store a meter before RFC 0021 delivery 6 wrote lacks the rollup columns added
+        // since (`reason`): add them in place, at the same version. Its rows keep their ids and
+        // read as they were (a null reason is `no_record` or `claimants_differ` by its state).
+        if !fresh && table_exists(&conn, "evidence")? {
+            for (col, ty) in evidence::USAGE_COLUMNS {
+                if !column_exists(&conn, "usage", col)? {
+                    conn.execute_batch(&format!("ALTER TABLE usage ADD COLUMN {col} {ty}"))?;
+                }
+            }
+            let keyed: Option<String> = conn
+                .query_row(
+                    "SELECT v FROM meta WHERE k = ?1",
+                    [evidence::REASON_KEYED_META],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if keyed.is_none() {
+                rekey_reasons(&conn)?;
+            }
         }
         let view: Option<String> = conn
             .query_row(
@@ -330,6 +353,8 @@ impl Store {
             put(evidence::KEY_META, &key.to_hex()).map_err(db)?;
         }
         put("schema_version", &SCHEMA_VERSION.to_string()).map_err(db)?;
+        // Every rollup this meter writes is keyed with its reason: nothing to re-key later.
+        put(evidence::REASON_KEYED_META, "1").map_err(db)?;
         if reset.is_none() {
             let after = row_counts(&tx).map_err(db)?;
             for (table, n) in &before {
@@ -750,6 +775,107 @@ pub fn no_room(e: &rusqlite::Error) -> bool {
             if f.code == rusqlite::ErrorCode::DiskFull
                 || f.extended_code == rusqlite::ffi::SQLITE_IOERR_WRITE
     )
+}
+
+/// Gives the ambiguous and unlinked rollups a meter before RFC 0021 delivery 6 wrote (no reason,
+/// an id without one) the reason that meter meant (`claimants_differ` for ambiguous, `no_record`
+/// for unlinked, the only ones it recorded) and the id this meter derives for it, merged into a
+/// row already under that id. One transaction; totals never change. Then `meta` records it, so
+/// later opens skip the scan.
+fn rekey_reasons(conn: &Connection) -> rusqlite::Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    struct Old {
+        id: String,
+        key: RollupKey,
+        precision: Precision,
+    }
+    let rows: Vec<Old> = {
+        let mut st = tx.prepare(
+            "SELECT id, bot, role, harness, model, machine, repo, branch, hour_ms, squad,
+                    actor_state, kind, basis, branch_basis, unrecorded, precision
+             FROM usage WHERE reason IS NULL AND actor_state IN ('ambiguous', 'unlinked')",
+        )?;
+        st.query_map([], |r| {
+            Ok(Old {
+                id: r.get(0)?,
+                key: RollupKey {
+                    bot: r.get(1)?,
+                    role: r.get(2)?,
+                    harness: r.get(3)?,
+                    model: r.get(4)?,
+                    machine: r.get(5)?,
+                    repo: r.get(6)?,
+                    branch: r.get(7)?,
+                    hour_ms: r.get(8)?,
+                    squad: r.get(9)?,
+                    attr: Some(RollupAttr {
+                        state: r.get(10)?,
+                        kind: r.get(11)?,
+                        basis: r.get(12)?,
+                        branch_basis: r.get::<_, Option<String>>(13)?.unwrap_or_default(),
+                        unrecorded: r.get(14)?,
+                        reason: None,
+                    }),
+                },
+                precision: if r.get::<_, String>(15)? == "total_only" {
+                    Precision::TotalOnly
+                } else {
+                    Precision::Exact
+                },
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?
+    };
+    for mut o in rows {
+        // Only a row under the id that meter gave it: any other is left as it is.
+        if o.key.id(o.precision) != o.id {
+            continue;
+        }
+        let Some(a) = o.key.attr.as_mut() else {
+            continue;
+        };
+        let reason = if a.state == "ambiguous" {
+            "claimants_differ"
+        } else {
+            "no_record"
+        };
+        a.reason = Some(reason.to_string());
+        let new = o.key.id(o.precision);
+        let taken: bool = tx.query_row(
+            "SELECT count(*) > 0 FROM usage WHERE id = ?1",
+            [&new],
+            |r| r.get(0),
+        )?;
+        if taken {
+            tx.execute(
+                "UPDATE usage SET
+                   input_uncached = input_uncached + o.input_uncached,
+                   cache_read = cache_read + o.cache_read,
+                   cache_write_5m = cache_write_5m + o.cache_write_5m,
+                   cache_write_1h = cache_write_1h + o.cache_write_1h,
+                   output = output + o.output, reasoning = reasoning + o.reasoning,
+                   unsplit = unsplit + o.unsplit, events = usage.events + o.events,
+                   usd_events = coalesce(usage.usd_events, 0) + coalesce(o.usd_events, 0),
+                   reported_usd = CASE WHEN o.reported_usd IS NULL THEN usage.reported_usd
+                                       ELSE coalesce(usage.reported_usd, 0) + o.reported_usd END,
+                   updated_ms = max(usage.updated_ms, o.updated_ms)
+                 FROM (SELECT * FROM usage WHERE id = ?2) AS o
+                 WHERE usage.id = ?1",
+                params![new, o.id],
+            )?;
+            tx.execute("DELETE FROM usage WHERE id = ?1", [&o.id])?;
+        } else {
+            tx.execute(
+                "UPDATE usage SET id = ?1, reason = ?2 WHERE id = ?3",
+                params![new, reason, o.id],
+            )?;
+        }
+    }
+    tx.execute(
+        "INSERT INTO meta(k, v) VALUES(?1, '1') ON CONFLICT(k) DO NOTHING",
+        [evidence::REASON_KEYED_META],
+    )?;
+    tx.commit()
 }
 
 /// Adds schema 3's columns and tables where they are missing.

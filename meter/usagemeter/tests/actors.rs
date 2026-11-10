@@ -234,12 +234,405 @@ fn usage_given_to_no_bot_says_why() {
     assert_eq!(v["machine"]["id"], MACHINE);
 }
 
+// The Reviewer's M1 on PR 875: a start row's bot, role and squad are printed, and the contract
+// caps each at 64 characters. A bot past the cap is a record that cannot be read (its calls are
+// ambiguous, never under a shortened name another bot could share); a role or squad past it is
+// unrecorded. Either way the answer is one the schema accepts.
+#[test]
+fn a_tag_past_the_contracts_cap_is_never_printed_or_cut_short() {
+    let long = |c: char| c.to_string().repeat(300);
+    let (bot, role, squad) = (long('b'), long('r'), long('s'));
+    let mut s = Scene::migrated("2026-09-11T23:30:00Z", &[]);
+    let (w41, w42) = (wt("gn-41"), wt("gn-42"));
+    let c = t("2026-11-01T08:00:00Z");
+    s.start(worker(
+        "t41",
+        &bot,
+        "dev",
+        "lark",
+        "claude",
+        &w41,
+        "feat/gn-41",
+        c,
+    ));
+    s.start(worker(
+        "t42",
+        "kite",
+        &role,
+        &squad,
+        "claude",
+        &w42,
+        "feat/gn-42",
+        c,
+    ));
+    s.add(
+        Usage::new(
+            H::Claude,
+            "s-41",
+            &w41,
+            Some("feat/gn-41"),
+            at(&["2026-11-02T10"]),
+        )
+        .tokens([1000, 0, 0, 0, 0, 0]),
+    );
+    s.add(
+        Usage::new(
+            H::Claude,
+            "s-42",
+            &w42,
+            Some("feat/gn-42"),
+            at(&["2026-11-02T11"]),
+        )
+        .tokens([2000, 0, 0, 0, 0, 0]),
+    );
+    s.sync();
+    let schema = common::schema::Schema::new(
+        serde_json::from_str(
+            &std::fs::read_to_string(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("../schema/query/v1/envelope.schema.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap(),
+    );
+    for (by_bot, branches) in [(true, vec![]), (false, vec!["feat/gn-41", "feat/gn-42"])] {
+        let v = answer(&s, by_bot, &branches);
+        let e = schema.errors(&v);
+        assert!(e.is_empty(), "the answer breaks the schema: {e:?}\n{v}");
+    }
+    let v = answer(&s, true, &[]);
+    let rows = v["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{v}");
+    let kite = &rows[0];
+    assert_eq!(kite["bot"], "kite");
+    assert_eq!(kite["role"], Value::Null);
+    assert_eq!(kite["squad"], Value::Null);
+    assert_eq!(kite["unrecorded"], serde_json::json!(["role", "squad"]));
+    assert_eq!(int(&kite["tokens"]["total"]), 2000);
+    assert_eq!(
+        reasons(&v),
+        [("claimants_differ".into(), "ambiguous".into(), 1000)]
+    );
+}
+
+/// Makes the store one a meter before RFC 0021 delivery 6 (PR 849 alone) wrote: its ambiguous and
+/// unlinked rollups keyed without their reason (that meter's ids) and holding none, and with
+/// `drop_reason`, no `reason` column at all, as that meter's schema 3 made the table. Unless
+/// `keyed` (a store this meter re-keyed, then an older meter wrote again: a downgrade), it has
+/// never been re-keyed.
+fn as_older(s: &Scene, drop_reason: bool, keyed: bool) {
+    let rows = s.store().rows_since(i64::MIN).unwrap();
+    let c = rusqlite::Connection::open(s.env.state().join("meter.db")).unwrap();
+    for r in rows {
+        if r.key.attr.as_ref().is_none_or(|a| a.reason.is_none()) {
+            continue;
+        }
+        let mut k = r.key.clone();
+        if let Some(a) = k.attr.as_mut() {
+            a.reason = None;
+        }
+        let p = if r.precision == "total_only" {
+            meter::event::Precision::TotalOnly
+        } else {
+            meter::event::Precision::Exact
+        };
+        c.execute(
+            "UPDATE usage SET id = ?1, reason = NULL WHERE id = ?2",
+            rusqlite::params![k.id(p), r.id],
+        )
+        .unwrap();
+    }
+    if drop_reason {
+        c.execute_batch("ALTER TABLE usage DROP COLUMN reason")
+            .unwrap();
+    }
+    if !keyed {
+        c.execute(
+            "DELETE FROM meta WHERE k = ?1",
+            [evidence::REASON_KEYED_META],
+        )
+        .unwrap();
+    }
+}
+
+/// Two unlinked calls (3,300 tokens between them) of a session no launch names yet, in a worker's
+/// worktree, and an ambiguous call (700 tokens: two workers started in its folder), on a store an
+/// 849 meter wrote; then the first worker's start row, which a later sync learns.
+fn upgraded(drop_reason: bool) -> Scene {
+    upgraded_with(drop_reason, false)
+}
+
+fn upgraded_with(drop_reason: bool, keyed: bool) -> Scene {
+    let mut s = Scene::migrated("2026-09-11T23:30:00Z", &[]);
+    let (w, w52) = (wt("gn-51"), wt("gn-52"));
+    let c = t("2026-11-01T08:00:00Z");
+    s.start(worker(
+        "t52",
+        "heron",
+        "dev",
+        "lark",
+        "claude",
+        &w52,
+        "feat/gn-52",
+        c,
+    ));
+    s.start(worker(
+        "t53",
+        "kite",
+        "review",
+        "lark",
+        "claude",
+        &w52,
+        "feat/gn-52",
+        c,
+    ));
+    s.add(
+        Usage::new(
+            H::Claude,
+            "s-52",
+            &w52,
+            Some("feat/gn-52"),
+            at(&["2026-11-02T12"]),
+        )
+        .tokens([700, 0, 0, 0, 0, 0]),
+    );
+    s.add(
+        Usage::new(
+            H::Claude,
+            "s-51",
+            &w,
+            Some("feat/gn-51"),
+            at(&["2026-11-02T10", "2026-11-02T11"]),
+        )
+        .tokens([1000, 2000, 0, 0, 300, 0]),
+    );
+    s.sync();
+    as_older(&s, drop_reason, keyed);
+    s.start(worker(
+        "t51",
+        "otter",
+        "dev",
+        "lark",
+        "claude",
+        &w,
+        "feat/gn-51",
+        c,
+    ));
+    s
+}
+
+// The upgrade path (Fixer's review of PR 875): an 849 meter keyed an unlinked call's rollup without
+// its reason. When this meter learns the call's launch, it takes the call out of that row (whose
+// id it no longer derives) rather than adding it again: totals never change.
+#[test]
+fn a_call_an_849_meter_counted_moves_once_when_its_launch_is_learned() {
+    let mut s = upgraded(false);
+    let before = totals(&s);
+    assert_eq!(before.total(), 3300 + 700);
+    let r = s.sync();
+    assert_eq!(
+        totals(&s).total(),
+        before.total(),
+        "a move never changes a total (moved {}, refused {})",
+        r.calls_moved,
+        r.calls_refused
+    );
+    assert_eq!((r.calls_moved, r.calls_refused), (2, 0));
+    assert_eq!(totals(&s), before);
+    assert_rollups_agree(&s);
+    let v = answer(&s, true, &[]);
+    // The 849 meter's ambiguous row (no reason) reads as claimants_differ, as that meter meant.
+    assert_eq!(
+        reasons(&v),
+        [("claimants_differ".into(), "ambiguous".into(), 700)]
+    );
+    let rows = v["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{v}");
+    assert_eq!(rows[0]["bot"], "otter");
+    assert_eq!(int(&rows[0]["tokens"]["total"]), 3300);
+}
+
+// A store this meter re-keyed, then an older meter wrote again (a downgrade, then back): its rows
+// under the older ids are not re-keyed twice, and a move still takes each call out of the row
+// that holds it, by the older id. Totals never change.
+#[test]
+fn a_call_an_older_meter_counted_after_the_rekey_still_moves_once() {
+    let mut s = upgraded_with(false, true);
+    let before = totals(&s);
+    let r = s.sync();
+    assert_eq!((r.calls_moved, r.calls_refused), (2, 0));
+    assert_eq!(totals(&s), before);
+    let v = answer(&s, true, &[]);
+    assert_eq!(v["rows"][0]["bot"], "otter");
+    assert_eq!(int(&v["rows"][0]["tokens"]["total"]), 3300);
+}
+
+// A call no rollup row holds (a row lost, or changed by hand) is never added again when its
+// attribution changes: it stays where it is, and the sync counts it as refused.
+#[test]
+fn a_call_no_row_holds_is_refused_never_counted_twice() {
+    let mut s = upgraded(false);
+    drop(s.store());
+    rusqlite::Connection::open(s.env.state().join("meter.db"))
+        .unwrap()
+        .execute("DELETE FROM usage WHERE actor_state = 'unlinked'", [])
+        .unwrap();
+    let before = totals(&s);
+    assert_eq!(before.total(), 700);
+    let r = s.sync();
+    assert_eq!((r.calls_moved, r.calls_refused), (0, 2));
+    assert_eq!(totals(&s), before);
+}
+
+// The Reviewer's L3 on PR 875: on one branch row, a session two workers' folder holds is
+// ambiguous and a session in a folder no launch started is unlinked, and the row keeps them
+// apart.
+#[test]
+fn a_branch_row_tells_ambiguous_from_unlinked() {
+    let mut s = Scene::migrated("2026-09-11T23:30:00Z", &[]);
+    let (w, lone) = (wt("gn-71"), wt("gn-71u"));
+    let b = "feat/gn-71";
+    let c = t("2026-11-01T08:00:00Z");
+    s.start(worker("t71", "heron", "dev", "lark", "claude", &w, b, c));
+    s.start(worker("t72", "kite", "review", "lark", "claude", &w, b, c));
+    s.add(
+        Usage::new(H::Claude, "s-71a", &w, Some(b), at(&["2026-11-02T10"]))
+            .tokens([700, 0, 0, 0, 0, 0]),
+    );
+    s.add(
+        Usage::new(H::Claude, "s-71u", &lone, Some(b), at(&["2026-11-02T11"]))
+            .tokens([300, 0, 0, 0, 0, 0]),
+    );
+    s.sync();
+    let v = answer(&s, false, &[b]);
+    assert_eq!(counts(&v["rows"][0]), [0, 700, 300, 0]);
+    assert_eq!(
+        reasons(&v),
+        [
+            ("claimants_differ".into(), "ambiguous".into(), 700),
+            ("no_record".into(), "unlinked".into(), 300)
+        ]
+    );
+}
+
+// The Fixer's Low (a) on PR 875: an attributed rollup whose bot key cannot be read (no bot, or a
+// kind that is neither worker nor seat) names no bot row, so it counts as ambiguous: every token
+// lands somewhere, the bot rows and actor_unattributed add up to the repo's total, and each branch
+// row's four counts add up to its total.
+#[test]
+fn an_attributed_row_with_no_readable_bot_still_counts() {
+    let mut s = Scene::migrated("2026-09-11T23:30:00Z", &[]);
+    let c = t("2026-11-01T08:00:00Z");
+    for (i, (term, bot, tokens)) in [
+        ("t61", "kite", 1000),
+        ("t62", "otter", 2000),
+        ("t63", "heron", 3000),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let w = wt(&format!("gn-6{}", i + 1));
+        let b = format!("feat/gn-6{}", i + 1);
+        s.start(worker(term, bot, "dev", "lark", "claude", &w, &b, c));
+        s.add(
+            Usage::new(
+                H::Claude,
+                &format!("s-6{}", i + 1),
+                &w,
+                Some(&b),
+                at(&["2026-11-02T10"]),
+            )
+            .tokens([tokens, 0, 0, 0, 0, 0]),
+        );
+    }
+    s.sync();
+    let c2 = rusqlite::Connection::open(s.env.state().join("meter.db")).unwrap();
+    c2.execute_batch(
+        "UPDATE usage SET bot = NULL WHERE bot = 'kite';
+         UPDATE usage SET kind = 'pane' WHERE bot = 'otter';",
+    )
+    .unwrap();
+    drop(c2);
+    let v = answer(&s, true, &[]);
+    let rows = v["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{v}");
+    assert_eq!(rows[0]["bot"], "heron");
+    assert_eq!(
+        reasons(&v),
+        [("claimants_differ".into(), "ambiguous".into(), 3000)]
+    );
+    let bots: i64 = rows.iter().map(|r| int(&r["tokens"]["total"])).sum();
+    assert_eq!(
+        bots + int(&v["actor_unattributed"]["tokens_total"]),
+        totals(&s).total()
+    );
+    let v = answer(&s, false, &["feat/gn-61", "feat/gn-62", "feat/gn-63"]);
+    for row in v["rows"].as_array().unwrap() {
+        assert_eq!(
+            counts(row).iter().sum::<i64>(),
+            int(&row["tokens"]["total"]),
+            "{row}"
+        );
+    }
+    assert_eq!(counts(&v["rows"][0]), [0, 1000, 0, 0]);
+    assert_eq!(counts(&v["rows"][1]), [0, 2000, 0, 0]);
+    assert_eq!(counts(&v["rows"][2]), [3000, 0, 0, 0]);
+}
+
+// The same store as that meter left it, with no `reason` column: the query reads it as it was,
+// and the next sync adds the column at the same schema version, then moves each call once.
+#[test]
+fn a_store_an_849_meter_left_without_reasons_still_answers_and_syncs() {
+    let mut s = upgraded(true);
+    let v = answer(&s, false, &["feat/gn-51"]);
+    assert_eq!(
+        int(&v["rows"][0]["attribution"]["actor"]["tokens_unlinked"]),
+        3300
+    );
+    // Rows with no reason read as that meter meant them: ambiguous is claimants_differ, unlinked
+    // no_record.
+    assert_eq!(
+        reasons(&v),
+        [
+            ("claimants_differ".into(), "ambiguous".into(), 700),
+            ("no_record".into(), "unlinked".into(), 3300)
+        ]
+    );
+    let r = s.sync();
+    assert_eq!((r.calls_moved, r.calls_refused), (2, 0));
+    assert_eq!(totals(&s).total(), 3300 + 700);
+    assert_rollups_agree(&s);
+    assert_eq!(
+        s.store().meta("schema_version").unwrap().as_deref(),
+        Some("3")
+    );
+}
+
 /// otter's Claude Code session on `feat/gn-40-old`, run before 10-25 and again after, with no
 /// ledger yet: its calls are unlinked. Then the retention bound drops the evidence before 10-25,
 /// as the size bound would, so those hours are before evidence.
 fn pruned() -> Scene {
+    pruned_with(false)
+}
+
+/// [`pruned`], with `codex`: a Codex thread in the same folder on 10-14 (4,600 tokens), whose
+/// evidence the bound drops too and which no backfill can re-read.
+fn pruned_with(codex: bool) -> Scene {
     let mut s = Scene::migrated("2026-09-11T23:30:00Z", &[]);
     let w = wt("gn-40");
+    if codex {
+        s.add(
+            Usage::new(
+                H::Codex,
+                "c-old",
+                &w,
+                Some("feat/gn-40-old"),
+                at(&["2026-10-14T09"]),
+            )
+            .tokens([4000, 0, 0, 0, 600, 0]),
+        );
+    }
     s.add(
         Usage::new(
             H::Claude,
@@ -394,6 +787,32 @@ fn the_evidence_backfill_recomputes_attribution_and_keeps_every_total() {
     // Done: a later sync does nothing more of it.
     let r = s.sync_with(|_| {});
     assert!(r.evidence_backfill.is_none());
+}
+
+// The Reviewer's L2 on PR 875: a Codex thread's evidence that a retention bound pruned cannot be
+// re-read (its deltas carry no request identity), so once a backfill moves evidence_from back
+// over its hour, its rollup counts as before evidence, never as unlinked or attributed with no
+// evidence behind it. Totals never change, and the rollups agree with the evidence.
+#[test]
+fn a_backfill_counts_pruned_codex_usage_before_evidence() {
+    let mut s = pruned_with(true);
+    let before = totals(&s);
+    s.sync();
+    let r = s.sync_with(|o| o.evidence_backfill = Some(30));
+    let b = r.evidence_backfill.expect("a backfill ran");
+    assert!(b.done, "{b:?}");
+    assert_eq!((b.adopted, b.unbacked), (6, 1));
+    assert_eq!(totals(&s), before, "a backfill never changes a total");
+    assert_rollups_agree(&s);
+    let v = answer(&s, true, &[]);
+    assert_eq!(
+        reasons(&v),
+        [("before_evidence".into(), "before_evidence".into(), 4600)]
+    );
+    let row = answer(&s, false, &["feat/gn-40-old"]);
+    let r0 = &row["rows"][0];
+    assert_eq!(counts(r0)[3], 4600, "{r0}");
+    assert_eq!(counts(r0).iter().sum::<i64>(), int(&r0["tokens"]["total"]));
 }
 
 // Chunked and resumable: a backfill stopped by the budget goes on at the next sync from where it

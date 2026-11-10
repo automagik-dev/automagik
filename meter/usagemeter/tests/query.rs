@@ -1901,11 +1901,51 @@ fn worst_store(fx: &Fx, branches: &[String]) {
             .unwrap();
         }
     }
+    // Every actor count a branch row prints, filled (the Reviewer's L1 on PR 875): rows after
+    // evidence_from given each basis, the ledger's branch, ambiguous and unlinked; the others stay
+    // before evidence. `tokens_by_branch_basis.none` is 0 on any branch row.
+    for (m, set) in [
+        (
+            0,
+            "actor_state = 'attributed', basis = 'session', branch_basis = 'log'",
+        ),
+        (
+            1,
+            "actor_state = 'attributed', basis = 'label', branch_basis = 'log'",
+        ),
+        (
+            2,
+            "actor_state = 'attributed', basis = 'worktree', branch_basis = 'log'",
+        ),
+        (
+            3,
+            "actor_state = 'attributed', basis = 'session', branch_basis = 'ledger'",
+        ),
+        (
+            4,
+            "actor_state = 'ambiguous', reason = 'claimants_differ', branch_basis = 'log'",
+        ),
+        (
+            5,
+            "actor_state = 'unlinked', reason = 'no_record', branch_basis = 'log'",
+        ),
+    ] {
+        c.execute(
+            &format!(
+                "UPDATE usage SET {set}, bot = 'kite', kind = 'worker', role = 'dev'
+                 WHERE id LIKE '%|m{m}'"
+            ),
+            [],
+        )
+        .unwrap();
+    }
+    let from = (h - 24 * HOUR_MS).to_string();
     let reason: String = "\u{1}\"é".repeat(300);
     for (k, v) in [
         ("codex_status", "degraded"),
         ("codex_reason", reason.as_str()),
         ("machine", &"\"".repeat(400)),
+        (meter::evidence::FROM_META, from.as_str()),
     ] {
         c.execute(
             "INSERT INTO meta(k, v) VALUES(?1, ?2) ON CONFLICT(k) DO UPDATE SET v = excluded.v",
@@ -1955,6 +1995,26 @@ fn rows_metadata_and_refusals_stay_within_the_budget_table() {
         );
     }
     assert_eq!(row["token_precision"], "mixed");
+    // Every actor count is filled, at the largest the store's sums reach.
+    let a = &row["attribution"]["actor"];
+    let filled = [
+        &a["tokens_attributed"],
+        &a["tokens_ambiguous"],
+        &a["tokens_unlinked"],
+        &a["tokens_before_evidence"],
+        &a["tokens_by_basis"]["session"],
+        &a["tokens_by_basis"]["label"],
+        &a["tokens_by_basis"]["worktree"],
+        &a["tokens_by_branch_basis"]["log"],
+        &a["tokens_by_branch_basis"]["ledger"],
+    ];
+    for n in filled {
+        assert!(
+            n.as_i64().unwrap() >= 1_000_000_000_000_000,
+            "an actor count not filled: {a}"
+        );
+    }
+    eprintln!("the worst row takes {} bytes", len(row));
     assert!(len(row) <= query::ROW_BYTES, "a row of {} bytes", len(row));
     let mut meta = v.clone();
     meta["rows"] = json!([]);
@@ -1972,7 +2032,7 @@ fn rows_metadata_and_refusals_stay_within_the_budget_table() {
     );
 
     // The largest request the bound allows: its echo stays within 2 x 64 KiB plus 3 bytes a
-    // name, and with the metadata under 150 KiB, which leaves room for 149 rows.
+    // name, and with the metadata under 150 KiB, which leaves room for 132 rows of 2.25 KiB.
     let n = query::MAX_BRANCHES;
     let names: Vec<String> = (0..n)
         .map(|i| quoted_branch(i, query::MAX_NAMES_BYTES / n))
@@ -1987,7 +2047,9 @@ fn rows_metadata_and_refusals_stay_within_the_budget_table() {
         &serde_json::to_string(&v).unwrap()[..300]
     );
     let rows_fit = v["error"]["rows_fit"].as_u64().unwrap();
-    assert!(rows_fit >= 149, "only {rows_fit} rows fit");
+    let floor = (query::OUTPUT_CAP - 150 * 1024) / query::ROW_BYTES;
+    assert_eq!(floor, 132);
+    assert!(rows_fit >= floor as u64, "only {rows_fit} rows fit");
     check_refusal_nulls("worst too_large", &v);
     let echo: usize = names
         .iter()

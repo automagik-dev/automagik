@@ -40,7 +40,9 @@ pub const MAX_REPO_BYTES: usize = 512;
 pub const OUTPUT_CAP: usize = 458_752;
 /// A refusal keeps the leading names whose echo fits here.
 pub const REFUSAL_ECHO_BYTES: usize = 4096;
-pub const ROW_BYTES: usize = 2048;
+/// A row's bound, its actor block at its largest included (RFC 0018, amended by RFC 0021
+/// delivery 6: it was 2 KiB before the block).
+pub const ROW_BYTES: usize = 2304;
 pub const METADATA_BYTES: usize = 16_384;
 pub const REFUSAL_BYTES: usize = 8192;
 pub const MESSAGE_CHARS: usize = 1000;
@@ -1182,14 +1184,22 @@ fn read(
     let evidence_from = meta_i64(&meta, crate::evidence::FROM_META);
     // Every row of the repo in the window, through `usage_repo_branch`: branch rows read the
     // branches named, and the actor counts (`actor_unattributed`, bot rows) the whole repo.
+    // A schema 3 store a meter before RFC 0021 delivery 6 wrote has no `reason` column until its
+    // next sync adds it: its ambiguous and unlinked rows read as they were, with no reason.
+    let reason: bool = c.query_row(
+        "SELECT count(*) > 0 FROM pragma_table_info('usage') WHERE name = 'reason'",
+        [],
+        |r| r.get(0),
+    )?;
     let mut rows = Vec::new();
     {
-        let mut st = c.prepare(
+        let mut st = c.prepare(&format!(
             "SELECT branch, harness, model, hour_ms, input_uncached, cache_read, cache_write_5m,
                cache_write_1h, output, reasoning, unsplit, precision, reported_usd, actor_state,
-               basis, branch_basis, reason, bot, kind, role, squad, unrecorded
+               basis, branch_basis, {}, bot, kind, role, squad, unrecorded
              FROM usage WHERE repo = ?1 AND hour_ms >= ?2 AND hour_ms < ?3",
-        )?;
+            if reason { "reason" } else { "NULL" }
+        ))?;
         let mut q = st.query(rusqlite::params![repo, from, to])?;
         while let Some(r) = q.next()? {
             let harness: String = r.get(1)?;
@@ -1223,13 +1233,14 @@ fn read(
                 (Some("ledger"), Some(_)) => BranchBasis::Ledger,
                 _ => BranchBasis::Log,
             };
+            let fits = |s: &String| s.chars().count() <= crate::ledger::TAG_CHARS;
             let bot = match (
                 class,
                 r.get::<_, Option<String>>(17)?,
                 r.get::<_, Option<String>>(18)?,
             ) {
                 (Class::Attributed(_), Some(bot), Some(kind))
-                    if matches!(kind.as_str(), "worker" | "seat") =>
+                    if matches!(kind.as_str(), "worker" | "seat") && fits(&bot) =>
                 {
                     let role: Option<String> = r.get(19)?;
                     let squad: Option<String> = r.get(20)?;
@@ -1239,9 +1250,10 @@ fn read(
                             .as_deref()
                             .is_some_and(|u| u.split(',').any(|f| f == k))
                     };
-                    // A role the start row left null is as unknown as one it left out.
-                    let no_role = listed("role") || role.is_none();
-                    let no_squad = listed("squad");
+                    // A role the start row left null is as unknown as one it left out, and one
+                    // past the contract's cap (a store written before the cap) is unrecorded.
+                    let no_role = listed("role") || role.as_ref().is_none_or(|r| !fits(r));
+                    let no_squad = listed("squad") || squad.as_ref().is_some_and(|s| !fits(s));
                     Some(BotKey {
                         bot,
                         kind,
@@ -1252,6 +1264,13 @@ fn read(
                     })
                 }
                 _ => None,
+            };
+            // An attributed row whose bot key cannot be read (no bot, a kind that is neither
+            // worker nor seat, a bot past the cap) names no bot row: it counts as ambiguous, so
+            // its tokens land in actor_unattributed and every sum holds.
+            let class = match (class, &bot) {
+                (Class::Attributed(_), None) => Class::Ambiguous,
+                _ => class,
             };
             rows.push(UsageRead {
                 branch,

@@ -246,6 +246,19 @@ fn cmd_sync(args: Vec<String>) -> Result<ExitCode, String> {
                         "the next sync goes on"
                     }
                 );
+                if b.unbacked > 0 {
+                    println!(
+                        "meter: evidence backfill: {} calls whose evidence was pruned and no log \
+                         gave back count as before evidence",
+                        b.unbacked
+                    );
+                }
+            }
+            if r.calls_refused > 0 {
+                println!(
+                    "meter: attribution: {} calls left where they were: no rollup row held them",
+                    r.calls_refused
+                );
             }
             if r.reimported {
                 println!(

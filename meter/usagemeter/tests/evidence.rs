@@ -754,6 +754,41 @@ fn an_attach_binding_learned_later_moves_a_seats_usage() {
     assert_rollups_agree(&env.store());
 }
 
+// The Reviewer's M1 on PR 875: an attach binding to a bot past the contract's 64-character cap
+// cannot be read, so the seat's call is ambiguous: never the start row's bot, and never a
+// shortened name another bot could share.
+#[test]
+fn an_attach_binding_past_the_cap_leaves_a_seats_usage_ambiguous() {
+    let env = Env::new();
+    let created = now() - 7_200_000;
+    let home = env.home().join(".config/herdr-app/automagik-herdr");
+    let seat = serde_json::json!({
+        "event": "start", "kind": "seat", "terminal": "t7", "botId": "b-seatstart",
+        "task": null, "worktree": "/work/app", "agent": "claude", "role": "captain",
+        "branch": null, "project": "/work/app", "lead": null, "core": "core-synthetic",
+        "created_ms": created, "squad": "b-seatstart", "session": "s-seat",
+        "at": meter::time::format_rfc3339(created + 5_000)
+    });
+    write_ledger(&home.join("workers.jsonl"), &[seat.to_string()]);
+    let attach = serde_json::json!({
+        "v": 1, "event": "attach", "bot": "b".repeat(300), "core": "core-synthetic",
+        "terminal": "t7", "created_ms": created,
+        "at": meter::time::format_rfc3339(created + 60_000)
+    });
+    write_ledger(&home.join("attach.jsonl"), &[attach.to_string()]);
+    write_lines(
+        &env.claude("-work-app/s-seat.jsonl"),
+        &[line("m1", "s-seat", "/work/app", now() - 3_600_000)],
+    );
+    env.run(&env.opts());
+    let rows = env.store().rows_since(i64::MIN).unwrap();
+    assert_eq!(rows.len(), 1);
+    let a = rows[0].key.attr.as_ref().unwrap();
+    assert_eq!(rows[0].key.bot, None);
+    assert_eq!(a.state, "ambiguous");
+    assert_eq!(a.reason.as_deref(), Some("claimants_differ"));
+}
+
 // RFC 0018 (d): before the migration commits, every table holds the rows it had. A store whose
 // backfill would lose a row (a trigger stands in for a faulty migration) is refused, unchanged.
 #[test]
