@@ -340,7 +340,7 @@ export function SettingsDialog({ page, id, roster, actions, useUpdate, leaving =
           shown === 'schedules' ? h(SchedulesPage, { roster, actions, start: id ?? undefined }) : null,
           shown === 'secrets' ? h(SecretsPage, { roster, actions, run, Section: SetSection }) : null,
           shown === 'privacy' ? h(PrivacyPage, { actions, run, Section: SetSection, Row: SetRow }) : null,
-          shown === 'feedback' ? h(FeedbackPage, { actions, run, Section: SetSection, Row: SetRow }) : null,
+          shown === 'feedback' ? h(FeedbackPage, { actions, run, roster, Section: SetSection, Row: SetRow }) : null,
           shown === 'about' ? h(AboutPage, { useUpdate, actions, run, Section: SetSection, Row: SetRow }) : null,
           // A page another plugin added, drawn as DSH's settings draws it (with `close`).
           pluginPage ? h('div', { className: 'bt-settings-plugin' }, h(pluginPage.Component, { close })) : null),
