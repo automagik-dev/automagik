@@ -73,15 +73,15 @@ export function unansweredText(name, doing, ms) {
   return `${name} did not answer while ${doing} (${waited(ms)}), so its session was ended. Send again to start a new one.`
 }
 
-// Resolves after `ms`, or as soon as `signal` aborts; `clear` withdraws both.
-function pause(ms, signal) {
+// Resolves after `ms` on `timers`, or as soon as `signal` aborts; `clear` withdraws both.
+function pause(ms, signal, timers) {
   let clear
   const done = new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms)
+    const timer = timers.setTimeout(resolve, ms)
     timer.unref?.()
     signal?.addEventListener('abort', resolve, { once: true })
     clear = () => {
-      clearTimeout(timer)
+      timers.clearTimeout(timer)
       signal?.removeEventListener('abort', resolve)
     }
     if (signal?.aborted) resolve()
@@ -332,11 +332,13 @@ export class AcpAdapter extends LlmAdapter {
    * @param {import('@deepseek-ai/cordis').Context} ctx
    * @param {Map<string, { name: string, catalog: import('./catalog.js').Catalog, installed?(): boolean, spawn(): { command: string, args?: string[], env?: Record<string, string> } }>} agents
    *   An agent's own `startMs` and `requestMs` replace acp.js's deadlines; `cancelWaitMs`
-   *   replaces CANCEL_WAIT_MS. Tests set them, so none waits a real deadline out.
+   *   replaces CANCEL_WAIT_MS; `timers` is the clock all three run on. Tests set them, so none
+   *   waits a real deadline out.
    */
-  constructor(ctx, agents, { dshTools = () => false, backchannel, redactor, onSignedOut, images = () => undefined, access, cancelWaitMs = CANCEL_WAIT_MS } = {}) {
+  constructor(ctx, agents, { dshTools = () => false, backchannel, redactor, onSignedOut, images = () => undefined, access, cancelWaitMs = CANCEL_WAIT_MS, timers = globalThis } = {}) {
     super()
     this.cancelWaitMs = cancelWaitMs
+    this.timers = timers
     // Asked before a turn opens on an agent (#869): a text when its signed-in account has not
     // been confirmed for the app, else undefined. Never asked for a call that continues a turn.
     this.access = access
@@ -458,7 +460,7 @@ export class AcpAdapter extends LlmAdapter {
    * replay carries the chat to it.
    */
   end(sessionId, live) {
-    clearTimeout(live.reaper)
+    this.timers.clearTimeout(live.reaper)
     live.reaper = undefined
     live.reaping = undefined
     live.open = false
@@ -476,9 +478,9 @@ export class AcpAdapter extends LlmAdapter {
   reap(sessionId, live) {
     const prompt = live?.run?.prompting
     if (prompt === undefined || live.reaping === prompt) return
-    clearTimeout(live.reaper)
+    this.timers.clearTimeout(live.reaper)
     live.reaping = prompt
-    const timer = setTimeout(() => {
+    const timer = this.timers.setTimeout(() => {
       if (live.reaper !== timer) return
       live.reaper = undefined
       live.reaping = undefined
@@ -497,7 +499,7 @@ export class AcpAdapter extends LlmAdapter {
   async stopping(live, signal) {
     const prompt = live.run.prompting
     await live.run.cancel()
-    const wait = pause(this.cancelWaitMs, signal)
+    const wait = pause(this.cancelWaitMs, signal, this.timers)
     try {
       await Promise.race([prompt, wait.done])
     } finally {
@@ -589,7 +591,7 @@ export class AcpAdapter extends LlmAdapter {
       // let the next turn start clean.
       live.bridge = previous
       this.backchannel.revoke(next)
-      clearTimeout(live.reaper)
+      this.timers.clearTimeout(live.reaper)
       live.run.dispose()
       this.live.delete(dshAgent?.session?.id ?? '')
       if (previous !== undefined) this.backchannel.revoke(previous)
@@ -774,6 +776,7 @@ export class AcpAdapter extends LlmAdapter {
             onToolCall: tool => this.checkDrift(sessionId, agent, tool),
             ...(agent.startMs === undefined ? {} : { startMs: agent.startMs }),
             ...(agent.requestMs === undefined ? {} : { requestMs: agent.requestMs }),
+            timers: this.timers,
           })
           state.run = run
           this.live.set(sessionId, state)

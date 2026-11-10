@@ -80,13 +80,15 @@ function stopped(what) {
 
 export class AgentRun {
   /**
-   * @param {{ command: string, args?: string[], env?: Record<string, string>, cwd: string, name: string, startMs?: number, requestMs?: number }} spec
+   * @param {{ command: string, args?: string[], env?: Record<string, string>, cwd: string, name: string, startMs?: number, requestMs?: number, timers?: { setTimeout: typeof setTimeout, clearTimeout: typeof clearTimeout } }} spec
    *   startMs, requestMs: the deadlines, START_MS and REQUEST_MS unless a test sets shorter ones.
+   *   timers: the clock the deadlines run on, for a test that moves it by hand.
    */
   constructor(spec) {
     this.spec = spec
     this.startMs = spec.startMs ?? START_MS
     this.requestMs = spec.requestMs ?? REQUEST_MS
+    this.timers = spec.timers ?? globalThis
     this.queue = []
     this.waiters = []
     this.tools = new Map()
@@ -167,17 +169,16 @@ export class AgentRun {
    * Replace this ACP session with a fork that carries the same conversation and the new server
    * set, then close the source session: `acp-codex` ignores `tools/list_changed` and a new server
    * list on resume, so this is how its tool set follows a preset or level change. Both bridges
-   * are the plugin's to end; the source's credential is revoked by the caller.
+   * are the plugin's to end; the source's credential is revoked by the caller. Each request
+   * has its deadline, and a close nobody answers is left like one that fails. The turn's Stop
+   * comes from the caller, which holds the whole fork (`held` with the signal and no deadline).
    * @param {{ cwd: string, mcpServers: any[] }} options
    * @returns {Promise<string>} the forked session id
    */
   async fork({ cwd, mcpServers }) {
     if (typeof this.conn.forkSession !== 'function') throw new Error('it cannot fork its session')
     const source = this.sessionId
-    const answer = await this.held(() => Promise.race([
-      this.conn.forkSession({ sessionId: source, cwd, mcpServers }),
-      this.gone,
-    ]))
+    const answer = await this.held(() => this.conn.forkSession({ sessionId: source, cwd, mcpServers }))
     this.sessionId = answer.sessionId
     if (answer.modes !== undefined && answer.modes !== null) this.modes = answer.modes
     if (Array.isArray(answer.configOptions)) this.options = answer.configOptions
@@ -186,7 +187,7 @@ export class AgentRun {
     // Session must never hold two bridges.
     try {
       if (typeof this.conn.closeSession === 'function') {
-        await this.held(() => Promise.race([this.conn.closeSession({ sessionId: source }), this.gone]))
+        await this.held(() => this.conn.closeSession({ sessionId: source }))
       }
     } catch {
       // A source session that will not close still ends with this process, which is disposed
@@ -228,7 +229,7 @@ export class AgentRun {
       if (ms > 0) {
         waits.push(new Promise((_, fail) => {
           // The hold above keeps the event loop for it; a run disposed meanwhile does not.
-          timer = setTimeout(() => fail(unanswered(what, ms)), ms)
+          timer = this.timers.setTimeout(() => fail(unanswered(what, ms)), ms)
           timer.unref?.()
         }))
       }
@@ -240,7 +241,7 @@ export class AgentRun {
       }
       return await Promise.race(waits)
     } finally {
-      clearTimeout(timer)
+      this.timers.clearTimeout(timer)
       if (onAbort !== undefined) signal.removeEventListener('abort', onAbort)
       this.letGo()
     }

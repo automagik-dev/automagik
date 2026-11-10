@@ -5,8 +5,9 @@
 //
 // The fake agent runs over real stdio and is made deaf to one ACP method at a time
 // (FAKE_ACP_DEAF_TO): it logs each request it did not hear, so a test knows the request is out
-// before it moves the clock. The deadlines are the real ones (60 s, 15 s, 5 s) on a mocked
-// `setTimeout`; the tests with a bridge, whose own waits need the real clock, set short ones.
+// before it moves the clock. The deadlines are the real ones (60 s, 15 s, 5 s) on a clock each
+// adapter is given (`timers`) and the test moves by hand: no test waits a deadline out, and no
+// test's clock is another's. Everything else (the processes, the bridge) runs on real time.
 import assert from 'node:assert/strict'
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -22,10 +23,8 @@ import { TOOL_NAME } from '../src/host/tool.js'
 const FAKE = join(import.meta.dirname, '..', 'dev', 'fake-agent.mjs')
 const ROUTE = 'acp-fake'
 
-// The real clock, taken before any test mocks `setTimeout`: what a test waits on is the agent's
-// process (a request on the wire, an exit), never a deadline.
-const realSetTimeout = globalThis.setTimeout
-const sleep = ms => new Promise(resolve => realSetTimeout(resolve, ms))
+// What a test waits on is the agent's process (a request on the wire, an exit), never a deadline.
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 async function until(check, what, ms = 20_000) {
   const deadline = Date.now() + ms
   while (!check()) {
@@ -33,10 +32,30 @@ async function until(check, what, ms = 20_000) {
     await sleep(5)
   }
 }
-// Mock `setTimeout` for one test; the returned function moves its clock.
-const clock = (t) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] })
-  return ms => t.mock.timers.tick(ms)
+
+// A clock that only `tick` moves: the `timers` an adapter and its agent runs keep their
+// deadlines on. Timers due at the new time fire in the order they were due.
+function handClock() {
+  let now = 0
+  let made = 0
+  const waiting = new Map()
+  return {
+    setTimeout(fn, ms) {
+      const timer = { id: ++made, at: now + ms, fn, unref: () => timer }
+      waiting.set(timer.id, timer)
+      return timer
+    },
+    clearTimeout(timer) {
+      if (timer !== undefined) waiting.delete(timer.id)
+    },
+    tick(ms) {
+      now += ms
+      const due = [...waiting.values()].filter(timer => timer.at <= now).sort((a, b) => a.at - b.at || a.id - b.id)
+      for (const timer of due) {
+        if (waiting.delete(timer.id)) timer.fn()
+      }
+    },
+  }
 }
 
 const user = text => ({ role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }] })
@@ -48,9 +67,10 @@ const STOPPED = { kind: 'aborted', failure: { message: 'Stopped', code: 'ABORTED
  * One DSH Session on the fake agent. `deaf` is the ACP methods it never hears; `h.env` is read
  * at each spawn, so a test can let the next process hear again. With `toolsOn` unset the agent
  * keeps its own tools and the chat is replayed to a new session (Codex's default); `true`
- * gives it the DSH bridge.
+ * gives it the DSH bridge. `h.tick(ms)` moves its clock; `realClock` leaves the deadlines on
+ * real time, for a test that sets short ones.
  */
-function fixture({ deaf, toolsOn, spec: extra = {}, cancelWaitMs } = {}) {
+function fixture(t, { deaf, toolsOn, spec: extra = {}, cancelWaitMs, realClock = false } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'acp-dsh-unanswered-'))
   const trace = join(dir, 'trace.ndjson')
   const env = { FAKE_ACP_TRACE: trace, ...(deaf === undefined ? {} : { FAKE_ACP_DEAF_TO: deaf }) }
@@ -75,30 +95,53 @@ function fixture({ deaf, toolsOn, spec: extra = {}, cancelWaitMs } = {}) {
   const catalog = { models: async () => [{ id: 'default', name: 'Fake agent' }], model: async () => undefined, ownEffort: () => undefined, dispose() {} }
   const spec = { name: 'Fake agent', catalog, installed: () => true, spawn: () => ({ command: process.execPath, args: [FAKE], env: { ...env } }), ...extra }
   const backchannel = new Backchannel({ ctx })
-  const adapter = new AcpAdapter(ctx, new Map([[ROUTE, spec]]), { dshTools: () => toolsOn, backchannel, ...(cancelWaitMs === undefined ? {} : { cancelWaitMs }) })
+  const clock = handClock()
+  const adapter = new AcpAdapter(ctx, new Map([[ROUTE, spec]]), { dshTools: () => toolsOn, backchannel, ...(cancelWaitMs === undefined ? {} : { cancelWaitMs }), ...(realClock ? {} : { timers: clock }) })
   const events = () => (existsSync(trace) ? readFileSync(trace, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line)) : [])
+  // The trace is read before the folder goes, for a failure that reports after the close.
+  let closed
+  const close = () => {
+    closed ??= events()
+    adapter.dispose()
+    backchannel.dispose()
+    rmSync(dir, { recursive: true, force: true })
+  }
+  // A test that fails or times out still ends its agent processes: nothing outlives the file.
+  t.after(close)
   return {
     adapter, agent, backchannel, definitions, env, spec, tools, warnings,
+    tick: ms => clock.tick(ms),
     live: () => adapter.live.get('s1'),
     // The requests the agent got and never answered, in order.
     unheard: () => events().filter(event => event.event === 'unheard').map(event => event.method),
     // What each prompt carried, and how many agent sessions were opened.
     prompts: () => events().filter(event => event.event === 'prompt').map(event => event.text),
     sessions: () => events().filter(event => event.event === 'new-session').length,
-    close: () => {
-      adapter.dispose()
-      backchannel.dispose()
-      rmSync(dir, { recursive: true, force: true })
-    },
+    close,
+  }
+}
+
+// A wait on the adapter that the real clock bounds: one that never ends fails by name, with
+// what the turn had streamed, instead of hanging the test.
+async function within(promise, what, ms = 20_000) {
+  let timer
+  const late = new Promise((_, fail) => { timer = setTimeout(() => fail(new Error(`still waiting for ${what()}`)), ms) })
+  try {
+    return await Promise.race([promise, late])
+  } finally {
+    clearTimeout(timer)
   }
 }
 
 async function step(h, messages, { signal, onChunk } = {}) {
   const chunks = []
-  for await (const chunk of h.adapter.stream(markAgentLoopRequest({ provider: ROUTE, model: 'default', sessionId: 's1', messages, signal }))) {
-    chunks.push(chunk)
-    onChunk?.(chunks)
-  }
+  const said = messages.at(-1).content[0].text
+  await within((async () => {
+    for await (const chunk of h.adapter.stream(markAgentLoopRequest({ provider: ROUTE, model: 'default', sessionId: 's1', messages, signal }))) {
+      chunks.push(chunk)
+      onChunk?.(chunks)
+    }
+  })(), () => `the turn on "${said}" to end; so far ${JSON.stringify(chunks.map(chunk => chunk.type))}, unheard ${JSON.stringify(h.unheard())}`)
   return chunks
 }
 
@@ -127,16 +170,18 @@ async function stoppedTurn(h, messages) {
 async function droppedTurn(h, messages) {
   messages.push(user('hang'))
   const seen = []
-  for await (const chunk of h.adapter.stream(markAgentLoopRequest({ provider: ROUTE, model: 'default', sessionId: 's1', messages }))) {
-    seen.push(chunk)
-    if (/you said "hang"/.test(textIn(seen))) break
-  }
+  await within((async () => {
+    for await (const chunk of h.adapter.stream(markAgentLoopRequest({ provider: ROUTE, model: 'default', sessionId: 's1', messages }))) {
+      seen.push(chunk)
+      if (/you said "hang"/.test(textIn(seen))) break
+    }
+  })(), () => `the agent to speak; so far ${JSON.stringify(textIn(seen))}`)
   messages.push(answer(textIn(seen)))
 }
 
 const gone = run => until(() => run.exited !== undefined, 'the agent process to exit')
 // Whether the adapter has asked `run` to stop again. Once it has, its own wait for the prompt
-// is armed: on a mocked clock a test must not move the time before that.
+// is armed: a test must not move the clock before that.
 function askedAgain(run) {
   let asked = false
   const cancel = run.cancel.bind(run)
@@ -167,15 +212,14 @@ test('the deadlines are 60 s to start, 15 s for a request before a prompt, 5 s t
 
 for (const method of ['initialize', 'session/new']) {
   test(`an agent that never answers ${method} fails the turn at the start deadline and says where to look`, async (t) => {
-    const tick = clock(t)
-    const h = fixture({ deaf: method })
+    const h = fixture(t, { deaf: method })
     try {
       const running = step(h, [user('plain')])
       await until(() => h.unheard().includes(method), `${method} to reach the agent`)
       const run = h.live().run
-      tick(START_MS - 1)
+      h.tick(START_MS - 1)
       assert.ok(await pending(running), 'the turn still waits one millisecond before the deadline')
-      tick(1)
+      h.tick(1)
       const reason = (await running).at(-1).reason
       assert.equal(reason.kind, 'error')
       assert.equal(reason.failure.message, 'Fake agent did not answer while starting (60 s). Open it once in a terminal to check it is not waiting for you, then send again.')
@@ -194,8 +238,8 @@ for (const method of ['initialize', 'session/new']) {
     }
   })
 
-  test(`Stop while the agent does not answer ${method} ends the turn as stopped and the process with it`, async () => {
-    const h = fixture({ deaf: method })
+  test(`Stop while the agent does not answer ${method} ends the turn as stopped and the process with it`, async (t) => {
+    const h = fixture(t, { deaf: method })
     try {
       const controller = new AbortController()
       const running = step(h, [user('plain')], { signal: controller.signal })
@@ -214,8 +258,8 @@ for (const method of ['initialize', 'session/new']) {
   })
 }
 
-test('with the DSH bridge, a start nobody answers leaves no bridge credential behind', async () => {
-  const h = fixture({ deaf: 'session/new', toolsOn: true, spec: { startMs: 150 } })
+test('with the DSH bridge and a deadline of its own, a start nobody answers leaves no bridge credential behind', async (t) => {
+  const h = fixture(t, { deaf: 'session/new', toolsOn: true, spec: { startMs: 150 }, realClock: true })
   try {
     const reason = (await step(h, [user('plain')])).at(-1).reason
     assert.equal(reason.failure.message, 'Fake agent did not answer while starting (150 ms). Open it once in a terminal to check it is not waiting for you, then send again.')
@@ -248,17 +292,16 @@ const BEFORE_PROMPT = {
 
 for (const [method, { doing, ready }] of Object.entries(BEFORE_PROMPT)) {
   test(`an agent that never answers ${method} fails the turn at the request deadline and ends its session`, async (t) => {
-    const tick = clock(t)
-    const h = fixture({ deaf: method })
+    const h = fixture(t, { deaf: method })
     try {
       const messages = []
       await ready(h, messages)
       const running = step(h, [...messages, user('plain')])
       await until(() => h.unheard().includes(method), `${method} to reach the agent`)
       const run = h.live().run
-      tick(REQUEST_MS - 1)
+      h.tick(REQUEST_MS - 1)
       assert.ok(await pending(running), 'the turn still waits one millisecond before the deadline')
-      tick(1)
+      h.tick(1)
       const reason = (await running).at(-1).reason
       assert.equal(reason.kind, 'error')
       assert.equal(reason.failure.message, `Fake agent did not answer while ${doing} (15 s), so its session was ended. Send again to start a new one.`)
@@ -275,8 +318,8 @@ for (const [method, { doing, ready }] of Object.entries(BEFORE_PROMPT)) {
     }
   })
 
-  test(`Stop while the agent does not answer ${method} ends the turn as stopped and its session`, async () => {
-    const h = fixture({ deaf: method })
+  test(`Stop while the agent does not answer ${method} ends the turn as stopped and its session`, async (t) => {
+    const h = fixture(t, { deaf: method })
     try {
       const messages = []
       await ready(h, messages)
@@ -302,16 +345,19 @@ async function forking(h) {
   return messages
 }
 
-test('a fork the agent never answers fails the turn at the request deadline, with no bridge left', async () => {
-  const h = fixture({ deaf: 'session/fork', toolsOn: true, spec: { refresh: 'fork' } })
+test('a fork the agent never answers fails the turn at the request deadline, with no bridge left', async (t) => {
+  const h = fixture(t, { deaf: 'session/fork', toolsOn: true, spec: { refresh: 'fork' } })
   try {
     const messages = await forking(h)
     const run = h.live().run
-    // Only from here: the first turn's own requests keep the real deadline.
-    run.requestMs = 150
-    const reason = (await step(h, [...messages, user('plain')])).at(-1).reason
+    const running = step(h, [...messages, user('plain')])
+    await until(() => h.unheard().includes('session/fork'), 'session/fork to reach the agent')
+    h.tick(REQUEST_MS - 1)
+    assert.ok(await pending(running), 'the turn still waits one millisecond before the deadline')
+    h.tick(1)
+    const reason = (await running).at(-1).reason
     assert.equal(reason.kind, 'error')
-    assert.equal(reason.failure.message, 'Fake agent did not answer while refreshing its DSH tools (150 ms), so its session was ended. Send again to start a new one.')
+    assert.equal(reason.failure.message, 'Fake agent did not answer while refreshing its DSH tools (15 s), so its session was ended. Send again to start a new one.')
     assert.equal(h.adapter.live.size, 0)
     assert.equal(h.backchannel.records.size, 0)
     await gone(run)
@@ -320,8 +366,8 @@ test('a fork the agent never answers fails the turn at the request deadline, wit
   }
 })
 
-test('Stop while the agent does not answer a fork ends the turn as stopped, with no bridge left', async () => {
-  const h = fixture({ deaf: 'session/fork', toolsOn: true, spec: { refresh: 'fork' } })
+test('Stop while the agent does not answer a fork ends the turn as stopped, with no bridge left', async (t) => {
+  const h = fixture(t, { deaf: 'session/fork', toolsOn: true, spec: { refresh: 'fork' } })
   try {
     const messages = await forking(h)
     const run = h.live().run
@@ -338,21 +384,18 @@ test('Stop while the agent does not answer a fork ends the turn as stopped, with
   }
 })
 
-test('a fork whose source session never closes goes on after the close deadline', async (t) => {
-  const tick = clock(t)
-  // A run with no process: the fork answers at once and the close never does. Both names of
-  // the fork request are given, the SDK's old one and its new one.
-  const run = new AgentRun({ command: 'unused', cwd: tmpdir(), name: 'Stub agent' })
+test('a fork whose source session never closes goes on after the close deadline', async () => {
+  // A run with no process: the fork answers at once and the close never does.
+  const h = handClock()
+  const run = new AgentRun({ command: 'unused', cwd: tmpdir(), name: 'Stub agent', timers: h })
   let closing = false
-  const fork = async () => ({ sessionId: 'forked' })
-  run.conn = { unstable_forkSession: fork, forkSession: fork, closeSession: () => { closing = true; return new Promise(() => {}) } }
-  run.gone = new Promise(() => {})
+  run.conn = { forkSession: async () => ({ sessionId: 'forked' }), closeSession: () => { closing = true; return new Promise(() => {}) } }
   run.sessionId = 'source'
   const forked = run.fork({ cwd: tmpdir(), mcpServers: [] })
   await until(() => closing, 'the close request')
-  tick(REQUEST_MS - 1)
+  h.tick(REQUEST_MS - 1)
   assert.ok(await pending(forked))
-  tick(1)
+  h.tick(1)
   assert.equal(await forked, 'forked')
   assert.equal(run.hold, undefined)
 })
@@ -374,8 +417,7 @@ test('a request stopped before it is sent is never sent', async () => {
 // --- a cancel the agent ignores ---------------------------------------------------------------
 
 test('a Stop the agent ignores ends its session within the cancel wait, and the next message gets a new one with the chat', async (t) => {
-  const tick = clock(t)
-  const h = fixture({ deaf: 'session/cancel' })
+  const h = fixture(t, { deaf: 'session/cancel' })
   try {
     const messages = []
     await turn(h, messages, 'plain one')
@@ -385,9 +427,9 @@ test('a Stop the agent ignores ends its session within the cancel wait, and the 
     const live = h.live()
     const run = live.run
     assert.ok(run.busy, 'the agent is still on the prompt it was asked to stop')
-    tick(CANCEL_WAIT_MS - 1)
+    h.tick(CANCEL_WAIT_MS - 1)
     assert.equal(h.live(), live)
-    tick(1)
+    h.tick(1)
     assert.equal(h.adapter.live.size, 0)
     assert.equal(run.alive, false)
     await gone(run)
@@ -407,8 +449,7 @@ test('a Stop the agent ignores ends its session within the cancel wait, and the 
 })
 
 test('a message sent right after a Stop the agent ignores is answered in that turn, by a new session with the chat', async (t) => {
-  const tick = clock(t)
-  const h = fixture({ deaf: 'session/cancel' })
+  const h = fixture(t, { deaf: 'session/cancel' })
   try {
     const messages = []
     await turn(h, messages, 'plain one')
@@ -419,7 +460,7 @@ test('a message sent right after a Stop the agent ignores is answered in that tu
     // The new turn asks again before it gives up on the old prompt.
     await until(() => h.unheard().filter(method => method === 'session/cancel').length === 2, 'the second session/cancel')
     assert.ok(await pending(running))
-    tick(CANCEL_WAIT_MS)
+    h.tick(CANCEL_WAIT_MS)
     const chunks = await running
     assert.equal(chunks.at(-1).reason.kind, 'stop', JSON.stringify(chunks.at(-1).reason))
     assert.match(textIn(chunks), /turn 1: you said/)
@@ -432,8 +473,7 @@ test('a message sent right after a Stop the agent ignores is answered in that tu
 })
 
 test('a prompt left open by a turn that ended without Stop is given the cancel wait, then replaced in the same turn', async (t) => {
-  const tick = clock(t)
-  const h = fixture({ deaf: 'session/cancel' })
+  const h = fixture(t, { deaf: 'session/cancel' })
   try {
     const messages = []
     await turn(h, messages, 'plain one')
@@ -444,10 +484,10 @@ test('a prompt left open by a turn that ended without Stop is given the cancel w
     messages.push(user('plain three'))
     const running = step(h, messages)
     await until(asked, 'the new turn to ask the agent to stop')
-    tick(CANCEL_WAIT_MS - 1)
+    h.tick(CANCEL_WAIT_MS - 1)
     assert.ok(await pending(running), 'the old prompt has the whole wait to end')
     assert.ok(wedged.alive)
-    tick(1)
+    h.tick(1)
     const chunks = await running
     assert.equal(chunks.at(-1).reason.kind, 'stop', JSON.stringify(chunks.at(-1).reason))
     assert.match(textIn(chunks), /turn 1: you said/)
@@ -465,8 +505,7 @@ test('a prompt left open by a turn that ended without Stop is given the cancel w
 })
 
 test('Stop while a new turn waits on the old prompt ends that turn at once, and the old session still ends in time', async (t) => {
-  const tick = clock(t)
-  const h = fixture({ deaf: 'session/cancel' })
+  const h = fixture(t, { deaf: 'session/cancel' })
   try {
     const messages = []
     await droppedTurn(h, messages)
@@ -477,7 +516,7 @@ test('Stop while a new turn waits on the old prompt ends that turn at once, and 
     controller.abort()
     assert.deepEqual((await running).at(-1).reason, STOPPED)
     assert.ok(wedged.alive, 'the wait is not over yet')
-    tick(CANCEL_WAIT_MS)
+    h.tick(CANCEL_WAIT_MS)
     assert.equal(h.adapter.live.size, 0)
     await gone(wedged)
   } finally {
@@ -486,14 +525,13 @@ test('Stop while a new turn waits on the old prompt ends that turn at once, and 
 })
 
 test('an agent that takes the cancel keeps its session: the wait ends nothing', async (t) => {
-  const tick = clock(t)
-  const h = fixture()
+  const h = fixture(t)
   try {
     const messages = []
     assert.deepEqual((await stoppedTurn(h, messages)).at(-1).reason, STOPPED)
     const live = h.live()
     await until(() => !live.run.busy, 'the cancelled prompt to end')
-    tick(CANCEL_WAIT_MS * 2)
+    h.tick(CANCEL_WAIT_MS * 2)
     assert.equal(h.live(), live)
     assert.ok(live.run.alive)
     assert.match(textIn(await turn(h, messages, 'plain')), /turn 2: you said "plain"/)
@@ -505,8 +543,7 @@ test('an agent that takes the cancel keeps its session: the wait ends nothing', 
 })
 
 test('a stopped tool call starts the same wait, and an agent that takes it keeps its session', async (t) => {
-  const tick = clock(t)
-  const h = fixture()
+  const h = fixture(t)
   try {
     const waits = []
     const reap = h.adapter.reap.bind(h.adapter)
@@ -523,15 +560,15 @@ test('a stopped tool call starts the same wait, and an agent that takes it keeps
     await h.tools.get(TOOL_NAME).execute(args, { agent: h.agent, callId: call.id, signal: controller.signal })
     assert.deepEqual(waits, ['s1'])
     await until(() => !live.run.busy, 'the cancelled prompt to end')
-    tick(CANCEL_WAIT_MS)
+    h.tick(CANCEL_WAIT_MS)
     assert.equal(h.live(), live)
   } finally {
     h.close()
   }
 })
 
-test('a drifted built-in call whose cancel the agent ignores ends with its session, not with the person\'s Stop', async () => {
-  const h = fixture({ deaf: 'session/cancel', toolsOn: true, spec: { drift: true }, cancelWaitMs: 150 })
+test('a drifted built-in call whose cancel the agent ignores ends with its session, not with the person\'s Stop', async (t) => {
+  const h = fixture(t, { deaf: 'session/cancel', toolsOn: true, spec: { drift: true }, cancelWaitMs: 150, realClock: true })
   try {
     const running = step(h, [user('drift')])
     await until(() => h.live()?.run !== undefined, 'the agent session')
