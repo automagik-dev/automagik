@@ -2231,6 +2231,8 @@ test("#805 restart queues working panes, lists, replaces and cancels watchers", 
   assert.equal(queued.json().queued[0].watcher, r.json().watcher);
   const watcher = runCall(s.calls());
   for (const flag of ["--bg", "--rm", "--no-parent", "--run-queued"]) assert.ok(watcher.includes(flag));
+  const watcherPath = watcher.find((word) => word.startsWith("PATH="));
+  assert.ok(watcherPath && watcherPath.length > "PATH=".length, "the watcher pane gets a PATH");
   assert.equal(at(s.calls(), "kill", "t5"), -1);
   const again = s.cli(["restart", "Genie"]);
   assert.equal(again.code, 0, again.err);
@@ -2286,6 +2288,87 @@ test("#805 queued watcher waits for idle, honors saved options and consumes its 
   assert.ok(at(s.calls(), "wait", "t5") >= 0);
   assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), []);
   assert.equal(s.cli(["restart", ID.main, "--run-queued", entry.id]).code, 0);
+});
+
+test("#805 a direct restart cancels the queued entry and kills its watcher", (t) => {
+  const s = restartScene(t, { status: "working" });
+  assert.equal(s.cli(["restart", "Genie", "--json"]).json().queued, true);
+  const file = join(s.app, "automagik-herdr/queued-restarts.json");
+  const entry = JSON.parse(readFileSync(file, "utf8"))[0];
+  const r = s.cli(["restart", "Genie", "--force", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(r.json().replaced, "t5");
+  assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), []);
+  assert.ok(at(s.calls(), "kill", entry.watcher) >= 0, "the superseded watcher was ended");
+});
+
+test("#805 a mid-turn pane with a background task still queues instead of being cut off", (t) => {
+  for (const screen of ["1 background task\nesc to interrupt\n❯ ", "1 background task\nctrl+b to run in background\n❯ "]) {
+    const s = restartScene(t, { status: "working" });
+    const state = s.hcState();
+    state.terminals[0].screen = screen;
+    writeFileSync(join(s.root, "hc.json"), JSON.stringify(state));
+    const r = s.cli(["restart", "Genie", "--json"]);
+    assert.equal(r.code, 0, r.err);
+    assert.equal(r.json().queued, true, screen);
+    assert.equal(r.json().reason, "working", screen);
+    assert.equal(at(s.calls(), "kill", "t5"), -1, "the turn was not cut short");
+  }
+});
+
+test("#805 assistant prose and a markdown list above an idle prompt restart immediately", (t) => {
+  for (const screen of ["Do you want to merge it now?\n\n❯ ", "Should I allow the deploy?\n\n❯ ",
+    "Completed steps:\n1. Read files\n2. Run tests\n❯ "]) {
+    const s = restartScene(t, { status: "idle" });
+    const state = s.hcState();
+    state.terminals[0].screen = screen;
+    writeFileSync(join(s.root, "hc.json"), JSON.stringify(state));
+    const r = s.cli(["restart", "Genie", "--json"]);
+    assert.equal(r.code, 0, r.err);
+    assert.equal(r.json().replaced, "t5", screen);
+    assert.equal(r.json().queued, undefined, screen);
+  }
+});
+
+test("#805 a queued restart waits for a helper that appeared and never ends it with force", async (t) => {
+  const s = restartScene(t, { status: "working" });
+  assert.equal(s.cli(["restart", "Genie", "--json"]).json().queued, true);
+  const file = join(s.app, "automagik-herdr/queued-restarts.json");
+  const entry = JSON.parse(readFileSync(file, "utf8"))[0];
+  const state = s.hcState();
+  state.terminals[0].status = { state: "idle" };
+  state.terminals.push({ ...term("t7", { argv: ["codex"], app: "codex", parent: "t5", created: 2, status: "working" }),
+    die_with_parent: true, exitAfterGets: 3 });
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(state));
+  const r = await s.cliAsync(["restart", ID.main, "--run-queued", entry.id, "--json"], { env: { AUTOMAGIK_HERDR_QUEUE_POLL_MS: "1" } });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(at(s.calls(), "kill", "t7"), -1, "the helper that appeared was never ended");
+  assert.equal(JSON.parse(r.out).replaced, "t5");
+  assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), []);
+});
+
+test("#805 a blocked pane polls without spinning hc wait and restarts once answered", async (t) => {
+  const s = restartScene(t, { status: "blocked" });
+  assert.equal(s.cli(["restart", "Genie", "--json"]).json().queued, true);
+  const file = join(s.app, "automagik-herdr/queued-restarts.json");
+  const entry = JSON.parse(readFileSync(file, "utf8"))[0];
+  const running = s.cliAsync(["restart", ID.main, "--run-queued", entry.id, "--json"], { env: { AUTOMAGIK_HERDR_QUEUE_POLL_MS: "25" } });
+  const until = Date.now() + 2000;
+  while (Date.now() < until && s.calls().filter((c) => c[0] === "get" && c[1] === "t5").length < 2) {
+    await new Promise((done) => setTimeout(done, 10));
+  }
+  assert.equal(at(s.calls(), "wait"), -1, "a blocked pane is polled, never hc wait");
+  const state = s.hcState();
+  state.terminals[0].status = { state: "idle" };
+  state.terminals[0].screen = "❯ ";
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(state));
+  let timer;
+  const hang = new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("the queued watcher did not restart")), 8000); });
+  let r;
+  try { r = await Promise.race([running, hang]); } finally { clearTimeout(timer); }
+  assert.equal(r.code, 0, r.err);
+  assert.equal(at(s.calls(), "wait"), -1);
+  assert.equal(JSON.parse(r.out).replaced, "t5");
 });
 
 test("restart refuses while a helper would end with the pane; a member bot that outlives it doesn't count", (t) => {

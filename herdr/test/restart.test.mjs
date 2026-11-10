@@ -489,17 +489,41 @@ test("claudeSlug: the path with every non-alphanumeric character as -, so automa
 
 
 test("#805 shared idle: a working background shell at an empty prompt is idle", async () => {
-  const { isPaneIdle, pendingDialog, hasAgentPrompt, hasBackgroundShellAtIdlePrompt } = await import("../mods/am-sidebar/restart.js");
+  const { isPaneIdle, pendingDialog, hasAgentPrompt, hasBackgroundShellAtIdlePrompt, isPromptLine } = await import("../mods/am-sidebar/restart.js");
   const old = { address: "t5", state: "live", status: { state: "working" } };
+  const idle = { address: "t5", state: "live", status: { state: "idle" } };
   const screen = "1 background task\n❯ ";
   assert.equal(typeof isPaneIdle, "function");
   assert.equal(isPaneIdle(old, screen), true);
   assert.equal(restartRefusal({ name: "Genie", old, screen }), null);
   assert.equal(hasBackgroundShellAtIdlePrompt("1 background task\n❯ do work"), false);
+  // H1: a mid-turn spinner or interrupt hint is not idle, background task or not.
+  for (const mid of ["1 background task\nesc to interrupt\n❯ ", "1 background task\nctrl+b to run in background\n❯ ",
+    "1 background task\nworking (42s)\n❯ ", "1 background task\nrunning (12s)\n❯ "]) {
+    assert.equal(hasBackgroundShellAtIdlePrompt(mid), false, mid);
+    assert.equal(hasAgentPrompt(mid), false, mid);
+    assert.equal(isPaneIdle(old, mid), false, mid);
+  }
+  assert.equal(hasBackgroundShellAtIdlePrompt("ctrl+b to run in background\n❯ "), false);
   for (const text of ["Run this command?", "Do you want to proceed?", "Allow this action?", "Requesting permission for: command", "1/2 answered (select)", "Choose a colour?\n> 1. Yes\n2. No\nEnter to confirm"]) {
     assert.equal(pendingDialog(text).who, "the owner", text);
     assert.ok(pendingDialog(text).question.length <= 200);
-    assert.equal(isPaneIdle(old, text + "\n1 background task\n❯ "), false);
+    assert.equal(isPaneIdle(old, text), false);
+  }
+  // H3: prose and ordinary numbered lists above an active prompt are scrollback, not a dialog.
+  for (const text of ["Do you want to merge it now?", "Should I allow the deploy?"]) {
+    assert.equal(pendingDialog(`${text}\n\n❯ `), null, text);
+    assert.equal(isPaneIdle(idle, `${text}\n\n❯ `), true, text);
+  }
+  const numbered = "Completed steps:\n1. Read files\n2. Run tests\n❯ ";
+  assert.equal(pendingDialog(numbered), null);
+  assert.equal(isPaneIdle(idle, numbered), true);
+  // M1: framed and placeholder prompts count as the agent's prompt when idle.
+  for (const text of ["│ > │", "⌸ ❯ … ⛶", "│ Type a message... │", "› Ask Codex to do anything"]) {
+    assert.equal(isPromptLine(text), true, text);
+    assert.equal(pendingDialog(text), null, text);
+    assert.equal(hasAgentPrompt(text), true, text);
+    assert.equal(isPaneIdle(idle, text), true, text);
   }
   for (const state of ["idle", "done"]) {
     assert.equal(isPaneIdle({ state: "live", status: { state } }, "❯ "), true);

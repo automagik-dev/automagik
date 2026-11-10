@@ -549,6 +549,12 @@ export class BotForm {
         this.forceable = r.forceable ? { project, bot, agent } : null;
         this.freshable = r.freshable ? { project, bot } : null;
       } else {
+        if (r.queued) {
+          notify({ title: "Bots", level: "info", timeout: 15000,
+            body: `${bot.name}: restart queued for ${r.terminal} (${r.dialog?.question
+              ? `blocked on "${r.dialog.question}" — ${r.dialog.who ?? "the owner"} must answer`
+              : `${bot.name} is working`}); it will restart at its next idle.` });
+        }
         if (r.warnings.length) notify({ title: "Bots", level: "warning", timeout: 15000, body: r.warnings.join("\n") });
         run("am-sidebar.refresh");
         closeOverlay(this.p.overlay);

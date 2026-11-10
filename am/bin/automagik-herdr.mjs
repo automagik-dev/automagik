@@ -3896,6 +3896,8 @@ async function queuedRestarts(opts, ref) {
     : entry ? `${name}: canceled queued restart for ${entry.terminal}.` : `No restart is queued for ${name}.`;
 }
 
+const RETRY_QUEUED = Symbol("retry-queued");
+
 async function runQueuedRestart(opts) {
   const queueId = opts["run-queued"];
   const current = () => readRestartQueue().find((e) => e.id === queueId);
@@ -3907,17 +3909,31 @@ async function runQueuedRestart(opts) {
       await editRestartQueue((rows) => { const i = rows.findIndex((e) => e.id === queueId); if (i >= 0) rows.splice(i, 1); });
       return PRINTED;
     }
-    const screen = state.get ? await readScreenText(entry.terminal) : null;
-    if (isPaneIdle(state.get, screen)) {
-      const consumed = await editRestartQueue((rows) => { const i = rows.findIndex((e) => e.id === queueId); return i < 0 ? null : rows.splice(i, 1)[0]; });
-      if (!consumed) return PRINTED;
-      const saved = Object.fromEntries(Object.entries(consumed.options).filter(([, value]) => value !== null));
-      return cmdRestart({ ...saved, "fresh-shared": saved.freshShared, project: consumed.project, force: true,
-        json: opts.json, _queuedTarget: consumed }, [consumed.botId]);
+    // A blocked pane is never idle: skip the screen read (an hc RPC on every poll).
+    const screen = state.get?.status?.state !== "blocked" && state.get ? await readScreenText(entry.terminal) : null;
+    const idle = isPaneIdle(state.get, screen);
+    let blockedByHelpers = false;
+    if (idle && !entry.options?.tree) {
+      const helpers = await helpersOf(entry.terminal);
+      blockedByHelpers = doomedHelpers(helpers).length > 0;
+    }
+    if (idle && !blockedByHelpers) {
+      const saved = Object.fromEntries(Object.entries(entry.options ?? {}).filter(([, value]) => value !== null));
+      const result = await cmdRestart({ ...saved, "fresh-shared": saved.freshShared, project: entry.project, force: false,
+        json: opts.json, _queuedTarget: entry }, [entry.botId]);
+      if (result !== RETRY_QUEUED) return result;
     }
     const start = Date.now();
-    await hc(["wait", entry.terminal, "--timeout", "25", "--json"], { timeout: 30000 });
-    const poll = Math.max(1, Number(process.env.AUTOMAGIK_HERDR_QUEUE_POLL_MS) || 250);
+    // hc wait returns at once for a blocked pane: poll those, and a pane kept for its helpers,
+    // at the slower floor instead of spinning the wait at the fast one.
+    if (state.get?.status?.state === "working" && !blockedByHelpers) {
+      await hc(["wait", entry.terminal, "--timeout", "25", "--json"], { timeout: 30000 });
+    }
+    const raw = process.env.AUTOMAGIK_HERDR_QUEUE_POLL_MS;
+    const configured = raw === undefined ? NaN : Number(raw);
+    const poll = Number.isFinite(configured)
+      ? Math.max(1, configured)
+      : (state.get?.status?.state === "working" && !blockedByHelpers ? 250 : 2000);
     if (Date.now() - start < poll) await new Promise((done) => setTimeout(done, poll - (Date.now() - start)));
     entry = current();
     if (!entry) return PRINTED;
@@ -3939,7 +3955,8 @@ async function queueRestart({ bot, key, old, screen, opts, wanted, plan }) {
     writeFileSync(tmp, JSON.stringify([...rows, e]), { mode: 0o600 });
     chmodSync(tmp, 0o600); renameSync(tmp, file);
     const r = await hc(["run", "--bg", "--json", "--rm", "--no-parent", "--cwd", key, "--label", `herdr.queued-restart=${bot.id}`,
-      "--", "/usr/bin/env", `HERDR_APP_HOME=${appHome()}`, process.execPath, fileURLToPath(import.meta.url), "restart", bot.id, "--project", key, "--run-queued", queueId]);
+      "--", "/usr/bin/env", `HERDR_APP_HOME=${appHome()}`, `PATH=${launchPath(process.execPath, key).path}`,
+      process.execPath, fileURLToPath(import.meta.url), "restart", bot.id, "--project", key, "--run-queued", queueId]);
     let watcher;
     try { watcher = r.code === 0 ? JSON.parse(r.stdout)?.address : null; } catch {}
     if (!watcher) {
@@ -4012,7 +4029,11 @@ async function cmdRestart(opts, [ref]) {
     || (opts._queuedTarget.created_ms != null && old.created_ms !== opts._queuedTarget.created_ms))) return PRINTED;
   const screen = old ? await readScreenText(old.address) : null;
   const helpers = old ? await helpersOf(old.address, { strict: Boolean(opts.tree) }) : [];
-  if (old) {
+  if (old && opts._queuedTarget) {
+    // Repeat the watcher's checks at fire time: a helper that appeared, or a pane that turned
+    // busy again after the queue was read, is waited for instead of being ended with the pane.
+    if (!isPaneIdle(old, screen) || (!opts.tree && doomedHelpers(helpers).length > 0)) return RETRY_QUEUED;
+  } else if (old) {
     // Helpers remain a refusal even when the parent's turn could otherwise be queued.
     const refusal = restartRefusal({ name: bot.name, old: { ...old, status: { state: "idle" } }, helpers, force: opts.force, tree: opts.tree });
     if (refusal) throw new CliError(refusal, 1, { refused: "helpers", terminal: old.address });
@@ -4098,6 +4119,29 @@ async function cmdRestart(opts, [ref]) {
     ...(plan.template ? { [WORKER_TEMPLATE_LABEL]: plan.template } : {}) };
   // The session the new pane runs, for its label and seat row: the id chosen for a new one, or the resumed one.
   const sessionOfPlan = (p, resumed) => p.sessionId ?? (p.mode === "resume" ? resumed : null);
+  // A queued restart claims its entry only once every check passed and the seat is about to
+  // start: a cancel between the watcher's read and here wins, and nothing is launched.
+  if (opts._queuedTarget) {
+    const consumed = await editRestartQueue((rows) => {
+      const i = rows.findIndex((e) => e.id === opts._queuedTarget.id);
+      return i < 0 ? null : rows.splice(i, 1)[0];
+    });
+    if (!consumed) return PRINTED;
+  } else {
+    // A direct restart supersedes a queued one: its watcher must not start a second replacement
+    // while this one hands the bot over. No entry: leave the queue file alone.
+    let queued = false;
+    try { queued = readRestartQueue().some((e) => e.botId === bot.id); } catch {}
+    if (queued) {
+      await editRestartQueue(async (rows) => {
+        const i = rows.findIndex((e) => e.botId === bot.id);
+        if (i < 0) return null;
+        const [e] = rows.splice(i, 1);
+        if (e.watcher) await hc(["kill", e.watcher]);
+        return e;
+      });
+    }
+  }
   let seat = await launchSeat(project, bot, { agent: plan.agent, model: plan.model, argv: plan.argv, cwd, place,
     carry: { ...carry, ...(plan.sessionId ? { [SESSION_LABEL]: plan.sessionId } : {}) }, session: sessionOfPlan(plan, resumeId),
     replacing: old ? held.binding : null });

@@ -1375,10 +1375,21 @@ export function relinkCli({ modsDir = defaultModsDir(), name = PACK_NAME, binDir
  * null (no pack released yet); update from pickUpdate; auto from autoStatus, so the mod decides
  * from one check whether to install on its own. `keys`: the trusted keys (packKeys by default).
  */
-export async function checkForUpdate({ fetch = globalThis.fetch, env = process.env, modsDir = defaultModsDir(env), keys } = {}) {
+export async function checkForUpdate({ fetch = globalThis.fetch, env = process.env, modsDir = defaultModsDir(env), keys, projectDir, hcRun } = {}) {
   const current = installedVersion({ modsDir });
   const auto = autoStatus(modsDir);
   if (updatesOff(env)) return { current, latest: null, update: null, disabled: true, auto };
+  // A main bot blocked during a rollback gets the notice on a later tick (#805).
+  try {
+    const state = stateDirOf(modsDir);
+    const restore = JSON.parse(readFileSync(join(state, RESTORE_FILE), "utf8"));
+    const note = JSON.parse(readFileSync(join(state, "restore-notified.json"), "utf8"));
+    if (typeof restore?.failedVersion === "string" && typeof restore?.version === "string"
+      && note?.failedVersion === restore.failedVersion && Array.isArray(note.pendingBots) && note.pendingBots.length > 0) {
+      notifyMainBotOfRestore({ modsDir, version: restore.failedVersion, restored: restore.version,
+        failed: Array.isArray(restore.failed) ? restore.failed : [restore.mod].filter(Boolean), projectDir, hcRun });
+    }
+  } catch {}
   const pack = await fetchPointer({ fetch, env, ...(keys ? { keys } : {}) });
   const behind = olderSequence(readMarker(modsDir), pack);
   return { current, latest: pack?.version ?? null, update: behind ? null : pickUpdate(current, pack), disabled: false, auto,
@@ -1414,7 +1425,7 @@ export const olderSequence = (record, pack) =>
  * downloaded: `{ ..., installed: null, held: why }`.
  */
 export async function installUpdate({ fetch = globalThis.fetch, env = process.env, modsDir = defaultModsDir(env), keys, log, binDir = null, window = false, expect = null, auto = false, herdrApp = "herdr-app", projectDir, hcRun } = {}) {
-  const found = await checkForUpdate({ fetch, env, modsDir, keys });
+  const found = await checkForUpdate({ fetch, env, modsDir, keys, projectDir, hcRun });
   if (!found.update) return { ...found, installed: null };
   if (expect && found.update.version !== expect) return { ...found, installed: null, refused: { expected: expect, latest: found.update.version } };
   let free;
@@ -1442,51 +1453,93 @@ export async function installUpdate({ fetch = globalThis.fetch, env = process.en
   }
 }
 
-/** Best-effort notice to this project's running main bot, once per failed version. */
-export function notifyMainBotOfRestore({ modsDir, version, restored, failed, projectDir,
+/**
+ * Best-effort notice to every project's running main bot, once per failed version. A bot whose
+ * pane is blocked when the send is attempted is kept in `pendingBots`, so a later call (or the
+ * next check tick) retries it; a notified bot is never told twice for the same version.
+ */
+export function notifyMainBotOfRestore({ modsDir, version, restored, failed = [], projectDir,
   hcRun = (args) => execFileSync("hc", args, { encoding: "utf8", timeout: 15000 }) }) {
   try {
     const state = stateDirOf(modsDir), file = join(state, "restore-notified.json");
-    let notified;
+    let notified = null;
     try { notified = JSON.parse(readFileSync(file, "utf8")); } catch {}
-    if (notified?.failedVersion === version) return { sent: false };
+    const same = notified?.failedVersion === version;
+    let notifiedBots = same && Array.isArray(notified.notifiedBots) ? [...notified.notifiedBots] : [];
+    let pendingBots = same && Array.isArray(notified.pendingBots) ? [...notified.pendingBots] : [];
+    // Done for this version, and none left to retry.
+    if (same && (!Array.isArray(notified.pendingBots) || notified.pendingBots.length === 0)) return { sent: false };
+    if (!same) { notifiedBots = []; pendingBots = []; }
     let rows = [];
     try { rows = readAttach(readFileSync(join(state, "attach.jsonl"), "utf8")).rows; } catch {}
     const bindings = foldAttach(rows);
-    if (!projectDir) {
+    const dirs = [];
+    const add = (dir) => {
+      if (typeof dir !== "string" || dir === "") return;
+      const resolved = resolve(dir);
+      if (!dirs.includes(resolved)) dirs.push(resolved);
+    };
+    if (projectDir) add(projectDir);
+    else {
       for (let dir = process.cwd();;) {
-        if (existsSync(join(dir, ".herdr/bots.json"))) { projectDir = dir; break; }
+        if (existsSync(join(dir, ".herdr/bots.json"))) { add(dir); break; }
         const parent = dirname(dir);
         if (parent === dir) break;
         dir = parent;
       }
-      if (!projectDir) projectDir = [...rows].reverse().find((b) => b.project && bindings.byBot.get(b.bot) === b)?.project;
     }
-    if (!projectDir) return { sent: false };
-    projectDir = resolve(projectDir);
-    const bots = JSON.parse(readFileSync(join(projectDir, ".herdr/bots.json"), "utf8"));
-    const main = bots.bots?.find((b) => b.kind === "main");
-    if (!main) return { sent: false };
-    let terminal = null;
+    // The sidebar's project registry, then every project the attach ledger names. The registry is
+    // an array, or { projects } whose entries are paths or records.
     try {
-      const listed = JSON.parse(hcRun(["ls", "--label", `bot=${main.id}`, "--json"]));
-      const terminals = Array.isArray(listed) ? listed : listed.terminals ?? listed.items ?? [];
-      terminal = terminals.find((t) => t.state === "live" && t.address)?.address ?? null;
+      const registry = JSON.parse(readFileSync(join(dirname(resolve(modsDir)), "am-sidebar-projects.json"), "utf8"));
+      const list = Array.isArray(registry) ? registry : Array.isArray(registry?.projects) ? registry.projects : [];
+      for (const item of list) add(typeof item === "string" ? item : item?.path ?? item?.dir ?? item?.key);
     } catch {}
-    if (!terminal) {
+    for (const binding of bindings.byBot.values()) add(binding?.project);
+    for (const row of rows) add(row?.project);
+    const text = `Automagik Herdr update ${version} failed to load (${failed.join(", ")}) and rolled back to ${restored}; no restart is needed for ${version}.`;
+    for (const dir of dirs) {
+      let bots;
+      try { bots = JSON.parse(readFileSync(join(dir, ".herdr/bots.json"), "utf8")); } catch { continue; }
+      const main = bots.bots?.find((b) => b.kind === "main");
+      if (!main || notifiedBots.includes(main.id)) continue;
+      // The project's own live binding first; ids are shared across a project's worktrees, so
+      // hc ls alone can name another checkout's pane.
+      let terminal = null;
       const binding = bindings.byBot.get(main.id);
-      if (binding?.project === projectDir) {
-        const get = JSON.parse(hcRun(["get", binding.terminal, "--json"]));
-        if (get.state === "live" && get.created_ms === binding.created_ms) terminal = binding.terminal;
+      if (binding?.project === dir) {
+        try {
+          const get = JSON.parse(hcRun(["get", binding.terminal, "--json"]));
+          if (get.state === "live" && get.created_ms === binding.created_ms) terminal = binding.terminal;
+        } catch {}
+      }
+      if (!terminal) {
+        try {
+          const listed = JSON.parse(hcRun(["ls", "--label", `bot=${main.id}`, "--json"]));
+          const terminals = Array.isArray(listed) ? listed : listed.terminals ?? listed.items ?? [];
+          const live = terminals.filter((t) => t?.state === "live" && t.address);
+          const under = (cwd) => typeof cwd === "string"
+            && (resolve(cwd) === dir || resolve(cwd).startsWith(dir === "/" ? "/" : `${dir}/`));
+          terminal = live.find((t) => under(t.cwd))?.address ?? live[0]?.address ?? null;
+        } catch {}
+      }
+      if (!terminal) continue;
+      try {
+        hcRun(["send", terminal, text]);
+        if (!notifiedBots.includes(main.id)) notifiedBots.push(main.id);
+        pendingBots = pendingBots.filter((id) => id !== main.id);
+      } catch {
+        if (!pendingBots.includes(main.id)) pendingBots.push(main.id);
       }
     }
-    if (!terminal) return { sent: false };
-    hcRun(["send", terminal, `Automagik Herdr update ${version} failed to load (${failed.join(", ")}) and rolled back to ${restored}; no restart is needed for ${version}.`]);
+    pendingBots = pendingBots.filter((id) => !notifiedBots.includes(id));
+    if (notifiedBots.length === 0 && pendingBots.length === 0) return { sent: false };
     mkdirSync(state, { recursive: true });
     const tmp = `${file}.${process.pid}`;
-    writeFileSync(tmp, JSON.stringify({ failedVersion: version, restoredVersion: restored, botId: main.id, terminal, at: Date.now() }), { mode: 0o600 });
+    writeFileSync(tmp, JSON.stringify({ failedVersion: version, restoredVersion: restored, notifiedBots, pendingBots,
+      botId: notifiedBots[0] ?? null, at: Date.now() }), { mode: 0o600 });
     chmodSync(tmp, 0o600); renameSync(tmp, file);
-    return { sent: true };
+    return { sent: notifiedBots.length > 0 };
   } catch { return { sent: false }; }
 }
 
