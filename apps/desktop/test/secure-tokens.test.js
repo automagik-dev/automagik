@@ -69,6 +69,7 @@ test('Linux backend detection: kwallet and gnome-libsecret are secure; basic_tex
     assert.equal(result.reason, NO_SECURE_STORE_REASON)
   }
   assert.equal(detectSecureStore(null, 'linux').secure, false)
+  assert.equal(detectSecureStore(fakeSafeStorage({ backend: '' }), 'linux').secure, false)
 })
 
 test('macOS and Windows use the platform store without asking for a Linux backend', () => {

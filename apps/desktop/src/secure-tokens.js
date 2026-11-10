@@ -73,8 +73,9 @@ export function detectSecureStore(safeStorage, platform = process.platform) {
   } catch {
     backend = 'unknown'
   }
-  if (typeof backend !== 'string' || NO_SECURE_STORE_BACKENDS.includes(backend)) return noStore(backend ?? 'unknown')
-  return { platform, backend, secure: true, reason: null }
+  const selected = typeof backend === 'string' ? backend.trim() : ''
+  if (selected === '' || NO_SECURE_STORE_BACKENDS.includes(selected)) return noStore(selected || 'unknown')
+  return { platform, backend: selected, secure: true, reason: null }
 }
 
 /**
