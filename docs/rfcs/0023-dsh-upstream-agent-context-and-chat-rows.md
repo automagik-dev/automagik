@@ -184,17 +184,22 @@ interface SessionStartLine {
 }
 ```
 
-- Owner: **DSH**. The v4 format is additive, and a DSH that does not write it stays readable.
-- The meter reads it when present: the dsh-tui source carries the header's terminal on the
-  session, and the resolver matches it by address to a launch on the machine's own core whose
-  span covers the session's start. It persists a normal `link` row at `session` basis. A resumed
-  session's first line covers only the first launch's span; two launches on the terminal whose
-  spans overlap name no launch, so the call is ambiguous, never a guess; a terminal that matches
-  no launch row is `no_record`. The pack's separate Claude witness (RFC 0026 (d)) is unchanged.
+- Owner: **DSH**. The v4 field must land in DSH core's read and write together: a DSH before the
+  field refuses a session that carries it. The additive claim covers only sessions without the
+  field: a newer DSH reads an older session that has none, and a DSH before the field still reads
+  sessions that do not carry it.
+- When 4b ships, the meter would read it: the dsh-tui source would carry the header's terminal
+  on the session, and the resolver would match it by address to a launch on the machine's own
+  core whose span covers the session's start. It would persist a normal `link` row at `session`
+  basis. A resumed session's first line would cover only the first launch's span; two launches on
+  the terminal whose spans overlap would name no launch, so the call would be ambiguous, never a
+  guess; a terminal that matches no launch row would be `no_record`. The pack's separate Claude
+  witness (RFC 0026 (d)) is unchanged.
 - **What we remove.** Nothing here: no workaround is removed. The meter's fallbacks and
   `dsh_tui_seat` stay, and that share narrows.
 
-*Check:* T4; P2 measured; the G4 wording-only schema change is merged with it or before it.
+*Check:* RFC 0026 (h), T4; (i), P2 measured; G4 in `Acked by genie, 2026-11-10`, with the
+wording-only schema change merged with it or before it.
 *Rollback:* 4b reverts to `dsh_tui_seat`; the field is additive and an older meter ignores it.
 
 ## What does not change
