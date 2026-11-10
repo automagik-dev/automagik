@@ -138,7 +138,10 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   // The chat's image keeper (`keepImages`): where an image an agent makes in a chat is kept so the
   // chat can show it. One at a time; the Bot team registers its images folder.
   let imageKeeper
+  // The turn gates (`holdTurns`): each registrant's own entry, so one never replaces another's.
+  const turnGates = new Set()
   const adapter = new AcpAdapter(ctx, agents, {
+    holds: () => [...turnGates].map(entry => entry.gate),
     images: () => imageKeeper,
     // The raw tri-state: an absent setting takes each agent's own switch in AcpAdapter.
     dshTools: () => flagOf(config.dshTools),
@@ -851,6 +854,31 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       imageKeeper = keeper
       return () => { if (imageKeeper === keeper) imageKeeper = undefined }
     },
+    /**
+     * A veto on agent turns, for a plugin that must keep an agent from acting in a Session (the
+     * Bot team: a Session whose permission level could not be set). `gate({ sessionId, agent,
+     * provider })` is asked before every model step on an agent's route, and again right before
+     * a turn's prompt is sent. It answers (or resolves) undefined to let the Session go, or the
+     * sentence to answer the step with. It can only refuse: a gate that throws, takes longer
+     * than ten seconds, or answers anything else holds the Session with a fixed sentence. A held
+     * Session's agent session is ended (as `endSession`). Several plugins may register; any
+     * refusal wins, and the returned disposer removes only its own gate. With none registered
+     * nothing is asked.
+     */
+    holdTurns(gate) {
+      if (typeof gate !== 'function') return () => {}
+      const entry = { gate }
+      turnGates.add(entry)
+      return () => { turnGates.delete(entry) }
+    },
+    /**
+     * Ends one Session's agent session now, a turn under way included: the agent's process is
+     * stopped and its bridge credential revoked, and the step answers `why` (a sentence for the
+     * person; a fixed one without it). The DSH Session and its transcript stay; the next turn
+     * starts a fresh agent session. A turn still starting there is refused too. Answers whether
+     * one was live or starting.
+     */
+    endSession: (sessionId, why) => adapter.endSession(sessionId, why),
     /**
      * What acted on one Session's permissions, for a diagnostics view (read-only, a fresh plain
      * copy, undefined for a Session that ran no agent here): { version, agent, startedAt, active,

@@ -766,9 +766,9 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["session", "label", "worktree"],
-          "description": "How tokens_attributed was tied to its launch, strongest first: a Herdr row names the session, an hc label seen at a sync named it, or the call's cwd is the worktree of exactly one logged launch.",
+          "description": "How tokens_attributed was tied to its launch, strongest first: a start-time session record names the session, an hc label seen at a sync named it, or the call's cwd is the worktree of exactly one logged launch. A tag that a label supplied counts under label, whatever tied the call.",
           "properties": {
-            "session": { "type": "integer", "minimum": 0 },
+            "session": { "type": "integer", "minimum": 0, "description": "A start-time session record tied the call: a Herdr session row, or a harness's own record of the terminal its session started in (a dsh-tui session header's terminal, RFC 0026 (d))." },
             "label": { "type": "integer", "minimum": 0 },
             "worktree": { "type": "integer", "minimum": 0 }
           }
@@ -795,7 +795,7 @@
         "attribution", "activity", "incomplete_sources"
       ],
       "properties": {
-        "task": { "type": "string", "minLength": 1, "maxLength": 64, "description": "Genie's short task id (gn-42, gh-1415, gl-231), joined with its project. Never inferred from a branch name, and never cut short: an id the contract cannot print is left out of the rows." },
+        "task": { "type": "string", "minLength": 1, "maxLength": 64, "description": "Genie's short task id (gn-42, gh-1415, gl-231), joined with its project. Never inferred from a branch name, and never cut short: an id the contract cannot print is left out of the rows. At most 64 characters and 96 bytes as JSON, its escapes included." },
         "actors": {
           "type": "array",
           "description": "The launch tags that did the task's work, one per (bot, kind, role, squad, unrecorded, harness) with usage, ordered by that key (byte order, null first, unrecorded in its enum's order). A task answered by several bots or roles names them all; it never guesses a single one. The row's numbers are theirs together.",
@@ -878,10 +878,10 @@
       "additionalProperties": false,
       "required": ["bot", "kind", "role", "squad", "unrecorded", "harness"],
       "properties": {
-        "bot": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "bot": { "type": "string", "minLength": 1, "maxLength": 64, "description": "The bot id the launch recorded. At most 64 characters and 96 bytes as JSON, its escapes included." },
         "kind": { "const": "worker" },
-        "role": { "type": ["string", "null"], "minLength": 1, "maxLength": 64, "description": "The start row's role (dev, test, review or fix). null only when unrecorded names it." },
-        "squad": { "type": ["string", "null"], "minLength": 1, "maxLength": 64, "description": "The bot heading the launching bot's lead chain, frozen at launch (RFC 0021 (e)). null for the main bot, which heads no squad, or, when unrecorded names it, unknown." },
+        "role": { "type": ["string", "null"], "minLength": 1, "maxLength": 64, "description": "The start row's role (dev, test, review or fix). null only when unrecorded names it. At most 64 characters and 96 bytes as JSON, its escapes included: one past either is unrecorded." },
+        "squad": { "type": ["string", "null"], "minLength": 1, "maxLength": 64, "description": "The bot heading the launching bot's lead chain, frozen at launch (RFC 0021 (e)). null for the main bot, which heads no squad, or, when unrecorded names it, unknown. At most 64 characters and 96 bytes as JSON, its escapes included: one past either is unrecorded." },
         "unrecorded": {
           "enum": [[], ["role"], ["squad"], ["role", "squad"]],
           "description": "The key fields the launch's start row did not record (rows written before RFC 0021 delivery 3): each is null, and unknown, never none."
@@ -909,10 +909,10 @@
         "token_precision", "attribution", "activity", "incomplete_sources"
       ],
       "properties": {
-        "bot": { "type": "string", "minLength": 1, "maxLength": 64, "description": "The bot id the launch recorded: the attach ledger's binding for a seat, else the start row's botId." },
+        "bot": { "type": "string", "minLength": 1, "maxLength": 64, "description": "The bot id the launch recorded: the attach ledger's binding for a seat, else the start row's botId. At most 64 characters and 96 bytes as JSON, its escapes included: a bot past either is never printed, and never cut short." },
         "kind": { "enum": ["worker", "seat"] },
-        "role": { "type": ["string", "null"], "minLength": 1, "maxLength": 64, "description": "The start row's role: dev, test, review or fix for a worker; the pane role for a seat. null only when unrecorded names it." },
-        "squad": { "type": ["string", "null"], "minLength": 1, "maxLength": 64, "description": "The bot heading the launching bot's lead chain, frozen at launch (RFC 0021 (e)). null for the main bot, which heads no squad, or, when unrecorded names it, unknown." },
+        "role": { "type": ["string", "null"], "minLength": 1, "maxLength": 64, "description": "The start row's role: dev, test, review or fix for a worker; the pane role for a seat. null only when unrecorded names it. At most 64 characters and 96 bytes as JSON, its escapes included: one past either is unrecorded." },
+        "squad": { "type": ["string", "null"], "minLength": 1, "maxLength": 64, "description": "The bot heading the launching bot's lead chain, frozen at launch (RFC 0021 (e)). null for the main bot, which heads no squad, or, when unrecorded names it, unknown. At most 64 characters and 96 bytes as JSON, its escapes included: one past either is unrecorded." },
         "unrecorded": {
           "enum": [[], ["role"], ["squad"], ["role", "squad"]],
           "description": "The key fields the launch's start row did not record (rows written before RFC 0021 delivery 3): each is null, and unknown, never none."
@@ -994,7 +994,7 @@
               "state": { "enum": ["ambiguous", "unlinked", "before_evidence"] },
               "reason": {
                 "enum": ["claimants_differ", "no_record", "dsh_tui_seat", "other_machine", "before_evidence"],
-                "description": "claimants_differ: launches, or a ledger row and a label, whose tags differ claim the call. no_record: no ledger row, label or worktree ties the call to a launch that names a bot. dsh_tui_seat: a dsh-tui session in a folder that is no worker launch's worktree, a seat in the project root among them: dsh-tui seats have no session-to-terminal record yet (RFC 0021 Decided 5). other_machine: the call's terminal was started by another computer's Herdr (a linked-machine pane), so its launch row is in that computer's ledger: unknown until a fleet query (Decided 6). before_evidence: before evidence_from, or while it is null."
+                "description": "claimants_differ: launches, or a ledger row and a label, whose tags differ claim the call; also a claimant whose stored tag cannot be read or is past the tag cap (64 characters, 96 bytes as JSON). no_record: no ledger row, label or worktree ties the call to a launch that names a bot. dsh_tui_seat: a dsh-tui session in a shared checkout (a folder that is no worker launch's worktree, the project root among them) that no session or terminal record ties to a launch (RFC 0026 (d)); one with such a record whose launch names no bot is no_record. other_machine: the call's only launch or session record belongs to another machine's core (a log moved from that machine, for one), so its launch row is in that computer's ledger: unknown until a fleet query (RFC 0021 Decided 6). before_evidence: before evidence_from, or while it is null."
               },
               "tokens_total": { "type": "integer", "minimum": 1 },
               "harnesses": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }

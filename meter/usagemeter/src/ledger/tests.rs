@@ -1726,3 +1726,436 @@ fn an_attach_row_with_an_unwritable_bot_ends_the_earlier_binding_and_names_no_on
         }
     }
 }
+
+// ---- RFC 0026 (d): the dsh-tui seat --------------------------------------------------------
+
+const DSH: &str = "dsh-tui";
+
+fn dsh_seat(terminal: &str, min: i64, bot: &str) -> Value {
+    seat(terminal, min, DSH, bot, "captain")
+}
+
+fn dsh_call(session: &str, min: i64) -> Call<'_> {
+    call(DSH, session, PROJECT, t(min))
+}
+
+/// A dsh-tui pane hc lists, with its `agent.session` label.
+fn dsh_pane(terminal: &str, created_min: i64, session: Option<&str>) -> Terminal {
+    let mut pane = live(terminal, created_min, DSH, PROJECT);
+    pane.labels.session = session.map(str::to_owned);
+    pane
+}
+
+/// The dsh-tui session links of `records`, as the next sync reads them back from the store.
+fn kept(links: &[LinkRecord]) -> Vec<SessionLink> {
+    links
+        .iter()
+        .filter(|l| l.harness == DSH && l.basis == "session")
+        .map(|l| SessionLink {
+            agent: l.harness.clone(),
+            session: l.session.clone(),
+            lkey: l.lkey.clone(),
+            valid_from: l.valid_from,
+            valid_to: l.valid_to,
+            sighted: l.sighted,
+        })
+        .collect()
+}
+
+/// T4 (a), (c): the header's terminal ties a dsh-tui session to the seat launched there, at
+/// `session` basis, from the session's start. A session run by hand in the same root has no such
+/// record: it stays unlinked and unwitnessed (`dsh_tui_seat`).
+#[test]
+fn a_dsh_tui_headers_terminal_ties_the_session_to_its_seat() {
+    let mut r = resolver(&[dsh_seat("t1", 0, "b-captain")]);
+    // No record yet: the project root names no seat.
+    assert_eq!(r.resolve(&dsh_call("s-seat", 20)), Resolution::Unlinked);
+    assert!(!r.witnessed(&dsh_call("s-seat", 20)));
+    r.witness("s-seat", "t1", Some(t(10)));
+    let (got, basis) = tag(r.resolve(&dsh_call("s-seat", 20)));
+    assert_eq!((got.bot.as_str(), basis), ("b-captain", Basis::Session));
+    assert_eq!(got.kind, Kind::Seat);
+    assert_eq!(got.role.as_deref(), Some("captain"));
+    assert!(r.witnessed(&dsh_call("s-seat", 20)));
+    // The link starts at the session's start: nothing earlier is claimed.
+    assert_eq!(r.resolve(&dsh_call("s-seat", 5)), Resolution::Unlinked);
+    // The session run by hand in the same root.
+    assert_eq!(r.resolve(&dsh_call("s-hand", 20)), Resolution::Unlinked);
+    assert!(!r.witnessed(&dsh_call("s-hand", 20)));
+    // A sub-agent's calls follow its parent session.
+    let mut child = dsh_call("s-child", 20);
+    child.parent_session = Some("s-seat");
+    assert_eq!(tag(r.resolve(&child)).0.bot, "b-captain");
+    // The record is dsh-tui's own: another harness's session of that name is not tied by it.
+    assert_eq!(
+        r.resolve(&call("claude-code", "s-seat", PROJECT, t(20))),
+        Resolution::Unlinked
+    );
+    assert!(!r.witnessed(&call("claude-code", "s-seat", PROJECT, t(20))));
+}
+
+/// The header names a worker's terminal: its session is the worker's at `session` basis, even
+/// where a second worker on the worktree leaves the folder ambiguous.
+#[test]
+fn a_dsh_tui_header_names_one_of_two_workers_on_a_worktree() {
+    let mut r = resolver(&[
+        worker("t1", 0, WT, DSH, "b-dev", "dev"),
+        worker("t2", 30, WT, DSH, "b-reviewer", "review"),
+    ]);
+    assert_eq!(
+        r.resolve(&call(DSH, "s-dev", WT, t(40))),
+        Resolution::Ambiguous
+    );
+    r.witness("s-dev", "t1", Some(t(1)));
+    r.witness("s-review", "t2", Some(t(31)));
+    let (dev, basis) = tag(r.resolve(&call(DSH, "s-dev", WT, t(40))));
+    assert_eq!((dev.bot.as_str(), basis), ("b-dev", Basis::Session));
+    let (review, basis) = tag(r.resolve(&call(DSH, "s-review", WT, t(40))));
+    assert_eq!((review.bot.as_str(), basis), ("b-reviewer", Basis::Session));
+    // A header whose terminal matches no launch leaves the worktree's answer as it was.
+    let mut r = resolver(&[worker("t1", 0, WT, DSH, "b-dev", "dev")]);
+    r.witness("s-dev", "t9", Some(t(1)));
+    let (dev, basis) = tag(r.resolve(&call(DSH, "s-dev", WT, t(10))));
+    assert_eq!((dev.bot.as_str(), basis), ("b-dev", Basis::Worktree));
+}
+
+/// T4 (a), (b): the tag's source sets the basis. A start row or an attach binding reports
+/// `session`; a seat known only by its `bot` label reports `label`, from the sync that saw it.
+#[test]
+fn a_dsh_tui_seat_tagged_only_by_its_label_reports_label_basis() {
+    let label_only = |session: Option<&str>| {
+        let mut pane = dsh_pane("t2", 0, session);
+        pane.labels.bot = Some("b-label".into());
+        pane.labels.role = Some("captain".into());
+        pane
+    };
+    // Through the header.
+    let mut r = resolver_seen(&[], vec![label_only(None)]).at(t(10));
+    r.witness("s-seat", "t2", Some(t(5)));
+    let (got, basis) = tag(r.resolve(&dsh_call("s-seat", 20)));
+    assert_eq!((got.bot.as_str(), basis), ("b-label", Basis::Label));
+    assert_eq!(got.kind, Kind::Seat);
+    // Before the sync that saw the label the launch names no bot: unlinked, with a record.
+    assert_eq!(r.resolve(&dsh_call("s-seat", 7)), Resolution::Unlinked);
+    assert!(r.witnessed(&dsh_call("s-seat", 7)));
+    // Through the pane's `agent.session` label.
+    let mut r = resolver_seen(&[], vec![label_only(Some("s-seat"))]).at(t(10));
+    let (got, basis) = tag(r.resolve(&dsh_call("s-seat", 20)));
+    assert_eq!((got.bot.as_str(), basis), ("b-label", Basis::Label));
+    // An attach binding names the seat's bot, not its label: `session` basis.
+    let mut r = resolver_seen(&[], vec![label_only(None)]).at(t(10));
+    r.add_attach(&lines(&[attach("t2", "b-bound", t(2))]));
+    r.witness("s-seat", "t2", Some(t(5)));
+    let (got, basis) = tag(r.resolve(&dsh_call("s-seat", 20)));
+    assert_eq!((got.bot.as_str(), basis), ("b-bound", Basis::Session));
+    // A logged seat's `agent.session` label: the start row's tag, at `session` basis (for every
+    // other harness a session label reports `label`).
+    let mut r = resolver_seen(
+        &[dsh_seat("t1", 0, "b-captain")],
+        vec![dsh_pane("t1", 0, Some("s-seat"))],
+    )
+    .at(t(10));
+    let (got, basis) = tag(r.resolve(&dsh_call("s-seat", 20)));
+    assert_eq!((got.bot.as_str(), basis), ("b-captain", Basis::Session));
+    // The label is a witness over the launch's life, not from the sync that saw it.
+    assert_eq!(tag(r.resolve(&dsh_call("s-seat", 3))).0.bot, "b-captain");
+}
+
+/// T4 (d): an address with a `/` is another machine's view of a pane, and an empty one names
+/// nothing: neither is a record.
+#[test]
+fn a_dsh_tui_header_naming_another_machines_view_is_no_record() {
+    for terminal in ["/mac/t1", "mac/t1", ""] {
+        let mut r = resolver(&[dsh_seat("t1", 0, "b-captain")]);
+        r.witness("s-seat", terminal, Some(t(10)));
+        assert_eq!(r.resolve(&dsh_call("s-seat", 20)), Resolution::Unlinked);
+        assert!(!r.witnessed(&dsh_call("s-seat", 20)), "{terminal:?}");
+        assert_eq!(r.witness_print(), "", "{terminal:?}");
+    }
+}
+
+/// T4 (e): a record that reaches no launch, or a launch that names no bot, leaves the call
+/// unlinked with a record behind it (`no_record`), never `dsh_tui_seat`.
+#[test]
+fn a_dsh_tui_record_that_names_no_bot_is_unlinked_but_witnessed() {
+    let at = dsh_call("s-seat", 20);
+    // No launch on the terminal.
+    let mut r = resolver(&[dsh_seat("t1", 0, "b-captain")]);
+    r.witness("s-seat", "t9", Some(t(10)));
+    assert_eq!(r.resolve(&at), Resolution::Unlinked);
+    assert!(r.witnessed(&at));
+    // The launch there ended before the session started.
+    let mut r = resolver(&[dsh_seat("t1", 0, "b-captain"), end("t1", 0, t(5))]);
+    r.witness("s-seat", "t1", Some(t(10)));
+    assert_eq!(r.resolve(&at), Resolution::Unlinked);
+    assert!(r.witnessed(&at));
+    // The launch there began after the session started.
+    let mut r = resolver(&[dsh_seat("t1", 15, "b-captain")]);
+    r.witness("s-seat", "t1", Some(t(10)));
+    assert_eq!(r.resolve(&at), Resolution::Unlinked);
+    assert!(r.witnessed(&at));
+    // A session whose start is not known: no launch can be said to cover it.
+    let mut r = resolver(&[dsh_seat("t1", 0, "b-captain")]);
+    r.witness("s-seat", "t1", None);
+    assert_eq!(r.resolve(&at), Resolution::Unlinked);
+    assert!(r.witnessed(&at));
+    // A launch with no start row, no binding and no label: by the header and by its own label.
+    let mut r = resolver_seen(&[], vec![dsh_pane("t3", 0, None)]).at(t(10));
+    r.witness("s-seat", "t3", Some(t(5)));
+    assert_eq!(r.resolve(&at), Resolution::Unlinked);
+    assert!(r.witnessed(&at));
+    let mut r = resolver_seen(&[], vec![dsh_pane("t3", 0, Some("s-seat"))]).at(t(10));
+    assert_eq!(r.resolve(&at), Resolution::Unlinked);
+    assert!(r.witnessed(&at));
+}
+
+/// T4 (f): two launches on the header's terminal that both cover the session's start name no
+/// launch. The call is ambiguous even where their tags are equal and would collapse.
+#[test]
+fn two_launches_covering_a_dsh_tui_sessions_start_are_ambiguous() {
+    // The same pane recorded twice: once with this machine's core, once by a row with none.
+    let rows = [
+        dsh_seat("t1", 0, "b-captain"),
+        with(dsh_seat("t1", 0, "b-captain"), "core", Value::Null),
+        with(hook_session("t1", "s-row", t(10)), "agent", json!(DSH)),
+    ];
+    let mut r = resolver(&rows);
+    // The control: a session row with no launch key reaches both, and their equal tags collapse.
+    assert_eq!(tag(r.resolve(&dsh_call("s-row", 20))).0.bot, "b-captain");
+    // The header: never a guess, whatever the tags.
+    r.witness("s-seat", "t1", Some(t(10)));
+    assert_eq!(r.resolve(&dsh_call("s-seat", 20)), Resolution::Ambiguous);
+    assert!(r.witnessed(&dsh_call("s-seat", 20)));
+    // It names no launch, so no link is kept for it.
+    let (_, links) = r.records();
+    assert!(links.iter().all(|l| l.session != "s-seat"));
+    // One of the two ended before the session started: the other is named.
+    let mut r = resolver(&[
+        rows[0].clone(),
+        rows[1].clone(),
+        with(end("t1", 0, t(5)), "core", Value::Null),
+    ]);
+    r.witness("s-seat", "t1", Some(t(10)));
+    assert_eq!(tag(r.resolve(&dsh_call("s-seat", 20))).0.bot, "b-captain");
+}
+
+/// T4 (g): the header and the pane's `agent.session` label are two witnesses. Naming one launch
+/// they collapse; naming two launches with different bots the call is ambiguous.
+#[test]
+fn a_dsh_tui_header_and_label_that_disagree_are_ambiguous() {
+    let rows = [
+        dsh_seat("t1", 0, "b-captain"),
+        dsh_seat("t2", 1, "b-second"),
+    ];
+    let mut r = resolver_seen(&rows, vec![dsh_pane("t1", 0, Some("s-seat"))]).at(t(15));
+    r.witness("s-seat", "t1", Some(t(10)));
+    let (got, basis) = tag(r.resolve(&dsh_call("s-seat", 20)));
+    assert_eq!((got.bot.as_str(), basis), ("b-captain", Basis::Session));
+    // The label is on the other seat's pane, which was already running when the session started.
+    let mut r = resolver_seen(&rows, vec![dsh_pane("t2", 1, Some("s-seat"))]).at(t(15));
+    r.witness("s-seat", "t1", Some(t(10)));
+    assert_eq!(r.resolve(&dsh_call("s-seat", 20)), Resolution::Ambiguous);
+    // The same bot on both panes: equal tags collapse.
+    let same = [
+        dsh_seat("t1", 0, "b-captain"),
+        dsh_seat("t2", 1, "b-captain"),
+    ];
+    let mut r = resolver_seen(&same, vec![dsh_pane("t2", 1, Some("s-seat"))]).at(t(15));
+    r.witness("s-seat", "t1", Some(t(10)));
+    assert_eq!(tag(r.resolve(&dsh_call("s-seat", 20))).0.bot, "b-captain");
+}
+
+/// T4 (h): the header ties the session to the launch it started in, and only over that span. A
+/// later `session` row, or the label of a pane launched later, moves the calls from then on.
+#[test]
+fn a_dsh_tui_session_resumed_in_another_launch_moves_from_the_resume() {
+    let seats = [
+        dsh_seat("t1", 0, "b-captain"),
+        dsh_seat("t2", 30, "b-second"),
+    ];
+    // Through a session row at minute 40.
+    let mut rows = seats.to_vec();
+    rows.push(cli_session("t2", "s-seat", DSH, 30, t(40)));
+    let mut r = resolver(&rows);
+    r.witness("s-seat", "t1", Some(t(10)));
+    let bot = |r: &mut Resolver, min| tag(r.resolve(&dsh_call("s-seat", min))).0.bot;
+    assert_eq!(bot(&mut r, 20), "b-captain");
+    assert_eq!(bot(&mut r, 39), "b-captain");
+    assert_eq!(bot(&mut r, 40), "b-second");
+    assert_eq!(bot(&mut r, 50), "b-second");
+    let (_, links) = r.records();
+    let spans: Vec<(Option<i64>, Option<i64>)> = links
+        .iter()
+        .filter(|l| l.session == "s-seat")
+        .map(|l| (l.valid_from, l.valid_to))
+        .collect();
+    assert_eq!(spans.len(), 2);
+    assert!(spans.contains(&(Some(t(10)), Some(t(40)))));
+    assert!(spans.contains(&(Some(t(40)), None)));
+    // Through the label of the pane launched at minute 30: the session entered that launch.
+    let mut r = resolver_seen(&seats, vec![dsh_pane("t2", 30, Some("s-seat"))]).at(t(45));
+    r.witness("s-seat", "t1", Some(t(10)));
+    assert_eq!(bot(&mut r, 20), "b-captain");
+    assert_eq!(bot(&mut r, 29), "b-captain");
+    assert_eq!(bot(&mut r, 30), "b-second");
+    assert_eq!(bot(&mut r, 50), "b-second");
+    // The first launch ended: the header's link ends with it.
+    let mut r = resolver(&[seats[0].clone(), end("t1", 0, t(25))]);
+    r.witness("s-seat", "t1", Some(t(10)));
+    assert_eq!(bot(&mut r, 20), "b-captain");
+    assert_eq!(r.resolve(&dsh_call("s-seat", 26)), Resolution::Unlinked);
+    assert!(r.witnessed(&dsh_call("s-seat", 26)));
+}
+
+/// T4 (b), replay: the links a sync kept are read back by the next, which sees no label and reads
+/// no log, and give the same answers and the same records.
+#[test]
+fn kept_dsh_tui_session_links_replay_without_the_label_or_the_log() {
+    let rows = [dsh_seat("t1", 0, "b-captain")];
+    // A label link.
+    let mut first = resolver_seen(&rows, vec![dsh_pane("t1", 0, Some("s-seat"))]).at(t(10));
+    let (_, links) = first.records();
+    let label = kept(&links);
+    assert_eq!(label.len(), 1);
+    assert!(label[0].sighted);
+    let mut later = resolver(&rows);
+    assert_eq!(later.resolve(&dsh_call("s-seat", 20)), Resolution::Unlinked);
+    later.add_session_links(&label);
+    let (got, basis) = tag(later.resolve(&dsh_call("s-seat", 20)));
+    assert_eq!((got.bot.as_str(), basis), ("b-captain", Basis::Session));
+    assert_eq!(kept(&later.records().1), label);
+    // A header link.
+    let mut first = resolver(&rows);
+    first.witness("s-seat", "t1", Some(t(10)));
+    let header = kept(&first.records().1);
+    assert_eq!(header.len(), 1);
+    assert!(!header[0].sighted);
+    assert_eq!(
+        (header[0].valid_from, header[0].valid_to),
+        (Some(t(10)), None)
+    );
+    let mut later = resolver(&rows);
+    later.add_session_links(&header);
+    assert_eq!(
+        tag(later.resolve(&dsh_call("s-seat", 20))).0.bot,
+        "b-captain"
+    );
+    assert_eq!(later.resolve(&dsh_call("s-seat", 5)), Resolution::Unlinked);
+    assert_eq!(kept(&later.records().1), header);
+    // With the header read again beside the kept link: one link, the same one.
+    later.witness("s-seat", "t1", Some(t(10)));
+    assert_eq!(
+        tag(later.resolve(&dsh_call("s-seat", 20))).0.bot,
+        "b-captain"
+    );
+    assert_eq!(kept(&later.records().1), header);
+}
+
+/// A kept link whose launch this sync does not know (its ledger is not read now) names no bot,
+/// and still stands over the span the store recorded: the folder never names another bot there.
+#[test]
+fn a_kept_dsh_tui_link_to_an_unknown_launch_is_never_dropped_for_the_folder() {
+    let mut r = resolver(&[worker("t7", 0, WT, DSH, "b-dev", "dev")]);
+    r.add_session_links(&[SessionLink {
+        agent: DSH.into(),
+        session: "s-seat".into(),
+        lkey: "a-launch-not-read-now".into(),
+        valid_from: Some(t(10)),
+        valid_to: Some(t(30)),
+        sighted: false,
+    }]);
+    let at = |min| call(DSH, "s-seat", WT, t(min));
+    assert_eq!(r.resolve(&at(20)), Resolution::Unlinked);
+    assert!(r.witnessed(&at(20)));
+    // Outside the recorded span the link says nothing.
+    assert_eq!(tag(r.resolve(&at(40))).0.bot, "b-dev");
+    // And it is not written again as a link of a launch that is not known.
+    assert!(kept(&r.records().1).is_empty());
+}
+
+/// A dsh-tui session tied to one launch by its header, a row and its pane's label is one link in
+/// the table: the rows' span, starting where the session entered the launch.
+#[test]
+fn a_dsh_tui_session_is_one_link_per_launch() {
+    let rows = [
+        dsh_seat("t1", 0, "b-captain"),
+        cli_session("t1", "s-seat", DSH, 0, t(12)),
+    ];
+    let mut r = resolver_seen(&rows, vec![dsh_pane("t1", 0, Some("s-seat"))]).at(t(15));
+    r.witness("s-seat", "t1", Some(t(10)));
+    let links = kept(&r.records().1);
+    assert_eq!(links.len(), 1);
+    assert!(!links[0].sighted);
+    assert_eq!(
+        (links[0].valid_from, links[0].valid_to),
+        (Some(t(10)), None)
+    );
+    // The label alone: its link, over the launch's life.
+    let mut r = resolver_seen(&rows[..1], vec![dsh_pane("t1", 0, Some("s-seat"))]).at(t(15));
+    let links = kept(&r.records().1);
+    assert_eq!(links.len(), 1);
+    assert!(links[0].sighted);
+    assert_eq!((links[0].valid_from, links[0].valid_to), (Some(t(0)), None));
+}
+
+/// The header is joined by terminal address alone, so only to a launch of this machine: one that
+/// recorded this core, or none. With this machine's core unknown, a launch that names a core may
+/// be another machine's at the same address.
+#[test]
+fn a_dsh_tui_header_joins_only_launches_of_this_machine() {
+    assert!(on_this_core(Some(CORE), Some(CORE)));
+    assert!(on_this_core(None, Some(CORE)));
+    assert!(on_this_core(None, None));
+    assert!(!on_this_core(Some(CORE), None));
+    assert!(!on_this_core(Some("core-synthetic-b"), Some(CORE)));
+    let rows = [dsh_seat("t1", 0, "b-captain")];
+    let mut unknown = Resolver::new(None, vec![]);
+    unknown.add_workers(&lines(&rows));
+    unknown.witness("s-seat", "t1", Some(t(10)));
+    assert_eq!(
+        unknown.resolve(&dsh_call("s-seat", 20)),
+        Resolution::Unlinked
+    );
+    assert!(unknown.witnessed(&dsh_call("s-seat", 20)));
+    // A row written before launches recorded their core.
+    let old = [with(dsh_seat("t1", 0, "b-captain"), "core", Value::Null)];
+    let mut unknown = Resolver::new(None, vec![]);
+    unknown.add_workers(&lines(&old));
+    unknown.witness("s-seat", "t1", Some(t(10)));
+    assert_eq!(
+        tag(unknown.resolve(&dsh_call("s-seat", 20))).0.bot,
+        "b-captain"
+    );
+    // Another machine's launch at the same address is not this machine's pane.
+    let other = [with(
+        dsh_seat("t1", 0, "b-remote"),
+        "core",
+        json!("core-synthetic-b"),
+    )];
+    let mut r = resolver(&other);
+    r.witness("s-seat", "t1", Some(t(10)));
+    assert_eq!(r.resolve(&dsh_call("s-seat", 20)), Resolution::Unlinked);
+}
+
+/// The fingerprint of the header records: empty with none (a store with no such record
+/// fingerprints as it did before), the same whatever order they were read in, and different for
+/// another terminal or start.
+#[test]
+fn the_header_fingerprint_follows_the_records() {
+    let print = |records: &[(&str, &str, Option<i64>)]| {
+        let mut r = resolver(&[]);
+        for (session, terminal, at) in records {
+            r.witness(session, terminal, *at);
+        }
+        r.witness_print()
+    };
+    assert_eq!(print(&[]), "");
+    let a = ("s-a", "t1", Some(t(1)));
+    let b = ("s-b", "t2", Some(t(2)));
+    assert_ne!(print(&[a]), "");
+    assert_eq!(print(&[a, b]), print(&[b, a]));
+    assert_ne!(print(&[a]), print(&[a, b]));
+    assert_ne!(print(&[a]), print(&[("s-a", "t2", Some(t(1)))]));
+    assert_ne!(print(&[a]), print(&[("s-a", "t1", Some(t(2)))]));
+    assert_ne!(print(&[a]), print(&[("s-a", "t1", None)]));
+}

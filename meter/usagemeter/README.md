@@ -293,7 +293,10 @@ links for 400 days. The rollups stay as they are.
   0021, `src/ledger.rs`): read from the global app home's `workers.jsonl` and `attach.jsonl`,
   `$HERDR_WORKERS_LEDGER`, and each project's `.herdr/app-home` above the call's cwd. The launch
   is found by a Herdr row naming the session, else an `agent.session` or `revive.session` label
-  hc shows at the sync, else (workers only) the call's cwd being the worker's worktree. A call
+  hc shows at the sync, else (workers only) the call's cwd being the worker's worktree. A
+  dsh-tui session is also found by the terminal its own header names (RFC 0026 (d)): the launch
+  on that address, on this machine, that was running when the session started; two such
+  launches name none, and the call is ambiguous. A call
   with no claimant, or claimants that differ, stays null: a bot is never guessed. That holds
   only for logged launches: a terminal started by hand that ended before any sync saw it is
   invisible to the ledgers, so the worktree path could still name the worker beside it. The

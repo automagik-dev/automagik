@@ -389,9 +389,26 @@ impl Attributor {
         let mut a = Actor::derive(&r, harness, branch);
         if matches!(r, crate::ledger::Resolution::Unlinked) {
             let elsewhere = !copied && self.resolver.elsewhere(&call);
-            a.reason = Some(evidence::unlinked_reason(harness, copied, elsewhere).into());
+            let witnessed = !copied && self.resolver.witnessed(&call);
+            a.reason =
+                Some(evidence::unlinked_reason(harness, copied, elsewhere, witnessed).into());
         }
         a
+    }
+
+    /// Hands the resolver a dsh-tui session's own start record, when its header named the
+    /// terminal it runs in (RFC 0026 (d)): the session hashed as its calls are, the terminal and
+    /// the session's start. Called with a file's context before its calls are attributed, so the
+    /// first call of a new log already finds its launch.
+    fn witness(&mut self, source: Source, ctx: &crate::sources::FileCtx) {
+        if source != Source::DshTui {
+            return;
+        }
+        if let (Some(session), Some(terminal)) = (ctx.session.as_deref(), ctx.terminal.as_deref()) {
+            let scope = evidence::scope(source.harness());
+            self.resolver
+                .witness(&self.key.hex(scope, session), terminal, ctx.created_at);
+        }
     }
 
     /// A stored call's attribution, as the resolver gives it now.
@@ -932,6 +949,7 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
         };
         let key = store.session_key()?;
         let snap = Snapshot::of(&store, core.as_deref(), &snapshot, answered, now)?;
+        let headers = dsh_headers(&store)?;
         let mut attr = Attributor {
             machine: machine.clone(),
             resolver: resolver(opts, core, snapshot, key.clone(), &snap, &store)?,
@@ -941,6 +959,9 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
             key,
             fail_writes_after: opts.fail_writes_after.map(std::cell::Cell::new),
         };
+        for ctx in &headers {
+            attr.witness(Source::DshTui, ctx);
+        }
 
         trace.mark("hc");
         let mut report = Report {
@@ -1415,7 +1436,29 @@ fn resolver(
         &evidence::label_history(&store.conn)?,
         &snap.gone_at,
     );
+    r.add_session_links(&evidence::session_links(&store.conn)?);
     Ok(r)
+}
+
+/// The file context of every dsh-tui session log read so far whose header named a terminal (RFC
+/// 0026 (d)): the header's record as the last read left it in the store, so a sync that reads
+/// nothing new of a log still knows which terminal its session started in. A recompute then
+/// keeps a session whose terminal no launch covers at `no_record`, and links it once a later
+/// sync learns that launch, with no log re-read.
+fn dsh_headers(store: &Store) -> rusqlite::Result<Vec<crate::sources::FileCtx>> {
+    let mut st = store
+        .conn
+        .prepare("SELECT ctx FROM files WHERE source = ?1 ORDER BY path")?;
+    let rows = st.query_map([Source::DshTui.harness()], |r| r.get::<_, String>(0))?;
+    let mut out = Vec::new();
+    for ctx in rows {
+        if let Ok(ctx) = serde_json::from_str::<crate::sources::FileCtx>(&ctx?)
+            && ctx.terminal.is_some()
+        {
+            out.push(ctx);
+        }
+    }
+    Ok(out)
 }
 
 /// What this sync's hc snapshot says about the launches earlier syncs saw.
@@ -1493,15 +1536,24 @@ impl Snapshot {
 const INPUTS_META: &str = "attribution_inputs";
 
 /// The derivation's version, the fingerprint's first input: a sync compares its inputs against the
-/// stored fingerprint, so changing what a launch's tags are derived from (RFC 0026 delivery 3
-/// added the label claims) revisits every launch once, on the first sync after the upgrade,
+/// stored fingerprint, so changing what a launch's tags or a session's links are derived from
+/// (RFC 0026 delivery 3 added the label claims; delivery 4b made a dsh-tui session label a
+/// `session` link) revisits every launch and link once, on the first sync after the upgrade,
 /// instead of waiting for a ledger or the snapshot to change.
-const DERIVATION: &[u8] = b"labels-v1\x1e";
+const DERIVATION: &[u8] = b"dsh-seat-v1\x1e";
 
 /// The fingerprint of what the launches and links are derived from: the derivation's version,
-/// what hc showed, each ledger read (its path, size, modification time and first bytes) and the
-/// project app homes found.
-fn inputs_print(derivation: &[u8], snapshot: &str, files: &[PathBuf], homes: &[String]) -> String {
+/// what hc showed, each ledger read (its path, size, modification time and first bytes), the
+/// project app homes found, and the dsh-tui header records known (`witnesses`,
+/// [`Resolver::witness_print`]: empty for none). The last makes a sync whose only news is a
+/// dsh-tui log write that session's link.
+fn inputs_print(
+    derivation: &[u8],
+    snapshot: &str,
+    files: &[PathBuf],
+    homes: &[String],
+    witnesses: &str,
+) -> String {
     use sha2::Digest;
     let mut print = sha2::Sha256::new();
     print.update(derivation);
@@ -1527,6 +1579,7 @@ fn inputs_print(derivation: &[u8], snapshot: &str, files: &[PathBuf], homes: &[S
     for h in homes {
         print.update(h.as_bytes());
     }
+    print.update(witnesses.as_bytes());
     crate::event::hex(&print.finalize())
 }
 
@@ -1546,7 +1599,13 @@ fn links_pass(
         .iter()
         .map(|h| h.to_string_lossy().into_owned())
         .collect();
-    let print = inputs_print(DERIVATION, &snap.print, &attr.resolver.files(), &homes);
+    let print = inputs_print(
+        DERIVATION,
+        &snap.print,
+        &attr.resolver.files(),
+        &homes,
+        &attr.resolver.witness_print(),
+    );
     let same = store.meta(INPUTS_META)?.as_deref() == Some(print.as_str());
     let tx = store.conn.transaction()?;
     if same {
@@ -1710,6 +1769,7 @@ fn evidence_backfill(
                 state.ctx = serde_json::from_str(&ctx).unwrap_or_default();
             }
             let read = scan::read_file(&mut state, c.source, limits, |st, events, _| {
+                attr.witness(c.source, &st.ctx);
                 let calls = attr
                     .attribute(store, events, from)
                     .map_err(io::Error::other)?;
@@ -1933,6 +1993,7 @@ fn read_into_store(
                 health.rewrites += 1;
             }
             first = false;
+            attr.witness(source, &st.ctx);
             let attributed = attr
                 .attribute(store, events, counted_from)
                 .map_err(store_write)?;
