@@ -610,8 +610,8 @@ selection, the conversation UI and the existing model-enable switches keep their
 
 Ledger pass (2026-11-10): the board links this RFC from its file.
 
-- Open issues: none (all tracked work is merged).
-- Merged changes: #186, #187, #189, #349, #520, #522, #537, #557, #559, #569 (last merged 2026-11-06).
+- Open issues: none..
+- Merged changes that cite this RFC: #186, #187, #189, #349, #520, #522, #537, #557, #559, #569 (last merged 2026-11-06).
 
 ## Links
 

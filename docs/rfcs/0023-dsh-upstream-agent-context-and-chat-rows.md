@@ -179,7 +179,7 @@ also keeps the code off DSH's input triggers and its undo history.
 Ledger pass (2026-11-10): the board links this RFC from its file.
 
 - Open issues: #871.
-- Merged changes: #860 (last merged 2026-11-09).
+- Merged changes that cite this RFC: #860 (last merged 2026-11-09).
 
 ## Links
 

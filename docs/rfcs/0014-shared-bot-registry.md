@@ -565,8 +565,8 @@ No open questions. The owner answered all nineteen (see Decided); they stay belo
 
 Ledger pass (2026-11-10): the board links this RFC from its file.
 
-- Open issues: none (all tracked work is merged).
-- Merged changes: #236, #253, #257, #259, #260, #272, #273, #282, #309, #321, #407, #508, #523, #666, #670, #674, #684, #847 (last merged 2026-11-09).
+- Open issues: none..
+- Merged changes that cite this RFC: #236, #253, #257, #259, #260, #272, #273, #282, #309, #321, #407, #508, #523, #666, #670, #674, #684, #847 (last merged 2026-11-09).
 
 ## Links
 

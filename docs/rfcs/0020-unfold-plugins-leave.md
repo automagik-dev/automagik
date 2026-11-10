@@ -323,8 +323,8 @@ None. Questions 1 to 5 were answered by the owner on 2026-11-09 and are in Decid
 
 Ledger pass (2026-11-10): the board links this RFC from its file.
 
-- Open issues: none (all tracked work is merged).
-- Merged changes: #790, #854 (last merged 2026-11-09).
+- Open issues: none..
+- Merged changes that cite this RFC: #790, #854 (last merged 2026-11-09).
 
 ## Links
 

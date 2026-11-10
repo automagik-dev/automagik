@@ -1000,7 +1000,7 @@ pointer and the outcome, so the two RFCs do not drift into two homes.
 Ledger pass (2026-11-10): the board links this RFC from its file.
 
 - Open issues: #902, #910, #912.
-- Merged changes: #888, #913 (last merged 2026-11-10).
+- Merged changes that cite this RFC: #888, #913 (last merged 2026-11-10).
 
 ## Links
 

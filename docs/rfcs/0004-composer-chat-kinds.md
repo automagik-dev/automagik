@@ -122,8 +122,8 @@ browser work and everyday fixes of milestone 1.
 
 Ledger pass (2026-11-10): the board links this RFC from its file.
 
-- Open issues: none (all tracked work is merged).
-- Merged changes: #187 (last merged 2026-11-03).
+- Open issues: none..
+- Merged changes that cite this RFC: #187 (last merged 2026-11-03).
 
 ## Links
 

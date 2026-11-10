@@ -820,7 +820,7 @@ finds out what the other accepts, and fails closed to read-only.
 Ledger pass (2026-11-10): the board links this RFC from its file.
 
 - Open issues: #852.
-- Merged changes: #253, #267, #273, #280, #282, #286, #296, #523, #574, #655, #663, #666, #670, #674, #675, #680, #740, #744, #748, #847 (last merged 2026-11-09).
+- Merged changes that cite this RFC: #253, #267, #273, #280, #282, #286, #296, #523, #574, #655, #663, #666, #670, #674, #675, #680, #740, #744, #748, #847 (last merged 2026-11-09).
 
 ## Links
 

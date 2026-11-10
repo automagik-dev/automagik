@@ -522,7 +522,7 @@ with other ids (deleted since); they are imported anyway, as question 2 decided.
 Ledger pass (2026-11-10): the board links this RFC from its file.
 
 - Open issues: #915.
-- Merged changes: #751, #764, #783, #788, #817, #822, #825, #834, #836, #838 (last merged 2026-11-09).
+- Merged changes that cite this RFC: #751, #764, #783, #788, #817, #822, #825, #834, #836, #838 (last merged 2026-11-09).
 
 ## Links
 

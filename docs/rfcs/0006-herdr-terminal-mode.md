@@ -116,7 +116,7 @@ gives a terminal that survives the app, and the same session is visible in both 
 Ledger pass (2026-11-10): the board links this RFC from its file.
 
 - Open issues: #250.
-- Merged changes: none yet.
+- Merged changes that cite this RFC: none yet.
 
 ## Links
 

@@ -885,7 +885,7 @@ principals are keyed by `(issuer, sub)`. Arca keeps its own sign-in (its own pas
 Ledger pass (2026-11-10): the board links this RFC from its file.
 
 - Open issues: #902, #903, #904, #905, #906, #907, #908, #909, #910, #911, #912.
-- Merged changes: #866, #888, #913 (last merged 2026-11-10).
+- Merged changes that cite this RFC: #866, #888, #913 (last merged 2026-11-10).
 
 ## Links
 

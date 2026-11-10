@@ -606,7 +606,7 @@ owner, the rest by Chat as recommended, Q6 re-decided after review. Decided 9 (H
 Ledger pass (2026-11-10): the board links this RFC from its file.
 
 - Open issues: #852.
-- Merged changes: #847, #866 (last merged 2026-11-09).
+- Merged changes that cite this RFC: #847, #866 (last merged 2026-11-09).
 
 ## Links
 

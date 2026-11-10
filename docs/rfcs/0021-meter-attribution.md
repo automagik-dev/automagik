@@ -660,7 +660,7 @@ The six questions this RFC asked were decided by Chat on 2026-11-09 (Decided, 1 
 Ledger pass (2026-11-10): the board links this RFC from its file.
 
 - Open issues: #897, #898, #899, #915.
-- Merged changes: #817, #822, #825, #827, #834, #835, #875 (last merged 2026-11-10).
+- Merged changes that cite this RFC: #817, #822, #825, #827, #834, #835, #875 (last merged 2026-11-10).
 
 ## Links
 
