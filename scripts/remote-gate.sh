@@ -20,6 +20,13 @@
 # Needs Linux's GNU coreutils (mv -T, stat -c): a slot is claimed by renaming a folder that already
 # holds its owner, so no slot is ever seen without one. A gate's identity is its pid, its start
 # time in clock ticks (/proc/<pid>/stat) and the boot id: no time zone or clock step changes it.
+# One REMOTE_GATE_BASE serves one pid namespace: gates in containers that share a base read each
+# other's pids as gone and take each other's slots and worktrees, so give each namespace its own.
+# The clone's git lock is never taken over from a gate of this boot, even a dead one (it says how
+# to clear it); one whose owner names another boot id is from before a reboot and is cleared.
+#
+# Heads before the merged script kept their state in <clone>/.remote-gate, this one in
+# <clone>-gate: the two share no slots and no git lock, so never run both against one clone.
 #
 # Environment (all optional):
 #   REMOTE_GATE_ENV            a file sourced first (PATH, NVM_DIR, the variables below)
@@ -48,8 +55,10 @@
 # throwaway worktree, never cached across shas.
 #
 # What differs from CI: the herdr gate leaves out test/am-quota-write.test.mjs, by the owner's
-# rule that it never runs on our machines (CI still runs it). Its static checks run once, on the first Node. A version like 24 is the
-# newest one nvm has installed, not the newest released; the record names the exact one. bun is
+# rule that it never runs on our machines (CI still runs it). That rule is an instruction
+# the owner gave the team; it is written down here and nowhere else in the repository (AGENTS.md
+# and CI run every test file). Its static checks run once, on the first Node. A version like 24
+# is the newest one nvm has installed, not the newest released; the record names the exact one. bun is
 # whatever PATH has (CI pins 1.4.4); the record names it. The plugin gate does not fetch Omni for
 # welcome-dsh. Without a browser it unsets CI, so bots-dsh's layout check skips instead of failing,
 # and says so; with one it sets CHROME_BIN and CI as CI does. The desktop gate is CI's desktop job
@@ -194,14 +203,38 @@ node_bin() {
   printf '%s/bin\n' "$best"
 }
 
+# Whether an owner line names a boot other than this one: its gate ended with that boot, whatever
+# runs under its pid now. Never true when either boot id is unknown.
+other_boot() {
+  local was=${1##* boot:}
+  [ "$was" != "$1" ] && [ -n "$was" ] && [ "$was" != unknown ] && [ "$boot_id" != unknown ] \
+    && [ "$was" != "$boot_id" ]
+}
+
+# Clears a git lock left from before a reboot. Its owner file is moved aside inside the lock, so
+# one gate wins and the lock's name stays taken meanwhile; a file that is not the one judged (a
+# live lock made since) is put back.
+git_lock_clear() {
+  local judged=$1 aside=$git_lock/owner.stale-$$
+  mv "$git_lock/owner" "$aside" 2>/dev/null || return 1
+  if [ "$(cat "$aside" 2>/dev/null || true)" != "$judged" ]; then
+    mv "$aside" "$git_lock/owner" 2>/dev/null || true
+    return 1
+  fi
+  rm -rf "$git_lock"
+  say "cleared the clone's git lock, left from before a reboot (owner: $judged)"
+}
+
 # The clone's lock for fetches and worktree bookkeeping, shared by every slot. One left by a gate
-# that is gone is never taken over: it is reported with the command that clears it.
+# of this boot that is gone is never taken over: it is reported with the command that clears it.
+# One from before a reboot (another boot id in its owner file) is stale and is cleared here.
 git_lock_take() {
   local deadline=$((SECONDS + git_timeout)) owner
   mkdir -p "$lock_dir"
   until mkdir "$git_lock" 2>/dev/null; do
+    owner=$(cat "$git_lock/owner" 2>/dev/null || true)
+    if other_boot "$owner" && git_lock_clear "$owner"; then continue; fi
     if [ "$SECONDS" -ge "$deadline" ]; then
-      owner=$(cat "$git_lock/owner" 2>/dev/null || true)
       if alive "$owner"; then
         say "the clone's git lock is held by a running gate (pid ${owner%% *}) for over $git_timeout s" >&2
       else
@@ -274,16 +307,19 @@ slot_take() {
     sweep_stale
     for i in $(seq 1 "$slots"); do
       dir=$lock_dir/slot-$i
+      if [ -e "$dir" ]; then
+        owner=$(slot_owner "$dir")
+        case $owner in
+          'none '*) if [ $(($(date +%s) - ${owner#none })) -gt "$lock_timeout" ]; then reclaim "$dir" "$owner"; fi ;;
+          *) if ! alive "$owner"; then reclaim "$dir" "$owner"; fi ;;
+        esac
+      fi
+      # Also right after a stale slot was taken back, not on the next pass.
       if [ ! -e "$dir" ] && claim "$dir"; then
         slot=$dir
         say "slot $i of $slots (pid $$)"
         return 0
       fi
-      owner=$(slot_owner "$dir")
-      case $owner in
-        'none '*) if [ $(($(date +%s) - ${owner#none })) -gt "$lock_timeout" ]; then reclaim "$dir" "$owner"; fi ;;
-        *) if ! alive "$owner"; then reclaim "$dir" "$owner"; fi ;;
-      esac
     done
     if [ "$SECONDS" -ge "$deadline" ]; then
       say "all $slots slots busy for $lock_timeout s; giving up" >&2
@@ -307,10 +343,18 @@ remove_worktree() {
   return 1
 }
 
+# A ref's stamp file. A '/' in the ref's name (only in a ref made by hand) is written as %2F and
+# a '%' as %25, so every stamp is one file in ref-stamps and no two refs share one.
+stamp_file() {
+  local name=${1#refs/remote-gate/}
+  name=${name//%/%25}
+  printf '%s\n' "$base/ref-stamps/${name//\//%2F}"
+}
+
 # A ref's stamp, touched whenever a gate fetches or uses it: the sweep ages refs by it.
 stamp() {
   mkdir -p "$base/ref-stamps"
-  touch "$base/ref-stamps/${1#refs/remote-gate/}"
+  touch "$(stamp_file "$1")"
 }
 
 # Old refs and logs, and worktrees left by a gate that is gone (killed, out of memory). A ref
@@ -319,7 +363,7 @@ sweep() {
   local cutoff owner_file dir name mark
   cutoff=$(($(date +%s) - keep_days * 86400))
   git -C "$repo" for-each-ref --format='%(refname)' refs/remote-gate/ | while read -r name; do
-    mark=$base/ref-stamps/${name#refs/remote-gate/}
+    mark=$(stamp_file "$name")
     if [ ! -e "$mark" ]; then
       stamp "$name"
     elif [ "$(mtime "$mark")" -lt "$cutoff" ]; then
@@ -387,11 +431,12 @@ step() {
   return 0
 }
 
-# Counts from node --test output, TAP (# tests 12) or spec (a glyph, tests 12); the last one wins.
-# Prints "found tests pass fail skip todo cancelled", found 0 when there is no summary.
+# Counts from node --test output: TAP's "# tests 12" or the spec reporter's "ℹ tests 12" (U+2139,
+# its three bytes in octal below), at the line's start; the last one wins. No other first word
+# counts. Prints "found tests pass fail skip todo cancelled", found 0 when there is no summary.
 node_counts() {
   LC_ALL=C awk '/^[^ \t]/ && NF == 3 && $2 ~ /^(tests|pass|fail|skipped|todo|cancelled)$/ \
-         && $3 ~ /^[0-9]+$/ && $1 !~ /^[[:alnum:]]/ { c[$2] = $3; found = 1 }
+         && $3 ~ /^[0-9]+$/ && ($1 == "#" || $1 == "\342\204\271") { c[$2] = $3; found = 1 }
        END { printf "%d %d %d %d %d %d %d\n", found, c["tests"], c["pass"], c["fail"], \
          c["skipped"], c["todo"], c["cancelled"] }' "$1"
 }
