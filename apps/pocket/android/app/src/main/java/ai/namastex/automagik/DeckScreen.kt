@@ -44,18 +44,20 @@ private data class MenuRead(val menu: Prompt.Menu?, val done: Boolean)
 /** The deck's answers and requests seen, kept in PocketApp so opening a card and coming Back keeps them. */
 class DeckMemory {
     var answered by mutableStateOf(setOf<String>())
+    var gone by mutableStateOf(setOf<String>())
     var seen by mutableIntStateOf(0)
     /** The deck reached All clear: the next open starts a new count, while a mid-deck close keeps it. */
     var complete by mutableStateOf(false)
 
     companion object {
         val Saver = listSaver<DeckMemory, Any>(
-            save = { listOf(it.answered.toList(), it.seen, it.complete) },
+            save = { listOf(it.answered.toList(), it.gone.toList(), it.seen, it.complete) },
             restore = { saved ->
                 DeckMemory().apply {
                     answered = (saved.getOrNull(0) as? List<*>)?.filterIsInstance<String>()?.toSet().orEmpty()
-                    seen = saved.getOrNull(1) as? Int ?: 0
-                    complete = saved.getOrNull(2) as? Boolean ?: false
+                    gone = (saved.getOrNull(1) as? List<*>)?.filterIsInstance<String>()?.toSet().orEmpty()
+                    seen = saved.getOrNull(2) as? Int ?: 0
+                    complete = saved.getOrNull(3) as? Boolean ?: false
                 }
             })
     }
@@ -75,10 +77,14 @@ class DeckMemory {
     BackHandler(onBack = onClose)
     LaunchedEffect(cards.size) { memory.seen = maxOf(memory.seen, cards.size) }
     val answered = memory.answered
+    val gone = memory.gone
     val offlineWaiting = offline.count { Teams.deckKey(it) !in answered }
     val waiting = (memory.seen - answered.size).coerceAtLeast(0)
-    val view = Teams.deckView(cards, answered, connected, waiting, offlineWaiting)
+    val view = Teams.deckView(cards, gone, connected, waiting, offlineWaiting)
     LaunchedEffect(view is Teams.DeckView.Clear) { memory.complete = view is Teams.DeckView.Clear }
+    // The card being answered stays composed through its exit, even if Home has already dropped it.
+    var leaving by remember { mutableStateOf<Teams.DeckCard?>(null) }
+    val showing = leaving ?: (view as? Teams.DeckView.Cards)?.cards?.firstOrNull()
     // Read the cards behind the top one before they arrive, so a swipe does not show a terminal-only frame.
     val menuCache = remember { mutableStateMapOf<String, MenuRead>() }
     val visible = (view as? Teams.DeckView.Cards)?.cards.orEmpty()
@@ -91,7 +97,7 @@ class DeckMemory {
     Box(Modifier.fillMaxSize().background(Canvas).clickable(enabled = false) {}.statusBarsPadding().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp)) {
         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                if (view is Teams.DeckView.Clear) {
+                if (view is Teams.DeckView.Clear && leaving == null) {
                     // The all-clear screen has no Needs-you header; it keeps the close control.
                     Spacer(Modifier.weight(1f))
                 } else {
@@ -106,16 +112,27 @@ class DeckMemory {
                 }
                 IconButton(onClick = onClose) { Icon(Icons.Outlined.Close, "Close the deck", tint = Muted) }
             }
-            when (view) {
-                is Teams.DeckView.Cards -> {
-                    val card = view.cards.first()
-                    key(Teams.deckKey(card)) {
-                        val cached = menuCache[Teams.deckKey(card)]
-                        DeckCard(vm, card, next = view.cards.getOrNull(1), behind = view.cards.size - 1,
-                            initialMenu = cached?.menu, initialMenuDone = cached?.done == true, modifier = Modifier.weight(1f),
-                            onAnswered = { memory.answered = memory.answered + Teams.deckKey(card) }, onOpen = { onOpen(card.ref) })
-                    }
+            val card = showing
+            if (card != null) {
+                val key = Teams.deckKey(card)
+                val cached = menuCache[key]
+                val cardsNow = (view as? Teams.DeckView.Cards)?.cards.orEmpty()
+                // While a card is leaving, the next card is the first of the list that no longer holds it.
+                val next = if (leaving != null) cardsNow.firstOrNull() else cardsNow.getOrNull(1)
+                val behind = if (leaving != null) cardsNow.size else (cardsNow.size - 1).coerceAtLeast(0)
+                key(key) {
+                    DeckCard(vm, card, next = next, behind = behind,
+                        initialMenu = cached?.menu, initialMenuDone = cached?.done == true, modifier = Modifier.weight(1f),
+                        onAnswered = {
+                            // Count the answer now, and hold the card composed for its exit animation.
+                            memory.answered = memory.answered + key
+                            memory.gone = memory.gone + key
+                            leaving = card
+                        },
+                        onGone = { if (leaving?.let(Teams::deckKey) == key) leaving = null },
+                        onOpen = { onOpen(card.ref) })
                 }
+            } else when (view) {
                 Teams.DeckView.Clear -> DeckEnd(Teams.DONE, "All clear", if (answered.isEmpty()) "No bot is waiting on you."
                     else "You answered ${answered.size} ${if (answered.size == 1) "request" else "requests"}. Your bots are back to work.",
                     celebrate = answered.isNotEmpty(), action = "Back to Home", onAction = onBackHome, Modifier.weight(1f))
@@ -123,12 +140,13 @@ class DeckMemory {
                     if (view.waiting == 1) "1 bot was waiting when the connection dropped. Reconnect to answer."
                     else "${view.waiting} bots were waiting when the connection dropped. Reconnect to answer.",
                     celebrate = false, action = "Back to Home", onAction = onClose, Modifier.weight(1f))
+                is Teams.DeckView.Cards -> Unit
             }
         }
         // The Scaffold's snackbar sits under this layer; answer outcomes overlay it here without moving the card.
         message?.takeIf { it.isNotBlank() }?.let {
             Text(it, color = Ink, fontSize = 13.sp, lineHeight = 18.sp, textAlign = TextAlign.Center,
-                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 92.dp).fillMaxWidth()
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 124.dp).fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp)).background(Raised).border(1.dp, Border, RoundedCornerShape(12.dp))
                     .padding(horizontal = 12.dp, vertical = 10.dp))
         }
@@ -160,7 +178,7 @@ class DeckMemory {
  */
 @Composable private fun DeckCard(vm: PocketViewModel, card: Teams.DeckCard, next: Teams.DeckCard?, behind: Int,
                                  initialMenu: Prompt.Menu?, initialMenuDone: Boolean, modifier: Modifier,
-                                 onAnswered: () -> Unit, onOpen: () -> Unit) {
+                                 onAnswered: () -> Unit, onGone: () -> Unit, onOpen: () -> Unit) {
     val scope = rememberCoroutineScope()
     val view = LocalView.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -193,9 +211,14 @@ class DeckMemory {
         scope.launch { launch { dx.animateTo(edge, tween(100)) }; dy.animateTo(0f, tween(100)) }
         val short = if (choice.index == yes?.index) "Yes" else if (choice.index == no?.index) "No" else choice.button
         vm.answer(card.ref, card.message, m.dialog, m.options, choice, short = short) { sent ->
-            sending = false
-            if (sent) scope.launch { dx.animateTo(direction * 1400f, tween(180)); onAnswered() }
-            else scope.launch { launch { dx.animateTo(0f, tween(180)) }; dy.animateTo(0f, tween(180)) }
+            if (sent) {
+                // Count before the exit so the All clear sentence is right even if Home drops the card first.
+                onAnswered()
+                scope.launch { dx.animateTo(direction * 1400f, tween(180)); onGone() }
+            } else {
+                sending = false
+                scope.launch { launch { dx.animateTo(0f, tween(180)) }; dy.animateTo(0f, tween(180)) }
+            }
         }
     }
     Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {

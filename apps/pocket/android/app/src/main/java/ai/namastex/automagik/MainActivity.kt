@@ -132,12 +132,14 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
     val deckMemory = rememberSaveable(saver = DeckMemory.Saver) { DeckMemory() }
     val openDeck: () -> Unit = {
         // A closed mid-deck session keeps its count; a new one after All clear starts fresh.
-        if (deckMemory.complete) { deckMemory.answered = emptySet(); deckMemory.seen = 0; deckMemory.complete = false }
+        if (deckMemory.complete) {
+            deckMemory.answered = emptySet(); deckMemory.gone = emptySet(); deckMemory.seen = 0; deckMemory.complete = false
+        }
         deckOpen = true
     }
     // The preview's deck session does not outlive the preview, so Exit clears its answered count.
     LaunchedEffect(state.demo) {
-        deckMemory.answered = emptySet(); deckMemory.seen = 0; deckMemory.complete = false
+        deckMemory.answered = emptySet(); deckMemory.gone = emptySet(); deckMemory.seen = 0; deckMemory.complete = false
         if (!state.demo) deckOpen = false
     }
     /** The machine whose Automagik Bot chats are listed (read only). */
@@ -430,12 +432,29 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
         // Today: the counts and nothing else above the agents; spent today joins them once a usage meter reports.
         if (space == null) item(key = "today") {
             val fontScale = LocalDensity.current.fontScale
-            Row(Modifier.fillMaxWidth().height(TodayTiles.heightDp(fontScale)), horizontalArrangement = Arrangement.spacedBy(TodayTiles.GAP_DP.dp)) {
-                CountCard(pulse.needsYou, if (pulse.needsYou == 1) "needs you" else "need you", Blocked, Modifier.weight(1f).fillMaxHeight(),
-                    onClick = if (pulse.needsYou > 0) onReviewNeedsYou else null)
-                CountCard(pulse.working, "working", Working, Modifier.weight(1f).fillMaxHeight())
-                CountCard(pulse.machines, "connected", Ink, Modifier.weight(1f).fillMaxHeight())
-                rememberSpend(state).takeIf { !it.coverage.none }?.let { SpendCount(it, Modifier.weight(1f).fillMaxHeight()) }
+            val tile = TodayTiles.heightDp(fontScale)
+            val spend = rememberSpend(state).takeIf { !it.coverage.none }
+            if (fontScale >= 1.2f) {
+                // At a large font the four counts become two rows, so every label keeps the same 12sp size.
+                Column(verticalArrangement = Arrangement.spacedBy(TodayTiles.GAP_DP.dp)) {
+                    Row(Modifier.fillMaxWidth().height(tile), horizontalArrangement = Arrangement.spacedBy(TodayTiles.GAP_DP.dp)) {
+                        CountCard(pulse.needsYou, if (pulse.needsYou == 1) "needs you" else "need you", Blocked, Modifier.weight(1f).fillMaxHeight(),
+                            onClick = if (pulse.needsYou > 0) onReviewNeedsYou else null)
+                        CountCard(pulse.working, "working", Working, Modifier.weight(1f).fillMaxHeight())
+                    }
+                    Row(Modifier.fillMaxWidth().height(tile), horizontalArrangement = Arrangement.spacedBy(TodayTiles.GAP_DP.dp)) {
+                        CountCard(pulse.machines, "connected", Ink, Modifier.weight(1f).fillMaxHeight())
+                        if (spend != null) SpendCount(spend, Modifier.weight(1f).fillMaxHeight()) else Spacer(Modifier.weight(1f))
+                    }
+                }
+            } else {
+                Row(Modifier.fillMaxWidth().height(tile), horizontalArrangement = Arrangement.spacedBy(TodayTiles.GAP_DP.dp)) {
+                    CountCard(pulse.needsYou, if (pulse.needsYou == 1) "needs you" else "need you", Blocked, Modifier.weight(1f).fillMaxHeight(),
+                        onClick = if (pulse.needsYou > 0) onReviewNeedsYou else null)
+                    CountCard(pulse.working, "working", Working, Modifier.weight(1f).fillMaxHeight())
+                    CountCard(pulse.machines, "connected", Ink, Modifier.weight(1f).fillMaxHeight())
+                    spend?.let { SpendCount(it, Modifier.weight(1f).fillMaxHeight()) }
+                }
             }
             Spacer(Modifier.height(12.dp))
             val focus = LocalFocusManager.current

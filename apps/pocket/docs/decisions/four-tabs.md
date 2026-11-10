@@ -43,11 +43,11 @@ placement and the progress strip do not.
 
 - Tabs, the default and Back: `android/app/src/main/java/ai/namastex/automagik/Nav.kt`
   (`TABS`, `HOME = TEAM`, `back`, `barShown`, `badge`). Tested in `NavTest`.
-- The bar: `PocketTabs`, `android/app/src/main/java/ai/namastex/automagik/MainActivity.kt:275`.
+- The bar: `PocketTabs`, `android/app/src/main/java/ai/namastex/automagik/MainActivity.kt:277`.
   Home carries the agents that need you (Today's badge), Team the bots that need you.
-- Home is `OverviewScreen` with no space (`MainActivity.kt:400`), the spend tile `SpendCount`
-  (`MainActivity.kt:438`). `ProjectsTest.homeShowsTodaysCountsAndCarriesItsBadge` checks its counts.
-- Home's needs-you deck (`DeckScreen.kt:72`): one card per entry of Home's own Needs you list, the
+- Home is `OverviewScreen` with no space (`MainActivity.kt:402`), the spend tile `SpendCount`
+  (`MainActivity.kt:447`). `ProjectsTest.homeShowsTodaysCountsAndCarriesItsBadge` checks its counts.
+- Home's needs-you deck (`DeckScreen.kt:74`): one card per entry of Home's own Needs you list, the
   list its count tile, badge and cards use (`Teams.deckCards`, `Teams.kt:355`). Right is Yes, left is
   No, up opens the chat or terminal; the same three buttons sit under the card, with the YES/NO
   stamps as the card leans. The header counts the cards left. A row with a Bot chat and no terminal
@@ -56,7 +56,7 @@ placement and the progress strip do not.
   (`Teams.kt:387`) keeps the deck through a card's Back and closes it for any other selection.
   `PocketApp` owns the open state
   (`MainActivity.kt:127`), and Home's needs-you count tile and **Review** bar open it
-  (`MainActivity.kt:434`, `:451`), so a later "Answer all" button opens the same screen. A card's
+  (`MainActivity.kt:441`, `:470`), so a later "Answer all" button opens the same screen. A card's
   terminal or chat keeps the deck's answers on the way Back, and a disconnected machine's requests
   show the offline end. The last answer shows All clear ("You answered N requests. Your bots are
   back to work."), the bot hops once, and **Back to Home** closes the deck.
