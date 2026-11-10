@@ -246,6 +246,7 @@ pub fn agent_of(harness: &str) -> Option<&'static str> {
         "codex" => Some("codex"),
         "omp" => Some("omp"),
         "dsh-tui" => Some("dsh-tui"),
+        "agy" | "antigravity" => Some("agy"),
         _ => None,
     }
 }

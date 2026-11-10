@@ -36,6 +36,13 @@
   },
   "sources": [
     {
+      "harness": "agy",
+      "status": "absent",
+      "reason": null,
+      "last_success": null,
+      "stale": false
+    },
+    {
       "harness": "claude-code",
       "status": "ok",
       "reason": null,
