@@ -40,19 +40,26 @@
 #   REMOTE_GATE_KEEP_DAYS      days to keep refs/remote-gate/* and logs (default: 7)
 #   REMOTE_GATE_NODE_VERSIONS  herdr gate's Node versions, nvm-installed (default: "24 22 24.9.0")
 #   REMOTE_GATE_PLUGIN_NODE    Node for the plugin, bun and desktop gates (default: 24.9, as CI)
-#   REMOTE_GATE_NPM_CACHE      desktop gate's npm cache (default: <REMOTE_GATE_BASE>/npm-cache)
+#   REMOTE_GATE_NPM_CACHE      desktop gate's npm cache (default: <REMOTE_GATE_BASE>/npm-cache;
+#                              a relative one is taken from the folder the gate is started in)
 #   REMOTE_GATE_TEST_CONCURRENCY  herdr node --test concurrency (default: 8; Node's own default
 #                              is one less than the cores, too many beside other work)
 #   NVM_DIR                    where nvm keeps Node (default: $HOME/.nvm)
 #   CHROME_BIN                 bots-dsh's browser (default: one at a usual path, if any)
 #
 # The desktop gate runs apps/desktop's main-process tests as CI's desktop job does: Node 24.9,
-# npm ci --no-fund --no-audit with ELECTRON_SKIP_BINARY_DOWNLOAD=1, then npm test (node --test).
-# It unsets NODE_ENV (CI has none) so npm ci keeps the devDependencies. It is Electron-free: no
-# Electron binary is downloaded or started, and no app is launched. The Electron UI and boot
-# checks stay with CI (desktop-build.yml, boot-check.yml). npm's download cache lives under the
-# gate base and is reused by later gates; node_modules is installed fresh into each gate's
-# throwaway worktree, never cached across shas.
+# npm ci --no-fund --no-audit with ELECTRON_SKIP_BINARY_DOWNLOAD=1 and DO_NOT_TRACK=1, then npm
+# test (node --test). It unsets NODE_ENV (CI has none) and passes --include=dev, so neither the
+# box's environment nor its npmrc (omit, npm_config_omit) makes npm ci drop the devDependencies.
+# It is Electron-free: no Electron binary is downloaded or started, and no app is launched. That
+# does not rest on ELECTRON_SKIP_BINARY_DOWNLOAD: the pinned electron (44.5.0) registers no
+# install script, so npm ci never runs its download, and the flag stays only to match CI.
+# Nothing runs Electron UI tests, here or on CI. What stays with CI: desktop-build.yml packages
+# the app, and boot-check.yml boots the plugins' web UI in a headless browser.
+# npm's download cache is reused by later gates; node_modules is installed fresh into each gate's
+# throwaway worktree, never cached across shas. The cache under the gate base is removed whole
+# once it is REMOTE_GATE_KEEP_DAYS old, by a gate that starts while no other holds a slot, and
+# the next desktop gate starts cold. A cache set anywhere else is never swept.
 #
 # What differs from CI: the herdr gate leaves out test/am-quota-write.test.mjs, by the owner's
 # rule that it never runs on our machines (CI still runs it). That rule is an instruction
@@ -63,7 +70,7 @@
 # welcome-dsh. Without a browser it unsets CI, so bots-dsh's layout check skips instead of failing,
 # and says so; with one it sets CHROME_BIN and CI as CI does. The desktop gate is CI's desktop job
 # on Linux only (CI also runs windows-latest), reusing an npm cache where CI starts cold; its Node
-# 24.9 and npm flags are CI's. Electron, the UI and the boot checks stay with CI.
+# 24.9 and npm flags are CI's, with --include=dev added. Packaging and the boot check stay with CI.
 #
 # Signals: bash runs a trap only once the running command returns, so a TERM to this script
 # waits for the step in progress (a test run can take minutes) before the cleanup; a terminal's
@@ -117,6 +124,14 @@ die() {
   exit 1
 }
 
+# A path as an absolute one: a relative one is taken from the folder the gate is started in.
+absolute() {
+  case $1 in
+    /*) printf '%s\n' "$1" ;;
+    *) printf '%s\n' "$PWD/$1" ;;
+  esac
+}
+
 script_dir=$(cd "$(dirname "$0")" && pwd)
 repo=${REMOTE_GATE_REPO:-$(git -C "$script_dir" rev-parse --show-toplevel)}
 repo=$(cd "$repo" && pwd) || die "no clone at $repo"
@@ -130,7 +145,9 @@ git_timeout=${REMOTE_GATE_GIT_TIMEOUT:-600}
 keep_days=${REMOTE_GATE_KEEP_DAYS:-7}
 node_versions=${REMOTE_GATE_NODE_VERSIONS:-24 22 24.9.0}
 plugin_node=${REMOTE_GATE_PLUGIN_NODE:-24.9}
-npm_cache=${REMOTE_GATE_NPM_CACHE:-$base/npm-cache}
+# Absolute here, before any cd: resolved inside the throwaway worktree, a relative cache would
+# be made there and deleted with it, and every run would be cold.
+npm_cache=$(absolute "${REMOTE_GATE_NPM_CACHE:-$base/npm-cache}")
 concurrency=${REMOTE_GATE_TEST_CONCURRENCY:-8}
 if [ -n "${NVM_DIR:-}" ]; then
   nvm_dir=$NVM_DIR
@@ -357,6 +374,30 @@ stamp() {
   touch "$(stamp_file "$1")"
 }
 
+# The desktop gate's npm cache, whole, once its stamp is older than the cutoff ($1): it grows with
+# each lockfile set and npm never trims it. Only the one under the gate base (a cache set
+# elsewhere is its owner's), and only while no other gate holds a slot: the caller holds the git
+# lock, which every gate takes before its npm ci, so no install is reading the cache then. One
+# with no stamp yet gets it now and is aged from there.
+sweep_npm_cache() {
+  local since=$npm_cache/.remote-gate-since d
+  case $npm_cache in
+    "$base"/*) ;;
+    *) return 0 ;;
+  esac
+  [ -d "$npm_cache" ] || return 0
+  if [ ! -e "$since" ]; then
+    touch "$since" || true
+    return 0
+  fi
+  [ "$(mtime "$since")" -lt "$1" ] || return 0
+  for d in "$lock_dir"/slot-*; do
+    if [ -d "$d" ] && [ "$d" != "$slot" ]; then return 0; fi
+  done
+  rm -rf "$npm_cache"
+  say "removed the npm cache, older than $keep_days days: the next desktop gate starts cold"
+}
+
 # Old refs and logs, and worktrees left by a gate that is gone (killed, out of memory). A ref
 # with no stamp yet gets one now and is aged from there.
 sweep() {
@@ -373,6 +414,7 @@ sweep() {
   if [ -d "$base/logs" ]; then
     find "$base/logs" -mindepth 1 -maxdepth 1 -type d -mtime +"$keep_days" -exec rm -rf {} + || true
   fi
+  sweep_npm_cache "$cutoff"
   for owner_file in "$wt_dir"/*.owner; do
     [ -f "$owner_file" ] || continue
     dir=${owner_file%.owner}
@@ -575,12 +617,15 @@ gate_desktop() {
   # NODE_ENV, and npm ci would omit the devDependencies if the box's environment had one.
   unset NODE_ENV
   export ELECTRON_SKIP_BINARY_DOWNLOAD=1 DO_NOT_TRACK=1
-  # npm's downloads only: node_modules is installed fresh in each gate's worktree.
+  # npm's downloads only: node_modules is installed fresh in each gate's worktree. The stamp is
+  # the cache's age for the sweep.
   mkdir -p "$npm_cache"
   npm_cache=$(cd "$npm_cache" && pwd)
+  [ -e "$npm_cache/.remote-gate-since" ] || touch "$npm_cache/.remote-gate-since"
   n=$(find test -maxdepth 1 -name '*.test.js' | wc -l | tr -d ' ')
   say "desktop: $n test files (Electron-free: no binary, no app start)"
-  step install npm ci --no-fund --no-audit --cache "$npm_cache"
+  # --include=dev: a box npmrc or npm_config_omit must not drop what the tests need.
+  step install npm ci --no-fund --no-audit --include=dev --cache "$npm_cache"
   t0=$SECONDS
   step test npm test
   judge "gate=desktop node=$(node --version) files=$n" "$(node_counts "$logs/test.log")" $((SECONDS - t0))
