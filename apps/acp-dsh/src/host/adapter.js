@@ -15,7 +15,7 @@ import { DEFAULT_MODEL } from './catalog.js'
 import { BRIDGE_NAME, CREDENTIAL_ENV, isAuthRequired, MODEL_ACCESS_REQUIRED, SYNTHETIC_KIND, URL_ENV } from './names.js'
 import { agentRoute, answered, boundaryNotice, isHandoff, lastProviderOf, missedBy, replayBlocks, turnStart } from './switch.js'
 import { ImageLinks, savedPathsOf } from './agent-image.js'
-import { callArguments, levelOf, mirrorTool, TOOL_NAME } from './tool.js'
+import { callArguments, entered, levelOf, mirrorTool, TOOL_NAME } from './tool.js'
 
 const CANCEL_WAIT_MS = 5000
 // A bridge that never listed its tools fails the turn: codex-acp skips a server whose name the
@@ -326,6 +326,26 @@ export class AcpAdapter extends LlmAdapter {
     // for an agent still running, replace on the status edge to idle, after its current step.
     this.ctx.on?.('agent/status', ({ agent, status } = {}) => { if (status === 'idle') this.registerMirror(agent) })
     for (const agent of this.ctx.agents?.list?.() ?? []) this.registerMirror(agent)
+    // A mirror call DSH refuses before its body (a gate, a failed review, the person's no, a
+    // Stop) leaves the agent's permission question with nobody to answer it.
+    this.offResult = this.ctx.on?.('tools/result', exec => this.refusedFirst(exec))
+  }
+
+  /**
+   * A finished mirror call whose body never ran: hand the agent the refusal, for this Session's
+   * own call only (its Session id, its DSH call id, and the tool id this adapter mapped to it,
+   * never the call's arguments). It must not throw: DSH only logs a failing observer.
+   */
+  refusedFirst(exec) {
+    try {
+      if (exec?.name !== TOOL_NAME || exec.parent !== undefined || entered.has(exec)) return
+      const live = this.live.get(exec.agent?.session?.id)
+      if (live?.calls?.has(exec.callId) !== true) return
+      const toolId = live.toolIds?.get(exec.callId)
+      if (toolId !== undefined) live.run?.refuse(toolId, exec.signal?.aborted === true)
+    } catch (error) {
+      try { this.ctx.logger?.warn?.(`acp-dsh: a refused call did not reach its agent: ${error?.message ?? error}`) } catch {}
+    }
   }
 
   /**
@@ -608,7 +628,7 @@ export class AcpAdapter extends LlmAdapter {
       const replaying = this.replayOn()
       if (live === undefined) {
         crossing = replaying && prior !== undefined && prior !== options.provider
-        const state = { provider: options.provider, name: agent.name, run: undefined, calls: new Set(), open: false, dshAgent, bridge: undefined, replay: undefined, owed: undefined, drifted: false }
+        const state = { provider: options.provider, name: agent.name, run: undefined, calls: new Set(), toolIds: new Map(), open: false, dshAgent, bridge: undefined, replay: undefined, owed: undefined, drifted: false }
         try {
           const spec = await agent.spawn()
           if (this.bridgeOn(agent)) {
@@ -757,6 +777,8 @@ export class AcpAdapter extends LlmAdapter {
         await settle(tool, DETAIL_WAIT_MS)
         const id = `acp_${randomUUID()}`
         live.calls.add(id)
+        // The agent's own id for the call, for a refusal that comes before the mirror's body.
+        ;(live.toolIds ??= new Map()).set(id, tool.id)
         yield* blocks.toolCall(id, TOOL_NAME, JSON.stringify(callArguments(tool)))
         return yield finish('tool-calls')
       } else if (event.type === 'end') {
@@ -797,6 +819,7 @@ export class AcpAdapter extends LlmAdapter {
   }
 
   dispose() {
+    try { this.offResult?.() } catch {}
     for (const agent of this.agents.values()) agent.catalog?.dispose()
     for (const live of this.live.values()) {
       live.run?.dispose()
