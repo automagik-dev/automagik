@@ -10,6 +10,12 @@
 // plugin's bridge is exercised over real stdio. With FAKE_ACP_SKIP_MCP=1 it connects none, as
 // codex-acp does when the person's own Codex config already defines that server name.
 //
+// FAKE_ACP_DEAF_TO lists ACP methods (comma separated, as on the wire: `initialize`,
+// `session/new`, `session/set_config_option`, `session/set_mode`, `session/fork`,
+// `session/close`, `session/cancel`) it never hears: a request among them is never answered, as
+// a CLI waiting on a first-run question, a keychain dialog or an update leaves it, and with
+// `session/cancel` among them a prompt that waits to be cancelled ("hang", "drift") never ends.
+//
 // Like Claude Code's and Codex's adapters it offers its models and each model's efforts as
 // session config options (categories `model` and `thought_level`, the effort list rebuilt per
 // model), and each turn's thoughts start with the model and effort it runs on. With
@@ -17,6 +23,10 @@
 // list starts with a "default" row, as Claude Code's does; FAKE_ACP_NO_DEFAULT_EFFORT=1 leaves it
 // out, as Codex's does. FAKE_ACP_AUTH=session (or prompt) refuses `session/new` (or every
 // prompt) with ACP's auth_required, as an adapter whose CLI is signed out does.
+//
+// FAKE_ACP_CHILD=1 starts a process of its own before it serves, as an agent's tool command is
+// (a shell, a build), and traces its id (`child`) once it runs; FAKE_ACP_CHILD=stubborn starts
+// one that ignores SIGTERM. Either ends by itself after a minute, so a failed test leaves none.
 //
 // FAKE_ACP_MODES=a,b,c makes it offer those permission modes (the first is the one it starts in)
 // and take `session/set_mode`, as both real adapters do; without it it offers none, as before.
@@ -120,7 +130,29 @@ async function attach(session, servers, sessionId) {
 // A 1x1 PNG, for the image calls.
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
 
-const stream = ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin))
+// The methods this agent never hears are dropped off the wire, before anything can answer them.
+const DEAF_TO = new Set((process.env.FAKE_ACP_DEAF_TO ?? '').split(',').filter(Boolean))
+function hearing(stream) {
+  if (DEAF_TO.size === 0) return stream
+  const heard = new TransformStream({
+    transform(message, controller) {
+      if (DEAF_TO.has(message?.method)) return trace({ event: 'unheard', method: message.method })
+      controller.enqueue(message)
+    },
+  })
+  return { ...stream, readable: stream.readable.pipeThrough(heard) }
+}
+
+if (process.env.FAKE_ACP_CHILD !== undefined) {
+  const deaf = process.env.FAKE_ACP_CHILD === 'stubborn' ? "process.on('SIGTERM', () => {});" : ''
+  const child = spawn(process.execPath, ['-e', `${deaf} setTimeout(() => {}, 60_000); process.stdout.write('up')`], { stdio: ['ignore', 'pipe', 'ignore'] })
+  // Traced once it has run its first line: a stubborn one ignores the signal from then on.
+  child.stdout.once('data', () => trace({ event: 'child', child: child.pid }))
+  child.unref()
+  child.stdout.unref?.()
+}
+
+const stream = hearing(ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin)))
 const sessions = new Map()
 let created = 0
 
