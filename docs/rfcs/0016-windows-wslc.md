@@ -511,7 +511,7 @@ Decided. The spike's numbers still pick between Q1's (a) and (b), and decide Q4'
 
 Ledger pass (2026-11-10): the board links this RFC from its file.
 
-- Open issues: none..
+- Open issues: none.
 - Merged changes that cite this RFC: #288, #292, #330, #349, #791 (last merged 2026-11-09).
 
 ## Links

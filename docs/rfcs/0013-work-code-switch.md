@@ -365,7 +365,7 @@ None. The owner answered every question (D27 and Decided).
 
 Ledger pass (2026-11-10): the board links this RFC from its file.
 
-- Open issues: none..
+- Open issues: none.
 - Merged changes that cite this RFC: #205, #211, #236, #237, #238, #252, #259, #265, #272, #292, #302, #666 (last merged 2026-11-08).
 
 ## Links

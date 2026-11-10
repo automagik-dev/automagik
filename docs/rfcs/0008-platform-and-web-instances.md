@@ -132,7 +132,7 @@ and a rollback when this RFC is accepted.
 
 Ledger pass (2026-11-10): the board links this RFC from its file.
 
-- Open issues: none..
+- Open issues: none.
 - Merged changes that cite this RFC: #866 (last merged 2026-11-09).
 
 ## Links

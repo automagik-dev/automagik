@@ -232,7 +232,7 @@ Bot can read a key and send it out. D19 accepts this for now.
 
 Ledger pass (2026-11-10): the board links this RFC from its file.
 
-- Open issues: none..
+- Open issues: none.
 - Merged changes that cite this RFC: #188, #252, #288 (last merged 2026-11-04).
 
 ## Links
