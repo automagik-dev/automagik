@@ -55,6 +55,10 @@ Security gaps are named by title only until their fix merges. Details go to a pr
 | [0023](0023-dsh-upstream-agent-context-and-chat-rows.md) | DSH upstream: agent context, a chat tail slot and a draft hook | Draft | none (a proposal to DSH; nothing ships here) |
 | [0024](0024-automagik-cloud.md) | Automagik Cloud: two identity models, workspaces and the rail | Draft (council 2026-11-09: proceed with conditions, folded in; owner's answers: Q1 and Q9, 2026-11-09; amended by [0025](0025-cloud-economics.md): Q8, D14, (g)) | none (ships outside the five milestones) |
 | [0025](0025-cloud-economics.md) | Automagik Cloud economics: billing, managed tokens and agentic payments | Draft (council 2026-11-09: revise, conditions folded in; owner's decisions 2026-11-09; amends RFC 0024) | none (ships outside the five milestones) |
+| [0026](0026-bot-tag-coverage.md) | Bot-tag coverage | Draft | none (outside the five) |
+
+RFC 0026 (2026-11-10) amends RFC 0021: the owner reopened Decided 5 and 6, and dsh-tui seats and
+linked-machine bots are tagged. The amendment and the RFC land in the same pull request.
 
 Milestones, in the owner's order:
 
