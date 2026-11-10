@@ -43,9 +43,9 @@ class ChatRenderTest {
 
     private fun member(id: String, name: String, pet: String?) = Teams.Member(id, name, false, pet)
 
-    private fun pane(bot: String? = null, title: String = "Review") =
-        CoreTerminal("t1", title, "~/project", "live", "blocked", "codex", "", 80, 24,
-            labels = if (bot == null) emptyMap() else mapOf("bot" to bot))
+    private fun pane(bot: String? = null, title: String = "Review", status: String = "blocked", statusMs: Long = 0) =
+        CoreTerminal("t1", title, "~/project", "live", status, "codex", "", 80, 24,
+            labels = if (bot == null) emptyMap() else mapOf("bot" to bot), statusMs = statusMs)
 
     @Test fun barTakesTheBotChatsNameAndItsRegistryPet() {
         val identity = chatIdentity(chat(title = "Integrator", registryId = "b-1"), null,
@@ -87,21 +87,31 @@ class ChatRenderTest {
         assertTrue(chatListRows(state).any { it.kind == "tool-call" })
     }
 
-    @Test fun aClosedQuestionStaysInTheTranscriptAndIsNotPinned() {
-        val closed = Chat.Row(id = "q1", kind = "question", open = false, prompt = "Old question?")
-        val state = Chat.State("dsh:s1", rows = listOf(closed), question = closed)
-        assertTrue(chatPending(state).isEmpty())
-        assertEquals(listOf("q1"), chatListRows(state).map { it.id })
+    @Test fun aReadOnlyQuestionWithoutTheOpenFieldIsStillPinned() {
+        // bots-dsh's pendingRowOf sends a read-only question with no open field; the reducer keeps it as s.question.
+        val question = Chat.Row(id = "q1", kind = "question", open = false, prompt = Chat.ANSWER_ON_COMPUTER, answerable = false)
+        val state = Chat.State("dsh:s1", question = question)
+        assertEquals(listOf("q1"), chatPending(state).map { it.id })
+        assertTrue(chatListRows(state).isEmpty())
+        // The same row in a transcript is shown once, pinned above the composer.
+        val inRows = state.copy(rows = listOf(question))
+        assertEquals(listOf("q1"), chatPending(inRows).map { it.id })
+        assertTrue(chatListRows(inRows).isEmpty())
     }
 
-    @Test fun anOpenCardNeedsThePersonEvenBeforeTheStatusSaysSo() {
+    @Test fun thePetUsesTheExistingPoseTables() {
+        val now = 1_000_000L
         val approval = Chat.Row(id = "a1", kind = "approval", open = true)
-        assertEquals(Teams.NEEDS_YOU, chatPose(Chat.State("dsh:s1", status = Chat.Status("working"), approval = approval)))
-        assertEquals(Teams.WORKING, chatPose(Chat.State("dsh:s1", status = Chat.Status("working"))))
-        assertEquals(Teams.IDLE, chatPose(Chat.State("dsh:s1", status = Chat.Status("idle"))))
-        assertEquals(Teams.DONE, chatPose(Chat.State("dsh:s1", status = Chat.Status("done"))))
-        assertEquals(Teams.FAILED, chatPose(Chat.State("dsh:s1", status = Chat.Status("error"))))
-        assertEquals(Teams.ASLEEP, chatPose(Chat.State("dsh:s1", gone = true)))
+        assertEquals(Teams.NEEDS_YOU, chatPose(Chat.State("dsh:s1", status = Chat.Status("working"), approval = approval), null, now))
+        assertEquals(Teams.WORKING, chatPose(Chat.State("dsh:s1", status = Chat.Status("working")), null, now))
+        assertEquals(Teams.IDLE, chatPose(Chat.State("dsh:s1", status = Chat.Status("idle")), null, now))
+        // A terminal chat uses Teams.poseOf, so done and error are not sleep.
+        assertEquals(Teams.DONE, chatPose(Chat.State("t1", status = Chat.Status("done")), pane(status = "done"), now))
+        assertEquals(Teams.FAILED, chatPose(Chat.State("t1", status = Chat.Status("error")), pane(status = "error"), now))
+        assertEquals(Teams.IDLE, chatPose(Chat.State("t1", status = Chat.Status("idle")), pane(status = "idle"), now))
+        assertEquals(Teams.ASLEEP, chatPose(Chat.State("t1", status = Chat.Status("idle"), gone = true), pane(status = "idle"), now))
+        // A Bot chat uses Teams.poseOfChat, the chat's own state words.
+        assertEquals(Teams.ASLEEP, chatPose(Chat.State("dsh:s1", status = Chat.Status("done")), null, now))
     }
 
     @Test fun theBarKeepsTheStateText() {

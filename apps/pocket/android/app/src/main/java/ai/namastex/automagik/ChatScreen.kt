@@ -71,22 +71,25 @@ fun chatIdentity(chat: Chat.Terminal?, terminal: CoreTerminal?, members: Collect
     return ChatIdentity(name, member?.pet, pose)
 }
 
-/** The pet's pose: an open card always needs the person, however late the status line is; gone or offline dozes. */
-fun chatPose(s: Chat.State): String = when {
+/**
+ * The pet's pose: an open card always needs the person, however late the status line is; gone or offline dozes.
+ * The rest is the existing tables': a Bot chat's status through [Teams.poseOfChat], a terminal's through
+ * [Teams.poseOf] (done and error are not sleep).
+ */
+fun chatPose(s: Chat.State, terminal: CoreTerminal?, now: Long = System.currentTimeMillis()): String = when {
     s.approval != null || s.question != null -> Teams.NEEDS_YOU
     s.gone || s.offline -> Teams.ASLEEP
-    // A live pane's words, as Teams.poseOf reads them: done and error are not sleep.
-    s.status.state == "working" -> Teams.WORKING
-    s.status.state == "blocked" -> Teams.NEEDS_YOU
-    s.status.state == "done" -> Teams.DONE
-    s.status.state == "error" -> Teams.FAILED
-    s.status.state == "idle" -> Teams.IDLE
-    else -> Teams.ASLEEP
+    s.dsh -> Teams.poseOfChat(s.status.state)
+    terminal != null -> Teams.poseOf(terminal, now)
+    else -> Teams.poseOfChat(s.status.state)
 }
 
-/** The open card, fixed above the composer: a question first, then an approval, each once. */
+/**
+ * The open card, fixed above the composer: a question first, then an approval, each once. A question is pinned even
+ * without `open` (a read-only Bot chat's row never carries it; the reducer clears it when the status leaves blocked).
+ */
 fun chatPending(s: Chat.State): List<Chat.Row> =
-    listOfNotNull(s.question?.takeIf { it.open }, s.approval?.takeIf { it.open }).distinctBy { it.id }
+    listOfNotNull(s.question, s.approval?.takeIf { it.open }).distinctBy { it.id }
 
 /** The transcript rows the message list draws: the fixed card is not also left scrolling in it. */
 fun chatListRows(s: Chat.State): List<Chat.Row> {
@@ -128,13 +131,13 @@ fun chatAnnotated(spans: List<ChatText.Span>, open: (String) -> Unit): Annotated
     val members = remember(app.machines[ref.hostId]?.members) {
         app.machines[ref.hostId]?.members?.values?.flatten().orEmpty()
     }
-    val pose = chatPose(s)
+    val pose = chatPose(s, terminal)
     val identity = remember(chat, terminal, members, pose) { chatIdentity(chat, terminal, members, pose) }
     val openLink = rememberLinkOpener()
     val list = rememberLazyListState()
     var draft by remember(ref) { mutableStateOf("") }
     var confirmDraft by remember(ref) { mutableStateOf<Chat.Message?>(null) }
-    val rows = remember(s.rows, s.approval?.id, s.question?.id) { chatListRows(s) }
+    val rows = remember(s.rows, s.approval, s.question) { chatListRows(s) }
     val pending = remember(s.question, s.approval) { chatPending(s) }
     val count = rows.size + s.screen.size + s.messages.size + s.receipts.size
     LaunchedEffect(count) { val items = list.layoutInfo.totalItemsCount; if (count > 0 && items > 0) list.animateScrollToItem(items - 1) }
