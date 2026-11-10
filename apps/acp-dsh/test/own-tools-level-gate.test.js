@@ -382,6 +382,9 @@ test('mutants successful-retry-keeps-wide-mode and cancel-ignored: a mark mid-tu
   assert.deepEqual(w.events('set-mode').map(entry => entry.modeId), ['bypassPermissions'])
   const [call] = callsIn(first)
   const pid = w.events('prompt')[0].pid
+  // The agent writes its trace after it reports the call: wait for the first tool's line, or
+  // ending the session below can stop the process before the line is on disk.
+  await w.seen('own-tool-ran')
   // The Bot team marks the Session (a lowering failed) and ends its agent session at once.
   assert.equal(w.adapter.endSession('s1', SENTENCE), true)
   assert.equal(w.adapter.endSession('s1', SENTENCE), false, 'nothing left to end')
