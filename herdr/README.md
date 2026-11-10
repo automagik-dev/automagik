@@ -134,6 +134,15 @@ each connected machine after this computer, one at a time. `automagik-herdr mete
 keeps it to this computer, and `--no-usagemeter` covers the linked machines too; both are
 remembered.
 
+Where you agreed to usagemeter, the same 10-minute run also asks each of those machines for its
+bot-tag coverage (`usagemeter coverage --window d30 --json`, a read of that machine's own store)
+and writes one record of the answers, `automagik-herdr/fleet-coverage.json` in the app home,
+beside the install record: readable by you alone (0600) and replaced on every run. It holds, per
+machine, token counts by class, bot and repository (no session id, no path), and names the
+machines that did not answer (`missing`, with why) and the linked machines usagemeter is not on
+(`out_of_scope`); a machine that did not answer is unknown, never counted as zero. Its contract
+is `meter/schema/fleet/v1/` in the repository. `--uninstall` removes it.
+
 **Updating to this release from an earlier one:** the update is run by the earlier release's
 command, which has no usagemeter step, so run `automagik-herdr meter install` once afterwards. It
 installs usagemeter on this computer and every connected linked machine, and records that you

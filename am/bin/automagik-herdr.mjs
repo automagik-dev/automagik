@@ -2861,8 +2861,13 @@ async function seatOnMachine(project, bot, over = {}) {
     }
   }
   // Herdr's table as this computer has it (programs.json applied): the Mac builds the command.
-  const command = withAgySettings(agentKey, over.argv ?? [...agent.run, ...agyModeArgs(agentKey, agyMode), ...modelArgs(bot.agent, bot.model)],
-    agySettings?.path);
+  // A Start's command runs on a new session whose id Herdr chooses (Claude), as a local start's
+  // does (launchSeat; RFC 0026 (e)): the pane's agent.session label is that machine's own record
+  // of the seat's session. A command that picks its own session keeps it; a restart's plan
+  // (over.argv) brings its own id, in its argv and its carried label.
+  const source = over.argv ?? [...agent.run, ...agyModeArgs(agentKey, agyMode), ...modelArgs(bot.agent, bot.model)];
+  const chosen = !over.argv && choosesSession(agentKey) && !ownsSession(source) ? newSessionId() : null;
+  const command = withAgySettings(agentKey, chosen ? [...source, ...sessionIdArgs(agentKey, chosen)] : source, agySettings?.path);
   // #612: a local absolute override that isn't there falls back to the shipped run when that is.
   const there = await agentThere(machine, command, agent.name ?? agentKey, paneEnv.prepend,
     shippedRunFor(agentKey, agent.run, command));
@@ -2888,6 +2893,7 @@ async function seatOnMachine(project, bot, over = {}) {
   const env = { ...(paneEnv.appHome ? { HERDR_APP_HOME: paneEnv.appHome } : {}), ...briefed.env };
   const carry = over.carry ?? {};
   const labels = { ...paneLabels(file, bot.id, carry, null), ...carry };
+  if (chosen) labels[SESSION_LABEL] = chosen;
   const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
   // A start: that space only, the bot in a tab of its own (as launchSeat).
   if (over.place === undefined && deadlineLeft() < DEADLINE_MARGIN_MS + DEADLINE_PLACE_MS) {
@@ -3013,6 +3019,8 @@ async function restartOnMachine(opts, project, bot, entry) {
   const planned = {
     bot, run, runningAgent: old ? agentKeyOfArgv(unwrapKeep(old.foreground?.argv), agentTable()) : null, session: label,
     fresh: opts.fresh || !old, agent: entry ? entry.agent : undefined, model: entry ? (entry.model ?? "") : undefined,
+    // A new conversation there starts on an id chosen here too (RFC 0026 (e)), as cmdRestart's does.
+    newSession: newSessionId(),
   };
   let plan = restartPlan(planned);
   let cwd = key;
@@ -3046,7 +3054,7 @@ async function restartOnMachine(opts, project, bot, entry) {
     if (refusal) throw new CliError(refusal);
   }
   let seat = await seatOnMachine(project, bot, { agent: plan.agent, argv: plan.argv, cwd, place: old ? placementFrom([old]) : undefined,
-    carry: { ...carriedLabels(old), ...(session ? { [SESSION_LABEL]: session } : {}) }, replacing: Boolean(old) });
+    carry: { ...carriedLabels(old), ...(session ?? plan.sessionId ? { [SESSION_LABEL]: session ?? plan.sessionId } : {}) }, replacing: Boolean(old) });
   if (seat.running) return opts.json ? { id: bot.id, running: seat.running } : `${bot.name} is already running in ${seat.running}.`;
   const warnings = [...(turnNote ? [turnNote] : []), ...seat.warnings];
   // #597: the replacement is built from bots.json, never the pane's command; when they differ,
@@ -3069,7 +3077,7 @@ async function restartOnMachine(opts, project, bot, entry) {
       session = null;
       warnings.push(`${bot.name} starts on a new conversation: ${note}.`);
       report([warnings.at(-1)]);
-      const again = await seatOnMachine(project, bot, { agent: plan.agent, argv: plan.argv, cwd, place: placementFrom([old]), carry: carriedLabels(old), replacing: true });
+      const again = await seatOnMachine(project, bot, { agent: plan.agent, argv: plan.argv, cwd, place: placementFrom([old]), carry: { ...carriedLabels(old), ...(plan.sessionId ? { [SESSION_LABEL]: plan.sessionId } : {}) }, replacing: true });
       if (again.running) throw new CliError(`${bot.name} is running in ${again.running} now, so no new pane was started; ${old.address} still runs it, untouched.`);
       warnings.push(...again.warnings);
       report(again.warnings);
