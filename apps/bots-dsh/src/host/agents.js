@@ -813,12 +813,18 @@ export function install(rt) {
   // Without one, a task started inside a group Session's tool call keeps that group as
   // `levelRoomId`, which can only narrow its level (permissions.js); the report still goes
   // to the Bot's own chat.
+  // Started from inside a task Session's tool call, it keeps that task as `levelTaskId` and
+  // never runs wider than it (permissions.js, #1030), with a `roomId` too; without one it
+  // also takes the group that task takes its level from.
   async function startTask({ title, text, from, cwd, agentPreset, roomId }) {
     // Read before the first await: the tool call this runs in may return before the rest.
-    const levelRoomId = roomId || from === undefined ? undefined : rt.callerGroup?.()
+    const levelTaskId = rt.callerTask?.()
+    const parent = levelTaskId === undefined ? undefined : state.tasks?.[levelTaskId]
+    if (levelTaskId !== undefined) rt.assertTaskDepth(levelTaskId)
+    const levelRoomId = roomId || from === undefined ? undefined : rt.callerGroup?.() ?? parent?.levelRoomId ?? parent?.roomId
     const caller = state.bots?.[from]
     const sessionId = await createTaskSession(title, { cwd: cwd ?? caller?.workDir, agentPreset: agentPreset ?? caller?.profile })
-    tasks()[sessionId] = { title: String(title).slice(0, AGENT_SESSION_TITLE_MAX), from, at: Date.now(), status: 'working', ...(roomId ? { roomId } : {}), ...(levelRoomId ? { levelRoomId } : {}) }
+    tasks()[sessionId] = { title: String(title).slice(0, AGENT_SESSION_TITLE_MAX), from, at: Date.now(), status: 'working', ...(roomId ? { roomId } : {}), ...(levelRoomId ? { levelRoomId } : {}), ...(levelTaskId ? { levelTaskId } : {}) }
     // Only TASKS_KEPT ended tasks are remembered for their reports. The ended ones go first,
     // the one that ended longest ago first: a long task that just ended is fresh news.
     // A working record is never evicted, whatever its age or whether DSH still holds its
@@ -828,12 +834,15 @@ export function install(rt) {
     const all = Object.entries(tasks())
     const ended = all.filter(([, task]) => task.status !== 'working').sort(([, a], [, b]) => endOf(a) - endOf(b))
     // The level each forgotten task ran at is read while it is still a task.
-    const forgotten = ended.slice(0, Math.max(0, all.length - TASKS_KEPT))
-      .map(([id]) => [id, rt.taskLevelOf(id)])
+    // An ended task a working task descends from is kept past the cap while that one works:
+    // its level bounds the working one, read live. The next oldest go in its place. At most
+    // a chain's depth per working task, and they go as any other once it has ended.
+    const held = rt.taskForebears?.() ?? new Set()
+    const picked = ended.filter(([id]) => !held.has(id)).slice(0, Math.max(0, all.length - TASKS_KEPT)).map(([id]) => id)
     // A fresh-Session task armed by an ended task's Session has that record as its only
     // team lineage; a restricted Bot's such tasks are paused before the record goes
     // (#584, L5). Without a schedule service this is a no-op.
-    for (const [id] of forgotten) {
+    for (const id of picked) {
       const from = tasks()[id]?.from
       const bot = from === undefined ? undefined : state.bots?.[from]
       if (!Array.isArray(bot?.denyTools) || bot.denyTools.length === 0) continue
@@ -843,6 +852,11 @@ export function install(rt) {
         rt.warn('ds-bot: the fresh-Session tasks of %s were not paused: %s', bot.name, error)
       }
     }
+    // Looked at again after the waits above, with nothing awaited before the delete: a task
+    // started meanwhile from one of them keeps it.
+    const needed = rt.taskForebears?.() ?? new Set()
+    const forgotten = picked.filter(id => tasks()[id] !== undefined && tasks()[id].status !== 'working' && !needed.has(id))
+      .map(id => [id, rt.taskLevelOf(id)])
     for (const [id] of forgotten) delete tasks()[id]
     await rt.save()
     for (const [id, ranAt] of forgotten) {
