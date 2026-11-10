@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Delivered (2026-11-09: #780, #790, #854; answers: Q1-Q5, 2026-11-09; no question open) |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | none: every step here touches only paths that never ship, so no step cuts a release |
 | Created | 2026-11-09 |

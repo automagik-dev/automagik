@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (2026-11-04, by the owner; answers: D38, D39, Q1-Q9) |
+| Status | In delivery (delivery 2: #349; the Windows build turned off by #284; 3-6 open; accepted 2026-11-04, by the owner; answers: D38, D39, Q1-Q9) |
 | Milestone | not scheduled |
 | Lanes | desktop (3.N); herdr (3.N.P) for the pack's split install; am (3.N.P) |
 | Created | 2026-11-04 |

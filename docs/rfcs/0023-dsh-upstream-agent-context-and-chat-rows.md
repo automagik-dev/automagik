@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Proposal-only (a proposal to DSH; nothing ships here) |
 | Milestone | none (a proposal to DSH; nothing ships here) |
 | Lanes | none for this RFC (docs only); plugin (3.N.P) for each removal once DSH ships the piece |
 | Created | 2026-11-09 |

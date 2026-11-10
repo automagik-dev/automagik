@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft (owner's answers: 1-11, 2026-11-09; the switch waits on gates G1-G8) |
+| Status | Queued (owner's answers: 1-11, 2026-11-09; the switch waits on gates G1-G8; only the RFC: #791; deliveries 0-1 unverified) |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | none: CI, workflow and process changes (`.github/` and `scripts/` never ship; `.gitlab-ci.yml` is added to `NEVER_SHIPPED` by delivery 2) |
 | Created | 2026-11-09 |

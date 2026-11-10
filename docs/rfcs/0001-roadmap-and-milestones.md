@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (delivery 3 merged: #190; 1-2, the labels and milestones, not done) |
+| Status | In delivery (delivery 1: the labels exist; delivery 3: `docs/` never ships; delivery 2 and its milestones unverified) |
 | Milestone | n/a (process) |
 | Lanes | none (docs and GitHub only) |
 | Created | 2026-10-30 |
