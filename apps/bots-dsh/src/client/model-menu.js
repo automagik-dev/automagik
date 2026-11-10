@@ -1,13 +1,13 @@
 import { createElement as h, Fragment, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { currentPart } from './text.js'
-import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, ConnectorIcon, SlidersIcon, TerminalIcon } from './icons.js'
+import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, ConnectorIcon, SlidersIcon } from './icons.js'
 import { BotMark } from './mark.js'
 import { KeyIcon, MaskedInput } from './secret-card.js'
 import { SPRING_POP, SPRING_SHAPE, spring, useLinger, useViewport, viewBottom } from './motion.js'
 import { hostText, t } from './i18n.js'
 import { HostModelMenu } from './host-model-menu.js'
-import { DshMarkIcon, HerdrMarkIcon } from './marks.js'
+import { AgentMark, DshMarkIcon, HerdrMarkIcon } from './marks.js'
 import { crossesHarness, routeOf, selectorRouteOf } from '../shared/routes.js'
 
 const MENU_EXIT_MS = 120
@@ -236,8 +236,26 @@ export function routesFor(bot, roster) {
   return ROUTE_ORDER.filter(route => named.includes(route))
 }
 
+// The agents the owner names, with the models the ACP layer will serve them once #973 lands.
+// They are shown as unavailable until acp-dsh actually lists them, so the route names every
+// supported agent instead of hiding three behind a plugin version; a catalog row always wins.
+const ACP_FALLBACK = Object.freeze({
+  'acp-claude': Object.freeze(['default', 'opus', 'sonnet', 'haiku']),
+  'acp-codex': Object.freeze(['default']),
+  'acp-hermes': Object.freeze(['default']),
+  'acp-antigravity': Object.freeze(['default']),
+  'acp-omp': Object.freeze(['default']),
+})
+const pendingAgent = (provider) => ({
+  provider,
+  name: ACP_NAME[provider] ?? provider,
+  pending: true,
+  models: (ACP_FALLBACK[provider] ?? []).map(id => ({ id, pending: true })),
+})
+
 // The ACP agents the host serves, each with its own models. acp-dsh lists an agent only when
-// it is on, so an agent added later appears without a selector change.
+// it is on, so an agent added later appears without a selector change; the named agents it
+// does not serve yet stay listed, marked unavailable, until #973 turns them on.
 export function acpAgents(models) {
   const groups = new Map()
   for (const model of models ?? []) {
@@ -250,11 +268,13 @@ export function acpAgents(models) {
     const at = ACP_ORDER.indexOf(provider)
     return at === -1 ? ACP_ORDER.length : at
   }
-  return [...groups].map(([provider, list]) => ({
+  const listed = [...groups].map(([provider, list]) => ({
     provider,
     name: list[0]?.providerName ?? ACP_NAME[provider] ?? connectionOf(list[0]),
     models: list,
-  })).sort((a, b) => rank(a.provider) - rank(b.provider) || a.name.localeCompare(b.name))
+  }))
+  for (const provider of ACP_ORDER) if (!groups.has(provider)) listed.push(pendingAgent(provider))
+  return listed.sort((a, b) => rank(a.provider) - rank(b.provider) || a.name.localeCompare(b.name))
 }
 
 // The Native route's models: every DSH model that can be run on, and one that needs an API
@@ -287,6 +307,7 @@ const herdrModelLabel = model => (model.id === 'default' ? t('Default') : model.
 
 // Why a model cannot run, in the menu's words. Undefined: it can run now.
 export function modelUnavailableText(model) {
+  if (model?.pending === true) return t('Not available yet')
   if (model?.missing === true) return t('Not available')
   if (model?.needsKey === true) return t('Needs an API key')
   if (model?.needsSignIn === true) return t('Needs a sign-in')
@@ -341,12 +362,13 @@ export function ModelSteps({ roster, bot, view, current, picked, levelName, go, 
         h('div', { className: 'bt-model-group', role: 'presentation' }, label),
         entries.map((entry) => {
           const herdr = route === 'herdr'
-          const off = herdr || offModel(entry)
-          const why = herdr ? t('Not available yet') : modelUnavailableText(entry)
+          const pending = entry.pending === true
+          const off = herdr || pending || offModel(entry)
+          const why = herdr || pending ? t('Not available yet') : modelUnavailableText(entry)
           const name = herdr ? herdrModelLabel(entry) : modelLabel(entry)
           const more = !off && effortRows(knownEfforts(entry)).length > 0
           return h('button', {
-            key: entry.ref ?? entry.id, type: 'button', role: 'menuitemradio', 'aria-checked': !herdr && entry.ref === current,
+            key: entry.ref ?? entry.id, type: 'button', role: 'menuitemradio', 'aria-checked': !herdr && !pending && entry.ref === current,
             title: entry.ref, 'aria-haspopup': more ? 'menu' : undefined,
             'data-unavailable': off ? '' : undefined,
             'aria-label': why ? `${name} · ${why}` : undefined,
@@ -355,7 +377,7 @@ export function ModelSteps({ roster, bot, view, current, picked, levelName, go, 
           h('span', { className: 'bt-menu-label' }, name),
           why ? h('span', { className: 'bt-menu-hint' }, why)
             : entry.ref === roster.defaultModel ? h('span', { className: 'bt-menu-hint' }, t('Default')) : null,
-          h(Tick, { on: !herdr && entry.ref === current }),
+          h(Tick, { on: !herdr && !pending && entry.ref === current }),
           more ? h(ChevronRightIcon) : null)
         }))))
   }
@@ -368,20 +390,22 @@ export function ModelSteps({ roster, bot, view, current, picked, levelName, go, 
       agents.length === 0 ? h('div', { className: 'bt-model-none' }, route === 'acp' ? t('No ACP agents are set up in DeepSeek Harness yet.') : t('No agents are set up for this route yet.')) : null,
       agents.map((agent) => {
         const herdr = route === 'herdr'
+        const pending = agent.pending === true
         const here = route === 'acp' && current !== undefined && current.startsWith(`${agent.provider}/`)
-        const signedOut = !herdr && agent.models.every(entry => offModel(entry)) && agent.models.some(entry => entry.needsSignIn || entry.needsAccount)
-        const why = herdr ? t('Not available yet') : signedOut ? t('Needs a sign-in') : undefined
+        const signedOut = !herdr && !pending && agent.models.every(entry => offModel(entry)) && agent.models.some(entry => entry.needsSignIn || entry.needsAccount)
+        const why = herdr || pending ? t('Not available yet') : signedOut ? t('Needs a sign-in') : undefined
         const now = here ? modelLabel(agent.models.find(entry => entry.ref === current) ?? {}) ?? agent.name : undefined
         return h('button', {
           key: agent.provider ?? agent.id, type: 'button', role: 'menuitem', 'aria-haspopup': 'menu', 'data-current': here ? '' : undefined,
+          'data-unavailable': why ? '' : undefined,
           'aria-label': here ? t('{agent}, current model {model}', { agent: agent.name, model: now ?? '' }) : why ? `${agent.name} · ${why}` : agent.name,
           onClick: () => go({ step: 'models', route, ...(agent.provider ? { provider: agent.provider } : { agent: agent.id }) }),
         },
-        herdr ? h(TerminalIcon) : h(ConnectorIcon),
+        h(AgentMark, { id: agent.provider ?? agent.id, name: agent.name }),
         h('span', { className: 'bt-menu-label' }, agent.name),
         why ? h('span', { className: 'bt-menu-hint' }, why) : here && levelName ? h('span', { className: 'bt-menu-hint' }, levelName) : null,
         h(Tick, { on: here }),
-        h(ChevronRightIcon))
+        herdr || pending ? null : h(ChevronRightIcon))
       }))
   }
   const routes = routesFor(bot, roster)
@@ -394,7 +418,8 @@ export function ModelSteps({ roster, bot, view, current, picked, levelName, go, 
         : route === 'herdr' ? t('Not available yet') : undefined
       return h('button', {
         key: route, type: 'button', role: 'menuitem', 'aria-haspopup': 'menu', 'data-current': here ? '' : undefined,
-        'data-route': route, title: route === 'acp' ? t('Agent Client Protocol') : undefined,
+        'data-route': route, 'data-unavailable': route === 'herdr' ? '' : undefined,
+        title: route === 'acp' ? t('Agent Client Protocol') : route === 'herdr' ? t('Not available yet') : undefined,
         'aria-label': here ? t('{route}, current model {model}', { route: routeName(route), model: now ?? '' })
           : now ? `${routeName(route)} · ${now}` : `${routeName(route)} · ${routeDetail(route)}`,
         onClick: () => go(route === 'native' ? { step: 'models', route } : { step: 'agents', route }),
@@ -404,7 +429,7 @@ export function ModelSteps({ roster, bot, view, current, picked, levelName, go, 
       now ? h('span', { className: 'bt-menu-hint' }, now)
         : h('span', { className: 'bt-menu-hint', 'data-route-detail': '' }, routeDetail(route)),
       h(Tick, { on: here }),
-      h(ChevronRightIcon))
+      route === 'herdr' ? null : h(ChevronRightIcon))
     }),
     onManage ? h('div', { className: 'bt-menu-sep', role: 'separator' }) : null,
     onManage ? h('button', { type: 'button', role: 'menuitem', onClick: onManage }, h(SlidersIcon), h('span', { className: 'bt-menu-label' }, t('Models and providers…'))) : null)
@@ -520,7 +545,7 @@ function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, c
     else setView(MENU_ROOT)
     return true
   }
-  const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu({ onEscape: back, minWidth: 280 })
+  const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu({ onEscape: back, minWidth: 300 })
   const live = useRef(false)
   live.current = isOpen
   const shown = modelOf(bot, roster)
@@ -951,19 +976,25 @@ export const MODEL_CSS = `
 .bt-route-icon{flex:none;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;color:var(--bt-ink-2)}
 .bt-route-icon svg{width:16px;height:16px}
 .bt-model-step>[data-route=acp] .bt-route-icon{color:var(--bt-accent)}
-.bt-model-step [data-route-detail]{font-style:italic}
-.bt-model-step [data-unavailable] .bt-menu-label{color:var(--bt-ink-2)}
-.bt-model-step [data-unavailable] .bt-menu-hint{color:var(--bt-ink-3)}
+.bt-agent-mark{flex:none;display:block;border-radius:4px;object-fit:contain}
+.bt-agent-initial{flex:none;display:inline-flex;align-items:center;justify-content:center;border-radius:5px;background:var(--bt-tag-bg);color:var(--bt-ink-2);font-weight:600;line-height:1}
+.bt-model-menu .bt-model-step .bt-menu-label{font-size:13px;line-height:18px;font-weight:500;color:var(--bt-ink)}
+.bt-model-menu .bt-model-step .bt-menu-hint{font-size:12px;color:var(--bt-ink-2)}
+.bt-model-menu .bt-model-step .bt-model-group{font-size:12px;font-weight:600;color:var(--bt-ink-2)}
+.bt-model-step>[data-unavailable]{color:var(--bt-ink-2)}
+.bt-model-step>[data-unavailable] .bt-menu-label{color:var(--bt-ink-2);font-weight:500}
+.bt-model-step>[data-unavailable] :is(.bt-route-icon,.bt-agent-mark,.bt-agent-initial){opacity:.6}
+.bt-model-step .bt-menu-hint[data-route-detail]{max-width:64%;overflow:visible;text-align:right;white-space:normal;line-height:14px;font-style:italic}
 .bt-model-confirm{padding:10px 10px 8px;gap:8px}
 .bt-model-confirm-title{font-size:13px;line-height:18px;font-weight:600;color:var(--bt-ink)}
 .bt-model-confirm-move{font-size:11px;line-height:15px;color:var(--bt-ink-3);overflow-wrap:anywhere}
 .bt-model-confirm-text{padding:2px 0 6px;font-size:12px;line-height:17px;color:var(--bt-ink-2)}
 .bt-model-confirm-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
-.bt-model-confirm-cancel,.bt-model-confirm-go{min-height:30px;padding:5px 12px;border-radius:999px;font:inherit;font-size:12px;line-height:18px;cursor:pointer}
-.bt-model-confirm-cancel{border:.5px solid var(--bt-line-2);background:var(--bt-surface,transparent);color:var(--bt-ink-2)}
-.bt-model-confirm-go{border:.5px solid transparent;background:var(--bt-accent);color:var(--bt-accent-ink);font-weight:600}
-.bt-model-confirm-cancel:hover{background:var(--bt-hover)}
-.bt-model-confirm-go:hover{filter:brightness(0.96)}
+.bt-menu .bt-model-confirm-actions .bt-model-confirm-cancel,.bt-menu .bt-model-confirm-actions .bt-model-confirm-go{width:auto;min-height:30px;padding:5px 12px;border-radius:999px;font:inherit;font-size:12px;line-height:18px;cursor:pointer}
+.bt-menu .bt-model-confirm-actions .bt-model-confirm-cancel{border:.5px solid var(--bt-line-2);background:var(--bt-main);color:var(--bt-ink-2)}
+.bt-menu .bt-model-confirm-actions .bt-model-confirm-go{border:.5px solid transparent;background:var(--bt-accent);color:var(--bt-accent-ink);font-weight:600}
+.bt-menu .bt-model-confirm-actions .bt-model-confirm-cancel:hover{background:var(--bt-hover)}
+.bt-menu .bt-model-confirm-actions .bt-model-confirm-go:hover{filter:brightness(0.96)}
 .bt-model-confirm-cancel:focus-visible,.bt-model-confirm-go:focus-visible{outline:2px solid var(--bt-accent);outline-offset:1px}
 @keyframes bt-model-in{from{opacity:0;transform:translateY(6px)}}
 .bt-model-spin{flex:none;width:14px;height:14px;border-radius:50%;border:1.5px solid var(--bt-line-2);border-top-color:var(--bt-ink-2);animation:bt-model-spin .7s linear infinite}

@@ -414,6 +414,7 @@ test('a model that cannot run is marked in the route, the agent, the model row a
     const agents = nodes(steps.type({ ...steps.props, view: { step: 'agents', route: 'acp' } }), node => node.props.role === 'menuitem' && node.props['aria-haspopup'] === 'menu')
     assert.deepEqual(agents.map(row => [label(row), hint(row) ?? null, row.props['data-current'] ?? null]), [
       ['Claude Code', 'Needs a sign-in', ''], ['Codex', null, null],
+      ['Hermes', 'Not available yet', null], ['Antigravity', 'Not available yet', null], ['omp', 'Not available yet', null],
     ])
     assert.equal(agents[0].props['aria-label'], 'Claude Code, current model Default')
     assert.equal(nodes(steps.type({ ...steps.props, view: { step: 'agents', route: 'acp' } }), node => node.props.className === 'bt-model-back')[0].props['aria-label'], 'Back to routes')
@@ -521,8 +522,11 @@ test('choosing ACP shows its agents, then that agent\'s models with a way back; 
   const [backRow] = nodes(agents, node => node.props.className === 'bt-model-back')
   assert.equal(backRow.props['aria-label'], 'Back to routes')
   const agentRows = nodes(agents, node => node.props.role === 'menuitem' && node.props['aria-haspopup'] === 'menu')
-  assert.deepEqual(agentRows.map(row => [labelOf(row), row.props['data-current'] ?? null]), [['Codex', '']])
-  assert.equal(agentRows[0].props['aria-label'], 'Codex, current model Default (6.1 Sol)')
+  assert.deepEqual(agentRows.map(row => [labelOf(row), row.props['data-current'] ?? null]), [
+    ['Claude Code', null], ['Codex', ''], ['Hermes', null], ['Antigravity', null], ['omp', null],
+  ])
+  assert.equal(agentRows[0].props['aria-label'], 'Claude Code · Not available yet')
+  assert.equal(agentRows[1].props['aria-label'], 'Codex, current model Default (6.1 Sol)')
   const tree = step({ step: 'models', route: 'acp', provider: 'acp-codex' })
   const [modelsBack] = nodes(tree, node => node.props.className === 'bt-model-back')
   assert.equal(modelsBack.props['aria-label'], 'Back to Codex')
