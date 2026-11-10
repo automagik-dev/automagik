@@ -1142,10 +1142,15 @@ class PocketViewModel(application: Application, private val initDispatcher: Coro
     /** The preview's answer: the card leaves as a real answer would, and the notice says nothing was sent. */
     private fun previewAnswer(row: Chat.Row): Boolean {
         if (!state.value.demo) return false
-        chatUpdate(chatGen) { s -> s.copy(
-            approval = s.approval?.takeIf { it.id != row.id },
-            question = s.question?.takeIf { it.id != row.id },
-            notice = ChatDemo.SAMPLE_ONLY) }
+        chatUpdate(chatGen) { s ->
+            val next = s.copy(
+                approval = s.approval?.takeIf { it.id != row.id },
+                question = s.question?.takeIf { it.id != row.id })
+            // The sample has no bridge to send a status after the last card: leave "blocked" behind.
+            if (next.approval == null && next.question == null)
+                next.copy(status = Chat.Status("working", "sample", "Sample turn finished"), notice = ChatDemo.SAMPLE_ONLY)
+            else next.copy(notice = ChatDemo.SAMPLE_ONLY)
+        }
         return true
     }
 

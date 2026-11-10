@@ -229,8 +229,8 @@ fun chatAnnotated(spans: List<ChatText.Span>, open: (String) -> Unit): Annotated
         Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back to agents") }
             Surface(color = Surface, shape = RoundedCornerShape(24.dp), border = BorderStroke(1.dp, Border),
-                modifier = Modifier.weight(1f).height(48.dp)) {
-                Row(Modifier.fillMaxSize().padding(start = 6.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                modifier = Modifier.weight(1f).heightIn(min = 48.dp)) {
+                Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).padding(start = 6.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(36.dp)) {
                         PetView(identity.pet, identity.pose, 36.dp)
                         Box(Modifier.align(Alignment.BottomEnd).size(12.dp).background(stateColor(s.status.state), CircleShape)

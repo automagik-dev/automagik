@@ -142,6 +142,8 @@ class ChatRenderTest {
     @Test fun theBarKeepsTheStateText() {
         assertEquals("Needs you · Waiting for approval",
             chatStateLine(Chat.State("dsh:s1", status = Chat.Status("blocked", msg = "Waiting for approval"))))
+        assertEquals("Working · Sample turn finished",
+            chatStateLine(Chat.State("dsh:s1", status = Chat.Status("working", msg = "Sample turn finished"))))
         assertEquals("Ended", chatStateLine(Chat.State("dsh:s1", gone = true)))
         assertEquals("Machine offline", chatStateLine(Chat.State("dsh:s1", offline = true)))
     }

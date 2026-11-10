@@ -369,6 +369,8 @@ class PocketViewModelChatTest {
         assertEquals("question", vm.chat.value?.question?.kind)
         vm.chatAnswerQuestion(checkNotNull(vm.chat.value?.question), listOf(0))
         assertNull("the sample question leaves after its answer", vm.chat.value?.question)
+        assertEquals("working", vm.chat.value?.status?.state)
+        assertEquals("Sample turn finished", vm.chat.value?.status?.msg)
         // The read-only sample opens too: its question is pinned and the phone offers no answer controls.
         vm.openChat(ChatDemo.readOnlyRef)
         val readOnly = checkNotNull(vm.chat.value)
