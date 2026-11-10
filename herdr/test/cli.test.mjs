@@ -113,7 +113,7 @@ function scene(t, { terminals = [], briefing = true, amPart = false, window = { 
   const botsPath = join(project, ".herdr/bots.json");
   const bots = () => JSON.parse(readFileSync(botsPath, "utf8"));
   const seed = (file) => { mkdirSync(join(project, ".herdr"), { recursive: true }); writeFileSync(botsPath, `${JSON.stringify(file, null, 2)}\n`); };
-  return { root, project, app, home, cli, cliAsync, calls, agyCalls, hcState, appCalls, windowNow, bots, botsPath, seed };
+  return { root, project, app, home, env, cli, cliAsync, calls, agyCalls, hcState, appCalls, windowNow, bots, botsPath, seed };
 }
 
 const bot = (id, kind, extra = {}) => ({ id, name: `Bot ${id.slice(2, 4)}`, kind, look: { character: "star", colour: "blue" }, role: "r", instructions: "i", agent: "claude", ...extra });
@@ -2232,8 +2232,9 @@ test("#805 restart queues working panes, lists, replaces and cancels watchers", 
   assert.equal(queued.json().queued[0].watcher, r.json().watcher);
   const watcher = runCall(s.calls());
   for (const flag of ["--bg", "--rm", "--no-parent", "--run-queued"]) assert.ok(watcher.includes(flag));
-  const envAt = watcher.indexOf("/usr/bin/env");
-  assert.ok(envAt >= 0 && watcher[envAt + 1] === "-i", "the watcher starts from an empty environment");
+  const envAt = watcher.indexOf("/bin/sh");
+  assert.ok(envAt >= 0 && watcher[envAt + 1] === "-c", "the watcher starts through a shell");
+  assert.match(watcher[envAt + 2], /exec \/usr\/bin\/env -i "\$@"/, "the watcher starts from an empty environment");
   for (const prefix of ["HOME=", "HERDR_APP_HOME=", "PATH="]) {
     const word = watcher.find((w) => w.startsWith(prefix));
     assert.ok(word && word.length > prefix.length, `the watcher gets ${prefix}`);
@@ -2294,6 +2295,77 @@ test("#805 queued watcher waits for idle, honors saved options and consumes its 
   assert.ok(at(s.calls(), "wait", "t5") >= 0);
   assert.deepEqual(JSON.parse(readFileSync(file, "utf8")), []);
   assert.equal(s.cli(["restart", ID.main, "--run-queued", entry.id]).code, 0);
+});
+
+test("#805 a queued watcher runs as its own terminal, never the caller's pane", async (t) => {
+  // #805's main case: the caller is the bot's own pane, restart typed inside t5. hc starts the
+  // watcher as a terminal of its own (the queue's `watcher`); that run's HC_SOCKET and
+  // HC_TERMINAL_ID are the ones the watcher must reach hc with, never t5's.
+  const scenario = (t, tree) => {
+    const s = tree ? treeScene(t).s : restartScene(t, { status: "working" });
+    // The watcher finds hc on the PATH it was queued with; env -i strips the test's
+    // HC_FAKE_* variables from it, so the fake carries its own state and log, as the real
+    // hc carries its own core.
+    exe(join(s.root, "bin", "hc"), `#!/bin/sh\nHC_FAKE_STATE="${join(s.root, "hc.json")}" `
+      + `HC_FAKE_LOG="${join(s.root, "hc.log")}" exec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
+    const caller = { HC_TERMINAL_ID: "t5", HC_SOCKET: join(s.root, "caller.sock"),
+      HC_TERMINAL_SOCKET: join(s.root, "caller-terminal.sock") };
+    if (tree) {
+      const state = s.hcState();
+      state.terminals.find((x) => x.address === "t5").status = { app: "claude-code", state: "working" };
+      writeFileSync(join(s.root, "hc.json"), JSON.stringify(state));
+    }
+    const q = s.cli(["restart", "Genie", ...(tree ? ["--tree"] : []), "--json"], { env: caller });
+    assert.equal(q.code, 0, q.err);
+    assert.equal(q.json().queued, true, q.err);
+    assert.equal(at(s.calls(), "kill"), -1, "queuing ended nothing");
+    const watcher = q.json().watcher;
+    assert.ok(watcher, "the queue started a watcher");
+    // The pane reaches its prompt; the watcher fires as herdr-core starts it, with its own
+    // run's terminal in HC_SOCKET and HC_TERMINAL_ID.
+    const state = s.hcState();
+    const pane = state.terminals.find((x) => x.address === "t5");
+    pane.status = { app: "claude-code", state: "idle" };
+    pane.screen = "❯ ";
+    writeFileSync(join(s.root, "hc.json"), JSON.stringify(state));
+    const run = runCall(s.calls());
+    const words = run.slice(run.indexOf("--") + 1);
+    const fired = spawnSync(words[0], words.slice(1), { cwd: s.project, encoding: "utf8",
+      env: { ...s.env, HC_TERMINAL_ID: watcher, HC_SOCKET: join(s.root, "watcher.sock"),
+        HC_TERMINAL_SOCKET: join(s.root, "watcher-terminal.sock") } });
+    const why = `${fired.stderr}${fired.stdout}`;
+    assert.equal(fired.signal, null, `the watcher was ended as its own caller: ${why}`);
+    assert.equal(fired.status, 0, `the watcher didn't fire the restart: ${why}`);
+    assert.doesNotMatch(fired.stderr, /This runs in t5/);
+    // Nothing in the command hc starts names the caller's pane: not its id, nor either socket.
+    assert.equal(words.includes(`HC_TERMINAL_ID=${caller.HC_TERMINAL_ID}`), false,
+      "the watcher command carries the caller's terminal id");
+    assert.equal(words.some((w) => w.includes(caller.HC_SOCKET)), false, "the watcher command carries the caller's socket");
+    assert.equal(words.some((w) => w.includes(caller.HC_TERMINAL_SOCKET)), false,
+      "the watcher command carries the caller's terminal socket");
+    const calls = s.calls();
+    const ran = calls.findIndex((c) => c[0] === "run" && !c.includes("--run-queued"));
+    assert.ok(ran > 0, "the watcher started the replacement");
+    assert.ok(at(calls, "kill", "t5") > ran, "the old pane ended only after the replacement started");
+    assert.equal(at(calls, "kill", watcher), -1, "the watcher's own terminal was left alone");
+    const after = s.hcState();
+    const stateOf = (addr) => after.terminals.find((x) => x.address === addr)?.state;
+    assert.equal(stateOf("t5"), "finished", "the old pane ended");
+    assert.equal(stateOf(watcher), "live", "the watcher's own terminal was left alone");
+    assert.deepEqual(JSON.parse(readFileSync(join(s.app, "automagik-herdr/queued-restarts.json"), "utf8")), []);
+    if (!tree) {
+      assert.equal(stateOf("t101"), "live", "the replacement runs");
+      return;
+    }
+    assert.deepEqual(["t7", "t8"].map(stateOf), ["finished", "finished"]);
+    assert.equal(stateOf("t9"), "live", "the member bot that outlives the pane is left alone");
+    assert.ok(calls.some((c) => c[0] === "run" && c.includes("fix-213-dev")), "the worker ran again");
+    assert.ok(calls.some((c) => c[0] === "run" && c.includes("rev-1")), "the template helper ran again");
+    assert.ok(at(calls, "kill", "t5") < calls.findIndex((c) => c[0] === "run" && c.includes("fix-213-dev")),
+      "the old pane ended before its helpers ran again");
+  };
+  await t.test("plain restart", (t) => scenario(t, false));
+  await t.test("restart --tree", (t) => scenario(t, true));
 });
 
 test("#805 a direct restart cancels the queued entry and kills its watcher", (t) => {

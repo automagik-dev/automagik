@@ -3996,6 +3996,9 @@ async function queueRestart({ bot, key, old, screen, opts, wanted, plan }) {
     chmodSync(tmp, 0o600); renameSync(tmp, file);
     // env -i: herdr-core's environment does not leak into the watcher. Only these explicit
     // values and the queue/agent variables the watcher and its tests need are passed.
+    // HC_SOCKET, HC_TERMINAL_ID and HC_TERMINAL_SOCKET are never copied from here: the
+    // caller pane's would make the watcher that bot's own pane (#805). The sh in front of
+    // env -i adds the two hc gave the watcher's own run instead.
     const watcherEnv = [
       `HOME=${home()}`,
       `HERDR_APP_HOME=${appHome()}`,
@@ -4003,12 +4006,17 @@ async function queueRestart({ bot, key, old, screen, opts, wanted, plan }) {
       ...Object.entries(process.env)
         .filter(([k, v]) => v !== undefined && (
           k.startsWith("AUTOMAGIK_HERDR_") ||
-          ["USER", "LOGNAME", "TMPDIR", "XDG_RUNTIME_DIR", "HC_SOCKET", "HC_TERMINAL_ID", "HERMES_HOME", "VIRTUAL_ENV"].includes(k)
+          ["USER", "LOGNAME", "TMPDIR", "XDG_RUNTIME_DIR", "HERMES_HOME", "VIRTUAL_ENV"].includes(k)
         ))
         .map(([k, v]) => `${k}=${v}`),
     ];
+    const watcherShell = [
+      'if [ -n "${HC_SOCKET-}" ]; then set -- "HC_SOCKET=$HC_SOCKET" "$@"; fi',
+      'if [ -n "${HC_TERMINAL_ID-}" ]; then set -- "HC_TERMINAL_ID=$HC_TERMINAL_ID" "$@"; fi',
+      'exec /usr/bin/env -i "$@"',
+    ].join("\n");
     const r = await hc(["run", "--bg", "--json", "--rm", "--no-parent", "--cwd", key, "--label", `herdr.queued-restart=${bot.id}`,
-      "--", "/usr/bin/env", "-i", ...watcherEnv,
+      "--", "/bin/sh", "-c", watcherShell, "sh", ...watcherEnv,
       process.execPath, fileURLToPath(import.meta.url), "restart", bot.id, "--project", key, "--run-queued", queueId]);
     let watcher;
     try { watcher = r.code === 0 ? JSON.parse(r.stdout)?.address : null; } catch {}
