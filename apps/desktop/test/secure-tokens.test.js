@@ -12,13 +12,17 @@ const seal = text => Buffer.from(`sealed:${text}`)
 const opened = buffer => buffer.toString().replace(/^sealed:/, '')
 
 /** safeStorage's async surface, with counters and the sync calls refusing to run. */
-function fakeSafeStorage({ backend = 'gnome_libsecret', decrypt, encrypt, isTemporarilyUnavailable } = {}) {
-  const calls = { backends: 0, decrypts: 0, encrypts: 0, plaintext: 0, sync: 0 }
+function fakeSafeStorage({ backend = 'gnome_libsecret', decrypt, encrypt, isEncryptionAvailable, isTemporarilyUnavailable } = {}) {
+  const calls = { availability: 0, backends: 0, decrypts: 0, encrypts: 0, plaintext: 0, sync: 0 }
   const storage = {
     calls,
     getSelectedStorageBackend() {
       calls.backends += 1
       return backend
+    },
+    isEncryptionAvailable() {
+      calls.availability += 1
+      return isEncryptionAvailable ? isEncryptionAvailable() : true
     },
     setUsePlainTextEncryption() {
       calls.plaintext += 1
@@ -72,6 +76,34 @@ test('Linux backend detection: kwallet and gnome-libsecret are secure; basic_tex
   assert.equal(detectSecureStore(fakeSafeStorage({ backend: '' }), 'linux').secure, false)
 })
 
+test('Linux detection also requires the sync availability check', () => {
+  const unavailable = [
+    ['false', () => fakeSafeStorage({ backend: 'gnome_libsecret', isEncryptionAvailable: () => false })],
+    ['a non-true value', () => fakeSafeStorage({ backend: 'gnome_libsecret', isEncryptionAvailable: () => 'yes' })],
+    ['missing', () => {
+      const storage = fakeSafeStorage({ backend: 'gnome_libsecret' })
+      delete storage.isEncryptionAvailable
+      return storage
+    }],
+    ['throwing', () => fakeSafeStorage({
+      backend: 'gnome_libsecret',
+      isEncryptionAvailable: () => {
+        throw new Error('the availability check failed')
+      },
+    })],
+  ]
+  for (const [name, make] of unavailable) {
+    assert.deepEqual(detectSecureStore(make(), 'linux'), {
+      platform: 'linux', backend: 'gnome_libsecret', secure: false, reason: NO_SECURE_STORE_REASON,
+    }, name)
+  }
+  const available = fakeSafeStorage({ backend: 'gnome_libsecret' })
+  assert.deepEqual(detectSecureStore(available, 'linux'), {
+    platform: 'linux', backend: 'gnome_libsecret', secure: true, reason: null,
+  })
+  assert.equal(available.calls.availability, 1)
+})
+
 test('macOS and Windows use the platform store without asking for a Linux backend', () => {
   for (const [platform, backend] of [['darwin', 'keychain'], ['win32', 'dpapi']]) {
     const storage = fakeSafeStorage()
@@ -104,6 +136,49 @@ test('with no secret store nothing is written; the token lives only in this proc
   const nextLaunch = createTokenStore({ safeStorage: fakeSafeStorage({ backend: 'unknown' }), platform: 'linux', userData: dir })
   assert.deepEqual(await nextLaunch.load('cloud:alpha'), { status: 'empty', reason: NO_SECURE_STORE_REASON })
   assert.deepEqual(readdirSync(dir), [])
+})
+
+test('a Linux secret-store name without availability keeps every token in memory', async (t) => {
+  const variants = [
+    ['false', () => fakeSafeStorage({ backend: 'gnome_libsecret', isEncryptionAvailable: () => false })],
+    ['missing', () => {
+      const storage = fakeSafeStorage({ backend: 'gnome_libsecret' })
+      delete storage.isEncryptionAvailable
+      return storage
+    }],
+    ['throwing', () => fakeSafeStorage({
+      backend: 'gnome_libsecret',
+      isEncryptionAvailable: () => {
+        throw new Error('the availability check failed')
+      },
+    })],
+  ]
+  for (const [name, make] of variants) {
+    const dir = scratch(t)
+    const storage = make()
+    assert.deepEqual(detectSecureStore(storage, 'linux'), {
+      platform: 'linux', backend: 'gnome_libsecret', secure: false, reason: NO_SECURE_STORE_REASON,
+    }, name)
+    const store = createTokenStore({ safeStorage: storage, platform: 'linux', userData: dir })
+    assert.equal(store.secure, false, name)
+    assert.equal(store.memoryOnly, true, name)
+    assert.equal(store.backend, 'gnome_libsecret', name)
+    assert.equal(store.reason, NO_SECURE_STORE_REASON, name)
+
+    assert.deepEqual(await store.save('cloud:alpha', 'refresh-1'), { status: 'memory', reason: NO_SECURE_STORE_REASON }, name)
+    assert.deepEqual(await store.rotate('cloud:alpha', 'refresh-2'), { status: 'memory', reason: NO_SECURE_STORE_REASON }, name)
+    assert.deepEqual(await store.load('cloud:alpha'), { status: 'ok', token: 'refresh-2', memory: true }, name)
+    assert.deepEqual(await store.clear('cloud:alpha'), { status: 'cleared', memory: true }, name)
+    assert.deepEqual(await store.load('cloud:alpha'), { status: 'empty', reason: NO_SECURE_STORE_REASON }, name)
+
+    // No token file, no leftover temporary file, and no safeStorage encryption call.
+    assert.equal(existsSync(tokenFile(dir)), false, name)
+    assert.deepEqual(readdirSync(dir), [], name)
+    assert.equal(storage.calls.encrypts, 0, name)
+    assert.equal(storage.calls.decrypts, 0, name)
+    assert.equal(storage.calls.plaintext, 0, name)
+    assert.equal(storage.calls.sync, 0, name)
+  }
 })
 
 test('a secure store keeps one token per account, rotates it on use, and clears it on sign-out', async (t) => {

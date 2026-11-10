@@ -57,9 +57,8 @@ export function accountKeyOf(account) {
 
 /**
  * Whether safeStorage offers a real secret store, and what to tell the person when it does not.
- * On Linux the answer is the selected backend, never isEncryptionAvailable: with the fallback
- * that reports available only after opting into plaintext (which this app never does).
- * `unknown` is how Electron answers before app ready, so call this only after it.
+ * On Linux the backend name alone is not proof: the sync isEncryptionAvailable must also be
+ * true (RFC 0024 Delivery 0, Unknowns). `unknown` is Electron's answer before app ready.
  */
 export function detectSecureStore(safeStorage, platform = process.platform) {
   const noStore = backend => ({ platform, backend, secure: false, reason: NO_SECURE_STORE_REASON })
@@ -75,6 +74,13 @@ export function detectSecureStore(safeStorage, platform = process.platform) {
   }
   const selected = typeof backend === 'string' ? backend.trim() : ''
   if (selected === '' || NO_SECURE_STORE_BACKENDS.includes(selected)) return noStore(selected || 'unknown')
+  let available
+  try {
+    available = safeStorage.isEncryptionAvailable?.() === true
+  } catch {
+    available = false
+  }
+  if (!available) return noStore(selected)
   return { platform, backend: selected, secure: true, reason: null }
 }
 
