@@ -59,13 +59,26 @@ const (
 	BackendHC    Backend = "hc"    // herdr-core, shown by the desktop app
 )
 
+// Command is work the scheduler runs itself: one program, started directly by
+// the daemon as the user it runs as. No pane, no agent, no model (ADR 0013).
+type Command struct {
+	// Argv is the program and its arguments, as they are: no shell reads them.
+	Argv []string `yaml:"argv" json:"argv"`
+	// Cwd is the working folder (absolute, ~ expanded). Empty is the home folder.
+	Cwd string `yaml:"cwd,omitempty" json:"cwd,omitempty"`
+	// Env is added to the daemon's own environment, and wins over it.
+	Env map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+}
+
 // Automation is one scheduled entry: a prompt (or delegated workflow) fired
-// on a cron schedule against an agent in a provisioned workspace.
+// on a cron schedule against an agent in a provisioned workspace, or a command
+// the scheduler runs itself.
 type Automation struct {
 	Name string `yaml:"name"`
 	Cron string `yaml:"cron"`
-	// Repo the automation operates on (absolute path, ~ expanded).
-	Repo string `yaml:"repo"`
+	// Repo the automation operates on (absolute path, ~ expanded). A command
+	// has none: it names its own working folder.
+	Repo string `yaml:"repo,omitempty"`
 	// Workspace provisioning mode; defaults to worktree.
 	Workspace Workspace `yaml:"workspace,omitempty"`
 	// WorkspaceID is required for existing mode. Each run gets a fresh tab at Repo.
@@ -81,10 +94,17 @@ type Automation struct {
 	// The value is passed through untouched: model names move faster than any
 	// list we could keep here, so a typo surfaces when the agent refuses it.
 	Model string `yaml:"model,omitempty"`
-	// Prompt submitted to the agent. Mutually exclusive with Workflow.
+	// Prompt submitted to the agent. Exactly one of Prompt, Workflow and
+	// Command is set.
 	Prompt string `yaml:"prompt,omitempty"`
 	// Workflow delegates execution to herdr-workflows: `hwf run <name>`.
 	Workflow string `yaml:"workflow,omitempty"`
+	// Command is run by the scheduler itself, with TimeoutMinutes as its
+	// bound. Exit 0 is done; anything else, or the timeout, is failed.
+	Command *Command `yaml:"command,omitempty"`
+	// Notify names the bot a command's one-line result is sent to: a bot id
+	// (the terminal labelled bot=<id>), else a terminal name. Command only.
+	Notify string `yaml:"notify,omitempty"`
 	// MCPConfig is a path to an MCP servers JSON passed to the agent
 	// (claude: --mcp-config). Sugar over AgentArgs.
 	MCPConfig string `yaml:"mcp_config,omitempty"`
@@ -148,6 +168,16 @@ func (d Diagnostic) String() string {
 }
 
 func (a *Automation) applyDefaults() {
+	if a.TimeoutMinutes <= 0 {
+		a.TimeoutMinutes = 60
+	}
+	if a.CatchUpMinutes == 0 {
+		a.CatchUpMinutes = 120
+	}
+	if a.Command != nil {
+		// No workspace and no agent to default: a command has neither.
+		return
+	}
 	if a.Workspace == "" {
 		a.Workspace = WorkspaceWorktree
 	}
@@ -156,12 +186,6 @@ func (a *Automation) applyDefaults() {
 	}
 	if a.Agent == "" {
 		a.Agent = "claude"
-	}
-	if a.TimeoutMinutes <= 0 {
-		a.TimeoutMinutes = 60
-	}
-	if a.CatchUpMinutes == 0 {
-		a.CatchUpMinutes = 120
 	}
 	if a.BlockedGraceMinutes == 0 {
 		a.BlockedGraceMinutes = 2
@@ -205,11 +229,23 @@ func (a *Automation) validate(backend Backend) error {
 	if _, err := CronParser.Parse(a.Cron); err != nil {
 		return fmt.Errorf("%s: invalid cron %q: %w", a.Name, a.Cron, err)
 	}
+	kinds := 0
+	for _, set := range []bool{a.Prompt != "", a.Workflow != "", a.Command != nil} {
+		if set {
+			kinds++
+		}
+	}
+	if kinds != 1 {
+		return fmt.Errorf("%s: exactly one of prompt, workflow or command is required", a.Name)
+	}
+	if a.Command != nil {
+		return a.validateCommand()
+	}
+	if a.Notify != "" {
+		return fmt.Errorf("%s: notify sends a command's result; a prompt or workflow run has none", a.Name)
+	}
 	if a.Repo == "" {
 		return fmt.Errorf("%s: missing repo", a.Name)
-	}
-	if (a.Prompt == "") == (a.Workflow == "") {
-		return fmt.Errorf("%s: exactly one of prompt or workflow is required", a.Name)
 	}
 	if a.Workspace != WorkspaceWorktree && a.Workspace != WorkspaceRoot && a.Workspace != WorkspaceExisting {
 		return fmt.Errorf("%s: workspace must be worktree, root or existing, got %q", a.Name, a.Workspace)
@@ -249,6 +285,65 @@ func (a *Automation) validate(backend Backend) error {
 	}
 	return nil
 }
+
+// validateCommand checks a command entry. It runs before any default is
+// filled in for the agent keys (applyDefaults leaves them alone for a
+// command), so a key that is set here is one somebody wrote.
+func (a *Automation) validateCommand() error {
+	c := a.Command
+	if len(c.Argv) == 0 || strings.TrimSpace(c.Argv[0]) == "" {
+		return fmt.Errorf("%s: command needs argv, the program first", a.Name)
+	}
+	if c.Cwd != "" && !filepath.IsAbs(c.Cwd) {
+		return fmt.Errorf("%s: command cwd must be an absolute path or start with ~/, got %q", a.Name, c.Cwd)
+	}
+	for k := range c.Env {
+		if k == "" || strings.ContainsAny(k, "=\x00 \t\n") {
+			return fmt.Errorf("%s: command env name %q is not a variable name", a.Name, k)
+		}
+	}
+	// A command starts no agent and opens no workspace. A key that only means
+	// something to those is a mistake to say out loud, not to ignore.
+	for _, k := range []struct {
+		name string
+		set  bool
+	}{
+		{"repo (the working folder is command.cwd)", a.Repo != ""},
+		{"workspace", a.Workspace != ""},
+		{"workspace_id", a.WorkspaceID != ""},
+		{"session", a.Session != ""},
+		{"agent", a.Agent != ""},
+		{"template", a.Template != ""},
+		{"model", a.Model != ""},
+		{"mcp_config", a.MCPConfig != ""},
+		{"agent_args", len(a.AgentArgs) > 0},
+		{"blocked_grace_minutes", a.BlockedGraceMinutes != 0},
+		{"close_workspace", a.CloseWorkspace != "" && a.CloseWorkspace != CloseNever},
+	} {
+		if k.set {
+			return fmt.Errorf("%s: a command starts no agent and opens no workspace; drop %s", a.Name, k.name)
+		}
+	}
+	if strings.ContainsAny(a.Notify, " \t\n") || strings.HasPrefix(a.Notify, "-") {
+		return fmt.Errorf("%s: notify %q is not a bot id or a terminal name", a.Name, a.Notify)
+	}
+	return nil
+}
+
+// Kind is what a run of this automation is: "command", "workflow" or "prompt".
+func (a Automation) Kind() string {
+	switch {
+	case a.Command != nil:
+		return "command"
+	case a.Workflow != "":
+		return "workflow"
+	}
+	return "prompt"
+}
+
+// Kinds are the kinds of work this build can run, for `ls --json`: a panel
+// offers a kind only when the scheduler it drives names it.
+var Kinds = []string{"prompt", "workflow", "command"}
 
 // modelFlagKinds are the agent kinds whose executable takes `--model`. Herdr
 // forwards the flag verbatim, so a model: on any other kind would make the
@@ -372,6 +467,9 @@ func parse(raw []byte) (*Config, error) {
 		a.applyDefaults()
 		a.Repo = expandHome(a.Repo)
 		a.MCPConfig = expandHome(a.MCPConfig)
+		if a.Command != nil {
+			a.Command.Cwd = expandHome(a.Command.Cwd)
+		}
 
 		if err := a.validate(cfg.Backend); err != nil {
 			cfg.Invalid = append(cfg.Invalid, Diagnostic{

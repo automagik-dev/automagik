@@ -1,5 +1,6 @@
 // herdr-automations — the trigger layer for Herdr agents: cron-scheduled
-// prompts (or herdr-workflows delegations) launched in fresh worktrees.
+// prompts (or herdr-workflows delegations) launched in fresh worktrees, and
+// plain commands the scheduler runs itself.
 package main
 
 import (
@@ -175,8 +176,13 @@ func list() error {
 		if model == "" {
 			model = "agent default"
 		}
+		workspace, agent := string(a.Workspace), a.Agent
+		if a.Command != nil {
+			// No workspace, no agent, no model: the scheduler runs it itself.
+			workspace, agent, model = "-", "command", "-"
+		}
 		fmt.Printf("%-24s %-16s %-9s %-8s %-13s %s\n",
-			name, a.Cron, a.Workspace, a.Agent, model, last)
+			name, a.Cron, workspace, agent, model, last)
 	}
 	printDiagnostics(cfg)
 	printStoppedSessions(cfg)
@@ -395,6 +401,7 @@ func putCmd(args []string) error {
 		MCPConfig: in.MCPConfig, AgentArgs: in.AgentArgs, TimeoutMinutes: in.TimeoutMinutes,
 		CatchUpMinutes: in.CatchUpMinutes, BlockedGraceMinutes: in.BlockedGraceMinutes,
 		Disabled: in.Disabled, CloseWorkspace: config.CloseWorkspace(in.CloseWorkspace),
+		Command: in.Command, Notify: in.Notify,
 	}
 	return printJSON(config.Put(original, a, given, dryRun))
 }
@@ -456,6 +463,9 @@ func showHistory(name string) error {
 	fmt.Printf("%-20s %-24s %-9s %-7s %s\n", "AT", "AUTOMATION", "STATUS", "TRIGGER", "DETAIL")
 	for _, r := range runs {
 		detail := r.Error
+		if r.Result != "" {
+			detail = r.Result // a command's one line: its last output, or why it failed
+		}
 		if detail == "" {
 			detail = r.WorkspaceID
 		}

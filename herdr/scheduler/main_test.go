@@ -128,3 +128,39 @@ func TestPutCarriesBlockedGrace(t *testing.T) {
 		}
 	})
 }
+
+// The panel's command form writes through the same put: the command, its
+// folder, env and bot have to survive the JSON-to-config mapping (ADR 0013).
+func TestPutCarriesACommandAndItsBot(t *testing.T) {
+	body := `{"name":"check","cron":"0 7 * * *","repo":"","workspace":"","agent":"","prompt":"",` +
+		`"command":{"argv":["./check.sh","two words"],"cwd":"/srv/checks","env":{"REGION":"eu"}},` +
+		`"notify":"b-captain","timeout_minutes":10}`
+	answer, after := runPut(t, "automations:\n", body)
+	if strings.Contains(answer, `"problem"`) {
+		t.Fatalf("put refused it: %s", answer)
+	}
+	for _, want := range []string{"command:", "- ./check.sh", "- two words", "cwd: /srv/checks", "REGION: eu", "notify: b-captain", "timeout_minutes: 10"} {
+		if !strings.Contains(after, want) {
+			t.Fatalf("%q not written:\n%s", want, after)
+		}
+	}
+	for _, never := range []string{"repo:", "agent:", "workspace:", "prompt:"} {
+		if strings.Contains(after, never) {
+			t.Fatalf("a command entry was written with %q:\n%s", never, after)
+		}
+	}
+
+	t.Run("an edit that sends no command keeps it", func(t *testing.T) {
+		_, kept := runPut(t, after, `{"name":"check","cron":"0 8 * * *"}`, "--original", "check")
+		if !strings.Contains(kept, "- ./check.sh") || !strings.Contains(kept, "notify: b-captain") || !strings.Contains(kept, `0 8 * * *`) {
+			t.Fatalf("the command or its bot was lost:\n%s", kept)
+		}
+	})
+
+	t.Run("a command with an agent key is refused, not written", func(t *testing.T) {
+		answer, same := runPut(t, after, `{"name":"check","cron":"0 7 * * *","agent":"claude"}`, "--original", "check")
+		if !strings.Contains(answer, "drop agent") || same != after {
+			t.Fatalf("answer %s\nfile:\n%s", answer, same)
+		}
+	})
+}
