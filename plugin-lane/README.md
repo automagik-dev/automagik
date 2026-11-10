@@ -15,8 +15,8 @@ which never changes, so a consumer that cached a version can always serve it aga
 
 For Automagik's plugins the URLs are:
 
-- https://github.com/automagik-dev/automagik/releases/download/plugin-lane/lane.json
-- https://github.com/automagik-dev/automagik/releases/download/plugin-lane/lane.json.sig
+- https://github.com/automagik-si/automagik/releases/download/plugin-lane/lane.json
+- https://github.com/automagik-si/automagik/releases/download/plugin-lane/lane.json.sig
 
 `keys.json` in this folder lists the public keys, `{ keys: [{ keyId, publicKey }] }`, with
 `publicKey` in PEM (SPKI). A consumer pins them in its code. Two keys may be listed at once
@@ -31,7 +31,7 @@ while one is rotated.
   "keyId": "automagik-2026-10",
   "sequence": 220001,
   "issuedAt": "2026-10-26T03:00:00Z",
-  "repository": "https://github.com/automagik-dev/automagik",
+  "repository": "https://github.com/automagik-si/automagik",
   "version": "3.22.1",
   "commit": "<the release commit, 40 hex>",
   "base": "3.22.0",
@@ -39,7 +39,7 @@ while one is rotated.
     {
       "name": "@automagik/bots-dsh",
       "version": "3.22.1",
-      "url": "https://github.com/automagik-dev/automagik/releases/download/v3.22.1/automagik-bots-dsh-3.22.1.tgz",
+      "url": "https://github.com/automagik-si/automagik/releases/download/v3.22.1/automagik-bots-dsh-3.22.1.tgz",
       "integrity": "sha512-…",
       "sha256": "<64 hex>",
       "size": 3305405,
@@ -60,7 +60,7 @@ while one is rotated.
 - `engines.dsh` is the plugin's own range. A consumer skips a plugin its DSH is outside of.
 - A consumer takes from a publisher's lane only the plugins that publisher owns, and trusts
   only that publisher's keys for it. Automagik's lane names `@automagik/bots-dsh` and
-  `@automagik/welcome-dsh`. Genie's lane (automagik-dev/genie, keyId `genie-2026-10`) names
+  `@automagik/welcome-dsh`. Genie's lane (automagik-si/genie, keyId `genie-2026-10`) names
   `@automagik/genie-dsh`.
 - Genie's `base` is the oldest app its plugin runs on, not an app release line. The app
   takes Genie's lane on any version at or past that base.
