@@ -1522,5 +1522,8 @@
   "Sign-in did not finish. Try again.": "O login não terminou. Tente de novo.",
   "This sign-in expired. Start again.": "Este login expirou. Comece de novo.",
   "Sign-in cancelled.": "Login cancelado.",
-  "The model could not be selected.": "Não foi possível selecionar o modelo."
+  "The model could not be selected.": "Não foi possível selecionar o modelo.",
+  "Tools": "Ferramentas",
+  "Denied tools": "Ferramentas bloqueadas",
+  "Exact tool names, one per line or comma separated, case-sensitive. Empty allows every tool.": "Nomes exatos de ferramentas, um por linha ou separados por vírgula, diferenciando maiúsculas de minúsculas. Vazio permite todas as ferramentas."
 }
