@@ -29,9 +29,11 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.flow.distinctUntilChanged
 import java.text.DateFormat
 import java.util.Date
 
@@ -45,7 +47,7 @@ object ChatStyle {
     val CARD_BUTTON_RADIUS = 26.dp
     val CARD_BUTTON_TEXT = 16.sp
     val CARD_CONFIRM_TEXT = 17.sp
-    val PENDING_MAX_HEIGHT = 300.dp
+    val PENDING_MAX_HEIGHT = 420.dp
     val COMPOSER_RADIUS = 28.dp
     val COMPOSER_HEIGHT = 56.dp
     val COMPOSER_TEXT = 17.sp
@@ -91,18 +93,31 @@ fun chatPose(s: Chat.State, terminal: CoreTerminal?, now: Long = System.currentT
 fun chatPending(s: Chat.State): List<Chat.Row> =
     listOfNotNull(s.question, s.approval?.takeIf { it.open }).distinctBy { it.id }
 
+/** The card the pinned area shows: the one picked, else the approval (the blocking action), else the only card. */
+fun chatPinned(s: Chat.State, selected: String?): Chat.Row? {
+    val pending = chatPending(s)
+    return pending.find { it.id == selected } ?: pending.firstOrNull { it.kind == "approval" } ?: pending.firstOrNull()
+}
+
 /** The transcript rows the message list draws: the fixed card is not also left scrolling in it. */
 fun chatListRows(s: Chat.State): List<Chat.Row> {
     val fixed = chatPending(s).map { it.id }.toSet()
     return if (fixed.isEmpty()) s.rows else s.rows.filterNot { it.id in fixed }
 }
 
-/** The bar's second line, as the chat has always said it: state word, then the engine's message. */
-fun chatStateLine(s: Chat.State): String = when {
+/** The bar's second line: the open card's own ask, else the chat's state word and the engine's message. */
+fun chatStateLine(s: Chat.State, card: Chat.Row? = null): String = when {
+    card?.kind == "question" -> "Question · " + ChatText.clean(card.prompt).ifBlank { Chat.ANSWER_ON_COMPUTER }
+    card?.kind == "approval" -> "Needs your approval" +
+        ChatText.clean(Chat.labelOf(card)).takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()
     s.gone -> "Ended"
     s.offline -> "Machine offline"
     else -> stateName(s.status.state) + s.status.msg.takeIf { it.isNotBlank() }?.let { " · " + ChatText.clean(it) }.orEmpty()
 }
+
+/** A folded tool row's one line: its chevron reflects whether it is open (a result keeps its ↳ when closed). */
+fun collapsedLabel(open: Boolean, label: String, result: Boolean = false): String =
+    (if (open) "▾" else if (result) "↳" else "▸") + " " + label
 
 /**
  * Prose spans as the text a Compose [Text] draws: every span's characters as they are, nothing parsed as markup.
@@ -137,42 +152,68 @@ fun chatAnnotated(spans: List<ChatText.Span>, open: (String) -> Unit): Annotated
     val list = rememberLazyListState()
     var draft by remember(ref) { mutableStateOf("") }
     var confirmDraft by remember(ref) { mutableStateOf<Chat.Message?>(null) }
+    var pinnedId by remember(ref) { mutableStateOf<String?>(null) }
+    val expanded = remember(ref) { mutableStateMapOf<String, Boolean>() }
     val rows = remember(s.rows, s.approval, s.question) { chatListRows(s) }
     val pending = remember(s.question, s.approval) { chatPending(s) }
+    val pinned = chatPinned(s, pinnedId)
+    // A card that closed falls back to the other one; the bar and the pinned area always describe the same card.
+    LaunchedEffect(pending.map { it.id }) { if (pending.none { c -> c.id == pinnedId }) pinnedId = null }
     val count = rows.size + s.screen.size + s.messages.size + s.receipts.size
     LaunchedEffect(count) { val items = list.layoutInfo.totalItemsCount; if (count > 0 && items > 0) list.animateScrollToItem(items - 1) }
-    Column(modifier.background(Canvas)) {
-        ChatBar(s, identity, onBack, onShowTerminal?.takeIf { ChatActions.canShowTerminal(s) }, vm::chatInterrupt, vm::reconnectChat)
-        s.notice?.let { notice ->
-            Row(Modifier.fillMaxWidth().background(Raised).padding(start = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(notice, fontSize = 12.sp, color = Ink, modifier = Modifier.weight(1f))
-                IconButton(onClick = vm::dismissChatNotice) { Icon(Icons.Outlined.Close, "Dismiss", Modifier.size(16.dp), tint = Muted) }
-            }
+    // The keyboard shrinking the list keeps its top: bring the newest row back instead.
+    LaunchedEffect(list) {
+        snapshotFlow { list.layoutInfo.viewportSize.height }.distinctUntilChanged().collect { height ->
+            val last = list.layoutInfo.totalItemsCount - 1
+            if (height > 0 && last >= 0) list.scrollToItem(last)
         }
-        LazyColumn(Modifier.fillMaxWidth().weight(1f).alpha(if (s.offline || s.gone) .55f else 1f), state = list,
-            contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (rows.isNotEmpty() && s.more) item("earlier") {
-                TextButton(onClick = vm::chatEarlier, modifier = Modifier.fillMaxWidth()) { Text("Load earlier", fontSize = 12.sp) }
+    }
+    BoxWithConstraints(modifier.fillMaxSize().background(Canvas)) {
+        val cardMax = (maxHeight - 200.dp).coerceIn(240.dp, ChatStyle.PENDING_MAX_HEIGHT)
+        Column(Modifier.fillMaxSize()) {
+            ChatBar(s, identity, pinned, onBack, onShowTerminal?.takeIf { ChatActions.canShowTerminal(s) }, vm::chatInterrupt, vm::reconnectChat)
+            Box(Modifier.fillMaxWidth().weight(1f)) {
+                LazyColumn(Modifier.fillMaxSize().alpha(if (s.offline || s.gone) .55f else 1f), state = list,
+                    contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (rows.isNotEmpty() && s.more) item("earlier") {
+                        TextButton(onClick = vm::chatEarlier, modifier = Modifier.fillMaxWidth()) { Text("Load earlier", fontSize = 12.sp) }
+                    }
+                    if (s.screenOnly) item("screen-only") { Hint("History appears when this pane’s transcript is found.") }
+                    items(rows, key = { "r:" + it.id }) { ChatRowView(it, s, vm, openLink, expanded) }
+                    if (s.screen.isNotEmpty()) item("live") { Hint("Live from the screen") }
+                    items(s.screen, key = { "s:" + it.id }) { ChatRowView(it, s, vm, openLink, expanded) }
+                    items(s.receipts, key = { "x:" + it.id }) { ReceiptCard(it, identity.name, vm::dismissReceipt) }
+                    items(s.messages, key = { "m:" + it.id }) { m -> MessageView(m, s, onSendNow = { confirmDraft = it }, onCancel = vm::chatCancelHeld, onRetry = vm::chatRetry) }
+                    if (count == 0 && pending.isEmpty() && s.error == null) item("empty") { Hint(if (s.connected) "No messages yet." else "Connecting chat…") }
+                }
+                s.notice?.let { notice -> ChatNotice(notice, vm::dismissChatNotice, Modifier.align(Alignment.TopCenter).padding(8.dp)) }
             }
-            if (s.screenOnly) item("screen-only") { Hint("History appears when this pane’s transcript is found.") }
-            items(rows, key = { "r:" + it.id }) { ChatRowView(it, s, vm, openLink) }
-            if (s.screen.isNotEmpty()) item("live") { Hint("Live from the screen") }
-            items(s.screen, key = { "s:" + it.id }) { ChatRowView(it, s, vm, openLink) }
-            items(s.receipts, key = { "x:" + it.id }) { ReceiptCard(it, identity.name, vm::dismissReceipt) }
-            items(s.messages, key = { "m:" + it.id }) { m -> MessageView(m, s, onSendNow = { confirmDraft = it }, onCancel = vm::chatCancelHeld, onRetry = vm::chatRetry) }
-            if (count == 0 && pending.isEmpty() && s.error == null) item("empty") { Hint(if (s.connected) "No messages yet." else "Connecting chat…") }
-        }
-        val why = ChatActions.whyNoSend(s)
-        Column(Modifier.fillMaxWidth().background(Chrome).navigationBarsPadding()) {
-            if (pending.isNotEmpty()) Column(Modifier.fillMaxWidth().heightIn(max = ChatStyle.PENDING_MAX_HEIGHT)
-                .verticalScroll(rememberScrollState())
-                .padding(start = 12.dp, end = 12.dp, top = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                for (row in pending) PendingCard(row, s, vm)
+            val why = ChatActions.whyNoSend(s)
+            Column(Modifier.fillMaxWidth().background(Chrome).navigationBarsPadding()) {
+                if (pinned != null) {
+                    Column(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 8.dp)) {
+                        // Both cards can be open at once. The approval wins at open; the question stays one tap away.
+                        if (pending.size > 1) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                            for (card in pending.sortedBy { if (it.kind == "approval") 0 else 1 }) {
+                                val active = card.id == pinned.id
+                                TextButton(onClick = { pinnedId = card.id }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)) {
+                                    Text(if (card.kind == "question") "Question" else "Approval", fontSize = 12.sp,
+                                        fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (active) Accent else Muted)
+                                }
+                            }
+                        }
+                        key(pinned.id) {
+                            Column(Modifier.fillMaxWidth().heightIn(max = cardMax).verticalScroll(rememberScrollState())) {
+                                PendingCard(pinned, s, vm)
+                            }
+                        }
+                    }
+                }
+                if (why != null) Text(why, fontSize = 12.sp, color = Muted,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp))
+                else if (ChatActions.canSend(s)) ChatComposer(draft, { draft = it }, { vm.chatSend(draft); draft = "" }, draft.isNotBlank(), identity.name)
             }
-            if (why != null) Text(why, fontSize = 12.sp, color = Muted,
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp))
-            else if (ChatActions.canSend(s)) ChatComposer(draft, { draft = it }, { vm.chatSend(draft); draft = "" }, draft.isNotBlank(), identity.name)
         }
     }
     confirmDraft?.let { m ->
@@ -183,7 +224,7 @@ fun chatAnnotated(spans: List<ChatText.Span>, open: (String) -> Unit): Annotated
     }
 }
 
-@Composable private fun ChatBar(s: Chat.State, identity: ChatIdentity, onBack: () -> Unit, onShowTerminal: (() -> Unit)?, onInterrupt: () -> Unit, onReconnect: () -> Unit) {
+@Composable private fun ChatBar(s: Chat.State, identity: ChatIdentity, card: Chat.Row?, onBack: () -> Unit, onShowTerminal: (() -> Unit)?, onInterrupt: () -> Unit, onReconnect: () -> Unit) {
     Column(Modifier.fillMaxWidth().background(Chrome)) {
         Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back to agents") }
@@ -199,7 +240,7 @@ fun chatAnnotated(spans: List<ChatText.Span>, open: (String) -> Unit): Annotated
                     Column(Modifier.weight(1f)) {
                         Text(identity.name, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Ink,
                             maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(chatStateLine(s), fontSize = 12.sp, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(chatStateLine(s, card), fontSize = 12.sp, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
             }
@@ -261,17 +302,31 @@ fun chatAnnotated(spans: List<ChatText.Span>, open: (String) -> Unit): Annotated
     }
 }
 
-/** A tool's input or output: collapsed to one line until tapped. */
-@Composable private fun Collapsed(label: String, body: String) {
-    var open by remember(body) { mutableStateOf(false) }
-    Column {
-        Text(ChatText.clean(label), fontSize = 12.sp, color = Muted, maxLines = if (open) Int.MAX_VALUE else 1, overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.clickable(enabled = body.isNotBlank()) { open = !open })
+/** A notice over the list, not in it: a sample tap or a send refusal never moves the newest row. */
+@Composable private fun ChatNotice(text: String, onDismiss: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(color = Raised, shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, Border), modifier = modifier.fillMaxWidth()) {
+        Row(Modifier.padding(start = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(text, fontSize = 12.sp, color = Ink, modifier = Modifier.weight(1f).padding(vertical = 10.dp))
+            IconButton(onClick = onDismiss) { Icon(Icons.Outlined.Close, "Dismiss", Modifier.size(16.dp), tint = Muted) }
+        }
+    }
+}
+
+/** A tool's input or output: one 48dp line until tapped; its open state lives in [expanded], so scrolling cannot close it. */
+@Composable private fun Collapsed(id: String, label: String, body: String, expanded: MutableMap<String, Boolean>, result: Boolean = false) {
+    val open = expanded[id] == true
+    Column(Modifier.fillMaxWidth()) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp)
+            .clickable(enabled = body.isNotBlank()) { expanded[id] = !open }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(collapsedLabel(open, ChatText.clean(label), result), fontSize = 12.sp, color = Muted,
+                maxLines = if (open) Int.MAX_VALUE else 1, overflow = TextOverflow.Ellipsis)
+        }
         if (open && body.isNotBlank()) { Spacer(Modifier.height(4.dp)); Mono(body) }
     }
 }
 
-@Composable private fun ChatRowView(row: Chat.Row, s: Chat.State, vm: PocketViewModel, openLink: (String, Boolean) -> Unit) {
+@Composable private fun ChatRowView(row: Chat.Row, s: Chat.State, vm: PocketViewModel, openLink: (String, Boolean) -> Unit,
+                                    expanded: MutableMap<String, Boolean>) {
     when (row.kind) {
         "text" -> {
             val mine = row.role == "user"
@@ -286,8 +341,8 @@ fun chatAnnotated(spans: List<ChatText.Span>, open: (String) -> Unit): Annotated
                 }
             }
         }
-        "tool-call" -> Collapsed("▸ ${row.tool}${row.summary.takeIf { it.isNotBlank() && it != row.tool }?.let { ": $it" }.orEmpty()}", row.input)
-        "tool-result" -> Collapsed(if (row.ok) "  ↳ result" else "  ↳ failed", row.output)
+        "tool-call" -> Collapsed(row.id + ":call", row.tool + row.summary.takeIf { it.isNotBlank() && it != row.tool }?.let { ": $it" }.orEmpty(), row.input, expanded)
+        "tool-result" -> Collapsed(row.id + ":result", if (row.ok) "result" else "failed", row.output, expanded, result = true)
         "status" -> Hint(ChatText.clean(row.msg.ifBlank { row.state }))
         "tokens" -> {}
         "approval", "question" -> PendingCard(row, s, vm)

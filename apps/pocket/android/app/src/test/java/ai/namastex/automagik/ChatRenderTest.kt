@@ -114,6 +114,31 @@ class ChatRenderTest {
         assertEquals(Teams.ASLEEP, chatPose(Chat.State("dsh:s1", status = Chat.Status("done")), null, now))
     }
 
+    @Test fun theApprovalIsPinnedFirstAndTheQuestionStaysReachable() {
+        val approval = Chat.Row(id = "a1", kind = "approval", open = true, tool = "Bash", summary = "tests")
+        val question = Chat.Row(id = "q1", kind = "question", open = true, prompt = "Which build?")
+        val state = Chat.State("dsh:s1", approval = approval, question = question)
+        assertEquals("a1", chatPinned(state, null)?.id)
+        assertEquals("q1", chatPinned(state, "q1")?.id)
+        assertEquals("q1", chatPinned(Chat.State("dsh:s1", question = question), null)?.id)
+    }
+
+    @Test fun theBarNamesThePinnedCard() {
+        val approval = Chat.Row(id = "a1", kind = "approval", open = true, tool = "Bash", summary = "Run the tests")
+        val question = Chat.Row(id = "q1", kind = "question", open = true, prompt = "Which build?")
+        assertEquals("Needs your approval · Bash: Run the tests",
+            chatStateLine(Chat.State("dsh:s1", status = Chat.Status("blocked", msg = "Needs your approval")), approval))
+        assertEquals("Question · Which build?",
+            chatStateLine(Chat.State("dsh:s1", status = Chat.Status("blocked", msg = "Needs your approval")), question))
+    }
+
+    @Test fun aFoldedRowShowsWhetherItIsOpen() {
+        assertEquals("▸ Bash: ls", collapsedLabel(false, "Bash: ls"))
+        assertEquals("▾ Bash: ls", collapsedLabel(true, "Bash: ls"))
+        assertEquals("↳ failed", collapsedLabel(false, "failed", result = true))
+        assertEquals("▾ failed", collapsedLabel(true, "failed", result = true))
+    }
+
     @Test fun theBarKeepsTheStateText() {
         assertEquals("Needs you · Waiting for approval",
             chatStateLine(Chat.State("dsh:s1", status = Chat.Status("blocked", msg = "Waiting for approval"))))
@@ -126,7 +151,7 @@ class ChatRenderTest {
         assertEquals(26f, ChatStyle.CARD_BUTTON_RADIUS.value)
         assertEquals(16f, ChatStyle.CARD_BUTTON_TEXT.value)
         assertEquals(17f, ChatStyle.CARD_CONFIRM_TEXT.value)
-        assertEquals(300f, ChatStyle.PENDING_MAX_HEIGHT.value)
+        assertEquals(420f, ChatStyle.PENDING_MAX_HEIGHT.value)
         assertEquals(56f, ChatStyle.COMPOSER_HEIGHT.value)
         assertEquals(28f, ChatStyle.COMPOSER_RADIUS.value)
         assertEquals(17f, ChatStyle.COMPOSER_TEXT.value)
