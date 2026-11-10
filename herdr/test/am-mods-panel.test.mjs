@@ -285,6 +285,71 @@ test("x on a package with no layout from Herdr removes it and the panel says why
   assert.ok(textOf(draw(view, cx)).includes(view.message), "the panel draws the line");
 });
 
+// #512: the remove decides on the shown layout's tree. Herdr's name alone reads the tree from
+// layouts/<name>.json, so another shown layout naming the package's mod refuses; a tree alone is
+// checked, and the line says so instead of "is Herdr running?".
+async function packageHome(t, { name = null, tree = null, files = {} } = {}) {
+  const s = scratch(t);
+  for (const [f, body] of Object.entries(files)) write(join(s.appHome, "layouts", f), body);
+  state.shared.set("am.mods.installed", [{ source: "someone/scratch", prefix: "", sha: "abcdef1234", mods: ["scratch"], layouts: ["scratchy.json"], keys: [] }]);
+  if (name) state.shared.set("layout", name);
+  ui.layout = tree;
+  const cx = makeCx();
+  const view = new ModManager();
+  view.init({}, cx);
+  await cx.settle();
+  return { s, view, cx };
+}
+const NAMES_SCRATCH = JSON.stringify({ id: "root", children: [{ id: "p", content: { mod: "scratch" } }] });
+const NAMES_PANE = JSON.stringify({ id: "root", children: [{ id: "p", content: { mod: "pane" } }] });
+
+test("x on a package with Herdr's layout name but no tree: another shown layout naming its mod refuses, read from layouts/ (#512)", async (t) => {
+  const { s, view, cx } = await packageHome(t, { name: "work", files: { "scratchy.json": NAMES_PANE, "work.json": NAMES_SCRATCH } });
+  await removeKey(view, cx, "scratch");
+  assert.equal(view.confirm, null, "no y/n question");
+  assert.match(view.message, /^scratch stays on: the work layout shows it, and Herdr drops a layout whose mod is off .*then remove it$/);
+  assert.ok(existsSync(join(s.appHome, "mods", "scratch", "mod.json")) && existsSync(join(s.appHome, "layouts", "scratchy.json")), "nothing moved");
+  // The shown layout names none of its mods: it goes, with nothing to say (the tree was read from the file).
+  write(join(s.appHome, "layouts", "work.json"), NAMES_PANE);
+  await removeKey(view, cx, "scratch");
+  await key(view, cx, "y");
+  assert.equal(view.message, "removed: scratch");
+  assert.ok(!existsSync(join(s.appHome, "mods", "scratch")));
+});
+
+test("x on a package with Herdr's layout name but a file that does not read: it goes on, said as checked and unreadable (#512)", async (t) => {
+  const { s, view, cx } = await packageHome(t, { name: "work", files: { "scratchy.json": NAMES_SCRATCH, "work.json": `${NAMES_SCRATCH},` } });
+  await removeKey(view, cx, "scratch");
+  await key(view, cx, "y");
+  assert.ok(!existsSync(join(s.appHome, "mods", "scratch")));
+  assert.equal(view.message, "removed: scratch · removed the package someone/scratch without knowing the layout Herdr shows"
+    + " (Herdr shows the work layout but gave no tree, and layouts/work.json does not read, so the remove checked its name only):"
+    + " moved mods/scratch, layouts/scratchy.json to the backup folder; the scratchy layout names scratch. If Herdr shows the package's layout"
+    + " or one naming its mods, Herdr drops it (plain Herdr instead): switch layouts (ctrl-shift-l)");
+  assert.doesNotMatch(view.message, /is Herdr running\?/);
+});
+
+test("x on a package with Herdr's tree but no name: the tree is checked, and the line says so, never \"is Herdr running?\" (#512)", async (t) => {
+  // The tree names its mod: refused, as layoutGuard words a layout with no name.
+  const named = await packageHome(t, { tree: JSON.parse(NAMES_SCRATCH), files: { "scratchy.json": NAMES_SCRATCH } });
+  await removeKey(named.view, named.cx, "scratch");
+  assert.equal(named.view.confirm, null);
+  assert.match(named.view.message, /^scratch stays on: the shown layout shows it/);
+  // The tree names none: it goes; its own layout may be the shown one, which only a name would tell.
+  const { s, view, cx } = await packageHome(t, { tree: JSON.parse(NAMES_PANE), files: { "scratchy.json": NAMES_PANE } });
+  await removeKey(view, cx, "scratch");
+  await key(view, cx, "y");
+  assert.ok(!existsSync(join(s.appHome, "mods", "scratch")));
+  assert.equal(view.message, "removed: scratch · removed the package someone/scratch without knowing the name of the layout Herdr shows"
+    + " (Herdr gave its tree, which the remove checked, but not its name): moved mods/scratch, layouts/scratchy.json to the backup folder."
+    + " If Herdr shows layouts/scratchy.json, Herdr drops it (plain Herdr instead): switch layouts (ctrl-shift-l)");
+  // A record layout already gone from the disk: nothing is claimed for it, and nothing is left unknown.
+  const gone = await packageHome(t, { tree: JSON.parse(NAMES_PANE) });
+  await removeKey(gone.view, gone.cx, "scratch");
+  await key(gone.view, gone.cx, "y");
+  assert.equal(gone.view.message, "removed: scratch");
+});
+
 test("a linked mods/: the panel says why under the list, in the refusal's own words (#494)", async (t) => {
   const s = scratch(t);
   const ext = join(dirname(s.appHome), "their-mods");

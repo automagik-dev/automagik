@@ -33,7 +33,17 @@ const LINKED_MODS_ANOTHER = "linked mods/ folder, another layout shown";
 const LINKED = [LINKED_MODS, LINKED_MODS_ANOTHER];
 /** #511: layouts/ itself a link to the person's folder, outside the app home. */
 const LINKED_LAYOUTS = "symlinked layouts folder";
-const SHAPES = ["plain folder", "symlinked mod folder", "symlinked layout file", LINKED_LAYOUTS, NO_ANSWER, NOTHING, ...LINKED];
+// #512: Herdr gives one answer without the other. The tree with no name; the name with no tree,
+// where the tree is read from layouts/<name>.json: the package's own layout, another one naming
+// the package's mod (work), and one that does not read (work, cut off: checked, and unreadable).
+const TREE_NO_NAME = "tree from Herdr, no name";
+const NAME_NO_TREE = "name from Herdr, no tree";
+const NAME_ANOTHER = "name of another layout from Herdr, no tree";
+const NAME_UNREAD = "name of a layout that does not read from Herdr, no tree";
+const ONE_ANSWER = [TREE_NO_NAME, NAME_NO_TREE, NAME_ANOTHER, NAME_UNREAD];
+/** The routes those shapes run on: the #490 hold and the package remove (#512 names both). */
+const ONE_ANSWER_ROUTES = ["package update dropping the shown layout's mod", "package remove"];
+const SHAPES = ["plain folder", "symlinked mod folder", "symlinked layout file", LINKED_LAYOUTS, NO_ANSWER, NOTHING, ...LINKED, ...ONE_ANSWER];
 /** Today's gaps: `${route} | ${shape}` → the issue ("new": no issue tracks it yet). */
 const EXPECTED_FAIL = {};
 /** A refusal of a linked mods/ (#494): it names the link as the person's folder and moves nothing through it. */
@@ -89,6 +99,9 @@ function machine(t, shape, { layout, mod = "scratch", off = false }) {
   // Another layout shown (#494's second shape): main, naming no mod.
   const MAIN = { id: "root", children: [] };
   if (shape === LINKED_MODS_ANOTHER) write(join(appHome, "layouts", "main.json"), JSON.stringify(MAIN));
+  // Another layout Herdr names (#512), its blocks naming the package's mod; cut off, it does not read.
+  if (shape === NAME_ANOTHER) write(join(appHome, "layouts", "work.json"), JSON.stringify(LAYOUT));
+  if (shape === NAME_UNREAD) write(join(appHome, "layouts", "work.json"), `${JSON.stringify(LAYOUT)},`);
   if (shape === LINKED_LAYOUTS) {
     write(join(ext, "layouts", "scratchy.json"), BODY);
     symlinkSync(join(ext, "layouts"), join(appHome, "layouts"));
@@ -122,9 +135,13 @@ function machine(t, shape, { layout, mod = "scratch", off = false }) {
   state.shared.set("am.mods.installed", [{ source, prefix: "", sha: "abcdef1234", mods: ["scratch"], layouts: ["scratchy.json"], keys: [] }]);
   if (shape === NO_ANSWER || shape === NOTHING) ui.layout = null;
   else if (shape === LINKED_MODS_ANOTHER) { ui.layout = MAIN; state.shared.set("layout", "main"); }
+  else if (shape === TREE_NO_NAME) ui.layout = LAYOUT;
+  else if (shape === NAME_NO_TREE) { ui.layout = null; state.shared.set("layout", "scratchy"); }
+  else if (shape === NAME_ANOTHER || shape === NAME_UNREAD) { ui.layout = null; state.shared.set("layout", "work"); }
   else { ui.layout = LAYOUT; state.shared.set("layout", "scratchy"); }
-  const [shown, tree] = shape === LINKED_MODS_ANOTHER ? ["main", MAIN] : ["scratchy", LAYOUT];
-  return { root, appHome, ext, source, shape, shown, tree };
+  const [shown, tree] = shape === LINKED_MODS_ANOTHER ? ["main", MAIN] : shape === NAME_ANOTHER || shape === NAME_UNREAD ? ["work", LAYOUT] : ["scratchy", LAYOUT];
+  // `called`: how a guard names the shown layout ("the shown layout" when Herdr gave no name).
+  return { root, appHome, ext, source, shape, shown, tree, called: shape === TREE_NO_NAME ? "shown" : shown };
 }
 
 const snapshot = (m) => {
@@ -133,6 +150,8 @@ const snapshot = (m) => {
   return { body, ext: treeSum(m.ext) };
 };
 const FAIL_OPEN_REASON = /without knowing the layout Herdr shows|no layout to read|is Herdr running\?/;
+/** #512: the named layout was looked up and does not read: said as that, never as "is Herdr running?". */
+const CHECKED_UNREAD = /without knowing the layout Herdr shows \(Herdr shows the work layout but gave no tree, and layouts\/work\.json does not read[,)]/;
 /** A refusal in the guard's own wording naming `name` (core.js layoutGuard, packageLayoutGuard). */
 const guardLine = (name) => new RegExp(`stays on: the ${name} layout shows it|the ${name} layout is this package's \\(layouts/${name}\\.json\\)`);
 
@@ -147,9 +166,13 @@ function judge(m, before, said, stopped) {
   if (after.ext !== before.ext) problems.push("something outside the app home changed (written through a link)");
   // A refusal of a linked mods/ (#494) moves nothing at all: it need not name the layout.
   const linkRefusal = LINKED.includes(m.shape) && LINKED_MODS_REFUSAL.test(said);
-  if (stopped && !linkRefusal && !guardLine(m.shown).test(said)) problems.push(`it stopped without the guard naming the ${m.shown} layout: ${said}`);
+  if (stopped && !linkRefusal && !guardLine(m.called).test(said)) problems.push(`it stopped without the guard naming the ${m.called} layout: ${said}`);
   // Fail open: with readable files the warning names the layout and why; with none, it says why.
   if (problems.length && (m.shape === NO_ANSWER ? said.includes(m.shown) : m.shape === NOTHING) && !stopped && after.ext === before.ext && FAIL_OPEN_REASON.test(said)) {
+    return { safe: true, why: `fail open: ${said}` };
+  }
+  // #512: the layout Herdr names does not read, so nothing could be held: said as checked and unreadable.
+  if (problems.length && m.shape === NAME_UNREAD && !stopped && after.ext === before.ext && CHECKED_UNREAD.test(said) && !/is Herdr running\?/.test(said)) {
     return { safe: true, why: `fail open: ${said}` };
   }
   return { safe: problems.length === 0, why: problems.join("; ") || (stopped ? `stopped: ${said}` : `went on: ${said}`) };
@@ -202,6 +225,7 @@ const ROUTES = {
 
 for (const [route, [next, go]] of Object.entries(ROUTES)) {
   for (const shape of SHAPES) {
+    if (ONE_ANSWER.includes(shape) && !ONE_ANSWER_ROUTES.includes(route)) continue;
     const gap = EXPECTED_FAIL[`${route} | ${shape}`];
     test(`${route} | ${shape}${gap ? ` [expected-fail ${gap}]` : ""}`, async (t) => {
       const m = machine(t, shape, next);
@@ -230,11 +254,27 @@ for (const [route, [next, go]] of Object.entries(ROUTES)) {
       }
       // #490: the mod it kept stays in the record, so the next update after a switch moves it aside.
       if (route === "package update dropping the shown layout's mod") {
-        const kept = shape !== NO_ANSWER && shape !== NOTHING;
+        const kept = shape !== NO_ANSWER && shape !== NOTHING && shape !== NAME_UNREAD;
         const rec = state.shared.get("am.mods.installed").find((r) => r.source === m.source);
         assert.deepEqual(rec.mods, kept ? ["other", "scratch"] : ["other"], `the record's mods (${shape})`);
         // With no answer and the files readable, the message names the layout that names the mod.
         if (shape === NO_ANSWER) assert.match(said, /moved mods\/scratch .*; the scratchy layout names it/);
+        // #512: held on the tree, whatever the name; the name alone reads the tree from layouts/.
+        if (shape === TREE_NO_NAME) assert.match(said, /kept mods\/scratch: this update no longer ships it, but the shown layout shows it/);
+        if (shape === NAME_NO_TREE) assert.match(said, /kept mods\/scratch: this update no longer ships it, but the scratchy layout shows it/);
+        if (shape === NAME_ANOTHER) assert.match(said, /kept mods\/scratch: this update no longer ships it, but the work layout shows it/);
+        if (shape === NAME_UNREAD) {
+          assert.match(said, /moved mods\/scratch to the backup folder without knowing the layout Herdr shows \(Herdr shows the work layout but gave no tree, and layouts\/work\.json does not read\): this update no longer ships it; the scratchy layout names it/);
+        }
+      }
+      // #512: the remove asks the tree too, read from layouts/ when Herdr gives the name alone.
+      if (route === "package remove") {
+        if (shape === TREE_NO_NAME) assert.match(said, /^scratch stays on: the shown layout shows it/);
+        if (shape === NAME_NO_TREE) assert.match(said, /^the scratchy layout is this package's \(layouts\/scratchy\.json\) and Herdr shows it/);
+        if (shape === NAME_ANOTHER) assert.match(said, /^scratch stays on: the work layout shows it/);
+        if (shape === NAME_UNREAD) {
+          assert.match(said, /removed the package \S+ without knowing the layout Herdr shows \(Herdr shows the work layout but gave no tree, and layouts\/work\.json does not read, so the remove checked its name only\): moved mods\/scratch, layouts\/scratchy\.json to the backup folder; the scratchy layout names scratch\./);
+        }
       }
     });
   }
