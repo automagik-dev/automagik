@@ -223,14 +223,53 @@ test("x on a mod the shown layout doesn't name removes it as before; the menu's 
   assert.match(view.confirm?.text ?? "", /^remove /);
 });
 
-test("x with no layout to read (layout() gives nothing) removes as before", async (t) => {
+// #545: with no tree of the shown layout to check, a mod the manager did not install goes as before
+// (fail open), and the panel says why, in the package paths' wording: never silently.
+const LOCAL_AFTER = " If Herdr shows a layout naming it, Herdr drops it (plain Herdr instead): switch layouts (ctrl-shift-l)";
+
+test("x with Herdr's layout name but no tree and no file to read removes, and says it could not check (#545)", async (t) => {
   const { view, on } = await shownLayout(t);
   ui.layout = null;
   const cx = makeCx();
   await removeKey(view, cx, "am-footer");
   await key(view, cx, "y");
   assert.ok(!on("am-footer"));
-  assert.equal(view.message, "removed: am-footer");
+  assert.equal(view.message, "removed: am-footer · removed am-footer without knowing the layout Herdr shows (Herdr shows the automagik layout"
+    + ` but gave no tree, and layouts/automagik.json could not be read, so the remove could not check it).${LOCAL_AFTER}`);
+});
+
+test("x on a local mod with no layout from Herdr removes it and the panel says why, with the layouts naming it (#545)", async (t) => {
+  const s = scratch(t);
+  const names = JSON.stringify({ id: "root", children: [{ id: "p", content: { mod: "scratch" } }] });
+  write(join(s.appHome, "layouts", "scratchy.json"), names);
+  write(join(s.appHome, "layouts", "work.json"), names);
+  // A link to a folder of the person's, in mods/: only the link goes, and the same line is said.
+  const theirs = join(dirname(s.appHome), "their-mod");
+  write(join(theirs, "mod.json"), "{}");
+  symlinkSync(theirs, join(s.appHome, "mods", "linked"));
+  const cx = makeCx();
+  const view = new ModManager();
+  view.init({}, cx);
+  await cx.settle();
+  const said = (name, which) => `removed ${name} without knowing the layout Herdr shows (no layout from Herdr, so the remove could not check it;`
+    + ` is Herdr running?)${which}.${LOCAL_AFTER}`;
+  await removeKey(view, cx, "scratch");
+  assert.equal(view.confirm?.text, "remove the folder mods/scratch? (y/n)");
+  await key(view, cx, "y");
+  assert.ok(!existsSync(join(s.appHome, "mods", "scratch")));
+  assert.equal(view.message, `removed: scratch · ${said("scratch", "; the layouts scratchy, work name it")}`);
+  assert.ok(textOf(draw(view, cx)).includes(view.message), "the panel draws the line");
+  await removeKey(view, cx, "linked");
+  await key(view, cx, "y");
+  assert.equal(view.message, `link linked removed (the folder it points to stays) · ${said("linked", "")}`);
+  assert.ok(existsSync(join(theirs, "mod.json")));
+  // A mod already off is in no layout's way: nothing to say of it.
+  await removeKey(view, cx, "am-tabs");
+  await key(view, cx, "y");
+  assert.equal(view.message, "removed: am-tabs");
+  // The pure line: a tree read says nothing; one layout naming it is worded in the singular.
+  assert.deepEqual(core.localRemoveLines({ name: "scratch", tree: { id: "root" }, naming: { scratch: ["work"] } }), []);
+  assert.deepEqual(core.localRemoveLines({ name: "scratch", tree: {}, naming: { scratch: ["work"] } }), [said("scratch", "; the work layout names it")]);
 });
 
 // #420: a package's remove moves its own layouts aside (core.uninstall), so one Herdr shows is

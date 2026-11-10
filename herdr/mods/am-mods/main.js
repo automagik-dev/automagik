@@ -299,8 +299,14 @@ export default class ModManager extends View {
         this.message = `removed: ${mod.record.mods.join(", ")}`;
         for (const l of core.packageRemoveLines({ record: mod.record, shown, tree, unread, moved, naming })) this.message += ` · ${l}`;
       } else {
+        // No tree of the shown layout to check (#545): a mod that was on goes as before (fail
+        // open), and the remove says why, with the layouts naming it. One already off is in no
+        // layout's way.
+        const { tree, unread } = guard.shown;
+        const naming = tree || !mod.enabled ? {} : await core.layoutsNamingMods(io, appHome(), [mod.name]);
         await core.removeLocal(io, { appHome: appHome(), name: mod.name, symlink: mod.symlink, path: mod.path });
         this.message = mod.symlink ? `link ${mod.name} removed (the folder it points to stays)` : `removed: ${mod.name}`;
+        if (mod.enabled) for (const l of core.localRemoveLines({ name: mod.name, tree, unread, naming })) this.message += ` · ${l}`;
       }
       if (guard?.note) this.message += ` · ${guard.note}`;
       await this.reloadMods();

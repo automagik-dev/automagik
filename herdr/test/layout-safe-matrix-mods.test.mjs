@@ -42,7 +42,7 @@ const NAME_ANOTHER = "name of another layout from Herdr, no tree";
 const NAME_UNREAD = "name of a layout that does not read from Herdr, no tree";
 const ONE_ANSWER = [TREE_NO_NAME, NAME_NO_TREE, NAME_ANOTHER, NAME_UNREAD];
 /** The routes those shapes run on: the #490 hold and the package remove (#512 names both). */
-const ONE_ANSWER_ROUTES = ["package update dropping the shown layout's mod", "package remove"];
+const ONE_ANSWER_ROUTES = ["package update dropping the shown layout's mod", "package remove", "local mod remove"];
 const SHAPES = ["plain folder", "symlinked mod folder", "symlinked layout file", LINKED_LAYOUTS, NO_ANSWER, NOTHING, ...LINKED, ...ONE_ANSWER];
 /** Today's gaps: `${route} | ${shape}` → the issue ("new": no issue tracks it yet). */
 const EXPECTED_FAIL = {};
@@ -80,7 +80,7 @@ const LAYOUT = { id: "root", children: [{ id: "p", content: { mod: "scratch" } }
  * scratchy.json, which Herdr shows), in `shape`, and its source: a git repository whose head ships
  * the mod and, with `layout`, the layout too. Links point into `ext`, outside the app home.
  */
-function machine(t, shape, { layout, mod = "scratch", off = false }) {
+function machine(t, shape, { layout, mod = "scratch", off = false, local = false }) {
   // Nothing readable: the layout file is cut off after its last block (its text names the mod).
   const BODY = shape === NOTHING ? `${JSON.stringify(LAYOUT)},` : JSON.stringify(LAYOUT);
   const root = realpathSync(mkdtempSync(join(tmpdir(), "am-layout-safe-mods-")));
@@ -132,7 +132,8 @@ function machine(t, shape, { layout, mod = "scratch", off = false }) {
   state.appHome = appHome;
   state.shared.clear?.();
   ui.props = {};
-  state.shared.set("am.mods.installed", [{ source, prefix: "", sha: "abcdef1234", mods: ["scratch"], layouts: ["scratchy.json"], keys: [] }]);
+  // `local`: scratch is the person's own folder (no record), and scratchy.json their layout.
+  state.shared.set("am.mods.installed", local ? [] : [{ source, prefix: "", sha: "abcdef1234", mods: ["scratch"], layouts: ["scratchy.json"], keys: [] }]);
   if (shape === NO_ANSWER || shape === NOTHING) ui.layout = null;
   else if (shape === LINKED_MODS_ANOTHER) { ui.layout = MAIN; state.shared.set("layout", "main"); }
   else if (shape === TREE_NO_NAME) ui.layout = LAYOUT;
@@ -189,6 +190,19 @@ const update = async (m) => {
   return { said: view.message ?? "", stopped: false };
 };
 
+async function removeScratch() {
+  const cx = makeCx();
+  const view = new ModManager();
+  view.init({}, cx);
+  await cx.settle();
+  view.at = view.grouped().rows.findIndex((r) => r.mod?.name === "scratch");
+  view.onKey({ key: "x", key_char: "x" }, cx);
+  await cx.settle();
+  const asked = Boolean(view.confirm);
+  if (asked) { view.onKey({ key: "y", key_char: "y" }, cx); await cx.settle(); }
+  return { said: view.message ?? "", stopped: !asked };
+}
+
 /** route → [what its machine's next commit ships, how it runs]. */
 const ROUTES = {
   // The package's next commit no longer ships its layout Herdr shows (#431's case).
@@ -196,18 +210,9 @@ const ROUTES = {
   // The next commit ships the layout, but its mod under another name: the old one is moved aside.
   "package update dropping the shown layout's mod": [{ layout: true, mod: "other" }, update],
   // x on the package, then y when it asks.
-  "package remove": [{ layout: false }, async (m) => {
-    const cx = makeCx();
-    const view = new ModManager();
-    view.init({}, cx);
-    await cx.settle();
-    view.at = view.grouped().rows.findIndex((r) => r.mod?.name === "scratch");
-    view.onKey({ key: "x", key_char: "x" }, cx);
-    await cx.settle();
-    const asked = Boolean(view.confirm);
-    if (asked) { view.onKey({ key: "y", key_char: "y" }, cx); await cx.settle(); }
-    return { said: view.message ?? "", stopped: !asked };
-  }],
+  "package remove": [{ layout: false }, removeScratch],
+  // x on a mod the manager did not install (#545), then y when it asks.
+  "local mod remove": [{ layout: false, local: true }, removeScratch],
   // A switched-off mod of the person's turned back on from the panel (mods-disabled/ → mods/). It is
   // listed even with mods/ a link, so the move is reachable (#494's review).
   "switch on": [{ layout: true, off: true }, async (m) => {
@@ -237,7 +242,7 @@ for (const [route, [next, go]] of Object.entries(ROUTES)) {
       else assert.ok(verdict.safe, `${route} | ${shape}: ${verdict.why}`);
       // #494: through a linked mods/ nothing changes, so the record is as it was.
       if (LINKED.includes(shape)) {
-        if (!gap) assert.deepEqual(state.shared.get("am.mods.installed").find((r) => r.source === m.source)?.mods, ["scratch"], `the record (${shape})`);
+        if (!gap && !next.local) assert.deepEqual(state.shared.get("am.mods.installed").find((r) => r.source === m.source)?.mods, ["scratch"], `the record (${shape})`);
         return;
       }
       // #511: an update through a linked layouts/ says that its layouts stay, and why.
@@ -266,6 +271,13 @@ for (const [route, [next, go]] of Object.entries(ROUTES)) {
         if (shape === NAME_UNREAD) {
           assert.match(said, /moved mods\/scratch to the backup folder without knowing the layout Herdr shows \(Herdr shows the work layout but gave no tree, and layouts\/work\.json does not read\): this update no longer ships it; the scratchy layout names it/);
         }
+      }
+      // #545: a local mod's remove with no tree to check goes on, and says why in the package paths' wording.
+      if (route === "local mod remove") {
+        if (shape === NO_ANSWER) assert.match(said, /^removed: scratch · removed scratch without knowing the layout Herdr shows \(no layout from Herdr, so the remove could not check it; is Herdr running\?\); the scratchy layout names it\. If Herdr shows a layout naming it, Herdr drops it/);
+        if (shape === NOTHING) assert.match(said, /^removed: scratch · removed scratch without knowing the layout Herdr shows \(no layout from Herdr, so the remove could not check it; is Herdr running\?\)\. If Herdr shows a layout naming it/);
+        if (shape === NAME_UNREAD) assert.match(said, /removed scratch without knowing the layout Herdr shows \(Herdr shows the work layout but gave no tree, and layouts\/work\.json does not read, so the remove could not check it\); the scratchy layout names it\./);
+        if (ONE_ANSWER.includes(shape) && shape !== NAME_UNREAD) assert.match(said, new RegExp(`^scratch stays on: the ${m.called} layout shows it`));
       }
       // #512: the remove asks the tree too, read from layouts/ when Herdr gives the name alone.
       if (route === "package remove") {

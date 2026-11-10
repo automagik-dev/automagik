@@ -738,6 +738,19 @@ export function packageRemoveLines({ record, shown, tree, unread = null, moved =
     + " If Herdr shows the package's layout or one naming its mods, Herdr drops it (plain Herdr instead): switch layouts (ctrl-shift-l)"];
 }
 
+// After the remove of a mod the manager did not install (#545), as packageRemoveLines says of a
+// package: with no tree read of the shown layout (`tree`, `unread`: shownLayout's), layoutGuard had
+// nothing to check, so the remove went on (fail open). Said with the reason and the layouts in
+// layouts/ naming the mod (`naming`, layoutsNamingMods). A tree read: nothing (the guard checked it).
+export function localRemoveLines({ name, tree, unread = null, naming = {} }) {
+  if (treeRead(tree)) return [];
+  const names = naming[name] ?? [];
+  const which = !names.length ? "" : names.length === 1 ? `; the ${names[0]} layout names it` : `; the layouts ${names.join(", ")} name it`;
+  const reason = unread ? `${unread}, so the remove could not check it` : "no layout from Herdr, so the remove could not check it; is Herdr running?";
+  return [`removed ${name} without knowing the layout Herdr shows (${reason})${which}.`
+    + " If Herdr shows a layout naming it, Herdr drops it (plain Herdr instead): switch layouts (ctrl-shift-l)"];
+}
+
 // GitHub search for the topic, as herdr.dev lists Community. `gh api` carries the person's login
 // (30 searches a minute instead of 10); without `gh`, `anonymous(url)` fetches the same URL.
 export async function searchMarket(io, { query = "", sort = "stars", page = 1, perPage = 50 }, anonymous) {
