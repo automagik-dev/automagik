@@ -601,7 +601,17 @@ export class AcpAdapter extends LlmAdapter {
       if (rest !== '') yield* blocks.add('text', rest)
     }
     const last = options.messages.at(-1)
-    const continuing = last?.role === 'tool' && live?.provider === options.provider && live.calls.has(last.toolCallId) && live.open
+    // The step after a mirror call's result continues the agent's turn. The bridge writes result
+    // rows of its own (a DSH tool call's result, or the row that closes a call still open when
+    // its step ended, #957), and one of those can come after the mirror call's result: the
+    // mirror result is looked for among all the tool messages the transcript ends with.
+    const mirrorAnswered = (() => {
+      for (let i = options.messages.length - 1; i >= 0 && options.messages[i]?.role === 'tool'; i--) {
+        if (live?.calls.has(options.messages[i].toolCallId)) return true
+      }
+      return false
+    })()
+    const continuing = mirrorAnswered && live?.provider === options.provider && live.open
     if (!continuing) {
       if (last?.role === 'tool') {
         yield* blocks.add('text', `${agent.name} was interrupted before it finished, so it is not answering this turn any more.`)

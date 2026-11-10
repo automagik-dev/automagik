@@ -78,7 +78,7 @@
   },
   {
     "patch": "acp-bridge-tool-lifecycle.patch",
-    "about": "Session format v4: a tool call that a bridged (ACP) tool recorded out of band has no assistant/message advertisement in sessions written before the bridge always wrote one (#842), and the loader refused the whole session with SessionFormatError \"tool/call <id> has no advertised tool lifecycle\". The loader now treats such a tool/call as its own advertisement: its tool/result must still close it, an orphan result or a repeated call (before or after its result) still fails, no event is rewritten or discarded, and one stderr line reports how many calls were tolerated. A bridged call also runs out of band, so sessions written before the bridge closed its calls itself can hold a step/end or turn/end with a bridged call still open, that call's one late result stamped with its ended step, and the bridge's empty replacement of its advertisement stamped the same way (#957, SessionFormatError \"step/end leaves unresolved tool call <id>\"). The loader closes such a call as superseded at the boundary and matches one late result (the call's own turn and step) to it where it stands; a second late result, a late result for a call that is not bridged and any other unresolved call still fail, and a second stderr line reports the counts. The worker's copy of the same validation is patched too, so migration verification agrees. Delete it in the DSH release that tolerates the shape itself.",
+    "about": "Session format v4: a tool call that a bridged (ACP) tool recorded out of band has no assistant/message advertisement in sessions written before the bridge always wrote one (#842), and the loader refused the whole session with SessionFormatError \"tool/call <id> has no advertised tool lifecycle\". The loader now treats such a tool/call as its own advertisement: its tool/result must still close it, an orphan result or a repeated call (before or after its result) still fails, no event is rewritten or discarded, and one stderr line reports how many calls were tolerated. A bridged call also runs out of band, so sessions written before the bridge closed its calls itself can hold a step/end or turn/end with a bridged call still open, that call's one late result stamped with its ended step, and the bridge's empty replacement of its advertisement stamped the same way (#957, SessionFormatError \"step/end leaves unresolved tool call <id>\"). The loader closes such a call as superseded at the boundary and matches one late result (the call's own turn and step) to it where it stands; the same holds for a bridged call that was advertised but whose tool/call row was never written (the error then names an id with no tool/call row), with or without a result; a second late result, a late result for a call that is not bridged and any other unresolved call still fail, and a second stderr line reports the counts. The worker's copy of the same validation is patched too, so migration verification agrees. Delete it in the DSH release that tolerates the shape itself.",
     "dsh": "0.2.2-rc.1",
     "files": [
       {
@@ -86,14 +86,14 @@
         "version": "0.2.2-rc.1",
         "file": "lib/index.js",
         "before": "2f7ba42e79072b2674be9f28d051665e006732fa6cc5de474f783b823bdfb0a9",
-        "after": "74366798c6b0728bc240f8b5931f903530b707c5f85315a9f8d6017dc2eede8c"
+        "after": "0fbda0a768c705684ef6072ee0a519c80ae566e6c4de282099bb957c98900aad"
       },
       {
         "package": "@deepseek-ai/dsh-session-persistence-jsonl",
         "version": "0.2.2-rc.1",
         "file": "lib/worker.cjs",
         "before": "c5c8ccb7a661ef343e9d0c792d8d5cba376ed783ea48c6489fe90eab264ae321",
-        "after": "a1e343f1e579b721e69a5adaacf2f2ed826251452b742c6cee6e36cbce4be804"
+        "after": "e2426d6532363bcc0fdfc89353f192a1d0d0759a573183bb1575db015aa481a3"
       }
     ]
   },

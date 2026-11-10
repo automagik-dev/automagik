@@ -390,6 +390,11 @@ const SHAPES = {
   'the late result lands after turn/end': turnTwoRows([...OPEN_HEAD, stepEnd(1), turnEnd, resultRow('bridge_a', 8), hideRow(7)]),
   // DSH's own recovery answered A in its step; the bridge's result came anyway (a double result).
   'a second result after the recovery result': turnTwoRows([...OPEN_HEAD, resultRow('bridge_a', 8), stepEnd(1), stepStart(2), resultRow('bridge_a', 8), hideRow(7), stepEnd(2), turnEnd]),
+  // The second broken session: the bridge advertised A (seq 7) and hid the block again, but its
+  // tool/call row was never written, so the error names an id with no tool/call row at all.
+  'an advertised call with no tool/call row': turnTwoRows([advert('bridge_a'), hideRow(7), advert('bridge_b'), callRow('bridge_b'), resultRow('bridge_b', 10), hideRow(9), stepEnd(1), turnEnd]),
+  // The same, with a result row for the call that never started.
+  'a result for an advertised call with no tool/call row': turnTwoRows([advert('bridge_a'), (({ sourceEventSeqs: _none, ...row }) => row)(resultRow('bridge_a', 7)), hideRow(7), stepEnd(1), turnEnd]),
 }
 const STILL_REFUSED = {
   // Two late results for one call: only one is matched to it.
@@ -401,8 +406,11 @@ const STILL_REFUSED = {
     { ...advert('native_a'), data: { ...advert('native_a').data, message: { ...advert('native_a').data.message, source: { kind: 'model', provider: 'acp-fake', model: 'fake' } } } },
     callRow('native_a'), stepEnd(1), turnEnd,
   ]), /step\/end leaves unresolved tool call native_a/],
-  // A bridge call advertised but never started is not the out-of-band shape.
-  'a bridged call that never started': [turnTwoRows([advert('bridge_a'), stepEnd(1), turnEnd]), /step\/end leaves unresolved tool call bridge_a/],
+  // An advertised call that never started and is not the bridge's: DSH's own rule stands.
+  'an advertised call that is not bridged and never started': [turnTwoRows([
+    { ...advert('native_a'), data: { ...advert('native_a').data, message: { ...advert('native_a').data.message, source: { kind: 'model', provider: 'acp-fake', model: 'fake' } } } },
+    stepEnd(1), turnEnd,
+  ]), /step\/end leaves unresolved tool call native_a/],
 }
 
 test('#957: the unpatched loader and verifier refuse each open-call shape, the patched ones load it untouched', async (t) => {
@@ -415,6 +423,10 @@ test('#957: the unpatched loader and verifier refuse each open-call shape, the p
       error => error.name === 'SessionFormatError',
       `unpatched loader: ${name}`,
     )
+    if (name === 'an advertised call with no tool/call row') {
+      assert.throws(() => before.restoreReleasedV4Artifact(artifactOf(events), KNOWN_957), error => error.message === 'step/end leaves unresolved tool call bridge_a')
+      assert.equal(events.some(event => event.type === 'tool/call' && event.data.callId === 'bridge_a'), false)
+    }
     logs[name] = join(runtime.root, `${Object.keys(logs).length}.v4.jsonl`)
     writeSyntheticLog(logs[name], events)
     const refused = await verifyWithWorker(runtime.worker, logs[name], events.length)

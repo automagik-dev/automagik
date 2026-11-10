@@ -296,6 +296,37 @@ function advertise(session, { turn, step }, route, { id, name, raw }, log) {
   }
 }
 
+// DSH's own wording for a tool request that never reached a recorded start. The v4 loader
+// accepts exactly this row (and no other) as the answer to an advertised call with no tool/call.
+const NOT_STARTED_TEXT = 'The tool call was interrupted before the Harness recorded it as started. Retry it if it is still needed.'
+
+/**
+ * Close an advertised call whose tool/call row could not be written. The advertisement is in
+ * the log for good (hiding it only takes it off the surface), and the loader refuses a step
+ * that ends with an advertised call unanswered: `step/end leaves unresolved tool call` (#957,
+ * a session whose log has no tool/call row for the id the error names). The one answer it
+ * accepts for a call that never started is DSH's own not-started repair row, written here.
+ */
+function closeNotStarted(session, { turn, step }, id, log) {
+  try {
+    session.append('tool/result', {
+      turn,
+      step,
+      message: {
+        id: `interrupted-tool-result-${id}-${session.snapshotEvents?.().length ?? 0}`,
+        role: 'tool',
+        toolCallId: id,
+        isError: true,
+        source: { kind: 'tool', callId: id },
+        content: [{ type: 'text', text: NOT_STARTED_TEXT }],
+      },
+      error: { name: 'ToolNotStartedError', code: 'TOOL_NOT_STARTED' },
+    }, { surfaceOp: 'append' })
+  } catch (cause) {
+    log(`an advertised bridge call was not closed: ${cause?.message ?? cause}`)
+  }
+}
+
 /**
  * The `acp_toolset_drift` record: a plugin record (replay-safe, outside DSH's released event
  * schemas) naming the structured call that should have been an MCP name. A reader that does not
@@ -435,9 +466,11 @@ export class Backchannel {
     const lateId = `${id}${LATE_SUFFIX}`
     let hide
     let written = false
+    let started = false
     try {
       hide = advertise(session, position, route, { id: lateId, name, raw }, this.log)
       const callSeq = session.append('tool/call', { ...position, callId: lateId, name, arguments: raw }).seq
+      started = true
       // Tracked before its result: a result row that fails leaves the guard to close the call.
       guard.track(lateId, { ...position, name, callSeq, closed: false, hide })
       session.append('tool/result', {
@@ -448,6 +481,7 @@ export class Backchannel {
       written = true
     } catch (cause) {
       this.log(`the late result of ${name} (${id}) was not recorded: ${cause?.message ?? cause}`)
+      if (hide !== undefined && !started) closeNotStarted(session, position, lateId, this.log)
     } finally {
       // A call row left without its result stays tracked: the guard closes and hides it.
       if (written || !guard.open.has(lateId)) hide?.()
@@ -748,7 +782,9 @@ export class Backchannel {
       const callSeq = session.append('tool/call', { turn, step, callId: id, name, arguments: raw }).seq
       entry = guard.track(id, { turn, step, name, callSeq, closed: false, hide: hideSynthetic })
     } catch (cause) {
-      // A call without its row cannot be reviewed or shown: close the advertisement and refuse.
+      // A call without its row cannot be reviewed or shown: answer the advertisement (it stays
+      // in the log), take it off the surface and refuse.
+      closeNotStarted(session, { turn, step }, id, this.log)
       hideSynthetic()
       leave()
       return review === undefined
@@ -763,8 +799,14 @@ export class Backchannel {
       const open = openStepOf(session)
       if (entry.closed || open === undefined || open.turn !== turn || open.step !== step) {
         // Its step ended first (or DSH closed it): the row under this id is already answered,
-        // and nothing may be written with the ended step's stamp.
-        this.late(session, guard, route, { id, name, raw }, content, isError, info)
+        // and nothing may be written with the ended step's stamp. A real result the agent still
+        // waits for is recorded as a call of its own; a call that was revoked or stopped, or
+        // whose turn is over, has nothing more to say: its row is answered and it writes nothing.
+        if (record.closed || record.abort.signal.aborted || own.signal.aborted || open?.turn !== turn) {
+          this.log(`the late result of ${name} (${id}) was not recorded: the call was stopped or its turn ended`)
+        } else {
+          this.late(session, guard, route, { id, name, raw }, content, isError, info)
+        }
       } else {
         const write = (rowContent, rowError, rowInfo) => session.append('tool/result', {
           turn,
@@ -931,6 +973,8 @@ export class Backchannel {
       if (levelChanged) {
         return await settle([{ type: 'text', text: `Auto review cannot finish ${name}: the permission level changed.` }], true, { name: 'AutoReviewUnavailableError', code: 'AUTO_REVIEW_LEVEL_CHANGED' })
       }
+      // Stopped while the body ran: a body that ignored its signal is not reported as a result.
+      if (own.signal.aborted) return await cancelled()
       const result = settled?.results?.[0]?.result
       if (result === undefined) return await settle([{ type: 'text', text: 'The tool returned no result.' }], true)
       const info = result.isError === true ? (result.error?.info ?? (typeof result.error?.code === 'string' ? result.error : undefined)) : undefined

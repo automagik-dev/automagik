@@ -391,3 +391,88 @@ test('#957: the Session gets its own append back once the bridge is gone and no 
   assert.equal(host.session.append, own)
   assert.equal(Object.hasOwn(host.session, 'append'), false)
 })
+
+// The second broken session: the error names an id that has no tool/call row at all. The
+// advertisement was written, the call row was not, and hiding the advertisement only takes it
+// off the surface: the loader still counts the advertised call and refuses the step's end.
+test('#957: a call whose tool/call row cannot be written is answered as not started, and the log loads', async () => {
+  const host = bridgeHost()
+  try {
+    const own = host.session.append.bind(host.session)
+    host.session.append = (type, ...rest) => {
+      if (type === 'tool/call') throw new Error('the call row was refused')
+      return own(type, ...rest)
+    }
+    const answered = await host.call(A, { job: 'job-1' })
+    assert.equal(answered.error.code, 'BRIDGE_RECORD_FAILED')
+    assert.equal(host.signalOf(A), undefined, 'the tool never ran')
+    delete host.session.append
+    assert.deepEqual(callsOf(host.session, A), [], 'the log has no tool/call row for the id')
+    const [row, ...extra] = resultsOf(host.session, A)
+    assert.deepEqual(extra, [])
+    assert.deepEqual(row.data.error, { name: 'ToolNotStartedError', code: 'TOOL_NOT_STARTED' })
+    host.session.append('step/end', { turn: 1, step: 1 })
+    host.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+    assert.doesNotThrow(() => assertLoadable(host.session))
+  } finally {
+    host.backchannel.dispose()
+  }
+})
+
+// Tester 2's cases on this PR's first head (Bug A, B1, B2), kept as regressions.
+test('#957: Stop on a body that ignores its signal and resolves before step/end is BRIDGE_CANCELLED, not its output', async () => {
+  const host = bridgeHost({ ignoreSignal: true })
+  try {
+    const a = host.call(A, { job: 'job-1', wait: 240 })
+    await host.running(A)
+    host.backchannel.cancel(host.record, 'the turn was stopped')
+    host.finish(A, 'stale output after stop')
+    const answered = await a
+    host.session.append('step/end', { turn: 1, step: 1 })
+    host.session.append('turn/end', { turn: 1, reason: { kind: 'aborted', reason: 'user' } })
+    assert.equal(answered.isError, true)
+    assert.equal(answered.error?.code, 'BRIDGE_CANCELLED')
+    assert.equal(resultsOf(host.session, A)[0].data.error.code, 'BRIDGE_CANCELLED')
+    assert.doesNotThrow(() => assertLoadable(host.session))
+  } finally {
+    host.backchannel.dispose()
+  }
+})
+
+test('#957: a call revoked in step 1 and closed at its step/end writes no late rows into step 2', async () => {
+  const host = bridgeHost({ ignoreSignal: true })
+  const a = host.call(A, { job: 'job-1', wait: 240 })
+  await host.running(A)
+  host.backchannel.dispose()
+  host.session.append('step/end', { turn: 1, step: 1 })
+  host.session.append('step/start', { turn: 1, step: 2 })
+  host.finish(A, 'finished after revocation')
+  assert.deepEqual(await a, { revoked: true })
+  host.session.append('step/end', { turn: 1, step: 2 })
+  host.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
+  const rows = host.session.snapshotEvents().filter(event => event.data?.step === 2 && (event.type === 'tool/call' || event.type === 'tool/result' || event.type === 'assistant/message'))
+  assert.deepEqual(rows, [])
+  assert.doesNotThrow(() => assertLoadable(host.session))
+})
+
+test('#957: a call stopped in turn 1 whose body ignores its signal writes nothing into turn 2', async () => {
+  const host = bridgeHost({ ignoreSignal: true })
+  try {
+    const a = host.call(A, { job: 'job-1', wait: 240 })
+    await host.running(A)
+    host.backchannel.cancel(host.record, 'the turn was stopped')
+    host.session.append('step/end', { turn: 1, step: 1 })
+    host.session.append('turn/end', { turn: 1, reason: { kind: 'aborted', reason: 'user' } })
+    host.session.append('turn/start', { turn: 2 })
+    host.session.append('step/start', { turn: 2, step: 1 })
+    host.finish(A, 'stale output from turn 1')
+    await a
+    host.session.append('step/end', { turn: 2, step: 1 })
+    host.session.append('turn/end', { turn: 2, reason: { kind: 'completed' } })
+    const rows = host.session.snapshotEvents().filter(event => event.data?.turn === 2 && (event.type === 'tool/call' || event.type === 'tool/result' || event.type === 'assistant/message'))
+    assert.deepEqual(rows, [])
+    assert.doesNotThrow(() => assertLoadable(host.session))
+  } finally {
+    host.backchannel.dispose()
+  }
+})
