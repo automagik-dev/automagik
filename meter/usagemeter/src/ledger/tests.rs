@@ -1726,3 +1726,167 @@ fn an_attach_row_with_an_unwritable_bot_ends_the_earlier_binding_and_names_no_on
         }
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// Issue 899: `pr` rows and how a terminal ended.
+
+fn pr(branch: &str, number: i64, state: &str, at_min: i64) -> Value {
+    json!({
+        "event": "pr", "project": PROJECT, "branch": branch, "task": "gh-45", "pr": number,
+        "state": state, "first_commit_at": iso(t(10)), "opened_at": iso(t(30)),
+        "merged_at": null, "closed_at": null, "core": CORE, "at": iso(t(at_min))
+    })
+}
+
+#[test]
+fn a_pr_row_is_read_beside_the_launches_and_moves_no_attribution() {
+    let rows = [
+        worker("t1", 0, WT, "claude", "b-dev", "dev"),
+        pr("feat/gh-45-example", 45, "open", 31),
+        // Times as milliseconds, and fields the meter never reads.
+        with(
+            with(
+                with(
+                    pr("feat/gh-45-example", 45, "merged", 90),
+                    "merged_at",
+                    json!(t(80)),
+                ),
+                "title",
+                json!("made-up title"),
+            ),
+            "url",
+            json!("https://example.com/acme/widgets/pull/45"),
+        ),
+    ];
+    let mut with_pr = resolver(&rows);
+    let mut without = resolver(&rows[..1]);
+    assert_eq!(
+        with_pr.records(),
+        without.records(),
+        "a pr row is no launch and no link"
+    );
+    let c = call("claude-code", "sess-1", WT, t(5));
+    assert_eq!(with_pr.resolve(&c), without.resolve(&c));
+
+    let got = with_pr.pr_rows();
+    assert_eq!(got.len(), 2);
+    assert_eq!(
+        got[0],
+        PrRow {
+            project: PROJECT.into(),
+            branch: "feat/gh-45-example".into(),
+            task: Some("gh-45".into()),
+            pr: 45,
+            state: "open",
+            first_commit_ms: Some(t(10)),
+            opened_ms: Some(t(30)),
+            merged_ms: None,
+            closed_ms: None,
+            core: Some(CORE.into()),
+            at_ms: t(31),
+        }
+    );
+    assert_eq!(
+        (got[1].state, got[1].merged_ms, got[1].at_ms),
+        ("merged", Some(t(80)), t(90))
+    );
+    assert!(without.pr_rows().is_empty());
+}
+
+#[test]
+fn a_pr_row_the_meter_cannot_trust_is_refused_whole() {
+    let good = pr("feat/x", 7, "open", 31);
+    let long = "x".repeat(300);
+    let bad = [
+        ("no number", with(good.clone(), "pr", Value::Null)),
+        ("a number below 1", with(good.clone(), "pr", json!(0))),
+        ("a number as text", with(good.clone(), "pr", json!("7"))),
+        (
+            "an unknown state",
+            with(good.clone(), "state", json!("draft")),
+        ),
+        ("no state", with(good.clone(), "state", Value::Null)),
+        ("no project", with(good.clone(), "project", Value::Null)),
+        ("no branch", with(good.clone(), "branch", json!(""))),
+        (
+            "a branch past 255 bytes",
+            with(good.clone(), "branch", json!(long)),
+        ),
+        (
+            "a branch with a line break",
+            with(good.clone(), "branch", json!("feat/x\nstate: merged")),
+        ),
+        (
+            "an unreadable opened_at",
+            with(good.clone(), "opened_at", json!("yesterday")),
+        ),
+        (
+            "a time out of range",
+            with(good.clone(), "first_commit_at", json!(12)),
+        ),
+        (
+            "a time as an object",
+            with(good.clone(), "closed_at", json!({"at": 1})),
+        ),
+        ("no at", with(good.clone(), "at", Value::Null)),
+        (
+            "a merge with no time",
+            with(good.clone(), "state", json!("merged")),
+        ),
+        (
+            "another machine's row",
+            with(good.clone(), "core", json!("core-synthetic-b")),
+        ),
+    ];
+    for (what, row) in bad {
+        let r = resolver(&[row]);
+        assert!(r.pr_rows().is_empty(), "{what} was read: {:?}", r.pr_rows());
+    }
+    // A task id the store cannot hold is dropped; the row is still a pull request.
+    let r = resolver(&[with(good.clone(), "task", json!("a;b"))]);
+    assert_eq!(r.pr_rows().len(), 1);
+    assert_eq!(r.pr_rows()[0].task, None);
+    // A row that names no core is this machine's, as a start row is.
+    let r = resolver(&[with(good, "core", Value::Null)]);
+    assert_eq!(r.pr_rows().len(), 1);
+}
+
+#[test]
+fn an_end_row_that_copied_hc_s_status_says_how_the_terminal_ended() {
+    let plain = end("t1", 0, t(60));
+    let copied = with(
+        with(end("t2", 0, t(60)), "hc_reason", json!("exited")),
+        "exit_code",
+        json!(2),
+    );
+    let signalled = with(end("t3", 0, t(60)), "signal", json!(9));
+    let elsewhere = with(
+        with(end("t4", 0, t(60)), "exit_code", json!(1)),
+        "core",
+        json!("core-synthetic-b"),
+    );
+    // A reason that is not a short word is dropped, never stored: with nothing else, no detail.
+    let odd = with(end("t5", 0, t(60)), "hc_reason", json!("exited; rm -rf"));
+    let r = resolver(&[plain, copied, signalled, elsewhere, odd]);
+    assert_eq!(
+        r.end_details(),
+        [
+            EndDetail {
+                core: Some(CORE.into()),
+                terminal: "t2".into(),
+                created_ms: t(0),
+                reason: Some("exited".into()),
+                exit_code: Some(2),
+                signal: None,
+            },
+            EndDetail {
+                core: Some(CORE.into()),
+                terminal: "t3".into(),
+                created_ms: t(0),
+                reason: None,
+                exit_code: None,
+                signal: Some("9".into()),
+            },
+        ]
+    );
+}
