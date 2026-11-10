@@ -1094,6 +1094,20 @@ test('a quit after the retry spawned stops the retry\'s dsh, and one spawned aft
   assert.equal(exited(late.child), true)
 })
 
+test("a run's `since` is when its current dsh was spawned, and nothing before a spawn (#882)", () => {
+  let clock = 100
+  const run = dshRun({ now: () => clock })
+  assert.equal(run.since, null)
+  const first = { exitCode: null }
+  run.track(first)
+  assert.equal(run.child, first)
+  assert.equal(run.since, 100)
+  // A retry's dsh is a new one: a busy file the first wrote is no longer the current dsh's.
+  clock = 250
+  run.track({ exitCode: null })
+  assert.equal(run.since, 250)
+})
+
 test('a port that cannot be kept is reported and the start goes on; the page URL is refused off the origin', async (t) => {
   const scope = scratch(t, 'omni-desktop-unkept-')
   const { root } = scope

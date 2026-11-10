@@ -96,6 +96,10 @@ The profile also ships the add-on that connects AI subscriptions DSH does not si
 
 To run from a checkout: `npm run prepare-runtime`, then `npx electron .` (add `--no-sandbox` on a system where Chromium's sandbox cannot start unpackaged).
 
+### The Cmd+W contract
+
+Cmd+W reaches the web client's `page.close` command by its key (`src/pane-close.js`), so `prepare-runtime` fails the build when the installed `@deepseek-ai/dsh-client-ui-sidebar-right` no longer registers that command on primary+alt+W for the web runtime on macOS. After a dsh bump that trips it, cut `test/fixtures/page-close/` again from the new bundle and check Cmd+W still closes a pane.
+
 ### Patches to DSH
 
 `runtime/patches` holds changes the app makes to the pinned dsh until DeepSeek ships them. `prepare-runtime` applies them to `build/runtime` once npm has installed it (`scripts/runtime-patches.mjs`). `patches.json` pins each patch to the exact dsh version, each package's version and each file's sha256 before and after. Another version or hash, or a hunk that does not apply, fails the build; a file already at its after-hash is left alone. `follow-dsh.mjs` moves the patch version guards with the runtime pin, but deliberately preserves the file hashes and hunks: this is not evidence that the patch applies. Verify the new release's actual package bytes with `patchRuntime` before accepting the bump. If those bytes changed, port the patch on that dsh's files and regenerate it with `diff -u`; never discard or weaken the hash guards to make a build pass.
