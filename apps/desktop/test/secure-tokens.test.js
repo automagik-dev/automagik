@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
+import {
+  existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync,
+  symlinkSync, writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import {
-  accountKeyOf, createTokenStore, detectSecureStore, NO_SECURE_STORE_REASON, SIGNED_OUT_REASON,
-  TOKEN_FILE, TRY_LATER_REASON,
+  accountKeyOf, CORRUPT_SUFFIX, createTokenStore, detectSecureStore, NO_SECURE_STORE_REASON,
+  SECRET_STORE_LOCKED_REASON, SIGNED_OUT_REASON, STORAGE_FAILED_REASON, TOKEN_FILE, TRY_LATER_REASON,
 } from '../src/secure-tokens.js'
 
 const seal = text => Buffer.from(`sealed:${text}`)
@@ -94,7 +97,7 @@ test('Linux detection also requires the sync availability check', () => {
   ]
   for (const [name, make] of unavailable) {
     assert.deepEqual(detectSecureStore(make(), 'linux'), {
-      platform: 'linux', backend: 'gnome_libsecret', secure: false, reason: NO_SECURE_STORE_REASON,
+      platform: 'linux', backend: 'gnome_libsecret', secure: false, reason: SECRET_STORE_LOCKED_REASON,
     }, name)
   }
   const available = fakeSafeStorage({ backend: 'gnome_libsecret' })
@@ -102,6 +105,95 @@ test('Linux detection also requires the sync availability check', () => {
     platform: 'linux', backend: 'gnome_libsecret', secure: true, reason: null,
   })
   assert.equal(available.calls.availability, 1)
+})
+
+test('the reason tells a desktop with no secret store from a store that does not answer', async (t) => {
+  const absent = detectSecureStore(fakeSafeStorage({ backend: 'basic_text' }), 'linux')
+  const locked = detectSecureStore(fakeSafeStorage({ backend: 'gnome_libsecret', isEncryptionAvailable: () => false }), 'linux')
+  assert.equal(absent.secure, false)
+  assert.equal(locked.secure, false)
+  assert.equal(absent.reason, NO_SECURE_STORE_REASON)
+  assert.equal(locked.reason, SECRET_STORE_LOCKED_REASON)
+  assert.notEqual(locked.reason, absent.reason)
+  // The locked reason says it is this launch only, and is not the per-operation try-later text.
+  assert.match(locked.reason, /locked/i)
+  assert.match(locked.reason, /this launch/i)
+  assert.notEqual(locked.reason, TRY_LATER_REASON)
+
+  // The store hands the same two reasons to its caller.
+  const dir = scratch(t)
+  const lockedStore = createTokenStore({
+    safeStorage: fakeSafeStorage({ backend: 'kwallet6', isEncryptionAvailable: () => false }), platform: 'linux', userData: dir,
+  })
+  const absentStore = createTokenStore({ safeStorage: fakeSafeStorage({ backend: 'basic_text' }), platform: 'linux', userData: dir })
+  assert.deepEqual(await lockedStore.load('cloud:alpha'), { status: 'empty', reason: SECRET_STORE_LOCKED_REASON })
+  assert.deepEqual(await absentStore.load('cloud:alpha'), { status: 'empty', reason: NO_SECURE_STORE_REASON })
+  assert.deepEqual(await lockedStore.save('cloud:alpha', 'refresh-1'), { status: 'memory', reason: SECRET_STORE_LOCKED_REASON })
+  assert.deepEqual(readdirSync(dir), [])
+})
+
+test('a store that did not answer at start is asked once more, at the first operation', async (t) => {
+  // Unlocked between start and the first save: the launch becomes secure.
+  const dir = scratch(t)
+  let answers = [false, true]
+  const unlocked = fakeSafeStorage({ backend: 'gnome_libsecret', isEncryptionAvailable: () => answers.shift() ?? true })
+  const store = createTokenStore({ safeStorage: unlocked, platform: 'linux', userData: dir })
+  assert.equal(store.secure, false)
+  assert.equal(store.reason, SECRET_STORE_LOCKED_REASON)
+  assert.equal(unlocked.calls.availability, 1)
+  assert.deepEqual(await store.save('cloud:alpha', 'alpha-1'), { status: 'saved' })
+  assert.equal(store.secure, true)
+  assert.equal(store.memoryOnly, false)
+  assert.equal(store.reason, null)
+  assert.equal(unlocked.calls.availability, 2)
+  assert.deepEqual(await store.load('cloud:alpha'), { status: 'ok', token: 'alpha-1' })
+  assert.equal(unlocked.calls.availability, 2)
+
+  // Still locked at the first operation: no store for this launch, and it is not asked again,
+  // even when the keyring answers later.
+  const lockedDir = scratch(t)
+  answers = [false, false, true]
+  const locked = fakeSafeStorage({ backend: 'gnome_libsecret', isEncryptionAvailable: () => answers.shift() ?? true })
+  const lockedStore = createTokenStore({ safeStorage: locked, platform: 'linux', userData: lockedDir })
+  assert.deepEqual(await lockedStore.load('cloud:alpha'), { status: 'empty', reason: SECRET_STORE_LOCKED_REASON })
+  assert.deepEqual(await lockedStore.save('cloud:alpha', 'alpha-1'), { status: 'memory', reason: SECRET_STORE_LOCKED_REASON })
+  assert.deepEqual(await lockedStore.load('cloud:alpha'), { status: 'ok', token: 'alpha-1', memory: true })
+  assert.equal(locked.calls.availability, 2)
+  assert.equal(lockedStore.secure, false)
+  assert.equal(locked.calls.encrypts, 0)
+  assert.deepEqual(readdirSync(lockedDir), [])
+
+  // A desktop with no secret store is never asked for availability at all.
+  const absent = fakeSafeStorage({ backend: 'basic_text' })
+  const absentStore = createTokenStore({ safeStorage: absent, platform: 'linux', userData: lockedDir })
+  await absentStore.save('cloud:alpha', 'alpha-1')
+  await absentStore.load('cloud:alpha')
+  assert.equal(absent.calls.availability, 0)
+  assert.deepEqual(readdirSync(lockedDir), [])
+})
+
+test('macOS and Windows never ask for availability: false or a throw still means a secure store', async (t) => {
+  const answers = [
+    ['false', () => false],
+    ['throwing', () => {
+      throw new Error('the availability check failed')
+    }],
+  ]
+  for (const [platform, backend] of [['darwin', 'keychain'], ['win32', 'dpapi']]) {
+    for (const [name, isEncryptionAvailable] of answers) {
+      const storage = fakeSafeStorage({ isEncryptionAvailable })
+      assert.deepEqual(detectSecureStore(storage, platform), { platform, backend, secure: true, reason: null }, `${platform} ${name}`)
+      assert.equal(storage.calls.availability, 0, `${platform} ${name}`)
+      assert.equal(storage.calls.backends, 0, `${platform} ${name}`)
+
+      const store = createTokenStore({ safeStorage: storage, platform, userData: scratch(t) })
+      assert.equal(store.secure, true, `${platform} ${name}`)
+      assert.deepEqual(await store.save('cloud:alpha', 'alpha-1'), { status: 'saved' }, `${platform} ${name}`)
+      assert.deepEqual(await store.load('cloud:alpha'), { status: 'ok', token: 'alpha-1' }, `${platform} ${name}`)
+      assert.equal(storage.calls.availability, 0, `${platform} ${name}`)
+      assert.equal(storage.calls.backends, 0, `${platform} ${name}`)
+    }
+  }
 })
 
 test('macOS and Windows use the platform store without asking for a Linux backend', () => {
@@ -157,19 +249,19 @@ test('a Linux secret-store name without availability keeps every token in memory
     const dir = scratch(t)
     const storage = make()
     assert.deepEqual(detectSecureStore(storage, 'linux'), {
-      platform: 'linux', backend: 'gnome_libsecret', secure: false, reason: NO_SECURE_STORE_REASON,
+      platform: 'linux', backend: 'gnome_libsecret', secure: false, reason: SECRET_STORE_LOCKED_REASON,
     }, name)
     const store = createTokenStore({ safeStorage: storage, platform: 'linux', userData: dir })
     assert.equal(store.secure, false, name)
     assert.equal(store.memoryOnly, true, name)
     assert.equal(store.backend, 'gnome_libsecret', name)
-    assert.equal(store.reason, NO_SECURE_STORE_REASON, name)
+    assert.equal(store.reason, SECRET_STORE_LOCKED_REASON, name)
 
-    assert.deepEqual(await store.save('cloud:alpha', 'refresh-1'), { status: 'memory', reason: NO_SECURE_STORE_REASON }, name)
-    assert.deepEqual(await store.rotate('cloud:alpha', 'refresh-2'), { status: 'memory', reason: NO_SECURE_STORE_REASON }, name)
+    assert.deepEqual(await store.save('cloud:alpha', 'refresh-1'), { status: 'memory', reason: SECRET_STORE_LOCKED_REASON }, name)
+    assert.deepEqual(await store.rotate('cloud:alpha', 'refresh-2'), { status: 'memory', reason: SECRET_STORE_LOCKED_REASON }, name)
     assert.deepEqual(await store.load('cloud:alpha'), { status: 'ok', token: 'refresh-2', memory: true }, name)
     assert.deepEqual(await store.clear('cloud:alpha'), { status: 'cleared', memory: true }, name)
-    assert.deepEqual(await store.load('cloud:alpha'), { status: 'empty', reason: NO_SECURE_STORE_REASON }, name)
+    assert.deepEqual(await store.load('cloud:alpha'), { status: 'empty', reason: SECRET_STORE_LOCKED_REASON }, name)
 
     // No token file, no leftover temporary file, and no safeStorage encryption call.
     assert.equal(existsSync(tokenFile(dir)), false, name)
@@ -343,6 +435,243 @@ test('Delivery 1: a downgrade leaves stored items unused and the file untouched'
   await downgraded.clear('cloud:alpha')
   assert.deepEqual(readFileSync(file), before)
   assert.deepEqual(readdirSync(dir), [TOKEN_FILE])
+})
+
+/** A promise the test settles by hand, for an encrypt or decrypt that must stay in flight. */
+function deferred() {
+  let release
+  const promise = new Promise((resolve) => {
+    release = resolve
+  })
+  return { promise, release }
+}
+/** Lets every already-queued microtask and timer callback run, so "still pending" is a real observation. */
+const drain = () => new Promise(resolve => setTimeout(resolve, 20))
+const settledFlag = (promise) => {
+  const flag = { done: false }
+  promise.then(() => {
+    flag.done = true
+  }, () => {
+    flag.done = true
+  })
+  return flag
+}
+
+test('H1: a clear called while a save is still encrypting wins; no file holds the token', async (t) => {
+  const dir = scratch(t)
+  const gate = deferred()
+  const storage = fakeSafeStorage({
+    encrypt: async (text) => {
+      await gate.promise
+      return seal(text)
+    },
+  })
+  const store = createTokenStore({ safeStorage: storage, platform: 'linux', userData: dir })
+  const saving = store.save('cloud:alpha', 'alpha-1')
+  const clearing = store.clear('cloud:alpha')
+  const loading = store.load('cloud:alpha')
+  await drain()
+  gate.release()
+  assert.deepEqual(await saving, { status: 'saved' })
+  assert.deepEqual(await clearing, { status: 'cleared' })
+  assert.deepEqual(await loading, { status: 'empty' })
+  assert.deepEqual(await store.load('cloud:alpha'), { status: 'empty' })
+  // Nothing on disk: no token file, no temporary file, no ciphertext of the cleared token.
+  assert.equal(existsSync(tokenFile(dir)), false)
+  assert.deepEqual(readdirSync(dir), [])
+})
+
+test('H1: of two rotations for one account, the one called last is stored, however slow the first', async (t) => {
+  const dir = scratch(t)
+  const store0 = createTokenStore({ safeStorage: fakeSafeStorage(), platform: 'linux', userData: dir })
+  await store0.save('cloud:alpha', 'alpha-1')
+  const slow = deferred()
+  const storage = fakeSafeStorage({
+    encrypt: async (text) => {
+      if (text === 'alpha-2') await slow.promise
+      return seal(text)
+    },
+  })
+  const store = createTokenStore({ safeStorage: storage, platform: 'linux', userData: dir })
+  const second = store.rotate('cloud:alpha', 'alpha-2')
+  const third = store.rotate('cloud:alpha', 'alpha-3')
+  await drain()
+  slow.release()
+  assert.deepEqual(await second, { status: 'saved' })
+  assert.deepEqual(await third, { status: 'saved' })
+  assert.equal(opened(Buffer.from(entries(tokenFile(dir))[accountKeyOf('cloud:alpha')], 'base64')), 'alpha-3')
+  assert.deepEqual(await store.load('cloud:alpha'), { status: 'ok', token: 'alpha-3' })
+  assert.deepEqual(readdirSync(dir), [TOKEN_FILE])
+})
+
+test('H1: a load that overlaps a rotation sees the token of its own turn, never a mix', async (t) => {
+  const dir = scratch(t)
+  await createTokenStore({ safeStorage: fakeSafeStorage(), platform: 'linux', userData: dir }).save('cloud:alpha', 'alpha-1')
+
+  // A load called after a rotation started waits for it and returns the new token.
+  const slowEncrypt = deferred()
+  const rotatingFirst = createTokenStore({
+    safeStorage: fakeSafeStorage({
+      encrypt: async (text) => {
+        await slowEncrypt.promise
+        return seal(text)
+      },
+    }),
+    platform: 'linux',
+    userData: dir,
+  })
+  const rotating = rotatingFirst.rotate('cloud:alpha', 'alpha-2')
+  const loadAfter = rotatingFirst.load('cloud:alpha')
+  const loadAfterDone = settledFlag(loadAfter)
+  await drain()
+  assert.equal(loadAfterDone.done, false, 'the load must wait for the rotation called before it')
+  slowEncrypt.release()
+  assert.deepEqual(await rotating, { status: 'saved' })
+  assert.deepEqual(await loadAfter, { status: 'ok', token: 'alpha-2' })
+
+  // A load called before a rotation returns the old token; the rotation waits, then lands.
+  const slowDecrypt = deferred()
+  const loadingFirstStorage = fakeSafeStorage({
+    decrypt: async (buffer) => {
+      await slowDecrypt.promise
+      return { result: opened(buffer), shouldReEncrypt: false }
+    },
+  })
+  const loadingFirst = createTokenStore({ safeStorage: loadingFirstStorage, platform: 'linux', userData: dir })
+  const loadBefore = loadingFirst.load('cloud:alpha')
+  const rotatingAfter = loadingFirst.rotate('cloud:alpha', 'alpha-3')
+  await drain()
+  assert.equal(loadingFirstStorage.calls.encrypts, 0, 'the rotation must wait for the load called before it')
+  assert.equal(opened(Buffer.from(entries(tokenFile(dir))[accountKeyOf('cloud:alpha')], 'base64')), 'alpha-2')
+  slowDecrypt.release()
+  assert.deepEqual(await loadBefore, { status: 'ok', token: 'alpha-2' })
+  assert.deepEqual(await rotatingAfter, { status: 'saved' })
+  assert.equal(opened(Buffer.from(entries(tokenFile(dir))[accountKeyOf('cloud:alpha')], 'base64')), 'alpha-3')
+})
+
+test('H1: different accounts stay concurrent, and a failed operation does not break the queue', async (t) => {
+  const dir = scratch(t)
+  const slow = deferred()
+  let failNext = false
+  const storage = fakeSafeStorage({
+    encrypt: async (text) => {
+      if (text === 'alpha-1') await slow.promise
+      if (failNext) {
+        failNext = false
+        throw new Error('the secret store refused')
+      }
+      return seal(text)
+    },
+  })
+  const store = createTokenStore({ safeStorage: storage, platform: 'linux', userData: dir })
+  const alpha = store.save('cloud:alpha', 'alpha-1')
+  // Another account does not wait behind the slow one.
+  assert.deepEqual(await store.save('cloud:beta', 'beta-1'), { status: 'saved' })
+  assert.deepEqual(await store.load('cloud:beta'), { status: 'ok', token: 'beta-1' })
+  slow.release()
+  assert.deepEqual(await alpha, { status: 'saved' })
+  assert.deepEqual(await store.load('cloud:beta'), { status: 'ok', token: 'beta-1' })
+
+  // A failed rotation and a rejected call leave the account's queue usable.
+  failNext = true
+  const failed = store.rotate('cloud:alpha', 'alpha-2')
+  const next = store.rotate('cloud:alpha', 'alpha-3')
+  assert.deepEqual(await failed, { status: 'failed', reason: STORAGE_FAILED_REASON })
+  assert.deepEqual(await next, { status: 'saved' })
+  await assert.rejects(store.save('cloud:alpha', ''), TypeError)
+  const throwing = fakeSafeStorage()
+  throwing.decryptStringAsync = () => {
+    throw new Error('thrown before any promise')
+  }
+  const thrower = createTokenStore({ safeStorage: throwing, platform: 'linux', userData: dir })
+  assert.deepEqual(await thrower.load('cloud:alpha'), { status: 'signed-out', reason: SIGNED_OUT_REASON })
+  assert.deepEqual(await thrower.clear('cloud:alpha'), { status: 'cleared' })
+  assert.deepEqual(await store.load('cloud:alpha'), { status: 'empty' })
+  assert.deepEqual(await store.load('cloud:beta'), { status: 'ok', token: 'beta-1' })
+})
+
+const backupsIn = dir => readdirSync(dir).filter(name => name.startsWith(`${TOKEN_FILE}${CORRUPT_SUFFIX}`))
+
+test('M1: a corrupt or other-version token file is moved aside, never deleted, and save works again', async (t) => {
+  const key = accountKeyOf('cloud:other')
+  const files = [
+    ['corrupt JSON', '{"version":1,"tokens":{"abc":'],
+    ['version 2', `${JSON.stringify({ version: 2, tokens: { [key]: 'bmV3ZXI=' }, extra: true })}\n`],
+    ['an array of tokens', '{"version":1,"tokens":[]}'],
+    ['an empty file', ''],
+  ]
+  for (const [name, content] of files) {
+    for (const firstWrite of ['save', 'clear']) {
+      const label = `${name}, ${firstWrite} first`
+      const dir = scratch(t)
+      const file = tokenFile(dir)
+      writeFileSync(file, content, { mode: 0o644 })
+      const before = readFileSync(file)
+      const store = createTokenStore({ safeStorage: fakeSafeStorage(), platform: 'linux', userData: dir })
+
+      // A load does not touch the unreadable file: it only reports signed out.
+      assert.deepEqual(await store.load('cloud:alpha'), { status: 'signed-out', reason: SIGNED_OUT_REASON }, label)
+      assert.deepEqual(readFileSync(file), before, label)
+      assert.deepEqual(readdirSync(dir), [TOKEN_FILE], label)
+
+      // The first save or clear moves it aside and carries on with an empty map.
+      if (firstWrite === 'clear') {
+        assert.deepEqual(await store.clear('cloud:alpha'), { status: 'cleared' }, label)
+        assert.equal(existsSync(file), false, label)
+      }
+      assert.deepEqual(await store.save('cloud:alpha', 'alpha-1'), { status: 'saved' }, label)
+      assert.deepEqual(await store.load('cloud:alpha'), { status: 'ok', token: 'alpha-1' }, label)
+      assert.deepEqual(Object.keys(entries(file)), [accountKeyOf('cloud:alpha')], label)
+
+      // The backup is the old file, byte for byte, owner-only; nothing else is left or lost.
+      const backups = backupsIn(dir)
+      assert.equal(backups.length, 1, label)
+      assert.match(backups[0], /\.corrupt-\d{4}-\d{2}-\d{2}T[\d-]+Z(?:-\d+)?$/, label)
+      assert.deepEqual(readFileSync(join(dir, backups[0])), before, label)
+      if (process.platform !== 'win32') assert.equal(statSync(join(dir, backups[0])).mode & 0o777, 0o600, label)
+      assert.deepEqual(readdirSync(dir).sort(), [TOKEN_FILE, backups[0]].sort(), label)
+
+      // A second unreadable file gets its own backup: the first one is not overwritten.
+      writeFileSync(file, 'again not JSON')
+      assert.deepEqual(await store.rotate('cloud:alpha', 'alpha-2'), { status: 'saved' }, label)
+      const both = backupsIn(dir)
+      assert.equal(both.length, 2, label)
+      assert.deepEqual(readFileSync(join(dir, backups[0])), before, label)
+      const second = both.find(entry => entry !== backups[0])
+      assert.equal(readFileSync(join(dir, second), 'utf8'), 'again not JSON', label)
+      assert.deepEqual(await store.load('cloud:alpha'), { status: 'ok', token: 'alpha-2' }, label)
+    }
+  }
+})
+
+test('M1: a token file that is a link to something unreadable is moved as a link; its target is untouched', { skip: process.platform === 'win32' }, async (t) => {
+  const dir = scratch(t)
+  const elsewhere = scratch(t)
+  const linked = join(elsewhere, 'notes.txt')
+  writeFileSync(linked, 'not a token file\n', { mode: 0o644 })
+  const before = readFileSync(linked)
+  const file = tokenFile(dir)
+  symlinkSync(linked, file)
+
+  const store = createTokenStore({ safeStorage: fakeSafeStorage(), platform: 'linux', userData: dir })
+  assert.deepEqual(await store.load('cloud:alpha'), { status: 'signed-out', reason: SIGNED_OUT_REASON })
+  assert.equal(lstatSync(file).isSymbolicLink(), true)
+  assert.deepEqual(await store.save('cloud:alpha', 'alpha-1'), { status: 'saved' })
+  assert.deepEqual(await store.load('cloud:alpha'), { status: 'ok', token: 'alpha-1' })
+
+  // The new token file is a regular owner-only file, not a write through the link.
+  assert.equal(lstatSync(file).isSymbolicLink(), false)
+  assert.equal(statSync(file).mode & 0o777, 0o600)
+  // The backup is the link itself, still pointing at the same place.
+  const backups = backupsIn(dir)
+  assert.equal(backups.length, 1)
+  assert.equal(lstatSync(join(dir, backups[0])).isSymbolicLink(), true)
+  assert.equal(readlinkSync(join(dir, backups[0])), linked)
+  // The target was not followed: same bytes, same mode, nothing deleted.
+  assert.deepEqual(readFileSync(linked), before)
+  assert.equal(statSync(linked).mode & 0o777, 0o644)
+  assert.deepEqual(readdirSync(elsewhere), ['notes.txt'])
+  assert.deepEqual(readdirSync(dir).sort(), [TOKEN_FILE, backups[0]].sort())
 })
 
 test('the store is inert: no desktop flow imports or calls it', () => {

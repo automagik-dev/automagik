@@ -15,10 +15,18 @@
 // secure store: load/save then use process memory only, nothing is written, and the caller must
 // sign in again at each launch. The reason string is exposed for the UI.
 //
+// A named Linux secret store that does not answer (a locked keyring, a dismissed unlock prompt)
+// also counts as no store for this launch: that is the product call. It carries its own reason,
+// and detection is tried once more at the first operation before the launch settles on it.
+//
+// Operations for one account run one at a time, in the order they were called; different
+// accounts stay concurrent. A token file that cannot be parsed is moved aside (never deleted)
+// by the next save or clear, so a corrupt or newer-format file cannot wedge the store.
+//
 // Create the store after app.whenReady(): getSelectedStorageBackend answers `unknown` before
 // that. Pure Node otherwise: main.js passes Electron's safeStorage in, and tests pass a fake.
 import { createHash, randomUUID } from 'node:crypto'
-import { chmodSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, lstatSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { PRODUCT } from './identity.js'
 
@@ -32,6 +40,11 @@ export const NO_SECURE_STORE_BACKENDS = Object.freeze(['basic_text', 'unknown'])
 /** Why no token is kept across launches on this desktop (shown to the person by the UI). */
 export const NO_SECURE_STORE_REASON = 'This desktop has no secure secret store, so Automagik cannot save your Cloud sign-in. Sign in again each time you open the app.'
 
+/** Why no token is kept for this launch although the desktop names a real secret store: the
+ *  store did not answer (a locked keyring, a dismissed unlock prompt). A locked keyring counts
+ *  as no store for this launch, by product decision; it is not the same as having none. */
+export const SECRET_STORE_LOCKED_REASON = 'The system secret store on this desktop is locked or not answering, so Automagik cannot save your Cloud sign-in for this launch. Unlock it and restart Automagik, or sign in again each time you open the app.'
+
 /** Why a stored token was not used: it cannot be decrypted on this launch (a locked keyring,
  *  or the secret store changed). The caller treats it as signed out and asks to sign in again. */
 export const SIGNED_OUT_REASON = 'The saved Cloud sign-in could not be unlocked. Sign in again.'
@@ -44,6 +57,9 @@ export const TRY_LATER_REASON = 'The system secret store is temporarily unavaila
 export const STORAGE_FAILED_REASON = 'The system secret store could not save the Cloud sign-in. Try again.'
 
 const VERSION = 1
+
+/** What a token file that could not be parsed is renamed to: `<file>.corrupt-<timestamp>`. */
+export const CORRUPT_SUFFIX = '.corrupt-'
 
 /** The token file for an Electron userData folder (main.js pins that folder under the app's name). */
 export function tokenFileOf(userData) {
@@ -59,6 +75,9 @@ export function accountKeyOf(account) {
  * Whether safeStorage offers a real secret store, and what to tell the person when it does not.
  * On Linux the backend name alone is not proof: the sync isEncryptionAvailable must also be
  * true (RFC 0024 Delivery 0, Unknowns). `unknown` is Electron's answer before app ready.
+ * Two different "no" answers: no secret store at all (NO_SECURE_STORE_REASON), and a named
+ * store that is not available right now (SECRET_STORE_LOCKED_REASON). macOS and Windows never
+ * ask isEncryptionAvailable: the Keychain and DPAPI are the store there.
  */
 export function detectSecureStore(safeStorage, platform = process.platform) {
   const noStore = backend => ({ platform, backend, secure: false, reason: NO_SECURE_STORE_REASON })
@@ -80,7 +99,8 @@ export function detectSecureStore(safeStorage, platform = process.platform) {
   } catch {
     available = false
   }
-  if (!available) return noStore(selected)
+  // Product call: a locked or unanswering keyring is no store for this launch, with its own reason.
+  if (!available) return { platform, backend: selected, secure: false, reason: SECRET_STORE_LOCKED_REASON }
   return { platform, backend: selected, secure: true, reason: null }
 }
 
@@ -94,14 +114,42 @@ export function detectSecureStore(safeStorage, platform = process.platform) {
  *   clear(account)         -> { status: 'cleared' | 'failed', ... }
  * A failed decrypt is signed-out: no token is returned and the caller re-authenticates. A
  * temporarily unavailable store is retry: the stored token is left untouched.
+ *
+ * Order: save, rotate, clear and load for one account run one at a time, in call order, so a
+ * clear called after a save always wins, the last rotate called is the one stored, and a load
+ * sees the token as it was when its turn came (never a half-applied rotate).
  */
 export function createTokenStore({ safeStorage, platform = process.platform, userData, file } = {}) {
   const target = file ?? (userData ? tokenFileOf(userData) : null)
   if (typeof target !== 'string' || target === '') throw new TypeError('createTokenStore needs userData or file')
-  const detected = detectSecureStore(safeStorage, platform)
-  const { secure, backend, reason } = detected
+  let detected = detectSecureStore(safeStorage, platform)
+  let settled = false
+  // A named store that did not answer at start gets one more detection, at the first operation
+  // (the person may have unlocked the keyring since). After that the answer stands: a locked
+  // keyring is no store for this launch. Nothing is in memory yet when this runs.
+  const settle = () => {
+    if (settled) return
+    settled = true
+    if (detected.reason === SECRET_STORE_LOCKED_REASON) detected = detectSecureStore(safeStorage, platform)
+  }
   // The only place a token waits without a secret store, and never past this process.
   const memory = new Map()
+
+  // One promise chain per account: each operation starts when the one before it has finished,
+  // whatever its outcome, so a slow encrypt cannot land after a later clear or rotate. The
+  // file's read-modify-write is synchronous, so different accounts need no shared queue.
+  const queues = new Map()
+  const inOrder = (account, operation) => {
+    const key = accountKeyOf(account)
+    const run = (queues.get(key) ?? Promise.resolve()).then(operation)
+    // The tail never rejects: a failed operation must not break the chain for later ones.
+    const tail = run.then(() => {}, () => {})
+    queues.set(key, tail)
+    tail.then(() => {
+      if (queues.get(key) === tail) queues.delete(key)
+    })
+    return run
+  }
 
   const isTemporarilyUnavailable = (error) => {
     if (error?.isTemporarilyUnavailable === true) return true
@@ -126,7 +174,7 @@ export function createTokenStore({ safeStorage, platform = process.platform, use
     try {
       const saved = JSON.parse(text)
       if (saved?.version !== VERSION || !saved.tokens || typeof saved.tokens !== 'object' || Array.isArray(saved.tokens)) {
-        return { error: new Error('the token file is not readable') }
+        return { error: new Error('the token file is not readable'), corrupt: true }
       }
       const tokens = Object.create(null)
       for (const [key, value] of Object.entries(saved.tokens)) {
@@ -135,8 +183,45 @@ export function createTokenStore({ safeStorage, platform = process.platform, use
       }
       return { tokens }
     } catch (error) {
+      return { error, corrupt: true }
+    }
+  }
+
+  // A file that cannot be parsed (corrupt, or written by another format version) is renamed
+  // beside itself, never deleted, so a write can start again from an empty map. rename moves a
+  // symlink itself, not its target; the mode is only set on a regular file, because chmod
+  // would follow a link.
+  const moveAside = () => {
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    let backup = `${target}${CORRUPT_SUFFIX}${stamp}`
+    for (let n = 1; ; n += 1) {
+      try {
+        lstatSync(backup)
+      } catch (error) {
+        if (error?.code === 'ENOENT') break
+        throw error
+      }
+      backup = `${target}${CORRUPT_SUFFIX}${stamp}-${n}`
+    }
+    renameSync(target, backup)
+    try {
+      if (!lstatSync(backup).isSymbolicLink()) chmodSync(backup, 0o600)
+    } catch {
+      // Windows has no meaningful group/other mode; the backup is still the owner's.
+    }
+  }
+
+  // The map a save or clear changes. Only a write moves an unparseable file aside: a load
+  // leaves it where it is and reports signed-out.
+  const tokensForWrite = () => {
+    const read = readTokens()
+    if (!read.corrupt) return read
+    try {
+      moveAside()
+    } catch (error) {
       return { error }
     }
+    return { tokens: Object.create(null) }
   }
 
   // One atomic replace: a crash or a full disk leaves either the old file or the new one.
@@ -170,12 +255,11 @@ export function createTokenStore({ safeStorage, platform = process.platform, use
     return Buffer.from(ciphertext).toString('base64')
   }
 
-  const saveOnly = async (account, token) => {
-    if (typeof account !== 'string' || account === '') throw new TypeError('an account or instance is required')
-    if (typeof token !== 'string' || token === '') throw new TypeError('a refresh token is required')
-    if (!secure) {
+  const saveInTurn = async (account, token) => {
+    settle()
+    if (!detected.secure) {
       memory.set(account, token)
-      return { status: 'memory', reason }
+      return { status: 'memory', reason: detected.reason }
     }
     let encrypted
     try {
@@ -185,7 +269,8 @@ export function createTokenStore({ safeStorage, platform = process.platform, use
         ? { status: 'retry', reason: TRY_LATER_REASON }
         : { status: 'failed', reason: STORAGE_FAILED_REASON }
     }
-    const { tokens, error } = readTokens()
+    // From here to the write nothing awaits: the read-modify-write is one synchronous step.
+    const { tokens, error } = tokensForWrite()
     if (error) return { status: 'failed', reason: STORAGE_FAILED_REASON }
     tokens[accountKeyOf(account)] = encrypted
     try {
@@ -196,56 +281,95 @@ export function createTokenStore({ safeStorage, platform = process.platform, use
     return { status: 'saved' }
   }
 
+  const saveOnly = async (account, token) => {
+    if (typeof account !== 'string' || account === '') throw new TypeError('an account or instance is required')
+    if (typeof token !== 'string' || token === '') throw new TypeError('a refresh token is required')
+    return inOrder(account, () => saveInTurn(account, token))
+  }
+
+  const loadInTurn = async (account) => {
+    settle()
+    if (!detected.secure) {
+      return memory.has(account)
+        ? { status: 'ok', token: memory.get(account), memory: true }
+        : { status: 'empty', reason: detected.reason }
+    }
+    const { tokens, error } = readTokens()
+    if (error) return { status: 'signed-out', reason: SIGNED_OUT_REASON }
+    const stored = tokens[accountKeyOf(account)]
+    if (typeof stored !== 'string' || stored === '') return { status: 'empty' }
+    let decrypted
+    try {
+      decrypted = await safeStorage.decryptStringAsync(Buffer.from(stored, 'base64'))
+    } catch (error) {
+      return isTemporarilyUnavailable(error)
+        ? { status: 'retry', reason: TRY_LATER_REASON }
+        : { status: 'signed-out', reason: SIGNED_OUT_REASON }
+    }
+    const token = typeof decrypted === 'string' ? decrypted : decrypted?.result
+    // A future async API may report unavailability on a resolved result instead of rejecting.
+    if (decrypted?.isTemporarilyUnavailable === true) return { status: 'retry', reason: TRY_LATER_REASON }
+    if (typeof token !== 'string' || token === '') return { status: 'signed-out', reason: SIGNED_OUT_REASON }
+    if (decrypted?.shouldReEncrypt === true) {
+      // The key was rotated: write the same token back under the new key. A failure here
+      // leaves today's token usable and the old ciphertext in place for the next launch.
+      // The compare-and-swap still guards against another writer of the same file.
+      try {
+        const next = await encrypt(token)
+        const current = readTokens()
+        if (!current.error && current.tokens[accountKeyOf(account)] === stored) {
+          current.tokens[accountKeyOf(account)] = next
+          writeTokens(current.tokens)
+        }
+      } catch {
+        // Not fatal for this launch: the token was decrypted, and the old ciphertext works.
+      }
+    }
+    return { status: 'ok', token }
+  }
+
+  const clearInTurn = async (account) => {
+    settle()
+    if (!detected.secure) {
+      memory.delete(account)
+      return { status: 'cleared', memory: true }
+    }
+    const { tokens, error } = tokensForWrite()
+    if (error) return { status: 'failed', reason: STORAGE_FAILED_REASON }
+    const key = accountKeyOf(account)
+    if (!(key in tokens)) return { status: 'cleared' }
+    delete tokens[key]
+    try {
+      writeTokens(tokens)
+    } catch {
+      return { status: 'failed', reason: STORAGE_FAILED_REASON }
+    }
+    return { status: 'cleared' }
+  }
+
   return Object.freeze({
-    /** Whether tokens survive a launch. */
-    secure,
+    /** Whether tokens survive a launch. Read it after the first operation for the settled answer. */
+    get secure() {
+      return detected.secure
+    },
     /** The backend safeStorage selected: keychain, dpapi, a Linux secret store, or unknown. */
-    backend,
+    get backend() {
+      return detected.backend
+    },
     platform,
     /** Why nothing is kept across launches, or null when the store is secure. */
-    reason,
+    get reason() {
+      return detected.reason
+    },
     /** The ciphertext file (never written when `secure` is false). */
     file: target,
-    memoryOnly: !secure,
+    get memoryOnly() {
+      return !detected.secure
+    },
 
     async load(account) {
       if (typeof account !== 'string' || account === '') throw new TypeError('an account or instance is required')
-      if (!secure) {
-        return memory.has(account)
-          ? { status: 'ok', token: memory.get(account), memory: true }
-          : { status: 'empty', reason }
-      }
-      const { tokens, error } = readTokens()
-      if (error) return { status: 'signed-out', reason: SIGNED_OUT_REASON }
-      const stored = tokens[accountKeyOf(account)]
-      if (typeof stored !== 'string' || stored === '') return { status: 'empty' }
-      let decrypted
-      try {
-        decrypted = await safeStorage.decryptStringAsync(Buffer.from(stored, 'base64'))
-      } catch (error) {
-        return isTemporarilyUnavailable(error)
-          ? { status: 'retry', reason: TRY_LATER_REASON }
-          : { status: 'signed-out', reason: SIGNED_OUT_REASON }
-      }
-      const token = typeof decrypted === 'string' ? decrypted : decrypted?.result
-      // A future async API may report unavailability on a resolved result instead of rejecting.
-      if (decrypted?.isTemporarilyUnavailable === true) return { status: 'retry', reason: TRY_LATER_REASON }
-      if (typeof token !== 'string' || token === '') return { status: 'signed-out', reason: SIGNED_OUT_REASON }
-      if (decrypted?.shouldReEncrypt === true) {
-        // The key was rotated: write the same token back under the new key. A failure here
-        // leaves today's token usable and the old ciphertext in place for the next launch.
-        try {
-          const next = await encrypt(token)
-          const current = readTokens()
-          if (!current.error && current.tokens[accountKeyOf(account)] === stored) {
-            current.tokens[accountKeyOf(account)] = next
-            writeTokens(current.tokens)
-          }
-        } catch {
-          // Not fatal for this launch: the token was decrypted, and the old ciphertext works.
-        }
-      }
-      return { status: 'ok', token }
+      return inOrder(account, () => loadInTurn(account))
     },
 
     save: saveOnly,
@@ -255,21 +379,7 @@ export function createTokenStore({ safeStorage, platform = process.platform, use
 
     async clear(account) {
       if (typeof account !== 'string' || account === '') throw new TypeError('an account or instance is required')
-      if (!secure) {
-        memory.delete(account)
-        return { status: 'cleared', memory: true }
-      }
-      const { tokens, error } = readTokens()
-      if (error) return { status: 'failed', reason: STORAGE_FAILED_REASON }
-      const key = accountKeyOf(account)
-      if (!(key in tokens)) return { status: 'cleared' }
-      delete tokens[key]
-      try {
-        writeTokens(tokens)
-      } catch {
-        return { status: 'failed', reason: STORAGE_FAILED_REASON }
-      }
-      return { status: 'cleared' }
+      return inOrder(account, () => clearInTurn(account))
     },
   })
 }
