@@ -1,5 +1,5 @@
 import { createElement as h, useEffect, useState } from 'react'
-import { t } from './i18n.js'
+import { language, t } from './i18n.js'
 
 // -------------------------------------------------------------------------
 // The Automagik desktop app's own update, at the bottom of the sidebar above the account and
@@ -16,16 +16,50 @@ import { t } from './i18n.js'
 
 const BUSY = new Set(['checking', 'downloading', 'installing'])
 
+// A download in megabytes, to one decimal in the reader's language: '41.2'.
+function megabytes(bytes) {
+  const value = bytes / (1024 * 1024)
+  try {
+    return new Intl.NumberFormat(language(), { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(value)
+  } catch {
+    return value.toFixed(1)
+  }
+}
+
+// What the download has of what it needs ({ done, total }), when the app counts its bytes.
+function downloaded(state) {
+  const { transferred, total } = state
+  if (!Number.isFinite(transferred) || !Number.isFinite(total) || !(total > 0) || transferred < 0) return null
+  return { done: megabytes(Math.min(transferred, total)), total: megabytes(total) }
+}
+
+// What failed, when the app says: the download, or the check of what arrived. The running
+// version stays either way, and a click tries again.
+function failureLabel(failure) {
+  if (failure === 'download') return t('Update download failed · Retry')
+  if (failure === 'verify') return t('Update could not be verified · Retry')
+  return t('Update check failed · Retry')
+}
+
+function downloadPill(state) {
+  const percent = state.percent ?? 0
+  const size = downloaded(state)
+  if (!size) return { label: t('Updating · {percent}%', { percent }), busy: true }
+  const label = t('Updating · {percent}% · {done} of {total} MB', { percent, ...size })
+  // The label is one line and a narrow sidebar cuts it: the whole of it is the title too.
+  return { label, title: label, busy: true }
+}
+
 /** The pill for one presentation: { label, busy, primary }, or null when there is nothing to say. */
 export function updatePill(state) {
   const version = state?.version
   switch (state?.phase) {
     case 'checking': return { label: t('Checking for updates…'), busy: true }
     case 'available': return { label: version ? t('Automagik {version} is out', { version }) : t('An update is out'), primary: true }
-    case 'downloading': return { label: t('Updating · {percent}%', { percent: state.percent ?? 0 }), busy: true }
+    case 'downloading': return downloadPill(state)
     case 'ready': return { label: version ? t('Restart to update to {version}', { version }) : t('Restart to update'), primary: true }
     case 'installing': return { label: t('Installing the update…'), busy: true }
-    case 'error': return { label: t('Update check failed · Retry') }
+    case 'error': return { label: failureLabel(state.failure) }
     default: return null
   }
 }
@@ -93,6 +127,23 @@ export function useDesktopUpdate() {
     return () => { live = false; off?.() }
   }, [bridge])
   return { bridge, state }
+}
+
+/**
+ * What this copy of the app is, once it has said so (`omniDesktop.updates.versions`, apps/desktop
+ * src/frame.js versionsAnswer): { app, dsh, plugins: [{ name, version }], updates }. Null
+ * outside the app, and in an app that does not say.
+ */
+export function useDesktopVersions() {
+  const bridge = globalThis.omniDesktop?.updates
+  const [versions, setVersions] = useState(null)
+  useEffect(() => {
+    if (typeof bridge?.versions !== 'function') return undefined
+    let live = true
+    bridge.versions().then((next) => { if (live && next && typeof next === 'object') setVersions(next) }, () => {})
+    return () => { live = false }
+  }, [bridge])
+  return versions
 }
 
 function Pill({ pill, busy, percent, onClick }) {

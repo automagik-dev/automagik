@@ -257,11 +257,20 @@ export class CliLogins {
     this.pruneStates()
     if (this.states.size === 0) return false
     const cleaned = text.slice(0, 1_000_000).replace(/[\p{Cf}]/gu, '')
+    // The cost of one call (#871): a token's prefix is hashed once however often the text
+    // repeats it, in either reading. So a call costs at most one HMAC per distinct prefix, and
+    // never more than 2 x 1,000,000 / (length + 1) of them for each state length shown (the
+    // lengths add up; Claude's states have one).
+    const tried = new Set()
     for (const candidate of new Set([cleaned, cleaned.replace(/\s+/gu, '')])) {
       for (const match of candidate.matchAll(/#([A-Za-z0-9_-]+)/g)) {
         const token = match[1]
         for (const length of this.stateLengths) {
-          if (token.length >= length && this.states.has(this.hashState(token.slice(0, length)))) return true
+          if (token.length < length) continue
+          const prefix = token.slice(0, length)
+          if (tried.has(prefix)) continue
+          tried.add(prefix)
+          if (this.states.has(this.hashState(prefix))) return true
         }
       }
     }

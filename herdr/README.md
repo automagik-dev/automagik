@@ -504,6 +504,7 @@ automagik-herdr worker "<task>" (--branch B [--base REF] | --worktree DIR)
        [--task ID [--lead BOT]]
 automagik-herdr update [--check | --rollback]
 automagik-herdr meter install [--machine M | --linked | --local] | meter uninstall
+automagik-herdr machines [update [--machine M | --linked | --local] | --auto on|off|status [--machine M]]
 automagik-herdr dsh-tui install | update | uninstall | doctor
 ```
 
@@ -1039,6 +1040,36 @@ daily), with no second notice. Turn it off with `automagik-herdr update --auto o
 in the status bar; then a new release is only announced, as before. It applies only to a pack
 `install.sh` installed from a signed release (its record in `<app home>/automagik-herdr/` has a
 `sequence=`); the setting lives beside it, in `auto-update.json`.
+
+### Every linked machine
+
+```bash
+automagik-herdr machines                        # what each machine runs, and how its last update went
+automagik-herdr machines update                 # one update of them all now
+automagik-herdr machines --auto off --machine M # M opts out (on again: --auto on); no --machine: this computer
+```
+
+The machines linked into your Herdr (`hc machine ls`) follow the releases too, with no one at each
+of them. About 90 seconds after the sidebar loads and then once an hour, the computer that runs
+Herdr starts `automagik-herdr machines update`: on each connected machine it runs that machine's
+own `am update` (am, then the pack where one is installed), so every check is made there, by the
+copy installed there, against the keys it pins: the signed pointer, the tarball's sha256, never a
+release older than one it took, and the replaced copy kept (`am rollback automagik.am`,
+`automagik-herdr update --rollback`). Then usagemeter, as `meter install` does (the signed
+meter-lane pointer checked here, the build's sha256 on the machine, never a downgrade, the old
+binary kept as `usagemeter.prev`): on a machine that has one, or on all of them once you agreed to
+that, and never after `install.sh --no-usagemeter`. This computer's am and usagemeter follow in the
+same run; its pack is the sidebar's own update above.
+
+`automagik-herdr machines` shows the last answer of each machine: its am, pack and usagemeter
+versions, and what the last run did or why it did not (a pointer it could not verify, a download
+that failed, a machine that was not connected). A machine that was not updated is also said once in
+a notice. The record is `<app home>/automagik-herdr/linked-updates.json`.
+
+It is on by default. A machine opts out with its own switch, the file `~/.automagik/linked-update`
+holding `off` (`automagik-herdr machines --auto off` there, or `--machine M` from here): the run
+reads it first and starts nothing on that machine. `AUTOMAGIK_HERDR_NO_UPDATE=1` on the computer
+that runs Herdr turns the whole run off.
 
 Updates come from the Automagik monorepo's GitHub releases, through one signed pointer: the
 `herdr-lane` release's `pack.json` names the newest pack release (not GitHub's "latest", often a

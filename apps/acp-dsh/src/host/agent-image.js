@@ -22,9 +22,18 @@ export const KEPT_TEXT = 'Image generated and saved as'
 // A title that names image generation: Codex's own, and the obvious spellings of another agent's.
 const IMAGE_TITLES = /^(?:image generation|generate[ _]image|image[ _]gen(?:eration)?)\b/i
 
+// A call's structured name is its identity where the agent sends one (Claude Code does; Codex
+// sends none, so its image tool is known by its exact title and nothing else, #871). A built-in
+// tool (a name that is not an MCP one: Bash, Read, Write) is what its name says: a command
+// titled `generate_image.py` is a command, and keeps its own result.
+const builtInName = tool => (typeof tool?.structuredName === 'string' && tool.structuredName !== '' && !tool.structuredName.startsWith('mcp__') ? tool.structuredName : undefined)
+
 /** Whether a call is an image-generation call, by what the agent titled or named it. */
-export const isImageCall = tool => typeof tool?.title === 'string'
-  && (tool.title === IMAGE_TITLE || IMAGE_TITLES.test(tool.title.trim()) || IMAGE_TITLES.test(String(tool.structuredName ?? '')))
+export const isImageCall = (tool) => {
+  if (typeof tool?.title !== 'string') return false
+  if (tool.title === IMAGE_TITLE || IMAGE_TITLES.test(String(tool.structuredName ?? ''))) return true
+  return builtInName(tool) === undefined && IMAGE_TITLES.test(tool.title.trim())
+}
 
 /**
  * The PNG an image-generation call answered with, as base64: the first ACP `image/png` block in

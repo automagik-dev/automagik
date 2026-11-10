@@ -11,6 +11,10 @@
 // is chain-safe: it delegates to whatever was below it, read when it is called, so another
 // wrapper installed before or after it keeps working; on dispose it unwinds only when it is
 // still on top, and otherwise stays in place as an inert pass-through.
+//
+// The method is another plugin's private one, so a DSH update can take it away (#871). An engine
+// this plugin cannot guard is then said out loud (`onUnguarded`), never passed over in silence:
+// without the wrapper, a switch to an agent fails as it did before this plugin had one.
 
 /** The engine method this plugin wraps. Private to compaction-basic: a guard test pins it. */
 export const PRESSURE_METHOD = 'compactPressure'
@@ -35,18 +39,29 @@ const rawOf = (engine) => {
  * The wrapper owner for one plugin instance. `adopt` is idempotent per engine instance; a
  * recreated engine (a reloaded compaction plugin, a preset mount) is a new instance and is
  * adopted when an agent next reaches it.
- * @param {{ agentDestination(provider: unknown): boolean }} options
+ * `onUnguarded(reason)` is told once per engine instance that the engine is there and cannot
+ * be guarded: `missing` (it has no such method any more) or `locked` (it cannot be wrapped).
+ * @param {{ agentDestination(provider: unknown): boolean, onUnguarded?(reason: 'missing' | 'locked'): void }} options
  * @returns {{ adopt(engine: any): boolean, dispose(): void, adopted(engine: any): boolean }}
  */
-export function pressureGuard({ agentDestination }) {
+export function pressureGuard({ agentDestination, onUnguarded }) {
   const links = new Map()
+  const unguarded = new WeakSet()
   let disposed = false
+
+  const refuse = (engine, reason) => {
+    if (!unguarded.has(engine)) {
+      unguarded.add(engine)
+      try { onUnguarded?.(reason) } catch {}
+    }
+    return false
+  }
 
   function adopt(service) {
     const engine = rawOf(service)
     if (disposed || engine === undefined || links.has(engine)) return false
     const current = engine[PRESSURE_METHOD]
-    if (typeof current !== 'function') return false
+    if (typeof current !== 'function') return refuse(engine, 'missing')
     // An own property is another owner's wrapper (or an instance override): call it. An
     // inherited method is looked up again at each call, so a replaced prototype is honoured.
     const link = { inert: false, below: hasOwn(engine, PRESSURE_METHOD) ? current : undefined, wrapper: undefined }
@@ -58,9 +73,9 @@ export function pressureGuard({ agentDestination }) {
     try {
       engine[PRESSURE_METHOD] = link.wrapper
     } catch {
-      return false
+      return refuse(engine, 'locked')
     }
-    if (engine[PRESSURE_METHOD] !== link.wrapper) return false
+    if (engine[PRESSURE_METHOD] !== link.wrapper) return refuse(engine, 'locked')
     links.set(engine, link)
     return true
   }
