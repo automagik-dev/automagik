@@ -496,7 +496,7 @@ are no `.cmd` shims and no Windows PATH entry.
 ### The sandbox
 
 D27's one install is "sandboxed"; RFC 0013 (Decided 2) puts herdr-app on now and the fence later.
-Proposed, after RFC 0010's supervision design (0010 is a Draft): entries get an allowlisted
+Proposed, after RFC 0010's supervision design (0010 is Queued): entries get an allowlisted
 environment (the `AM_*` variables, `HOME`, `PATH`, `USER`, `LANG`, `TMPDIR`, `HERDR_APP_HOME`,
 and Windows' system variables), never a spread of am's own. Entries run outside the DSH server
 fence, as RFC 0013's launch does, because they write outside any instance home. `writes` is the

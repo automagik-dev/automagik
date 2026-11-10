@@ -59,7 +59,7 @@ Today:
 - **The desktop app trusts its OS user.** It starts a local DSH and opens it with the launch URL
   DSH prints. Any process of the same user can already read that token and the window's cookies,
   as RFC 0022's threat model records. A passkey there would add a prompt and no protection.
-- **RFC 0008 ("Platform and web instances", Draft)** recommended any standard OIDC provider the
+- **RFC 0008 ("Platform and web instances", Queued)** recommended any standard OIDC provider the
   instance owner configures (its question 2), and one instance at a time, never local and remote
   together (questions 6 and 7). The two models here change all three; this RFC amends it.
 - **The left bar mockup (v7, private, not in the repository)** puts a rail of workspaces at the
@@ -596,7 +596,7 @@ one person signs in once per instance.
 
 ## Amendments to RFC 0008
 
-This RFC amends RFC 0008 (Draft); each amended line is marked there.
+This RFC amends RFC 0008 (Queued); each amended line is marked there.
 
 - **Summary, and Web instances (its two sign-in bullets).** Was: web instances sign in with OIDC.
   Now: a self-hosted web instance stays on loopback until claimed, then the gate signs its owner in

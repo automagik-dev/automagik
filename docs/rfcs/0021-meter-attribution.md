@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | In delivery (deliveries 1-6: #817, #825, #827, #835, #875; #849 closed, carried by #875; delivery 7 depends on #822, #834, #838; 8 open; answers: Q1-Q6, 2026-11-09) |
+| Status | In delivery (deliveries 1-6: #817, #825, #827, #835, #875; #849 closed, carried by #875; delivery 7 (reaching machines) is not delivered; 8 open; Q1-Q6 answered by Chat 2026-11-09, Decided 5 and 6 reopened by the owner 2026-11-10) |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | none here (docs); herdr (3.N.P) for ledger rows; meter (3.N.P, RFC 0017) for the crate |
 | Created | 2026-11-09 |
@@ -91,6 +91,9 @@ owner's ask to compare bots across agents:
 6. **Linked-machine panes are unknown** until a fleet query is designed (RFC 0018's question 3):
    such a launch has its rows on one computer and its logs on another. Decided by Chat,
    2026-11-09: neither meter can link it without guessing.
+
+*Reopened by the owner, 2026-11-10, after later work:* Decided 5 and 6 are open again; Decided 1
+to 4 stand.
 
 Proposed here: everything else.
 
@@ -636,6 +639,8 @@ release.
    their own; attribution does not wait for them. Delivery 2 here must merge before RFC 0017's
    delivery 4.
    *Check:* a machine that took the pack release runs a meter whose `query --by bot` answers.
+   *Status (2026-11-10):* not delivered. v3.114.1 shipped the meter with #875 and the meter-lane
+   pointer names it, but no machine is shown running the pack release's `query --by bot`.
 8. **The backfill** (the operator, per machine). `usagemeter sync --evidence-backfill` back to the
    later of the oldest ledger row and the retention bound.
    *Acceptance (the Reviewer's item, required):* `--days` never asks past the retention bound
@@ -647,7 +652,8 @@ agy follows once the meter has an agy source and Herdr launches agy workers with
 
 ## Open questions
 
-None. The six questions this RFC asked were decided by Chat on 2026-11-09 (Decided, 1 to 6).
+Decided 5 and 6 were reopened by the owner on 2026-11-10, after later work; the other four stand.
+The six questions this RFC asked were decided by Chat on 2026-11-09 (Decided, 1 to 6).
 
 ## Links
 
