@@ -59,7 +59,8 @@ three views:
   four sha256s, two darwin and two Linux, from its `checksums.txt`, checked by
   `herdr/scripts/scheduler-pin.mjs`; `install.sh` installs the same build from the same pins), and
   every 30 s refresh looks again, so a scheduler installed meanwhile is picked up. Copy writes the
-  command to the clipboard; **Install** runs exactly that command (`sh -c`), once per click, and a
+  command to the clipboard; **Install** runs exactly that command (`sh -c`), once per click (it
+  removes its own scratch folder, worked or not), and a
   failure keeps the block and says why. Nothing runs without a click, and the panel never installs
   a login service by itself (only **Start**, pressed by you, runs `service install`).
 - **Readiness**: `ls --json` answering is the check. No scheduler pid: the "Scheduler stopped"

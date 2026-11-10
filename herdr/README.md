@@ -156,6 +156,8 @@ against the pinned sha256, run once (`version` must be exactly the pinned one), 
 place. It keeps its own record (`<app home>/automagik-herdr/scheduler`) and replaces or removes
 only the binary it wrote, while it is still those bytes: one on your PATH somewhere else, a link, or
 a file you installed yourself (upstream's build, a dev build) is left as it is and only checked.
+The one exception: a file there that is exactly the pinned build (what the panel's repair command
+installs) is adopted, recorded without being replaced, so later pins reach it.
 
 For its own binary it then sets things up. A machine with no `automations.yaml` gets one saying
 `backend: hc`, so runs open in the Herdr app; an existing file is never edited, and neither it nor
@@ -168,6 +170,8 @@ warning; the pack is installed all the same, and a rerun retries.
 
 `--no-scheduler` leaves the binary and the service alone, on install and on `--uninstall`.
 `--uninstall` otherwise removes the login service when this installer started it, then the binary.
+While a login service you started yourself (Start in the panel, or `service install`) is installed,
+it keeps the binary too and says how to remove both, so no service is left restarting a missing file.
 `automagik-herdr update` (the pack's own updater) has no scheduler step yet: after it, or wherever
 the binary is missing, the panel shows the command that installs it, with an Install button.
 

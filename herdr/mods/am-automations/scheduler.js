@@ -21,12 +21,13 @@ export const SCHEDULER = Object.freeze({
 
 /** The command that installs the scheduler to ~/.local/bin, hash-checked, for this machine's
  * `uname -m` and `uname -s` (anything but Linux reads as a Mac; a subshell, so the terminal it is
- * pasted in stays where it was). */
+ * pasted in stays where it was). Its scratch folder is removed whether it worked or not, and the
+ * subshell exits with the install's own status. */
 export function repairCommand(machine, os = "Darwin") {
   const linux = os === "Linux";
   const arch = machine === "x86_64" || machine === "amd64" ? "amd64" : "arm64";
   const url = `https://github.com/${SCHEDULER.repo}/releases/download/herdr-automations-v${SCHEDULER.version}/herdr-automations_${linux ? "linux" : "darwin"}_${arch}`;
-  return `(mkdir -p ~/.local/bin && cd "$(mktemp -d)" && curl -fsSLo herdr-automations ${url}`
+  return `(mkdir -p ~/.local/bin && d="$(mktemp -d)" && cd "$d" && curl -fsSLo herdr-automations ${url}`
     + ` && echo "${(linux ? SCHEDULER.linux : SCHEDULER.sha256)[arch]}  herdr-automations" | ${linux ? "sha256sum -c" : "shasum -a 256 -c"}`
-    + " && chmod 755 herdr-automations && mv herdr-automations ~/.local/bin/)";
+    + ' && chmod 755 herdr-automations && mv herdr-automations ~/.local/bin/; s=$?; cd /; [ -z "$d" ] || rm -rf "$d"; exit "$s")';
 }

@@ -953,17 +953,33 @@ install_scheduler() {
     return 0
   fi
   shad=
+  sforeign=0
   if [ -f "$SCHED" ]; then
     SCHED_BIN=$SCHED
-    if ! sched_ours; then
-      say "Automations scheduler: left $SCHED as it is (not installed by this installer; it reports version $(sched_version "$SCHED"))."
-      return 0
-    fi
-    shad=$(sched_get version)
+    if sched_ours; then shad=$(sched_get version); else sforeign=1; fi
   fi
-  spin=$(sched_pin) || { why=${spin:-the scheduler pin in the pack cannot be read}; return 1; }
+  spin=$(sched_pin) || {
+    why=${spin:-the scheduler pin in the pack cannot be read}
+    [ "$sforeign" = 0 ] || { say "Automations scheduler: left $SCHED as it is (not installed by this installer)."; return 0; }
+    return 1
+  }
   swant=${spin%% *}; srest=${spin#* }
   sasset=${srest%% *}; ssum=${srest#* }
+  if [ "$sforeign" = 1 ]; then
+    # Not this installer's by the record. Exactly the pinned bytes (the panel's repair command puts
+    # them there) is adopted: recorded, nothing replaced, so a later pin reaches it. Anything else
+    # is the person's own and stays.
+    if [ "$(sha_of "$SCHED")" = "$ssum" ]; then
+      if sched_record "$swant" "$ssum" ""; then
+        say "herdr-automations $swant: already installed ($SCHED), exactly the build the pack pins; this installer keeps it up to date from now on."
+      else
+        say "Automations scheduler: left $SCHED as it is (the pinned build; its record, $SCHED_RECORD, could not be written)."
+      fi
+      return 0
+    fi
+    say "Automations scheduler: left $SCHED as it is (not installed by this installer; it reports version $(sched_version "$SCHED"))."
+    return 0
+  fi
   if [ -n "$shad" ] && [ "$(sched_get sha256)" = "$ssum" ]; then
     say "herdr-automations $swant: already installed ($SCHED)."
     return 0
@@ -1105,7 +1121,8 @@ sched_step() {
   sched_health
 }
 # --uninstall: the binary goes only while it is still the bytes this installer wrote, and the login
-# service only when this installer started it (through the binary's own `service uninstall`).
+# service only when this installer started it (through the binary's own `service uninstall`); while
+# a service someone else started is installed (`service status`), the binary stays too.
 # automations.yaml and the run history stay.
 uninstall_scheduler() {
   [ -f "$SCHED_RECORD" ] || return 0
@@ -1113,6 +1130,14 @@ uninstall_scheduler() {
   if ! sched_ours; then
     if [ -e "$SCHED" ] || [ -L "$SCHED" ]; then say "Left $SCHED: it is not the herdr-automations $(sched_get version) this installer put there."; fi
     rm -f "$SCHED_RECORD"
+    return 0
+  fi
+  # A login service this installer did not start (Start in the panel, or `service install` by hand)
+  # runs this binary and restarts it for good: the binary stays, so nothing relaunches a missing
+  # file, and the person removes both. The record stays with it: the binary is still ours.
+  if [ "$(sched_get service)" != installed ] \
+    && "$SCHED" service status </dev/null 2>/dev/null | grep -q '^service installed: true'; then
+    say "Left $SCHED: a login service this installer did not start runs it (removing the binary would leave that service restarting a missing file). To remove both: herdr-automations service uninstall, then rm $SCHED"
     return 0
   fi
   if [ "$(sched_get service)" = installed ]; then

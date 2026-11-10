@@ -2734,16 +2734,58 @@ test("#220: --uninstall removes the binary and the login service this installer 
   assert.equal(existsSync(join(schedState(s), "service")), false);
   assert.equal(existsSync(schedRecord(s)), false);
   assert.equal(readFileSync(schedConfig(s), "utf8"), "backend: hc\n", "the configuration stays");
-  // A service the person started themselves (the installer was told no) is not this installer's to remove.
+});
+
+// The installer was told no; the person then started the service (Start in the panel runs exactly
+// this). That service restarts its program for good, so the binary it runs must not vanish under it.
+test("#220: --uninstall keeps the binary while a login service this installer did not start runs it", (t) => {
   const own = scratch(t);
   own.publishScheduler();
   own.publish("9.9.0");
   assert.equal(own.run("--no-usagemeter").code, 0);
   assert.equal(spawnSync(schedBin(own), ["service", "install"], { env: { HOME: own.home, PATH: "/usr/bin:/bin" } }).status, 0);
+  const bytes = sha(schedBin(own));
   const o = own.run("--uninstall");
   assert.equal(o.code, 0, o.err);
-  assert.doesNotMatch(o.out, /login service/);
+  assert.match(o.out, /Left .*\/herdr-automations: a login service this installer did not start runs it .* To remove both: herdr-automations service uninstall, then rm /);
+  assert.doesNotMatch(o.out, /Removed .*herdr-automations/);
+  assert.equal(sha(schedBin(own)), bytes, "the binary the service runs is still there");
   assert.ok(existsSync(join(schedState(own), "service")), "the person's service stays");
+  assert.ok(!schedCalls(own).includes("service uninstall"), "never uninstalled for them");
+  assert.ok(existsSync(schedRecord(own)), "still recorded as this installer's binary");
+  // Once the person removes the service, a reinstall and --uninstall take the binary.
+  assert.equal(spawnSync(schedBin(own), ["service", "uninstall"], { env: { HOME: own.home, PATH: "/usr/bin:/bin" } }).status, 0);
+  assert.equal(own.run("--no-usagemeter").code, 0);
+  const gone = own.run("--uninstall");
+  assert.equal(gone.code, 0, gone.err);
+  assert.match(gone.out, /Removed .*\/herdr-automations \(herdr-automations 0\.12\.9-am\.7\)/);
+  assert.equal(existsSync(schedBin(own)), false);
+});
+
+// The panel's repair command (Copy, or Install) puts exactly the pinned bytes in ~/.local/bin with no
+// record. Those are adopted, so the next pin reaches them; any other bytes stay the person's.
+test("#220: a recordless binary that is exactly the pinned build is adopted without a download, then kept up to date", (t) => {
+  const s = scratch(t);
+  const { sums } = s.publishScheduler();
+  s.publish("9.9.0");
+  mkdirSync(dirname(schedBin(s)), { recursive: true });
+  cpSync(join(s.root, "release", "download", `herdr-automations-v${SV}`, "herdr-automations_darwin_arm64"), schedBin(s));
+  chmodSync(schedBin(s), 0o755);
+  const ino = lstatSync(schedBin(s)).ino;
+  const r = s.run("--yes", "--no-usagemeter");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /herdr-automations 0\.12\.9-am\.7: already installed \(.*\), exactly the build the pack pins; this installer keeps it up to date from now on\./);
+  assert.deepEqual(s.schedulerBuilds(), [], "nothing was downloaded");
+  assert.equal(lstatSync(schedBin(s)).ino, ino, "nothing was replaced");
+  assert.equal(readFileSync(schedRecord(s), "utf8"), `version=${SV}\nsha256=${sums.darwin_arm64}\nservice=installed\n`);
+  assert.match(r.out, /Automations: ready \(herdr-automations 0\.12\.9-am\.7, backend hc, scheduler running, pid 4242\)\./);
+  // The next pin reaches it.
+  const next = s.publishScheduler({ version: "0.12.9-am.8" });
+  s.publish("9.9.1");
+  const up = s.run("--no-usagemeter");
+  assert.equal(up.code, 0, up.err);
+  assert.match(up.out, /Updated herdr-automations 0\.12\.9-am\.7 to 0\.12\.9-am\.8 \(/);
+  assert.equal(sha(schedBin(s)), next.sums.darwin_arm64);
 });
 
 test("#220: --no-scheduler installs the pack and never downloads, configures or starts the scheduler", (t) => {

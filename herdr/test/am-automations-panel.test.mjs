@@ -51,7 +51,10 @@ test("the repair command: our pinned release for this Mac's arch, hash-checked, 
   const arm = repairCommand("arm64");
   assert.match(arm, /\/automagik-dev\/automagik\/releases\/download\/herdr-automations-v0\.12\.1-am\.1\/herdr-automations_darwin_arm64 /);
   assert.ok(arm.includes(`echo "${SCHEDULER.sha256.arm64}  herdr-automations" | shasum -a 256 -c`));
-  assert.match(arm, /shasum -a 256 -c && chmod 755 herdr-automations && mv herdr-automations ~\/\.local\/bin\/\)$/, "moved in only once the hash matches");
+  assert.match(arm, /shasum -a 256 -c && chmod 755 herdr-automations && mv herdr-automations ~\/\.local\/bin\/; s=\$\?; /, "moved in only once the hash matches");
+  // Its scratch folder goes whether it worked or not, and the subshell keeps the install's status.
+  assert.ok(arm.startsWith('(mkdir -p ~/.local/bin && d="$(mktemp -d)" && cd "$d" && curl '));
+  assert.ok(arm.endsWith('; s=$?; cd /; [ -z "$d" ] || rm -rf "$d"; exit "$s")'));
   const intel = repairCommand("x86_64");
   assert.match(intel, /herdr-automations-v[^/]+\/herdr-automations_darwin_amd64 /);
   assert.ok(intel.includes(SCHEDULER.sha256.amd64));
