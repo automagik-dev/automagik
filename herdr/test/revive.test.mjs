@@ -12,7 +12,7 @@ import { attachPath, readAttach } from "../mods/am-sidebar/attach.js";
 import { ledgerPath, readLedger } from "../mods/am-sidebar/workers.js";
 import { helperPlan } from "../mods/am-sidebar/restart.js";
 import { AGENTS } from "../mods/am-sidebar/models.js";
-import { FIRST_SESSION_MS, UNIT_MARK, UNIT_NAME, agyCandidates, agyHistoryPath, byHandCommand, dshSessionOf, dshSessionsDir, isBareShell, ledgerRivals,
+import { FIRST_SESSION_MS, KEEP_DOWN, UNIT_MARK, UNIT_NAME, agyCandidates, agyHistoryPath, byHandCommand, countsLine, dshHomeOf, dshSessionOf, dshSessionsDir, isBareShell, ledgerRivals,
   pickSession, reportLine, reviveOrder, reviveTargets, sameBoot, sweptSince, unitIsOurs, unitPath, unitText } from "../mods/am-sidebar/revive.js";
 import { readJsonLines } from "./log-lines.mjs";
 import { scratchProject, scratchRoot } from "./scratch-project.mjs";
@@ -34,28 +34,38 @@ test("isBareShell: a live pane with a shell (a login shell, the keep wrapper's, 
   assert.equal(isBareShell(null), false);
 });
 
-test("pickSession: alone in the folder, the session written last among those born after the pane; one another terminal holds never counts", () => {
-  const c = (id, born, touched = born) => ({ id, born, touched });
-  assert.equal(pickSession({ createdMs: 1000_000, candidates: [c(SID, 1000_500, 1009_000), c(SID2, 1005_000, 1006_000)] }), SID);
-  assert.equal(pickSession({ createdMs: 1000_000, candidates: [c(SID, 1000_500, 1009_000), c(SID2, 1005_000, 1006_000)], claimed: new Set([SID]) }), SID2);
+test("pickSession: only the pane's first session, the one born within two minutes after its start; one another terminal holds never counts", () => {
+  const c = (id, born) => ({ id, born });
+  const T = 10_000_000;
+  assert.equal(pickSession({ createdMs: T, candidates: [c(SID, T + 500)] }), SID);
+  assert.equal(pickSession({ createdMs: T, candidates: [c(SID, T - 1000)] }), SID, "two seconds of slack");
+  // #992 review: a session from outside the ledger (a person's terminal, DSH Desktop), born ten
+  // minutes later and written last, is never taken over the pane's own.
+  assert.equal(pickSession({ createdMs: T, candidates: [c(SID, T + 5000), c(SID2, T + 600_000)] }), SID);
+  // Only an outside session, born later: nothing, never that one.
+  assert.equal(pickSession({ createdMs: T, candidates: [c(SID2, T + 600_000)] }), null);
+  assert.equal(pickSession({ createdMs: T, candidates: [c(SID, T + FIRST_SESSION_MS + 1)] }), null);
+  // Two born in the window: they can't be told apart.
+  assert.equal(pickSession({ createdMs: T, candidates: [c(SID, T + 500), c(SID2, T + 9000)] }), null);
+  assert.equal(pickSession({ createdMs: T, candidates: [c(SID, T + 500), c(SID2, T + 9000)], claimed: new Set([SID]) }), SID2);
   // Born before the pane (one it resumed, or another's): not this launch's.
-  assert.equal(pickSession({ createdMs: 1000_000, candidates: [c(SID, 900_000, 1009_000)] }), null);
-  assert.equal(pickSession({ createdMs: 1000_000, candidates: [c(SID, 999_000)] }), SID, "two seconds of slack");
-  assert.equal(pickSession({ createdMs: 1000_000, candidates: [] }), null);
+  assert.equal(pickSession({ createdMs: T, candidates: [c(SID, T - 100_000)] }), null);
+  assert.equal(pickSession({ createdMs: T, candidates: [] }), null);
   assert.equal(pickSession({ createdMs: null, candidates: [c(SID, 5)] }), null);
-  assert.equal(pickSession({ createdMs: 1000_000, candidates: [c("not-an-id", 1000_500)] }), null);
+  assert.equal(pickSession({ createdMs: T, candidates: [c("not-an-id", T + 500)] }), null);
+  assert.equal(pickSession({ createdMs: T, candidates: [{ id: SID }] }), null, "no birth time");
 });
 
-test("pickSession: beside another launch of that agent in the folder, only the first session, born soon after, with no launch near it: right or nothing", () => {
-  const c = (id, born, touched = born) => ({ id, born, touched });
+test("pickSession: beside another pane or launch of that agent in the folder, nothing when it started near: right or nothing", () => {
+  const c = (id, born) => ({ id, born });
   const T = 10_000_000;
   // A rival that started long before: this pane's first session, never a later one.
-  assert.equal(pickSession({ createdMs: T, candidates: [c(SID, T + 800), c(SID2, T + 500_000, T + 900_000)], rivals: [{ created_ms: T - 10 * FIRST_SESSION_MS }] }), SID);
+  assert.equal(pickSession({ createdMs: T, candidates: [c(SID, T + 800), c(SID2, T + 500_000)], rivals: [{ created_ms: T - 10 * FIRST_SESSION_MS }] }), SID);
   // A rival that started around the same time (a reboot's pass starts them together): nothing.
   assert.equal(pickSession({ createdMs: T, candidates: [c(SID, T + 800)], rivals: [{ created_ms: T - 5000 }] }), null);
   assert.equal(pickSession({ createdMs: T, candidates: [c(SID, T + 800)], rivals: [{ created_ms: T + 300 }] }), null);
-  // No session soon after the start: a later one may be the rival's.
-  assert.equal(pickSession({ createdMs: T, candidates: [c(SID, T + FIRST_SESSION_MS + 1)], rivals: [{ created_ms: T - 10 * FIRST_SESSION_MS }] }), null);
+  // A rival that started after the session was born can't own it.
+  assert.equal(pickSession({ createdMs: T, candidates: [c(SID, T + 800)], rivals: [{ created_ms: T + 60_000 }] }), SID);
   // A rival whose start time isn't known counts as near.
   assert.equal(pickSession({ createdMs: T, candidates: [c(SID, T + 800)], rivals: [{ created_ms: null }] }), null);
 });
@@ -77,8 +87,12 @@ test("ledgerRivals: the other launches of that agent in the folder not ended bef
 });
 
 test("dshSessionsDir, dshSessionOf, agyCandidates: where each agent leaves its sessions", () => {
-  assert.equal(dshSessionsDir("/home/u", "/srv/team/app"), "/home/u/.dsh/sessions/--srv-team-app--");
-  assert.equal(dshSessionsDir("/home/u/", "/home/u/.dsh/bot-workspace"), "/home/u/.dsh/sessions/--home-u-.dsh-bot-workspace--");
+  assert.equal(dshSessionsDir("/home/u/.dsh", "/srv/team/app"), "/home/u/.dsh/sessions/--srv-team-app--");
+  assert.equal(dshSessionsDir("/home/u/.dsh/", "/home/u/.dsh/bot-workspace"), "/home/u/.dsh/sessions/--home-u-.dsh-bot-workspace--");
+  assert.equal(dshHomeOf("/home/u/", {}), "/home/u/.dsh");
+  assert.equal(dshHomeOf("/home/u", { DSH_HOME: "/data/dsh" }), "/data/dsh", "$DSH_HOME wins");
+  assert.equal(dshHomeOf("/home/u", { DSH_HOME: "relative" }), "/home/u/.dsh");
+  assert.equal(dshHomeOf("/home/u", { DSH_HOME: "" }), "/home/u/.dsh");
   assert.equal(dshSessionOf(SID), SID);
   assert.equal(dshSessionOf(`session-${SID}`), SID);
   assert.equal(dshSessionOf("session.lock"), null);
@@ -146,7 +160,13 @@ test("reportLine: one line: who resumed, who is on a new conversation and why, w
   assert.ok(line.includes(`Not back: Dev, claude isn't installed on this computer; by hand: ${byHandCommand("b-cccccccccc", "/p")}.`), line);
   assert.equal(byHandCommand("b-cccccccccc", "/p"), "automagik-herdr restart b-cccccccccc --project /p --tree");
   assert.match(line, /Left alone: Ops, hc get t9 failed\./);
+  assert.ok(line.endsWith(KEEP_DOWN), "how a bot is kept down is said every time");
+  assert.match(KEEP_DOWN, /automagik-herdr detach <bot>/);
   assert.equal(reportLine("/p", []), null, "nothing came back and nothing failed: no report");
+  // The boot pass's own line (the user journal keeps it): counts, never a folder or a name.
+  const counts = countsLine([{ project: "/home/u/secret", results: [{ name: "Genie", outcome: "resumed" }, { name: "Dev", outcome: "failed" }] }, { project: "/q", results: [{ name: "Cap", outcome: "fresh" }] }]);
+  assert.match(counts, /^revive: 1 resumed, 1 on a new conversation, 1 not back, 0 left alone, in 2 projects;/);
+  for (const word of ["/home/u", "Genie", "Dev", "Cap", "/q"]) assert.ok(!counts.includes(word), counts);
 });
 
 test("unitText: a oneshot user unit that runs revive --boot and waits for herdr-core itself; only a unit with the pack's mark is ours", () => {
@@ -157,6 +177,7 @@ test("unitText: a oneshot user unit that runs revive --boot and waits for herdr-
   assert.match(text, /^Environment="HERDR_APP_HOME=\/home\/u\/my app\/100%%"$/m, "a % is doubled for systemd");
   assert.match(text, /^WantedBy=default\.target$/m);
   assert.doesNotMatch(text, /Restart=/, "it runs once: it never restarts itself");
+  assert.match(text, /^TimeoutStartSec=infinity$/m, "systemd never ends a long pass part way: the pass bounds its own waits");
   assert.equal(unitIsOurs(text), true);
   assert.equal(unitIsOurs("[Unit]\nDescription=someone's\n"), false);
   assert.equal(unitIsOurs(null), false);
@@ -280,7 +301,7 @@ test("revive: after a reboot each bot at a bare shell is restarted in its place,
   // One report, to the main bot's new pane, naming who resumed; no session id in it or in any output.
   assert.equal(state.sent.length, 1, JSON.stringify(state.sent));
   assert.equal(state.sent[0].to, "t100");
-  assert.match(state.sent[0].text, /^Revive after a restart of this computer, project .*Resumed where they were: Genie \(t100\); Dev \(t101\)\.$/);
+  assert.match(state.sent[0].text, /^Revive after a restart of this computer, project .*Resumed where they were: Genie \(t100\); Dev \(t101\)\. To keep a bot down across restarts of this computer: automagik-herdr detach <bot>\.$/);
   const out = r.json();
   assert.equal(out.projects.length, 1);
   assert.equal(out.projects[0].sent, "t100");
@@ -317,7 +338,7 @@ test("revive records a dsh-TUI pane's session from DSH's own folder and resumes 
   const s = world(t, { file: team({ main: { agent: "dsh-tui" } }),
     terminals: (p) => [pane("t5", { bot: ID.main, cwd: p, created: born, argv: ["dsh-tui"], labels: { "herdr.space": "sp1" } })] });
   // DSH's sessions for the project folder: one from before the pane (not its own), one born with it.
-  const dir = dshSessionsDir(s.home, s.project);
+  const dir = dshSessionsDir(join(s.home, ".dsh"), s.project);
   for (const [id, at] of [[SID2, born - 86_400_000], [SID, born + 1500]]) {
     mkdirSync(join(dir, id), { recursive: true });
     writeFileSync(join(dir, id, "session.v4.jsonl.zstd"), "x");
@@ -342,7 +363,7 @@ test("revive: two dsh-TUI bots started together in one folder can't be told apar
     terminals: (p) => [pane("t5", { bot: ID.main, cwd: p, created: born, argv: ["dsh-tui"] }), pane("t6", { bot: ID.cap, cwd: p, created: born + 500, argv: ["dsh-tui"] })] });
   writeFileSync(ledgerPath(s.app), [["t5", ID.main, born], ["t6", ID.cap, born + 500]].map(([terminal, botId, created_ms]) =>
     `${JSON.stringify({ event: "start", kind: "seat", terminal, botId, project: s.project, worktree: s.project, agent: "dsh-tui", core: CORE, created_ms, at: new Date(created_ms).toISOString() })}\n`).join(""), { mode: 0o600 });
-  const dir = dshSessionsDir(s.home, s.project);
+  const dir = dshSessionsDir(join(s.home, ".dsh"), s.project);
   for (const [id, at] of [[SID, born + 1500], [SID2, born + 2500]]) { mkdirSync(join(dir, id), { recursive: true }); utimesSync(join(dir, id), at / 1000, at / 1000); }
   const r = s.cli(["revive", "--json"]);
   assert.equal(r.code, 0, r.err);
@@ -527,4 +548,91 @@ test("revive service: installs and enables a systemd user unit that runs revive 
   assert.match(off.out, /written but not enabled \(systemctl --user: Failed to connect to bus\)/);
   assert.equal(unitIsOurs(readFileSync(unitPath(s2.home), "utf8")), true);
   assert.equal(s.cli(["revive", "service", "start"]).code, 2);
+});
+
+// ---- #992 review ----
+
+/** DSH session folders for the project, each born at its time. */
+function dshSessions(s, rows, dshHome = join(s.home, ".dsh")) {
+  const dir = dshSessionsDir(dshHome, s.project);
+  for (const [id, at] of rows) { mkdirSync(join(dir, id), { recursive: true }); utimesSync(join(dir, id), at / 1000, at / 1000); }
+}
+const sessionLabels = (s) => s.calls().filter((c) => c[0] === "label" && c[2]?.startsWith("agent.session=")).map((c) => [c[1], c[2].slice("agent.session=".length)]);
+
+test("a session from outside the ledger, born later and written last in the bot's folder, is never recorded as the bot's; the bot's own first one is", (t) => {
+  const born = Date.now() - 3_600_000;
+  const s = world(t, { file: team({ main: { agent: "dsh-tui" } }), terminals: (p) => [pane("t5", { bot: ID.main, cwd: p, created: born, argv: ["dsh-tui"] })] });
+  dshSessions(s, [[SID, born + 5000], [SID2, born + 600_000]]);
+  const r = s.cli(["revive", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(sessionLabels(s), [["t5", SID]]);
+  assert.ok(hasSeq(wordsOf(runsOf(s)[0]), ["--resume", SID]), runsOf(s)[0].join(" "));
+});
+
+test("only a later session from outside the ledger in the folder: nothing is recorded and the bot comes back on a new conversation", (t) => {
+  const born = Date.now() - 3_600_000;
+  const s = world(t, { file: team({ main: { agent: "dsh-tui" } }), terminals: (p) => [pane("t5", { bot: ID.main, cwd: p, created: born, argv: ["dsh-tui"] })] });
+  dshSessions(s, [[SID2, born + 600_000]]);
+  const r = s.cli(["revive", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(sessionLabels(s), []);
+  for (const run of runsOf(s)) assert.ok(!wordsOf(run).includes(SID2) && !wordsOf(run).includes("--resume") && !wordsOf(run).includes("-c"), run.join(" "));
+  assert.deepEqual(r.json().projects[0].results.map((x) => [x.name, x.outcome]), [["Genie", "fresh"]]);
+});
+
+test("an hc pane started by hand on that agent in the folder, in no ledger, is a rival: started near the bot's pane, no session is recorded", (t) => {
+  const born = Date.now() - 3_600_000;
+  const s = world(t, { file: team({ main: { agent: "dsh-tui" } }),
+    terminals: (p) => [pane("t5", { bot: ID.main, cwd: p, created: born, argv: ["dsh-tui"] }),
+      pane("t7", { cwd: p, created: born - 30_000, front: ["dsh-tui"], argv: ["zsh"] })] });
+  dshSessions(s, [[SID, born + 5000]]);
+  const r = s.cli(["revive", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(sessionLabels(s), [], "the session may be the hand-started pane's");
+  for (const run of runsOf(s)) assert.ok(!wordsOf(run).includes(SID), run.join(" "));
+  assert.deepEqual(r.json().projects[0].results.map((x) => [x.name, x.outcome]), [["Genie", "fresh"]]);
+});
+
+test("a recorded session is never replaced: a pane that holds an agent.session label keeps it whatever is found on disk later", (t) => {
+  const born = Date.now() - 3_600_000;
+  const s = world(t, { file: team({ main: { agent: "dsh-tui" } }),
+    terminals: (p) => [pane("t5", { bot: ID.main, cwd: p, created: born, argv: ["dsh-tui"], labels: { "agent.session": SID3 } })] });
+  dshSessions(s, [[SID, born + 5000]]);
+  const r = s.cli(["revive", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(sessionLabels(s).filter(([terminal]) => terminal === "t5"), []);
+  assert.ok(hasSeq(wordsOf(runsOf(s)[0]), ["--resume", SID3]), runsOf(s)[0].join(" "));
+});
+
+test("DSH's sessions are read under $DSH_HOME when it is set", (t) => {
+  const born = Date.now() - 3_600_000;
+  const s = world(t, { file: team({ main: { agent: "dsh-tui" } }), terminals: (p) => [pane("t5", { bot: ID.main, cwd: p, created: born, argv: ["dsh-tui"] })] });
+  const dshHome = join(s.root, "dsh-home");
+  dshSessions(s, [[SID, born + 5000]], dshHome);
+  dshSessions(s, [[SID2, born + 6000]]); // ~/.dsh is not DSH's home here
+  const r = s.cli(["revive", "--json"], { env: { DSH_HOME: dshHome } });
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(sessionLabels(s), [["t5", SID]]);
+});
+
+test("a detached bot stays down: revive never brings it back, at a bare shell or with its pane gone, and --boot neither", (t) => {
+  const s = world(t, { terminals: (p) => [pane("t5", { bot: ID.main, cwd: p, front: ["claude"] }), pane("t6", { bot: ID.cap, cwd: p })],
+    attach: () => [{ bot: ID.main, terminal: "t5", created_ms: 1 }, { bot: ID.cap, terminal: "t6", created_ms: 1 }, { bot: ID.dev, terminal: "t44", created_ms: 9 },
+      { event: "detach", bot: ID.cap, terminal: "t6", created_ms: 1, by: "detach", at: "2026-11-01T11:00:00.000Z" },
+      { event: "detach", bot: ID.dev, terminal: "t44", created_ms: 9, by: "detach", at: "2026-11-01T11:00:00.000Z" }] });
+  assert.deepEqual(s.attachRows().map((x) => x.event), ["attach", "attach", "attach", "detach", "detach"], "the ledger reads whole");
+  for (const args of [["revive", "--json"], ["revive", "--boot", "--json"]]) {
+    const r = s.cli(args, { env: { AUTOMAGIK_HERDR_BOOT_MS: String(Date.parse("2026-11-01T10:30:00.000Z")) } });
+    assert.equal(r.code, 0, r.err);
+    assert.deepEqual(changes(s), [], args.join(" "));
+  }
+});
+
+test("revive --boot prints counts only: no folder and no bot name reaches the user journal", (t) => {
+  const s = world(t, { terminals: (p) => [pane("t5", { bot: ID.main, cwd: p, labels: { "agent.session": SID } })] });
+  const r = s.cli(["revive", "--boot"], { env: { AUTOMAGIK_HERDR_BOOT_MS: String(Date.now() - 60_000) } });
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /^revive: 1 resumed, 0 on a new conversation, 0 not back, 0 left alone, in 1 project;/);
+  for (const text of [r.out, r.err]) for (const word of [s.project, s.home, s.root, "Genie", SID]) assert.ok(!text.includes(word), text);
+  assert.equal(s.lastReport().projects[0].project, s.project, "the kept report still names the project");
 });

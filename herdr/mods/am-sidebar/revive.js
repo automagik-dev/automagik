@@ -31,10 +31,14 @@ export const discoversSession = (agentKey) => DISCOVERED.includes(agentKey);
 
 /**
  * DSH keeps a folder's sessions in `<dsh home>/sessions/--<folder, "/" as "-">--/`, one folder
- * per session named by its id (`<uuid>`, or `session-<uuid>` in older ones).
+ * per session named by its id (`<uuid>`, or `session-<uuid>` in older ones). `dshHome`: DSH's
+ * own home ($DSH_HOME, else ~/.dsh: dshHomeOf).
  */
-export const dshSessionsDir = (home, cwd) =>
-  `${String(home).replace(/\/+$/, "")}/.dsh/sessions/--${String(cwd).replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
+export const dshSessionsDir = (dshHome, cwd) =>
+  `${String(dshHome).replace(/\/+$/, "")}/sessions/--${String(cwd).replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
+/** DSH's home: $DSH_HOME when it is an absolute path, else `<home>/.dsh`. */
+export const dshHomeOf = (home, env = {}) => (typeof env.DSH_HOME === "string" && env.DSH_HOME.startsWith("/") ? env.DSH_HOME
+  : `${String(home).replace(/\/+$/, "")}/.dsh`);
 
 /** The session id a DSH session folder's name holds, or null. */
 export function dshSessionOf(name) {
@@ -70,29 +74,29 @@ export function agyCandidates(historyText, folders) {
 
 /** How far before a pane's created_ms its session may be stamped (clocks, a slow stat). */
 export const BORN_SLACK_MS = 2000;
-/** With another launch of that agent in the folder: how soon after its start a pane's first session must be born. */
+/** How soon after its start a pane's own session must be born: its briefing is its first prompt. */
 export const FIRST_SESSION_MS = 120_000;
 
 /**
  * The session a pane started at `createdMs` runs, from what its agent left on disk, or null:
- * right or nothing, since a wrong one would resume another bot's conversation (#328).
- * `candidates`: that agent's sessions in the pane's folder, [{ id, born, touched }] (ms);
- * `claimed`: the ids another terminal's label or ledger row holds; `rivals`: the other launches
- * of that agent in that folder not known to have ended before this one, [{ created_ms }].
- * Only a session born after the pane counts (one it resumed is known already). Alone in the
- * folder, the pane's is the one written last (a new conversation started inside it counts).
- * Beside a rival, only the first one born, within FIRST_SESSION_MS of the start, and only when
- * no rival started between FIRST_SESSION_MS before the pane and that birth.
+ * right or nothing, since a wrong one would resume another's conversation (#328). Anyone can
+ * leave a session in that folder with no pane this pack knows (a person's own terminal, DSH
+ * Desktop), so only the pane's first conversation is ever taken, and only when nothing else
+ * could be it. `candidates`: that agent's sessions in the pane's folder, [{ id, born }] (ms);
+ * `claimed`: the ids another terminal's label or ledger row holds; `rivals`: the other panes and
+ * launches of that agent in that folder (hc's live panes, and the ledger's launches not known to
+ * have ended before this one), [{ created_ms }].
+ * The pick: the one session born between the pane's start and FIRST_SESSION_MS after it. Two
+ * born then, none, or a rival that started between FIRST_SESSION_MS before the pane and that
+ * birth (or at a time not known): null. A session born later (a new conversation started inside
+ * the pane, or anyone's) is never taken.
  */
 export function pickSession({ createdMs, candidates = [], claimed = new Set(), rivals = [] }) {
   if (!Number.isSafeInteger(createdMs)) return null;
-  const mine = candidates
-    .filter((c) => typeof c?.id === "string" && UUID.test(c.id) && !claimed.has(c.id) && Number.isFinite(c.born) && c.born >= createdMs - BORN_SLACK_MS)
-    .sort((a, b) => a.born - b.born);
-  if (!mine.length) return null;
-  if (!rivals.length) return [...mine].sort((a, b) => (b.touched ?? b.born) - (a.touched ?? a.born))[0].id;
+  const mine = candidates.filter((c) => typeof c?.id === "string" && UUID.test(c.id) && !claimed.has(c.id) && Number.isFinite(c.born)
+    && c.born >= createdMs - BORN_SLACK_MS && c.born <= createdMs + FIRST_SESSION_MS);
+  if (mine.length !== 1) return null;
   const first = mine[0];
-  if (first.born - createdMs > FIRST_SESSION_MS) return null;
   const near = rivals.some((r) => !Number.isSafeInteger(r?.created_ms)
     || (r.created_ms >= createdMs - FIRST_SESSION_MS && r.created_ms <= first.born + BORN_SLACK_MS));
   return near ? null : first.id;
@@ -190,6 +194,16 @@ export function reviveOrder(targets, { leadOf = () => null, isMain = () => false
 
 /** The command that brings `botId` back by hand. No session id: restart finds it itself. */
 export const byHandCommand = (botId, project) => `automagik-herdr restart ${botId} --project ${project} --tree`;
+/** How a bot is kept down across restarts of the computer: said in every report. */
+export const KEEP_DOWN = "To keep a bot down across restarts of this computer: automagik-herdr detach <bot>.";
+
+/** The boot pass's own line (its output goes to the user journal): counts only, never a path or a name. */
+export function countsLine(projects) {
+  const all = projects.flatMap((p) => p.results ?? []);
+  const n = (o) => all.filter((r) => r.outcome === o).length;
+  return `revive: ${n("resumed")} resumed, ${n("fresh")} on a new conversation, ${n("failed")} not back, ${n("skipped")} left alone, in ${projects.length} `
+    + `project${projects.length === 1 ? "" : "s"}; the report is in the app home, automagik-herdr/revive-last.json.`;
+}
 
 const list = (items) => items.join("; ");
 
@@ -215,6 +229,7 @@ export function reportLine(project, results) {
     parts.push(`Not back: ${list(failed.map((r) => `${r.name}, ${r.why ?? "no reason given"}; by hand: ${byHandCommand(r.bot, project)}`))}.`);
   }
   if (skipped.length) parts.push(`Left alone: ${list(skipped.map((r) => `${r.name}, ${r.why}`))}.`);
+  parts.push(KEEP_DOWN);
   return parts.join(" ").replace(/\s*\n\s*/g, " ");
 }
 
@@ -242,7 +257,9 @@ export function unitText({ runner, env = {}, wait = SERVICE_WAIT_S }) {
   return [UNIT_MARK, "[Unit]", "Description=Automagik Herdr: bring the bots back after a restart", "",
     "[Service]", "Type=oneshot", ...vars,
     `ExecStart=${unitWord(runner)} revive --boot --wait ${wait}`,
-    `TimeoutStartSec=${wait + 1800}`, "", "[Install]", "WantedBy=default.target", ""].join("\n");
+    // No start timeout: the pass bounds its own waits (herdr-core, each bot's restart), and
+    // systemd ending it part way would leave no report and no stamp.
+    "TimeoutStartSec=infinity", "", "[Install]", "WantedBy=default.target", ""].join("\n");
 }
 
 /** Whether `text` (a unit file's) is one this pack wrote. */

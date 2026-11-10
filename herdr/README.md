@@ -668,18 +668,30 @@ back:
 - A resume that finds nothing is tried once more as a new conversation, and the report says so.
 - A pane that is gone whole comes back in the folder its last seat row names, in the project's
   space; its old tab is not on record.
+- A bot whose agent was quit, its pane left at a shell, comes back too: revive cannot tell that
+  from a restart of the computer. To keep a bot down across restarts, detach it
+  (`automagik-herdr detach <bot>`): a detached bot is never brought back. Every report says so.
 
 Session ids. Claude gets its id from Herdr at launch. dsh-TUI and Antigravity take none at
 launch, so the pack reads the id from what each leaves on disk (DSH's session folders for the
 pane's folder, Antigravity's prompt history: only its time, folder and conversation id) and
 records it as it does Claude's: a session row in the workers ledger and the pane's
-`agent.session` label. It records one only when it can be told from every other pane's: two
-panes of one agent started within two minutes of each other in one folder get none, and come
-back on a new conversation, which the report says.
+`agent.session` label. Anyone can leave a session in that folder with no pane the pack knows (a
+terminal of your own, DSH Desktop), so the pack takes only a pane's first conversation: the one
+session born within two minutes after the pane started. It records none, and the bot comes back
+on a new conversation, which the report says, when two sessions were born then, when none was,
+or when another pane of that agent in that folder (any hc pane, whoever started it, and every
+launch the workers ledger names) started within two minutes before the pane or before that
+session. A session born later is never taken, and a recorded id is never replaced. What stays
+unknowable: a session someone started outside hc in that folder inside those two minutes, when
+the pane's own agent left none. A conversation started later inside the pane is not followed:
+the bot resumes its first one. DSH's home is `$DSH_HOME`, else `~/.dsh`.
 
 The login service. `install.sh --revive` (or a yes when it asks; `--yes` never installs it)
 runs `automagik-herdr revive service install`: on Linux a systemd user unit,
 `~/.config/systemd/user/automagik-herdr-revive.service`, enabled and never started on the spot.
+The unit has no start timeout (the pass bounds its own waits), and what the pass prints, which
+the user journal keeps, is counts only: no folder, no bot name.
 At login it runs `automagik-herdr revive --boot --wait 600`: it waits for herdr-core, runs once
 per boot, and also takes the bots whose ended pane another command swept since the boot.
 `loginctl enable-linger` makes it run at boot with nobody logged in.

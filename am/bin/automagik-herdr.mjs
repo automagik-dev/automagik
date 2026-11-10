@@ -40,7 +40,7 @@ import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, 
   workLeft, writesWorktree } from "../workers.js";
 import { SESSION_MASK, carriedLabels, maskSession, commandArgv, continueRefusal, doomedHelpers, helperArgs, helperPlan, launchChange, ledgerSession, maskedArgv,
   isPaneIdle, pendingDialog, paneCommand, planText as restartText, restartAnswer, restartPlan, sharedFresh, claudeSlug, paneSession, restartRefusal, sameSessions, sessionFor, sessionId, sharedFolders } from "../restart.js";
-import { SERVICE_WAIT_S, UNIT_NAME, agyCandidates, agyHistoryPath, byHandCommand, discoversSession, dshSessionOf, dshSessionsDir, isBareShell, ledgerRivals,
+import { SERVICE_WAIT_S, UNIT_NAME, agyCandidates, agyHistoryPath, countsLine, discoversSession, dshHomeOf, dshSessionOf, dshSessionsDir, isBareShell, ledgerRivals,
   pickSession, reportLine, reviveOrder, reviveTargets, sameBoot, sweptSince, unitIsOurs, unitPath, unitText } from "../revive.js";
 import { autoStatus, readAuto, binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, managedPack, readMarker, relinkCli, rollback as rollbackPack, writeAuto, writeMarker } from "../update.mjs";
 import { NO_UPDATE_ENV, PACK_NAME, POCKET_LINK, heldModLine, updatesOff } from "../release.js";
@@ -1237,7 +1237,9 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 and touches nothing. --boot is the login service's pass: once
                                 per boot, it also takes the bots whose ended pane another
                                 command swept since the boot. --wait waits that long for
-                                herdr-core first. This computer's panes only.
+                                herdr-core first, and prints counts only. This computer's
+                                panes only. A bot whose agent was quit comes back too: to
+                                keep one down across restarts, detach it (detach <bot>).
   revive service install | uninstall | status
                                 the login service that runs revive --boot (Linux: a systemd
                                 user unit, written and enabled, never started on the spot;
@@ -3448,14 +3450,23 @@ function lastSeat(rows, botId, key) {
   return null;
 }
 
-/** A session folder's times: born (the folder's own, never after its first write) and touched (its newest file's). */
-function sessionTimes(dir) {
+/** When a session folder was born: its own birth or first write, whichever is earlier (ms), or null. */
+function sessionBorn(dir) {
   const st = statSync(dir);
   if (!st.isDirectory()) return null;
   const born = Math.min(...[st.birthtimeMs, st.mtimeMs].filter((x) => Number.isFinite(x) && x > 0));
-  let touched = st.mtimeMs;
-  for (const name of readdirSync(dir)) { try { touched = Math.max(touched, statSync(join(dir, name)).mtimeMs); } catch { /* gone meanwhile */ } }
-  return Number.isFinite(born) ? { born, touched } : null;
+  return Number.isFinite(born) ? born : null;
+}
+
+/** Whether either agent has left sessions under this home: with none, nothing is looked up and hc is asked nothing more. */
+const sessionsOnDisk = () => existsSync(join(dshHomeOf(home(), process.env), "sessions")) || existsSync(agyHistoryPath(home()));
+
+/** hc's live panes on this computer, as hc get answers them ([] when hc can't say): discoveredSession's rivals come from them. */
+async function livePanes() {
+  try {
+    const rows = rowsOf(await hcJson(["ls"])).filter((r) => local(r?.address) && r.state === "live");
+    return (await Promise.all(rows.map((r) => hcGet(r.address).catch(() => null)))).filter(Boolean);
+  } catch { return null; }
 }
 
 /**
@@ -3466,8 +3477,9 @@ function sessionTimes(dir) {
  * ledger's rows (the other launches there, and the ids already tied to one). Null when there
  * is none, or it can't be told from another pane's. The id is held: never printed.
  */
-function discoveredSession(agentKey, get, ledger) {
-  if (!discoversSession(agentKey) || !Number.isSafeInteger(get?.created_ms)) return null;
+function discoveredSession(agentKey, get, ledger, panes) {
+  // `panes` (livePanes): null when hc couldn't list them, and then nothing is picked.
+  if (!discoversSession(agentKey) || !Number.isSafeInteger(get?.created_ms) || !Array.isArray(panes)) return null;
   const cwd = get.cwd ?? get.foreground?.cwd ?? null;
   if (typeof cwd !== "string" || !cwd.startsWith("/")) return null;
   const folders = [...new Set([cwd, realDir(cwd)].filter(Boolean))];
@@ -3475,49 +3487,56 @@ function discoveredSession(agentKey, get, ledger) {
   try {
     if (agentKey === "dsh-tui") {
       for (const folder of folders) {
-        const dir = dshSessionsDir(home(), folder);
+        const dir = dshSessionsDir(dshHomeOf(home(), process.env), folder);
         let names = [];
         try { names = readdirSync(dir); } catch { names = []; }
         for (const name of names) {
           const id = dshSessionOf(name);
-          let times = null;
-          try { times = id ? sessionTimes(join(dir, name)) : null; } catch { times = null; }
-          if (times) candidates.push({ id, ...times });
+          let born = null;
+          try { born = id ? sessionBorn(join(dir, name)) : null; } catch { born = null; }
+          if (born !== null) candidates.push({ id, born });
         }
       }
     } else candidates = agyCandidates(readText(agyHistoryPath(home())) ?? "", folders);
   } catch { return null; }
   const { rivals, claimed } = ledgerRivals(ledger, { terminal: get.address, createdMs: get.created_ms, agentKey, folders });
+  // Every other live pane on that agent in the folder is a rival too, whoever started it (as
+  // sharersOf counts them): by the program in front, or its launch command (a bare shell hc kept).
+  const agents = agentTable();
+  const inFolder = (d) => typeof d === "string" && d !== "" && (folders.includes(d) || folders.includes(realDir(d) ?? d));
+  for (const p of panes) {
+    if (p.address === get.address || !(inFolder(p.cwd) || inFolder(p.foreground?.cwd))) continue;
+    if (agentKeyOfArgv(unwrapKeep(p.foreground?.argv), agents) !== agentKey && agentKeyOfArgv(paneCommand(p)?.argv, agents) !== agentKey) continue;
+    rivals.push({ terminal: p.address, created_ms: Number.isSafeInteger(p.created_ms) ? p.created_ms : null });
+    for (const k of [SESSION_LABEL, "revive.session"]) if (typeof p.labels?.[k] === "string" && p.labels[k]) claimed.add(p.labels[k]);
+  }
   const id = sessionFor(agentKey, pickSession({ createdMs: get.created_ms, candidates, claimed, rivals }));
   return id ? holdId(id) : null;
 }
 
 /**
- * #939: ties each live dsh-TUI or Antigravity pane of a bot or a worker to the session it runs
- * (discoveredSession), as the briefing hook does for Claude: a session row in the workers
- * ledger and the pane's agent.session label, once per session. A pane whose label an earlier
- * look set is looked at again (a new conversation started inside it). Never fails: what it
- * couldn't do is left for the next run. Resolves how many it recorded.
+ * #939: ties each live dsh-TUI or Antigravity pane of a bot or a worker to the session it started
+ * on (discoveredSession), as the briefing hook does for Claude: a session row in the workers
+ * ledger and the pane's agent.session label. Once: a pane that has a label, or a session row,
+ * is never looked at again, so nothing found later can replace what it holds. Never fails: what
+ * it couldn't do is left for the next run. Resolves how many it recorded.
  */
 async function recordSessions() {
   let recorded = 0;
-  // Nothing to read: neither agent has left a session under this home.
-  if (!existsSync(join(home(), ".dsh", "sessions")) && !existsSync(agyHistoryPath(home()))) return recorded;
+  if (!sessionsOnDisk()) return recorded;
   try {
     const agents = agentTable();
     const ledger = workerLedgerRows();
-    const rows = rowsOf(await hcJson(["ls"])).filter((r) => local(r?.address) && r.state === "live");
-    const gets = (await Promise.all(rows.map((r) => hcGet(r.address).catch(() => null)))).filter(Boolean);
-    for (const get of gets) {
+    const gets = await livePanes();
+    for (const get of gets ?? []) {
       if (!get.labels?.[BOT_LABEL] && !get.labels?.[WORKER_OF_LABEL]) continue;
       const start = ledger.findLast((r) => r?.event === "start" && r.terminal === get.address && r.created_ms === get.created_ms) ?? null;
       // Its agent: the program in front, else its start row's, else its launch command's (a bare shell hc kept).
       const agentKey = agentKeyOfArgv(unwrapKeep(get.foreground?.argv), agents) ?? start?.agent ?? agentKeyOfArgv(paneCommand(get)?.argv, agents) ?? null;
       if (!discoversSession(agentKey)) continue;
-      const has = sessionFor(agentKey, get.labels?.[SESSION_LABEL]);
-      if (has) holdId(has);
-      const found = discoveredSession(agentKey, { ...get, cwd: start?.worktree ?? get.cwd }, ledger);
-      if (!found || found === has) continue;
+      if (get.labels?.[SESSION_LABEL] || get.labels?.["revive.session"] || ledgerSession(ledger, get.address, agentKey, get.created_ms)) continue;
+      const found = discoveredSession(agentKey, { ...get, cwd: start?.worktree ?? get.cwd }, ledger, gets);
+      if (!found) continue;
       const unlogged = appendLedger(sessionRow({ terminal: get.address, session: found, transcript: null, agent: agentKey,
         core: await rowCore(), createdMs: get.created_ms }));
       if (unlogged) continue;
@@ -4239,13 +4258,15 @@ async function cmdRestart(opts, [ref]) {
   // The session to resume: the old pane's agent.session label (or a reviver's revive.session),
   // else the ledger's last session row for that terminal (the Claude hook writes them), for
   // every agent that resumes by id.
+  // hc's live panes, asked only when a session may have to be found on disk (#939): its rivals.
+  const panesNow = sessionsOnDisk() && (discoversSession(runningAgent ?? bot.agent) || helpers.length) ? await livePanes() : [];
   const knownSession = (get, agentKey) => {
     const id = paneSession(get, agentKey);
     if (id) return { session: id, transcript: null };
     const row = resumesById(agentKey) ? ledgerSession(ledger, get.address, agentKey, get.created_ms) : null;
     if (row) return row;
     // #939: an agent that takes no id at launch (dsh-TUI, Antigravity) left its session on disk.
-    const found = discoveredSession(agentKey, get, ledger);
+    const found = discoveredSession(agentKey, get, ledger, panesNow);
     return found ? { session: found, transcript: null } : null;
   };
   // #939, revive only: the bot's pane is gone whole (a reboot took it). Its last seat row stands
@@ -6150,10 +6171,12 @@ async function cmdRevive(opts, [verb, sub, ...more]) {
     mkdirSync(dirname(reviveReportPath()), { recursive: true });
     writeFileSync(reviveReportPath(), unprinted(`${JSON.stringify({ at: new Date().toISOString(), boot_ms: bootMs, projects: out }, null, 2)}\n`), { mode: 0o600 });
     if (opts.boot) writeFileSync(reviveStampPath(), `${JSON.stringify({ boot_ms: bootMs, at: new Date().toISOString() })}\n`, { mode: 0o600 });
-  } catch (e) { report([`revive: its record wasn't written (${e?.message ?? e}).`]); }
+  } catch (e) { report([`revive: its record wasn't written (${opts.boot ? e?.code ?? "an error" : e?.message ?? e}).`]); }
   if (failed) exitAfter.code = 1;
   if (opts.json) return { ran: true, boot_ms: bootMs, projects: out };
   if (!out.length) return "Every bot the ledger names runs its agent: nothing to bring back.";
+  // The login service's output goes to the user journal: counts only, no folder, no name.
+  if (opts.boot) return countsLine(out);
   return out.map((p) => `${p.report}\n  ${p.sent ? `Sent to the main bot (${p.sent}).` : `Not sent: ${p.unsent}. It is kept in ${reviveReportPath()}.`}`).join("\n");
 }
 
