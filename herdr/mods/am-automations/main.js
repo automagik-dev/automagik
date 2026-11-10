@@ -61,6 +61,7 @@ export default class Automations extends View {
     this.known = null; // run ids already seen by this copy, to toast only new failures
     this.missing = null; // the repair command while the scheduler is not installed, else null
     this.copied = false;
+    this.installing = false; // while the Install button's command runs
     this.handle = cx.focus_handle();
     this.bin = null; this.ours = false; this.watching = false;
     cx.spawn((cx) => this.refresh(cx));
@@ -84,9 +85,10 @@ export default class Automations extends View {
     if (await answers("herdr-automations")) return "herdr-automations";
     const local = `${home()}/.local/bin/herdr-automations`;
     if (await answers(local)) return local;
-    let machine = "";
+    let machine = "", os = "";
     try { machine = (await exec("uname", ["-m"])).stdout.trim(); } catch {}
-    this.missing = repairCommand(machine);
+    try { os = (await exec("uname", ["-s"])).stdout.trim(); } catch {}
+    this.missing = repairCommand(machine, os);
     return null;
   }
 
@@ -152,6 +154,24 @@ export default class Automations extends View {
     if (!run_.seen && FINISHED.has(run_.status)) this.act(cx, ["seen", run_.run_id]);
     if (run_.terminal && this.live(run_.terminal)) run("pane.focus", { terminal: run_.terminal });
     else { this.view = { kind: "detail", name: run_.automation }; cx.notify(); }
+  }
+
+  // The repair action (#220): runs the shown command, and only from a click on Install. It puts the
+  // hash-checked scheduler in ~/.local/bin and starts no service: once the binary answers, the
+  // "Scheduler stopped" banner offers Start. A failure keeps the block and says why.
+  installScheduler(cx) {
+    if (this.installing || !this.missing) return;
+    const command = this.missing;
+    this.installing = true; this.note = null;
+    cx.notify();
+    cx.spawn(async (cx) => {
+      try {
+        const r = await exec("sh", ["-c", command]);
+        if (r.code !== 0) this.note = `The scheduler was not installed: ${(r.stderr || r.stdout || `exit ${r.code}`).trim().split("\n").pop()}`;
+      } catch (e) { this.note = `The scheduler was not installed: ${String(e.message ?? e)}`; }
+      this.installing = false;
+      await this.refresh(cx);
+    });
   }
 
   // hc's templates, or null when hc gave no list: a failure is never kept as an empty list, so
@@ -305,6 +325,7 @@ export default class Automations extends View {
       .child(this.header(t, cx))
       .when(Boolean(this.missing), (el) => el.child(this.repair(t, cx)))
       .when(Boolean(this.list && !this.list.scheduler), (el) => el.child(this.banner(t, cx)))
+      .when(this.list?.backend === "herdr" || this.list?.backend === "", (el) => el.child(this.backendNotice(t)))
       .when(Boolean(this.error || this.note), (el) => el.child(div().px(14).py(6).text_size(12).text_color(t.ansi1).child(this.error || this.note)))
       .child(div().id("automations-body").flex_1().min_h(0).overflow_y_scrollbar().child(body));
   }
@@ -352,7 +373,15 @@ export default class Automations extends View {
       .child(this.button("start", "Start", t, (cx) => this.act(cx, ["service", "install"]), { solid: true }));
   }
 
-  // One line for what is missing, the exact command, and Copy. Nothing here runs it.
+  // Readiness (#220): under `backend: herdr` (the scheduler's default: ls --json says "" while no
+  // automations.yaml exists) a run opens in the Herdr TUI's server, never in this app. The panel
+  // never edits automations.yaml, so it names the file and the line to set.
+  backendNotice(t) {
+    return div().id("backend-notice").px(14).py(8).text_size(12).bg(t.blocked + "22").border_b(1).border_color(t.border)
+      .child(`Backend is herdr: runs open in the Herdr TUI, not in this app. Set "backend: hc" in ${tilde(this.list.config) || "automations.yaml"}.`);
+  }
+
+  // One line for what is missing, the exact command, Copy and Install. Only a click on Install runs it.
   repair(t, cx) {
     return v_flex().id("scheduler-missing").px(14).py(8).gap(6).bg(t.blocked + "22").border_b(1).border_color(t.border)
       .child(div().text_size(12).child("Missing the scheduler: herdr-automations is not on PATH or in ~/.local/bin."))
@@ -361,8 +390,9 @@ export default class Automations extends View {
           .text_size(11).text_color(t.muted).child(this.missing))
         .child(this.button("copy-repair", this.copied ? "Copied" : "Copy", t, (cx) => {
           cx.write_to_clipboard(this.missing); this.copied = true; cx.notify();
-        })))
-      .child(div().text_size(11).text_color(t.dim).child("Run it in a terminal; this panel finds it within 30 s."));
+        }))
+        .child(this.button("install-repair", this.installing ? "Installing…" : "Install", t, (cx) => this.installScheduler(cx), { solid: true })))
+      .child(div().text_size(11).text_color(t.dim).child("Install runs it here; or run it in a terminal, and this panel finds it within 30 s."));
   }
 
   dot(a, t) {

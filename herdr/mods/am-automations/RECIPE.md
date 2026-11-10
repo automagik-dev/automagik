@@ -3,13 +3,15 @@
 Scheduled agent prompts, as a side panel: a prompt, a cron line and a repo — every weekday at 09:00
 an agent starts in a fresh worktree and works. The panel is where you find what ran while you were
 away, start one now, pause them all, or write a new one with its next runs previewed. It needs
-the `herdr-automations` scheduler, a separate program the pack does not install.
+the `herdr-automations` scheduler, a separate program: `install.sh` installs the build this mod
+pins (#220); the pack's own updater does not.
 
 **It ships switched off**, footer tab included (#220): a fresh install puts it in
 `<app home>/mods-disabled/am-automations`, where Herdr does not load it. To turn it on, open the
 **Mods** panel, find *Automagik Automations* and switch it on; the footer's **Automations** tab then
 appears. Without the scheduler the panel says what is missing and shows the command that installs
-it (the pinned release, hash-checked, into `~/.local/bin`), with **Copy**; it never runs it. An
+it (the pinned release, hash-checked, into `~/.local/bin`), with **Copy** and **Install**; only a
+click on Install runs it. An
 install that already has the mod keeps its state through updates, on or off (`OFF_BY_DEFAULT` in
 `am-sidebar/release.js`; `am install herdr.am-automations` also switches it on).
 
@@ -24,8 +26,9 @@ pack.
 A card filling its block (`rounded(10)`, 1 px `border`, `background`), three parts top to bottom:
 a 42 px header — "Automations", "Active" / "All paused", a switch, and `+`; while the scheduler
 binary is missing, a `blocked`-tinted block with one line ("Missing the scheduler: herdr-automations
-is not on PATH or in ~/.local/bin."), the install command and **Copy**; a `blocked`-tinted banner
-with a solid **Start** button while no scheduler holds the lock; and a scrolling body in one of
+is not on PATH or in ~/.local/bin."), the install command, **Copy** and a solid **Install**; a
+`blocked`-tinted banner with a solid **Start** button while no scheduler holds the lock; a
+`blocked`-tinted line while the backend is `herdr`; and a scrolling body in one of
 three views:
 
 - **List**: `INBOX` (finished runs not yet seen, with "Mark all read" and "Nothing new."), then
@@ -51,12 +54,18 @@ three views:
 
 - **Finding the scheduler**: `herdr-automations version` on PATH, then
   `~/.local/bin/herdr-automations`; the answer also says whether it is ours (`-am.` in the version).
-  Neither answers: the repair block shows `repairCommand()` for this Mac's `uname -m`
-  (`SCHEDULER` in `scheduler.js` pins our `herdr-automations-v<version>` release and its darwin
-  sha256s from its `checksums.txt`, checked by `herdr/scripts/scheduler-pin.mjs`), and every 30 s
-  refresh looks again, so a scheduler installed meanwhile is picked up. Copy writes
-  the command to the clipboard; the panel never runs it and never installs a login service (only
-  **Start**, pressed by you, runs `service install`).
+  Neither answers: the repair block shows `repairCommand()` for this machine's `uname -m` and
+  `uname -s` (`SCHEDULER` in `scheduler.js` pins our `herdr-automations-v<version>` release and its
+  four sha256s, two darwin and two Linux, from its `checksums.txt`, checked by
+  `herdr/scripts/scheduler-pin.mjs`; `install.sh` installs the same build from the same pins), and
+  every 30 s refresh looks again, so a scheduler installed meanwhile is picked up. Copy writes the
+  command to the clipboard; **Install** runs exactly that command (`sh -c`), once per click, and a
+  failure keeps the block and says why. Nothing runs without a click, and the panel never installs
+  a login service by itself (only **Start**, pressed by you, runs `service install`).
+- **Readiness**: `ls --json` answering is the check. No scheduler pid: the "Scheduler stopped"
+  banner with **Start**. `backend: herdr` (or none in the file): a line saying runs open in the
+  Herdr TUI, not in this app, naming the `automations.yaml` to set `backend: hc` in; the panel
+  never edits that file.
 - Every read and write goes through the CLI (`ls --json`, `history --json`, `put [--dry-run]`,
   `rm`, `seen`, `run --bg`, `pause|resume`, `service install`); the panel never edits
   `automations.yaml` or `history.jsonl` itself. Config and state folders are watched to know when to
@@ -112,16 +121,21 @@ three views:
 (DnzzL's MIT, verbatim). Herdr API: `exec`, `hc`, `home`, `theme`, `terminals`, `spaces`, `run`,
 `notify`, `pickFolder`, `watchFolder`, `knownAgents`; `InputState`, `TextareaState`.
 
-Programs: `herdr-automations` (the scheduler; installed separately as a login service), `hc`
-templates, `sh`, and the agents a run starts (`claude`, `codex`, `pi`).
+Programs: `herdr-automations` (the scheduler; `install.sh` installs it and, when you say yes, its
+login service), `hc` templates, `sh`, `uname`, and the agents a run starts (`claude`, `codex`,
+`pi`); **Install** runs the repair command's `curl`, `shasum` or `sha256sum`, `chmod` and `mv`.
 
 ## Watch out
 
 - **It runs programs**: `herdr-automations` on every action, `hc templates` for the form, and it
-  starts agents. It reaches no network and writes no file itself.
-- Without the scheduler binary the panel shows the repair block instead of the list. Shipping the
-  scheduler with the pack (an RFC 0012 part, installed by `am install`) comes later; until then a
-  new scheduler release means updating `SCHEDULER` (version and both sha256s) by hand.
+  starts agents. It reaches no network and writes no file itself, except when you click
+  **Install**: that one command downloads the pinned scheduler from this repository's release and
+  writes `~/.local/bin/herdr-automations` once its sha256 matches. `exec`'s 30 s limit applies to
+  it: on a slow link it fails and says so, and the copied command in a terminal has no limit.
+- Without the scheduler binary the panel shows the repair block instead of the list. `install.sh`
+  provisions it (#220); shipping it as an RFC 0012 part (installed by `am install` and the pack's
+  updater) comes later. A new scheduler release means updating `SCHEDULER` (version and all four
+  sha256s) by hand; `install.sh` reads them from the pack, so it needs no change.
 - `exec` has no stdin and a 30 s limit: both are worked around (shell printf, `--bg`), and a very
   slow `ls`/`history` would show as an error rather than a hang.
 - The fork means upstream changes arrive by hand; `LICENSE-upstream` and the NOTICE entry must stay.

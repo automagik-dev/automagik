@@ -56,6 +56,13 @@ test("the repair command: our pinned release for this Mac's arch, hash-checked, 
   assert.match(intel, /herdr-automations-v[^/]+\/herdr-automations_darwin_amd64 /);
   assert.ok(intel.includes(SCHEDULER.sha256.amd64));
   assert.doesNotMatch(arm + intel, /service install|launchctl|LaunchAgents/, "it installs the program, never a login service");
+  // A Linux Herdr gets the Linux build, checked with sha256sum (no shasum there).
+  const linux = repairCommand("x86_64", "Linux"), linuxArm = repairCommand("aarch64", "Linux");
+  assert.match(linux, /herdr-automations-v0\.12\.1-am\.1\/herdr-automations_linux_amd64 /);
+  assert.ok(linux.includes(`echo "${SCHEDULER.linux.amd64}  herdr-automations" | sha256sum -c && chmod 755`));
+  assert.match(linuxArm, /herdr-automations_linux_arm64 /);
+  assert.ok(linuxArm.includes(SCHEDULER.linux.arm64));
+  assert.equal(repairCommand("arm64", "Darwin"), arm, "a Mac is the default");
 });
 
 // The release the Integrator cuts carries the checksums; until they are pasted in, this fails loudly
@@ -66,7 +73,9 @@ test("the scheduler pin is a real release hash, never the PENDING-SHA256 placeho
   for (const arch of ["arm64", "amd64"]) {
     assert.notEqual(SCHEDULER.sha256[arch], "PENDING-SHA256", `${arch}: paste the release's checksums.txt sha256`);
     assert.match(SCHEDULER.sha256[arch], /^[0-9a-f]{64}$/, `${arch}: a sha256`);
+    assert.match(SCHEDULER.linux[arch], /^[0-9a-f]{64}$/, `linux ${arch}: a sha256`);
   }
+  assert.equal(new Set([...Object.values(SCHEDULER.sha256), ...Object.values(SCHEDULER.linux)]).size, 4, "four builds, four hashes");
 });
 
 test("no scheduler: one line says what is missing, the command is shown, Copy copies it, nothing runs it", async () => {
@@ -102,6 +111,81 @@ test("installed later: the next refresh finds it in ~/.local/bin and the repair 
   assert.ok(!after.has("scheduler-missing"));
   assert.ok(after.has("new"), "+ is back");
   assert.deepEqual(view.list.automations, []);
+});
+
+// The repair action (#220): Install runs the shown command, once, from a click only; the panel then
+// finds the scheduler without waiting for the 30 s refresh, and starts no service by itself.
+test("Install runs the shown command once; the panel then finds the scheduler and offers Start", async () => {
+  const local = `${state.home}/.local/bin/herdr-automations`;
+  let installed = false;
+  const shell = [];
+  state.exec = async (command, args) => {
+    if (command === "uname") return { code: 0, stdout: args[0] === "-s" ? "Linux\n" : "x86_64\n", stderr: "" };
+    if (command === "sh") { shell.push(args); installed = true; return { code: 0, stdout: "herdr-automations: OK\n", stderr: "" }; }
+    if (command !== local || !installed) return { code: 127, stdout: "", stderr: `cannot run ${command}: no such file` };
+    if (args[0] === "ls") return { code: 0, stdout: JSON.stringify({ automations: [], invalid: [], scheduler: 0, backend: "hc", paused: false }), stderr: "" };
+    if (args[0] === "history") return { code: 0, stdout: "[]", stderr: "" };
+    return { code: 0, stdout: "0.12.1-am.1\n", stderr: "" };
+  };
+  const { view, cx, draw } = await panel();
+  const n = draw();
+  assert.equal(textOf(n.get("repair-command")), repairCommand("x86_64", "Linux"), "this machine's own build");
+  assert.equal(textOf(n.get("install-repair")), "Install");
+  assert.deepEqual(shell, [], "nothing ran before the click");
+  n.get("install-repair").click({}, cx);
+  assert.equal(textOf(draw().get("install-repair")), "Installing…");
+  draw().get("install-repair").click({}, cx); // a second click while it runs starts nothing
+  await cx.settle();
+  assert.deepEqual(shell, [["-c", repairCommand("x86_64", "Linux")]], "exactly the shown command, once");
+  assert.equal(view.bin, local);
+  const after = draw();
+  assert.ok(!after.has("scheduler-missing"), "the repair block is gone");
+  assert.ok(after.has("start"), "the stopped scheduler's Start is offered");
+  assert.ok(!after.has("backend-notice"), "backend hc is ready");
+  assert.ok(!state.calls.some((c) => c.includes("service")), "the panel started no service by itself");
+});
+
+test("a failed Install keeps the repair block and says why", async () => {
+  state.exec = async (command) => {
+    if (command === "uname") return { code: 0, stdout: "arm64\n", stderr: "" };
+    if (command === "sh") return { code: 1, stdout: "", stderr: "curl: (22) The requested URL returned error: 404\nherdr-automations: FAILED\n" };
+    return { code: 127, stdout: "", stderr: "no such file" };
+  };
+  const { view, cx, draw } = await panel();
+  draw().get("install-repair").click({}, cx);
+  await cx.settle();
+  assert.equal(view.bin, null);
+  assert.equal(view.note, "The scheduler was not installed: herdr-automations: FAILED");
+  const n = draw();
+  assert.ok(n.has("scheduler-missing"));
+  assert.equal(textOf(n.get("install-repair")), "Install", "ready to try again");
+  assert.match(textOf(view.render(cx)), /The scheduler was not installed: herdr-automations: FAILED/);
+});
+
+// Readiness (#220): ls --json answers, but under backend herdr nothing would open in this app.
+test("backend herdr, or none named: the panel says runs open in the TUI and names the file; hc and auto say nothing", async () => {
+  const serve = (backend) => {
+    state.exec = async (command, args) => {
+      if (command !== "herdr-automations") return { code: 127, stdout: "", stderr: "no such file" };
+      if (args[0] === "ls") return { code: 0, stdout: JSON.stringify({ automations: [], invalid: [], scheduler: 7, backend, paused: false }), stderr: "" };
+      if (args[0] === "history") return { code: 0, stdout: "[]", stderr: "" };
+      return { code: 0, stdout: "0.12.1-am.1\n", stderr: "" };
+    };
+  };
+  serve("herdr");
+  const tui = await panel();
+  assert.equal(textOf(tui.draw().get("backend-notice")), 'Backend is herdr: runs open in the Herdr TUI, not in this app. Set "backend: hc" in automations.yaml.');
+  // With the config path ls --json reports (set here: the stub's folder watch never returns), the file is named.
+  tui.view.list.config = `${state.home}/.config/herdr/plugins/config/automations/automations.yaml`;
+  assert.equal(textOf(tui.draw().get("backend-notice")),
+    'Backend is herdr: runs open in the Herdr TUI, not in this app. Set "backend: hc" in ~/.config/herdr/plugins/config/automations/automations.yaml.');
+  // No automations.yaml yet: ls --json names no backend, and the scheduler's default is herdr.
+  serve("");
+  assert.ok((await panel()).draw().has("backend-notice"), "no backend named is herdr");
+  for (const backend of ["hc", "auto"]) {
+    serve(backend);
+    assert.ok(!(await panel()).draw().has("backend-notice"), backend);
+  }
 });
 
 test("on PATH: no repair line, and uname is never asked", async () => {
