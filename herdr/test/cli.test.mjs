@@ -767,7 +767,8 @@ test("Antigravity #812: create/edit set agyMode (auto clears), show, ls and doct
   assert.match(s.cli(["show", "Ag"]).out, /agy mode     auto/);
   const doctor = s.cli(["dsh-tui", "doctor", "--json"]);
   const row = doctor.json().checks.find((c) => c.check === `hc-proxy:${saved.id}`);
-  assert.match(row.detail, /Ag: agy mode auto; agy allow /);
+  assert.match(row.detail, /Ag: agy mode auto; agy trusted .*; agy allow /);
+  assert.match(row.detail, new RegExp(`agy trusted ${s.project};`), "the seat's own folder is named (#879)");
   assert.match(row.detail, /agy deny .*command\(git push --force\)/);
 });
 
@@ -883,6 +884,7 @@ test("Antigravity #823: --agy-allow/--agy-deny add rules, clear with one empty v
   const saved = s.bots().bots.find((b) => b.id === made.json().id);
   assert.deepEqual(saved.agyPermissions, { allow: ["command(npm publish)", "command(hc)"], deny: ["command(git stash)"] });
   const show = s.cli(["show", "Ag"]).out;
+  assert.match(show, new RegExp(`  agy trusted  ${s.project}`), "the seat trusts its project");
   assert.match(show, /agy allow .*command\(hc\)/);
   assert.match(show, /agy allow .*command\(npm publish\)/);
   assert.match(show, /agy deny .*command\(git stash\)/);
@@ -909,11 +911,107 @@ test("Antigravity #823: --agy-allow/--agy-deny add rules, clear with one empty v
   assert.ok(row.agyPermissions.allow.includes("command(npm publish)"));
   assert.ok(row.agyPermissions.allow.includes(`write_file(${s.project})`));
   for (const rule of AGY_FIXED_DENY) assert.ok(row.agyPermissions.deny.includes(rule));
+  // #879: the seat's own project folder, never its parent or the home; a worker's worktree is
+  // only known at launch, so the plan names it as such.
+  assert.deepEqual(row.agyPermissions.trustedWorkspaces, [s.project]);
+  for (const wrong of [dirname(s.project), s.home, "/"]) {
+    assert.equal(row.agyPermissions.trustedWorkspaces.includes(wrong), false, `never ${wrong}`);
+  }
+  assert.deepEqual(row.workerAgyPermissions.trustedWorkspaces, ["<worktree>"]);
+  const doctorText = s.cli(["dsh-tui", "doctor"]).out;
+  assert.match(doctorText, new RegExp(`agy trusted ${s.project}`));
+  assert.match(doctorText, /worker agy trusted <worktree>/);
   const sandbox = doctor.checks.find((c) => c.check === "agy-sandbox");
   assert.ok(sandbox, "a host-level sandbox row when a bot runs agy");
   assert.equal(sandbox.ok, true);
   if (process.platform !== "linux" && process.platform !== "darwin") assert.match(sandbox.detail, /isn't one agy's terminal sandbox is known on/);
   assert.equal(doctor.checks.filter((c) => c.check === "agy-sandbox").length, 1, "one host-level row, not one per bot");
+});
+
+test("Antigravity #884 M1: a reviewer seat and a review worker are never auto-trusted; writers list their folder", (t) => {
+  const s = scene(t);
+  const f = team();
+  f.bots[0].agent = "antigravity";
+  f.bots[0].rank = "reviewer";
+  f.bots[0].worker = { agent: "antigravity" };
+  f.bots[1].agent = "antigravity";
+  f.bots[1].rank = "dev";
+  f.bots[1].worker = { agent: "antigravity" };
+  s.seed(f);
+  const doctor = s.cli(["dsh-tui", "doctor", "--json"]).json();
+  const reviewer = doctor.checks.find((c) => c.check === `hc-proxy:${ID.main}`);
+  assert.deepEqual(reviewer.agyPermissions.trustedWorkspaces, [], "the reviewer seat trusts nothing");
+  assert.deepEqual(reviewer.workerAgyPermissions.trustedWorkspaces, [], "its review worker trusts nothing");
+  const text = s.cli(["dsh-tui", "doctor"]).out;
+  assert.match(text, /agy trusted -; agy allow /, "the reviewer seat prints no trusted folder");
+  assert.match(text, /worker agy trusted -; worker agy allow /, "the review worker prints none either");
+  // A writer seat and its writer worker: the project, and (at launch) its worktree.
+  const writer = doctor.checks.find((c) => c.check === `hc-proxy:${ID.cap}`);
+  assert.deepEqual(writer.agyPermissions.trustedWorkspaces, [s.project]);
+  assert.deepEqual(writer.workerAgyPermissions.trustedWorkspaces, ["<worktree>"]);
+  assert.match(text, new RegExp(`agy trusted ${s.project}; agy allow `));
+  assert.match(text, /worker agy trusted <worktree>; worker agy allow /);
+  // show carries the same effective rows as ls and doctor (botRow's JSON).
+  const show = s.cli(["show", "Genie", "--json"]).json();
+  assert.deepEqual(show.agyPermissions.trustedWorkspaces, []);
+  assert.deepEqual(show.workerAgyPermissions.trustedWorkspaces, []);
+  assert.match(s.cli(["show", "Genie"]).out, /agy trusted  -/);
+  const cap = s.cli(["show", "Captain", "--json"]).json();
+  assert.deepEqual(cap.agyPermissions.trustedWorkspaces, [s.project]);
+  assert.deepEqual(cap.workerAgyPermissions.trustedWorkspaces, ["<worktree>"]);
+  // #884 Low B: plain show names the worker default's trusted folder too: "-" for a review
+  // worker, the worktree placeholder for a writer's.
+  assert.match(s.cli(["show", "Genie"]).out, /worker agy trusted  -/);
+  assert.match(s.cli(["show", "Captain"]).out, /worker agy trusted  <worktree>/);
+  // Follow-up: the reviewer seat's own start writes no trustedWorkspaces key at all, so the
+  // person's saved trust list is never overwritten with an empty one.
+  const started = s.cli(["start", "Genie"]);
+  assert.equal(started.code, 0, started.err);
+  const seatFile = JSON.parse(readFileSync(agySettingsPath(s, ID.main), "utf8"));
+  assert.equal("trustedWorkspaces" in seatFile, false, "the reviewer seat's file leaves the key out");
+  assert.equal(seatFile.permissions.allow.some((rule) => rule.startsWith("write_file(")), false, "and writes nothing");
+});
+
+test("Antigravity #884 Low A: a project at the home folder trusts nothing and leaves the key out", (t) => {
+  const s = scene(t);
+  // The home folder is itself the project: its key resolves to HOME, which agy must never trust.
+  git(s.home, "init", "-q");
+  git(s.home, "commit", "-q", "--allow-empty", "-m", "start");
+  const f = team();
+  f.bots[0].agent = "antigravity";
+  mkdirSync(join(s.home, ".herdr"), { recursive: true });
+  writeFileSync(join(s.home, ".herdr/bots.json"), `${JSON.stringify(f, null, 2)}\n`);
+  const show = s.cli(["show", "Genie", "--json"], { cwd: s.home }).json();
+  assert.deepEqual(show.agyPermissions.trustedWorkspaces, [], "the home folder is never trusted");
+  assert.match(s.cli(["show", "Genie"], { cwd: s.home }).out, /agy trusted  -/);
+  const started = s.cli(["start", "Genie"], { cwd: s.home });
+  assert.equal(started.code, 0, started.err);
+  const data = JSON.parse(readFileSync(agySettingsPath(s, ID.main), "utf8"));
+  assert.equal("trustedWorkspaces" in data, false, "the file leaves the key out");
+  assert.ok(data.permissions.allow.includes(`write_file(${s.home})`), "the writer rule still names the project");
+});
+
+test("Antigravity #884: restart --cwd writes DIR into the seat's permission file, never the project", (t) => {
+  const s = scene(t);
+  const f = team();
+  f.bots[0].agent = "antigravity";
+  s.seed(f);
+  const old = term("t5", { bot: ID.main, cwd: s.project, argv: ["agy", "--mode", "auto"], app: "antigravity" });
+  old.foreground.cwd = s.project;
+  old.labels = { ...old.labels, role: "main", "agent.session": SID };
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify({ terminals: [old], next: 100 }));
+  const dir = join(s.root, "moved");
+  mkdirSync(dir);
+  assert.equal(s.cli(["restart", "Genie", "--cwd", dir, "--json"]).code, 0);
+  const path = agySettingsPath(s, ID.main);
+  assert.deepEqual(plain(agentWords(runCall(s.calls()))), ["agy", "--settings", path, "--mode", "auto", "--conversation", SID]);
+  // #884 M1/Low 2: a seat started or restarted with --cwd DIR lists DIR, not the project.
+  const data = JSON.parse(readFileSync(path, "utf8"));
+  assert.deepEqual(data.trustedWorkspaces, [dir], "the folder the restart works in, exact");
+  assert.ok(data.permissions.allow.includes(`write_file(${dir})`), "write_file names DIR");
+  assert.equal(data.permissions.allow.includes(`write_file(${s.project})`), false, "never the project");
+  assert.equal(data.trustedWorkspaces.includes(s.project), false, "the project isn't trusted");
+  assert.equal(runCall(s.calls())[runCall(s.calls()).indexOf("--cwd") + 1], dir, "the pane runs in DIR");
 });
 
 test("Antigravity #823: restart --tree writes the permission file of a worker helper and resumes it with it", (t) => {
@@ -943,7 +1041,16 @@ test("Antigravity #823: restart --tree writes the permission file of a worker he
   assert.deepEqual(plain(agentWords(runs[0])), ["agy", "--settings", seatPath, "--mode", "auto", "--conversation", SID]);
   assert.deepEqual(plain(agentWords(runs[1])), ["agy", "--mode", "auto", "--settings", helperPath, "--continue"]);
   assert.equal(statSync(helperPath).mode & 0o777, 0o600);
+  // #879: each launch's file trusts its own folder, exact: the seat's project, the helper's worktree.
+  const seat = JSON.parse(readFileSync(seatPath, "utf8"));
+  assert.deepEqual(seat.trustedWorkspaces, [s.project], "the seat trusts its project");
+  for (const wrong of [dirname(s.project), s.home, "/"]) {
+    assert.equal(seat.trustedWorkspaces.includes(wrong), false, `the seat never trusts ${wrong}`);
+  }
   const data = JSON.parse(readFileSync(helperPath, "utf8"));
+  assert.deepEqual(data.trustedWorkspaces, [wt], "the helper trusts only its worktree");
+  assert.equal(data.trustedWorkspaces.includes(s.project), false, "not the project");
+  assert.equal(data.trustedWorkspaces.includes(dirname(wt)), false, "not the worktrees' parent");
   assert.ok(data.permissions.allow.includes(`write_file(${wt})`), "the helper writes in its worktree");
   assert.ok(!data.permissions.allow.includes(`write_file(${s.project})`), "not in the project");
   for (const rule of AGY_FIXED_DENY) assert.ok(data.permissions.deny.includes(rule));
@@ -4101,6 +4208,139 @@ test("RFC 0021: no session id in the codex provider-gone note, on stderr or in -
   }
 });
 
+test("cross-project lead (#850): create, edit, ls, show, brief and dsh-tui doctor support reciprocal --lead-project and --cross-member", (t) => {
+  const s = scene(t);
+  s.seed(team());
+
+  // Create a second git project (spoke) under s.root.
+  const spoke = join(s.root, "spoke");
+  mkdirSync(spoke);
+  git(spoke, "init", "-q");
+  git(spoke, "commit", "-q", "--allow-empty", "-m", "start");
+
+  // Create SpokeMain in spoke reporting to Genie in s.project via --lead and --lead-project.
+  // Before Genie reciprocates with --cross-member, the CLI warns that the link is one-sided.
+  const createdMain = s.cli([
+    "create",
+    "--project", spoke,
+    "--kind", "main",
+    "--name", "SpokeMain",
+    "--agent", "claude",
+    "--omni",
+    "--lead", "Genie",
+    "--lead-project", s.project,
+    "--json",
+  ]);
+  assert.equal(createdMain.code, 0, createdMain.err);
+  assert.match(createdMain.err, /is one-sided/);
+  const spokeMainId = createdMain.json().id;
+  assert.equal(createdMain.json().bot.lead, ID.main);
+  assert.equal(createdMain.json().bot.leadProject, s.project);
+
+  // Create SpokeMember in spoke reporting to Captain in s.project.
+  const createdMem = s.cli([
+    "create",
+    "--project", spoke,
+    "--name", "SpokeMember",
+    "--agent", "claude",
+    "--omni",
+    "--lead", "Captain",
+    "--lead-project", s.project,
+    "--json",
+  ]);
+  assert.equal(createdMem.code, 0, createdMem.err);
+  assert.match(createdMem.err, /is one-sided/);
+  assert.equal(createdMem.json().bot.lead, ID.cap);
+  assert.equal(createdMem.json().bot.leadProject, s.project);
+
+  // While one-sided, dsh-tui doctor flags the lead checks as not ok (is one-sided).
+  const docOneSided = s.cli(["dsh-tui", "doctor", "--project", spoke, "--json"]);
+  const oneSidedChecks = docOneSided.json().checks.filter((c) => c.check.startsWith("lead:"));
+  assert.equal(oneSidedChecks.length, 2);
+  assert.equal(oneSidedChecks.every((c) => !c.ok && /is one-sided/.test(c.detail)), true);
+
+  // Reciprocate from s.project on Genie and Captain via --cross-member <bot>@<dir>.
+  const recGenie = s.cli(["edit", "Genie", "--project", s.project, "--cross-member", `SpokeMain@${spoke}`, "--json"]);
+  assert.equal(recGenie.code, 0, recGenie.err);
+  assert.equal(recGenie.err, "");
+  assert.deepEqual(recGenie.json().bot.crossMembers, [{ id: spokeMainId, project: spoke }]);
+
+  const recCap = s.cli(["edit", "Captain", "--project", s.project, "--cross-member", `SpokeMember@${spoke}`, "--json"]);
+  assert.equal(recCap.code, 0, recCap.err);
+  assert.equal(recCap.err, "");
+
+  // Refusals: missing folder, folder with no .herdr/bots.json, missing bot, planned lead, or cross-project cycle.
+  const missingDir = s.cli(["edit", "SpokeMember", "--project", spoke, "--lead", "Genie", "--lead-project", join(s.root, "nope")]);
+  assert.equal(missingDir.code, 2);
+  assert.match(missingDir.err, /is not a folder/);
+
+  const noBotsDir = join(s.root, "empty-proj");
+  mkdirSync(noBotsDir);
+  const noBots = s.cli(["edit", "SpokeMember", "--project", spoke, "--lead", "Genie", "--lead-project", noBotsDir]);
+  assert.equal(noBots.code, 1);
+  assert.match(noBots.err, /No \.herdr\/bots\.json in/);
+
+  const noSuchBot = s.cli(["edit", "SpokeMember", "--project", spoke, "--lead", "Nobody", "--lead-project", s.project]);
+  assert.equal(noSuchBot.code, 1);
+  assert.match(noSuchBot.err, /no bot "Nobody"/i);
+
+  const plannedLead = s.cli(["edit", "SpokeMember", "--project", spoke, "--lead", "Studio", "--lead-project", s.project]);
+  assert.equal(plannedLead.code, 1);
+  assert.match(plannedLead.err, /planned/);
+
+  // Cross-project cycle refusal: editing Captain in s.project to report to SpokeMember in spoke.
+  const cycle = s.cli(["edit", "Captain", "--project", s.project, "--lead", "SpokeMember", "--lead-project", spoke]);
+  assert.equal(cycle.code, 1);
+  assert.match(cycle.err, /reports to Captain, so it can't be its lead/);
+
+  // ls, show, brief, and dsh-tui doctor in spoke and s.project once reciprocal.
+  const lsOut = s.cli(["ls", "--project", spoke]);
+  assert.equal(lsOut.code, 0, lsOut.err);
+  assert.match(lsOut.out, new RegExp(`main → Genie \\(${s.project.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\)`));
+  assert.match(lsOut.out, new RegExp(`→ Captain \\(${s.project.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\)`));
+
+  const showJson = s.cli(["show", "SpokeMain", "--project", spoke, "--json"]);
+  assert.equal(showJson.code, 0, showJson.err);
+  assert.equal(showJson.json().lead, ID.main);
+  assert.equal(showJson.json().leadName, "Genie");
+  assert.equal(showJson.json().leadProject, s.project);
+  const showText = s.cli(["show", "SpokeMain", "--project", spoke]);
+  assert.equal(showText.code, 0, showText.err);
+  assert.match(showText.out, new RegExp(`lead\\s+Genie \\(${ID.main}\\) in ${s.project.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+
+  const showGenie = s.cli(["show", "Genie", "--project", s.project]);
+  assert.equal(showGenie.code, 0, showGenie.err);
+  assert.match(showGenie.out, /cross members\s+SpokeMain/);
+
+  const briefSpoke = s.cli(["brief", "SpokeMain", "--project", spoke]);
+  assert.equal(briefSpoke.code, 0, briefSpoke.err);
+  assert.match(briefSpoke.out, /Your lead: Genie \(bot b-aaaaaaaaaa\)/);
+
+  const briefHub = s.cli(["brief", "Genie", "--project", s.project]);
+  assert.equal(briefHub.code, 0, briefHub.err);
+  assert.match(briefHub.out, new RegExp(`SpokeMain \\(bot ${spokeMainId}`));
+
+  const doc = s.cli(["dsh-tui", "doctor", "--project", spoke, "--json"]);
+  const docChecks = doc.json().checks.filter((c) => c.check.startsWith("lead:"));
+  assert.equal(docChecks.length, 2);
+  assert.equal(docChecks.every((c) => c.ok), true);
+
+  // Clearing with --no-lead-project, --lead-project="", and --no-cross-members.
+  const clearMain = s.cli(["edit", "SpokeMain", "--project", spoke, "--no-lead-project", "--json"]);
+  assert.equal(clearMain.code, 0, clearMain.err);
+  assert.equal(clearMain.json().bot.lead, undefined);
+  assert.equal(clearMain.json().bot.leadProject, undefined);
+
+  const clearMem = s.cli(["edit", "SpokeMember", "--project", spoke, "--lead-project=", "--json"]);
+  assert.equal(clearMem.code, 0, clearMem.err);
+  assert.equal(clearMem.json().bot.lead, undefined);
+  assert.equal(clearMem.json().bot.leadProject, undefined);
+
+  const clearGenieCm = s.cli(["edit", "Genie", "--project", s.project, "--no-cross-members", "--json"]);
+  assert.equal(clearGenieCm.code, 0, clearGenieCm.err);
+  assert.equal(clearGenieCm.json().bot.crossMembers, undefined);
+});
+
 test("#858: scratch helpers isolate TMPDIR inside a project with .git and .herdr/bots.json, warn once, and fail loudly on an unisolated folder", (t) => {
   const box = scratchRoot(t, "hb-858-");
   const outer = join(box, "outer");
@@ -4199,4 +4439,3 @@ test("#858: non-git scratch folder stops at the scene ceiling and create --proje
   assert.match(plainMode.out.trim(), /^b-[a-z2-7]{10}$/);
   assert.match(plainMode.err, new RegExp(`saved in ${s.botsPath} \\(project ${s.project}, resolved from --project ${sub}\\)\\.`));
 });
-

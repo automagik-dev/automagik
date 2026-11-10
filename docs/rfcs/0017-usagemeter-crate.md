@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | In delivery (deliveries 1, 2, 4, 5 and 6: #751, #783, #822, #834, #836, #838; deliveries 3, 7, 8 and 9 open; answers: Q1-Q6 and Q8, 2026-11-08; question 7 open) |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | meter (3.N.P), added here; herdr (3.N.P) for the cutover |
 | Created | 2026-11-08 |
@@ -516,6 +516,13 @@ with other ids (deleted since); they are imported anyway, as question 2 decided.
    reviews as the reader: what is ported, where it lives (this crate, or crates beside it under
    `meter/` with a workspace), which genie specs and acceptance tests come with it, and who
    reviews them. Delivery 8 waits for it.
+
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: #915.
+- Merged changes that cite this RFC: #751, #764, #783, #788, #817, #822, #825, #834, #836, #838 (last merged 2026-11-09).
 
 ## Links
 

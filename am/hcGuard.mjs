@@ -25,11 +25,12 @@
 import { spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, dirname, isAbsolute, join, resolve, sep } from "node:path";
+import { delimiter, dirname, isAbsolute, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { readApprovedRecord } from "./approved.js";
 import { attachPath, foldAttach, modeProblem, readAttach } from "./attach.js";
-import { descendantsOf, effectiveLead, mainBotOf, parseBots, RANKS } from "./model.js";
+import { cleanProjectPath, crossMembersOf, descendantsOf, effectiveLead, inferProjectOf, mainBotOf, parseBots, projectEntriesOf, projectFileOf, RANKS } from "./model.js";
 import { ENV, WORKER_OF_LABEL } from "./workers.js";
 
 /** The commands a sandboxed bot may call unchanged. */
@@ -279,44 +280,121 @@ function readBots(project) {
 }
 
 /**
- * The declared lead chain of a bot: its `lead`, then that bot's `lead`, while each id is
- * listed in the project's bots.json (planned entries included), cycle-safe. effectiveLead
- * falls back to the main bot at a planned lead; this is the declared path, so a guarded
- * captain reaches a planned Orchestrator without changing the tree's rule.
+ * Loads approved snapshots (`approved.js` `readApprovedRecord`, verified `0600`) for any other
+ * projects named by `file` (`leadProject` or `crossMembers`) or `extraKeys`. Never reads another
+ * project's live writable `.herdr/bots.json`; an missing, unapproved, or non-0600 snapshot is
+ * omitted so cross-project checks fail closed.
+ */
+export function loadApprovedProjectsFor(project, file, env = process.env, extraKeys = []) {
+  const ownClean = cleanProjectPath(project);
+  if (!ownClean || !file || !Array.isArray(file.bots)) return null;
+  const candidates = new Set();
+  for (const b of file.bots) {
+    if (typeof b?.leadProject === "string" && b.leadProject) {
+      candidates.add(cleanProjectPath(b.leadProject));
+    }
+    for (const m of crossMembersOf(b)) {
+      candidates.add(m.project);
+    }
+  }
+  for (const k of extraKeys ?? []) {
+    if (typeof k === "string" && k) candidates.add(cleanProjectPath(k));
+  }
+  const ownReal = realOrNull(ownClean);
+  const map = new Map([[ownClean, file]]);
+  if (ownReal && ownReal !== ownClean) map.set(ownReal, file);
+  let loadedOther = false;
+  for (const cand of candidates) {
+    if (!cand || cand === ownClean || (ownReal && (cand === ownReal || realOrNull(cand) === ownReal))) continue;
+    try {
+      const approved = readApprovedRecord({ project: cand, env });
+      if (approved?.file) {
+        map.set(cand, approved.file);
+        if (approved.record?.project) map.set(cleanProjectPath(approved.record.project), approved.file);
+        loadedOther = true;
+      }
+    } catch {
+      // Unapproved, missing, not 0600, symlink, or corrupt: fail closed by omitting it.
+    }
+  }
+  return loadedOther ? map : null;
+}
+
+/**
+ * The declared lead chain of a bot within its own project: its `lead`, then that bot's `lead`,
+ * while each id is listed in the project's bots.json (planned entries included), cycle-safe.
+ * effectiveLead falls back to the main bot at a planned lead; this is the declared path, so a
+ * guarded captain reaches a planned Orchestrator without changing the tree's rule. Cross-project
+ * leads never widen via declaredLeads.
  */
 function declaredLeads(file, botId) {
   const out = [];
   const seen = new Set([botId]);
-  let cur = file.bots.find((b) => b.id === botId)?.lead;
-  while (typeof cur === "string" && cur && !seen.has(cur)) {
-    const def = file.bots.find((b) => b.id === cur);
+  let curBot = file?.bots?.find((b) => b.id === botId);
+  while (curBot) {
+    if (curBot.leadProject) break;
+    const nextId = curBot.lead;
+    if (typeof nextId !== "string" || !nextId || seen.has(nextId)) break;
+    const def = file?.bots?.find((b) => b.id === nextId);
     if (!def) break;
-    seen.add(cur);
-    out.push(cur);
-    cur = def.lead;
+    seen.add(def.id);
+    out.push(def.id);
+    curBot = def;
   }
   return out;
 }
 
 /**
- * The bots the caller may address: both lead chains, members, main, own workers (and its bot
- * for a worker). Exported for the per-pane hc proxy (#631), which reads the same graph from its
- * start-time snapshot instead of re-reading the writable roster.
+ * The bots the caller may address: both same-project lead chains, same-project members, main,
+ * own workers (and its bot for a worker), plus — for a non-worker caller with verified projects —
+ * the direct cross-project lead <-> member link only (never the lead's upward chain or the other
+ * project's main bot, and never the member's team or workers). Exported for the per-pane hc proxy
+ * (#631), which reads the same graph from its start-time approved snapshot.
  */
-export function teamOf(file, caller) {
+export function teamOf(file, caller, options = {}, maybeOptions = {}) {
+  const opts = typeof options === "boolean" ? maybeOptions : (options ?? {});
+  const callerBot = typeof caller === "string" ? caller : caller?.bot;
+  const callerWorker = typeof options === "boolean" ? options : Boolean(caller?.worker);
+  const project = opts?.project ?? (typeof caller === "object" ? caller?.project : null) ?? null;
+  const projects = opts?.projects ?? (typeof caller === "object" ? caller?.projects : null)
+    ?? loadApprovedProjectsFor(project, file, opts?.env ?? process.env, opts?.extraKeys ?? []);
+  const verifiedProjects = projects ?? new Map();
+  const ownProject = inferProjectOf(file, callerBot, project, projects);
   const allowed = new Set();
   const main = mainBotOf(file);
   if (main) allowed.add(main.id);
-  const seen = new Set([caller.bot]);
-  let lead = effectiveLead(file, caller.bot).lead;
-  while (lead && !seen.has(lead)) {
-    allowed.add(lead);
-    seen.add(lead);
-    lead = effectiveLead(file, lead).lead;
+  let curBotId = callerBot;
+  const seen = new Set([curBotId]);
+  while (curBotId) {
+    const eff = effectiveLead(file, curBotId, { project: ownProject || null });
+    if (!eff.lead || eff.leadProject || seen.has(eff.lead)) break;
+    seen.add(eff.lead);
+    allowed.add(eff.lead);
+    curBotId = eff.lead;
   }
-  for (const id of declaredLeads(file, caller.bot)) allowed.add(id);
-  for (const id of descendantsOf(file, caller.bot)) allowed.add(id);
-  if (caller.worker) allowed.add(caller.bot);
+  for (const id of declaredLeads(file, callerBot)) allowed.add(id);
+  for (const id of descendantsOf(file, callerBot)) allowed.add(id);
+  if (callerWorker) {
+    allowed.add(callerBot);
+    return allowed;
+  }
+  if (ownProject && projects) {
+    const selfEff = effectiveLead(file, callerBot, { project: ownProject, projects: verifiedProjects });
+    if (selfEff.lead && selfEff.leadProject && selfEff.leadProject !== ownProject) {
+      allowed.add(selfEff.lead);
+    }
+    for (const [otherKey, otherFile] of projectEntriesOf(verifiedProjects)) {
+      if (!otherKey || otherKey === ownProject) continue;
+      for (const b of otherFile.bots ?? []) {
+        if (!b?.id || b.planned || !b.leadProject) continue;
+        if (cleanProjectPath(b.leadProject) !== ownProject || b.lead !== callerBot) continue;
+        const eff = effectiveLead(otherFile, b.id, { project: otherKey, projects: verifiedProjects });
+        if (eff.lead === callerBot && eff.leadProject === ownProject) {
+          allowed.add(b.id);
+        }
+      }
+    }
+  }
   return allowed;
 }
 
@@ -423,8 +501,34 @@ function sendProblem(real, args, env, terminal, on) {
   const hit = targetOf(real, target, on.value, env);
   if (!hit) return "the target is not resolvable with hc";
   const { labels } = hit;
-  const allowed = teamOf(file, caller);
-  if (typeof labels.bot === "string" && allowed.has(labels.bot)) return null;
+  const targetProject = projectOfFolder(hit.get?.cwd);
+  const crossTarget = Boolean(
+    targetProject && caller.project && realOrNull(targetProject) !== realOrNull(caller.project),
+  );
+  if (crossTarget && caller.worker) return "the target is not in the caller's team";
+  const allowed = teamOf(file, caller, {
+    project: caller.project,
+    env,
+    extraKeys: targetProject ? [targetProject] : [],
+  });
+  if (typeof labels.bot === "string" && allowed.has(labels.bot)) {
+    if (!crossTarget) return null;
+    const ownClean = cleanProjectPath(caller.project);
+    const targetClean = cleanProjectPath(targetProject);
+    const verified = loadApprovedProjectsFor(caller.project, file, env, [targetProject]);
+    if (!verified) return "the target is not in the caller's team";
+    const selfEff = effectiveLead(file, caller.bot, { project: ownClean, projects: verified });
+    const isDirectLead = selfEff.lead === labels.bot && selfEff.leadProject === targetClean;
+    const targetFile = projectFileOf(verified, targetClean);
+    const targetEff = targetFile
+      ? effectiveLead(targetFile, labels.bot, { project: targetClean, projects: verified })
+      : null;
+    const isDirectMember = Boolean(
+      targetEff && targetEff.lead === caller.bot && targetEff.leadProject === ownClean,
+    );
+    return isDirectLead || isDirectMember ? null : "the target is not in the caller's team";
+  }
+  if (crossTarget) return "the target is not in the caller's team";
   if (labels[WORKER_OF_LABEL] === caller.bot) return null;
   if (sharedSendAllowed(file, caller, labels)) return null;
   return "the target is not in the caller's team";

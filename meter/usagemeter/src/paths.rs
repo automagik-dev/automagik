@@ -173,6 +173,9 @@ pub struct Migration {
     pub moved: Vec<&'static str>,
     /// Files left in the old directory because the new one already has a different file.
     pub kept: Vec<&'static str>,
+    /// Files left in the old directory because they changed after they were copied (a line
+    /// appended across filesystems): the copy was removed, and the next run moves them.
+    pub changed: Vec<&'static str>,
     /// The new directory holds files the move cannot prove are its own and no store beside them
     /// may be opened or created: sync does nothing this run (the stderr line says why).
     pub stop: bool,
@@ -262,8 +265,10 @@ fn same_file(a: &Path, b: &Path) -> io::Result<bool> {
 }
 
 /// Copies `src` to `dst` through a temporary file in `dst`'s directory: fsync, compare with the
-/// source, then rename into place. The mode is the source's. Refuses to replace `dst`. On any
-/// error (a full disk, a short read) the temporary file is removed.
+/// source, then link it into place and drop the temporary name. The mode is the source's. Never
+/// replaces `dst`: the link fails when a file is there, with no gap between a check and the
+/// placing (a rename would replace a file that appeared after the check). On any error (a full
+/// disk, a short read, a filesystem without hard links) the temporary file is removed.
 pub fn copy_verified(src: &Path, dst: &Path) -> io::Result<()> {
     let dir = dst.parent().unwrap_or(Path::new("."));
     let name = dst.file_name().unwrap_or_default().to_string_lossy();
@@ -278,19 +283,25 @@ pub fn copy_verified(src: &Path, dst: &Path) -> io::Result<()> {
                 src.display()
             )));
         }
-        if exists(dst) {
-            return Err(io::Error::new(
+        step("verified", &part);
+        match fs::hard_link(&part, dst) {
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
                 format!("{} appeared during the copy", dst.display()),
-            ));
+            )),
+            r => r,
         }
-        fs::rename(&part, dst)
     })();
-    if let Err(e) = placed {
-        let _ = fs::remove_file(&part);
-        return Err(e);
-    }
+    // Placed or not, the temporary name goes: placed, `dst` is the same file.
+    let _ = fs::remove_file(&part);
+    placed?;
     sync_dir(dir)
+}
+
+/// What a move checks before it removes an old name: the file's length and modification time.
+fn stamp(p: &Path) -> io::Result<(u64, Option<std::time::SystemTime>)> {
+    let m = p.symlink_metadata()?;
+    Ok((m.len(), m.modified().ok()))
 }
 
 #[cfg(unix)]
@@ -308,6 +319,9 @@ enum Step {
     Absent,
     Moved,
     Kept,
+    /// The old file changed after it was copied: the copy went, the old file stays, and the next
+    /// run moves it again.
+    Changed,
 }
 
 /// Puts `src` at `dst` without ever replacing a file there: a hard link (same filesystem, the
@@ -328,7 +342,10 @@ fn place(src: &Path, dst: &Path, force_copy: bool) -> io::Result<()> {
 
 /// Moves `old/name` to `new/name`, never replacing a file there, then removes the old name. A
 /// file already at `new/name` is taken as this move's own only when `adopt` (a verified move
-/// marker) and it has the same bytes; otherwise the old file stays.
+/// marker) and it has the same bytes; otherwise the old file stays. Across filesystems the new
+/// name is a copy, so the old name goes only while the old file still has the length and
+/// modification time it had when the copy was made and verified: a line appended after that
+/// stays in the old file, the copy goes, and the next run moves the file again.
 fn move_file(
     old: &Path,
     new: &Path,
@@ -340,6 +357,7 @@ fn move_file(
     if !exists(&src) {
         return Ok(Step::Absent);
     }
+    let before = stamp(&src)?;
     if exists(&dst) {
         if !(adopt && same_file(&src, &dst)?) {
             return Ok(Step::Kept);
@@ -352,6 +370,19 @@ fn move_file(
             Ok(()) => {}
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => return Ok(Step::Kept),
             Err(e) => return Err(e),
+        }
+    }
+    step("placed", &src);
+    // A hard link is the old file itself: nothing written to it can be lost.
+    let linked = match (src.symlink_metadata(), dst.symlink_metadata()) {
+        (Ok(a), Ok(b)) => same_inode(&a, &b),
+        _ => false,
+    };
+    if !linked {
+        let now = stamp(&src)?;
+        if now != before || now.0 != dst.symlink_metadata()?.len() {
+            remove(&dst)?;
+            return Ok(Step::Changed);
         }
     }
     fs::remove_file(&src)?;
@@ -730,6 +761,7 @@ pub fn migrate_with(old: &Path, new: &Path, force_copy: bool) -> io::Result<Migr
             match move_file(old, new, f, force_copy, moving)? {
                 Step::Moved => m.moved.push(f),
                 Step::Kept => m.kept.push(f),
+                Step::Changed => m.changed.push(f),
                 Step::Absent => {}
             }
         }
@@ -745,7 +777,7 @@ pub fn migrate_with(old: &Path, new: &Path, force_copy: bool) -> io::Result<Migr
     // The lock file is empty and `new` has its own (held by the caller): the old one is removed,
     // never moved onto the held one, once nothing else is left. One this run created never stays.
     // Beside an old generation it stays until that generation goes.
-    if (m.kept.is_empty() && !m.old_generation) || !had_lock {
+    if (m.kept.is_empty() && m.changed.is_empty() && !m.old_generation) || !had_lock {
         remove(&old.join("meter.lock"))?;
         if had_lock {
             m.moved.push("meter.lock");
@@ -785,6 +817,12 @@ pub fn migrate_with(old: &Path, new: &Path, force_copy: bool) -> io::Result<Migr
             Why::Store => String::new(),
         };
         eprintln!("meter: {left}{reason}; nothing was overwritten or deleted{after}");
+    } else if !m.changed.is_empty() {
+        eprintln!(
+            "meter: left {} in {o}: written to while it was copied to {n}; the copy was removed \
+             and the next sync moves it again",
+            m.changed.join(", ")
+        );
     } else if !m.kept.is_empty() {
         eprintln!(
             "meter: left {} in {o}: {n} already has different copies; nothing was overwritten or deleted",
@@ -1251,6 +1289,88 @@ mod tests {
         let e = copy_verified(&src, &dst).unwrap_err();
         assert_eq!(e.kind(), io::ErrorKind::AlreadyExists);
         assert_eq!(names(dst.parent().unwrap()), ["b"]);
+    }
+
+    /// Places a file at the destination right after the copy is verified, before it is placed.
+    #[cfg(unix)]
+    fn race_the_destination(what: &str, _p: &Path) {
+        if what == "verified"
+            && let Some(dst) = VICTIM.with(|v| v.borrow_mut().take())
+        {
+            fs::write(dst, b"theirs").unwrap();
+        }
+    }
+
+    // Two reviewers on #836: no gap between the check for a destination and the placing.
+    #[cfg(unix)]
+    #[test]
+    fn a_destination_that_appears_after_the_check_is_never_replaced() {
+        let t = tempfile::tempdir().unwrap();
+        let (src, dst) = (t.path().join("a"), t.path().join("d/b"));
+        fs::create_dir_all(dst.parent().unwrap()).unwrap();
+        fs::write(&src, b"mine").unwrap();
+        VICTIM.with(|v| *v.borrow_mut() = Some(dst.clone()));
+        let (r, _) = with_steps(race_the_destination, || copy_verified(&src, &dst));
+        assert_eq!(r.unwrap_err().kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(&dst).unwrap(), b"theirs");
+        assert_eq!(
+            names(dst.parent().unwrap()),
+            ["b"],
+            "no temporary file is left"
+        );
+        // Without the race, the copy is placed and its temporary name is gone.
+        fs::remove_file(&dst).unwrap();
+        copy_verified(&src, &dst).unwrap();
+        assert_eq!(fs::read(&dst).unwrap(), b"mine");
+        assert_eq!(names(dst.parent().unwrap()), ["b"]);
+    }
+
+    /// Appends a line to the old file once its copy is placed, before the old name goes.
+    #[cfg(unix)]
+    fn append_after_the_copy(what: &str, p: &Path) {
+        if what == "placed" {
+            let mut f = fs::OpenOptions::new().append(true).open(p).unwrap();
+            std::io::Write::write_all(&mut f, b"{\"late\":true}\n").unwrap();
+        }
+    }
+
+    // Two reviewers on #836: across filesystems, a line appended after the verify is never lost.
+    #[cfg(unix)]
+    #[test]
+    fn a_file_written_after_its_copy_keeps_its_old_name() {
+        let t = tempfile::tempdir().unwrap();
+        let (old, new) = (t.path().join("old"), t.path().join("new"));
+        fs::create_dir_all(&old).unwrap();
+        fs::create_dir_all(&new).unwrap();
+        let name = "claude-limits.jsonl";
+        fs::write(old.join(name), b"{\"first\":true}\n").unwrap();
+        let (r, _) = with_steps(append_after_the_copy, || {
+            move_file(&old, &new, name, true, false)
+        });
+        assert!(matches!(r.unwrap(), Step::Changed));
+        assert_eq!(
+            fs::read(old.join(name)).unwrap(),
+            b"{\"first\":true}\n{\"late\":true}\n"
+        );
+        assert!(!exists(&new.join(name)), "the stale copy is removed");
+        // The next run moves it whole.
+        assert!(matches!(
+            move_file(&old, &new, name, true, false).unwrap(),
+            Step::Moved
+        ));
+        assert!(!exists(&old.join(name)));
+        assert_eq!(
+            fs::read(new.join(name)).unwrap(),
+            b"{\"first\":true}\n{\"late\":true}\n"
+        );
+        // A hard link is the old file itself: the same append loses nothing, and the move ends.
+        fs::write(old.join(name), b"x\n").unwrap();
+        fs::remove_file(new.join(name)).unwrap();
+        let (r, _) = with_steps(append_after_the_copy, || {
+            move_file(&old, &new, name, false, false)
+        });
+        assert!(matches!(r.unwrap(), Step::Moved));
+        assert_eq!(fs::read(new.join(name)).unwrap(), b"x\n{\"late\":true}\n");
     }
 
     fn names(dir: &Path) -> Vec<String> {

@@ -1245,3 +1245,118 @@ test("installHook with neither the pack nor the am part writes nothing and says 
   assert.match(r.warnings.join("\n"), /gets no per-turn briefing: .*briefing\.mjs isn't there/);
   assert.match(r.warnings.join("\n"), new RegExp(`am's entry at neither place: ${amPartEntryPath(store).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} isn't there either`));
 });
+
+test("cross-project lead (#850): directMembers, launchBriefingText, briefingText, and briefing.mjs include cross-project lead and reports", async (t) => {
+  const coordId = "b-7777777777";
+  const spokeMainId = "b-5555555555";
+  const spokeCapId = "b-4444444444";
+  const hubFile = {
+    version: 1,
+    categories: [],
+    bots: [
+      bot(coordId, "main", {
+        name: "Coord",
+        role: "Runs all projects",
+        instructions: "Coordinate.",
+        crossMembers: [
+          { id: spokeMainId, project: "/work/spoke" },
+          { id: spokeCapId, project: "/work/spoke" },
+        ],
+      }),
+    ],
+  };
+  const spokeFile = {
+    version: 1,
+    categories: [],
+    bots: [
+      bot(spokeMainId, "main", { name: "SpokeMain", role: "Runs spoke", instructions: "Report to Coord.", lead: coordId, leadProject: "/work/hub" }),
+      bot(spokeCapId, "member", { name: "SpokeCap", role: "Spoke squad", instructions: "Report to Coord.", lead: coordId, leadProject: "/work/hub" }),
+    ],
+  };
+  const projects = new Map([["/work/hub", hubFile], ["/work/spoke", spokeFile]]);
+
+  // Coord's directMembers across projects includes SpokeMain and SpokeCap.
+  const reports = directMembers(hubFile, coordId, { project: "/work/hub", projects });
+  assert.deepEqual(reports.map((b) => b.id), [spokeMainId, spokeCapId]);
+
+  // Launch briefing for SpokeMain (a main bot with a cross-project lead) names Coord as its lead.
+  const spokeMainLaunch = launchBriefingText({
+    self: spokeFile.bots[0],
+    file: spokeFile,
+    project: "/work/spoke",
+    projects,
+  });
+  assert.match(spokeMainLaunch, /You are SpokeMain, this project's main bot \(bot b-5555555555\)\./);
+  assert.match(spokeMainLaunch, /Your lead: Coord \(bot b-7777777777\)/);
+
+  // Launch briefing for Coord in /work/hub lists SpokeMain and SpokeCap in its team.
+  const coordLaunch = launchBriefingText({
+    self: hubFile.bots[0],
+    file: hubFile,
+    project: "/work/hub",
+    projects,
+  });
+  assert.match(coordLaunch, /- SpokeMain \(bot b-5555555555, Runs spoke\)/);
+  assert.match(coordLaunch, /- SpokeCap \(bot b-4444444444, Spoke squad\)/);
+
+  // Full briefingText for SpokeMain includes its cross-project lead's status and address.
+  const spokeMainFull = briefingText({
+    self: spokeFile.bots[0],
+    file: spokeFile,
+    lead: { bot: hubFile.bots[0], status: "working", terminal: "t9" },
+    members: [],
+    helpers: [],
+  });
+  assert.match(spokeMainFull, /Your lead: Coord \(bot b-7777777777\), working\./);
+  assert.match(spokeMainFull, /hc send t9 /);
+
+  // End-to-end briefing.mjs hook: SpokeMain in a second repo sees its cross-project lead Genie in main.
+  const sc = await scratch(t);
+  const spokeDir = join(sc.root, "spoke");
+  const mainBotsPath = join(sc.main, ".herdr", "bots.json");
+  const mainBots = JSON.parse(readFileSync(mainBotsPath, "utf8"));
+  mainBots.bots[0].crossMembers = [{ id: spokeMainId, project: spokeDir }];
+  writeFileSync(mainBotsPath, JSON.stringify(mainBots));
+  mkdirSync(join(spokeDir, ".herdr"), { recursive: true });
+  writeFileSync(
+    join(spokeDir, ".herdr", "bots.json"),
+    JSON.stringify({
+      version: 1,
+      categories: [],
+      bots: [
+        bot(spokeMainId, "main", {
+          name: "SpokeMain",
+          role: "Runs spoke",
+          instructions: "Keep spoke green.",
+          lead: ID.main,
+          leadProject: sc.main,
+        }),
+      ],
+    }),
+  );
+  const fxPath = join(sc.root, "hc.json");
+  const fx = JSON.parse(readFileSync(fxPath, "utf8"));
+  fx.terminals.t8 = {
+    address: "t8",
+    state: "live",
+    created_ms: 1000,
+    status: { state: "idle" },
+    labels: { bot: spokeMainId },
+    foreground: { argv: ["claude"], cwd: spokeDir },
+    program: { key: "claude", name: "Claude Code", agent: true },
+  };
+  writeFileSync(fxPath, JSON.stringify(fx));
+  const appDir = join(sc.root, "app", "automagik-herdr");
+  mkdirSync(appDir, { recursive: true });
+  writeFileSync(join(appDir, "projects.json"), JSON.stringify([sc.main, spokeDir]));
+
+  const spokeTurn = await sc.brief({ HC_TERMINAL_ID: "t8", CLAUDE_PROJECT_DIR: spokeDir, HERDR_APP_HOME: join(sc.root, "app") });
+  assert.equal(spokeTurn.stderr, "");
+  assert.match(spokeTurn.stdout, /You are SpokeMain, this project's main bot/);
+  assert.match(spokeTurn.stdout, /Your lead: Genie \(bot b-aaaaaaaaaa\), idle\./);
+  assert.match(spokeTurn.stdout, /hc send t1 /);
+
+  const hubTurn = await sc.brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: sc.main, HERDR_APP_HOME: join(sc.root, "app") });
+  assert.equal(hubTurn.stderr, "");
+  assert.match(hubTurn.stdout, /SpokeMain \(bot b-5555555555, Runs spoke\): idle at t8\./);
+});

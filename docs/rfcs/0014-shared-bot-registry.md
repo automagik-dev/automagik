@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (every question answered: see Decided and proposed; delivery 1 merged: #260; amended 2026-11-07: universal Bots, see Amendments) |
+| Status | In delivery (delivery 1: #260; universal-Bot amendment: #666, #670, #674, #684; 2-9 unconfirmed; every question answered) |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | plugin (3.N.P), desktop (3.N), herdr (3.N.P, [RFC 0011](0011-monorepo-parts-and-releases.md)) |
 | Created | 2026-11-03 |
@@ -560,6 +560,13 @@ No open questions. The owner answered all nineteen (see Decided); they stay belo
     any half-typed terminal draft first. The research is in
     `~/.config/herdr-app/handoffs/bot-chat-backend/orca-research-2026-11-03.md`. RFC 0015 designs
     the mechanism.
+
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: none.
+- Merged changes that cite this RFC: #236, #253, #257, #259, #260, #272, #273, #282, #309, #321, #407, #508, #523, #666, #670, #674, #684, #847 (last merged 2026-11-09).
 
 ## Links
 

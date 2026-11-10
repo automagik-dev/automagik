@@ -13,6 +13,7 @@
 //! fork and its exec would share a sync's lock).
 
 mod common;
+mod scenes;
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -24,7 +25,7 @@ use common::schema::{Schema, same};
 use common::{Env, serial};
 use meter::paths::StateDirs;
 use meter::query::{self, Ctx};
-use meter::store::Store;
+use meter::store::{SCHEMA_VERSION, Store};
 use meter::sync::{Outcome, Report};
 use meter::time::{HOUR_MS, format_rfc3339, parse_rfc3339};
 use rusqlite::{Connection, params};
@@ -633,7 +634,12 @@ fn scenario_raw(name: &str) -> (u8, String) {
         }
         "newer-schema" | "outdated-store" => {
             let fx = plain_store();
-            let v = if name == "newer-schema" { "3" } else { "1" };
+            let newer = (SCHEMA_VERSION + 1).to_string();
+            let v = if name == "newer-schema" {
+                newer.as_str()
+            } else {
+                "1"
+            };
             Store::open(&fx.db())
                 .unwrap()
                 .set_meta("schema_version", v)
@@ -697,7 +703,8 @@ fn scenario_raw(name: &str) -> (u8, String) {
                 fx.query_raw(&args(&["feat/gn-12-cache"]))
             })
         }
-        other => panic!("no scenario builds the example {other}: add one"),
+        other => scenes::answer(other)
+            .unwrap_or_else(|| panic!("no scenario builds the example {other}: add one")),
     }
 }
 
@@ -836,10 +843,6 @@ fn each_example_is_what_the_meter_answers() {
     for name in example_names() {
         if name == "read-only-folder" && !permissions_bind() {
             eprintln!("{name}: skipped, a folder's mode does not bind root");
-            continue;
-        }
-        if SCHEMA_ONLY.contains(&name.as_str()) {
-            eprintln!("{name}: schema-only until RFC 0021 delivery 6, no meter answer to compare");
             continue;
         }
         let want = example(&name);
@@ -1224,11 +1227,9 @@ fn every_measured_row_keeps_three_questions_apart() {
 // ---------------------------------------------------------------------------------------------
 // The attribution contract (RFC 0021 delivery 2).
 
-/// RFC 0021 delivery 2's examples. The meter writes none of their fields until RFC 0021 delivery
-/// 6 (the query), so until then they are schema-only: they validate against the schema and pass
-/// the sum checks below, but no store is built for them and no meter answer is compared with
-/// them. Delivery 6 empties this list and adds a scenario for each.
-const SCHEMA_ONLY: [&str; 9] = [
+/// RFC 0021 delivery 2's examples: schema-only until delivery 6, each now built from a synthetic
+/// store (`scenes`) and compared with the meter's answer like every other example.
+const ATTRIBUTION_EXAMPLES: [&str; 9] = [
     "actor-ambiguous",
     "actor-ledger-branch",
     "actor-no-evidence",
@@ -1249,20 +1250,35 @@ fn reports_actors(v: &Value) -> bool {
             .is_some_and(|r| r.iter().any(|r| r["attribution"].get("actor").is_some()))
 }
 
+/// Each attribution example against its scene's answer, one at a time, with the difference.
 #[test]
-fn schema_only_examples_are_exactly_the_attribution_ones() {
-    // No attribution example is compared with a meter that cannot write it, and no example the
-    // meter answers today can hide behind the list.
+fn each_attribution_example_is_what_the_meter_answers() {
+    let s = schema();
+    let mut failed = Vec::new();
+    for name in ATTRIBUTION_EXAMPLES {
+        let (code, raw) = scenes::answer(name).unwrap();
+        let got: Value = serde_json::from_str(&raw).unwrap();
+        let e = s.errors(&got);
+        assert!(e.is_empty(), "{name}: the answer breaks the schema: {e:#?}");
+        assert_eq!(code, 0, "{name}");
+        if !same(&got, &example(name)) {
+            failed.push(format!("{name}:\n{}", pretty(&got)));
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n\n"));
+}
+
+#[test]
+fn every_answer_reports_actors_and_every_refusal_none() {
+    // RFC 0021 (d): a meter that reports actors does so on every answer (actor_unattributed and,
+    // on every row with tokens, attribution.actor); a refusal reports none.
     let names = example_names();
-    for n in SCHEMA_ONLY {
+    for n in ATTRIBUTION_EXAMPLES {
         assert!(names.iter().any(|x| x == n), "{n} is not an example");
     }
     for n in &names {
-        assert_eq!(
-            reports_actors(&example(n)),
-            SCHEMA_ONLY.contains(&n.as_str()),
-            "{n}"
-        );
+        let v = example(n);
+        assert_eq!(reports_actors(&v), v["status"] == "ok", "{n}");
     }
 }
 
@@ -1480,7 +1496,7 @@ fn actor_counts_add_up_on_every_example() {
         assert!(e.is_empty(), "{n}: {e:#?}");
         checked += usize::from(reports_actors(&v));
     }
-    assert_eq!(checked, SCHEMA_ONLY.len());
+    assert!(checked >= ATTRIBUTION_EXAMPLES.len(), "{checked}");
 }
 
 #[test]
@@ -1814,9 +1830,16 @@ fn the_schema_refuses_what_the_attribution_contract_forbids() {
         assert!(!s.valid(&v), "the schema accepts {what}");
     }
 
-    // The fields stay optional: an answer without them is the meter's answer today.
-    assert!(s.valid(&example("priced")));
-    assert!(!reports_actors(&example("priced")));
+    // The fields stay optional: an answer without them, a meter's from before RFC 0021 delivery
+    // 6, still validates.
+    let mut v = example("priced");
+    assert!(reports_actors(&v));
+    v.as_object_mut().unwrap().remove("actor_unattributed");
+    for r in v["rows"].as_array_mut().unwrap() {
+        r["attribution"].as_object_mut().unwrap().remove("actor");
+    }
+    assert!(!reports_actors(&v));
+    assert!(s.valid(&v), "{:#?}", s.errors(&v));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1878,11 +1901,51 @@ fn worst_store(fx: &Fx, branches: &[String]) {
             .unwrap();
         }
     }
+    // Every actor count a branch row prints, filled (the Reviewer's L1 on PR 875): rows after
+    // evidence_from given each basis, the ledger's branch, ambiguous and unlinked; the others stay
+    // before evidence. `tokens_by_branch_basis.none` is 0 on any branch row.
+    for (m, set) in [
+        (
+            0,
+            "actor_state = 'attributed', basis = 'session', branch_basis = 'log'",
+        ),
+        (
+            1,
+            "actor_state = 'attributed', basis = 'label', branch_basis = 'log'",
+        ),
+        (
+            2,
+            "actor_state = 'attributed', basis = 'worktree', branch_basis = 'log'",
+        ),
+        (
+            3,
+            "actor_state = 'attributed', basis = 'session', branch_basis = 'ledger'",
+        ),
+        (
+            4,
+            "actor_state = 'ambiguous', reason = 'claimants_differ', branch_basis = 'log'",
+        ),
+        (
+            5,
+            "actor_state = 'unlinked', reason = 'no_record', branch_basis = 'log'",
+        ),
+    ] {
+        c.execute(
+            &format!(
+                "UPDATE usage SET {set}, bot = 'kite', kind = 'worker', role = 'dev'
+                 WHERE id LIKE '%|m{m}'"
+            ),
+            [],
+        )
+        .unwrap();
+    }
+    let from = (h - 24 * HOUR_MS).to_string();
     let reason: String = "\u{1}\"é".repeat(300);
     for (k, v) in [
         ("codex_status", "degraded"),
         ("codex_reason", reason.as_str()),
         ("machine", &"\"".repeat(400)),
+        (meter::evidence::FROM_META, from.as_str()),
     ] {
         c.execute(
             "INSERT INTO meta(k, v) VALUES(?1, ?2) ON CONFLICT(k) DO UPDATE SET v = excluded.v",
@@ -1932,7 +1995,48 @@ fn rows_metadata_and_refusals_stay_within_the_budget_table() {
         );
     }
     assert_eq!(row["token_precision"], "mixed");
+    // Every actor count is filled, at the largest the store's sums reach.
+    let a = &row["attribution"]["actor"];
+    let filled = [
+        &a["tokens_attributed"],
+        &a["tokens_ambiguous"],
+        &a["tokens_unlinked"],
+        &a["tokens_before_evidence"],
+        &a["tokens_by_basis"]["session"],
+        &a["tokens_by_basis"]["label"],
+        &a["tokens_by_basis"]["worktree"],
+        &a["tokens_by_branch_basis"]["log"],
+        &a["tokens_by_branch_basis"]["ledger"],
+    ];
+    for n in filled {
+        assert!(
+            n.as_i64().unwrap() >= 1_000_000_000_000_000,
+            "an actor count not filled: {a}"
+        );
+    }
+    eprintln!("the worst row takes {} bytes", len(row));
     assert!(len(row) <= query::ROW_BYTES, "a row of {} bytes", len(row));
+    // A bot row at its largest (the Reviewer's Low (b) on cf79aedb): bot, role and squad each at
+    // the 96-byte JSON cap, one by quotes, one by 4-byte characters, one by control characters.
+    {
+        let c = Connection::open(fx.db()).unwrap();
+        c.execute(
+            "UPDATE usage SET bot = ?1, role = ?2, squad = ?3 WHERE actor_state = 'attributed'",
+            params!["\"".repeat(48), "😀".repeat(24), "\u{1}".repeat(16)],
+        )
+        .unwrap();
+    }
+    let mut by_bot = args(&[]);
+    by_bot.extend(["--by".to_string(), "bot".to_string()]);
+    let (code, bots) = fx.query(&by_bot);
+    assert_eq!(code, 0, "{bots}");
+    assert!(schema().valid(&bots), "{:#?}", schema().errors(&bots));
+    let bot_rows = rows_of(&bots);
+    assert!(!bot_rows.is_empty(), "{bots}");
+    let widest = bot_rows.iter().map(len).max().unwrap();
+    eprintln!("the worst bot row takes {widest} bytes");
+    assert!(widest <= query::ROW_BYTES, "a bot row of {widest} bytes");
+    assert_eq!(bot_rows[0]["squad"], "\u{1}".repeat(16));
     let mut meta = v.clone();
     meta["rows"] = json!([]);
     meta["query"]["branches"] = json!([]);
@@ -1949,7 +2053,7 @@ fn rows_metadata_and_refusals_stay_within_the_budget_table() {
     );
 
     // The largest request the bound allows: its echo stays within 2 x 64 KiB plus 3 bytes a
-    // name, and with the metadata under 150 KiB, which leaves room for 149 rows.
+    // name, and with the metadata under 150 KiB, which leaves room for 132 rows of 2.25 KiB.
     let n = query::MAX_BRANCHES;
     let names: Vec<String> = (0..n)
         .map(|i| quoted_branch(i, query::MAX_NAMES_BYTES / n))
@@ -1964,7 +2068,9 @@ fn rows_metadata_and_refusals_stay_within_the_budget_table() {
         &serde_json::to_string(&v).unwrap()[..300]
     );
     let rows_fit = v["error"]["rows_fit"].as_u64().unwrap();
-    assert!(rows_fit >= 149, "only {rows_fit} rows fit");
+    let floor = (query::OUTPUT_CAP - 150 * 1024) / query::ROW_BYTES;
+    assert_eq!(floor, 132);
+    assert!(rows_fit >= floor as u64, "only {rows_fit} rows fit");
     check_refusal_nulls("worst too_large", &v);
     let echo: usize = names
         .iter()
@@ -2143,7 +2249,7 @@ fn query_and_status_never_change_the_store_and_add_only_sqlite_companions() {
     );
     let st: Value = serde_json::from_slice(&out.stdout).unwrap();
     assert!(st["rows"].as_i64().unwrap() > 0);
-    assert_eq!(st["schema_version"], 2);
+    assert_eq!(st["schema_version"], SCHEMA_VERSION);
     same_folder(&folder(&fx.env.state()), &before, "status");
 
     // A sync that stopped without closing left a row in the wal: the query counts it, and the
@@ -2180,14 +2286,15 @@ fn query_and_status_never_change_the_store_and_add_only_sqlite_companions() {
     Store::open(&fx.db()).unwrap();
 
     // Every refusal leaves it as it was too, a newer and an outdated store included.
-    for v in ["3", "1"] {
+    let newer = (SCHEMA_VERSION + 1).to_string();
+    for v in [newer.as_str(), "2", "1"] {
         Store::open(&fx.db())
             .unwrap()
             .set_meta("schema_version", v)
             .unwrap();
         let before = folder(&fx.env.state());
         let out = bin(&fx, &a);
-        assert_eq!(out.status.code(), Some(if v == "3" { 12 } else { 13 }));
+        assert_eq!(out.status.code(), Some(if v == newer { 12 } else { 13 }));
         let out = bin(&fx, &["status"]);
         assert_eq!(
             out.status.code(),
@@ -2413,13 +2520,15 @@ fn set_version(fx: &Fx, v: &str) {
 #[test]
 fn sync_refuses_a_newer_store_and_writes_nothing() {
     let fx = plain_store();
-    set_version(&fx, "3");
+    set_version(&fx, &(SCHEMA_VERSION + 1).to_string());
     let state = fx.env.state();
     let before = folder(&state);
     {
         let _g = serial();
         let o = sync_opts(&fx, t(GENERATED));
-        assert!(matches!(fx.env.sync(&o), Outcome::NewerSchema { store: 3 }));
+        assert!(
+            matches!(fx.env.sync(&o), Outcome::NewerSchema { store } if store == SCHEMA_VERSION + 1)
+        );
     }
     strictly_same_folder(&folder(&state), &before, "sync on a newer store");
 
@@ -2524,7 +2633,7 @@ fn before_a_reset_sync_keeps_a_generation_whose_row_counts_match() {
             .meta("schema_version")
             .unwrap()
             .as_deref(),
-        Some("2")
+        Some(SCHEMA_VERSION.to_string().as_str())
     );
     assert_eq!(
         meter::store::generations(&fx.env.state()),
@@ -2559,12 +2668,18 @@ fn a_migration_without_twice_the_store_free_refuses_and_changes_nothing() {
     let mut o = sync_opts(&fx, t(GENERATED));
     o.free_bytes = Some(2 * size - 1);
     let out = fx.env.sync(&o);
-    match out {
-        Outcome::NoSpace { free, needed } => {
-            assert_eq!((free, needed), (2 * size - 1, 2 * size));
+    // Twice the store, plus what the logs a reset re-imports are projected to add.
+    let growth = match out {
+        Outcome::NoSpace {
+            free,
+            needed,
+            growth,
+        } => {
+            assert_eq!((free, needed), (2 * size - 1, 2 * size + growth));
+            growth
         }
         other => panic!("expected a refusal, got {other:?}"),
-    }
+    };
     strictly_same_folder(&folder(&state), &before, "a refused migration");
     assert_eq!(
         Store::open_read_only(&fx.db())
@@ -2576,7 +2691,7 @@ fn a_migration_without_twice_the_store_free_refuses_and_changes_nothing() {
         "the old store keeps working as it was"
     );
 
-    o.free_bytes = Some(2 * size);
+    o.free_bytes = Some(2 * size + growth);
     let r = {
         let _g = serial();
         fx.env.run(&o)
@@ -2651,9 +2766,10 @@ fn ceiling_store() {
             .prepare(
                 "INSERT INTO usage(id, hour_ms, harness, model, machine, repo, branch,
                    input_uncached, cache_read, cache_write_5m, cache_write_1h, output, reasoning,
-                   unsplit, precision, reported_usd, events, updated_ms)
+                   unsplit, precision, reported_usd, events, updated_ms, actor_state, bot, role,
+                   squad, kind, basis, branch_basis, reason)
                  VALUES(?1, ?2, ?3, ?4, 'machine-ceiling', ?5, ?6, ?7, ?8, ?9, 0, ?10, ?11, 0,
-                   'exact', NULL, 7, ?12)",
+                   'exact', NULL, 7, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
             )
             .unwrap();
         let mut n = 0u64;
@@ -2673,6 +2789,9 @@ fn ceiling_store() {
                 } else {
                     Some(branch.as_str())
                 };
+                // Two calls in three tied to one of eight bots (RFC 0021), the rest unlinked.
+                let tied = r % 3 != 2;
+                let bot = tied.then(|| format!("bot-{}", (r + b as u64) % 8));
                 st.execute(params![
                     format!("c{n}"),
                     h,
@@ -2685,7 +2804,15 @@ fn ceiling_store() {
                     2_000,
                     3_000,
                     400,
-                    now
+                    now,
+                    if tied { "attributed" } else { "unlinked" },
+                    bot,
+                    tied.then_some("dev"),
+                    tied.then_some("bot-0"),
+                    tied.then_some("worker"),
+                    tied.then_some(["session", "label", "worktree"][(r % 3) as usize]),
+                    if branch.is_some() { "log" } else { "none" },
+                    (!tied).then_some("no_record")
                 ])
                 .unwrap();
             }
@@ -2710,6 +2837,7 @@ fn ceiling_store() {
     let counted_from = meter::time::day_start(now) - 89 * meter::time::DAY_MS;
     for (k, v) in [
         ("counted_from_ms", counted_from.to_string()),
+        (meter::evidence::FROM_META, counted_from.to_string()),
         ("last_run_ms", (now - 300_000).to_string()),
         ("last_success_ms", (now - 300_000).to_string()),
         ("last_pending_bytes", "0".into()),
@@ -2871,7 +2999,7 @@ fn a_read_only_state_folder_is_read_with_companions_and_refused_without() {
 #[test]
 fn a_newer_store_is_refused_before_the_move_runs() {
     let fx = plain_store();
-    set_version(&fx, "3");
+    set_version(&fx, &(SCHEMA_VERSION + 1).to_string());
     let old = fx.env.dir.path().join("old-state");
     fs::create_dir_all(&old).unwrap();
     fs::copy(fx.db(), old.join("meter.db")).unwrap();
@@ -2879,7 +3007,10 @@ fn a_newer_store_is_refused_before_the_move_runs() {
     let mut o = sync_opts(&fx, t(GENERATED));
     o.migrate_from = Some(old.clone());
     let out = fx.env.sync(&o);
-    assert!(matches!(out, Outcome::NewerSchema { store: 3 }), "{out:?}");
+    assert!(
+        matches!(out, Outcome::NewerSchema { store } if store == SCHEMA_VERSION + 1),
+        "{out:?}"
+    );
     strictly_same_folder(&folder(&fx.env.state()), &before_new, "the state folder");
     strictly_same_folder(&folder(&old), &before_old, "the old folder");
 
@@ -2895,7 +3026,10 @@ fn a_newer_store_is_refused_before_the_move_runs() {
     o.now_ms = t(GENERATED);
     o.migrate_from = Some(old.clone());
     let out = fresh.sync(&o);
-    assert!(matches!(out, Outcome::NewerSchema { store: 3 }), "{out:?}");
+    assert!(
+        matches!(out, Outcome::NewerSchema { store } if store == SCHEMA_VERSION + 1),
+        "{out:?}"
+    );
     strictly_same_folder(&folder(&old), &before_old, "the old folder");
     assert!(!new.join("meter.db").exists() && !new.join(".meter-moved").exists());
 }
@@ -3034,8 +3168,12 @@ fn a_real_free_space_refusal_reads_the_filesystem() {
     assert_eq!(o.free_bytes, None, "the real filesystem is asked");
     let out = fx.env.sync(&o);
     match out {
-        Outcome::NoSpace { free: f, needed } => {
-            assert_eq!(needed, 2 * len_before, "{f}");
+        Outcome::NoSpace {
+            free: f,
+            needed,
+            growth,
+        } => {
+            assert_eq!(needed, 2 * len_before + growth, "{f}");
             assert!(f < needed);
         }
         other => panic!("expected the real refusal, got {other:?}"),

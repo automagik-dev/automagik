@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (2026-11-04, by the owner; answers: D38, D39, Q1-Q9) |
+| Status | In delivery (delivery 2: #349; the Windows build turned off by #284; 3-6 open; accepted 2026-11-04, by the owner; answers: D38, D39, Q1-Q9) |
 | Milestone | not scheduled |
 | Lanes | desktop (3.N); herdr (3.N.P) for the pack's split install; am (3.N.P) |
 | Created | 2026-11-04 |
@@ -506,6 +506,13 @@ The guest half (delivery 2) runs on hosted Linux runners and gates every PR.
 
 None left. The owner answered all nine on 2026-11-04, each as the draft recommended: Q1-Q9 in
 Decided. The spike's numbers still pick between Q1's (a) and (b), and decide Q4's Windows 10.
+
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: none.
+- Merged changes that cite this RFC: #288, #292, #330, #349, #791 (last merged 2026-11-09).
 
 ## Links
 

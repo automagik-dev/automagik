@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft (owner's answers in: D19; question 2 still open) |
+| Status | Queued (owner's answers in: D19; question 2 still open; only the RFC: #188) |
 | Milestone | not scheduled |
 | Lanes | desktop (3.N); plugin (3.N.P) for the secrets broker; Omni upstream |
 | Created | 2026-11-03 |
@@ -227,6 +227,13 @@ Bot can read a key and send it out. D19 accepts this for now.
    default and offer the guest only where it runs.
 5. **Unfold.** Recommended: Unfold consumes the same boundary API, so one supervisor serves
    both products.
+
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: none.
+- Merged changes that cite this RFC: #188, #252, #288 (last merged 2026-11-04).
 
 ## Links
 

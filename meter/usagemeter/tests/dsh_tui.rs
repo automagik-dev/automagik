@@ -1001,3 +1001,75 @@ fn zstd_cli_frames_have_their_checksums_verified() {
     assert_eq!(dsh_totals(&env), sum(&[0, 2]));
     assert_eq!(dsh_source(&r)["status"], "degraded");
 }
+
+// RFC 0021 delivery 5, carried item 4: a dsh-tui worker's usage takes its branch from the worker
+// ledger's start row (`branch_basis: ledger`), never from a checkout, and a start row learned
+// after the usage was read moves it there on the next sync.
+#[test]
+fn a_dsh_tui_workers_branch_comes_from_its_start_row_even_when_learned_later() {
+    let env = Env::new();
+    let p = session_file(&env);
+    append(
+        &p,
+        &frame(&[
+            header(),
+            call(0, Some("id-1"), 10, 5, 0),
+            call(1, Some("id-2"), 3, 1, 0),
+        ]),
+    );
+    env.run(&env.opts());
+    let rows = |env: &Env| -> Vec<(Option<String>, Option<String>, String, String)> {
+        env.store()
+            .rows_since(i64::MIN)
+            .unwrap()
+            .into_iter()
+            .map(|r| {
+                let a = r.key.attr.unwrap();
+                (r.key.bot, r.key.branch, a.branch_basis, a.state)
+            })
+            .collect()
+    };
+    assert_eq!(rows(&env), [(None, None, "none".into(), "unlinked".into())]);
+    let created = at() - 3_600_000;
+    let start = serde_json::json!({
+        "event": "start", "kind": "worker", "terminal": "t4", "botId": "b-dshworker",
+        "task": "gh-45", "worktree": "/work/app", "agent": "dsh-tui", "role": "dev",
+        "branch": "feat/gh-45-dsh", "project": "/work/app", "lead": "b-leadsynth",
+        "core": "core-synthetic", "created_ms": created, "squad": "b-squadsynt", "session": null,
+        "at": meter::time::format_rfc3339(created + 5_000)
+    });
+    let ledger = env
+        .home()
+        .join(".config/herdr-app/automagik-herdr/workers.jsonl");
+    fs::create_dir_all(ledger.parent().unwrap()).unwrap();
+    fs::write(&ledger, format!("{start}\n")).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&ledger, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+    let r = env.run(&env.opts());
+    assert_eq!(r.calls_moved, 2);
+    assert_eq!(
+        rows(&env),
+        [(
+            Some("b-dshworker".into()),
+            Some("feat/gh-45-dsh".into()),
+            "ledger".into(),
+            "attributed".into()
+        )]
+    );
+    let total: i64 = env
+        .store()
+        .rows_since(i64::MIN)
+        .unwrap()
+        .iter()
+        .map(|r| r.tokens.input_uncached)
+        .sum();
+    assert_eq!(total, 13, "a move never changes a total");
+    let store = env.store();
+    assert_eq!(
+        meter::evidence::implied_rollups(&store.conn).unwrap(),
+        meter::evidence::stored_rollups(&store.conn, i64::MIN).unwrap()
+    );
+}

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft (amended 2026-11-09 by [RFC 0024](0024-automagik-cloud.md): the Summary, Web instances, the desktop client, Contracts, the threat model's Authentication and Undo lines, and questions 2, 6 and 7) |
+| Status | Queued (amended 2026-11-09 by [RFC 0024](0024-automagik-cloud.md), #866: the Summary, Web instances, the desktop client, Contracts, the threat model's Authentication and Undo lines, and questions 2, 6 and 7) |
 | Milestone | not scheduled |
 | Lanes | desktop (3.N); release tooling |
 | Created | 2026-10-30 |
@@ -127,6 +127,13 @@ and a rollback when this RFC is accepted.
    one, so the user always knows where the work runs. *Amended by RFC 0024 (2026-11-09):* yes on
    the desktop: "This computer" is the rail's first tile beside Cloud workspaces, one tile is
    active at a time and its name is in the window's header.
+
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: none.
+- Merged changes that cite this RFC: #866 (last merged 2026-11-09).
 
 ## Links
 

@@ -19,8 +19,9 @@ variables did not change, so an existing install keeps its data. Since 0.5.0 the
 ## Privacy
 
 usagemeter records how many tokens were used, never what was said. It stores no prompt text,
-responses, titles, file contents or per-turn rows: only hourly token counts per harness, model,
-repo and branch (see [What it stores](#what-it-stores)). Repo URLs are stripped of credentials.
+responses, titles or file contents: hourly token counts per harness, model, repo and branch, and,
+for a bounded time, each call's token counts with its time, folder and keyed hashes of its session
+and request ids, never the raw ids (see [What it stores](#what-it-stores)). Repo URLs are stripped of credentials.
 The store stays on the machine (0600); the only thing that leaves it is the summary doc, written
 to the local herdr-core. The binary itself opens no network connection.
 
@@ -81,8 +82,9 @@ Several tools on a machine install and run the same usagemeter. They rely on thi
   prints `another sync is running; nothing to do` and exits 0.
 - **Exit status of `sync`:** 0 when it ran or had nothing to do, 2 on an error, 3 when the state
   move blocks it (files in the new dir must be resolved by hand; one stderr line says which), 4
-  when a migration needs more free space than there is (twice the store's size; nothing was
-  changed), 12 when the store was written by a newer meter (nothing was read or written).
+  when a rebuild, backfill or migration needs more free space than there is (twice the store's
+  size plus what the logs still to import may add; nothing was changed) or ran out of room
+  part-way (the store put back as it was), 12 when the store was written by a newer meter (nothing was read or written).
 - **`query`:** genie's read-only, fork-and-exit answer, contract 1 under `meter.usage@1` (RFC
   0018 in automagik, schema and examples in `meter/schema/query/v1/`). See [Query](#query).
 - **Release assets:** every release carries `usagemeter-darwin-arm64`, `usagemeter-darwin-x86_64`,
@@ -160,7 +162,9 @@ is opened, and the folder itself stays.
   kept. No old name is removed before its new entry is fsynced, including an entry an interrupted
   run already made; a failed fsync before that point stops `sync` with an error and the old file
   stays. A copy that fails (a full disk, a source that changed) removes its temporary
-  `.<name>.part` file.
+  `.<name>.part` file. A copy is placed with a hard link inside the new dir, which fails rather
+  than replace a file there, so the new dir must be on a filesystem with hard links (APFS, ext4,
+  and the like); on one without, the move stops and nothing is replaced.
 - The database moves with its sidecars as one unit. First a `.meter-migrating` marker in the new
   dir records the length and SHA-256 of each of `meter.db`, `meter.db-wal` and `meter.db-shm`;
   then all of them are copied into the new dir and fsynced, and the marker is renamed
@@ -233,15 +237,41 @@ renders each row as an `ae/1` envelope:
 - `total_only`: `unsplit` (tokens known only as a total, never priced), and none of the split
   fields.
 
-A store written by an older meter (row ids without precision) is rebuilt once from the logs on
-the next `sync`: the old rows are dropped in the same transaction that resets the offsets, so the
-doc never counts a token twice. Until the rebuild finishes, it is published with
-`complete: false`. No prompt text, titles, file contents or
-per-turn rows are stored, and no $ except omp's reported cost.
+A store written by a meter older than schema 2 (row ids without precision) is rebuilt once from
+the logs on the next `sync`: the old rows are dropped in the same transaction that resets the
+offsets, so the doc never counts a token twice. Until the rebuild finishes, it is published with
+`complete: false`. A schema 2 store is migrated to schema 3 in place, every row kept (below). No
+prompt text, titles or file contents are stored, and no $ except omp's reported cost.
+
+**Per-call evidence and links (schema 3, RFC 0021 delivery 5).** Beside the rollups the store keeps,
+per counted call (RFC 0018 (b)): its time in ms, harness, model, machine, repo and branch as
+logged, every token kind and the precision, the reported $, the folder it ran in and the one its
+session started in, and its session, parent session and request ids as keyed 128-bit hashes (an
+HMAC with a random key kept in the store; the raw ids are never written there). Its bot, kind,
+role, squad, task and basis are derived from the `launch` and `link` tables, never typed in.
+`launch` holds one row per Herdr launch (its start row's fields, its validity interval and what
+ended it: an end row, a newer terminal, hc showing it finished, a detach, or `gone`, when a sync
+no longer sees a terminal an earlier sync saw, with `gone_after` the last sync that saw it);
+`link` one row per session in a launch (`session`, `label` or `worktree`), a changed one kept and
+marked superseded. They follow RFC 0018 (b)'s rules without extending its session-to-task
+contract. Each sync reads Herdr's ledgers whole (each at most 16 MiB, counted in the run's
+budget; size, modification time and first bytes tell an unchanged set apart, so its diff is
+skipped), writes what changed, and queues the sessions and start folders whose launches or links
+changed: their calls' attribution is recomputed under the read budget, and a call whose
+attribution changed moves its tokens from the old rollup row to the new one in the same
+transaction (a run stopped by the budget resumes the queue). A schema 3 rollup keys on its squad,
+`kind`, `basis`, `branch_basis` and `actor_state`; rows from before schema 3 keep their bot and
+role for the doc but have no state: they are frozen and never counted as attributed, nor is any
+hour before `evidence_from`. Retention (RFC 0018, proposed): evidence for 90 days or 1 GiB,
+whichever comes first, oldest whole day first (`evidence_from` moves past it); closed launches and
+links for 400 days. The rollups stay as they are.
 
 - `repo` is `host/owner/repo` from the cwd's git remote, without credentials, port, query or
   fragment; worktrees resolve to their repository. No remote: null.
-- `branch` is the session's `gitBranch` (Claude Code); null for omp and dsh-tui.
+- `branch` is the session's `gitBranch` (Claude Code), or a Codex thread's (`branch_basis: log`,
+  never replaced). omp and dsh-tui log none: a call of theirs that resolves to a worker launch
+  takes that worker's start-row branch (`branch_basis: ledger`); any other stays null
+  (`branch_basis: none`). Never from git or today's checkout.
 - `bot`, `role`, `squad` come from the start row of the Herdr launch the call belongs to (RFC
   0021, `src/ledger.rs`): read from the global app home's `workers.jsonl` and `attach.jsonl`,
   `$HERDR_WORKERS_LEDGER`, and each project's `.herdr/app-home` above the call's cwd. The launch
@@ -261,6 +291,7 @@ per-turn rows are stored, and no $ except omp's reported cost.
 usagemeter sync                 # the normal run: at most 20 s, then publish
 usagemeter sync --no-publish    # update the store only
 usagemeter sync --backfill      # import the full history instead of 30 days (resumes across runs)
+usagemeter sync --evidence-backfill --days 90   # per-call evidence for the last 90 days, re-tagged
 usagemeter status               # what the store holds, as JSON
 usagemeter --version
 ```
@@ -276,12 +307,30 @@ widening it re-imports), `--budget-secs N` (default 20), `--no-publish`, `--doc 
 - When the budget runs out, progress so far is committed and the rest waits for the next run. A
   killed run loses at most the chunk it was on and never counts anything twice.
 - A missing `hc` is not an error: the summary is just not published.
+- `--evidence-backfill --days N` (RFC 0021 (c), run by the operator, never on its own): N is 1 to
+  90, the evidence's retention, whatever the oldest ledger row says. For the hours before
+  `evidence_from`, it re-reads the omp, Claude Code and dsh-tui logs still on disk and moves each
+  call out of the rollup that counted it, with its evidence, to the row its attribution names
+  now; totals never change. Then `evidence_from` moves back, and every call from then is queued
+  to have its attribution recomputed from today's ledgers and labels. It runs under the budget,
+  one transaction per chunk, and later syncs go on with it until it is done. Codex threads, usage
+  whose logs are gone, and rows written before schema 3 keep their hours before evidence.
 - A store a newer meter wrote is refused (exit 12) before anything is opened for writing.
-- A write to an existing store's schema (a reset, or the query's index on an older store) needs
-  twice the store's size free (else exit 4, nothing changed). Before a reset drops a store's rows
-  (an outdated store rebuilt, or a widened re-import), `sync` also keeps a generation: `meter.db.gen-<schema>-<utc>` (mode 0600), a copy of the store made with
-  `VACUUM INTO`, reopened and checked table by table against the store's row counts. Only one is
-  kept; the next sync that succeeds on the rebuilt store removes it.
+- A write to an existing store's schema (a reset, the schema 3 migration, or the query's index on
+  an older store) needs twice the store's size free (else exit 4, nothing changed). Before a reset
+  drops a store's rows (an outdated store rebuilt, or a widened re-import) and before the schema 3
+  migration, `sync` also keeps a generation: `meter.db.gen-<schema>-<utc>` (mode 0600), a copy of
+  the store made with `VACUUM INTO`, reopened and checked table by table against the store's row
+  counts. Only one is kept; the next sync that succeeds on the migrated store removes it, never
+  the run that made it. The migration itself is one transaction that refuses to commit if any
+  table would lose a row; `query` and `status` never migrate (a schema 2 store gives `query` exit
+  13 until `sync` runs). For a reset, a backfill or the migration, the room needed also counts
+  what the logs still to import may add, so a disk that would fill mid-run refuses up front: their
+  bytes (every log in the window for a reset, else what lies past each log's stored offset)
+  divided by 8, far above the measured ratio (about 1/137). A run that still runs out of room part-way (or meets
+  a file-size limit) stops with exit 4: the generation it kept is put back (its wal and shm
+  removed first), or, with no rebuild under way, the store keeps every chunk it committed and
+  its old watermark. It is never reported as complete and fresh.
 
 ## Query
 
@@ -301,7 +350,23 @@ with the reason. Unknown is never 0: an unpriced amount, the reasoning of a harn
 none (dsh-tui) and the backlog while a reset's re-import is unfinished are null. The query never
 syncs: only `sync` refreshes the store.
 `sync` keeps an index on (repo, branch, hour), made by its first run after an upgrade (no row
-changes, no new `schema_version`), so a query reads only the rows of the branches it names.
+changes, no new `schema_version`); a query reads the repo's rows in its window through it.
+
+```sh
+usagemeter query --repo example.com/acme/widgets --by bot [--branch feat/x ...] --json
+```
+
+Actors (RFC 0021 (d)): every answer says who its tokens belong to.
+- Each row with tokens carries `attribution.actor`: `tokens_attributed`, `tokens_ambiguous`,
+  `tokens_unlinked` and `tokens_before_evidence` add up to `tokens.total`; `tokens_by_basis`
+  (`session`, `label`, `worktree`) to the attributed part; `tokens_by_branch_basis` (`log`,
+  `ledger`, `none`) to the total. Usage before `evidence_from`, all of it while that is null, and
+  rollups written before schema 3 are before evidence: never attributed, whatever bot they name.
+- `actor_unattributed` holds the repo's usage in the window given to no bot, one part per reason
+  (`claimants_differ`, `no_record`, `dsh_tui_seat`, `other_machine`, `before_evidence`).
+- `--by bot` answers one row per (bot, kind, role, squad, unrecorded, harness) of attributed
+  usage, the branches named (none needed) a filter. A bot with no row is 0 only when
+  `actor_unattributed.absent_bot_is_zero` is true; otherwise it is unknown.
 
 ## The summary doc
 

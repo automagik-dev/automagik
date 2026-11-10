@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
+| Status | Accepted (unverified: no delivery PR found; #103, #121 and #127 predate the RFC) |
 | Milestone | 1. Safe browser and everyday fixes |
 | Lanes | plugin (3.N.P) |
 | Created | 2026-10-30 |
@@ -98,6 +98,13 @@ Order: 3a, then 3b, 3c and 3d. No other browser feature work merges before 3a.
 3. **Should 3c ride with 3a?** Recommended: no. Keep it a separate slice, merged right after 3a,
    so each has its own test and rollback.
 4. **Trace caps.** Recommended: keep the last 50 runs or 30 days per Bot, whichever is smaller.
+
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: none.
+- Merged changes that cite this RFC: #203 (last merged 2026-11-03).
 
 ## Links
 

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (delivery 3 merged: #190; 1-2, the labels and milestones, not done) |
+| Status | In delivery (delivery 3 only: `docs/` never ships; deliveries 1 and 2 not done) |
 | Milestone | n/a (process) |
 | Lanes | none (docs and GitHub only) |
 | Created | 2026-10-30 |
@@ -28,7 +28,7 @@ repository only.
 - A milestone names an outcome a user can feel: "One message box", "The app opens fast".
 - It has no due date and no version. It closes when its last issue closes.
 - Each RFC names its milestone in its header and in the index.
-- A milestone is created only for scheduled work. Draft and Parked RFCs have none.
+- A milestone is created only for scheduled work. Queued and Parked RFCs have none.
 
 ### Milestone order
 
@@ -43,7 +43,7 @@ these RFCs merges.
 | 4 | Projects in one place | RFC 0005 repos base and picker, then Genie Simple |
 | 5 | The app opens fast | RFC 0007, measured first |
 
-Personal customization (0009) is Draft and comes after milestone 2; its milestone is created
+Personal customization (0009) is Queued and comes after milestone 2; its milestone is created
 when it is scheduled. Herdr (0006), Genie Publish (0005) and Platform (0008) stay at the RFC
 stage, with no milestone, until their open questions are answered.
 
@@ -107,7 +107,7 @@ Decided by the owner: the RFCs and the roadmap are public now, scrubbed by the r
 | `cross-repo` | A tracking issue for work in another repository. |
 | `security` | A security fix. Its title follows the title-only rule. |
 | `needs-owner` | Waits on an owner answer. |
-| `not-scheduled` | Belongs to a Draft or Parked RFC. |
+| `not-scheduled` | Belongs to a Queued or Parked RFC. |
 
 ## Contracts introduced
 

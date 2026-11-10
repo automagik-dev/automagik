@@ -59,6 +59,13 @@ impl Env {
         }
     }
 
+    /// An env whose temp folder is inside `parent` (a test of TMPDIR inside a project).
+    pub fn new_in(parent: &Path) -> Env {
+        Env {
+            dir: tempfile::tempdir_in(parent).unwrap(),
+        }
+    }
+
     pub fn home(&self) -> PathBuf {
         self.dir.path().join("home")
     }
@@ -112,6 +119,7 @@ impl Env {
         o.workers_ledger = None;
         o.use_hc = false;
         o.resolve_repos = false;
+        o.walk_within = Some(self.dir.path().to_path_buf());
         o.publish = false;
         o.force = true;
         o
@@ -141,6 +149,11 @@ impl Env {
         }
         if !o.workers_ledger.as_deref().is_some_and(inside) {
             o.workers_ledger = None;
+        }
+        // The walk for project app homes stays in the test's folder: a temp folder inside a real
+        // project (TMPDIR under a repository) never reads that project's ledgers.
+        if !o.walk_within.as_deref().is_some_and(inside) {
+            o.walk_within = Some(self.dir.path().to_path_buf());
         }
         for p in [&o.state_dir].into_iter().chain(o.migrate_from.as_ref()) {
             assert!(

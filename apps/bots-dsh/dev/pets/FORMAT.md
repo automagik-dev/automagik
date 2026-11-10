@@ -27,7 +27,7 @@ Use the shipped example manifest for the locally verified Codex fields: id, disp
 
 ## DSH presentation mapping
 
-Verified source snapshot: `examples/genie-v5/qa/dsh-commit.txt`, repository automagik-dev/automagik, apps/bots-dsh. Original adapter and mark source are included in that QA directory.
+Verified source snapshot: `examples/genie-v5/qa/dsh-commit.txt`, repository automagik-si/automagik, apps/bots-dsh. Original adapter and mark source are included in that QA directory.
 
 - idle → idle
 - thinking, working, sending, orbit → running

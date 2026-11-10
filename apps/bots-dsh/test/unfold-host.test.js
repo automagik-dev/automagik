@@ -40,7 +40,7 @@ function updaters() {
   globalThis.fetch = async (url) => {
     fetched.push(String(url))
     const latest = { version: '99.0.0', dsBot: { verifiedDsh: '9.9.9' } }
-    const body = String(url).includes('api.github.com') ? { tag_name: 'v99.0.0', stargazers_count: 7, html_url: 'https://github.com/automagik-dev/automagik/releases/v99.0.0' } : latest
+    const body = String(url).includes('api.github.com') ? { tag_name: 'v99.0.0', stargazers_count: 7, html_url: 'https://github.com/automagik-si/automagik/releases/v99.0.0' } : latest
     return { ok: true, status: 200, json: async () => body }
   }
   const pluginManager = {

@@ -2,7 +2,8 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft (council 2026-11-09: revise; platform owner decisions 2026-11-09; amends 0024) |
+| Status | Accepted (2026-11-10, by the owner; council 2026-11-09: revise; platform owner decisions 2026-11-09; amends 0024) |
+| Goal | First goal (owner, 2026-11-10): by 23 Nov, the owner signs in and opens one hosted workspace in test mode, with no real charges: RFC 0024 deliveries 0-4 and RFC 0025 phase A. |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | none here (docs); desktop (3.N) or plugin (3.N.P) for a link; the Cloud service outside |
 | Created | 2026-11-09 |
@@ -643,7 +644,7 @@ outcomes.
 
 ## Amendments to RFC 0024
 
-This RFC amends RFC 0024 (Draft) at each place marked there:
+This RFC amends RFC 0024 (now Accepted) at each place marked there:
 
 - **Open question 8 (What is paid).** Was: model usage on the workspace's own keys at first.
   Now: BYO model access is free; managed tokens are an opt-in through Cloud's gateway at a
@@ -939,36 +940,40 @@ cannot waive it.
 
 ### Carried from RFC 0024
 
-The full question text stays in RFC 0024, and the platform owner's answer is recorded there.
-This list is the pointer and the recommendation, so the two RFCs do not drift into two homes.
+The full question text stays in RFC 0024, and the answer is recorded there. This list is the
+pointer and the outcome, so the two RFCs do not drift into two homes.
 
-- **RFC 0024 Q3, the isolation unit.** Recommended: one Incus VM per workspace; an unprivileged
-  container only for the operator's own; never privileged; settled at the isolation gate.
+- **RFC 0024 Q3, the isolation unit.** Decided by the owner, 2026-11-10: one Incus VM per
+  workspace; an unprivileged container only for the operator's own; never privileged. The gate
+  reviews how it is built.
 - **RFC 0024 Q4, who may invite.** Recommended: owners and admins, and the individual of a
   personal account; members and guests cannot.
 - **RFC 0024 Q5, recovery.** Recommended: a second passkey at the claim, recovery codes as slow
   hashes, and the host reset out of the Bots' reach; no email reset.
 - **RFC 0024 Q6, session lifetimes.** Recommended: self-hosted sessions slide with a 12-hour idle
   limit; Cloud workspace tokens 5 minutes; DSH's multi-day cookie is the delivery 0 evidence gap.
-- **RFC 0024 Q7, IP-only LAN installs.** Recommended: no passkeys there; an SSH tunnel or pairing
-  from a signed-in session; no TOTP fallback without its own review.
+- **RFC 0024 Q7, IP-only LAN installs.** Decided by Automagik Chat, 2026-11-10: no passkeys
+  there; an SSH tunnel or pairing from a signed-in session; no TOTP fallback without its own
+  review.
 - **RFC 0024 Q8, what is paid (amended).** Recommended: BYO free; managed tokens opt-in at a
   published margin; a per-workspace subscription with seats; compute metered; personal and
   self-hosted free; included seats and host shape at GO-LIVE.
-- **RFC 0024 Q10, moving a self-hosted instance into Cloud.** Recommended: a separate, later
-  decision; linking moves no data.
-- **RFC 0024 Q11, DSH's authentication hook.** Recommended: the gate now; propose a hook
-  upstream (RFC 0023) and move to it only once DSH ships one.
-- **RFC 0024 Q12, Omni's sign-in.** Recommended: Omni keeps its own for outside Omnis; behind a
-  gate it takes the gate's principal with its own sign-in off.
-- **RFC 0024 Q13, an optional external OIDC provider.** Recommended: not planned; the principal
-  contract leaves room later.
+- **RFC 0024 Q10, moving a self-hosted instance into Cloud.** Decided by Automagik Chat,
+  2026-11-10: a separate, later decision; linking moves no data.
+- **RFC 0024 Q11, DSH's authentication hook.** Decided by Automagik Chat, 2026-11-10: the gate
+  now; propose a hook upstream (RFC 0023) and move to it only once DSH ships one.
+- **RFC 0024 Q12, Omni's sign-in.** Decided by Automagik Chat, 2026-11-10: Omni keeps its own for
+  outside Omnis; behind a gate it takes the gate's principal with its own sign-in off.
+- **RFC 0024 Q13, an optional external OIDC provider.** Decided by Automagik Chat, 2026-11-10:
+  not planned; the principal contract leaves room later.
 - **RFC 0024 Q14, federation for company customers.** Recommended: RFC 0024's delivery 0 checks
   it; decide before the first company customer, since a later issuer move re-binds everyone.
-- **RFC 0024 Q15, Pocket and Pocket Link.** Recommended: unchanged; Pocket pairs through Pocket
-  Link's keys; a phone sign-in to a web instance is a passkey of the same owner.
-- **RFC 0024 Q16, is the Cloud service open source?** Recommended: its contracts (principal,
-  workspace token, entitlements, rail API) are public here; the service starts private.
+- **RFC 0024 Q15, Pocket and Pocket Link.** Decided by Automagik Chat, 2026-11-10: unchanged;
+  Pocket pairs through Pocket Link's keys; a phone sign-in to a web instance is a passkey of the
+  same owner.
+- **RFC 0024 Q16, is the Cloud service open source?** Decided by Automagik Chat, 2026-11-10: its
+  contracts (principal, workspace token, entitlements, rail API) are public here; the service
+  starts private.
 - **RFC 0024 Q17, the desktop's Cloud credential and local Bots.** Recommended: a
   delivery-H-style mask per OS; keep desktop Cloud sign-in off until it exists; or the platform
   owner's written acceptance.
@@ -984,11 +989,18 @@ This list is the pointer and the recommendation, so the two RFCs do not drift in
 2. **Prepaid credit terms.** Recommended: credit is bought in the account's currency, is not
    transferable and earns no interest; a refund or an expiry is the organisation Owner's written
    decision and a compensating ledger event, shown before a purchase.
-3. **The outbound legal review's scope (phase E).** Recommended: the later RFC names the
-   jurisdictions, tax, consumer protection, sanctions and dispute rules before any merchant
-   path is built; this RFC builds none of it.
+3. **The outbound legal review's scope (phase E).** *Decided by Automagik Chat, 2026-11-10:* the
+   later RFC names the jurisdictions, tax, consumer protection, sanctions and dispute rules
+   before any merchant path is built; this RFC builds none of it.
 4. **Unattended spend beyond a day.** Recommended: keep the 24-hour maximum on Pre-approve; a
    longer unattended run needs a fresh owner step-up or a separate design, not a longer TTL.
+
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: #902, #910, #912.
+- Merged changes that cite this RFC: #888, #913 (last merged 2026-11-10).
 
 ## Links
 

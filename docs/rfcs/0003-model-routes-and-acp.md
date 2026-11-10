@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (deliveries 1-4, 6 and 7 merged: #187, #189, #563, #537, with #558, #559, #585 and #594; 5 (Gemini) open; amended 2026-11-06, 2026-11-08 and 2026-11-09) |
+| Status | In delivery (deliveries 1-4, 6 and 7: #187, #189, #537, #557, #558, #559, #563, #569, #585, #594; 5 (Gemini) open; amended 2026-11-06, 2026-11-08 and 2026-11-09) |
 | Milestone | 2. One message box (route descriptor); 3. Other agents in the same chat (ACP) |
 | Lanes | plugin (3.N.P), desktop (3.N) |
 | Created | 2026-10-30 |
@@ -605,6 +605,13 @@ the next check or the existing `retry(id)` service. Shutdown cancels incomplete 
 
 This amends D17's desktop CLI ownership only. Adapter installation, authentication, model
 selection, the conversation UI and the existing model-enable switches keep their own contracts.
+
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: none.
+- Merged changes that cite this RFC: #186, #187, #189, #349, #520, #522, #537, #557, #559, #569 (last merged 2026-11-06).
 
 ## Links
 

@@ -15,8 +15,8 @@ Omni for dsh is three packages. This one is the team; the other two sit on it an
 | Package | Folder | Row id | What it adds |
 |---|---|---|---|
 | `@automagik/bots-dsh` (this one) | `apps/bots-dsh` | `omni-ui` | The Bot team and its surface: Bots, group chats, settings, themes, interface copy, memory, secrets, usage, scheduled tasks, the Bot browser, updates, diagnostics, the `POST /api/omni-ui` route, and the `web-search` plugin |
-| `@automagik/omni-channels-dsh` | [`apps/omni-channels-dsh` in Omni](https://github.com/automagik-dev/omni/tree/dev/apps/omni-channels-dsh#readme) | `omni-channels` | The link to an Omni (pairing, `omni.json`), the Channels page and chats, Omni's tools for the platform (and the shell and file tools a Main Bot loses for them), the events Omni listens to, automations and their board, Omni's operator rules, and the onboarding step Connect Omni (`omni-connect`) |
-| `@automagik/omni-canvas-dsh` | [`apps/omni-canvas-dsh` in Omni](https://github.com/automagik-dev/omni/tree/dev/apps/omni-canvas-dsh#readme) | `omni-canvas` | `show_canvas`, the canvas check, the canvas language in Omni's rules, and the renderer that draws canvases in the chat (OpenUI and zod live only here) |
+| `@automagik/omni-channels-dsh` | [`apps/omni-channels-dsh` in Omni](https://github.com/automagik-si/omni/tree/dev/apps/omni-channels-dsh#readme) | `omni-channels` | The link to an Omni (pairing, `omni.json`), the Channels page and chats, Omni's tools for the platform (and the shell and file tools a Main Bot loses for them), the events Omni listens to, automations and their board, Omni's operator rules, and the onboarding step Connect Omni (`omni-connect`) |
+| `@automagik/omni-canvas-dsh` | [`apps/omni-canvas-dsh` in Omni](https://github.com/automagik-si/omni/tree/dev/apps/omni-canvas-dsh#readme) | `omni-canvas` | `show_canvas`, the canvas check, the canvas language in Omni's rules, and the renderer that draws canvases in the chat (OpenUI and zod live only here) |
 
 How they fit:
 

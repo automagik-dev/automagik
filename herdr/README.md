@@ -468,13 +468,14 @@ build and run their own teams.
 automagik-herdr ls [--all]                 bots: kind, lead, category, rank, code, planned, agent, model, pane, status
 automagik-herdr show <bot>                 one bot in full
 automagik-herdr create --name N --agent A [--kind main|member] [--role R] [--code true|false]
-       [--instructions TEXT | --instructions-file F|-] [--lead BOT] [--category ID]
+       [--instructions TEXT | --instructions-file F|-] [--lead BOT [--lead-project DIR]] [--category ID]
+       [--cross-member BOT@DIR]...
        [--character C --colour K | --omni] [--model M] [--rank R]
        [--agy-mode auto|accept-edits|plan] [--agy-allow RULE]... [--agy-deny RULE]...
        [--planned-wave N [--planned-note T]]
        [--worker-agent A] [--worker-model M] [--worker-effort E] [--worker-agy-mode M]
        [--worker-template T]
-automagik-herdr edit <bot> [the create options] [--code true|false] [--unplanned] [--no-model] [--no-category] [--rank=]
+automagik-herdr edit <bot> [the create options] [--code true|false] [--unplanned] [--no-model] [--no-category] [--no-lead-project] [--no-cross-members] [--rank=]
 automagik-herdr rm <bot>
 automagik-herdr category ls | add --title T [--sub S] [--id ID] | edit <id> | rm <id> | order <id>...
 automagik-herdr start <bot> [--space ID] [--tab ID]
@@ -877,11 +878,16 @@ verb but `send` (`hc events --terminal`/`--children-of` included), and any `--on
 allowed `send`.
 
 `send` is scoped to the caller's team: its lead chain (`effectiveLead` up), its declared lead
-chain (`bot.lead`, then that bot's lead, while each id is listed in bots.json, planned entries
-included — so a captain whose lead is a planned Orchestrator reaches it), its members
-(`descendantsOf`), the project's main bot (`mainBotOf`), its own workers (`worker.of` = the
-caller's bot) and the shared tester/reviewer/fixer ranks in bots.json (`RANKS`). The existing
-reviewer/fixer pane-label path also remains; a `role=tester` label alone grants nothing.
+chain (`bot.lead`, then that bot's lead, while each id is listed in the project's bots.json,
+planned entries included — so a captain whose lead is a planned Orchestrator reaches it), its
+members (`descendantsOf`), the project's main bot (`mainBotOf`), its own workers (`worker.of` =
+the caller's bot) and the shared tester/reviewer/fixer ranks in bots.json (`RANKS`). Across
+projects (`--lead-project` paired with `--cross-member <bot>@<dir>` on the lead), `send` adds
+only the direct `lead <-> member` link (never the lead's upward chain or main bot, and never the
+member's team or workers), and the guard and proxy read the other project's `0600` approved
+snapshot (`approved/`), never its live `.herdr/bots.json`; a one-sided or unapproved link fails
+closed. The existing reviewer/fixer pane-label path also remains; a `role=tester` label alone
+grants nothing.
 A captain bot may send to another squad's captain when both bots.json ranks are `captain`.
 Its workers do not inherit that rule, and a `role=captain` label alone grants nothing.
 A pm, integrator or fixer bot the project lists may also send to any bot the project lists,
@@ -1075,9 +1081,15 @@ on this computer are labelled. The lead's pane is the one the attach ledger ties
 ```
 
 - Exactly one bot has `kind: "main"`. Every other bot is a `member`.
-- `lead` is the id of the bot a member reports to. Without one, the member reports to the
-  main bot. A lead that is missing, planned or part of a cycle counts as the main bot, and
-  the row shows a warning.
+- `lead` is the id of the bot a member (or a `main` bot with `leadProject`) reports to. Without
+  one, a member reports to the main bot. `leadProject` is an optional absolute main-checkout
+  path (`--lead <bot> --lead-project <dir>`, cleared with `--no-lead-project` or
+  `--lead-project=""`): the lead lives in that other project on the same machine, and the bot
+  (or the whole team under a cross-project `main` bot) nests under that lead in the sidebar,
+  receives briefings and parent pane wiring across the two projects, and can exchange `hc send`
+  messages with its cross-project lead chain and reports. A lead (or `leadProject`) that is
+  missing, planned or part of a cycle falls back to the project's main bot (or no lead for a
+  `main` bot), and the row shows a warning.
 - `category` places a bot that reports to the main bot under a category header. Bots
   deeper down show under their lead and ignore it. A category id is a lowercase slug
   (`a-z`, `0-9`, single dashes, like `quality-gate`), since it goes into a pane label. A new
@@ -1105,7 +1117,9 @@ on this computer are labelled. The lead's pane is the one the attach ledger ties
   `agy --mode <mode>`. One of `auto` (the default when absent), `accept-edits` or `plan`; any
   other value is refused at launch with one line and never passed to agy. It applies only to
   an Antigravity seat: the pack never passes `--dangerously-skip-permissions` and never writes
-  agy's own settings, so its trust list and saved settings stay the person's.
+  agy's own saved settings; each writer launch's own `--settings` file lists just that launch's
+  folder in `trustedWorkspaces` (see below), so the rest of the person's trust list and saved
+  settings stay theirs. A read-only review launch is not auto-trusted (see below).
   `create|edit --agy-mode` sets it (`--agy-mode auto` clears it back to the default); the form
   offers it for an Antigravity bot. Other edits, installs and updates keep it in the roster.
   `show`, `ls` and `dsh-tui doctor` print it.
@@ -1144,11 +1158,25 @@ an unattended bot would stop at its first command. agy 1.5.3 takes a permission 
 `--settings` for one session, never saved, so every Antigravity launch of this pack — a bot's
 start, restart and resume, a worker, a helper Restart --tree runs again — writes its own file
 0600 under `<app home>/automagik-herdr/agy-settings/` and passes it as `--settings <file>`.
-The pack never writes agy's own `settings.json`, so its trust list and saved settings stay the
-person's.
+The pack never writes agy's own `settings.json`, so its saved settings stay the person's.
 
-The file is `{ "permissions": { "allow": [...], "deny": [...] } }`, both arrays in full every
-time (agy replaces its saved list field by field). The allow list is as narrow as the launch
+The file is
+`{ "permissions": { "allow": [...], "deny": [...] }, "trustedWorkspaces": ["<folder>"] }`,
+both arrays in full every time (agy replaces its saved list field by field). `trustedWorkspaces`
+lists one folder for a writer launch: the project folder for a seat, the worker's worktree
+for a worker, the helper's folder for a helper. agy trusts folders by exact path, so without it
+a new writer worktree would stop at the first-run question, "Do you trust the contents of this
+project?" (`agy` 1.5.3 reads `TrustedWorkspaces []string json:"trustedWorkspaces,omitempty"` as a
+top-level key of `--settings`). Trusting a folder lets agy load that folder's project
+customizations, such as its `.agents/` agents, rules, hooks and MCP servers, without asking. A
+read-only review launch (a worker with `role: "review"`, a seat with `rank: "reviewer"`) is
+therefore never auto-trusted: it has no trusted folder, so the file leaves `trustedWorkspaces`
+out entirely (a writer's saved list is never overwritten with an empty one), reviewing a
+contributor's or fork's tree never loads that tree's project configuration without asking, and
+agy stops at the trust question instead. Never a parent folder and never the home folder is listed,
+and the pack never writes agy's own `settings.json`, so its saved trust list stays the person's.
+
+The allow list is as narrow as the launch
 needs: a dev bot's project (or a worker's worktree) as `write_file`, `hc`, `git`, `node`,
 `bun`, the 24 read-only shell tools (`ls`, `cat`, `head`, `tail`, `grep`, `wc`, `diff`, `pwd`,
 `echo`, `cut`, `tr`, `jq`, `printf`, `basename`, `dirname`, `true`, `which`, `stat`, `realpath`,
@@ -1204,10 +1232,12 @@ command ends in a separator or a comment can't take either, so it runs without t
 plain warning. A linked machine's start writes the file under that machine's app home, through
 `hc`; with no app home there the start is refused rather than launched without its list.
 
-`dsh-tui doctor` prints each Antigravity bot's effective allow and deny lists (its seat's and
-its worker defaults'), in JSON too, plus one host-level row saying whether agy's terminal
-sandbox, and so `--mode`, can work here: Linux's user namespace controls, or macOS's
-`/usr/bin/sandbox-exec`. Unreadable evidence is a note, not a false warning.
+`dsh-tui doctor` prints each Antigravity bot's effective trusted folder and allow and deny lists
+(its seat's and its worker defaults'; a writer worker's trusted folder is its worktree, named at
+launch, while a read-only review launch prints `-` because it trusts nothing), in JSON too, plus
+one host-level row saying whether agy's terminal sandbox, and so `--mode`, can
+work here: Linux's user namespace controls, or macOS's `/usr/bin/sandbox-exec`. Unreadable evidence
+is a note, not a false warning.
 
 ### The briefing hook (Claude bots)
 

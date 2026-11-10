@@ -14,7 +14,7 @@ const temp = (t) => { const dir = mkdtempSync(join(tmpdir(), 'lane-')); t.after(
 const automagik = PUBLISHERS.find(entry => entry.publisher === 'automagik')
 const lane = (patch = {}) => ({
   schemaVersion: 1, publisher: 'automagik', keyId: 'k1', sequence: 220001, issuedAt: '2026-10-26T03:00:00Z', version: '3.22.1', base: '3.22.0',
-  plugins: [{ name: '@automagik/bots-dsh', version: '3.22.1', url: 'https://github.com/automagik-dev/automagik/releases/download/v3.22.1/automagik-bots-dsh-3.22.1.tgz', integrity: 'sha512-x', sha256: 'y', size: 1, engines: { dsh: '>=0.2.1-rc.3 <0.2.2-0' } }],
+  plugins: [{ name: '@automagik/bots-dsh', version: '3.22.1', url: 'https://github.com/automagik-si/automagik/releases/download/v3.22.1/automagik-bots-dsh-3.22.1.tgz', integrity: 'sha512-x', sha256: 'y', size: 1, engines: { dsh: '>=0.2.1-rc.3 <0.2.2-0' } }],
   ...patch,
 })
 const context = { publisher: automagik, appVersion: '3.22.0', dshVersion: '0.2.1-rc.3', installed: { '@automagik/bots-dsh': '3.22.0', '@automagik/welcome-dsh': '3.22.0' } }
@@ -38,7 +38,7 @@ test('a lane opens only with its signer\'s key, byte for byte', () => {
 
 test('Genie\'s lane is taken on any app at or past its base, and only for its own plugin', () => {
   const genie = PUBLISHERS.find(entry => entry.publisher === 'genie')
-  const own = { schemaVersion: 1, publisher: 'genie', keyId: 'genie-2026-10', sequence: 10002, version: '0.1.2', base: '3.3.0', plugins: [{ name: '@automagik/genie-dsh', version: '0.1.2', url: 'https://github.com/automagik-dev/genie/releases/download/v0.1.2/genie-dsh-0.1.2.tgz', engines: { dsh: '>=0.2.1-rc.3 <0.2.2-0' } }] }
+  const own = { schemaVersion: 1, publisher: 'genie', keyId: 'genie-2026-10', sequence: 10002, version: '0.1.2', base: '3.3.0', plugins: [{ name: '@automagik/genie-dsh', version: '0.1.2', url: 'https://github.com/automagik-si/genie/releases/download/v0.1.2/genie-dsh-0.1.2.tgz', engines: { dsh: '>=0.2.1-rc.3 <0.2.2-0' } }] }
   const installed = { '@automagik/genie-dsh': '0.1.1' }
   assert.deepEqual(laneUpdate(own, { publisher: genie, appVersion: '3.25.0', dshVersion: '0.2.1-rc.3', installed })?.plugins.map(plugin => plugin.name), ['@automagik/genie-dsh'])
   assert.equal(laneUpdate(own, { publisher: genie, appVersion: '3.2.0', dshVersion: '0.2.1-rc.3', installed }), null)
@@ -203,7 +203,7 @@ test('each lane keeps its own sequence, failures and staging: Genie\'s still goe
   // Each lane's own sequence: Genie's numbers are not measured against Automagik's.
   assert.equal(laneMemory(home, 'automagik').last, 220001)
   assert.equal(laneMemory(home, 'genie').last, 10004)
-  const genieLane = { schemaVersion: 1, publisher: 'genie', keyId: 'genie-2026-10', sequence: 10005, version: '0.1.5', base: '3.3.0', plugins: [{ ...genie.plugin, version: '0.1.5', url: 'https://github.com/automagik-dev/genie/releases/download/v0.1.5/genie-dsh-0.1.5.tgz', engines: { dsh: '>=0.2.1-rc.3 <0.2.2-0' } }] }
+  const genieLane = { schemaVersion: 1, publisher: 'genie', keyId: 'genie-2026-10', sequence: 10005, version: '0.1.5', base: '3.3.0', plugins: [{ ...genie.plugin, version: '0.1.5', url: 'https://github.com/automagik-si/genie/releases/download/v0.1.5/genie-dsh-0.1.5.tgz', engines: { dsh: '>=0.2.1-rc.3 <0.2.2-0' } }] }
   const geniePublisher = PUBLISHERS.find(entry => entry.publisher === 'genie')
   assert.equal(laneUpdate(genieLane, { publisher: geniePublisher, appVersion: '3.22.0', dshVersion: '0.2.1-rc.3', installed: { '@automagik/genie-dsh': '0.1.4' }, ...laneMemory(home, 'genie') })?.version, '0.1.5')
   // A Genie trial that fails marks Genie's version bad, not Automagik's.
@@ -230,7 +230,7 @@ test('a lane record from before each lane kept its own still reads', (t) => {
 // Oh My Claude left the lane with the app (dsh.js RETIRED): a lane that still carries it updates
 // nothing of it, and an add-on the lane does not name is never taken either.
 test('Automagik\'s lane updates only the plugins it names, never an add-on it does not', () => {
-  const addon = (name, version) => ({ name, version, url: `https://github.com/automagik-dev/automagik/releases/download/v3.22.1/${name.replace('/', '-')}-${version}.tgz`, integrity: 'sha512-x', sha256: 'y', size: 1, engines: { dsh: '>=0.2.0-rc.1 <0.3.0' } })
+  const addon = (name, version) => ({ name, version, url: `https://github.com/automagik-si/automagik/releases/download/v3.22.1/${name.replace('/', '-')}-${version}.tgz`, integrity: 'sha512-x', sha256: 'y', size: 1, engines: { dsh: '>=0.2.0-rc.1 <0.3.0' } })
   const carried = lane({ addons: [addon('dsh-oh-my-claude', '1.5.6-omni.8'), addon('@goodandready/dsh-subscriptions', '0.7.22-omni.1')] })
   const installed = { ...context.installed, 'dsh-oh-my-claude': '1.5.6-omni.7', '@goodandready/dsh-subscriptions': '0.7.21-omni.1' }
   assert.deepEqual(laneUpdate(carried, { ...context, installed })?.plugins.map(plugin => `${plugin.name}@${plugin.version}`), ['@automagik/bots-dsh@3.22.1'])
@@ -250,7 +250,7 @@ test('a lane that stops carrying a plugin leaves the installed one, and its data
   const link = join(target, 'node_modules', '@automagik', 'unfold-bridge-dsh')
   symlinkSync(bridge, link)
   const manifest = JSON.parse(readFileSync(join(target, 'package.json'), 'utf8'))
-  manifest.dependencies['@automagik/unfold-bridge-dsh'] = 'github:automagik-dev/automagik#0123456789abcdef0123456789abcdef01234567'
+  manifest.dependencies['@automagik/unfold-bridge-dsh'] = 'github:automagik-si/automagik#0123456789abcdef0123456789abcdef01234567'
   writeFileSync(join(target, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`)
   // What the bridge keeps outside node_modules: the sessions it watches.
   const data = join(home, 'team', 'unfold-bridge', 'state.json')
@@ -262,7 +262,7 @@ test('a lane that stops carrying a plugin leaves the installed one, and its data
   // person installed stays as it was.
   const carried = lane({ plugins: [...lane().plugins, {
     ...lane().plugins[0], name: '@automagik/unfold-bridge-dsh', version: '3.22.1',
-    url: 'https://github.com/automagik-dev/automagik/releases/download/v3.22.1/automagik-unfold-bridge-dsh-3.22.1.tgz',
+    url: 'https://github.com/automagik-si/automagik/releases/download/v3.22.1/automagik-unfold-bridge-dsh-3.22.1.tgz',
   }] })
   const installed = { ...context.installed, '@automagik/unfold-bridge-dsh': '3.20.0' }
   const update = laneUpdate(carried, { ...context, installed })

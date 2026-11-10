@@ -127,13 +127,15 @@ impl Hc {
     /// Every terminal hc lists, finished ones included (their end is evidence), with the labels
     /// attribution reads. Empty when hc cannot answer.
     pub fn terminals(&mut self) -> Vec<Terminal> {
-        let Ok(r) = self.call("terminal.list", json!({})) else {
-            return Vec::new();
-        };
-        let Some(list) = r.get("terminals").and_then(Value::as_array) else {
-            return Vec::new();
-        };
-        list.iter().filter_map(Terminal::from_json).collect()
+        self.terminals_listed().unwrap_or_default()
+    }
+
+    /// [`Hc::terminals`], None when hc did not answer with a list (so nothing can be taken as
+    /// gone from it).
+    pub fn terminals_listed(&mut self) -> Option<Vec<Terminal>> {
+        let r = self.call("terminal.list", json!({})).ok()?;
+        let list = r.get("terminals").and_then(Value::as_array)?;
+        Some(list.iter().filter_map(Terminal::from_json).collect())
     }
 
     pub fn doc_get(&mut self, name: &str) -> Result<(Value, u64), RpcError> {

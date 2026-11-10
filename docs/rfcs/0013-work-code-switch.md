@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (owner's answers in: D27 and Decided; deliveries 1-6 merged: #211, #238, #237, #259, #265, #272; 7 and 8 open) |
+| Status | In delivery (deliveries 1-6: #211, #237, #238, #259, #265, #272; 7 (one install) and 8 (shared Bots) open; owner's answers in: D27 and Decided) |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | desktop (3.N), plugin (3.N.P), herdr (3.N.P, [RFC 0011](0011-monorepo-parts-and-releases.md)) |
 | Created | 2026-11-03 |
@@ -360,6 +360,13 @@ the orchestrator.
 ## Open questions
 
 None. The owner answered every question (D27 and Decided).
+
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: none.
+- Merged changes that cite this RFC: #205, #211, #236, #237, #238, #252, #259, #265, #272, #292, #302, #666 (last merged 2026-11-08).
 
 ## Links
 

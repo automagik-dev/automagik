@@ -10,9 +10,11 @@ use meter::{paths, summary};
 const USAGE: &str = "\
 Usage:
   usagemeter sync [--force] [--backfill] [--days N] [--budget-secs N] [--no-publish] [--doc NAME]
+  usagemeter sync --evidence-backfill --days N [--budget-secs N] [--no-publish] [--doc NAME]
   usagemeter status
   usagemeter query --repo HOST/OWNER/REPO --branch B [--branch B ...] --json
                    [--window d1|d7|d30] [--contract 1] [--stale-after SECONDS]
+  usagemeter query --repo HOST/OWNER/REPO --by bot [--branch B ...] --json [...]
   usagemeter --version
 
 sync      Read new harness usage (omp, Claude Code, Codex, dsh-tui) into the local store and
@@ -20,6 +22,10 @@ sync      Read new harness usage (omp, Claude Code, Codex, dsh-tui) into the loc
   --force         Run even if the last sync is recent.
   --backfill      Re-import the full history (slow; resumes across runs).
   --days N        Import window in days (default 30). A wider window re-imports.
+  --evidence-backfill
+                  Give the last N days (--days, 1 to 90, the evidence's retention) per-call
+                  evidence from the logs still on disk, then recompute the attribution of every
+                  call from then. Totals never change; it resumes on later syncs until done.
   --budget-secs N Stop after N seconds and resume next run (default 20).
   --no-publish    Do not write the summary doc.
   --doc NAME      Doc name to publish to (default herdr-meter).
@@ -29,13 +35,16 @@ status    Print the store's state as JSON. It never writes the store: the databa
 query     Usage and estimated cost per branch of one repo, as the contract 1 envelope (RFC 0018,
           meter/schema/query/v1/) on stdout, for every exit below. It opens the store as status
           does; only sync refreshes the store. Capability meter.usage@1.
+  --by bot        One row per bot (RFC 0021): bot, kind, role, squad and harness, from the
+                  usage tied to a launch; any --branch is then a filter, and none is needed.
 
 The state lives in METER_STATE_DIR if set, else $AM_HOME/meter, else ~/.automagik/meter.
 The first sync moves the meter's files out of the pre-0.5.0 default directory.
 
 Exit status of sync and status: 0 done or nothing to do, 2 an error, 3 sync blocked by the state
-move, 4 sync refused a migration for want of free space (twice the store's size), 12 the store
-was written by a newer meter (sync writes nothing to it). stderr says why.
+move, 4 sync refused a migration for want of free space (twice the store's size, plus what the
+logs still to import may add) or ran out of room part-way (the store put back as it was), 12
+the store was written by a newer meter (sync writes nothing to it). stderr says why.
 
 Exit status of query: 0 answered, 1 error, 2 bad request, 10 no store, 11 no snapshot in time,
 12 store from a newer meter, 13 store needs sync to migrate it, 14 contract not served, 15 the
@@ -87,11 +96,13 @@ fn cmd_sync(args: Vec<String>) -> Result<ExitCode, String> {
     let dirs = state_dirs()?;
     let mut opts = Options::new(home, dirs.dir, now_ms());
     opts.migrate_from = dirs.legacy;
+    let mut evidence_backfill = false;
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--force" => opts.force = true,
             "--backfill" => opts.backfill = true,
+            "--evidence-backfill" => evidence_backfill = true,
             "--no-publish" => opts.publish = false,
             "--days" => opts.days = Some(parse_num("--days", it.next(), 1, 36_500)? as i64),
             "--budget-secs" => {
@@ -120,6 +131,26 @@ fn cmd_sync(args: Vec<String>) -> Result<ExitCode, String> {
             }
         }
     }
+    if evidence_backfill {
+        // --days is then how far back the evidence goes, never the import window: it never asks
+        // past the evidence's retention, whatever the oldest ledger row says (RFC 0021 delivery 8).
+        if opts.backfill {
+            return Err("--evidence-backfill and --backfill do not go together".into());
+        }
+        let days = opts
+            .days
+            .take()
+            .ok_or("--evidence-backfill needs --days N (1 to 90)")?;
+        if days > meter::evidence::EVIDENCE_DAYS {
+            return Err(format!(
+                "--days takes 1 to {} with --evidence-backfill: evidence is kept {} days",
+                meter::evidence::EVIDENCE_DAYS,
+                meter::evidence::EVIDENCE_DAYS
+            ));
+        }
+        opts.evidence_backfill = Some(days);
+        opts.force = true;
+    }
     match sync::run(&opts).map_err(|e| e.0)? {
         Outcome::Locked => println!("meter: another sync is running; nothing to do"),
         // The one stderr line from the move says why and what to do. Not a success: a scheduled
@@ -133,13 +164,24 @@ fn cmd_sync(args: Vec<String>) -> Result<ExitCode, String> {
             );
             return Ok(ExitCode::from(query::exit::NEWER_SCHEMA));
         }
-        Outcome::NoSpace { free, needed } => {
+        Outcome::NoSpace {
+            free,
+            needed,
+            growth,
+        } => {
             eprintln!(
-                "meter: the store needs a migration, which keeps a copy first and needs {} free; \
-                 only {} is free, so nothing was changed and the store keeps working as it is",
+                "meter: the store needs a rebuild or migration, which keeps a copy first and needs {} free \
+                 (twice the store, plus {} the logs still to import may add); only {} is free, \
+                 so nothing was changed and the store keeps working as it is",
                 human_bytes(needed),
+                human_bytes(growth),
                 human_bytes(free)
             );
+            return Ok(ExitCode::from(EXIT_NO_SPACE));
+        }
+        // Exit 4 as for the up-front refusal: the store is as it was, or keeps whole chunks.
+        Outcome::RanOutOfRoom { reason } => {
+            eprintln!("meter: {reason}");
             return Ok(ExitCode::from(EXIT_NO_SPACE));
         }
         Outcome::Fresh { age_ms } => println!(
@@ -160,14 +202,70 @@ fn cmd_sync(args: Vec<String>) -> Result<ExitCode, String> {
             );
             if let Some(g) = &r.generation {
                 let rows: i64 = g.counts.values().sum();
+                let before = if r.migrated && !r.reimported {
+                    "the migration"
+                } else {
+                    "the reset"
+                };
                 println!(
-                    "meter: kept the store before the reset as {} ({rows} rows, every table's \
+                    "meter: kept the store before {before} as {} ({rows} rows, every table's \
                      count checked)",
                     g.path.display()
                 );
             }
             for g in &r.generations_removed {
                 println!("meter: removed the generation {}", g.display());
+            }
+            if r.migrated && r.reimported {
+                println!(
+                    "meter: migrated the store to schema {SCHEMA_VERSION} and rebuilt it from \
+                     the logs: its rows were from a meter older than schema 2"
+                );
+            } else if r.migrated {
+                println!(
+                    "meter: migrated the store to schema {SCHEMA_VERSION}: every row kept, \
+                     per-call evidence from the next hour on"
+                );
+            }
+            if r.launches_changed + r.links_changed > 0 || r.calls_moved > 0 {
+                println!(
+                    "meter: attribution: {} launch and {} link rows changed, {} calls moved",
+                    r.launches_changed, r.links_changed, r.calls_moved
+                );
+            }
+            if let Some(b) = &r.evidence_backfill {
+                println!(
+                    "meter: evidence backfill from {}: {} calls given their evidence, {} left as \
+                     they were (no row before evidence held them as logged); {}",
+                    format_rfc3339(b.from_ms),
+                    b.adopted,
+                    b.left_alone,
+                    if b.done {
+                        "done, attribution queued for recompute"
+                    } else {
+                        "the next sync goes on"
+                    }
+                );
+                if b.unbacked > 0 {
+                    println!(
+                        "meter: evidence backfill: {} calls whose evidence was pruned and no log \
+                         gave back count as before evidence",
+                        b.unbacked
+                    );
+                }
+            }
+            if r.rekeyed.0 > 0 {
+                println!(
+                    "meter: re-keyed {} rollup rows an older build wrote ({} merged); every total \
+                     kept, its generation kept until a later sync",
+                    r.rekeyed.0, r.rekeyed.1
+                );
+            }
+            if r.calls_refused > 0 {
+                println!(
+                    "meter: attribution: {} calls left where they were: no rollup row held them",
+                    r.calls_refused
+                );
             }
             if r.reimported {
                 println!(
@@ -267,6 +365,19 @@ fn cmd_status() -> Result<ExitCode, String> {
         "files": store.count("files").unwrap_or(0),
         "dedupe_keys": store.count("seen").unwrap_or(0),
         "sessions": store.count("sessions").unwrap_or(0),
+        // Schema 3 (RFC 0021 delivery 5): counts only, never an id. Tokens before the evidence
+        // (rows written before schema 3 included) are never counted as attributed.
+        "evidence": current.then(|| serde_json::json!({
+            "evidence_from": get(meter::evidence::FROM_META).map(format_rfc3339),
+            "calls": store.count("evidence").unwrap_or(0),
+            "launches": store.count("launch").unwrap_or(0),
+            "links": store.count("link").unwrap_or(0),
+            "attribution_backlog": meter::evidence::dirty_count(&store.conn).unwrap_or(0),
+            "tokens_by_harness": meter::evidence::actor_totals(
+                &store.conn,
+                get("counted_from_ms").unwrap_or(0),
+            ).unwrap_or_default(),
+        })),
         "sources": sources.iter().map(|s| serde_json::json!({
             "harness": s.harness, "status": s.status, "reason": s.reason,
             "last_success": s.last_success_ms.map(format_rfc3339),

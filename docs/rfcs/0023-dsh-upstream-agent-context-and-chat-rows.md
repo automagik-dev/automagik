@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Proposal-only (a proposal to DSH; nothing ships here) |
 | Milestone | none (a proposal to DSH; nothing ships here) |
 | Lanes | none for this RFC (docs only); plugin (3.N.P) for each removal once DSH ships the piece |
 | Created | 2026-11-09 |
@@ -173,6 +173,13 @@ also keeps the code off DSH's input triggers and its undo history.
    client `submit` filter, since only the host sees every client's prompt?
 5. Where does this go first: an issue on DSH's tracker, a patch in the desktop's runtime patches
    (which would make it a desktop release, RFC 0011), or both?
+
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: #871.
+- Merged changes that cite this RFC: #860 (last merged 2026-11-09).
 
 ## Links
 

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
+| Status | Accepted (unverified: no delivery PR found; only #187, the picker's prerequisite, merged) |
 | Milestone | 2. One message box |
 | Lanes | plugin (3.N.P) |
 | Created | 2026-10-30 |
@@ -117,6 +117,13 @@ browser work and everyday fixes of milestone 1.
    itself; the grant names one task id.
 2. **Herdr kind in this milestone?** Recommended: no. The registry allows input-less kinds now;
    the Herdr kind itself waits for RFC 0006.
+
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: none.
+- Merged changes that cite this RFC: #187 (last merged 2026-11-03).
 
 ## Links
 

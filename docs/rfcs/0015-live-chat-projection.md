@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (every question answered: see Decided and proposed; deliveries 1-3 merged: #267, #273, #280, #282; delivery 4 is #286, open; amended 2026-11-07: writes on DSH chats, global Bots included, see Amendments) |
+| Status | In delivery (deliveries 1-5: #267, #273, #280, #282, #286, #574; later work: #523, #655, #670, #675, #680; 6-8 unconfirmed; every question answered; amended 2026-11-07: writes on DSH chats, global Bots included) |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | herdr (3.N.P, Pocket Link included), plugin (3.N.P), pocket (3.N.P, [RFC 0011](0011-monorepo-parts-and-releases.md)) |
 | Created | 2026-11-03 |
@@ -814,6 +814,13 @@ finds out what the other accepts, and fails closed to read-only.
    receipt (its dialog closes), and the race rule does not change. A second point for the same
    check: whether DSH's Session log records an approval's outcome, which the phone's "Answered on
    the computer" receipt reads.
+
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: #852.
+- Merged changes that cite this RFC: #253, #267, #273, #280, #282, #286, #296, #523, #574, #655, #663, #666, #670, #674, #675, #680, #740, #744, #748, #847 (last merged 2026-11-09).
 
 ## Links
 
