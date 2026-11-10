@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -159,6 +160,89 @@ func TestListCarriesBlockedGrace(t *testing.T) {
 		name, _ := entry["name"].(string)
 		if grace, _ := entry["blocked_grace_minutes"].(float64); grace != want[name] {
 			t.Errorf("%s: blocked_grace_minutes is %v in %s", name, entry["blocked_grace_minutes"], raw)
+		}
+	}
+}
+
+// The panel offers the command form only to a scheduler that names the kind,
+// and draws a command entry from its command and its bot (ADR 0013).
+func TestListCarriesTheKindsAndACommandEntry(t *testing.T) {
+	setup(t, `automations:
+  - name: daily-check
+    cron: "0 7 * * *"
+    command:
+      argv: ["./check.sh", "--all"]
+      cwd: /srv/checks
+      env:
+        REGION: eu
+    notify: b-captain
+`)
+	l, err := List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		Kinds       []string `json:"kinds"`
+		Automations []struct {
+			Command *struct {
+				Argv []string          `json:"argv"`
+				Cwd  string            `json:"cwd"`
+				Env  map[string]string `json:"env"`
+			} `json:"command"`
+			Notify    string  `json:"notify"`
+			Agent     *string `json:"agent"`
+			Workspace string  `json:"workspace"`
+			Repo      string  `json:"repo"`
+			Timeout   int     `json:"timeout_minutes"`
+		} `json:"automations"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if len(wire.Kinds) != 3 || wire.Kinds[2] != "command" {
+		t.Fatalf("kinds = %v", wire.Kinds)
+	}
+	a := wire.Automations[0]
+	if a.Command == nil || len(a.Command.Argv) != 2 || a.Command.Cwd != "/srv/checks" || a.Command.Env["REGION"] != "eu" {
+		t.Fatalf("command = %+v in %s", a.Command, raw)
+	}
+	if a.Notify != "b-captain" || a.Agent != nil || a.Workspace != "" || a.Repo != "" || a.Timeout != 60 {
+		t.Fatalf("entry = %+v in %s", a, raw)
+	}
+}
+
+func TestHistoryCarriesACommandRunsResult(t *testing.T) {
+	setup(t, "automations: []\n")
+	seven := 7
+	if err := history.Append(history.Record{
+		RunID: "r1", Automation: "check", Status: history.StatusFailed, At: time.Now(), Error: "exited 7",
+		ExitCode: &seven, Result: "exited 7: no route", Stderr: "warming up\nno route", Notified: "sent to t7",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runs, err := History("check", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(runs[0])
+	for _, want := range []string{`"exit_code":7`, `"result":"exited 7: no route"`, `"stderr":"warming up\nno route"`, `"notified":"sent to t7"`, `"error":"exited 7"`} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("history --json lacks %s: %s", want, raw)
+		}
+	}
+	// An agent run carries none of them.
+	if err := history.Append(history.Record{RunID: "r2", Automation: "triage", Status: history.StatusDone, At: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	runs, _ = History("triage", 10)
+	raw, _ = json.Marshal(runs[0])
+	for _, key := range []string{"exit_code", "result", "stderr", "notified"} {
+		if strings.Contains(string(raw), key) {
+			t.Fatalf("an agent run carries %s: %s", key, raw)
 		}
 	}
 }
