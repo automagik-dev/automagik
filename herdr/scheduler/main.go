@@ -396,6 +396,15 @@ func putCmd(args []string) error {
 		CatchUpMinutes: in.CatchUpMinutes, BlockedGraceMinutes: in.BlockedGraceMinutes,
 		Disabled: in.Disabled, CloseWorkspace: config.CloseWorkspace(in.CloseWorkspace),
 	}
+	// A new automation that names no agent_args starts on the form's automatic
+	// mode (#938): the form always sends the key, so this is a bot or a person
+	// writing JSON by hand, and without it their Codex run would be sandboxed
+	// where the form's is not. A sent key stands, an empty one included (the
+	// form's "Agent default"), and an edit keeps the entry's own args as before.
+	// A template's command and a workflow bring their own.
+	if _, sentArgs := sent["agent_args"]; original == "" && !sentArgs && a.Template == "" && a.Workflow == "" {
+		a.AgentArgs = config.DefaultAgentArgs(a.Agent)
+	}
 	return printJSON(config.Put(original, a, given, dryRun))
 }
 
