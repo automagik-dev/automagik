@@ -417,6 +417,7 @@ export function install(rt) {
     if (modelChanged) await switchModel(bot, patch, modelRef, effortId)
     const roleBefore = bot.role
     const instructionsBefore = bot.instructions
+    let unapplied
     try {
       if (nextName !== undefined) {
         bot.name = nextName
@@ -435,7 +436,14 @@ export function install(rt) {
         if (avatar) bot.avatar = avatar
         else delete bot.avatar
       }
-      if (patch.permission !== undefined) await rt.setPermission(bot, patch.permission)
+      if (patch.permission !== undefined) {
+        // A level that was kept but did not reach every Session: the update goes on, and
+        // the person is told last.
+        await rt.setPermission(bot, patch.permission).catch((error) => {
+          if (error?.levelNotApplied !== true) throw error
+          unapplied = error
+        })
+      }
     } catch (error) {
       // A step after the switch still failed (the title, the level's apply): the model goes
       // back too, on the record and on its Sessions, so the refused update leaves it as it was.
@@ -497,6 +505,7 @@ export function install(rt) {
       await rt.save()
       sendKickoff(bot, held)
     }
+    if (unapplied !== undefined) throw unapplied
     return bot
   }
 
@@ -757,8 +766,16 @@ export function install(rt) {
       }
     }
     if (!room.named) room.name = autoRoomName(room.members)
-    // The preset is written before its first await; the members' Sessions follow it.
-    if (permission !== undefined && await rt.setRoomPermission(room, permission)) {
+    // The preset is written before its first await; the members' Sessions follow it. One
+    // that was kept but did not reach every Session: the update goes on, and the person is
+    // told last.
+    let unapplied
+    const releveled = permission !== undefined && await rt.setRoomPermission(room, permission).catch((error) => {
+      if (error?.levelNotApplied !== true) throw error
+      unapplied = error
+      return true
+    })
+    if (releveled) {
       changes.push(permission ? `every member now works with the ${permission} permissions here` : 'every member uses its own permissions again')
     }
     if (room.name !== before) {
@@ -770,6 +787,7 @@ export function install(rt) {
     // awaits above has left it again, so it is not reported as added.
     const kept = added.filter(member => room.members.includes(member) && isLive(member))
     if (kept.length < added.length) changes.splice(addedAt, 1, ...(kept.length > 0 ? [`added ${names(kept)}`] : []))
+    if (unapplied !== undefined) throw unapplied
     return { room, changes }
   }
 

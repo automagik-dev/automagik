@@ -1436,6 +1436,7 @@ const pack = createPack({
     "Memory review runs on it, and so do the notes of a chat on Claude Code or Codex.": "A revisão da memória usa este modelo, assim como as notas de uma conversa no Claude Code ou no Codex.",
     "Default: {model}": "Padrão: {model}",
     "Runs as Workspace here": "Aqui roda como Área de trabalho",
+    "The permission level was saved, but some conversations could not take it and keep the level they had until DeepSeek Harness opens them again.": "O nível de permissão foi salvo, mas algumas conversas não puderam adotá-lo e mantêm o nível que tinham até o DeepSeek Harness abri-las de novo.",
     "Turn Auto review back on in Plugins to open this chat.": "Ative de novo a revisão automática em Plugins para abrir este chat.",
     "Use Auto review": "Usar revisão automática",
     "It cannot change files unless you allow that one action. It can still run commands and use the network and its other tools.": "Não pode alterar arquivos, a menos que você permita aquela ação. Ainda pode executar comandos e usar a rede e as outras ferramentas que tem.",

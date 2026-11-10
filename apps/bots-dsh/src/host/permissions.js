@@ -220,16 +220,33 @@ export function install(rt) {
   }
   // The tasks `match` picks take their level again now, after a level changes or their Bot
   // goes: a loaded one, and a working one even if DSH has to open it. Any other takes it
-  // from the session/created re-apply when DSH opens it next.
+  // from the session/created re-apply when DSH opens it next. Resolves the tasks whose
+  // level was not set, apart from those that take it on opening, for the change that asked.
   async function reapplyTasks(match) {
+    const left = []
     const picked = Object.entries(rt.state?.tasks ?? {}).filter(([, task]) => match(task))
-    if (picked.length === 0 || rt.readOnly() !== undefined || presets() === undefined) return
+    if (picked.length === 0 || rt.readOnly() !== undefined || presets() === undefined) return left
     const loaded = new Map((ctx.sessions?.list?.() ?? []).map(session => [session.id, session]))
     for (const [sessionId, task] of picked) {
       if (!loaded.has(sessionId) && task.status !== 'working') continue
       await applyTaskPermission(sessionId, loaded.get(sessionId))
-        .catch(error => rt.warn('ds-bot: permission for the task %s not applied: %s', sessionId, error))
+        .catch((error) => {
+          rt.warn('ds-bot: permission for the task %s not applied: %s', sessionId, error)
+          if (keptLevel(error)) left.push(sessionId)
+        })
     }
+    return left
+  }
+  // A change of level that some Sessions did not take is saved all the same, never taken
+  // back to the wider one, and whoever asked is told: the Sessions named kept the level
+  // they had, and take the saved one when DSH opens them again (session/created), which
+  // for a loaded Session may be its next start. A Session DSH will not open while Auto
+  // review is off is not one of them: it takes the level when it opens (autoClosed).
+  const NOT_EVERYWHERE = 'The permission level was saved, but some conversations could not take it and keep the level they had until DeepSeek Harness opens them again.'
+  const keptLevel = error => error?.autoClosed !== true
+  function notEverywhere(what, left) {
+    rt.warn('ds-bot: the permission level of %s was not applied on %s', what, left.join(', '))
+    return Object.assign(refusal(NOT_EVERYWHERE), { levelNotApplied: true, sessions: left })
   }
   // A task startTask no longer remembers (past TASKS_KEPT) goes now to the narrower of the
   // catalog default and `ranAt`, the level it ran at (taskLevelOf before the forget): when
@@ -303,27 +320,50 @@ export function install(rt) {
 
   // The level is kept before the apply: the resolve may open the Session, and the
   // session/created re-apply must find the new one. A chat DSH will not open while Auto
-  // review is off keeps the new level and takes it when it opens again.
+  // review is off keeps the new level and takes it when it opens again. A level the chat
+  // refuses is not kept, unless it allows less than the one before: taking a lowering
+  // back would save the wider level again, so it stays and the chat is reported.
   async function setPermission(bot, name) {
     const wanted = checkPreset(name)
     const before = bot.permission
+    // Read before the apply: whether the Bot's saved Auto last ran as workspace-write.
+    const fell = fellBack.has(`bot:${bot.id}`)
     bot.permission = wanted
+    const left = []
     try {
       await applyPermission(bot, rt.chatOf(bot.id))
     } catch (error) {
       if (error?.autoClosed !== true) {
-        if (before === undefined) delete bot.permission
-        else bot.permission = before
-        throw error
+        // Whether `wanted` is proven to allow less than what the chat ran at: a saved Auto
+        // that DSH does not offer, or that fell back, ran as workspace-write. Anything that
+        // cannot be ranked (the service gone meanwhile too) is not a lowering.
+        let lowering = false
+        try {
+          const service = presets()
+          const ran = before === AUTO && (fell || !autoOffered(service)) ? AUTO_FALLBACK : before ?? service.catalog().defaultPreset
+          const [now, was] = [rankOf(service, wanted), rankOf(service, ran)]
+          lowering = now !== undefined && was !== undefined && now < was
+        } catch {}
+        if (!lowering) {
+          if (before === undefined) delete bot.permission
+          else bot.permission = before
+          throw error
+        }
+        rt.warn('ds-bot: permission for %s not applied: %s', bot.name, error)
+        left.push(rt.chatOf(bot.id))
       }
     }
     for (const sessionId of rt.groupSessionsOf(bot.id)) {
       if (roomOfSession(sessionId)?.permission) continue
       await applyPermission(bot, sessionId)
-        .catch(error => rt.warn('ds-bot: permission for %s in a group not applied: %s', bot.name, error))
+        .catch((error) => {
+          rt.warn('ds-bot: permission for %s in a group not applied: %s', bot.name, error)
+          if (keptLevel(error)) left.push(sessionId)
+        })
     }
     // Its tasks too, but one asked for in a group with a level of its own keeps that one.
-    await reapplyTasks(task => task.from === bot.id && !(task.roomId && rt.roomOf(task.roomId)?.permission))
+    left.push(...await reapplyTasks(task => task.from === bot.id && !(task.roomId && rt.roomOf(task.roomId)?.permission)))
+    if (left.length > 0) throw notEverywhere(bot.name, left)
   }
 
   // The level a Bot made by another Bot starts at (#315): its creator's own, or else the
@@ -353,15 +393,20 @@ export function install(rt) {
     markFallback(`room:${room.id}`, false)
     const service = presets()
     if (service === undefined) return true
+    const left = []
     for (const [botId, sessionId] of Object.entries(room.sessions ?? {})) {
       const bot = rt.botOf(botId)
       if (bot === undefined) continue
       // A member without a level of its own goes back to the default its Session started on.
       await applyPermission({ ...bot, permission: bot.permission ?? service.catalog().defaultPreset }, sessionId, room)
-        .catch(error => rt.warn('ds-bot: permission for %s in %s not applied: %s', bot.name, room.name, error))
+        .catch((error) => {
+          rt.warn('ds-bot: permission for %s in %s not applied: %s', bot.name, room.name, error)
+          if (keptLevel(error)) left.push(sessionId)
+        })
     }
     // The tasks asked for in the group: its level, or now their Bot's own.
-    await reapplyTasks(task => taskOfRoom(task, room.id))
+    left.push(...await reapplyTasks(task => taskOfRoom(task, room.id)))
+    if (left.length > 0) throw notEverywhere(room.name, left)
     return true
   }
 
