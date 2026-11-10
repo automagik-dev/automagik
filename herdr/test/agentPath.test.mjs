@@ -8,7 +8,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { agentOnMachine, besideDirs, envInterpreter, interpreterPath, loginPathAsk, loginPathOf, paneEnvOf, safe } from "../mods/am-sidebar/agentPath.mjs";
-import { workerArgs } from "../mods/am-sidebar/workers.js";
+import { KILL_GUARD_DIR, workerArgs } from "../mods/am-sidebar/workers.js";
 import { withoutBriefing } from "../mods/am-sidebar/models.js";
 import { readJsonLines } from "./log-lines.mjs";
 // Start and Restart put each bot's briefing in its agent's command (models.js withBriefing);
@@ -48,7 +48,9 @@ const pathOf = (path) => {
     agent: "codex", model: null, effort: null, argv: ["codex"], task: "do it", template: null, path });
   const argv = args.slice(args.indexOf("--") + 1);
   assert.equal(argv[0], "/usr/bin/env");
-  return argv[1].replace(/^PATH=/, "");
+  // #955: a worker of any agent but dsh-tui has the `hc kill` shim first; the rest is the PATH under test.
+  assert.ok(argv[1].startsWith(`PATH=${KILL_GUARD_DIR}:`), "the hc kill shim is first on the worker PATH");
+  return argv[1].slice(`PATH=${KILL_GUARD_DIR}:`.length);
 };
 
 test("envInterpreter: the word env runs, past -S, other flags and VAR=x; null for anything else", () => {
@@ -277,7 +279,7 @@ test("worker CLI: a codex the pane reaches without node starts under env PATH=<n
   const r = cli("worker", "fix it", "--branch", "feat/x");
   assert.equal(r.status, 0, r.stderr);
   const run = runCall();
-  assert.deepEqual(run.slice(run.indexOf("--") + 1, run.indexOf("--") + 4), ["/usr/bin/env", `PATH=${join(prefix, "bin")}:${path}:/usr/bin:/bin`, "codex"]);
+  assert.deepEqual(run.slice(run.indexOf("--") + 1, run.indexOf("--") + 4), ["/usr/bin/env", `PATH=${KILL_GUARD_DIR}:${join(prefix, "bin")}:${path}:/usr/bin:/bin`, "codex"]);
   assert.match(r.stderr, new RegExp(`automagik-herdr: codex runs under node, which isn't on its PATH: ${join(prefix, "bin")} put first on it\\.`));
 });
 
@@ -287,10 +289,10 @@ test("start CLI (#56): a codex bot whose node is only in nvm starts under env PA
   assert.equal(r.status, 0, r.stderr);
   const run = runCall();
   const argv = run.slice(run.indexOf("--") + 1);
-  assert.deepEqual(plain(argv), ["/usr/bin/env", `PATH=${join(prefix, "bin")}:${path}:/usr/bin:/bin`, `HERDR_APP_HOME=${app}`, "codex"]);
+  assert.deepEqual(plain(argv), ["/usr/bin/env", `PATH=${KILL_GUARD_DIR}:${join(prefix, "bin")}:${path}:/usr/bin:/bin`, `HERDR_APP_HOME=${app}`, "codex", "--approve-for-me"]);
   assert.match(argv[4], /^-c$/);
   assert.match(argv[5], /^developer_instructions="<herdr-bot>\\nAutomagik Herdr briefing/, "codex takes it as a TOML string");
-  assert.deepEqual(plain(JSON.parse(r.stdout).argv), ["codex"]);
+  assert.deepEqual(plain(JSON.parse(r.stdout).argv), ["codex", "--approve-for-me"]);
   assert.match(r.stderr, new RegExp(`automagik-herdr: codex runs under node, which isn't on its PATH: ${join(prefix, "bin")} put first on it\\.`));
   // The seat's command as hc would run it: with the caller's PATH alone, env finds no node (127); as started, it runs.
   const bare = spawnSync("codex", [], { env: { PATH: path }, encoding: "utf8" });
@@ -309,7 +311,7 @@ test("restart CLI (#56): restarting a codex bot whose node is only in nvm runs u
   assert.equal(JSON.parse(r.stdout).replaced, "t7");
   const run = runCall();
   const argv = run.slice(run.indexOf("--") + 1);
-  assert.deepEqual(plain(argv), ["/usr/bin/env", `PATH=${join(prefix, "bin")}:${path}:/usr/bin:/bin`, `HERDR_APP_HOME=${app}`, "codex", "resume", "--last"]);
+  assert.deepEqual(plain(argv), ["/usr/bin/env", `PATH=${KILL_GUARD_DIR}:${join(prefix, "bin")}:${path}:/usr/bin:/bin`, `HERDR_APP_HOME=${app}`, "codex", "--approve-for-me", "resume", "--last"]);
   assert.ok(argv.findIndex((w) => w.startsWith("developer_instructions=")) < argv.indexOf("resume"), "its -c before the subcommand");
   assert.equal(argv.filter((w) => w.startsWith("developer_instructions=")).length, 1, "never twice after a restart");
   const seat = spawnSync(argv[0], argv.slice(1), { env: {}, encoding: "utf8" });

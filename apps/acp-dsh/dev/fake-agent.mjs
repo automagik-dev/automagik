@@ -17,6 +17,13 @@
 // list starts with a "default" row, as Claude Code's does; FAKE_ACP_NO_DEFAULT_EFFORT=1 leaves it
 // out, as Codex's does. FAKE_ACP_AUTH=session (or prompt) refuses `session/new` (or every
 // prompt) with ACP's auth_required, as an adapter whose CLI is signed out does.
+//
+// FAKE_ACP_MODES=a,b,c makes it offer those permission modes (the first is the one it starts in)
+// and take `session/set_mode`, as both real adapters do; without it it offers none, as before.
+// A prompt that says "unasked" runs one of its own tools without asking permission, as an agent
+// does when its mode (or a rule in the person's own CLI settings) lets the call through, and
+// traces `own-tool-ran` with the mode it ran in; "unasked twice" runs two.
+// FAKE_ACP_IGNORE_CANCEL=1 makes it ignore `session/cancel`, as a stuck agent would.
 import { spawn } from 'node:child_process'
 import { appendFileSync } from 'node:fs'
 import { Readable, Writable } from 'node:stream'
@@ -32,6 +39,8 @@ const OFFERS = process.env.FAKE_ACP_NO_OPTIONS !== '1'
 const DEFAULT_ROW = process.env.FAKE_ACP_NO_DEFAULT_EFFORT === '1' ? [] : [{ value: 'default', name: 'Default' }]
 const SKIP_MCP = process.env.FAKE_ACP_SKIP_MCP === '1'
 const AUTH = process.env.FAKE_ACP_AUTH
+const MODES = (process.env.FAKE_ACP_MODES ?? '').split(',').filter(Boolean)
+const modesOf = session => (MODES.length === 0 ? {} : { modes: { currentModeId: session.mode, availableModes: MODES.map(id => ({ id, name: id })) } })
 // A test can read what the client asked for (its servers, a fork, a close) from this file.
 const TRACE = process.env.FAKE_ACP_TRACE
 const trace = (entry) => {
@@ -116,7 +125,7 @@ const sessions = new Map()
 let created = 0
 
 function newSession(sessionId, cwd) {
-  const session = { cwd, cancelled: false, turns: 0, model: MODELS[0].value, effort: MODELS[0].effort, mcp: new Map() }
+  const session = { cwd, cancelled: false, turns: 0, model: MODELS[0].value, effort: MODELS[0].effort, mode: MODES[0], mcp: new Map() }
   sessions.set(sessionId, session)
   return session
 }
@@ -134,7 +143,7 @@ const implementation = {
     const session = newSession(sessionId, params.cwd)
     await attach(session, params.mcpServers, sessionId)
     trace({ event: 'new-answer', sessionId, at: Date.now() })
-    return { sessionId, ...(OFFERS ? { configOptions: configOptions(session) } : {}) }
+    return { sessionId, ...(OFFERS ? { configOptions: configOptions(session) } : {}), ...modesOf(session) }
   },
   async forkSession(params) {
     if (process.env.FAKE_ACP_FORK_FAIL === '1') throw RequestError.invalidParams(undefined, 'fork refused')
@@ -147,6 +156,7 @@ const implementation = {
     session.turns = source.turns
     session.model = source.model
     session.effort = source.effort
+    session.mode = source.mode
     session.forkedFrom = params.sessionId
     trace({ event: 'fork', from: params.sessionId, sessionId, servers: (params.mcpServers ?? []).map(server => server.name) })
     // A fork that cannot offer the bridge: `session/fork` answers with a session whose server
@@ -157,7 +167,7 @@ const implementation = {
     const delay = Number(process.env.FAKE_ACP_FORK_DELAY_MS ?? 0)
     if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay))
     trace({ event: 'fork-answer', sessionId, from: params.sessionId, at: Date.now() })
-    return { sessionId, ...(OFFERS ? { configOptions: configOptions(session) } : {}) }
+    return { sessionId, ...(OFFERS ? { configOptions: configOptions(session) } : {}), ...modesOf(session) }
   },
   async closeSession({ sessionId }) {
     trace({ event: 'close', sessionId })
@@ -186,6 +196,8 @@ const implementation = {
   async authenticate() { return {} },
   async cancel({ sessionId }) {
     trace({ event: 'cancel', sessionId })
+    // FAKE_ACP_IGNORE_CANCEL=1: an agent that goes on working after a cancel.
+    if (process.env.FAKE_ACP_IGNORE_CANCEL === '1') return
     const session = sessions.get(sessionId)
     if (session) {
       session.cancelled = true
@@ -229,6 +241,23 @@ const implementation = {
       await update({ sessionUpdate: 'tool_call_update', toolCallId, status: 'failed' })
       await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ` Withdrawn: ${answer}.` } })
       return { stopReason: 'end_turn' }
+    }
+    // Its own tool under a mode that does not ask: no `session/request_permission` at all, so
+    // nothing the client answers can stop the call. The trace says it ran, and in which mode.
+    if (/unasked/.test(said)) {
+      const calls = /twice/.test(said) ? 2 : 1
+      for (let n = 1; n <= calls; n++) {
+        if (session.cancelled) return { stopReason: 'cancelled' }
+        const toolCallId = `unasked-${session.turns}-${n}`
+        const command = `touch unasked-${n}`
+        await update({ sessionUpdate: 'tool_call', toolCallId, title: `Run ${command}`, kind: 'execute', status: 'in_progress', rawInput: { command } })
+        trace({ event: 'own-tool-ran', sessionId, toolCallId, mode: session.mode })
+        await update({ sessionUpdate: 'tool_call_update', toolCallId, status: 'completed', content: [{ type: 'content', content: { type: 'text', text: `ran ${n}` } }] })
+        await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ` It ran unasked ${n}.` } })
+        // Between two calls the agent works for a moment, so a cancel can land.
+        if (n < calls) await new Promise(resolve => setTimeout(resolve, Number(process.env.FAKE_ACP_UNASKED_GAP_MS ?? 0)))
+      }
+      return { stopReason: session.cancelled ? 'cancelled' : 'end_turn' }
     }
     // A plain answer with no tool call: the turn ends cleanly, for tests about the session.
     if (/plain/.test(said)) return { stopReason: 'end_turn' }
@@ -369,6 +398,17 @@ const implementation = {
     }
     return { stopReason: 'end_turn' }
   },
+}
+
+// Only a fake that offers modes takes `session/set_mode`; the others answer Method Not Found.
+if (MODES.length > 0) {
+  implementation.setSessionMode = async ({ sessionId, modeId }) => {
+    if (!MODES.includes(modeId)) throw RequestError.invalidParams(undefined, `Unknown mode: ${modeId}`)
+    const session = sessions.get(sessionId)
+    if (session !== undefined) session.mode = modeId
+    trace({ event: 'set-mode', sessionId, modeId })
+    return {}
+  }
 }
 
 const conn = serveAgent(implementation, stream)

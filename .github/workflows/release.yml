@@ -784,19 +784,42 @@ jobs:
               --notes "am.json names the newest am, the Automagik command (its tarball stays on its own versioned release); am.json.sig is its ed25519 signature, checked against am/am-keys.json. See scripts/am-lane.ts."
           fi
           mkdir -p am-lane/posted
-          if ! gh release download am-lane --repo "${GITHUB_REPOSITORY}" -p am.json -p am.json.sig -D am-lane/posted --clobber 2> am-lane/download.err; then
+          # gh, tried again after a GitHub server error (HTTP 5xx, #768): three times in all, 10 s
+          # then 20 s apart. Its last stderr stays in the file $1 names; any other error ends it.
+          gh_retry() {
+            local err=$1 attempt=1
+            shift
+            until gh "$@" 2> "${err}"; do
+              if (( attempt >= 3 )) || ! grep -qE 'HTTP 5[0-9][0-9]' "${err}"; then return 1; fi
+              cat "${err}" >&2
+              echo "am lane: a GitHub server error (attempt ${attempt} of 3); trying again"
+              sleep $(( attempt * 10 ))
+              attempt=$(( attempt + 1 ))
+            done
+          }
+          if ! gh_retry am-lane/download.err release download am-lane --repo "${GITHUB_REPOSITORY}" -p am.json -p am.json.sig -D am-lane/posted --clobber; then
             if grep -qE '^(release not found|no assets match the file pattern|no assets to download)$' am-lane/download.err; then
               echo "am lane: nothing posted on am-lane yet"
             else
               cat am-lane/download.err >&2
-              echo "::error::am lane: could not read the posted pointer; refusing to post blind (re-run the job)"
+              asset="$(grep -oE 'releases/assets/[0-9]+' am-lane/download.err | head -n 1 || true)"
+              echo "::error::am lane: could not read the posted pointer (the am-lane release of ${GITHUB_REPOSITORY}${asset:+, asset ${asset##*/}}); refusing to post blind. Nothing was changed: re-run the job"
               exit 1
             fi
           fi
           bun scripts/am-lane.ts posted am-lane/am.json am-lane/posted
-          # --clobber replaces each asset in turn: a reader that sees a pointer and a signature that
-          # do not match, or neither, refuses it (no update yet).
-          gh release upload am-lane am-lane/am.json.sig am-lane/am.json --clobber --repo "${GITHUB_REPOSITORY}"
+          # One file at a time, am.json first: --clobber deletes an asset and then uploads it, so a
+          # reader that sees a pointer and a signature that do not match, or one of them missing,
+          # refuses it (no update yet). An upload that still fails can leave the pointer half-written.
+          # After am.json went up, a re-run finishes it; with only am.json.sig left, a re-run stops
+          # and names the command that removes the orphan (am-lane.ts posted).
+          for file in am.json am.json.sig; do
+            if ! gh_retry am-lane/upload.err release upload am-lane "am-lane/${file}" --clobber --repo "${GITHUB_REPOSITORY}"; then
+              cat am-lane/upload.err >&2
+              echo "::error::am lane: could not upload ${file} to the am-lane release of ${GITHUB_REPOSITORY}; the posted pointer may be half-written. Re-run the job: it finishes the post, or names the repair"
+              exit 1
+            fi
+          done
 
   meter:
     # usagemeter's four binaries (RFC 0017, "Release and trust"), the targets
