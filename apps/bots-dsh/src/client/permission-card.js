@@ -3,7 +3,7 @@ import { AUTO } from '../shared/permission-levels.js'
 import { CloseIcon } from './icons.js'
 import { t } from './i18n.js'
 import { needsModelPick } from './model-menu.js'
-import { PermissionOptions, presetDanger, presetName } from './permission-picker.js'
+import { cliAuto, cliConfirmText, cliOfBot, PermissionOptions, presetDanger, presetName } from './permission-picker.js'
 import { setEntry, sharedMap } from './shared-map.js'
 import { createSource } from './sources.js'
 import { STORAGE } from './storage.js'
@@ -39,6 +39,9 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
   const busyRef = useRef(false)
   const titleId = useId()
   const draft = picked ?? saved
+  // A Bot on a coding CLI reads Full access as "Auto", in that CLI's words.
+  const cli = cliOfBot(bot)
+  const auto = cliAuto(draft, cli)
   const offered = catalog.options.some(option => option.value === draft)
   const asks = draft === AUTO || presetDanger(draft)
   // Nothing picked on a Bot that has a level: there is nothing to save, and a level
@@ -62,22 +65,22 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
   const errorLine = error ? h('div', { className: 'bt-error', role: 'alert', style: { padding: 0 } }, error) : null
   // The question holds for the level it was asked about, and only while DSH still offers it.
   if (confirming !== false && confirming === draft && offered) {
-    const name = presetName(draft, catalog)
+    const name = presetName(draft, catalog, cli)
     return h('form', { className: 'bt-q', role: 'alert', 'aria-labelledby': titleId, 'aria-busy': busy || undefined, 'data-permission-confirm': draft, onSubmit: event => event.preventDefault() },
       h('div', { className: 'bt-q-head' },
         h('div', { className: 'bt-q-text' },
-          h('p', { className: 'bt-q-title', id: titleId }, draft === AUTO ? name : t('Give {name} full access?', { name: bot.name })),
+          h('p', { className: 'bt-q-title', id: titleId }, draft === AUTO ? name : auto ? t('Use Auto for {name}?', { name: bot.name }) : t('Give {name} full access?', { name: bot.name })),
           draft === AUTO
             ? h('div', { className: 'bt-q-detail' }, t('Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.'))
             : h('div', { className: 'bt-q-detail' },
-              h('span', { className: 'bt-danger' }, t('{name} will run commands and change files anywhere without asking you first.', { name: bot.name })),
+              h('span', { className: 'bt-danger' }, auto ? cliConfirmText(cli) : t('{name} will run commands and change files anywhere without asking you first.', { name: bot.name })),
               ' ', t('Choose it only when you trust what you asked for.')))),
       note,
       h('div', { className: 'bt-q-foot' },
         // Focus goes to Cancel, never to the button that gives the access.
         h('button', { type: 'button', className: 'bt-q-btn', autoFocus: true, disabled: busy, onClick: () => setConfirming(false) }, t('Cancel')),
         // Never the second press of a double click on Save, which sat in this place.
-        h('button', { type: 'button', className: 'bt-q-submit', disabled: busy, onClick: (event) => { if (!(event.detail > 1)) send() } }, draft === AUTO ? t('Use Auto review') : t('Give full access'))))
+        h('button', { type: 'button', className: 'bt-q-submit', disabled: busy, onClick: (event) => { if (!(event.detail > 1)) send() } }, draft === AUTO ? t('Use Auto review') : auto ? t('Use Auto') : t('Give full access'))))
   }
   return h('form', {
     className: 'bt-q', 'aria-labelledby': titleId, 'aria-busy': busy || undefined, 'data-permission-card': bot.id,
@@ -93,7 +96,7 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
         h('p', { className: 'bt-q-title', id: titleId }, `${t('Permissions')} · `, t('What may {name} do on its own?', { name: bot.name })),
         h('div', { className: 'bt-q-detail' }, t('You choose. Nothing changes until you save.'))),
       h('button', { type: 'button', className: 'bt-q-x', 'aria-label': t('Dismiss'), title: t('Dismiss'), onClick: onClose, disabled: busy }, h(CloseIcon))),
-    h(PermissionOptions, { catalog, current: draft, onPick: (value) => { setError(''); setPicked(value) }, disabled: busy }),
+    h(PermissionOptions, { catalog, current: draft, onPick: (value) => { setError(''); setPicked(value) }, disabled: busy, cli }),
     errorLine,
     note,
     h('div', { className: 'bt-q-foot' },

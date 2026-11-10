@@ -1684,7 +1684,13 @@ const pack = createPack({
     "Not applied: {level} could not be set on this conversation ({time}). Tools may be held back here until it is.": "Não aplicado: não foi possível definir {level} nesta conversa ({time}). As ferramentas podem ficar retidas aqui até que isso aconteça.",
     "The level in force here is not the saved one.": "O nível em vigor aqui não é o nível salvo.",
     "This could not be read just now.": "Não foi possível ler isto agora.",
-    "Some of this could not be read just now.": "Não foi possível ler parte disto agora."
+    "Some of this could not be read just now.": "Não foi possível ler parte disto agora.",
+    "{cli} decides by itself and runs commands and changes files anywhere without asking you. Automagik asks it for its own \"{mode}\" mode, and does not review or ask. This holds while the Bot runs on {cli}.": "O {cli} decide sozinho e executa comandos e altera arquivos em qualquer lugar sem perguntar a você. O Automagik pede o modo \"{mode}\" do próprio CLI e não revisa nem pergunta. Isso vale enquanto o Bot rodar no {cli}.",
+    "{cli} will decide by itself and run without asking you. Automagik will ask it for its own \"{mode}\" mode, and will not review or ask. This holds while the Bot runs on {cli}.": "O {cli} vai decidir sozinho e executar sem perguntar a você. O Automagik vai pedir o modo \"{mode}\" do próprio CLI e não vai revisar nem perguntar. Isso vale enquanto o Bot rodar no {cli}.",
+    "Use Auto for {name}?": "Usar Automático para {name}?",
+    "Use Auto": "Usar Automático",
+    "The agent": "O agente",
+    "{cli} is in its mode \"{mode}\" here, not its no-ask mode.": "O {cli} está no modo \"{mode}\" aqui, e não no modo sem perguntas."
   }
 })
 return Object.defineProperty({ ...pack }, Symbol.toStringTag, { value: 'Module' })
