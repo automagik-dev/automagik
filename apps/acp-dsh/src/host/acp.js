@@ -11,6 +11,8 @@ import { PROTOCOL_VERSION, client, methods, ndJsonStream } from '@agentclientpro
 import { isBridgeName } from './names.js'
 
 const STDERR_KEEP = 4000
+// How long a closed connection waits for the agent's exit, which says why (start()).
+const EXIT_GRACE_MS = 500
 const TERMINAL = new Set(['completed', 'failed'])
 // SDK 2.x refuses an incoming message over 32 MiB by default and closes the connection on it.
 // An image call carries its picture twice (content and rawOutput), base64: one a little over the
@@ -164,8 +166,19 @@ export class AgentRun {
     } catch (error) {
       // The request nobody answered, for the log: the person is told only that it did not start.
       if (isUnanswered(error)) error.step = this.init === undefined ? 'initialize' : this.sessionId === undefined ? 'session/new' : 'its DSH tools'
+      // An agent that dies at its start closes its output a moment before its exit is
+      // reported, and the closed connection says nothing of why. Its exit does (the code and
+      // what it wrote), so that is the failure when it follows at once. A deadline or a Stop
+      // is its own reason and waits for nothing.
+      let reason = error
+      if (!isUnanswered(error) && !isStopped(error) && this.exited === undefined && (child.stdout.readableEnded || child.stdout.destroyed)) {
+        let timer
+        const exit = await Promise.race([gone.catch(left => left), new Promise((resolve) => { timer = setTimeout(resolve, EXIT_GRACE_MS) })])
+        clearTimeout(timer)
+        if (exit !== undefined) reason = exit
+      }
       this.dispose()
-      throw error
+      throw reason
     } finally {
       this.letGo()
     }

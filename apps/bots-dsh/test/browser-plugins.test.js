@@ -528,6 +528,32 @@ test('refs exposes the ARIA snapshot tool contract', () => {
   assert.ok(refsPrompt.includes('Posting, uploading, downloading, or deleting may need approval;'))
 })
 
+// The model reads these before it tells the person what it did. The browser is the Bot's own:
+// a window the person can see outside the app, the Bot's browser panel in the app. The
+// right-panel Browser is a client-only panel these tools never open.
+test('browser_open and browser_handoff say whose browser they drive, and whose panel they do not open', () => {
+  const open = refsTools.find(tool => tool.name === 'browser_open').description
+  const handoff = refsTools.find(tool => tool.name === 'browser_handoff').description
+  for (const [name, description] of [['browser_open', open], ['browser_handoff', handoff]]) {
+    assert.match(description, /this Bot's (?:own )?browser/, name)
+    assert.match(description, /right-panel Browser/, name)
+    assert.match(description, /[Oo]utside the (?:Automagik )?app/, name)
+    assert.match(description, /in the (?:Automagik )?app[^.]*the Bot's browser panel/, name)
+    assert.doesNotMatch(description, /sees nothing/, name)
+    assert.doesNotMatch(description, /on the host/, name)
+    assert.doesNotMatch(description, /in the user's browser panel|opens? a tab for the user/, name)
+  }
+  assert.match(open, /Open a URL in this Bot's own browser/)
+  assert.match(open, /not a tab in the user's right-panel Browser/)
+  assert.match(open, /a separate browser window the person can see/)
+  assert.match(open, /headless only on Linux without a display/)
+  assert.match(open, /Call browser_handoff when the person needs to take over/)
+  assert.match(handoff, /handoff card in this chat and take over the Bot's browser/)
+  assert.match(handoff, /outside the app in its browser window/)
+  assert.match(handoff, /Nothing opens in the user's right-panel Browser/)
+  assert.match(handoff, /Call browser_resume when they are done/)
+})
+
 test('browserExecutablePath must be a string when configured', () => {
   const home = mkdtempSync(join(tmpdir(), 'ds-bot-browser-plugin-'))
   try {

@@ -45,18 +45,18 @@ file, to be here) and prints each as patched or added; any other difference fail
 docs/adr/0012-a-successful-run-may-close-its-workspace.md — patched: existing mode closes its own tab; blocked grace
 internal/api/api.go            — patched: ls --json carries blocked_grace_minutes
 internal/api/api_test.go       — patched: the listing carries blocked_grace_minutes and its default
-internal/config/config.go      — patched: blocked_grace_minutes, its default and range; existing mode may close its tab
+internal/config/config.go      — patched: blocked_grace_minutes, its default and range; existing mode may close its tab; a new automation's default agent args
 internal/config/config_test.go — patched: the grace defaults, -1, and existing + on-success load
 internal/config/edit_test.go   — patched: put's merge cases for blocked_grace_minutes; existing + on-success accepted
 internal/hc/hc.go              — patched: hc read, the blocked run's screen; live terminals by label
 internal/herdr/herdr.go        — patched: tab id/list/close; pane process-info for a blocked agent's stop request
 internal/herdr/herdr_test.go   — patched: tab and pane process-info wire cases
-internal/host/agent.go         — patched: herdr blocked grace, rechecked stop; deadline and paced bounded submit retries
-internal/host/agent_test.go    — patched: herdr blocked/blips/-1; submit mismatch deadline, attempt limit and pacing
+internal/host/agent.go         — patched: herdr blocked grace, rechecked stop; deadline and paced bounded submit retries; only idle or done ends a run done
+internal/host/agent_test.go    — patched: herdr blocked/blips/-1; submit mismatch deadline, attempt limit and pacing; error and unknown status rows
 internal/host/close.go         — added: read and close serialized per workspace within one scheduler process
 internal/host/close_test.go    — added: concurrent closes on two tabs leave the last visible tab
-internal/host/hc.go            — patched: blocked fail-fast ends the blocked terminal; existing runs keep their tab id; close reads a space's terminals first
-internal/host/hc_test.go       — patched: blocked past the grace, a blip, -1; existing close rows including the read/act race
+internal/host/hc.go            — patched: blocked fail-fast ends the blocked terminal; existing runs keep their tab id; close reads a space's terminals first; done, exit 0 and a dialog before the prompt read truly
+internal/host/hc_test.go       — patched: blocked past the grace, a blip, -1; existing close rows including the read/act race; the status rows in both directions
 internal/host/host.go          — patched: Session carries the run's tab; existing mode asks only for a tab a read says is listed and not last
 internal/host/host_test.go     — patched: own-tab close, last tab, unlisted tab, unreadable list, race row, worktree/root unchanged
 internal/host/ops.go           — patched: tab operations and rechecked AgentStop result in the seam
@@ -67,8 +67,8 @@ internal/host/stop_other.go    — added: unsupported platform stop reports an e
 internal/host/screen.go        — added: the dialog line read from a blocked screen
 internal/host/screen_test.go   — added: dialog line, control characters, the bound and the fallback
 internal/runner/runner_test.go — patched: the blocked failure's notice; existing mode's default
-main.go                        — patched: put copies blocked_grace_minutes into the entry
-main_test.go                   — added: the put wire path carries blocked_grace_minutes; existing + on-success accepted
+main.go                        — patched: put copies blocked_grace_minutes into the entry; put gives a new automation the form's default agent args
+main_test.go                   — added: the put wire path carries blocked_grace_minutes; existing + on-success accepted; put and a form save write the same file
 README.md                      — patched: blocked_grace_minutes, and existing mode's own-tab close
 ```
 
@@ -102,6 +102,38 @@ space close itself in existing mode; on hc, where a terminal is the tab, it ends
 the run's terminal only while another one is there at that read. Each refusal logs
 why. The loader no longer refuses that combination, and `ls --json` / `put` carry
 `blocked_grace_minutes` like the other keys.
+
+Issue #938, the run status and `put`. A run's status is written in one place,
+`runner.Run`, from what the host's `Do` returns; the panel and the board only show
+it. Three verdicts were wrong on hc and one on Herdr:
+
+- Listed `failed` with the work finished (hc): `done` was accepted only after a turn
+  count or a wait that caught the agent working, so a turn shorter than one wait, or
+  an agent that reports no turn count, ended as "never started working". `done` is
+  the agent's own word and is now enough. `idle` still needs one of the two, since an
+  agent is idle before it reads its prompt.
+- Listed `failed` with the work finished (hc): a program that ended on its own with
+  exit code 0 was "exited with code 0 before finishing". Exit 0 is now `done` when
+  the program never reported a status (a plain program, a template's script), or its
+  last word was `done`, or `idle` after its turn. An agent that exits 0 while
+  `working` or `blocked`, or `idle` before any work, was quit and still fails, as does
+  any other code, or none; a killed terminal is still `cancelled`.
+- Listed `done` with no work (hc): `blocked` counted as proof the prompt landed, so a
+  dialog before the first turn followed by `idle` was a finished run. Only `working`
+  or a turn count is that proof now.
+- Listed `done` with the work failed (Herdr): any status but `working` after a wait
+  that returned was a finished run. Only `idle` or `done` is; `error` fails at once,
+  and any other word (`unknown`) is waited out and named if the timeout comes first.
+
+What the scheduler still cannot read is whether a finished turn did its task: an
+agent that ends its turn having given up reports `done` like any other.
+
+`put` gives a new automation the form's automatic mode when the request sends no
+`agent_args` key (`config.DefaultAgentArgs`: codex and claude; no other agent, no
+template, no workflow). A sent key stands, an empty one included, and an edit
+(`--original`) keeps the entry's own args as before. The table is the panel's
+`AUTO_ARGS`; `herdr/test/fixtures/automation-put-parity.json` holds the two equal
+(the panel's test checks the form's side, `main_test.go` that both write one file).
 
 The earlier patch is still why `close_workspace` exists in the API at all: the pack's
 panel sets it per automation (issue #498). `ls --json` names it for every entry, and
