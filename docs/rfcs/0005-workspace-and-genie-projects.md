@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
+| Status | Queued (no delivery PR found) |
 | Milestone | 4. Projects in one place (Publish not scheduled) |
 | Lanes | plugin (3.N.P); Genie repository (cross-repo) |
 | Created | 2026-10-30 |

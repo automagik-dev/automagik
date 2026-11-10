@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (owner's answers in: D35; delivery 2 partly merged: #254, #258; delivery 1 is #263, open) |
+| Status | In delivery (deliveries 1-2: #254, #258, #263; 3-10 not found; owner's answers in: D35) |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | am (3.N.P, D35), herdr (3.N.P), plugin (3.N.P), pocket (3.N.P), desktop (3.N) |
 | Created | 2026-11-03 |
@@ -496,7 +496,7 @@ are no `.cmd` shims and no Windows PATH entry.
 ### The sandbox
 
 D27's one install is "sandboxed"; RFC 0013 (Decided 2) puts herdr-app on now and the fence later.
-Proposed, after RFC 0010's supervision design (0010 is a Draft): entries get an allowlisted
+Proposed, after RFC 0010's supervision design (0010 is Queued): entries get an allowlisted
 environment (the `AM_*` variables, `HOME`, `PATH`, `USER`, `LANG`, `TMPDIR`, `HERDR_APP_HOME`,
 and Windows' system variables), never a spread of am's own. Entries run outside the DSH server
 fence, as RFC 0013's launch does, because they write outside any instance home. `writes` is the

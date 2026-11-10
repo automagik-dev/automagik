@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (the owner OKd one version and the jump, 2026-11-03; herdr import merged: #190; herdr lane: #210; Pocket import merged: #203) |
+| Status | Delivered (unverified: no delivery list; #190, #203 and #210 merged 2026-11-03; the owner OKd one version and the jump) |
 | Milestone | n/a (process) |
 | Lanes | herdr (3.N.P), added here; pocket (3.N.P), added by Pocket's import |
 | Created | 2026-11-03 |

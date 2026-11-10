@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | In delivery (M0-M1: #764, #806, #814; M2, M4 and M5 not merged; M3's evidence table landed with RFC 0021's #875) |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | none for this RFC (docs and fixtures cut nothing); meter (3.N.P, RFC 0017) for M1 to M5 |
 | Created | 2026-11-08 |

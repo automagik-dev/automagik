@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | In delivery (deliveries 1, 2, 4, 5 and 6: #751, #783, #822, #834, #836, #838; deliveries 3, 7, 8 and 9 open; answers: Q1-Q6 and Q8, 2026-11-08; question 7 open) |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | meter (3.N.P), added here; herdr (3.N.P) for the cutover |
 | Created | 2026-11-08 |

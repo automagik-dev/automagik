@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
+| Status | Accepted (unverified: no delivery PR found; only #187, the picker's prerequisite, merged) |
 | Milestone | 2. One message box |
 | Lanes | plugin (3.N.P) |
 | Created | 2026-10-30 |
