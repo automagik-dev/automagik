@@ -32,7 +32,7 @@ import { BotViews, isBotId, isTabId } from './bot-views.js'
 import { findHerdr, herdrStatus } from './herdr.js'
 import { openRequest, pickSpace } from './herdr-space.js'
 import { openLatest } from './herdr-update.js'
-import { tableColor, updatePresentation, WINDOW_ACTIONS, windowChrome, windowPageLayout } from './frame.js'
+import { laneMissedOf, tableColor, updatePresentation, versionsAnswer, WINDOW_ACTIONS, windowChrome, windowPageLayout } from './frame.js'
 import { dataPathsOf, PRODUCT } from './identity.js'
 import { LOOK_EVERY_MS, readBusy } from './idle.js'
 import { appMenuTemplate } from './menu.js'
@@ -89,6 +89,9 @@ let laneFetching = null
 // carries the retrying marker instead.
 let checking = false
 let checkFailed = false
+// The last look at the lanes could not read the lane of a publisher whose plugins are installed
+// (lookOnce).
+let laneFailed = false
 // logs/start.log (timeline.js): a start's steps from the process's own start, and the way out
 // (a quit, or a restart into an update) from the moment it was asked for.
 const startLog = (line) => { try { appendFileSync(join(home, 'logs', 'start.log'), line) } catch {} }
@@ -475,6 +478,7 @@ const runningVersion = () => (pluginsVersion() ? `${pluginsVersion()} (app ${app
 let looking = null
 const lookAtLanes = () => (looking ??= lookOnce().finally(() => { looking = null }))
 async function lookOnce() {
+  laneFailed = false
   if (!app.isPackaged || !laneProfile || !laneDsh || laneTrial === 'applied' || laneTrial === 'trial' || laneApplying) return Boolean(laneReady)
   for (const publisher of PUBLISHERS) {
     try {
@@ -493,6 +497,8 @@ async function lookOnce() {
       laneLog(`lane: ${found.version} is ready${readAutoApply(settingsFileOf(home)) ? ', and goes in by itself once no agent is at work' : ' and goes in at the next start'}`)
       publishUpdate()
     } catch (error) {
+      // A lane nothing here is installed from has no update to miss.
+      if (Object.keys(installedVersions(laneProfile, publisher.plugins)).length > 0) laneFailed = true
       laneLog(`lane: ${publisher.publisher}: ${error.message}`)
       publishUpdate()
     }
@@ -702,6 +708,18 @@ ipcMain.handle('automagik-updates-open', async (event) => {
   if (update?.state === 'available' && isReleasePage(update.page)) return void shell.openExternal(update.page)
   await checkForUpdates({ quiet: true })
 })
+// About's Check for updates: a check and nothing else. Unlike `open` above it never restarts
+// into a downloaded update and never puts staged plugins in by itself.
+ipcMain.handle('automagik-updates-check', async (event) => {
+  if (fromPage(event)) await checkForUpdates({ quiet: true })
+})
+// What this copy is, for About: version text only (frame.js versionsAnswer).
+ipcMain.handle('automagik-updates-versions', event => (fromPage(event) ? versionsAnswer({
+  app: app.getVersion(),
+  dsh: laneDsh,
+  plugins: laneProfile ? installedVersions(laneProfile, PUBLISHERS.flatMap(publisher => publisher.plugins)) : {},
+  mode: updateMode({ packaged: app.isPackaged, platform: process.platform, env: process.env }),
+}) : null))
 // The plugins' own notice: put the staged plugins in now, with DSH restarted alone.
 ipcMain.handle('automagik-updates-apply-plugins', (event) => {
   if (fromPage(event) && laneReady) void applyLaneNow()
@@ -769,13 +787,17 @@ async function checkForUpdates({ quiet = false } = {}) {
   const [{ result, retrying }, staged] = await Promise.all([updates.check(), lookAtLanes().catch(() => false)])
   checking = false
   checkFailed = result === 'error' && !retrying
+  // A lane that could not be read is a failed check too, when the check found nothing else:
+  // "up to date" would not be true.
+  const laneMissed = laneMissedOf({ result, laneFailed, staged: Boolean(laneReady) })
+  if (laneMissed) checkFailed = true
   publishUpdate()
   if (quiet) return
   if (result === 'latest' && staged && laneReady) {
     const { response } = await dialog.showMessageBox(window ?? undefined, { type: 'info', buttons: ['Update now', 'Later'], defaultId: 0, cancelId: 1, message: `${PRODUCT} ${laneReady.version} is ready`, detail: `${changeText(laneWaiting)}. It goes in when DSH restarts, in a few seconds; the window stays.${readAutoApply(settingsFileOf(home)) ? ' Later, it goes in by itself once no agent is at work.' : ''} You have ${runningVersion()}.` })
     if (response === 0) void applyLaneNow()
-  } else if (result === 'latest') void dialog.showMessageBox(window ?? undefined, { type: 'info', message: `${PRODUCT} is up to date`, detail: `Version ${runningVersion()}` })
-  else if (result === 'error' && !retrying) void dialog.showMessageBox(window ?? undefined, { type: 'warning', message: 'Could not check for updates', detail: 'Check your connection and try again.' })
+  } else if (result === 'latest' && !laneMissed) void dialog.showMessageBox(window ?? undefined, { type: 'info', message: `${PRODUCT} is up to date`, detail: `Version ${runningVersion()}` })
+  else if ((result === 'error' && !retrying) || laneMissed) void dialog.showMessageBox(window ?? undefined, { type: 'warning', message: 'Could not check for updates', detail: 'Check your connection and try again.' })
 }
 
 // The title bar's menu, on a right click; on macOS the app menu has the same entries.
