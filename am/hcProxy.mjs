@@ -38,7 +38,7 @@ import { AGY_MODE_DEFAULT, agySettingsArgs, agySettingsPlan, choosesSession, ses
 import { commandArgv, sessionId } from "./restart.js";
 import { approvedDataRootProblem, executionPathProblem, shimPathOf } from "./dshTui.mjs";
 import { sharedSendAllowed, teamOf } from "./hcGuard.mjs";
-import { ENV, guardPathWith, stableGuardDir, stableHelper, stableRootOf, stableRunner, templateAgent, workerArgs, workerPlan, WORKER_OF_LABEL } from "./workers.js";
+import { ENV, guardPathWith, stableGuardDir, stableHelper, stableKillDir, stableRootOf, stableRunner, templateAgent, workerArgs, workerPlan, WORKER_OF_LABEL } from "./workers.js";
 
 /** The one core version this proxy speaks (the box's herdr-core, hc 0.1.14). */
 export const HC_PIN = "0.1.14";
@@ -323,7 +323,9 @@ function approvedWorkerProblem(p, snapshot, bot, templates) {
     argv: session ? [...plan.argv, ...sessionIdArgs(plan.agent, session)] : plan.argv, session,
     task, template: plan.template, templateArgv, login, path: snapshot.path,
     taskId: labels.task, project: snapshot.caller.project, lead: labels["task.lead"],
-    space: labels["herdr.space"], agySettingsPath: agySettings?.path ?? null });
+    space: labels["herdr.space"], agySettingsPath: agySettings?.path ?? null,
+    // #955: the worker's `hc kill` shim is the stable folder's copy, as the CLI names it for a proxied pane.
+    killGuard: stableKillDir(snapshot.stableRoot) });
   const expected = plan.template && !templateArgv ? args.slice(-2)
     : args.slice(args.indexOf("--") + 1);
   if (!Array.isArray(p.argv) || p.argv.length !== expected.length

@@ -1,6 +1,7 @@
 // Automagik Automations — forked into automagik-herdr from DnzzL/herdr-automations (MIT, kept
 // verbatim in LICENSE-upstream). This file is the pack's to change; RECIPE.md says what it does.
-// Automations: scheduled agent prompts (herdr-automations), as a side panel.
+// Automations: scheduled agent prompts (herdr-automations), as a side panel. An automation may
+// also be a plain command the scheduler runs itself, with no pane and no model (#938).
 //
 // Everything goes through the herdr-automations CLI (`… --json`): this mod
 // never reads or writes automations.yaml or history.jsonl itself. The files
@@ -10,7 +11,7 @@ import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, TextareaState, Textarea } from "gpui-base";
 import { exec, hc, home, theme, terminals, spaces, run, notify, pickFolder, watchFolder, knownAgents } from "herdr";
 import { offeredAgents, RETIRED } from "./agents.js";
-import { addressWarning, argsText, autoArgs, modeOf, parseArgs, splitPermission, templateMode, withoutPermission } from "./modes.js";
+import { addressWarning, argsText, autoArgs, envText, modeOf, parseArgs, parseEnv, splitPermission, templateMode, withoutPermission } from "./modes.js";
 import { SCHEDULER, repairCommand } from "./scheduler.js";
 
 // The scheduler's release pin and install line live in scheduler.js: pure, so the Node pin check
@@ -26,6 +27,10 @@ const PRESETS = [
 ];
 const WORKSPACES = [["worktree", "New worktree"], ["root", "Repo root"], ["existing", "Existing space"]];
 const FINISHED = new Set(["done", "failed", "cancelled"]);
+// #938: what a run is. A command is run by the scheduler itself: no space, no agent, no model.
+const KINDS = [["agent", "Agent prompt"], ["command", "Command (no model)"]];
+/** A run in one line: a command's result line (its last output, or why it failed), else the error. */
+const outcome = (r) => r.result || r.error || "";
 /** Our scheduler's `version` output carries "-am." (herdr-automations-v<version>); upstream's never does. */
 const oursVersion = (out) => /-am\./.test(out ?? "");
 
@@ -132,12 +137,16 @@ export default class Automations extends View {
       if (this.known.has(r.run_id) || !(r.status === "failed" || r.status === "missed")) continue;
       notify({
         title: `${r.automation} ${r.status === "failed" ? "failed" : "missed a run"}`,
-        body: r.error ?? "", level: r.status === "failed" ? "error" : "warning",
+        body: outcome(r), level: r.status === "failed" ? "error" : "warning",
         ...(r.terminal && this.live(r.terminal) ? { action: { name: "pane.focus", args: { terminal: r.terminal } } } : {}),
       });
     }
     this.known = ids;
   }
+
+  // #938: whether this scheduler runs a plain command. Its ls --json says so (kinds); a build
+  // that does not would drop the command key from a put, so the form never offers it there.
+  get commands() { return Boolean(this.list?.kinds?.includes("command")); }
 
   live(address) { return terminals().find((t) => t.address === address && t.state === "live"); }
   liveFor(name) { return terminals().find((t) => t.labels?.automation === name && t.state === "live"); }
@@ -196,11 +205,18 @@ export default class Automations extends View {
       return s;
     };
     this.form = {
-      original, workspace: a.workspace ?? "worktree", workspace_id: a.workspace_id ?? "",
+      // #938: a command entry has no repo, space or agent; switched to a prompt it starts on the
+      // defaults a new one gets.
+      kind: a.command ? "command" : "agent", wasCommand: Boolean(a.command),
+      command: field(argsText(a.command?.argv), "./check.sh --all"),
+      cwd: field(tilde(a.command?.cwd), "your home folder"),
+      env: field(envText(a.command?.env), 'optional: KEY=value KEY2="two words"'),
+      notify: field(a.notify, "optional: a bot id (b-…) or a terminal name"),
+      original, workspace: a.workspace || "worktree", workspace_id: a.workspace_id ?? "",
       // #498 (D2): a new entry closes its fresh space on success; an existing one shows what
       // ls --json reports, "on-success" or "never".
       close: original ? a.close_workspace === "on-success" : true,
-      agent: a.template ? "" : a.agent ?? "claude", template: a.template ?? "",
+      agent: a.template ? "" : a.agent || "claude", template: a.template ?? "",
       name: field(a.name, "issue-triage"), cron: field(a.cron, "0 9 * * 1-5"), repo: field(tilde(a.repo), "~/Projects/myapp"),
       model: field(a.model, "agent default"), timeout: field(String(a.timeout_minutes ?? 60), "60"),
       mcp: field(tilde(a.mcp_config), "optional: path to an MCP servers JSON"),
@@ -213,7 +229,7 @@ export default class Automations extends View {
       // Kept exactly only while the agent is the saved one (savedAgent; "" for a template entry):
       // after a switch the other agent's permission flags never carry over (agentArgsOf).
       agentArgs: Array.isArray(a.agent_args) ? [...a.agent_args] : null,
-      savedAgent: a.template ? "" : a.agent ?? "claude",
+      savedAgent: a.template ? "" : a.agent || "claude",
       mode: original ? "kept" : "auto",
       prompt: TextareaState.new({ placeholder: "What should the agent do each time?", value: a.prompt ?? "" }),
       result: null, warning: null, seq: 0,
@@ -235,7 +251,21 @@ export default class Automations extends View {
   entry() {
     const f = this.form, num = parseInt(f.timeout.value(), 10);
     const expand = (p) => (p.startsWith("~/") ? home() + p.slice(1) : p);
+    const timeout_minutes = Number.isFinite(num) ? num : 0;
+    // #938: a command. Every agent and space key goes empty, which put removes: the scheduler
+    // refuses a command that still names one. What the form does not edit stays as it came.
+    if (f.kind === "command") return {
+      name: f.name.value().trim(), cron: f.cron.value().trim(), timeout_minutes,
+      command: { argv: parseArgs(f.command.value()), cwd: expand(f.cwd.value().trim()), env: parseEnv(f.env.value()).env ?? {} },
+      notify: f.notify.value().trim(),
+      repo: "", workspace: "", workspace_id: "", session: "", agent: "", template: "", model: "", prompt: "", workflow: "",
+      mcp_config: "", agent_args: [], blocked_grace_minutes: 0, close_workspace: "",
+      ...Object.fromEntries(Object.entries({ catch_up_minutes: f.untouched.catch_up_minutes, disabled: f.untouched.disabled })
+        .filter(([, v]) => v !== undefined && v !== null)),
+    };
     return {
+      // An entry that was a command and is a prompt now: its command and its bot go.
+      ...(f.wasCommand ? { command: null, notify: "" } : {}),
       name: f.name.value().trim(), cron: f.cron.value().trim(), repo: expand(f.repo.value().trim()),
       workspace: f.workspace, workspace_id: f.workspace === "existing" ? f.workspace_id : "",
       agent: f.template ? "" : f.agent, template: f.template, model: f.template ? "" : f.model.value().trim(),
@@ -283,6 +313,9 @@ export default class Automations extends View {
 
   async put(dryRun) {
     const f = this.form, args = ["put", ...(f.original ? ["--original", f.original] : []), ...(dryRun ? ["--dry-run"] : [])];
+    // A word in ENV that is not KEY=value is said here: the scheduler would never see it.
+    const env = f.kind === "command" ? parseEnv(f.env.value()) : {};
+    if (env.problem) return { problem: env.problem };
     await this.probeOurs();
     // exec has no stdin: hand the JSON over through the shell.
     const r = await exec("sh", ["-c", 'bin=$1 json=$2; shift 2; printf %s "$json" | "$bin" "$@"', "sh", this.bin, JSON.stringify(this.entry()), ...args]);
@@ -293,7 +326,7 @@ export default class Automations extends View {
   preview(cx) {
     const f = this.form, seq = ++f.seq;
     // #498: a prompt naming a terminal is saved all the same, with a warning beside it.
-    f.warning = addressWarning(f.prompt.value());
+    f.warning = f.kind === "command" ? null : addressWarning(f.prompt.value());
     cx.spawn(async (cx) => {
       let result;
       try { result = await this.put(true); } catch (e) { result = { problem: String(e.message ?? e) }; }
@@ -303,7 +336,7 @@ export default class Automations extends View {
 
   save(cx) {
     const f = this.form;
-    f.warning = addressWarning(f.prompt.value());
+    f.warning = f.kind === "command" ? null : addressWarning(f.prompt.value());
     cx.spawn(async (cx) => {
       try {
         const res = await this.put(false);
@@ -397,7 +430,9 @@ export default class Automations extends View {
 
   dot(a, t) {
     const live = this.liveFor(a.name);
+    // A command has no terminal to be live in: its running record is the sign.
     const color = live ? (live.status === "blocked" ? t.blocked : t.working)
+      : a.command && a.last?.status === "running" ? t.working
       : a.disabled || this.list.paused ? t.dim : a.last?.status === "failed" || a.last?.status === "missed" ? t.ansi1 : t.idle;
     return div().size(8).rounded(4).flex_none().bg(color);
   }
@@ -432,20 +467,39 @@ export default class Automations extends View {
         .child(div().flex_1().min_w(0).truncate().child(r.automation))
         .child(div().text_size(11).text_color(color).child(r.status))
         .child(div().text_size(11).text_color(t.dim).child(ago(r.at))))
-      .child(div().pl(13).text_size(11).text_color(t.muted).truncate()
-        .child(r.error || `${duration(r.seconds)}${r.terminal && this.live(r.terminal) ? " · open" : ""}`));
+      .child(div().id(`inbox-line-${r.run_id}`).pl(13).text_size(11).text_color(t.muted).truncate()
+        .child(outcome(r) || `${duration(r.seconds)}${r.terminal && this.live(r.terminal) ? " · open" : ""}`));
   }
 
   row(a, t) {
     const live = this.liveFor(a.name);
-    const sub = live ? `running · ${live.status ?? "starting"}` : a.disabled ? "paused"
+    const sub = live ? `running · ${live.status ?? "starting"}` : a.command && a.last?.status === "running" ? "running"
+      : a.disabled ? "paused"
       : `${human(a.cron)} · ${this.list.paused ? "held" : until(a.next)}`;
     return v_flex().id(`auto-${a.name}`).mx(8).px(8).py(7).gap(2).rounded(7).cursor_pointer().hover((s) => s.bg(t.hover))
       .on_click((_e, cx) => { this.view = { kind: "detail", name: a.name }; cx.notify(); })
       .child(h_flex().gap(7).items_center().child(this.dot(a, t)).child(div().flex_1().min_w(0).truncate().font_semibold().child(a.name))
         .child(this.button(`run-${a.name}`, "▶", t, (cx) => this.act(cx, ["run", a.name, "--bg"]), { px: 6, h: 22 })))
       .child(div().pl(15).text_size(11).text_color(t.muted).truncate().child(sub))
-      .child(div().pl(15).text_size(11).text_color(t.dim).truncate().child(`${a.template ? "template " + a.template : a.agent + (a.model ? " · " + a.model : "")} · ${a.workspace} · ${this.modeLine(a)}`));
+      .child(div().id(`auto-kind-${a.name}`).pl(15).text_size(11).text_color(t.dim).truncate().child(a.command
+        ? `command · ${argsText(a.command.argv)}${a.notify ? ` · tells ${a.notify}` : ""}`
+        : `${a.template ? "template " + a.template : a.agent + (a.model ? " · " + a.model : "")} · ${a.workspace} · ${this.modeLine(a)}`));
+  }
+
+  // #938: a command's last run, spelled out: the status and exit code, its one line, the last
+  // lines of stderr when it failed, and what became of the report to its bot.
+  lastRun(a, t) {
+    const r = a.last;
+    if (!r || !FINISHED.has(r.status)) return null;
+    const ok = r.status === "done";
+    const head = `${r.status}${typeof r.exit_code === "number" ? ` · exit ${r.exit_code}` : ""} · ${ago(r.at)}`;
+    return v_flex().id("d-last").p(8).gap(4).rounded(7).bg(t.raised).text_size(12)
+      .child(div().id("d-last-status").text_size(11).text_color(ok ? t.ansi2 : t.ansi1).child(head))
+      .child(div().id("d-last-result").child(outcome(r) || "no output"))
+      .when(!ok && Boolean(r.stderr), (el) => el.child(v_flex().id("d-last-stderr").font_family("JetBrains Mono").text_size(11).text_color(t.muted)
+        .children(String(r.stderr).split("\n").map((line) => div().child(line)))))
+      .when(Boolean(r.notified), (el) => el.child(div().id("d-last-notified").text_size(11)
+        .text_color(r.notified.startsWith("sent") ? t.dim : t.blocked).child(`${a.notify || "bot"}: ${r.notified}`)));
   }
 
   renderDetail(t, cx) {
@@ -468,16 +522,29 @@ export default class Automations extends View {
       .child(v_flex().gap(4)
         .child(kv("Schedule", `${human(a.cron)}${human(a.cron) !== a.cron ? ` (${a.cron})` : ""}`))
         .child(kv("Next", a.disabled ? "paused" : this.list.paused ? "held: all paused" : until(a.next)))
-        .child(kv("Repo", tilde(a.repo)))
-        .child(kv("Runs in", WORKSPACES.find(([w]) => w === a.workspace)?.[1] ?? a.workspace))
-        .child(kv(a.template ? "Template" : "Agent", a.template || `${a.agent}${a.model ? " · " + a.model : ""}`))
-        .child(kv("Permissions", this.modeLine(a))))
-      .child(div().p(8).rounded(7).bg(t.raised).text_size(12).text_color(t.muted).child(a.prompt || a.workflow || ""))
+        .when(!a.command, (el) => el
+          .child(kv("Repo", tilde(a.repo)))
+          .child(kv("Runs in", WORKSPACES.find(([w]) => w === a.workspace)?.[1] ?? a.workspace))
+          .child(kv(a.template ? "Template" : "Agent", a.template || `${a.agent}${a.model ? " · " + a.model : ""}`))
+          .child(kv("Permissions", this.modeLine(a))))
+        // #938: a command runs as you, in its folder, with no agent; these are its own lines.
+        .when(Boolean(a.command), (el) => el
+          .child(kv("Runs", "a command, as you: no agent, no model"))
+          .child(kv("Folder", tilde(a.command.cwd) || "your home folder"))
+          .child(kv("Env", Object.keys(a.command.env ?? {}).join(", ")))
+          .child(kv("Timeout", `${a.timeout_minutes} min`))
+          .child(kv("Tells", a.notify))))
+      .child(div().id("d-work").p(8).rounded(7).bg(t.raised).text_size(12).text_color(t.muted)
+        .when(Boolean(a.command), (el) => el.font_family("JetBrains Mono"))
+        .child(a.command ? argsText(a.command.argv) : a.prompt || a.workflow || ""))
+      .when(Boolean(a.command && this.lastRun(a, t)), (el) => el
+        .child(div().pt(4).text_size(11).font_semibold().text_color(t.dim).child("LAST RESULT"))
+        .child(this.lastRun(a, t)))
       .child(div().pt(4).text_size(11).font_semibold().text_color(t.dim).child("HISTORY"))
       .children(runs.length ? runs.map((r) => h_flex().id(`h-${r.run_id}`).gap(8).px(6).py(4).rounded(6).items_center().cursor_pointer()
         .hover((s) => s.bg(t.hover)).on_click((_e, cx) => this.open(r, cx))
         .child(div().w(66).flex_none().text_size(11).text_color(r.status === "done" ? t.ansi2 : r.status === "failed" || r.status === "missed" ? t.ansi1 : t.muted).child(r.status))
-        .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.muted).child(r.error || (r.seconds ? duration(r.seconds) : "")))
+        .child(div().id(`h-line-${r.run_id}`).flex_1().min_w(0).truncate().text_size(11).text_color(t.muted).child(outcome(r) || (r.seconds ? duration(r.seconds) : "")))
         .child(div().flex_none().text_size(11).text_color(t.dim).child(ago(r.at))))
         : [div().text_size(12).text_color(t.dim).child("No runs yet.")]);
   }
@@ -539,6 +606,45 @@ export default class Automations extends View {
       .child(label("NAME")).child(input("f-name", f.name))
       .child(label("SCHEDULE")).child(this.pills("f-preset", presets, preset, t, (v, cx) => { if (v !== "custom") f.cron.set_value(v); this.preview(cx); cx.notify(); }))
       .child(input("f-cron", f.cron))
+      // #938: what the run is. Offered only by a scheduler whose ls --json names the command kind.
+      .when(this.commands, (el) => el.child(label("RUNS")).child(this.pills("f-kind", KINDS, f.kind, t, (v, cx) => { f.kind = v; this.preview(cx); cx.notify(); })))
+      .when(!this.commands, (el) => el.child(div().id("f-kind-old").pt(6).text_size(11).text_color(t.muted)
+        .child("This scheduler build runs agent prompts only. A newer herdr-automations also runs a plain command, with no model.")))
+      .when(f.kind === "command", (el) => this.commandForm(el, f, t, label, input))
+      .when(f.kind !== "command", (el) => this.agentForm(el, f, t, label, input, agents, agentValue))
+      .child(label("TIMEOUT (MINUTES)")).child(input("f-timeout", f.timeout))
+      .when(f.kind !== "command", (el) => el.child(label("MCP CONFIG")).child(input("f-mcp", f.mcp)))
+      .child(div().id("f-result").pt(8).text_size(12)
+        .when(Boolean(res?.problem), (el) => el.text_color(t.ansi1).child(res.problem))
+        .when(Boolean(res && !res.problem && res.next), (el) => el.text_color(t.muted)
+          .child(`Next: ${res.next.map((n) => until(n)).join(", ")}`)))
+      .child(h_flex().pt(8).gap(8).justify_end()
+        .child(this.button("f-cancel", "Cancel", t, (cx) => { this.view = f.original ? { kind: "detail", name: f.original } : { kind: "list" }; this.form = null; cx.notify(); }))
+        .child(this.button("f-save", "Save", t, (cx) => this.save(cx), { solid: true })));
+  }
+
+  // #938: the command kind's fields. The scheduler starts the program itself, as the user it
+  // runs as: no shell reads the line (words split on spaces, quotes keep theirs), no space opens.
+  commandForm(el, f, t, label, input) {
+    const note = (id, text) => div().id(id).text_size(11).text_color(t.muted).child(text);
+    return el
+      .child(label("COMMAND")).child(input("f-command", f.command))
+      .child(note("f-command-note", "The program and its arguments. No shell reads this line: for pipes or &&, run a script. "
+        + "It runs as you, with your network and files. Exit 0 is done; any other exit, or the timeout, is failed."))
+      .child(label("WORKING FOLDER")).child(h_flex().gap(6).child(div().flex_1().child(input("f-cwd", f.cwd)))
+        .child(this.button("f-cwd-pick", "Choose…", t, (cx) => cx.spawn(async (cx) => {
+          const dir = await pickFolder({ prompt: "Folder the command runs in" });
+          if (dir) { f.cwd.set_value(tilde(dir)); this.preview(cx); }
+          cx.notify();
+        }), { h: 30 })))
+      .child(label("ENV")).child(input("f-env", f.env))
+      .child(label("TELL A BOT")).child(input("f-notify", f.notify))
+      .child(note("f-notify-note", "The run's one line (its last line of output, or why it failed) is sent to this bot with hc send."));
+  }
+
+  // The agent kind's fields: where it runs, the agent, its permissions and its prompt.
+  agentForm(el, f, t, label, input, agents, agentValue) {
+    return el
       .child(label("REPO")).child(h_flex().gap(6).child(div().flex_1().child(input("f-repo", f.repo)))
         .child(this.button("f-pick", "Choose…", t, (cx) => cx.spawn(async (cx) => {
           const dir = await pickFolder({ prompt: "Repository for this automation" });
@@ -569,15 +675,6 @@ export default class Automations extends View {
       .child(label("PERMISSIONS")).child(this.modeForm(f, t, input))
       .child(label("PROMPT")).child(div().id("f-prompt").p(8).rounded(7).border_1().border_color(t.input)
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation()).child(Textarea.new(f.prompt).w_full().text_size(12)))
-      .when(Boolean(f.warning), (el) => el.child(div().id("f-address").pt(2).text_size(11).text_color(t.blocked).child(f.warning)))
-      .child(label("TIMEOUT (MINUTES)")).child(input("f-timeout", f.timeout))
-      .child(label("MCP CONFIG")).child(input("f-mcp", f.mcp))
-      .child(div().pt(8).text_size(12)
-        .when(Boolean(res?.problem), (el) => el.text_color(t.ansi1).child(res.problem))
-        .when(Boolean(res && !res.problem && res.next), (el) => el.text_color(t.muted)
-          .child(`Next: ${res.next.map((n) => until(n)).join(", ")}`)))
-      .child(h_flex().pt(8).gap(8).justify_end()
-        .child(this.button("f-cancel", "Cancel", t, (cx) => { this.view = f.original ? { kind: "detail", name: f.original } : { kind: "list" }; this.form = null; cx.notify(); }))
-        .child(this.button("f-save", "Save", t, (cx) => this.save(cx), { solid: true })));
+      .when(Boolean(f.warning), (el) => el.child(div().id("f-address").pt(2).text_size(11).text_color(t.blocked).child(f.warning)));
   }
 }

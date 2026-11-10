@@ -729,11 +729,22 @@ test('a stop after the install exited kills nothing: its pid may already be a st
   writeFileSync(join(home, 'quick'), '#!/bin/sh\necho $$ > "$ACP_TEST_PIDS/installer"\nsleep 1 &\nexit 0\n')
   const kills = []
   const quit = new AbortController()
-  const job = runInstall('/bin/sh', [join(home, 'quick')], { cwd: home, env: { ...process.env, ACP_TEST_PIDS: home }, signal: quit.signal, kill: pid => kills.push(pid) })
-  assert.ok(await until(() => existsSync(join(home, 'installer'))))
-  const installer = Number(readFileSync(join(home, 'installer'), 'utf8'))
-  assert.ok(await until(() => !alive(installer), 3000), 'the installer exited and was reaped')
-  await new Promise(done => setTimeout(done, 50))
+  let pid
+  let exited
+  const job = runInstall('/bin/sh', [join(home, 'quick')], {
+    cwd: home,
+    env: { ...process.env, ACP_TEST_PIDS: home },
+    signal: quit.signal,
+    kill: killed => kills.push(killed),
+    onSpawn: (child) => {
+      pid = child.pid
+      exited = new Promise(done => child.once('exit', done))
+    },
+  })
+  // 'exit' is the signal, not a poll: Node has reaped the installer, so its pid may already be
+  // a stranger's. 'close' still comes a second later, so the stop does reach an install in flight.
+  await exited
+  assert.equal(Number(readFileSync(join(home, 'installer'), 'utf8')), pid, 'the installer ran')
   quit.abort()
   await assert.rejects(job, /DSH is quitting/)
   assert.deepEqual(kills, [])

@@ -2,6 +2,15 @@
 
 What changed for someone using the plugin. Dates are release dates.
 
+## Unreleased (the fork's next `-am` build)
+
+- `command:` runs a plain program on a schedule: the scheduler starts it
+  itself, with no pane, no agent and no model, as the user it runs as. Exit 0
+  is `done`; any other exit, a signal or the timeout is `failed`, with the exit
+  code and the last lines of stderr in history. `notify: <bot>` sends the run's
+  one-line result to a bot through `hc send`. `ls --json` names the kinds a
+  build runs, and the panel's form offers the command kind (ADR 0013).
+
 ## v0.12.1 — 2026-11-04
 
 - Copilot receives `mcp_config` through `--additional-mcp-config @<path>`,

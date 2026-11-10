@@ -16,6 +16,7 @@ import { BRIDGE_NAME, CREDENTIAL_ENV, isAuthRequired, MODEL_ACCESS_REQUIRED, SYN
 import { agentRoute, answered, boundaryNotice, isHandoff, lastProviderOf, missedBy, replayBlocks, turnStart } from './switch.js'
 import { ImageLinks, savedPathsOf } from './agent-image.js'
 import { callArguments, entered, levelOf, mirrorTool, TOOL_NAME } from './tool.js'
+import { guardSession } from './write-guard.js'
 
 const CANCEL_WAIT_MS = 5000
 // A bridge that never listed its tools fails the turn: codex-acp skips a server whose name the
@@ -27,6 +28,13 @@ export const BRIDGE_PATH = fileURLToPath(new URL('./bridge.js', import.meta.url)
 // An agent may announce a call before it says what the call does (Claude Code's adapter sends
 // the command in an update right after): the card waits this long for it.
 const DETAIL_WAIT_MS = 1500
+// How long the turn gates (`acpAgents.holdTurns`) get to answer before a step. A gate normally
+// answers from memory; the Bot team's may try to set a level again first (one Session resolve
+// and one preset write). Beside this adapter's other waits (5 s for a cancel, 15 s for a
+// bridge) ten seconds is ample, and running out only refuses the one step.
+export const HOLD_WAIT_MS = 10_000
+/** What a held Session's step answers when no gate gave a sentence of its own (it threw, never answered, or answered nothing readable). */
+export const HELD_TEXT = 'This conversation is on hold while its permission level is checked, so the agent is not running here. Send the message again in a moment.'
 
 // The exact disposer of the mirror-tool registration a Session agent carries. It lives on the
 // agent, never in this module: a plugin reload replaces the module and the adapter while the
@@ -303,8 +311,16 @@ export class AcpAdapter extends LlmAdapter {
    * @param {import('@deepseek-ai/cordis').Context} ctx
    * @param {Map<string, { name: string, catalog: import('./catalog.js').Catalog, installed?(): boolean, spawn(): { command: string, args?: string[], env?: Record<string, string> } }>} agents
    */
-  constructor(ctx, agents, { dshTools = () => false, backchannel, redactor, onSignedOut, images = () => undefined, access } = {}) {
+  constructor(ctx, agents, { dshTools = () => false, backchannel, redactor, onSignedOut, images = () => undefined, access, holds, holdWaitMs = HOLD_WAIT_MS } = {}) {
     super()
+    // The turn gates (index.js `holdTurns`): asked before an agent acts for a Session. They
+    // only ever refuse; with none registered nothing is asked.
+    this.holds = holds
+    this.holdWaitMs = holdWaitMs
+    // Session id -> the turn that is starting there (from its step's entry to its prompt):
+    // `endSession` marks it, so a Session ended before its agent session exists (the consent
+    // wait, the start) still refuses that turn.
+    this.starting = new Map()
     // Asked before a turn opens on an agent (#869): a text when its signed-in account has not
     // been confirmed for the app, else undefined. Never asked for a call that continues a turn.
     this.access = access
@@ -422,6 +438,70 @@ export class AcpAdapter extends LlmAdapter {
       if (live.bridge !== undefined) this.backchannel?.revoke(live.bridge)
     }
     this.live.clear()
+  }
+
+  /**
+   * Whether a gate holds this Session now: the sentence to answer the step with, or undefined.
+   * Every gate is asked; any refusal wins, the first to arrive. A gate lets the Session go only
+   * by answering undefined (or null) in time. One that throws, does not answer within the
+   * bound, or answers anything but a non-empty text holds it with `HELD_TEXT`: an error's own
+   * message never becomes chat text. With no gate registered nothing is asked.
+   */
+  async heldBack(sessionId, agent, provider) {
+    let gates = []
+    try { gates = [...(this.holds?.() ?? [])] } catch { return HELD_TEXT }
+    if (gates.length === 0) return undefined
+    const read = answer => (answer === undefined || answer === null ? undefined : typeof answer === 'string' && answer.trim() !== '' ? answer : HELD_TEXT)
+    let timer
+    try {
+      return await new Promise((resolve) => {
+        timer = setTimeout(resolve, this.holdWaitMs, HELD_TEXT)
+        let left = gates.length
+        for (const gate of gates) {
+          Promise.resolve().then(() => gate({ sessionId, agent, provider })).then(read, () => HELD_TEXT).then((held) => {
+            left -= 1
+            if (held !== undefined) resolve(held)
+            else if (left === 0) resolve(undefined)
+          })
+        }
+      })
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  /**
+   * End one Session's agent session, as the kill switch ends them all: its process is disposed
+   * (its open questions withdrawn, SIGTERM then SIGKILL), its bridge credential revoked, and
+   * the live entry removed, so an agent that ignores a cancel cannot go on and the next turn
+   * starts a fresh agent session that takes its mode again. A step still streaming that
+   * session answers `why` and stops. A turn still starting there (no agent session yet) is
+   * refused the same way, whatever a gate says later. The DSH Session and its transcript stay.
+   * A bridge call under way keeps the Session's write guard until it is back, so the step's
+   * end closes its open call and its late result is not written outside the step.
+   * @param {string} sessionId
+   * @param {string} [why] the sentence a step under way answers
+   * @returns {boolean} whether an agent session was live or starting there
+   */
+  endSession(sessionId, why) {
+    const text = typeof why === 'string' && why.trim() !== '' ? why : HELD_TEXT
+    const starting = this.starting.get(sessionId)
+    if (starting !== undefined) starting.held ??= text
+    const live = this.live.get(sessionId)
+    if (live === undefined) return starting !== undefined
+    live.held = text
+    live.open = false
+    this.live.delete(sessionId)
+    live.run?.dispose()
+    const bridge = live.bridge
+    if (bridge !== undefined && bridge.calls > 0 && bridge.drained === undefined) {
+      const hold = guardSession(live.dshAgent?.session ?? bridge.agent?.session)
+      bridge.drained = () => hold?.release()
+    }
+    if (bridge !== undefined) this.backchannel?.revoke(bridge)
+    // A step waiting for the agent's next event wakes now, not when the process has exited.
+    try { live.run?.push({ type: 'error', message: 'held' }) } catch {}
+    return true
   }
 
   /** The `session/new` server entry for one bridge: the adapter spawns it with this env only. */
@@ -583,7 +663,18 @@ export class AcpAdapter extends LlmAdapter {
     try { this.onSignedOut?.(id) } catch {}
   }
 
+  // One model step. The turn that is starting there is tracked from here to the step's last
+  // exit (`starting`), whichever way it leaves: a refusal, a failure, a stop, its end.
   async *stream(options) {
+    const entry = { held: undefined }
+    try {
+      yield* this.step(options, entry)
+    } finally {
+      if (this.starting.get(options.sessionId) === entry) this.starting.delete(options.sessionId)
+    }
+  }
+
+  async *step(options, entry) {
     const agent = this.agents.get(options.provider)
     if (agent === undefined) return yield finish('error', `No ACP agent is set up as ${options.provider}`, 'NO_ADAPTER')
     // A title or summary DSH asks for on the side is refused at the llm/stream waterfall (aside).
@@ -604,8 +695,29 @@ export class AcpAdapter extends LlmAdapter {
       const rest = links.flush()
       if (rest !== '') yield* blocks.add('text', rest)
     }
+    // A held Session's step: the sentence as the answer, and nothing else happens there.
+    const stopped = function* (why) {
+      // In a block of its own, after whatever the agent had already said this step.
+      yield* blocks.close()
+      yield* blocks.add('text', why)
+      yield* blocks.close()
+      yield finish('stop')
+    }
+    // No agent acts for a Session a gate holds: not a new turn, not the next step of one. The
+    // agent session there ends with the refusal.
+    // The turn is starting from here: an `endSession` that lands before its prompt refuses it.
+    this.starting.set(sessionId, entry)
+    const started = () => { if (this.starting.get(sessionId) === entry) this.starting.delete(sessionId) }
+    const held = await this.heldBack(sessionId, dshAgent, options.provider) ?? entry.held
+    if (held !== undefined) {
+      started()
+      this.endSession(sessionId, held)
+      return yield* stopped(held)
+    }
+    live = this.live.get(sessionId)
     const last = options.messages.at(-1)
     const continuing = last?.role === 'tool' && live?.provider === options.provider && live.calls.has(last.toolCallId) && live.open
+    if (continuing) started()
     if (!continuing) {
       if (last?.role === 'tool') {
         yield* blocks.add('text', `${agent.name} was interrupted before it finished, so it is not answering this turn any more.`)
@@ -622,6 +734,11 @@ export class AcpAdapter extends LlmAdapter {
       // refused like a signed-out CLI, before any process starts, and never answered elsewhere.
       let unconfirmed
       try { unconfirmed = await this.access?.(options.provider) } catch {}
+      // Ended while the consent was read: nothing starts for this turn.
+      if (entry.held !== undefined) {
+        started()
+        return yield* stopped(entry.held)
+      }
       if (typeof unconfirmed === 'string' && unconfirmed !== '') return yield finish('error', unconfirmed, MODEL_ACCESS_REQUIRED)
       let fresh = false
       let crossing = false
@@ -668,6 +785,8 @@ export class AcpAdapter extends LlmAdapter {
             if (state.bridge !== undefined) this.backchannel?.revoke(state.bridge)
             state.bridge = undefined
             this.live.delete(sessionId)
+            // Ended while it started (endSession): not a failed connector, so no rollback.
+            if (state.held !== undefined) return yield* stopped(state.held)
             if (isAuthRequired(error)) {
               this.signedOut(options.provider)
               return yield signInFailure(agent.name, error)
@@ -727,6 +846,7 @@ export class AcpAdapter extends LlmAdapter {
           try {
             await this.refork(agent, live, dshAgent)
           } catch (error) {
+            if (live.held !== undefined) return yield* stopped(live.held)
             return yield finish('error', `${agent.name} would not refresh its DSH tools: ${error?.message ?? error}`, error?.code === 'acp_bridge_missing' ? 'acp_bridge_missing' : undefined)
           }
         }
@@ -743,6 +863,7 @@ export class AcpAdapter extends LlmAdapter {
           () => agent.catalog?.ownEffort(options.model),
         )
       } catch (error) {
+        if (live.held !== undefined) return yield* stopped(live.held)
         const at = options.reasoningEffort ? ` at ${options.reasoningEffort} effort` : ''
         const reason = error?.message ?? error
         const why = `${agent.name} would not take ${options.model}${at}: ${reason}`
@@ -751,7 +872,18 @@ export class AcpAdapter extends LlmAdapter {
       try {
         await live.run.setMode(agent.modeFor?.(levelOf(this.ctx.get?.('approval'), dshAgent?.session, this.ctx.get?.('sandboxPolicy'), this.ctx.get?.('permissionPresets'))))
       } catch (error) {
+        if (live.held !== undefined) return yield* stopped(live.held)
         return yield finish('error', `${agent.name} would not take DSH's permission level: ${error?.message ?? error}`)
+      }
+      // Asked again right before the prompt: a Session held since the first ask (while consent,
+      // the start, a fork or the mode were awaited) gets no prompt. One that was ended since
+      // the step's entry is refused whatever the gate says now: its mode above was read from a
+      // level that has changed, and a gate that lets go here must not let this turn through.
+      const late = entry.held ?? live.held ?? await this.heldBack(sessionId, dshAgent, options.provider) ?? entry.held
+      started()
+      if (late !== undefined) {
+        this.endSession(sessionId, late)
+        return yield* stopped(late)
       }
       // A new agent session in a chat that already has answers says so once, in a row of its
       // own before the reply (bots-dsh's fallback.js writes its notice the same way). The
@@ -776,6 +908,11 @@ export class AcpAdapter extends LlmAdapter {
     // asks for the step after a tool result.
     for (;;) {
       const event = await live.run.next(options.signal)
+      // Its agent session was ended under it (endSession): whatever came is not shown.
+      if (live.held !== undefined) {
+        yield* shown()
+        return yield* stopped(live.held)
+      }
       if (event.type === 'end' || event.type === 'error') live.open = false
       // Inbound text is logged as the agent said it: DSH does not redact at ingest, and neither
       // does this plugin. The redactor runs at each provider crossing instead — the replay out
@@ -845,6 +982,7 @@ export class AcpAdapter extends LlmAdapter {
 
   dispose() {
     try { this.offResult?.() } catch {}
+    this.starting.clear()
     for (const agent of this.agents.values()) agent.catalog?.dispose()
     for (const live of this.live.values()) {
       live.run?.dispose()
