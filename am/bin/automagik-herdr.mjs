@@ -49,6 +49,7 @@ import { REMOTE_TEXT_MAX, RemoteFileError, StaleSnapshot, readRemoteText, remove
 import { botHistory, historyLines } from "../inspect.js";
 import { chooseLogin } from "../logins.js";
 import { DocError, docGet } from "../docGet.mjs";
+import { isGuardFolder } from "../hcGuard.mjs";
 import { DSH_TUI, approvedDataRootProblem, doctorBotProxies, doctorDshTui, installDshTui,
   uninstallDshTui, workerProxyTransport } from "../dshTui.mjs";
 import { approveProject, approvedProxyEnabled, approvedProxyState, approvedSettingsDir, parseApprovedRecord,
@@ -203,35 +204,19 @@ function programPath(program) {
 }
 const onPath = (program) => programPath(program) !== null;
 
-/** This CLI's guard folder and bytes: a copy must be byte-equal to them (#643). */
-const SELF_GUARD_BYTES = (() => { try { return readFileSync(join(GUARD_DIR, "..", "hcGuard.mjs")); } catch { return null; } })();
-const SELF_GUARD_DIR = (() => { try { return realpathSync(GUARD_DIR); } catch { return null; } })();
-/**
- * A guard folder the CLI can vouch for (#643): this copy's own guard folder, or one whose
- * hcGuard.mjs is byte-equal to this copy's. A planted hcGuard.mjs no longer hides a folder
- * from realHcPath or gets a worker PATH word accepted.
- */
-function isGuardDir(dir) {
-  if (typeof dir !== "string" || dir === "") return false;
-  let real;
-  try { real = realpathSync(dir); } catch { return false; }
-  if (SELF_GUARD_DIR && real === SELF_GUARD_DIR) return true;
-  let bytes;
-  try { bytes = readFileSync(join(dir, "..", "hcGuard.mjs")); } catch { return false; }
-  return SELF_GUARD_BYTES !== null && bytes.equals(SELF_GUARD_BYTES);
-}
-
 /**
  * The real hc for the CLI's own trusted calls (system status, machine lists, remote file/exec,
  * docs): the first PATH hc that isn't inside any guard folder. The guard is a guardrail for
  * the bot's direct calls (#624; #628 scopes send/keys/attach), not for the pack's own commands.
  * Skipping every guard folder (the pack's and am's) keeps `automagik-herdr worker` and the
  * remote commands working in a guarded pane, and never treats one guard as the real hc.
+ * A guard folder is hcGuard.mjs's isGuardFolder (#643, #721): this copy's own guard folder, or
+ * one whose hcGuard.mjs is byte-equal to this copy's, so a planted hcGuard.mjs hides no folder.
  */
 function realHcPath() {
   const dirs = [...(process.env.PATH ?? "").split(":"), `${home()}/.local/bin`, dirname(process.execPath)];
   for (const dir of dirs) {
-    if (!dir || isGuardDir(dir)) continue;
+    if (!dir || isGuardFolder(dir)) continue;
     const file = `${dir}/hc`;
     try {
       accessSync(file, constants.X_OK);

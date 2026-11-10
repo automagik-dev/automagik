@@ -686,6 +686,22 @@ test("a planted guard folder is not the worker shape's guard word", (t) => {
   assert.deepEqual(calls(s), [], "the run never reached hc");
 });
 
+test("#721: the byte-equal guard rule is one helper, which the CLI imports and the proxy does not copy", async (t) => {
+  const s = scene(t);
+  const { isGuardFolder } = await import("../mods/am-sidebar/hcGuard.mjs");
+  assert.equal(isGuardFolder(GUARD_DIR), true, "this pack's own guard folder");
+  assert.equal(isGuardFolder(guardCopy(s.root, "equal-copy")), true, "a byte-equal copy (am's)");
+  assert.equal(isGuardFolder(plantedGuard(s.root, "planted-rule")), false, "a planted hcGuard.mjs");
+  assert.equal(isGuardFolder(join(s.root, "missing", "guard")), false, "a folder that is not there");
+  assert.equal(isGuardFolder(""), false);
+  const mod = join(GUARD_DIR, "..");
+  const cli = readFileSync(join(mod, "bin", "automagik-herdr.mjs"), "utf8");
+  assert.match(cli, /^import \{ isGuardFolder \} from "\.\.\/hcGuard\.mjs";$/m, "the CLI imports the guard's rule");
+  assert.doesNotMatch(cli, /function isGuard|["']hcGuard\.mjs["']\)/, "the CLI reads no hcGuard.mjs bytes of its own");
+  const proxy = readFileSync(join(mod, "hcProxy.mjs"), "utf8");
+  assert.doesNotMatch(proxy, /isGuardFolder|["']hcGuard\.mjs["']\)/, "the proxy keeps no guard-folder rule of its own");
+});
+
 test("a set re-entry marker is refused, never allowed: no guard has to be behind it", (t) => {
   const s = scene(t);
   const r = guardRun(s, ["read", "t101"], { AM_HC_GUARD_REENTRY: "1" });

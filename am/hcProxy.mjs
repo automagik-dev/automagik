@@ -209,9 +209,6 @@ const refusal = (id, why, kind = "refused") => ({
   error: { code: -32000, message: `hc-proxy: ${oneLine(why)}`, data: { kind } },
 });
 
-/** Whether a PATH word's first folder is a guard folder (the pack's or am's copy). */
-const isGuardFolder = (dir) => typeof dir === "string" && dir !== "" && existsSync(join(dir, "..", "hcGuard.mjs"));
-
 /** The real path of `name` on the given PATH words, or null; follows links and checks X_OK. */
 function resolveOnPath(name, words) {
   for (const dir of words) {
