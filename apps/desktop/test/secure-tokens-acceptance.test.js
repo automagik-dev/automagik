@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url'
 import {
   NO_SECURE_STORE_BACKENDS,
   NO_SECURE_STORE_REASON,
+  SECRET_STORE_LOCKED_REASON,
   SIGNED_OUT_REASON,
   TOKEN_FILE,
   TRY_LATER_REASON,
@@ -45,10 +46,11 @@ function unseal(buffer) {
 /**
  * Electron's safeStorage surface as main.js would pass it in, with counters and with the calls the
  * store must never make (the fixed-key opt-in, the synchronous API) failing the test if reached.
- * `probe` replaces getSelectedStorageBackend, `decrypt`/`encrypt` replace the async calls.
+ * `probe` replaces getSelectedStorageBackend, `decrypt`/`encrypt` replace the async calls, and
+ * `available` is what the synchronous isEncryptionAvailable answers (a value, or a function).
  */
-function fakeSafeStorage({ backend = 'gnome_libsecret', probe, decrypt, encrypt, generation = 1, unavailable } = {}) {
-  const calls = { backends: 0, decrypts: 0, encrypts: 0, plaintext: 0, sync: 0 }
+function fakeSafeStorage({ backend = 'gnome_libsecret', probe, decrypt, encrypt, generation = 1, unavailable, available = true } = {}) {
+  const calls = { availability: 0, backends: 0, decrypts: 0, encrypts: 0, plaintext: 0, sync: 0 }
   const storage = {
     calls,
     getSelectedStorageBackend() {
@@ -56,7 +58,8 @@ function fakeSafeStorage({ backend = 'gnome_libsecret', probe, decrypt, encrypt,
       return probe ? probe() : backend
     },
     isEncryptionAvailable() {
-      return true
+      calls.availability += 1
+      return typeof available === 'function' ? available() : available
     },
     setUsePlainTextEncryption() {
       calls.plaintext += 1
@@ -225,6 +228,99 @@ test('acceptance 3: KWallet and GNOME libsecret backends are a secure store', ()
     assert.equal(storage.calls.backends, 1)
     assert.equal(storage.calls.plaintext, 0)
     assert.equal(storage.calls.sync, 0)
+  }
+})
+
+test('acceptance 3: a Linux secret-store name whose store does not answer is no store, and the saved file is untouched', async t => {
+  const dir = temporaryFolder(t)
+  const file = tokenPath(dir)
+  assert.deepEqual(await storeIn(dir, fakeSafeStorage({ backend: 'gnome_libsecret' })).save('team-account', 'refresh-token-1'), { status: 'saved' })
+  const before = bytesOnDisk(file)
+  const modeBefore = statSync(file).mode
+  const mtimeBefore = statSync(file).mtimeMs
+
+  const answers = [
+    ['false', false],
+    ['a truthy value that is not true', 'yes'],
+    ['a throw', () => {
+      throw new Error('the availability check failed')
+    }],
+  ]
+  for (const backend of ['gnome_libsecret', 'kwallet6']) {
+    for (const [name, available] of answers) {
+      const label = `${backend}, ${name}`
+      const storage = fakeSafeStorage({ backend, available })
+      assert.deepEqual(detectSecureStore(fakeSafeStorage({ backend, available }), 'linux'), {
+        platform: 'linux', backend, secure: false, reason: SECRET_STORE_LOCKED_REASON,
+      }, label)
+      const store = storeIn(dir, storage)
+      assert.equal(store.secure, false, label)
+      assert.equal(store.memoryOnly, true, label)
+      assert.equal(store.backend, backend, label)
+      assert.equal(store.reason, SECRET_STORE_LOCKED_REASON, label)
+
+      // The saved ciphertext is not read for tokens: the launch starts signed out.
+      assert.deepEqual(await store.load('team-account'), { status: 'empty', reason: SECRET_STORE_LOCKED_REASON }, label)
+      assert.deepEqual(await store.save('team-account', 'refresh-token-2'), { status: 'memory', reason: SECRET_STORE_LOCKED_REASON }, label)
+      assert.deepEqual(await store.rotate('team-account', 'refresh-token-3'), { status: 'memory', reason: SECRET_STORE_LOCKED_REASON }, label)
+      assert.deepEqual(await store.load('team-account'), { status: 'ok', token: 'refresh-token-3', memory: true }, label)
+      assert.deepEqual(await store.clear('team-account'), { status: 'cleared', memory: true }, label)
+      assert.deepEqual(await store.load('team-account'), { status: 'empty', reason: SECRET_STORE_LOCKED_REASON }, label)
+      assert.equal(storage.calls.decrypts, 0, label)
+      assert.equal(storage.calls.encrypts, 0, label)
+      assert.equal(storage.calls.plaintext, 0, label)
+      assert.equal(storage.calls.sync, 0, label)
+
+      // Not rewritten, not removed, nothing beside it.
+      assert.deepEqual(bytesOnDisk(file), before, label)
+      assert.equal(statSync(file).mode, modeBefore, label)
+      assert.equal(statSync(file).mtimeMs, mtimeBefore, label)
+      assert.deepEqual(readdirSync(dir), [TOKEN_FILE], label)
+    }
+  }
+
+  // Its bytes are intact: a launch whose store answers unlocks the original token.
+  const restored = storeIn(dir, fakeSafeStorage({ backend: 'gnome_libsecret', available: true }))
+  assert.deepEqual(await restored.load('team-account'), { status: 'ok', token: 'refresh-token-1' })
+})
+
+test('acceptance 3: the reason tells no secret store from a store that does not answer', async t => {
+  const absent = detectSecureStore(fakeSafeStorage({ backend: 'basic_text' }), 'linux')
+  const locked = detectSecureStore(fakeSafeStorage({ backend: 'gnome_libsecret', available: false }), 'linux')
+  assert.equal(absent.reason, NO_SECURE_STORE_REASON)
+  assert.equal(locked.reason, SECRET_STORE_LOCKED_REASON)
+  assert.notEqual(locked.reason, absent.reason)
+  assert.notEqual(locked.reason, TRY_LATER_REASON)
+  // A locked keyring is no store for this launch, and the text says so.
+  assert.match(locked.reason, /locked/i)
+  assert.match(locked.reason, /this launch/i)
+  assert.match(locked.reason, /sign in again/i)
+
+  const dir = temporaryFolder(t)
+  const lockedLoad = await storeIn(dir, fakeSafeStorage({ backend: 'kwallet5', available: false })).load('team-account')
+  const absentLoad = await storeIn(dir, fakeSafeStorage({ backend: 'basic_text' })).load('team-account')
+  assert.notEqual(lockedLoad.reason, absentLoad.reason)
+  assert.deepEqual(readdirSync(dir), [])
+})
+
+test('acceptance 3: a Linux secret-store name whose store answers true is a secure store', async t => {
+  for (const backend of ['gnome_libsecret', 'kwallet6']) {
+    const dir = temporaryFolder(t)
+    const storage = fakeSafeStorage({ backend, available: true })
+    assert.deepEqual(detectSecureStore(fakeSafeStorage({ backend, available: true }), 'linux'), {
+      platform: 'linux', backend, secure: true, reason: null,
+    })
+    const store = storeIn(dir, storage)
+    assert.equal(store.secure, true, backend)
+    assert.equal(store.memoryOnly, false, backend)
+    assert.equal(store.reason, null, backend)
+    // Availability was asked, once, with the backend name.
+    assert.equal(storage.calls.availability, 1, backend)
+    assert.equal(storage.calls.backends, 1, backend)
+    assert.deepEqual(await store.save('team-account', 'refresh-token-1'), { status: 'saved' }, backend)
+    assert.deepEqual(await store.load('team-account'), { status: 'ok', token: 'refresh-token-1' }, backend)
+    assert.equal(storage.calls.availability, 1, backend)
+    assert.deepEqual(readdirSync(dir), [TOKEN_FILE], backend)
   }
 })
 
