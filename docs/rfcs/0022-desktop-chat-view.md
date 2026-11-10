@@ -504,6 +504,12 @@ What this changes:
 - **RFC 0014's D29** keeps workers and helpers in Herdr, and (d) above lists no worker. Team
   keeps that rule. Code lists workers, because Code is the Herdr side, shown in Automagik (Q15).
 - **The phone** follows the same split in its own work; this revision changes nothing in Pocket.
+- **RFC 0028** (code workers, #1008, not merged) reads both words the other way. Its Words table
+  says "Code" is herdr-app, opened from the sidebar's Code card (RFC 0013), and it says workers
+  get no rows of their own, as D29 decided. If the owner confirms Q9 (Team replaces Work, Code is
+  a side of the bar) and Q15 (Code lists workers), those answers amend RFC 0028's Words row for
+  "Code" and its line on worker rows, in that RFC, and its code workers are Code rows here ((i),
+  delivery B). If he declines either, RFC 0028 stands on that point and this revision changes.
 
 ### (i) The left bar (Proposed)
 
@@ -834,7 +840,8 @@ owner, the rest by Chat as recommended, Q6 re-decided after review. Decided 9 (H
 Open for the owner, from the 2026-11-10 revision ((h) to (l)); each has a recommendation:
 
 9. **Team replaces Work.** Does the bar's Team and Code switch replace RFC 0013's Work and Code
-   segments, with herdr-app one click away from a Code row? Recommended: yes ((h)).
+   segments, with herdr-app one click away from a Code row? Recommended: yes ((h)). A yes
+   amends RFC 0028's Words row for "Code" (#1008).
 10. **Two switches.** Does the view keep its own Code mode switch (Decided, 2) beside the bar's
     side switch? Recommended: yes, since one picks a list and the other a pane's face ((i)).
 11. **What Team lists.** Orchestrators and humanized bots only, or also the team's DSH Bots and
@@ -848,7 +855,8 @@ Open for the owner, from the 2026-11-10 revision ((h) to (l)); each has a recomm
 14. **The main bot.** Does `front` name the General Orchestrator? Recommended: the owner sets it
     in settings; the RFC does not fix it ((j)).
 15. **Workers on Code.** Does Code list every worker, against D29 on that side only?
-    Recommended: yes, read-only rows that open Code mode ((h), (i)).
+    Recommended: yes, read-only rows that open Code mode ((h), (i)). A yes amends RFC 0028's
+    line that workers get no rows of their own (#1008).
 16. **H's scope.** Is H widened from the one shown seat to the terminals of shown projects on a
     linked machine, still with no `exec`, `run` or file writes? Recommended: yes ((k)).
 17. **The instance's links.** Do (l)'s four conditions let the owner's own instance hold links
