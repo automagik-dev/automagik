@@ -1,4 +1,5 @@
-// Golden hashes from origin/dev, with #805 restart advice in the briefing.
+// Golden hashes from origin/dev, with #805 restart advice in the briefing; re-recorded for #955,
+// whose briefing ends a worker with `automagik-herdr worker kill` (the text and its five carriers).
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
