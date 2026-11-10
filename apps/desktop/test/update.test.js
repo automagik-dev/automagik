@@ -43,8 +43,8 @@ test("the update is the newest release above this one with this platform's feed;
   ]
   assert.deepEqual(pickUpdate(releases, { current: '2.261019.10-labs.14', platform: 'darwin' }), {
     version: '2.261023.1',
-    url: 'https://github.com/automagik-dev/automagik/releases/download/v2.261023.1/',
-    page: 'https://github.com/automagik-dev/automagik/releases/tag/v2.261023.1',
+    url: 'https://github.com/automagik-si/automagik/releases/download/v2.261023.1/',
+    page: 'https://github.com/automagik-si/automagik/releases/tag/v2.261023.1',
   })
   assert.equal(pickUpdate(releases, { current: '2.261019.10-labs.14', platform: 'linux' }).version, '2.261025.1')
   assert.equal(pickUpdate(releases, { current: '2.261025.1', platform: 'linux' }), null)
@@ -145,7 +145,7 @@ for (const [platform, mode] of [['linux', 'auto'], ['darwin', 'auto'], ['win32',
     assert.equal(calls, 3, 'a later release is found without a restart or manual check')
     if (mode === 'auto') {
       assert.equal(updater.autoDownload, true)
-      assert.equal(updater.feeds.at(-1).url, 'https://github.com/automagik-dev/automagik/releases/download/v3.102.0/')
+      assert.equal(updater.feeds.at(-1).url, 'https://github.com/automagik-si/automagik/releases/download/v3.102.0/')
     } else {
       assert.equal(states.at(-1).state, 'available')
       assert.equal(states.at(-1).version, '3.102.0')
@@ -171,7 +171,7 @@ test('a check points electron-updater at the chosen release, reports the downloa
   assert.deepEqual(updater.installs, [])
   assert.deepEqual(await updates.check(), { result: 'found', version: '2.261022.1' })
   // One range per request: GitHub answers several at once with 501, and the update would come whole.
-  assert.deepEqual(updater.feeds, [{ provider: 'generic', url: 'https://github.com/automagik-dev/automagik/releases/download/v2.261022.1/', useMultipleRangeRequest: false }])
+  assert.deepEqual(updater.feeds, [{ provider: 'generic', url: 'https://github.com/automagik-si/automagik/releases/download/v2.261022.1/', useMultipleRangeRequest: false }])
   updater.emit('download-progress', { percent: 41.6 })
   updater.emit('update-downloaded', { version: '2.261022.1' })
   assert.deepEqual(states, [{ version: '2.261022.1', state: 'downloading', percent: 42 }, { version: '2.261022.1', state: 'ready' }])
@@ -213,7 +213,7 @@ test('on Windows the update comes from the release with latest.yml and is ready 
     releases: async () => [release('v3.66.0', ['latest-mac.yml', 'latest-linux.yml']), release('v3.65.1', ['latest.yml', 'latest-mac.yml'])],
   })
   assert.deepEqual(await updates.check(), { result: 'found', version: '3.65.1' })
-  assert.deepEqual(updater.feeds, [{ provider: 'generic', url: 'https://github.com/automagik-dev/automagik/releases/download/v3.65.1/', useMultipleRangeRequest: false }])
+  assert.deepEqual(updater.feeds, [{ provider: 'generic', url: 'https://github.com/automagik-si/automagik/releases/download/v3.65.1/', useMultipleRangeRequest: false }])
   updater.emit('update-downloaded', { version: '3.65.1' })
   assert.equal(updates.ready, '3.65.1')
   assert.deepEqual(states.at(-1), { version: '3.65.1', state: 'ready' })
@@ -295,12 +295,12 @@ test('a deb build only says a release is out: no feed, no download, and its page
     releases: async () => [release('v2.261023.1')],
   })
   assert.deepEqual(await updates.check(), { result: 'found', version: '2.261023.1' })
-  assert.deepEqual(states, [{ version: '2.261023.1', state: 'available', page: 'https://github.com/automagik-dev/automagik/releases/tag/v2.261023.1' }])
+  assert.deepEqual(states, [{ version: '2.261023.1', state: 'available', page: 'https://github.com/automagik-si/automagik/releases/tag/v2.261023.1' }])
   assert.deepEqual(updater.feeds, [])
   assert.equal(updater.autoDownload, undefined)
   assert.equal(updater.listenerCount('update-downloaded'), 0)
   assert.equal(isReleasePage(states[0].page), true)
-  assert.equal(isReleasePage('https://github.com/automagik-dev/automagik/releases/tag/v1/../../evil'), false)
+  assert.equal(isReleasePage('https://github.com/automagik-si/automagik/releases/tag/v1/../../evil'), false)
   assert.equal(isReleasePage('https://evil.example/releases/tag/v1'), false)
 })
 

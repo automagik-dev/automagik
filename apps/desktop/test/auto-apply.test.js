@@ -75,7 +75,7 @@ test('the Automagik lane updates the Automagik plugins a person added from the m
   assert.ok(!automagik.plugins.some(name => name.startsWith('@automagik/omni-')))
   // Unfold's ship from Unfold's own release, not this lane (Refs marketplace/unfold).
   assert.ok(!automagik.plugins.some(name => name.startsWith('@automagik/unfold-')))
-  const lane = { schemaVersion: 1, publisher: 'automagik', sequence: 590002, version: '3.59.2', base: '3.59.0', plugins: [{ name: '@automagik/locale-pt-br-dsh', version: '3.59.2', url: 'https://github.com/automagik-dev/automagik/releases/download/v3.59.2/x.tgz', engines: { dsh: '>=0.2.1-rc.5 <0.2.2-0' } }] }
+  const lane = { schemaVersion: 1, publisher: 'automagik', sequence: 590002, version: '3.59.2', base: '3.59.0', plugins: [{ name: '@automagik/locale-pt-br-dsh', version: '3.59.2', url: 'https://github.com/automagik-si/automagik/releases/download/v3.59.2/x.tgz', engines: { dsh: '>=0.2.1-rc.5 <0.2.2-0' } }] }
   const context = { publisher: automagik, appVersion: '3.59.0', dshVersion: '0.2.1-rc.5' }
   assert.equal(laneUpdate(lane, { ...context, installed: { '@automagik/locale-pt-br-dsh': '3.59.0' } })?.plugins.length, 1)
   // Not added here: nothing to update.
@@ -104,7 +104,7 @@ async function staged(root, home, version, draws) {
   const file = join(root, `bots-${version}.tgz`)
   execFileSync(tarOf(), ['-czf', file, '-C', dir, 'package'])
   const bytes = readFileSync(file)
-  const plugin = { name: BOTS, version, url: `https://github.com/automagik-dev/automagik/releases/download/v${version}/automagik-bots-dsh-${version}.tgz`, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), integrity: `sha512-${createHash('sha512').update(bytes).digest('base64')}` }
+  const plugin = { name: BOTS, version, url: `https://github.com/automagik-si/automagik/releases/download/v${version}/automagik-bots-dsh-${version}.tgz`, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), integrity: `sha512-${createHash('sha512').update(bytes).digest('base64')}` }
   await stage({ publisher: 'automagik', version, sequence: Number(version.replaceAll('.', '')), plugins: [plugin] }, { home, fetch: async () => new Response(bytes) })
 }
 
@@ -186,7 +186,7 @@ test('end to end: a version whose Bot team never draws is rolled back in the sam
   assert.equal(existsSync(join(home, 'lane', 'staged', `${BOTS.replace('/', '+')}@3.59.2`)), false)
   // The lane offers it again: it is refused.
   const automagik = PUBLISHERS.find(entry => entry.publisher === 'automagik')
-  const lane = { schemaVersion: 1, publisher: 'automagik', sequence: 3593, version: '3.59.2', base: '3.59.0', plugins: [{ name: BOTS, version: '3.59.2', url: 'https://github.com/automagik-dev/automagik/releases/download/v3.59.2/x.tgz', engines: { dsh: '>=0.2.1-rc.5 <0.2.2-0' } }] }
+  const lane = { schemaVersion: 1, publisher: 'automagik', sequence: 3593, version: '3.59.2', base: '3.59.0', plugins: [{ name: BOTS, version: '3.59.2', url: 'https://github.com/automagik-si/automagik/releases/download/v3.59.2/x.tgz', engines: { dsh: '>=0.2.1-rc.5 <0.2.2-0' } }] }
   assert.equal(laneUpdate(lane, { publisher: automagik, appVersion: '3.59.0', dshVersion: '0.2.1-rc.5', installed: installedVersions(target, [BOTS]), ...laneMemory(home) }), null)
 })
 

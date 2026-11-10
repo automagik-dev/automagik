@@ -143,6 +143,6 @@ dmg:
 # repository's release `v<version>`, and the app reads that release's feed (src/update.js).
 publish:
   provider: github
-  owner: automagik-dev
+  owner: automagik-si
   repo: automagik
   releaseType: prerelease
