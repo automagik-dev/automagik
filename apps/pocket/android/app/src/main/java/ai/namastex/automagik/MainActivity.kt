@@ -125,10 +125,15 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
     var newTerminal by remember { mutableStateOf(false) }
     // Home's swipe deck. It lives here, not inside Home, so a later "Answer all" button opens the same screen.
     var deckOpen by rememberSaveable { mutableStateOf(false) }
+    /** Whether the open terminal/chat came from the deck, so Back returns to the deck instead of Home. */
+    var deckReturn by remember { mutableStateOf(false) }
     /** The machine whose Automagik Bot chats are listed (read only). */
     var botChats by remember { mutableStateOf<String?>(null) }
     val selected = state.selected
-    LaunchedEffect(selected) { if (selected != null) deckOpen = false }
+    // A selection that did not come from the deck closes it; one that did (deckReturn) comes back to it on Back.
+    LaunchedEffect(selected) {
+        if (selected == null) deckReturn = false else if (!deckReturn) deckOpen = false
+    }
     val space = state.space?.let { (host, id) -> state.machines[host]?.spaces?.find { it.id == id } }
     val terminal = selected?.let { state.machines[it.hostId]?.terminals?.find { t -> t.address == it.address } }
     // The open terminal's own space, for its tabs; the space screen under it may be another one or none.
@@ -278,7 +283,7 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
         } }
     }
     }
-    if (deckOpen) {
+    if (deckOpen && selected == null) {
         // Home's own Needs you list, the one its count tiles and cards use: a chat row as a chat card, a terminal row
         // with its menu. A future "Answer all" button only has to set deckOpen.
         val needs = pulse.sections.firstOrNull { it.rank == Cockpit.BLOCKED }?.entries.orEmpty()
@@ -286,7 +291,7 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
             state.machines[ref.hostId]?.spaces?.find { ref.address in it.addresses }?.name ?: vm.hostName(ref.hostId)
         }
         DeckScreen(cards, vm, anyConnected, onClose = { deckOpen = false },
-            onOpen = { ref -> deckOpen = false; openFromDeck(ref) },
+            onOpen = { ref -> deckReturn = true; openFromDeck(ref) },
             onBackToTeams = { deckOpen = false; vm.navigate(Nav.TEAM) })
     }
     vm.sheet.collectAsStateWithLifecycle().value?.let { StatsSheetHost(it, onDismiss = vm::closeStats) }
@@ -428,7 +433,7 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
                     Dot(request, 8); Spacer(Modifier.width(10.dp))
                     Text(if (pulse.needsYou == 1) "1 needs you" else "${pulse.needsYou} need you", fontWeight = FontWeight.SemiBold,
                         fontSize = 14.sp, modifier = Modifier.weight(1f))
-                    Text("· Review", color = Accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Review", color = Accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         }

@@ -1294,12 +1294,14 @@ class PocketViewModel(application: Application, private val initDispatcher: Coro
             CoreTerminal("t4", "Shell", "~/work/website", "live", "", "zsh", "", 80, 24),
             CoreTerminal("t5", "Release notes", "~/work/herdr-squad", "live", "working", "Codex", "Drafting the changelog", 80, 24),
             CoreTerminal("t6", "Landing copy", "~/work/website", "live", "idle", "Claude Code", "", 80, 24, labels = mapOf("bot" to "b-demo-writer")),
-            CoreTerminal("t7", "Notes", "~/work/notes", "live", "idle", "Claude Code", "", 80, 24, labels = mapOf("bot" to "b-demo-scribe")))
+            CoreTerminal("t7", "Notes", "~/work/notes", "live", "idle", "Claude Code", "", 80, 24, labels = mapOf("bot" to "b-demo-scribe")),
+            // A second waiting agent, so sample data renders a deck of two cards.
+            CoreTerminal("t8", "Landing review", "~/work/website", "live", "blocked", "Claude Code", "Approve the new landing page copy", 80, 24, labels = mapOf("bot" to "b-demo-review"), kind = "permission"))
             // Each one's last change, so the Teams rows show times and the scribe has dozed off.
-            .map { t -> t.copy(statusMs = System.currentTimeMillis() - mapOf("t1" to 1L, "t2" to 3L, "t3" to 14L, "t5" to 6L, "t6" to 4L, "t7" to 95L).getOrDefault(t.address, 0L) * 60_000L) }
+            .map { t -> t.copy(statusMs = System.currentTimeMillis() - mapOf("t1" to 1L, "t2" to 3L, "t3" to 14L, "t5" to 6L, "t6" to 4L, "t7" to 95L, "t8" to 2L).getOrDefault(t.address, 0L) * 60_000L) }
         val spaces = listOf(PocketSpace("sp1", "herdr", "~/work/herdr", "", listOf(PocketTab("tb2", "Android", listOf("t2", "t3")), PocketTab("tb1", "Authentication", listOf("t1")))),
             PocketSpace("sp3", "Release squad", "~/work/herdr-squad", "", listOf(PocketTab("tb4", "Notes", listOf("t5")))),
-            PocketSpace("sp2", "Website", "~/work/website", "", listOf(PocketTab("tb3", "Shell", listOf("t4")), PocketTab("tb5", "Copy", listOf("t6")))),
+            PocketSpace("sp2", "Website", "~/work/website", "", listOf(PocketTab("tb3", "Shell", listOf("t4")), PocketTab("tb5", "Copy", listOf("t6", "t8")))),
             PocketSpace("sp4", "Notes", "~/work/notes", "", listOf(PocketTab("tb6", "Notes", listOf("t7")))))
         // Sample repositories: one with a squad's worktrees (its branches are tasks), one on main (untasked).
         fun repo(top: String, branch: String, common: String = "~/work/herdr/.git", remote: String = "example/herdr") =

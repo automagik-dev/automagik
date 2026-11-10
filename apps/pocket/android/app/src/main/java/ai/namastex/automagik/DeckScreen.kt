@@ -56,13 +56,18 @@ import kotlinx.coroutines.launch
     Box(Modifier.fillMaxSize().background(Canvas).statusBarsPadding().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp)) {
         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("Needs you", fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                if (view is Teams.DeckView.Cards) {
-                    Box(Modifier.clip(RoundedCornerShape(16.dp)).background(amber().copy(alpha = .15f))
-                        .border(1.dp, amber().copy(alpha = .5f), RoundedCornerShape(16.dp)).padding(horizontal = 12.dp, vertical = 5.dp)) {
-                        Text("${view.cards.size} left", color = amber(), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                if (view is Teams.DeckView.Clear) {
+                    // The all-clear screen has no Needs-you header; it keeps the close control.
+                    Spacer(Modifier.weight(1f))
+                } else {
+                    Text("Needs you", color = Ink, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    if (view is Teams.DeckView.Cards) {
+                        Box(Modifier.clip(RoundedCornerShape(16.dp)).background(amber().copy(alpha = .15f))
+                            .border(1.dp, amber().copy(alpha = .5f), RoundedCornerShape(16.dp)).padding(horizontal = 12.dp, vertical = 5.dp)) {
+                            Text("${view.cards.size} left", color = amber(), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Spacer(Modifier.width(8.dp))
                     }
-                    Spacer(Modifier.width(8.dp))
                 }
                 IconButton(onClick = onClose) { Icon(Icons.Outlined.Close, "Close the deck", tint = Muted) }
             }
@@ -93,7 +98,7 @@ import kotlinx.coroutines.launch
         Spacer(Modifier.weight(1f))
         PetView(Teams.GENIE, pose, 132.dp, celebrate = if (celebrate) Unit else null)
         Spacer(Modifier.height(12.dp))
-        Text(title, fontSize = 28.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+        Text(title, color = Ink, fontSize = 28.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
         Spacer(Modifier.height(8.dp))
         Text(text, color = Muted, fontSize = 16.sp, lineHeight = 24.sp, textAlign = TextAlign.Center)
         Spacer(Modifier.weight(1f))
@@ -146,52 +151,54 @@ import kotlinx.coroutines.launch
             // The cards still waiting, peeking out under this one.
             for (i in minOf(behind, 2) downTo 1) Box(Modifier.fillMaxWidth(1f - i * .05f).fillMaxHeight(.92f).offset(y = (i * 10).dp)
                 .clip(RoundedCornerShape(24.dp)).background(Surface.copy(alpha = 1f - i * .3f)).border(1.dp, Border, RoundedCornerShape(24.dp)))
-            Column(Modifier.fillMaxWidth().fillMaxHeight(.94f)
-                .graphicsLayer { translationX = dx.value; translationY = dy.value; rotationZ = dx.value / 40f }
-                .clip(RoundedCornerShape(24.dp)).background(Surface).border(1.5.dp, amber.copy(alpha = .65f), RoundedCornerShape(24.dp))
-                .pointerInput(card.ref, yes, no, card.chat) {
-                    detectDragGestures(onDragEnd = {
-                        scope.launch {
-                            when (Teams.swipe(dx.value, dy.value, threshold, yes != null && menu != null, no != null && menu != null)) {
-                                Teams.Swipe.YES -> { dx.animateTo(size.width * 1.5f); send(yes) }
-                                Teams.Swipe.NO -> { dx.animateTo(-size.width * 1.5f); send(no) }
-                                Teams.Swipe.OPEN -> { launch { dx.animateTo(0f) }; dy.animateTo(0f); onOpen() }
-                                Teams.Swipe.NONE -> { launch { dx.animateTo(0f) }; dy.animateTo(0f) }
+            Box(Modifier.fillMaxWidth().fillMaxHeight(.94f)
+                .graphicsLayer { translationX = dx.value; translationY = dy.value; rotationZ = dx.value / 40f }) {
+                Column(Modifier.fillMaxSize()
+                    .clip(RoundedCornerShape(24.dp)).background(Surface).border(1.5.dp, amber.copy(alpha = .65f), RoundedCornerShape(24.dp))
+                    .pointerInput(card.ref, yes, no, card.chat) {
+                        detectDragGestures(onDragEnd = {
+                            scope.launch {
+                                when (Teams.swipe(dx.value, dy.value, threshold, yes != null && menu != null, no != null && menu != null)) {
+                                    Teams.Swipe.YES -> { dx.animateTo(size.width * 1.5f); send(yes) }
+                                    Teams.Swipe.NO -> { dx.animateTo(-size.width * 1.5f); send(no) }
+                                    Teams.Swipe.OPEN -> { launch { dx.animateTo(0f) }; dy.animateTo(0f); onOpen() }
+                                    Teams.Swipe.NONE -> { launch { dx.animateTo(0f) }; dy.animateTo(0f) }
+                                }
                             }
-                        }
-                    }) { change, drag -> change.consume(); scope.launch { dx.snapTo(dx.value + drag.x); dy.snapTo(minOf(0f, dy.value + drag.y)) } }
-                }.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Dot(amber, 8); Spacer(Modifier.width(8.dp))
-                    Text(card.where.ifBlank { "Home" }, color = Muted, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f))
-                    Text(listOf(card.agent, Teams.time(card.statusMs, System.currentTimeMillis())).filter { it.isNotBlank() }.joinToString(" · "),
-                        color = Muted, fontSize = 12.sp, maxLines = 1)
-                }
-                Spacer(Modifier.weight(.55f))
-                PetView(Teams.GENIE, Teams.NEEDS_YOU, 104.dp)
-                Spacer(Modifier.height(10.dp))
-                Text(card.title, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(statusLabel("blocked", card.kind), color = amber, fontSize = 13.sp)
-                Spacer(Modifier.height(12.dp))
-                Text(card.message.ifBlank { if (card.opensChat) "Waiting for your reply" else "Waiting for you" },
-                    fontSize = 17.sp, lineHeight = 24.sp, textAlign = TextAlign.Center, maxLines = 4, overflow = TextOverflow.Ellipsis)
-                menu?.dialog?.takeIf { it.isNotBlank() }?.let {
+                        }) { change, drag -> change.consume(); scope.launch { dx.snapTo(dx.value + drag.x); dy.snapTo(minOf(0f, dy.value + drag.y)) } }
+                    }.padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Dot(amber, 8); Spacer(Modifier.width(8.dp))
+                        Text(card.where.ifBlank { "Home" }, color = Muted, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f))
+                        Text(listOf(card.agent, Teams.time(card.statusMs, System.currentTimeMillis())).filter { it.isNotBlank() }.joinToString(" · "),
+                            color = Muted, fontSize = 12.sp, maxLines = 1)
+                    }
+                    Spacer(Modifier.weight(.55f))
+                    PetView(Teams.GENIE, Teams.NEEDS_YOU, 104.dp)
                     Spacer(Modifier.height(10.dp))
-                    Text(it, fontFamily = FontFamily.Monospace, fontSize = 13.sp, lineHeight = 19.sp, maxLines = 6,
-                        overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Canvas).padding(12.dp))
+                    Text(card.title, color = Ink, fontSize = 22.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(statusLabel("blocked", card.kind), color = amber, fontSize = 13.sp)
+                    Spacer(Modifier.height(12.dp))
+                    Text(card.message.ifBlank { if (card.opensChat) "Waiting for your reply" else "Waiting for you" }, color = Ink,
+                        fontSize = 17.sp, lineHeight = 24.sp, textAlign = TextAlign.Center, maxLines = 4, overflow = TextOverflow.Ellipsis)
+                    menu?.dialog?.takeIf { it.isNotBlank() }?.let {
+                        Spacer(Modifier.height(10.dp))
+                        Text(it, color = Ink, fontFamily = FontFamily.Monospace, fontSize = 13.sp, lineHeight = 19.sp, maxLines = 6,
+                            overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Canvas).padding(12.dp))
+                    }
+                    Spacer(Modifier.weight(1f))
+                    Text(when {
+                        card.opensChat -> "Swipe up, or tap Open chat, to answer there"
+                        yes != null -> "Swipe right for Yes, left for No"
+                        else -> "Answer this one in its terminal: swipe up"
+                    }, color = Muted, fontSize = 12.sp, textAlign = TextAlign.Center)
                 }
-                Spacer(Modifier.weight(1f))
-                Text(when {
-                    card.opensChat -> "Swipe up, or tap Open chat, to answer there"
-                    yes != null -> "Swipe right for Yes, left for No"
-                    else -> "Answer this one in its terminal: swipe up"
-                }, color = Muted, fontSize = 12.sp, textAlign = TextAlign.Center)
+                // The stamps sit on the card and move with it, as the mock draws them.
+                val lean = (dx.value / threshold).coerceIn(-1f, 1f)
+                if (lean > .1f && yes != null) Stamp("YES", Ok, Modifier.align(Alignment.TopStart).padding(start = 22.dp, top = 86.dp).alpha(lean))
+                if (lean < -.1f && no != null) Stamp("NO", Blocked, Modifier.align(Alignment.TopEnd).padding(end = 22.dp, top = 86.dp).alpha(-lean))
             }
-            // The stamps, as the card leans.
-            val lean = (dx.value / threshold).coerceIn(-1f, 1f)
-            if (lean > .1f && yes != null) Stamp("YES", Ok, Modifier.align(Alignment.TopStart).padding(28.dp).alpha(lean))
-            if (lean < -.1f && no != null) Stamp("NO", Blocked, Modifier.align(Alignment.TopEnd).padding(28.dp).alpha(-lean))
         }
         Text("← No  ·  ↑ Open  ·  Yes →", color = Muted, fontSize = 12.sp)
         Spacer(Modifier.height(10.dp))
