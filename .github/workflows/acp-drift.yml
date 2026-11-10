@@ -67,8 +67,11 @@ jobs:
         id: drift
         run: |
           set -uo pipefail
-          node scripts/acp-drift.mjs --json > "${RUNNER_TEMP}/acp-drift.json"
-          code=$?
+          if node scripts/acp-drift.mjs --json > "${RUNNER_TEMP}/acp-drift.json"; then
+            code=0
+          else
+            code=$?
+          fi
           echo "code=${code}" >> "$GITHUB_OUTPUT"
           {
             echo '### ACP drift'
@@ -77,7 +80,11 @@ jobs:
               echo 'npm could not be read; nothing was compared.'
             else
               echo '```json'
-              cat "${RUNNER_TEMP}/acp-drift.json"
+              if [ -f "${RUNNER_TEMP}/acp-drift.json" ]; then
+                cat "${RUNNER_TEMP}/acp-drift.json"
+              else
+                echo 'no output: the drift check failed before it wrote its JSON'
+              fi
               echo '```'
             fi
           } >> "$GITHUB_STEP_SUMMARY"
@@ -94,9 +101,13 @@ jobs:
           {
             echo 'The daily ACP drift check failed.'
             echo
-            echo '```json'
-            cat "${RUNNER_TEMP}/acp-drift.json"
-            echo '```'
+            if [ -f "${RUNNER_TEMP}/acp-drift.json" ]; then
+              echo '```json'
+              cat "${RUNNER_TEMP}/acp-drift.json"
+              echo '```'
+            else
+              echo 'no output: the drift check failed before it wrote its JSON'
+            fi
             echo
             echo "Run: ${RUN_URL}"
             echo
@@ -169,9 +180,16 @@ jobs:
           FUZZ_RUNS: '2000'
         run: |
           set -uo pipefail
-          npm test > "${RUNNER_TEMP}/acp-daily.log" 2>&1
-          code=$?
-          tail -n 60 "${RUNNER_TEMP}/acp-daily.log"
+          if npm test > "${RUNNER_TEMP}/acp-daily.log" 2>&1; then
+            code=0
+          else
+            code=$?
+          fi
+          if [ -f "${RUNNER_TEMP}/acp-daily.log" ]; then
+            tail -n 60 "${RUNNER_TEMP}/acp-daily.log"
+          else
+            echo 'no output: the step failed before the suite ran'
+          fi
           echo "code=${code}" >> "$GITHUB_OUTPUT"
           # The real-adapter tests must have run, not been skipped: a skip proves nothing.
           for agent in 'Claude Code' 'Codex'; do
@@ -182,7 +200,7 @@ jobs:
           done
 
       - name: Open or update the issue
-        if: steps.run.outputs.code != '0'
+        if: failure() || steps.run.outputs.code != '0'
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -200,9 +218,13 @@ jobs:
             echo 'The end of the output (failing tests are marked `✖`):'
             echo
             echo '```'
-            grep -n '^✖' "${RUNNER_TEMP}/acp-daily.log" | head -n 40 || true
-            echo '...'
-            tail -n 40 "${RUNNER_TEMP}/acp-daily.log" | cut -c1-400
+            if [ -f "${RUNNER_TEMP}/acp-daily.log" ]; then
+              grep -n '^✖' "${RUNNER_TEMP}/acp-daily.log" | head -n 40 || true
+              echo '...'
+              tail -n 40 "${RUNNER_TEMP}/acp-daily.log" | cut -c1-400
+            else
+              echo 'no output: the step failed before the suite ran'
+            fi
             echo '```'
             echo
             echo "Run: ${RUN_URL}"
@@ -314,9 +336,16 @@ jobs:
           echo "claude=${ACP_CLAUDE_VERSION:-unknown}" >> "$GITHUB_OUTPUT"
           echo "codex=${ACP_CODEX_VERSION:-unknown}" >> "$GITHUB_OUTPUT"
           # The record must name the new pin before the suite's own check of it runs.
-          { node scripts/acp-drift.mjs --record && bun run lint && npm test; } > "${RUNNER_TEMP}/acp-bump.log" 2>&1
-          code=$?
-          tail -n 60 "${RUNNER_TEMP}/acp-bump.log"
+          if { node scripts/acp-drift.mjs --record && bun run lint && npm test; } > "${RUNNER_TEMP}/acp-bump.log" 2>&1; then
+            code=0
+          else
+            code=$?
+          fi
+          if [ -f "${RUNNER_TEMP}/acp-bump.log" ]; then
+            tail -n 60 "${RUNNER_TEMP}/acp-bump.log"
+          else
+            echo 'no output: the step failed before the suite ran'
+          fi
           echo "code=${code}" >> "$GITHUB_OUTPUT"
           for agent in 'Claude Code' 'Codex'; do
             if ! grep -q "^✔ real ${agent}: the adapter answers initialize" "${RUNNER_TEMP}/acp-bump.log"; then
