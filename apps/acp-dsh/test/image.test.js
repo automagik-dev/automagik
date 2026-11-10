@@ -19,7 +19,8 @@ function setup(mode, env = {}) {
   const traceFile = join(home, 'trace.jsonl')
   const scratches = []
   const scratch = async () => {
-    const dir = mkdtempSync(join(home, 'scratch-'))
+    // The product's own scratch is resolved before checks and session; model that here.
+    const dir = realpathSync(mkdtempSync(join(home, 'scratch-')))
     scratches.push(dir)
     return dir
   }
@@ -82,6 +83,16 @@ test('one image: an empty read-only scratch session, the feature on for this run
   assert.equal(trace.find(entry => entry.event === 'prompt').mentionsTool, true)
   assert.ok(trace.some(entry => entry.event === 'close'), 'the session is closed')
   assert.equal(existsSync(run.scratches[0]), false, 'the scratch folder is removed')
+})
+
+test('the default scratch folder is the resolved folder the session gets', async (t) => {
+  const run = setup('ok')
+  t.after(run.cleanup)
+  await drawImage({ spawn: run.spawn, prompt: 'a red fox' })
+  const trace = run.trace()
+  const session = trace.find(entry => entry.event === 'new-session')
+  const first = trace.find(entry => entry.event === 'cli')
+  assert.equal(session.cwd, first.cwd, 'the scratch folder is resolved before the session starts')
 })
 
 test('the config turns command execution off, not only refuses it afterwards', () => {
@@ -270,7 +281,7 @@ test('the person\'s own skills are turned off by name, and the tools read again 
   assert.equal(sticky.trace().filter(entry => entry.event === 'cli' && entry.args[0] === 'debug').length, 2, 'two renders at most')
 })
 
-test('imageSetup runs every check outside a project and keeps names only', async () => {
+test('imageSetup runs every check outside a project and keeps names only', async (t) => {
   const calls = []
   const run = (file, args, options, done) => {
     calls.push({ args: args.slice(args.indexOf('cli') + 1), cwd: options.cwd })
@@ -286,10 +297,12 @@ test('imageSetup runs every check outside a project and keeps names only', async
   assert.equal(calls[0].cwd, tmpdir())
   // In the run's folder when there is one, trusted as the session will trust it.
   calls.length = 0
-  const inside = await imageSetup({ command: '/node' }, { run, cwd: '/scratch/one' })
-  assert.deepEqual(calls.map(call => call.cwd), ['/scratch/one', '/scratch/one', '/scratch/one'])
-  assert.deepEqual(inside.overrides.projects, { '/scratch/one': { trust_level: 'trusted' } })
-  assert.equal(calls[2].args.at(-1), 'projects={ \'/scratch/one\' = { trust_level = \'trusted\' } }')
+  const folder = realpathSync(mkdtempSync(join(tmpdir(), 'acp-image-folder-')))
+  t.after(() => rmSync(folder, { recursive: true, force: true }))
+  const inside = await imageSetup({ command: '/node' }, { run, cwd: folder })
+  assert.deepEqual(calls.map(call => call.cwd), [folder, folder, folder])
+  assert.deepEqual(inside.overrides.projects, { [folder]: { trust_level: 'trusted' } })
+  assert.equal(calls[2].args.at(-1), `projects={ '${folder}' = { trust_level = 'trusted' } }`)
   // An exit code is Codex's own no (an update is needed); a timeout or a spawn failure is not.
   const failing = error => (file, args, options, done) => (args.includes('features') ? done(error, '', '') : run(file, args, options, done))
   await assert.rejects(imageSetup({ command: '/node' }, { run: failing(Object.assign(new Error('exit'), { code: 2 })) }), error => error.kind === 'unsupported')
