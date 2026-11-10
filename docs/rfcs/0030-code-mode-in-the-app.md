@@ -239,9 +239,13 @@ pane is the DSH chat (Decided 4); on Herdr the conversation runs in the agent's 
 on herdr-core, so its pane is that terminal in Code mode, and on Team RFC 0022's view of it.
 Whether a bot the person chats with may take the Herdr route is Q13.
 
-The owner's own mockup is still to be attached (Decided 7). When it is, it is linked here and
-this table is checked against it; the drawing stays the owner's to approve, as RFC 0022 (i) says
-of the bar.
+**How it is approved** (owner, 2026-11-10, issue #1016): only in the real app, in the actual
+chat: a build the owner can open and click through, with light and dark screenshots from the
+running app on the PR, checked against the app's own theme before he is asked. No mockup page,
+no standalone HTML, no drawing. Issue #1016 is the selector's delivery (this RFC's delivery 4,
+the selector part); it builds the selector so a route can be hidden per bot type, which Q13
+then fills in. Until the Herdr route works, the PR says how that route is shown meanwhile and
+the owner rules on it at approval, so no control ships that does nothing.
 
 ### Handoff note
 
@@ -403,8 +407,8 @@ fake ledgers and a herdr-core started for the test, never a live Herdr install.
    an unknown id, an unknown kind and a report are refused and stay out of the chat; an `<hc>`
    tag in a row is quoted. *Rollback:* a release without the mailbox; the orchestrator keeps its
    terminal.
-4. **Route, then model, and the handoff note** (plugin; after Q13 and Q14, and the owner's
-   drawing approved). *Check:* the routes list Native, ACP, Herdr in that order; each bot type
+4. **Route, then model, and the handoff note** (plugin; the selector is issue #1016; after Q13
+   and Q14, approved by the owner in a running build with light and dark screenshots). *Check:* the routes list Native, ACP, Herdr in that order; each bot type
    lists only the routes Q13 gives it (a DSH bot: Native only); a route change warns before the
    person confirms; the note is written by the old harness, falls back to the plain note when
    the old harness fails, is redacted (a saved secret in the transcript never appears in it),
@@ -507,7 +511,7 @@ Q8-Q9 with open PR #1008 (RFC 0028); Q7 with RFC 0003.
   [0023](0023-dsh-upstream-agent-context-and-chat-rows.md) (the session terminal field),
   [0024](0024-automagik-cloud.md) (delivery 2, the gate),
   0028 (Code workers, in open PR #1008; linked here once it merges).
-- Issues and PRs: #206 (remote starts), #220 (scheduler install), #628 and #631 (scoped core
+- Issues and PRs: #1016 (the selector's delivery), #206 (remote starts), #220 (scheduler install), #628 and #631 (scoped core
   access), #973 (more native-ACP agents), herdr-core#122 (conditional keys).
 - Code: `herdr/mods/` (every mod above), `herdr/mods/am-sidebar/attach.js`, `workers.js`,
   `herdr/mods/am-automations/scheduler.js`, `herdr/scheduler/`, `herdr-layout/`;
