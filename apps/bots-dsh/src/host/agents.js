@@ -844,8 +844,18 @@ export function install(rt) {
     const live = await rt.resolveAgent(sessionId)
     // And at its Bot's permission level: DSH announced the Session before it was a task,
     // so its session/created listener could not. Before the first turn, as the model is.
-    await rt.applyTaskPermission(sessionId, live.session)
-      .catch(error => rt.warn('ds-bot: the task keeps the default permission, %s\'s was not applied: %s', caller?.name ?? from, error?.message ?? error))
+    // A task whose level did not hold takes no turn: the default it would run at may be
+    // wider. It ends as failed, so nothing resumes it, and its Session is archived, so
+    // nothing is typed into it at that default either.
+    try {
+      await rt.applyTaskPermission(sessionId, live.session, { start: true })
+    } catch (error) {
+      Object.assign(tasks()[sessionId] ?? {}, { status: 'failed', endedAt: Date.now(), summary: String(error?.message ?? error).slice(0, TASK_SUMMARY_MAX) })
+      await rt.save().catch(failure => rt.warn('ds-bot: saving a task failed: %s', failure))
+      await ctx.workspaceRegistry.archiveSession(sessionId, { stopActivity: true })
+        .catch(failure => rt.warn('ds-bot: the task %s that did not start was not archived: %s', sessionId, failure))
+      throw error
+    }
     // The Session existed before this task record did, so the tool deny list could not be
     // resolved then (a task is a task only once it is written down). Apply it now, before
     // the first turn, to the same agent the turn will use.

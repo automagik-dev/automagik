@@ -77,8 +77,10 @@ export function install(rt) {
 
   // Sets the level on one of the Bot's Sessions: its group's there, else its own; a Bot
   // without one keeps DSH's default. `room` is for a group Session not indexed yet. The
-  // level is read when the apply runs, not when it is queued.
-  async function applyPermission(bot, sessionId, room = roomOfSession(sessionId), session) {
+  // level is read when the apply runs, not when it is queued. `start`: the Session is
+  // about to start work, so a level that does not hold refuses it (startPermission).
+  async function applyPermission(bot, sessionId, room = roomOfSession(sessionId), session, { start = false } = {}) {
+    if (start) return startPermission(bot, sessionId, room, session)
     if (presets() === undefined) return
     return serial(sessionId, async () => {
       const name = room?.permission ?? bot.permission
@@ -124,7 +126,8 @@ export function install(rt) {
   // Sets a task Session's level, read when the apply runs, not when it is queued, so a
   // lower level picked meanwhile lands last. The fallback mark stays the Bot's and the
   // group's own: a task does not mark them. Resolves whether the Session is a task.
-  async function applyTaskPermission(sessionId, session) {
+  async function applyTaskPermission(sessionId, session, { start = false } = {}) {
+    if (start) return startTaskPermission(sessionId, session)
     if (taskOf(sessionId) === undefined) return false
     const service = presets()
     if (rt.readOnly() !== undefined || service === undefined) return true
@@ -136,6 +139,44 @@ export function install(rt) {
       else if (task?.from !== undefined) rt.warn('ds-bot: no permission level for the task %s can be ranked; it keeps its own', sessionId)
     })
     return true
+  }
+  // Where work starts by itself (a task's first turn, a new Bot's greeting, a member's
+  // first turn in a group) nothing runs on a Session whose level did not hold: the start
+  // is refused, never left on DSH's default, which may be wider than the level chosen. A
+  // saved level that left the catalog is refused too, with what to do about it: no level
+  // still offered is known to allow no more than it did. Auto's own fallback is
+  // applyLevel's, as before.
+  const NOT_SET = 'The permission level could not be set, so nothing was started. Try again.'
+  const NOT_OFFERED = 'The saved permission level is no longer offered, so nothing was started. Pick a permission level again.'
+  function startRefusal(name, error) {
+    const service = presets()
+    let offered = name === AUTO
+    try {
+      if (!offered) offered = service?.resolve(name) !== undefined
+    } catch {}
+    // `levelNotSet`: for a caller that words this refusal its own way (a group's failed line).
+    return Object.assign(refusal(offered ? NOT_SET : NOT_OFFERED, { cause: error }), { levelNotSet: true })
+  }
+  // applyPermission with `start`, for a Session about to start work: rejects with a
+  // refusal when its level does not hold.
+  async function startPermission(bot, sessionId, room, session) {
+    try {
+      await applyPermission(bot, sessionId, room, session)
+    } catch (error) {
+      rt.warn('ds-bot: permission for %s not applied on %s: %s', bot.name, sessionId, error)
+      throw startRefusal(room?.permission ?? bot.permission, error)
+    }
+  }
+  // applyTaskPermission with `start`, for a task about to take its first turn, the same way.
+  async function startTaskPermission(sessionId, session) {
+    try {
+      return await applyTaskPermission(sessionId, session)
+    } catch (error) {
+      rt.warn('ds-bot: permission for the task %s not applied: %s', sessionId, error)
+      const task = taskOf(sessionId)
+      const service = presets()
+      throw startRefusal(task === undefined || service === undefined ? undefined : taskLevel(task, service), error)
+    }
   }
   // The tasks `match` picks take their level again now, after a level changes or their Bot
   // goes: a loaded one, and a working one even if DSH has to open it. Any other takes it

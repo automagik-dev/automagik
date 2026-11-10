@@ -1213,6 +1213,7 @@ const ZH = {
   'Could not reach the model service': '连不上模型服务',
   'Its group conversation could not open': '它的群聊会话打不开',
   'Its group conversation could not open, so it starts a new one next time': '它的群聊会话打不开，下次会换一个新的',
+  'Its permission level could not be set here, so it took no turn': '它在这里的权限级别未能设置，所以这一轮没有发言',
   // The composer's +
   'Add files': '添加文件',
   'Reference a chat': '引用对话',
@@ -1591,6 +1592,8 @@ const HOST_ERRORS = [
 const HOST_ZH = {
   'Request failed': '请求失败',
   'Permissions are not available in this DeepSeek Harness': '这个 DeepSeek Harness 不支持权限设置',
+  'The permission level could not be set, so nothing was started. Try again.': '权限级别未能设置，因此没有启动任何操作。请重试。',
+  'The saved permission level is no longer offered, so nothing was started. Pick a permission level again.': '已保存的权限级别已不再提供，因此没有启动任何操作。请重新选择权限级别。',
   'Turn Auto review back on in Plugins to open this chat.': '请在插件中重新开启自动审查，才能打开这个对话。',
   'Avatar images must be PNG, JPEG, WebP, or GIF': '头像图片必须是 PNG、JPEG、WebP 或 GIF',
   'Avatar image is too large': '头像图片太大了',
