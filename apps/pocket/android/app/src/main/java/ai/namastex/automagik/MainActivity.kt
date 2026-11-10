@@ -123,9 +123,12 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
     LaunchedEffect(pairDesktop) { if (pairDesktop) vm.cancelRepair() }
     var editHost by remember { mutableStateOf<HostProfile?>(null) }
     var newTerminal by remember { mutableStateOf(false) }
+    // Home's swipe deck. It lives here, not inside Home, so a later "Answer all" button opens the same screen.
+    var deckOpen by rememberSaveable { mutableStateOf(false) }
     /** The machine whose Automagik Bot chats are listed (read only). */
     var botChats by remember { mutableStateOf<String?>(null) }
     val selected = state.selected
+    LaunchedEffect(selected) { if (selected != null) deckOpen = false }
     val space = state.space?.let { (host, id) -> state.machines[host]?.spaces?.find { it.id == id } }
     val terminal = selected?.let { state.machines[it.hostId]?.terminals?.find { t -> t.address == it.address } }
     // The open terminal's own space, for its tabs; the space screen under it may be another one or none.
@@ -153,6 +156,11 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
     val writes by vm.botWrites.collectAsStateWithLifecycle()
     val chats = remember(dsh, watched, writes, teams) { Cockpit.chats(dsh, watched, writes, teams, System.currentTimeMillis()) }
     val pulse = remember(sidebar, state.seen, chats) { Projects.pulse(sidebar, state.seen, chats) }
+    // What the deck's "Open" opens: the Bot chat when the row has one, else the terminal (Home's own row rule).
+    val openFromDeck: (TerminalRef) -> Unit = { ref ->
+        val target = if (Chat.isDsh(ref.address)) ref else pulse.fromChat[ref] ?: paneChats[ref] ?: ref
+        vm.selectTerminal(target, row = ref.takeIf { target != ref })
+    }
     // Repositories and branches re-check every minute while a screen shows them; otherwise only when work stops.
     val gitScreen = selected == null && state.screen == Nav.CODE
     LaunchedEffect(gitScreen) { vm.gitShown(gitScreen) }
@@ -265,10 +273,21 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
                     }
                 }
                 disconnected -> WelcomeScreen(state, onPair = { pairDesktop = true }, onRepair = ::repair, onConnect = { vm.connect(it) }, onPreview = vm::enterDemo)
-                else -> OverviewScreen(state, null, vm, pulse, paneChats, onAll = vm::showAll)
+                else -> OverviewScreen(state, null, vm, pulse, paneChats, onAll = vm::showAll, onReviewNeedsYou = { deckOpen = true })
             }
         } }
     }
+    }
+    if (deckOpen) {
+        // Home's own Needs you list, the one its count tiles and cards use: a chat row as a chat card, a terminal row
+        // with its menu. A future "Answer all" button only has to set deckOpen.
+        val needs = pulse.sections.firstOrNull { it.rank == Cockpit.BLOCKED }?.entries.orEmpty()
+        val cards = Teams.deckCards(needs, pulse.fromChat) { ref ->
+            state.machines[ref.hostId]?.spaces?.find { ref.address in it.addresses }?.name ?: vm.hostName(ref.hostId)
+        }
+        DeckScreen(cards, vm, anyConnected, onClose = { deckOpen = false },
+            onOpen = { ref -> deckOpen = false; openFromDeck(ref) },
+            onBackToTeams = { deckOpen = false; vm.navigate(Nav.TEAM) })
     }
     vm.sheet.collectAsStateWithLifecycle().value?.let { StatsSheetHost(it, onDismiss = vm::closeStats) }
     if (pairDesktop) PairDialog(state.pairing, onDismiss = { pairDesktop = false }, onScan = ::scan, onPair = vm::pair)
@@ -356,7 +375,7 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable fun OverviewScreen(state: PocketState, space: PocketSpace?, vm: PocketViewModel, pulse: Projects.Pulse,
-                               paneChats: Map<TerminalRef, TerminalRef>, onAll: () -> Unit) {
+                               paneChats: Map<TerminalRef, TerminalRef>, onAll: () -> Unit, onReviewNeedsYou: () -> Unit = {}) {
     // A main bot's pane opens the bot's DSH chat, as its Team bubble does ([Teams.paneChats]); any other agent its terminal.
     val open: (TerminalRef) -> Unit = { ref -> vm.selectTerminal(paneChats[ref] ?: ref, row = ref) }
     var search by remember { mutableStateOf("") }
@@ -388,7 +407,8 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
         // Today: the counts and nothing else above the agents; spent today joins them once a usage meter reports.
         if (space == null) item(key = "today") {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(TodayTiles.GAP_DP.dp)) {
-                CountCard(pulse.needsYou, if (pulse.needsYou == 1) "needs you" else "need you", Blocked, Modifier.weight(1f))
+                CountCard(pulse.needsYou, if (pulse.needsYou == 1) "needs you" else "need you", Blocked, Modifier.weight(1f),
+                    onClick = if (pulse.needsYou > 0) onReviewNeedsYou else null)
                 CountCard(pulse.working, "working", Working, Modifier.weight(1f))
                 CountCard(pulse.machines, "connected", Ink, Modifier.weight(1f))
                 rememberSpend(state).takeIf { !it.coverage.none }?.let { SpendCount(it, Modifier.weight(1f)) }
@@ -400,6 +420,17 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
                 trailingIcon = { if (search.isNotEmpty()) IconButton(onClick = { search = "" }) { Icon(Icons.Outlined.Close, "Clear search", Modifier.size(18.dp)) } },
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search), keyboardActions = KeyboardActions(onSearch = { focus.clearFocus() }),
                 colors = OutlinedTextFieldDefaults.colors(unfocusedBorderColor = Border, focusedBorderColor = Accent, unfocusedContainerColor = Surface))
+            if (pulse.needsYou > 0) {
+                Spacer(Modifier.height(10.dp))
+                val request = amber()
+                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(request.copy(alpha = .14f))
+                    .clickable(onClick = onReviewNeedsYou).padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Dot(request, 8); Spacer(Modifier.width(10.dp))
+                    Text(if (pulse.needsYou == 1) "1 needs you" else "${pulse.needsYou} need you", fontWeight = FontWeight.SemiBold,
+                        fontSize = 14.sp, modifier = Modifier.weight(1f))
+                    Text("· Review", color = Accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
         }
         if (space != null) item {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -514,9 +545,10 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
 /** "Needs you", with what kind of answer when the agent said (permission, question, auth). */
 fun statusLabel(word: String, kind: String) = stateName(word).let { if (word == "blocked" && kind.isNotBlank()) "$it · ${kind.replace('_', ' ')}" else it }
 
-/** A count in a small card, as Today's header and a project's show them. */
-@Composable fun CountCard(number: Int, text: String, color: Color, modifier: Modifier = Modifier) {
-    Column(modifier.clip(RoundedCornerShape(12.dp)).background(Surface).border(1.dp, Border, RoundedCornerShape(12.dp)).padding(12.dp, 10.dp)) {
+/** A count in a small card, as Today's header and a project's show them. [onClick] makes it open Home's deck. */
+@Composable fun CountCard(number: Int, text: String, color: Color, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
+    Column(modifier.clip(RoundedCornerShape(12.dp)).background(Surface).border(1.dp, Border, RoundedCornerShape(12.dp))
+        .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier).padding(12.dp, 10.dp)) {
         Text(number.toString(), color = color, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
         Text(text, color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }

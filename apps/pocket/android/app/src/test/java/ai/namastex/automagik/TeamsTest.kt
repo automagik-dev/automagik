@@ -505,4 +505,62 @@ class TeamsTest {
             mapOf("h" to listOf(dshRow("b-main", status = "blocked"))))
         assertEquals(emptyMap<TerminalRef, TerminalRef>(), Teams.paneChats(dshOnly))
     }
+
+    // ---- Home's needs-you deck
+
+    private fun deckEntry(address: String, turn: Long = 1, statusMs: Long = 10, kind: String = "permission",
+                          title: String = "Integrator", message: String = "Run 2 commands?", app: String = "claude-code") =
+        Cockpit.Entry(TerminalRef("h", address),
+            CoreTerminal(address, title, "/w", "live", "blocked", if (app == "dsh") "Automagik Bot" else app, message, 80, 24,
+                app = app, statusMs = statusMs, turn = turn, kind = kind), Cockpit.BLOCKED)
+
+    @Test fun theDeckCardsComeFromHomesNeedsYouEntriesInTheirOrder() {
+        val first = deckEntry("t1", turn = 1, statusMs = 100)
+        val second = deckEntry("t2", turn = 2, statusMs = 200, title = "Builder", message = "May I push?")
+        val cards = Teams.deckCards(listOf(second, first)) { "brain-v3" }
+        assertEquals(listOf("t2", "t1"), cards.map { it.ref.address })
+        assertEquals(listOf("Builder", "Integrator"), cards.map { it.title })
+        assertEquals(listOf("May I push?", "Run 2 commands?"), cards.map { it.message })
+        assertEquals(listOf("brain-v3", "brain-v3"), cards.map { it.where })
+        assertEquals(listOf("2:200", "1:100"), cards.map { it.turn to it.statusMs }.map { "${it.first}:${it.second}" })
+        assertTrue(cards.none { it.opensChat })
+    }
+
+    @Test fun aChatCardAndAPaneRaisedToItsChatOpenTheChat() {
+        val chat = TerminalRef("h", "dsh:s1")
+        val lone = Teams.deckCards(listOf(deckEntry("dsh:s1", kind = "question", title = "Lead", message = "Which branch?", app = "dsh"))) { "Home" }
+        assertEquals(chat, lone.single().chat)
+        assertTrue(lone.single().opensChat)
+        // A pane row whose chat is the more urgent keeps the pane ref but opens the chat ([Cockpit.Raised.fromChat]).
+        val pane = deckEntry("t1", kind = "question", title = "Lead", message = "Which branch?")
+        val raised = Teams.deckCards(listOf(pane), mapOf(TerminalRef("h", "t1") to chat)) { "Home" }
+        assertEquals(TerminalRef("h", "t1"), raised.single().ref)
+        assertEquals(chat, raised.single().chat)
+        // Every other row still answers its own terminal.
+        assertNull(Teams.deckCards(listOf(pane)).single().chat)
+    }
+
+    @Test fun onlyAnsweredCardsLeaveAndDisconnectIsOfflineNotAllClear() {
+        val one = Teams.deckCards(listOf(deckEntry("t1", turn = 1, statusMs = 100))) { "P" }.single()
+        val two = Teams.deckCards(listOf(deckEntry("t2", turn = 2, statusMs = 200))) { "P" }.single()
+        val cards = listOf(two, one)
+        assertEquals(Teams.DeckView.Cards(cards), Teams.deckView(cards, emptySet(), anyConnected = true, waiting = 2))
+        assertEquals(Teams.DeckView.Cards(listOf(two)), Teams.deckView(cards, setOf(Teams.deckKey(one)), anyConnected = true, waiting = 1))
+        // A new request from the same agent (a later turn) is another card.
+        val later = one.copy(turn = 3, statusMs = 300)
+        assertEquals(Teams.DeckView.Cards(listOf(later)), Teams.deckView(listOf(later), setOf(Teams.deckKey(one)), anyConnected = true, waiting = 1))
+        assertEquals(Teams.DeckView.Clear, Teams.deckView(cards, setOf(Teams.deckKey(one), Teams.deckKey(two)), anyConnected = true, waiting = 0))
+        // The link dropped with unanswered requests: offline, never a false all clear.
+        assertEquals(Teams.DeckView.Offline(2), Teams.deckView(emptyList(), emptySet(), anyConnected = false, waiting = 2))
+        assertEquals(Teams.DeckView.Clear, Teams.deckView(emptyList(), emptySet(), anyConnected = false, waiting = 0))
+    }
+
+    @Test fun aSwipeFollowsTheAxisItMovedMostAlong() {
+        val t = 100f
+        assertEquals(Teams.Swipe.OPEN, Teams.swipe(dx = 120f, dy = -200f, t, canYes = true, canNo = true))   // diagonal, mostly up
+        assertEquals(Teams.Swipe.YES, Teams.swipe(dx = 200f, dy = -120f, t, canYes = true, canNo = true))   // diagonal, mostly right
+        assertEquals(Teams.Swipe.NO, Teams.swipe(dx = -150f, dy = 0f, t, canYes = true, canNo = true))
+        assertEquals(Teams.Swipe.NONE, Teams.swipe(dx = 150f, dy = 0f, t, canYes = false, canNo = true))   // no Yes to send
+        assertEquals(Teams.Swipe.NONE, Teams.swipe(dx = 60f, dy = -80f, t, canYes = true, canNo = true))    // too short
+    }
 }
