@@ -107,6 +107,11 @@ Antigravity:
   and counted, and the source reports `unsupported` or `degraded` until the row becomes readable.
   One permanently bad row therefore keeps the source visibly not counted rather than hiding later
   usage or vouching a zero.
+- An input-only generation counts what it holds once its database and WAL have been quiet for 30
+  minutes; output written after that is not added, because the cursor is already past the row.
+- A new call that reuses an index and the previous call's first step time keeps the old dedupe
+  key and is not counted. The format writes a new call's steps with new times, so this is a
+  stated limit rather than a path the reader expects.
 
 Codex:
 
