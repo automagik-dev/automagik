@@ -79,8 +79,9 @@
 //! Whoever can label a terminal chooses those labels, so a label reaches no further than the
 //! terminal could. A worker known only by its label names a call by folder only from a task
 //! worktree (a linked git worktree, checked when its interval opens, never the main checkout or a
-//! folder that is no worktree), only while hc shows it in that folder (a move voids the folder
-//! claim for the whole span), and never where a seat sits; elsewhere only its own session names
+//! folder that is no worktree), only while hc shows it in that folder (a move clears every
+//! worktree mark in the timeline, with or without a label at that sync, so the folder claim is
+//! void for the whole span and stays void), and never where a seat sits; elsewhere only its own session names
 //! it. A launch the attach ledger bound is a seat whatever its labels say. A label's bot is
 //! shape-checked (the printed caps, no control character) before it is stored or names anything;
 //! one that fails is ignored. An interval never opens or closes before the last sync that saw the
@@ -488,7 +489,8 @@ struct Launch {
     /// A worker's label changed: two bots in its timeline make its claim empty for its whole span.
     fail_closed: bool,
     /// A worker the labels tagged may name calls by its folder: every label interval opened in a
-    /// task worktree, and the terminal never left that folder. False for everything else.
+    /// task worktree and still carries its mark (a terminal seen in another folder loses them
+    /// all, for good). False for everything else.
     folder: bool,
     /// The label claim this sync's snapshot shows: (kind, bot, role), merged into the timeline.
     sighting: Option<(Kind, String, Option<String>)>,
@@ -1164,7 +1166,7 @@ impl Index {
             .map(|iv| iv.bot.clone());
         // A binding to a bot past the cap cannot be read: the seat's call is Unknown, never the
         // start row's bot or a shortened name.
-        if bound.as_deref().is_some_and(|b| !fits(b)) {
+        if bound.as_deref().is_some_and(|b| !readable(b)) {
             return Claim::Unknown;
         }
         Claim::Tags(
@@ -1198,7 +1200,7 @@ impl Index {
             let Some(iv) = bindings.iter().find(|i| i.covers(t)) else {
                 return Claim::Unrecorded;
             };
-            if !fits(&iv.bot) {
+            if !readable(&iv.bot) {
                 return Claim::Unknown;
             }
             // The attach ledger's own answer, not a label's: a launch with a binding is a seat,
@@ -1605,6 +1607,17 @@ fn build(
         let mut labels: Vec<Interval> = stored
             .map(|s| s.timeline.iter().filter(|i| i.label).cloned().collect())
             .unwrap_or_default();
+        // The terminal is no longer in the folder its label intervals were written in: whatever
+        // it claimed by folder there is void, for its whole span. The timeline itself records it
+        // (every worktree mark is cleared, and none is given again), whether or not this sync
+        // sees a label: the row's folder is rewritten to the new one below, so a later sync
+        // could not tell the launch had ever moved.
+        let moved = !labels.is_empty() && stored.is_some_and(|s| s.worktree != l.worktree);
+        if moved {
+            for i in &mut labels {
+                i.folder = false;
+            }
+        }
         // An attach binding always wins: the launch is a seat, its kind the binding's and never
         // the labels', so a `worker.of` added to a bound seat makes no worker of it and its
         // project-root folder names nothing. The label intervals an earlier sync wrote are kept
@@ -1616,9 +1629,6 @@ fn build(
             l.over_cap = l.timeline.len() > BOUND_INTERVALS;
             continue;
         }
-        // The terminal is no longer in the folder its label intervals were written in: whatever
-        // it claimed by folder there is void, for its whole span.
-        let moved = !labels.is_empty() && stored.is_some_and(|s| s.worktree != l.worktree);
         let mut label = stored.and_then(|s| {
             s.kind.map(|kind| LabelTag {
                 bot: s.bot.clone(),
@@ -1632,7 +1642,7 @@ fn build(
             let at = at.max(stored.and_then(|s| s.seen_last).unwrap_or(at));
             let worktree = l.worktree.as_deref();
             let in_worktree = || *kind == Kind::Worker && worktree.is_some_and(probe);
-            see_label(&mut labels, at, bot, moved, in_worktree);
+            see_label(&mut labels, at, bot, in_worktree);
             // A row whose worker label changed has no tag to seed from: the fresh sighting only
             // restores the claim's shape, and the timeline (two bots) keeps it fail-closed.
             if label.is_none() {
@@ -1651,7 +1661,6 @@ fn build(
         if let Some(t) = &label {
             l.kind = Some(t.kind);
             l.folder = t.kind == Kind::Worker
-                && !moved
                 && !l.timeline.is_empty()
                 && l.timeline.iter().all(|i| i.folder);
             // A worker's changed label makes the claim empty for its whole span: no tag is
@@ -1934,13 +1943,20 @@ fn parse_start(row: &Map<String, Value>) -> Option<StartRow> {
     })
 }
 
-/// The intervals a launch's `bound` column holds, as the attach ledger's fold gives them.
+/// The intervals a launch's `bound` column holds, as the attach ledger's fold gives them. A bot
+/// the column cannot hold (one with a separator in it) keeps its interval and loses its name: an
+/// empty bot is a binding that cannot be read, so a call it covers is Unknown, never the bot
+/// bound before it and never a mangled one.
 fn intervals(b: &[(i64, Option<i64>, String)]) -> Vec<Interval> {
     b.iter()
         .map(|(from, to, bot)| Interval {
             from: *from,
             to: *to,
-            bot: bot.clone(),
+            bot: if column_safe(bot) {
+                bot.clone()
+            } else {
+                String::new()
+            },
             label: false,
             folder: false,
         })
@@ -2021,25 +2037,16 @@ fn task_worktree(cwd: &str) -> bool {
 /// opens, before the open one began: a sync whose clock stepped back changes no earlier answer.
 ///
 /// `in_worktree` is asked only when an interval opens, and its answer is kept with the interval
-/// ([`Interval::folder`]). `moved` (the terminal left the folder its intervals were written in)
-/// ends a folder-marked interval and opens an unmarked one, which voids the folder claim.
-fn see_label(
-    timeline: &mut Vec<Interval>,
-    at: i64,
-    bot: &str,
-    moved: bool,
-    in_worktree: impl FnOnce() -> bool,
-) {
+/// ([`Interval::folder`]).
+fn see_label(timeline: &mut Vec<Interval>, at: i64, bot: &str, in_worktree: impl FnOnce() -> bool) {
     // The open interval wins a tie on `from` (one closed as it opened, by a clamped clock).
     let last = timeline
         .iter_mut()
         .filter(|i| i.label)
         .max_by_key(|i| (i.from, i.to.is_none()));
     let mut at = at;
-    let mut same_bot = false;
     if let Some(iv) = last {
-        same_bot = iv.bot == bot;
-        if same_bot && !(iv.folder && moved) {
+        if iv.bot == bot {
             return;
         }
         at = at.max(iv.from);
@@ -2052,7 +2059,7 @@ fn see_label(
         to: None,
         bot: bot.to_owned(),
         label: true,
-        folder: !same_bot && !moved && in_worktree(),
+        folder: in_worktree(),
     });
 }
 
@@ -2167,6 +2174,12 @@ fn fits(s: &str) -> bool {
     tag_fits(s)
 }
 
+/// Whether a binding's bot can be read: named (an empty one stands for a bot the `bound` column
+/// could not hold) and within the printed caps.
+fn readable(bot: &str) -> bool {
+    !bot.is_empty() && fits(bot)
+}
+
 fn parse_tag(row: &Map<String, Value>, kind: Kind) -> Option<Tag> {
     str_field(row, "terminal")?;
     let bot = owned(row, "bot").or_else(|| owned(row, "botId"))?;
@@ -2242,10 +2255,9 @@ fn parse_attach(row: &Map<String, Value>) -> Option<AttachRow> {
         "end" => AttachEvent::End,
         _ => return None,
     };
+    // A bot the `bound` column cannot hold still binds: the row stays in the fold, where it ends
+    // the binding before it, and its own interval names no bot ([`intervals`]).
     let bot = owned(row, "bot")?;
-    if !column_safe(&bot) {
-        return None;
-    }
     Some(AttachRow {
         event,
         bot,

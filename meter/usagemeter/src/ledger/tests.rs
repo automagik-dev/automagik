@@ -1370,9 +1370,9 @@ fn a_label_only_worker_that_leaves_its_worktree_loses_its_folder_claim() {
     let (after, _) = moved.records();
     assert_eq!(
         launch(&after, "t7").bound.as_deref(),
-        Some(format!("~@{}-{}:b-hand;~{}-:b-hand", t(30), t(50), t(50)).as_str())
+        Some(format!("~{}-:b-hand", t(30)).as_str())
     );
-    // Back in the worktree, or gone: the unmarked interval keeps the claim void.
+    // Back in the worktree, or gone: the interval lost its mark, and the claim stays void.
     let mut back = seen(vec![worker_label("t7", 20, WT, "b-hand")]).at(t(70));
     back.add_history(&history_of(&after, Some(t(50))), &[], &HashMap::new());
     let mut gone = seen(vec![]).at(t(70));
@@ -1599,5 +1599,130 @@ fn only_a_linked_worktree_root_is_a_task_worktree() {
         std::fs::create_dir_all(at("linked")).unwrap();
         std::os::unix::fs::symlink(linked.join(".git"), at("linked/.git")).unwrap();
         assert!(!task_worktree(&text(&at("linked"))));
+    }
+}
+
+// ---- Reviewer on #949: a move no label saw, and an attach row the column cannot hold --------
+
+const PLAIN: &str = "/work/scratch/notes";
+
+/// The move is recorded whether or not the sync that sees it sees a label. A labelled worker in
+/// its task worktree whose terminal is then shown elsewhere with `sync2` (no label, or one that
+/// fails the shape check) has lost its folder claim for good: with the label back, in the new
+/// folder or in the worktree again, an unrelated session is unlinked at every time, and a
+/// recompute from the rows alone says the same.
+fn a_move_seen_with(sync2: impl Fn(&str) -> Terminal) {
+    let unrelated = |cwd, min| call("claude-code", "s-unrelated", cwd, t(min));
+    let mut r1 = resolver_seen(&[], vec![worker_label("t7", 20, WT, "b-hand")]).at(t(30));
+    assert_eq!(tag(r1.resolve(&unrelated(WT, 40))).0.bot, "b-hand");
+    let (first, _) = r1.records();
+    assert_eq!(
+        launch(&first, "t7").bound.as_deref(),
+        Some(format!("~@{}-:b-hand", t(30)).as_str())
+    );
+    // Sync 2: hc shows the terminal in a folder that is no worktree, with no usable label.
+    let mut r2 = seen(vec![sync2(PLAIN)]).at(t(50));
+    r2.add_history(&history_of(&first, Some(t(30))), &[], &HashMap::new());
+    for (cwd, min) in [(PLAIN, 40), (PLAIN, 55), (WT, 40)] {
+        assert_eq!(
+            r2.resolve(&unrelated(cwd, min)),
+            Resolution::Unlinked,
+            "sync 2, {cwd} at {min}"
+        );
+    }
+    let (second, _) = r2.records();
+    let row = launch(&second, "t7");
+    assert_eq!(row.worktree.as_deref(), Some(PLAIN));
+    // The row itself says the launch left: the interval is kept, its worktree mark is gone.
+    assert_eq!(
+        row.bound.as_deref(),
+        Some(format!("~{}-:b-hand", t(30)).as_str())
+    );
+    // Sync 3: the label is back, in the new folder or in the worktree again.
+    for back_in in [PLAIN, WT] {
+        let mut r3 = seen(vec![worker_label("t7", 20, back_in, "b-hand")]).at(t(70));
+        r3.add_history(&history_of(&second, Some(t(50))), &[], &HashMap::new());
+        for cwd in [PLAIN, WT] {
+            for min in [40, 55, 75] {
+                assert_eq!(
+                    r3.resolve(&unrelated(cwd, min)),
+                    Resolution::Unlinked,
+                    "sync 3 in {back_in}: {cwd} at {min}"
+                );
+            }
+        }
+        let (third, _) = r3.records();
+        assert_eq!(launch(&third, "t7").bound, row.bound, "{back_in}");
+        // A recompute once the terminal is gone, from the rows alone.
+        let mut r4 = seen(vec![]).at(t(90));
+        r4.add_history(&history_of(&third, Some(t(70))), &[], &HashMap::new());
+        for cwd in [PLAIN, WT] {
+            for min in [55, 75] {
+                assert_eq!(
+                    r4.resolve(&unrelated(cwd, min)),
+                    Resolution::Unlinked,
+                    "recompute after {back_in}: {cwd} at {min}"
+                );
+            }
+        }
+        assert_eq!(launch(&r4.records().0, "t7").bound, row.bound);
+    }
+}
+
+#[test]
+fn a_move_seen_without_a_label_voids_the_folder_claim_for_good() {
+    a_move_seen_with(|cwd| labelled("t7", 20, "claude-code", cwd));
+}
+
+#[test]
+fn a_move_seen_with_an_unsafe_label_voids_the_folder_claim_for_good() {
+    a_move_seen_with(|cwd| worker_label("t7", 20, cwd, "b:x"));
+    a_move_seen_with(|cwd| worker_label("t7", 20, cwd, "b-esc\u{1b}[2J"));
+}
+
+/// An attach row whose bot the `bound` column cannot hold still binds: it ends the binding
+/// before it, and a call under it is Unknown (ambiguous), never the earlier bot and never the
+/// malformed one. The row never reaches the column with its separator.
+#[test]
+fn an_attach_row_with_an_unwritable_bot_ends_the_earlier_binding_and_names_no_one() {
+    let binding = lines(&[
+        attach("t1", "b-a", t(2)),
+        attach("t1", "b:x", t(10)),
+        attach("t1", "b-c", t(30)),
+    ]);
+    let at = |min| call("claude-code", "s-seat", PROJECT, t(min));
+    // A logged seat, and a seat with no start row: the same answers.
+    let logged = [
+        seat("t1", 0, "claude", "b-captain", "captain"),
+        hook_session("t1", "s-seat", t(1)),
+    ];
+    let unlogged = [hook_session("t1", "s-seat", t(1))];
+    let shown = || vec![labelled("t1", 0, "claude-code", PROJECT)];
+    for (name, rows) in [("logged", &logged[..]), ("unlogged", &unlogged[..])] {
+        let mut r = resolver_seen(rows, shown()).at(t(50));
+        r.add_attach(&binding);
+        assert_eq!(tag(r.resolve(&at(5))).0.bot, "b-a", "{name}");
+        assert_eq!(r.resolve(&at(20)), Resolution::Ambiguous, "{name}");
+        assert_eq!(tag(r.resolve(&at(40))).0.bot, "b-c", "{name}");
+        let (records, _) = r.records();
+        let bound = launch(&records, "t1").bound.clone().unwrap();
+        assert_eq!(
+            bound,
+            format!("{}-{}:b-a;{}-{}:;{}-:b-c", t(2), t(10), t(10), t(30), t(30)),
+            "{name}"
+        );
+        // Read back from the row alone (no attach ledger at this sync), the nameless interval
+        // is still a binding that cannot be read.
+        if name == "unlogged" {
+            let mut again = seen(shown()).at(t(60));
+            again.add_workers(&lines(rows));
+            again.add_history(&history_of(&records, Some(t(50))), &[], &HashMap::new());
+            assert_eq!(again.resolve(&at(20)), Resolution::Ambiguous);
+            assert_eq!(tag(again.resolve(&at(5))).0.bot, "b-a");
+            assert_eq!(
+                launch(&again.records().0, "t1").bound.as_deref(),
+                Some(bound.as_str())
+            );
+        }
     }
 }
