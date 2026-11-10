@@ -18,6 +18,7 @@ import { appendPluginRecord } from '@deepseek-ai/dsh-session'
 import { SYNTHETIC_KIND } from './names.js'
 import { contentImages } from './acp.js'
 import { levelOf, TOOL_NAME } from './tool.js'
+import { guardSession } from './write-guard.js'
 
 /** How long a bridge's long-poll waits before answering "nothing changed". */
 export const WAIT_MS = 20_000
@@ -25,10 +26,6 @@ const MAX_BODY = 16 * 1024 * 1024
 const OUTPUT_LIMIT = 20_000
 // A reviewer that never answers must not hold the bridge's call forever. Auto only.
 const REVIEW_TIMEOUT_MS = 120_000
-// The call id a late result is recorded under once its own call was closed at a step's end.
-export const LATE_SUFFIX = '_late'
-// Rows that end a step or a turn: no bridge call may be open when one is written (#957).
-const BOUNDARY_EVENTS = new Set(['step/end', 'turn/end'])
 // Events that can change the Session's level while a review is pending.
 const LEVEL_EVENTS = new Set(['permission/preset', 'sandbox/mode', 'approval/policy'])
 
@@ -277,8 +274,8 @@ function advertise(session, { turn, step }, route, { id, name, raw }, log) {
     const shadowed = seq
     seq = undefined
     // The replacement is a step row: the loader refuses one stamped with a step that is no
-    // longer the open one. The guard hides the block before its step ends; a block that still
-    // missed that is left alone (`aside` in adapter.js skips it for a native provider).
+    // longer the open one. The write guard hides the block before its step ends; one that
+    // still missed that is left alone (`aside` in adapter.js skips it for a native provider).
     const open = openStepOf(session)
     if (open === undefined || open.turn !== turn || open.step !== step) {
       log('the synthetic bridge block was not removed: its step already ended')
@@ -356,135 +353,16 @@ export class Backchannel {
     this.log = log
     this.reviewTimeoutMs = reviewTimeoutMs
     this.records = new Map()
-    // Session -> the guard that keeps its bridge calls closed before a step or turn ends.
-    this.guards = new Map()
     this.closed = false
-  }
-
-  /**
-   * The Session's guard (#957). An agent runs its calls in parallel, so a bridge call can still
-   * be open when DSH ends the step it was recorded in: the loop writes `step/end` as soon as
-   * its own work is done, and nothing DSH dispatches comes before that row. The v4 loader
-   * refuses a step or turn that ends with an unresolved call, so the guard stands in front of
-   * the Session's own `append`: before a `step/end` or `turn/end` goes in, every bridge call
-   * still open gets a result row in its own step, and its advertisement leaves the surface.
-   * The real result, when it comes, is recorded as a call of its own in the step open then
-   * (`late`), never under the ended step's stamp. A result anyone else writes for an open call
-   * (DSH's interrupted-step recovery) closes it here too, so it is never answered twice.
-   */
-  guardOf(session) {
-    let guard = this.guards.get(session)
-    if (guard !== undefined) return guard
-    const own = Object.hasOwn(session, 'append')
-    const original = session.append
-    const open = new Map()
-    const closeOpen = () => {
-      for (const [id, entry] of open) {
-        try {
-          original.call(session, 'tool/result', {
-            turn: entry.turn,
-            step: entry.step,
-            message: createToolResultMessage({
-              callId: id,
-              content: [{ type: 'text', text: `${entry.name} was still running when its step ended. Its result, when it comes, is shown as a call of its own.` }],
-              isError: false,
-            }),
-          }, { surfaceOp: 'append', sourceEventSeqs: [entry.callSeq] })
-        } catch (cause) {
-          this.log(`an open bridge call was not closed before its step ended: ${cause?.message ?? cause}`)
-        }
-        open.delete(id)
-        entry.closed = true
-        entry.hide()
-      }
-    }
-    const append = (type, data, ...options) => {
-      if (BOUNDARY_EVENTS.has(type) && open.size > 0) closeOpen()
-      const event = original.call(session, type, data, ...options)
-      if (type === 'tool/result' && options[0]?.surfaceOp === 'append') {
-        const entry = open.get(data?.message?.toolCallId)
-        if (entry !== undefined && entry.turn === data.turn && entry.step === data.step) {
-          open.delete(data.message.toolCallId)
-          entry.closed = true
-          // Answered (by the bridge or by DSH's recovery): the block goes while its step is open.
-          entry.hide()
-        }
-      }
-      if (type === 'turn/end') {
-        // Nobody waits for a call once its turn is over: Stop, an error and a finished prompt
-        // all end here. A body that ignores its signal still cannot write (`late`).
-        for (const record of this.records.values()) if (record.agent?.session === session) this.cancel(record, 'the turn ended')
-      }
-      if (BOUNDARY_EVENTS.has(type)) this.release(session)
-      return event
-    }
-    guard = {
-      open,
-      // Calls in flight: one whose row was closed still owes a late result through this guard.
-      calls: 0,
-      /** Follow one recorded call until its result row is written. */
-      track: (id, entry) => {
-        open.set(id, entry)
-        return entry
-      },
-      remove: () => {
-        if (session.append !== append) return
-        if (own) session.append = original
-        else delete session.append
-      },
-    }
-    try {
-      session.append = append
-    } catch (cause) {
-      this.log(`the bridge cannot guard this Session's step ends: ${cause?.message ?? cause}`)
-    }
-    this.guards.set(session, guard)
-    return guard
-  }
-
-  /** Give the Session its own `append` back once no call is open and no live bridge serves it. */
-  release(session) {
-    const guard = this.guards.get(session)
-    if (guard === undefined || guard.open.size > 0 || guard.calls > 0) return
-    for (const record of this.records.values()) if (!record.closed && record.agent?.session === session) return
-    guard.remove()
-    this.guards.delete(session)
-  }
-
-  /**
-   * Record the result of a call whose own row was closed when its step ended: a call of its own
-   * (`<id>_late`, advertised like any bridge call) in the step open now, with the same name and
-   * arguments. With no open step there is no loadable place for it: it is dropped and logged,
-   * and the agent still gets it as the answer to its call.
-   */
-  late(session, guard, route, { id, name, raw }, content, isError, info) {
-    const position = openStepOf(session)
-    if (position === undefined) {
-      this.log(`the late result of ${name} (${id}) was not recorded: the Session has no open step`)
-      return
-    }
-    const lateId = `${id}${LATE_SUFFIX}`
-    let hide
-    let written = false
-    let started = false
-    try {
-      hide = advertise(session, position, route, { id: lateId, name, raw }, this.log)
-      const callSeq = session.append('tool/call', { ...position, callId: lateId, name, arguments: raw }).seq
-      started = true
-      // Tracked before its result: a result row that fails leaves the guard to close the call.
-      guard.track(lateId, { ...position, name, callSeq, closed: false, hide })
-      session.append('tool/result', {
-        ...position,
-        message: createToolResultMessage({ callId: lateId, content, isError }),
-        ...(info === undefined ? {} : { error: info }),
-      }, { surfaceOp: 'append', sourceEventSeqs: [callSeq] })
-      written = true
-    } catch (cause) {
-      this.log(`the late result of ${name} (${id}) was not recorded: ${cause?.message ?? cause}`)
-      if (hide !== undefined && !started) closeNotStarted(session, position, lateId, this.log)
-    } finally {
-      // A call row left without its result stays tracked: the guard closes and hides it.
-      if (written || !guard.open.has(lateId)) hide?.()
+    // A turn that ends stops the calls still in flight on it: nobody waits for them any more.
+    // (The adapter does the same when the agent's prompt ends; this covers every other end.)
+    if (typeof ctx?.on === 'function') {
+      try {
+        this.offTurnEnd = ctx.on('session/event', (session, event) => {
+          if (event?.type !== 'turn/end') return
+          for (const record of this.records.values()) if (record.agent?.session === session) this.cancel(record, 'the turn ended')
+        })
+      } catch {}
     }
   }
 
@@ -537,6 +415,8 @@ export class Backchannel {
       calls: new Set(),
     }
     this.records.set(credential, record)
+    // From here the bridge may write rows on this Session: none the reader refuses (#958).
+    record.guard = guardSession(agent?.session, { log: this.log })
     return record
   }
 
@@ -558,12 +438,14 @@ export class Backchannel {
     } catch {}
     for (const wake of record.waiters) wake()
     record.waiters.clear()
-    if (record.agent?.session !== undefined) this.release(record.agent.session)
+    // The write guard stays while a call of this bridge is still in flight: its step can end
+    // before its body does, and the guard is what closes it then (`leave` releases it).
+    if (record.calls.size === 0) record.guard?.release()
   }
 
   /**
    * Stop every call this bridge has in flight, and keep the bridge: the adapter calls it when
-   * the agent's prompt ends, fails or is stopped, and the guard when the turn ends. An open
+   * the agent's prompt ends, fails or is stopped, and the back-channel when the turn ends. An open
    * approval dialog is withdrawn and a running tool body gets its abort signal.
    */
   cancel(record, reason = 'the call was stopped') {
@@ -749,9 +631,8 @@ export class Backchannel {
     const route = review === undefined
       ? routeOf(session)
       : { provider: review.provider, model: review.model }
-    // From here the call has rows, and its step may end before it does (#957).
-    const guard = this.guardOf(session)
-    guard.calls += 1
+    // From here the call has rows, and its step may end before it does (#957): the write guard
+    // (#958) then closes it before the step/end row.
     // This call's own controller: `cancel` (Stop, the turn's end) and its caller going away
     // abort it; a revocation still aborts every call through the record's signal.
     const own = new AbortController()
@@ -764,8 +645,7 @@ export class Backchannel {
     const leave = () => {
       record.calls.delete(own)
       callerGone?.removeEventListener('abort', onGone)
-      guard.calls -= 1
-      this.release(session)
+      if (record.closed && record.calls.size === 0) record.guard?.release()
     }
     // The synthetic block is for the advertisement (and the review on Auto) only.
     let hideSynthetic
@@ -777,10 +657,9 @@ export class Backchannel {
         ? recordFailed(`The bridge could not advertise ${name}: ${cause?.message ?? cause}`)
         : unavailable('AUTO_REVIEW_FAILED', `Auto review could not see this call: ${cause?.message ?? cause}`)
     }
-    let entry
+    let callSeq
     try {
-      const callSeq = session.append('tool/call', { turn, step, callId: id, name, arguments: raw }).seq
-      entry = guard.track(id, { turn, step, name, callSeq, closed: false, hide: hideSynthetic })
+      callSeq = session.append('tool/call', { turn, step, callId: id, name, arguments: raw }).seq
     } catch (cause) {
       // A call without its row cannot be reviewed or shown: answer the advertisement (it stays
       // in the log), take it off the surface and refuse.
@@ -796,35 +675,33 @@ export class Backchannel {
       answered = true
       // The row is plain JSON with string fields: a tool's own error object is not trusted to be.
       const info = infoOf(rawInfo)
+      // A result is written only into its call's own step, while that step is open. Once the
+      // step has ended the write guard has closed the call (superseded, or cancelled at a turn's
+      // end), so its row is answered and nothing may carry the ended step's stamp. The agent
+      // still gets the real answer below.
+      // The write guard drops and reports such a row itself; a Session it could not guard is
+      // checked here.
       const open = openStepOf(session)
-      if (entry.closed || open === undefined || open.turn !== turn || open.step !== step) {
-        // Its step ended first (or DSH closed it): the row under this id is already answered,
-        // and nothing may be written with the ended step's stamp. A real result the agent still
-        // waits for is recorded as a call of its own; a call that was revoked or stopped, or
-        // whose turn is over, has nothing more to say: its row is answered and it writes nothing.
-        if (record.closed || record.abort.signal.aborted || own.signal.aborted || open?.turn !== turn) {
-          this.log(`the late result of ${name} (${id}) was not recorded: the call was stopped or its turn ended`)
-        } else {
-          this.late(session, guard, route, { id, name, raw }, content, isError, info)
-        }
+      if (record.guard === undefined && (open === undefined || open.turn !== turn || open.step !== step)) {
+        this.log(`the late result of ${name} (${id}) was not recorded: its step already ended`)
       } else {
         const write = (rowContent, rowError, rowInfo) => session.append('tool/result', {
           turn,
           step,
           message: createToolResultMessage({ callId: id, content: rowContent, isError: rowError }),
           ...(rowInfo === undefined ? {} : { error: rowInfo }),
-        }, { surfaceOp: 'append', sourceEventSeqs: [entry.callSeq] })
+        }, { surfaceOp: 'append', sourceEventSeqs: [callSeq] })
         try {
           write(content, isError, info)
         } catch (cause) {
-          // A result the log refuses (content or an error that is not plain JSON) must not leave
-          // the call open: record a minimal row that is always valid. The agent still gets the
-          // real answer below.
+          // A result the log refuses must not leave the call open: record a minimal row that
+          // is always valid. (The write guard already replaces data that is not plain JSON;
+          // this covers a Session it does not guard and any other refusal.)
           this.log(`bridge result row failed: ${cause?.message ?? cause}`)
           try {
             write([{ type: 'text', text: `The result of ${name} could not be recorded.` }], true, { name: 'BridgeRecordError', code: 'BRIDGE_RESULT_UNRECORDABLE' })
           } catch (again) {
-            // Still tracked: the guard closes it before its step ends.
+            // The write guard closes the call before its step ends.
             this.log(`bridge fallback result row failed: ${again?.message ?? again}`)
           }
         }
@@ -988,7 +865,7 @@ export class Backchannel {
       clearTimeout(timer)
       unwatch?.()
       unwatchPre?.()
-      // A call closed at its step's end had its block hidden there: this is then a no-op.
+      // After its step ended this writes nothing: the write guard hid the block there.
       hideSynthetic()
       leave()
     }
@@ -996,6 +873,7 @@ export class Backchannel {
 
   dispose() {
     this.closed = true
+    try { this.offTurnEnd?.() } catch {}
     // A Map iterator tolerates the deletes `revoke` makes; a copy here would be noise.
     for (const record of this.records.values()) this.revoke(record)
     try {

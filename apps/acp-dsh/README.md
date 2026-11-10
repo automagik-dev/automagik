@@ -59,15 +59,13 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   call row cannot be written is `BRIDGE_RECORD_FAILED`, and the call does not run. **A call that
   outlives its step (#957).** The agent runs its calls in parallel, and the bridge puts no
   deadline on one (a long wait, a slow command and an open approval dialog are legitimate), so
-  DSH can end the step a call was recorded in while it still runs. Before a `step/end` or
-  `turn/end` row goes into the Session, every bridge call still open gets a result row in its
-  own step ("still running when its step ended") and its advertisement leaves the surface; the
-  real result is then recorded as a call of its own (`<id>_late`) in the step open at that
-  moment, or dropped and logged when no step is open, and the agent gets it either way. Nothing
-  is ever written with an ended step's stamp. Each call has its own abort controller: Stop, the
-  end of its turn and a caller that went away (an MCP `notifications/cancelled`, a closed
-  request) stop that call as `BRIDGE_CANCELLED` and keep the bridge. A result the log refuses
-  is recorded as `BRIDGE_RESULT_UNRECORDABLE` instead of leaving its call open. The reviewer
+  DSH can end the step a call was recorded in while it still runs. The write guard below then
+  closes it before the `step/end` row and drops its late result; the agent still gets the real
+  answer. Each call has its own abort controller: Stop, the end of its turn and a caller that
+  went away (an MCP `notifications/cancelled`, a closed request) stop that call as
+  `BRIDGE_CANCELLED` and keep the bridge. A call whose `tool/call` row cannot be written is
+  answered with DSH's own not-started row, and a bridge revoked with a call in flight keeps
+  the guard until that call is over. The reviewer
   goes to the same non-agent side model as a Session title. Manual asks (one dialog), Full
   access does not. A Session that moves between providers carries its transcript
   redacted at each crossing — the replay out to an agent, and the transcript handed back to a
@@ -458,6 +456,40 @@ node dev/dsh-check.mjs --agent codex    # the same on your own Codex (a few toke
 `dev/dsh-check.mjs` installs the plugin the way DSH installs any plugin and reads the Session
 log: the agent's text, a `tool/call` of `acp_tool` with its `tool/result`, and the
 `approval/asked` and `approval/decided` pair for that call.
+
+### The ACP library, and a log that always loads
+
+The plugin speaks ACP through `@agentclientprotocol/sdk`, pinned to one exact version, on its
+`/unstable` entry (stable ACP v1, plus `session/fork` and the session updates newer adapters
+send). The agent's `initialize` answer is compared with the protocol version the library
+speaks: an agent that answers another one does not start, and the failure says whether to
+update Automagik or the connector.
+
+**The write-time guard** (`src/host/write-guard.js`). DSH's Session reader refuses a whole
+conversation for one bad step, and the bridge writes its rows beside DSH's own loop. While a
+bridge serves a Session, every row written on it passes the guard first, which keeps the same
+books as the reader. A `step/end` or `turn/end` over a call with no result closes the call
+first (as superseded, or cancelled at a turn's end; DSH's own not-started repair for a call
+that never started) and hides its advertisement; a result for a call that is not open, or
+stamped with a step that has ended, is not written; a call with no advertisement is refused.
+Each repair leaves a log line and a `plugin:acp-dsh/write-guard` record in the Session.
+
+`test/sequence-fuzz.test.js` drives random interleavings of calls, results, cancellations,
+overlapping calls and step and turn ends through the real back-channel on a real Session, and
+loads the log with the pinned reader after every move. `FUZZ_SEED` and `FUZZ_RUNS` replay one
+seed or widen the search.
+
+**Drift.** `node scripts/acp-drift.mjs` fails when the pin is more than one minor behind npm's
+latest, and names each adapter that moved past `dev/acp-compat.json`, the record of the SDK and
+adapter versions the suite last passed against (`--record` writes it, after the suite and the
+real-adapter tests passed). The `ACP drift` workflow runs it daily and opens an issue on drift;
+every pull request checks the record against the pin.
+
+`test/real-adapters.test.js` starts the real adapters with this client in a throwaway home
+(never signed in, no model request): the handshake, the session start or its `auth_required`,
+the bridge's first tool list, and Codex's fork and close. It is skipped unless
+`AUTOMAGIK_TEST_CLAUDE_ACP` and `AUTOMAGIK_TEST_CLAUDE`, or `AUTOMAGIK_TEST_CODEX_ACP` and
+`AUTOMAGIK_TEST_CODEX`, name an adapter's `dist/index.js` and its CLI.
 
 ## Contracts
 

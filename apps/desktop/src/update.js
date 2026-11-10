@@ -37,6 +37,18 @@ export function isTransient(error) {
   return status === 429 || (status >= 500 && status <= 599)
 }
 
+// electron-updater's own words for an update that is not what its release says: a sha512 that
+// does not match (ERR_CHECKSUM_MISMATCH), an installer its publisher did not sign
+// (ERR_UPDATER_INVALID_SIGNATURE, Windows), or a bundle macOS's Squirrel turns down.
+const UNVERIFIED = /checksum mismatch|code signature|not signed by|ERR_CHECKSUM_MISMATCH|ERR_UPDATER_INVALID_SIGNATURE/i
+
+/** Whether a failure says the downloaded update could not be verified (its hash or its signature). */
+export function isVerification(error) {
+  const code = String(error?.code ?? '')
+  if (code === 'ERR_CHECKSUM_MISMATCH' || code === 'ERR_UPDATER_INVALID_SIGNATURE') return true
+  return UNVERIFIED.test(String(error?.message ?? error ?? ''))
+}
+
 /** The update feed electron-updater reads for `platform`, or null where the app does not update. */
 export function feedFileOf(platform) {
   if (platform === 'darwin') return 'latest-mac.yml'
@@ -302,8 +314,15 @@ export async function fetchReleases(fetchImpl = fetch) {
  * Checks after FIRST_CHECK_MS and every CHECK_EVERY_MS (with an additional retry after RETRY_MS
  * when a check failed; after QUICK_RETRY_MS a few times when the failure is transient), and reports to
  * `onState`:
- * - `auto`: `{ version, state: 'downloading', percent }`, then `{ version, state: 'ready' }`;
- *   `install()` restarts into the downloaded update, which otherwise installs on quit.
+ * - `auto`: `{ version, state: 'downloading', percent }` (with `transferred` and `total`, in
+ *   bytes, when electron-updater counts them), then `{ version, state: 'ready' }`;
+ *   `install()` restarts into the downloaded update, which otherwise installs on quit. Nothing
+ *   here restarts the app by itself: `install()` is the person's Restart.
+ * - `{ version, state: 'failed', failure: 'download' | 'verify' }` when a download that had
+ *   started did not arrive, or what arrived is not what the release says: nothing is ready, the
+ *   running version stays, and the next check (the retry's, the quarter hour's or the person's)
+ *   takes the mark away and tries again. A check that failed is not reported here (its answer is
+ *   `check()`'s), so a computer that is offline shows nothing.
  * - `notify`: `{ version, state: 'available', page }`; nothing is downloaded.
  * - `{ state: 'retrying', failure: 'check' }` while a quick retry waits; `idle` once it starts
  *   or a non-transient failure takes over.
@@ -320,6 +339,13 @@ export function startUpdates({ updater, current, platform, env, log, onState, mo
   let retryQuick = false
   let quickRetries = 0
   let retrying = false
+  // A failed download is on screen; a download is under way (from electron-updater's
+  // update-available until it is ready or fails); and how many of its failures were retried
+  // within a minute. A check that passes resets quickRetries before the download ends, so the
+  // download keeps a count of its own, or one that keeps failing would be retried forever.
+  let failed = false
+  let fetching = false
+  let downloadRetries = 0
   let cacheDir = null
   const auto = mode === 'auto'
   const newer = version => compareVersions(version, current) > 0
@@ -342,7 +368,19 @@ export function startUpdates({ updater, current, platform, env, log, onState, mo
   // marker away and a quick retry's state cannot outlive it.
   function report(state) {
     retrying = state?.state === 'retrying'
+    failed = state?.state === 'failed'
     onState(state)
+  }
+  // Only a failure's mark goes: a check that runs while a download is under way leaves its
+  // progress on screen.
+  function clearFailed() {
+    if (failed) report({ state: 'idle' })
+  }
+  const bytes = value => (Number.isFinite(value) && value >= 0 ? Math.round(value) : null)
+  function progressOf(progress) {
+    const transferred = bytes(progress?.transferred)
+    const total = bytes(progress?.total)
+    return transferred !== null && total !== null && total > 0 ? { transferred: Math.min(transferred, total), total } : {}
   }
   function clearRetrying() {
     if (retrying) report({ state: 'idle' })
@@ -359,6 +397,7 @@ export function startUpdates({ updater, current, platform, env, log, onState, mo
       report({ state: 'idle' })
     }
     if (!newer(pending)) pending = null
+    fetching = false
     const cleaned = cleanStaleCache(cacheDirNow(), { current, version })
     if (cleaned.removed.length > 0) log.info(`update: removed ${cleaned.removed.join(', ')} from the updater cache`)
   }
@@ -370,11 +409,18 @@ export function startUpdates({ updater, current, platform, env, log, onState, mo
     }
     if (!newer(pending)) return discardStale(pending)
     ready = pending
+    fetching = false
+    downloadRetries = 0
     log.info(`update: ${ready} is ready and installs on quit`)
     report({ version: ready, state: 'ready' })
   }
   if (auto) {
-    updater.on('download-progress', progress => report({ version: pending, state: 'downloading', percent: Math.round(progress?.percent ?? 0) }))
+    updater.on('update-available', () => { fetching = true })
+    updater.on('update-cancelled', () => { fetching = false })
+    updater.on('download-progress', (progress) => {
+      fetching = true
+      report({ version: pending, state: 'downloading', percent: Math.round(progress?.percent ?? 0), ...progressOf(progress) })
+    })
     updater.on('update-downloaded', (info) => {
       const version = info?.version ?? pending
       if (!newer(version)) return discardStale(version)
@@ -387,12 +433,28 @@ export function startUpdates({ updater, current, platform, env, log, onState, mo
     squirrel?.on('error', error => log.warn(`update (macOS): ${error?.message ?? error}`))
     updater.on('error', (error) => {
       log.warn(`update: ${error?.message ?? error}`)
-      retryLater(error)
+      const unverified = isVerification(error)
+      // A download's failure, or an update that is not what the release says. A feed that could
+      // not be read is a failed check (no download had started), and stays check()'s to answer.
+      // While a check runs (`busy`), an error is that check's: a download that is under way
+      // goes on, and its count of retries is not spent.
+      const download = fetching && !busy
+      const lost = download || unverified
+      const again = !download || downloadRetries < QUICK_RETRIES
+      if (download && isTransient(error)) downloadRetries += 1
+      if (download) fetching = false
+      const soon = retryLater(error, again)
+      // An update that is ready stays ready: macOS repeats Squirrel's errors here.
+      if (lost && !soon && ready === null) {
+        const failure = unverified ? 'verify' : 'download'
+        log.info(`update: ${pending ?? 'the update'} ${failure === 'verify' ? 'could not be verified' : 'did not download'}; ${current} stays, and the next check tries again`)
+        report({ ...(pending ? { version: pending } : {}), state: 'failed', failure })
+      }
     })
   }
 
-  function retryLater(error) {
-    const soon = isTransient(error) && quickRetries < QUICK_RETRIES
+  function retryLater(error, quick = true) {
+    const soon = quick && isTransient(error) && quickRetries < QUICK_RETRIES
     // A retry is already scheduled (an electron-updater error, say): a failure that would wait
     // as long inherits it, and no second timer is set. A non-transient failure must not inherit
     // a pending quick retry's minute: it replaces that timer with RETRY_MS and clears the
@@ -422,6 +484,7 @@ export function startUpdates({ updater, current, platform, env, log, onState, mo
     }
     if (busy) return { result: 'busy' }
     clearRetrying()
+    clearFailed()
     busy = true
     try {
       const override = auto ? feedOverride(env) : null

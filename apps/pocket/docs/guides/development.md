@@ -2,7 +2,7 @@
 title: "Development"
 type: guide
 created: 2026-11-01
-updated: 2026-11-03
+updated: 2026-11-10
 tags: [guide, build, test, contributors]
 ---
 # Development
@@ -32,6 +32,15 @@ cd android
 This is the same gate CI runs. The debug APK is
 `android/app/build/outputs/apk/debug/app-debug.apk`.
 
+**Debug signing.** A local build uses the debug key AGP creates for the worktree, unless the release
+key is present (then it uses that). When the `POCKET_DEBUG_SIGNING_KEYSTORE` repository secret is
+set, CI signs PR debug APKs with one shared debug key, so two PR APKs install over each other. A run
+with the secret uploads the APK as the `pocket-debug-apk-<number>` artifact (the PR number, or the
+run number on a push) for 14 days and prints its certificate. Without the secret, CI uses the
+runner's default debug key and uploads no APK. To build locally with a keystore you provide, set
+`POCKET_DEBUG_STORE` (or `-Ppocket.debugStore`) to its path; alias `androiddebugkey`, password
+`android`.
+
 **16 KB pages.** Play requires every native library to support 16 KB memory pages. JNA is pinned
 to 5.17.0 (`android/app/build.gradle.kts:66-71`) because iroh-android 1.2.0 brings 5.15.0, whose
 `libjnidispatch.so` isn't 16 KB aligned. Drop the pin when iroh-android depends on JNA 5.17 or newer.
@@ -51,7 +60,7 @@ to 5.17.0 (`android/app/build.gradle.kts:66-71`) because iroh-android 1.2.0 brin
    QR code.
 
 A debug build signed with a different key than the installed copy can't replace it. Uninstall
-first.
+first. CI's shared-key PR APKs have the same certificate, so they replace each other.
 
 ## 4. More tests
 
@@ -92,7 +101,7 @@ same key.
   The environment variables `POCKET_SIGNING_STORE` and `POCKET_SIGNING_PASSWORD` override it
   (`android/app/build.gradle.kts:5-12`).
 - With the key present, debug builds are signed with it too, so a build from Android Studio and the
-  releases update each other. Without it, builds are debug-signed.
+  releases update each other. Without it, builds are debug-signed (section 2).
 - Never commit a key: `*.jks` and `*.keystore` are in `.gitignore`. Never regenerate the key;
   every installed copy would have to uninstall.
 - A fork signs with its own key and sets `pocket.updateUrl` in `android/gradle.properties` to its

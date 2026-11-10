@@ -1492,7 +1492,9 @@ fn fold_attach<'a>(rows: impl Iterator<Item = &'a AttachRow>) -> Bindings {
     out
 }
 
-fn normalize(p: &str) -> &str {
+/// A path compared as a string: no `.` or `..` resolution, no opening, only a trailing slash
+/// removed, as the resolver and the query compare them.
+pub(crate) fn normalize(p: &str) -> &str {
     let t = p.trim_end_matches('/');
     if t.is_empty() && p.starts_with('/') {
         "/"

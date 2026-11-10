@@ -1,22 +1,23 @@
 // Issue #957: a bridged tool call still open when its step ends. The agent runs its calls in
-// parallel, so a long wait (call A) can outlive the step: DSH's loop ends the step as soon as
-// its own work is done, and no hook comes before that row. The log then held `step/end` with A
-// unresolved, and A's result landed later inside the next step with the old step's stamp; the
-// v4 loader refuses both, and the session never opened again.
+// parallel, and the bridge puts no deadline on one, so a long wait (call A) can outlive the
+// step: DSH's loop ends the step as soon as its own work is done. The log then held `step/end`
+// with A unresolved, and A's result landed later inside the next step with the old step's
+// stamp; the v4 loader refuses both, and the session never opened again.
 //
-// The other half of the same class (review on #958, lifecycle findings 1 to 4): a call has its
-// own controller, stopped by Stop, by its turn's end and by a caller that went away; nothing is
-// written with an ended step's stamp; and a result the log refuses still closes its call.
-//
-// These tests replay that order on the real Backchannel, the real Session and the real pinned
-// v4 loader (the unpatched 0.2.2-rc.1 bytes: what the bridge writes must load on its own). No
-// real session, id or text is read or copied: every Session, call id and message is synthetic.
+// The write guard (#958) closes such a call before the step/end row and drops its late result.
+// These tests replay the issue's order through the real Backchannel on the real Session and
+// check the stored log with the real pinned v4 loader, and cover the bridge's own half (review
+// on #958, lifecycle findings 1 to 4): a call has its own controller, stopped by Stop, by its
+// turn's end and by a caller that went away; a stopped, revoked or late call writes nothing
+// more; a result the log refuses still closes its call; an advertised call whose tool/call row
+// cannot be written is answered. No real session, id or text is read or copied.
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createToolResultMessage } from '@deepseek-ai/dsh-llm'
 import { KNOWN_SESSION_EVENT_TYPES, Session } from '@deepseek-ai/dsh-session'
 import { restoreReleasedV4Artifact } from '@deepseek-ai/dsh-session-format-v3-to-v4'
-import { Backchannel, LATE_SUFFIX } from '../src/host/backchannel.js'
+import { Backchannel } from '../src/host/backchannel.js'
+import { CANCELLED, SUPERSEDED } from '../src/host/write-guard.js'
 
 const TOOLS = [
   { name: 'job_output', description: 'Read a job', parameters: { type: 'object', properties: { job: { type: 'string' }, wait: { type: 'number' } } } },
@@ -56,7 +57,13 @@ function bridgeHost({ level = 'full', ignoreSignal = false, answer, request = as
     if (!started.has(callId)) started.set(callId, Promise.withResolvers())
     return started.get(callId)
   }
+  const listeners = new Set()
   const ctx = {
+    // The back-channel's own listener for a turn's end; a bare Session publishes nothing here.
+    on: (name, listener) => {
+      if (name === 'session/event') listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
     get: (name) => {
       if (name === 'tools') {
         return {
@@ -100,6 +107,10 @@ function bridgeHost({ level = 'full', ignoreSignal = false, answer, request = as
     running: callId => startedOf(callId).promise,
     finish: (callId, text) => waiting.get(callId).resolve(text),
     signalOf: callId => signals.get(callId),
+    endTurn(reason = { kind: 'completed' }) {
+      const event = session.append('turn/end', { turn: 1, reason })
+      for (const listener of listeners) listener(session, event)
+    },
   }
 }
 
@@ -132,29 +143,18 @@ for (const level of ['full', 'manual']) {
       assert.equal(answered.isError, false)
       assert.deepEqual(answered.content, [{ type: 'text', text: 'the job finished' }])
 
-      // Step 1 closed A itself, before its step/end, in step 1's own coordinates.
+      // A was closed before its step/end, in step 1's own coordinates, as superseded.
       const firstEnd = seqOf(host.session, 'step/end', { turn: 1, step: 1 })
       const [closer, ...extra] = resultsOf(host.session, A)
-      assert.deepEqual(extra, [], 'A has exactly one result row under its own id')
+      assert.deepEqual(extra, [], 'A has exactly one result row')
       assert.ok(closer.seq < firstEnd, 'A is closed before its step ends')
       assert.deepEqual([closer.data.turn, closer.data.step], [1, 1])
-      assert.equal(closer.data.message.isError, false)
-      assert.match(textOf(closer), /still running when its step ended/)
-
-      // The late result is re-homed: a call of its own in the open step, never an old stamp.
-      const secondStart = seqOf(host.session, 'step/start', { turn: 1, step: 2 })
-      const secondEnd = seqOf(host.session, 'step/end', { turn: 1, step: 2 })
-      const [lateCall] = callsOf(host.session, `${A}${LATE_SUFFIX}`)
-      const [lateResult] = resultsOf(host.session, `${A}${LATE_SUFFIX}`)
-      assert.ok(lateCall && lateResult, 'the late result has its own call and result rows')
-      assert.deepEqual([lateCall.data.turn, lateCall.data.step], [1, 2])
-      assert.deepEqual([lateResult.data.turn, lateResult.data.step], [1, 2])
-      assert.ok(secondStart < lateCall.seq && lateCall.seq < lateResult.seq && lateResult.seq < secondEnd)
-      assert.equal(lateCall.data.name, 'job_output')
-      assert.equal(lateCall.data.arguments, callsOf(host.session, A)[0].data.arguments)
-      assert.equal(textOf(lateResult), 'the job finished')
+      assert.deepEqual(closer.data.error, SUPERSEDED)
+      // The late result is not written: nothing after step 1's end carries its stamp, and no
+      // tool row of the bridge lands in step 2.
       for (const event of host.session.snapshotEvents()) {
-        if (event.seq > firstEnd && event.data?.step === 1) assert.fail(`${event.type} at seq ${event.seq} carries the ended step's stamp`)
+        if (event.seq > firstEnd && event.data?.step === 1 && !event.type.startsWith('plugin:')) assert.fail(`${event.type} at seq ${event.seq} carries the ended step's stamp`)
+        if (event.data?.step === 2 && (event.type === 'tool/call' || event.type === 'tool/result')) assert.fail(`${event.type} in step 2`)
       }
       // No fake call reaches provider history.
       const derived = host.session.deriveMessages().flatMap(message => (Array.isArray(message.content) ? message.content : []))
@@ -165,20 +165,20 @@ for (const level of ['full', 'manual']) {
   })
 }
 
-test('#957: a turn that ends with call A open stops A, loads, and writes nothing after turn/end', async () => {
+test('#957: a turn that ends with call A open stops A, loads, and writes no tool row after turn/end', async () => {
   const host = bridgeHost()
   try {
     const { a } = await overlap(host)
     assert.equal(host.signalOf(A).aborted, false, 'a step ending does not stop a call the agent still waits for')
-    host.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
-    const rows = host.session.snapshotEvents().length
+    host.endTurn()
+    const toolRows = () => host.session.snapshotEvents().filter(event => event.type === 'tool/call' || event.type === 'tool/result').length
+    const rows = toolRows()
     assert.equal(host.signalOf(A).aborted, true, 'the turn ending stops the call')
     const answered = await a
     assert.equal(answered.isError, true)
     assert.equal(answered.error.code, 'BRIDGE_CANCELLED')
-    assert.equal(host.session.snapshotEvents().length, rows, 'nothing is written after the turn ended')
+    assert.equal(toolRows(), rows, 'no tool row is written after the turn ended')
     assert.equal(resultsOf(host.session, A).length, 1)
-    assert.ok(host.logged.some(line => /late result/.test(line)), 'the dropped result is logged')
     assert.doesNotThrow(() => assertLoadable(host.session))
   } finally {
     host.backchannel.dispose()
@@ -196,10 +196,11 @@ test('#957: Stop during a bridge body that ignores its signal leaves one result 
     assert.equal(host.signalOf(A).aborted, true, 'the body got its abort signal')
     host.session.append('step/end', { turn: 1, step: 1 })
     host.session.append('turn/end', { turn: 1, reason: { kind: 'aborted', reason: 'user' } })
-    const rows = host.session.snapshotEvents().length
+    const toolRows = () => host.session.snapshotEvents().filter(event => event.type === 'tool/call' || event.type === 'tool/result').length
+    const rows = toolRows()
     host.finish(A, 'finished anyway')
     await a
-    assert.equal(host.session.snapshotEvents().length, rows, 'the late body wrote nothing')
+    assert.equal(toolRows(), rows, 'the late body wrote no tool row')
     assert.equal(resultsOf(host.session, A).length, 1, 'exactly one result')
     assert.doesNotThrow(() => assertLoadable(host.session))
     assert.equal(host.record.closed, false, 'Stop keeps the bridge for the next turn')
@@ -253,7 +254,7 @@ test('#957: a bridge revoked mid-call with a slow body leaves one result and a l
   host.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
   assert.equal(resultsOf(host.session, A).length, 1)
   for (const event of host.session.snapshotEvents()) {
-    if (event.seq > seqOf(host.session, 'step/end', { turn: 1, step: 1 }) && event.data?.step === 1) assert.fail(`${event.type} carries the ended step's stamp`)
+    if (event.seq > seqOf(host.session, 'step/end', { turn: 1, step: 1 }) && event.data?.step === 1 && !event.type.startsWith('plugin:')) assert.fail(`${event.type} carries the ended step's stamp`)
   }
   assert.doesNotThrow(() => assertLoadable(host.session))
   assert.equal(Object.hasOwn(host.session, 'append'), false, 'the guard left with the last call')
@@ -275,7 +276,7 @@ test('#957: a tool result that is not plain JSON gets a fallback result row, and
       assert.ok(row, `${what}: the call has a result row`)
       assert.deepEqual(extra, [], `${what}: exactly one`)
       if (what === 'content') {
-        assert.equal(row.data.error.code, 'BRIDGE_RESULT_UNRECORDABLE')
+        assert.equal(row.data.error.code, 'BRIDGE_RESULT_NOT_JSON')
         assert.equal(answered.isError, false, 'the agent still gets the real answer')
       } else {
         assert.deepEqual(row.data.error, { name: 'Error' }, 'only string fields enter the row')
@@ -323,10 +324,13 @@ test('#957: turn/end alone (no step/end before it) still closes an open call fir
     await host.running(A)
     // DSH always writes step/end first; a turn/end is guarded all the same.
     const before = host.session.snapshotEvents().length
-    try { host.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } }) } catch {}
+    host.endTurn()
     const [closer] = resultsOf(host.session, A)
     assert.ok(closer, 'A was closed')
     assert.equal(closer.seq, before)
+    assert.deepEqual(closer.data.error, CANCELLED)
+    assert.equal(host.signalOf(A).aborted, true)
+    assert.doesNotThrow(() => assertLoadable(host.session))
     host.finish(A, 'late')
     await a
   } finally {
@@ -352,8 +356,8 @@ test('#957: a call DSH already closed (its own interrupted-step recovery) is not
     await a
     host.session.append('step/end', { turn: 1, step: 2 })
     host.session.append('turn/end', { turn: 1, reason: { kind: 'completed' } })
-    assert.equal(resultsOf(host.session, A).length, 1, 'only the recovery result carries A\'s id')
-    assert.equal(textOf(resultsOf(host.session, `${A}${LATE_SUFFIX}`)[0]), 'after the recovery')
+    assert.equal(resultsOf(host.session, A).length, 1, 'only the recovery result answers A')
+    assert.equal(host.session.snapshotEvents().filter(event => event.type === 'tool/result').length, 1)
     assert.doesNotThrow(() => assertLoadable(host.session))
   } finally {
     host.backchannel.dispose()
@@ -379,34 +383,21 @@ test('#957: a call that resolves inside its own step writes the same rows as bef
   }
 })
 
-test('#957: the Session gets its own append back once the bridge is gone and no call is open', async () => {
-  const host = bridgeHost()
-  const own = host.session.append
-  const a = host.call(A, { job: 'job-1', wait: 240 })
-  await host.running(A)
-  assert.notEqual(host.session.append, own, 'the guard is in place while a call is open')
-  host.finish(A, 'done')
-  await a
-  host.backchannel.dispose()
-  assert.equal(host.session.append, own)
-  assert.equal(Object.hasOwn(host.session, 'append'), false)
-})
-
 // The second broken session: the error names an id that has no tool/call row at all. The
 // advertisement was written, the call row was not, and hiding the advertisement only takes it
 // off the surface: the loader still counts the advertised call and refuses the step's end.
 test('#957: a call whose tool/call row cannot be written is answered as not started, and the log loads', async () => {
   const host = bridgeHost()
   try {
-    const own = host.session.append.bind(host.session)
+    const guarded = host.session.append
     host.session.append = (type, ...rest) => {
       if (type === 'tool/call') throw new Error('the call row was refused')
-      return own(type, ...rest)
+      return guarded.call(host.session, type, ...rest)
     }
     const answered = await host.call(A, { job: 'job-1' })
     assert.equal(answered.error.code, 'BRIDGE_RECORD_FAILED')
     assert.equal(host.signalOf(A), undefined, 'the tool never ran')
-    delete host.session.append
+    host.session.append = guarded
     assert.deepEqual(callsOf(host.session, A), [], 'the log has no tool/call row for the id')
     const [row, ...extra] = resultsOf(host.session, A)
     assert.deepEqual(extra, [])
