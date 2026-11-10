@@ -1147,6 +1147,7 @@ const ZH = {
   '{share}% of all usage from {span}': '占 {span} 全部用量的 {share}%',
   // About
   'About Omni': '关于 Omni',
+  'About Automagik': '关于 Automagik',
   'Version {version}': '版本 {version}',
   'Star Omni on GitHub': '在 GitHub 上给 Omni 点 Star',
   '{count} stars': '{count} 个 Star',
@@ -1166,6 +1167,7 @@ const ZH = {
   'Installed from a local folder; update it there.': '从本地文件夹安装，请在那里更新。',
   'Updates are not offered for this install.': '这种安装方式不提供更新。',
   'Updates come with the Automagik app.': '随 Automagik 应用一起更新。',
+  'Updates are off in this copy of Automagik.': '此 Automagik 副本已关闭更新。',
   Links: '链接',
   'Source code': '源代码',
   'Release notes': '发布说明',
@@ -1438,6 +1440,9 @@ const ZH = {
   'Restart to update to {version}': '重启以更新到 {version}',
   'Installing the update…': '正在安装更新…',
   'Update check failed · Retry': '检查更新失败 · 重试',
+  'Updating · {percent}% · {done} of {total} MB': '正在更新 · {percent}% · {done} / {total} MB',
+  'Update download failed · Retry': '更新下载失败 · 重试',
+  'Update could not be verified · Retry': '无法验证更新 · 重试',
   // The Work / Code switch (work-code-switch.js, RFC 0013).
   'Work or code': '工作或代码',
   'Work': '工作',

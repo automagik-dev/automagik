@@ -1,5 +1,7 @@
-// Settings → About Omni: the version, updates for Omni and DSH, and the links to
-// the repository. The sidebar's cloud button shows the same update state.
+// Settings → About Automagik: the version, updates for Automagik and DSH, the plugins' versions
+// and the links to the repository. The sidebar's cloud button shows the same update state.
+// Inside the Automagik app the page is the app's: its version, its update and its plugins come
+// from the app (desktop-update.js); in a plain DSH the Bot team's own update (Omni's) shows.
 import { createElement as h, useEffect, useState } from 'react'
 import { GitHubMark } from './connectors.js'
 import { whenText } from './feedback.js'
@@ -9,7 +11,7 @@ import { SPRING_POP } from './motion.js'
 import { BotMark } from './mark.js'
 import { MAIN_LOOK } from './characters.js'
 import { showsDshRow } from './dsh-offer.js'
-import { appState, pluginName, splitsPlugins, updatePill, useDesktopUpdate } from './desktop-update.js'
+import { appState, pluginName, splitsPlugins, updatePill, useDesktopUpdate, useDesktopVersions } from './desktop-update.js'
 import { Switch } from './bot-settings.js'
 
 // The length of the mark's `done` hop (bt-done in styles.js).
@@ -17,9 +19,19 @@ const CHEER_MS = 1800
 
 const starCount = count => new Intl.NumberFormat(dateLocale(), { notation: 'compact', maximumFractionDigits: 1 }).format(count)
 
-function botHint(update, app) {
-  // In the Automagik app, Omni updates with the app: its row follows the app's update.
-  if (update.source === 'app' && app.bridge) return updatePill(appState(app.state))?.label ?? t('Updates come with the Automagik app.')
+// Inside the Automagik app: the app says so itself (its bridge), or the host does.
+const inApp = (update, app) => Boolean(app.bridge) || update.source === 'app'
+
+// A copy of the app that says it does not update (a development run, or updates switched off).
+const updatesOff = versions => versions?.updates === false
+
+function botHint(update, app, versions) {
+  // In the Automagik app everything updates with the app: the row follows the app's update,
+  // whatever the plugin's own check setting says.
+  if (inApp(update, app)) {
+    if (updatesOff(versions)) return t('Updates are off in this copy of Automagik.')
+    return (app.bridge ? updatePill(appState(app.state))?.label : null) ?? t('Updates come with the Automagik app.')
+  }
   if (update.phase === 'installing') return t('Updating Omni…')
   if (update.phase === 'installed') return t('Restart DSH to start using Omni {version}.', { version: update.installed ?? update.latest })
   if (update.phase === 'updated') return t('Omni {version} is installed.', { version: update.installed ?? update.latest })
@@ -50,6 +62,15 @@ function pluginHint(change, plugins) {
   return `${versions} · ${plugins.auto === false ? t('Waits for a restart') : t('Updates when no agent is at work')}`
 }
 
+// The plugins this copy of the app runs, each with its own version, as the app reads them.
+// An app that does not say has only the Bot team's own, from its host.
+function versionRows({ versions, update, Row }) {
+  const plugins = versions ? (Array.isArray(versions.plugins) ? versions.plugins : []) : [{ name: update.name, version: update.current }]
+  return plugins
+    .filter(plugin => typeof plugin?.name === 'string' && typeof plugin.version === 'string')
+    .map(plugin => h(Row, { key: `version:${plugin.name}`, label: pluginName(plugin.name), hint: t('Version {version}', { version: plugin.version }) }))
+}
+
 // The plugins the Automagik app updates by itself (its lane): a row for each one updating, and the
 // switch that lets them go in without a restart.
 function pluginRows({ app, Row }) {
@@ -76,6 +97,7 @@ const linkProps = href => ({ className: 'bt-soft bt-soft-sm bt-about-link', href
 export function AboutPage({ useUpdate, actions, run, Section, Row }) {
   const update = useUpdate(value => value) ?? {}
   const app = useDesktopUpdate()
+  const versions = useDesktopVersions()
   const [checking, setChecking] = useState(false)
   const [stars, setStars] = useState(null)
   useEffect(() => {
@@ -104,11 +126,17 @@ export function AboutPage({ useUpdate, actions, run, Section, Row }) {
   const dshShown = dshNew && dsh.available
   const appPill = updatePill(appState(app.state))
   const appBusy = ['checking', 'downloading', 'installing'].includes(appState(app.state)?.phase)
-  const botControl = update.source === 'app'
-    ? app.bridge
-      // The app's own button: restart into a downloaded update, open its release, or check.
-      ? h('button', { type: 'button', className: appPill?.primary ? 'bt-fb-primary' : 'bt-soft bt-soft-sm', disabled: appBusy, onClick: () => { void app.bridge.open().catch(() => {}) } },
-          appPill?.primary ? appPill.label : appBusy ? t('Checking…') : t('Check for updates'))
+  const ours = inApp(update, app)
+  // A check is only a check (the app's `check`): `open` also restarts into an update that is
+  // ready and puts staged plugins in, so it is asked only under the label that says so. An
+  // app from before `check` has only `open`.
+  const appCheck = () => { void (typeof app.bridge.check === 'function' ? app.bridge.check() : app.bridge.open()).catch(() => {}) }
+  const botControl = ours
+    ? app.bridge && !updatesOff(versions)
+      // The app's own button: restart into a downloaded update or open its release, else check.
+      ? appPill?.primary
+        ? h('button', { type: 'button', className: 'bt-fb-primary', disabled: appBusy, onClick: () => { void app.bridge.open().catch(() => {}) } }, appPill.label)
+        : h('button', { type: 'button', className: 'bt-soft bt-soft-sm', disabled: appBusy, onClick: appCheck }, appBusy ? t('Checking…') : t('Check for updates'))
       : null
     : phase === 'installed' || phase === 'updated' ? null
     : update.available || phase === 'installing'
@@ -123,12 +151,15 @@ export function AboutPage({ useUpdate, actions, run, Section, Row }) {
             dshPhase === 'installing' ? t('Updating…') : dshPhase === 'failed' ? t('Try again') : t('Update'))
         : null
   const repo = update.repoUrl
+  // The app's own version inside the app; in a plain DSH the Bot team's is the only one there is.
+  const version = ours ? versions?.app : update.current
+  const plugins = ours ? versionRows({ versions, update, Row }) : []
   return [
     h('div', { key: 'hero', className: 'bt-about-hero' },
       h('span', { className: 'bt-about-mark' }, h(BotMark, { look: MAIN_LOOK, bot: { id: 'about' }, size: 52, state: markState, live: true, gaze: true, pokeable: true })),
       h('div', { className: 'bt-about-copy' },
-        h('span', { className: 'bt-about-name' }, 'Omni'),
-        update.current ? h('span', { className: 'bt-about-version' }, t('Version {version}', { version: update.current })) : null),
+        h('span', { className: 'bt-about-name' }, 'Automagik'),
+        version ? h('span', { className: 'bt-about-version' }, t('Version {version}', { version })) : null),
       repo ? h('a', {
         className: 'bt-star', href: repo, target: '_blank', rel: 'noopener noreferrer', title: t('Star Omni on GitHub'),
         'aria-label': stars === null ? t('Star Omni on GitHub') : `${t('Star Omni on GitHub')} · ${t('{count} stars', { count: stars })}`,
@@ -137,9 +168,12 @@ export function AboutPage({ useUpdate, actions, run, Section, Row }) {
       stars === null ? null : h('span', { className: 'bt-star-count' }, starCount(stars))) : null),
     repo ? h('p', { key: 'ask', className: 'bt-about-ask' }, t('If Omni helps you, a star on GitHub helps more people find it.')) : null,
     h(Section, { key: 'updates', title: t('Updates') },
-      h(Row, { label: 'Omni', hint: botHint(update, app) }, botControl, update.available && update.notesUrl ? h('a', linkProps(update.notesUrl), t("What's new")) : null),
-      dsh?.current ? h(Row, { label: 'DeepSeek Harness', hint: dshHint(dsh, dshShown) }, dshControl) : null,
+      h(Row, { label: ours ? 'Automagik' : 'Omni', hint: botHint(update, app, versions) }, botControl, update.available && update.notesUrl ? h('a', linkProps(update.notesUrl), t("What's new")) : null),
+      dsh?.current ? h(Row, { label: 'DeepSeek Harness', hint: dshHint(dsh, dshShown) }, dshControl)
+        // With the plugin's own check off, the app still knows the runtime it carries.
+        : ours && typeof versions?.dsh === 'string' ? h(Row, { label: 'DeepSeek Harness', hint: t('Version {version}', { version: versions.dsh }) }) : null,
       ...pluginRows({ app, Row })),
+    plugins.length > 0 ? h(Section, { key: 'plugins', title: t('Plugins') }, ...plugins) : null,
     h(Section, { key: 'links', title: t('Links') },
       repo ? h(Row, { label: t('Source code'), hint: repo.replace(/^https:\/\//, '') }, h('a', linkProps(repo), h(GitHubMark), t('Open'))) : null,
       update.notesUrl ? h(Row, { label: t('Release notes') }, h('a', linkProps(update.notesUrl), t('Open'))) : null,

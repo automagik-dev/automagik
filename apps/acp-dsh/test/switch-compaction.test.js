@@ -374,3 +374,50 @@ test('case 9: the boundary row written before the agent answers does not claim a
   adapter.noteEvent(session, { type: 'model/selection', data: { provider: 'deepseek-official' } })
   assert.equal(back[0].content[0].text, '[Switching to DSH.]')
 })
+
+// #871 (L6): compactPressure is compaction-basic's private method, so a DSH update can remove
+// it. An engine this plugin cannot guard is reported, once per engine, never passed over.
+test('wrapper: an engine that cannot be guarded is reported once, a guarded one and a non-object never', () => {
+  const said = []
+  const guard = pressureGuard({ agentDestination: agentRoute, onUnguarded: reason => said.push(reason) })
+  assert.equal(guard.adopt(undefined), false)
+  assert.equal(guard.adopt(null), false)
+  assert.equal(guard.adopt('compaction'), false)
+  assert.deepEqual(said, [], 'nothing to guard is not a missing method')
+  const { engine } = plainEngine()
+  assert.equal(guard.adopt(engine), true)
+  assert.equal(guard.adopt(engine), false)
+  assert.deepEqual(said, [], 'a guarded engine is not reported')
+  const gone = {}
+  assert.equal(guard.adopt(gone), false)
+  assert.equal(guard.adopt(gone), false)
+  assert.deepEqual(said, ['missing'], 'once per engine')
+  assert.equal(guard.adopt({ compactPressure: 'not a function' }), false)
+  assert.deepEqual(said, ['missing', 'missing'])
+  const frozen = Object.freeze({ compactPressure() {} })
+  assert.equal(guard.adopt(frozen), false)
+  assert.equal(guard.adopt(frozen), false)
+  assert.deepEqual(said, ['missing', 'missing', 'locked'])
+  // A callback that throws never breaks the request that adopted.
+  const loud = pressureGuard({ agentDestination: agentRoute, onUnguarded: () => { throw new Error('logger down') } })
+  assert.equal(loud.adopt({}), false)
+  // Without a callback the answer is as before.
+  assert.equal(pressureGuard({ agentDestination: agentRoute }).adopt({}), false)
+  guard.dispose()
+})
+
+test('a DSH whose compaction engine lost the method: the plugin warns once and the switch fails as without it', async (t) => {
+  const b = await bench()
+  t.after(() => b.plugin?.dispose())
+  // What an update that removed the private method leaves: nothing callable under its name.
+  const engine = b.engine()
+  engine[PRESSURE_METHOD] = undefined
+  await created(b.agent)
+  await created(b.agent)
+  await switchFails(b.prepare('acp-fake', 'default'))
+  // The context's own logger keeps what plugins log.
+  const said = b.ctx.logger.buffer.filter(record => record.type === 'warn').map(record => record.args.join(' ')).filter(line => line.includes(PRESSURE_METHOD))
+  assert.equal(said.length, 1, 'once, not on every request')
+  assert.match(said[0], /^acp-dsh: the compaction engine has no compactPressure: /)
+  assert.equal(engine[PRESSURE_METHOD], undefined, 'nothing was installed in its place')
+})
