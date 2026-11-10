@@ -4,6 +4,7 @@ package hc
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -151,6 +152,33 @@ func (Client) Read(address string) (string, error) {
 	}
 	err := run(&res, "read", address, "--json")
 	return res.Text, err
+}
+
+// sendTimeout bounds one hc send. hc waits for a person typing in that
+// terminal to pause; a report is not worth holding a run's slot for longer.
+const sendTimeout = 2 * time.Minute
+
+// Send pastes text into a terminal and submits it: how one bot messages
+// another. hc refuses a terminal whose program is blocked on a dialog, and
+// that refusal is the answer: a report never answers somebody's dialog.
+func (Client) Send(address, text string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
+	defer cancel()
+	// "--" keeps a text that starts with a dash from being read as a flag.
+	cmd := exec.CommandContext(ctx, hostpath.HCBin(), "send", "--json", "--", address, text)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("hc send: no answer within %s", sendTimeout)
+		}
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = strings.TrimSpace(stdout.String())
+		}
+		return fmt.Errorf("hc send: %s (%w)", msg, err)
+	}
+	return nil
 }
 
 // Kill ends a terminal's program. A finished terminal is fine.

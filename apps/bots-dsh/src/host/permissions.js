@@ -83,11 +83,13 @@ export function install(rt) {
   // is marked again when that fails.
   const unapplied = new Map()
   // Whether DSH offers `level` now. Auto counts: one DSH does not offer runs as its fallback.
+  // A catalog that cannot be read counts too: a mark is dropped only when DSH is shown not
+  // to offer the level, never because DSH failed to answer.
   function offers(level) {
     try {
       return level === AUTO || presets().catalog().options.some(option => option.value === level)
     } catch {
-      return false
+      return true
     }
   }
   // One apply of `level` on a Session, inside its serial job. A Session DSH will not open
@@ -352,7 +354,10 @@ export function install(rt) {
   const warnNotApplied = sessionId => error => rt.warn('ds-bot: permission for %s not applied: %s', sessionId, error)
 
   // The Session of a tool call, or the nearest parent of a subagent child, that is marked.
-  // A child is in none of the team's maps and works under its parent's level.
+  // A child is in none of the team's maps and works under its parent's level. Only asked
+  // while a Session is marked (levelHolds): a Session DSH cannot read then may be a marked
+  // one's child, so its call is refused, never let through.
+  const UNREAD = 'DeepSeek Harness could not read where this conversation comes from while a permission level is not set, so no tool runs here until it can. Try again; if this goes on, tell the user to restart DeepSeek Harness.'
   function markedFor(agent) {
     let current = agent?.id ?? agent?.session?.id
     let header = agent?.session?.header
@@ -360,8 +365,9 @@ export function install(rt) {
       if (unapplied.has(current)) return current
       try {
         header ??= ctx.sessions?.get?.(current)?.header
-      } catch {
-        return undefined
+      } catch (error) {
+        rt.warn('ds-bot: the Session %s could not be read while a permission level is not set: %s', current, error)
+        throw refusal(UNREAD, { cause: error })
       }
       if (header?.origin !== 'subagent') return undefined
       current = header.parentSession

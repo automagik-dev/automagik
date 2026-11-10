@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/DnzzL/herdr-automations/internal/command"
 	"github.com/DnzzL/herdr-automations/internal/config"
 	"github.com/DnzzL/herdr-automations/internal/herdr"
 	"github.com/DnzzL/herdr-automations/internal/history"
@@ -108,8 +109,32 @@ func Run(standby bool) error {
 			evaluate(state, runs, n)
 		case s := <-sigs:
 			log.Printf("received %v, shutting down", s)
+			stopCommands(runs)
 			return nil
 		}
+	}
+}
+
+// commandStopWait bounds how long a stopping daemon waits for its commands to
+// end and record it: the commands' own grace (10s) and a little for the write.
+var commandStopWait = 12 * time.Second
+
+// stopCommands ends the command runs in flight before the daemon leaves. An
+// agent run is left alone, as before: its pane outlives the daemon and bounds
+// it. A command has no pane, and sits in its own process group where the
+// signal that stopped the daemon does not reach it (ADR 0013).
+func stopCommands(runs *runner.Runner) {
+	if runs.CommandsRunning() == 0 {
+		return
+	}
+	log.Printf("ending %d running command(s)", runs.CommandsRunning())
+	command.Shutdown()
+	deadline := time.Now().Add(commandStopWait)
+	for runs.CommandsRunning() > 0 && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if n := runs.CommandsRunning(); n > 0 {
+		log.Printf("%d command(s) did not record their end in time", n)
 	}
 }
 

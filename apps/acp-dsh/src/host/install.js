@@ -136,12 +136,15 @@ export function killTree(pid) {
 
 // One install command: rejects with its last output when it fails, and kills its whole tree
 // when `signal` aborts or it runs past INSTALL_TIMEOUT_MS.
-export function runInstall(command, args, { cwd, env, signal: abort, timeoutMs = INSTALL_TIMEOUT_MS, kill = killTree }) {
+export function runInstall(command, args, { cwd, env, signal: abort, timeoutMs = INSTALL_TIMEOUT_MS, kill = killTree, onSpawn }) {
   return new Promise((resolve, reject) => {
     if (abort?.aborted) return reject(new Error('install stopped: DSH is quitting'))
     // On Windows the package manager is a batch file (the app's pnpm.cmd, npm.cmd): through
     // cmd.exe, whose tree killTree's taskkill /T ends with it.
     const child = spawn(...batchSafe(command, args, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' }))
+    // The process at once, for a caller that must tell when it is gone: 'exit' says Node reaped
+    // it, while 'close' can come after, when a grandchild holds its output open.
+    onSpawn?.(child)
     let output = ''
     let stopped
     const keep = (chunk) => { output = (output + chunk).slice(-16_384) }
