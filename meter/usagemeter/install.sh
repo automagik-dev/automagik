@@ -1,8 +1,8 @@
 #!/bin/sh
-# Installs usagemeter to ~/.local/bin/usagemeter from a GitHub release of automagik-dev/usagemeter.
+# Installs usagemeter to ~/.local/bin/usagemeter from a GitHub release of automagik-si/usagemeter.
 #
-#   curl -fsSL https://raw.githubusercontent.com/automagik-dev/usagemeter/dev/install.sh | sh
-#   curl -fsSL https://raw.githubusercontent.com/automagik-dev/usagemeter/dev/install.sh | sh -s -- 0.3.0
+#   curl -fsSL https://raw.githubusercontent.com/automagik-si/usagemeter/dev/install.sh | sh
+#   curl -fsSL https://raw.githubusercontent.com/automagik-si/usagemeter/dev/install.sh | sh -s -- 0.3.0
 #
 # The version is the first argument or USAGEMETER_VERSION (0.3.0 or v0.3.0); without one it
 # installs the latest release. It picks the binary for this OS and CPU, checks it against the
@@ -13,12 +13,12 @@
 # the network; the latest by comparing the installed file with the release's SHA256SUMS, then the
 # version of the verified download. An older binary, or one without a version, is replaced.
 #
-# USAGEMETER_BASE_URL replaces https://github.com/automagik-dev/usagemeter/releases (a mirror, or
+# USAGEMETER_BASE_URL replaces https://github.com/automagik-si/usagemeter/releases (a mirror, or
 # a local copy for tests); it must keep the same layout: latest/download/<file> and
 # download/v<version>/<file>.
 set -eu
 
-base=${USAGEMETER_BASE_URL:-https://github.com/automagik-dev/usagemeter/releases}
+base=${USAGEMETER_BASE_URL:-https://github.com/automagik-si/usagemeter/releases}
 want=${1:-${USAGEMETER_VERSION:-}}
 
 say() { printf '%s\n' "$*"; }

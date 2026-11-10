@@ -5,13 +5,13 @@ dsh-tui) and publishes a small summary to that machine's herdr-core. It is share
 Automagik Herdr on the desktop, and the Automagik Pocket phone app through its Pocket Link mod,
 which install it with `install.sh` and run it on the machines they
 reach. Rows follow `ae/1` (agent event envelope, revision 3, owned by automagik-herdr). Design:
-[RFC 0005](https://github.com/automagik-dev/automagik-pocket/blob/dev/docs/rfcs/0005-usage-meter.md).
+[RFC 0005](https://github.com/automagik-si/automagik-pocket/blob/dev/docs/rfcs/0005-usage-meter.md).
 
 It runs once and exits. It has no daemon, no listener and makes no network calls; the only process
 it talks to is the local `hc`.
 
 This project used to live in the `meter/` folder of
-[automagik-pocket](https://github.com/automagik-dev/automagik-pocket), where it was built as
+[automagik-pocket](https://github.com/automagik-si/automagik-pocket), where it was built as
 `automagik-meter`; it moved here with its history. Its store, summary doc and environment
 variables did not change, so an existing install keeps its data. Since 0.5.0 the store lives in
 `~/.automagik/meter/` and the first `sync` moves it there (see [What it stores](#what-it-stores)).
@@ -53,7 +53,7 @@ build the pointer names (check its signature with `bun scripts/meter-lane.ts ver
 checkout):
 
 ```sh
-base=https://github.com/automagik-dev/automagik/releases/download
+base=https://github.com/automagik-si/automagik/releases/download
 curl -fLO "$base/meter-lane/meter.json" -fLO "$base/meter-lane/meter.json.sig"
 v=$(sed -n 's/^  "version": "\(.*\)",$/\1/p' meter.json)
 curl -fLO "$base/v$v/usagemeter-linux-x86_64" -fLO "$base/v$v/usagemeter.SHA256SUMS"
