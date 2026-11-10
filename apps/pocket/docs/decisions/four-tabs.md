@@ -3,7 +3,7 @@ title: "Four tabs: Home, Team, Code, Settings"
 type: decision
 status: Implemented
 created: 2026-11-07
-updated: 2026-11-07
+updated: 2026-11-10
 pr: "automagik-dev/automagik#664"
 tags: [decisions, navigation, teams, home]
 ---
@@ -11,7 +11,8 @@ tags: [decisions, navigation, teams, home]
 
 The bottom bar has four tabs, Home, Team, Code and Settings, and the app opens on Team. They
 replace the five tabs and the Settings gear, and this note replaces [Teams v1](teams-v1.md)'s tab
-list, its needs-you deck and its progress strip.
+list, its needs-you deck and its progress strip. The deck returns on Home (below); its Team
+placement and the progress strip do not.
 
 ## Decision
 
@@ -19,6 +20,11 @@ list, its needs-you deck and its progress strip.
   tabs. Team is the default; Home is the needs-you cockpit, with spend as a chip.
 - Owner, 2026-11-07 (relayed by the Mobile Captain): this step changes the structure only. The
   bar keeps its current look; no mobile UX guidance is applied until the owner names the guidance.
+- Owner, 2026-11-10 (picked from the 10 Nov UX gap review, gap A): the swipe-to-answer deck
+  returns, on **Home**. It reads Home's own Needs you list, the list its count tiles and cards
+  use, not the Team bubbles. It opens from the needs-you count tile and an "N need you · Review"
+  bar. A row with a Bot chat and no terminal gets an "Open chat" card in this first cut. Answers
+  go through the same path as the terminal's answer buttons.
 - What moved, so nothing is lost:
 
   | Before | Now |
@@ -37,10 +43,20 @@ list, its needs-you deck and its progress strip.
 
 - Tabs, the default and Back: `android/app/src/main/java/ai/namastex/automagik/Nav.kt`
   (`TABS`, `HOME = TEAM`, `back`, `barShown`, `badge`). Tested in `NavTest`.
-- The bar: `PocketTabs`, `android/app/src/main/java/ai/namastex/automagik/MainActivity.kt:251`.
+- The bar: `PocketTabs`, `android/app/src/main/java/ai/namastex/automagik/MainActivity.kt:255`.
   Home carries the agents that need you (Today's badge), Team the bots that need you.
-- Home is `OverviewScreen` with no space (`MainActivity.kt:238`), the spend tile `SpendCount`
-  (`MainActivity.kt:360`). `ProjectsTest.homeShowsTodaysCountsAndCarriesItsBadge` checks its counts.
+- Home is `OverviewScreen` with no space (`MainActivity.kt:377`), the spend tile `SpendCount`
+  (`MainActivity.kt:414`). `ProjectsTest.homeShowsTodaysCountsAndCarriesItsBadge` checks its counts.
+- Home's needs-you deck (`DeckScreen.kt:46`): one card per entry of Home's own Needs you list, the
+  list its count tile, badge and cards use (`Teams.deckCards`, `Teams.kt:355`). Right is Yes, left is
+  No, up opens the chat or terminal; the same three buttons sit under the card, with the YES/NO
+  stamps as the card leans. The header counts the cards left. A row with a Bot chat and no terminal
+  opens the chat instead of sending keys. `Teams.deckView` (`Teams.kt:375`) and `Teams.swipe`
+  (`Teams.kt:383`) hold the end state and the gesture rule. `PocketApp` owns the open state
+  (`MainActivity.kt:127`), and Home's needs-you count tile and "N need you · Review" bar open it
+  (`MainActivity.kt:410`, `:427`), so a later "Answer all" button opens the same screen. The last
+  answer shows All clear ("You answered N requests. Your bots are back to work."), the bot hops
+  once, and **Back to Teams** returns to Team. Tested in `TeamsTest` and `HomeChatsTest`.
 - Code (wish group 3), the desktop's Herdr window made mobile:
   - The spaces and bots tree (`Sidebar.rows`, drawn by `sidebarRows`) places each project's bots under
     its first space, grouped as the desktop groups them: the main bot, then categories in
