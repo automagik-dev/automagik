@@ -1012,10 +1012,15 @@ function describe(project, bot, view, hcError, projects = null) {
   else if (held) status = agentInForeground(live) ? live.status?.state ?? "running" : "no agent in front";
   // #823: the effective permission lists the launch carries: a seat's on the project folder,
   // and a worker default's (its task worktree is added at its launch).
-  const seatAgy = bot.agent === "antigravity" ? agyPermissionPlan({ bot, scope: "seat", folder: project.key }) : null;
+  const seatAgy = bot.agent === "antigravity"
+    ? agyPermissionPlan({ bot, scope: "seat", folder: project.key, realpath: realDir, homeDir: home() }) : null;
   const workerAgent = !worker ? resolveAgent(bot.agent) : worker.template ? null : resolveAgent(worker.agent ?? bot.agent);
+  // #884 M1: a review worker is read-only and is never auto-trusted, so its trusted folder is
+  // named as empty; a writer role's worktree is only known at launch, so its plan names it as such.
+  const workerRoleOf = workerRole(bot).role;
+  const workerTrusted = workerRoleOf === "review" ? [] : ["<worktree>"];
   const workerAgy = workerAgent === "antigravity"
-    ? agyPermissionPlan({ bot, scope: "worker", role: workerRole(bot).role, folder: null }) : null;
+    ? agyPermissionPlan({ bot, scope: "worker", role: workerRoleOf, folder: null, realpath: realDir, homeDir: home() }) : null;
   const out = {
     id: bot.id, name: bot.name, kind: bot.kind, ...placeOf(project),
     lead: lead.lead || null, leadName,
@@ -1029,8 +1034,8 @@ function describe(project, bot, view, hcError, projects = null) {
     role: bot.role, rank: bot.rank ?? null, code: bot.code !== false, look: bot.look,
     hcProxy: bot.hcProxy === true,
     worker,
-    ...(seatAgy ? { agyPermissions: { allow: seatAgy.allow, deny: seatAgy.deny } } : {}),
-    ...(workerAgy ? { workerAgyPermissions: { allow: workerAgy.allow, deny: workerAgy.deny } } : {}),
+    ...(seatAgy ? { agyPermissions: { allow: seatAgy.allow, deny: seatAgy.deny, trustedWorkspaces: seatAgy.trustedWorkspaces } } : {}),
+    ...(workerAgy ? { workerAgyPermissions: { allow: workerAgy.allow, deny: workerAgy.deny, trustedWorkspaces: workerTrusted } } : {}),
   };
   const crossWarns = bot.crossMembers?.length
     ? crossMemberWarnings(file, bot.id, { project: project.key, projects: projectsMap })
@@ -1365,9 +1370,15 @@ last cached list and the refusal says when there is none. Every Antigravity laun
 \`worker.agyMode\`, else auto. Each launch also writes its own session permission list, 0600
 under <app home>/automagik-herdr/agy-settings/, and passes it as \`--settings\`: a narrow allow
 list for its scope and the fixed denies --force pushes, hard resets, rm -rf, PR merges and
-releases -- plus the bot's \`agyPermissions\` additions, never a fixed deny dropped. The pack
-never passes --dangerously-skip-permissions and never writes agy's own settings, so its trust
-list and saved settings stay the person's. Its first prompt goes through -i, its resume
+releases -- plus the bot's \`agyPermissions\` additions, never a fixed deny dropped. The file
+also lists a writer launch's own folder in \`trustedWorkspaces\` -- the project folder for a
+seat, the worker's worktree for a worker, never a parent or the home folder -- so agy's
+first-run trust question is already answered. A read-only review launch (a review worker, a
+reviewer seat) is never auto-trusted: it has no trusted folder, so the file leaves
+\`trustedWorkspaces\` out instead of writing an empty list, and agy asks before it loads that
+checkout's project configuration. The pack never passes
+--dangerously-skip-permissions and never writes agy's own saved settings, so the rest of its
+trust list and saved settings stay the person's. Its first prompt goes through -i, its resume
 through --conversation <id> (--fresh starts new).
 
 --rank R sets the pane's role= label, one of: ${RANKS.join(", ")}.
@@ -1996,9 +2007,11 @@ async function cmdShow(opts, [ref]) {
     ...(info.planned ? [`  planned      wave ${info.planned.wave}${info.planned.note ? ` · ${info.planned.note}` : ""}`] : []),
     `  agent        ${info.agent ?? "-"}`, `  model        ${info.model ? `${info.model} (${info.modelSource})` : "-"}${info.pinnedModel && info.modelSource !== "pinned" ? `, pinned ${info.pinnedModel}` : ""}`,
     ...(info.agyMode ? [`  agy mode     ${info.agyMode}`] : []),
-    ...(info.agyPermissions ? [`  agy allow    ${info.agyPermissions.allow.join(", ") || "-"}`,
+    ...(info.agyPermissions ? [`  agy trusted  ${(info.agyPermissions.trustedWorkspaces ?? []).join(", ") || "-"}`,
+      `  agy allow    ${info.agyPermissions.allow.join(", ") || "-"}`,
       `  agy deny     ${info.agyPermissions.deny.join(", ") || "-"}`] : []),
-    ...(info.workerAgyPermissions ? [`  worker agy allow  ${info.workerAgyPermissions.allow.join(", ")}`,
+    ...(info.workerAgyPermissions ? [`  worker agy trusted  ${(info.workerAgyPermissions.trustedWorkspaces ?? []).join(", ") || "-"}`,
+      `  worker agy allow  ${info.workerAgyPermissions.allow.join(", ")}`,
       `  worker agy deny   ${info.workerAgyPermissions.deny.join(", ")}`] : []),
     `  status       ${info.status}${info.terminal ? ` in ${info.terminal} (since ${info.since})` : ""}`,
     `  look         ${info.look.character} in ${info.look.colour}`, `  role         ${info.role || "-"}`,
@@ -2817,7 +2830,11 @@ async function seatOnMachine(project, bot, over = {}) {
   if (agentKey === "antigravity") {
     const agyHome = await launchHomeOn(machine, bot, paneEnv, "its Antigravity permission list");
     if (!agyHome.dir) throw new CliError(`${agyHome.warning}. Nothing was started.`);
-    agySettings = agySettingsPlan({ bot, scope: "seat", folder: key, settingsDir: agySettingsDir(agyHome.dir) });
+    // #884 Low A: a linked machine's home folder, derived from its own app home (never this
+    // computer's home(), and no extra remote exec): ~/.config/herdr-app sits in it.
+    const remoteHome = agyHome.dir.endsWith("/.config/herdr-app") ? agyHome.dir.slice(0, -"/.config/herdr-app".length) : null;
+    agySettings = agySettingsPlan({ bot, scope: "seat", folder: over.cwd ?? key, settingsDir: agySettingsDir(agyHome.dir),
+      homeDir: remoteHome });
     try { await ownFileOn(machine, agySettings.path, agySettings.text); }
     catch (e) {
       throw new CliError(`${bot.name} wasn't started on ${machine}: its Antigravity permission list couldn't be written `
@@ -2842,12 +2859,12 @@ async function seatOnMachine(project, bot, over = {}) {
   // The briefing there, as a local start has it (#582), in that machine's app home while it is
   // there (briefingHomeOn: asked only when a file or the hook needs one; never made).
   const needsHome = !briefingOwnConfig(agentKey) && (briefingWay(agentKey) === "file" || briefingHook(agentKey));
-  const home = needsHome ? await briefingHomeOn(machine, bot, paneEnv) : { dir: null, warnings: [] };
-  const briefed = await briefedOn(machine, project, bot, agentKey, there.argv, home.dir,
+  const briefingHome = needsHome ? await briefingHomeOn(machine, bot, paneEnv) : { dir: null, warnings: [] };
+  const briefed = await briefedOn(machine, project, bot, agentKey, there.argv, briefingHome.dir,
     agentKey === "dsh-tui" ? Boolean(remoteGuard) : null);
   const argv = briefed.argv;
   // The hook goes in before the session starts, so Claude Code reads it at startup.
-  const hook = briefingHook(agentKey) && home.dir ? await briefingHookOn(machine, bot, over.cwd ?? key, home.dir)
+  const hook = briefingHook(agentKey) && briefingHome.dir ? await briefingHookOn(machine, bot, over.cwd ?? key, briefingHome.dir)
     : { written: false, warnings: [] };
   const env = { ...(paneEnv.appHome ? { HERDR_APP_HOME: paneEnv.appHome } : {}), ...briefed.env };
   const carry = over.carry ?? {};
@@ -2863,7 +2880,7 @@ async function seatOnMachine(project, bot, over = {}) {
     // No hc parent: hc run's default is the terminal it is started from, and the pane would end with it.
     parent: ["--no-parent"], argv, labels, path: there.path, env, agent: agentKey, guard: remoteGuard });
   args.splice(1, 0, "--on", machine);
-  const warnings = [...paneEnv.warnings, ...there.warnings, ...guardWarnings, ...home.warnings, ...briefed.warnings, ...hook.warnings,
+  const warnings = [...paneEnv.warnings, ...there.warnings, ...guardWarnings, ...briefingHome.warnings, ...briefed.warnings, ...hook.warnings,
     ...(agySettings?.warnings ?? [])];
   const run = async () => {
     if (deadlineLeft() < DEADLINE_MARGIN_MS) throw tooLate(bot, machine, key, DEADLINE_MARGIN_MS, place?.spare ? place.space : null);
@@ -3133,10 +3150,14 @@ async function launchSeat(project, bot, over = {}) {
   const agent = startableAgent(bot, agentKey);
   // Antigravity always gets a mode (auto by default); every other agent's argv is unchanged.
   const agyMode = launchAgyMode(bot, agentKey);
+  // Where the launch works: a restart's --cwd (its canonical path), else the project folder. The
+  // permission file trusts this folder (#884), so it is resolved before the file is planned.
+  const cwd = over.cwd ? (realDir(over.cwd) ?? over.cwd) : key;
   // #823: the session's permission list, written private under the app home before the launch;
   // a restart's plan names the same file, so it is written again with the roster as it is now.
   const agySettings = agentKey === "antigravity"
-    ? (over.agySettings ?? agySettingsPlan({ bot, scope: "seat", folder: key, settingsDir: agySettingsDir(appHome()) })) : null;
+    ? (over.agySettings ?? agySettingsPlan({ bot, scope: "seat", folder: cwd, settingsDir: agySettingsDir(appHome()),
+      realpath: realDir, homeDir: home() })) : null;
   if (agySettings) writeAgySettingsFile(agySettings, bot);
   // A1: the effective lead's live terminal as parent, outliving it; the main bot has none.
   const lead = bot.kind === "member" ? effectiveLead(file, bot.id).lead : "";
@@ -3159,7 +3180,6 @@ async function launchSeat(project, bot, over = {}) {
   // As a worker (cmdWorker): the pane gets this PATH, with an npm agent's (#!/usr/bin/env node,
   // like codex) interpreter folder first when it lacks it (#56); start and restart both come
   // here. Always passed (#213): without it the pane has herdr-core's PATH, which may lack node.
-  const cwd = over.cwd ?? key;
   const runPath = launchPath(argv[0], cwd);
   const path = runPath.path;
   // A restart's own place (the old pane's space and tab) stands; a start asks the window too:
@@ -3774,7 +3794,7 @@ async function treePlans({ project, bot, old, helpers, view, ledger, agents, kno
     for (const k of ["agent.session", "revive.session"]) holdId(h.labels?.[k]);
     holdId(knownSession(h, agentKey)?.session);
     return { ...helperPlan({ get: h, worker, session: knownSession(h, agentKey)?.session ?? null,
-      agents, fresh, agy: { appHomeDir: appHome(), bot: agyBot } }), worker, binding, proxyIdentity,
+      agents, fresh, agy: { appHomeDir: appHome(), bot: agyBot, realpath: realDir, homeDir: home() } }), worker, binding, proxyIdentity,
       createdMs: Number.isSafeInteger(h.created_ms) ? h.created_ms : null };
   };
   let tree = doomed.map((h) => planOf(h));
@@ -3882,20 +3902,21 @@ async function cmdRestart(opts, [ref]) {
   // differ from it (#597): a template hc still lists owns the command, with its CURRENT words.
   const oldLaunch = old ? paneCommand(old) : null;
   const oldTemplate = old ? await paneTemplate(old) : null;
+  // The folder the replacement starts in: --cwd DIR, else the old pane's folder (#213: a worktree
+  // too, where its conversation is), unless it is gone, else the project. Resolved first: the
+  // permission file (#884) trusts this folder, not the project, and a symlinked one by realpath.
+  const oldCwd = old?.foreground?.cwd ?? old?.cwd ?? null;
+  const cwd = wanted ?? (oldCwd && isDir(oldCwd) ? (realDir(oldCwd) ?? oldCwd) : key);
   const planned = {
     bot, run: startableAgent(bot, entry?.agent ?? bot.agent).run,
     runningAgent, session: known?.session ?? null,
     fresh: opts.fresh || !old, agent: entry ? entry.agent : undefined, model: entry ? (entry.model ?? "") : undefined,
     template: oldTemplate?.command ? { name: oldTemplate.name, command: oldTemplate.command } : null,
-    agy: { appHomeDir: appHome(), folder: key },
+    agy: { appHomeDir: appHome(), folder: cwd, realpath: realDir, homeDir: home() },
     // A new conversation on Claude runs on an id chosen here (RFC 0021 (f) 2); a resume keeps its own.
     newSession: newSessionId(),
   };
   let plan = restartPlan(planned);
-  // The old pane's folder (#213: a worktree too, where its conversation is), unless it is gone;
-  // the same space and tab (its Herdr labels).
-  const oldCwd = old?.foreground?.cwd ?? old?.cwd ?? null;
-  const cwd = wanted ?? (oldCwd && isDir(oldCwd) ? oldCwd : key);
   // --cwd: Claude resumes only within one folder slug (~/.claude/projects/<slug>), by id or --continue.
   const movedFrom = wanted && old && oldCwd ? (realDir(oldCwd) ?? oldCwd) : null;
   const slugMoved = movedFrom && claudeSlug(movedFrom) !== claudeSlug(wanted);
@@ -5328,6 +5349,9 @@ async function cmdWorker(opts, rest) {
       place = await makeBranchWorktree(now, opts.base, project.key, warnings);
     }
     worktree = realDir(place.worktree) ?? place.worktree;
+    // #884 Low C: --cwd, the launch words and the settings file name all take the resolved
+    // worktree, so a symlinked folder is the same path everywhere.
+    place = { ...place, worktree };
     base = await baseCommit(place, project.key);
     // Only the actual proxy transport can authorize skipping the PATH guard. Caller-added flags
     // and working roster edits cannot do so; the same socket still checks terminal.run.
@@ -5341,7 +5365,8 @@ async function cmdWorker(opts, rest) {
     const settingsDir = proxied ? approvedSettingsDir() : agySettingsDir(appHome());
     let agySettings = null;
     if (plan.agent === "antigravity" || (plan.template && runs === "antigravity")) {
-      agySettings = agySettingsPlan({ bot, scope: "worker", role, folder: place.worktree, settingsDir });
+      agySettings = agySettingsPlan({ bot, scope: "worker", role, folder: worktree, settingsDir, realpath: realDir,
+        homeDir: home() });
       if (agySettings?.warnings.length) warnings.push(...agySettings.warnings);
       if (agySettings && !proxied) writeAgySettingsFile(agySettings, bot);
       if (plan.template && runs === "antigravity") {
@@ -5716,15 +5741,22 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
       // The effective allow and deny lists each Antigravity launch of this bot carries: its
       // seat's, and its worker defaults' (a task's worktree is added to a worker's at launch).
       const seatAgy = agent?.agent === "antigravity" && projectKey
-        ? agyPermissionPlan({ bot: agent, scope: "seat", folder: projectKey }) : null;
+        ? agyPermissionPlan({ bot: agent, scope: "seat", folder: projectKey, realpath: realDir, homeDir: home() }) : null;
       const workerAgent = agent && !agent.worker?.template ? resolveAgent(agent.worker?.agent ?? agent.agent) : null;
+      const workerRoleOf = agent ? workerRole(agent).role : null;
       const workerAgy = workerAgent === "antigravity"
-        ? agyPermissionPlan({ bot: agent, scope: "worker", role: workerRole(agent).role, folder: null }) : null;
-      if (seatAgy) bot.agyPermissions = { allow: seatAgy.allow, deny: seatAgy.deny };
-      if (workerAgy) bot.workerAgyPermissions = { allow: workerAgy.allow, deny: workerAgy.deny };
+        ? agyPermissionPlan({ bot: agent, scope: "worker", role: workerRoleOf, folder: null, realpath: realDir,
+          homeDir: home() }) : null;
+      // #884 M1: a review worker is read-only and is never auto-trusted (it stops at agy's trust
+      // question); a writer role's worktree is only known at launch, so the plan names it as such.
+      const workerTrusted = workerRoleOf === "review" ? [] : ["<worktree>"];
+      if (seatAgy) bot.agyPermissions = { allow: seatAgy.allow, deny: seatAgy.deny, trustedWorkspaces: seatAgy.trustedWorkspaces };
+      if (workerAgy) bot.workerAgyPermissions = { allow: workerAgy.allow, deny: workerAgy.deny, trustedWorkspaces: workerTrusted };
       const perms = [
-        seatAgy ? `agy allow ${seatAgy.allow.join(", ")}; agy deny ${seatAgy.deny.join(", ")}` : "",
-        workerAgy ? `worker agy allow ${workerAgy.allow.join(", ")}; worker agy deny ${workerAgy.deny.join(", ")}` : "",
+        seatAgy ? `agy trusted ${seatAgy.trustedWorkspaces.join(", ") || "-"}; agy allow ${seatAgy.allow.join(", ")}; `
+          + `agy deny ${seatAgy.deny.join(", ")}` : "",
+        workerAgy ? `worker agy trusted ${workerTrusted.join(", ") || "-"}; worker agy allow ${workerAgy.allow.join(", ")}; `
+          + `worker agy deny ${workerAgy.deny.join(", ")}` : "",
       ].filter(Boolean).join("; ");
       // The lists are a guardrail against accidents, never the boundary: say so wherever they print.
       const guardrail = perms ? "these lists are a guardrail against accidents, not a security boundary: "
@@ -5734,8 +5766,8 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
         + "agent do anything" : "";
       r.checks.push({ check: `hc-proxy:${bot.id}`, ok, warning: bot.warning === true,
         detail: `${bot.name}: ${agy}${perms ? `${perms}; ${guardrail}; ` : ""}hcProxy ${proxyStateText(state)}; ${bot.detail}`,
-        ...(seatAgy ? { agyPermissions: { allow: seatAgy.allow, deny: seatAgy.deny } } : {}),
-        ...(workerAgy ? { workerAgyPermissions: { allow: workerAgy.allow, deny: workerAgy.deny } } : {}),
+        ...(seatAgy ? { agyPermissions: { allow: seatAgy.allow, deny: seatAgy.deny, trustedWorkspaces: seatAgy.trustedWorkspaces } } : {}),
+        ...(workerAgy ? { workerAgyPermissions: { allow: workerAgy.allow, deny: workerAgy.deny, trustedWorkspaces: workerTrusted } } : {}),
         fix: needsApproval ? "automagik-herdr proxy approve (review the diff), then restart"
           : !ok || bot.warning ? `automagik-herdr restart ${bot.id}` : null });
       if (!ok) r.code = 1;

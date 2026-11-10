@@ -562,6 +562,9 @@ test("start --machine of an Antigravity bot: its 0600 permission file is written
   assert.ok(data.permissions.allow.includes(`write_file(${s.project})`), "the project on vm");
   assert.ok(data.permissions.allow.includes("command(npm publish)"), "the roster's addition");
   for (const rule of AGY_FIXED_DENY) assert.ok(data.permissions.deny.includes(rule), rule);
+  // #884 Low A: the linked machine's own home (vm) is derived from its app home, so the project
+  // it works in is still the one trusted folder.
+  assert.deepEqual(data.trustedWorkspaces, [s.project], "the linked project, not vm's home");
   // Never this computer's app home: no file, no path in the argv.
   assert.equal(existsSync(LOCAL_AGY_DIR(s)), false, "never written here");
   assert.equal(r.json().argv.includes(file), true);
