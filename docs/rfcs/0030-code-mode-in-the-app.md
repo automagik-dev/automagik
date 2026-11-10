@@ -408,9 +408,10 @@ fake ledgers and a herdr-core started for the test, never a live Herdr install.
    tag in a row is quoted. *Rollback:* a release without the mailbox; the orchestrator keeps its
    terminal.
 4. **Route, then model, and the handoff note** (plugin; the selector is issue #1016; after Q13
-   and Q14, approved by the owner in a running build with light and dark screenshots). *Check:* the routes list Native, ACP, Herdr in that order; each bot type
-   lists only the routes Q13 gives it (a DSH bot: Native only); a route change warns before the
-   person confirms; the note is written by the old harness, falls back to the plain note when
+   and Q14, approved by the owner in a running build with light and dark screenshots).
+   *Check:* the routes list Native, ACP, Herdr in that order; each bot type lists only the
+   routes Q13 gives it (a DSH bot: Native only); a route change warns before the person
+   confirms; the note is written by the old harness, falls back to the plain note when
    the old harness fails, is redacted (a saved secret in the transcript never appears in it),
    and the new conversation starts with it as a card; a model change inside a route keeps the
    conversation. *Rollback:* today's menu and RFC 0003's replay.
@@ -511,8 +512,9 @@ Q8-Q9 with open PR #1008 (RFC 0028); Q7 with RFC 0003.
   [0023](0023-dsh-upstream-agent-context-and-chat-rows.md) (the session terminal field),
   [0024](0024-automagik-cloud.md) (delivery 2, the gate),
   0028 (Code workers, in open PR #1008; linked here once it merges).
-- Issues and PRs: #1016 (the selector's delivery), #206 (remote starts), #220 (scheduler install), #628 and #631 (scoped core
-  access), #973 (more native-ACP agents), herdr-core#122 (conditional keys).
+- Issues and PRs: #1016 (the selector's delivery), #206 (remote starts), #220 (scheduler
+  install), #628 and #631 (scoped core access), #973 (more native-ACP agents), herdr-core#122
+  (conditional keys).
 - Code: `herdr/mods/` (every mod above), `herdr/mods/am-sidebar/attach.js`, `workers.js`,
   `herdr/mods/am-automations/scheduler.js`, `herdr/scheduler/`, `herdr-layout/`;
   `apps/bots-dsh/src/client/` (`sidebar.js`, `work-code-switch.js`, `model-menu.js`,
