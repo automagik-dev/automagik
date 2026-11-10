@@ -129,6 +129,23 @@ export function useDesktopUpdate() {
   return { bridge, state }
 }
 
+/**
+ * What this copy of the app is, once it has said so (`omniDesktop.updates.versions`, apps/desktop
+ * src/frame.js versionsAnswer): { app, dsh, plugins: [{ name, version }], updates }. Null
+ * outside the app, and in an app that does not say.
+ */
+export function useDesktopVersions() {
+  const bridge = globalThis.omniDesktop?.updates
+  const [versions, setVersions] = useState(null)
+  useEffect(() => {
+    if (typeof bridge?.versions !== 'function') return undefined
+    let live = true
+    bridge.versions().then((next) => { if (live && next && typeof next === 'object') setVersions(next) }, () => {})
+    return () => { live = false }
+  }, [bridge])
+  return versions
+}
+
 function Pill({ pill, busy, percent, onClick }) {
   return h('button', {
     type: 'button',
