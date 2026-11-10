@@ -29,7 +29,7 @@ import { PANE_ENV_PATH, agentOnMachine, interpreterPath, paneEnvOf } from "../ag
 import { briefingFilePath, installHook, launchBriefingText, screenTail, stableBriefingPath, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
 import { AGENTS, AGY_MODE_DEFAULT, AGY_MODES, AUTO_MODE, AUTO_MODE_NONE, agentKeyOfArgv, agyGuarded, agyModeArgs, agyModeOf, agyModeProblem, agyModeWarning, agyPermissionPlan, agyRuleProblem, agySandbox, agySettingsArgs, agySettingsDir, agySettingsPlan, autoModeArgs, choosesSession, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, launchRun, modelArgs, modelRefusal, ownPromptIn, ownsSession, resolveAgent, resumeAfterTurn, resumesById,
-  sessionIdArgs, shownModel, withAgySettings, withBriefing, withOverrides } from "../models.js";
+  promptByMessage, sessionIdArgs, shownModel, withAgySettings, withBriefing, withOverrides } from "../models.js";
 import { AG_MODELS_TIMEOUT_MS, agModelsSpawnResult, refreshAgModelsSync } from "../modelCache.js";
 import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, WORKTREES_EXCLUDE,
   GUARD_DIR, KILL_GUARD_DIR, KILL_GUARD_NAME, SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, guardPathWith,
@@ -5743,6 +5743,30 @@ async function cmdWorkerKill(opts, panes) {
   return opts.json ? { terminal: address, ended: true, branch: target.labels?.branch ?? null } : `${address} ended (${bot.name}'s worker${target.labels?.branch ? ` on ${target.labels.branch}` : ""}).`;
 }
 
+/** How long a worker that takes its task as a message may take to say it is ready, in seconds (hc wait's check-in). */
+const FIRST_TASK_WAIT_S = 30;
+/**
+ * Sends `task` as the first message of the worker pane `address`, for an agent that takes no
+ * first prompt on its command line (models.js promptByMessage: kimi, #1032). hc's own order for
+ * a plain launch: wait until the agent is ready, then send (a send to a booting agent can be
+ * dropped). The wait ends when the agent first reports idle; one that reports no status is
+ * given FIRST_TASK_WAIT_S, and the send follows either way. hc refuses the send to a pane that
+ * waits for an answer (a sign-in, a trust question) or has ended. `run`: hc or hcReal, the one
+ * that started the pane. Never throws: null, or the warning when the task did not go in (the
+ * pane is left as it is, to be read and sent to by hand).
+ */
+async function sendFirstTask(address, task, run) {
+  let said;
+  try {
+    await run(["wait", address, "--timeout", String(FIRST_TASK_WAIT_S), "--json"], { timeout: (FIRST_TASK_WAIT_S + 10) * 1000 });
+    const r = await run(["send", address, task]);
+    if (r.code === 0) return null;
+    said = hcSaid((r.stderr || r.stdout).trim()).split("\n")[0] || `exit ${r.code}`;
+  } catch (e) { said = e?.message ?? String(e); }
+  return `${address} started without its task (hc send: ${said}): this agent takes its task as its first message, and it was not sent. `
+    + `Read the pane (hc read ${address}), answer what it asks, then send the task: hc send ${address} "<task>".`;
+}
+
 async function cmdWorker(opts, rest) {
   // `worker kill <pane>`: a task call always names --branch or --worktree, so the two never mix.
   if (rest[0] === "kill" && opts.branch === undefined && opts.worktree === undefined) return cmdWorkerKill(opts, rest.slice(1));
@@ -5959,7 +5983,7 @@ async function cmdWorker(opts, rest) {
     let address = null;
     try { address = JSON.parse(r.stdout).address ?? null; } catch { address = null; }
     if (!address) throw new CliError(`hc run gave no terminal address: ${r.stdout.trim()}`);
-    return { address, name };
+    return { address, name, proxied };
   }, { wait: Math.max(0, deadline - Date.now()), what: `the worker lock on ${place.worktree}` });
   const started = await (taskName ? withLockAsync(taskLock(lockDir, taskName), inWorktree,
     { wait: WORKER_LOCK_WAIT, what: `the task name ${taskName}` }) : inWorktree())
@@ -5972,6 +5996,12 @@ async function cmdWorker(opts, rest) {
     template: plan.template, role, swap, override, overrideRequested, core: await rowCore(), createdMs, squad: squadOf(project.file, bot.id),
     session }));
   if (unlogged) warnings.push(unlogged);
+  // An agent that takes no first prompt on its command line (kimi, #1032) started bare: its task
+  // goes in as its first message, through the hc that started it, outside the worktree's lock.
+  if (!plan.template && promptByMessage(plan.agent)) {
+    const why = await sendFirstTask(terminal, task, started.proxied ? hcReal : hc);
+    if (why) warnings.push(why);
+  }
   // Herdr shows a labelled worker at once, so the sidebar's tab setup (workerTab.js) never
   // runs for it: its tab is named and moved after the bot's tab here, as a click would.
   if (space && window && TAB_WAIT_MS > 0) {

@@ -12,7 +12,7 @@ import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 
 import { applyBotEdit, checkBots, parseBots, swapProblem } from "../mods/am-sidebar/model.js";
-import { AGY_FIXED_DENY, AGY_SHELL_READ, agySettingsDir, agySettingsFile, effortArgs, promptArgs } from "../mods/am-sidebar/models.js";
+import { AGENTS, AGY_FIXED_DENY, AGY_SHELL_READ, agySettingsDir, agySettingsFile, effortArgs, promptArgs } from "../mods/am-sidebar/models.js";
 import { ENV, GUARD_DIR, WORKER_OF_LABEL, stableGuardDir, stableHelper, stableRunner, baseCandidates, hcProxyEnabled, branchNamesTask, branchSlug, parseWorktrees, readLedger, reapCandidates, runsTemplate, workLeft, sessionChange, startRow, swapArm, swapByte, templateAgent,
   KILL_GUARD_DIR, workerArgs, workerBranch, workerPlan, workerRole, workerTaskId, writesWorktree } from "../mods/am-sidebar/workers.js";
 import { approveProject, recordFileOf } from "../mods/am-sidebar/approved.js";
@@ -586,6 +586,80 @@ test("worker Antigravity: --mode auto by default, the chosen worker.agyMode when
   assert.match(r3.err, /Dev's workers: Antigravity mode "yolo" isn't one of accept-edits, auto, plan\./);
   assert.match(r3.err, /--worker-agy-mode <accept-edits\|auto\|plan>/);
   assert.equal(s3.runs().length, 0, "nothing started");
+});
+
+test("worker #1032: a Kimi worker starts bare and gets its task as its first message, after hc says it is ready", (t) => {
+  const TASK = "You are a read-only reviewer of the login form";
+  const kimi = team();
+  kimi.bots[2].worker = { agent: "kimi" };
+  const s = scene(t, { file: kimi });
+  exe(join(s.root, "bin", "kimi"), "#!/bin/sh\nexit 0\n");
+  const r = s.cli(["worker", TASK, "--branch", "feat/kimi", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const out = r.json();
+  // kimi 2.5.0 reads a bare word as a command name and exits 1: its argv is the program alone.
+  assert.deepEqual(after(s.runs()[0]), ["kimi"]);
+  assert.equal(s.runs()[0].includes(TASK), false, "the task is no word of hc run");
+  assert.equal(s.runs()[0].includes("-p"), false, "never kimi's one-shot print mode");
+  assert.deepEqual(out.argv.slice(-1), ["kimi"]);
+  // The task goes in once, as a message to the new pane; hc wait comes first (a send to a
+  // booting agent can be dropped), both after hc run.
+  assert.deepEqual(s.hcState().sent, [{ to: out.terminal, text: TASK }]);
+  const order = s.calls().filter((c) => ["run", "wait", "send"].includes(c[0])).map((c) => c[0]);
+  assert.deepEqual(order, ["run", "wait", "send"]);
+  assert.deepEqual(s.calls().find((c) => c[0] === "wait").slice(0, 2), ["wait", out.terminal]);
+  assert.deepEqual(s.calls().find((c) => c[0] === "send"), ["send", out.terminal, TASK]);
+  assert.deepEqual(out.warnings, [], r.err);
+
+  // A send hc refuses (the pane waits for a sign-in or a trust answer, or has ended): the worker
+  // is kept and the call succeeds, with one plain line naming the pane and what to do.
+  const s2 = scene(t, { file: kimi });
+  exe(join(s2.root, "bin", "kimi"), "#!/bin/sh\nexit 0\n");
+  const st = s2.hcState();
+  writeFileSync(join(s2.root, "hc.json"), JSON.stringify({ ...st, failSend: ["t100"] }));
+  const r2 = s2.cli(["worker", TASK, "--branch", "feat/kimi", "--json"]);
+  assert.equal(r2.code, 0, r2.err);
+  assert.equal(r2.json().terminal, "t100");
+  assert.equal(s2.hcState().sent, undefined, "nothing went in");
+  assert.equal(r2.json().warnings.length, 1, JSON.stringify(r2.json().warnings));
+  assert.match(r2.json().warnings[0], /^t100 started without its task \(hc send: t100 is blocked\): .*hc read t100.*hc send t100 "<task>"\.$/);
+  assert.match(r2.err, /t100 started without its task/, "on stderr too");
+  assert.equal(s2.ledger().filter((row) => row.terminal === "t100").length, 1, "its start row is written all the same");
+});
+
+test("worker #1032: every other agent's task stays a word of hc run, and no message is sent", (t) => {
+  for (const [agent, program, words] of [["codex", "codex", ["fix the login form"]], ["claude", "claude", ["fix the login form"]],
+    ["antigravity", "agy", ["-i", "fix the login form"]]]) {
+    const file = team();
+    file.bots[2].worker = { agent };
+    const s = scene(t, { file });
+    const r = s.cli(["worker", "fix the login form", "--branch", "feat/other", "--json"]);
+    assert.equal(r.code, 0, `${agent}: ${r.err}`);
+    const argv = freshClaude(after(s.runs()[0]));
+    assert.equal(argv[0], program, agent);
+    assert.deepEqual(argv.slice(-words.length), words, agent);
+    assert.equal(s.calls().some((c) => c[0] === "send" || c[0] === "wait"), false, `${agent}: no first message, no wait`);
+    assert.equal(s.hcState().sent, undefined, agent);
+  }
+});
+
+test("workerArgs #1032: kimi's hc run ends at its program, with no task word; the same call for another agent ends in the task", () => {
+  const base = { botId: ID.dev, branch: "feat/a", name: "feat-a", cwd: "/p/wt", parent: "t1", task: "fix the build", path: "/x/bin" };
+  const head = ["run", "--bg", "--json", "--name", "feat-a", "--cwd", "/p/wt", "--label", `worker.of=${ID.dev}`, "--label", "branch=feat/a",
+    "--parent", "t1", "--", "/usr/bin/env", `PATH=${KILL_GUARD_DIR}:/x/bin`];
+  const kimi = workerPlan({ name: "K", agent: "claude", worker: { agent: "kimi" } });
+  assert.deepEqual(kimi.argv, ["kimi"]);
+  assert.deepEqual(workerArgs({ ...base, agent: kimi.agent, argv: kimi.argv }), [...head, "kimi"]);
+  assert.equal(workerArgs({ ...base, agent: kimi.agent, argv: kimi.argv }).includes("fix the build"), false);
+  // Its own options stay where they were, and none of them is followed by the task.
+  assert.deepEqual(runArgv(workerArgs({ ...base, agent: "kimi", argv: ["kimi", "--auto"] })).slice(2), ["kimi", "--auto"]);
+  // Unchanged: every other agent Herdr knows ends in its task (agy behind -i, dsh-tui after --).
+  const own = { antigravity: ["-i", "fix the build"], "dsh-tui": ["--", "fix the build"] };
+  for (const key of Object.keys(AGENTS).filter((k) => k !== "kimi")) {
+    const words = own[key] ?? ["fix the build"];
+    assert.deepEqual(runArgv(workerArgs({ ...base, agent: key, argv: ["prog"] })).slice(-words.length - 1), ["prog", ...words], key);
+  }
+  assert.deepEqual(runArgv(workerArgs({ ...base, argv: ["omp"] })), ["/usr/bin/env", "PATH=/x/bin", "omp", "fix the build"], "no agent named");
 });
 
 test("worker #823: an Antigravity worker writes its 0600 permission file (its worktree, the roster's rules), a review worker a read-only one", (t) => {
@@ -2282,8 +2356,8 @@ test("worker #567 F4: a worker call's sweep skips a kept worktree whose reason i
 });
 
 // Refs #631: the real PATH guard plus a fake hc that forwards only run to the fixture proxy.
-async function proxyWorkerCli(t) {
-  const s = scene(t);
+async function proxyWorkerCli(t, { file } = {}) {
+  const s = scene(t, file ? { file } : {});
   const shortDir = shortSocketDir(t, "hw-");
   const runtime = join(shortDir, "r"), paneTmp = join(s.root, "pane-tmp");
   const stableRoot = join(s.env.XDG_DATA_HOME, "automagik-herdr", "dsh-sandbox");
@@ -2373,6 +2447,33 @@ async function runProxiedWorkerUnapprovedRefusal(t) {
 
 test("proxied worker CLI skips the guard only for the actual proxy transport", async (t) => {
   await runProxiedWorkerSuccess(t);
+});
+
+test("proxied worker CLI #1032: an approved Kimi worker starts bare through the proxy, and its task is sent past the pane's guard", async (t) => {
+  const TASK = "review the login form";
+  const file = team();
+  file.bots[2].worker = { agent: "kimi" };
+  const { s, env, fake, proxy, closeAll } = await proxyWorkerCli(t, { file });
+  try {
+    exe(join(s.root, "bin", "kimi"), "#!/bin/sh\nexit 0\n");
+    // The fixture core names the new pane t200; the file-backed hc knows it as a plain live
+    // pane with no labels, which the pane's guard would refuse a send to.
+    const state = s.hcState();
+    state.terminals.push({ address: "t200", name: "t200", cwd: s.project, state: "live", parent: "t1", labels: {} });
+    writeFileSync(join(s.root, "hc.json"), JSON.stringify(state));
+    const r = await s.cliAsync(["worker", TASK, "--branch", "feat/proxied-kimi", "--json"], { env: { ...env, HC_SOCKET: proxy.socket } });
+    assert.equal(r.code, 0, r.err);
+    const out = JSON.parse(r.out);
+    assert.equal(out.terminal, "t200");
+    const argv = fake.calls("terminal.run")[0].params.argv;
+    assert.equal(argv.at(-1), "kimi", `the proxy approved an argv with no task word: ${JSON.stringify(argv)}`);
+    assert.equal(argv.includes(TASK), false);
+    assert.deepEqual(s.hcState().sent, [{ to: "t200", text: TASK }], r.err);
+    assert.deepEqual(s.calls().filter((c) => ["wait", "send"].includes(c[0])).map((c) => c.slice(0, 2)), [["wait", "t200"], ["send", "t200"]]);
+    assert.deepEqual(out.warnings, [], r.err);
+  } finally {
+    await closeAll();
+  }
 });
 
 test("proxied worker CLI gets an unapproved agent refusal from the proxy", async (t) => {

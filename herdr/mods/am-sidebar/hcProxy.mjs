@@ -34,7 +34,7 @@ import { pathToFileURL } from "node:url";
 import { approvedSettingsDir, readApprovedRecord, sha256Of } from "./approved.js";
 import { attachPath, foldAttach, modeProblem, readAttach } from "./attach.js";
 import { parseBots } from "./model.js";
-import { AGY_MODE_DEFAULT, agySettingsArgs, agySettingsPlan, choosesSession, sessionIdArgs } from "./models.js";
+import { AGY_MODE_DEFAULT, agySettingsArgs, agySettingsPlan, choosesSession, promptByMessage, sessionIdArgs } from "./models.js";
 import { commandArgv, sessionId } from "./restart.js";
 import { approvedDataRootProblem, executionPathProblem, shimPathOf } from "./dshTui.mjs";
 import { sharedSendAllowed, teamOf } from "./hcGuard.mjs";
@@ -264,8 +264,12 @@ function approvedWorkerProblem(p, snapshot, bot, templates) {
       }
     }
   }
-  const task = Array.isArray(p.argv) ? p.argv.at(-1) : null;
-  if (typeof task !== "string" || /^\s*-/.test(task) || task.includes("\0")) {
+  // An agent that takes its task as its first message (models.js promptByMessage: kimi, #1032)
+  // starts with no task word: its argv is the approved command alone, and may end in one of its
+  // options. Nothing of the request is read as a task then; the exact match below still holds.
+  const taskByMessage = !plan.template && promptByMessage(plan.agent);
+  const task = taskByMessage ? "" : Array.isArray(p.argv) ? p.argv.at(-1) : null;
+  if (!taskByMessage && (typeof task !== "string" || /^\s*-/.test(task) || task.includes("\0"))) {
     return "approved worker task must be one text word that is not an option";
   }
   const labels = p.labels;

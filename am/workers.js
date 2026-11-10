@@ -364,7 +364,8 @@ export function workerKillRefusal({ target, botId, self = null, bound = false })
  * `hc run` arguments for a worker: in the background, a child of the bot's pane, in the
  * task worktree, with the usage labels and no `bot` label (a worker is never a bot, so the
  * sidebar folds it under its bot as a helper). The task text is the agent's last argument
- * (behind `-i` for agy: models.js promptArgs, by `agent`), after `--`, never part of a shell string. An agent runs as `/usr/bin/env PATH=<path> <argv>`
+ * (behind `-i` for agy: models.js promptArgs, by `agent`; none at all for kimi, whose task the
+ * CLI sends as its first message, #1032), after `--`, never part of a shell string. An agent runs as `/usr/bin/env PATH=<path> <argv>`
  * (env by its full path, so nothing hangs on core's PATH), so it gets the calling pane's PATH,
  * not herdr-core's (a bun script like omp needs ~/.bun/bin). A
  * `template` runs in hc's documented template form, `<template> <task>` after the options,
