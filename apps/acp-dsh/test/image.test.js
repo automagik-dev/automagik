@@ -2,14 +2,16 @@
 // (dev/fake-image-agent.mjs) that reports Codex's image tool the way the real adapter does. No
 // real Codex runs, nothing reaches a network, and no Codex home or config is read or written.
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { apply } from '../index.js'
-import { drawImage, FAILED, IMAGE_CONFIG, IMAGE_FEATURES_OFF, IMAGE_TITLE, imageConfig, imageOf, imagePrompt, isPng, mcpServerNames, REFUSED, SIGNED_OUT, STOPPED, TIMED_OUT, UNAVAILABLE, USAGE_LIMIT } from '../src/host/image.js'
+import { checkFeatures, checkOffered, configArgs, drawImage, FAILED, IMAGE_CHECKS_TIMEOUT_MS, IMAGE_CONFIG, IMAGE_FEATURES_ALSO_OFF, IMAGE_FEATURES_OFF, IMAGE_NESTED_ALLOWED, IMAGE_TITLE, IMAGE_TOOLS_ALLOWED, imageConfig, imageOf, imageOverrides, imagePrompt, imageSetup, imageSupport, isPng, mcpServerNames, nestedTools, readFeatures, readOffered, REFUSED, SIGNED_OUT, STOPPED, TIMED_OUT, toToml, UNAVAILABLE, USAGE_LIMIT } from '../src/host/image.js'
 
 const FAKE = join(import.meta.dirname, '..', 'dev', 'fake-image-agent.mjs')
+// The also-off features the fake Codex lists and has not removed (dev/fake-image-agent.mjs).
+const EXTRAS = ['unified_exec', 'code_mode', 'multi_agent', 'multi_agent_v2', 'apps', 'plugins', 'browser_use', 'sleep_tool']
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
 
 function setup(mode, env = {}) {
@@ -53,13 +55,24 @@ test('one image: an empty read-only scratch session, the feature on for this run
   assert.deepEqual(made, { base64: PNG, mimeType: 'image/png' })
   const trace = run.trace()
   const start = trace.find(entry => entry.event === 'start')
-  assert.equal(start.codexConfig, IMAGE_CONFIG)
+  assert.equal(start.codexConfig, imageConfig([], EXTRAS, [], run.scratches[0]))
   const config = JSON.parse(start.codexConfig)
+  assert.deepEqual(config.projects, { [run.scratches[0]]: { trust_level: 'trusted' } }, 'the scratch folder is trusted in the checks as codex-acp trusts it in the session')
   assert.equal(config.features.image_generation, true)
-  for (const feature of ['shell_tool', 'unified_exec', 'js_repl', 'code_mode', 'apply_patch_freeform', 'view_image']) assert.equal(config.features[feature], false, `${feature} is off`)
+  for (const feature of ['shell_tool', 'view_image', ...EXTRAS]) assert.equal(config.features[feature], false, `${feature} is off`)
+  for (const feature of ['js_repl', 'apply_patch_freeform', 'remote_plugin']) assert.equal(feature in config.features, false, `${feature} (removed, or not listed by this Codex) is never sent`)
   assert.equal(config.web_search, 'disabled')
   assert.deepEqual(config.mcp_servers, {})
-  assert.deepEqual(trace.find(entry => entry.event === 'cli').args, ['mcp', 'list', '--json'], 'the person\'s MCP servers are listed first')
+  assert.deepEqual(config.skills, { bundled: { enabled: false }, config: [] })
+  // The checks come first, each through the `cli` passthrough and in the folder the session
+  // then gets; the tools are read under the very config the session then gets.
+  const clis = trace.filter(entry => entry.event === 'cli')
+  assert.deepEqual(clis.map(entry => entry.cwd), Array(3).fill(run.scratches[0].replace(run.home, realpathSync(run.home))))
+  assert.deepEqual(clis[0].args, ['mcp', 'list', '--json', '-c', `projects={ '${run.scratches[0]}' = { trust_level = 'trusted' } }`], 'the person\'s MCP servers are listed first')
+  assert.deepEqual(clis[1].args, ['features', 'list', '-c', 'features={ image_generation = true, shell_tool = false, view_image = false }'])
+  assert.deepEqual(clis[2].args, ['debug', 'prompt-input', ...configArgs(config)])
+  assert.equal(clis.length, 3)
+  assert.ok(trace.indexOf(clis[2]) < trace.indexOf(start), 'the checks end before the session starts')
   assert.equal(start.codexHome, process.env.CODEX_HOME ?? null, 'CODEX_HOME is never set by the run')
   assert.equal(start.codexPath, '/fake/codex')
   const session = trace.find(entry => entry.event === 'new-session')
@@ -75,8 +88,280 @@ test('the config turns command execution off, not only refuses it afterwards', (
   const config = JSON.parse(imageConfig())
   assert.deepEqual(Object.keys(config.features).filter(feature => config.features[feature] === true), ['image_generation'])
   for (const feature of IMAGE_FEATURES_OFF) assert.equal(config.features[feature], false)
-  assert.ok(IMAGE_FEATURES_OFF.includes('shell_tool') && IMAGE_FEATURES_OFF.includes('unified_exec'))
+  assert.ok(IMAGE_FEATURES_OFF.includes('shell_tool') && IMAGE_FEATURES_OFF.includes('view_image'))
   assert.equal(config.web_search, 'disabled')
+  assert.equal(imageConfig(), IMAGE_CONFIG)
+  assert.equal(IMAGE_FEATURES_ALSO_OFF.some(name => IMAGE_FEATURES_OFF.includes(name)), false)
+})
+
+test('the session config and the checks\' -c arguments are one object', () => {
+  const overrides = imageOverrides({ servers: ['github', 'docs.search'], extras: ['apps'], skills: ['my-notes', 'visualize:visualize'] })
+  assert.equal(imageConfig(['github', 'docs.search'], ['apps'], ['my-notes', 'visualize:visualize']), JSON.stringify(overrides))
+  assert.deepEqual(configArgs(overrides), [
+    '-c', 'features={ image_generation = true, shell_tool = false, view_image = false, apps = false }',
+    '-c', 'web_search=\'disabled\'',
+    '-c', 'mcp_servers={ github = { enabled = false }, \'docs.search\' = { enabled = false } }',
+    '-c', 'skills={ bundled = { enabled = false }, config = [{ name = \'my-notes\', enabled = false }, { name = \'visualize:visualize\', enabled = false }] }',
+  ])
+  assert.deepEqual(configArgs(imageOverrides({ project: 'C:\\Users\\a b\\scratch' })).at(-1), 'projects={ \'C:\\Users\\a b\\scratch\' = { trust_level = \'trusted\' } }')
+  assert.equal('projects' in imageOverrides(), false)
+  // Every top-level key of the config is an argument, so nothing reaches the session unchecked.
+  assert.deepEqual(configArgs(overrides).filter(arg => arg !== '-c').map(arg => arg.slice(0, arg.indexOf('='))), Object.keys(JSON.parse(JSON.stringify(overrides))))
+  assert.equal(toToml({ a: 'it\'s', b: [1, true], c: {} }), '{ a = "it\'s", b = [1, true], c = {} }')
+  assert.throws(() => toToml({ a: null }))
+})
+
+test('feature rows: a stage with spaces, a name with a dot, a removed feature that reads true', () => {
+  const rows = readFeatures('guardianv2.thread_context                removed            false\ncode_mode   under development  false\r\ncollaboration_modes  removed  true\n\nshell_tool stable false\nview_image stable false\nimage_generation stable true\napps stable true\njs_repl removed false\n')
+  assert.deepEqual(rows.get('guardianv2.thread_context'), { stage: 'removed', on: false })
+  assert.deepEqual(rows.get('code_mode'), { stage: 'under development', on: false })
+  assert.deepEqual(rows.get('collaboration_modes'), { stage: 'removed', on: true })
+  // The also-off names sent: listed and not removed. A removed switch protects nothing.
+  assert.deepEqual(checkFeatures(rows), ['code_mode', 'apps'])
+  assert.throws(() => readFeatures('Usage: codex features <COMMAND>\n'), error => error.kind === 'unsupported')
+  assert.throws(() => readFeatures('\n'), error => error.kind === 'unsupported')
+  const without = (name, row) => new Map([...rows].filter(([key]) => key !== name).concat(row ? [[name, row]] : []))
+  assert.throws(() => checkFeatures(without('view_image')), /does not know the feature view_image/)
+  assert.throws(() => checkFeatures(without('shell_tool', { stage: 'stable', on: true })), /did not turn the feature shell_tool off/)
+  assert.throws(() => checkFeatures(without('shell_tool', { stage: 'removed', on: false })), /does not know the feature shell_tool/, 'a removed required feature is not protection')
+  assert.throws(() => checkFeatures(without('image_generation')), /image_generation on/)
+  assert.throws(() => checkFeatures(without('image_generation', { stage: 'stable', on: false })), /image_generation on/)
+})
+
+test('offered tools: only the fixed list and the image tool pass; anything else, or no tool block, does not', () => {
+  const fn = name => ({ type: 'function', name, description: '' })
+  const input = ({ top = [], spaces = {}, nested = ['apply_patch'], more = [] } = {}) => JSON.stringify([
+    { type: 'additional_tools', tools: [{ type: 'namespace', name: 'functions', tools: [{ type: 'custom', name: 'exec', description: nested.map(name => `declare const tools: { ${name}(args: {}): Promise<unknown>; };`).join('\n') }, fn('wait')] }, ...Object.entries(spaces).map(([name, tools]) => ({ type: 'namespace', name, tools: tools.map(fn) })), ...top] },
+    { type: 'message', role: 'developer', content: [{ type: 'input_text', text: '<skills_instructions>\n### Available skills\n- my-notes: Read notes. (file: r0/a/SKILL.md)\n- visualize:visualize: Draw: charts. (file: r1/b/SKILL.md)\n- bad name here\n</skills_instructions>' }] },
+    ...more,
+  ])
+  const fine = readOffered(input({ spaces: { image_gen: ['imagegen'], clock: ['sleep'], collaboration: ['spawn_agent'] }, top: [{ type: 'image_generation' }], nested: IMAGE_NESTED_ALLOWED.concat('image_gen__imagegen') }))
+  assert.deepEqual(fine.tools, ['functions.exec', 'functions.wait', 'image_gen.imagegen', 'clock.sleep', 'collaboration.spawn_agent', 'type:image_generation'])
+  assert.deepEqual(fine.skills, ['my-notes', 'visualize:visualize'])
+  checkOffered(fine)
+  checkOffered({ tools: [...IMAGE_TOOLS_ALLOWED], nested: [...IMAGE_NESTED_ALLOWED] })
+  for (const [label, text] of [
+    ['a command tool inside exec', input({ nested: ['apply_patch', 'exec_command'] })],
+    ['command input inside exec', input({ nested: ['write_stdin'] })],
+    ['image viewing inside exec', input({ nested: ['view_image'] })],
+    ['an MCP tool inside exec', input({ nested: ['mcp__github__get_file'] })],
+    ['an MCP tool', input({ top: [fn('mcp__github__get_file')] })],
+    ['a namespaced MCP tool', input({ spaces: { mcp__github: ['get_file'] } })],
+    ['a tool this version does not know', input({ spaces: { functions2: ['read_file'] } })],
+    ['a new tool in a known namespace', input({ spaces: { collaboration: ['read_file'] } })],
+    ['a hosted tool that is not the image tool', input({ top: [{ type: 'web_search' }] })],
+  ]) {
+    assert.throws(() => checkOffered(readOffered(text)), error => error.kind === 'unsupported' && /does not allow/.test(error.message), label)
+  }
+  for (const [label, text] of [
+    ['no tool block', JSON.stringify([{ type: 'message', role: 'user', content: [] }])],
+    ['an item of an unknown kind', input({ more: [{ type: 'tool_search_output', tools: [fn('read_file')] }] })],
+    ['a tool with no name in a namespace', JSON.stringify([{ type: 'additional_tools', tools: [{ type: 'namespace', name: 'x', tools: [{ type: 'function' }] }] }])],
+    ['a nested declaration it cannot read', input({ top: [{ type: 'function', name: 'wait2', description: 'declare const tools: Record<string, unknown>' }] })],
+    ['text that is not JSON', 'Error: unrecognized subcommand'],
+    ['an answer that is no list', '{}'],
+    ['an exec that names no tool it reaches', input({ nested: [] })],
+    ['a tool with a field this code does not know', input({ top: [{ ...fn('wait'), nested_tools: [fn('exec_command')] }] })],
+    ['a tool of a kind this code does not know', input({ top: [{ type: 'local_shell', name: 'wait' }] })],
+    ['a function that holds tools', input({ top: [{ ...fn('wait'), tools: [fn('exec_command')] }] })],
+    ['a namespace inside a namespace', JSON.stringify([{ type: 'additional_tools', tools: [{ type: 'namespace', name: 'a', tools: [{ type: 'namespace', name: 'b', tools: [] }] }] }])],
+  ]) {
+    assert.throws(() => readOffered(text), error => error.kind === 'unsupported', label)
+  }
+})
+
+test('nested tools: one declaration per tool in the one form Codex writes; any other form is refused', () => {
+  const one = name => `### \`${name}\`\nWhat it does.\n\nexec tool declaration:\n\`\`\`ts\ndeclare const tools: { ${name}(args: {\n  // It's a comment with a { brace and a "quote.\n  path?: string; kind: "a" | 'b';\n  each?: Array<{ at: number }>;\n}): Promise<{\n  output: string;\n}>; };\n\`\`\``
+  assert.deepEqual(nestedTools(`Run JavaScript code, for example \`await tools.exec_command(...)\`.\n${one('apply_patch')}\n## clock\n${one('clock__curr_time')}`), ['apply_patch', 'clock__curr_time'])
+  assert.deepEqual(nestedTools('declare const tools: { apply_patch(input: string): Promise<string>; };'), ['apply_patch'])
+  assert.deepEqual(nestedTools('A tool with no nested tools.'), [])
+  assert.deepEqual(nestedTools(undefined), [])
+  for (const [label, text] of [
+    ['two tools in one block', 'declare const tools: { apply_patch(input: string): Promise<string>; exec_command(args: {}): Promise<string>; };'],
+    ['two tools in one block, the second under another argument name', 'declare const tools: { apply_patch(input: string): Promise<string>; exec_command(options: {}): Promise<string>; };'],
+    ['two tools in one block, split by a comma', 'declare const tools: { apply_patch(input: string): Promise<string>, exec_command: Run };'],
+    ['a namespace', `${one('apply_patch')}\ndeclare namespace tools { function exec_command(args: {}): Promise<string> }`],
+    ['an interface', `${one('apply_patch')}\ninterface Tools { exec_command(args: {}): Promise<string> }`],
+    ['another kind of declaration', `${one('apply_patch')}\ndeclare let tools: { exec_command: Run };`],
+    ['a declaration of another shape', 'declare const tools: Record<string, unknown>'],
+    ['a quoted name', 'declare const tools: { "exec_command"(args: {}): Promise<string>; };'],
+    ['a block that does not close', 'declare const tools: { apply_patch(input: string): Promise<string>;'],
+    ['an empty block', 'declare const tools: { apply_patch(input: string) }; declare const tools: { };'],
+    ['the same tool twice', `${one('apply_patch')}\n${one('apply_patch')}`],
+    ['a signature with no declaration', `${one('apply_patch')}\nAlso: exec_command(args: { cmd: string }) runs a command.`],
+    ['a heading with no declaration', `${one('apply_patch')}\n### \`exec_command\`\nRuns a command. Takes cmd.`],
+  ]) {
+    assert.throws(() => nestedTools(text), error => error.kind === 'unsupported' && /nested tool/.test(error.message), label)
+  }
+})
+
+// What stops a draw before Codex starts: the check, the trace of what did not happen, the text.
+async function refusedBeforeStart(t, env, message, label, options = {}) {
+  const run = setup('ok', env)
+  t.after(run.cleanup)
+  const logged = []
+  let caught
+  await assert.rejects(drawImage({ spawn: run.spawn, prompt: 'a fox', scratch: run.scratch, ...options, log: line => logged.push(line) }), (error) => {
+    caught = error.message
+    assert.equal(error.code, UNAVAILABLE, label)
+    assert.match(error.message, message, label)
+    return true
+  })
+  const trace = run.trace()
+  assert.equal(trace.some(entry => entry.event === 'start' || entry.event === 'new-session'), false, `${label}: no session is started`)
+  assert.equal(run.scratches.length, 1, label)
+  assert.equal(existsSync(run.scratches[0]), false, `${label}: the scratch folder of the checks is removed`)
+  return { trace, logged, message: caught }
+}
+
+test('a feature the run relies on that Codex does not list, or leaves on, stops the draw before Codex starts', async (t) => {
+  const unsupported = /could not turn off.*Update Automagik, or add an OpenAI key/
+  const renamed = await refusedBeforeStart(t, { FAKE_FEATURES: JSON.stringify({ drop: ['view_image'] }) }, unsupported, 'a renamed feature')
+  assert.match(renamed.logged[0], /unsupported.*view_image/, 'one log line names the feature')
+  assert.doesNotMatch(renamed.message, /view_image/, 'the refusal shown does not')
+  await refusedBeforeStart(t, { FAKE_FEATURES: JSON.stringify({ stuck: ['shell_tool'] }) }, unsupported, 'an override not taken')
+  await refusedBeforeStart(t, { FAKE_FEATURES: JSON.stringify({ set: { shell_tool: ['removed', false] } }) }, unsupported, 'a removed feature')
+  await refusedBeforeStart(t, { FAKE_FEATURES: JSON.stringify({ drop: ['image_generation'] }) }, unsupported, 'no image feature')
+  await refusedBeforeStart(t, { FAKE_FEATURES: JSON.stringify({ stuck: ['image_generation'], set: { image_generation: ['stable', false] } }) }, unsupported, 'the image feature off')
+  await refusedBeforeStart(t, { FAKE_FEATURES: 'fail' }, unsupported, 'a refused feature list')
+  await refusedBeforeStart(t, { FAKE_FEATURES: 'garbage' }, unsupported, 'an unreadable feature list')
+  const slow = await refusedBeforeStart(t, { FAKE_FEATURES: 'hang' }, /could not be checked.*Try again/, 'a feature list that never answers', { checkTimeoutMs: 1500 })
+  assert.match(slow.logged[0], /unreadable/)
+})
+
+test('a tool Codex still offers that is not on the list stops the draw, whatever the feature names say', async (t) => {
+  const unsupported = /could not turn off.*Update Automagik/
+  // Every feature name is known and off, and the tool is offered all the same.
+  const kept = await refusedBeforeStart(t, { FAKE_TOOLS: JSON.stringify({ nested: ['exec_command'] }) }, unsupported, 'a command tool the switches left on')
+  assert.match(kept.logged[0], /exec_command/)
+  await refusedBeforeStart(t, { FAKE_TOOLS: JSON.stringify({ nested: ['view_image'] }) }, unsupported, 'image viewing left on')
+  await refusedBeforeStart(t, { FAKE_TOOLS: JSON.stringify({ extra: ['mcp__github__get_file'] }) }, unsupported, 'an MCP tool')
+  await refusedBeforeStart(t, { FAKE_TOOLS: JSON.stringify({ extra: ['functions.read_file'] }) }, unsupported, 'a tool a later Codex adds')
+  await refusedBeforeStart(t, { FAKE_TOOLS: JSON.stringify({ hosted: ['web_search'] }) }, unsupported, 'a hosted tool')
+  await refusedBeforeStart(t, { FAKE_TOOLS: JSON.stringify({ missing: true }) }, unsupported, 'no tool block')
+  await refusedBeforeStart(t, { FAKE_TOOLS: JSON.stringify({ item: 'tool_search_output' }) }, unsupported, 'an unknown item')
+  await refusedBeforeStart(t, { FAKE_TOOLS: 'fail' }, unsupported, 'a Codex without the command')
+  await refusedBeforeStart(t, { FAKE_TOOLS: 'garbage' }, unsupported, 'an unreadable answer')
+  // The hosted image tool, with no name, is the one nameless tool allowed.
+  const hosted = setup('ok', { FAKE_TOOLS: JSON.stringify({ hosted: ['image_generation'] }) })
+  t.after(hosted.cleanup)
+  assert.equal((await drawImage({ spawn: hosted.spawn, prompt: 'a fox', scratch: hosted.scratch })).base64, PNG)
+})
+
+test('a Codex config that cannot be loaded says so', async (t) => {
+  const broken = await refusedBeforeStart(t, { FAKE_MCP_LIST: 'broken' }, /could not load its own configuration/, 'a broken config')
+  assert.match(broken.logged[0], /config/)
+})
+
+test('the person\'s own skills are turned off by name, and the tools read again under that config', async (t) => {
+  const run = setup('ok', { FAKE_TOOLS: JSON.stringify({ skills: ['my-notes', 'visualize:visualize'] }) })
+  t.after(run.cleanup)
+  await drawImage({ spawn: run.spawn, prompt: 'a fox', scratch: run.scratch })
+  const trace = run.trace()
+  const config = JSON.parse(trace.find(entry => entry.event === 'start').codexConfig)
+  assert.deepEqual(config.skills, { bundled: { enabled: false }, config: [{ name: 'my-notes', enabled: false }, { name: 'visualize:visualize', enabled: false }] })
+  const renders = trace.filter(entry => entry.event === 'cli' && entry.args[0] === 'debug')
+  assert.equal(renders.length, 2)
+  assert.deepEqual(renders[1].args, ['debug', 'prompt-input', ...configArgs(config)], 'the last render is the session\'s config')
+  // A skill that stays listed is not a tool: the draw goes on (a read it invites is refused).
+  const sticky = setup('ok', { FAKE_TOOLS: JSON.stringify({ skills: ['my-notes'], sticky: true }) })
+  t.after(sticky.cleanup)
+  assert.equal((await drawImage({ spawn: sticky.spawn, prompt: 'a fox', scratch: sticky.scratch })).base64, PNG)
+  assert.equal(sticky.trace().filter(entry => entry.event === 'cli' && entry.args[0] === 'debug').length, 2, 'two renders at most')
+})
+
+test('imageSetup runs every check outside a project and keeps names only', async () => {
+  const calls = []
+  const run = (file, args, options, done) => {
+    calls.push({ args: args.slice(args.indexOf('cli') + 1), cwd: options.cwd })
+    const [first] = calls.at(-1).args
+    if (first === 'mcp') return done(null, '[{"name":"github","env":{"KEY":"x"}}]', '')
+    if (first === 'features') return done(null, 'shell_tool stable false\nview_image stable false\nimage_generation stable true\napps stable true\n', '')
+    done(null, JSON.stringify([{ type: 'additional_tools', tools: [{ type: 'namespace', name: 'functions', tools: [{ type: 'custom', name: 'exec', description: 'declare const tools: { apply_patch(input: string): Promise<string>; };' }] }] }, { type: 'message', role: 'developer', content: [{ type: 'input_text', text: 'The person\'s global instructions.' }] }]), '')
+  }
+  const made = await imageSetup({ command: '/node', args: ['/adapter.js'], env: { CODEX_PATH: '/codex' } }, { run })
+  assert.deepEqual(made, { servers: ['github'], extras: ['apps'], skills: [], overrides: imageOverrides({ servers: ['github'], extras: ['apps'] }) })
+  assert.deepEqual(calls.map(call => call.args.slice(0, 2)), [['mcp', 'list'], ['features', 'list'], ['debug', 'prompt-input']])
+  assert.equal(new Set(calls.map(call => call.cwd)).size, 1)
+  assert.equal(calls[0].cwd, tmpdir())
+  // In the run's folder when there is one, trusted as the session will trust it.
+  calls.length = 0
+  const inside = await imageSetup({ command: '/node' }, { run, cwd: '/scratch/one' })
+  assert.deepEqual(calls.map(call => call.cwd), ['/scratch/one', '/scratch/one', '/scratch/one'])
+  assert.deepEqual(inside.overrides.projects, { '/scratch/one': { trust_level: 'trusted' } })
+  assert.equal(calls[2].args.at(-1), 'projects={ \'/scratch/one\' = { trust_level = \'trusted\' } }')
+  // An exit code is Codex's own no (an update is needed); a timeout or a spawn failure is not.
+  const failing = error => (file, args, options, done) => (args.includes('features') ? done(error, '', '') : run(file, args, options, done))
+  await assert.rejects(imageSetup({ command: '/node' }, { run: failing(Object.assign(new Error('exit'), { code: 2 })) }), error => error.kind === 'unsupported')
+  await assert.rejects(imageSetup({ command: '/node' }, { run: failing(Object.assign(new Error('timeout'), { killed: true, code: null })) }), error => error.kind === 'unreadable' && error.passing === true)
+  await assert.rejects(imageSetup({ command: '/node' }, { run: failing(Object.assign(new Error('spawn'), { code: 'ENOENT' })) }), error => error.kind === 'unreadable' && error.passing !== true)
+})
+
+test('the checks share one deadline, stop when the draw is stopped, and do not wait for a command that hangs', async () => {
+  assert.ok(IMAGE_CHECKS_TIMEOUT_MS < 60_000)
+  const answer = (args, done) => {
+    if (args.includes('mcp')) return done(null, '[]', '')
+    if (args.includes('features')) return done(null, 'shell_tool stable false\nview_image stable false\nimage_generation stable true\n', '')
+    done(null, JSON.stringify([{ type: 'additional_tools', tools: [] }]), '')
+  }
+  // A clock that passes the deadline after the first check: the second is never started.
+  let clock = 0
+  const calls = []
+  const timed = (file, args, options, done) => { calls.push(args); clock += 30_000; answer(args, done) }
+  await assert.rejects(imageSetup({ command: '/node' }, { run: timed, now: () => clock, deadlineMs: 20_000 }), error => error.kind === 'unreadable' && error.passing === true && /in time/.test(error.message))
+  assert.equal(calls.length, 1)
+  // A stop between two checks, and a stop while one is running (it is killed, not waited for).
+  const controller = new AbortController()
+  const stopping = (file, args, options, done) => { controller.abort(); answer(args, done) }
+  await assert.rejects(imageSetup({ command: '/node' }, { run: stopping, signal: controller.signal }), error => error.stopped === true)
+  const midway = new AbortController()
+  const killed = []
+  const hanging = () => { setTimeout(() => midway.abort(), 20); return { pid: undefined, kill: signal => killed.push(signal) } }
+  await assert.rejects(imageSetup({ command: '/node' }, { run: hanging, signal: midway.signal }), error => error.stopped === true && error.passing === true)
+  assert.deepEqual(killed, ['SIGKILL'])
+  // A command that never answers is killed at its own time, and the answer does not wait.
+  const late = []
+  const from = Date.now()
+  await assert.rejects(imageSetup({ command: '/node' }, { run: () => ({ kill: signal => late.push(signal) }), timeoutMs: 50 }), error => error.kind === 'unreadable' && error.passing === true)
+  assert.deepEqual(late, ['SIGKILL'])
+  assert.ok(Date.now() - from < 5000)
+})
+
+test('imageSupport remembers a yes or a no per Codex, with its reason, and never a check that ran out of time', async () => {
+  let answer = 'yes'
+  let runs = 0
+  let clock = 0
+  const logged = []
+  const setup = async () => {
+    runs += 1
+    if (answer === 'no') throw Object.assign(new Error('Codex offers a tool the image run does not allow (exec_command)'), { kind: 'unsupported' })
+    if (answer === 'slow') throw Object.assign(new Error('timeout'), { kind: 'unreadable', passing: true })
+    if (answer === 'broken') throw Object.assign(new Error('the MCP server list was not JSON'), { kind: 'unreadable' })
+    if (answer === 'config') throw Object.assign(new Error('Codex could not load its configuration'), { kind: 'config' })
+  }
+  const supported = imageSupport({ setup, ttlMs: 1000, now: () => clock, log: line => logged.push(line) })
+  const launch = { command: '/no/node', args: ['/no/adapter.js'], env: { CODEX_PATH: '/no/codex' } }
+  assert.deepEqual(await Promise.all([supported(launch), supported(launch)]), [{ ok: true }, { ok: true }])
+  assert.equal(runs, 1, 'one check for two askers')
+  answer = 'no'
+  assert.deepEqual(await supported(launch), { ok: true }, 'remembered')
+  assert.deepEqual(await supported({ ...launch, env: { CODEX_PATH: '/no/other-codex' } }), { ok: false, reason: 'unsupported' }, 'another Codex is asked')
+  assert.match(logged[0], /unsupported.*exec_command/)
+  clock = 2000
+  answer = 'slow'
+  assert.deepEqual(await supported(launch), { ok: undefined })
+  answer = 'yes'
+  assert.deepEqual(await supported(launch), { ok: true }, 'a check that ran out of time is not remembered')
+  assert.equal(runs, 4)
+  // A check that fails for another reason is a no as well, remembered for the same time.
+  for (const [how, reason] of [['broken', 'unreadable'], ['config', 'config']]) {
+    clock += 2000
+    answer = how
+    assert.deepEqual(await supported(launch), { ok: false, reason })
+    answer = 'yes'
+    assert.deepEqual(await supported(launch), { ok: false, reason }, 'remembered')
+  }
+  assert.equal(runs, 6)
 })
 
 test('the person\'s own MCP servers are each turned off by name, never left to an empty table', async (t) => {
@@ -86,6 +371,10 @@ test('the person\'s own MCP servers are each turned off by name, never left to a
   const start = run.trace().find(entry => entry.event === 'start')
   assert.deepEqual(JSON.parse(start.codexConfig).mcp_servers, { github: { enabled: false }, 'docs.search': { enabled: false } })
   assert.doesNotMatch(start.codexConfig, /gh-mcp|TOKEN|redacted/, 'nothing but the names is kept')
+  // The tools were read with those servers off: the last render is the session's own config.
+  const render = run.trace().filter(entry => entry.event === 'cli' && entry.args[0] === 'debug').at(-1)
+  assert.deepEqual(render.args, ['debug', 'prompt-input', ...configArgs(JSON.parse(start.codexConfig))])
+  assert.ok(render.args.some(arg => arg.startsWith('mcp_servers={ github = { enabled = false }')))
 })
 
 test('a server list that cannot be read stops the draw before Codex starts', async (t) => {
@@ -94,7 +383,7 @@ test('a server list that cannot be read stops the draw before Codex starts', asy
     t.after(run.cleanup)
     await assert.rejects(drawImage({ spawn: run.spawn, prompt: 'a fox', scratch: run.scratch }), error => error.code === UNAVAILABLE && /MCP servers could not be listed/.test(error.message), listed)
     assert.equal(run.trace().some(entry => entry.event === 'start'), false, `${listed}: no session is started`)
-    assert.deepEqual(run.scratches, [], `${listed}: no scratch folder is made`)
+    assert.equal(existsSync(run.scratches[0]), false, `${listed}: the scratch folder of the checks is removed`)
   }
 })
 
@@ -113,13 +402,18 @@ test('an image only in the raw output is taken from there', async (t) => {
   assert.equal((await drawImage({ spawn: run.spawn, prompt: 'a fox', scratch: run.scratch })).base64, PNG)
 })
 
-test('only the image call is allowed: any other permission is cancelled', async (t) => {
-  const run = setup('ask')
-  t.after(run.cleanup)
-  assert.equal((await drawImage({ spawn: run.spawn, prompt: 'a fox', scratch: run.scratch })).base64, PNG)
-  const answers = run.trace().filter(entry => entry.event === 'answer')
-  assert.deepEqual(answers.map(entry => [entry.call, entry.outcome.outcome]), [['shell', 'cancelled'], ['image', 'selected']])
-  assert.equal(answers[1].outcome.optionId, 'yes')
+test('every permission asked is cancelled, and one that is not about the image call refuses the draw', async (t) => {
+  for (const [mode, call] of [['ask', 'shell'], ['asktitle', 'titled']]) {
+    const run = setup(mode)
+    t.after(run.cleanup)
+    await assert.rejects(drawImage({ spawn: run.spawn, prompt: 'a fox', scratch: run.scratch }), error => error.code === REFUSED, mode)
+    assert.deepEqual(run.trace().filter(entry => entry.event === 'answer').map(entry => [entry.call, entry.outcome.outcome]), [[call, 'cancelled']], mode)
+  }
+  // Asked about the image call itself, the answer is no as well: nothing is ever allowed.
+  const image = setup('askimage')
+  t.after(image.cleanup)
+  await assert.rejects(drawImage({ spawn: image.spawn, prompt: 'a fox', scratch: image.scratch }), error => error.code !== REFUSED && error.code !== undefined)
+  assert.deepEqual(image.trace().filter(entry => entry.event === 'answer').map(entry => [entry.call, entry.outcome.outcome]), [['image', 'cancelled']])
 })
 
 test('a call that runs without asking (a read in read-only mode) ends the turn and refuses the draw', async (t) => {
@@ -134,6 +428,32 @@ test('a call that runs without asking (a read in read-only mode) ends the turn a
   assert.ok(trace.some(entry => entry.event === 'cancel'), 'the turn is cancelled')
   assert.ok(trace.some(entry => entry.event === 'close'), 'the session is closed')
   assert.equal(existsSync(run.scratches[0]), false, 'the scratch folder is removed')
+})
+
+test('a call reported after the image refuses the draw too: the image waits for the turn to end', async (t) => {
+  const run = setup('late')
+  t.after(run.cleanup)
+  await assert.rejects(drawImage({ spawn: run.spawn, prompt: 'a fox', scratch: run.scratch }), error => error.code === REFUSED)
+  const trace = run.trace()
+  assert.ok(trace.some(entry => entry.event === 'late-read'), 'the read came in a later write, after the image')
+  assert.ok(trace.some(entry => entry.event === 'close'), 'the session is closed')
+})
+
+test('a second image call refuses the draw; an image too large to keep fails it', async (t) => {
+  const twice = setup('twice')
+  t.after(twice.cleanup)
+  await assert.rejects(drawImage({ spawn: twice.spawn, prompt: 'a fox', scratch: twice.scratch }), error => error.code === REFUSED)
+  const big = setup('big')
+  t.after(big.cleanup)
+  await assert.rejects(drawImage({ spawn: big.spawn, prompt: 'a fox', scratch: big.scratch }), error => error.code === FAILED && /too large/.test(error.message))
+})
+
+test('an image whose turn never ends is not returned', async (t) => {
+  // The fake holds the turn open after the image (hang ends only on cancel).
+  const run = setup('ok', { FAKE_IMAGE_HOLD: '1' })
+  t.after(run.cleanup)
+  await assert.rejects(drawImage({ spawn: run.spawn, prompt: 'a fox', scratch: run.scratch, timeoutMs: 1500 }), error => error.code === TIMED_OUT)
+  assert.ok(run.trace().some(entry => entry.event === 'cancel'), 'the turn is cancelled')
 })
 
 test('a draw keeps the process alive on its own until it is cleaned up', async () => {
@@ -181,7 +501,7 @@ test('a run past its time is cancelled and refused; a stopped one says so', asyn
 })
 
 // The service: images only when Codex is on, found, its connector installed and signed in.
-function service({ signedIn = true, bins = true, codex = true } = {}) {
+function service({ signedIn = true, bins = true, codex = true, imageSetup: check } = {}) {
   const services = {}
   const ctx = {
     logger: { warn() {}, info() {} },
@@ -200,6 +520,7 @@ function service({ signedIn = true, bins = true, codex = true } = {}) {
     cliStore: undefined,
     find: name => (name === 'codex' ? '/fake/bin/codex' : undefined),
     signedIn: async (spec) => { probes.push(spec.key); return signedIn ?? undefined },
+    ...(check ? { imageSetup: check } : {}),
   })
   return { acp: services.acpAgents, probes }
 }
@@ -213,6 +534,27 @@ test('imageAccess: ready only for an installed, enabled, signed-in Codex; the si
   assert.deepEqual(await service({ signedIn: null }).acp.imageAccess(), { ready: false })
   assert.deepEqual(await service({ bins: false }).acp.imageAccess(), { ready: false })
   assert.deepEqual(await service({ codex: false }).acp.imageAccess(), { ready: false })
+})
+
+test('imageAccess: a Codex that does not take the lockdown is not ready, so the caller goes on to its next source', async () => {
+  let checks = 0
+  const refusing = service({ imageSetup: async () => { checks += 1; throw Object.assign(new Error('Codex does not know the feature view_image'), { kind: 'unsupported' }) } })
+  assert.deepEqual(await refusing.acp.imageAccess(), { ready: false, signedIn: true, reason: 'unsupported', unsupported: true })
+  await assert.rejects(refusing.acp.generateImage({ prompt: 'a fox' }), error => error.code === UNAVAILABLE && /could not turn off.*Update Automagik/.test(error.message))
+  assert.equal(checks, 1, 'asked once, then remembered')
+  // A check that ran out of time leaves Codex ready: the draw makes its own and says why.
+  const slow = service({ imageSetup: async () => { throw Object.assign(new Error('timeout'), { kind: 'unreadable', passing: true }) } })
+  assert.deepEqual(await slow.acp.imageAccess(), { ready: true, signedIn: true })
+  // A check that fails another way is not ready either, with its reason; a draw asked for
+  // all the same makes its own check, which answers for it.
+  for (const kind of ['config', 'unreadable']) {
+    const failing = service({ imageSetup: async () => { throw Object.assign(new Error('no'), { kind }) } })
+    assert.deepEqual(await failing.acp.imageAccess(), { ready: false, signedIn: true, reason: kind })
+  }
+  // A signed-out Codex is never asked.
+  const out = service({ signedIn: false, imageSetup: async () => { checks += 1 } })
+  assert.deepEqual(await out.acp.imageAccess(), { ready: false, signedIn: false })
+  assert.equal(checks, 1)
 })
 
 test('generateImage refuses a signed-out or missing Codex before it starts anything', async () => {
@@ -237,5 +579,7 @@ test('generateImage draws through the installed connector with the run\'s own co
   assert.equal(made.base64, PNG)
   const start = readFileSync(traceFile, 'utf8').trim().split('\n').map(line => JSON.parse(line)).find(entry => entry.event === 'start')
   assert.equal(start.codexPath, '/fake/bin/codex')
-  assert.equal(start.codexConfig, IMAGE_CONFIG)
+  const { projects, ...config } = JSON.parse(start.codexConfig)
+  assert.deepEqual(config, JSON.parse(imageConfig([], EXTRAS)))
+  assert.deepEqual(Object.values(projects), [{ trust_level: 'trusted' }])
 })

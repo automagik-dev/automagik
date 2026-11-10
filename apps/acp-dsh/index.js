@@ -22,7 +22,7 @@ import { Backchannel } from './src/host/backchannel.js'
 import { Catalog, cliStamp, DEFAULT_MODEL } from './src/host/catalog.js'
 import { CliStore, CLI_CHECK_EVERY_MS } from './src/host/clis.js'
 import { AdapterStore, CHECK_EVERY_MS } from './src/host/install.js'
-import { drawImage, imageRefusal, SIGNED_OUT, UNAVAILABLE } from './src/host/image.js'
+import { drawImage, imageRefusal, imageSupport, SIGNED_OUT, UNAVAILABLE, unsupported } from './src/host/image.js'
 import { CliLogins } from './src/host/login.js'
 import { CREDENTIAL_ENV, URL_ENV } from './src/host/names.js'
 import { enginesFor, pressureGuard } from './src/host/pressure.js'
@@ -99,11 +99,12 @@ export function nodeCommand() {
  * @param {any} ctx
  * @param {{ claude?: any, codex?: any, sideModel?: any, fakeAgent?: string, dshTools?: any }}
  *   [config]
- * @param {{ store?: any, cliStore?: any, find?: typeof findCommand, signedIn?: typeof signedInOf, catalogHome?: string, loginSpawn?: typeof spawn, loginTimers?: any }} [deps]
+ * @param {{ store?: any, cliStore?: any, find?: typeof findCommand, signedIn?: typeof signedInOf, catalogHome?: string, loginSpawn?: typeof spawn, loginTimers?: any, imageSetup?: (launch: any) => Promise<any> }} [deps]
  *   catalogHome: where each agent's models and efforts are kept (beside the adapters by default).
  *   loginSpawn, loginTimers: tests only, a fake CLI process and clock for sign-in attempts.
+ *   imageSetup: tests only, the image run's lockdown check (image.js imageSetup).
  */
-export function apply(ctx, config = {}, { store = new AdapterStore({ log: message => info(ctx, message) }), cliStore = !config.fakeAgent && (process.env.AUTOMAGIK_APP_BROWSER === '1' || process.env.AUTOMAGIK_PNPM) ? new CliStore({ log: message => info(ctx, message) }) : undefined, find = name => findCommand(name), signedIn = signedInOf, catalogHome = store.home ? join(dirname(store.home), 'catalog') : undefined, loginSpawn, loginTimers } = {}) {
+export function apply(ctx, config = {}, { store = new AdapterStore({ log: message => info(ctx, message) }), cliStore = !config.fakeAgent && (process.env.AUTOMAGIK_APP_BROWSER === '1' || process.env.AUTOMAGIK_PNPM) ? new CliStore({ log: message => info(ctx, message) }) : undefined, find = name => findCommand(name), signedIn = signedInOf, catalogHome = store.home ? join(dirname(store.home), 'catalog') : undefined, loginSpawn, loginTimers, imageSetup } = {}) {
   const agents = new Map()
   const log = message => info(ctx, message)
   if (config.fakeAgent) {
@@ -527,25 +528,40 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   })
 
   // Images on the person's ChatGPT plan, through the Codex CLI's own sign-in (image.js). Ready
-  // means: Codex is on and found, its connector installed, and its CLI says it is signed in. An
-  // unknown sign-in is asked once (`codex login status`, read-only); nothing else is spawned.
+  // means: Codex is on and found, its connector installed, its CLI says it is signed in, and
+  // this Codex takes the image run's lockdown. An unknown sign-in is asked once
+  // (`codex login status`, read-only); the lockdown is asked of Codex's own CLI (its features
+  // and the tools it would offer: no session, no model request) and remembered per Codex. A
+  // Codex that does not take it is not ready, so the caller goes on to its next image source.
   const IMAGE_AGENT = 'acp-codex'
+  const imageSupported = imageSupport({ ...(imageSetup ? { setup: imageSetup } : {}), log: line => warn(ctx, line) })
   const imageAccess = async () => {
     reconcile({ kick: false })
     const agent = agents.get(IMAGE_AGENT)
     if (agent === undefined || agent.installed?.() !== true) return { ready: false }
     if (signIns.get(IMAGE_AGENT) === undefined) await probe(IMAGE_AGENT).catch(() => {})
     const signedIn = signIns.get(IMAGE_AGENT)
-    return { ready: signedIn === true, ...(signedIn === undefined ? {} : { signedIn }) }
+    if (signedIn !== true) return { ready: false, ...(signedIn === undefined ? {} : { signedIn }) }
+    // A Codex whose check does not hold is not ready, and `reason` says which check: the caller
+    // goes on to its next image source. Only a check that ran out of time leaves Codex ready
+    // (the draw makes its own and says why).
+    let support
+    try {
+      support = await imageSupported(agent.spawn())
+    } catch {}
+    return support?.ok === false ? { ready: false, signedIn, reason: support.reason, ...(support.reason === 'unsupported' ? { unsupported: true } : {}) } : { ready: true, signedIn }
   }
   const generateImage = async ({ prompt, size, quality, background, signal, timeoutMs } = {}) => {
     const access = await imageAccess()
-    if (!access.ready) {
+    // A Codex config that does not load, or a check that keeps breaking, may have been put
+    // right since it was remembered: the draw's own check answers for those.
+    if (!access.ready && access.reason !== 'config' && access.reason !== 'unreadable') {
       if (access.signedIn === false) throw imageRefusal(SIGNED_OUT, 'Codex is not signed in. Sign in to Codex from a Bot\'s chat, or add an OpenAI key, then try again.')
+      if (access.unsupported === true) throw unsupported()
       throw imageRefusal(UNAVAILABLE, 'Codex cannot draw images here yet: it is off, not installed, or its sign-in could not be checked.')
     }
     try {
-      return await drawImage({ spawn: () => agents.get(IMAGE_AGENT).spawn(), prompt, size, quality, background, signal, ...(timeoutMs === undefined ? {} : { timeoutMs }), name: AGENTS[IMAGE_AGENT].defaultName })
+      return await drawImage({ spawn: () => agents.get(IMAGE_AGENT).spawn(), prompt, size, quality, background, signal, ...(timeoutMs === undefined ? {} : { timeoutMs }), name: AGENTS[IMAGE_AGENT].defaultName, log: line => warn(ctx, line) })
     } catch (error) {
       // A run refused as signed out says the CLI's sign-in ended: the next check asks again.
       if (error?.code === SIGNED_OUT) signIns.delete(IMAGE_AGENT)
@@ -570,7 +586,11 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     /** How many sign-in attempts are starting or waiting (the busy signal). */
     loginActive: () => logins.activeAttempts(),
     /**
-     * Whether Codex can draw an image now, on its own ChatGPT sign-in: { ready, signedIn? }.
+     * Whether Codex can draw an image now, on its own ChatGPT sign-in: { ready, signedIn?,
+     * reason?, unsupported? }. Signed in and not ready, `reason` says which check of the image
+     * run did not hold: `unsupported` (this Codex does not take the lockdown; `unsupported:
+     * true` says the same), `config` (Codex cannot load its configuration) or `unreadable`
+     * (the check keeps breaking).
      * Never starts a sign-in and never reads a credential.
      */
     imageAccess,

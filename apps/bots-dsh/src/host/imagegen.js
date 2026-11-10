@@ -210,7 +210,15 @@ export function createImageGen({ credentials: credentialsOf, codex: codexOf = ()
     const text = String(prompt ?? '').trim().slice(0, PROMPT_MAX)
     if (text === '') throw Object.assign(new Error('Say what to draw.'), { code: 'bot/invalid' })
     const found = await source()
-    if (!found) throw refused('No image service is connected. Ask the user to sign in to Codex (from a Bot\'s chat or Connect AI) or add an OpenAI key in Settings → Models; then generate_image can draw.')
+    if (!found) {
+      // A signed-in Codex that acp-dsh does not let draw (a safety check of its image run did
+      // not hold) is not a missing sign-in: say what helps.
+      const codex = await codexService()?.imageAccess().catch(() => undefined)
+      if (codex?.unsupported === true) throw refused('Codex is signed in, but this Codex version is not supported for drawing yet. Ask the user to update Automagik, or to add an OpenAI key in Settings → Models; then generate_image can draw.')
+      if (codex?.reason === 'config') throw refused('Codex is signed in, but it could not load its own configuration, so it cannot draw. Ask the user to fix Codex\'s config file, or to add an OpenAI key in Settings → Models; then generate_image can draw.')
+      if (codex?.reason === 'unreadable') throw refused('Codex is signed in, but it could not be checked for safe drawing, so it cannot draw now. Ask the user to try again later, or to add an OpenAI key in Settings → Models; then generate_image can draw.')
+      throw refused('No image service is connected. Ask the user to sign in to Codex (from a Bot\'s chat or Connect AI) or add an OpenAI key in Settings → Models; then generate_image can draw.')
+    }
     const chatgpt = found.kind === 'chatgpt'
     note(callId, { phase: 'generating', via: found.kind, partials: [], started: now(), error: undefined })
     if (found.kind === 'codex') return drawWithCodex(found.service, { text, size, quality, background, callId, signal })
