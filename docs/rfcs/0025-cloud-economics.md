@@ -5,7 +5,7 @@
 | Status | Accepted (2026-11-10, by the owner; council 2026-11-09: revise; platform owner decisions 2026-11-09; Automagik Chat: legal review scope, 2026-11-09; amends 0024) |
 | Goal | First goal (owner, 2026-11-10): by 23 Nov, the owner signs in and opens one hosted workspace in test mode, with no real charges: RFC 0024 deliveries 0-4 and RFC 0025 phase A. |
 | Milestone | none (ships outside the five milestones) |
-| Lanes | none here (docs); desktop (3.N) or plugin (3.N.P) for a link; the Cloud service in its own private repository |
+| Lanes | none here (docs); desktop (3.N) or plugin (3.N.P) for a link; the Cloud service in its own private repository (RFC 0024, Decided 17) |
 | Created | 2026-11-09 |
 
 ## Summary
@@ -21,15 +21,16 @@ lease before the work; grants charge the authenticated token's scope, a budget a
 within the workspace's total grants and caps; quotes bind the tenant, workspace and Bot; every
 money approval is a passkey step-up in Cloud's page. Each phase opens only behind its own go-live
 gate. This RFC is docs only: it opens no checkout, starts
-no service and writes no billing code. It amends RFC 0024's open question 8, Decided 14's "being
-paid", and its (g) workspace credential.
+no service and writes no billing code. It amends RFC 0024: open question 8, Decided 14's "being
+paid", and (g)'s workspace credential.
 
 ## Motivation
 
 RFC 0024's (i) recommended "model usage on the workspace's own keys at first" (its open question
 8) and recorded the platform owner's answer on billing: Stripe directly, "including support to
-agentic payments" (its Decided 14), "Bots paying, or being paid, on a customer's behalf ... within
-limits the human sets", to be detailed by a follow-up RFC after a brainstorm on the economics.
+agentic payments" (RFC 0024 Decided 14), "Bots paying, or being paid, on a customer's behalf
+... within limits the human sets", to be detailed by a follow-up RFC after a brainstorm on the
+economics.
 This is that follow-up, and the platform owner's decisions of 2026-11-09 (Decided 1 to 4) settle
 the direction.
 
@@ -126,10 +127,10 @@ From the council review (2026-11-09; verdict revise; conditions folded in):
     in Cloud workspaces. Without that configuration, the open-source image and an unlinked
     instance have no gateway address or credential. A static scan of the image's dependencies
     and imports and the no-connection test prove it.
-13. **RFC 0024 is amended explicitly**: open question 8 on tokens, Decided 14's "being paid",
-    and (g)'s "the workspace holds no Cloud credential", which now admits a scoped, short-lived,
-    revocable gateway token and the control-plane identity that renews it. The amendments are
-    listed below.
+13. **RFC 0024 is amended explicitly**: open question 8 on tokens, RFC 0024 Decided 14's
+    "being paid", and (g)'s "the workspace holds no Cloud credential", which now admits a
+    scoped, short-lived, revocable gateway token and the control-plane identity that renews it.
+    The amendments are listed below.
 
 From Automagik Chat (2026-11-09; recorded 2026-11-10):
 
@@ -656,11 +657,11 @@ This RFC amends RFC 0024 (now Accepted) at each place marked there:
   Now: BYO model access is free; managed tokens are an opt-in through Cloud's gateway at a
   published margin; compute is metered from the host lifecycle; the workspace subscription and
   seats stay as recommended. The remaining shape is carried below as RFC 0024's question 8.
-- **Decided 14 ("being paid").** Was: Bots paying, or being paid, on a customer's behalf. Now:
-  inbound first; outbound to third-party merchants is deferred to phase E, after a legal review
-  and its own RFC.
-- **Decided 14's follow-up (the billing system).** It recorded the follow-up RFC; 0025 is
-  that RFC, and "being paid" is deferred (0025, (j)).
+- **RFC 0024 Decided 14 ("being paid").** Was: Bots paying, or being paid, on a customer's
+  behalf. Now: inbound first; outbound to third-party merchants is deferred to phase E, after a
+  legal review and its own RFC.
+- **RFC 0024 Decided 14's follow-up (the billing system).** It recorded the follow-up RFC;
+  0025 is that RFC, and "being paid" is deferred (0025, (j)).
 - **(i) Billing and entitlements, first paragraph.** Its model-usage sentence now reads as the
   platform owner's decision 1: BYO free, managed tokens opt-in at a published margin, compute
   metered.
@@ -946,8 +947,8 @@ cannot waive it.
 
 ### Carried from RFC 0024
 
-The full question text stays in RFC 0024, and an answer is recorded there. This list carries
-only the questions still open, so the two RFCs do not drift into two homes.
+The full question text stays in RFC 0024; the answer, where decided, is recorded there. This
+list carries only the questions still open, so the two RFCs do not drift into two homes.
 
 - **RFC 0024 Q4, who may invite.** Recommended: owners and admins, and the individual of a
   personal account; members and guests cannot.
@@ -968,8 +969,6 @@ only the questions still open, so the two RFCs do not drift into two homes.
 
 ### New here
 
-New question 3 has moved to Decided 14.
-
 1. **The cap fractions and the starting cap.** Recommended: alerts at one half, four fifths and
    the cap; a new paying account starts with a low cap and managed tokens at zero until an
    organisation Owner opts in and raises it. The organisation Owner sets the actual amounts at
@@ -977,6 +976,7 @@ New question 3 has moved to Decided 14.
 2. **Prepaid credit terms.** Recommended: credit is bought in the account's currency, is not
    transferable and earns no interest; a refund or an expiry is the organisation Owner's written
    decision and a compensating ledger event, shown before a purchase.
+3. **The outbound legal review's scope (phase E).** Answered in Decided 14.
 4. **Unattended spend beyond a day.** Recommended: keep the 24-hour maximum on Pre-approve; a
    longer unattended run needs a fresh owner step-up or a separate design, not a longer TTL.
 
@@ -989,9 +989,9 @@ Ledger pass (2026-11-10): the board links this RFC from its file.
 
 ## Links
 
-- RFCs: [0024](0024-automagik-cloud.md) (amended here: open question 8, Decided 14's "being
-  paid", and (g)'s workspace credential); [0017](0017-usagemeter-crate.md) (the meter part and
-  its lane); [0018](0018-meter-query-contract.md) (the doc cannot be the source; its evidence
+- RFCs: [0024](0024-automagik-cloud.md) (amended here: open question 8, RFC 0024 Decided 14's
+  "being paid", and (g)'s workspace credential); [0017](0017-usagemeter-crate.md) (the meter part
+  and its lane); [0018](0018-meter-query-contract.md) (the doc cannot be the source; its evidence
   contract is for task linking; this RFC keeps it away from money);
   [0021](0021-meter-attribution.md) (machine-local attribution; this RFC adds it is not a
   billing identity); [0022](0022-desktop-chat-view.md)

@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (2026-11-10, by the owner; council review 2026-11-09: proceed with conditions, folded in; owner's answers: identity and billing, 2026-11-09; isolation, identity stand-up, hosting and the goal, 2026-11-10; amends RFC 0008; amended 2026-11-09 by [RFC 0025][25]) |
+| Status | Accepted (2026-11-10, by the owner; council review 2026-11-09: proceed with conditions, folded in; owner's answers: identity and billing, 2026-11-09; isolation, identity stand-up, hosting and the goal, 2026-11-10; Chat: Decided 19-25, 2026-11-09; amends RFC 0008; amended 2026-11-09 by [RFC 0025][25]) |
 | Goal | First goal (owner, 2026-11-10): by 23 Nov, the owner signs in and opens one hosted workspace in test mode, with no real charges: RFC 0024 deliveries 0-4 and RFC 0025 phase A. |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | none here (docs); desktop (3.N) for secure storage, sign-in and the rail; the server image and plugin (3.N.P) for the self-hosted gate and the web rail; the Cloud service in its own private repository in the owner's organisation (its contracts stay public here) |
@@ -88,7 +88,7 @@ From the owner (2026-11-09, above):
 2. **The open-source product is one instance, free**, on the web or the desktop, as it is. Cloud
    is where many workspaces, creating one, and the rail live.
 3. **Cloud uses the same identity system Tactu uses, Pocket ID, on a new instance of its own**;
-   Arca keeps its own passkey approvals. See Decided 13 and 16.
+   Arca keeps its own passkey approvals (corrected 2026-11-10). See Decided 13 and 16.
 
 From the council review (2026-11-09; five lenses, proceed with conditions; relayed by the
 Automagik Orchestrator). Nine conditions, numbered 4 to 12:
@@ -121,7 +121,7 @@ From the owner's answers (2026-11-09, asked by the Automagik Orchestrator):
     own work, later, and not a delivery of this RFC.
     *Corrected 2026-11-10 (Arca's orchestrator, via Automagik Chat):* Arca keeps its own sign-in
     (its own passkey approvals) and does not move to the new identity service.
-14. **Billing is Stripe, directly**, "including support to agentic payments"
+14. **Billing is Stripe, directly** (was open question 9), "including support to agentic payments"
     (the owner, verbatim). Cloud uses Stripe Billing itself, a subscription per workspace, and
     Stripe's signed webhooks update Cloud's entitlements; no other billing app. Agentic payments
     are a direction, to be detailed by a follow-up RFC ((i)).
@@ -138,8 +138,7 @@ From the owner (2026-11-10):
     owner's passkey (was open question 1). Its address, client ids and group names stay out of
     this repository.
 17. **Cloud home: workspace VMs run on Arca's hosting, not on the build host; the Cloud service
-    lives in a new private repository in the owner's organisation** (the contracts stay public
-    here; was open question 16).
+    lives in a new private repository in the owner's organisation.**
 18. **First goal by 2026-11-23: one workspace you can sign in to.** The owner signs in and opens
     one hosted workspace in test mode, with no real charges: RFC 0024 deliveries 0-4 plus RFC
     0025 phase A.
@@ -159,9 +158,10 @@ From Automagik Chat (2026-11-09; recorded 2026-11-10):
     contract leaves room for one later.
 24. **Pocket is unchanged** (was open question 15): it pairs through Pocket Link's own keys,
     outside the gate; any phone sign-in to a web instance is a passkey of the same owner.
-25. **The contracts are public; the service is private** (was open question 16). The principal,
-    the workspace token, the entitlements document and the rail's API are public here; the
-    Cloud service is private.
+25. **The contracts are public; the service is private** (was open question 16). The base answer
+    said the service starts private; the decision is now that it is private. The principal, the
+    workspace token, the entitlements document and the rail's API are public here; the Cloud
+    service is private.
 
 Carried, not new:
 
@@ -506,8 +506,8 @@ build host**, from the server image the release already builds, scans and smokes
 of a claim. One image, no second one for Cloud. Each workspace pins the image by the digest the
 release itself recorded, never `:latest` (RFC 0019 notes the published image is not signed), and
 the Cloud service rolls releases one workspace first. The Cloud service itself lives in a new
-private repository in the owner's organisation; only its contracts stay public here (Decided 17
-and 25).
+private repository in the owner's organisation (Decided 17); only its contracts stay public here
+(Decided 25).
 
 **The identity service and the first test workspace VMs** run in a restricted Incus project on
 Arca's own hosting, operated by Arca; no host name is written in this repository.
@@ -849,16 +849,20 @@ principals are keyed by `(issuer, sub)`. Arca keeps its own sign-in (its own pas
 
 ## Open questions
 
-Answered questions have moved to Decided; the numbers below stay as they were, so references keep
-their meaning.
+Answered questions point to their Decided items; the numbers stay as they were, so references
+keep their meaning.
 
+1. **Which identity service.** Answered in Decided 13 and 16.
+2. **Where Cloud roles live.** Answered in Decided 6.
+3. **Isolation unit.** Answered in Decided 15.
 4. **Who may invite.** Recommended: owners and admins, and the individual of a personal account;
    members and guests cannot ((e)).
 5. **Recovery.** Recommended: a second passkey at the claim, plus recovery codes as slow hashes,
    plus the host reset out of the Bots' reach; no email reset ((c)).
-6. **Session lifetimes.** Recommended: self-hosted sessions sliding with a 12-hour idle limit; Cloud
-   workspace tokens 5 minutes; whether DSH's own multi-day cookie can stay behind the gate unchanged
-   is an evidence gap for delivery 0.
+6. **Session lifetimes.** Recommended: self-hosted sessions sliding with a 12-hour idle limit;
+   Cloud workspace tokens 5 minutes; whether DSH's own multi-day cookie can stay behind the gate
+   unchanged is an evidence gap for delivery 0.
+7. **IP-only LAN installs.** Answered in Decided 19.
 8. **What is paid.** Recommended: hosted workspaces, per workspace per month, seats up to a limit,
    model usage on the workspace's keys at first; personal accounts free; self-hosted free and
    complete for one instance ((i)).
@@ -866,10 +870,18 @@ their meaning.
    opt-in through Cloud's gateway at a published margin; compute is metered from the host
    lifecycle. The workspace subscription and seats stand; 0025's Open questions carry the
    included seats and host shape under RFC 0024 Q8.
+9. **The billing system.** Answered in Decided 14.
+10. **Moving a self-hosted instance into Cloud.** Answered in Decided 20.
+11. **DSH's authentication hook.** Answered in Decided 21.
+12. **Omni's sign-in.** Answered in Decided 22.
+13. **An optional external OIDC provider for self-hosters** (RFC 0008's old question 2).
+    Answered in Decided 23.
 14. **Federation for company customers** (Google or Entra sign-in, SAML, SCIM). The council's
     dissent expects customers to ask; Pocket ID's support is unverified. Recommended: delivery 0
     checks it; if it is missing, decide before the first company customer, since a later issuer move
     re-binds every person.
+15. **Pocket and Pocket Link with a claimed instance.** Answered in Decided 24.
+16. **Is the Cloud service open source?** Answered in Decided 25.
 17. **The desktop's Cloud credential and local Bots.** Recommended: build a delivery-H-style mask
     per OS (the secret store, the session bus, the app's data folder) and keep desktop Cloud sign-in
     off on an OS until it exists there. The alternative is the owner's written acceptance of the
