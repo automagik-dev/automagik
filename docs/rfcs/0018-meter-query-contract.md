@@ -475,9 +475,11 @@ The conditions it holds to:
    `unsupported`; a window that starts before `errors_from`, or one after a sync that recorded
    no failures (an older meter, after a rollback), is `partial`; a store no sync has prepared is
    `not_recorded`.
-5. No tool name, argument, output, error text, session, folder or terminal is stored or printed:
-   a failure is kept as its time, harness, launch tag and a keyed hash of its id, for the
-   evidence's retention ((b): 90 days or 1 GiB).
+5. No tool name, argument, output, error text, session, folder or terminal is printed, and the
+   meter stores no text of a failure: its session as a keyed hash and its folders as references
+   to the evidence's own folder rows, for re-attribution, kept for the evidence's retention;
+   prints none of them. Beside those a failure is kept as its time, harness, launch tag and a
+   keyed hash of its id ((b): 90 days or 1 GiB).
 6. It is not in the query envelope. A reader that wants a tool-error rate, a label or a score
    computes it in genie, from these counts or from its own annotations.
 
