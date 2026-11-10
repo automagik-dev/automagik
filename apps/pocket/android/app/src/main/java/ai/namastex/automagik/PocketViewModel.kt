@@ -1015,7 +1015,7 @@ class PocketViewModel(application: Application, private val initDispatcher: Coro
         val gen = ++chatGen
         chatRef = ref
         _chat.value = Chat.carry(prior, Chat.State(ref.address, messages = unknown, resuming = resuming, error = if (resuming) Chat.RESUMING else null))
-        if (state.value.demo) { _chat.value = Chat.State(ref.address, error = "Chat needs a connected machine."); return }
+        if (state.value.demo) { _chat.value = ChatDemo.state(ref.address); return }
         chatJob = viewModelScope.launch(Dispatchers.IO) {
             val scope = CoroutineScope(coroutineContext + SupervisorJob(coroutineContext[Job]))
             var link: ChatLink? = null
@@ -1129,6 +1129,13 @@ class PocketViewModel(application: Application, private val initDispatcher: Coro
     /** Connects the open chat again after it dropped. */
     fun reconnectChat() { val ref = chatRef ?: return; chatJob?.cancel(); chatJob = null; openChat(ref) }
 
+    /** The preview has no chat link: its controls say so instead of pretending, and the sample stays as drawn. */
+    private fun previewChat(): Boolean {
+        if (!state.value.demo) return false
+        chatUpdate(chatGen) { it.copy(notice = ChatDemo.SAMPLE_ONLY) }
+        return true
+    }
+
     private fun chatAct(block: suspend (ChatLink, Chat.State, Int) -> Unit) {
         val link = chatLink ?: return
         val s = _chat.value ?: return
@@ -1140,6 +1147,7 @@ class PocketViewModel(application: Application, private val initDispatcher: Coro
     fun chatSend(text: String, id: String = UUID.randomUUID().toString()) {
         val s = _chat.value ?: return
         if (text.isBlank()) return
+        if (previewChat()) return
         if (!ChatActions.canSend(s)) { chatUpdate(chatGen) { it.copy(notice = ChatActions.whyNoSend(it) ?: "Not sent: the chat isn’t ready yet.") }; return }
         chatUpdate(chatGen) { it.copy(messages = it.messages.filterNot { m -> m.id == id } + Chat.Message(id, text, "sending")) }
         chatAct { link, st, gen ->
@@ -1174,6 +1182,7 @@ class PocketViewModel(application: Application, private val initDispatcher: Coro
     fun chatAnswer(row: Chat.Row, choice: String) {
         val s = _chat.value ?: return
         if (choice !in ChatActions.choices(s, row)) return
+        if (previewChat()) return
         chatAct { link, st, gen ->
             val notice = runCatching { Chat.answerNotice(link.answer(st.terminal, row.id, choice), st.dsh) }.getOrElse { unconfirmed(st) }
             chatUpdate(gen) { it.copy(notice = notice) }
@@ -1184,6 +1193,7 @@ class PocketViewModel(application: Application, private val initDispatcher: Coro
     fun chatAnswerQuestion(row: Chat.Row, picked: List<Int>, text: String? = null) {
         val s = _chat.value ?: return
         val (choice, typed) = ChatActions.questionAnswer(s, row, picked, text) ?: return
+        if (previewChat()) return
         chatAct { link, st, gen ->
             val notice = runCatching { Chat.answerNotice(link.answer(st.terminal, row.id, choice, typed), st.dsh) }.getOrElse { unconfirmed(st) }
             chatUpdate(gen) { it.copy(notice = notice) }
@@ -1193,6 +1203,7 @@ class PocketViewModel(application: Application, private val initDispatcher: Coro
     fun chatInterrupt() {
         val s = _chat.value ?: return
         if (!ChatActions.canInterrupt(s)) return
+        if (previewChat()) return
         chatAct { link, st, gen ->
             val notice = Chat.interruptNotice(runCatching { link.interrupt(st.terminal) }.getOrNull(), st.dsh)
             chatUpdate(gen) { it.copy(notice = notice) }
@@ -1287,6 +1298,9 @@ class PocketViewModel(application: Application, private val initDispatcher: Coro
     fun enterDemo() {
         clients.keys.toList().forEach { disconnect(it) }
         val id = "preview"
+        // The sample main bot's chat, listed as a real bridge would list it, so Team's bubble and the chat pane agree.
+        _botChats.update { it + (id to Result.success(ChatDemo.listing())) }
+        _botWrites.update { it + (id to true) }
         val terminals = listOf(
             CoreTerminal("t1", "Authentication flow", "~/work/herdr-auth", "live", "blocked", "Claude Code", "Waiting for your approval to run the test suite", 80, 24, labels = mapOf("bot" to "b-demo-test"), kind = "permission"),
             CoreTerminal("t2", "Android companion", "~/work/herdr", "live", "working", "Codex", "Building the mobile navigation", 80, 24, labels = mapOf("bot" to "b-demo-captain")),
@@ -1319,7 +1333,13 @@ class PocketViewModel(application: Application, private val initDispatcher: Coro
     val sheet = _sheet.asStateFlow()
     fun openStats(s: StatsSheet) { _sheet.value = s }
     fun closeStats() { _sheet.value = null }
-    fun leaveDemo() { detach(); _state.update { it.copy(demo = false, machines = emptyMap(), selected = null, space = null, project = null) } }
+    fun leaveDemo() {
+        closeChat()
+        _botChats.update { it - ChatDemo.HOST }
+        _botWrites.update { it - ChatDemo.HOST }
+        detach()
+        _state.update { it.copy(demo = false, machines = emptyMap(), selected = null, space = null, project = null) }
+    }
     fun hostName(hostId: String) = if (state.value.demo) PREVIEW_MACHINE else state.value.hosts.find { it.id == hostId }?.name ?: "Machine"
     override fun onCleared() { if (current === this) current = null; closeChat(); clients.values.forEach { it.close() }; clients.clear() }
 }

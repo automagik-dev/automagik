@@ -152,6 +152,7 @@ object SpaceIcons {
     val read by vm.botChats.collectAsState()
     var last by remember { mutableStateOf(emptyMap<String, List<Chat.Terminal>>()) }
     LaunchedEffect(read) { read.forEach { (h, r) -> r?.getOrNull()?.let { last = last + (h to it) } } }
+    if (state.demo) return ChatDemo.chats()
     return last.filterKeys { it in hosts }
 }
 
