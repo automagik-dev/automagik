@@ -1479,6 +1479,9 @@ var ZH = {
   "Restart to update to {version}": "重启以更新到 {version}",
   "Installing the update…": "正在安装更新…",
   "Update check failed · Retry": "检查更新失败 · 重试",
+  "Updating · {percent}% · {done} of {total} MB": "正在更新 · {percent}% · {done} / {total} MB",
+  "Update download failed · Retry": "更新下载失败 · 重试",
+  "Update could not be verified · Retry": "无法验证更新 · 重试",
   // The Work / Code switch (work-code-switch.js, RFC 0013).
   "Work or code": "工作或代码",
   "Work": "工作",
@@ -14484,6 +14487,31 @@ function turnDetector({ loud = 0.12, quiet: quiet2 = 0.06, quietMs = 1200 } = {}
 // src/client/desktop-update.js
 var import_react34 = require("react");
 var BUSY = /* @__PURE__ */ new Set(["checking", "downloading", "installing"]);
+function megabytes(bytes) {
+  const value = bytes / (1024 * 1024);
+  try {
+    return new Intl.NumberFormat(language(), { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(value);
+  } catch {
+    return value.toFixed(1);
+  }
+}
+function downloaded(state) {
+  const { transferred, total } = state;
+  if (!Number.isFinite(transferred) || !Number.isFinite(total) || !(total > 0) || transferred < 0) return null;
+  return { done: megabytes(Math.min(transferred, total)), total: megabytes(total) };
+}
+function failureLabel2(failure) {
+  if (failure === "download") return t("Update download failed · Retry");
+  if (failure === "verify") return t("Update could not be verified · Retry");
+  return t("Update check failed · Retry");
+}
+function downloadPill(state) {
+  const percent3 = state.percent ?? 0;
+  const size = downloaded(state);
+  if (!size) return { label: t("Updating · {percent}%", { percent: percent3 }), busy: true };
+  const label = t("Updating · {percent}% · {done} of {total} MB", { percent: percent3, ...size });
+  return { label, title: label, busy: true };
+}
 function updatePill(state) {
   const version = state?.version;
   switch (state?.phase) {
@@ -14492,13 +14520,13 @@ function updatePill(state) {
     case "available":
       return { label: version ? t("Automagik {version} is out", { version }) : t("An update is out"), primary: true };
     case "downloading":
-      return { label: t("Updating · {percent}%", { percent: state.percent ?? 0 }), busy: true };
+      return downloadPill(state);
     case "ready":
       return { label: version ? t("Restart to update to {version}", { version }) : t("Restart to update"), primary: true };
     case "installing":
       return { label: t("Installing the update…"), busy: true };
     case "error":
-      return { label: t("Update check failed · Retry") };
+      return { label: failureLabel2(state.failure) };
     default:
       return null;
   }
