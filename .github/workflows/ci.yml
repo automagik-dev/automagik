@@ -362,12 +362,52 @@ jobs:
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
         if: steps.changed.outputs.pocket == 'true'
 
+      # One shared debug key for PR APKs (docs/decisions/shared-debug-signing-key.md). With the
+      # secret, the job signs with it and publishes the APK; without it (a fork), the default key.
+      - name: Materialize the shared debug keystore
+        id: debug_key
+        if: steps.changed.outputs.pocket == 'true'
+        env:
+          KEYSTORE: ${{ secrets.POCKET_DEBUG_SIGNING_KEYSTORE }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEYSTORE}" ]; then
+            echo "No shared debug key in this repository's secrets: the build uses the default debug key."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          store="$RUNNER_TEMP/pocket-debug.keystore"
+          printf '%s' "$KEYSTORE" | base64 -d > "$store"
+          chmod 600 "$store"
+          echo "POCKET_DEBUG_STORE=$store" >> "$GITHUB_ENV"
+          echo "present=true" >> "$GITHUB_OUTPUT"
+
       - name: Build the debug APK, run the unit tests and lint
         if: steps.changed.outputs.pocket == 'true'
         working-directory: apps/pocket/android
         run: |
           touch "$RUNNER_TEMP/m2-marker"
           ./gradlew --stacktrace :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
+
+      # The certificate is public evidence that two PR runs share a key; the APK is what a tester installs.
+      - name: Debug APK certificate
+        if: steps.changed.outputs.pocket == 'true' && steps.debug_key.outputs.present == 'true'
+        run: |
+          set -euo pipefail
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs \
+            apps/pocket/android/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload the debug APK
+        if: steps.changed.outputs.pocket == 'true' && steps.debug_key.outputs.present == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pocket-debug-apk-${{ github.event.pull_request.number || github.run_number }}
+          path: apps/pocket/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 14
+
+      - name: Remove the shared debug keystore
+        if: always() && steps.debug_key.outputs.present == 'true'
+        run: rm -f "${POCKET_DEBUG_STORE:-}"
 
       # Evidence only, never a failure: Gradle hides the tests' "Downloading" lines, so this lists
       # the jars this run fetched into ~/.m2. A warm cache fetches none.

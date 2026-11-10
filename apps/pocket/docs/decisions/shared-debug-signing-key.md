@@ -1,7 +1,7 @@
 ---
 title: "One shared debug signing key for Pocket PR builds"
 type: decision
-status: Proposed
+status: Accepted
 created: 2026-11-10
 updated: 2026-11-10
 pr: ""
@@ -9,96 +9,71 @@ tags: [decisions, build, signing, ci]
 ---
 # One shared debug signing key for Pocket PR builds
 
-Without the release key, as in CI and the gate, two debug APKs built in different worktrees carry
-different certificates today: each worktree gets its own debug keystore. One phone can then install
-neither over the other. Pull-request builds should share one debug certificate, held in a repository
-secret and never in git.
+Two debug APKs built in different worktrees carried different certificates, because each worktree
+got its own debug keystore; one phone could install neither over the other. CI signs debug APKs with
+one shared debug key from a repository secret (set by the owner), so PR APKs install over each
+other. Local builds keep AGP's own debug key unless a keystore is provided.
 
 ## Decision
 
-Proposed, awaiting the Orchestrator's check. No secret is set and no build file changes in this
-note's pull request.
+Taken by the Orchestrator on 2026-11-10, from the design in this pull request.
 
-- **CI signs debug APKs with one debug key from a repository secret.**
-  `POCKET_DEBUG_SIGNING_KEYSTORE` holds the base64 keystore, alias `androiddebugkey`, store and key
-  password `android` (the standard, public debug credentials). The owner creates a new debug-only
-  key (never the release key) once and sets the secret; it is never committed or printed.
-- **The pocket CI job materializes the key for the build and removes it after.** The job decodes the
-  secret into the runner's temporary folder, exports `POCKET_DEBUG_STORE` (and the password),
-  builds the debug APK, prints `apksigner verify --print-certs`, uploads the APK as a workflow
-  artifact named for the pull request (or the run on a push), and deletes the keystore on exit. The
-  certificate fingerprint in the log and the artifact let two PRs be compared.
-- **The build reads a fixed debug-keystore path, with today's fallback.** `signingConfigs.debug`
-  takes `POCKET_DEBUG_STORE` (or `-Ppocket.debugStore`), with the password from
-  `POCKET_DEBUG_SIGNING_PASSWORD`, defaulting to `android`; when set it signs with that keystore and
-  alias `androiddebugkey`. When unset, AGP's default debug keystore is used exactly as today.
-- **The release key keeps priority and stays untouched.** A debug build still uses the release key
-  when it is present, as it does today, so Android Studio builds and published releases update each
-  other. `signingConfigs.pocket`, the release build type, the app ID, versionCode and latest.json do
-  not change.
-- **Local gates keep the default unless a developer opts in.** A gate without the secret uses its
-  worktree's own AGP debug keystore. A developer who wants a local APK to install over a PR APK
-  exports `POCKET_DEBUG_STORE` to a local copy of the CI key; the development guide will document
-  the variable, not the key.
+1. **A repository secret, never a committed keystore.** `POCKET_DEBUG_SIGNING_KEYSTORE` holds the
+   base64 debug keystore. A keystore holds a private key, so it never enters git.
+2. **One secret, the standard `android` password.** Alias `androiddebugkey`, store and key password
+   `android`. The owner creates the key and sets the secret; the password changes only if the owner
+   says so.
+3. **A workflow artifact only.** The debug APK is a workflow artifact; the job needs no
+   `pull-requests: write` permission and does not comment on the pull request.
+4. **Fourteen days of retention** for that artifact.
+5. **No RFC.** The never-change rule covers the release key and the app ID; both stay untouched, so
+   a debug-only key does not need an RFC.
+6. **Local gates keep their own default.** No copy of the shared key is provisioned on any host. A
+   local build uses AGP's debug key unless `POCKET_DEBUG_STORE` (or `-Ppocket.debugStore`) points it
+   at a keystore.
 
 ## Current state
 
-- Each gate sets its own Android user home and `user.home`, so AGP creates a per-worktree debug
-  keystore. The build only pins the location for a read-only home, to a folder under Gradle's user
-  home (`apps/pocket/android/app/build.gradle.kts:98-114`).
-- Debug builds use the release key when it is configured, else the AGP debug keystore
-  (`apps/pocket/android/app/build.gradle.kts:61-68`).
-- CI builds, tests and lints the app but publishes no APK (`.github/workflows/ci.yml` `pocket` job).
-- Fork pull requests cannot read repository secrets, so they keep the fallback.
+- `apps/pocket/android/app/build.gradle.kts:39` reads `POCKET_DEBUG_STORE`, else
+  `-Ppocket.debugStore`; `:66-69` creates the `sharedDebug` signing config from it.
+- The debug build type picks the release key first, then `sharedDebug`, then AGP's default debug key
+  (`apps/pocket/android/app/build.gradle.kts:77`). The release build type and
+  `signingConfigs.pocket` are unchanged.
+- With no path, debug builds keep AGP's default debug key, including the read-only-home fallback
+  (`apps/pocket/android/app/build.gradle.kts:117-118`).
+- `.github/workflows/ci.yml:367-383` decodes the secret to the runner's temporary folder and exports
+  `POCKET_DEBUG_STORE`; `:393-406` prints `apksigner verify --print-certs` and uploads
+  `app-debug.apk` as `pocket-debug-apk-<pr-or-run>` for 14 days; `:408-410` removes the file.
+- Without the secret (a fork, or before the owner sets it), the job builds with the default key and
+  uploads no APK. Fork pull requests cannot read repository secrets.
 
 ## Why not commit the debug keystore
 
 A debug keystore still holds a private key, and this repository never commits one. The standard
-debug credentials make it low risk, but they do not make it a public file: the owner's route is a
-repository secret, and this note stops for that check before any build file changes.
-
-## What changes after approval
-
-1. `apps/pocket/android/app/build.gradle.kts`: `signingConfigs.debug` reads the variable; the
-   read-only-home fallback at the end of the file yields to an explicit store.
-2. `.github/workflows/ci.yml`'s `pocket` job: materialize the secret, export it to the Gradle step,
-   print the certificate, upload `app-debug.apk`.
-3. `apps/pocket/docs/guides/development.md`: the variable, the fallback, and how to compare a local
-   APK with a PR artifact.
-
-No other workflow changes. `release.yml` and the release signing config are out of scope.
+debug credentials make it low risk, but they do not make it a public file; the shared key travels
+through a repository secret.
 
 ## Verification
 
-After the owner sets the secret:
-
-1. Open or re-run two pull requests that build Pocket (for example the deck and chat PRs).
-2. Download each run's debug APK artifact.
-3. Compare the `apksigner verify --print-certs` SHA-256 digests: they must be equal.
-4. `adb install -r` the first, then the second: the second replaces the first. The same versionCode
-   is fine for `-r` when the certificate matches.
-5. Record the certificate's SHA-256 digest in the implementation PR body.
+- Built with a throwaway keystore via `POCKET_DEBUG_STORE`, via `-Ppocket.debugStore`, and with
+  neither: the first two APKs carried the throwaway certificate, the third the worktree's AGP debug
+  certificate (the pull request has the fingerprints).
+- Once the owner sets the secret, two PR runs must print the same certificate SHA-256, and their
+  APKs must install over each other (`adb install -r`). A run without the secret prints no
+  certificate and uploads no APK.
 
 ## Risks
 
-- A build without the secret (a fork, or the secret removed) still runs and publishes, but its APK
-  may not install over another PR's. The certificate step makes the mismatch visible.
-- Rotating the debug key is a one-time uninstall for debug installs; release signing is unaffected.
+- A missing or rotated secret means no shared APK for that build; installed debug copies may need
+  one uninstall. Release signing is unaffected.
+- A same-repository branch can read the secret and sign its debug APK with it; that is the intended
+  trust boundary for a debug-only key. Fork pull requests cannot.
 
 ## Open questions
 
-1. Does the Orchestrator approve a repository secret for the debug key, rather than a committed
-   keystore? (Orchestrator)
-2. Keep the standard `android` password (one secret), or use a second password secret? (Owner)
-3. Upload the APK as a workflow artifact only, or also comment its link on the pull request (needs
-   `pull-requests: write`)? (Orchestrator)
-4. How long should the debug APK artifact be retained? (Orchestrator)
-5. Does a debug-only key cross the "never change the signing key" rule, and so need an RFC, even
-   though the release key and its config stay untouched? (Orchestrator)
-6. Should the host gate wrapper export `POCKET_DEBUG_STORE` to a provisioned copy of the key, so
-   local gates match CI, or keep local gates on their own default? (Orchestrator)
+None.
 
 ## Related
 
-- [Development](../guides/development.md): today's build, debug and release-key behavior.
+- [Development](../guides/development.md): the local default and the CI secret/artifact.
 - [Releasing](../guides/releasing.md): how the release key signs published APKs.
