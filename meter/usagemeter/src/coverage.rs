@@ -39,8 +39,8 @@ const PARTS: [(&str, &str); 5] = [
     ("before_evidence", "before_evidence"),
 ];
 
-const NO_REPO: &str =
-    "usage with no repo belongs to no query answer: it is outside the denominator";
+const NO_REPO: &str = "store-wide, even with --repo: usage with no repo belongs to no query \
+     answer, so it is outside the denominator";
 
 const ABSENT: &str = "no meter store on this machine yet; open Herdr or run usagemeter sync";
 
@@ -331,10 +331,12 @@ fn read_health(c: &Connection) -> rusqlite::Result<BTreeMap<String, Option<i64>>
 }
 
 /// The oldest launch or link record: the backfill's horizon beside `evidence_from` (RFC 0026
-/// (f)). Null when the store has kept neither.
+/// (f)). A launch row written before RFC 0021 delivery 3 may have no `created_ms`; its
+/// `valid_from` is when its span starts, so it carries the horizon back rather than forward.
+/// Null when the store has kept neither.
 fn oldest_record(c: &Connection) -> rusqlite::Result<Option<i64>> {
     c.query_row(
-        "SELECT min(m) FROM (SELECT min(created_ms) AS m FROM launch
+        "SELECT min(m) FROM (SELECT min(coalesce(created_ms, valid_from)) AS m FROM launch
                               UNION ALL SELECT min(valid_from) AS m FROM link)",
         [],
         |r| r.get(0),
@@ -424,6 +426,15 @@ struct Record {
     complete: bool,
     stale: bool,
     as_of: Option<String>,
+    /// Every counting source is `ok` or `absent` and the old folder's store is not degraded: only
+    /// then is a zero share or a `no_usage` repo a vouched 0 (RFC 0018's zero rule), otherwise
+    /// they are unknown and their lines carry the unreadable sources.
+    all_vouch: bool,
+    /// The sources the query reports as `degraded` or `unsupported`, by harness, in its order.
+    incomplete_sources: Vec<String>,
+    /// True when any window's repo or bot list was capped at 50; every total still includes every
+    /// repo and bot. The record's 64 KiB bound is the fleet step's per-machine cut (RFC 0026 (e)).
+    truncated: bool,
     windows: Vec<WindowOut>,
 }
 
@@ -462,7 +473,11 @@ struct PartOut {
     state: &'static str,
     reason: &'static str,
     tokens: i64,
+    /// Null when there is no counted usage, and for a zero whose sources cannot vouch for it.
     share: Option<f64>,
+    /// False only for a zero class share while a source is `degraded` or `unsupported`: the
+    /// class may hold usage the meter could not read, so its 0 is unknown, not a vouched 0.
+    vouched: bool,
     harnesses: Vec<String>,
 }
 
@@ -475,8 +490,9 @@ struct NoRepo {
 #[derive(Serialize)]
 struct RepoLine {
     repo: String,
-    /// `measured`, `no_usage` (a repo named with no counted usage: a null ratio, never a 0) or
-    /// `other` (the omitted repos' line).
+    /// `measured`; `no_usage` for a repo with no counted usage (a null ratio, never a 0) when
+    /// every source vouches for it; `unknown` when one does not; or `other` (the omitted repos'
+    /// line).
     state: &'static str,
     totals: Totals,
     bot_coverage: Option<f64>,
@@ -521,11 +537,8 @@ fn bot_line(bot: String, agg: &BotAgg, total: i64) -> BotLine {
     BotLine {
         bot,
         tokens: agg.tokens,
-        share: if total > 0 {
-            agg.tokens.max(0) as f64 / total as f64
-        } else {
-            0.0
-        },
+        // The same four-decimal rule as `bot_coverage`: a share above 0 is never rounded to 0.
+        share: ratio(agg.tokens, total).unwrap_or(0.0),
         tokens_by_basis: BasisOut {
             session: agg.by_basis[0],
             label: agg.by_basis[1],
@@ -538,19 +551,22 @@ fn bot_line(bot: String, agg: &BotAgg, total: i64) -> BotLine {
     }
 }
 
-fn repo_line(repo: String, counts: Counts) -> RepoLine {
+fn repo_line(repo: String, counts: Counts, all_vouch: bool) -> RepoLine {
     RepoLine {
         repo,
         state: if counts.total() > 0 {
             "measured"
-        } else {
+        } else if all_vouch {
             "no_usage"
+        } else {
+            "unknown"
         },
         totals: Totals::of(counts),
         bot_coverage: counts.bot_coverage(),
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn window_out(
     window: Window,
     b: &query::Bounds,
@@ -559,6 +575,7 @@ fn window_out(
     complete: bool,
     stale: bool,
     evidence_from: Option<i64>,
+    all_vouch: bool,
 ) -> WindowOut {
     let totals = Totals::of(acc.counts);
     let parts: Vec<PartOut> = PARTS
@@ -566,11 +583,18 @@ fn window_out(
         .enumerate()
         .map(|(i, (state, reason))| {
             let p = &acc.parts[i];
+            // A zero share is a claim only a fully readable store can vouch for (RFC 0018).
+            let vouched = !(p.tokens == 0 && totals.total > 0 && !all_vouch);
             PartOut {
                 state,
                 reason,
                 tokens: p.tokens,
-                share: ratio(p.tokens, totals.total),
+                share: if vouched {
+                    ratio(p.tokens, totals.total)
+                } else {
+                    None
+                },
+                vouched,
                 harnesses: p.harnesses.iter().cloned().collect(),
             }
         })
@@ -597,10 +621,10 @@ fn window_out(
     let repos: Vec<RepoLine> = repos
         .into_iter()
         .take(MAX_REPOS)
-        .map(|(name, c)| repo_line(name, c))
+        .map(|(name, c)| repo_line(name, c, all_vouch))
         .collect();
     let repos_other = (repos_omitted > 0).then(|| {
-        let mut line = repo_line("other".into(), other_repos);
+        let mut line = repo_line("other".into(), other_repos, all_vouch);
         line.state = "other";
         line
     });
@@ -663,6 +687,7 @@ fn report(
     req: &Request,
     ctx: &query::Ctx,
     location: query::Location,
+    stray: Option<&'static str>,
 ) -> Result<Option<Record>, Failure> {
     c.execute_batch("BEGIN").map_err(Failure::sql)?;
     let version = match query::schema_version(c).map_err(Failure::sql)? {
@@ -690,10 +715,23 @@ fn report(
     let counted_from = query::meta_i64(&meta, "counted_from_ms").unwrap_or(0);
     let evidence_from = query::meta_i64(&meta, crate::evidence::FROM_META);
     let watermark = query::watermark(&meta);
-    let stale = watermark.is_none_or(|w| ctx.now_ms - w > query::DEFAULT_STALE_AFTER_S * 1000);
+    let stale_ms = query::DEFAULT_STALE_AFTER_S * 1000;
+    let stale = watermark.is_none_or(|w| ctx.now_ms - w > stale_ms);
     let pending = |k: &str| query::meta_i64(&meta, k).map(|v| v.max(0));
     let complete =
         pending("last_pending_bytes") == Some(0) && pending("last_pending_files") == Some(0);
+    // RFC 0018's zero rule: a zero share, or a repo with no usage, is vouched for only when every
+    // source is ok or absent and the old folder's store (a stale, out-of-store source) is not
+    // degraded. The query reports the same list on every row it answers.
+    let srcs = query::sources(&meta, &health, stray, ctx.now_ms, stale_ms);
+    let incomplete_sources: Vec<String> = srcs
+        .iter()
+        .filter(|s| matches!(s.status.as_str(), "degraded" | "unsupported"))
+        .map(|s| s.harness.clone())
+        .collect();
+    let all_vouch = srcs
+        .iter()
+        .all(|s| matches!(s.status.as_str(), "ok" | "absent"));
     let bounds: Vec<(Window, query::Bounds)> = req
         .windows
         .iter()
@@ -756,13 +794,23 @@ fn report(
     .map_err(Failure::sql)?;
     c.execute_batch("COMMIT").map_err(Failure::sql)?;
 
-    let windows = bounds
+    let windows: Vec<WindowOut> = bounds
         .iter()
         .zip(wins)
         .map(|((window, b), acc)| {
-            window_out(*window, b, acc, &repo_names, complete, stale, evidence_from)
+            window_out(
+                *window,
+                b,
+                acc,
+                &repo_names,
+                complete,
+                stale,
+                evidence_from,
+                all_vouch,
+            )
         })
         .collect();
+    let truncated = windows.iter().any(|w| w.truncated);
     Ok(Some(Record {
         v: RECORD_VERSION,
         generated_at: format_rfc3339(ctx.now_ms),
@@ -779,6 +827,9 @@ fn report(
         complete,
         stale,
         as_of: as_of(&meta, &health).map(format_rfc3339),
+        all_vouch,
+        incomplete_sources,
+        truncated,
         windows,
     }))
 }
@@ -795,8 +846,13 @@ pub fn run(args: &[String], ctx: &query::Ctx) -> Reply {
             "HOME is not set; set METER_STATE_DIR to choose the state folder",
         );
     };
-    let (db, location) = match query::locate(dirs, ctx.overridden) {
-        Ok(Located::Store { db, location, .. }) => (db, location),
+    let (db, location, stray) = match query::locate(dirs, ctx.overridden) {
+        Ok(Located::Store {
+            db,
+            location,
+            stray,
+            ..
+        }) => (db, location, stray),
         Ok(Located::Absent) => return Reply::err(exit::ABSENT_STORE, ABSENT),
         Err(m) => return Reply::err(exit::ERROR, m),
     };
@@ -814,7 +870,7 @@ pub fn run(args: &[String], ctx: &query::Ctx) -> Reply {
             return Reply::err(code, format!("the store could not be read: {e}"));
         }
     };
-    let record = match report(&conn, &req, ctx, location) {
+    let record = match report(&conn, &req, ctx, location, stray) {
         Ok(Some(r)) => r,
         Ok(None) => return Reply::err(exit::ABSENT_STORE, ABSENT),
         Err(f) => return Reply::err(f.code, f.message),
@@ -856,7 +912,14 @@ fn percent(part: i64, total: i64) -> String {
 fn fraction(v: Option<f64>) -> String {
     match v {
         None => "null".into(),
-        Some(v) => format!("{v:.4}"),
+        Some(v) => {
+            let s = format!("{v:.4}");
+            if s == "0.0000" && v > 0.0 {
+                "<0.0001".into()
+            } else {
+                s
+            }
+        }
     }
 }
 
@@ -891,6 +954,23 @@ fn text(r: &Record) -> String {
         or_null(&r.as_of),
         r.windows.len()
     );
+    if r.all_vouch {
+        let _ = writeln!(o, "sources: every counting source is ok or absent");
+    } else {
+        let _ = writeln!(
+            o,
+            "sources unreadable: {} (their usage is not counted: zero shares and no_usage repos \
+             are unknown here, not vouched 0s)",
+            r.incomplete_sources.join(", ")
+        );
+    }
+    if r.truncated {
+        let _ = writeln!(
+            o,
+            "lists capped at {MAX_REPOS} repos and {MAX_BOTS} bots; every total still includes \
+             every repo and bot"
+        );
+    }
     for w in &r.windows {
         let _ = writeln!(o);
         let _ = writeln!(
@@ -921,6 +1001,13 @@ fn text(r: &Record) -> String {
             yes(w.stale),
             yes(w.clipped)
         );
+        if !r.all_vouch {
+            let _ = writeln!(
+                o,
+                "  sources unreadable: {} (zero shares in this window are unknown, not vouched 0s)",
+                r.incomplete_sources.join(", ")
+            );
+        }
         let headline = match w.bot_coverage {
             None => "bot_coverage null (no counted usage in this window)".to_string(),
             Some(_) if w.evidence == "none" => format!(
@@ -948,10 +1035,10 @@ fn text(r: &Record) -> String {
                 o,
                 "  tokens {}{}",
                 w.totals.total,
-                if w.complete && !w.stale {
+                if w.complete && !w.stale && !w.clipped {
                     ""
                 } else {
-                    " (at least: the store may hold usage not yet counted)"
+                    " (at least: the window or the store leaves usage uncounted)"
                 }
             );
         }
@@ -961,11 +1048,19 @@ fn text(r: &Record) -> String {
              printed, never the headline)",
             fraction(w.inspected)
         );
+        let zero_unknown = |tokens: i64| tokens == 0 && w.totals.total > 0 && !r.all_vouch;
+        let share = |tokens: i64| {
+            if zero_unknown(tokens) {
+                "unknown".to_string()
+            } else {
+                percent(tokens, w.totals.total)
+            }
+        };
         let _ = writeln!(
             o,
             "  attributed {} ({:>9} of the counted tokens; the bots below are its split)",
             w.totals.attributed,
-            percent(w.totals.attributed, w.totals.total)
+            share(w.totals.attributed)
         );
         let _ = writeln!(o, "  classes (part / total):");
         for p in &w.parts {
@@ -974,7 +1069,7 @@ fn text(r: &Record) -> String {
                 "    {:<30} {:>10}  {:>10}  {}",
                 format!("{}/{}", p.state, p.reason),
                 p.tokens,
-                percent(p.tokens, w.totals.total),
+                share(p.tokens),
                 harnesses(&p.harnesses)
             );
         }
@@ -995,6 +1090,11 @@ fn text(r: &Record) -> String {
             w.repos_shown, w.repos_omitted
         );
         for line in &w.repos {
+            let coverage = if line.state == "unknown" {
+                "unknown".to_string()
+            } else {
+                fraction(line.bot_coverage)
+            };
             let _ = writeln!(
                 o,
                 "    {}  {}/{}/{}/{}  {}  {}",
@@ -1004,7 +1104,7 @@ fn text(r: &Record) -> String {
                 line.totals.unlinked,
                 line.totals.before_evidence,
                 line.totals.total,
-                fraction(line.bot_coverage)
+                coverage
             );
         }
         if let Some(line) = &w.repos_other {

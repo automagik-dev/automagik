@@ -282,9 +282,9 @@ struct WindowInfo {
 }
 
 #[derive(Serialize, Clone)]
-struct SourceInfo {
-    harness: String,
-    status: String,
+pub(crate) struct SourceInfo {
+    pub(crate) harness: String,
+    pub(crate) status: String,
     reason: Option<String>,
     last_success: Option<String>,
     stale: bool,
@@ -1582,8 +1582,12 @@ pub(crate) fn meta_i64(meta: &BTreeMap<String, String>, k: &str) -> Option<i64> 
 
 /// Source health, one entry per harness (by name), then the old folder's store if it holds usage
 /// this store does not.
-fn sources(
-    snap: &Snapshot,
+/// Every harness's health, then the old folder's store when it holds usage this store does not.
+/// The query puts it in the envelope and the coverage report reads it for its zero rule
+/// (RFC 0018: a zero is vouched for only when every source is `ok` or `absent`).
+pub(crate) fn sources(
+    meta: &BTreeMap<String, String>,
+    health: &BTreeMap<String, Option<i64>>,
     stray: Option<&'static str>,
     now: i64,
     stale_ms: i64,
@@ -1594,9 +1598,9 @@ fn sources(
         .into_iter()
         .map(|s| {
             let h = s.harness();
-            let (status, reason) = crate::sync::source_status(|k| snap.meta.get(k).cloned(), s);
+            let (status, reason) = crate::sync::source_status(|k| meta.get(k).cloned(), s);
             let reason = reason.map(|r| chars(&r, LABEL_CHARS));
-            let last = snap.health.get(h).copied().flatten();
+            let last = health.get(h).copied().flatten();
             let counts = matches!(status.as_str(), "ok" | "degraded");
             let stale = counts && last.is_none_or(|t| now - t > stale_ms);
             SourceInfo {
@@ -1872,7 +1876,7 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
     };
     let stale = w.is_none_or(|w| now - w > stale_ms);
     let complete = backlog.bytes == Some(0) && backlog.files == Some(0);
-    let srcs = sources(&snap, stray, now, stale_ms);
+    let srcs = sources(&snap.meta, &snap.health, stray, now, stale_ms);
     let harness_sources: Vec<&SourceInfo> =
         srcs.iter().filter(|s| s.harness != LEGACY_STORE).collect();
     let counting: Vec<&&SourceInfo> = harness_sources

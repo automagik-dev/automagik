@@ -50,8 +50,135 @@ fn report(s: &Scene, a: &[&str]) -> Value {
     serde_json::from_str(&r.stdout).unwrap()
 }
 
+/// Runs the report in memory at a chosen clock (for the stale case).
+fn report_at(s: &Scene, a: &[&str], now: &str) -> Value {
+    let mut c = ctx(s);
+    c.now_ms = t(now);
+    let r = coverage::run(&args(a), &c);
+    assert_eq!(r.code, 0, "{}", r.stderr.unwrap_or_default());
+    serde_json::from_str(&r.stdout).unwrap()
+}
+
+/// One synthetic usage row, for the cases a log cannot easily make: a window edge, usage with no
+/// repo, two repos, or several contract keys for one bot.
+#[derive(Default)]
+struct Row<'a> {
+    id: &'a str,
+    repo: Option<&'a str>,
+    hour: i64,
+    tokens: i64,
+    /// `attributed`, `ambiguous` or `unlinked`.
+    state: &'a str,
+    bot: Option<&'a str>,
+    role: Option<&'a str>,
+    squad: Option<&'a str>,
+    /// The contract's `unrecorded` list, as the store writes it (`role`, `squad` or both).
+    unrecorded: Option<&'a str>,
+    kind: Option<&'a str>,
+    basis: Option<&'a str>,
+    reason: Option<&'a str>,
+    /// `claude-code` when empty.
+    harness: &'a str,
+}
+
+/// Inserts the rows into the scene's store, opened for this test only.
+fn insert(s: &Scene, rows: &[Row<'_>]) {
+    let store = s.store();
+    for row in rows {
+        store
+            .conn
+            .execute(
+                "INSERT INTO usage(id, hour_ms, harness, model, machine, repo, branch,
+                   input_uncached, cache_read, cache_write_5m, cache_write_1h, output, reasoning,
+                   unsplit, precision, reported_usd, events, updated_ms, actor_state, bot, role,
+                   squad, kind, basis, branch_basis, unrecorded, reason)
+                 VALUES(?1, ?2, ?3, 'claude-opus-5-5', ?4, ?5, NULL,
+                   ?6, 0, 0, 0, 0, 0, 0, 'exact', NULL, 1, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
+                   'none', ?14, ?15)",
+                rusqlite::params![
+                    row.id,
+                    row.hour,
+                    if row.harness.is_empty() {
+                        "claude-code"
+                    } else {
+                        row.harness
+                    },
+                    MACHINE,
+                    row.repo,
+                    row.tokens,
+                    row.hour,
+                    row.state,
+                    row.bot,
+                    row.role,
+                    row.squad,
+                    row.kind,
+                    row.basis,
+                    row.unrecorded,
+                    row.reason
+                ],
+            )
+            .unwrap();
+    }
+}
+
+/// An attributed row for bot otter, every key field recorded, on `repo`.
+fn attributed(
+    id: &'static str,
+    repo: Option<&'static str>,
+    hour: i64,
+    tokens: i64,
+) -> Row<'static> {
+    Row {
+        id,
+        repo,
+        hour,
+        tokens,
+        state: "attributed",
+        bot: Some("otter"),
+        role: Some("dev"),
+        squad: Some("lark"),
+        kind: Some("worker"),
+        basis: Some("session"),
+        ..Row::default()
+    }
+}
+
+fn report_text(s: &Scene, a: &[&str]) -> String {
+    let r = coverage::run(&args(a), &ctx(s));
+    assert_eq!(r.code, 0, "{:?}", r.stderr);
+    r.stdout
+}
+
+fn report_text_at(s: &Scene, a: &[&str], now: &str) -> String {
+    let mut c = ctx(s);
+    c.now_ms = t(now);
+    let r = coverage::run(&args(a), &c);
+    assert_eq!(r.code, 0, "{:?}", r.stderr);
+    r.stdout
+}
+
 fn int(v: &Value) -> i64 {
     v.as_i64().unwrap_or_else(|| panic!("not an integer: {v}"))
+}
+
+/// The part with `reason` in a window.
+fn part<'a>(w: &'a Value, reason: &str) -> &'a Value {
+    w["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["reason"] == reason)
+        .unwrap_or_else(|| panic!("no {reason} part in {w}"))
+}
+
+/// The repo line named `repo` in a window.
+fn repo_line<'a>(w: &'a Value, repo: &str) -> &'a Value {
+    w["repos"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["repo"] == repo)
+        .unwrap_or_else(|| panic!("no {repo} line in {w}"))
 }
 
 /// The window named `name` of a record.
@@ -219,9 +346,20 @@ fn t1_every_class_is_counted_and_none_is_hidden() {
     assert_eq!(v["evidence_from"], "2026-10-21T00:00:00Z");
     // The oldest launch row is the attributed worker's.
     assert_eq!(v["records_from"], "2026-11-08T09:00:00Z");
+    // Every source is readable, so the zeros below are vouched for, and every counting source
+    // reported a last success.
+    assert_eq!(v["all_vouch"], true);
+    assert_eq!(v["incomplete_sources"], json!([]));
+    assert_eq!(v["as_of"], "2026-11-08T19:52:41Z");
+    assert_eq!(v["complete"], true);
+    assert_eq!(v["stale"], false);
+    assert_eq!(v["truncated"], false);
 
     let d1 = window(&v, "d1");
     assert_eq!(d1["evidence"], "full");
+    assert_eq!(d1["clipped"], false);
+    assert_eq!(d1["complete"], true);
+    assert_eq!(d1["stale"], false);
     // 1100 attributed + 2200 ambiguous + 3300 + 4400 + 5500 unlinked.
     assert_eq!(
         [
@@ -290,6 +428,8 @@ fn t1_every_class_is_counted_and_none_is_hidden() {
     assert_eq!(int(&d30["bots"][0]["tokens"]), 1100);
     assert_eq!(int(&d30["bots"][0]["tokens_by_basis"]["session"]), 1100);
     assert_eq!(d30["bots"][0]["unrecorded"], json!([]));
+    // The share rounds like `bot_coverage`: four decimals, 1100/27500 = 0.04.
+    assert_eq!(d30["bots"][0]["share"], json!(0.04));
     let shares: f64 = d30["bots"]
         .as_array()
         .unwrap()
@@ -428,6 +568,7 @@ fn t2_the_by_bot_answer_is_the_same_arithmetic() {
 fn t2_more_than_50_bots_are_capped_counted_and_summed() {
     let s = many_bots();
     let v = report(&s, &["--json", "--window", "d1"]);
+    assert_eq!(v["truncated"], true);
     let d1 = window(&v, "d1");
     assert_eq!(
         int(&d1["totals"]["attributed"]),
@@ -533,6 +674,7 @@ fn the_repo_list_is_capped_counted_and_summed() {
         .unwrap();
     drop(store);
     let v = report(&s, &["--json", "--window", "d1"]);
+    assert_eq!(v["truncated"], true);
     let d1 = window(&v, "d1");
     assert_eq!(int(&d1["totals"]["total"]), expected);
     assert_eq!(int(&d1["totals"]["attributed"]), expected);
@@ -676,6 +818,367 @@ fn exit_codes_follow_the_query_store_states() {
         assert!(r.stdout.is_empty(), "a refusal prints no report");
     }
     s.store().set_meta("schema_version", "3").unwrap();
+}
+
+/// Fixer M-1 / RFC 0018's zero rule: when a source cannot be read, a zero class share and a
+/// `no_usage` repo are unknown, not vouched 0s, and both outputs name the unreadable sources;
+/// the query reports the same list on every row it answers.
+#[test]
+fn zeros_are_unknown_when_a_source_cannot_be_read() {
+    let s = classes();
+    let store = s.store();
+    store.set_meta("codex_status", "unsupported").unwrap();
+    store.set_meta("dsh-tui_status", "unsupported").unwrap();
+    drop(store);
+    let empty = "example.com/acme/empty";
+    let v = report(
+        &s,
+        &["--json", "--window", "d1", "--repo", REPO, "--repo", empty],
+    );
+    assert_eq!(v["all_vouch"], false);
+    assert_eq!(v["incomplete_sources"], json!(["codex", "dsh-tui"]));
+    let d1 = window(&v, "d1");
+    // before_evidence is 0 in d1 while codex and dsh-tui could not be read: unknown.
+    let before = part(d1, "before_evidence");
+    assert_eq!(int(&before["tokens"]), 0);
+    assert_eq!(before["share"], Value::Null);
+    assert_eq!(before["vouched"], false);
+    // A class that does hold tokens keeps its share, and its 0 claim is not involved.
+    let no_record = part(d1, "no_record");
+    assert_eq!(int(&no_record["tokens"]), 3300);
+    assert!(no_record["share"].as_f64().unwrap() > 0.0);
+    assert_eq!(no_record["vouched"], true);
+    // A named repo with no usage is unknown, not `no_usage`, while a source is unreadable.
+    assert_eq!(repo_line(d1, empty)["state"], "unknown");
+    assert_eq!(repo_line(d1, empty)["bot_coverage"], Value::Null);
+    assert_eq!(repo_line(d1, REPO)["state"], "measured");
+
+    // The query names the same unreadable sources on the rows it answers.
+    let (code, raw) = s.query(&scenes::args(true, &[]));
+    assert_eq!(code, 0, "{raw}");
+    let q: Value = serde_json::from_str(&raw).unwrap();
+    let rows = q["rows"].as_array().unwrap();
+    assert!(!rows.is_empty());
+    for r in rows {
+        assert_eq!(r["incomplete_sources"], json!(["codex", "dsh-tui"]));
+    }
+
+    // The text names them and shows the zero as unknown.
+    let text = report_text(&s, &["--window", "d1", "--repo", REPO]);
+    assert!(
+        text.contains("sources unreadable: codex, dsh-tui"),
+        "{text}"
+    );
+    assert!(text.contains("unknown"), "{text}");
+    let before = text
+        .lines()
+        .find(|l| l.contains("before_evidence/before_evidence"))
+        .unwrap();
+    assert!(before.contains("unknown"), "not a vouched zero: {before}");
+}
+
+/// A legacy store beside the current one is a degraded source in the query's answer, so the
+/// report names it too and its zeros are not vouched (the stray-store half of Fixer M-1).
+#[test]
+fn a_stray_legacy_store_is_named_and_unvouches_zeros() {
+    let s = classes();
+    let old = s.env.dir.path().join("old-state");
+    fs::create_dir_all(&old).unwrap();
+    fs::write(old.join("meter.db"), b"an older meter's store").unwrap();
+    let c = Ctx {
+        state: Some(StateDirs {
+            dir: s.env.state(),
+            legacy: Some(old),
+        }),
+        overridden: false,
+        now_ms: t(scenes::GENERATED),
+        busy: Duration::from_secs(2),
+        meter_version: scenes::EXAMPLE_VERSION.into(),
+    };
+    let r = coverage::run(&args(&["--json", "--window", "d1"]), &c);
+    assert_eq!(r.code, 0, "{:?}", r.stderr);
+    let v: Value = serde_json::from_str(&r.stdout).unwrap();
+    assert_eq!(v["all_vouch"], false);
+    assert_eq!(v["incomplete_sources"], json!(["legacy-store"]));
+    let d1 = window(&v, "d1");
+    assert_eq!(part(d1, "before_evidence")["vouched"], false);
+}
+
+/// The windows are half-open, `[start, end)`: a row exactly at the start is counted, one exactly
+/// at the end is not.
+#[test]
+fn window_boundaries_are_half_open() {
+    let s = Scene::migrated("2026-09-11T23:30:00Z", &[]);
+    let store = s.store();
+    store
+        .set_meta("last_run_ms", &t("2026-11-08T19:00:00Z").to_string())
+        .unwrap();
+    drop(store);
+    insert(
+        &s,
+        &[
+            attributed("cov-edge-start", Some(REPO), t("2026-11-07T20:00:00Z"), 100),
+            attributed(
+                "cov-edge-inside",
+                Some(REPO),
+                t("2026-11-08T19:00:00Z"),
+                200,
+            ),
+            attributed("cov-edge-end", Some(REPO), t("2026-11-08T20:00:00Z"), 400),
+        ],
+    );
+    let v = report(&s, &["--json", "--window", "d1"]);
+    let d1 = window(&v, "d1");
+    assert_eq!(d1["start"], "2026-11-07T20:00:00Z");
+    assert_eq!(d1["end"], "2026-11-08T20:00:00Z");
+    assert_eq!(int(&d1["totals"]["total"]), 300);
+    assert_eq!(int(&repo_line(d1, REPO)["totals"]["total"]), 300);
+    assert_eq!(int(&d1["bots"][0]["tokens"]), 300);
+}
+
+/// Usage with no repo is outside every denominator, store-wide: it raises `no_repo` and moves no
+/// count, not even the numerator.
+#[test]
+fn no_repo_usage_is_outside_every_denominator() {
+    let s = classes();
+    let before = report(&s, &["--json", "--window", "d1"]);
+    insert(
+        &s,
+        &[Row {
+            repo: None,
+            ..attributed("cov-no-repo", None, t("2026-11-08T10:00:00Z"), 777)
+        }],
+    );
+    let after = report(&s, &["--json", "--window", "d1"]);
+    let (b, a) = (window(&before, "d1"), window(&after, "d1"));
+    assert_eq!(int(&a["no_repo"]["tokens"]), 777);
+    for count in [
+        "attributed",
+        "ambiguous",
+        "unlinked",
+        "before_evidence",
+        "total",
+    ] {
+        assert_eq!(
+            int(&a["totals"][count]),
+            int(&b["totals"][count]),
+            "{count}"
+        );
+    }
+    assert_eq!(
+        int(&a["bots"][0]["tokens"]),
+        int(&b["bots"][0]["tokens"]),
+        "no-repo usage is never attributed to a bot"
+    );
+    let text = report_text(&s, &["--window", "d1"]);
+    assert!(text.contains("no_repo 777 tokens"), "{text}");
+    assert!(text.contains("store-wide, even with --repo"), "{text}");
+}
+
+/// The overall ratio is computed over the summed tokens, never as the mean of the repos' ratios:
+/// 1/2 and 2/10 make 3/12 = 0.25, not 0.35.
+#[test]
+fn the_overall_is_over_summed_tokens_not_the_mean_of_ratios() {
+    let s = Scene::migrated("2026-09-11T23:30:00Z", &[]);
+    let store = s.store();
+    store
+        .set_meta("last_run_ms", &t(SYNCED).to_string())
+        .unwrap();
+    drop(store);
+    let half = "example.com/acme/ratio-half";
+    let fifth = "example.com/acme/ratio-fifth";
+    insert(
+        &s,
+        &[
+            attributed("cov-ratio-a", Some(half), t("2026-11-08T10:00:00Z"), 1),
+            Row {
+                id: "cov-ratio-a-rest",
+                repo: Some(half),
+                hour: t("2026-11-08T10:00:00Z"),
+                tokens: 1,
+                state: "unlinked",
+                reason: Some("no_record"),
+                ..Row::default()
+            },
+            attributed("cov-ratio-b", Some(fifth), t("2026-11-08T10:00:00Z"), 2),
+            Row {
+                id: "cov-ratio-b-rest",
+                repo: Some(fifth),
+                hour: t("2026-11-08T10:00:00Z"),
+                tokens: 8,
+                state: "unlinked",
+                reason: Some("no_record"),
+                ..Row::default()
+            },
+        ],
+    );
+    let v = report(&s, &["--json", "--window", "d1"]);
+    let d1 = window(&v, "d1");
+    assert_eq!(int(&d1["totals"]["total"]), 12);
+    assert_eq!(int(&d1["totals"]["attributed"]), 3);
+    assert_eq!(d1["bot_coverage"], json!(0.25));
+    assert_eq!(repo_line(d1, half)["bot_coverage"], json!(0.5));
+    assert_eq!(repo_line(d1, fifth)["bot_coverage"], json!(0.2));
+}
+
+/// One bot with two contract keys: the line sums its tokens by bot id, keeps the basis split and
+/// shows the union of its `unrecorded` fields over the tokens they cover.
+#[test]
+fn a_bot_line_sums_its_keys_and_keeps_unrecorded_visible() {
+    let s = Scene::migrated("2026-09-11T23:30:00Z", &[]);
+    let store = s.store();
+    store
+        .set_meta("last_run_ms", &t(SYNCED).to_string())
+        .unwrap();
+    drop(store);
+    insert(
+        &s,
+        &[
+            Row {
+                id: "cov-key-recorded",
+                repo: Some(REPO),
+                hour: t("2026-11-08T10:00:00Z"),
+                tokens: 3,
+                state: "attributed",
+                bot: Some("otter"),
+                role: Some("dev"),
+                squad: Some("lark"),
+                kind: Some("worker"),
+                basis: Some("session"),
+                harness: "claude-code",
+                ..Row::default()
+            },
+            Row {
+                id: "cov-key-unrecorded",
+                repo: Some(REPO),
+                hour: t("2026-11-08T11:00:00Z"),
+                tokens: 5,
+                state: "attributed",
+                bot: Some("otter"),
+                role: Some("dev"),
+                squad: None,
+                unrecorded: Some("squad"),
+                kind: Some("worker"),
+                basis: Some("label"),
+                harness: "dsh-tui",
+                ..Row::default()
+            },
+        ],
+    );
+    let v = report(&s, &["--json", "--window", "d1"]);
+    let d1 = window(&v, "d1");
+    assert_eq!(int(&d1["bots_shown"]), 1);
+    let bot = &d1["bots"][0];
+    assert_eq!(bot["bot"], "otter");
+    assert_eq!(int(&bot["tokens"]), 8);
+    assert_eq!(bot["share"], json!(1.0));
+    assert_eq!(int(&bot["tokens_by_basis"]["session"]), 3);
+    assert_eq!(int(&bot["tokens_by_basis"]["label"]), 5);
+    assert_eq!(int(&bot["tokens_by_basis"]["worktree"]), 0);
+    assert_eq!(bot["unrecorded"], json!(["squad"]));
+    assert_eq!(int(&bot["tokens_unrecorded"]), 5);
+    assert_eq!(bot["harnesses"], json!(["claude-code", "dsh-tui"]));
+    assert_eq!(int(&d1["totals"]["attributed"]), 8);
+    assert_eq!(d1["bot_coverage"], json!(1.0));
+}
+
+/// Fixer L-1: a launch row written before RFC 0021 delivery 3 may have no `created_ms`; its
+/// `valid_from` is its start, so it carries `records_from` back where it belongs.
+#[test]
+fn a_launch_without_created_ms_still_marks_the_horizon() {
+    let s = classes();
+    let store = s.store();
+    store
+        .conn
+        .execute(
+            "UPDATE launch SET created_ms = NULL, valid_from = ?1
+             WHERE lkey = (SELECT lkey FROM launch ORDER BY coalesce(created_ms, valid_from) LIMIT 1)",
+            rusqlite::params![t("2026-10-01T00:00:00Z")],
+        )
+        .unwrap();
+    drop(store);
+    let v = report(&s, &["--json"]);
+    assert_eq!(v["records_from"], "2026-10-01T00:00:00Z");
+}
+
+/// The completeness flags are asserted in both outputs, and a stale, backlogged or clipped
+/// window labels its token total a lower bound ("at least"), while its ratio stays over counted
+/// usage.
+#[test]
+fn stale_complete_and_clipped_are_reported_and_label_totals() {
+    let s = classes();
+    let base = report(&s, &["--json", "--window", "d30"]);
+    assert_eq!(base["as_of"], "2026-11-08T19:52:41Z");
+    assert_eq!(base["complete"], true);
+    assert_eq!(base["stale"], false);
+    assert_eq!(base["windows"][0]["clipped"], false);
+
+    // Two hours past the watermark, the answer is stale: tokens become a lower bound.
+    let late = "2026-11-08T23:00:00Z";
+    let stale = report_at(&s, &["--json", "--window", "d30"], late);
+    assert_eq!(stale["stale"], true);
+    assert_eq!(stale["windows"][0]["stale"], true);
+    let text = report_text_at(&s, &["--window", "d30"], late);
+    assert!(text.contains("stale: yes"), "{text}");
+    assert!(text.contains("(at least"), "{text}");
+
+    // A backlog makes the ingestion incomplete.
+    s.store().set_meta("last_pending_bytes", "5").unwrap();
+    let backlog = report(&s, &["--json", "--window", "d30"]);
+    assert_eq!(backlog["complete"], false);
+    let text = report_text(&s, &["--window", "d30"]);
+    assert!(text.contains("ingestion complete: no"), "{text}");
+    assert!(text.contains("(at least"), "{text}");
+    s.store().set_meta("last_pending_bytes", "0").unwrap();
+
+    // A counted_from inside d30 clips the window, and its total is labelled the same way.
+    s.store()
+        .set_meta("counted_from_ms", &t("2026-10-25T00:00:00Z").to_string())
+        .unwrap();
+    let clipped = report(&s, &["--json", "--window", "d30"]);
+    assert_eq!(clipped["windows"][0]["clipped"], true);
+    assert_eq!(clipped["windows"][0]["start"], "2026-10-25T00:00:00Z");
+    let text = report_text(&s, &["--window", "d30"]);
+    assert!(text.contains("clipped: yes"), "{text}");
+    assert!(text.contains("(at least"), "{text}");
+    s.store().set_meta("counted_from_ms", COUNTED_FROM).unwrap();
+}
+
+/// A share above 0 is never printed as 0: the record keeps a tiny positive exact, and the text
+/// prints `<0.0001` rather than `0.0000`.
+#[test]
+fn a_tiny_positive_share_is_never_printed_as_zero() {
+    let s = Scene::migrated("2026-09-11T23:30:00Z", &[]);
+    let store = s.store();
+    store
+        .set_meta("last_run_ms", &t(SYNCED).to_string())
+        .unwrap();
+    drop(store);
+    insert(
+        &s,
+        &[
+            attributed("cov-tiny-good", Some(REPO), t("2026-11-08T10:00:00Z"), 1),
+            Row {
+                id: "cov-tiny-rest",
+                repo: Some(REPO),
+                hour: t("2026-11-08T10:00:00Z"),
+                tokens: 99_999,
+                state: "unlinked",
+                reason: Some("no_record"),
+                ..Row::default()
+            },
+        ],
+    );
+    let v = report(&s, &["--json", "--window", "d1"]);
+    let d1 = window(&v, "d1");
+    let coverage = d1["bot_coverage"].as_f64().unwrap();
+    assert!(coverage > 0.0 && coverage < 0.0001, "{coverage}");
+    assert!((coverage - 0.00001).abs() < 1e-12, "{coverage}");
+    let share = d1["bots"][0]["share"].as_f64().unwrap();
+    assert!(share > 0.0 && share < 0.0001, "{share}");
+    let text = report_text(&s, &["--window", "d1"]);
+    assert!(text.contains("bot_coverage <0.0001"), "{text}");
+    assert!(!text.contains("bot_coverage 0.0000"), "{text}");
 }
 
 // ---------------------------------------------------------------------------------------------
