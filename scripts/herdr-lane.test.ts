@@ -22,7 +22,7 @@ describe('the herdr lane', () => {
     expect(p).toMatchObject({ schemaVersion: 1, publisher: 'automagik', part: 'herdr', keyId: KEY_ID, sequence: 570001, version: '3.57.1', tag: 'v3.57.1', commit });
     expect(p.tarball).toEqual({
       name: 'automagik-herdr-pack-3.57.1.tgz',
-      url: 'https://github.com/automagik-dev/automagik/releases/download/v3.57.1/automagik-herdr-pack-3.57.1.tgz',
+      url: 'https://github.com/automagik-si/automagik/releases/download/v3.57.1/automagik-herdr-pack-3.57.1.tgz',
       sha256: createHash('sha256').update('the pack').digest('hex'),
       size: 8,
     });

@@ -495,12 +495,12 @@ jobs:
           METER: ${{ steps.lane.outputs.meter }}
         run: |
           set -euo pipefail
-          notes="\`@automagik/acp-dsh\`, \`@automagik/bots-dsh\`, \`@automagik/locale-pt-br-dsh\`, \`@automagik/welcome-dsh\` for DeepSeek Harness, and the Automagik desktop app. Install the plugins from the [Automagik market](https://github.com/automagik-dev/dsh-marketplace) or from an Omni's own market; \`plugins.json\` lists each tarball's integrity. The desktop builds follow when they are done."
+          notes="\`@automagik/acp-dsh\`, \`@automagik/bots-dsh\`, \`@automagik/locale-pt-br-dsh\`, \`@automagik/welcome-dsh\` for DeepSeek Harness, and the Automagik desktop app. Install the plugins from the [Automagik market](https://github.com/automagik-si/dsh-marketplace) or from an Omni's own market; \`plugins.json\` lists each tarball's integrity. The desktop builds follow when they are done."
           [[ "${KIND}" == "herdr" ]] && notes="The Automagik Herdr pack alone (no plugins, no desktop build)."
           [[ "${KIND}" == "pocket" ]] && notes="Automagik Pocket (no plugins, no desktop build)."
           [[ "${KIND}" == "am" ]] && notes="am, the Automagik command, alone (no plugins, no desktop build)."
           [[ "${KIND}" == "meter" ]] && notes="usagemeter, the Automagik token meter, alone (no plugins, no desktop build)."
-          [[ "${HERDR}" == "yes" ]] && notes="${notes} Automagik Herdr: \`automagik-herdr-pack-${VERSION}.tgz\` (its sha256 in \`.sha256\`); install with \`curl -fsSL https://raw.githubusercontent.com/automagik-dev/automagik/main/herdr/install.sh | bash\`, or run \`automagik-herdr update\`."
+          [[ "${HERDR}" == "yes" ]] && notes="${notes} Automagik Herdr: \`automagik-herdr-pack-${VERSION}.tgz\` (its sha256 in \`.sha256\`); install with \`curl -fsSL https://raw.githubusercontent.com/automagik-si/automagik/main/herdr/install.sh | bash\`, or run \`automagik-herdr update\`."
           notes="${notes} am: \`automagik-am-${VERSION}.tgz\` (its sha256 in \`.sha256\`); \`am update\` takes it from the signed am-lane."
           [[ "${METER}" == "yes" ]] && notes="${notes} usagemeter: \`usagemeter-darwin-arm64\`, \`usagemeter-darwin-x86_64\`, \`usagemeter-linux-x86_64\` and \`usagemeter-linux-aarch64\` follow (the meter jobs) with \`usagemeter.SHA256SUMS\` and their signed pointer, \`meter.json\` and \`meter.json.sig\`."
           [[ "${POCKET}" == "yes" ]] && notes="${notes} Automagik Pocket: \`automagik-pocket-${VERSION}.apk\` follows (the Pocket job) with \`latest.json\`; installed phones update on their own."

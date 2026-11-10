@@ -5,8 +5,8 @@
  * only when herdr/ changed, so the pack's updater and installer do not search the releases: they
  * read two files from the rolling `herdr-lane` release, which holds nothing else:
  *
- *   https://github.com/automagik-dev/automagik/releases/download/herdr-lane/pack.json
- *   https://github.com/automagik-dev/automagik/releases/download/herdr-lane/pack.json.sig
+ *   https://github.com/automagik-si/automagik/releases/download/herdr-lane/pack.json
+ *   https://github.com/automagik-si/automagik/releases/download/herdr-lane/pack.json.sig
  *
  * pack.json names the newest pack release and its tarball's URL, sha256 and size; pack.json.sig is
  * ed25519 over its exact bytes, detached, base64, made with the HERDR_PACK_KEY Actions secret (the
@@ -45,7 +45,7 @@ export const KEY_ID = 'herdr-pack-2026-11';
 export const SLOTS = ['HERDR_PACK_KEY', 'HERDR_PACK_KEY_NEXT'] as const;
 export const KEYS_FILE = join(ROOT, 'herdr', 'mods', 'am-sidebar', 'pack-keys.json');
 export const INSTALL_SH = join(ROOT, 'herdr', 'install.sh');
-const REPOSITORY = 'https://github.com/automagik-dev/automagik';
+const REPOSITORY = 'https://github.com/automagik-si/automagik';
 const DOWNLOADS = `${REPOSITORY}/releases/download/`;
 
 export interface PackKey { keyId: string; publicKey: string }
@@ -194,7 +194,7 @@ if (import.meta.main) {
     if (problem) { console.error(`herdr lane: ${problem} (bun scripts/herdr-lane.ts keygen makes it; RFC 0011)`); process.exit(1); }
     console.log(`herdr lane: HERDR_PACK_KEY is ${keyIdOf(process.env.HERDR_PACK_KEY as string, readKeys())}, listed in pack-keys.json`);
   } else if (command === 'keygen') {
-    const repo = flag('--repo', 'automagik-dev/automagik');
+    const repo = flag('--repo', 'automagik-si/automagik');
     const keyId = flag('--key-id', KEY_ID);
     const keys = readKeys();
     if (keys.some(entry => entry.keyId === keyId)) throw new Error(`pack-keys.json already lists ${keyId}: pick a new --key-id to rotate`);
