@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | In delivery (deliveries 1-6: #211, #237, #238, #259, #265, #272; 7 (one install) and 8 (shared Bots) open; owner's answers in: D27 and Decided) |
+| Status | In delivery (deliveries 1-6: #211, #237, #238, #259, #265, #272; 7 (one install) and 8 (shared Bots) open; owner's answers in: D27 and Decided; D27 replaced by the owner 2026-11-10, #1007, designed in [RFC 0030](0030-code-mode-in-the-app.md), Queued: deliveries 7 and 8 re-scoped there) |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | desktop (3.N), plugin (3.N.P), herdr (3.N.P, [RFC 0011](0011-monorepo-parts-and-releases.md)) |
 | Created | 2026-11-03 |
@@ -16,6 +16,12 @@ window forward, on the space for the current Bot's folder. A button in Herdr bri
 back. One install sets up DSH, herdr-app and the Automagik Herdr pack, and herdr-app is kept on
 its latest release. Both modes read one Bot registry and one pet system. The owner's answers are
 D27 and the Decided section (2026-11-03).
+
+**D27 is replaced** (owner, 2026-11-10, issue #1007): Code moves inside the Automagik app, which
+draws the coding team and its herdr-core terminals itself, and the pack's mods become DSH plugins.
+[RFC 0030](0030-code-mode-in-the-app.md) designs it and says which of D27's text is replaced, which
+narrow sense is kept (Herdr's spaces, tabs, splits and layouts are not rebuilt), and how
+deliveries 7 and 8 are re-scoped. Deliveries 1-6 stand until RFC 0030's Code mode ships.
 
 ## Motivation
 
