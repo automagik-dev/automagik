@@ -603,6 +603,10 @@ export class AcpAdapter extends LlmAdapter {
     if (live === undefined) return starting !== undefined
     live.held = text
     live.open = false
+    // A cancel's own wait on this session (reap) has nothing left to end.
+    this.timers.clearTimeout(live.reaper)
+    live.reaper = undefined
+    live.reaping = undefined
     this.live.delete(sessionId)
     live.run?.dispose()
     const bridge = live.bridge
@@ -858,6 +862,11 @@ export class AcpAdapter extends LlmAdapter {
       // chat never waits on it again.
       if (live !== undefined && live.run.busy) {
         const ended = await this.stopping(live, options.signal)
+        // Ended while the old prompt was given its time (endSession): nothing starts here.
+        if (entry.held !== undefined) {
+          started()
+          return yield* stopped(entry.held)
+        }
         if (options.signal?.aborted) {
           if (!ended) this.reap(sessionId, live)
           return yield STOPPED()

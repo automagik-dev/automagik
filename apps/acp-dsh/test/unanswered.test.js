@@ -690,3 +690,47 @@ test('an agent that ends by itself does not leave what it started behind', group
     h.close()
   }
 })
+
+// --- with the level hold (#1028) -----------------------------------------------------------------
+//
+// `endSession` ends an agent session for a Session whose level is not set. It may land while a
+// cancel's own wait runs there: the hold wins, nothing new starts, and the wait ends nothing twice.
+
+test('a session ended by a hold while a new turn waits on its old prompt is not replaced in that turn', async (t) => {
+  const h = fixture(t, { deaf: 'session/cancel' })
+  try {
+    const messages = []
+    await droppedTurn(h, messages)
+    const wedged = h.live().run
+    const asked = askedAgain(wedged)
+    const running = step(h, [...messages, user('plain')])
+    await until(asked, 'the new turn to ask the agent to stop')
+    assert.equal(h.adapter.endSession('s1', 'On hold.'), true)
+    const chunks = await running
+    assert.equal(chunks.at(-1).reason.kind, 'stop')
+    assert.equal(textIn(chunks), 'On hold.')
+    assert.equal(h.adapter.live.size, 0)
+    await gone(wedged)
+    assert.equal(h.sessions(), 1, 'no agent session was started for the refused turn')
+  } finally {
+    h.close()
+  }
+})
+
+test('a hold that ends a session whose cancel was ignored leaves the cancel wait nothing to do', async (t) => {
+  const h = fixture(t, { deaf: 'session/cancel' })
+  try {
+    await stoppedTurn(h, [])
+    await until(() => h.unheard().includes('session/cancel'), 'session/cancel to reach the agent')
+    const live = h.live()
+    assert.notEqual(live.reaper, undefined, 'the wait for the cancelled prompt is running')
+    assert.equal(h.adapter.endSession('s1', 'On hold.'), true)
+    assert.equal(live.reaper, undefined)
+    await gone(live.run)
+    h.tick(CANCEL_WAIT_MS)
+    assert.deepEqual(h.warnings, [])
+  } finally {
+    h.close()
+  }
+})
+
