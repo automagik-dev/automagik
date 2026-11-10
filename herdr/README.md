@@ -54,7 +54,7 @@ holds nine mod folders and one layout, and nothing else:
 | `am-new-menu` | the `+` menu (a space row's `+` and the tab bar's `+`) |
 | `am-markdown` | the terminal's right-click menu with its Markdown files |
 | `am-mods` | the mod manager (`⌘⇧M`) |
-| `am-automations` | the automations panel; installed switched off (it needs the `herdr-automations` scheduler, which the pack does not install: the panel shows the command that does), turn it on in the Mods panel |
+| `am-automations` | the automations panel; installed switched off, turn it on in the Mods panel (it needs the `herdr-automations` scheduler: `install.sh` installs the build the pack pins, and where it is missing the panel shows the command that installs it, with an Install button) |
 | `am-quota` | the Accounts panel (your own CLIProxyAPI's accounts); installed switched off, turn it on in the Mods panel |
 | `../herdr-layout/layouts/automagik.json` | the layout that shows all of the above (its own folder: herdr.dev skips a pack folder that holds `layouts/`) |
 
@@ -153,6 +153,36 @@ nothing (an earlier `install.sh --no-usagemeter` recorded nothing), `update` ins
 prints that command instead. Either way the sidebar syncs only this computer until you run it. `--uninstall` removes it
 from a linked machine only where the install record says the pack put it and it is still that
 version.
+
+### The automations scheduler (herdr-automations)
+
+The Automations panel (`am-automations`) drives `herdr-automations`, the scheduler that fires the
+automations (our build of the vendored fork in `scheduler/`, released as
+`herdr-automations-v<version>`). The installer puts the build the pack pins
+(`mods/am-automations/scheduler.js`, read from the pack tarball it has just checked) in
+`~/.local/bin/herdr-automations`, for macOS and Linux on arm64 and x86_64: downloaded, checked
+against the pinned sha256, run once (`version` must be exactly the pinned one), then renamed into
+place. It keeps its own record (`<app home>/automagik-herdr/scheduler`) and replaces or removes
+only the binary it wrote, while it is still those bytes: one on your PATH somewhere else, a link, or
+a file you installed yourself (upstream's build, a dev build) is left as it is and only checked.
+The one exception: a file there that is exactly the pinned build (what the panel's repair command
+installs) is adopted, recorded without being replaced, so later pins reach it.
+
+For its own binary it then sets things up. A machine with no `automations.yaml` gets one saying
+`backend: hc`, so runs open in the Herdr app; an existing file is never edited, and neither it nor
+the run history is ever removed. It asks before starting the scheduler's login service
+(`herdr-automations service install`, for your user only; `--yes` says yes, no terminal says
+no), and restarts that service without asking only when it started it and the binary was replaced.
+Last, the runtime check: it asks the scheduler `ls --json` and says whether Automations is ready
+(the scheduler runs and the backend is the app's) or what is missing. A failure anywhere here is a
+warning; the pack is installed all the same, and a rerun retries.
+
+`--no-scheduler` leaves the binary and the service alone, on install and on `--uninstall`.
+`--uninstall` otherwise removes the login service when this installer started it, then the binary.
+While a login service you started yourself (Start in the panel, or `service install`) is installed,
+it keeps the binary too and says how to remove both, so no service is left restarting a missing file.
+`automagik-herdr update` (the pack's own updater) has no scheduler step yet: after it, or wherever
+the binary is missing, the panel shows the command that installs it, with an Install button.
 
 ### DSH as a Herdr agent (dsh-TUI)
 
@@ -1573,7 +1603,7 @@ with its own `RECIPE.md`:
 | `am-footer` | Herdr's `workspace-chrome` | The sidebar's brand bar and a footer rail of icon tabs — Bots, Mods, Automations, Accounts (while am-quota is on), Settings, Add machine, and up to 4 buttons other mods add — so tabs never stack up. |
 | `am-status` | Herdr's `workspace-status` | The window's bottom status bar (machine, branch, agents, `⌘⇧P commands`) plus the installed Automagik Herdr version beside "commands": click it to check now; when a release is out, `0.8.0 → 0.8.1 · update` installs it after a confirm, the same way `automagik-herdr update` does. |
 | `am-tabs` | Herdr's `tabs` | The tab bar: pills named from the agent's own title, close ✕ on hover, middle-click to close, drag to reorder, per-space side-panel memory. Scrolling never switches tabs. Its `+` opens `am-new-menu`. |
-| `am-automations` | `DnzzL/herdr-automations` (MIT) | Scheduled agent prompts as a side panel: inbox of finished runs, run now, pause all, and a form that previews the next runs. The panel draws and asks; the `herdr-automations` scheduler launches the work. **Ships switched off** (#220): the pack does not install the scheduler, so a fresh install puts the mod in `mods-disabled/`; turn it on in the Mods panel (*Automagik Automations*), and the rail's Automations tab then opens it. Without the scheduler, the panel shows the hash-checked command that installs it, to copy. An install that already has it keeps its state. |
+| `am-automations` | `DnzzL/herdr-automations` (MIT) | Scheduled agent prompts as a side panel: inbox of finished runs, run now, pause all, and a form that previews the next runs. The panel draws and asks; the `herdr-automations` scheduler launches the work. **Ships switched off** (#220): a fresh install puts the mod in `mods-disabled/`; turn it on in the Mods panel (*Automagik Automations*), and the rail's Automations tab then opens it. `install.sh` installs the scheduler the pack pins to `~/.local/bin/herdr-automations`, checked against its sha256 (never over one it did not install; `--no-scheduler` skips it), writes `backend: hc` only where there is no `automations.yaml` yet, asks before starting the login service, and says whether Automations is ready. Without the scheduler (an update through the pack's own updater installs none), the panel shows the hash-checked command that installs it: Copy copies it, Install runs it. An install that already has it keeps its state. |
 | `am-markdown` | Herdr's `menu` + `ohneda/herdr-markdown-browser` (MIT) | Right-click a terminal: under Herdr's own items, the Markdown files that terminal printed. Pick one and it renders in a preview pane — live reload on save, `Default app` — that the next pick replaces in place. |
 | `am-new-menu` | Herdr's `new-menu` | The `+` menu (the sidebar's and the tab bar's, in place of Herdr's own): terminal, the agents actually installed (per machine), new space, worktree dialogs; `⌘1…9`/`⌘T`/`⌘N`. |
 | `am-mods` | `jacksonpires/herdr-app-mod-manager` (MIT) | The table over every installed mod — on/off, check result, version, source, drift — install, update, remove; `⌘⇧M`. |

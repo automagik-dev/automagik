@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// The Automations panel installs our scheduler release and pins its two darwin binaries by sha256
-// (mods/am-automations/scheduler.js, SCHEDULER). This check downloads that release's checksums.txt
-// and fails unless both pins are exactly its hashes, so a release built from a different tree
+// The Automations panel and install.sh install our scheduler release and pin its four binaries by
+// sha256 (mods/am-automations/scheduler.js, SCHEDULER: two darwin, two Linux). This check downloads
+// that release's checksums.txt and fails unless every pin is exactly its hash, so a release built from a different tree
 // cannot leave the panel handing out a repair command that 404s or fails its shasum.
 //
 // The public download URL is tried first; on a 5xx, a timeout or a network error checksums.txt
@@ -20,12 +20,16 @@ import { releaseAssets } from "./release-assets.mjs";
 const RELEASE = `herdr-automations-v${SCHEDULER.version}`;
 const BASE = `https://github.com/${SCHEDULER.repo}/releases/download/${RELEASE}`;
 const API = `https://api.github.com/repos/${SCHEDULER.repo}`;
-const ASSETS = { arm64: "herdr-automations_darwin_arm64", amd64: "herdr-automations_darwin_amd64" };
+const ASSETS = {
+  arm64: "herdr-automations_darwin_arm64", amd64: "herdr-automations_darwin_amd64",
+  linux_arm64: "herdr-automations_linux_arm64", linux_amd64: "herdr-automations_linux_amd64",
+};
+const PINNED = { ...SCHEDULER.sha256, linux_arm64: SCHEDULER.linux.arm64, linux_amd64: SCHEDULER.linux.amd64 };
 
 /**
  * Check the release's checksums against the pins. `pinned` and `assets` are injectable so the
  * tests can serve their own hashes; the CLI runs with scheduler.js's map. Returns the exit code:
- * 0 when both pins match, 1 on any difference, 2 when neither route serves checksums.txt.
+ * 0 when every pin matches, 1 on any difference, 2 when neither route serves checksums.txt.
  */
 export async function check({
   fetch: fetchImpl = globalThis.fetch,
@@ -33,7 +37,7 @@ export async function check({
   api = API,
   tag = RELEASE,
   token = process.env.GITHUB_TOKEN,
-  pinned = SCHEDULER.sha256,
+  pinned = PINNED,
   assets = ASSETS,
   log = console.log,
   error = console.error,
@@ -57,7 +61,7 @@ export async function check({
     for (const problem of problems) error(`scheduler-pin: ${problem}`);
     return 1;
   }
-  log(`scheduler-pin: ${tag} matches both darwin pins`);
+  log(`scheduler-pin: ${tag} matches every pin (${Object.keys(assets).length})`);
   return 0;
 }
 
