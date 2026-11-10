@@ -11,6 +11,13 @@ import { callArguments, mirrorTool } from '../src/host/tool.js'
 
 // A 1x1 PNG, small enough to compare as a string, shaped like the bytes a screenshot carries.
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+// A 1x1 JPEG (ffmpeg), real image bytes so the guard's pass-through row is not a media-type guess.
+const JPEG = [
+  '/9j/4AAQSkZJRgABAgAAAQABAAD//gAQTGF2YzYyLjExLjEwMAD/2wBDAAgEBAQEBAUFBQUFBQ',
+  'YGBgYGBgYGBgYGBgYHBwcICAgHBwcGBgcHCAgICAkJCQgICAgJCQoKCgwMCwsODg4RERT/xABL',
+  'AAEBAAAAAAAAAAAAAAAAAAAABwEBAAAAAAAAAAAAAAAAAAAAABABAAAAAAAAAAAAAAAAAAAAAB',
+  'EBAAAAAAAAAAAAAAAAAAAAAP/AABEIAAEAAQMBIgACEQADEQD/2gAMAwEAAhEDEQA/AL+AD//Z',
+].join('')
 const SHOT_TEXT = 'Screenshot of https://example.com/.'
 const SHOT_REF = { attachmentId: `sha256:${'c'.repeat(64)}`, mediaType: 'image/png', bytes: 68, width: 1, height: 1 }
 const SHOT_TOOL = { name: 'browser_screenshot', description: 'Take a screenshot of the current page.', parameters: { type: 'object', properties: {} } }
@@ -325,5 +332,93 @@ test('a stub browser_screenshot tool result keeps its image in the model-facing 
     assert.equal(host.executed[0].name, 'browser_screenshot')
   } finally {
     host.backchannel.dispose()
+  }
+})
+
+// M1 rows for the repair at 2ab5339c: an inline image reaches the model only when its type is one
+// the agent decodes and its decoded bytes fit the cap; anything else is the reasoned placeholder.
+
+test('M1: an inline image decoded over 5 MiB becomes the reasoned placeholder, never image content', async () => {
+  // One byte over the cap. The bridge sizes base64 from its length, so it never decodes this.
+  const oversized = Buffer.alloc(5 * 1024 * 1024 + 1).toString('base64')
+  const host = bridge({
+    sessionId: 'm1-oversized-inline',
+    content: [{ type: 'text', text: SHOT_TEXT }, { type: 'image', data: oversized, mimeType: 'image/png' }],
+  })
+  try {
+    await serve(host)
+    const { status, body } = await callBridge(host, { callId: 'm1-oversized' })
+    assert.equal(status, 200)
+    assert.equal(body.isError, false)
+    // Checked first so a pre-repair failure names the block type, not the 7 MB payload.
+    assert.equal(body.content.filter(block => block.type === 'image').length, 0, 'no image reaches the model')
+    assert.equal(body.content.length, 2)
+    assert.deepEqual(body.content, [
+      { type: 'text', text: SHOT_TEXT },
+      { type: 'text', text: '[image unavailable: image/png; larger than 5 MiB]' },
+    ])
+    // The placeholder is the whole answer: the oversized base64 never travels back.
+    const reply = JSON.stringify(body)
+    assert.ok(reply.length < 1024, 'the response carries no unbounded payload')
+    assert.equal(reply.includes(oversized.slice(0, 64)), false)
+  } finally {
+    host.backchannel.dispose()
+  }
+})
+
+test('M1: a non-image inline block becomes the same reasoned placeholder, never image content', async () => {
+  const payload = Buffer.from('not an image, only bytes').toString('base64')
+  const host = bridge({
+    sessionId: 'm1-non-image-inline',
+    content: [
+      { type: 'text', text: SHOT_TEXT },
+      { type: 'image', data: payload, mimeType: 'text/plain' },
+      { type: 'image', data: payload, mimeType: 'application/pdf' },
+    ],
+  })
+  try {
+    await serve(host)
+    const { body } = await callBridge(host, { callId: 'm1-non-image' })
+    // Checked first so a pre-repair failure names the block type, not the payload.
+    assert.equal(body.content.filter(block => block.type === 'image').length, 0, 'a non-image stays text')
+    assert.deepEqual(body.content, [
+      { type: 'text', text: SHOT_TEXT },
+      { type: 'text', text: '[image unavailable: text/plain; not a supported image type]' },
+      { type: 'text', text: '[image unavailable: application/pdf; not a supported image type]' },
+    ])
+    assert.equal(countOf(JSON.stringify(body), payload), 0, 'the payload never travels as image data')
+  } finally {
+    host.backchannel.dispose()
+  }
+})
+
+test('M1: a small png and a small jpeg still pass as ACP image content exactly once', async () => {
+  // The guard must not over-block: both are real images under the cap and pass byte for byte.
+  // One block names mimeType, the other mediaType; both are the block's media type.
+  for (const [data, mimeType, field] of [[PNG, 'image/png', 'mimeType'], [JPEG, 'image/jpeg', 'mediaType']]) {
+    const kind = mimeType.split('/')[1]
+    const host = bridge({
+      sessionId: `m1-small-${kind}`,
+      content: [{ type: 'text', text: SHOT_TEXT }, { type: 'image', data, [field]: mimeType }],
+    })
+    try {
+      await serve(host)
+      const { body } = await callBridge(host, { callId: `m1-small-${kind}` })
+      assert.deepEqual(body.content, [
+        { type: 'text', text: SHOT_TEXT },
+        { type: 'image', data, mimeType },
+      ])
+      assert.equal(countOf(JSON.stringify(body), data), 1, 'the base64 passes exactly once')
+      // The bytes are a real image container, so the pass-through is of a picture, not a label.
+      const bytes = Buffer.from(data, 'base64')
+      if (mimeType === 'image/png') {
+        assert.deepEqual([...bytes.subarray(0, 8)], [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+      } else {
+        assert.deepEqual([...bytes.subarray(0, 3)], [0xff, 0xd8, 0xff], 'jpeg starts with SOI')
+        assert.deepEqual([...bytes.subarray(-2)], [0xff, 0xd9], 'jpeg ends with EOI')
+      }
+    } finally {
+      host.backchannel.dispose()
+    }
   }
 })
