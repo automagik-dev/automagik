@@ -3,9 +3,10 @@
 // set one level for all its members there, in place of each member's own, as it may
 // set one working folder. A level is DSH's preset name; DSH's Auto review is one while
 // its layer is loaded (../shared/permission-levels.js).
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { AUTO, AUTO_FALLBACK } from '../shared/permission-levels.js'
 import { refusal } from './refusal.js'
-import { narrowerLevel } from './permission-rank.js'
+import { narrowerLevel, narrowestOffered, rankOf } from './permission-rank.js'
 
 export function install(rt) {
   const { ctx } = rt
@@ -95,14 +96,94 @@ export function install(rt) {
   // task no Bot asked for keeps DSH's default. When its Bot or its group is deleted, the
   // task keeps the level it ran at as a cap (`permissionCap`, capTasks): what governs it
   // afterwards (the default, the Bot's own level) can lower it, never raise it.
+  // A task started from a group Session's tool call without a `roomId` (another plugin's
+  // tool that forgot the group) remembers that group as `levelRoomId`: its level is the
+  // narrower of the one above and that group's, read live, so a Bot with a wide level does
+  // not carry it into work asked for in a narrower group. It only ever narrows: a wider
+  // group gives the task nothing, and where the report goes (`roomId`) is not changed.
   const taskOf = sessionId => rt.state?.tasks?.[sessionId]
   function taskLevel(task, service) {
     if (task.from === undefined) return undefined
     const bot = rt.botOf(task.from)
     const room = task.roomId ? rt.roomOf(task.roomId) : undefined
     const level = bot === undefined ? service.catalog().defaultPreset : room?.permission ?? bot.permission ?? service.catalog().defaultPreset
-    if (level === undefined || task.permissionCap === undefined) return level
-    return narrowerLevel(service, level, task.permissionCap)
+    if (level === undefined) return level
+    return narrowedByCaller(task, task.permissionCap === undefined ? level : narrowerLevel(service, level, task.permissionCap), service)
+  }
+  // `level`, or the group's when that one is known to allow less: both are ranked as what
+  // they run as (a saved Auto DSH does not offer runs as workspace-write). A level of the
+  // task that cannot be ranked stays, as without the group; a group's that cannot gives
+  // the narrowest level the catalog offers, and only when that one allows less.
+  function narrowedByCaller(task, level, service) {
+    const asked = task.levelRoomId ? rt.roomOf(task.levelRoomId)?.permission : undefined
+    if (level === undefined || !asked || asked === level) return level
+    const rank = name => rankOf(service, name === AUTO && !autoOffered(service) ? AUTO_FALLBACK : name)
+    const was = rank(level)
+    if (was === undefined) return level
+    // A group's Auto DSH does not offer goes by the name it runs as: were the task given
+    // `auto`, a layer loading before the level is set would run it as Auto, which is wider.
+    const named = asked === AUTO && !autoOffered(service) ? AUTO_FALLBACK : asked
+    const narrower = rank(named) === undefined ? narrowestOffered(service) : named
+    const now = narrower === undefined ? undefined : rank(narrower)
+    if (now === undefined || now >= was) return level
+    // An Auto DSH offers may still fail to set, and then runs as workspace-write
+    // (applyLevel): a level wider than that one would be wider than without the group.
+    if (level === AUTO && autoOffered(service)) {
+      const floor = rankOf(service, AUTO_FALLBACK)
+      if (floor === undefined) return level
+      if (now > floor) return AUTO_FALLBACK
+    }
+    return narrower
+  }
+  // Whether a task takes its level from this group: asked for there, or started from it.
+  const taskOfRoom = (task, roomId) => task.roomId === roomId || task.levelRoomId === roomId
+
+  // The Session whose tool call is running, for a startTask made inside it: the team's
+  // tools/execute guard (tool-deny.js) runs the rest of the call through here. The store
+  // outlives the call in the timers and promise chains the call started, so it is only
+  // read while `active`, which ends with the call.
+  const callers = new AsyncLocalStorage()
+  function inToolCall(exec, next) {
+    const sessionId = exec?.agent?.id ?? exec?.agent?.session?.id
+    if (typeof sessionId !== 'string') return next()
+    const call = { sessionId, header: exec.agent?.session?.header, active: true }
+    call.roomId = groupOfSession(call)
+    return callers.run(call, async () => {
+      try {
+        return await next()
+      } finally {
+        call.active = false
+      }
+    })
+  }
+  // The group a Session speaks in. A subagent child is in none of the team's maps: it
+  // follows its parents, as the tool deny list does, up to the first Session the team
+  // knows, and has that one's group or none.
+  function groupOfSession({ sessionId, header }) {
+    let current = sessionId
+    for (let depth = 0; typeof current === 'string' && depth < 32; depth += 1) {
+      const group = rt.groupOwners.get(current)
+      if (group !== undefined) return group.roomId
+      if (rt.selfOf?.(current) !== undefined || taskOf(current) !== undefined) return undefined
+      let from = header
+      header = undefined
+      try {
+        from ??= ctx.sessions?.get?.(current)?.header
+      } catch {
+        return undefined
+      }
+      if (from?.origin !== 'subagent') return undefined
+      current = from.parentSession
+    }
+    return undefined
+  }
+  // The group of the Session whose tool call this runs in, or undefined: outside a tool
+  // call, after it returned, or from a Session that is not a group's. Read at the call's
+  // start, and again here for a call that began before the team was loaded.
+  function callerGroup() {
+    const call = callers.getStore()
+    if (call?.active !== true) return undefined
+    return call.roomId ?? groupOfSession(call)
   }
   // Before a Bot or a group leaves the state: each task `match` picks keeps the level it
   // runs at now as its cap. Saved with the deletion.
@@ -280,9 +361,9 @@ export function install(rt) {
         .catch(error => rt.warn('ds-bot: permission for %s in %s not applied: %s', bot.name, room.name, error))
     }
     // The tasks asked for in the group: its level, or now their Bot's own.
-    await reapplyTasks(task => task.roomId === room.id)
+    await reapplyTasks(task => taskOfRoom(task, room.id))
     return true
   }
 
-  Object.assign(rt, { permissionCatalog, permissionFallbackOf, permissionKey, autoClosed, applyPermission, applyTaskPermission, reapplyTasks, capTasks, taskLevelOf, forgetTaskPermission, checkPreset, setPermission, inheritedPermission, cleanRoomPermission, setRoomPermission })
+  Object.assign(rt, { permissionCatalog, permissionFallbackOf, permissionKey, autoClosed, applyPermission, applyTaskPermission, reapplyTasks, capTasks, taskOfRoom, inToolCall, callerGroup, taskLevelOf, forgetTaskPermission, checkPreset, setPermission, inheritedPermission, cleanRoomPermission, setRoomPermission })
 }

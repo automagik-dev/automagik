@@ -806,10 +806,15 @@ export function install(rt) {
   const endOf = task => task.endedAt ?? task.at ?? 0
   // `roomId`: the group whose Session asked for the task. Its result goes back to that
   // group, where the user saw the request, not to the Bot's own chat.
+  // Without one, a task started inside a group Session's tool call keeps that group as
+  // `levelRoomId`, which can only narrow its level (permissions.js); the report still goes
+  // to the Bot's own chat.
   async function startTask({ title, text, from, cwd, agentPreset, roomId }) {
+    // Read before the first await: the tool call this runs in may return before the rest.
+    const levelRoomId = roomId || from === undefined ? undefined : rt.callerGroup?.()
     const caller = state.bots?.[from]
     const sessionId = await createTaskSession(title, { cwd: cwd ?? caller?.workDir, agentPreset: agentPreset ?? caller?.profile })
-    tasks()[sessionId] = { title: String(title).slice(0, AGENT_SESSION_TITLE_MAX), from, at: Date.now(), status: 'working', ...(roomId ? { roomId } : {}) }
+    tasks()[sessionId] = { title: String(title).slice(0, AGENT_SESSION_TITLE_MAX), from, at: Date.now(), status: 'working', ...(roomId ? { roomId } : {}), ...(levelRoomId ? { levelRoomId } : {}) }
     // Only TASKS_KEPT ended tasks are remembered for their reports. The ended ones go first,
     // the one that ended longest ago first: a long task that just ended is fresh news.
     // A working record is never evicted, whatever its age or whether DSH still holds its

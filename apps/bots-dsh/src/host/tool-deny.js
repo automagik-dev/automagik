@@ -307,7 +307,8 @@ export function install(rt) {
     const name = typeof exec?.name === 'string' ? exec.name : ''
     if (name === '' || exec?.agent === undefined) return next()
     const bot = botOfSession(exec.agent?.id ?? exec.agent?.session?.id, exec.agent)
-    if (bot === undefined || !deniedNames(bot).includes(name)) return next()
+    // A call that goes on carries its Session, for a task started inside it (permissions.js).
+    if (bot === undefined || !deniedNames(bot).includes(name)) return rt.inToolCall === undefined ? next() : rt.inToolCall(exec, next)
     throw refusal(`${bot.name} does not have the ${name} tool`)
   })
 
