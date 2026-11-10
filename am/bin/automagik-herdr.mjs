@@ -14,7 +14,7 @@ import { accessSync, chmodSync, closeSync, constants, existsSync, fchmodSync, fs
   renameSync, statSync, unlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 
 import { BOT_LABEL, BOTS_PATH, CHARACTERS, COLOURS, KINDS, MAX_INSTRUCTIONS, OMNI_LOOK, applyBotEdit, checkBots,
@@ -39,7 +39,7 @@ import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, 
   taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, templateAgent, workerArgs, workerBranch, workerPlan, workerRole, worktreeFolder,
   workLeft, writesWorktree } from "../workers.js";
 import { SESSION_MASK, carriedLabels, maskSession, commandArgv, continueRefusal, doomedHelpers, helperArgs, helperPlan, launchChange, ledgerSession, maskedArgv,
-  paneCommand, planText as restartText, restartPlan, sharedFresh, claudeSlug, paneSession, restartRefusal, sameSessions, sessionFor, sessionId, sharedFolders } from "../restart.js";
+  isPaneIdle, pendingDialog, paneCommand, planText as restartText, restartPlan, sharedFresh, claudeSlug, paneSession, restartRefusal, sameSessions, sessionFor, sessionId, sharedFolders } from "../restart.js";
 import { autoStatus, readAuto, binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, managedPack, readMarker, relinkCli, rollback as rollbackPack, writeAuto, writeMarker } from "../update.mjs";
 import { NO_UPDATE_ENV, PACK_NAME, POCKET_LINK, heldModLine, updatesOff } from "../release.js";
 import { MACHINE_NAME, OPT_IN, decodeExec, hcExecArgs, installOn, linkedMachines, meterScope, recordAfter, resultLine, uninstallOn } from "../meterFleet.js";
@@ -1178,6 +1178,7 @@ const OPTIONS = {
   "worker-template": { type: "string" }, template: { type: "string" },
   branch: { type: "string" }, worktree: { type: "string" }, base: { type: "string" }, effort: { type: "string" },
   task: { type: "string" }, bot: { type: "string" }, move: { type: "boolean" },
+  queued: { type: "boolean" }, cancel: { type: "boolean" }, "run-queued": { type: "string" },
   fresh: { type: "boolean" }, force: { type: "boolean" }, save: { type: "boolean" }, tree: { type: "boolean" }, "fresh-shared": { type: "boolean" },
   cwd: { type: "string" },
   machine: { type: "string" }, linked: { type: "boolean" }, local: { type: "boolean" },
@@ -1219,6 +1220,8 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
   category ls | add --title T [--sub S] [--id ID] | edit <id> [--title T] [--sub S]
            | rm <id> | order <id>...
   start <bot> [--space ID] [--tab ID]   a new pane on this computer (prints its terminal)
+  restart --queued [--project DIR] [--json]   List queued restarts.
+  restart --cancel <bot> [--project DIR] [--json]   Cancel a queued restart.
   restart <bot> [--fresh] [--agent A] [--model M [--save]] [--tree [--fresh-shared]] [--force] [--cwd DIR]
                                 the bot's agent again in its pane's place (same space and tab,
                                 same folder, labels kept), launched from its current source
@@ -1237,8 +1240,9 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 resume --last, --continue for the rest), unless another bot
                                 on that agent runs there: then a new one, and why;
                                 --fresh: a new one; --agent/--model: a swap (always new;
-                                --save: also into ${BOTS_PATH}). Refused while the bot is
-                                working or has helpers that would end with it, unless --force
+                                --save: also into ${BOTS_PATH}). Queues a working or blocked
+                                bot until its next idle; the owner answers dialogs.
+                                Helpers that would end with it still refuse, unless --force
                                 (they end with it) or --tree (they run again under the new pane,
                                 one at a time, each in its folder with its command, resumed: by
                                 its agent.session or revive.session id, else its folder's latest,
@@ -3540,9 +3544,10 @@ async function treeIdle(old, plans, say, { force = false } = {}) {
     const states = await Promise.all([old.address, ...plans.map((q) => q.replaced)].map((a) => hcState(a)));
     const unread = states.filter((x) => x.state === "unknown").map((x) => x.why);
     if (unread.length) throw new CliError(`${unread.join("; ")}: --tree can't tell whether it is mid-turn. Nothing was started.`);
+    const screens = await Promise.all(states.map((s) => s.get ? readScreenText(s.get.address) : null));
     const panes = [{ address: old.address, agent: agentKeyOfArgv(unwrapKeep(old.foreground?.argv), agentTable()) }, ...plans.map((q) => ({ address: q.replaced, agent: q.agent }))]
-      .map((p, i) => ({ ...p, live: states[i].state === "live", status: states[i].get?.status?.state }));
-    const asking = panes.filter((p) => p.live && p.status === "blocked").map((p) => p.address);
+      .map((p, i) => ({ ...p, live: states[i].state === "live", status: states[i].get?.status?.state, idle: isPaneIdle(states[i].get, screens[i]), dialog: pendingDialog(screens[i]) }));
+    const asking = panes.filter((p) => p.live && (p.status === "blocked" || p.dialog)).map((p) => p.address);
     if (asking.length) {
       const one = asking.length === 1;
       throw new CliError(`${asking.join(", ")} ${one ? "is" : "are"} waiting for an answer. Nothing was started: answer ${one ? "it" : "them"} first, or pass --force to end ${one ? "it" : "them"}.`);
@@ -3553,7 +3558,7 @@ async function treeIdle(old, plans, say, { force = false } = {}) {
       throw new CliError(`${silent.join(", ")} ${one ? "doesn't" : "don't"} tell hc whether ${one ? "it is" : "they are"} busy, so --tree can't tell whether ${one ? "it has" : "they have"} finished. `
         + `Nothing was started. Look at ${one ? "it" : "them"} first, then pass --force to restart anyway.`);
     }
-    const busy = panes.filter((p) => p.live && p.status === "working").map((p) => p.address);
+    const busy = panes.filter((p) => p.live && (p.status === "working" || ["idle", "done"].includes(p.status)) && !p.idle).map((p) => p.address);
     if (!busy.length) {
       const live = plans.filter((_, i) => states[i + 1].state === "live");
       for (const q of plans.filter((_, i) => states[i + 1].state !== "live")) say(`${q.replaced} ended by itself before the restart, so it isn't run again.`);
@@ -3827,7 +3832,134 @@ async function treePlans({ project, bot, old, helpers, view, ledger, agents, kno
   return { tree, treeWarnings };
 }
 
+// Queue mutations share a lock: cancel, replace and watcher consumption cannot lose rows.
+const queuePath = () => join(appHome(), "automagik-herdr", "queued-restarts.json");
+function readRestartQueue() {
+  const text = readText(queuePath());
+  if (text === null) return [];
+  try { const rows = JSON.parse(text); if (Array.isArray(rows)) return rows; } catch {}
+  throw new CliError(`Can't read ${queuePath()}: invalid restart queue`);
+}
+async function editRestartQueue(edit) {
+  const file = queuePath();
+  mkdirSync(dirname(file), { recursive: true });
+  return withLockAsync(`${file}.lock`, async () => {
+    const rows = readRestartQueue();
+    const result = await edit(rows);
+    const tmp = `${file}.${process.pid}.${randomUUID()}`;
+    try {
+      writeFileSync(tmp, JSON.stringify(rows), { mode: 0o600 });
+      chmodSync(tmp, 0o600);
+      renameSync(tmp, file);
+    } finally { try { unlinkSync(tmp); } catch {} }
+    return result;
+  });
+}
+
+/** No screen capture is treated as absent, just as pure callers without a capture are. */
+async function readScreenText(terminal) {
+  const r = await hc(["read", terminal, "--lines", "40", "--json"]);
+  if (r.code !== 0) return null;
+  try { return JSON.parse(r.stdout)?.text ?? null; } catch { return null; }
+}
+
+async function queuedRestarts(opts, ref) {
+  const project = opts.project ? (await projectFor(opts)).key : null;
+  if (opts.queued) {
+    const entries = await editRestartQueue(async (rows) => {
+      for (let i = rows.length - 1; i >= 0; i -= 1) {
+        const e = rows[i];
+        const state = await hcState(e.terminal);
+        if (["gone", "finished"].includes(state.state) || (state.get && e.created_ms != null && state.get.created_ms !== e.created_ms)) {
+          if (e.watcher) await hc(["kill", e.watcher]);
+          rows.splice(i, 1);
+        }
+      }
+      return rows.filter((e) => !project || e.project === project);
+    });
+    return opts.json ? { queued: entries } : entries.length ? entries.map((e) => `${e.botName} (${e.botId}): queued on ${e.terminal} (${e.reason}${e.dialog ? `: "${e.dialog.question}" — ${e.dialog.who} must answer` : ""}) since ${e.at}`).join("\n") : "No restarts queued.";
+  }
+  if (!ref) throw new CliError("restart --cancel needs a bot.", 2);
+  let bot = null;
+  const matches = readRestartQueue().filter((e) => (!project || e.project === project) && [e.botId, e.botName].includes(ref));
+  if (matches.length > 1) throw new CliError(`More than one queued bot matches ${ref}; use --project.`, 2);
+  if (!matches.length) bot = await botIn(await projectFor(opts), ref, opts);
+  const id = matches[0]?.botId ?? bot.id, name = matches[0]?.botName ?? bot.name;
+  const entry = await editRestartQueue(async (rows) => {
+    const i = rows.findIndex((e) => e.botId === id && (!project || e.project === project));
+    if (i < 0) return null;
+    const [e] = rows.splice(i, 1);
+    if (e.watcher) await hc(["kill", e.watcher]);
+    return e;
+  });
+  return opts.json ? { id, canceled: Boolean(entry), terminal: entry?.terminal ?? null }
+    : entry ? `${name}: canceled queued restart for ${entry.terminal}.` : `No restart is queued for ${name}.`;
+}
+
+async function runQueuedRestart(opts) {
+  const queueId = opts["run-queued"];
+  const current = () => readRestartQueue().find((e) => e.id === queueId);
+  let entry = current();
+  if (!entry) return PRINTED;
+  for (;;) {
+    const state = await hcState(entry.terminal);
+    if (["gone", "finished"].includes(state.state) || (state.get && entry.created_ms != null && state.get.created_ms !== entry.created_ms)) {
+      await editRestartQueue((rows) => { const i = rows.findIndex((e) => e.id === queueId); if (i >= 0) rows.splice(i, 1); });
+      return PRINTED;
+    }
+    const screen = state.get ? await readScreenText(entry.terminal) : null;
+    if (isPaneIdle(state.get, screen)) {
+      const consumed = await editRestartQueue((rows) => { const i = rows.findIndex((e) => e.id === queueId); return i < 0 ? null : rows.splice(i, 1)[0]; });
+      if (!consumed) return PRINTED;
+      const saved = Object.fromEntries(Object.entries(consumed.options).filter(([, value]) => value !== null));
+      return cmdRestart({ ...saved, "fresh-shared": saved.freshShared, project: consumed.project, force: true,
+        json: opts.json, _queuedTarget: consumed }, [consumed.botId]);
+    }
+    const start = Date.now();
+    await hc(["wait", entry.terminal, "--timeout", "25", "--json"], { timeout: 30000 });
+    const poll = Math.max(1, Number(process.env.AUTOMAGIK_HERDR_QUEUE_POLL_MS) || 250);
+    if (Date.now() - start < poll) await new Promise((done) => setTimeout(done, poll - (Date.now() - start)));
+    entry = current();
+    if (!entry) return PRINTED;
+  }
+}
+
+async function queueRestart({ bot, key, old, screen, opts, wanted, plan }) {
+  const dialog = pendingDialog(screen) ?? (old.status?.state === "blocked" ? { question: "confirmation dialog in pane", who: "the owner" } : null);
+  const queueId = randomUUID();
+  const entry = await editRestartQueue(async (rows) => {
+    const i = rows.findIndex((e) => e.botId === bot.id);
+    if (i >= 0) { const [prev] = rows.splice(i, 1); if (prev.watcher) await hc(["kill", prev.watcher]); }
+    const e = { id: queueId, botId: bot.id, botName: bot.name, project: key, terminal: old.address, created_ms: old.created_ms ?? null,
+      reason: dialog ? "blocked" : "working", dialog, options: { fresh: Boolean(opts.fresh), agent: opts.agent ?? null,
+        model: opts.model ?? null, save: Boolean(opts.save), tree: Boolean(opts.tree), freshShared: Boolean(opts["fresh-shared"]),
+        cwd: wanted ?? null, space: opts.space ?? null, tab: opts.tab ?? null }, watcher: null, at: new Date().toISOString() };
+    // Persist before starting: the detached process may read immediately, then takes this lock.
+    const file = queuePath(), tmp = `${file}.${process.pid}`;
+    writeFileSync(tmp, JSON.stringify([...rows, e]), { mode: 0o600 });
+    chmodSync(tmp, 0o600); renameSync(tmp, file);
+    const r = await hc(["run", "--bg", "--json", "--rm", "--no-parent", "--cwd", key, "--label", `herdr.queued-restart=${bot.id}`,
+      "--", "/usr/bin/env", `HERDR_APP_HOME=${appHome()}`, process.execPath, fileURLToPath(import.meta.url), "restart", bot.id, "--project", key, "--run-queued", queueId]);
+    let watcher;
+    try { watcher = r.code === 0 ? JSON.parse(r.stdout)?.address : null; } catch {}
+    if (!watcher) {
+      // Roll back the unpublished entry if hc could not start the watcher.
+      writeFileSync(tmp, JSON.stringify(rows), { mode: 0o600 }); chmodSync(tmp, 0o600); renameSync(tmp, file);
+      throw new CliError(`Could not queue ${bot.name}'s restart: ${(r.stderr || r.stdout).trim()}`);
+    }
+    e.watcher = watcher;
+    rows.push(e);
+    return e;
+  });
+  if (opts.json) return { id: bot.id, queued: true, terminal: old.address, reason: entry.reason, dialog,
+    watcher: entry.watcher, mode: plan.mode, agent: plan.agent, model: plan.model };
+  const why = dialog ? `blocked on dialog "${dialog.question}" — ${dialog.who} must answer it in ${old.address}; Herdr never answers dialogs` : `${bot.name} is working in ${old.address}`;
+  return `${bot.name}: restart queued for ${old.address} (${why}); it will restart and resume at its next idle (automagik-herdr restart --queued lists it; automagik-herdr restart --cancel ${bot.id} cancels it; pass --force to restart now).`;
+}
+
 async function cmdRestart(opts, [ref]) {
+  if (opts["run-queued"]) return runQueuedRestart(opts);
+  if (opts.queued || opts.cancel) return queuedRestarts(opts, ref);
   if (opts.tab && !opts.space) throw new CliError("--tab needs --space (the space that tab is in).", 2);
   const swap = opts.agent !== undefined || opts.model !== undefined;
   if (opts.save && !swap) throw new CliError("--save keeps a swap in the bot's definition; it goes with --agent or --model.", 2);
@@ -3876,10 +4008,14 @@ async function cmdRestart(opts, [ref]) {
   const view = await attachView();
   const held = view.live.get(bot.id) ?? null;
   const old = held && local(held.get?.address ?? held.binding.terminal) ? { ...held.get, address: held.get?.address ?? held.binding.terminal } : null;
+  if (opts._queuedTarget && (!old || old.address !== opts._queuedTarget.terminal
+    || (opts._queuedTarget.created_ms != null && old.created_ms !== opts._queuedTarget.created_ms))) return PRINTED;
+  const screen = old ? await readScreenText(old.address) : null;
   const helpers = old ? await helpersOf(old.address, { strict: Boolean(opts.tree) }) : [];
   if (old) {
-    const refusal = restartRefusal({ name: bot.name, old, helpers, force: opts.force, tree: opts.tree });
-    if (refusal) throw busyRefusal(refusal, old);
+    // Helpers remain a refusal even when the parent's turn could otherwise be queued.
+    const refusal = restartRefusal({ name: bot.name, old: { ...old, status: { state: "idle" } }, helpers, force: opts.force, tree: opts.tree });
+    if (refusal) throw new CliError(refusal, 1, { refused: "helpers", terminal: old.address });
   }
   const agents = agentTable();
   const ledger = workerLedgerRows();
@@ -3917,6 +4053,10 @@ async function cmdRestart(opts, [ref]) {
     newSession: newSessionId(),
   };
   let plan = restartPlan(planned);
+  if (old && !opts.force && !isPaneIdle(old, screen)
+    && (["working", "blocked"].includes(old.status?.state) || pendingDialog(screen))) {
+    return queueRestart({ bot, key, old, screen, opts, wanted, plan });
+  }
   // --cwd: Claude resumes only within one folder slug (~/.claude/projects/<slug>), by id or --continue.
   const movedFrom = wanted && old && oldCwd ? (realDir(oldCwd) ?? oldCwd) : null;
   const slugMoved = movedFrom && claudeSlug(movedFrom) !== claudeSlug(wanted);
@@ -5945,7 +6085,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
   const run = COMMANDS[command];
   if (!run) { process.stderr.write(`automagik-herdr: unknown command "${command}"\n\n${USAGE}\n`); return 2; }
   try {
-    if (NEEDS_BOT.has(command) && !rest[0]) throw new CliError(`${command} needs a bot (its id or name).`, 2);
+    if (NEEDS_BOT.has(command) && !rest[0] && !(command === "restart" && (opts.queued || opts["run-queued"]))) throw new CliError(`${command} needs a bot (its id or name).`, 2);
     if (opts.machine !== undefined && !ON_MACHINE.has(command)) {
       throw new CliError(`${command} works on this computer only for now; --machine goes with ls, show, create, edit, rm, category, start, restart, attach, detach, whois, meter and doc.`, 2);
     }

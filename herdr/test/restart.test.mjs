@@ -486,3 +486,35 @@ test("claudeSlug: the path with every non-alphanumeric character as -, so automa
   assert.equal(claudeSlug("/a/.claude/worktrees/x_y"), "-a--claude-worktrees-x-y");
   assert.notEqual(claudeSlug("/a/b"), claudeSlug("/a/c"));
 });
+
+
+test("#805 shared idle: a working background shell at an empty prompt is idle", async () => {
+  const { isPaneIdle, pendingDialog, hasAgentPrompt, hasBackgroundShellAtIdlePrompt } = await import("../mods/am-sidebar/restart.js");
+  const old = { address: "t5", state: "live", status: { state: "working" } };
+  const screen = "1 background task\n❯ ";
+  assert.equal(typeof isPaneIdle, "function");
+  assert.equal(isPaneIdle(old, screen), true);
+  assert.equal(restartRefusal({ name: "Genie", old, screen }), null);
+  assert.equal(hasBackgroundShellAtIdlePrompt("1 background task\n❯ do work"), false);
+  for (const text of ["Run this command?", "Do you want to proceed?", "Allow this action?", "Requesting permission for: command", "1/2 answered (select)", "Choose a colour?\n> 1. Yes\n2. No\nEnter to confirm"]) {
+    assert.equal(pendingDialog(text).who, "the owner", text);
+    assert.ok(pendingDialog(text).question.length <= 200);
+    assert.equal(isPaneIdle(old, text + "\n1 background task\n❯ "), false);
+  }
+  for (const state of ["idle", "done"]) {
+    assert.equal(isPaneIdle({ state: "live", status: { state } }, "❯ "), true);
+    assert.equal(isPaneIdle({ state: "live", status: { state } }, "still thinking"), false);
+  }
+  assert.equal(isPaneIdle({ ...old, state: "finished" }, screen), false);
+  assert.equal(isPaneIdle({ ...old, status: { state: "blocked" } }, screen), false);
+  assert.equal(isPaneIdle(null), false);
+  for (const text of [null, undefined, "", "❯ ", "user@host $ "]) assert.equal(hasAgentPrompt(text), true);
+  assert.equal(pendingDialog("old output\n❯ "), null);
+  assert.equal(pendingDialog("Completed steps:\n1. Read files\n2. Run tests\n❯ "), null);
+  assert.equal(pendingDialog("Are you sure?\n[y/n]").question, "Are you sure?");
+});
+
+test("#805 sidebar understands a queued restart", () => {
+  assert.deepEqual(restartAnswer({ code: 0, out: { queued: true, terminal: "t5", reason: "working" } }),
+    { terminal: "t5", replaced: null, queued: true, reason: "working", dialog: null, warnings: [] });
+});

@@ -55,7 +55,7 @@
 import { execFile, execFileSync } from "node:child_process";
 import { createHash, createPublicKey, randomBytes, verify as verifySignature } from "node:crypto";
 import {
-  cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync,
+  chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, realpathSync, renameSync, rmSync,
   statSync, symlinkSync, writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -72,6 +72,7 @@ import {
   apply as applyMigration, pending, plan as migrationPlan, revert as revertMigration, revertedLayouts, strandedLayouts,
 } from "./migrateHome.mjs";
 import { change, removePath } from "./layoutSafe.mjs";
+import { foldAttach, readAttach } from "./attach.js";
 import { CLI_LINK, botPaneFolders, hooksNotice, openSpaces, relink, syncHooks, tightenLedgers } from "./migrateHooks.mjs";
 
 export { CHECK_EVERY_MS, FIRST_CHECK_MS, LANE_RELEASE, NO_UPDATE_ENV, PACK_MODS, PACK_NAME, POINTER_SIG_URL, POINTER_URL, RETRY_MS, compareVersions,
@@ -1412,7 +1413,7 @@ export const olderSequence = (record, pack) =>
  * record are read again: when autoHold says no, or another update or rollback runs, nothing is
  * downloaded: `{ ..., installed: null, held: why }`.
  */
-export async function installUpdate({ fetch = globalThis.fetch, env = process.env, modsDir = defaultModsDir(env), keys, log, binDir = null, window = false, expect = null, auto = false, herdrApp = "herdr-app" } = {}) {
+export async function installUpdate({ fetch = globalThis.fetch, env = process.env, modsDir = defaultModsDir(env), keys, log, binDir = null, window = false, expect = null, auto = false, herdrApp = "herdr-app", projectDir, hcRun } = {}) {
   const found = await checkForUpdate({ fetch, env, modsDir, keys });
   if (!found.update) return { ...found, installed: null };
   if (expect && found.update.version !== expect) return { ...found, installed: null, refused: { expected: expect, latest: found.update.version } };
@@ -1429,7 +1430,7 @@ export async function installUpdate({ fetch = globalThis.fetch, env = process.en
     if (late) return { ...found, current: late.current, update: null, installed: null };
     const hold = auto ? autoHold(found.update.version, autoStatus(modsDir)) : null;
     if (hold) return { ...found, auto: autoStatus(modsDir), installed: null, held: hold };
-    const done = await downloadAndApply(found, { fetch, modsDir, log, binDir, window, herdrApp });
+    const done = await downloadAndApply(found, { fetch, modsDir, log, binDir, window, herdrApp, projectDir, hcRun });
     // On its own, an install whose record wasn't written is a failure: the record still names the
     // old version, and the next check would install it again. A restore has rewritten its own.
     if (auto && done.installed?.recorded === false && !done.installed?.restored) {
@@ -1441,6 +1442,54 @@ export async function installUpdate({ fetch = globalThis.fetch, env = process.en
   }
 }
 
+/** Best-effort notice to this project's running main bot, once per failed version. */
+export function notifyMainBotOfRestore({ modsDir, version, restored, failed, projectDir,
+  hcRun = (args) => execFileSync("hc", args, { encoding: "utf8", timeout: 15000 }) }) {
+  try {
+    const state = stateDirOf(modsDir), file = join(state, "restore-notified.json");
+    let notified;
+    try { notified = JSON.parse(readFileSync(file, "utf8")); } catch {}
+    if (notified?.failedVersion === version) return { sent: false };
+    let rows = [];
+    try { rows = readAttach(readFileSync(join(state, "attach.jsonl"), "utf8")).rows; } catch {}
+    const bindings = foldAttach(rows);
+    if (!projectDir) {
+      for (let dir = process.cwd();;) {
+        if (existsSync(join(dir, ".herdr/bots.json"))) { projectDir = dir; break; }
+        const parent = dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+      }
+      if (!projectDir) projectDir = [...rows].reverse().find((b) => b.project && bindings.byBot.get(b.bot) === b)?.project;
+    }
+    if (!projectDir) return { sent: false };
+    projectDir = resolve(projectDir);
+    const bots = JSON.parse(readFileSync(join(projectDir, ".herdr/bots.json"), "utf8"));
+    const main = bots.bots?.find((b) => b.kind === "main");
+    if (!main) return { sent: false };
+    let terminal = null;
+    try {
+      const listed = JSON.parse(hcRun(["ls", "--label", `bot=${main.id}`, "--json"]));
+      const terminals = Array.isArray(listed) ? listed : listed.terminals ?? listed.items ?? [];
+      terminal = terminals.find((t) => t.state === "live" && t.address)?.address ?? null;
+    } catch {}
+    if (!terminal) {
+      const binding = bindings.byBot.get(main.id);
+      if (binding?.project === projectDir) {
+        const get = JSON.parse(hcRun(["get", binding.terminal, "--json"]));
+        if (get.state === "live" && get.created_ms === binding.created_ms) terminal = binding.terminal;
+      }
+    }
+    if (!terminal) return { sent: false };
+    hcRun(["send", terminal, `Automagik Herdr update ${version} failed to load (${failed.join(", ")}) and rolled back to ${restored}; no restart is needed for ${version}.`]);
+    mkdirSync(state, { recursive: true });
+    const tmp = `${file}.${process.pid}`;
+    writeFileSync(tmp, JSON.stringify({ failedVersion: version, restoredVersion: restored, botId: main.id, terminal, at: Date.now() }), { mode: 0o600 });
+    chmodSync(tmp, 0o600); renameSync(tmp, file);
+    return { sent: true };
+  } catch { return { sent: false }; }
+}
+
 /**
  * After an update swaps the pack in: `herdr-app check` on every pack mod that is on (#652). When
  * one fails to load the kept set is restored at once (the same rollback, under the install's lock)
@@ -1450,7 +1499,7 @@ export async function installUpdate({ fetch = globalThis.fetch, env = process.en
  * own warnings (a folder it could not remove) ride back in `warnings`. `version` is the release
  * that was just installed, not the record's version: a restore rewrites that.
  */
-function checkUpdated({ modsDir, mods, version, log = () => {}, herdrApp = "herdr-app", binDir = null, window = false }) {
+function checkUpdated({ modsDir, mods, version, log = () => {}, herdrApp = "herdr-app", binDir = null, window = false, projectDir, hcRun }) {
   const list = toCheck(modsDir, mods);
   if (list.length === 0) return { failed: [], checked: true, unavailable: null };
   const result = checkMods({ modsDir, mods: list, log, herdrApp });
@@ -1491,6 +1540,7 @@ function checkUpdated({ modsDir, mods, version, log = () => {}, herdrApp = "herd
         failed: [...result.failed], checked: true, unavailable, ...(prevRemoved ? { prevRemoved: true } : {}),
         ...(warnings.length ? { warnings } : {}), at: Date.now() });
     } catch (error) { log(`warning: the restore note was not saved (${error.message})`); }
+    notifyMainBotOfRestore({ modsDir, version, restored, failed: result.failed, projectDir, hcRun });
     log(`restored ${restored}: ${result.failed.join(", ")} did not load`);
     return { ...result, checked: true, unavailable, warnings, restored: { version: restored, failedVersion: version, mod: result.failed[0],
       failed: [...result.failed], checked: true, ...(prevRemoved ? { prevRemoved: true } : {}), ...(warnings.length ? { warnings } : {}),
@@ -1506,7 +1556,7 @@ function checkUpdated({ modsDir, mods, version, log = () => {}, herdrApp = "herd
   }
 }
 
-async function downloadAndApply(found, { fetch, modsDir, log, binDir, window, herdrApp }) {
+async function downloadAndApply(found, { fetch, modsDir, log, binDir, window, herdrApp, projectDir, hcRun }) {
   const dir = mkdtempSync(join(tmpdir(), "automagik-herdr-"));
   try {
     const tgzPath = await downloadUpdate(found.update, { fetch, dir });
@@ -1514,7 +1564,7 @@ async function downloadAndApply(found, { fetch, modsDir, log, binDir, window, he
     clearNotes(modsDir); // a previous update's notes are not this one's
     const installed = await applyUpdate({ tgzPath, version: found.update.version, sequence: found.update.sequence, modsDir, log });
     // The swap is the point an update becomes live: check it before anything else touches the home.
-    const checked = checkUpdated({ modsDir, mods: installed.mods, version: found.update.version, log, herdrApp, binDir, window });
+    const checked = checkUpdated({ modsDir, mods: installed.mods, version: found.update.version, log, herdrApp, binDir, window, projectDir, hcRun });
     installed.check = { failed: checked.failed, checked: checked.checked, ...(checked.unavailable ? { unavailable: checked.unavailable } : {}) };
     // A restore that could not remove what it rolled away from says where it stays (#671): the
     // warning rides with the install's own answer, as the other warnings after a swap do.

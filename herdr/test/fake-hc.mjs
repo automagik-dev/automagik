@@ -200,6 +200,13 @@ switch (words[0]) {
     out(t);
     break;
   }
+  case "wait": {
+    const t = find(words[1]);
+    if (!t) fail(`no terminal ${words[1]}`, 3);
+    if (state.idleOnWait === t.address) { t.status = { state: "idle" }; t.screen = "❯ "; save(); }
+    out(t);
+    break;
+  }
   case "read": {
     const t = find(words[1]);
     if (!t) fail(`no terminal ${words[1]}`);

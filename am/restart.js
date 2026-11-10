@@ -378,6 +378,52 @@ export function sharedFresh({ name, old, cwd, sharers = [], agent, words, anywhe
 /** The helpers (hc get answers) that end with their parent's pane: live, die_with_parent. */
 export const doomedHelpers = (helpers = []) => helpers.filter((h) => h?.state === "live" && h.die_with_parent !== false && h.address);
 
+// Only the visible tail matters: old scrollback is not a current prompt or dialog.
+const screenLines = (text) => typeof text === "string" ? text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").split("\n").slice(-40) : [];
+
+/** A visible permission or selection dialog belongs to the owner, never Herdr. */
+export function pendingDialog(screenText) {
+  const lines = screenLines(screenText);
+  const question = /(?:run this command\?|do you want to .+\?|requesting permission for:|allow\b.*\?|\d+\/\d+ answered.*(?:select|confirm))/i;
+  const choice = /^\s*(?:[>❯›]\s*)?\d+[.)]\s+|\[y\/n\]|enter to confirm|esc to cancel/i;
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (question.test(lines[i])) return { question: lines[i].trim().slice(0, 200), who: "the owner" };
+    if (choice.test(lines[i])) {
+      for (let j = i - 1; j >= 0; j -= 1) {
+        if (!choice.test(lines[j]) && /\?|^\s*(?:choose|select|pick)\b/i.test(lines[j])) {
+          return { question: lines[j].trim().slice(0, 200), who: "the owner" };
+        }
+      }
+      if (/\[y\/n\]|enter to confirm|esc to cancel/i.test(lines[i])) {
+        return { question: lines[i].trim().slice(0, 200), who: "the owner" };
+      }
+    }
+  }
+  return null;
+}
+
+/** Missing captures retain the historic status-only behavior. */
+export function hasAgentPrompt(screenText) {
+  if (screenText == null || String(screenText).trim() === "") return true;
+  if (pendingDialog(screenText)) return false;
+  return screenLines(screenText).slice(-8).some((line) => /^\s*[>❯›](?:\s|$)|[>❯›$%]\s*$/.test(line));
+}
+
+/** A harness may report working while its background shell runs at an empty prompt. */
+export function hasBackgroundShellAtIdlePrompt(screenText) {
+  if (typeof screenText !== "string" || !screenText.trim() || pendingDialog(screenText)) return false;
+  const tail = screenLines(screenText).slice(-12).join("\n");
+  return /^\s*[>❯›]\s*$/m.test(tail)
+    && /\b(\d+\s+(background\s+(task|shell|command)s?|shells?|bashes)|background\s+(shell|task|command)|running in the background|ctrl\+b)\b/i.test(tail);
+}
+
+/** The single restart idle rule, including panes that still have background work. */
+export function isPaneIdle(get, screenText = null) {
+  if (!get || get.state === "finished" || get.status?.state === "blocked" || pendingDialog(screenText)) return false;
+  if (["idle", "done"].includes(get.status?.state)) return hasAgentPrompt(screenText);
+  return get.status?.state === "working" && hasBackgroundShellAtIdlePrompt(screenText);
+}
+
 /**
  * Why a restart of `old` (hc get of the bot's live pane) is refused, or null. `name`: the
  * bot's name; `helpers`: hc get answers of the live terminals whose parent is the old pane.
@@ -389,9 +435,9 @@ export const doomedHelpers = (helpers = []) => helpers.filter((h) => h?.state ==
  * (a finished worker's pane stays open), then restart, never --tree, nor --force (it drops the
  * other checks too).
  */
-export function restartRefusal({ name, old, helpers = [], force = false, tree = false, onMachine = false }) {
+export function restartRefusal({ name, old, helpers = [], force = false, tree = false, onMachine = false, screen = null }) {
   if (force) return null;
-  if (old?.status?.state === "working") {
+  if (old?.status?.state === "working" && !isPaneIdle(old, screen)) {
     return `${name} is working in ${old.address}; restarting now would cut its turn in half. Wait until it is idle, or pass --force.`;
   }
   const doomed = doomedHelpers(helpers);
@@ -572,6 +618,8 @@ export function restartArgs({ botId, projectKey, agent = null, force = false, fr
  * overrides, or one a new conversation, --fresh, avoids).
  */
 export function restartAnswer(r) {
+  if (r?.code === 0 && r.out?.queued) return { terminal: r.out.terminal, replaced: null, queued: true,
+    reason: r.out.reason ?? null, dialog: r.out.dialog ?? null, warnings: [] };
   if (r?.code === 0 && r.out?.terminal) {
     return { terminal: r.out.terminal, replaced: r.out.replaced ?? null, warnings: Array.isArray(r.out.warnings) ? r.out.warnings : [] };
   }

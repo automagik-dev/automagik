@@ -102,6 +102,9 @@ test("self install: the store, the links and the briefing entry; doctor is healt
   assert.equal(record(s).current.part.id, "automagik.am", "the store keeps its own copy of the manifest");
   const doctor = s.installed("self", "doctor", "--json");
   assert.equal(doctor.status, 0, doctor.stdout);
+  const restart = doctor.stdout.trim().split("\n").map((l) => JSON.parse(l)).find((l) => l.check === "restart-path");
+  assert.equal(restart?.ok, true);
+  assert.match(restart.detail, /automagik-herdr restart <bot>.*am restart <bot>.*never \/restart/);
   for (const line of doctor.stdout.trim().split("\n").map((l) => JSON.parse(l))) {
     assert.deepEqual(Object.keys(line).slice(0, 4), ["part", "check", "ok", "detail"]);
     assert.equal(line.ok, true, line.detail);
