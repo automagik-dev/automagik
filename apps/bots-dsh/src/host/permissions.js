@@ -82,6 +82,29 @@ export function install(rt) {
   // in memory only: a Session DSH opens again takes its level again (session/created), and
   // is marked again when that fails.
   const unapplied = new Map()
+  // What a marked Session answers with, for a tool call and for an ACP agent's turn.
+  const notSet = level => `The ${level} permission level could not be set on this conversation, so no tool runs here until it is. Tell the user: restarting DeepSeek Harness, or changing the permission level, tries again.`
+  const acpAgents = () => { try { return ctx.get?.('acpAgents') } catch { return undefined } }
+  // An ACP agent (Claude Code, Codex) runs its own tools under its own mode, which no
+  // tools/execute guard reaches: marking a Session ends its agent session at once, a turn
+  // under way included, and the gate below keeps the next one from starting.
+  // A subagent child works under its parent's level (markedFor), so the open Sessions that
+  // resolve to the marked one are ended with it.
+  const mark = (sessionId, level) => {
+    unapplied.set(sessionId, { level, at: Date.now() })
+    const acp = acpAgents()
+    if (typeof acp?.endSession !== 'function') return
+    const why = notSet(level)
+    try { acp.endSession(sessionId, why) } catch {}
+    let open = []
+    try { open = ctx.sessions?.list?.() ?? [] } catch {}
+    for (const session of open) {
+      if (typeof session?.id !== 'string' || session.id === sessionId) continue
+      try {
+        if (markedFor({ id: session.id, session }) === sessionId) acp.endSession(session.id, why)
+      } catch {}
+    }
+  }
   // Whether DSH offers `level` now. Auto counts: one DSH does not offer runs as its fallback.
   // A catalog that cannot be read counts too: a mark is dropped only when DSH is shown not
   // to offer the level, never because DSH failed to answer.
@@ -102,7 +125,7 @@ export function install(rt) {
       unapplied.delete(sessionId)
       return held
     } catch (error) {
-      if (error?.autoClosed !== true && offers(level)) unapplied.set(sessionId, { level, at: Date.now() })
+      if (error?.autoClosed !== true && offers(level)) mark(sessionId, level)
       else if (error?.autoClosed !== true) unapplied.delete(sessionId)
       throw error
     }
@@ -445,8 +468,25 @@ export function install(rt) {
     }
     const left = unapplied.get(sessionId)
     if (left === undefined) return
-    throw refusal(`The ${left.level} permission level could not be set on this conversation, so no tool runs here until it is. Tell the user: restarting DeepSeek Harness, or changing the permission level, tries again.`)
+    throw refusal(notSet(left.level))
   }
+  // The same rule for an ACP agent's turn (acp-dsh's `holdTurns`, when that plugin is here):
+  // no turn starts and no step goes on in a marked Session. It answers the refusal's own
+  // sentence; any other failure is thrown, which acp-dsh also takes as a refusal.
+  const holdAgents = (sub) => {
+    const off = sub.acpAgents?.holdTurns?.(async ({ agent } = {}) => {
+      try {
+        await levelHolds({ agent })
+      } catch (error) {
+        if (error?.code === 'bot/refused') return error.message
+        throw error
+      }
+      return undefined
+    })
+    if (typeof off === 'function') sub.effect(() => off, 'ds-bot: level gate on agents')
+  }
+  if (typeof ctx.inject === 'function') ctx.inject(['acpAgents'], holdAgents)
+  else if (acpAgents() !== undefined) holdAgents({ acpAgents: acpAgents(), effect: (execute, label) => ctx.effect(execute, label) })
 
   // A Session DSH opens, after a restart too, gets its level. Once the team is loaded the
   // first preset is set within DSH's announce, before the Session is published; the
