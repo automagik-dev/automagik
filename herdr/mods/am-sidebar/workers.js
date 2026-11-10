@@ -5,7 +5,7 @@
 // usagemeter reads. Pure: no `herdr`, `gpui-*` or `fs`, so `node --test`, the CLI and the
 // briefing hook share it. Apache-2.0.
 
-import { AGENTS, AGY_MODE_DEFAULT, agyModeArgs, agyModeOf, agyModeProblem, agySettingsArgs, effortArgs, hasEffortFlag, modelArgs, modelRefusal,
+import { AGENTS, AGY_MODE_DEFAULT, agyModeArgs, agyModeOf, agyModeProblem, agyGuarded, agySettingsArgs, effortArgs, hasEffortFlag, launchRun, modelArgs, modelRefusal,
   promptArgs, resolveAgent } from "./models.js";
 import { TEMPLATE_SHAPE } from "./model.js";
 import { envWords } from "./logins.js";
@@ -301,7 +301,7 @@ export function workerPlan(bot, pick = {}, agents = AGENTS) {
     warnings.push(`${agents[agent].name} has no effort flag; effort ${effort} left out.`);
     effort = null;
   }
-  const argv = [...agents[agent].run, ...agyModeArgs(agent, agyMode), ...modelArgs(agent, model), ...effortArgs(agent, effort)];
+  const argv = [...launchRun(agent, agents[agent].run, bot), ...agyModeArgs(agent, agyMode), ...modelArgs(agent, model), ...effortArgs(agent, effort)];
   return { template: null, agent, model, effort, agyMode, argv, warnings };
 }
 
@@ -355,7 +355,8 @@ export function workerArgs({ botId, branch, role, name, cwd, parent, agent, mode
   const guard = sandboxRoot ? stableGuardDir(sandboxRoot) : agent === "dsh-tui" ? GUARD_DIR : null;
   const vars = envWords(path ? [`PATH=${guardPathWith(path, guard)}`] : [], login);
   const env = vars.length ? [ENV, ...vars] : [];
-  const taskArgv = [...argv, ...agySettingsArgs(agent, agySettingsPath), ...promptArgs(agent, task)];
+  // #955: an Antigravity worker with no permission file never runs on skip-permissions.
+  const taskArgv = [...agyGuarded(agent, [...argv, ...agySettingsArgs(agent, agySettingsPath)]), ...promptArgs(agent, task)];
   const launchArgv = sandboxRoot ? paneArgs(taskArgv, { botId, project: project ?? null, worker: true, stableRoot: sandboxRoot }) : taskArgv;
   return [...args, "--parent", parent, "--", ...env, ...launchArgv];
 }

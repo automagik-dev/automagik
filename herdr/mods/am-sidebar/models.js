@@ -22,10 +22,12 @@ export const AGENTS = Object.freeze({
   copilot: { name: "Copilot", run: ["copilot"], match: ["github-copilot"] },
   amp: { name: "Amp", run: ["amp"] },
   grok: { name: "Grok", run: ["grok"] },
-  // agy 1.5.3 takes permission flags (--dangerously-skip-permissions, --mode
-  // accept-edits|auto|plan, --sandbox); this pack passes only --mode (agyModeArgs: auto unless
-  // the roster names another mode), never a skip-permissions flag, and never writes agy's own
-  // settings, so its trust list and saved settings stay the person's.
+  // agy takes permission flags (--dangerously-skip-permissions, --mode accept-edits|auto|plan,
+  // --sandbox). Its --mode auto is not available where its terminal sandbox or the account
+  // lacks it, and agy then continues in manual mode (#955), so this pack passes --mode
+  // (agyModeArgs) and --dangerously-skip-permissions (AUTO_MODE), the second only beside a
+  // --settings file whose deny list agy still enforces (agyGuarded). It never writes agy's own
+  // settings, so its saved trust list and settings stay the person's.
   antigravity: { name: "Antigravity", run: ["agy"], match: ["agy"] },
   kimi: { name: "Kimi", run: ["kimi"] },
   kiro: { name: "Kiro", run: ["kiro-cli"], match: ["kiro-cli"] },
@@ -383,7 +385,8 @@ export function effortArgs(agentKey, effort) {
 
 // agy 1.5.3's execution mode (`--mode accept-edits|auto|plan`): the pack names one on every
 // Antigravity launch, auto unless the roster's agyMode says otherwise, so a bot doesn't stop at
-// its first command. Never --dangerously-skip-permissions, and agy's own settings (its trust
+// its first command. Where agy can't run that mode it continues in manual mode, so the launch
+// also carries --dangerously-skip-permissions (AUTO_MODE, #955). agy's own settings (its trust
 // list included) stay the person's: the mode goes on the launch line only.
 export const AGY_MODES = Object.freeze(["accept-edits", "auto", "plan"]);
 /** The mode an Antigravity launch gets when the roster names none. */
@@ -401,6 +404,132 @@ export const agyModeProblem = (mode) => (AGY_MODES.includes(agyModeOf(mode)) ? n
  */
 export function agyModeArgs(agentKey, mode = null) {
   return agentKey === "antigravity" ? ["--mode", agyModeOf(mode)] : [];
+}
+
+// ---- Each agent's automatic mode (#955, #946) ----
+//
+// The pack starts every bot and worker in its agent's automatic mode, so an unattended pane
+// never stops at an approval prompt only a person can answer. The flags come from the definition
+// (launchRun), never from an old pane's command. herdr/README.md has the same table.
+
+// Codex's auto mode (codex-cli 0.167.0 `--approve-for-me`): an approval request goes to Codex's
+// own reviewer instead of a person, and the workspace-write sandbox stays. The pack puts it on
+// every Codex launch it makes, so an unattended bot or worker never stops at an approval prompt
+// only a person can answer (#946). A bot's `codexAuto: false` opts out, and an hc template owns
+// a worker's command: the flag never reaches one.
+export const CODEX_AUTO_ARGS = Object.freeze(["--approve-for-me"]);
+
+/** Whether a launch of `agentKey` for `bot` passes Codex's auto mode: a Codex seat or worker, unless its bot opted out. */
+export const codexAutoOn = (agentKey, bot) => agentKey === "codex" && bot?.codexAuto !== false;
+
+/** The words Codex's auto mode adds, [] for every other agent and for a bot whose `codexAuto` is false. */
+export const codexAutoArgs = (agentKey, bot) => (codexAutoOn(agentKey, bot) ? [...CODEX_AUTO_ARGS] : []);
+
+/** agy's flag that answers every permission request itself; its --settings deny list still holds. */
+export const AGY_SKIP_PERMISSIONS = "--dangerously-skip-permissions";
+
+/**
+ * The automatic mode of each agent that has one this pack passes: `args` (the words added after
+ * the agent's run), `own` (the flags by which a run already picks its approvals: a programs.json
+ * override naming one is left as the person wrote it), `what` (one line for status and doctor).
+ * Checked against claude 2.1.322, codex-cli 0.167.0 and agy 1.5.4 on 2026-11-10.
+ * Antigravity is the one agent that gets a skip-all flag, on the owner's word (#955): agy's
+ * `--mode auto` falls back to manual mode where its sandbox or the account lacks it, while
+ * `--dangerously-skip-permissions` still refuses a command its --settings deny list names
+ * (AGY_FIXED_DENY), so the flag only ever goes beside that file (agyGuarded).
+ */
+export const AUTO_MODE = Object.freeze({
+  claude: Object.freeze({ args: Object.freeze(["--permission-mode", "auto"]),
+    own: Object.freeze(["--permission-mode", "--dangerously-skip-permissions"]),
+    what: "Claude Code's auto mode: its classifier answers permission requests" }),
+  codex: Object.freeze({ args: CODEX_AUTO_ARGS,
+    own: Object.freeze(["--approve-for-me", "-a", "--ask-for-approval", "--yolo", "--dangerously-bypass-approvals-and-sandbox"]),
+    what: "Codex's auto mode: its reviewer answers approval requests, inside the workspace-write sandbox" }),
+  antigravity: Object.freeze({ args: Object.freeze([AGY_SKIP_PERMISSIONS]),
+    own: Object.freeze([AGY_SKIP_PERMISSIONS]),
+    what: "no permission prompts; the launch's deny list still refuses what it names" }),
+});
+
+/**
+ * Why an agent gets no automatic-mode flag from this pack. No skip-all-approvals flag (`--yolo`,
+ * `--auto-approve` and the like) is passed for any of them: that needs the owner's word first
+ * (#955). "not checked" means the agent is on none of the hosts the flags were read on, so the
+ * pack adds nothing it has not seen that agent's own help name.
+ */
+export const AUTO_MODE_NONE = Object.freeze({
+  pi: "not checked: Pi isn't installed where the flags were read",
+  omp: "omp 18.14.2 has only skip-all flags (--auto-approve, --approval-mode=yolo)",
+  opencode: "not checked: OpenCode isn't installed where the flags were read",
+  cursor: "not checked: Cursor's CLI isn't installed where the flags were read",
+  copilot: "not checked: Copilot's CLI isn't installed where the flags were read",
+  amp: "not checked: Amp isn't installed where the flags were read",
+  grok: "not checked: Grok's CLI isn't installed where the flags were read",
+  kimi: "not checked: Kimi isn't installed where the flags were read",
+  kiro: "not checked: Kiro's CLI isn't installed where the flags were read",
+  hermes: "Hermes 0.22.5 has only a skip-all flag (--yolo)",
+  qoder: "not checked: Qoder's CLI isn't installed where the flags were read",
+  crush: "not checked: Crush isn't installed where the flags were read",
+  "dsh-tui": "its DSH profile on the machine it runs on sets the approval policy; dsh-tui takes no such flag",
+});
+
+/** Whether `run` already names one of `flags` (as a word or `--flag=value`), before any `--`. */
+function runNames(run, flags) {
+  for (const w of Array.isArray(run) ? run.map(String) : []) {
+    if (w === "--") return false;
+    if (flags.some((flag) => w === flag || w.startsWith(`${flag}=`))) return true;
+  }
+  return false;
+}
+
+/**
+ * The words `agentKey`'s automatic mode adds to `run` for `bot`: AUTO_MODE's, [] for an agent
+ * with none, for a Codex bot whose `codexAuto` is false, and for a run that already picks its
+ * own approvals (a programs.json override).
+ */
+export function autoModeArgs(agentKey, bot = null, run = []) {
+  const mode = AUTO_MODE[agentKey];
+  if (!mode || runNames(run, mode.own)) return [];
+  if (agentKey === "codex") return codexAutoArgs(agentKey, bot);
+  return [...mode.args];
+}
+
+/**
+ * The words `agentKey` starts with: the given run (Herdr's table, programs.json applied) and the
+ * flags this pack adds for that agent's automatic mode. They are added here, so a bot's start,
+ * its restart and its workers all take them from the definition, never from an old pane's command.
+ */
+export function launchRun(agentKey, run, bot) {
+  return [...run, ...autoModeArgs(agentKey, bot, run)];
+}
+
+/**
+ * `argv` (a launch) as it may run: an Antigravity launch with no `--settings` file loses
+ * `--dangerously-skip-permissions`, since the deny list in that file is the one thing the flag
+ * leaves standing. Any other agent's argv, or one that doesn't run agy directly (a shell
+ * template owns its command), is returned as it is.
+ */
+export function agyGuarded(agentKey, argv) {
+  const words = Array.isArray(argv) ? argv.map(String) : [];
+  if (agentKey !== "antigravity" || agentKeyOfArgv(words) !== agentKey) return words;
+  const end = words.indexOf("--");
+  const head = end < 0 ? words : words.slice(0, end);
+  const settings = head.findIndex((w) => w === "--settings" || w.startsWith("--settings="));
+  const named = settings >= 0 && (head[settings].length > "--settings=".length || (head[settings] === "--settings" && Boolean(head[settings + 1])));
+  if (named) return words;
+  return [...head.filter((w) => w !== AGY_SKIP_PERMISSIONS), ...(end < 0 ? [] : words.slice(end))];
+}
+
+/**
+ * The line a launch says when the roster itself names Antigravity's `auto` mode and this host
+ * can't run it, or null. agy prints its own warning only in print mode ("--mode auto is not
+ * available ..."); an interactive pane shows nothing and continues in its default mode, so the
+ * launcher says it. `explicit`: the roster's own value (a bot's `agyMode`, a worker's), absent
+ * for the default; `sandbox`: agySandbox's answer for the host the launch runs on.
+ */
+export function agyModeWarning({ name = "the bot", explicit = null, sandbox = null } = {}) {
+  if (explicit !== "auto" || sandbox?.state !== "missing") return null;
+  return `${name}: Antigravity's --mode auto is not available on this host (${sandbox.detail}); agy continues in its default mode `
+    + `and says so only in print mode. The launch still runs without prompts (${AGY_SKIP_PERMISSIONS}), under its deny list.`;
 }
 
 // ---- Antigravity's per-launch permission list (--settings, #823) ----
@@ -441,6 +570,22 @@ export const AGY_FIXED_DENY = Object.freeze([
   "command(rm -rf)",
   "command(gh pr merge)",
   "command(gh release)",
+  // #955: every launch runs with no permission prompt, so what used to stop at one is named
+  // here. gh api's writing forms (its reads stay open to a roster's own allow rule):
+  "command(gh api -X)",
+  "command(gh api --method)",
+  "command(gh api -f)",
+  "command(gh api -F)",
+  // the roster and other bots' seats:
+  "command(automagik-herdr edit)",
+  "command(automagik-herdr restart)",
+  "command(automagik-herdr rm)",
+  "command(automagik-herdr create)",
+  // and another pane's keys, life and commands:
+  "command(hc keys)",
+  "command(hc kill)",
+  "command(hc interrupt)",
+  "command(hc exec)",
 ]);
 
 /** The rule types agy 1.5.3 takes: a command prefix, or a folder its files are written under. */

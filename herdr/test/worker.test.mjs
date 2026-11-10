@@ -279,11 +279,23 @@ test("worker: the bot's worker defaults are used, and per-task --agent/--model/-
   assert.equal(r.code, 0, r.err);
   const out = r.json();
   assert.deepEqual([out.agent, out.model, out.effort], ["codex", "gpt-5.5", "medium"]);
-  assert.deepEqual(after(s.runs()[0]), ["codex", "--model", "gpt-5.5", "-c", "model_reasoning_effort=medium", "fix the login form"]);
+  assert.deepEqual(after(s.runs()[0]), ["codex", "--approve-for-me", "--model", "gpt-5.5", "-c", "model_reasoning_effort=medium", "fix the login form"]);
   const o = s.cli(["worker", "review it", "--branch", "feat/review", "--agent", "claude", "--model", "opus", "--effort", "max", "--json"]);
   assert.equal(o.code, 0, o.err);
   assert.deepEqual([o.json().agent, o.json().model, o.json().effort], ["claude", "opus", "max"]);
-  assert.deepEqual(freshClaude(after(s.runs()[1])), ["claude", "--model", "opus", "--effort", "max", "review it"]);
+  assert.deepEqual(freshClaude(after(s.runs()[1])), ["claude", "--permission-mode", "auto", "--model", "opus", "--effort", "max", "review it"]);
+});
+
+test("worker #946: a bot's codexAuto false leaves its Codex workers on Codex's default approvals", (t) => {
+  const file = team();
+  file.bots[2].codexAuto = false;
+  const s = scene(t, { file });
+  const r = s.cli(["worker", "fix the login form", "--branch", "feat/login", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(after(s.runs()[0]), ["codex", "--model", "gpt-5.5", "-c", "model_reasoning_effort=medium", "fix the login form"]);
+  const o = s.cli(["worker", "tune it", "--branch", "feat/tune", "--agent", "codex", "--json"]);
+  assert.equal(o.code, 0, o.err);
+  assert.equal(s.runs()[1].includes("--approve-for-me"), false, "a per-task --agent codex keeps the opt-out");
 });
 
 test("worker: a bot with no worker field runs its own agent, with that agent's default model and effort", (t) => {
@@ -294,7 +306,7 @@ test("worker: a bot with no worker field runs its own agent, with that agent's d
   assert.equal(r.code, 0, r.err);
   assert.deepEqual([r.json().agent, r.json().model, r.json().effort], ["claude", null, null]);
   const run = s.runs()[0];
-  assert.deepEqual(freshClaude(after(run)), ["claude", "write the parser"]);
+  assert.deepEqual(freshClaude(after(run)), ["claude", "--permission-mode", "auto", "write the parser"]);
   assert.equal(labelsOf(run).some((l) => l.startsWith("worker.model=") || l.startsWith("worker.effort=")), false);
 });
 
@@ -304,7 +316,7 @@ test("worker: a codex captain starts a Claude reviewer with --agent claude-code;
   assert.equal(r.code, 0, r.err);
   const out = r.json();
   assert.deepEqual([out.agent, out.model, out.effort], ["claude", null, "high"]);
-  assert.deepEqual(freshClaude(after(s.runs()[0])), ["claude", "--effort", "high", "review PR 12"]);
+  assert.deepEqual(freshClaude(after(s.runs()[0])), ["claude", "--permission-mode", "auto", "--effort", "high", "review PR 12"]);
   assert.match(r.err, /worker model gpt-5\.5 is for codex; claude runs its own default/);
   assert.ok(labelsOf(s.runs()[0]).includes(`worker.of=${ID.cap}`));
 });
@@ -502,7 +514,7 @@ test("worker Antigravity: --mode auto by default, the chosen worker.agyMode when
   const r = s.cli(["worker", "fix the login form", "--branch", "feat/agy", "--json"]);
   assert.equal(r.code, 0, r.err);
   const cwdOf = (run) => run[run.indexOf("--cwd") + 1];
-  assert.deepEqual(after(s.runs()[0]), ["agy", "--mode", "auto", "--settings",
+  assert.deepEqual(after(s.runs()[0]), ["agy", "--dangerously-skip-permissions", "--mode", "auto", "--settings",
     agySettingsFile(agySettingsDir(s.app), ID.dev, "worker", "dev", cwdOf(s.runs()[0])), "-i", "fix the login form"]);
   assert.equal(r.json().agyMode, "auto");
   assert.equal(labelsOf(s.runs()[0]).some((l) => l.startsWith("worker.agyMode=")), false, "the default isn't a label");
@@ -512,7 +524,7 @@ test("worker Antigravity: --mode auto by default, the chosen worker.agyMode when
   const s2 = scene(t, { file: chosen });
   const r2 = s2.cli(["worker", "fix the login form", "--branch", "feat/agy", "--json"]);
   assert.equal(r2.code, 0, r2.err);
-  assert.deepEqual(after(s2.runs()[0]), ["agy", "--mode", "plan", "--settings",
+  assert.deepEqual(after(s2.runs()[0]), ["agy", "--dangerously-skip-permissions", "--mode", "plan", "--settings",
     agySettingsFile(agySettingsDir(s2.app), ID.dev, "worker", "dev", cwdOf(s2.runs()[0])), "-i", "fix the login form"]);
   assert.equal(r2.json().agyMode, "plan");
   assert.ok(labelsOf(s2.runs()[0]).includes("worker.agyMode=plan"));
@@ -605,7 +617,7 @@ test("worker #879: a fake agy reads --settings and trusts only its session cwd, 
   const run = s.runs()[0];
   const cwd = run[run.indexOf("--cwd") + 1];
   const words = after(run);
-  assert.deepEqual(words.slice(0, 2), ["agy", "--mode"], JSON.stringify(words));
+  assert.deepEqual(words.slice(0, 3), ["agy", "--dangerously-skip-permissions", "--mode"], JSON.stringify(words));
   const at = words.indexOf("--settings");
   assert.ok(at > 0, "the launch names its settings file");
   // A stand-in agy like the one a worker runs: it reads the file the launch names, from the
@@ -809,7 +821,7 @@ test("worker: a bots.json template default is used; a per-task --agent sets it a
   // The captain picks Claude for a reviewer: the template default steps aside.
   const o = s.cli(["worker", "review it", "--branch", "review/x", "--agent", "claude", "--json"], { from: "t4" });
   assert.equal(o.code, 0, o.err);
-  assert.deepEqual(freshClaude(after(s.runs()[1])), ["claude", "review it"]);
+  assert.deepEqual(freshClaude(after(s.runs()[1])), ["claude", "--permission-mode", "auto", "review it"]);
   assert.deepEqual([o.json().template, o.json().agent], [null, "claude"]);
   assert.equal(labelsOf(s.runs()[1]).some((l) => l.startsWith("worker.template=")), false);
   assert.deepEqual(s.ledger().map((row) => row.template), ["dev-sol", null]);
@@ -821,7 +833,7 @@ test("worker: a bots.json template default is used; a per-task --agent sets it a
   // --model alone is a per-task pick too: the default template steps aside for the default agent.
   const m = s.cli(["worker", "tune it", "--branch", "feat/tune", "--model", "gpt-6", "--json"]);
   assert.equal(m.code, 0, m.err);
-  assert.deepEqual(after(s.runs()[3]), ["codex", "--model", "gpt-6", "-c", "model_reasoning_effort=medium", "tune it"]);
+  assert.deepEqual(after(s.runs()[3]), ["codex", "--approve-for-me", "--model", "gpt-6", "-c", "model_reasoning_effort=medium", "tune it"]);
 });
 
 test("worker --template: an agent the command doesn't name skips the hook with a warning; no template list refuses", (t) => {
@@ -962,21 +974,21 @@ test("effortArgs: claude/antigravity --effort, codex -c model_reasoning_effort, 
   assert.deepEqual(plan.argv, ["grok"]);
   assert.match(plan.warnings[0], /Grok has no effort flag; effort high left out/);
   const agy = workerPlan({ name: "A", agent: "antigravity", worker: { model: "gemini-4-argon-high", effort: "max" } });
-  assert.deepEqual(agy.argv, ["agy", "--mode", "auto", "--model", "gemini-4-argon-high", "--effort", "max"]);
+  assert.deepEqual(agy.argv, ["agy", "--dangerously-skip-permissions", "--mode", "auto", "--model", "gemini-4-argon-high", "--effort", "max"]);
   assert.equal(agy.agyMode, "auto", "the default mode is always passed");
   assert.deepEqual(agy.warnings, []);
   const chosen = workerPlan({ id: ID.dev, name: "A", agent: "antigravity", worker: { agyMode: "plan" } });
-  assert.deepEqual([chosen.agyMode, chosen.argv], ["plan", ["agy", "--mode", "plan"]]);
+  assert.deepEqual([chosen.agyMode, chosen.argv], ["plan", ["agy", "--dangerously-skip-permissions", "--mode", "plan"]]);
   const unknown = workerPlan({ id: ID.dev, name: "A", agent: "antigravity", worker: { agyMode: "yolo" } });
   assert.equal(unknown.error, 'A\'s workers: Antigravity mode "yolo" isn\'t one of accept-edits, auto, plan. '
     + `Fix it with automagik-herdr edit ${ID.dev} --worker-agy-mode <accept-edits|auto|plan>.`);
   assert.equal(unknown.error.includes("\n"), false, "one clear line");
   // Another agent's worker defaults never add mode words: its argv stays as it was.
   const claude = workerPlan({ id: ID.dev, name: "A", agent: "claude", worker: { agyMode: "plan" } });
-  assert.deepEqual([claude.agyMode, claude.argv], [null, ["claude"]]);
+  assert.deepEqual([claude.agyMode, claude.argv], [null, ["claude", "--permission-mode", "auto"]]);
   const legacy = workerPlan({ name: "L", agent: "claude" }, { agent: "gemini", effort: "low" });
   assert.equal(legacy.agent, "antigravity", "a typed gemini runs antigravity");
-  assert.deepEqual(legacy.argv, ["agy", "--mode", "auto", "--effort", "low"]);
+  assert.deepEqual(legacy.argv, ["agy", "--dangerously-skip-permissions", "--mode", "auto", "--effort", "low"]);
   assert.match(workerPlan({ name: "G", agent: "claude" }, { agent: "nope" }).error, /isn't a coding agent/);
   assert.match(workerPlan({ name: "G", agent: "claude" }, { effort: "$(x)" }).error, /isn't an effort level/);
 });
@@ -1051,7 +1063,8 @@ test("workers.js: hc run arguments, slugs, worktree list, base order, ledger row
     "--label", "worker.template=dev-sol", "--parent", "t1", "dev-sol", "do it"]);
   assert.deepEqual(runArgv(workerArgs({ botId: ID.dev, branch: "b", cwd: "/w", parent: "t1", argv: ["omp"], task: "t", path: "/a:/b" })),
     ["/usr/bin/env", "PATH=/a:/b", "omp", "t"]);
-  // agy takes its first prompt only through -i; a bare trailing task is an error to it.
+  // agy takes its first prompt only through -i; a bare trailing task is an error to it. With no permission
+  // file named, the launch carries no skip-permissions flag (#955).
   const agyPlan = workerPlan({ name: "A", agent: "antigravity", worker: { model: "gemini-4-argon-high", effort: "high" } });
   assert.deepEqual(workerArgs({ botId: ID.dev, branch: "feat/a", name: "feat-a", cwd: "/p/wt", parent: "t1", agent: agyPlan.agent,
     model: agyPlan.model, effort: agyPlan.effort, agyMode: agyPlan.agyMode, argv: agyPlan.argv, task: "fix the build", path: "/x/bin" }),
@@ -1238,7 +1251,7 @@ test("worker: a model starting with a dash is refused, from --model, --worker-mo
   assert.match(parseBots(JSON.stringify(file)).warnings.join("\n"), /worker model starts with a dash/);
   const r = s.cli(["worker", "x", "--branch", "feat/x", "--json"]);
   assert.equal(r.code, 0, r.err);
-  assert.deepEqual(freshClaude(after(s.runs()[0])), ["claude", "x"]);
+  assert.deepEqual(freshClaude(after(s.runs()[0])), ["claude", "--permission-mode", "auto", "x"]);
 });
 
 test("worker: task worktrees are excluded from the main checkout; master is the last base; colliding folders are named", (t) => {
@@ -1711,7 +1724,7 @@ test("worker #225: the calling bot's bots.json warnings go to stderr at once, re
   assert.match(r.err, mine);
   assert.doesNotMatch(r.err, /b-bbbbbbbbbb/, "only the calling bot's warnings");
   assert.ok(r.json().warnings.includes(said), r.out);
-  assert.deepEqual(freshClaude(after(s.runs()[0])), ["claude", "x"], "the defaults are dropped, as before");
+  assert.deepEqual(freshClaude(after(s.runs()[0])), ["claude", "--permission-mode", "auto", "x"], "the defaults are dropped, as before");
   // Printed once, and before a refusal too.
   assert.equal(r.err.split("worker model starts with a dash").length, 2);
   // Refused once the bot is known (the main checkout is no task worktree): the warning comes first.
@@ -2431,7 +2444,7 @@ test("worker: a new Claude worker's --session-id is its label and its start row'
   assert.ok(labelsOf(run).includes(`agent.session=${sid}`));
   const row = s.ledger().find((x) => x.event === "start" && x.terminal === r.json().terminal);
   assert.equal(row.session, sid);
-  assert.deepEqual(r.json().argv, ["claude", "--session-id", "***"]);
+  assert.deepEqual(r.json().argv, ["claude", "--permission-mode", "auto", "--session-id", "***"]);
   assert.equal(`${r.out}${r.err}`.includes(sid), false, "never printed");
   // A codex worker: no session id, none in its row.
   const text = s.cli(["worker", "review it", "--branch", "feat/other", "--agent", "codex"]);

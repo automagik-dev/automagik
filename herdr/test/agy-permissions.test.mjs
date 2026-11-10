@@ -426,7 +426,7 @@ test("helperPlan with the launch's file: a worker gets its worktree rule and fil
     worker: { botId: BOT.id, worktree: SEAT, agent: "antigravity" }, session: null, agents,
     agy: { appHomeDir: APP, bot } });
   const path = agySettingsFile(SETTINGS, BOT.id, "worker", "dev", SEAT);
-  assert.deepEqual(worker.argv, ["agy", "--mode", "auto", "--settings", path, "--continue"]);
+  assert.deepEqual(worker.argv, ["agy", "--dangerously-skip-permissions", "--mode", "auto", "--settings", path, "--continue"]);
   assert.equal(worker.agySettings.path, path);
   assert.ok(JSON.parse(worker.agySettings.text).permissions.allow.includes(`write_file(${SEAT})`));
   // A non-worker pane's command is reused, its older permission file replaced, never doubled.

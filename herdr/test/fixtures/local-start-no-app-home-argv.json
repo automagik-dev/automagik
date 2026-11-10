@@ -6,6 +6,8 @@
   "claude",
   "--append-system-prompt-file",
   "<root>/box/.config/herdr-app/automagik-herdr/briefings/<hash>-b-mainaaaaaa.md",
+  "--permission-mode",
+  "auto",
   "--session-id",
   "<session-id>"
 ]

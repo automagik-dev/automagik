@@ -1122,10 +1122,24 @@ on this computer are labelled. The lead's pane is the one the attach ledger ties
   bot shows the model its pane runs: the one its command line names, else the agent's own
   configured default. A bot that isn't running shows no model in its sidebar row
   ("not running · role"), while `automagik-herdr ls` and `show` print its pin, else that default.
+- `codexAuto` is optional and says whether a Codex seat and its Codex workers get Codex's auto
+  mode, `--approve-for-me`: approval requests go to Codex's own reviewer instead of a person,
+  and commands still run in Codex's workspace-write sandbox (it is not full access and does not
+  widen the sandbox). `true` (the default) passes it; `false` leaves Codex its default approvals
+  for that bot, so its panes can stop at a prompt only a person can answer. Set it in the bot's
+  entry in `.herdr/bots.json`; `create` and `edit` have no option for it, and either keeps the
+  field. It applies to a Codex seat, its Start and Restart, and its Codex workers; every other
+  agent's launch line is unchanged, and a worker that runs an hc template keeps the template's
+  command. Inside that sandbox (no network by default) `hc` can't connect to its socket and the
+  git folder of a worktree is read-only, so an `hc` call or a commit goes out as an approval
+  request: with the flag Codex's reviewer answers it, without it a person must. The worktree
+  itself and the temp folder stay writable, so a gate that runs there needs no approval.
 - `agyMode` is optional: the Antigravity execution mode Start and Restart pass as
   `agy --mode <mode>`. One of `auto` (the default when absent), `accept-edits` or `plan`; any
   other value is refused at launch with one line and never passed to agy. It applies only to
-  an Antigravity seat: the pack never passes `--dangerously-skip-permissions` and never writes
+  an Antigravity seat. Where agy can't run `auto` (see
+  [Automatic mode](#automatic-mode)) it continues in manual mode, so a roster that names `auto`
+  itself gets one warning at launch on such a host. The pack never writes
   agy's own saved settings; each writer launch's own `--settings` file lists just that launch's
   folder in `trustedWorkspaces` (see below), so the rest of the person's trust list and saved
   settings stay theirs. A read-only review launch is not auto-trusted (see below).
@@ -1155,19 +1169,56 @@ on this computer are labelled. The lead's pane is the one the attach ledger ties
   and `effort`. `agyMode` is the Antigravity workers' `--mode` (auto when absent).
   `create|edit --worker-agent/--worker-model/--worker-effort/--worker-template/--worker-agy-mode` set them
   (an empty value clears one); the form keeps the field as it is. An invalid one is ignored
-  with a warning.
+  with a warning. A Codex worker passes `--approve-for-me` like its bot's seat, unless the bot's
+  `codexAuto` is false; a `template` owns the command and gets no flag.
 - Ids are `b-` plus 10 lowercase base32 characters. A bot's terminal carries the hc label
   `bot=<id>`.
 
+### Automatic mode
+
+The launcher starts every bot and every worker in its agent's automatic mode, so an unattended
+pane never stops at an approval prompt only a person can answer (#955). The words come from the
+agent's definition on every start, restart, linked-machine start, worker and Restart --tree
+helper, never from an old pane's command. A `programs.json` run that already names one of an
+agent's own approval flags is left as the person wrote it, and an hc template owns its command:
+the pack adds nothing to either.
+
+| Agent | What its launch adds | What that does |
+| --- | --- | --- |
+| Claude Code (`claude`) | `--permission-mode auto` | Claude Code's auto mode: its classifier answers permission requests. |
+| Codex (`codex`) | `--approve-for-me` | Codex's auto mode: its reviewer answers approval requests, inside the workspace-write sandbox (#946). A bot's `codexAuto: false` turns it off. |
+| Antigravity (`agy`) | `--dangerously-skip-permissions`, `--mode <agyMode>`, `--settings <file>` | No permission prompt; the file's deny list still refuses what it names, and its `trustedWorkspaces` answers the folder-trust question (see below). |
+| dsh-TUI (`dsh-tui`) | nothing | Its DSH profile on the machine it runs on sets the approval policy; dsh-tui takes no such flag. |
+| Oh My Pi (`omp`) | nothing | omp 18.14.2 has only skip-all flags (`--auto-approve`, `--approval-mode=yolo`). |
+| Hermes (`hermes`) | nothing | Hermes 0.22.5 has only a skip-all flag (`--yolo`). |
+| Pi, OpenCode, Cursor, Copilot, Amp, Grok, Kimi, Kiro, Qoder, Crush | nothing | Not checked: none is installed where the flags were read (2026-11-10), and the pack adds no flag it has not seen an agent's own help name. |
+
+Flags read from claude 2.1.322, codex-cli 0.167.0 and agy 1.5.4. No skip-all-approvals flag is
+passed for any agent but Antigravity; one for another agent needs the owner's word first.
+`automagik-herdr show <bot>` prints the bot's `auto mode` line (in `--json`, `autoMode`: its
+words, a note, and for an Antigravity bot on this computer whether agy's sandbox can run here).
+
+Antigravity is the exception, measured on agy 1.5.4 on Linux and macOS: `--mode auto` is not
+available where agy's terminal sandbox can't run (restricted unprivileged user namespaces, say)
+or where the account lacks it, and agy then continues in its default manual mode. It says so
+only in print mode ("warning: --mode auto is not available ..."); an interactive pane shows
+nothing and stops at its first command. `--dangerously-skip-permissions` removes every prompt
+and still enforces the `permissions.deny` list of the launch's `--settings` file, in every part
+of a compound command (`echo hi && git push --force` is refused: "Matches user-configured deny
+rule"). So an Antigravity launch gets the flag only beside that file: a launch with no file (a
+helper with no bot to write one for, a command that takes no words) has the flag taken out. The
+flag does not answer the folder-trust question; the file's `trustedWorkspaces` does (#953).
+`dsh-tui doctor`'s `agy-sandbox` row and `show` say when this computer can't run `--mode auto`.
+
 ### Antigravity's permission list
 
-On a host where agy's terminal sandbox is unavailable (restricted unprivileged user
-namespaces, say), agy ignores `--mode auto` with a warning and runs in its default review mode:
-an unattended bot would stop at its first command. agy 1.5.3 takes a permission list from
+agy takes a permission list from
 `--settings` for one session, never saved, so every Antigravity launch of this pack — a bot's
 start, restart and resume, a worker, a helper Restart --tree runs again — writes its own file
 0600 under `<app home>/automagik-herdr/agy-settings/` and passes it as `--settings <file>`.
 The pack never writes agy's own `settings.json`, so its saved settings stay the person's.
+Since every launch runs without prompts, the deny list is what stands between a bot and the
+commands it names; the allow list matters only to a launch without the flag.
 
 The file is
 `{ "permissions": { "allow": [...], "deny": [...] }, "trustedWorkspaces": ["<folder>"] }`,
@@ -1218,7 +1269,12 @@ out of both lists. The fixed deny rules are always present and a roster's `agyPe
 `git push --force`, `git push --force-with-lease`, `git push -f`, `git push origin --force`,
 `git push origin -f`, `git push --mirror`, `git push --delete`, `git reset --hard`,
 `git branch -D`, `git clean`, `git rebase`, `git stash`,
-`git checkout --`, `git -C`, `rm -rf`, `gh pr merge`, `gh release`.
+`git checkout --`, `git -C`, `rm -rf`, `gh pr merge`, `gh release`, and, since every launch runs
+without prompts (#955), `gh api -X`, `gh api --method`, `gh api -f`, `gh api -F` (its writing
+forms), `automagik-herdr edit`, `automagik-herdr restart`, `automagik-herdr rm`,
+`automagik-herdr create`, `hc keys`, `hc kill`, `hc interrupt` and `hc exec`. The list is the
+same for a seat and for every worker role. An Antigravity lead that must end or restart a
+worker asks a person or a bot on another agent to do it.
 
 These lists are a guardrail against accidents, not a security boundary. A deny rule matches the
 words' prefix only, so a quoted or reordered command, an absolute path or an interpreter can get

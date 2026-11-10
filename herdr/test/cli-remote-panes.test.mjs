@@ -336,7 +336,7 @@ test("start --machine of a Claude bot with no app home there: none is made; one 
   assert.equal(existsSync(join(s.root, "vm/.config")), false, "no app home made there");
   assert.equal(existsSync(join(s.project, ".claude")), false);
   assert.equal(existsSync(join(s.home, ".claude")), false);
-  assert.deepEqual(agentPart(startedWith(s)), ["claude"], "started, without the flag");
+  assert.deepEqual(agentPart(startedWith(s)), ["claude", "--permission-mode", "auto"], "started, without the flag");
   assert.deepEqual(briefedIn(s.app), [], "never this computer's app home");
   // RFC 0021: a linked machine's launch is unchanged: no --session-id, no agent.session label, no workers row here.
   assert.equal(startedWith(s).some((w) => w === "--session-id" || w.startsWith("agent.session=")), false);
@@ -373,7 +373,7 @@ test("start --machine with a pane-env that is left out: no app home there is use
   assert.equal(warnings.length, 2, warnings.join("\n"));
   assert.match(warnings[0], /pane-env on vm was left out \(line 1: HERDR_APP_HOME: "\/srv\/bots\/herdr-app " has a space at its start or end\)/);
   assert.match(warnings[1], /^Hedge runs on vm without its briefing in its system prompt or per turn: its \.herdr\/pane-env there was left out, so no app home there is used, not even the default one\./);
-  assert.deepEqual(agentPart(startedWith(s)), ["claude"]);
+  assert.deepEqual(agentPart(startedWith(s)), ["claude", "--permission-mode", "auto"]);
   assert.equal(startedWith(s).some((w) => w.startsWith("HERDR_APP_HOME=")), false);
   assert.deepEqual(briefedIn(vmApp(s)), [], "the default app home there is left alone");
   assert.equal(existsSync(join(s.project, ".claude")), false);
@@ -552,8 +552,8 @@ test("start --machine of an Antigravity bot: its 0600 permission file is written
   const r = s.cli(["start", "Atlas", ...s.on, "--json"]);
   assert.equal(r.code, 0, r.err);
   const file = agySeatFile(s);
-  assert.deepEqual(r.json().argv, ["agy", "--settings", file, "--mode", "auto"], "the command names the file there");
-  assert.deepEqual(agentPart(startedWith(s)), ["agy", "--settings", file, "--mode", "auto"]);
+  assert.deepEqual(r.json().argv, ["agy", "--settings", file, "--dangerously-skip-permissions", "--mode", "auto"], "the command names the file there");
+  assert.deepEqual(agentPart(startedWith(s)), ["agy", "--settings", file, "--dangerously-skip-permissions", "--mode", "auto"]);
   // Written on vm, in vm's app home, through hc: 0600 in a 0700 folder.
   assert.ok(existsSync(file), file);
   assert.equal(modeOf(file).toString(8), "600");
@@ -574,7 +574,7 @@ test("start --machine of an Antigravity bot: its 0600 permission file is written
   assert.equal(again.code, 0, again.err);
   const run = s.calls().filter((c) => c[0] === "run")[1];
   const words = agentPart(run.slice(run.indexOf("--") + 1));
-  assert.deepEqual(words, ["agy", "--settings", file, "--mode", "auto", "--continue"]);
+  assert.deepEqual(words, ["agy", "--settings", file, "--dangerously-skip-permissions", "--mode", "auto", "--continue"]);
   assert.equal(modeOf(file).toString(8), "600");
   assert.equal(existsSync(LOCAL_AGY_DIR(s)), false, "still here nothing");
 });

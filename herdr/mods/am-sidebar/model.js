@@ -175,6 +175,12 @@ export function parseBots(text) {
       warnings.push(`${where}: hcProxy is not a boolean; ignored`);
       delete bot.hcProxy;
     }
+    // Codex's auto mode switch (#946): true (the default) passes --approve-for-me; false opts
+    // out and leaves Codex its own approvals.
+    if (bot.codexAuto !== undefined && typeof bot.codexAuto !== "boolean") {
+      warnings.push(`${where}: codexAuto is not a boolean; ignored`);
+      delete bot.codexAuto;
+    }
     if (!ID_SHAPE.test(bot.id)) warnings.push(`${where}: id is not b- plus 10 base32 characters`);
     if (typeof bot.role !== "string") { if (bot.role !== undefined) warnings.push(`${where}: role is not text`); bot.role = ""; }
     if (typeof bot.instructions !== "string") { if (bot.instructions !== undefined) warnings.push(`${where}: instructions are not text`); bot.instructions = ""; }
@@ -596,6 +602,9 @@ export function checkBots(file, before = null, { project = null, projects = null
     if (b.code !== undefined && typeof b.code !== "boolean") errors.push(`${at}: code is not a boolean`);
     if (b.hcProxy !== undefined && typeof b.hcProxy !== "boolean") {
       errors.push(`${at}: hcProxy is not a boolean`);
+    }
+    if (b.codexAuto !== undefined && typeof b.codexAuto !== "boolean") {
+      errors.push(`${at}: codexAuto is not a boolean`);
     }
     if (typeof b.instructions !== "string") errors.push(`${at}: no instructions`);
     else if (b.instructions.length > MAX_INSTRUCTIONS) errors.push(`${at}: instructions longer than ${MAX_INSTRUCTIONS} characters`);
