@@ -977,7 +977,7 @@ export const MODEL_CSS = `
 .bt-route-icon svg{width:16px;height:16px}
 .bt-model-step>[data-route=acp] .bt-route-icon{color:var(--bt-accent)}
 .bt-agent-mark{flex:none;display:block;border-radius:4px;object-fit:contain}
-.bt-agent-initial{flex:none;display:inline-flex;align-items:center;justify-content:center;border-radius:5px;background:var(--bt-tag-bg);color:var(--bt-ink-2);font-weight:600;line-height:1}
+.bt-agent-initial{flex:none;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;background:var(--bt-tag-bg);color:var(--bt-ink-2);font-weight:600;line-height:1}
 .bt-model-menu .bt-model-step .bt-menu-label{font-size:13px;line-height:18px;font-weight:500;color:var(--bt-ink)}
 .bt-model-menu .bt-model-step .bt-menu-hint{font-size:12px;color:var(--bt-ink-2)}
 .bt-model-menu .bt-model-step .bt-model-group{font-size:12px;font-weight:600;color:var(--bt-ink-2)}
