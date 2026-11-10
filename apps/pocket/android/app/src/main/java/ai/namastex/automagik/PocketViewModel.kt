@@ -571,9 +571,9 @@ class PocketViewModel(application: Application, private val initDispatcher: Coro
             } finally { done(sent) }
         }
     }
-    /** The preview has no core: its blocked agent checks the dialog and menu the same way, logs the keys it would get, and moves on. */
     /** The preview's failing request fails once, so the deck's error strip renders and the retry can move on. */
     private val previewFailed = mutableSetOf<String>()
+    /** The preview has no core: its blocked agent checks the dialog and menu the same way, logs the keys it would get, and moves on. */
     private fun choosePreview(ref: TerminalRef, msg: String, dialog: String, options: List<String>, index: Int, label: String): String {
         val t = terminalOf(ref)
         if (index !in options.indices) return "Not sent: open the agent to answer."
@@ -1310,7 +1310,7 @@ class PocketViewModel(application: Application, private val initDispatcher: Coro
             CoreTerminal("t5", "Release notes", "~/work/herdr-squad", "live", "working", "Codex", "Drafting the changelog", 80, 24),
             CoreTerminal("t6", "Landing copy", "~/work/website", "live", "idle", "Claude Code", "", 80, 24, labels = mapOf("bot" to "b-demo-writer")),
             CoreTerminal("t7", "Notes", "~/work/notes", "live", "idle", "Claude Code", "", 80, 24, labels = mapOf("bot" to "b-demo-scribe")),
-            // A second waiting agent, so sample data renders a deck of two cards; t9's answer always fails to
+            // A second waiting agent, so sample data renders a deck of two cards; t9's first answer fails to
             // show the deck's error strip.
             CoreTerminal("t8", "Release gate", "~/work/herdr", "live", "blocked", "Claude Code", "Run the lint check?", 80, 24, labels = mapOf("bot" to "b-demo-review"), kind = "permission"),
             CoreTerminal("t9", "Sample deploy", "~/work/herdr", "live", "blocked", "Claude Code", "Approve the sample deploy?", 80, 24, labels = mapOf("bot" to "b-demo-flaky"), kind = "permission"))

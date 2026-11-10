@@ -37,8 +37,8 @@ object TodayTiles {
     const val GAP_DP = 8
     const val COUNT = 4
     const val PAD_DP = 10
-    /** One height for the four Home tiles, so the spend tile lines up with the counts. */
-    const val HEIGHT_DP = 64
+    /** Two 24sp body lines, the 10dp top/bottom padding and 4dp of slack; grows with the font setting. */
+    fun heightDp(fontScale: Float) = (48f * fontScale + 24f).dp
     const val MAX_SP = 22
     const val MIN_SP = 12
     fun textWidthDp(screenDp: Int): Double = (screenDp - 2.0 * GUTTER_DP - (COUNT - 1) * GAP_DP) / COUNT - 2 * PAD_DP

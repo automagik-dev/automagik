@@ -39,6 +39,7 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.ui.input.pointer.pointerInput
 import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -133,6 +134,11 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
         // A closed mid-deck session keeps its count; a new one after All clear starts fresh.
         if (deckMemory.complete) { deckMemory.answered = emptySet(); deckMemory.seen = 0; deckMemory.complete = false }
         deckOpen = true
+    }
+    // The preview's deck session does not outlive the preview, so Exit clears its answered count.
+    LaunchedEffect(state.demo) {
+        deckMemory.answered = emptySet(); deckMemory.seen = 0; deckMemory.complete = false
+        if (!state.demo) deckOpen = false
     }
     /** The machine whose Automagik Bot chats are listed (read only). */
     var botChats by remember { mutableStateOf<String?>(null) }
@@ -423,7 +429,8 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
         }
         // Today: the counts and nothing else above the agents; spent today joins them once a usage meter reports.
         if (space == null) item(key = "today") {
-            Row(Modifier.fillMaxWidth().height(TodayTiles.HEIGHT_DP.dp), horizontalArrangement = Arrangement.spacedBy(TodayTiles.GAP_DP.dp)) {
+            val fontScale = LocalDensity.current.fontScale
+            Row(Modifier.fillMaxWidth().height(TodayTiles.heightDp(fontScale)), horizontalArrangement = Arrangement.spacedBy(TodayTiles.GAP_DP.dp)) {
                 CountCard(pulse.needsYou, if (pulse.needsYou == 1) "needs you" else "need you", Blocked, Modifier.weight(1f).fillMaxHeight(),
                     onClick = if (pulse.needsYou > 0) onReviewNeedsYou else null)
                 CountCard(pulse.working, "working", Working, Modifier.weight(1f).fillMaxHeight())
@@ -445,7 +452,7 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
                     Dot(request, 8); Spacer(Modifier.width(10.dp))
                     Text(if (pulse.needsYou == 1) "1 needs you" else "${pulse.needsYou} need you", fontWeight = FontWeight.SemiBold,
                         fontSize = 14.sp, modifier = Modifier.weight(1f))
-                    Text("Review", color = Accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Review", color = Ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         }

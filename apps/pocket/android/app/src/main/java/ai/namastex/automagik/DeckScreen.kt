@@ -22,7 +22,6 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -37,6 +36,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.launch
+
+/** A card's menu read: [done] separates "not read yet" from a read that found no menu. */
+private data class MenuRead(val menu: Prompt.Menu?, val done: Boolean)
 
 /** The deck's answers and requests seen, kept in PocketApp so opening a card and coming Back keeps them. */
 class DeckMemory {
@@ -76,6 +78,15 @@ class DeckMemory {
     val waiting = (memory.seen - answered.size).coerceAtLeast(0)
     val view = Teams.deckView(cards, answered, connected, waiting, offlineWaiting)
     LaunchedEffect(view is Teams.DeckView.Clear) { memory.complete = view is Teams.DeckView.Clear }
+    // Read the cards behind the top one before they arrive, so a swipe does not show a terminal-only frame.
+    val menuCache = remember { mutableStateMapOf<String, MenuRead>() }
+    val visible = (view as? Teams.DeckView.Cards)?.cards.orEmpty()
+    LaunchedEffect(visible.map { Teams.deckKey(it) }) {
+        for (c in visible.drop(1)) {
+            val key = Teams.deckKey(c)
+            if (c.chat == null && menuCache[key] == null) menuCache[key] = MenuRead(vm.readMenu(c.ref), true)
+        }
+    }
     Box(Modifier.fillMaxSize().background(Canvas).clickable(enabled = false) {}.statusBarsPadding().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp)) {
         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -98,7 +109,9 @@ class DeckMemory {
                 is Teams.DeckView.Cards -> {
                     val card = view.cards.first()
                     key(Teams.deckKey(card)) {
-                        DeckCard(vm, card, next = view.cards.getOrNull(1), behind = view.cards.size - 1, Modifier.weight(1f),
+                        val cached = menuCache[Teams.deckKey(card)]
+                        DeckCard(vm, card, next = view.cards.getOrNull(1), behind = view.cards.size - 1,
+                            initialMenu = cached?.menu, initialMenuDone = cached?.done == true, modifier = Modifier.weight(1f),
                             onAnswered = { memory.answered = memory.answered + Teams.deckKey(card) }, onOpen = { onOpen(card.ref) })
                     }
                 }
@@ -144,17 +157,20 @@ class DeckMemory {
  * A permission's Yes and No go through [PocketViewModel.answer] with the dialog text, as the terminal's buttons do;
  * anything the phone can't read, and every chat card, is answered by opening it.
  */
-@Composable private fun DeckCard(vm: PocketViewModel, card: Teams.DeckCard, next: Teams.DeckCard?, behind: Int, modifier: Modifier,
+@Composable private fun DeckCard(vm: PocketViewModel, card: Teams.DeckCard, next: Teams.DeckCard?, behind: Int,
+                                 initialMenu: Prompt.Menu?, initialMenuDone: Boolean, modifier: Modifier,
                                  onAnswered: () -> Unit, onOpen: () -> Unit) {
     val scope = rememberCoroutineScope()
     val view = LocalView.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     // Read again every 2 s, as the terminal screen does: a menu that wasn't drawn yet, or changed, shows its answers.
     // Not while the app is stopped ([Background.poll]). A chat card has no terminal menu to read.
-    val menu by produceState<Prompt.Menu?>(null, card.ref, card.chat) {
-        if (card.chat != null) { value = null; return@produceState }
-        Background.poll(lifecycle.started(), 2_000) { vm.readMenu(card.ref) }.collect { value = it }
+    var read by remember(card.ref, card.chat) { mutableStateOf(initialMenuDone) }
+    val menu by produceState<Prompt.Menu?>(initialMenu, card.ref, card.chat) {
+        if (card.chat != null) { value = null; read = true; return@produceState }
+        Background.poll(lifecycle.started(), 2_000) { vm.readMenu(card.ref) }.collect { value = it; read = true }
     }
+    val waitingForMenu = !read && card.chat == null && card.kind == "permission"
     val choices = remember(menu, card.kind, card.chat) {
         if (card.chat == null && card.kind == "permission") Prompt.choices(card.kind, menu) else emptyList()
     }
@@ -184,12 +200,15 @@ class DeckMemory {
                 Box(Modifier.fillMaxWidth(1f - i * .05f).fillMaxHeight(.92f).offset(y = (i * 10).dp)
                     .clip(RoundedCornerShape(24.dp)).background(Surface.copy(alpha = 1f - i * .3f)).border(1.dp, Border, RoundedCornerShape(24.dp))) {
                     if (i == 1 && next != null) {
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp).alpha(.7f), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            if (next.where.isNotBlank()) Text(next.where, color = Muted, fontSize = 12.sp, maxLines = 1,
+                                overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                            else Spacer(Modifier.weight(1f))
+                            Spacer(Modifier.width(10.dp))
                             PetView(Teams.GENIE, Teams.NEEDS_YOU, 34.dp)
                             Spacer(Modifier.width(10.dp))
-                            Text(next.title, color = Muted, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1,
-                                overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                            if (next.where.isNotBlank()) Text(next.where, color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(next.title, color = Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1,
+                                overflow = TextOverflow.Ellipsis)
                         }
                     }
                 }
@@ -202,8 +221,8 @@ class DeckMemory {
                         detectDragGestures(onDragEnd = {
                             scope.launch {
                                 when (Teams.swipe(dx.value, dy.value, threshold, yes != null && menu != null, no != null && menu != null)) {
-                                    Teams.Swipe.YES -> { dx.animateTo(size.width * 1.5f); send(yes) }
-                                    Teams.Swipe.NO -> { dx.animateTo(-size.width * 1.5f); send(no) }
+                                    Teams.Swipe.YES -> { launch { dx.animateTo(0f) }; dy.animateTo(0f); send(yes) }
+                                    Teams.Swipe.NO -> { launch { dx.animateTo(0f) }; dy.animateTo(0f); send(no) }
                                     Teams.Swipe.OPEN -> { launch { dx.animateTo(0f) }; dy.animateTo(0f); onOpen() }
                                     Teams.Swipe.NONE -> { launch { dx.animateTo(0f) }; dy.animateTo(0f) }
                                 }
@@ -225,7 +244,13 @@ class DeckMemory {
                     Spacer(Modifier.height(12.dp))
                     Text(card.message.ifBlank { if (card.opensChat) "Waiting for your reply" else "Waiting for you" }, color = Ink,
                         fontSize = 17.sp, lineHeight = 24.sp, textAlign = TextAlign.Center, maxLines = 4, overflow = TextOverflow.Ellipsis)
-                    menu?.dialog?.takeIf { it.isNotBlank() }?.let {
+                    if (waitingForMenu) {
+                        Spacer(Modifier.height(10.dp))
+                        Box(Modifier.fillMaxWidth().heightIn(min = 76.dp).clip(RoundedCornerShape(12.dp)).background(Canvas).padding(12.dp),
+                            contentAlignment = Alignment.CenterStart) {
+                            Text("Reading the agent's menu…", color = Muted, fontFamily = FontFamily.Monospace, fontSize = 13.sp)
+                        }
+                    } else menu?.dialog?.takeIf { it.isNotBlank() }?.let {
                         Spacer(Modifier.height(10.dp))
                         Text(it, color = Ink, fontFamily = FontFamily.Monospace, fontSize = 13.sp, lineHeight = 19.sp, maxLines = 6,
                             overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Canvas).padding(12.dp))
@@ -233,14 +258,15 @@ class DeckMemory {
                     Spacer(Modifier.weight(1f))
                     Text(when {
                         card.opensChat -> "Swipe up, or tap Open chat, to answer there"
+                        waitingForMenu -> "Reading the agent's menu…"
                         yes != null -> "Swipe right for Yes, left for No"
                         else -> "Answer this one in its terminal: swipe up"
                     }, color = Muted, fontSize = 12.sp, textAlign = TextAlign.Center)
                 }
                 // The stamps sit on the card and move with it, as the mock draws them.
                 val lean = (dx.value / threshold).coerceIn(-1f, 1f)
-                if (lean > .1f && yes != null) Stamp("YES", Ok, Modifier.align(Alignment.TopStart).padding(start = 22.dp, top = 86.dp).alpha(lean))
-                if (lean < -.1f && no != null) Stamp("NO", Blocked, Modifier.align(Alignment.TopEnd).padding(end = 22.dp, top = 86.dp).alpha(-lean))
+                if (lean > .1f && yes != null) Stamp("YES", Ok, lean, Modifier.align(Alignment.TopStart).padding(start = 22.dp, top = 86.dp))
+                if (lean < -.1f && no != null) Stamp("NO", Blocked, -lean, Modifier.align(Alignment.TopEnd).padding(end = 22.dp, top = 86.dp))
             }
         }
         Text("← No  ·  ↑ Open  ·  Yes →", color = Muted, fontSize = 12.sp)
@@ -255,8 +281,10 @@ class DeckMemory {
     }
 }
 
-@Composable private fun Stamp(text: String, color: Color, modifier: Modifier) {
-    Text(text, color = color, fontSize = 30.sp, fontWeight = FontWeight.Black,
-        modifier = modifier.graphicsLayer { rotationZ = if (text == "YES") -14f else 14f }
-            .border(3.dp, color, RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 2.dp))
+@Composable private fun Stamp(text: String, color: Color, alpha: Float, modifier: Modifier) {
+    // The whole stamp (frame and letters) is one alpha layer, so the frame keeps its corners as it fades.
+    Box(modifier.graphicsLayer { rotationZ = if (text == "YES") -14f else 14f; this.alpha = alpha }
+        .border(3.dp, color, RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 2.dp)) {
+        Text(text, color = color, fontSize = 30.sp, fontWeight = FontWeight.Black)
+    }
 }
