@@ -369,13 +369,25 @@ object Teams {
     }
 
     /**
-     * [cards] without the ones [answered], or the end. Offline when there is nothing left but [waiting] requests
-     * were on a machine the phone can't reach; all clear once they were answered (or there were none).
+     * [cards] without the ones [answered], or the end. Offline when nothing is left but [offline] requests are on
+     * machines the phone can't reach, or (with no connected machine) [waiting] were seen before the link dropped;
+     * all clear once they were answered (or there were none).
      */
-    fun deckView(cards: List<DeckCard>, answered: Set<String>, anyConnected: Boolean, waiting: Int): DeckView {
+    fun deckView(cards: List<DeckCard>, answered: Set<String>, anyConnected: Boolean, waiting: Int, offline: Int = 0): DeckView {
         val left = cards.filter { deckKey(it) !in answered }
         if (left.isNotEmpty()) return DeckView.Cards(left)
-        return if (!anyConnected && waiting > 0) DeckView.Offline(waiting) else DeckView.Clear
+        val lost = maxOf(offline, if (!anyConnected) waiting else 0)
+        return if (lost > 0) DeckView.Offline(lost) else DeckView.Clear
+    }
+
+    /**
+     * The deck's open state and "opened from the deck" flag after a selection: Back from a card opened from the deck
+     * keeps the deck and clears the flag; a selection from anywhere else closes it.
+     */
+    fun deckAfterSelection(open: Boolean, fromDeck: Boolean, selected: TerminalRef?): Pair<Boolean, Boolean> = when {
+        selected == null -> open to false
+        fromDeck -> open to true
+        else -> false to false
     }
 
     /** A swipe's answer, by the axis it moved most along: up opens, right is Yes, left is No; short of [threshold], none. */

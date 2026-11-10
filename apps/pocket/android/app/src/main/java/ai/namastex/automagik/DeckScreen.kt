@@ -6,6 +6,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -18,6 +19,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -36,24 +38,45 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.launch
 
+/** The deck's answers and requests seen, kept in PocketApp so opening a card and coming Back keeps them. */
+class DeckMemory {
+    var answered by mutableStateOf(setOf<String>())
+    var seen by mutableIntStateOf(0)
+    /** The deck reached All clear: the next open starts a new count, while a mid-deck close keeps it. */
+    var complete by mutableStateOf(false)
+
+    companion object {
+        val Saver = listSaver<DeckMemory, Any>(
+            save = { listOf(it.answered.toList(), it.seen, it.complete) },
+            restore = { saved ->
+                DeckMemory().apply {
+                    answered = (saved.getOrNull(0) as? List<*>)?.filterIsInstance<String>()?.toSet().orEmpty()
+                    seen = saved.getOrNull(1) as? Int ?: 0
+                    complete = saved.getOrNull(2) as? Boolean ?: false
+                }
+            })
+    }
+}
+
 /**
  * Home's needs-you deck: one card per entry of Home's own Needs you list. Swipe right for Yes, left for No, up for
  * the agent; the same three buttons sit under the card. A card with a chat and no terminal menu opens its chat instead.
  * After the last answer, the all clear says how many requests were answered and the bot hops once.
  *
- * [cards] is Home's list ([Teams.deckCards]); a future "Answer all" button opens this same screen.
+ * [cards] is Home's reachable list, [offline] the entries on machines that are not connected now. A future "Answer
+ * all" button opens this same screen.
  */
-@Composable fun DeckScreen(cards: List<Teams.DeckCard>, vm: PocketViewModel, connected: Boolean,
+@Composable fun DeckScreen(cards: List<Teams.DeckCard>, offline: List<Teams.DeckCard>, vm: PocketViewModel,
+                           connected: Boolean, memory: DeckMemory, message: String?,
                            onClose: () -> Unit, onOpen: (TerminalRef) -> Unit, onBackToTeams: () -> Unit) {
     BackHandler(onBack = onClose)
-    // Cards whose answer reached the agent leave at once, before the next reading shows the agent moved on.
-    var answered by remember { mutableStateOf(setOf<String>()) }
-    // The requests seen since the deck opened, for the offline message: Home's own count drops to zero with the link.
-    var seen by remember { mutableIntStateOf(cards.size) }
-    LaunchedEffect(cards.size) { seen = maxOf(seen, cards.size) }
-    val waiting = (seen - answered.size).coerceAtLeast(0)
-    val view = Teams.deckView(cards, answered, connected, waiting)
-    Box(Modifier.fillMaxSize().background(Canvas).statusBarsPadding().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp)) {
+    LaunchedEffect(cards.size) { memory.seen = maxOf(memory.seen, cards.size) }
+    val answered = memory.answered
+    val offlineWaiting = offline.count { Teams.deckKey(it) !in answered }
+    val waiting = (memory.seen - answered.size).coerceAtLeast(0)
+    val view = Teams.deckView(cards, answered, connected, waiting, offlineWaiting)
+    LaunchedEffect(view is Teams.DeckView.Clear) { memory.complete = view is Teams.DeckView.Clear }
+    Box(Modifier.fillMaxSize().background(Canvas).clickable(enabled = false) {}.statusBarsPadding().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp)) {
         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 if (view is Teams.DeckView.Clear) {
@@ -64,19 +87,26 @@ import kotlinx.coroutines.launch
                     if (view is Teams.DeckView.Cards) {
                         Box(Modifier.clip(RoundedCornerShape(16.dp)).background(amber().copy(alpha = .15f))
                             .border(1.dp, amber().copy(alpha = .5f), RoundedCornerShape(16.dp)).padding(horizontal = 12.dp, vertical = 5.dp)) {
-                            Text("${view.cards.size} left", color = amber(), fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            Text("${view.cards.size} left", color = Ink, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                         }
                         Spacer(Modifier.width(8.dp))
                     }
                 }
                 IconButton(onClick = onClose) { Icon(Icons.Outlined.Close, "Close the deck", tint = Muted) }
             }
+            // The Scaffold's snackbar sits under this layer; answer outcomes show here instead.
+            message?.takeIf { it.isNotBlank() }?.let {
+                Spacer(Modifier.height(8.dp))
+                Text(it, color = Ink, fontSize = 13.sp, lineHeight = 18.sp, textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Raised)
+                        .border(1.dp, Border, RoundedCornerShape(12.dp)).padding(12.dp))
+            }
             when (view) {
                 is Teams.DeckView.Cards -> {
                     val card = view.cards.first()
                     key(Teams.deckKey(card)) {
-                        DeckCard(vm, card, behind = view.cards.size - 1, Modifier.weight(1f),
-                            onAnswered = { answered = answered + Teams.deckKey(card) }, onOpen = { onOpen(card.ref) })
+                        DeckCard(vm, card, next = view.cards.getOrNull(1), behind = view.cards.size - 1, Modifier.weight(1f),
+                            onAnswered = { memory.answered = memory.answered + Teams.deckKey(card) }, onOpen = { onOpen(card.ref) })
                     }
                 }
                 Teams.DeckView.Clear -> DeckEnd(Teams.DONE, "All clear", if (answered.isEmpty()) "No bot is waiting on you."
@@ -114,7 +144,7 @@ import kotlinx.coroutines.launch
  * A permission's Yes and No go through [PocketViewModel.answer] with the dialog text, as the terminal's buttons do;
  * anything the phone can't read, and every chat card, is answered by opening it.
  */
-@Composable private fun DeckCard(vm: PocketViewModel, card: Teams.DeckCard, behind: Int, modifier: Modifier,
+@Composable private fun DeckCard(vm: PocketViewModel, card: Teams.DeckCard, next: Teams.DeckCard?, behind: Int, modifier: Modifier,
                                  onAnswered: () -> Unit, onOpen: () -> Unit) {
     val scope = rememberCoroutineScope()
     val view = LocalView.current
@@ -148,9 +178,22 @@ import kotlinx.coroutines.launch
     }
     Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
-            // The cards still waiting, peeking out under this one.
-            for (i in minOf(behind, 2) downTo 1) Box(Modifier.fillMaxWidth(1f - i * .05f).fillMaxHeight(.92f).offset(y = (i * 10).dp)
-                .clip(RoundedCornerShape(24.dp)).background(Surface.copy(alpha = 1f - i * .3f)).border(1.dp, Border, RoundedCornerShape(24.dp)))
+            // The cards still waiting, peeking out under this one; the next one shows its own who/project.
+            for (i in minOf(behind, 2) downTo 1) {
+                Box(Modifier.fillMaxWidth(1f - i * .05f).fillMaxHeight(.92f).offset(y = (i * 10).dp)
+                    .clip(RoundedCornerShape(24.dp)).background(Surface.copy(alpha = 1f - i * .3f)).border(1.dp, Border, RoundedCornerShape(24.dp))) {
+                    if (i == 1 && next != null) {
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp).alpha(.7f), verticalAlignment = Alignment.CenterVertically) {
+                            PetView(Teams.GENIE, Teams.NEEDS_YOU, 34.dp)
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(next.title, color = Muted, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                if (next.where.isNotBlank()) Text(next.where, color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                    }
+                }
+            }
             Box(Modifier.fillMaxWidth().fillMaxHeight(.94f)
                 .graphicsLayer { translationX = dx.value; translationY = dy.value; rotationZ = dx.value / 40f }) {
                 Column(Modifier.fillMaxSize()

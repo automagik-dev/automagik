@@ -577,9 +577,10 @@ class PocketViewModel(application: Application, private val initDispatcher: Coro
         if (!Prompt.sameDialog(dialog, menu)) return Prompt.CHANGED
         if (!Prompt.unchanged(options, menu)) return "Not sent: its options changed. Open the agent to answer."
         android.util.Log.i("PocketPrompt", "preview ${ref.address} keys=${Prompt.keys(menu, index).joinToString(",")}")
+        val running = if (ref.address == "t8") "Running the lint check" else "Running the test suite"
         _state.update { s ->
             val m = s.machines[ref.hostId] ?: return@update s
-            val moved = m.terminals.map { if (it.address == ref.address) it.copy(status = "working", kind = "", message = "Running the test suite") else it }
+            val moved = m.terminals.map { if (it.address == ref.address) it.copy(status = "working", kind = "", message = running) else it }
             s.copy(machines = s.machines + (ref.hostId to m.copy(terminals = moved)))
         }
         if (state.value.selected == ref) { if (state.value.nativeDisplay) nativeReady(cols, rows) else terminalReady(cols, rows) }
@@ -1296,12 +1297,12 @@ class PocketViewModel(application: Application, private val initDispatcher: Coro
             CoreTerminal("t6", "Landing copy", "~/work/website", "live", "idle", "Claude Code", "", 80, 24, labels = mapOf("bot" to "b-demo-writer")),
             CoreTerminal("t7", "Notes", "~/work/notes", "live", "idle", "Claude Code", "", 80, 24, labels = mapOf("bot" to "b-demo-scribe")),
             // A second waiting agent, so sample data renders a deck of two cards.
-            CoreTerminal("t8", "Landing review", "~/work/website", "live", "blocked", "Claude Code", "Approve the new landing page copy", 80, 24, labels = mapOf("bot" to "b-demo-review"), kind = "permission"))
+            CoreTerminal("t8", "Release gate", "~/work/herdr", "live", "blocked", "Claude Code", "Run the lint check?", 80, 24, labels = mapOf("bot" to "b-demo-review"), kind = "permission"))
             // Each one's last change, so the Teams rows show times and the scribe has dozed off.
             .map { t -> t.copy(statusMs = System.currentTimeMillis() - mapOf("t1" to 1L, "t2" to 3L, "t3" to 14L, "t5" to 6L, "t6" to 4L, "t7" to 95L, "t8" to 2L).getOrDefault(t.address, 0L) * 60_000L) }
-        val spaces = listOf(PocketSpace("sp1", "herdr", "~/work/herdr", "", listOf(PocketTab("tb2", "Android", listOf("t2", "t3")), PocketTab("tb1", "Authentication", listOf("t1")))),
+        val spaces = listOf(PocketSpace("sp1", "herdr", "~/work/herdr", "", listOf(PocketTab("tb2", "Android", listOf("t2", "t3")), PocketTab("tb1", "Authentication", listOf("t1")), PocketTab("tb7", "Release gate", listOf("t8")))),
             PocketSpace("sp3", "Release squad", "~/work/herdr-squad", "", listOf(PocketTab("tb4", "Notes", listOf("t5")))),
-            PocketSpace("sp2", "Website", "~/work/website", "", listOf(PocketTab("tb3", "Shell", listOf("t4")), PocketTab("tb5", "Copy", listOf("t6", "t8")))),
+            PocketSpace("sp2", "Website", "~/work/website", "", listOf(PocketTab("tb3", "Shell", listOf("t4")), PocketTab("tb5", "Copy", listOf("t6")))),
             PocketSpace("sp4", "Notes", "~/work/notes", "", listOf(PocketTab("tb6", "Notes", listOf("t7")))))
         // Sample repositories: one with a squad's worktrees (its branches are tasks), one on main (untasked).
         fun repo(top: String, branch: String, common: String = "~/work/herdr/.git", remote: String = "example/herdr") =
@@ -1331,15 +1332,22 @@ internal fun previewScreen(t: CoreTerminal?) = "Automagik  ·  Interface preview
     "  ${t?.message ?: "Ready for your next task."}\n\n  This is sample output. Connect your machine for a live terminal.\n\n" + previewMenu(t)
 
 /** A permission shaped like Claude Code's, for the preview's agent that is blocked on one. */
-internal fun previewMenu(t: CoreTerminal?) = if (t?.attention != true || t.kind != "permission") "" else """
-⏺ Bash(npm test)
+internal fun previewMenu(t: CoreTerminal?): String {
+    if (t?.attention != true || t.kind != "permission") return ""
+    // Each sample request carries its own command, so the second deck card does not repeat the first's block.
+    val lint = t.address == "t8"
+    val command = if (lint) "npm run lint" else "npm test"
+    val purpose = if (lint) "Run the lint check" else "Run the test suite"
+    return """
+⏺ Bash($command)
 ────────────────────────────────────────
  Bash command
-   npm test
-   Run the test suite
+   $command
+   $purpose
  Do you want to proceed?
  ❯ 1. Yes
-   2. Yes, and don’t ask again for npm test commands in this project
+   2. Yes, and don’t ask again for $command commands in this project
    3. No, and tell Claude what to do differently (esc)
  Esc to cancel
 """.trimStart()
+}

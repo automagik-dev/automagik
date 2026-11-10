@@ -553,6 +553,28 @@ class TeamsTest {
         // The link dropped with unanswered requests: offline, never a false all clear.
         assertEquals(Teams.DeckView.Offline(2), Teams.deckView(emptyList(), emptySet(), anyConnected = false, waiting = 2))
         assertEquals(Teams.DeckView.Clear, Teams.deckView(emptyList(), emptySet(), anyConnected = false, waiting = 0))
+        // A machine dropped while another is still connected: its waiting cards are offline, not all clear.
+        assertEquals(Teams.DeckView.Offline(1), Teams.deckView(emptyList(), emptySet(), anyConnected = true, waiting = 0, offline = 1))
+        assertEquals(Teams.DeckView.Clear, Teams.deckView(emptyList(), emptySet(), anyConnected = true, waiting = 0, offline = 0))
+    }
+
+    @Test fun eachPreviewRequestShowsItsOwnCommand() {
+        fun sample(address: String, message: String) =
+            CoreTerminal(address, "x", "/w", "live", "blocked", "Claude Code", message, 80, 24, kind = "permission")
+        assertTrue("npm test" in previewMenu(sample("t1", "Run the test suite?")))
+        val second = previewMenu(sample("t8", "Run the lint check?"))
+        assertTrue("npm run lint" in second)
+        assertTrue("npm test" !in second)
+    }
+
+    @Test fun backFromADeckOpenedCardReturnsToTheDeckAndAnExternalSelectionClosesIt() {
+        val card = TerminalRef("h", "t1")
+        assertEquals(true to true, Teams.deckAfterSelection(open = true, fromDeck = true, selected = card))
+        assertEquals(true to false, Teams.deckAfterSelection(open = true, fromDeck = true, selected = null))
+        assertEquals(false to false, Teams.deckAfterSelection(open = true, fromDeck = false, selected = card))
+        assertEquals(true to false, Teams.deckAfterSelection(open = true, fromDeck = false, selected = null))
+        // A closed deck stays closed when a card opens from anywhere.
+        assertEquals(false to false, Teams.deckAfterSelection(open = false, fromDeck = false, selected = card))
     }
 
     @Test fun aSwipeFollowsTheAxisItMovedMostAlong() {

@@ -126,13 +126,22 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
     // Home's swipe deck. It lives here, not inside Home, so a later "Answer all" button opens the same screen.
     var deckOpen by rememberSaveable { mutableStateOf(false) }
     /** Whether the open terminal/chat came from the deck, so Back returns to the deck instead of Home. */
-    var deckReturn by remember { mutableStateOf(false) }
+    var deckReturn by rememberSaveable { mutableStateOf(false) }
+    /** The deck's answers and seen count, kept across a card's terminal/chat and a configuration change. */
+    val deckMemory = rememberSaveable(saver = DeckMemory.Saver) { DeckMemory() }
+    val openDeck: () -> Unit = {
+        // A closed mid-deck session keeps its count; a new one after All clear starts fresh.
+        if (deckMemory.complete) { deckMemory.answered = emptySet(); deckMemory.seen = 0; deckMemory.complete = false }
+        deckOpen = true
+    }
     /** The machine whose Automagik Bot chats are listed (read only). */
     var botChats by remember { mutableStateOf<String?>(null) }
     val selected = state.selected
     // A selection that did not come from the deck closes it; one that did (deckReturn) comes back to it on Back.
     LaunchedEffect(selected) {
-        if (selected == null) deckReturn = false else if (!deckReturn) deckOpen = false
+        val (open, fromDeck) = Teams.deckAfterSelection(deckOpen, deckReturn, selected)
+        deckOpen = open
+        deckReturn = fromDeck
     }
     val space = state.space?.let { (host, id) -> state.machines[host]?.spaces?.find { it.id == id } }
     val terminal = selected?.let { state.machines[it.hostId]?.terminals?.find { t -> t.address == it.address } }
@@ -278,21 +287,24 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
                     }
                 }
                 disconnected -> WelcomeScreen(state, onPair = { pairDesktop = true }, onRepair = ::repair, onConnect = { vm.connect(it) }, onPreview = vm::enterDemo)
-                else -> OverviewScreen(state, null, vm, pulse, paneChats, onAll = vm::showAll, onReviewNeedsYou = { deckOpen = true })
+                else -> OverviewScreen(state, null, vm, pulse, paneChats, onAll = vm::showAll, onReviewNeedsYou = openDeck)
             }
         } }
     }
     }
     if (deckOpen && selected == null) {
         // Home's own Needs you list, the one its count tiles and cards use: a chat row as a chat card, a terminal row
-        // with its menu. A future "Answer all" button only has to set deckOpen.
+        // with its menu. A future "Answer all" button only has to call openDeck.
         val needs = pulse.sections.firstOrNull { it.rank == Cockpit.BLOCKED }?.entries.orEmpty()
-        val cards = Teams.deckCards(needs, pulse.fromChat) { ref ->
+        val all = Teams.deckCards(needs, pulse.fromChat) { ref ->
             state.machines[ref.hostId]?.spaces?.find { ref.address in it.addresses }?.name ?: vm.hostName(ref.hostId)
         }
-        DeckScreen(cards, vm, anyConnected, onClose = { deckOpen = false },
+        // A disconnected machine keeps its terminals in the reading; its cards move to the offline end, not the deck.
+        val cards = all.filter { state.machines[it.ref.hostId]?.connected == true }
+        val offline = all.filter { state.machines[it.ref.hostId]?.connected != true }
+        DeckScreen(cards, offline, vm, anyConnected, deckMemory, state.message, onClose = { deckOpen = false },
             onOpen = { ref -> deckReturn = true; openFromDeck(ref) },
-            onBackToTeams = { deckOpen = false; vm.navigate(Nav.TEAM) })
+            onBackToTeams = { deckOpen = false })
     }
     vm.sheet.collectAsStateWithLifecycle().value?.let { StatsSheetHost(it, onDismiss = vm::closeStats) }
     if (pairDesktop) PairDialog(state.pairing, onDismiss = { pairDesktop = false }, onScan = ::scan, onPair = vm::pair)
