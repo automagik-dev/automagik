@@ -1,16 +1,29 @@
 name: ACP drift
 
-# apps/acp-dsh pins @agentclientprotocol/sdk exactly, and the app installs the newest ACP
-# adapters at run time, so the pin can fall behind what the adapters are built on with nothing
-# failing (#958 found it a major behind). Once a day this reads npm's latest for the SDK and
-# for each adapter (apps/acp-dsh/scripts/acp-drift.mjs) and compares them with the pin and with
-# apps/acp-dsh/dev/acp-compat.json, the versions the suite last passed against.
+# The ACP library and the adapters keep up to date by themselves, daily (#958).
 #
-# When the pin is more than one minor behind npm's latest (a new major always is), or the
-# record names another SDK than the pin, the run fails and opens an issue with the report, or
-# adds a comment to the one already open. It changes no file and merges nothing: the bump is a
-# pull request through the normal review. An adapter that moved past the record is only named
-# in the run's summary. A run that could not read npm fails without an issue: the next run decides.
+# apps/acp-dsh pins @agentclientprotocol/sdk exactly, and the app installs the newest ACP
+# adapters at run time. Once a day this:
+#
+# 1. drift: reads npm's latest for the SDK and for each adapter
+#    (apps/acp-dsh/scripts/acp-drift.mjs) and compares them with the pin and with
+#    apps/acp-dsh/dev/acp-compat.json, the versions the suite last passed against. A pin more
+#    than one minor behind npm's latest (a new major always is), or a record for another SDK
+#    than the pin, fails the job and opens an issue (or comments on the open one).
+# 2. adapters: installs the newest adapters through the plugin's own AdapterStore and the two
+#    CLIs from npm into a throwaway home, with no account, and runs the plugin suite, the
+#    sequence fuzz on a wider search and the real-adapter tests against them, on Linux and
+#    macOS. An adapter release that breaks the client is seen the same day: a red run opens an
+#    issue with the end of the failing output.
+# 3. bump: when npm's latest SDK is not the pin, bumps the pin and bun.lock on a branch, runs
+#    the same suite, fuzz and real-adapter tests on it, and opens a pull request to dev that
+#    also moves the record. It goes through the normal review and the plugin lane, so the
+#    desktop app picks it up through its own update. It never merges by itself; a red run opens
+#    an issue with the failing output and no pull request.
+#
+# A pull request opened with GITHUB_TOKEN does not start CI by itself: close and reopen it, or
+# push to its branch, before review. The run that opened it links its own results.
+# A run that could not read npm fails without an issue: the next run decides.
 #
 # Every pull request runs the offline half in the plugin's own suite
 # (apps/acp-dsh/test/acp-drift.test.js): the record names the pin and every adapter.
@@ -100,3 +113,254 @@ jobs:
         run: |
           echo "::error::acp-drift exited ${CODE} (1: drift, 2: npm could not be read)"
           exit 1
+
+  adapters:
+    name: Newest adapters (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    permissions:
+      contents: read
+      issues: write
+    defaults:
+      run:
+        working-directory: apps/acp-dsh
+    env:
+      DO_NOT_TRACK: '1'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.9
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Install
+        run: |
+          bun install --frozen-lockfile
+          bun run harness
+
+      - name: The newest adapters and CLIs, in a throwaway home
+        run: |
+          set -euo pipefail
+          node dev/install-adapters.mjs "${RUNNER_TEMP}/acp-adapters" | tee -a "$GITHUB_ENV"
+          mkdir -p "${RUNNER_TEMP}/acp-clis"
+          npm install --prefix "${RUNNER_TEMP}/acp-clis" --no-audit --no-fund --loglevel=error @anthropic-ai/claude-code @openai/codex
+          {
+            echo "AUTOMAGIK_TEST_CLAUDE=${RUNNER_TEMP}/acp-clis/node_modules/.bin/claude"
+            echo "AUTOMAGIK_TEST_CODEX=${RUNNER_TEMP}/acp-clis/node_modules/.bin/codex"
+          } >> "$GITHUB_ENV"
+
+      - name: The suite, the fuzz and the real adapters
+        id: run
+        env:
+          FUZZ_RUNS: '2000'
+        run: |
+          set -uo pipefail
+          npm test > "${RUNNER_TEMP}/acp-daily.log" 2>&1
+          code=$?
+          tail -n 60 "${RUNNER_TEMP}/acp-daily.log"
+          echo "code=${code}" >> "$GITHUB_OUTPUT"
+          # The real-adapter tests must have run, not been skipped: a skip proves nothing.
+          if ! grep -q '^✔ real Claude Code: the adapter answers initialize' "${RUNNER_TEMP}/acp-daily.log"; then
+            echo "::error::the real-adapter tests did not run"
+            echo "code=3" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open or update the issue
+        if: steps.run.outputs.code != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          OS: ${{ matrix.os }}
+        run: |
+          set -euo pipefail
+          title='acp-dsh: the suite fails against the newest ACP adapters'
+          body="${RUNNER_TEMP}/acp-daily-issue.md"
+          {
+            echo "The daily run against the newest adapters failed on ${OS}."
+            echo
+            echo "- claude-agent-acp ${ACP_CLAUDE_VERSION:-unknown}"
+            echo "- codex-acp ${ACP_CODEX_VERSION:-unknown}"
+            echo
+            echo 'The end of the output (failing tests are marked `✖`):'
+            echo
+            echo '```'
+            grep -n '^✖' "${RUNNER_TEMP}/acp-daily.log" | head -n 40 || true
+            echo '...'
+            tail -n 40 "${RUNNER_TEMP}/acp-daily.log" | cut -c1-400
+            echo '```'
+            echo
+            echo "Run: ${RUN_URL}"
+          } > "${body}"
+          number=$(gh issue list --repo "${GITHUB_REPOSITORY}" --state open --search "\"${title}\" in:title" --json number,title --jq "map(select(.title == \"${title}\")) | .[0].number // empty")
+          if [ -n "${number}" ]; then
+            gh issue comment "${number}" --repo "${GITHUB_REPOSITORY}" --body-file "${body}"
+          else
+            gh issue create --repo "${GITHUB_REPOSITORY}" --title "${title}" --body-file "${body}" --label bug --label area:dsh
+          fi
+
+      - name: Fail when the run failed
+        if: steps.run.outputs.code != '0'
+        run: exit 1
+
+  bump:
+    name: Bump the SDK pin when npm moved
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    defaults:
+      run:
+        working-directory: apps/acp-dsh
+    env:
+      DO_NOT_TRACK: '1'
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: dev
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.9
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Is npm's latest SDK the pin?
+        id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pin=$(node -p "require('./package.json').dependencies['@agentclientprotocol/sdk']")
+          latest=$(npm view @agentclientprotocol/sdk version)
+          branch="bot/acp-sdk-${latest}"
+          echo "pin=${pin}" >> "$GITHUB_OUTPUT"
+          echo "latest=${latest}" >> "$GITHUB_OUTPUT"
+          echo "branch=${branch}" >> "$GITHUB_OUTPUT"
+          if [ "${pin}" = "${latest}" ]; then
+            echo "move=false" >> "$GITHUB_OUTPUT"
+            echo "The pin ${pin} is npm's latest."
+          elif [ -n "$(gh pr list --repo "${GITHUB_REPOSITORY}" --state open --head "${branch}" --json number --jq '.[0].number // empty')" ]; then
+            echo "move=false" >> "$GITHUB_OUTPUT"
+            echo "A pull request for ${latest} is already open."
+          else
+            echo "move=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Bump the pin and the lockfile
+        if: steps.latest.outputs.move == 'true'
+        env:
+          LATEST: ${{ steps.latest.outputs.latest }}
+        run: |
+          set -euo pipefail
+          node -e "
+            const fs = require('node:fs')
+            const file = 'package.json'
+            const json = JSON.parse(fs.readFileSync(file, 'utf8'))
+            json.dependencies['@agentclientprotocol/sdk'] = process.env.LATEST
+            fs.writeFileSync(file, JSON.stringify(json, null, 2) + '\n')
+          "
+          bun install
+          bun run harness
+
+      - name: The newest adapters and CLIs, in a throwaway home
+        if: steps.latest.outputs.move == 'true'
+        run: |
+          set -euo pipefail
+          node dev/install-adapters.mjs "${RUNNER_TEMP}/acp-adapters" | tee -a "$GITHUB_ENV"
+          mkdir -p "${RUNNER_TEMP}/acp-clis"
+          npm install --prefix "${RUNNER_TEMP}/acp-clis" --no-audit --no-fund --loglevel=error @anthropic-ai/claude-code @openai/codex
+          {
+            echo "AUTOMAGIK_TEST_CLAUDE=${RUNNER_TEMP}/acp-clis/node_modules/.bin/claude"
+            echo "AUTOMAGIK_TEST_CODEX=${RUNNER_TEMP}/acp-clis/node_modules/.bin/codex"
+          } >> "$GITHUB_ENV"
+
+      - name: The suite, the fuzz and the real adapters on the new SDK
+        if: steps.latest.outputs.move == 'true'
+        id: run
+        env:
+          FUZZ_RUNS: '2000'
+        run: |
+          set -uo pipefail
+          # The record must name the new pin before the suite's own check of it runs.
+          node scripts/acp-drift.mjs --record
+          { bun run lint && npm test; } > "${RUNNER_TEMP}/acp-bump.log" 2>&1
+          code=$?
+          tail -n 60 "${RUNNER_TEMP}/acp-bump.log"
+          echo "code=${code}" >> "$GITHUB_OUTPUT"
+          if ! grep -q '^✔ real Claude Code: the adapter answers initialize' "${RUNNER_TEMP}/acp-bump.log"; then
+            echo "::error::the real-adapter tests did not run"
+            echo "code=3" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open the pull request
+        if: steps.latest.outputs.move == 'true' && steps.run.outputs.code == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PIN: ${{ steps.latest.outputs.pin }}
+          LATEST: ${{ steps.latest.outputs.latest }}
+          BRANCH: ${{ steps.latest.outputs.branch }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -b "${BRANCH}"
+          git add package.json bun.lock dev/acp-compat.json
+          git commit -m "chore(acp-dsh): bump the ACP SDK pin from ${PIN} to ${LATEST}"
+          git push origin "${BRANCH}"
+          body="${RUNNER_TEMP}/acp-bump-pr.md"
+          {
+            echo "The daily ACP run found \`@agentclientprotocol/sdk\` ${LATEST} on npm; the pin was ${PIN}."
+            echo
+            echo "On this branch the plugin lint, the suite, the sequence fuzz (2000 seeds) and the real-adapter tests passed against claude-agent-acp ${ACP_CLAUDE_VERSION:-unknown} and codex-acp ${ACP_CODEX_VERSION:-unknown}: ${RUN_URL}"
+            echo
+            echo 'It was opened with GITHUB_TOKEN, which starts no CI: close and reopen it (or push to it) before review. It never merges by itself.'
+          } > "${body}"
+          gh pr create --repo "${GITHUB_REPOSITORY}" --base dev --head "${BRANCH}" --title "chore(acp-dsh): bump the ACP SDK pin from ${PIN} to ${LATEST}" --body-file "${body}"
+
+      - name: Open or update the issue
+        if: steps.latest.outputs.move == 'true' && steps.run.outputs.code != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PIN: ${{ steps.latest.outputs.pin }}
+          LATEST: ${{ steps.latest.outputs.latest }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="acp-dsh: the suite fails on ACP SDK ${LATEST}"
+          body="${RUNNER_TEMP}/acp-bump-issue.md"
+          {
+            echo "The daily ACP run bumped the pin from ${PIN} to ${LATEST} and the run failed, so no pull request was opened."
+            echo
+            echo '```'
+            grep -n '^✖' "${RUNNER_TEMP}/acp-bump.log" | head -n 40 || true
+            echo '...'
+            tail -n 40 "${RUNNER_TEMP}/acp-bump.log" | cut -c1-400
+            echo '```'
+            echo
+            echo "Run: ${RUN_URL}"
+          } > "${body}"
+          number=$(gh issue list --repo "${GITHUB_REPOSITORY}" --state open --search "\"${title}\" in:title" --json number,title --jq "map(select(.title == \"${title}\")) | .[0].number // empty")
+          if [ -n "${number}" ]; then
+            gh issue comment "${number}" --repo "${GITHUB_REPOSITORY}" --body-file "${body}"
+          else
+            gh issue create --repo "${GITHUB_REPOSITORY}" --title "${title}" --body-file "${body}" --label bug --label area:dsh
+          fi
+
+      - name: Fail when the bumped run failed
+        if: steps.latest.outputs.move == 'true' && steps.run.outputs.code != '0'
+        run: exit 1
