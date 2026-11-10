@@ -730,7 +730,7 @@ export default class Spaces extends View {
     if (live) this.order.push(live.terminal);
     const second = secondLine(r, tree, { texts: this.modelTexts, defaults: this.modelDefaults, argvOf: (a) => this.argvOf.get(a)?.argv ?? null });
     const s = n.status === "error" ? "blocked" : n.status;
-    const project = { key: tree.key, machine: tree.machine };
+    const project = { key: n.project ?? tree.key, machine: tree.machine };
     // Not counted live but holding a live terminal (no agent seen in front yet): its pane, or
     // a peek, rather than nothing; read again at click time (panes() too), nothing if it is gone.
     const held = live || planned ? null : heldTerminalOf(b.id, this.all, [], project, this.keyOf);

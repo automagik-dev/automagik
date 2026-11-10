@@ -48,6 +48,11 @@ body.darwin .frame{border-radius:0;box-shadow:none}
 .piece:focus-visible{outline:2px solid var(--ring);outline-offset:2px}
 
 .bar{height:var(--bar);display:flex;align-items:center;gap:10px;padding:0 9px 0 14px;-webkit-app-region:drag}
+/* Empty bar space drags the window; anything in it that takes input opts out on every
+   platform. A drag region swallows pointer events, menus included, so the brand (the bar's
+   right-click menu surface) is no-drag too, and a future control in here is covered by the
+   same rule rather than inheriting the drag region. */
+.bar :is(.brand,.controls,a,button,input,label,select,summary,textarea,[contenteditable],[role=button],[role=checkbox],[role=link],[role=menu],[role=menubar],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=option],[role=radio],[role=slider],[role=switch],[role=tab],[aria-haspopup],[tabindex],[data-menu]){-webkit-app-region:no-drag}
 body.darwin .bar{padding-left:84px}
 .brand{display:flex;align-items:center;gap:8px}
 .brand-mark{width:21px;height:18px}
@@ -57,7 +62,7 @@ body.darwin .bar{padding-left:84px}
 .spacer{flex:1}
 
 [hidden]{display:none!important}
-body.linux .controls{display:flex;gap:8px;margin-bottom:2px;-webkit-app-region:no-drag}
+body.linux .controls{display:flex;gap:8px;margin-bottom:2px}
 body.darwin .controls{display:none}
 .controls button{--fill:var(--cream);width:26px;height:26px;padding:0;border-radius:50%;display:grid;place-items:center;color:var(--ink2)}
 .controls button:hover{color:var(--ink)}

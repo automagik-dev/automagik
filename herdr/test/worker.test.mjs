@@ -7,12 +7,12 @@ import assert from "node:assert/strict";
 import { execFile, execFileSync, spawn, spawnSync } from "node:child_process";
 import { appendFileSync, chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 import { createHash } from "node:crypto";
 
 import { applyBotEdit, checkBots, parseBots, swapProblem } from "../mods/am-sidebar/model.js";
-import { AGY_FIXED_DENY, agySettingsDir, agySettingsFile, effortArgs, promptArgs } from "../mods/am-sidebar/models.js";
+import { AGY_FIXED_DENY, AGY_SHELL_READ, agySettingsDir, agySettingsFile, effortArgs, promptArgs } from "../mods/am-sidebar/models.js";
 import { ENV, GUARD_DIR, WORKER_OF_LABEL, stableGuardDir, stableHelper, stableRunner, baseCandidates, hcProxyEnabled, branchNamesTask, branchSlug, parseWorktrees, readLedger, reapCandidates, runsTemplate, workLeft, sessionChange, startRow, swapArm, swapByte, templateAgent,
   workerArgs, workerBranch, workerPlan, workerRole, workerTaskId, writesWorktree } from "../mods/am-sidebar/workers.js";
 import { approveProject, recordFileOf } from "../mods/am-sidebar/approved.js";
@@ -21,6 +21,7 @@ import { startProxy } from "../mods/am-sidebar/hcProxy.mjs";
 import { startFakeCore } from "./fake-hc-core.mjs";
 import { fixturePaneEdit } from "./fixture-pane-edit.mjs";
 import { readJsonLines } from "./log-lines.mjs";
+import { scratchProject, scratchRoot, shortSocketDir } from "./scratch-project.mjs";
 const createHashOf = (text) => createHash("sha256").update(text).digest("hex").slice(0, 16);
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
@@ -46,14 +47,8 @@ const term = (address, { bot: b, cwd }) => ({ address, name: address, cwd, state
 
 /** A scratch world: a git project on main with its bots, a fake hc whose t1..t3 are panes in it. */
 function scene(t, { file = team(), branch = "main", briefing = true, templates = TEMPLATES } = {}) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-worker-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const project = join(root, "proj");
-  mkdirSync(project);
-  git(project, "init", "-q", "-b", branch);
-  git(project, "commit", "-q", "--allow-empty", "-m", "start");
-  mkdirSync(join(project, ".herdr"));
-  writeFileSync(join(project, ".herdr/bots.json"), `${JSON.stringify(file, null, 2)}\n`);
+  const root = scratchRoot(t, "hb-worker-");
+  const project = scratchProject(root, "proj", { branch, commit: true, bots: file });
   const bin = join(root, "bin");
   mkdirSync(bin);
   exe(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
@@ -80,7 +75,7 @@ function scene(t, { file = team(), branch = "main", briefing = true, templates =
   writeFileSync(appState, JSON.stringify({ down: true }));
   writeFileSync(appLog, "");
   const env = { ...process.env, XDG_DATA_HOME: join(root, "data"), PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath,
-    HERDR_APP_FAKE_STATE: appState, HERDR_APP_FAKE_LOG: appLog, AUTOMAGIK_HERDR_TAB_WAIT_MS: "300" };
+    HERDR_APP_FAKE_STATE: appState, HERDR_APP_FAKE_LOG: appLog, AUTOMAGIK_HERDR_TAB_WAIT_MS: "300", GIT_CEILING_DIRECTORIES: root };
   // Worker transport discovery must never inherit a host socket into a fixture scene.
   env.HC_SOCKET = join(root, "unproxied.sock");
   env.HC_TERMINAL_SOCKET = env.HC_SOCKET;
@@ -547,9 +542,25 @@ test("worker #823: an Antigravity worker writes its 0600 permission file (its wo
   const data = JSON.parse(readFileSync(path, "utf8"));
   assert.ok(data.permissions.allow.includes(`write_file(${cwd})`), "it writes in its worktree");
   assert.equal(data.permissions.allow.some((rule) => rule.startsWith("write_file(") && rule !== `write_file(${cwd})`), false);
+  assert.ok(data.permissions.allow.includes("command(hc)"));
+  for (const rule of ["command(mkdir)", "command(chmod)", "command(rg)", "command(sort)", "command(uniq)", "command(sed -n)"]) {
+    assert.ok(data.permissions.allow.includes(rule), `worker allow ${rule}`);
+  }
+  for (const tool of AGY_SHELL_READ) {
+    assert.ok(data.permissions.allow.includes(`command(${tool})`), `worker allow command(${tool})`);
+  }
+  for (const bad of ["command(bash)", "command(sh)", "command(env)", "command(xargs)",
+    "command(find)", "command(awk)", "command(tee)", "command(sed)"]) {
+    assert.equal(data.permissions.allow.includes(bad), false, `worker never allows ${bad}`);
+  }
   assert.ok(data.permissions.allow.includes("command(npm publish)"), "the bot's roster reaches its worker");
   assert.ok(data.permissions.deny.includes("command(git stash)"));
   for (const rule of AGY_FIXED_DENY) assert.ok(data.permissions.deny.includes(rule));
+  // #879: the file trusts the worker's own worktree, exact, so agy asks no trust question.
+  assert.deepEqual(data.trustedWorkspaces, [cwd], "the worker's settings trust its worktree");
+  for (const wrong of [s.project, dirname(cwd), s.env.HOME, "/"]) {
+    assert.equal(data.trustedWorkspaces.includes(wrong), false, `never ${wrong}`);
+  }
   // A reviewer runs on another branch's worktree: no write_file and no writer shell of its own.
   const g = team();
   g.bots[2].worker = { agent: "antigravity" };
@@ -563,7 +574,62 @@ test("worker #823: an Antigravity worker writes its 0600 permission file (its wo
   const review = JSON.parse(readFileSync(path2, "utf8"));
   assert.equal(review.permissions.allow.some((rule) => rule.startsWith("write_file(")), false, "a review worker writes nothing");
   assert.equal(review.permissions.allow.includes("command(git)"), false, "no writer shell at all");
+  for (const rule of ["command(hc ls)", "command(hc get)", "command(hc read)", "command(hc wait)", "command(hc send)"]) {
+    assert.ok(review.permissions.allow.includes(rule), `review worker allow ${rule}`);
+  }
+  for (const rule of ["command(hc)", "command(hc run)", "command(hc exec)",
+    "command(mkdir)", "command(chmod)", "command(rg)", "command(sort)", "command(uniq)", "command(sed -n)"]) {
+    assert.equal(review.permissions.allow.includes(rule), false, `review worker excludes ${rule}`);
+  }
   assert.ok(review.permissions.allow.includes("command(git diff)"));
+  for (const tool of AGY_SHELL_READ) {
+    assert.ok(review.permissions.allow.includes(`command(${tool})`), `review worker allow command(${tool})`);
+  }
+  for (const bad of ["command(bash)", "command(sh)", "command(env)", "command(xargs)",
+    "command(find)", "command(awk)", "command(tee)", "command(sed)"]) {
+    assert.equal(review.permissions.allow.includes(bad), false, `review worker never allows ${bad}`);
+  }
+  // #884 M1/follow-up: a review launch is never auto-trusted, and its file leaves the key out
+  // entirely (an empty trustedWorkspaces would overwrite the person's saved list with []):
+  // agy stops at its trust question instead of loading a contributor's or fork's tree.
+  assert.equal("trustedWorkspaces" in review, false, "a review worker's settings leave the key out");
+  assert.equal(readFileSync(path2, "utf8").includes("trustedWorkspaces"), false, "not even as an empty list");
+});
+
+test("worker #879: a fake agy reads --settings and trusts only its session cwd, never a saved trust list", (t) => {
+  const f = team();
+  f.bots[2].worker = { agent: "antigravity" };
+  const s = scene(t, { file: f });
+  const r = s.cli(["worker", "fix the login form", "--branch", "feat/agy", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const run = s.runs()[0];
+  const cwd = run[run.indexOf("--cwd") + 1];
+  const words = after(run);
+  assert.deepEqual(words.slice(0, 2), ["agy", "--mode"], JSON.stringify(words));
+  const at = words.indexOf("--settings");
+  assert.ok(at > 0, "the launch names its settings file");
+  // A stand-in agy like the one a worker runs: it reads the file the launch names, from the
+  // worker's own folder, and records whether it had to fall back to a saved trust list.
+  const script = join(s.root, "fake-agy-trust.mjs");
+  writeFileSync(script, [
+    'import { existsSync, readFileSync, writeFileSync } from "node:fs";',
+    'import { join } from "node:path";',
+    "const args = process.argv.slice(2);",
+    "const at = args.indexOf('--settings');",
+    "const data = at < 0 ? null : JSON.parse(readFileSync(args[at + 1], 'utf8'));",
+    "const gemini = existsSync(join(process.env.HOME, '.gemini'));",
+    "const trusted = data?.trustedWorkspaces ?? [];",
+    "writeFileSync(process.env.AGY_TRUST_OUT, JSON.stringify({ cwd: process.cwd(), trusted, gemini }));",
+    "process.exit(trusted.length === 1 && trusted[0] === process.cwd() && !gemini ? 0 : 1);",
+  ].join("\n"));
+  const report = join(s.root, "fake-agy-trust.json");
+  const res = spawnSync(process.execPath, [script, ...words], {
+    cwd, env: { ...s.env, HOME: s.env.HOME, AGY_TRUST_OUT: report }, encoding: "utf8" });
+  assert.equal(res.status, 0, `fake agy refused the launch: ${res.stderr}`);
+  const seen = JSON.parse(readFileSync(report, "utf8"));
+  assert.deepEqual(seen.trusted, [cwd], "agy trusts the session's cwd, exact");
+  assert.equal(seen.gemini, false, "the fake agy read no saved trust list");
+  assert.equal(existsSync(join(s.env.HOME, ".gemini")), false, "the pack never writes agy's saved settings");
 });
 
 test("worker #823: a template that runs agy is rebuilt with --settings and its task, or says it can't take the list", (t) => {
@@ -1501,8 +1567,7 @@ test("bots.json worker.swap: validated like the worker's agent, model and effort
 
 test("worker lock: named by realpathSync.native, so a folder's case can't split it", async (t) => {
   const { worktreeLock } = await import("../mods/am-sidebar/bin/automagik-herdr.mjs");
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-case-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = scratchRoot(t, "hb-case-");
   mkdirSync(join(root, "Task-Tree"));
   const lock = (p) => worktreeLock("/L", p);
   assert.equal(lock(join(root, "Task-Tree")), `/L/worktree-${createHashOf(realpathSync.native(join(root, "Task-Tree")))}.lock`);
@@ -1515,12 +1580,7 @@ test("worker lock: named by realpathSync.native, so a folder's case can't split 
 
 /** A second git project beside the scene's, with its own bots file. */
 function otherProject(s, name, file) {
-  const dir = join(s.root, name);
-  mkdirSync(join(dir, ".herdr"), { recursive: true });
-  git(dir, "init", "-q", "-b", "main");
-  git(dir, "commit", "-q", "--allow-empty", "-m", "start");
-  writeFileSync(join(dir, ".herdr/bots.json"), `${JSON.stringify(file, null, 2)}\n`);
-  return dir;
+  return scratchProject(s.root, name, { branch: "main", commit: true, bots: file });
 }
 /** Moves a scene terminal: its foreground now works in `cwd` (its launch cwd stays). */
 function moveForeground(s, address, cwd, labels = {}) {
@@ -2161,58 +2221,115 @@ test("worker #567 F4: a worker call's sweep skips a kept worktree whose reason i
 // Refs #631: the real PATH guard plus a fake hc that forwards only run to the fixture proxy.
 async function proxyWorkerCli(t) {
   const s = scene(t);
-  const runtime = join(s.root, "runtime"), paneTmp = join(s.root, "pane-tmp");
+  const shortDir = shortSocketDir(t, "hw-");
+  const runtime = join(shortDir, "r"), paneTmp = join(s.root, "pane-tmp");
   const stableRoot = join(s.env.XDG_DATA_HOME, "automagik-herdr", "dsh-sandbox");
   for (const dir of [runtime, paneTmp, join(stableRoot, "guard"), join(stableRoot, "bin"),
     join(s.env.HOME, ".local", "bin")]) mkdirSync(dir, { recursive: true });
+  chmodSync(runtime, 0o700);
   exe(join(stableRoot, "bin", "run.sh"), stableRunnerText(process.execPath));
   writeFileSync(join(stableRoot, "hcPane.mjs"), "// fixture helper\n");
   const env = { ...s.env, PATH: `${GUARD_DIR}:${s.env.PATH}`, XDG_RUNTIME_DIR: runtime,
     TMPDIR: paneTmp, HC_FAKE_PROXY_RUN: "1", TERM: "xterm-256color", COLORTERM: "truecolor",
     TERM_PROGRAM: "fixture", TERM_PROGRAM_VERSION: "1.0", AUTOMAGIK_HERDR_TAB_WAIT_MS: "0" };
-  const fake = await startFakeCore({ socket: join(s.root, "fixture.sock"), terminals: [
-    { address: "t1", labels: { bot: ID.dev }, cwd: s.project, state: "live" },
-  ] });
-  s.approve();
-  const proxy = await startProxy({ terminal: "t1", upstream: fake.socket, appHome: s.app, env,
-    caller: { bot: ID.dev, project: s.project }, bound: true,
-    forbiddenRoots: [["project", s.project], ["app home", s.app], ["temp", paneTmp], ["runtime", runtime]] });
-  const transportRequests = [];
-  proxy.server.on("connection", (socket) => socket.on("data", (data) => {
-    for (const line of data.toString().trim().split("\n")) {
-      if (JSON.parse(line).method === "proxy.workerTransport") transportRequests.push(line);
-    }
-  }));
-  // A proxied start must obtain core identity from that same reply, without server.status.
-  const state = s.hcState(); state.fail = ["server"];
-  writeFileSync(join(s.root, "hc.json"), JSON.stringify(state));
-  t.after(async () => { await proxy.close(); await fake.close(); });
-  return { s, env, fake, proxy, transportRequests };
+  let fake = null;
+  let proxy = null;
+  const openSockets = new Set();
+  const closeAll = async () => {
+    for (const sock of openSockets) sock.destroy();
+    openSockets.clear();
+    try { await proxy?.close(); } catch { /* already closed */ }
+    proxy = null;
+    try { await fake?.close(); } catch { /* already closed */ }
+    fake = null;
+  };
+  t.after(closeAll);
+  try {
+    fake = await startFakeCore({ socket: join(shortDir, "f.sock"), terminals: [
+      { address: "t1", labels: { bot: ID.dev }, cwd: s.project, state: "live" },
+    ] });
+    s.approve();
+    proxy = await startProxy({ terminal: "t1", upstream: fake.socket, appHome: s.app, env,
+      caller: { bot: ID.dev, project: s.project }, bound: true,
+      forbiddenRoots: [["project", s.project], ["app home", s.app], ["temp", paneTmp], ["runtime", runtime]] });
+    proxy.server.unref?.();
+    const transportRequests = [];
+    proxy.server.on("connection", (socket) => {
+      socket.unref?.();
+      openSockets.add(socket);
+      socket.on("close", () => openSockets.delete(socket));
+      socket.on("error", () => { openSockets.delete(socket); socket.destroy(); });
+      socket.on("data", (data) => {
+        for (const line of data.toString().trim().split("\n")) {
+          if (JSON.parse(line).method === "proxy.workerTransport") transportRequests.push(line);
+        }
+      });
+    });
+    // A proxied start must obtain core identity from that same reply, without server.status.
+    const state = s.hcState(); state.fail = ["server"];
+    writeFileSync(join(s.root, "hc.json"), JSON.stringify(state));
+    return { s, env, fake, proxy, transportRequests, closeAll };
+  } catch (err) {
+    await closeAll();
+    throw err;
+  }
+}
+
+async function runProxiedWorkerSuccess(t) {
+  const { s, env, fake, proxy, transportRequests, closeAll } = await proxyWorkerCli(t);
+  try {
+    const r = await s.cliAsync(["worker", "do the task", "--branch", "feat/proxied", "--json"],
+      { env: { ...env, HC_SOCKET: proxy.socket } });
+    assert.equal(r.code, 0, r.err);
+    assert.equal(fake.calls("terminal.run").length, 1, "spawn reached the proxy then fake core");
+    assert.equal(transportRequests.length, 1, "one reply supplies core id and route identity");
+    assert.equal(s.calls().filter((args) => args[0] === "server").length, 0);
+    const params = fake.calls("terminal.run")[0].params;
+    assert.equal(params.caller, "t1");
+    assert.equal(params.parent, "t1");
+    assert.equal(params.labels[WORKER_OF_LABEL], ID.dev);
+    assert.deepEqual(params.env, { TERM: "xterm-256color", COLORTERM: "truecolor",
+      TERM_PROGRAM: "fixture", TERM_PROGRAM_VERSION: "1.0" });
+  } finally {
+    await closeAll();
+  }
+}
+
+async function runProxiedWorkerUnapprovedRefusal(t) {
+  const { s, env, fake, proxy, closeAll } = await proxyWorkerCli(t);
+  try {
+    const r = await s.cliAsync(["worker", "do the task", "--branch", "feat/unapproved",
+      "--agent", "claude", "--json"], { env: { ...env, HC_SOCKET: proxy.socket } });
+    assert.notEqual(r.code, 0);
+    assert.match(r.err, /hc-proxy: terminal.run: approved worker/);
+    assert.equal(fake.calls("terminal.run").length, 0);
+  } finally {
+    await closeAll();
+  }
 }
 
 test("proxied worker CLI skips the guard only for the actual proxy transport", async (t) => {
-  const { s, env, fake, proxy, transportRequests } = await proxyWorkerCli(t);
-  const r = await s.cliAsync(["worker", "do the task", "--branch", "feat/proxied", "--json"],
-    { env: { ...env, HC_SOCKET: proxy.socket } });
-  assert.equal(r.code, 0, r.err);
-  assert.equal(fake.calls("terminal.run").length, 1, "spawn reached the proxy then fake core");
-  assert.equal(transportRequests.length, 1, "one reply supplies core id and route identity");
-  assert.equal(s.calls().filter((args) => args[0] === "server").length, 0);
-  const params = fake.calls("terminal.run")[0].params;
-  assert.equal(params.caller, "t1");
-  assert.equal(params.parent, "t1");
-  assert.equal(params.labels[WORKER_OF_LABEL], ID.dev);
-  assert.deepEqual(params.env, { TERM: "xterm-256color", COLORTERM: "truecolor",
-    TERM_PROGRAM: "fixture", TERM_PROGRAM_VERSION: "1.0" });
+  await runProxiedWorkerSuccess(t);
 });
 
 test("proxied worker CLI gets an unapproved agent refusal from the proxy", async (t) => {
-  const { s, env, fake, proxy } = await proxyWorkerCli(t);
-  const r = await s.cliAsync(["worker", "do the task", "--branch", "feat/unapproved",
-    "--agent", "claude", "--json"], { env: { ...env, HC_SOCKET: proxy.socket } });
-  assert.notEqual(r.code, 0);
-  assert.match(r.err, /hc-proxy: terminal.run: approved worker/);
-  assert.equal(fake.calls("terminal.run").length, 0);
+  await runProxiedWorkerUnapprovedRefusal(t);
+});
+
+test("#858: proxied worker CLI rows pass and exit cleanly when TMPDIR is over 80 characters", async (t) => {
+  const base = scratchRoot(t, "hb-long-");
+  const longTmp = join(base, "long-tmpdir-segment-".repeat(5));
+  mkdirSync(longTmp, { recursive: true });
+  assert.ok(longTmp.length > 80, `expected longTmp > 80 chars, got ${longTmp.length}`);
+  const prevTmp = process.env.TMPDIR;
+  try {
+    process.env.TMPDIR = longTmp;
+    await runProxiedWorkerSuccess(t);
+    await runProxiedWorkerUnapprovedRefusal(t);
+  } finally {
+    if (prevTmp === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = prevTmp;
+  }
 });
 
 test("unproxied worker CLI keeps the guard refusal with switch off and forged env markers", async (t) => {
@@ -2227,50 +2344,77 @@ test("unproxied worker CLI keeps the guard refusal with switch off and forged en
     "an unproxied pane retains server.status for core id");
 });
 
+async function startOneShotTransportServer(t, socketPath, result) {
+  let probes = 0;
+  const sockets = new Set();
+  const server = net.createServer((socket) => {
+    socket.unref();
+    sockets.add(socket);
+    socket.on("close", () => sockets.delete(socket));
+    socket.on("error", () => { sockets.delete(socket); socket.destroy(); });
+    socket.on("data", () => {
+      probes++;
+      socket.end(JSON.stringify({ jsonrpc: "2.0", id: 1, result }) + "\n");
+    });
+  });
+  server.unref();
+  let closed = false;
+  const closeServer = async () => {
+    if (closed) return;
+    closed = true;
+    for (const sock of sockets) sock.destroy();
+    sockets.clear();
+    await new Promise((done) => server.close(() => done()));
+  };
+  t.after(closeServer);
+  await new Promise((resolve, reject) => {
+    const onError = (err) => { closeServer().finally(() => reject(err)); };
+    server.once("error", onError);
+    server.listen(socketPath, () => {
+      server.off("error", onError);
+      resolve();
+    });
+  });
+  return { probes: () => probes, closeServer };
+}
 
 test("worker transport rejects a mismatched terminal for core id and routing", async (t) => {
   const s = scene(t);
-  const socketPath = join(s.root, "wrong-terminal.sock");
-  let probes = 0;
-  const server = net.createServer((socket) => socket.on("data", () => {
-    probes++;
-    socket.end(JSON.stringify({ jsonrpc: "2.0", id: 1,
-      result: { v: 1, terminal: "t999", core: { id: "wrong-core" } } }) + "\n");
-  }));
-  await new Promise((done) => server.listen(socketPath, done));
-  t.after(() => new Promise((done) => server.close(done)));
-  const r = await s.cliAsync(["worker", "do the task", "--branch", "feat/wrong-terminal", "--json"],
-    { env: { PATH: `${GUARD_DIR}:${s.env.PATH}`, HC_SOCKET: socketPath } });
-  assert.equal(s.calls().filter((args) => args[0] === "server").length, 1,
-    "a failed terminal check must ignore the reply's core id");
-  assert.equal(probes, 1);
-  assert.notEqual(r.code, 0);
-  assert.match(r.err, /hc guard: refused run:/);
-  assert.equal(s.runs().length, 0);
+  const socketPath = join(shortSocketDir(t, "hw-"), "wrong-terminal.sock");
+  const srv = await startOneShotTransportServer(t, socketPath, { v: 1, terminal: "t999", core: { id: "wrong-core" } });
+  try {
+    const r = await s.cliAsync(["worker", "do the task", "--branch", "feat/wrong-terminal", "--json"],
+      { env: { PATH: `${GUARD_DIR}:${s.env.PATH}`, HC_SOCKET: socketPath } });
+    assert.equal(s.calls().filter((args) => args[0] === "server").length, 1,
+      "a failed terminal check must ignore the reply's core id");
+    assert.equal(srv.probes(), 1);
+    assert.notEqual(r.code, 0);
+    assert.match(r.err, /hc guard: refused run:/);
+    assert.equal(s.runs().length, 0);
+  } finally {
+    await srv.closeServer();
+  }
 });
 
 test("unset caller terminal keeps server.status and the guard route", async (t) => {
   const s = scene(t);
-  const socketPath = join(s.root, "missing-terminal.sock");
-  let probes = 0;
-  const server = net.createServer((socket) => socket.on("data", () => {
-    probes++;
-    socket.end(JSON.stringify({ jsonrpc: "2.0", id: 1,
-      result: { v: 1, core: { id: "wrong-core" } } }) + "\n");
-  }));
-  await new Promise((done) => server.listen(socketPath, done));
-  t.after(() => new Promise((done) => server.close(done)));
-  const env = { ...s.env, PATH: `${GUARD_DIR}:${s.env.PATH}`, HC_SOCKET: socketPath };
-  delete env.HC_TERMINAL_ID;
-  const result = await new Promise((done) => execFile(process.execPath,
-    [CLI, "whois", "t1", "--json"], { cwd: s.project, env, encoding: "utf8" },
-    (error, stdout, stderr) => done({ code: error?.code ?? 0, stdout, stderr })));
-  assert.equal(s.calls().filter((args) => args[0] === "server").length, 1,
-    "an unset caller terminal must keep the server.status core-id lookup");
-  assert.notEqual(result.code, 0);
-  assert.match(result.stderr, /hc guard: refused a command without HC_TERMINAL_ID/);
-  assert.equal(s.runs().length, 0, "no unguarded worker route is selected");
-  assert.equal(probes, 0, "an unset expected terminal is refused before connecting");
+  const socketPath = join(shortSocketDir(t, "hw-"), "missing-terminal.sock");
+  const srv = await startOneShotTransportServer(t, socketPath, { v: 1, core: { id: "wrong-core" } });
+  try {
+    const env = { ...s.env, PATH: `${GUARD_DIR}:${s.env.PATH}`, HC_SOCKET: socketPath };
+    delete env.HC_TERMINAL_ID;
+    const result = await new Promise((done) => execFile(process.execPath,
+      [CLI, "whois", "t1", "--json"], { cwd: s.project, env, encoding: "utf8" },
+      (error, stdout, stderr) => done({ code: error?.code ?? 0, stdout, stderr })));
+    assert.equal(s.calls().filter((args) => args[0] === "server").length, 1,
+      "an unset caller terminal must keep the server.status core-id lookup");
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /hc guard: refused a command without HC_TERMINAL_ID/);
+    assert.equal(s.runs().length, 0, "no unguarded worker route is selected");
+    assert.equal(srv.probes(), 0, "an unset expected terminal is refused before connecting");
+  } finally {
+    await srv.closeServer();
+  }
 });
 
 // RFC 0021 (f) 2: a new Claude worker runs on a session id Herdr chose; its row names it, output never.

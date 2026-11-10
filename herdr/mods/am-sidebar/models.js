@@ -498,41 +498,120 @@ const AGY_GATES = ["node --test", "node --check", "bun test", "node scripts/priv
   "node scripts/version.mjs", "node scripts/entries.mjs", "node scripts/parts.mjs", "node scripts/catalog.mjs",
   "node scripts/lane.ts", "node scripts/test-guard.mjs", "node ../scripts/privacy-check.mjs", "node ../scripts/am-copies.mjs"];
 
-// A seat or worker that writes: the shell tools the task needs, and the gates to prove it.
-const AGY_WRITE_ALLOW = Object.freeze(["hc", "git", "node", "bun", ...AGY_GH_READ, ...AGY_GH_WRITE, ...AGY_GATES]
-  .map((v) => `command(${v})`));
-// A read-only seat (rank reviewer) or worker (role review): hc, the test checks and a short list
-// of git subcommands and gh reads. A subcommand is allowed with every argument it is given, so
-// some can write (`git diff --output=file`): like the whole list, this is a guardrail, not a
-// boundary. hc and the test runners stay because they read (and hc is how a worker reports).
-const AGY_READ_ALLOW = Object.freeze(["hc", "git log", "git diff", "git show", "git status", "git rev-parse",
+// The 24 plain read-only shell tools every Antigravity seat and worker gets by default (#840).
+// On GNU/Linux, `sed -n` runs a program (GNU `e` command) and writes (`w` command, `-i`),
+// `rg --pre` runs a program, `sort --compress-program` runs one, and `sort -o` and `uniq IN OUT`
+// write files: those four stay on writing roles only (alongside `mkdir` and `chmod`, where `node`
+// is already allowed) and out of `AGY_SHELL_READ` / `AGY_READ_ALLOW`. Shell launchers and
+// wrappers (`bash`, `sh`, `env`, `xargs`, `find`, `awk`, `tee`, plain `sed`) are never in any
+// default list.
+export const AGY_SHELL_READ = Object.freeze([
+  "ls", "cat", "head", "tail", "grep", "wc", "diff", "pwd", "echo", "cut", "tr", "jq", "printf",
+  "basename", "dirname", "true", "which", "stat", "realpath", "readlink", "date", "nl", "comm",
+  "column",
+]);
+
+// A seat or worker that writes: the shell tools the task needs (`mkdir`, `chmod`, `rg`, `sort`,
+// `uniq` and `sed -n` only when the role writes, since writers already have `node`), and the
+// gates to prove it.
+export const AGY_WRITE_ALLOW = Object.freeze(["hc", "git", "node", "bun", "mkdir", "chmod",
+  "rg", "sort", "uniq", "sed -n", ...AGY_SHELL_READ, ...AGY_GH_READ, ...AGY_GH_WRITE,
+  ...AGY_GATES].map((v) => `command(${v})`));
+// A read-only seat (rank reviewer) or worker (role review): the read/send hc subcommands (`hc ls`,
+// `hc get`, `hc read`, `hc wait`, `hc send` — never bare `hc`, so `hc run` and `hc exec` are not
+// allowed on read-only roles), the 24 read-only shell tools, the test checks and a short list of
+// git subcommands and gh reads. A subcommand is allowed with every argument it is given, so some
+// can write (`git diff --output=file`): like the whole list, this is a guardrail, not a boundary.
+export const AGY_READ_ALLOW = Object.freeze(["hc ls", "hc get", "hc read", "hc wait", "hc send",
+  ...AGY_SHELL_READ, "git log", "git diff", "git show", "git status", "git rev-parse",
   "git ls-files", "git blame", "git describe", "git merge-base", "git rev-list", "git cat-file",
   ...AGY_GH_READ, "node --test", "node --check", "bun test"].map((v) => `command(${v})`));
+
+/**
+ * `folder` as a launch's canonical folder (#879, #884): the caller's injected `realpath` when
+ * it gives one (the CLI passes `fs.realpathSync`), else the folder as it is. Pure: `realpath`
+ * is a callback, never an `fs` import. A callback that throws (ENOENT on a synthetic test path)
+ * or answers a non-path keeps the folder as given.
+ */
+function agyResolvedFolder(folder, realpath) {
+  if (typeof folder !== "string" || typeof realpath !== "function") return folder;
+  const path = folder.trim();
+  if (!path.startsWith("/")) return folder;
+  try {
+    const real = realpath(path);
+    if (typeof real === "string" && real.trim().startsWith("/")) return real.trim().replace(/\/+$/, "");
+  } catch { /* the folder as given */ }
+  return folder;
+}
+
+/** `path` as a trust-list entry: trimmed, trailing slashes stripped, and resolved by the injected
+ * `realpath` when that gives an absolute answer; "" for the root or nothing usable (#879). */
+function agyCanonicalPath(path, realpath) {
+  const clean = path.trim().replace(/\/+$/, "");
+  if (!clean || typeof realpath !== "function") return clean;
+  try {
+    const real = realpath(clean);
+    if (typeof real === "string" && real.trim().startsWith("/")) return real.trim().replace(/\/+$/, "");
+  } catch { /* a synthetic test path: the path as given */ }
+  return clean;
+}
+
+/**
+ * The folders a launch's `--settings` file lists in `trustedWorkspaces` (#879). agy trusts a
+ * folder by exact path, so a new writer worktree would stop at its first-run question, "Do you
+ * trust the contents of this project?". `realpath` (optional): a `(path) => string` callback
+ * that resolves the folder to its canonical path, so a symlinked folder is trusted by the
+ * folder it really is; null, or a callback that throws, keeps it as given. `homeDir` (optional):
+ * the person's home folder, normalized and resolved the same way; a folder that resolves to it
+ * lists nothing, so the home folder is never trusted. Only `folder` itself is listed, never a
+ * parent folder; anything but a trimmed absolute path (the root included, a line-broken one, a
+ * non-string) lists nothing. A read-only review launch never calls this (agyPermissionPlan gives
+ * it no trusted folder). The pack never writes agy's saved settings.
+ */
+export function agyTrustedWorkspaces(folder, realpath = null, homeDir = null) {
+  if (typeof folder !== "string") return [];
+  const path = folder.trim();
+  if (!path.startsWith("/") || !path.replace(/\/+$/, "") || /[\n\r\0]/.test(folder)) return [];
+  const clean = agyCanonicalPath(path, realpath);
+  if (!clean) return [];
+  if (typeof homeDir === "string" && homeDir.trim() && !/[\n\r\0]/.test(homeDir)
+    && clean === agyCanonicalPath(homeDir, realpath)) return [];
+  return [clean];
+}
 
 /**
  * The effective allow and deny rules of an Antigravity launch: the defaults its scope and role
  * need, plus the roster's own additions (a bot's `agyPermissions` reaches its workers too).
  * `scope`: "seat" (a bot) or "worker"; `role`: a worker's role (models.js callers pass
  * workers.js's ROLES: only "review" is read-only); `folder`: the project or worktree that
- * `write_file` opens to a writer. The fixed deny rules are always there; nothing drops them.
- * These lists are a guardrail against accidents, not a security boundary: a rule matches word
- * prefixes only, and allowing `node`, `bun` or `git` with any arguments lets a determined agent
- * do anything. Returns { allow, deny, warnings }.
+ * `write_file` opens to a writer and that a writer launch's settings file trusts (#879);
+ * `realpath` (optional): a `(path) => string` callback that resolves `folder` to its canonical
+ * path for both the `write_file` rule and `trustedWorkspaces`, so a symlinked folder is named
+ * by the folder it really is. `homeDir` (optional): the person's home folder; a folder that
+ * resolves to it lists nothing (agyTrustedWorkspaces). A read-only launch (a review worker, a
+ * reviewer seat) is never auto-trusted (#884 M1): `trustedWorkspaces` is `[]`, so agy stops at
+ * its trust question rather than loading a contributor's or fork's review tree's project
+ * configuration. The fixed deny rules are always there; nothing drops them. These lists are a
+ * guardrail against accidents, not a security boundary: a rule matches word prefixes only, and
+ * allowing `node`, `bun` or `git` with any arguments lets a determined agent do anything.
+ * Returns { allow, deny, trustedWorkspaces, warnings }.
  */
-export function agyPermissionPlan({ bot, scope = "seat", role = null, folder = null }) {
+export function agyPermissionPlan({ bot, scope = "seat", role = null, folder = null, realpath = null, homeDir = null }) {
   const readOnly = scope === "worker" ? role === "review" : bot?.rank === "reviewer";
+  const trustedWorkspaces = readOnly ? [] : agyTrustedWorkspaces(folder, realpath, homeDir);
   const allow = [...(readOnly ? AGY_READ_ALLOW : AGY_WRITE_ALLOW)];
   const warnings = [];
   if (!readOnly && typeof folder === "string" && folder) {
-    const why = agyRuleProblem(`write_file(${folder})`);
+    const resolved = agyResolvedFolder(folder, realpath);
+    const why = agyRuleProblem(`write_file(${resolved})`);
     if (why) warnings.push(`${bot?.name ?? bot?.id ?? "the bot"}: ${why}`);
-    else allow.push(`write_file(${folder})`);
+    else allow.push(`write_file(${resolved})`);
   }
   const roster = bot?.agyPermissions === undefined ? { allow: [], deny: [], problems: [] } : normalizeAgyPermissions(bot.agyPermissions);
   allow.push(...roster.allow);
   for (const why of roster.problems) warnings.push(`${bot?.name ?? bot?.id ?? "the bot"}: ${why}`);
   const deny = [...AGY_FIXED_DENY, ...roster.deny];
-  return { allow: [...new Set(allow)], deny: [...new Set(deny)], warnings };
+  return { allow: [...new Set(allow)], deny: [...new Set(deny)], trustedWorkspaces, warnings };
 }
 
 // A stable, path-free tag for a folder in a settings file's name: FNV-1a, 8 hex characters.
@@ -567,18 +646,26 @@ export function agySettingsFile(dir, botId, scope = "seat", role = null, folder 
 }
 
 /**
- * The settings file an Antigravity launch of `bot` gets: { path, text, allow, deny, warnings },
- * or null for a bot with no id. `settingsDir` is the folder it goes in (agySettingsDir under the
- * app home; the proxy's own folder under the data root for an approved worker). `text` is the JSON
- * agy reads from `--settings`: permissions.allow and permissions.deny, both arrays in full (agy
- * replaces its saved lists field by field).
+ * The settings file an Antigravity launch of `bot` gets: { path, text, allow, deny,
+ * trustedWorkspaces, warnings }, or null for a bot with no id. `settingsDir` is the folder it
+ * goes in (agySettingsDir under the app home; the proxy's own folder under the data root for an
+ * approved worker). `realpath` and `homeDir` (optional) are agyPermissionPlan's: the folder's
+ * canonical path, and the home folder that is never trusted. `text` is the JSON agy reads from
+ * `--settings`: permissions.allow and permissions.deny, both arrays in full (agy replaces its
+ * saved lists field by field), and, only when there is one, trustedWorkspaces, the writer
+ * launch's own folder (agy trusts folders by exact path, #879), so agy asks no first-run trust
+ * question. A read-only review launch (and any launch with no trusted folder) omits the key
+ * entirely (#884 M1): agy then asks, and a contributor's or fork's review tree is never loaded
+ * as trusted project configuration, nor is a person's saved trust list overwritten with [].
  */
-export function agySettingsPlan({ bot, scope = "seat", role = null, folder = null, settingsDir }) {
+export function agySettingsPlan({ bot, scope = "seat", role = null, folder = null, settingsDir, realpath = null, homeDir = null }) {
   if (!bot?.id || !settingsDir) return null;
-  const plan = agyPermissionPlan({ bot, scope, role, folder });
+  const plan = agyPermissionPlan({ bot, scope, role, folder, realpath, homeDir });
   const path = agySettingsFile(settingsDir, bot.id, scope, role, folder);
-  const text = `${JSON.stringify({ permissions: { allow: plan.allow, deny: plan.deny } }, null, 2)}\n`;
-  return { path, text, allow: plan.allow, deny: plan.deny, warnings: plan.warnings };
+  const settings = { permissions: { allow: plan.allow, deny: plan.deny },
+    ...(plan.trustedWorkspaces.length ? { trustedWorkspaces: plan.trustedWorkspaces } : {}) };
+  const text = `${JSON.stringify(settings, null, 2)}\n`;
+  return { path, text, allow: plan.allow, deny: plan.deny, trustedWorkspaces: plan.trustedWorkspaces, warnings: plan.warnings };
 }
 
 /** The words that hand `agentKey` a permission list from `path`: ["--settings", path], or []. */

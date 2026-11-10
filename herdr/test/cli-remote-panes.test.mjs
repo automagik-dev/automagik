@@ -18,6 +18,7 @@ import { WORKER_LINE } from "../mods/am-sidebar/briefingText.mjs";
 import { approveProject, recordFileOf } from "../mods/am-sidebar/approved.js";
 import { DEADLINE_CALL_MS, DEADLINE_MARGIN_MS, DEADLINE_PLACE_MS } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 import { readJsonLines } from "./log-lines.mjs";
+import { scratchProject, scratchRoot } from "./scratch-project.mjs";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 const FAKE_HC = new URL("./fake-hc.mjs", import.meta.url).pathname;
@@ -29,8 +30,7 @@ const KEEP = ["sh", "-c", "\"$@\"; exec \"${SHELL:-sh}\" -i", "sh", "hermes", "-
 const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755); };
 
 function scene(t, { terminals = [], tui = true } = {}) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-panes-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = scratchRoot(t, "hb-panes-");
   const bin = join(root, "bin"), home = join(root, "home"), app = join(root, "app"), vm = join(root, "vm"), vmBin = join(root, "vm-bin");
   for (const d of [bin, home, app, vm, vmBin]) mkdirSync(d, { recursive: true });
   exe(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
@@ -43,15 +43,13 @@ function scene(t, { terminals = [], tui = true } = {}) {
   exe(join(vmBin, "pgrep"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_PGREP}" "$@"\n`);
   // The owner's override, as programs.json holds it: Atlas runs the TUI.
   if (tui) writeFileSync(join(app, "programs.json"), JSON.stringify({ programs: { hermes: { run: ["hermes", "--tui"] } } }));
-  const project = join(vm, "atlas");
-  mkdirSync(project);
-  execFileSync("git", ["init", "-q", project]);
   const look = { character: "star", colour: "blue" };
-  mkdirSync(join(project, ".herdr"));
-  writeFileSync(join(project, ".herdr/bots.json"), `${JSON.stringify({ version: 1, categories: [], bots: [
-    { id: ATLAS, name: "Atlas", kind: "main", look, role: "incident agent", instructions: "", agent: "hermes" },
-    { id: HEDGE, name: "Hedge", kind: "member", look, role: "r", instructions: "", agent: "claude" },
-  ] }, null, 2)}\n`);
+  const project = scratchProject(vm, "atlas", {
+    bots: { version: 1, categories: [], bots: [
+      { id: ATLAS, name: "Atlas", kind: "main", look, role: "incident agent", instructions: "", agent: "hermes" },
+      { id: HEDGE, name: "Hedge", kind: "member", look, role: "r", instructions: "", agent: "claude" },
+    ] },
+  });
   const statePath = join(root, "hc.json"), logPath = join(root, "hc.log");
   writeFileSync(statePath, JSON.stringify({ next: 100, noStatus: ["hermes"], terminals: terminals.map((x) => ({ cwd: project, ...x })),
     machines: [{ name: "vm", id: CORE, state: "connected", uname: "Linux x86_64", home: vm, path: vmBin }] }));
@@ -59,7 +57,8 @@ function scene(t, { terminals = [], tui = true } = {}) {
   const appState = join(root, "herdr-app.json"), appLog = join(root, "herdr-app.log");
   const env = { ...process.env, XDG_DATA_HOME: "", PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath,
     HERDR_APP_FAKE_STATE: appState, HERDR_APP_FAKE_LOG: appLog,
-    AUTOMAGIK_HERDR_RESTART_STABLE_MS: "300", AUTOMAGIK_HERDR_RESTART_WAIT_MS: "4000", AUTOMAGIK_HERDR_TAB_WAIT_MS: "300" };
+    AUTOMAGIK_HERDR_RESTART_STABLE_MS: "300", AUTOMAGIK_HERDR_RESTART_WAIT_MS: "4000", AUTOMAGIK_HERDR_TAB_WAIT_MS: "300",
+    GIT_CEILING_DIRECTORIES: root };
   // Run from a pane (t1), as a bot would: hc run's default parent is the calling terminal.
   env.HC_TERMINAL_ID = "t1";
   const cli = (args, more = {}) => {
@@ -563,6 +562,9 @@ test("start --machine of an Antigravity bot: its 0600 permission file is written
   assert.ok(data.permissions.allow.includes(`write_file(${s.project})`), "the project on vm");
   assert.ok(data.permissions.allow.includes("command(npm publish)"), "the roster's addition");
   for (const rule of AGY_FIXED_DENY) assert.ok(data.permissions.deny.includes(rule), rule);
+  // #884 Low A: the linked machine's own home (vm) is derived from its app home, so the project
+  // it works in is still the one trusted folder.
+  assert.deepEqual(data.trustedWorkspaces, [s.project], "the linked project, not vm's home");
   // Never this computer's app home: no file, no path in the argv.
   assert.equal(existsSync(LOCAL_AGY_DIR(s)), false, "never written here");
   assert.equal(r.json().argv.includes(file), true);

@@ -94,6 +94,7 @@ Until October 2026 this app was called Omni. An installed Omni updates itself in
 ## Your data
 
 - What Automagik keeps on your computer is in one folder: **`.automagik`** in your home folder. Only the window keeps a little of its own (sign-ins in a Bot's browser, the page's storage) in **`Automagik`**, in `~/Library/Application Support` on a Mac and `~/.config` on Linux. An Omni you run on this computer keeps its own files in **`.omni`**.
+- **Session backups** belong outside DSH's sessions tree: keep them in **`.automagik/desktop/session-backups/`**. A backup copied into the sessions tree is skipped at startup, never loaded.
 - Your chats stay in your Omni. The app shows them and keeps what your Bots need to work.
 - What your Bots read and write goes to the AI account you connected, under that company's terms.
 

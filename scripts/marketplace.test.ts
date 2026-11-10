@@ -48,10 +48,11 @@ describe('market index', () => {
   test('no Unfold plugin is listed: they come with Unfold\'s own instance, and a release never adds one', () => {
     const index = JSON.parse(readFileSync(INDEX_PATH, 'utf8'));
     expect(index.plugins.filter((plugin: { name: string }) => plugin.name.startsWith('@automagik/unfold-'))).toEqual([]);
-    // Built and tested here all the same, but outside this repository's release set.
+    // None is left here (RFC 0020), and the name guard keeps one out of the release set.
     expect(pluginNames().filter(unlisted)).toEqual([]);
-    // A listing left over from before is dropped at the next release, and the check refuses one.
-    const listed = { ...index, plugins: [{ name: '@automagik/unfold-bridge-dsh', versions: [{ version: '1.0.0', publishTimestamp: 1, source: { type: 'git', url: REPO_URL, commit: head, path: 'apps/unfold-bridge-dsh' } }] }] };
+    // A listing of an Unfold name is dropped at the next release, and the check refuses one,
+    // whatever source it points at (no Unfold folder is left to point at).
+    const listed = { ...index, plugins: [{ name: '@automagik/unfold-bridge-dsh', versions: [{ version: '1.0.0', publishTimestamp: 1, source: { type: 'git', url: REPO_URL, commit: head, path: 'apps/bots-dsh' } }] }] };
     expect(checkIndex(structuredClone(listed), repoDir)).toContain('@automagik/unfold-bridge-dsh: is unlisted, so the index must not carry it');
     expect(pinIndex(structuredClone(listed), repoDir, 'HEAD').plugins.filter((plugin) => unlisted(plugin.name))).toEqual([]);
   });
@@ -105,8 +106,8 @@ describe('market index', () => {
       metadata: { category: manifest.automagik.market.category, keywords: manifest.automagik.market.keywords, labels: ['official'] },
       versions: [{ version: manifest.version, source: { type: 'git', url: REPO_URL, commit: head, path: 'apps/locale-pt-br-dsh' }, engines: { dsh: manifest.engines.dsh } }],
     });
-    // only plugins with a market block join (ACP agents, the pt-BR pack; Unfold's have one but stay
-    // unlisted); the Bot team and the welcome are listed by hand
+    // only plugins with a market block join (ACP agents, the pt-BR pack); the Bot team and the
+    // welcome are listed by hand
     expect(pinned.plugins.map((plugin) => plugin.name)).toEqual(['@automagik/acp-dsh', '@automagik/locale-pt-br-dsh']);
     expect(checkIndex(pinned, repoDir)).toEqual([]);
   });

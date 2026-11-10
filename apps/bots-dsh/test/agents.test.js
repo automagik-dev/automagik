@@ -105,6 +105,29 @@ async function nativeTransition(t) {
   return { ...bench, rt, bot, botId, entry, target, presets, selected, adopt: () => bench.call('bot-session-adopt', { botId, sessionId: 'picked', sourceSessionId: botId }) }
 }
 
+// The team records an adopt must leave as they were: the Bot and its parts, the DSH
+// bots and their Sessions, the group chats' Sessions and segments, and the task records.
+const teamState = rt => structuredClone({
+  bots: rt.state.bots,
+  agents: rt.state.agents,
+  rooms: rt.state.rooms,
+  tasks: rt.state.tasks,
+  switching: rt.state.switching,
+})
+
+// The reason each eligibility refusal must name, with the exact code the UI receives.
+const ADOPT_REFUSALS = {
+  nonblank: ['bot/adopt-not-blank', /is neither blank nor a fork of the current part of Bot "Brain"/],
+  subagent: ['bot/adopt-root', /is not a root Session.*cannot join Bot "Brain"/],
+  depth: ['bot/adopt-root', /is not a root Session.*cannot join Bot "Brain"/],
+  task: ['bot/adopt-in-team', /already belongs to the team.*cannot join Bot "Brain"/],
+  'other-owner': ['bot/adopt-in-team', /already belongs to the team.*cannot join Bot "Brain"/],
+  group: ['bot/adopt-in-team', /already belongs to the team.*cannot join Bot "Brain"/],
+  'wrong-source': ['bot/adopt-changed', /changed while Session picked was joining it/],
+  registration: ['bot/adopt-unknown', /Bot "Brain" is not an adopted DSH Bot, so Session picked cannot join it/],
+  ordinary: ['bot/adopt-unknown', /Bot "Brain" is not an adopted DSH Bot, so Session picked cannot join it/],
+}
+
 test('native project association persists the exact selected root and stable adopted identity', async t => {
   const bench = await nativeTransition(t)
   const { rt, bot, botId, entry, home, created, archived, target } = bench
@@ -152,12 +175,84 @@ for (const invalid of ['nonblank', 'subagent', 'depth', 'task', 'other-owner', '
     if (invalid === 'registration') rt.state.agents[entry.id].adoptedBotId = 'other'
     if (invalid === 'ordinary') delete bot.kind
     rt.indexSessions()
+    const before = teamState(rt)
+    const [code, reason] = ADOPT_REFUSALS[invalid]
     const result = await bench.adopt()
     assert.equal(result.ok, false)
+    assert.equal(result.error.code, code)
+    assert.match(result.error.message, reason)
+    assert.match(result.error.message, /Session picked/)
+    assert.match(result.error.message, /Bot "Brain"/)
     assert.notEqual(rt.chatOf(botId), 'picked')
+    assert.deepEqual(teamState(rt), before, 'a refused adopt must not change the team')
     assert.deepEqual(bench.selected, [])
+    const entries = await rt.diagnostics.entries()
+    const noted = entries.find(item => item.code === code)
+    assert.ok(noted, JSON.stringify(entries))
+    assert.equal(noted.source, 'api')
+    assert.equal(noted.bot, 'Brain')
+    assert.equal(noted.sessionId, 'picked')
+    assert.equal(noted.where, 'bot-session-adopt (Session picked)')
+    assert.equal(noted.text, result.error.message)
+    assert.equal(noted.stack, undefined)
+    assert.equal(entries.filter(item => item.code === code).length, 1)
   })
 }
+
+test('a native association without a valid Session id is refused by name and code', async t => {
+  const bench = await nativeTransition(t)
+  const before = teamState(bench.rt)
+  const payloads = [
+    { sessionId: '', sourceSessionId: bench.botId },
+    { sessionId: 42, sourceSessionId: bench.botId },
+    { sessionId: 'picked' },
+  ]
+  for (const payload of payloads) {
+    const result = await bench.call('bot-session-adopt', { botId: bench.botId, ...payload })
+    assert.equal(result.ok, false)
+    assert.equal(result.error.code, 'bot/adopt-invalid-transition')
+    assert.match(result.error.message, /Bot "Brain"/)
+    assert.match(result.error.message, /Session/)
+    assert.deepEqual(teamState(bench.rt), before)
+  }
+  const entries = await bench.rt.diagnostics.entries()
+  assert.equal(entries.filter(item => item.code === 'bot/adopt-invalid-transition').length, 3)
+  assert.ok(entries.every(item => item.code !== 'bot/adopt-invalid-transition'
+    || (item.bot === 'Brain' && item.where.startsWith('bot-session-adopt (Session ') && item.stack === undefined)))
+})
+
+test('an unknown Bot and a pending transition are refused by name and code without changing state', async t => {
+  const bench = await nativeTransition(t)
+  const beforeUnknown = teamState(bench.rt)
+  const unknown = await bench.call('bot-session-adopt', { botId: 'nope', sessionId: 'picked', sourceSessionId: 'nope' })
+  assert.equal(unknown.ok, false)
+  assert.equal(unknown.error.code, 'bot/adopt-unknown')
+  assert.match(unknown.error.message, /Bot nope is not an adopted DSH Bot, so Session picked cannot join it/)
+  assert.deepEqual(teamState(bench.rt), beforeUnknown)
+  const before = teamState(bench.rt)
+  let release
+  bench.presets.list = () => new Promise(resolve => { release = () => resolve([{ id: 'cordis' }]) })
+  const first = bench.rt.adoptBotSession(bench.botId, 'picked', bench.botId)
+  await flush()
+  assert.equal(typeof release, 'function')
+  await assert.rejects(bench.rt.adoptBotSession(bench.botId, 'picked', bench.botId), error => {
+    assert.equal(error.code, 'bot/adopt-pending')
+    assert.match(error.message, /A Bot Session transition is already pending for Bot "Brain", so Session picked cannot join it yet/)
+    return true
+  })
+  assert.deepEqual(teamState(bench.rt), before)
+  release()
+  assert.equal(await first, 'picked')
+  const entries = await bench.rt.diagnostics.entries()
+  for (const [code, bot] of [['bot/adopt-unknown', 'nope'], ['bot/adopt-pending', 'Brain']]) {
+    const entry = entries.find(item => item.code === code)
+    assert.ok(entry, JSON.stringify(entries))
+    assert.equal(entry.bot, bot)
+    assert.equal(entry.sessionId, 'picked')
+    assert.equal(entry.where, 'bot-session-adopt (Session picked)')
+    assert.equal(entry.stack, undefined)
+  }
+})
 
 test('a native current-part fork retains its existing preset without replacing the selected Session', async t => {
   const bench = await nativeTransition(t)
@@ -221,6 +316,11 @@ test('native association requires a durable save and rolls back ownership on dis
   assert.equal(bench.rt.selfOf('picked'), undefined)
   assert.equal(bench.rt.chatOf(bench.botId), bench.botId)
   assert.deepEqual(bench.archived, [])
+  const noted = (await bench.rt.diagnostics.entries()).find(item => item.code === 'Error')
+  assert.ok(noted)
+  assert.equal(noted.text, 'bot-session-adopt: Error')
+  assert.ok(noted.stack, 'an unclassified failure keeps its stack for the host log')
+  assert.doesNotMatch(JSON.stringify(noted), /disk full/, 'a file-system message never reaches diagnostics')
   assert.equal((await bench.adopt()).ok, true)
 })
 
@@ -264,9 +364,87 @@ test('native eligibility and registration are revalidated after preset flush', a
 
 test('native association refuses missing presets instead of downgrading silently', async t => {
   const bench = await nativeTransition(t)
+  const before = teamState(bench.rt)
   bench.presets.list = async () => []
-  assert.match((await bench.adopt()).error.message, /preset cordis is not available/)
+  const result = await bench.adopt()
+  assert.equal(result.ok, false)
+  assert.equal(result.error.code, 'bot/adopt-preset-unavailable')
+  assert.match(result.error.message, /preset cordis is not available/)
+  assert.match(result.error.message, /Bot "Brain"/)
+  assert.match(result.error.message, /Session picked/)
   assert.equal(bench.rt.selfOf('picked'), undefined)
+  assert.deepEqual(teamState(bench.rt), before)
+  const noted = (await bench.rt.diagnostics.entries()).find(item => item.code === 'bot/adopt-preset-unavailable')
+  assert.ok(noted)
+  assert.equal(noted.bot, 'Brain')
+  assert.equal(noted.where, 'bot-session-adopt (Session picked)')
+  assert.equal(noted.stack, undefined)
+})
+
+test('native association refuses an unavailable or unpersisted native preset by name and code', async t => {
+  const cases = [
+    {
+      label: 'selection unavailable',
+      code: 'bot/adopt-preset-unavailable',
+      setup: bench => { delete bench.presets.select },
+      reason: /native preset selection is unavailable/,
+    },
+    {
+      label: 'selection did not persist',
+      code: 'bot/adopt-preset-not-persisted',
+      setup: bench => { bench.presets.presetForSession = () => undefined },
+      reason: /could not keep the native preset "cordis" for Session picked/,
+    },
+  ]
+  for (const { label, code, setup, reason } of cases) {
+    await t.test(label, async t => {
+      const bench = await nativeTransition(t)
+      const before = teamState(bench.rt)
+      setup(bench)
+      const result = await bench.adopt()
+      assert.equal(result.ok, false)
+      assert.equal(result.error.code, code)
+      assert.match(result.error.message, reason)
+      assert.match(result.error.message, /Bot "Brain"/)
+      assert.match(result.error.message, /Session picked/)
+      assert.equal(bench.rt.selfOf('picked'), undefined)
+      assert.equal(bench.rt.chatOf(bench.botId), bench.botId)
+      assert.deepEqual(teamState(bench.rt), before)
+      const noted = (await bench.rt.diagnostics.entries()).find(item => item.code === code)
+      assert.ok(noted)
+      assert.equal(noted.bot, 'Brain')
+      assert.equal(noted.where, 'bot-session-adopt (Session picked)')
+      assert.equal(noted.stack, undefined)
+    })
+  }
+})
+
+test('native association rolls back a Bot changed while its Session was saved', async t => {
+  const bench = await nativeTransition(t)
+  const before = teamState(bench.rt)
+  const save = bench.rt.save
+  let replaced = false
+  bench.rt.save = async options => {
+    const saved = await save(options)
+    if (!replaced) {
+      replaced = true
+      // A value-equal replacement of the registration still fails the identity check.
+      bench.rt.state.agents[bench.entry.id] = structuredClone(bench.rt.state.agents[bench.entry.id])
+    }
+    return saved
+  }
+  const result = await bench.adopt()
+  assert.equal(result.ok, false)
+  assert.equal(result.error.code, 'bot/adopt-changed-persisting')
+  assert.match(result.error.message, /Bot "Brain" changed while Session picked was being saved/)
+  assert.equal(bench.rt.chatOf(bench.botId), bench.botId)
+  assert.equal(bench.rt.selfOf('picked'), undefined)
+  assert.deepEqual(teamState(bench.rt), before)
+  const noted = (await bench.rt.diagnostics.entries()).find(item => item.code === 'bot/adopt-changed-persisting')
+  assert.ok(noted)
+  assert.equal(noted.bot, 'Brain')
+  assert.equal(noted.where, 'bot-session-adopt (Session picked)')
+  assert.equal(noted.stack, undefined)
 })
 
 test('adoption is additive, retains registration, and rollback restores the original', async (t) => {

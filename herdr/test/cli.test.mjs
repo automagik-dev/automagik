@@ -12,7 +12,7 @@ import { dirname, join } from "node:path";
 import { checkBots, parseBots } from "../mods/am-sidebar/model.js";
 import { writeBotsFile, findBot, CliError, listProject, causeLine } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 import { GUARD_DIR, ledgerPath, readLedger } from "../mods/am-sidebar/workers.js";
-import { AGY_FIXED_DENY, agySettingsDir, agySettingsFile, withoutBriefing } from "../mods/am-sidebar/models.js";
+import { AGY_FIXED_DENY, AGY_SHELL_READ, agySettingsDir, agySettingsFile, withoutBriefing } from "../mods/am-sidebar/models.js";
 import { WORKER_LINE, amPartHookCommand } from "../mods/am-sidebar/briefingText.mjs";
 import { restartAnswer } from "../mods/am-sidebar/restart.js";
 // Start and Restart put each bot's briefing in its agent's command (models.js withBriefing);
@@ -39,6 +39,7 @@ const freshClaude = (words) => {
 };
 import { attachPath as attachFile, foldAttach as foldRows, readAttach as readRows } from "../mods/am-sidebar/attach.js";
 import { readJsonLines } from "./log-lines.mjs";
+import { assertScratchProject, scratchProject, scratchRoot, warnTmpdir } from "./scratch-project.mjs";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
 // AUTOMAGIK_HERDR_TEST_RUNTIME=<bun or node path> runs the CLI with that runtime instead.
@@ -57,14 +58,8 @@ const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755);
 /** A scratch world: a git project, a fake hc, a fake home and app home. `trimsGit`: a git whose
  * stdout is trimmed, as a Herdr exec would answer the rule (#626, #665). */
 function scene(t, { terminals = [], briefing = true, amPart = false, window = { down: true }, trimsGit = false, isGit = true } = {}) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "hb-cli-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const project = join(root, "proj");
-  mkdirSync(project);
-  if (isGit) {
-    git(project, "init", "-q");
-    git(project, "commit", "-q", "--allow-empty", "-m", "start");
-  }
+  const root = scratchRoot(t, "hb-cli-");
+  const project = scratchProject(root, "proj", { isGit, commit: isGit });
   const bin = join(root, "bin");
   mkdirSync(bin);
   exe(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
@@ -100,7 +95,7 @@ function scene(t, { terminals = [], briefing = true, amPart = false, window = { 
   writeFileSync(appState, JSON.stringify(window));
   writeFileSync(appLog, "");
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath,
-    HERDR_APP_FAKE_STATE: appState, HERDR_APP_FAKE_LOG: appLog, AUTOMAGIK_HERDR_TAB_WAIT_MS: "300", AGY_FAKE_LOG: agyLog };
+    HERDR_APP_FAKE_STATE: appState, HERDR_APP_FAKE_LOG: appLog, AUTOMAGIK_HERDR_TAB_WAIT_MS: "300", AGY_FAKE_LOG: agyLog, GIT_CEILING_DIRECTORIES: root };
   delete env.HC_TERMINAL_ID;
   delete env.HERMES_HOME; // a runner's own hermes home must not decide the hermes tests
   const cli = (args, { cwd = project, input, env: extra = {} } = {}) => {
@@ -539,7 +534,7 @@ test("from a worktree branched before a bot was added: edit names both files, re
   git(s.project, "worktree", "add", "-q", wt);
   // The worktree's own file, from before Genie: another main bot only.
   const wtText = `${JSON.stringify({ version: 1, categories: [], bots: [bot(ID.plan, "main", { name: "Old" })] }, null, 2)}\n`;
-  mkdirSync(join(wt, ".herdr"));
+  mkdirSync(join(wt, ".herdr"), { recursive: true });
   writeFileSync(join(wt, ".herdr/bots.json"), wtText);
   const mainText = readFileSync(s.botsPath, "utf8");
   const e = s.cli(["edit", "Genie", "--role", "x"], { cwd: wt });
@@ -772,7 +767,8 @@ test("Antigravity #812: create/edit set agyMode (auto clears), show, ls and doct
   assert.match(s.cli(["show", "Ag"]).out, /agy mode     auto/);
   const doctor = s.cli(["dsh-tui", "doctor", "--json"]);
   const row = doctor.json().checks.find((c) => c.check === `hc-proxy:${saved.id}`);
-  assert.match(row.detail, /Ag: agy mode auto; agy allow /);
+  assert.match(row.detail, /Ag: agy mode auto; agy trusted .*; agy allow /);
+  assert.match(row.detail, new RegExp(`agy trusted ${s.project};`), "the seat's own folder is named (#879)");
   assert.match(row.detail, /agy deny .*command\(git push --force\)/);
 });
 
@@ -790,6 +786,16 @@ test("Antigravity #823: start and restart write a private permission file and pa
   assert.equal(statSync(join(s.app, "automagik-herdr/agy-settings")).mode & 0o777, 0o700, "in a private folder");
   const data = JSON.parse(readFileSync(path, "utf8"));
   assert.ok(data.permissions.allow.includes("command(hc)"));
+  for (const rule of ["command(mkdir)", "command(chmod)", "command(rg)", "command(sort)", "command(uniq)", "command(sed -n)"]) {
+    assert.ok(data.permissions.allow.includes(rule), `writer seat allow ${rule}`);
+  }
+  for (const tool of AGY_SHELL_READ) {
+    assert.ok(data.permissions.allow.includes(`command(${tool})`), `seat allow command(${tool})`);
+  }
+  for (const bad of ["command(bash)", "command(sh)", "command(env)", "command(xargs)",
+    "command(find)", "command(awk)", "command(tee)", "command(sed)"]) {
+    assert.equal(data.permissions.allow.includes(bad), false, `seat never allows ${bad}`);
+  }
   assert.ok(data.permissions.allow.includes("command(npm publish)"), "the roster's allow is added");
   assert.ok(data.permissions.allow.includes(`write_file(${s.project})`), "a bot writes in its project");
   for (const rule of ["command(gh pr create)", "command(gh pr edit)", "command(gh pr comment)"]) {
@@ -804,6 +810,8 @@ test("Antigravity #823: start and restart write a private permission file and pa
   assert.ok(data.permissions.deny.includes("command(git stash)"), "the roster's deny is added");
   // Restart: the same file, rewritten from the source as it is now, and resumed with it.
   f.bots[0].agyPermissions = { allow: ["command(npm publish)", "command(bun publish)"], deny: [] };
+  f.bots[2].agent = "antigravity";
+  f.bots[2].rank = "reviewer";
   s.seed(f);
   const restarted = s.cli(["restart", "Genie", "--force", "--json"]);
   assert.equal(restarted.code, 0, restarted.err);
@@ -814,6 +822,27 @@ test("Antigravity #823: start and restart write a private permission file and pa
   assert.ok(again.permissions.allow.includes("command(bun publish)"));
   assert.equal(statSync(path).mode & 0o777, 0o600);
   for (const rule of AGY_FIXED_DENY) assert.ok(again.permissions.deny.includes(rule));
+  // A reviewer seat (#840) gets all 24 read-only shell tools, no write_file, no writer-only tools, no launchers.
+  const revStarted = s.cli(["start", "Dev"]);
+  assert.equal(revStarted.code, 0, revStarted.err);
+  const revData = JSON.parse(readFileSync(agySettingsPath(s, ID.dev), "utf8"));
+  for (const rule of ["command(hc ls)", "command(hc get)", "command(hc read)", "command(hc wait)", "command(hc send)"]) {
+    assert.ok(revData.permissions.allow.includes(rule), `reviewer seat allow ${rule}`);
+  }
+  for (const rule of ["command(hc)", "command(hc run)", "command(hc exec)"]) {
+    assert.equal(revData.permissions.allow.includes(rule), false, `reviewer seat excludes ${rule}`);
+  }
+  for (const tool of AGY_SHELL_READ) {
+    assert.ok(revData.permissions.allow.includes(`command(${tool})`), `reviewer seat allow command(${tool})`);
+  }
+  assert.equal(revData.permissions.allow.some((r) => r.startsWith("write_file(")), false);
+  for (const rule of ["command(mkdir)", "command(chmod)", "command(rg)", "command(sort)", "command(uniq)", "command(sed -n)"]) {
+    assert.equal(revData.permissions.allow.includes(rule), false, `reviewer seat excludes ${rule}`);
+  }
+  for (const bad of ["command(bash)", "command(sh)", "command(env)", "command(xargs)",
+    "command(find)", "command(awk)", "command(tee)", "command(sed)"]) {
+    assert.equal(revData.permissions.allow.includes(bad), false, `reviewer seat never allows ${bad}`);
+  }
 });
 
 test("Antigravity #823: a symlinked permission folder or file is refused, never followed", (t) => {
@@ -855,6 +884,7 @@ test("Antigravity #823: --agy-allow/--agy-deny add rules, clear with one empty v
   const saved = s.bots().bots.find((b) => b.id === made.json().id);
   assert.deepEqual(saved.agyPermissions, { allow: ["command(npm publish)", "command(hc)"], deny: ["command(git stash)"] });
   const show = s.cli(["show", "Ag"]).out;
+  assert.match(show, new RegExp(`  agy trusted  ${s.project}`), "the seat trusts its project");
   assert.match(show, /agy allow .*command\(hc\)/);
   assert.match(show, /agy allow .*command\(npm publish\)/);
   assert.match(show, /agy deny .*command\(git stash\)/);
@@ -881,11 +911,107 @@ test("Antigravity #823: --agy-allow/--agy-deny add rules, clear with one empty v
   assert.ok(row.agyPermissions.allow.includes("command(npm publish)"));
   assert.ok(row.agyPermissions.allow.includes(`write_file(${s.project})`));
   for (const rule of AGY_FIXED_DENY) assert.ok(row.agyPermissions.deny.includes(rule));
+  // #879: the seat's own project folder, never its parent or the home; a worker's worktree is
+  // only known at launch, so the plan names it as such.
+  assert.deepEqual(row.agyPermissions.trustedWorkspaces, [s.project]);
+  for (const wrong of [dirname(s.project), s.home, "/"]) {
+    assert.equal(row.agyPermissions.trustedWorkspaces.includes(wrong), false, `never ${wrong}`);
+  }
+  assert.deepEqual(row.workerAgyPermissions.trustedWorkspaces, ["<worktree>"]);
+  const doctorText = s.cli(["dsh-tui", "doctor"]).out;
+  assert.match(doctorText, new RegExp(`agy trusted ${s.project}`));
+  assert.match(doctorText, /worker agy trusted <worktree>/);
   const sandbox = doctor.checks.find((c) => c.check === "agy-sandbox");
   assert.ok(sandbox, "a host-level sandbox row when a bot runs agy");
   assert.equal(sandbox.ok, true);
   if (process.platform !== "linux" && process.platform !== "darwin") assert.match(sandbox.detail, /isn't one agy's terminal sandbox is known on/);
   assert.equal(doctor.checks.filter((c) => c.check === "agy-sandbox").length, 1, "one host-level row, not one per bot");
+});
+
+test("Antigravity #884 M1: a reviewer seat and a review worker are never auto-trusted; writers list their folder", (t) => {
+  const s = scene(t);
+  const f = team();
+  f.bots[0].agent = "antigravity";
+  f.bots[0].rank = "reviewer";
+  f.bots[0].worker = { agent: "antigravity" };
+  f.bots[1].agent = "antigravity";
+  f.bots[1].rank = "dev";
+  f.bots[1].worker = { agent: "antigravity" };
+  s.seed(f);
+  const doctor = s.cli(["dsh-tui", "doctor", "--json"]).json();
+  const reviewer = doctor.checks.find((c) => c.check === `hc-proxy:${ID.main}`);
+  assert.deepEqual(reviewer.agyPermissions.trustedWorkspaces, [], "the reviewer seat trusts nothing");
+  assert.deepEqual(reviewer.workerAgyPermissions.trustedWorkspaces, [], "its review worker trusts nothing");
+  const text = s.cli(["dsh-tui", "doctor"]).out;
+  assert.match(text, /agy trusted -; agy allow /, "the reviewer seat prints no trusted folder");
+  assert.match(text, /worker agy trusted -; worker agy allow /, "the review worker prints none either");
+  // A writer seat and its writer worker: the project, and (at launch) its worktree.
+  const writer = doctor.checks.find((c) => c.check === `hc-proxy:${ID.cap}`);
+  assert.deepEqual(writer.agyPermissions.trustedWorkspaces, [s.project]);
+  assert.deepEqual(writer.workerAgyPermissions.trustedWorkspaces, ["<worktree>"]);
+  assert.match(text, new RegExp(`agy trusted ${s.project}; agy allow `));
+  assert.match(text, /worker agy trusted <worktree>; worker agy allow /);
+  // show carries the same effective rows as ls and doctor (botRow's JSON).
+  const show = s.cli(["show", "Genie", "--json"]).json();
+  assert.deepEqual(show.agyPermissions.trustedWorkspaces, []);
+  assert.deepEqual(show.workerAgyPermissions.trustedWorkspaces, []);
+  assert.match(s.cli(["show", "Genie"]).out, /agy trusted  -/);
+  const cap = s.cli(["show", "Captain", "--json"]).json();
+  assert.deepEqual(cap.agyPermissions.trustedWorkspaces, [s.project]);
+  assert.deepEqual(cap.workerAgyPermissions.trustedWorkspaces, ["<worktree>"]);
+  // #884 Low B: plain show names the worker default's trusted folder too: "-" for a review
+  // worker, the worktree placeholder for a writer's.
+  assert.match(s.cli(["show", "Genie"]).out, /worker agy trusted  -/);
+  assert.match(s.cli(["show", "Captain"]).out, /worker agy trusted  <worktree>/);
+  // Follow-up: the reviewer seat's own start writes no trustedWorkspaces key at all, so the
+  // person's saved trust list is never overwritten with an empty one.
+  const started = s.cli(["start", "Genie"]);
+  assert.equal(started.code, 0, started.err);
+  const seatFile = JSON.parse(readFileSync(agySettingsPath(s, ID.main), "utf8"));
+  assert.equal("trustedWorkspaces" in seatFile, false, "the reviewer seat's file leaves the key out");
+  assert.equal(seatFile.permissions.allow.some((rule) => rule.startsWith("write_file(")), false, "and writes nothing");
+});
+
+test("Antigravity #884 Low A: a project at the home folder trusts nothing and leaves the key out", (t) => {
+  const s = scene(t);
+  // The home folder is itself the project: its key resolves to HOME, which agy must never trust.
+  git(s.home, "init", "-q");
+  git(s.home, "commit", "-q", "--allow-empty", "-m", "start");
+  const f = team();
+  f.bots[0].agent = "antigravity";
+  mkdirSync(join(s.home, ".herdr"), { recursive: true });
+  writeFileSync(join(s.home, ".herdr/bots.json"), `${JSON.stringify(f, null, 2)}\n`);
+  const show = s.cli(["show", "Genie", "--json"], { cwd: s.home }).json();
+  assert.deepEqual(show.agyPermissions.trustedWorkspaces, [], "the home folder is never trusted");
+  assert.match(s.cli(["show", "Genie"], { cwd: s.home }).out, /agy trusted  -/);
+  const started = s.cli(["start", "Genie"], { cwd: s.home });
+  assert.equal(started.code, 0, started.err);
+  const data = JSON.parse(readFileSync(agySettingsPath(s, ID.main), "utf8"));
+  assert.equal("trustedWorkspaces" in data, false, "the file leaves the key out");
+  assert.ok(data.permissions.allow.includes(`write_file(${s.home})`), "the writer rule still names the project");
+});
+
+test("Antigravity #884: restart --cwd writes DIR into the seat's permission file, never the project", (t) => {
+  const s = scene(t);
+  const f = team();
+  f.bots[0].agent = "antigravity";
+  s.seed(f);
+  const old = term("t5", { bot: ID.main, cwd: s.project, argv: ["agy", "--mode", "auto"], app: "antigravity" });
+  old.foreground.cwd = s.project;
+  old.labels = { ...old.labels, role: "main", "agent.session": SID };
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify({ terminals: [old], next: 100 }));
+  const dir = join(s.root, "moved");
+  mkdirSync(dir);
+  assert.equal(s.cli(["restart", "Genie", "--cwd", dir, "--json"]).code, 0);
+  const path = agySettingsPath(s, ID.main);
+  assert.deepEqual(plain(agentWords(runCall(s.calls()))), ["agy", "--settings", path, "--mode", "auto", "--conversation", SID]);
+  // #884 M1/Low 2: a seat started or restarted with --cwd DIR lists DIR, not the project.
+  const data = JSON.parse(readFileSync(path, "utf8"));
+  assert.deepEqual(data.trustedWorkspaces, [dir], "the folder the restart works in, exact");
+  assert.ok(data.permissions.allow.includes(`write_file(${dir})`), "write_file names DIR");
+  assert.equal(data.permissions.allow.includes(`write_file(${s.project})`), false, "never the project");
+  assert.equal(data.trustedWorkspaces.includes(s.project), false, "the project isn't trusted");
+  assert.equal(runCall(s.calls())[runCall(s.calls()).indexOf("--cwd") + 1], dir, "the pane runs in DIR");
 });
 
 test("Antigravity #823: restart --tree writes the permission file of a worker helper and resumes it with it", (t) => {
@@ -915,7 +1041,16 @@ test("Antigravity #823: restart --tree writes the permission file of a worker he
   assert.deepEqual(plain(agentWords(runs[0])), ["agy", "--settings", seatPath, "--mode", "auto", "--conversation", SID]);
   assert.deepEqual(plain(agentWords(runs[1])), ["agy", "--mode", "auto", "--settings", helperPath, "--continue"]);
   assert.equal(statSync(helperPath).mode & 0o777, 0o600);
+  // #879: each launch's file trusts its own folder, exact: the seat's project, the helper's worktree.
+  const seat = JSON.parse(readFileSync(seatPath, "utf8"));
+  assert.deepEqual(seat.trustedWorkspaces, [s.project], "the seat trusts its project");
+  for (const wrong of [dirname(s.project), s.home, "/"]) {
+    assert.equal(seat.trustedWorkspaces.includes(wrong), false, `the seat never trusts ${wrong}`);
+  }
   const data = JSON.parse(readFileSync(helperPath, "utf8"));
+  assert.deepEqual(data.trustedWorkspaces, [wt], "the helper trusts only its worktree");
+  assert.equal(data.trustedWorkspaces.includes(s.project), false, "not the project");
+  assert.equal(data.trustedWorkspaces.includes(dirname(wt)), false, "not the worktrees' parent");
   assert.ok(data.permissions.allow.includes(`write_file(${wt})`), "the helper writes in its worktree");
   assert.ok(!data.permissions.allow.includes(`write_file(${s.project})`), "not in the project");
   for (const rule of AGY_FIXED_DENY) assert.ok(data.permissions.deny.includes(rule));
@@ -1129,7 +1264,7 @@ test("ls and show (#227): the main checkout's pane is not the clone's; a row wit
   const rows = () => readRows(readFileSync(attachFile(s.app), "utf8")).rows;
   const clone = join(s.root, "proj-clone");
   git(s.root, "clone", "-q", s.project, clone);
-  mkdirSync(join(clone, ".herdr"));
+  mkdirSync(join(clone, ".herdr"), { recursive: true });
   writeFileSync(join(clone, ".herdr/bots.json"), readFileSync(s.botsPath, "utf8"));
   const captain = (cwd) => s.cli(["ls", "--json"], { cwd }).json().projects[0].bots.find((b) => b.id === ID.cap);
   // The first ls imports t5 into the ledger, bound to the main checkout that defines the bot.
@@ -1171,9 +1306,7 @@ test("create, edit, category, start and attach list their project for the sideba
   assert.equal(s.cli(["start", "Genie"]).code, 0);
   assert.deepEqual(listed(), [s.project]);
   // ls --all adds a listed project the sidebar never remembered.
-  const other = join(s.root, "other");
-  mkdirSync(join(other, ".herdr"), { recursive: true });
-  writeFileSync(join(other, ".herdr/bots.json"), JSON.stringify({ version: 1, categories: [], bots: [bot("b-dddddddddd", "main", { name: "Solo" })] }));
+  const other = scratchProject(s.root, "other", { bots: { version: 1, categories: [], bots: [bot("b-dddddddddd", "main", { name: "Solo" })] } });
   writeFileSync(list, JSON.stringify([other]));
   assert.deepEqual(s.cli(["ls", "--all", "--json"]).json().projects.map((p) => p.project), [s.project, other]);
   // Reading leaves the list alone; a read-only command adds nothing.
@@ -1182,8 +1315,7 @@ test("create, edit, category, start and attach list their project for the sideba
 });
 
 test("twenty CLIs listing projects at once lose none of them", async (t) => {
-  const app = realpathSync(mkdtempSync(join(tmpdir(), "hb-list-")));
-  t.after(() => rmSync(app, { recursive: true, force: true }));
+  const app = scratchRoot(t, "hb-list-");
   const writer = `import { listProject } from ${JSON.stringify(CLI)};\nprocess.exitCode = listProject(process.argv[1], process.argv[2]) ? 0 : 1;`;
   const keys = Array.from({ length: 20 }, (_, i) => `/p/${i}`);
   const codes = await Promise.all(keys.map((key) => new Promise((done) => {
@@ -1196,8 +1328,7 @@ test("twenty CLIs listing projects at once lose none of them", async (t) => {
 });
 
 test("a stale project-list lock (a CLI killed mid-write) is taken over, and nothing is left behind", (t) => {
-  const app = realpathSync(mkdtempSync(join(tmpdir(), "hb-lock-")));
-  t.after(() => rmSync(app, { recursive: true, force: true }));
+  const app = scratchRoot(t, "hb-lock-");
   const lock = join(app, "am-sidebar-projects.json.lock");
   writeFileSync(lock, "999999 someone-else");
   const old = new Date(Date.now() - 60_000);
@@ -1470,8 +1601,7 @@ test("start on a CLI-only host (no pack, the am part installed) writes am's entr
 test("attach refuses a Claude pane whose session runs outside the project, naming both folders; nothing written", (t) => {
   const s = scene(t, { terminals: [term("t9", { cwd: "/elsewhere" })] });
   s.seed(team());
-  const outside = realpathSync(mkdtempSync(join(tmpdir(), "hb-out-")));
-  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  const outside = scratchProject(s.root, "outside");
   const st = s.hcState();
   st.terminals[0].foreground.cwd = outside;
   writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
@@ -1803,8 +1933,7 @@ test("attach: a terminal argument that looks like an option is refused; a claude
   const opt = s.cli(["attach", "Genie", "--", "--all"]);
   assert.equal(opt.code, 2);
   assert.match(opt.err, /"--all" isn't a terminal/);
-  const outside = realpathSync(mkdtempSync(join(tmpdir(), "hb-out-")));
-  t.after(() => rmSync(outside, { recursive: true, force: true }));
+  const outside = scratchProject(s.root, "outside");
   const st = s.hcState();
   st.terminals[0].foreground.cwd = outside;
   writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
@@ -2396,8 +2525,7 @@ test("restart (#341): a teammate re-seated in a worktree still left its omp conv
   seats(gone, join(gone.root, "wt"), "t12");
   assert.match(fresh(gone), /^no Oh My Pi session id is known for t5, and Captain \(t7, ended\) also ran Oh My Pi in /);
   // Captain live in the worktree (t9): that pane isn't here, its old seat row here still is.
-  const wt = join(mkdtempSync(join(tmpdir(), "herdr-341-")), "wt");
-  t.after(() => rmSync(dirname(wt), { recursive: true, force: true }));
+  const wt = join(scratchRoot(t, "herdr-341-"), "wt");
   const moved = shareScene(t, "omp", { captain: { cwd: wt }, ledger: seed });
   seats(moved, wt, "t9");
   const note = fresh(moved);
@@ -4078,4 +4206,236 @@ test("RFC 0021: no session id in the codex provider-gone note, on stderr or in -
     assert.match(r.err, /codex can't resume its thread \(\*\*\*\)/);
     noIdIn(new Set([SID]), r, `the provider-gone note${json ? " (--json)" : ""}`);
   }
+});
+
+test("cross-project lead (#850): create, edit, ls, show, brief and dsh-tui doctor support reciprocal --lead-project and --cross-member", (t) => {
+  const s = scene(t);
+  s.seed(team());
+
+  // Create a second git project (spoke) under s.root.
+  const spoke = join(s.root, "spoke");
+  mkdirSync(spoke);
+  git(spoke, "init", "-q");
+  git(spoke, "commit", "-q", "--allow-empty", "-m", "start");
+
+  // Create SpokeMain in spoke reporting to Genie in s.project via --lead and --lead-project.
+  // Before Genie reciprocates with --cross-member, the CLI warns that the link is one-sided.
+  const createdMain = s.cli([
+    "create",
+    "--project", spoke,
+    "--kind", "main",
+    "--name", "SpokeMain",
+    "--agent", "claude",
+    "--omni",
+    "--lead", "Genie",
+    "--lead-project", s.project,
+    "--json",
+  ]);
+  assert.equal(createdMain.code, 0, createdMain.err);
+  assert.match(createdMain.err, /is one-sided/);
+  const spokeMainId = createdMain.json().id;
+  assert.equal(createdMain.json().bot.lead, ID.main);
+  assert.equal(createdMain.json().bot.leadProject, s.project);
+
+  // Create SpokeMember in spoke reporting to Captain in s.project.
+  const createdMem = s.cli([
+    "create",
+    "--project", spoke,
+    "--name", "SpokeMember",
+    "--agent", "claude",
+    "--omni",
+    "--lead", "Captain",
+    "--lead-project", s.project,
+    "--json",
+  ]);
+  assert.equal(createdMem.code, 0, createdMem.err);
+  assert.match(createdMem.err, /is one-sided/);
+  assert.equal(createdMem.json().bot.lead, ID.cap);
+  assert.equal(createdMem.json().bot.leadProject, s.project);
+
+  // While one-sided, dsh-tui doctor flags the lead checks as not ok (is one-sided).
+  const docOneSided = s.cli(["dsh-tui", "doctor", "--project", spoke, "--json"]);
+  const oneSidedChecks = docOneSided.json().checks.filter((c) => c.check.startsWith("lead:"));
+  assert.equal(oneSidedChecks.length, 2);
+  assert.equal(oneSidedChecks.every((c) => !c.ok && /is one-sided/.test(c.detail)), true);
+
+  // Reciprocate from s.project on Genie and Captain via --cross-member <bot>@<dir>.
+  const recGenie = s.cli(["edit", "Genie", "--project", s.project, "--cross-member", `SpokeMain@${spoke}`, "--json"]);
+  assert.equal(recGenie.code, 0, recGenie.err);
+  assert.equal(recGenie.err, "");
+  assert.deepEqual(recGenie.json().bot.crossMembers, [{ id: spokeMainId, project: spoke }]);
+
+  const recCap = s.cli(["edit", "Captain", "--project", s.project, "--cross-member", `SpokeMember@${spoke}`, "--json"]);
+  assert.equal(recCap.code, 0, recCap.err);
+  assert.equal(recCap.err, "");
+
+  // Refusals: missing folder, folder with no .herdr/bots.json, missing bot, planned lead, or cross-project cycle.
+  const missingDir = s.cli(["edit", "SpokeMember", "--project", spoke, "--lead", "Genie", "--lead-project", join(s.root, "nope")]);
+  assert.equal(missingDir.code, 2);
+  assert.match(missingDir.err, /is not a folder/);
+
+  const noBotsDir = join(s.root, "empty-proj");
+  mkdirSync(noBotsDir);
+  const noBots = s.cli(["edit", "SpokeMember", "--project", spoke, "--lead", "Genie", "--lead-project", noBotsDir]);
+  assert.equal(noBots.code, 1);
+  assert.match(noBots.err, /No \.herdr\/bots\.json in/);
+
+  const noSuchBot = s.cli(["edit", "SpokeMember", "--project", spoke, "--lead", "Nobody", "--lead-project", s.project]);
+  assert.equal(noSuchBot.code, 1);
+  assert.match(noSuchBot.err, /no bot "Nobody"/i);
+
+  const plannedLead = s.cli(["edit", "SpokeMember", "--project", spoke, "--lead", "Studio", "--lead-project", s.project]);
+  assert.equal(plannedLead.code, 1);
+  assert.match(plannedLead.err, /planned/);
+
+  // Cross-project cycle refusal: editing Captain in s.project to report to SpokeMember in spoke.
+  const cycle = s.cli(["edit", "Captain", "--project", s.project, "--lead", "SpokeMember", "--lead-project", spoke]);
+  assert.equal(cycle.code, 1);
+  assert.match(cycle.err, /reports to Captain, so it can't be its lead/);
+
+  // ls, show, brief, and dsh-tui doctor in spoke and s.project once reciprocal.
+  const lsOut = s.cli(["ls", "--project", spoke]);
+  assert.equal(lsOut.code, 0, lsOut.err);
+  assert.match(lsOut.out, new RegExp(`main → Genie \\(${s.project.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\)`));
+  assert.match(lsOut.out, new RegExp(`→ Captain \\(${s.project.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\)`));
+
+  const showJson = s.cli(["show", "SpokeMain", "--project", spoke, "--json"]);
+  assert.equal(showJson.code, 0, showJson.err);
+  assert.equal(showJson.json().lead, ID.main);
+  assert.equal(showJson.json().leadName, "Genie");
+  assert.equal(showJson.json().leadProject, s.project);
+  const showText = s.cli(["show", "SpokeMain", "--project", spoke]);
+  assert.equal(showText.code, 0, showText.err);
+  assert.match(showText.out, new RegExp(`lead\\s+Genie \\(${ID.main}\\) in ${s.project.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+
+  const showGenie = s.cli(["show", "Genie", "--project", s.project]);
+  assert.equal(showGenie.code, 0, showGenie.err);
+  assert.match(showGenie.out, /cross members\s+SpokeMain/);
+
+  const briefSpoke = s.cli(["brief", "SpokeMain", "--project", spoke]);
+  assert.equal(briefSpoke.code, 0, briefSpoke.err);
+  assert.match(briefSpoke.out, /Your lead: Genie \(bot b-aaaaaaaaaa\)/);
+
+  const briefHub = s.cli(["brief", "Genie", "--project", s.project]);
+  assert.equal(briefHub.code, 0, briefHub.err);
+  assert.match(briefHub.out, new RegExp(`SpokeMain \\(bot ${spokeMainId}`));
+
+  const doc = s.cli(["dsh-tui", "doctor", "--project", spoke, "--json"]);
+  const docChecks = doc.json().checks.filter((c) => c.check.startsWith("lead:"));
+  assert.equal(docChecks.length, 2);
+  assert.equal(docChecks.every((c) => c.ok), true);
+
+  // Clearing with --no-lead-project, --lead-project="", and --no-cross-members.
+  const clearMain = s.cli(["edit", "SpokeMain", "--project", spoke, "--no-lead-project", "--json"]);
+  assert.equal(clearMain.code, 0, clearMain.err);
+  assert.equal(clearMain.json().bot.lead, undefined);
+  assert.equal(clearMain.json().bot.leadProject, undefined);
+
+  const clearMem = s.cli(["edit", "SpokeMember", "--project", spoke, "--lead-project=", "--json"]);
+  assert.equal(clearMem.code, 0, clearMem.err);
+  assert.equal(clearMem.json().bot.lead, undefined);
+  assert.equal(clearMem.json().bot.leadProject, undefined);
+
+  const clearGenieCm = s.cli(["edit", "Genie", "--project", s.project, "--no-cross-members", "--json"]);
+  assert.equal(clearGenieCm.code, 0, clearGenieCm.err);
+  assert.equal(clearGenieCm.json().bot.crossMembers, undefined);
+});
+
+test("#858: scratch helpers isolate TMPDIR inside a project with .git and .herdr/bots.json, warn once, and fail loudly on an unisolated folder", (t) => {
+  const box = scratchRoot(t, "hb-858-");
+  const outer = join(box, "outer");
+  const nestedTmp = join(outer, ".tmp");
+  mkdirSync(join(outer, ".herdr"), { recursive: true });
+  mkdirSync(nestedTmp, { recursive: true });
+  git(outer, "init", "-q");
+  git(outer, "commit", "-q", "--allow-empty", "-m", "init");
+  const outerBotsPath = join(outer, ".herdr/bots.json");
+  const outerBefore = `${JSON.stringify({ version: 1, categories: [], bots: [bot(ID.main, "main", { name: "Outer" })] }, null, 2)}\n`;
+  writeFileSync(outerBotsPath, outerBefore);
+
+  const herdrOnly = join(box, "herdr-only");
+  mkdirSync(join(herdrOnly, ".herdr"), { recursive: true });
+  mkdirSync(join(herdrOnly, "tmp"), { recursive: true });
+  writeFileSync(join(herdrOnly, ".herdr/bots.json"), outerBefore);
+
+  const linkToNested = join(box, "linked-tmp");
+  symlinkSync(nestedTmp, linkToNested);
+
+  for (const [unsafeTmp, expectedOuter] of [[nestedTmp, outer], [join(herdrOnly, "tmp"), herdrOnly], [linkToNested, outer]]) {
+    const lines = [];
+    const line = warnTmpdir(unsafeTmp, { once: false, write: (s) => lines.push(s) });
+    assert.equal(lines.length, 1);
+    assert.equal(line.trim().split("\n").length, 1, "one-line warning");
+    assert.match(line, new RegExp(`TMPDIR .*inside project/git folder ${expectedOuter}`));
+    assert.match(line, /set TMPDIR to a folder outside every project folder \(for example TMPDIR=\/tmp\)/);
+  }
+
+  const prevTmp = process.env.TMPDIR;
+  try {
+    process.env.TMPDIR = nestedTmp;
+    const s = scene(t);
+    assert.equal(s.project.startsWith(nestedTmp), true, "scratch project lives under nested TMPDIR");
+    const created = s.cli(["create", "--name", "Solo", "--agent", "claude", "--json"]);
+    assert.equal(created.code, 0, created.err);
+    assert.equal(created.json().project, s.project);
+    const edited = s.cli(["edit", "Solo", "--role", "Inner role", "--json"]);
+    assert.equal(edited.code, 0, edited.err);
+    assert.equal(s.bots().bots[0].role, "Inner role");
+
+    const sPlain = scene(t, { isGit: false });
+    assert.equal(sPlain.project.startsWith(nestedTmp), true);
+    const createdPlain = sPlain.cli(["create", "--name", "PlainSolo", "--agent", "claude", "--json"]);
+    assert.equal(createdPlain.code, 0, createdPlain.err);
+    assert.equal(createdPlain.json().project, sPlain.project);
+  } finally {
+    if (prevTmp === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = prevTmp;
+  }
+
+  const missedGit = join(nestedTmp, "missed-git");
+  mkdirSync(missedGit, { recursive: true });
+  assert.throws(
+    () => assertScratchProject(missedGit, { ceiling: box, env: {} }),
+    new RegExp(`^Error: Scratch project ${missedGit} resolved to outer project ${outer} instead of itself \\(#858\\)\\.$`),
+  );
+
+  const missedHerdr = join(herdrOnly, "tmp", "missed-herdr");
+  mkdirSync(missedHerdr, { recursive: true });
+  assert.throws(
+    () => assertScratchProject(missedHerdr, { ceiling: join(herdrOnly, "tmp"), env: {} }),
+    new RegExp(`^Error: Scratch project ${missedHerdr} resolved to outer project ${herdrOnly} instead of itself \\(#858\\)\\.$`),
+  );
+
+  assert.equal(readFileSync(outerBotsPath, "utf8"), outerBefore, "outer .herdr/bots.json is byte-identical");
+  assert.equal(readFileSync(join(herdrOnly, ".herdr/bots.json"), "utf8"), outerBefore, "herdr-only .herdr/bots.json is byte-identical");
+});
+
+test("#858: non-git scratch folder stops at the scene ceiling and create --project reports a resolved parent project", (t) => {
+  const s = scene(t);
+  git(s.root, "init", "-q");
+  const rootBotsPath = join(s.root, ".herdr/bots.json");
+  const rootBefore = `${JSON.stringify({ version: 1, categories: [], bots: [bot(ID.main, "main", { name: "Outer" })] }, null, 2)}\n`;
+  mkdirSync(join(s.root, ".herdr"), { recursive: true });
+  writeFileSync(rootBotsPath, rootBefore);
+
+  const plain = join(s.root, "plain");
+  mkdirSync(plain);
+  const solo = s.cli(["create", "--name", "Solo", "--agent", "claude", "--project", plain, "--json"]);
+  assert.equal(solo.code, 0, solo.err);
+  assert.equal(solo.json().project, plain);
+  assert.equal(solo.err, "", "exact non-git --project emits no resolved-parent note");
+  assert.equal(readFileSync(rootBotsPath, "utf8"), rootBefore, "outer root bots.json untouched");
+  assert.ok(existsSync(join(plain, ".herdr/bots.json")));
+
+  const sub = join(s.project, "sub");
+  mkdirSync(sub);
+  const resolved = s.cli(["create", "--name", "Genie", "--agent", "claude", "--project", sub, "--json"]);
+  assert.equal(resolved.code, 0, resolved.err);
+  assert.equal(resolved.json().project, s.project);
+  assert.match(resolved.err, new RegExp(`saved in ${s.botsPath} \\(project ${s.project}, resolved from --project ${sub}\\)\\.`));
+
+  const plainMode = s.cli(["create", "--name", "Member", "--agent", "claude", "--project", sub]);
+  assert.equal(plainMode.code, 0, plainMode.err);
+  assert.match(plainMode.out.trim(), /^b-[a-z2-7]{10}$/);
+  assert.match(plainMode.err, new RegExp(`saved in ${s.botsPath} \\(project ${s.project}, resolved from --project ${sub}\\)\\.`));
 });

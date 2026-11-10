@@ -1,7 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pluginNames, releasePlugins, unshipped, tarballOf } from './release-plugins';
@@ -11,35 +10,25 @@ const root = join(import.meta.dir, '..');
 describe("a release's plugins.json", () => {
   test('lists this repository\'s plugins, and none of Unfold\'s', () => {
     expect(pluginNames()).toEqual(['@automagik/acp-dsh', '@automagik/bots-dsh', '@automagik/locale-pt-br-dsh', '@automagik/welcome-dsh']);
-    // Every Unfold plugin is built and tested here, but Unfold's own release ships it
-    // (Refs marketplace/unfold): this repository's releases never attach one.
+    // No Unfold folder is left here (RFC 0020): Unfold's own release ships them, and this
+    // repository's releases never attach one.
     expect(pluginNames().filter(unshipped)).toEqual([]);
     expect(tarballOf('@automagik/bots-dsh', '3.261024.1')).toBe('automagik-bots-dsh-3.261024.1.tgz');
   });
 
-  test('every Unfold package still resolves as a git source, though no release carries it', () => {
-    const folders = readdirSync(join(root, 'apps')).filter((name) => name.startsWith('unfold-')).sort();
-    expect(folders.length).toBe(9);
-    for (const folder of folders) {
-      const path = `apps/${folder}`;
-      const manifest = JSON.parse(readFileSync(join(root, path, 'package.json'), 'utf8'));
-      expect(manifest.name).toBe(`@automagik/${folder}`);
-      // The source a market pins is this folder at a release commit.
-      expect(manifest.repository).toEqual({
-        type: 'git',
-        url: 'git+https://github.com/automagik-dev/automagik.git',
-        directory: path,
-      });
-      expect(execFileSync('git', ['ls-tree', '--name-only', 'HEAD', `${path}/package.json`], { cwd: root, encoding: 'utf8' }).trim()).toBe(`${path}/package.json`);
-      if (manifest.dsh?.bundle?.patch) expect(existsSync(join(root, path, manifest.dsh.bundle.patch))).toBe(true);
-      // A listing takes its title and description from the package where it has them; the SSE
-      // library is not a plugin and has neither.
-      if (manifest.dsh) {
-        expect(manifest.automagik?.market?.title?.en).toBeTruthy();
-        expect(manifest.automagik?.market?.description?.en).toBeTruthy();
-      } else {
-        expect(manifest.automagik?.market).toBeUndefined();
+  test('no Unfold folder is left under apps/, and the name guard keeps one out if it came back', () => {
+    expect(readdirSync(join(root, 'apps')).filter((name) => name.startsWith('unfold-'))).toEqual([]);
+    expect(unshipped('@automagik/unfold-bridge-dsh')).toBe(true);
+    expect(unshipped('@automagik/bots-dsh')).toBe(false);
+    const back = mkdtempSync(join(tmpdir(), 'release-plugins-unfold-'));
+    try {
+      for (const folder of ['bots-dsh', 'unfold-bridge-dsh']) {
+        mkdirSync(join(back, 'apps', folder), { recursive: true });
+        writeFileSync(join(back, 'apps', folder, 'package.json'), JSON.stringify({ name: `@automagik/${folder}`, version: '1.0.0' }));
       }
+      expect(pluginNames(back)).toEqual(['@automagik/bots-dsh']);
+    } finally {
+      rmSync(back, { recursive: true, force: true });
     }
   });
 

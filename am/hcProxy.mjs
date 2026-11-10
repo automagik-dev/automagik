@@ -276,8 +276,11 @@ function approvedWorkerProblem(p, snapshot, bot, templates) {
   // approved start. The path is deterministic from the approved data (the bot, its role and the
   // worktree), so the plan and the argv name the same file.
   let agySettings = null;
-  const agySettingsFor = () => agySettingsPlan({ bot, scope: "worker", role, folder: p.cwd,
-    settingsDir: approvedSettingsDir(snapshot.approvalEnv ?? process.env) });
+  // #884: a symlinked worktree is trusted and written by its canonical path, as every local
+  // launch does (models.js agyTrustedWorkspaces/agyPermissionPlan take the injected realpath).
+  const agySettingsFor = () => agySettingsPlan({ bot, scope: "worker", role, folder: realOrNull(p.cwd) ?? p.cwd,
+    settingsDir: approvedSettingsDir(snapshot.approvalEnv ?? process.env), realpath: realOrNull,
+    homeDir: homedir() });
   let templateArgv = null;
   let login = [];
   if (plan.template) {
@@ -475,8 +478,12 @@ export function explicitCaller(value) {
  * The proxy's frozen policy for one pane: { terminal, upstream, snapshot: { caller, file,
  * team, ... } }. The snapshot is plain data; no getter reads the writable tree again.
  */
-export function policyOf({ terminal, upstream, caller, file, bound, appHome, path, shim, stableRoot, approval, approvalEnv, coreId }) {
-  return { terminal, upstream, caller, file, bound, appHome, path, shim, stableRoot, approval, approvalEnv, coreId, team: teamOf(file, caller) };
+export function policyOf({ terminal, upstream, caller, file, bound, appHome, path, shim, stableRoot, approval, approvalEnv, coreId, projects }) {
+  const env = approvalEnv ?? process.env;
+  return {
+    terminal, upstream, caller, file, bound, appHome, path, shim, stableRoot, approval, approvalEnv, coreId,
+    team: teamOf(file, caller, { project: caller?.project, projects, env }),
+  };
 }
 
 /** Whether `record` is one of the caller's own workers, by its label (hcGuard's send rule). */

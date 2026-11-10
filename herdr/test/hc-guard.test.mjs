@@ -698,7 +698,7 @@ test("a guard copy that calls its caller stops at once instead of looping", (t) 
   const s = scene(t);
   const mod = join(s.root, "other-guard"), copyGuard = join(mod, "guard");
   mkdirSync(copyGuard, { recursive: true });
-  for (const file of ["hcGuard.mjs", "attach.js", "model.js", "models.js", "workers.js", "logins.js", "retired.js"]) {
+  for (const file of ["hcGuard.mjs", "approved.js", "attach.js", "model.js", "models.js", "workers.js", "logins.js", "retired.js"]) {
     copyFileSync(join(GUARD_DIR, "..", file), join(mod, file));
   }
   appendFileSync(join(mod, "hcGuard.mjs"), "\n// not this guard\n");
@@ -719,7 +719,7 @@ test("an older guard copy after this one cannot turn a refusal into an allow", (
   const mod = join(s.root, "older-guard"), olderGuard = join(mod, "guard");
   const log = join(mod, "older.log");
   mkdirSync(olderGuard, { recursive: true });
-  for (const file of ["hcGuard.mjs", "attach.js", "model.js", "models.js", "workers.js", "logins.js", "retired.js"]) {
+  for (const file of ["hcGuard.mjs", "approved.js", "attach.js", "model.js", "models.js", "workers.js", "logins.js", "retired.js"]) {
     copyFileSync(join(GUARD_DIR, "..", file), join(mod, file));
   }
   // An older copy: it predates the re-entry marker, so it ignores the marker on its env.
@@ -799,4 +799,189 @@ test("the guard goes first on a dsh-tui PATH and nowhere else; non-dsh-tui argv 
   assert.deepEqual(omp.slice(omp.indexOf("--") + 1), ["/usr/bin/env", "PATH=/a:/b", "omp", "t"]);
   const dshWorker = workerArgs({ botId: ID.dev, branch: "b", cwd: "/w", parent: "t1", agent: "dsh-tui", argv: ["dsh-tui"], task: "t", path: "/a:/b" });
   assert.deepEqual(dshWorker.slice(dshWorker.indexOf("--") + 1), ["/usr/bin/env", `PATH=${GUARD_DIR}:/a:/b`, "dsh-tui", "--", "t"]);
+});
+
+test("cross-project lead (#850): hc send and proxy require reciprocal crossMembers and an approved 0600 snapshot, and allow only the direct lead <-> member link", async (t) => {
+  const { teamOf } = await import("../mods/am-sidebar/hcGuard.mjs");
+  const { policyOf } = await import("../mods/am-sidebar/hcProxy.mjs");
+  const { approveProject, recordFileOf } = await import("../mods/am-sidebar/approved.js");
+  const { parseBots } = await import("../mods/am-sidebar/model.js");
+
+  const hubTopId = "b-8888888888";
+  const coordId = "b-7777777777";
+  const unrelatedHubId = "b-6666666666";
+  const spokeMainId = "b-5555555555";
+  const spokeDevId = "b-4444444444";
+
+  const hubRaw = {
+    version: 1,
+    categories: [],
+    bots: [
+      bot(hubTopId, "main", { name: "HubTop" }),
+      bot(coordId, "member", {
+        name: "Coord",
+        lead: hubTopId,
+        crossMembers: [{ id: spokeMainId, project: "/work/spoke" }],
+      }),
+      bot(unrelatedHubId, "member", { name: "UnrelatedHub", lead: hubTopId }),
+    ],
+  };
+  const spokeRaw = {
+    version: 1,
+    categories: [],
+    bots: [
+      bot(spokeMainId, "main", { name: "SpokeMain", lead: coordId, leadProject: "/work/hub" }),
+      bot(spokeDevId, "member", { name: "SpokeDev", lead: spokeMainId }),
+    ],
+  };
+  const hubFile = parseBots(JSON.stringify(hubRaw)).file;
+  const spokeFile = parseBots(JSON.stringify(spokeRaw)).file;
+  const projects = new Map([["/work/hub", hubFile], ["/work/spoke", spokeFile]]);
+
+  // Direct link only: SpokeMain reaches Coord in /work/hub, NEVER Coord's lead (HubTop) or UnrelatedHub.
+  const spokeMainTeam = teamOf(spokeFile, spokeMainId, { project: "/work/spoke", projects });
+  assert.equal(spokeMainTeam.has(coordId), true);
+  assert.equal(spokeMainTeam.has(hubTopId), false);
+  assert.equal(spokeMainTeam.has(unrelatedHubId), false);
+
+  // SpokeMain's member (SpokeDev) and SpokeMain's worker do NOT reach Coord across projects.
+  const spokeDevTeam = teamOf(spokeFile, spokeDevId, { project: "/work/spoke", projects });
+  assert.equal(spokeDevTeam.has(coordId), false);
+  const spokeMainWorkerTeam = teamOf(spokeFile, spokeMainId, true, { project: "/work/spoke", projects });
+  assert.equal(spokeMainWorkerTeam.has(coordId), false);
+
+  // Coord in /work/hub reaches SpokeMain (its direct cross-project member), NEVER SpokeDev (SpokeMain's member),
+  // and HubTop (Coord's lead) does NOT reach SpokeMain.
+  const coordTeam = teamOf(hubFile, coordId, { project: "/work/hub", projects });
+  assert.equal(coordTeam.has(spokeMainId), true);
+  assert.equal(coordTeam.has(spokeDevId), false);
+  const hubTopTeam = teamOf(hubFile, hubTopId, { project: "/work/hub", projects });
+  assert.equal(hubTopTeam.has(spokeMainId), false);
+
+  // One-sided declaration (spoke names Coord, but Coord does not list SpokeMain in crossMembers) gives nothing.
+  const oneSidedHub = parseBots(JSON.stringify({
+    version: 1,
+    categories: [],
+    bots: [
+      bot(hubTopId, "main", { name: "HubTop" }),
+      bot(coordId, "member", { name: "Coord", lead: hubTopId }),
+    ],
+  })).file;
+  const oneSidedProjects = new Map([["/work/hub", oneSidedHub], ["/work/spoke", spokeFile]]);
+  assert.equal(teamOf(spokeFile, spokeMainId, { project: "/work/spoke", projects: oneSidedProjects }).has(coordId), false);
+  assert.equal(teamOf(oneSidedHub, coordId, { project: "/work/hub", projects: oneSidedProjects }).has(spokeMainId), false);
+
+  // Without verified projects, a cross-project lead is not trusted by teamOf.
+  const unverifiedTeam = teamOf(spokeFile, spokeMainId);
+  assert.equal(unverifiedTeam.has(coordId), false);
+
+  // End-to-end guard run and hcProxy policyOf across two projects on disk.
+  const s = scene(t);
+  const hubDir = join(s.root, "hub");
+  mkdirSync(join(hubDir, ".herdr"), { recursive: true });
+  const diskHubOneSided = {
+    version: 1,
+    categories: [],
+    bots: [
+      bot(hubTopId, "main", { name: "HubTop" }),
+      bot(coordId, "member", { name: "Coord", lead: hubTopId }),
+      bot(unrelatedHubId, "member", { name: "UnrelatedHub", lead: hubTopId }),
+    ],
+  };
+  const diskSpoke = {
+    version: 1,
+    categories: [],
+    bots: [
+      bot(ID.main, "main", { name: "Main", lead: coordId, leadProject: hubDir }),
+      bot(ID.dev, "member", { name: "Dev", lead: ID.main }),
+    ],
+  };
+  writeFileSync(join(hubDir, ".herdr", "bots.json"), JSON.stringify(diskHubOneSided, null, 2));
+  writeFileSync(join(s.project, ".herdr", "bots.json"), JSON.stringify(diskSpoke, null, 2));
+
+  const st = JSON.parse(readFileSync(s.statePath, "utf8"));
+  st.terminals.push(
+    { address: "t200", name: "coord", state: "live" },
+    { address: "t201", name: "unrelated", state: "live" },
+    { address: "t202", name: "hubtop", state: "live" },
+  );
+  st.get.t200 = get("t200", { bot: coordId }, { cwd: hubDir, name: "coord" });
+  st.get.t201 = get("t201", { bot: unrelatedHubId }, { cwd: hubDir, name: "unrelated" });
+  st.get.t202 = get("t202", { bot: hubTopId }, { cwd: hubDir, name: "hubtop" });
+  writeFileSync(s.statePath, JSON.stringify(st));
+  const ledger = join(s.app, "automagik-herdr", "attach.jsonl");
+  const rows = [
+    { v: 1, event: "attach", bot: ID.main, project: s.project, terminal: "t103", core: "core", created_ms: 100, machine: null, at: "2026-11-01T00:00:00.000Z", by: "start" },
+    { v: 1, event: "attach", bot: ID.dev, project: s.project, terminal: "t100", core: "core", created_ms: 100, machine: null, at: "2026-11-01T00:00:00.000Z", by: "start" },
+    { v: 1, event: "attach", bot: coordId, project: hubDir, terminal: "t200", core: "core", created_ms: 100, machine: null, at: "2026-11-01T00:00:00.000Z", by: "start" },
+    { v: 1, event: "attach", bot: hubTopId, project: hubDir, terminal: "t202", core: "core", created_ms: 100, machine: null, at: "2026-11-01T00:00:00.000Z", by: "start" },
+  ];
+  writeFileSync(ledger, `${rows.map((r) => JSON.stringify(r)).join("\n")}\n`);
+  chmodSync(ledger, 0o600);
+
+  // (a) One-sided on disk (even after approving both): Main -> Coord and Coord -> Main are refused.
+  approveProject({ project: hubDir, env: envFor(s) });
+  approveProject({ project: s.project, env: envFor(s) });
+  assertRefused(guardRun(s, ["send", "t200", "one-sided"], { HC_TERMINAL_ID: "t103" }));
+  assertRefused(guardRun(s, ["send", "t103", "one-sided"], { HC_TERMINAL_ID: "t200" }));
+
+  // (b) Both sides declare the link in .herdr/bots.json, but hubDir's approved snapshot is NOT updated yet:
+  // live .herdr/bots.json alone is untrusted (digest mismatch with approved snapshot) -> fails closed.
+  const diskHubReciprocal = {
+    ...diskHubOneSided,
+    bots: [
+      bot(hubTopId, "main", { name: "HubTop" }),
+      bot(coordId, "member", {
+        name: "Coord",
+        lead: hubTopId,
+        crossMembers: [{ id: ID.main, project: s.project }],
+      }),
+      bot(unrelatedHubId, "member", { name: "UnrelatedHub", lead: hubTopId }),
+    ],
+  };
+  writeFileSync(join(hubDir, ".herdr", "bots.json"), JSON.stringify(diskHubReciprocal, null, 2));
+  assertRefused(guardRun(s, ["send", "t200", "unapproved-edit"], { HC_TERMINAL_ID: "t103" }));
+
+  // (c) Approve hubDir, then loosen snapshot permissions to 0644 -> fails closed.
+  approveProject({ project: hubDir, env: envFor(s) });
+  const hubApprovedFile = recordFileOf(hubDir, envFor(s));
+  chmodSync(hubApprovedFile, 0o644);
+  assertRefused(guardRun(s, ["send", "t200", "bad-mode"], { HC_TERMINAL_ID: "t103" }));
+  const diskSpokeParsed = parseBots(JSON.stringify(diskSpoke)).file;
+  const diskHubParsed = parseBots(JSON.stringify(diskHubReciprocal)).file;
+  const badModePolicy = policyOf({
+    caller: { bot: ID.main, project: s.project, worker: false, terminal: "t103" },
+    file: diskSpokeParsed,
+    approvalEnv: envFor(s),
+  });
+  assert.equal(badModePolicy?.team?.has(coordId), false);
+
+  // (d) Restore 0600 on approved snapshot: direct link Main (t103) <-> Coord (t200) is allowed in guard and proxy.
+  chmodSync(hubApprovedFile, 0o600);
+  const toLead = guardRun(s, ["send", "t200", "status report"], { HC_TERMINAL_ID: "t103" });
+  assert.equal(toLead.status, 0, toLead.stderr);
+  const toReport = guardRun(s, ["send", "t103", "ack"], { HC_TERMINAL_ID: "t200" });
+  assert.equal(toReport.status, 0, toReport.stderr);
+
+  const okPolicyMain = policyOf({
+    caller: { bot: ID.main, project: s.project, worker: false, terminal: "t103" },
+    file: diskSpokeParsed,
+    approvalEnv: envFor(s),
+  });
+  assert.equal(okPolicyMain?.team?.has(coordId), true);
+  assert.equal(okPolicyMain?.team?.has(hubTopId), false);
+  const okPolicyCoord = policyOf({
+    caller: { bot: coordId, project: hubDir, worker: false, terminal: "t200" },
+    file: diskHubParsed,
+    approvalEnv: envFor(s),
+  });
+  assert.equal(okPolicyCoord?.team?.has(ID.main), true);
+  assert.equal(okPolicyCoord?.team?.has(ID.dev), false);
+
+  // (e) Upward chain (HubTop t202), unrelated hub bot (t201), and Main's member (Dev t100) stay out.
+  assertRefused(guardRun(s, ["send", "t202", "nope-upward"], { HC_TERMINAL_ID: "t103" }));
+  assertRefused(guardRun(s, ["send", "t201", "nope-unrelated"], { HC_TERMINAL_ID: "t103" }));
+  assertRefused(guardRun(s, ["send", "t200", "nope-member-team"], { HC_TERMINAL_ID: "t100" }));
+  assertRefused(guardRun(s, ["send", "t100", "nope-member-team"], { HC_TERMINAL_ID: "t200" }));
+  assertRefused(guardRun(s, ["send", "t103", "nope-from-hubtop"], { HC_TERMINAL_ID: "t202" }));
 });

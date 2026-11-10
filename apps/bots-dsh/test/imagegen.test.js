@@ -177,7 +177,7 @@ test('a Codex refusal is the tool\'s answer and the card shows it failed', async
 // The card's own helpers, bundled with a stand-in React.
 const bundle = await build({
   stdin: { contents: "export { imageIdOf, ratioOf, PAINT_FACES } from './src/client/image-cell.js'; export { FACES } from './src/client/clay-art.js'", resolveDir: dirname(dirname(fileURLToPath(import.meta.url))) },
-  bundle: true, format: 'cjs', platform: 'node', write: false, logLevel: 'silent', external: ['react'],
+  bundle: true, format: 'cjs', platform: 'node', write: false, logLevel: 'silent', external: ['react', 'react-dom'],
 })
 const cell = { exports: {} }
 runInNewContext(bundle.outputFiles[0].text, { module: cell, exports: cell.exports, require: () => ({ createElement: () => null, useEffect: () => {}, useRef: () => ({}), useState: v => [v, () => {}] }) })

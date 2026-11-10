@@ -52,7 +52,7 @@ runInNewContext(readFileSync(join(harness, 'node_modules/@deepseek-ai/dsh-client
   AbortController, AbortSignal, console, setTimeout, clearTimeout,
 })
 
-async function start(t, { advanced = false, model, delay = false, reject = false, standalone = false } = {}) {
+async function start(t, { advanced = false, model, delay = false, reject = false, refuse = undefined, standalone = false } = {}) {
   const dom = new JSDOM('<div id="root"></div>', { url: 'http://localhost' })
   const globals = ['window', 'document', 'navigator', 'Element', 'HTMLElement', 'MutationObserver', 'IS_REACT_ACT_ENVIRONMENT']
   const saved = globals.map(key => Object.getOwnPropertyDescriptor(globalThis, key))
@@ -81,6 +81,7 @@ async function start(t, { advanced = false, model, delay = false, reject = false
     if (endpoint === 'bot-session-adopt') {
       if (delay) await new Promise((resolve, fail) => registrations.push({ resolve, fail }))
       if (reject) throw new Error('registration rejected')
+      if (refuse !== undefined) return { ok: true, json: async () => ({ ok: false, error: refuse }) }
       brain.segments = [...(brain.segments ?? []), { sessionId: brain.sessionId, endedAt: 3 }]
       brain.sessionId = payload.sessionId
       revision++
@@ -259,6 +260,21 @@ test('rejected registration retains the actual selected native session and repor
   assert.equal(bench.brain.sessionId, 'brain')
   assert.ok(bench.hooks.ui.getSnapshot().toast)
   assert.equal(bench.calls.some(call => call.endpoint === 'agent-archive'), false)
+})
+
+test('a refused native adoption names the reason and both sides in the toast', async t => {
+  const message = 'Session rejected is neither blank nor a fork of the current part of Bot "Brain" (Session brain), so it cannot join it.'
+  const bench = await start(t, { refuse: { code: 'bot/adopt-not-blank', message } })
+  await bench.pick('rejected')
+  assert.equal(bench.current(), 'rejected')
+  assert.equal(bench.brain.sessionId, 'brain')
+  const toast = bench.hooks.ui.getSnapshot().toast
+  assert.ok(toast)
+  assert.equal(toast.text, message)
+  assert.match(toast.text, /neither blank nor a fork/)
+  assert.match(toast.text, /Bot "Brain"/)
+  assert.match(toast.text, /Session rejected/)
+  assert.equal(bench.calls.filter(call => call.endpoint === 'bot-session-adopt').length, 1)
 })
 
 test('rapid native picks serialize their source ownership and stale completion never navigates', async t => {

@@ -584,20 +584,54 @@ export function install(rt) {
     writeCheck()
     const bot = rt.own(state.bots, botId)
     const original = rt.own(state.agents, bot?.dshAgentId)
-    if (bot?.kind !== DSH_BOT || original?.kind !== DSH_BOT || original.adoptedBotId !== botId) throw refusal('Unknown adopted DSH Bot')
-    if (typeof sessionId !== 'string' || sessionId === '' || typeof sourceSessionId !== 'string') throw refusal('Invalid Session transition')
+    // Every refusal names the Bot and the Session in the message the person sees, and its
+    // own code so the UI can tell the three eligibility checks apart. It also keeps a host
+    // diagnostics entry with those fields: the channel exposes a `bot/`-coded message but
+    // only notes an unclassified error, which leaves nothing but a stack location.
+    const name = typeof bot?.name === 'string' && bot.name.trim() !== '' ? bot.name.trim() : undefined
+    const sessionText = typeof sessionId === 'string' && sessionId !== ''
+      ? sessionId
+      : sessionId === undefined ? '(missing)' : String(sessionId).slice(0, 80)
+    const botLabel = name === undefined
+      ? `Bot ${typeof botId === 'string' && botId !== '' ? botId : '(unknown)'}`
+      : `Bot "${name}"`
+    const sessionLabel = `Session ${sessionText}`
+    const sourceText = typeof sourceSessionId === 'string' && sourceSessionId !== '' ? sourceSessionId : '(missing)'
+    const refuse = (code, message, { cause } = {}) => {
+      rt.noteFailure?.({
+        source: 'api',
+        text: message,
+        code,
+        bot: name ?? (typeof botId === 'string' && botId !== '' ? botId : undefined),
+        where: `bot-session-adopt (${sessionLabel})`,
+        sessionId: typeof sessionId === 'string' && sessionId !== '' ? sessionId : undefined,
+      })
+      throw refusal(message, { code, cause })
+    }
+    if (bot?.kind !== DSH_BOT || original?.kind !== DSH_BOT || original.adoptedBotId !== botId) {
+      refuse('bot/adopt-unknown', `${botLabel} is not an adopted DSH Bot, so ${sessionLabel} cannot join it. Open the Bot from the team list and try again.`)
+    }
+    if (typeof sessionId !== 'string' || sessionId === '' || typeof sourceSessionId !== 'string') {
+      refuse('bot/adopt-invalid-transition', `${botLabel} cannot change to ${sessionLabel}: the request needs a valid Session id and the id of the Bot's current part. Pick the project Session again.`)
+    }
     if (rt.chatOf(botId) === sessionId && (bot.segments ?? []).some(part => part.sessionId === sourceSessionId)) return sessionId
-    if (associations.has(botId) || associationTargets.has(sessionId)) throw refusal('A Bot Session transition is already pending')
+    if (associations.has(botId) || associationTargets.has(sessionId)) {
+      refuse('bot/adopt-pending', `A Bot Session transition is already pending for ${botLabel}, so ${sessionLabel} cannot join it yet. Wait for the current change to finish, then try again.`)
+    }
     const before = JSON.stringify(bot)
     const registration = JSON.stringify(original)
     const validate = () => {
       writeCheck()
       if (state.bots[botId] !== bot || state.agents[bot.dshAgentId] !== original
         || JSON.stringify(bot) !== before || JSON.stringify(original) !== registration
-        || rt.chatOf(botId) !== sourceSessionId) throw refusal('The Bot changed during Session transition')
+        || rt.chatOf(botId) !== sourceSessionId) {
+        refuse('bot/adopt-changed', `${botLabel} changed while ${sessionLabel} was joining it (another window or an edit). Nothing was changed; try again.`)
+      }
       if (rt.selfOf(sessionId) !== undefined || rt.botOf(sessionId) !== undefined
         || rt.roomOf(sessionId) !== undefined || agentOf(sessionId) !== undefined
-        || state.tasks?.[sessionId] !== undefined) throw refusal('Session already belongs to the team')
+        || state.tasks?.[sessionId] !== undefined) {
+        refuse('bot/adopt-in-team', `${sessionLabel} already belongs to the team (a Bot, group chat, task, or DSH bot), so it cannot join ${botLabel}. Open a new blank Session or a fork of this Bot instead.`)
+      }
     }
     associations.add(botId)
     associationTargets.add(sessionId)
@@ -610,21 +644,32 @@ export function install(rt) {
         const header = session?.header
         const parent = header?.parentSession === undefined ? undefined : ctx.agents?.get?.(header.parentSession)
         if (session?.id !== sessionId || header === undefined || header.origin === 'subagent'
-          || (header.delegationDepth ?? 0) > 0 || (parent !== undefined && ctx.agents.isOwnedBy?.(sessionId, parent))) throw refusal('Only a root Session can join a Bot')
+          || (header.delegationDepth ?? 0) > 0 || (parent !== undefined && ctx.agents.isOwnedBy?.(sessionId, parent))) {
+          refuse('bot/adopt-root', `${sessionLabel} is not a root Session (it is a subagent, delegated, or owned by another Session), so it cannot join ${botLabel}. Open the project's own root Session instead.`)
+        }
         // dsh 0.2.2 deprecates ctx.sessionProjections.stateOf(session, key); the loop
         // registry owns this unit and exposes it directly.
         const boundary = ctx.agents?.turnBoundaryOf?.(session)
         const blank = boundary !== undefined && boundary.openTurnStartSeq === null && boundary.lastTurn === 0
         const fork = header.parentSession === sourceSessionId && header.isSeeded === true
-        if (!blank && !fork) throw refusal('Only a blank Session or a fork of the current Bot can join')
+        if (!blank && !fork) {
+          refuse('bot/adopt-not-blank', `${sessionLabel} is neither blank nor a fork of the current part of ${botLabel} (Session ${sourceText}), so the Session cannot join that Bot. Start a new Session in the project or fork the Bot's current chat.`)
+        }
       }
       eligible()
-      const preset = await servedPreset(bot.profile, { strict: true })
+      let preset
+      try {
+        preset = await servedPreset(bot.profile, { strict: true })
+      } catch (error) {
+        refuse('bot/adopt-preset-unavailable', `The preset ${bot.profile} is not available in this DSH, so ${sessionLabel} cannot join ${botLabel}. Choose an available preset in the Bot's settings, then try again.`, { cause: error })
+      }
       validate()
       eligible()
       if (preset !== undefined && ctx.get('agentPresets')?.presetForSession?.(session) !== preset) {
         const presets = ctx.get('agentPresets')
-        if (typeof presets?.select !== 'function') throw refusal('Native preset selection is unavailable')
+        if (typeof presets?.select !== 'function') {
+          refuse('bot/adopt-preset-unavailable', `${botLabel} needs the native preset "${preset}" for ${sessionLabel}, but native preset selection is unavailable in this DSH. Update DSH or pick a Session already on that preset.`)
+        }
         await presets.select(live, preset)
         await ctx.sessions.flush(session)
       }
@@ -632,7 +677,7 @@ export function install(rt) {
       eligible()
       const persisted = ctx.get('agentPresets')?.presetForSession?.(session)
       if (preset !== undefined && persisted !== preset) {
-        throw refusal('Native preset selection did not persist')
+        refuse('bot/adopt-preset-not-persisted', `${botLabel} could not keep the native preset "${preset}" for ${sessionLabel}, so the Session did not join that Bot. Try again, or pick a Session already on that preset.`)
       }
       const previous = { sessionId: bot.sessionId, segments: bot.segments }
       bot.segments = [...(bot.segments ?? []), { sessionId: sourceSessionId, endedAt: Date.now() }]
@@ -640,7 +685,9 @@ export function install(rt) {
       try {
         await rt.save({ required: true })
         if (state.bots[botId] !== bot || bot.sessionId !== sessionId || state.agents[bot.dshAgentId] !== original
-          || JSON.stringify(original) !== registration) throw refusal('The Bot changed during Session persistence')
+          || JSON.stringify(original) !== registration) {
+          refuse('bot/adopt-changed-persisting', `${botLabel} changed while ${sessionLabel} was being saved. Nothing was changed; try again.`)
+        }
       } catch (error) {
         // Undo only this operation's tentative ownership; do not erase a successor.
         if (state.bots[botId] === bot && bot.sessionId === sessionId) {

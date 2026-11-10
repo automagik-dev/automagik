@@ -9,13 +9,15 @@ import {
   BOT_LABEL, MAX_INSTRUCTIONS, CHARACTERS, COLOURS, projectKeyOf, projectOf, paneKeyOf, parseBots, checkBots, effectiveLead, newBotId, defaultLook,
   listedProjects, withListedProject, MAX_LISTED_PROJECTS,
 } from "../mods/am-sidebar/model.js";
+import { scratchRoot } from "./scratch-project.mjs";
 
 const run = promisify(execFile);
+const roots = new Set();
 // What bots.js hands projectKeyOf, over Node instead of Herdr's exec.
 const git = async (args, cwd) => {
   try { return (await run("git", args, { cwd })).stdout; } catch { return null; }
 };
-const exists = async (path) => existsSync(path);
+const exists = async (path) => [...roots].some((r) => path === r || path.startsWith(`${r}/`)) && existsSync(path);
 const noGit = async () => null;
 // No git installed: the adapter answers null, as bots.js does for a program that can't start.
 const missingGit = async (args, cwd) => {
@@ -26,8 +28,9 @@ const unreachable = async () => { throw new Error("machine unreachable"); };
 // A scratch repository with one commit, a worktree and a subfolder, under $TMPDIR
 // (realpath: on macOS /var/folders is /private/var/folders, and git answers with the real one).
 function scratch(t) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "automagik-herdr-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const root = scratchRoot(t, "automagik-herdr-");
+  roots.add(root);
+  t.after(() => roots.delete(root));
   return root;
 }
 async function repo(t) {
@@ -59,7 +62,7 @@ test("project key: a subfolder belongs to its main checkout", async (t) => {
 
 test("project key: a worktree's committed bots.json is not its project", async (t) => {
   const { main, tree } = await repo(t);
-  mkdirSync(join(tree, ".herdr"));
+  mkdirSync(join(tree, ".herdr"), { recursive: true });
   writeFileSync(join(tree, ".herdr", "bots.json"), "{}");
   assert.equal(await projectKeyOf(tree, git, exists), main);
 });
@@ -68,7 +71,7 @@ test("project key: outside git, the nearest folder holding .herdr/bots.json", as
   const root = scratch(t);
   const deep = join(root, "a", "b", "c");
   mkdirSync(deep, { recursive: true });
-  mkdirSync(join(root, "a", ".herdr"));
+  mkdirSync(join(root, "a", ".herdr"), { recursive: true });
   writeFileSync(join(root, "a", ".herdr", "bots.json"), "{}");
   assert.equal(await projectKeyOf(deep, git, exists), join(root, "a"));
   assert.equal(await projectKeyOf(join(root, "a"), git, exists), join(root, "a"));
@@ -86,12 +89,12 @@ test("project key: a picked folder outside git under another project's folder is
   const root = scratch(t);
   const child = join(root, "repos", "child");
   mkdirSync(child, { recursive: true });
-  mkdirSync(join(root, "repos", ".herdr"));
+  mkdirSync(join(root, "repos", ".herdr"), { recursive: true });
   writeFileSync(join(root, "repos", ".herdr", "bots.json"), "{}");
   assert.deepEqual(await projectOf(child, git, exists), { key: join(root, "repos"), own: child });
   assert.equal(await projectKeyOf(child, git, exists), join(root, "repos"));
   // Once child has its own file, the walk-up finds it first.
-  mkdirSync(join(child, ".herdr"));
+  mkdirSync(join(child, ".herdr"), { recursive: true });
   writeFileSync(join(child, ".herdr", "bots.json"), "{}");
   assert.deepEqual(await projectOf(child, git, exists), { key: child, own: child });
 });
@@ -108,7 +111,7 @@ test("project key: git missing or failing reads as outside git", async (t) => {
   // Inside a real repository, but git can't answer: the folder rule applies.
   assert.equal(await projectKeyOf(sub, noGit, exists), sub);
   assert.equal(await projectKeyOf(sub, missingGit, exists), sub);
-  mkdirSync(join(main, ".herdr"));
+  mkdirSync(join(main, ".herdr"), { recursive: true });
   writeFileSync(join(main, ".herdr", "bots.json"), "{}");
   assert.equal(await projectKeyOf(sub, missingGit, exists), main);
 });
@@ -545,9 +548,271 @@ test("pane key (#227): a folder that names no project gives null; a bots.json ab
   assert.equal(await paneKeyOf(deep, missingGit, exists), null);
   assert.equal(await paneKeyOf(join(root, "gone"), git, exists), null);
   // A project outside git: the walk-up finds it.
-  mkdirSync(join(root, "a", ".herdr"));
+  mkdirSync(join(root, "a", ".herdr"), { recursive: true });
   writeFileSync(join(root, "a", ".herdr", "bots.json"), "{}");
   assert.equal(await paneKeyOf(deep, noGit, exists), join(root, "a"));
   // A machine that can't be asked still rejects (the caller reads that as no project).
   await assert.rejects(paneKeyOf("/srv/x", unreachable, async () => false), /unreachable/);
+});
+
+// ---- #850: cross-project lead (leadProject + reciprocal crossMembers) ----
+import { collectProjectMap, crossMemberWarnings, descendantsOf } from "../mods/am-sidebar/model.js";
+import { parentArgs, leadIdOf, roleOf } from "../mods/am-sidebar/launchArgs.js";
+
+test("cross-project lead (#850): member and main bots resolve across projects only when reciprocal, and fall back when one-sided, missing, planned or cyclic", () => {
+  const leadId = "b-7777777777";
+  const plannedLeadId = "b-6666666666";
+  const subMain = "b-5555555555";
+  const subCap = "b-4444444444";
+  const subDev = "b-3333333333";
+  const hubFile = parseBots(text({
+    version: 1,
+    categories: [],
+    bots: [
+      bot(leadId, "main", {
+        name: "Coord",
+        crossMembers: [
+          { id: subMain, project: "/work/sub" },
+          { id: subCap, project: "/work/sub" },
+        ],
+      }),
+      bot(plannedLeadId, "member", { name: "FutureLead", agent: undefined, planned: { wave: 2 } }),
+    ],
+  })).file;
+  const subFile = parseBots(text({
+    version: 1,
+    categories: [],
+    bots: [
+      bot(subMain, "main", { name: "SubMain", lead: leadId, leadProject: "/work/hub" }),
+      bot(subCap, "member", { name: "SubCap", lead: leadId, leadProject: "/work/hub" }),
+      bot(subDev, "member", { name: "SubDev", lead: subCap }),
+    ],
+  })).file;
+  const projects = new Map([["/work/hub", hubFile], ["/work/sub", subFile]]);
+
+  // Valid reciprocal cross-project lead for both main and member bots.
+  const mainEff = effectiveLead(subFile, subMain, { project: "/work/sub", projects });
+  assert.equal(mainEff.lead, leadId);
+  assert.equal(mainEff.leadProject, "/work/hub");
+  assert.equal(mainEff.leadBot?.name, "Coord");
+  assert.equal(mainEff.warning, undefined);
+
+  const capEff = effectiveLead(subFile, subCap, { project: "/work/sub", projects });
+  assert.equal(capEff.lead, leadId);
+  assert.equal(capEff.leadProject, "/work/hub");
+  assert.equal(capEff.leadBot?.name, "Coord");
+  assert.equal(capEff.warning, undefined);
+
+  // descendantsOf on Coord in /work/hub includes SubMain, SubCap, and SubDev across projects.
+  assert.deepEqual(
+    [...descendantsOf(hubFile, leadId, { project: "/work/hub", projects })].sort(),
+    [subMain, subCap, subDev].sort(),
+  );
+  assert.deepEqual(crossMemberWarnings(hubFile, leadId, { project: "/work/hub", projects }), []);
+
+  // One-sided declaration (member names lead, lead does NOT list member in crossMembers):
+  // fails closed to same-project graph (main -> "", member -> subMain) with one clear warning.
+  const oneSidedHub = parseBots(text({
+    version: 1,
+    categories: [],
+    bots: [bot(leadId, "main", { name: "Coord" })],
+  })).file;
+  const oneSidedProjects = new Map([["/work/hub", oneSidedHub], ["/work/sub", subFile]]);
+  const oneSidedMain = effectiveLead(subFile, subMain, { project: "/work/sub", projects: oneSidedProjects });
+  assert.equal(oneSidedMain.lead, "");
+  assert.equal(oneSidedMain.leadProject, undefined);
+  assert.match(oneSidedMain.warning, /is one-sided/);
+  const oneSidedCap = effectiveLead(subFile, subCap, { project: "/work/sub", projects: oneSidedProjects });
+  assert.equal(oneSidedCap.lead, subMain);
+  assert.equal(oneSidedCap.leadProject, undefined);
+  assert.match(oneSidedCap.warning, /is one-sided/);
+  assert.deepEqual([...descendantsOf(oneSidedHub, leadId, { project: "/work/hub", projects: oneSidedProjects })], []);
+
+  // One-sided declaration on the lead side (lead lists member in crossMembers, member does not name lead):
+  // fails closed and surfaces a crossMemberWarnings entry on the lead.
+  const unlinkedSub = parseBots(text({
+    version: 1,
+    categories: [],
+    bots: [
+      bot(subMain, "main", { name: "SubMain" }),
+      bot(subCap, "member", { name: "SubCap" }),
+    ],
+  })).file;
+  const leadOnlyProjects = new Map([["/work/hub", hubFile], ["/work/sub", unlinkedSub]]);
+  assert.deepEqual([...descendantsOf(hubFile, leadId, { project: "/work/hub", projects: leadOnlyProjects })], []);
+  const cmWarns = crossMemberWarnings(hubFile, leadId, { project: "/work/hub", projects: leadOnlyProjects });
+  assert.equal(cmWarns.length, 2);
+  assert.ok(cmWarns.every((w) => /is one-sided/.test(w)));
+
+  // Target project missing: member falls back to same-project main, main falls back to "".
+  const onlySub = new Map([["/work/sub", subFile]]);
+  const missingProjCap = effectiveLead(subFile, subCap, { project: "/work/sub", projects: onlySub });
+  assert.equal(missingProjCap.lead, subMain);
+  assert.equal(missingProjCap.leadProject, undefined);
+  assert.match(missingProjCap.warning, /project \/work\/hub has no roster/);
+  const missingProjMain = effectiveLead(subFile, subMain, { project: "/work/sub", projects: onlySub });
+  assert.equal(missingProjMain.lead, "");
+  assert.match(missingProjMain.warning, /project \/work\/hub has no roster/);
+
+  // Target bot missing in leadProject: falls back with warning.
+  const missingBotSub = parseBots(text({
+    version: 1,
+    categories: [],
+    bots: [
+      bot(subMain, "main", { name: "SubMain" }),
+      bot(subCap, "member", { name: "SubCap", lead: "b-2222222222", leadProject: "/work/hub" }),
+    ],
+  })).file;
+  const missingBotEff = effectiveLead(missingBotSub, subCap, {
+    project: "/work/sub",
+    projects: new Map([["/work/hub", hubFile], ["/work/sub", missingBotSub]]),
+  });
+  assert.equal(missingBotEff.lead, subMain);
+  assert.match(missingBotEff.warning, /in \/work\/hub is missing/);
+
+  // Target bot is planned in leadProject: falls back with warning.
+  const plannedLeadSub = parseBots(text({
+    version: 1,
+    categories: [],
+    bots: [
+      bot(subMain, "main", { name: "SubMain" }),
+      bot(subCap, "member", { name: "SubCap", lead: plannedLeadId, leadProject: "/work/hub" }),
+    ],
+  })).file;
+  const plannedEff = effectiveLead(plannedLeadSub, subCap, {
+    project: "/work/sub",
+    projects: new Map([["/work/hub", hubFile], ["/work/sub", plannedLeadSub]]),
+  });
+  assert.equal(plannedEff.lead, subMain);
+  assert.match(plannedEff.warning, /in \/work\/hub is planned/);
+
+  // Cross-project cycle: hub's Coord reports to sub's SubCap, which reports to hub's Coord (both reciprocal).
+  const cyclicHub = parseBots(text({
+    version: 1,
+    categories: [],
+    bots: [
+      bot(leadId, "main", {
+        name: "Coord",
+        lead: subCap,
+        leadProject: "/work/sub",
+        crossMembers: [{ id: subCap, project: "/work/sub" }],
+      }),
+    ],
+  })).file;
+  const cyclicSub = parseBots(text({
+    version: 1,
+    categories: [],
+    bots: [
+      bot(subMain, "main", { name: "SubMain" }),
+      bot(subCap, "member", {
+        name: "SubCap",
+        lead: leadId,
+        leadProject: "/work/hub",
+        crossMembers: [{ id: leadId, project: "/work/hub" }],
+      }),
+    ],
+  })).file;
+  const cyclicProjects = new Map([["/work/hub", cyclicHub], ["/work/sub", cyclicSub]]);
+  const cycCap = effectiveLead(cyclicSub, subCap, { project: "/work/sub", projects: cyclicProjects });
+  assert.equal(cycCap.lead, subMain);
+  assert.match(cycCap.warning, /leads back to this bot/);
+  const cycHub = effectiveLead(cyclicHub, leadId, { project: "/work/hub", projects: cyclicProjects });
+  assert.equal(cycHub.lead, "");
+  assert.match(cycHub.warning, /leads back to this bot/);
+  assert.ok(
+    checkBots(cyclicSub, null, { project: "/work/sub", projects: cyclicProjects })
+      .some((e) => /leads back to this bot/.test(e)),
+  );
+});
+
+test("cross-project lead (#850): schema validation, applyBotEdit, and collectProjectMap", async () => {
+  // Relative leadProject or leadProject without lead is warned and refused by checkBots.
+  const relRaw = sample((f) => { f.bots[1].lead = ID.main; f.bots[1].leadProject = "relative/path"; return f; });
+  assert.ok(parseBots(text(relRaw)).warnings.some((w) => /leadProject must be an absolute/.test(w)));
+  assert.ok(checkBots(relRaw).some((e) => /leadProject must be an absolute/.test(e)));
+
+  const noLeadRaw = sample((f) => { f.bots[1].leadProject = "/work/hub"; return f; });
+  assert.ok(parseBots(text(noLeadRaw)).warnings.some((w) => /leadProject without lead/.test(w)));
+  assert.ok(checkBots(noLeadRaw).some((e) => /leadProject needs a lead/.test(e)));
+
+  // Malformed crossMembers entries are warned by parseBots and refused by checkBots.
+  const badCmRaw = sample((f) => { f.bots[0].crossMembers = [{ id: "bad", project: "rel" }]; return f; });
+  assert.ok(parseBots(text(badCmRaw)).warnings.some((w) => /crossMembers.*entry must have/.test(w)));
+  assert.ok(checkBots(badCmRaw).some((e) => /crossMembers entry needs a bot id/.test(e)));
+
+  // applyBotEdit sets, preserves, and clears lead + leadProject + crossMembers on bots.
+  const start = sample();
+  const withCrossMain = applyBotEdit(start, {
+    ...start.bots[0],
+    lead: "b-7777777777",
+    leadProject: "/work/hub/",
+    crossMembers: [{ id: "b-5555555555", project: "/work/spoke/" }],
+  });
+  assert.equal(withCrossMain.bots[0].lead, "b-7777777777");
+  assert.equal(withCrossMain.bots[0].leadProject, "/work/hub");
+  assert.deepEqual(withCrossMain.bots[0].crossMembers, [{ id: "b-5555555555", project: "/work/spoke" }]);
+  const clearedMain = applyBotEdit(withCrossMain, {
+    ...withCrossMain.bots[0],
+    lead: undefined,
+    leadProject: undefined,
+    crossMembers: [],
+  });
+  assert.equal("lead" in clearedMain.bots[0], false);
+  assert.equal("leadProject" in clearedMain.bots[0], false);
+  assert.equal("crossMembers" in clearedMain.bots[0], false);
+
+  // collectProjectMap discovers projects from leadProject, crossMembers, and PROJECTS_FILE.
+  const files = new Map([
+    [
+      "/work/hub/.herdr/bots.json",
+      text({
+        version: 1,
+        categories: [],
+        bots: [
+          bot("b-7777777777", "main", {
+            name: "Coord",
+            crossMembers: [{ id: "b-5555555555", project: "/work/spoke" }],
+          }),
+        ],
+      }),
+    ],
+    [
+      "/work/spoke/.herdr/bots.json",
+      text({
+        version: 1,
+        categories: [],
+        bots: [bot("b-5555555555", "main", { name: "Spoke", lead: "b-7777777777", leadProject: "/work/hub" })],
+      }),
+    ],
+    ["/app/am-sidebar-projects.json", JSON.stringify(["/work/spoke"])],
+  ]);
+  const hubParsed = parseBots(files.get("/work/hub/.herdr/bots.json")).file;
+  const map = collectProjectMap({
+    project: "/work/hub",
+    file: hubParsed,
+    appHome: "/app",
+    readText: (p) => files.get(p) ?? null,
+  });
+  assert.deepEqual([...map.keys()].sort(), ["/work/hub", "/work/spoke"]);
+
+  // launchArgs: parentArgs, leadIdOf, and roleOf resolve reciprocal cross-project leads and reports.
+  const spokeParsed = map.get("/work/spoke");
+  assert.equal(leadIdOf(spokeParsed, spokeParsed.bots[0], { project: "/work/spoke", projects: map }), "b-7777777777");
+  assert.deepEqual(
+    parentArgs(spokeParsed, spokeParsed.bots[0], (id) => (id === "b-7777777777" ? "t1" : null), { project: "/work/spoke", projects: map }),
+    ["--parent", "t1", "--outlive-parent"],
+  );
+  const hubWithMemberLead = parseBots(text({
+    version: 1,
+    categories: [],
+    bots: [
+      bot("b-8888888888", "main", { name: "Main" }),
+      bot("b-7777777777", "member", {
+        name: "Coord",
+        crossMembers: [{ id: "b-5555555555", project: "/work/spoke" }],
+      }),
+    ],
+  })).file;
+  const map2 = new Map([["/work/hub", hubWithMemberLead], ["/work/spoke", spokeParsed]]);
+  assert.equal(roleOf(hubWithMemberLead, hubWithMemberLead.bots[1], { project: "/work/hub", projects: map2 }), "captain");
 });

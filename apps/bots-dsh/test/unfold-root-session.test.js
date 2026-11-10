@@ -4,29 +4,44 @@
 // message the person sends there must reach Unfold's control endpoint once and show in that
 // Session: the Bot never moves it to a fresh part, where the session plugin turns every message
 // away. A team saved by a version that did move it goes back to the root Session on start.
+// The Unfold Bot and Unfold's session live in Unfold's own repository (RFC 0020): here they are
+// stand-ins for what each does to the team (fake-unfold-bot.js, and fakeUnfoldSession below).
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import { registerHooks } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createAssistantMessage, createUserMessage } from '@deepseek-ai/dsh-llm'
 import { apply as applyTeam } from '../index.js'
-import { createRuntime as createUnfold } from '../../unfold-bot-dsh/index.js'
-import { fakeControl, preload } from '../../unfold-session-dsh/test/fake-control.js'
+import { createUnfold } from './fake-unfold-bot.js'
 import { fakeContext } from './fake-ctx.js'
 import { until } from './until.js'
 
-// Unfold's session plugin resolves its DSH peers from the harness this plugin's tests use.
-const session = new URL('../../unfold-session-dsh/', import.meta.url).href
-const here = new URL('../index.js', import.meta.url).href
-registerHooks({
-  resolve(specifier, context, nextResolve) {
-    if (specifier.startsWith('@deepseek-ai/') && context.parentURL?.startsWith(session)) return nextResolve(specifier, { ...context, parentURL: here })
-    return nextResolve(specifier, context)
-  },
-})
-const { apply: applySession } = await import('../../unfold-session-dsh/index.js')
+// Unfold's session plugin (@automagik/unfold-session-dsh), as the team meets it: it provides the
+// unfoldSession service on the root Session, and its pre-step (prepended) takes every turn of
+// that Session: the person's message is shown, sent to Unfold once, and Unfold's reply is shown,
+// with no model step (the turn ends on `reject`). Every other root Session's turn is refused.
+function fakeUnfoldSession(ctx, { sessionId, reply }) {
+  const sent = []
+  ctx.on('agent/pre-step', async (payload, next) => {
+    const { agent } = payload
+    if (agent.session?.id !== sessionId && agent.id !== sessionId) {
+      return agent.session?.header?.origin === 'subagent' ? next() : { kind: 'reject' }
+    }
+    for (const message of payload.messages) {
+      const s = agent.session
+      s.append('step/start', { turn: payload.turn, step: 1 })
+      s.append('user/message', message)
+      await ctx.sessions.flush?.(s)
+      sent.push(message.content.filter(block => block.type === 'text').map(block => block.text).join(''))
+      s.append('assistant/message', { turn: payload.turn, step: 1, message: createAssistantMessage({ content: [{ type: 'text', text: reply }], source: { provider: 'unfold', model: 'agentd' } }) })
+      s.append('step/end', { turn: payload.turn, step: 1 })
+    }
+    return { kind: 'reject' }
+  }, { prepend: true })
+  ctx.provide('unfoldSession', { sessionId, ready: Promise.resolve() })
+  return { sent }
+}
 
 const ROOT = 'unfold-root'
 const EMPTY = { version: 1, mainBotIds: [], workspaceId: 'w1', bots: {}, rooms: {}, agents: {}, exchanges: [], exchangeTurns: {}, questions: {}, prefs: {}, revision: 0 }
@@ -49,9 +64,6 @@ async function instance(t, { team = EMPTY, services = {} } = {}) {
   const env = { DSH_HOME: process.env.DSH_HOME, AUTOMAGIK_HOST: process.env.AUTOMAGIK_HOST }
   process.env.DSH_HOME = dsh
   process.env.AUTOMAGIK_HOST = 'unfold'
-
-  const fake = await fakeControl(`bots-unfold-root-${t.name}`)
-  preload(fake.channel())
 
   // DSH's compaction engine: what reaches it, the Bot team lets through.
   const compaction = {
@@ -194,20 +206,7 @@ async function instance(t, { team = EMPTY, services = {} } = {}) {
   })
   agentOf(ROOT)
 
-  applySession(ctx, { sessionId: ROOT }, { observer: { start() {}, stop() {} } })
-  const unfoldSession = ctx.provided.get('unfoldSession')
-  // agentd's Hello, and what it broadcasts for each admitted typed turn.
-  let seq = 0
-  const guest = (kind, fields = {}) => ({ v: 2, id: `guest-1:${++seq}`, producer: 'guest-1', seq, source: 'guest', kind, ...fields })
-  unfoldSession.bridge.ingest(guest('hello', { boot_id: 'b1', command_generation: 0, instance: { session_id: fake.session } }))
-  unfoldSession.bridge.onLink('attached')
-  fake.onAccept = (turnId) => {
-    const responseId = `r-${turnId}`
-    unfoldSession.bridge.ingest(guest('command_admitted', { command_id: turnId, generation: 1, status: 'admitted', duplicate: false }))
-    unfoldSession.bridge.ingest(guest('response_started', { response_id: responseId, request_id: turnId }))
-    unfoldSession.bridge.ingest(guest('agent_delta', { response_id: responseId, text: 'Hi from Unfold.' }))
-    unfoldSession.bridge.ingest(guest('agent_done', { response_id: responseId, status: 'completed' }))
-  }
+  const unfold = fakeUnfoldSession(ctx, { sessionId: ROOT, reply: 'Hi from Unfold.' })
 
   applyTeam(ctx, { home, browserPlugin: false })
   const rt = ctx.provided.get('omniTeam')
@@ -218,20 +217,18 @@ async function instance(t, { team = EMPTY, services = {} } = {}) {
     for (const agent of agents.values()) await agent.whenIdle().catch(() => {})
     await ctx.dispose()
     for (const dispose of disposers.splice(0).reverse()) await dispose()
-    preload(null)
-    await fake.close()
     for (const [name, value] of Object.entries(env)) {
       if (value === undefined) delete process.env[name]
       else process.env[name] = value
     }
     rmSync(root, { recursive: true, force: true, maxRetries: 5 })
   })
-  return { ctx, rt, fake, agentOf, state, created, archived, unarchived, modelSteps, teamFolder, unfoldFolder, project, compaction, cwds }
+  return { ctx, rt, unfold, agentOf, state, created, archived, unarchived, modelSteps, teamFolder, unfoldFolder, project, compaction, cwds }
 }
 
 test('the first message in the Unfold root Session reaches Unfold once and stays in that Session', async (t) => {
   const env = await instance(t)
-  const { rt, fake, agentOf, state, archived, modelSteps } = env
+  const { rt, unfold, agentOf, state, archived, modelSteps } = env
   assert.notEqual(env.teamFolder, env.unfoldFolder)
   const bot = Object.values(state().bots).find(entry => entry.kind === 'unfold')
   assert.equal(bot?.id, ROOT, 'the Unfold Bot is made on the root Session')
@@ -252,8 +249,7 @@ test('the first message in the Unfold root Session reaches Unfold once and stays
   for (const type of ['step/start', 'user/message', 'assistant/message']) assert.ok(types.includes(type), `the root journal has ${type}: ${types}`)
   const reply = root.events.find(event => event.type === 'assistant/message')
   assert.equal(reply.data.message.content.map(block => block.text).join(''), 'Hi from Unfold.')
-  assert.equal(fake.rows.filter(row => row.verb === 'submit').length, 1, 'one POST /submit')
-  assert.deepEqual(fake.texts, ['Hello Unfold'])
+  assert.deepEqual(unfold.sent, ['Hello Unfold'], 'sent to Unfold once')
   assert.deepEqual(modelSteps, [], 'no model step')
   assert.equal(saved.sessionPinned, true, 'an adopted Session is pinned')
 })
@@ -284,7 +280,7 @@ test('an Unfold Bot an earlier version moved off the root Session goes back to i
   const root = env.agentOf(ROOT)
   await until(() => root.events.some(event => event.type === 'assistant/message'))
   await root.whenIdle()
-  assert.equal(env.fake.rows.filter(row => row.verb === 'submit').length, 1)
+  assert.deepEqual(env.unfold.sent, ['Still there?'])
   assert.equal(env.rt.chatOf(ROOT), ROOT)
 })
 

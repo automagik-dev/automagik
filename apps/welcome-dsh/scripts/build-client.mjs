@@ -5,7 +5,8 @@
 //
 // client.js is committed, so `link:` and git installs need no build step. DSH loads it as
 // a classic script that hands a factory to its module loader; `require` resolves the
-// shell-seeded platform modules (react, react-dom), which therefore stay external.
+// shell-seeded platform modules (react, react-dom) and the plugin clients DSH loaded first
+// (`dsh.client.external`), which therefore stay external.
 import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -16,6 +17,9 @@ const PLUGIN = dirname(dirname(fileURLToPath(import.meta.url)))
 const PACKAGE_NAME = JSON.parse(readFileSync(join(PLUGIN, 'package.json'), 'utf8')).name
 const OUTPUT = join(PLUGIN, 'client.js')
 export const PLATFORM_MODULES = ['react', 'react-dom']
+// The Bot team's client, which the power shortcut looks up when the plugin applies
+// (power-shortcut.js): DSH hands over the one module instance it loaded, never a copy.
+export const PLUGIN_MODULES = ['@automagik/bots-dsh/client']
 
 export async function bundleClient() {
   const result = await build({
@@ -25,7 +29,7 @@ export async function bundleClient() {
     format: 'cjs',
     platform: 'browser',
     target: 'es2022',
-    external: PLATFORM_MODULES,
+    external: [...PLATFORM_MODULES, ...PLUGIN_MODULES],
     // xterm's stylesheet joins the page's styles as text (src/client/terminal.js).
     loader: { '.css': 'text' },
     treeShaking: false,

@@ -13,7 +13,8 @@ onState((state) => {
   }
 })
 
-// A right click on the title bar opens its menu (Check for Updates).
+// A right click on the title bar opens its menu (Check for Updates). The bar's content
+// (shell.css) is no-drag, so the click reaches this handler instead of moving the window.
 document.querySelector('.bar').addEventListener('contextmenu', (event) => {
   event.preventDefault()
   act('menu')

@@ -9,7 +9,7 @@ import { build } from 'esbuild'
 const { outputFiles } = await build({
   stdin: {
     contents: [
-      "export { badges, botSettings, mountShellInstallers, nav, onShell, toolCards } from './src/client/extend.js'",
+      "export { badges, botSettings, mountShellInstallers, nav, onShell, sidebarTools, toolCards } from './src/client/extend.js'",
       "export { addStrings, installLocale, t } from './src/client/i18n.js'",
     ].join('\n'),
     resolveDir: fileURLToPath(new URL('..', import.meta.url)),
@@ -24,7 +24,7 @@ runInNewContext(outputFiles[0].text, {
     throw new Error(`Unexpected platform module ${name}`)
   },
 })
-const { addStrings, badges, botSettings, installLocale, mountShellInstallers, nav, onShell, t, toolCards } = module.exports
+const { addStrings, badges, botSettings, installLocale, mountShellInstallers, nav, onShell, sidebarTools, t, toolCards } = module.exports
 
 test('a tool card is drawn by the last registration for its name, until its disposer runs', () => {
   const first = () => 'first'
@@ -137,4 +137,13 @@ test('a tool whose call can ask the user says so, for the docks; Bot settings ca
   first()
   later()
   assert.equal(botSettings.entries().length, 0)
+})
+
+test('sidebar tools keep their order and leave with their disposer', () => {
+  const offLate = sidebarTools.register({ id: 'late', order: 10, Component: () => null })
+  const offEarly = sidebarTools.register({ id: 'early', order: -10, Component: () => null })
+  assert.deepEqual([...sidebarTools.entries()].map(entry => entry.id), ['early', 'late'])
+  offLate()
+  offEarly()
+  assert.equal(sidebarTools.entries().length, 0)
 })

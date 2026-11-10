@@ -168,11 +168,49 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
         assertTrue(Prompt.choices("auth", Prompt.menu(permission)).isEmpty())
     }
 
+    @Test fun theMenuCarriesTheDialogTextAboveIt() {
+        // Claude Code's question and permission dialogs, then Codex's unruled one: the header, command and question.
+        assertEquals("☐ Color\nWhich color do you like?", Prompt.menu(question)!!.dialog)
+        assertEquals("Bash command\nmake build\nDo you want to proceed?", Prompt.menu(permission)!!.dialog)
+        assertEquals("Would you like to run the following command?\n$ cargo test -p example", Prompt.menu(codex)!!.dialog)
+        // No menu, no dialog.
+        assertNull(Prompt.menu("⏺ Done.\n❯ "))
+    }
+
     @Test fun aChangedMenuIsNotPressed() {
         val then = Prompt.menu(question)!!.options
         assertTrue(Prompt.unchanged(then, Prompt.menu(question)))
         assertFalse(Prompt.unchanged(then, Prompt.menu(permission)))
         assertFalse(Prompt.unchanged(then, null))
+    }
+
+    @Test fun aRotatingTipIsNotTheDialogsText() {
+        val older = permission.replace(" Bash command\n", " Bash command\n Tip: an older hint\n")
+        val newer = permission.replace(" Bash command\n", " Bash command\n Tip: a newer hint\n")
+        assertEquals(Prompt.menu(permission)!!.dialog, Prompt.menu(older)!!.dialog)
+        assertEquals(Prompt.menu(older)!!.dialog, Prompt.menu(newer)!!.dialog)
+    }
+
+    @Test fun aChangedDialogIsNotTheSameDialog() {
+        val then = Prompt.menu(question)!!
+        assertTrue(Prompt.sameDialog(then.dialog, Prompt.menu(question)))
+        assertFalse(Prompt.sameDialog(then.dialog, Prompt.menu(permission)))
+        // The same options for a different command is still a different dialog.
+        val changed = permission.replace("make build", "make deploy")
+        assertEquals(Prompt.menu(permission)!!.options, Prompt.menu(changed)!!.options)
+        assertFalse(Prompt.sameDialog(Prompt.menu(permission)!!.dialog, Prompt.menu(changed)))
+        assertFalse(Prompt.sameDialog(then.dialog, null))
+    }
+
+    @Test fun aRewrappedDialogIsStillTheSameDialog() {
+        // The phone pane rewraps a long command at its width: the same words, so the same dialog.
+        val rewrapped = permissionAtYes.replace(" Bash command\n make build\n", " Bash command\n make\n build\n")
+        val now = Prompt.menu(rewrapped)!!
+        assertEquals(Prompt.menu(permissionAtYes)!!.options, now.options)
+        assertTrue(Prompt.sameDialog(Prompt.menu(permissionAtYes)!!.dialog, now))
+        // A changed word is still a different dialog.
+        val changed = permissionAtYes.replace("make build", "make deploy")
+        assertFalse(Prompt.sameDialog(Prompt.menu(permissionAtYes)!!.dialog, Prompt.menu(changed)))
     }
 
     /** The same permission with the cursor where Claude Code puts it first: on 1. Yes. */
@@ -194,23 +232,28 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
     }
 
     /**
-     * A fake core for [Prompt.choose]: the agent blocked on [permissionAtYes]; after terminal.keys its status becomes
-     * [landing] (null: the key is reported typed but the prompt stays, as on the phone when the tap did nothing).
+     * A fake core for [Prompt.choose]: the agent blocked on [permissionAtYes], with [dialog] captured for its buttons;
+     * [fresh] is what terminal.read returns on the guard's re-read, and [asking] whether terminal.get still reports the
+     * block. After terminal.keys its status becomes [landing] (null: the key is reported typed but the prompt stays, as
+     * on the phone when the tap did nothing).
      */
-    private fun tapped(landing: String?): Pair<String, List<String>> {
-        var status = JSONObject().put("state", "blocked").put("kind", "permission").put("msg", "approve Bash: make build")
+    private fun tapped(landing: String?, fresh: String = permissionAtYes, dialog: String = Prompt.menu(permissionAtYes)!!.dialog,
+                       asking: Boolean = true): Pair<String, List<String>> {
+        var blocked = asking
         val calls = mutableListOf<String>()
         var clock = 0L
         val outcome = runBlocking {
             Prompt.choose({ m, p ->
                 calls += m
                 when (m) {
-                    "terminal.get" -> JSONObject().put("address", p.getString("terminal")).put("status", status).put("turn", 3)
-                    "terminal.read" -> JSONObject().put("text", permissionAtYes)
-                    "terminal.keys" -> { if (landing != null) status = JSONObject().put("state", landing); JSONObject().put("status", "blocked").put("turn", 3) }
+                    "terminal.get" -> JSONObject().put("address", p.getString("terminal")).put("turn", 3)
+                        .put("status", if (blocked) JSONObject().put("state", "blocked").put("kind", "permission").put("msg", "approve Bash: make build")
+                            else JSONObject().put("state", "working"))
+                    "terminal.read" -> JSONObject().put("text", if (blocked) fresh else "⏺ Done.\n")
+                    "terminal.keys" -> { if (landing != null) blocked = false; JSONObject().put("status", "blocked").put("turn", 3) }
                     else -> error(m)
                 }
-            }, "t1", "approve Bash: make build", Prompt.menu(permissionAtYes)!!.options, 0, "Yes", pause = { clock += it }, clock = { clock })
+            }, "t1", "approve Bash: make build", dialog, Prompt.menu(permissionAtYes)!!.options, 0, "Yes", pause = { clock += it }, clock = { clock })
         }
         return outcome to calls
     }
@@ -228,6 +271,82 @@ Enter to select · ↑/↓ to navigate · Esc to cancel
         // Pressed once, then read back until VERIFY_MS ran out: never pressed again.
         assertEquals(1, calls.count { it == "terminal.keys" })
         assertTrue(calls.count { it == "terminal.get" } > 2)
+    }
+
+    /** The same approval, same letter and options, for a different command: only the dialog text above the menu changed. */
+    private val otherCommand = permissionAtYes.replace("make build", "make deploy")
+
+    @Test fun aTapWhoseDialogTextChangedSendsNoKeys() {
+        val before = Prompt.menu(permissionAtYes)!!
+        val after = Prompt.menu(otherCommand)!!
+        assertEquals(before.options, after.options)
+        assertTrue("the dialog did not change", before.dialog != after.dialog)
+        val (outcome, calls) = tapped(landing = "working", fresh = otherCommand)
+        assertEquals("Answered elsewhere or changed; look again", outcome)
+        assertFalse(Teams.sent(outcome))
+        assertEquals(listOf("terminal.get", "terminal.read"), calls)
+    }
+
+    @Test fun aTapWhoseDialogVanishedSendsNoKeys() {
+        // The fresh read no longer draws the menu, though terminal.get still reports the old block.
+        val (gone, goneCalls) = tapped(landing = "working", fresh = "⏺ Running the tests…\n❯ ")
+        assertEquals("Answered elsewhere or changed; look again", gone)
+        assertEquals(listOf("terminal.get", "terminal.read"), goneCalls)
+        // And the agent is no longer blocked at all.
+        val (answered, answeredCalls) = tapped(landing = "working", asking = false)
+        assertEquals("Answered elsewhere or changed; look again", answered)
+        assertEquals(listOf("terminal.get"), answeredCalls)
+        assertFalse(goneCalls.contains("terminal.keys") || answeredCalls.contains("terminal.keys"))
+    }
+
+    /**
+     * Claude Code's permission with no rule, its question flush left above a blank line before the options: the walk
+     * cannot capture the dialog, so two different commands over the same options read as the same (empty) text.
+     */
+    private val blankDialog = """
+⏺ Bash(make build)
+Bash command
+make build
+Do you want to proceed?
+
+❯ 1. Yes
+  2. Yes, and always allow access to /work/example from this project
+  3. Yes, and switch to auto mode · auto mode handles these prompts for you
+  4. No
+""".trimIndent()
+
+    @Test fun aBlankCapturedDialogSendsNoKeysEvenWithMatchingOptions() {
+        val captured = Prompt.menu(blankDialog)!!
+        val changed = Prompt.menu(blankDialog.replace("make build", "make deploy"))!!
+        assertEquals("", captured.dialog)
+        assertEquals("", changed.dialog)
+        assertEquals(Prompt.menu(permissionAtYes)!!.options, captured.options)
+        assertEquals(captured.options, changed.options)
+        // There is no text above the options to compare, so blank must not equal blank: the keys stay.
+        val (outcome, calls) = tapped(landing = "working", fresh = blankDialog.replace("make build", "make deploy"),
+            dialog = captured.dialog)
+        assertEquals(listOf("terminal.get", "terminal.read"), calls)
+        assertEquals(Prompt.NOT_READABLE, outcome)
+        assertFalse(Teams.sent(outcome))
+    }
+
+    @Test fun aFreshReadWithABlankDialogSendsNoKeys() {
+        // The captured text is readable, but the re-read cannot find any text above the same options.
+        val readable = Prompt.menu(permissionAtYes)!!.dialog
+        val fresh = Prompt.menu(blankDialog)!!
+        assertEquals("", fresh.dialog)
+        assertEquals(Prompt.menu(permissionAtYes)!!.options, fresh.options)
+        val (outcome, calls) = tapped(landing = "working", fresh = blankDialog, dialog = readable)
+        assertEquals(Prompt.NOT_READABLE, outcome)
+        assertFalse(Teams.sent(outcome))
+        assertEquals(listOf("terminal.get", "terminal.read"), calls)
+    }
+
+    @Test fun anOptionsOnlyChangeKeepsItsOwnMessage() {
+        val other = permissionAtYes.replace("   3. Yes, and switch to auto mode · auto mode handles these prompts for you\n", "").replace("   4. No", "   3. No")
+        val (outcome, calls) = tapped(landing = "working", fresh = other)
+        assertEquals("Not sent: its options changed. Open the agent to answer.", outcome)
+        assertEquals(listOf("terminal.get", "terminal.read"), calls)
     }
 
     @Test fun theButtonsAreTheSameWhereverTheCursorIs() {

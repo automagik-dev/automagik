@@ -16,13 +16,14 @@ const hostCss = [...nativeBundle.matchAll(/const css\$?\w* = ("(?:[^"\\]|\\.)*")
 assert.ok(hostCss, 'supported DSH InputBar CSS must be present')
 const prefix = hostCss.match(/\.([\w]+)_card\{/)[1]
 const { outputFiles } = await build({
-  stdin: { contents: "export { CONVERSATION_CSS } from './src/client/styles.js'", resolveDir: new URL('..', import.meta.url).pathname },
+  stdin: { contents: "export { CONVERSATION_CSS } from './src/client/styles.js'; export { MODEL_CSS } from './src/client/model-menu.js'; export { COMPOSER_PACK_CSS } from './src/client/composer-pack-cells.js'", resolveDir: new URL('..', import.meta.url).pathname },
   bundle: true, format: 'cjs', platform: 'browser', write: false,
   external: ['react', 'react-dom', '@deepseek-ai/dsh-client-ui-primitives'],
 })
 const module = { exports: {} }
 runInNewContext(outputFiles[0].text, { module, exports: module.exports, require: () => ({}) })
 const botCss = module.exports.CONVERSATION_CSS
+const { MODEL_CSS, COMPOSER_PACK_CSS } = module.exports
 
 // This is a layout fixture, NOT an end-to-end replacement for the shell's editor.
 // Bot mode's conversation group marks the page and installs CONVERSATION_CSS and ComposerPlus;
@@ -169,5 +170,71 @@ test('stage leaves native wish geometry intact; Bot controls keep their two-row 
       assert.ok(multiline > before.height, 'the hero grows with the draft')
       t.diagnostic(`hero ${width}px: empty card ${before.height}px, multiline ${multiline}px`)
     })
+  }
+})
+
+// The Bot's model in its composer (composer-pack-cells.js), where DSH seats its model cell: in
+// the trailing group, beside the voice button and send. A Bot's composer flattens DSH's control
+// row (display:contents), so DSH's compact switch, which measures that row, always fires; the
+// model's name and level must still show, and a long name must end in an ellipsis in the card.
+function modelFixture(name, chatWidth) {
+  const cls = part => `${prefix}_${part}`
+  return `<html ${CONVERSATION_MARK}><style>
+    :root{--dsh-composer-card-max-width:748px;--dsh-composer-text-max-height:240px;--dsw-font-family:Arial}
+    *{box-sizing:border-box}body{margin:0;display:flex;justify-content:flex-end}main{width:${chatWidth}px;height:600px;display:flex;flex-direction:column;justify-content:flex-end;padding:16px}
+    ${hostCss}\n${botCss}\n${STAGE_CSS}\n${MODEL_CSS}\n${COMPOSER_PACK_CSS}
+  </style><main><div class="${cls('root')} fixture_composerStack"><div data-composer-card class="${cls('card')}">
+    <div data-slot="conversation.input.attachments"></div>
+    <div data-input-scroll class="${cls('scroll')}"><div class="${cls('grow')}">
+      <div contenteditable="true" role="textbox" data-composer-input class="${cls('input')}"><p><br></p></div>
+      <div data-composer-placeholder class="${cls('placeholder')}">Message</div>
+    </div></div>
+    <div class="${cls('row')}"><div class="${cls('tools')}"><button class="bt-plus">+</button></div>
+      <div class="${cls('trailing')}"><div class="${cls('standardControls')}"><button class="bt-mic">m</button>
+        <span class="bt-composer-model" data-pack="model"><button type="button" class="bt-model-trigger" aria-label="Model"><span class="bt-model-copy">
+          <span class="bt-model-name">${name}</span><span class="bt-model-provider">DeepSeek · High</span></span><svg class="bt-model-caret" width="16" height="16"></svg></button></span></div>
+        <button class="${cls('primary')}" aria-label="Send">↑</button></div></div>
+  </div></div></main></html>`
+}
+
+// DSH's own rule (observeControlRow): compact when the row's children outgrow the row's width.
+const measureRow = () => {
+  const row = document.querySelector('[class*="_row"]')
+  row.removeAttribute('data-model-compact')
+  const style = getComputedStyle(row)
+  const available = row.getBoundingClientRect().width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
+  const widths = Array.from(row.children, child => child.getBoundingClientRect().width).filter(width => width > 0)
+  const needed = widths.reduce((sum, width) => sum + width, 0) + Math.max(0, widths.length - 1) * parseFloat(style.columnGap)
+  row.toggleAttribute('data-model-compact', needed > available)
+}
+
+test('a Bot\'s composer shows its model\'s name and level, and a long name fits the card', async t => {
+  const guard = await browserGuard()
+  if (guard.skip) return t.skip(guard.skip)
+  const browser = await guard.chromium.launch({ executablePath: guard.executablePath, headless: true })
+  t.after(() => browser.close())
+  const page = await browser.newPage()
+  await page.setViewportSize({ width: 720, height: 720 })
+  const long = 'Claude Opus 5.5 with an extended context window (1M tokens) preview'
+  for (const chatWidth of [720, 460, 360]) for (const name of ['DeepSeek V4', long]) {
+    await page.setContent(modelFixture(name, chatWidth))
+    await page.evaluate(measureRow)
+    const shown = await page.evaluate(() => {
+      const box = el => document.querySelector(el).getBoundingClientRect()
+      const copy = document.querySelector('.bt-model-copy')
+      const label = document.querySelector('.bt-model-name')
+      return {
+        copy: getComputedStyle(copy).display, nameWidth: box('.bt-model-name').width, card: box('[data-composer-card]').toJSON(),
+        trigger: box('.bt-model-trigger').toJSON(), send: box('[aria-label="Send"]').toJSON(),
+        clipped: label.scrollWidth > label.clientWidth, page: document.documentElement.scrollWidth,
+      }
+    })
+    t.diagnostic(`${chatWidth}px, ${name.length} chars: name ${Math.round(shown.nameWidth)}px, clipped ${shown.clipped}`)
+    assert.notEqual(shown.copy, 'none', 'the model\'s name and level show')
+    assert.ok(shown.nameWidth > 0)
+    assert.ok(shown.trigger.left >= shown.card.left && shown.trigger.right <= shown.card.right + 1, 'the model fits the card')
+    assert.ok(shown.send.right <= shown.card.right + 1, 'send stays in the card')
+    assert.ok(shown.page <= 720, 'no sideways scroll')
+    if (name === long && chatWidth < 720) assert.ok(shown.clipped, 'a long name ends in an ellipsis')
   }
 })

@@ -12,6 +12,7 @@ import { promisify } from "node:util";
 
 import { state } from "./use-stubs.mjs";
 import { hcFileOps } from "./hc-file-ops.mjs";
+import { scratchRoot } from "./scratch-project.mjs";
 import { PROJECTS_FILE } from "../mods/am-sidebar/model.js";
 const { discoverProjects, discoverySnapshot, editFolderOf, writeBots, rememberProject, keyOf } = await import("../mods/am-sidebar/bots.js");
 
@@ -21,9 +22,7 @@ const bot = (id, kind) => ({ id, name: id.slice(2, 5), kind, look: { character: 
 const sample = () => ({ version: 1, categories: [], bots: [bot(ID.main, "main"), bot(ID.dev, "member")] });
 
 function scratch(t) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "automagik-herdr-")));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  return root;
+  return scratchRoot(t, "automagik-herdr-");
 }
 async function repo(t) {
   const root = scratch(t);

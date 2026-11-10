@@ -21,12 +21,12 @@
 
 import { execFile } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
-import { closeSync, existsSync, fchmodSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, renameSync, statSync, writeFileSync, writeSync }
+import { closeSync, existsSync, fchmodSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, renameSync, statSync, writeFileSync, writeSync }
   from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { BOT_LABEL, BOTS_PATH, effectiveLead, parseBots, projectKeyOf } from "./model.js";
+import { BOT_LABEL, BOTS_PATH, collectProjectMap, effectiveLead, parseBots, projectKeyOf } from "./model.js";
 import { UNANSWERED, paneOf, rowsOf, unwrapKeep } from "./launchArgs.js";
 import { attachKey, attachPath, confirmBindings, foldAttach, modeProblem, readAttach, verdictOf } from "./attach.js";
 import { botOfBriefingFile, briefDecision, briefedPath, briefingText, directMembers, latestReport, launchBriefingText, textHash }
@@ -99,10 +99,12 @@ const exists = async (path) => { try { await access(path); return true; } catch 
  * own live terminal, whose unlabelled children are its helpers (null: no helpers counted).
  * Shared with the CLI's `automagik-herdr brief`.
  */
-export async function gatherBriefing({ file, bot, address, ask, locate = (id) => paneOf(id, ask), guard = null, isGit = true }) {
-  const team = directMembers(file, bot.id);
-  const leadId = bot.kind === "member" ? effectiveLead(file, bot.id).lead : "";
-  const leadBot = leadId ? file.bots.find((b) => b.id === leadId) : null;
+export async function gatherBriefing({ file, bot, address, ask, locate = (id) => paneOf(id, ask), guard = null, isGit = true, project = null, projects = null }) {
+  const team = directMembers(file, bot.id, { project, projects });
+  const eff = bot.kind === "member" || bot.leadProject
+    ? effectiveLead(file, bot.id, { project, projects })
+    : { lead: "", leadProject: null, leadBot: null, warning: null };
+  const leadBot = eff.leadBot ?? (eff.lead && !eff.leadProject ? file.bots.find((b) => b.id === eff.lead) : null);
 
   // One `hc ls` for the helpers (its rows carry parent and status), one label query per
   // team bot; `hc get` only for the bot panes found and the children no query named.
@@ -199,6 +201,13 @@ async function main(mePending, inputPending, appHome) {
   const { file } = parseBots(await readFile(`${key === "/" ? "" : key}/${BOTS_PATH}`, "utf8"));
   const bot = file.bots.find((b) => b.id === botId);
   if (!bot || bot.planned) return null;
+  const projects = collectProjectMap({
+    project: key,
+    file,
+    appHome,
+    readText: (p) => { try { return readFileSync(p, "utf8"); } catch { return null; } },
+    listDir: (p) => { try { return readdirSync(p); } catch { return []; } },
+  });
   const transcript = typeof input.transcript_path === "string" ? transcriptRealPath(input.transcript_path, "claude", homedir()) : null;
   const scan = seen && transcript ? compactedSince(transcript, seen.offset) : { compacted: false, size: seen?.offset ?? 0 };
   const guard = guardOnPath(process.env.PATH);
@@ -207,8 +216,8 @@ async function main(mePending, inputPending, appHome) {
     ? gitTree?.trim() === "true"
     : typeof seen?.isGit === "boolean"
       ? seen.isGit
-      : [startedHash, seen?.hash].includes(textHash(launchBriefingText({ self: bot, file, guard, isGit: true })));
-  const now = textHash(launchBriefingText({ self: bot, file, guard, isGit }));
+      : [startedHash, seen?.hash].includes(textHash(launchBriefingText({ self: bot, file, guard, isGit: true, project: key, projects })));
+  const now = textHash(launchBriefingText({ self: bot, file, guard, isGit, project: key, projects }));
   const decision = briefDecision({ covered, started: startedHash, resumed, seen: seen?.hash ?? null, now, compacted: scan.compacted });
   const offset = () => (transcript ? sizeOf(transcript) : 0);
   const record = () => writeSeen(appHome, recordKey, { hash: decision.hash ?? seen?.hash, offset: offset(), isGit });
@@ -216,7 +225,7 @@ async function main(mePending, inputPending, appHome) {
     if (decision.hash !== null || (seen && transcript && scan.size !== seen.offset)) record();
     return null;
   }
-  const text = await gatherBriefing({ file, bot, address: terminal, ask: hcJson, guard, isGit, ...(ledger ? { locate: ledger.locate } : {}) });
+  const text = await gatherBriefing({ file, bot, address: terminal, ask: hcJson, guard, isGit, project: key, projects, ...(ledger ? { locate: ledger.locate } : {}) });
   return { text, record };
 }
 

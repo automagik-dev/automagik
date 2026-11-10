@@ -60,6 +60,8 @@ export const DotsIcon = lineIcon(['M5 10h.01M10 10h.01M15 10h.01'])
 export const CheckIcon = lineIcon(['M4.5 10.5l3.5 3.5 7.5-8'])
 export const GlobeIcon = lineIcon(['M10 3a7 7 0 1 0 0 14 7 7 0 0 0 0-14z', 'M3 10h14', 'M10 3c2 2.2 2.9 4.5 2.9 7S12 14.8 10 17c-2-2.2-2.9-4.5-2.9-7S8 5.2 10 3z'])
 export const ArrowDownIcon = lineIcon(['M10 4v12', 'M5 11l5 5 5-5'])
+// Open in the viewer: arrows to two opposite corners.
+export const ExpandIcon = lineIcon(['M11.5 4H16v4.5', 'M16 4l-5 5', 'M8.5 16H4v-4.5', 'M4 16l5-5'])
 export const DownloadIcon = lineIcon(['M10 3.5v9', 'M6.5 9.5L10 13l3.5-3.5', 'M4 16h12'])
 export const GaugeIcon = lineIcon(['M3.5 13.5a6.5 6.5 0 1 1 13 0', 'M10 13.5l3-4', 'M10 13.5h.01'])
 export const PlugIcon = lineIcon(['M7 3v4M13 3v4', 'M5 7h10v2.5a5 5 0 0 1-10 0z', 'M10 14.5V17'])

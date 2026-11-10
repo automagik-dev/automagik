@@ -18,6 +18,7 @@ import { install as installDshUpdate } from '../src/host/dsh-update.js'
 import { createPrivacy } from '../src/host/privacy.js'
 import { install as installUpdate } from '../src/host/update.js'
 import { fakeContext } from './fake-ctx.js'
+import { unfoldLeads } from './fake-unfold-bot.js'
 
 const PKG = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 const realFetch = globalThis.fetch
@@ -81,6 +82,16 @@ test('Unfold\'s instance is named by AUTOMAGIK_HOST or AUTOMAGIK_PRELOAD, and on
   assert.equal(constants.inUnfoldInstance({ AUTOMAGIK_HOST: 'desktop' }), false)
   assert.equal(constants.inUnfoldInstance({ AUTOMAGIK_PRELOAD: 'genie' }), false)
   assert.equal(constants.inUnfoldInstance({}), false)
+})
+
+// The Unfold Bot (in Unfold's own repository, here its stand-in) and the welcome's hostOf tell
+// Unfold's instance by the same rule, held to one written case table (RFC 0020).
+test('the host rule answers every case of its table, here and in the Unfold Bot stand-in', () => {
+  const table = JSON.parse(readFileSync(new URL('./fixtures/unfold-host-rule.json', import.meta.url), 'utf8'))
+  assert.ok(table.cases.some(row => row.unfold) && table.cases.some(row => !row.unfold))
+  for (const { name, env, unfold } of table.cases) {
+    assert.deepEqual([constants.inUnfoldInstance(env), unfoldLeads(env)], [unfold, unfold], name)
+  }
 })
 
 test('elsewhere the same setup asks the registry and GitHub, and offers the update', async () => {
