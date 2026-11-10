@@ -53,9 +53,9 @@ test('each capture matches its recorded digest and is described in CAPTURES.md',
 
 test('links go to local anchors or reviewed destinations', () => {
   const allowed = new Set([
-    'https://github.com/automagik-dev/automagik',
-    'https://github.com/automagik-dev/automagik/blob/dev/apps/landing/assets/CAPTURES.md',
-    'https://github.com/automagik-dev/automagik/releases',
+    'https://github.com/automagik-si/automagik',
+    'https://github.com/automagik-si/automagik/blob/dev/apps/landing/assets/CAPTURES.md',
+    'https://github.com/automagik-si/automagik/releases',
     'https://github.com/deepseek-ai/deepseek-harness',
     'https://deepseek.com/en/harness/',
   ])
@@ -70,7 +70,7 @@ test('links go to local anchors or reviewed destinations', () => {
 })
 
 test('the developer commands are exactly the verified ones', () => {
-  assert.ok(html.includes('<code>curl -fsSL https://raw.githubusercontent.com/automagik-dev/genie/main/install.sh | bash</code>'))
+  assert.ok(html.includes('<code>curl -fsSL https://raw.githubusercontent.com/automagik-si/genie/main/install.sh | bash</code>'))
   assert.ok(html.includes('<code>genie desktop</code>'))
   assert.match(text, /The Genie CLI installs on Linux \(x64 or arm64\) and on a Mac with Apple silicon/)
   assert.match(text, /there is no Linux arm64 desktop build yet/)

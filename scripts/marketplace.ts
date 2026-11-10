@@ -12,7 +12,7 @@
  * `check` proves that each pinned commit of this repository is reachable from HEAD and holds, at
  * the entry's path, a package.json with the entry's name and version: a market installs exactly
  * that commit. A vetted plugin's commit is proven against its fork by dsh-marketplace's check.
- * automagik-dev/dsh-marketplace reads this file at each release (`v<version>`) for the titles,
+ * automagik-si/dsh-marketplace reads this file at each release (`v<version>`) for the titles,
  * categories and paths, and lists the plugins at that release's commit.
  */
 import { execFileSync } from 'node:child_process';

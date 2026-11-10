@@ -594,22 +594,22 @@ describe('the plugin lane', () => {
     const dir = mkdtempSync(join(tmpdir(), 'lane-'));
     writeFileSync(join(dir, 'automagik-bots-dsh-3.22.1.tgz'), 'tarball');
     const lane = manifest({
-      repository: 'https://github.com/automagik-dev/automagik',
+      repository: 'https://github.com/automagik-si/automagik',
       version: '3.22.1',
       commit: 'a'.repeat(40),
       packages: { '@automagik/bots-dsh': { version: '3.22.1', file: 'automagik-bots-dsh-3.22.1.tgz', integrity: 'sha512-x', size: 7 } },
     }, { base: '3.22.0', issuedAt: '2026-10-26T03:00:00Z', dir, engines: () => '>=0.2.1-rc.3 <0.2.2-0' });
-    expect(lane.plugins[0].url).toBe('https://github.com/automagik-dev/automagik/releases/download/v3.22.1/automagik-bots-dsh-3.22.1.tgz');
+    expect(lane.plugins[0].url).toBe('https://github.com/automagik-si/automagik/releases/download/v3.22.1/automagik-bots-dsh-3.22.1.tgz');
     expect(lane.plugins[0].sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(lane.plugins[0].engines.dsh).toBe('>=0.2.1-rc.3 <0.2.2-0');
     expect([lane.base, lane.sequence, lane.keyId]).toEqual(['3.22.0', 220001, 'automagik-2026-10']);
     writeFileSync(join(dir, 'dsh-addon-1.5.6-omni.8.tgz'), 'addon');
-    const carried = manifest({ repository: 'https://github.com/automagik-dev/automagik', version: '3.22.1', commit: 'a'.repeat(40), packages: {} }, {
+    const carried = manifest({ repository: 'https://github.com/automagik-si/automagik', version: '3.22.1', commit: 'a'.repeat(40), packages: {} }, {
       base: '3.22.0', issuedAt: '2026-10-26T03:00:00Z', dir, engines: () => '',
       addons: { 'dsh-addon': { version: '1.5.6-omni.8', file: 'dsh-addon-1.5.6-omni.8.tgz', integrity: 'sha512-y', size: 5, engines: { dsh: '>=0.2.0-rc.1 <0.3.0' }, source: `github:automagik-genie/dsh-addon#${'b'.repeat(40)}` } },
     });
     // Apart from plugins[] (Omni serves those, checking each), on this release, in the plugins' shape.
-    expect(carried.addons).toEqual([{ name: 'dsh-addon', version: '1.5.6-omni.8', url: 'https://github.com/automagik-dev/automagik/releases/download/v3.22.1/dsh-addon-1.5.6-omni.8.tgz', integrity: 'sha512-y', sha256: createHash('sha256').update('addon').digest('hex'), size: 5, engines: { dsh: '>=0.2.0-rc.1 <0.3.0' } }]);
+    expect(carried.addons).toEqual([{ name: 'dsh-addon', version: '1.5.6-omni.8', url: 'https://github.com/automagik-si/automagik/releases/download/v3.22.1/dsh-addon-1.5.6-omni.8.tgz', integrity: 'sha512-y', sha256: createHash('sha256').update('addon').digest('hex'), size: 5, engines: { dsh: '>=0.2.0-rc.1 <0.3.0' } }]);
     const pair = generateKeyPairSync('ed25519');
     const bytes = Buffer.from(JSON.stringify(lane));
     const signature = signLane(bytes, pair.privateKey.export({ type: 'pkcs8', format: 'pem' }).toString());

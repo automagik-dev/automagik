@@ -49,7 +49,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { verifyLane, ROOT as REPO_ROOT, type Lane } from './lane';
 
-const REPO = 'automagik-dev/automagik';
+const REPO = 'automagik-si/automagik';
 const PUBLIC_REPO = `https://github.com/${REPO}`;
 
 /** This host's home directory, the base of every default path below. */
