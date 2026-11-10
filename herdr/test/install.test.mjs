@@ -197,7 +197,7 @@ case "$1" in
     case "$2" in
       install) printf '%s\\n' "$0" > "$S/service"; printf '%s\\n' "$PATH" > "$S/service-path"; echo "Installed $S/service"; echo "Runs: $0" ;;
       uninstall) rm -f "$S/service"; echo "Uninstalled; automations.yaml and history are left where they are" ;;
-      status) if [ -f "$S/service" ]; then echo "service installed: true"; else echo "service installed: false"; fi ;;
+      status) [ ! -f "$S/status-fails" ] || exit 3; if [ -f "$S/service" ]; then echo "service installed: true"; else echo "service installed: false"; fi ;;
     esac ;;
 esac
 `);
@@ -2811,6 +2811,16 @@ test("#220: --uninstall keeps the binary while a login service this installer di
   assert.ok(existsSync(join(schedState(own), "service")), "the person's service stays");
   assert.ok(!schedCalls(own).includes("service uninstall"), "never uninstalled for them");
   assert.ok(existsSync(schedRecord(own)), "still recorded as this installer's binary");
+  // No answer to `service status` (asked with the install side's time limit): nobody knows whether
+  // a service runs it, so the binary stays then too.
+  writeFileSync(join(schedState(own), "status-fails"), "");
+  assert.equal(own.run("--no-usagemeter").code, 0);
+  const mute = own.run("--uninstall");
+  assert.equal(mute.code, 0, mute.err);
+  assert.match(mute.out, /Left .*\/herdr-automations: it gave no answer to 'service status' within 15 s, so whether a login service runs it is not known\./);
+  assert.equal(sha(schedBin(own)), bytes);
+  rmSync(join(schedState(own), "status-fails"));
+  assert.match(readFileSync(INSTALL, "utf8"), /! bounded 15 "\$sstat" "\$SCHED" service status/, "the uninstall side's question is bounded like the install side's");
   // Once the person removes the service, a reinstall and --uninstall take the binary.
   assert.equal(spawnSync(schedBin(own), ["service", "uninstall"], { env: { HOME: own.home, PATH: "/usr/bin:/bin" } }).status, 0);
   assert.equal(own.run("--no-usagemeter").code, 0);

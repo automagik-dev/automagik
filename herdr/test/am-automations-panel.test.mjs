@@ -5,6 +5,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
+import { spawnSync } from "node:child_process";
+import { existsSync, readdirSync } from "node:fs";
 
 const here = (f) => new URL(f, import.meta.url).href;
 const stubs = { herdr: here("./am-automations-herdr.mjs"), "gpui-kit": here("./gpui-stub.mjs"), "gpui-base": here("./gpui-stub.mjs") };
@@ -53,7 +55,7 @@ test("the repair command: our pinned release for this Mac's arch, hash-checked, 
   assert.ok(arm.includes(`echo "${SCHEDULER.sha256.arm64}  herdr-automations" | shasum -a 256 -c`));
   assert.match(arm, /shasum -a 256 -c && chmod 755 herdr-automations && mv herdr-automations ~\/\.local\/bin\/; s=\$\?; /, "moved in only once the hash matches");
   // Its scratch folder goes whether it worked or not, and the subshell keeps the install's status.
-  assert.ok(arm.startsWith('(mkdir -p ~/.local/bin && d="$(mktemp -d)" && cd "$d" && curl '));
+  assert.ok(arm.startsWith('(d=; mkdir -p ~/.local/bin && d="$(mktemp -d)" && cd "$d" && curl '));
   assert.ok(arm.endsWith('; s=$?; cd /; [ -z "$d" ] || rm -rf "$d"; exit "$s")'));
   const intel = repairCommand("x86_64");
   assert.match(intel, /herdr-automations-v[^/]+\/herdr-automations_darwin_amd64 /);
@@ -66,6 +68,31 @@ test("the repair command: our pinned release for this Mac's arch, hash-checked, 
   assert.match(linuxArm, /herdr-automations_linux_arm64 /);
   assert.ok(linuxArm.includes(SCHEDULER.linux.arm64));
   assert.equal(repairCommand("arm64", "Darwin"), arm, "a Mac is the default");
+});
+
+// The command is pasted into the person's own terminal, and a ( … ) subshell inherits that shell's
+// variables. Run for real, in a scratch home where ~/.local/bin cannot be made (.local is a file),
+// with `d` already naming a folder: the cleanup must not touch it. Nothing is downloaded: mkdir
+// fails first, so curl never runs.
+test("the repair command never removes a folder it did not make: a preset d survives a failing mkdir", () => {
+  const scratch = mkdtempSync(join(tmpdir(), "am-repair-"));
+  try {
+    const home = join(scratch, "home"), victim = join(scratch, "victim"), tmp = join(scratch, "tmp");
+    for (const dir of [home, victim, tmp]) mkdirSync(dir);
+    writeFileSync(join(home, ".local"), "a file where the folder would go\n");
+    writeFileSync(join(victim, "keep.txt"), "the person's own\n");
+    for (const [machine, os] of [["x86_64", "Linux"], ["arm64", "Darwin"]]) {
+      const env = { HOME: home, TMPDIR: tmp, PATH: "/usr/bin:/bin", d: victim };
+      // Both ways a terminal can hold it: exported into the environment, and a plain shell variable.
+      for (const script of [repairCommand(machine, os), `d='${victim}'; ${repairCommand(machine, os)}`]) {
+        const r = spawnSync("sh", ["-c", script], { env, encoding: "utf8" });
+        assert.notEqual(r.status, 0, "mkdir failed, and the command says so by its status");
+        assert.equal(readFileSync(join(victim, "keep.txt"), "utf8"), "the person's own\n", `${os}: the preset d is untouched`);
+        assert.deepEqual(readdirSync(tmp), [], "no scratch folder was made or left");
+        assert.equal(existsSync(join(home, ".local", "bin")), false);
+      }
+    }
+  } finally { rmSync(scratch, { recursive: true, force: true }); }
 });
 
 // The release the Integrator cuts carries the checksums; until they are pasted in, this fails loudly

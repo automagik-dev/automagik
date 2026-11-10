@@ -1153,10 +1153,21 @@ uninstall_scheduler() {
   # A login service this installer did not start (Start in the panel, or `service install` by hand)
   # runs this binary and restarts it for good: the binary stays, so nothing relaunches a missing
   # file, and the person removes both. The record stays with it: the binary is still ours.
-  if [ "$(sched_get service)" != installed ] \
-    && "$SCHED" service status </dev/null 2>/dev/null | grep -q '^service installed: true'; then
-    say "Left $SCHED: a login service this installer did not start runs it (removing the binary would leave that service restarting a missing file). To remove both: herdr-automations service uninstall, then rm $SCHED"
-    return 0
+  # `service status` is asked with the same 15 s limit as the install side's questions; with no
+  # answer nobody knows whether a service runs it, so the binary stays then too.
+  if [ "$(sched_get service)" != installed ]; then
+    sstat=$(mktemp "${TMPDIR:-/tmp}/automagik-herdr-scheduler.XXXXXX") || sstat=
+    if [ -z "$sstat" ] || ! bounded 15 "$sstat" "$SCHED" service status; then
+      [ -z "$sstat" ] || rm -f "$sstat"
+      say "Left $SCHED: it gave no answer to 'service status' within 15 s, so whether a login service runs it is not known. To remove both: herdr-automations service uninstall, then rm $SCHED"
+      return 0
+    fi
+    if grep -q '^service installed: true' "$sstat"; then
+      rm -f "$sstat"
+      say "Left $SCHED: a login service this installer did not start runs it (removing the binary would leave that service restarting a missing file). To remove both: herdr-automations service uninstall, then rm $SCHED"
+      return 0
+    fi
+    rm -f "$sstat"
   fi
   if [ "$(sched_get service)" = installed ]; then
     if sout=$("$SCHED" service uninstall </dev/null 2>&1); then
