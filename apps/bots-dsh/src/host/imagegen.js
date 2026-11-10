@@ -214,6 +214,7 @@ export function createImageGen({ credentials: credentialsOf, codex: codexOf = ()
       // A signed-in Codex that acp-dsh does not let draw (a safety check of its image run did
       // not hold) is not a missing sign-in: say what helps.
       const codex = await codexService()?.imageAccess().catch(() => undefined)
+      if (codex?.reason === 'account') throw refused('Codex is signed in on this computer, but the user has not confirmed its account for Bots. Ask the user to confirm it in a Bot\'s chat (choose a Codex model there), or to add an OpenAI key in Settings → Models; then generate_image can draw.')
       if (codex?.unsupported === true) throw refused('Codex is signed in, but this Codex version is not supported for drawing yet. Ask the user to update Automagik, or to add an OpenAI key in Settings → Models; then generate_image can draw.')
       if (codex?.reason === 'config') throw refused('Codex is signed in, but it could not load its own configuration, so it cannot draw. Ask the user to fix Codex\'s config file, or to add an OpenAI key in Settings → Models; then generate_image can draw.')
       if (codex?.reason === 'unreadable') throw refused('Codex is signed in, but it could not be checked for safe drawing, so it cannot draw now. Ask the user to try again later, or to add an OpenAI key in Settings → Models; then generate_image can draw.')

@@ -246,7 +246,7 @@ export function install(rt) {
    * Whether `spec.to` can take Bots now. Without `probe` only acp-dsh's `status()` is read
    * (nothing is spawned) and a served route is `present`; with it, `inspect` asks the CLI for
    * its sign-in and only a definite `true` is `ready`. Never `refresh()`, which starts installs.
-   * @returns {Promise<{ state: 'ready' | 'present' | 'gone' } | { state: 'waiting', reason: 'sign-in' | 'cli' | 'checking' }>}
+   * @returns {Promise<{ state: 'ready' | 'present' | 'gone' } | { state: 'waiting', reason: 'sign-in' | 'account' | 'cli' | 'checking' }>}
    */
   async function destination(spec, probe) {
     let acp
@@ -266,7 +266,9 @@ export function install(rt) {
     if (row === undefined || row === null) return CHECKING
     const seen = rowState(row)
     if (seen !== undefined) return seen
-    if (row.signedIn === true) return { state: 'ready' }
+    // Signed in, but to an account the person has not confirmed for Bots (#869): no Bot moves
+    // onto it. Only acp-dsh saying `needed` waits; anything else is as before.
+    if (row.signedIn === true) return row.consent === 'needed' ? { state: 'waiting', reason: 'account' } : { state: 'ready' }
     return row.signedIn === false ? { state: 'waiting', reason: 'sign-in' } : CHECKING
   }
 
@@ -310,7 +312,7 @@ export function install(rt) {
     said.set(key, reason)
     if (reason !== undefined) rt.warn?.(...line)
   }
-  const WHY = { 'sign-in': 'is not signed in', cli: 'is not ready', checking: 'could not be checked' }
+  const WHY = { 'sign-in': 'is not signed in', account: 'waits for its account to be confirmed', cli: 'is not ready', checking: 'could not be checked' }
   // When each route was first read as gone, and whether a pass has run since the start.
   const goneSince = new Map()
   let started = false
@@ -441,7 +443,8 @@ export function install(rt) {
       if (route.state !== 'ready') {
         const reason = route.state === 'waiting' ? route.reason : 'cli'
         reasons.set(spec.from, reason)
-        if (reason === 'sign-in') lookAgain(SIGN_IN_RECHECK_MS)
+        // Neither a terminal sign-in nor a terminal account change is announced: look again later.
+        if (reason === 'sign-in' || reason === 'account') lookAgain(SIGN_IN_RECHECK_MS)
         else if (route.state === 'waiting') unread = true
         continue
       }

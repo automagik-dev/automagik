@@ -299,8 +299,11 @@ export class AcpAdapter extends LlmAdapter {
    * @param {import('@deepseek-ai/cordis').Context} ctx
    * @param {Map<string, { name: string, catalog: import('./catalog.js').Catalog, installed?(): boolean, spawn(): { command: string, args?: string[], env?: Record<string, string> } }>} agents
    */
-  constructor(ctx, agents, { dshTools = () => false, backchannel, redactor, onSignedOut, images = () => undefined } = {}) {
+  constructor(ctx, agents, { dshTools = () => false, backchannel, redactor, onSignedOut, images = () => undefined, access } = {}) {
     super()
+    // Asked before a turn opens on an agent (#869): a text when its signed-in account has not
+    // been confirmed for the app, else undefined. Never asked for a call that continues a turn.
+    this.access = access
     // Told which agent answered ACP's auth_required, so a cached "signed in" is dropped at once.
     this.onSignedOut = onSignedOut
     this.ctx = ctx
@@ -591,6 +594,11 @@ export class AcpAdapter extends LlmAdapter {
         this.live.delete(sessionId)
         live = undefined
       }
+      // The account this CLI is signed in to waits for the person's word (index.js, consent.js):
+      // refused like a signed-out CLI, before any process starts, and never answered elsewhere.
+      let unconfirmed
+      try { unconfirmed = await this.access?.(options.provider) } catch {}
+      if (typeof unconfirmed === 'string' && unconfirmed !== '') return yield finish('error', unconfirmed, MODEL_ACCESS_REQUIRED)
       let fresh = false
       let crossing = false
       const prior = lastProviderOf(options.messages)

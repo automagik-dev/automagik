@@ -98,6 +98,8 @@ export function modelHint(bot, roster, state) {
   if (!shown.served && (roster.models ?? []).length > 0) return t('This model is not available now. Pick another one.')
   const served = servedOf(roster, shown.ref)
   if (served?.needsSignIn) return t('{model} needs a sign-in before it can answer.', { model: served.name })
+  // Signed in on this computer, to an account the person has not confirmed for Bots (#869).
+  if (served?.needsAccount) return t('{model} waits for you to confirm its account.', { model: served.name })
   // A plan route whose Bots wait for its CLI (the host's subscription-move.js): the Bot still
   // answers on this model, and moves once the CLI can take it.
   const waiting = served?.covered ? roster.subscriptionWaiting?.[served.provider] : undefined

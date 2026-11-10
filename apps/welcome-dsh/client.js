@@ -9202,6 +9202,8 @@ var PT_BR = {
   "Updating": "Atualizando",
   "Sign-in needed": "Falta entrar",
   "Check sign-in": "Verificar login",
+  "Confirm account": "Confirmar conta",
+  "{name} is signed in on this computer. Confirm its account in a Bot's chat before Bots use it.": "{name} já está com login feito neste computador. Confirme a conta no chat de um Bot antes de os Bots usarem essa conta.",
   "Off": "Desligado",
   "Setting up": "Configurando",
   "Needs a retry": "Precisa tentar de novo",
@@ -11895,6 +11897,7 @@ function stateOf(agent) {
   if (agent.connector.state !== "ready") return agent.connector.state;
   if (agent.restartNeeded) return "restart";
   if (agent.signedIn !== true) return agent.signedIn === false ? "login-required" : "sign-in-unknown";
+  if (agent.consent === "needed") return "account";
   return "ready";
 }
 function badgeOf(agent) {
@@ -11907,6 +11910,7 @@ function badgeOf(agent) {
   if (state === "restart") return t("Restart needed");
   if (state === "login-required") return t("Sign-in needed");
   if (state === "sign-in-unknown") return t("Check sign-in");
+  if (state === "account") return t("Confirm account");
   if (state === "ready") return t("Ready");
   return null;
 }
@@ -11929,7 +11933,8 @@ function agentLines(agent) {
     return lines;
   }
   lines.push({ tone: "ok", text: agent.cli.version ? t("Found the {cli} CLI on this computer (version {version}).", { cli, version: agent.cli.version }) : t("Found the {cli} CLI on this computer.", { cli }) });
-  if (agent.signedIn === true) lines.push({ tone: "ok", text: t("Signed in to {name}.", { name }) });
+  if (agent.signedIn === true && agent.consent !== "needed") lines.push({ tone: "ok", text: t("Signed in to {name}.", { name }) });
+  if (agent.signedIn === true && agent.consent === "needed" && !cliBusy(agent)) lines.push({ tone: "bad", text: t("{name} is signed in on this computer. Confirm its account in a Bot's chat before Bots use it.", { name }), action: "login", label: t("Confirm account") });
   if (agent.signedIn === false && !cliBusy(agent)) {
     lines.push({ tone: "bad", text: t("Not signed in to {name}. Sign in from a Bot's chat.", { name }), action: "login" });
     lines.push({ tone: "muted", text: t("Or run {command} in a terminal, then check again.", { command: SIGN_IN_OF[agent.id] ?? cli }), action: "check" });
@@ -12045,7 +12050,7 @@ function AcpLine({ line, agent, acp, busy }) {
       line.text,
       line.link ? [" ", (0, import_react8.createElement)("a", { key: "link", className: "oai-link", href: line.link.href, target: "_blank", rel: "noreferrer" }, line.link.text)] : null,
       line.action === "retry" ? (0, import_react8.createElement)("button", { type: "button", className: "oai-ghost oai-acp-act", disabled: busy, onClick: () => acp.retry(agent) }, t("Retry")) : null,
-      line.action === "login" ? (0, import_react8.createElement)("button", { type: "button", className: "oai-ghost oai-acp-act", disabled: busy, onClick: () => acp.login(agent) }, t("Sign in")) : null,
+      line.action === "login" ? (0, import_react8.createElement)("button", { type: "button", className: "oai-ghost oai-acp-act", disabled: busy, onClick: () => acp.login(agent) }, line.label ?? t("Sign in")) : null,
       line.action === "check" ? (0, import_react8.createElement)("button", { type: "button", className: "oai-ghost oai-acp-act", disabled: busy, onClick: () => acp.check(agent) }, t("Check again")) : null
     ),
     line.details ? (0, import_react8.createElement)(

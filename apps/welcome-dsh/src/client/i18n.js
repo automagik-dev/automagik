@@ -253,6 +253,8 @@ export const PT_BR = {
   'Updating': 'Atualizando',
   'Sign-in needed': 'Falta entrar',
   'Check sign-in': 'Verificar login',
+  'Confirm account': 'Confirmar conta',
+  '{name} is signed in on this computer. Confirm its account in a Bot\'s chat before Bots use it.': '{name} já está com login feito neste computador. Confirme a conta no chat de um Bot antes de os Bots usarem essa conta.',
   'Off': 'Desligado',
   'Setting up': 'Configurando',
   'Needs a retry': 'Precisa tentar de novo',
