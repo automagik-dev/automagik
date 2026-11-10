@@ -37,8 +37,9 @@ API and WebSocket authentication.
   exposes unprotected routes and static assets.
   [README](https://unpkg.com/@deepseek-ai/dsh-host-webserver@0.2.2-rc.1/README.md)
 - `@deepseek-ai/dsh-client-connection` 0.2.2-rc.1, `README.md`, "Browser authentication and
-  request trust": the launch token is exchanged only at `GET /`, the cookie is minted there,
-  static assets stay public, and the HTTP carrier accepts no `Authorization` header.
+  request trust": the launch token is accepted at the root exchange and at `/connect`; the
+  root mints the browser cookie and `/connect` mints an owner API cookie, while static assets
+  stay public and the HTTP carrier accepts no `Authorization` header.
   [README](https://unpkg.com/@deepseek-ai/dsh-client-connection@0.2.2-rc.1/README.md)
 - The `connection/request` waterfall admits or wraps an **authenticated** shared API request.
   It is post-admission, so it cannot authenticate a request that arrived without a cookie.
@@ -65,14 +66,15 @@ in-DSH SSO before that hook exists.
 **What it means for the deliveries.**
 
 - #907 must put the gate in front of loopback DSH and cover **every** route, including static
-  assets, and every WebSocket upgrade, not only `/api`.
+  assets, and every WebSocket upgrade: the root exchange, `/connect` and `/api`.
 - #908's passkey claim belongs to the gate; DSH never sees a person.
 - #909's Cloud mode keeps DSH at the owner principal; role filtering has to happen in the gate
   or in Cloud's own layer.
 - #911's isolation review should test gate coverage as a boundary, not assume DSH enforces it.
 - #905 and #906 are unaffected: the desktop starts its own DSH and trusts the OS user.
 - #910's image smoke can keep answering `401` at the gate; that is healthy, not a failure.
-- #912's end-to-end test must include an unauthenticated request to every route and WebSocket.
+- #912's end-to-end test must include an unauthenticated request to every route and WebSocket,
+  including `/connect`.
 
 ## 2. Can DSH's multi-day session cookie stay behind the gate?
 
@@ -82,13 +84,18 @@ cookie is a stateless signed credential, not a server-side session: host-only, `
 and `Secure` only when the DSH listener itself serves TLS. A gate can pass it through
 (transparent mode) or mint it upstream and replay it (gate-held mode). Gate-held is the
 recommendation: the browser then holds only the gate's session cookie, so `SameSite`, port and
-`Secure` rules stop constraining the design.
+`Secure` rules stop constraining the design. DSH issues the credential at two points: the
+root exchange mints the browser cookie, and `GET /connect` mints a signed owner API cookie for
+the API and WebSocket carrier. A gate that covers every route has to handle both.
 
 **Evidence.**
 
 - Cookie attributes: `apps/desktop/test/fixtures/client-connection-cookie-lax/index.js:348-349`.
   The `cookieMaxAgeDays` default of 30 and its minimum of 1 are at `:1017`; the plain `401`
   body is at `:576`.
+- The second exchange: `authorizeConnect` at
+  `apps/desktop/test/fixtures/client-connection-cookie-lax/index.js:505-536` mints the API
+  cookie; its route is registered at `:1061-1065`.
 - The fixture header at `apps/desktop/test/client-connection-cookie-lax.test.js:1-9` records
   that it is the unmodified upstream package file, pinned to DSH 0.2.2-rc.1.
 - `@deepseek-ai/dsh-client-connection` 0.2.2-rc.1, `README.md`, "Browser authentication and
@@ -98,7 +105,7 @@ recommendation: the browser then holds only the gate's session cookie, so `SameS
   [README](https://unpkg.com/@deepseek-ai/dsh-client-connection@0.2.2-rc.1/README.md)
 - RFC 0024 already has the gate holding the launch token
   (`docs/rfcs/0024-automagik-cloud.md:233-238`) and lists the DSH cookie as open question 6
-  (`:835-837`).
+  (`:836-838`).
 
 **Transparent mode has sharp edges.** Preserve the exact `Host` spelling and the `Origin`;
 strip any path prefix before DSH sees `/`; forward `Set-Cookie` and the WebSocket upgrade
@@ -117,12 +124,12 @@ storage and container topology (#907), not the answer.
 
 **What it means for the deliveries.**
 
-- #907 should store the DSH cookie server-side and replay it, including on the WebSocket
-  handshake, and strip DSH's `Set-Cookie` from browser responses.
+- #907 should store DSH's browser and API cookies server-side and replay them, including on
+  the WebSocket handshake, and strip DSH's `Set-Cookie` from browser responses.
 - #907 must re-mint on `401` and re-read the launch token after a DSH restart.
 - #909's gate session and workspace tokens are separate from DSH's cookie: revoking a gate
   session does not revoke DSH's cookie, and "sign out everywhere" covers only the gate.
-- #912 should test the `401` path, the WebSocket path and a DSH restart.
+- #912 should test the `401` path, `/connect`, the WebSocket path and a DSH restart.
 
 ## 3. What does `safeStorage` do on each OS, and what happens with no Linux secret store?
 
@@ -243,35 +250,40 @@ and WebAuthn would reject the ceremony anyway; do not plan on it.
 
 **The word first.** In this record, "delivery-H mask" means RFC 0022's delivery-H security
 mask: the per-OS sandbox over DSH Bots' commands. It does **not** mean the window frame or
-title bar. The frame is a separate visual workstream; its macOS, Linux and Windows shapes are
-in `apps/desktop/src/frame.js` and `apps/desktop/src/shell.css`, and nothing here changes them.
+title bar. The frame is a separate visual workstream: its macOS and Linux shapes are in
+`apps/desktop/src/frame.js` and `apps/desktop/src/shell.css`, and no Windows build is supported.
 
 **Answer.** The mask must keep a Bot's shell from reading the OS secret store, the session
 bus, the app's data folder, hc's core socket and link credential, and SSH keys or config.
-Only Linux has such a mask today, through bwrap. macOS has no read mask: DSH's existing
-Seatbelt fence governs writes, not reads, so the Keychain, the app's data and SSH material
-are not hidden from a Bot's shell. Windows is not a supported build and has no mask; DPAPI is
-per user anyway. Desktop Cloud sign-in stays off on an OS until the mask exists there, or the
-owner accepts the risk in writing.
+No OS has that widened mask for desktop Bots today. Linux has a bwrap runner to extend
+(#631, still open): its first cut is for pack-started dsh-tui Bots and masks hc, the core
+socket and SSH material, not the secret store, the session bus or the app's data. macOS has
+no read mask: DSH's own per-call fence applies on both OSes and governs writes, not reads.
+Windows is not a supported build and has no mask; DPAPI is per user anyway. Desktop Cloud
+sign-in stays off on an OS until the widened mask exists there, or the owner accepts the
+risk in writing.
 
 **Evidence.**
 
 - RFC 0022 delivery H defines the mask and puts it before phase 1:
-  `docs/rfcs/0022-desktop-chat-view.md:508-528`, with the Linux-only note at `:519-520`.
+  `docs/rfcs/0022-desktop-chat-view.md:508-528`, with the Linux-only note at `:519-520` for
+  that narrower mask.
 - RFC 0024's desktop section makes desktop Cloud sign-in conditional on a delivery-H-style
-  mask: `docs/rfcs/0024-automagik-cloud.md:326-336`, and open question 17 at `:874-877`.
-- Linux's bwrap mask and the write-only, read-open limit of the current macOS fence:
-  `docs/rfcs/0022-desktop-chat-view.md:424-427` and `:519-520`;
-  `docs/rfcs/0010-desktop-sandbox.md:64`.
+  mask: `docs/rfcs/0024-automagik-cloud.md:326-336`, and open question 17 at `:875-878`.
+- The widened mask is not built. RFC 0022's mask covers hc, the core socket, the link
+  credential and SSH material, and its bwrap runner is #631, still open:
+  `docs/rfcs/0022-desktop-chat-view.md:424-427` and `:519-520`.
+- The app's own per-call fence, on both OSes, governs writes only and leaves reads open:
+  `docs/rfcs/0010-desktop-sandbox.md:64`. It is not the delivery-H mask.
 - The window-frame facts, for disambiguation only: `apps/desktop/src/frame.js:13-17,31-47`;
   `apps/desktop/src/shell.css:35-36,50-71`; Windows is unsupported:
   `apps/desktop/README.md:16` and `apps/desktop/docs/DEVELOPMENT.md:26`.
 
 **Per OS.**
 
-- **Linux:** extend the existing bwrap runner to mask the Secret Service socket, the session
-  bus, the app's data folder, hc's socket and credential, and SSH material. Linux is the only
-  platform that can meet the delivery now.
+- **Linux:** extend the bwrap runner (#631) to mask the Secret Service socket, the session
+  bus, the app's data folder, hc's socket and credential, and SSH material. The runner exists;
+  the widened mask does not.
 - **macOS:** build a read mask; a Seatbelt profile or a separate helper user are the two
   shapes, and they differ in prompts and file access. The app data folder is readable by
   same-user processes, and a Keychain prompt is not a Bot boundary; the mask must cover both.
@@ -280,19 +292,21 @@ owner accepts the risk in writing.
   band or a `dist:win` script as Windows support.
 
 **Unknowns, and what they block.** The word "mask" is the first unknown; this record fixes it
-as the security sandbox, which unblocks scoping. The macOS mechanism is not chosen, which
-blocks an estimate and the per-OS switch in #906. Windows support is a product decision, not
+as the security sandbox, which unblocks scoping. No OS has the widened mask, so the Linux,
+macOS and Windows work and the per-OS switch in #906 remain blocked on building it. The macOS
+mechanism is not chosen, which blocks an estimate. Windows support is a product decision, not
 evidence from the frame code; until it is decided, no Windows mask exists and no Windows
 Cloud sign-in may be promised.
 
 **What it means for the deliveries.**
 
 - #905's secure storage is necessary but not sufficient; the mask is a separate condition.
-- #906 must keep desktop Cloud sign-in off per OS until the mask exists, or the owner's
-  written acceptance is recorded.
-- #911's isolation review should treat same-UID Bots as able to read the app's data and the
-  OS store, and should check the mask, not the title bar.
-- #912's end-to-end test cannot claim desktop Cloud safety on macOS until a read mask lands.
+- #906 must keep desktop Cloud sign-in off per OS until the widened mask exists, or the
+  owner's written acceptance is recorded.
+- #911's isolation review should treat same-UID Bots on desktop Linux and macOS as able to
+  read the app's data and the OS store, and should check the mask, not the title bar.
+- #912's end-to-end test cannot claim desktop Cloud safety on any OS until the widened mask
+  lands.
 
 ## 6. What can Pocket ID do?
 
@@ -304,9 +318,9 @@ sync is a one-way import. Its SCIM support is outbound: Pocket ID pushes users a
 an app that exposes a SCIM endpoint. The public source on `main` at `8b57842` has per-key
 scopes; the v2.19.2 release does not, and that change is unreleased as of 2026-11-10.
 
-**Version checked.** v2.19.2 is the current release and what the public docs describe. I also
-checked `main` at commit `8b57842` (2026-11-09), which is ahead of the release. Where the two
-differ, the item says so.
+**Version checked.** v2.19.2 is the current release and what the public docs describe. This
+record also checks `main` at commit `8b57842` (2026-11-09), which is ahead of the release.
+Where the two differ, the item says so.
 
 ### Organisations or groups
 
@@ -378,8 +392,8 @@ as good as a passkey until it expires.
 an upstream OIDC or SAML identity provider for person sign-in. LDAP is the only directory
 integration, and it is a read-only sync: Pocket ID imports users and groups, users still sign
 in with passkeys, and it does not serve LDAP to other apps. SAML is not a protocol Pocket ID
-serves; an app that needs SAML can sit behind an authentication proxy that speaks OIDC to
-Pocket ID. "Federated client credentials" is a different feature: it lets an OIDC client
+serves; an app without OIDC support can sit behind an authentication proxy that speaks OIDC
+to Pocket ID. "Federated client credentials" is a different feature: it lets an OIDC client
 prove itself to Pocket ID with a platform-issued JWT instead of a client secret; it does not
 federate people.
 
