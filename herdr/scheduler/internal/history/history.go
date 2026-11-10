@@ -70,6 +70,18 @@ type Record struct {
 	WorkspaceID string `json:"workspace_id,omitempty"`
 	PaneID      string `json:"pane_id,omitempty"`
 	Error       string `json:"error,omitempty"`
+	// The next four are a command run's (ADR 0013); an agent run has none.
+	// ExitCode is the program's exit status, absent when it has none (it never
+	// started, the timeout or a signal ended it).
+	ExitCode *int `json:"exit_code,omitempty"`
+	// Result is the run in one line: the last line of stdout when it worked,
+	// else the failure. It is what Notify's bot is sent.
+	Result string `json:"result,omitempty"`
+	// Stderr is the last lines of the program's stderr, kept for a failure.
+	Stderr string `json:"stderr,omitempty"`
+	// Notified says what became of the report to the bot: "sent to <terminal>"
+	// or "not delivered: <why>". Empty when the automation names no bot.
+	Notified string `json:"notified,omitempty"`
 	// Seen marks a finished run as opened, for the panel's inbox. On disk it
 	// is a copy of the run's latest record with the flag set; Runs folds it
 	// into the run rather than letting it stand in for the status.

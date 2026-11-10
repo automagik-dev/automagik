@@ -201,6 +201,9 @@ const OUR = version.includes("-am.");
 const FIELDS = ["name", "cron", "repo", "workspace", "workspace_id", "agent", "model", "template",
   "prompt", "workflow", "mcp_config", "agent_args", "timeout_minutes", "catch_up_minutes", "disabled"];
 if (OUR) FIELDS.push("close_workspace");
+// A build with the command kind (#938): its put writes command and notify, its ls names the kinds.
+const COMMANDS = process.env.STUB_COMMANDS === "1";
+if (COMMANDS) FIELDS.push("command", "notify");
 const yaml = path.join(home, ".config/herdr-automations/automations.yaml");
 const read = () => JSON.parse(fs.readFileSync(yaml, "utf8"));
 const out = (x) => process.stdout.write(JSON.stringify(x));
@@ -212,13 +215,14 @@ else if (args[0] === "ls") out({ automations: read().map(({ session, ...a }) => 
   if (OUR) a.close_workspace = a.close_workspace ?? "never";
   else delete a.close_workspace; // upstream's api.Automation has no field for it
   return a;
-}), invalid: [], scheduler: { pid: 1 }, paused: false });
-else if (args[0] === "history") out([]);
+}), invalid: [], scheduler: { pid: 1 }, paused: false, ...(COMMANDS ? { kinds: ["prompt", "workflow", "command"] } : {}) });
+else if (args[0] === "history") out(JSON.parse(process.env.STUB_HISTORY || "[]"));
 else if (args[0] === "put") {
   const entry = JSON.parse(input), list = read();
   const at = args[1] === "--original" ? list.findIndex((a) => a.name === args[2]) : -1;
   if (!args.includes("--dry-run")) {
-    const empty = (k, v) => !["name", "cron", "repo"].includes(k)
+    // A build with the command kind writes no empty repo (its yaml tag is omitempty: a command has none).
+    const empty = (k, v) => !(COMMANDS ? ["name", "cron"] : ["name", "cron", "repo"]).includes(k)
       && (v === undefined || v === null || v === "" || v === 0 || v === false || (Array.isArray(v) && !v.length));
     const into = at >= 0 ? list[at] : {};
     for (const [k, v] of Object.entries(entry)) if (!FIELDS.includes(k) || empty(k, v)) delete into[k]; else into[k] = v;
@@ -229,7 +233,7 @@ else if (args[0] === "put") {
 } else { process.stderr.write("stub: not offered: " + args.join(" ")); process.exit(2); }
 `;
 
-function stubScheduler(automations, { version = "0.12.1" } = {}) {
+function stubScheduler(automations, { version = "0.12.1", commands = false, history = [] } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "am-automations-"));
   mkdirSync(join(dir, ".local/bin"), { recursive: true });
   mkdirSync(join(dir, ".config/herdr-automations"), { recursive: true });
@@ -242,7 +246,7 @@ function stubScheduler(automations, { version = "0.12.1" } = {}) {
   let running = version; // the installed build; useVersion() swaps it, like a repair does
   state.exec = (command, args) => new Promise((resolve) => {
     if (command !== "sh" && command !== bin) { resolve({ code: 127, stdout: "", stderr: `cannot run ${command}: refused` }); return; }
-    execFile(command, args, { env: { PATH: "/usr/bin:/bin", STUB_HOME: dir, STUB_VERSION: running } }, (err, stdout, stderr) =>
+    execFile(command, args, { env: { PATH: "/usr/bin:/bin", STUB_HOME: dir, STUB_VERSION: running, STUB_COMMANDS: commands ? "1" : "0", STUB_HISTORY: JSON.stringify(history) } }, (err, stdout, stderr) =>
       resolve({ code: err ? (typeof err.code === "number" ? err.code : 1) : 0, stdout, stderr }));
   });
   const calls = () => readFileSync(join(dir, "argv.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
@@ -295,7 +299,7 @@ test("an edit of a paused automation keeps it paused (#501)", async () => {
 });
 
 // ---- permission modes (#498) and the other fields put would erase (#501) ----
-const { AUTO_ARGS, addressesIn, addressWarning, argsText, modeOf, parseArgs, splitPermission, templateMode } =
+const { AUTO_ARGS, addressesIn, addressWarning, argsText, envText, modeOf, parseArgs, parseEnv, splitPermission, templateMode } =
   await import("../mods/am-automations/modes.js");
 const ALL = [{ key: "claude", installed: true, run: ["claude"] }, { key: "codex", installed: true, run: ["codex"] }, { key: "pi", installed: true, run: ["pi"] }];
 const TEMPLATES = { templates: [
@@ -721,6 +725,187 @@ test("a template list hc could not give is not kept: the next refresh asks again
     await cx.settle();
     assert.match(textOf(draw().get("auto-rev")), /automatic \(skips permissions\) \(template\)/, "asked again and shown");
   } finally { s.done(); }
+});
+
+// ---- the command kind (#938) ----
+// An automation may be a plain command the scheduler runs itself: no repo, no space, no agent, no
+// model. The form offers the kind only to a scheduler whose ls --json names it (kinds), sends the
+// command and its bot, and empties every agent key so put removes them. The rows and the detail
+// show the run's one result line.
+const NEXT = "0.12.1-am.2"; // any build of ours whose ls names the command kind
+const check = { name: "daily-check", cron: "0 7 * * *", timeout_minutes: 10, catch_up_minutes: 120, workspace: "", repo: "",
+  command: { argv: ["./check.sh", "--all"], cwd: "/srv/checks", env: { REGION: "eu" } }, notify: "b-captain" };
+
+test("a scheduler that names the command kind: the form offers it, and a new command saves with no agent key", async () => {
+  const { s, view, cx, draw } = await stubPanel([], { version: NEXT, commands: true });
+  try {
+    view.edit(null, cx);
+    await cx.settle();
+    let n = draw();
+    assert.ok(n.has("f-kind-agent") && n.has("f-kind-command"), "both kinds are offered");
+    assert.ok(!n.has("f-kind-old"));
+    assert.ok(n.has("f-repo") && !n.has("f-command"), "a new automation starts as an agent prompt");
+    n.get("f-kind-command").click({}, cx);
+    await cx.settle();
+    n = draw();
+    for (const id of ["f-command", "f-cwd", "f-env", "f-notify", "f-timeout"]) assert.ok(n.has(id), `${id} is drawn`);
+    for (const id of ["f-repo", "f-ws-worktree", "f-close", "f-agent-claude", "f-model", "f-mode-auto", "f-prompt", "f-mcp"])
+      assert.ok(!n.has(id), `${id} is not drawn for a command`);
+    assert.match(textOf(n.get("f-command-note")), /No shell reads this line/);
+    assert.match(textOf(n.get("f-command-note")), /It runs as you/);
+    assert.match(textOf(n.get("f-command-note")), /Exit 0 is done; any other exit, or the timeout, is failed\./);
+    view.form.name.type("daily-check", cx);
+    view.form.command.type('./check.sh --all "two words"', cx);
+    view.form.cwd.type("~/checks", cx);
+    view.form.env.type('REGION=eu NOTE="a b"', cx);
+    view.form.notify.type("b-captain", cx);
+    view.form.timeout.type("10", cx);
+    await saveIt(view, cx);
+    const [saved] = s.saves();
+    assert.deepEqual(saved.argv, ["put"]);
+    assert.deepEqual(saved.entry.command, { argv: ["./check.sh", "--all", "two words"], cwd: `${s.dir}/checks`, env: { REGION: "eu", NOTE: "a b" } });
+    assert.equal(saved.entry.notify, "b-captain");
+    assert.equal(saved.entry.timeout_minutes, 10);
+    for (const key of ["repo", "workspace", "workspace_id", "session", "agent", "template", "model", "prompt", "workflow", "mcp_config", "close_workspace"])
+      assert.equal(saved.entry[key], "", `${key} goes empty, so put removes it`);
+    assert.deepEqual(saved.entry.agent_args, [], "no automatic permission flag on a command");
+    assert.deepEqual(Object.keys(s.yaml()[0]).sort(), ["command", "cron", "name", "notify", "timeout_minutes"]);
+    assert.deepEqual(view.view, { kind: "detail", name: "daily-check" });
+  } finally { s.done(); }
+});
+
+test("a scheduler that does not name the kind: no command form, one line says why, an agent saves as before", async () => {
+  const { s, view, cx, draw } = await stubPanel([], { version: OUR });
+  try {
+    await fillNew(view, cx, draw, "claude");
+    const n = draw();
+    assert.ok(!n.has("f-kind-command") && !n.has("f-kind-agent") && !n.has("f-command"));
+    assert.match(textOf(n.get("f-kind-old")), /runs agent prompts only\. A newer herdr-automations also runs a plain command, with no model\./);
+    await saveIt(view, cx);
+    const [saved] = s.saves();
+    assert.ok(!("command" in saved.entry) && !("notify" in saved.entry), "neither key is sent");
+    assert.equal(saved.entry.agent, "claude");
+  } finally { s.done(); }
+});
+
+test("an existing command opens as a command, and an edit keeps what the form does not show", async () => {
+  const { s, view, cx, draw } = await stubPanel([{ ...check, disabled: true }], { version: NEXT, commands: true });
+  try {
+    view.edit("daily-check", cx);
+    await cx.settle();
+    const n = draw();
+    assert.equal(view.form.kind, "command");
+    assert.equal(view.form.command.value(), "./check.sh --all");
+    assert.equal(view.form.cwd.value(), "/srv/checks");
+    assert.equal(view.form.env.value(), "REGION=eu");
+    assert.equal(view.form.notify.value(), "b-captain");
+    assert.ok(n.has("f-command") && !n.has("f-prompt"));
+    view.form.command.type("./check.sh --quick", cx);
+    await saveIt(view, cx);
+    const [saved] = s.saves();
+    assert.deepEqual(saved.argv, ["put", "--original", "daily-check"]);
+    assert.deepEqual(s.yaml()[0].command, { argv: ["./check.sh", "--quick"], cwd: "/srv/checks", env: { REGION: "eu" } });
+    assert.equal(s.yaml()[0].notify, "b-captain");
+    assert.equal(s.yaml()[0].disabled, true, "a paused command stays paused");
+    assert.equal(s.yaml()[0].catch_up_minutes, 120);
+  } finally { s.done(); }
+});
+
+test("a word in ENV that is not KEY=value is said in the form and nothing is saved", async () => {
+  const { s, view, cx, draw } = await stubPanel([check], { version: NEXT, commands: true });
+  try {
+    view.edit("daily-check", cx);
+    await cx.settle();
+    view.form.env.type("REGION=eu loose", cx);
+    await cx.settle();
+    assert.match(textOf(draw().get("f-result")), /ENV: "loose" is not KEY=value/);
+    await saveIt(view, cx);
+    assert.equal(s.saves().length, 0, "no put was sent");
+    assert.equal(view.view.kind, "form", "the form stays open");
+  } finally { s.done(); }
+});
+
+test("a command switched to an agent prompt drops its command and its bot; the other way drops the agent's keys", async () => {
+  const { s, view, cx, draw } = await stubPanel([check, { ...nightly("codex"), agent_args: ["--yolo"], close_workspace: "on-success" }], { version: NEXT, commands: true });
+  try {
+    view.edit("daily-check", cx);
+    await cx.settle();
+    draw().get("f-kind-agent").click({}, cx);
+    view.form.repo.type("/r", cx);
+    view.form.prompt.type("look around", cx);
+    await saveIt(view, cx);
+    let entry = s.yaml()[0];
+    assert.ok(!("command" in entry) && !("notify" in entry), "the command and its bot are gone");
+    assert.equal(entry.prompt, "look around");
+    assert.equal(entry.agent, "claude");
+    assert.equal(entry.workspace, "worktree");
+
+    view.edit("nightly", cx);
+    await cx.settle();
+    draw().get("f-kind-command").click({}, cx);
+    view.form.command.type("/usr/bin/true", cx);
+    await saveIt(view, cx);
+    entry = s.yaml()[1];
+    assert.deepEqual(entry.command, { argv: ["/usr/bin/true"], cwd: "", env: {} });
+    for (const key of ["repo", "workspace", "agent", "prompt", "agent_args", "close_workspace"]) assert.ok(!(key in entry), `${key} is removed`);
+  } finally { s.done(); }
+});
+
+test("the list row and the inbox show a command's result line, and the detail spells its last run out", async () => {
+  const at = new Date(Date.now() - 120000).toISOString();
+  const failed = { run_id: "r2", automation: "daily-check", status: "failed", started: at, at, seconds: 3, seen: false,
+    error: "exited 7", exit_code: 7, result: "exited 7: no route to host", stderr: "warming up\nno route to host", notified: "sent to t7" };
+  const done = { run_id: "r1", automation: "daily-check", status: "done", started: at, at, seconds: 2, seen: false,
+    exit_code: 0, result: "12 checked, 0 broken", notified: "not delivered: hc send: blocked" };
+  const { s, view, cx, draw } = await stubPanel([{ ...check, last: failed }], { version: NEXT, commands: true, history: [failed, done] });
+  try {
+    let n = draw();
+    assert.equal(textOf(n.get("auto-kind-daily-check")), "command · ./check.sh --all · tells b-captain");
+    assert.equal(textOf(n.get("inbox-line-r2")), "exited 7: no route to host", "a failed run: why, and its last stderr line");
+    assert.equal(textOf(n.get("inbox-line-r1")), "12 checked, 0 broken", "a done run: its last line of output");
+    view.view = { kind: "detail", name: "daily-check" };
+    n = draw();
+    const text = textOf(view.render(cx));
+    assert.match(text, /Runs\s*a command, as you: no agent, no model/);
+    assert.match(text, /Folder\s*\/srv\/checks/);
+    assert.match(text, /Tells\s*b-captain/);
+    assert.doesNotMatch(text, /Permissions|Repo|Agent\b/);
+    assert.equal(textOf(n.get("d-work")), "./check.sh --all");
+    assert.match(textOf(n.get("d-last-status")), /^failed · exit 7 · /);
+    assert.equal(textOf(n.get("d-last-result")), "exited 7: no route to host");
+    assert.match(textOf(n.get("d-last-stderr")), /warming up\s*no route to host/);
+    assert.equal(textOf(n.get("d-last-notified")), "b-captain: sent to t7");
+    assert.equal(textOf(n.get("h-line-r1")), "12 checked, 0 broken");
+    assert.equal(textOf(n.get("h-line-r2")), "exited 7: no route to host");
+  } finally { s.done(); }
+});
+
+test("an agent run's rows are as before: its error, else its duration", async () => {
+  const at = new Date(Date.now() - 120000).toISOString();
+  const runs = [
+    { run_id: "a1", automation: "nightly", status: "failed", started: at, at, seconds: 90, seen: false, error: "agent blocked" },
+    { run_id: "a2", automation: "nightly", status: "done", started: at, at, seconds: 90, seen: false },
+  ];
+  const { s, view, cx, draw } = await stubPanel([nightly("claude")], { version: NEXT, commands: true, history: runs });
+  try {
+    const n = draw();
+    assert.equal(textOf(n.get("inbox-line-a1")), "agent blocked");
+    assert.equal(textOf(n.get("inbox-line-a2")), "2m");
+    assert.match(textOf(n.get("auto-kind-nightly")), /^claude · worktree · /);
+    view.view = { kind: "detail", name: "nightly" };
+    assert.ok(!draw().has("d-last"), "no LAST RESULT block for an agent");
+    assert.match(textOf(view.render(cx)), /Permissions/);
+  } finally { s.done(); }
+});
+
+test("envText and parseEnv: KEY=value words, quoted like the args line", () => {
+  assert.equal(envText({ REGION: "eu", NOTE: "a b" }), 'REGION=eu NOTE="a b"');
+  assert.deepEqual(parseEnv(envText({ A: 'say "hi"', B: "it's", C: "" })).env, { A: 'say "hi"', B: "it's", C: "" }, "a round trip");
+  assert.deepEqual(parseEnv('REGION=eu "NOTE=a b" EMPTY='), { env: { REGION: "eu", NOTE: "a b", EMPTY: "" } });
+  assert.deepEqual(parseEnv('NOTE="a b"'), { env: { NOTE: "a b" } }, "a quote after the = keeps its words");
+  assert.deepEqual(parseEnv(""), { env: {} });
+  assert.equal(parseEnv("=x").problem, 'ENV: "=x" is not KEY=value');
+  assert.equal(envText(undefined), "");
 });
 
 // ---- put and the form write the same file (#938) ----
