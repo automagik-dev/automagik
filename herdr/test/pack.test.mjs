@@ -104,3 +104,17 @@ test("release.yml packs the tag through the tag's own pack.mjs", () => {
   assert.match(yml, /git show "v\$\{VERSION\}:herdr\/scripts\/pack\.mjs" > "\$\{RUNNER_TEMP\}\/pack\.mjs"/);
   assert.match(yml, /node "\$\{RUNNER_TEMP\}\/pack\.mjs" --repo \. --ref "v\$\{VERSION\}" --out "release\/\$\{tgz\}"/);
 });
+
+test("pack.mjs imports nothing from herdr/scripts: it is the one script there that ships (#810)", () => {
+  // scripts/lane.ts never ships herdr/scripts/ except pack.mjs (HERDR_SHIPPING_SCRIPTS), and
+  // release.yml runs the tag's pack.mjs alone, from a temp folder. A sibling it imported would
+  // be missing there, and a change to that sibling would cut no herdr release.
+  const source = readFileSync(join(ROOT, "scripts", "pack.mjs"), "utf8");
+  const specifiers = [...source.matchAll(/^\s*(?:import|export)\b[^;]*?\bfrom\s*["']([^"']+)["']|^\s*import\s*["']([^"']+)["']/gm)]
+    .map((m) => m[1] ?? m[2]);
+  assert.ok(specifiers.length >= 5, `read only ${specifiers.length} imports: the scan missed them`);
+  assert.deepEqual(specifiers.filter((s) => !s.startsWith("node:")), [], "pack.mjs imports Node's own modules only");
+  const dynamic = [...source.matchAll(/\bimport\s*\(([^)]*)\)/g)].map((m) => m[1].trim());
+  assert.deepEqual(dynamic, ["pathToFileURL(release"], "its one import() is the pack's release.js, copied to a temp file");
+  assert.doesNotMatch(source, /\brequire\s*\(/);
+});
