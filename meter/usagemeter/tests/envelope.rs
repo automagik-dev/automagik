@@ -35,6 +35,7 @@ fn key() -> RollupKey {
         repo: Some("example.com/acme/app".into()),
         branch: Some("feat/x".into()),
         hour_ms: hour(),
+        ..RollupKey::default()
     }
 }
 
@@ -59,13 +60,13 @@ fn ev(tokens: Tokens, precision: Precision, minute: i64) -> Attributed {
     Attributed {
         dedupe_key: String::new(),
         key: key(),
-        squad: None,
         tokens,
         precision,
         reported_usd: None,
         session: None,
         parent_session: None,
         ts_ms: hour() + minute * 60_000,
+        evidence: None,
     }
 }
 

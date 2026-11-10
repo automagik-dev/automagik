@@ -12,24 +12,32 @@
 //! - `codex_threads`: the last cumulative token count seen per Codex thread, keyed by thread id
 //!   so a rollout that moves (to `archived_sessions`) is never counted twice.
 //!
-//! Every chunk of a log is applied in one transaction that adds its usage, records its keys and
-//! advances the file's offset, so a killed run leaves either all of a chunk or none of it.
+//! - Schema 3 adds per-call evidence, the `launch` and `link` tables and the attribution columns
+//!   of `usage` ([`crate::evidence`]).
+//!
+//! Every chunk of a log is applied in one transaction that adds its usage and its evidence,
+//! records its keys and advances the file's offset, so a killed run leaves either all of a chunk
+//! or none of it.
 
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
-use crate::event::{Precision, RollupKey, Tokens, key_hash};
+use crate::event::{Precision, RollupAttr, RollupKey, Tokens, key_hash};
+use crate::evidence::{self, Evidence, Interner};
 use crate::sources::FileCtx;
 use crate::sources::codex::{CodexCtx, Cum};
 
-/// 2: precision is part of the row id (`ae/1` revision 3). A store of an older version is rebuilt
-/// once from the logs (`sync` resets it), because every row id changed.
-pub const SCHEMA_VERSION: i64 = 2;
+/// 3: per-call evidence, the `launch` and `link` tables, and the attribution columns of `usage`
+/// (RFC 0021 delivery 5). A schema 2 store is migrated in place by `sync` ([`Store::migrate`]),
+/// every row kept, after a generation. 2: precision is part of the row id (`ae/1` revision 3); a
+/// store older than 2 is rebuilt from the logs (`sync` resets it), because every row id changed.
+pub const SCHEMA_VERSION: i64 = 3;
 
 pub struct Store {
     pub conn: Connection,
+    pub intern: Interner,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -74,13 +82,14 @@ impl Health {
 pub struct Attributed {
     pub dedupe_key: String,
     pub key: RollupKey,
-    pub squad: Option<String>,
     pub tokens: Tokens,
     pub precision: Precision,
     pub reported_usd: Option<f64>,
     pub session: Option<String>,
     pub parent_session: Option<String>,
     pub ts_ms: i64,
+    /// The call's evidence row; `sync` always gives one.
+    pub evidence: Option<Evidence>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -173,7 +182,10 @@ impl Store {
     /// checkpoint on close, so the database and its wal keep exactly the bytes they had.
     pub fn open_read_only(path: &Path) -> rusqlite::Result<Store> {
         let conn = crate::query::open_read_only(path, std::time::Duration::from_secs(5))?;
-        Ok(Store { conn })
+        Ok(Store {
+            conn,
+            intern: Interner::default(),
+        })
     }
 
     pub fn open_in_memory() -> rusqlite::Result<Store> {
@@ -188,7 +200,44 @@ impl Store {
         }
         // Per connection, never stored in the file.
         conn.pragma_update(None, "synchronous", "NORMAL")?;
-        let fresh = !table_exists(&conn, "usage")?;
+        // A new store is made whole in one transaction, at the current version: it holds nothing
+        // a migration would have to keep, and another open racing it waits, then finds it made.
+        let mut fresh = false;
+        if !table_exists(&conn, "usage")? {
+            conn.execute_batch("BEGIN IMMEDIATE")?;
+            let made = (|| -> rusqlite::Result<bool> {
+                if table_exists(&conn, "usage")? {
+                    return Ok(false);
+                }
+                conn.execute_batch(TABLES)?;
+                add_schema_3(&conn)?;
+                // A new store's rollups are keyed with their reason from the start (RFC 0021
+                // delivery 6): only a store an older meter made is ever re-keyed.
+                conn.execute(
+                    "INSERT INTO meta(k, v) VALUES('schema_version', ?1), (?2, ?3), (?4, '1')
+                     ON CONFLICT(k) DO NOTHING",
+                    [
+                        SCHEMA_VERSION.to_string(),
+                        evidence::KEY_META.to_string(),
+                        evidence::SessionKey::random()
+                            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?
+                            .to_hex(),
+                        evidence::REASON_KEYED_META.to_string(),
+                    ],
+                )?;
+                Ok(true)
+            })();
+            match made {
+                Ok(m) => {
+                    conn.execute_batch("COMMIT")?;
+                    fresh = m;
+                }
+                Err(e) => {
+                    let _ = conn.execute_batch("ROLLBACK");
+                    return Err(e);
+                }
+            }
+        }
         // Stores made before `unsplit` existed: add the column before the view that names it.
         if !fresh && !column_exists(&conn, "usage", "unsplit")? {
             conn.execute_batch("ALTER TABLE usage ADD COLUMN unsplit INTEGER NOT NULL DEFAULT 0")?;
@@ -202,6 +251,16 @@ impl Store {
                 "ALTER TABLE files ADD COLUMN head_skip INTEGER NOT NULL DEFAULT 0",
             )?;
         }
+        // A schema 3 store a meter before RFC 0021 delivery 6 wrote lacks the rollup columns added
+        // since (`reason`): add them in place, at the same version. Its rows keep their ids and
+        // read as they were (a null reason is `no_record` or `claimants_differ` by its state).
+        if !fresh && table_exists(&conn, "evidence")? {
+            for (col, ty) in evidence::USAGE_COLUMNS {
+                if !column_exists(&conn, "usage", col)? {
+                    conn.execute_batch(&format!("ALTER TABLE usage ADD COLUMN {col} {ty}"))?;
+                }
+            }
+        }
         let view: Option<String> = conn
             .query_row(
                 "SELECT sql FROM sqlite_master WHERE type = 'view' AND name = 'ae_usage'",
@@ -210,15 +269,113 @@ impl Store {
             )
             .optional()?;
         if view.as_deref() != Some(VIEW) {
-            conn.execute_batch(&format!("DROP VIEW IF EXISTS ae_usage; {VIEW};"))?;
+            // One transaction: a second open racing this one waits, then replaces it whole.
+            conn.execute_batch(&format!(
+                "BEGIN IMMEDIATE; DROP VIEW IF EXISTS ae_usage; {VIEW}; COMMIT;"
+            ))?;
         }
-        let s = Store { conn };
-        // Only a store this call created is stamped: an older store without a version stays
-        // without one, so `sync` sees it is outdated and keeps a generation before it resets it.
-        if fresh && s.meta("schema_version")?.is_none() {
-            s.set_meta("schema_version", &SCHEMA_VERSION.to_string())?;
-        }
+        // An older store without a version stays without one, so `sync` sees it is outdated and
+        // keeps a generation before it resets it.
+        let s = Store {
+            conn,
+            intern: Interner::default(),
+        };
         Ok(s)
+    }
+
+    /// Brings a store older than this meter to [`SCHEMA_VERSION`] in one write transaction (RFC
+    /// 0018 (d)); `sync` alone calls it, under the lock, after the free-space check and the
+    /// generation. With `reset` (a store older than 2, whose row ids all changed) every row and
+    /// offset is dropped and the window starts there; otherwise (schema 2) every row is kept: the
+    /// columns and tables of schema 3 are added, `branch_basis` is backfilled on the old rollups
+    /// (`log` where a branch is recorded, `none` where it is null), and their `actor_state` stays
+    /// null, so their tags are frozen and never counted as attributed. Evidence starts at the next
+    /// hour: every rollup of an hour from then on is the evidence's. Before it commits, every table
+    /// the store had holds as many rows as before (or none, on a reset); else nothing changes.
+    pub fn migrate(&mut self, now_ms: i64, reset: Option<i64>) -> Result<(), String> {
+        let cut = evidence::retention_cut(now_ms);
+        let tx = self
+            .conn
+            .transaction()
+            .map_err(|e| format!("cannot start the migration: {e}"))?;
+        let db = |e: rusqlite::Error| {
+            if no_room(&e) {
+                format!("{NO_ROOM}: the migration failed: {e}")
+            } else {
+                format!("the migration failed: {e}")
+            }
+        };
+        let before = row_counts(&tx).map_err(db)?;
+        add_schema_3(&tx).map_err(db)?;
+        let evidence_from = match reset {
+            Some(from) => {
+                clear(&tx, from).map_err(db)?;
+                from.max(cut)
+            }
+            None => {
+                tx.execute(
+                    "UPDATE usage SET branch_basis = CASE WHEN branch IS NULL THEN 'none'
+                       ELSE 'log' END
+                     WHERE actor_state IS NULL AND branch_basis IS NULL",
+                    [],
+                )
+                .map_err(db)?;
+                crate::time::hour_start(now_ms) + crate::time::HOUR_MS
+            }
+        };
+        let put = |k: &str, v: &str| {
+            tx.execute(
+                "INSERT INTO meta(k, v) VALUES(?1, ?2) ON CONFLICT(k) DO UPDATE SET v = excluded.v",
+                [k, v],
+            )
+        };
+        put(evidence::FROM_META, &evidence_from.to_string()).map_err(db)?;
+        let has_key: bool = tx
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM meta WHERE k = ?1)",
+                [evidence::KEY_META],
+                |r| r.get(0),
+            )
+            .map_err(db)?;
+        if !has_key {
+            let key = evidence::SessionKey::random()
+                .map_err(|e| format!("cannot make the store's hash key: {e}"))?;
+            put(evidence::KEY_META, &key.to_hex()).map_err(db)?;
+        }
+        put("schema_version", &SCHEMA_VERSION.to_string()).map_err(db)?;
+        // Every rollup this meter writes is keyed with its reason: nothing to re-key later.
+        put(evidence::REASON_KEYED_META, "1").map_err(db)?;
+        if reset.is_none() {
+            let after = row_counts(&tx).map_err(db)?;
+            for (table, n) in &before {
+                // `meta` gains the version's keys; every other table keeps its rows.
+                if table != "meta" && after.get(table) != Some(n) {
+                    return Err(format!(
+                        "the migration would change {table}'s rows ({n} before, {:?} after), so \
+                         nothing was changed",
+                        after.get(table)
+                    ));
+                }
+            }
+        }
+        tx.commit().map_err(db)?;
+        self.intern.clear();
+        Ok(())
+    }
+
+    /// The store's key for session and request hashes.
+    pub fn session_key(&self) -> rusqlite::Result<evidence::SessionKey> {
+        if let Some(k) = self
+            .meta(evidence::KEY_META)?
+            .as_deref()
+            .and_then(evidence::SessionKey::from_hex)
+        {
+            return Ok(k);
+        }
+        let k = evidence::SessionKey::random()
+            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+        self.set_meta(evidence::KEY_META, &k.to_hex())?;
+        Ok(k)
     }
 
     pub fn meta(&self, k: &str) -> rusqlite::Result<Option<String>> {
@@ -243,26 +400,35 @@ impl Store {
     /// the store as the current version. It also forgets when the last run finished and what it
     /// left: until a run over the new window ends, a reader sees no watermark and an unknown
     /// backlog, never a partial re-import passed off as complete and fresh.
+    /// The evidence goes with the rows (the re-import writes it again) and starts at the new
+    /// window; the `launch` and `link` tables stay: they hold what only past syncs saw.
     pub fn reset(&mut self, counted_from_ms: i64) -> rusqlite::Result<()> {
+        self.reset_at(counted_from_ms, counted_from_ms)
+    }
+
+    /// [`Store::reset`], with evidence starting at `evidence_from_ms` (never before the window):
+    /// a re-import writes no evidence a retention bound would drop at once.
+    pub fn reset_at(
+        &mut self,
+        counted_from_ms: i64,
+        evidence_from_ms: i64,
+    ) -> rusqlite::Result<()> {
         let tx = self.conn.transaction()?;
-        tx.execute_batch(
-            "DELETE FROM usage; DELETE FROM files; DELETE FROM seen; DELETE FROM sessions;
-             DELETE FROM health; DELETE FROM codex_threads;",
-        )?;
-        tx.execute(
-            "INSERT INTO meta(k, v) VALUES('counted_from_ms', ?1) ON CONFLICT(k) DO UPDATE SET v = excluded.v",
-            [counted_from_ms.to_string()],
-        )?;
+        clear(&tx, counted_from_ms)?;
         tx.execute(
             "INSERT INTO meta(k, v) VALUES('schema_version', ?1) ON CONFLICT(k) DO UPDATE SET v = excluded.v",
             [SCHEMA_VERSION.to_string()],
         )?;
         tx.execute(
-            "DELETE FROM meta WHERE k IN ('last_success_ms', 'last_run_ms', 'last_pending_bytes',
-             'last_pending_files', 'codex_watermark_ms', 'codex_bad_lines')",
-            [],
+            "INSERT INTO meta(k, v) VALUES(?1, ?2) ON CONFLICT(k) DO UPDATE SET v = excluded.v",
+            [
+                evidence::FROM_META,
+                &evidence_from_ms.max(counted_from_ms).to_string(),
+            ],
         )?;
-        tx.commit()
+        tx.commit()?;
+        self.intern.clear();
+        Ok(())
     }
 
     pub fn file(&self, path: &str) -> rusqlite::Result<Option<FileState>> {
@@ -341,6 +507,23 @@ impl Store {
         source: &str,
         thread: Option<&CodexCtx>,
         events: &[Attributed],
+        health: Health,
+        now_ms: i64,
+    ) -> rusqlite::Result<Health> {
+        let r = self.apply_tx(file, source, thread, events, health, now_ms);
+        if r.is_err() {
+            // An id it cached may belong to the rolled-back transaction.
+            self.intern.clear();
+        }
+        r
+    }
+
+    fn apply_tx(
+        &mut self,
+        file: Option<&FileState>,
+        source: &str,
+        thread: Option<&CodexCtx>,
+        events: &[Attributed],
         mut health: Health,
         now_ms: i64,
     ) -> rusqlite::Result<Health> {
@@ -372,20 +555,26 @@ impl Store {
                     }
                 }
                 health.events += 1;
-                let entry = rows.entry((e.key.clone(), e.precision)).or_insert((
-                    None,
-                    Tokens::default(),
-                    None,
-                    0,
-                ));
-                if e.squad.is_some() {
-                    entry.0.clone_from(&e.squad);
+                if let Some(ev) = &e.evidence {
+                    evidence::insert(
+                        &tx,
+                        &mut self.intern,
+                        ev,
+                        e.ts_ms,
+                        &e.tokens,
+                        e.reported_usd,
+                    )?;
                 }
-                entry.1.add(&e.tokens);
+                let entry = rows.entry((e.key.clone(), e.precision)).or_default();
+                if e.key.squad.is_some() {
+                    entry.squad.clone_from(&e.key.squad);
+                }
+                entry.tokens.add(&e.tokens);
                 if let Some(usd) = e.reported_usd {
-                    entry.2 = Some(entry.2.unwrap_or(0.0) + usd);
+                    entry.usd = Some(entry.usd.unwrap_or(0.0) + usd);
+                    entry.usd_events += 1;
                 }
-                entry.3 += 1;
+                entry.events += 1;
             }
         }
         upsert_rows(&tx, &rows, now_ms)?;
@@ -447,7 +636,8 @@ impl Store {
         let mut st = self.conn.prepare(
             "SELECT bot, role, harness, model, machine, repo, branch, hour_ms, squad,
                     input_uncached, cache_read, cache_write_5m, cache_write_1h, output, reasoning,
-                    precision, reported_usd, events, unsplit, id
+                    precision, reported_usd, events, unsplit, id,
+                    actor_state, kind, basis, branch_basis, unrecorded, reason
              FROM usage WHERE hour_ms >= ?1
              ORDER BY hour_ms, harness, model, repo, branch, bot, role, precision",
         )?;
@@ -463,6 +653,18 @@ impl Store {
                     repo: r.get(5)?,
                     branch: r.get(6)?,
                     hour_ms: r.get(7)?,
+                    squad: r.get(8)?,
+                    attr: match r.get::<_, Option<String>>(20)? {
+                        Some(state) => Some(RollupAttr {
+                            state,
+                            kind: r.get(21)?,
+                            basis: r.get(22)?,
+                            branch_basis: r.get::<_, Option<String>>(23)?.unwrap_or_default(),
+                            unrecorded: r.get(24)?,
+                            reason: r.get(25)?,
+                        }),
+                        None => None,
+                    },
                 },
                 squad: r.get(8)?,
                 tokens: Tokens {
@@ -527,6 +729,9 @@ impl Store {
             "files" => "SELECT count(*) FROM files",
             "seen" => "SELECT count(*) FROM seen",
             "sessions" => "SELECT count(*) FROM sessions",
+            "evidence" => "SELECT count(*) FROM evidence",
+            "launch" => "SELECT count(*) FROM launch",
+            "link" => "SELECT count(*) FROM link",
             _ => return Ok(0),
         };
         self.conn.query_row(sql, [], |r| r.get(0))
@@ -547,6 +752,210 @@ const OBJECTS: [(&str, &str); 11] = [
     ("table", "health"),
     ("table", "codex_threads"),
 ];
+
+/// How an error begins when the store could not be written for want of room.
+pub const NO_ROOM: &str = "no room to write the store";
+
+/// A write SQLite could not make for want of room: the disk is full (`SQLITE_FULL`), or a write
+/// failed outright (`SQLITE_IOERR_WRITE`, as a file-size limit's `EFBIG` gives).
+pub fn no_room(e: &rusqlite::Error) -> bool {
+    matches!(
+        e,
+        rusqlite::Error::SqliteFailure(f, _)
+            if f.code == rusqlite::ErrorCode::DiskFull
+                || f.extended_code == rusqlite::ffi::SQLITE_IOERR_WRITE
+    )
+}
+
+/// Gives the ambiguous and unlinked rollups a meter before RFC 0021 delivery 6 wrote (no reason,
+/// an id without one) the reason that meter meant (`claimants_differ` for ambiguous, `no_record`
+/// for unlinked, the only ones it recorded) and the id this meter derives for it, merged into a
+/// row already under that id. One transaction; totals never change. Then `meta` records it, so
+/// later runs skip it. `sync` alone calls it, under the lock, after keeping a counted generation
+/// (RFC 0018 (d)), as for any rewrite of a store's rows. Returns (rows re-keyed, of them merged).
+pub fn rekey_reasons(conn: &Connection) -> rusqlite::Result<(usize, usize)> {
+    let tx = conn.unchecked_transaction()?;
+    let (mut rekeyed, mut merged) = (0usize, 0usize);
+    struct Old {
+        id: String,
+        key: RollupKey,
+        precision: Precision,
+    }
+    let rows: Vec<Old> = {
+        let mut st = tx.prepare(
+            "SELECT id, bot, role, harness, model, machine, repo, branch, hour_ms, squad,
+                    actor_state, kind, basis, branch_basis, unrecorded, precision
+             FROM usage WHERE reason IS NULL AND actor_state IN ('ambiguous', 'unlinked')",
+        )?;
+        st.query_map([], |r| {
+            Ok(Old {
+                id: r.get(0)?,
+                key: RollupKey {
+                    bot: r.get(1)?,
+                    role: r.get(2)?,
+                    harness: r.get(3)?,
+                    model: r.get(4)?,
+                    machine: r.get(5)?,
+                    repo: r.get(6)?,
+                    branch: r.get(7)?,
+                    hour_ms: r.get(8)?,
+                    squad: r.get(9)?,
+                    attr: Some(RollupAttr {
+                        state: r.get(10)?,
+                        kind: r.get(11)?,
+                        basis: r.get(12)?,
+                        branch_basis: r.get::<_, Option<String>>(13)?.unwrap_or_default(),
+                        unrecorded: r.get(14)?,
+                        reason: None,
+                    }),
+                },
+                precision: if r.get::<_, String>(15)? == "total_only" {
+                    Precision::TotalOnly
+                } else {
+                    Precision::Exact
+                },
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?
+    };
+    for mut o in rows {
+        // Only a row under the id that meter gave it: any other is left as it is.
+        if o.key.id(o.precision) != o.id {
+            continue;
+        }
+        let Some(a) = o.key.attr.as_mut() else {
+            continue;
+        };
+        let reason = if a.state == "ambiguous" {
+            "claimants_differ"
+        } else {
+            "no_record"
+        };
+        a.reason = Some(reason.to_string());
+        let new = o.key.id(o.precision);
+        let taken: bool = tx.query_row(
+            "SELECT count(*) > 0 FROM usage WHERE id = ?1",
+            [&new],
+            |r| r.get(0),
+        )?;
+        if taken {
+            // The old row's counts, read first and added as values: no column of the statement
+            // can name two rows.
+            let (t, events, usd, usd_events, updated): (Tokens, i64, Option<f64>, i64, i64) = tx
+                .query_row(
+                    "SELECT input_uncached, cache_read, cache_write_5m, cache_write_1h, output,
+                            reasoning, unsplit, events, reported_usd, coalesce(usd_events, 0),
+                            updated_ms
+                     FROM usage WHERE id = ?1",
+                    [&o.id],
+                    |r| {
+                        Ok((
+                            Tokens {
+                                input_uncached: r.get(0)?,
+                                cache_read: r.get(1)?,
+                                cache_write_5m: r.get(2)?,
+                                cache_write_1h: r.get(3)?,
+                                output: r.get(4)?,
+                                reasoning: r.get(5)?,
+                                unsplit: r.get(6)?,
+                            },
+                            r.get(7)?,
+                            r.get(8)?,
+                            r.get(9)?,
+                            r.get(10)?,
+                        ))
+                    },
+                )?;
+            tx.execute(
+                "UPDATE usage SET input_uncached = input_uncached + ?2,
+                   cache_read = cache_read + ?3, cache_write_5m = cache_write_5m + ?4,
+                   cache_write_1h = cache_write_1h + ?5, output = output + ?6,
+                   reasoning = reasoning + ?7, unsplit = unsplit + ?8, events = events + ?9,
+                   usd_events = coalesce(usd_events, 0) + ?10,
+                   reported_usd = CASE WHEN ?11 IS NULL THEN reported_usd
+                                       ELSE coalesce(reported_usd, 0) + ?11 END,
+                   updated_ms = max(updated_ms, ?12)
+                 WHERE id = ?1",
+                params![
+                    new,
+                    t.input_uncached,
+                    t.cache_read,
+                    t.cache_write_5m,
+                    t.cache_write_1h,
+                    t.output,
+                    t.reasoning,
+                    t.unsplit,
+                    events,
+                    usd_events,
+                    usd,
+                    updated
+                ],
+            )?;
+            tx.execute("DELETE FROM usage WHERE id = ?1", [&o.id])?;
+            merged += 1;
+        } else {
+            tx.execute(
+                "UPDATE usage SET id = ?1, reason = ?2 WHERE id = ?3",
+                params![new, reason, o.id],
+            )?;
+        }
+        rekeyed += 1;
+    }
+    tx.execute(
+        "INSERT INTO meta(k, v) VALUES(?1, '1') ON CONFLICT(k) DO NOTHING",
+        [evidence::REASON_KEYED_META],
+    )?;
+    tx.commit()?;
+    Ok((rekeyed, merged))
+}
+
+/// Whether a store needs [`rekey_reasons`]: schema 3 with evidence, written by a meter before RFC
+/// 0021 delivery 6 (no `rollups_reason_keyed` mark).
+pub fn needs_rekey(conn: &Connection) -> rusqlite::Result<bool> {
+    if !table_exists(conn, "evidence")? || !table_exists(conn, "meta")? {
+        return Ok(false);
+    }
+    let marked: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM meta WHERE k = ?1)",
+        [evidence::REASON_KEYED_META],
+        |r| r.get(0),
+    )?;
+    Ok(!marked)
+}
+
+/// Adds schema 3's columns and tables where they are missing.
+fn add_schema_3(conn: &Connection) -> rusqlite::Result<()> {
+    for (col, ty) in evidence::USAGE_COLUMNS {
+        if !column_exists(conn, "usage", col)? {
+            conn.execute_batch(&format!("ALTER TABLE usage ADD COLUMN {col} {ty}"))?;
+        }
+    }
+    conn.execute_batch(evidence::DDL)
+}
+
+/// A reset's deletes: every row, offset and piece of evidence, and the window from `from`.
+fn clear(tx: &Transaction<'_>, from: i64) -> rusqlite::Result<()> {
+    tx.execute_batch(
+        "DELETE FROM usage; DELETE FROM files; DELETE FROM seen; DELETE FROM sessions;
+         DELETE FROM health; DELETE FROM codex_threads;",
+    )?;
+    if table_exists(tx, "evidence")? {
+        tx.execute_batch(
+            "DELETE FROM evidence; DELETE FROM ev_dirty; DELETE FROM ev_dim; DELETE FROM ev_actor;
+             DELETE FROM ev_cwd;",
+        )?;
+    }
+    tx.execute(
+        "INSERT INTO meta(k, v) VALUES('counted_from_ms', ?1) ON CONFLICT(k) DO UPDATE SET v = excluded.v",
+        [from.to_string()],
+    )?;
+    tx.execute(
+        "DELETE FROM meta WHERE k IN ('last_success_ms', 'last_run_ms', 'last_pending_bytes',
+         'last_pending_files', 'codex_watermark_ms', 'codex_bad_lines')",
+        [],
+    )?;
+    Ok(())
+}
 
 fn table_exists(conn: &Connection, name: &str) -> rusqlite::Result<bool> {
     conn.query_row(
@@ -589,6 +998,9 @@ pub struct Peek {
     pub has_rows: bool,
     /// Whether it has the `usage_repo_branch` index the query reads through.
     pub has_repo_index: bool,
+    /// Whether its rollups must be re-keyed with their reason ([`rekey_reasons`]): a rewrite of
+    /// rows, so `sync` keeps a generation first.
+    pub needs_rekey: bool,
 }
 
 /// Reads a store's version and window without writing a byte. None when there is no store yet:
@@ -623,11 +1035,13 @@ pub fn peek(path: &Path) -> rusqlite::Result<Option<Peek>> {
         [],
         |r| r.get(0),
     )?;
+    let needs_rekey = version == SCHEMA_VERSION && needs_rekey(&conn)?;
     Ok(Some(Peek {
         version,
         counted_from_ms,
         has_rows,
         has_repo_index,
+        needs_rekey,
     }))
 }
 
@@ -659,6 +1073,26 @@ fn open_peek(path: &Path) -> rusqlite::Result<Connection> {
             | rusqlite::OpenFlags::SQLITE_OPEN_URI
             | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
+}
+
+/// How far the store has read each log (`files.offset`), by path, read without writing a byte.
+/// Empty when the store has no `files` table.
+pub fn imported_offsets(path: &Path) -> rusqlite::Result<std::collections::HashMap<String, u64>> {
+    let mut out = std::collections::HashMap::new();
+    if !path.metadata().is_ok_and(|m| m.is_file() && m.len() > 0) {
+        return Ok(out);
+    }
+    let conn = open_peek(path)?;
+    if !table_exists(&conn, "files")? {
+        return Ok(out);
+    }
+    let mut st = conn.prepare("SELECT path, offset FROM files")?;
+    let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+    for row in rows {
+        let (p, o) = row?;
+        out.insert(p, o.max(0) as u64);
+    }
+    Ok(out)
 }
 
 /// Row counts of every table, by name.
@@ -699,8 +1133,15 @@ pub fn write_generation(db: &Path, version: i64, now_ms: i64) -> Result<Generati
         .chars()
         .filter(|c| c.is_ascii_alphanumeric())
         .collect();
-    let path = dir.join(format!("{GENERATION_PREFIX}{version}-{stamp}"));
-    let made = (|| -> Result<BTreeMap<String, i64>, String> {
+    let base = format!("{GENERATION_PREFIX}{version}-{stamp}");
+    // A name no file has: a generation from the same second (or a kill's leftover) is never
+    // replaced, and never removed by this call, which removes only the file it created.
+    let mut path = dir.join(&base);
+    let mut created = false;
+    for n in 0..100 {
+        if n > 0 {
+            path = dir.join(format!("{base}-{n}"));
+        }
         let mut o = std::fs::OpenOptions::new();
         o.write(true).create_new(true);
         #[cfg(unix)]
@@ -708,10 +1149,19 @@ pub fn write_generation(db: &Path, version: i64, now_ms: i64) -> Result<Generati
             use std::os::unix::fs::OpenOptionsExt;
             o.mode(0o600);
         }
-        drop(
-            o.open(&path)
-                .map_err(|e| format!("cannot create {}: {e}", path.display()))?,
-        );
+        match o.open(&path) {
+            Ok(_) => {
+                created = true;
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(format!("cannot create {}: {e}", path.display())),
+        }
+    }
+    if !created {
+        return Err(format!("no free name for a generation beside {base}"));
+    }
+    let made = (|| -> Result<BTreeMap<String, i64>, String> {
         let src = crate::query::open_read_only(db, std::time::Duration::from_secs(5))
             .map_err(|e| format!("cannot open the store: {e}"))?;
         // The caller holds the sync lock, so nothing writes between the count and the copy.
@@ -738,10 +1188,23 @@ pub fn write_generation(db: &Path, version: i64, now_ms: i64) -> Result<Generati
     match made {
         Ok(counts) => Ok(Generation { path, counts }),
         Err(e) => {
-            let _ = std::fs::remove_file(&path);
+            let _ = remove_generation(&path);
             Err(e)
         }
     }
+}
+
+/// Removes a generation and the rollback journal a killed copy may have left beside it.
+pub fn remove_generation(path: &Path) -> std::io::Result<()> {
+    let journal = path.with_file_name(format!(
+        "{}-journal",
+        path.file_name().unwrap_or_default().to_string_lossy()
+    ));
+    match std::fs::remove_file(&journal) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+        _ => {}
+    }
+    std::fs::remove_file(path)
 }
 
 /// The generations in `dir`, by name.
@@ -751,9 +1214,10 @@ pub fn generations(dir: &Path) -> Vec<std::path::PathBuf> {
         .flatten()
         .flatten()
         .filter(|e| {
-            e.file_name()
-                .to_string_lossy()
-                .starts_with(GENERATION_PREFIX)
+            let n = e.file_name().to_string_lossy().into_owned();
+            // A copy's own companions are not generations.
+            n.starts_with(GENERATION_PREFIX)
+                && !["-journal", "-wal", "-shm"].iter().any(|x| n.ends_with(x))
         })
         .map(|e| e.path())
         .collect();
@@ -803,10 +1267,20 @@ fn put_thread(tx: &Transaction<'_>, t: &CodexCtx, path: Option<&str>) -> rusqlit
     Ok(())
 }
 
-type Pending = (Option<String>, Tokens, Option<f64>, i64);
+/// What a chunk adds to one rollup row.
+#[derive(Debug, Clone, Default)]
+pub struct Pending {
+    pub squad: Option<String>,
+    pub tokens: Tokens,
+    pub usd: Option<f64>,
+    /// How many of its calls reported USD: when a move takes the last away, the row's USD is
+    /// null again, never 0.
+    pub usd_events: i64,
+    pub events: i64,
+}
 
 /// Precision is part of the id, so a row never mixes exact and total_only usage.
-fn upsert_rows(
+pub(crate) fn upsert_rows(
     tx: &Transaction<'_>,
     rows: &BTreeMap<(RollupKey, Precision), Pending>,
     now_ms: i64,
@@ -814,9 +1288,12 @@ fn upsert_rows(
     let mut st = tx.prepare_cached(
         "INSERT INTO usage(id, hour_ms, bot, role, squad, harness, model, machine, repo, branch,
            input_uncached, cache_read, cache_write_5m, cache_write_1h, output, reasoning,
-           precision, reported_usd, events, updated_ms, unsplit)
-         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
+           precision, reported_usd, events, updated_ms, unsplit,
+           actor_state, kind, basis, branch_basis, unrecorded, usd_events, reason)
+         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21,
+           ?22, ?23, ?24, ?25, ?26, ?27, ?28)
          ON CONFLICT(id) DO UPDATE SET
+           usd_events = coalesce(usd_events, 0) + excluded.usd_events,
            squad = coalesce(excluded.squad, squad),
            input_uncached = input_uncached + excluded.input_uncached,
            cache_read = cache_read + excluded.cache_read,
@@ -830,7 +1307,14 @@ fn upsert_rows(
            events = events + excluded.events,
            updated_ms = excluded.updated_ms",
     )?;
-    for ((k, precision), (squad, t, usd, n)) in rows {
+    for ((k, precision), p) in rows {
+        let (squad, t, usd, n) = (&p.squad, &p.tokens, p.usd, p.events);
+        let a = k.attr.as_ref();
+        // A schema 3 row's squad is its key's; an older key's squad rides beside it.
+        let squad = if a.is_some() { &k.squad } else { squad };
+        let branch_basis = a
+            .map(|a| a.branch_basis.clone())
+            .or_else(|| Some(if k.branch.is_some() { "log" } else { "none" }.to_string()));
         st.execute(params![
             k.id(*precision),
             k.hour_ms,
@@ -852,7 +1336,14 @@ fn upsert_rows(
             usd,
             n,
             now_ms,
-            t.unsplit
+            t.unsplit,
+            a.map(|a| a.state.clone()),
+            a.and_then(|a| a.kind.clone()),
+            a.and_then(|a| a.basis.clone()),
+            branch_basis,
+            a.and_then(|a| a.unrecorded.clone()),
+            p.usd_events,
+            a.and_then(|a| a.reason.clone())
         ])?;
     }
     Ok(())
