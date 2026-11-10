@@ -11,7 +11,7 @@ import {
   AGENTS, AGY_MODE_DEFAULT, AGY_MODES, AGY_READ_ALLOW, AGY_SHELL_READ, AGY_WRITE_ALLOW, LEGACY_AGENTS,
   agentArgv, agentKeyOfArgv, agyModeArgs, agyModeOf, agyModeProblem, agySettingsDir, agySettingsPlan,
   configPaths, defaultModel, defaultModelFrom, detectModel, effortArgs, knownModels, knownModelsFrom,
-  modelArgs, promptArgs, resolveAgent, resumeArgs, shownModel, withOverrides,
+  modelArgs, promptArgs, promptByMessage, resolveAgent, resumeArgs, shownModel, withOverrides,
 } from "../mods/am-sidebar/models.js";
 import { BRIEFINGS_DIR, briefingFileOf, briefingLaunch, briefingWay, ownPromptIn, resumedSessionOf, resumesConversation, tomlString,
   withBriefing, withoutBriefing } from "../mods/am-sidebar/models.js";
@@ -169,6 +169,24 @@ test("antigravity replaces gemini: agy argv is antigravity, gemini resolves to i
     "a programs.json that adds gemini back keeps it");
   assert.equal(configPaths("/h").antigravitySettings, "/h/.gemini/antigravity-cli/settings.json");
   assert.equal(configPaths("/h").geminiSettings, undefined);
+});
+
+test("kimi 2.5.0 takes no first prompt on its command line (#1032): promptArgs gives it no word, every other agent's is as it was", () => {
+  // kimi 2.5.0's --help: `Usage: kimi [options] [command]`. A bare word is a command name
+  // (`unknown command '<word>'. See 'kimi --help'.`, exit 1), and `-p, --prompt <prompt>` is its
+  // one-shot print mode, never an interactive start. The task is sent as its first message.
+  assert.deepEqual(promptArgs("kimi", "You are a read-only reviewer of src/x.rs"), []);
+  assert.deepEqual(promptArgs("kimi", "-p looks like an option"), [], "whatever the task says");
+  assert.equal(promptByMessage("kimi"), true);
+  // Every other agent Herdr knows still takes its task as a word: its own flag or the bare task.
+  const own = { antigravity: ["-i", "fix the build"], "dsh-tui": ["--", "fix the build"] };
+  for (const key of Object.keys(AGENTS).filter((k) => k !== "kimi")) {
+    assert.deepEqual(promptArgs(key, "fix the build"), own[key] ?? ["fix the build"], key);
+    assert.equal(promptByMessage(key), false, key);
+  }
+  assert.deepEqual(promptArgs(undefined, "fix the build"), ["fix the build"], "no agent named: the bare task");
+  assert.equal(promptByMessage(undefined), false, "no agent named: a template or a plain command keeps its task word");
+  assert.equal(promptByMessage(null), false);
 });
 
 test("agy 1.5.3's flags: --model/-model, --effort, --mode auto by default, -i/--prompt-interactive, -c/--continue, --conversation", () => {

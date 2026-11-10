@@ -789,15 +789,19 @@ export function install(rt) {
   // A task thinks with the model of the Bot that asked, as that Bot's own chat does, not
   // with DSH's default: the default may be a route this machine has no key for. Before the
   // first message, so the first turn already runs on it.
+  // It answers false when the Bot's model was to be selected and was not: the task is still
+  // on the model DSH made its Session with.
   async function askersModel(sessionId, bot) {
-    if (bot === undefined) return
+    if (bot === undefined) return true
     try {
-      const ref = await rt.desiredModel(bot)
-      if (ref === undefined) return
+      const ref = await rt.desiredModel(bot, { sessionId })
+      if (ref === undefined) return true
       const effort = await rt.desiredEffort(bot, ref)
       await rt.selectSessionModel(sessionId, { ...splitRef(ref), ...(effort === undefined ? {} : { reasoningEffort: effort }) })
+      return true
     } catch (error) {
       rt.warn('ds-bot: the task keeps the default model, %s\'s was not applied: %s', bot.name, error?.message ?? error)
+      return false
     }
   }
 
@@ -845,7 +849,7 @@ export function install(rt) {
       await rt.forgetTaskPermission(id, ranAt)
         .catch(error => rt.warn('ds-bot: the old task %s keeps its permission, the default was not applied: %s', id, error?.message ?? error))
     }
-    await askersModel(sessionId, state.bots?.[from])
+    const selected = await askersModel(sessionId, state.bots?.[from])
     const live = await rt.resolveAgent(sessionId)
     // And at its Bot's permission level: DSH announced the Session before it was a task,
     // so its session/created listener could not. Before the first turn, as the model is.
@@ -854,6 +858,9 @@ export function install(rt) {
     // nothing is typed into it at that default either.
     try {
       await rt.applyTaskPermission(sessionId, live.session, { start: true })
+      // At Full access with its Bot's coding CLI not served, or not selected just above: not
+      // started on another model.
+      await rt.assertNotOffCli(state.bots?.[from], sessionId, live.session, { unselected: !selected })
     } catch (error) {
       Object.assign(tasks()[sessionId] ?? {}, { status: 'failed', endedAt: Date.now(), summary: String(error?.message ?? error).slice(0, TASK_SUMMARY_MAX) })
       await rt.save().catch(failure => rt.warn('ds-bot: saving a task failed: %s', failure))

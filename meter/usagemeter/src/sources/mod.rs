@@ -6,6 +6,7 @@ pub mod claude;
 pub mod codex;
 pub mod dsh_tui;
 pub mod omp;
+pub mod tool_error;
 
 use serde::{Deserialize, Serialize};
 

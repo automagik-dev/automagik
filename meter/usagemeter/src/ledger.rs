@@ -700,6 +700,10 @@ pub struct Resolver {
     bytes_read: u64,
     /// The walk for project app homes stays inside this folder (tests: their own temp folder).
     walk_stop: Option<PathBuf>,
+    /// The `pr` rows read (issue 899): a branch's pull request as Herdr recorded it.
+    prs: Vec<PrRow>,
+    /// How a launch ended, where an `end` row says more than that it ended.
+    end_details: Vec<EndDetail>,
 }
 
 impl Resolver {
@@ -1106,7 +1110,20 @@ impl Resolver {
                     Parsed::Start(r)
                 }),
                 Some("session") => parse_session(&row).map(Parsed::Session),
-                Some("end") => parse_end(&row).map(Parsed::End),
+                Some("end") => {
+                    if let Some(d) = parse_end_detail(&row).filter(|d| self.this_core(&d.core)) {
+                        self.end_details.push(d);
+                    }
+                    parse_end(&row).map(Parsed::End)
+                }
+                // Not a launch's row: kept beside them for `usagemeter outcomes`, and it never
+                // moves a call's attribution. An older meter skips the event it does not know.
+                Some("pr") => {
+                    if let Some(p) = parse_pr(&row).filter(|p| self.this_core(&p.core)) {
+                        self.prs.push(p);
+                    }
+                    None
+                }
                 _ => None,
             };
             if let Some(p) = parsed {
@@ -1188,6 +1205,25 @@ impl Resolver {
                 self.load_app_home(&home);
             }
         }
+    }
+
+    /// A row of this machine: one that names no core, or this one's. Another machine's launches
+    /// and usage are in that machine's store.
+    fn this_core(&self, core: &Option<String>) -> bool {
+        match (core, &self.core) {
+            (Some(row), Some(mine)) => row == mine,
+            _ => true,
+        }
+    }
+
+    /// The `pr` rows of every workers ledger read so far, in file order.
+    pub fn pr_rows(&self) -> &[PrRow] {
+        &self.prs
+    }
+
+    /// The `end` rows that record how their terminal ended (hc's reason, exit code or signal).
+    pub fn end_details(&self) -> &[EndDetail] {
+        &self.end_details
     }
 
     /// How many calls were resolved: 0 means no project app home was looked for.
@@ -2614,6 +2650,125 @@ fn parse_end(row: &Map<String, Value>) -> Option<EndRow> {
         key: (owned(row, "core"), owned(row, "terminal")?, created(row)?),
         at_ms: at(row)?,
         basis: "end_row",
+    })
+}
+
+/// A branch's pull request as Herdr recorded it when it saw it open, merge or close (issue 899):
+/// the one source of pull-request times, since the meter never asks a forge. No title, author or
+/// address is read, even if a row holds one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrRow {
+    /// The main checkout, as start rows record it: with `branch`, the join to the launches.
+    pub project: String,
+    pub branch: String,
+    pub task: Option<String>,
+    pub pr: i64,
+    /// `open`, `merged` or `closed`.
+    pub state: &'static str,
+    /// The author date of the branch's oldest commit past its base, read by Herdr while the
+    /// branch still existed.
+    pub first_commit_ms: Option<i64>,
+    pub opened_ms: Option<i64>,
+    pub merged_ms: Option<i64>,
+    pub closed_ms: Option<i64>,
+    pub core: Option<String>,
+    /// When Herdr observed it: the newest row of a pull request wins.
+    pub at_ms: i64,
+}
+
+/// What a `pr` row's text fields may hold at most, in bytes: a checkout path and a branch name.
+const PR_PROJECT_BYTES: usize = 1024;
+const PR_BRANCH_BYTES: usize = 255;
+
+/// A time a row gives as RFC 3339 text or as milliseconds since the epoch. None for anything
+/// else, a time before 2000 or one past 2100 included: a row is never trusted to place a pull
+/// request outside any window a report could ask for.
+fn row_time(row: &Map<String, Value>, key: &str) -> Option<i64> {
+    const FROM: i64 = 946_684_800_000;
+    const TO: i64 = 4_102_444_800_000;
+    let ms = match row.get(key)? {
+        Value::String(s) => crate::time::parse_rfc3339(s)?,
+        Value::Number(n) => n.as_i64()?,
+        _ => return None,
+    };
+    (FROM..TO).contains(&ms).then_some(ms)
+}
+
+/// Whether a `pr` row names a time under `key` that cannot be read: the row is then refused
+/// whole, never read with that time missing (a merge with an unreadable time is not an open one).
+fn bad_time(row: &Map<String, Value>, key: &str) -> bool {
+    row.get(key).is_some_and(|v| !v.is_null()) && row_time(row, key).is_none()
+}
+
+fn parse_pr(row: &Map<String, Value>) -> Option<PrRow> {
+    let text = |k: &str, max: usize| {
+        owned(row, k).filter(|v| v.len() <= max && !v.chars().any(char::is_control))
+    };
+    let project = text("project", PR_PROJECT_BYTES)?;
+    let branch = text("branch", PR_BRANCH_BYTES)?;
+    let pr = row.get("pr").and_then(Value::as_i64).filter(|n| *n > 0)?;
+    let state = match str_field(row, "state")? {
+        "open" => "open",
+        "merged" => "merged",
+        "closed" => "closed",
+        _ => return None,
+    };
+    if ["first_commit_at", "opened_at", "merged_at", "closed_at"]
+        .iter()
+        .any(|k| bad_time(row, k))
+    {
+        return None;
+    }
+    let merged_ms = row_time(row, "merged_at");
+    // A merged row says when: without it the pull request cannot be placed in a window.
+    if state == "merged" && merged_ms.is_none() {
+        return None;
+    }
+    Some(PrRow {
+        project,
+        branch,
+        // A task id is printed nowhere here, but it is bounded like every tag the store keeps.
+        task: owned(row, "task").filter(|t| fits(t) && column_safe(t)),
+        pr,
+        state,
+        first_commit_ms: row_time(row, "first_commit_at"),
+        opened_ms: row_time(row, "opened_at"),
+        merged_ms,
+        closed_ms: row_time(row, "closed_at"),
+        core: owned(row, "core").filter(|c| c.len() <= 128),
+        at_ms: row_time(row, "at")?,
+    })
+}
+
+/// How a launch's terminal ended, from an `end` row that records it (Herdr may copy hc's
+/// `reason`, `exit_code` and `signal` there: a second, durable source for a terminal hc has
+/// forgotten by the next sync). None for an `end` row that says only that the launch ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EndDetail {
+    pub core: Option<String>,
+    pub terminal: String,
+    pub created_ms: i64,
+    /// hc's reason (`exited`, `killed`, `stopped_by_restart`), in the row's `hc_reason`: the
+    /// row's own `reason` is the ledger's (`replaced`, `finished`) and says nothing of a failure.
+    pub reason: Option<String>,
+    pub exit_code: Option<i64>,
+    pub signal: Option<String>,
+}
+
+fn parse_end_detail(row: &Map<String, Value>) -> Option<EndDetail> {
+    let reason = str_field(row, "hc_reason").and_then(crate::hc::end_word);
+    let exit_code = row.get("exit_code").and_then(Value::as_i64);
+    let signal = crate::hc::signal_of(row.get("signal"));
+    if reason.is_none() && exit_code.is_none() && signal.is_none() {
+        return None;
+    }
+    Some(EndDetail {
+        core: owned(row, "core"),
+        terminal: owned(row, "terminal").filter(|t| t.len() <= 128)?,
+        created_ms: created(row)?,
+        reason,
+        exit_code,
+        signal,
     })
 }
 

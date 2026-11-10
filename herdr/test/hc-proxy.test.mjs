@@ -1281,7 +1281,8 @@ test("approved worker (#955): a sandboxed bot's worker of another agent keeps th
 for (const worker of [{ agent: "codex", model: "chosen", effort: "high" },
   { agent: "claude", model: "chosen", effort: "high" }, { template: "dev-sol" }, { template: "agy-sol" },
   { agent: "antigravity", agyMode: "auto" }, { agent: "antigravity", agyMode: "accept-edits" },
-  { agent: "antigravity", agyMode: "plan" }]) {
+  // #1032: kimi's approved argv has no task word (its task is sent as its first message).
+  { agent: "antigravity", agyMode: "plan" }, { agent: "kimi" }]) {
   test(`approved worker allows named ${worker.template ?? `${worker.agent} (${worker.agyMode ?? "default"})`} with today's identity`, async (t) => {
     const { s, client, fake } = await approvedWorkerScene(t, worker);
     const template = worker.template ? fake.state.templates.find((row) => row.name === worker.template).command : null;
@@ -1487,6 +1488,34 @@ test("approved helper worker re-reads at spawn time and refuses after re-approva
   assert.match(answer.error.message,
     /^hc-proxy: terminal\.run: approved worker refused: worker allowance approval approvedAt changed; restart the pane after approval$/);
   assert.equal(fake.calls("terminal.run").length, 0, "the core never received the start");
+});
+
+test("approved worker #1032: a Kimi worker's argv is its approved command alone, with no task word; one with a task or an option is refused", async (t) => {
+  const worker = { agent: "kimi" };
+  const { s, client, fake } = await approvedWorkerScene(t, worker);
+  const params = approvedParams(s, worker);
+  // kimi 2.5.0 takes no first prompt on its command line: the last word is the program.
+  assert.equal(params.argv.at(-1), "kimi", JSON.stringify(params.argv));
+  assert.equal(params.argv.includes("do the task"), false);
+  for (const [name, argv] of [
+    ["a trailing task word", [...params.argv, "do the task"]],
+    ["its one-shot print mode", [...params.argv, "-p", "do the task"]],
+    ["an option of its own", [...params.argv, "--yolo"]],
+    ["another program", params.argv.map((word) => word === "kimi" ? "pi" : word)],
+    ["no argv", []],
+  ]) {
+    const answer = await client.call("terminal.run", { ...params, argv });
+    assert.match(answer.error?.message ?? "", /^hc-proxy: terminal\.run: approved worker argv refused: does not match approved agent kimi exactly$/, name);
+  }
+  assert.equal(fake.calls("terminal.run").length, 0, "nothing reached the core");
+  const answer = await client.call("terminal.run", params);
+  assert.ok(answer.result, JSON.stringify(answer));
+  assert.deepEqual(fake.calls("terminal.run").at(-1).params, { ...params, caller: "t100" });
+  // The other agents' rule is as it was: a last word that is an option is no task.
+  const codex = await approvedWorkerScene(t, { agent: "codex" });
+  const codexParams = approvedParams(codex.s, { agent: "codex" });
+  const refused = await codex.client.call("terminal.run", { ...codexParams, argv: [...codexParams.argv.slice(0, -1), "--yolo"] });
+  assert.match(refused.error?.message ?? "", /approved worker task must be one text word that is not an option/);
 });
 
 test("approved worker rejects extra argv and nonterminal RPC env overrides", async (t) => {

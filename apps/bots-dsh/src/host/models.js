@@ -1,7 +1,7 @@
 // Models. Every Bot runs on one model of its own, fixed when it is created and changed
 // only in its settings or by a Main Bot. The team's first Main Bot has none until the
 // user picks one in its chat. The Session keeps the selection durably.
-import { piAiRoutes, routeOf } from '../shared/routes.js'
+import { cliRoute, leavesCli, piAiRoutes, routeOf } from '../shared/routes.js'
 import { refusal } from './refusal.js'
 import { normalize, splitRef } from './text.js'
 import { install as installHostModels } from './host-models.js'
@@ -342,11 +342,57 @@ export function install(rt) {
 
   // A Bot with no model yet waits for the user to pick one and changes nothing. A
   // model that is no longer served falls back to the last one it ran on, then the default.
-  async function desiredModel(bot) {
-    if (!bot.model || !onDsh(bot)) return undefined
+  // A Session at Full access of a Bot whose model is a coding CLI's (acp-claude, acp-codex) is
+  // not moved to another provider this way: there the CLI itself runs without asking, and
+  // another model would run DSH's own tools unasked at that level. The rule is read per
+  // Session: `sessionId` (and `session`, when the caller holds it) names the one the model is
+  // for, and without it every Session of the Bot's own counts. It answers undefined then, as
+  // for a Bot that waits; another model of the same CLI is still taken. `aside`: a call
+  // beside the chat that runs no tool (memory.js) keeps the plain rule.
+  const stayed = new Set()
+  const plainModel = async (bot) => {
     const entries = await catalog()
     const served = new Set(entries.map(entry => entry.ref))
     return [bot.model, bot.appliedModel].find(ref => ref && served.has(ref)) ?? pickDefault(entries)
+  }
+  // Whether going from the Bot's saved model to `ref` leaves its coding CLI.
+  const offCli = (bot, ref) => ref !== undefined && ref !== bot.model && leavesCli(splitRef(bot.model), splitRef(ref))
+  const stays = (bot, ref) => {
+    const key = `${bot.id}:${bot.model}:${ref}`
+    if (stayed.has(key)) return
+    stayed.add(key)
+    rt.warn?.('ds-bot: %s is not served now; %s stays on it where it has Full access, not moved to %s', bot.model, bot.name, ref)
+  }
+  // The Sessions among `ids` that read Full access now (permissions.js sessionWide).
+  function wideAmong(ids) {
+    if (typeof rt.sessionWide !== 'function') return new Set()
+    let loaded = []
+    try { loaded = ctx.sessions?.list?.() ?? [] } catch {}
+    const open = new Map(loaded.map(session => [session?.id, session]))
+    return new Set(ids.filter(id => typeof id === 'string' && rt.sessionWide(id, open.get(id)) === true))
+  }
+  const ownSessions = bot => [rt.chatOf?.(bot.id), ...(rt.groupSessionsOf?.(bot.id) ?? [])]
+  async function desiredModel(bot, { aside = false, sessionId, session } = {}) {
+    if (!bot.model || !onDsh(bot)) return undefined
+    const ref = await plainModel(bot)
+    if (aside || !offCli(bot, ref)) return ref
+    const wide = sessionId !== undefined ? rt.sessionWide?.(sessionId, session) === true : wideAmong(ownSessions(bot)).size > 0
+    if (!wide) return ref
+    stays(bot, ref)
+    return undefined
+  }
+  // Before a Session of the Bot takes a turn by itself (a task, a group seat, a fresh part, a
+  // greeting): when the Bot's saved CLI model is not served, so the Session would run on
+  // another provider's model, and the Session is at Full access, the start is refused.
+  // `unselected`: the caller tried to select the Bot's model on the new Session and that
+  // failed, so the Session is still on the model DSH made it with. Which one that is cannot
+  // be told before its first request, so it is not taken for the Bot's CLI: refused too.
+  // `owner`: whose Session it is when it is not on record yet (permissions.js sessionWide).
+  const STAYS = 'This Bot has Auto (full access) on its coding CLI, which is not available now, so nothing was started on another model. Fix the CLI or sign in to it, or pick another model for the Bot yourself.'
+  async function assertNotOffCli(bot, sessionId, session, { unselected = false, owner } = {}) {
+    if (!bot?.model || !onDsh(bot) || !cliRoute(splitRef(bot.model).provider)) return
+    if (rt.sessionWide?.(sessionId, session, owner) !== true) return
+    if (unselected || offCli(bot, await plainModel(bot))) throw refusal(STAYS)
   }
 
   // The thinking level a Bot asked for, when the model it runs on serves it; else the
@@ -417,21 +463,40 @@ export function install(rt) {
   // `force` re-selects even when the record says it is applied: the composer's own
   // model picker can move the Session without telling this plugin.
   async function applyModel(bot, { force = false } = {}) {
-    const ref = await desiredModel(bot)
+    const ref = await desiredModel(bot, { aside: true })
     if (ref === undefined) return ref
+    // A move off the Bot's coding CLI skips each Session that is at Full access; the others
+    // take the model as before. When every one stays, nothing moved and the record stands.
+    const chat = rt.chatOf(bot.id)
+    const staying = offCli(bot, ref) ? wideAmong([chat, ...rt.groupSessionsOf(bot.id)]) : new Set()
+    if (staying.size > 0) stays(bot, ref)
+    if (staying.has(chat) && rt.groupSessionsOf(bot.id).every(sessionId => staying.has(sessionId))) return undefined
     const effort = await desiredEffort(bot, ref)
-    if (!force && bot.appliedModel === ref && (bot.appliedEffort ?? undefined) === effort) return ref
+    if (!force && staying.size === 0 && bot.appliedModel === ref && (bot.appliedEffort ?? undefined) === effort) return ref
     const route = { ...splitRef(ref), ...(effort === undefined ? {} : { reasoningEffort: effort }) }
-    await selectSessionModel(rt.chatOf(bot.id), route)
+    if (!staying.has(chat)) await selectSessionModel(chat, route)
     for (const sessionId of rt.groupSessionsOf(bot.id)) {
+      if (staying.has(sessionId)) continue
       await selectSessionModel(sessionId, route)
         .catch(error => rt.warn('ds-bot: model for %s in a group not applied: %s', bot.name, error))
+    }
+    // Some Sessions moved and some stayed, so no one model is applied to all of them. The
+    // record, which is one per Bot, says what the Bot's own chat runs on: the model it just
+    // took, or, when it is the chat that stayed, nothing unless the record already names that
+    // model. A record left naming the CLI would skip the selection when the CLI is served
+    // again, and the Sessions moved here would stay off it. Nothing is returned as applied.
+    if (staying.size > 0 && staying.has(chat)) {
+      if (bot.appliedModel === undefined || bot.appliedModel === ref) return undefined
+      delete bot.appliedModel
+      delete bot.appliedEffort
+      await rt.save()
+      return undefined
     }
     bot.appliedModel = ref
     if (effort === undefined) delete bot.appliedEffort
     else bot.appliedEffort = effort
     await rt.save()
-    return ref
+    return staying.size > 0 ? undefined : ref
   }
 
   // A provider may register after the plugin starts; a greeting waits for its Bot's
@@ -467,7 +532,7 @@ export function install(rt) {
 
   Object.assign(rt, {
     catalog, cachedCatalog: () => catalogCache.value, cachedDefault: () => pickDefault(catalogCache.value),
-    defaultRef, defaultModel, defaultEffort, resolveModel, modelAccess, assertModelAccess, desiredModel, reasoningOf, resolveEffort, desiredEffort,
+    defaultRef, defaultModel, defaultEffort, resolveModel, modelAccess, assertModelAccess, desiredModel, assertNotOffCli, reasoningOf, resolveEffort, desiredEffort,
     backgroundModel, cachedBackground: () => pickBackground(catalogCache.value), answersAside: answersAsideRef,
     selectSessionModel, applyModel, waitForModel, syncModels,
     dropCatalog: () => { catalogCache = { at: 0, value: [] } },
