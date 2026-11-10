@@ -65,3 +65,26 @@ test('a hidden window is not faded out again', async () => {
   await fade(win, { to: 0, platform: 'darwin', timers, now })
   assert.deepEqual(win.calls, [])
 })
+
+test('a frame that fails ends the fade at once where it was going, and the wait is answered (#882)', async () => {
+  const out = stand()
+  let frames = 0
+  const set = out.win.setOpacity
+  out.win.setOpacity = (value) => { if (++frames === 3) throw new Error('window is gone'); set(value) }
+  const gone = fade(out.win, { to: 0, platform: 'darwin', timers: out.timers, now: out.now })
+  out.run()
+  await gone
+  assert.deepEqual(out.win.calls, ['hide'])
+  assert.equal(out.win.opacity, 1, 'left opaque for the next show')
+
+  const back = stand()
+  back.hide()
+  let shown = 0
+  const setBack = back.win.setOpacity
+  back.win.setOpacity = (value) => { if (++shown === 3) throw new Error('window is gone'); setBack(value) }
+  const done = fade(back.win, { to: 1, platform: 'darwin', timers: back.timers, now: back.now })
+  back.run()
+  await done
+  assert.equal(back.win.isVisible(), true)
+  assert.equal(back.win.opacity, 1, 'never left half-faded')
+})

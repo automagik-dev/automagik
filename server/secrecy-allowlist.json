@@ -144,6 +144,42 @@
     "reason": "Playwright's container user, not a host account"
   },
   {
+    "file": "opt/automagik/profile/node_modules/@agentclientprotocol/sdk/dist/v2/schema/zod.gen.js",
+    "rule": "home-path",
+    "match": "/home/user",
+    "reason": "the ACP SDK's generated zod schema AbsolutePath example, not a host account"
+  },
+  {
+    "file": "opt/automagik/profile/node_modules/@agentclientprotocol/sdk/dist/v2/schema/zod.gen.js",
+    "rule": "home-path",
+    "match": "C:\\Users\\user",
+    "reason": "the ACP SDK's generated zod schema Windows AbsolutePath example, not a host account"
+  },
+  {
+    "file": "opt/automagik/profile/node_modules/@agentclientprotocol/sdk/dist/v2/unstable/schema/zod.gen.js",
+    "rule": "home-path",
+    "match": "/home/user",
+    "reason": "the ACP SDK's generated unstable zod schema AbsolutePath example, not a host account"
+  },
+  {
+    "file": "opt/automagik/profile/node_modules/@agentclientprotocol/sdk/dist/v2/unstable/schema/zod.gen.js",
+    "rule": "home-path",
+    "match": "C:\\Users\\user",
+    "reason": "the ACP SDK's generated unstable zod schema Windows AbsolutePath example, not a host account"
+  },
+  {
+    "file": "opt/automagik/profile/node_modules/@agentclientprotocol/sdk/schema/v2/schema.json",
+    "rule": "home-path",
+    "match": "/home/user",
+    "reason": "the ACP SDK's generated JSON schema AbsolutePath example, not a host account"
+  },
+  {
+    "file": "opt/automagik/profile/node_modules/@agentclientprotocol/sdk/schema/v2/schema.unstable.json",
+    "rule": "home-path",
+    "match": "/home/user",
+    "reason": "the ACP SDK's generated unstable JSON schema AbsolutePath example, not a host account"
+  },
+  {
     "file": "opt/automagik/runtime/node_modules/@vscode/ripgrep-linux-x64/bin/rg",
     "rule": "home-path",
     "match": "/home/cloudtest",

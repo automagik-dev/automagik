@@ -138,6 +138,16 @@ impl Hc {
         Some(list.iter().filter_map(Terminal::from_json).collect())
     }
 
+    /// How each finished terminal hc still lists ended (issue 899): hc's own `reason`,
+    /// `exit_code` and `signal`. `terminal.list` answers with live terminals only unless asked
+    /// for all, so this is its own call on the same connection; the attribution snapshot stays
+    /// what [`Hc::terminals_listed`] gives. None when hc did not answer with a list.
+    pub fn ends(&mut self) -> Option<Vec<TerminalEnd>> {
+        let r = self.call("terminal.list", json!({"all": true})).ok()?;
+        let list = r.get("terminals").and_then(Value::as_array)?;
+        Some(list.iter().filter_map(TerminalEnd::from_json).collect())
+    }
+
     pub fn doc_get(&mut self, name: &str) -> Result<(Value, u64), RpcError> {
         let r = self.call("doc.get", json!({"name": name}))?;
         let version = r.get("version").and_then(Value::as_u64).unwrap_or(0);
@@ -199,6 +209,60 @@ pub struct Terminal {
     /// The foreground program's cwd, else the terminal's.
     pub cwd: Option<String>,
     pub labels: Labels,
+}
+
+/// How a finished terminal ended, as hc recorded it. A recorded fact, never read as a verdict:
+/// `usagemeter outcomes` counts a run as failed only when it `exited` on its own with a non-zero
+/// exit code or by a signal; `killed` and `stopped_by_restart` are ends, not failures.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TerminalEnd {
+    /// Its hc address on this machine (`t7`).
+    pub terminal: String,
+    pub created_ms: i64,
+    pub finished_ms: i64,
+    /// hc's reason (`exited`, `killed`, `stopped_by_restart`), None when hc gave none.
+    pub reason: Option<String>,
+    pub exit_code: Option<i64>,
+    /// The signal that ended it, as hc gave it (a number, or a name).
+    pub signal: Option<String>,
+}
+
+/// An end reason or a signal is a short word: letters, digits, `_` and `-`, at most 32. Anything
+/// else is dropped, never stored or cut.
+pub fn end_word(s: &str) -> Option<String> {
+    (!s.is_empty()
+        && s.len() <= 32
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-'))
+    .then(|| s.to_string())
+}
+
+/// A signal as hc or a ledger row gives it: a number or a short name.
+pub fn signal_of(v: Option<&Value>) -> Option<String> {
+    match v? {
+        Value::Number(n) => n.as_i64().map(|n| n.to_string()),
+        Value::String(s) => end_word(s),
+        _ => None,
+    }
+}
+
+impl TerminalEnd {
+    /// None for a terminal that is still running, is on a linked machine, or has no key.
+    pub fn from_json(t: &Value) -> Option<TerminalEnd> {
+        let terminal = t
+            .get("address")
+            .or_else(|| t.get("id"))
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty() && s.len() <= 128 && !s.contains('/'))?;
+        Some(TerminalEnd {
+            terminal: terminal.to_string(),
+            created_ms: t.get("created_ms").and_then(Value::as_i64)?,
+            finished_ms: t.get("finished_ms").and_then(Value::as_i64)?,
+            reason: t.get("reason").and_then(Value::as_str).and_then(end_word),
+            exit_code: t.get("exit_code").and_then(Value::as_i64),
+            signal: signal_of(t.get("signal")),
+        })
+    }
 }
 
 /// The labels Herdr (and an outside reviver) set that attribution reads. The session labels tie a
@@ -318,6 +382,49 @@ impl Terminal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_how_a_finished_terminal_ended_and_nothing_of_a_live_one() {
+        let exited = json!({"address": "t4", "created_ms": 5, "finished_ms": 9, "state": "finished",
+            "reason": "exited", "exit_code": 1, "signal": null});
+        assert_eq!(
+            TerminalEnd::from_json(&exited),
+            Some(TerminalEnd {
+                terminal: "t4".into(),
+                created_ms: 5,
+                finished_ms: 9,
+                reason: Some("exited".into()),
+                exit_code: Some(1),
+                signal: None,
+            })
+        );
+        let killed = json!({"address": "t5", "created_ms": 5, "finished_ms": 9,
+            "reason": "killed", "exit_code": null, "signal": 9});
+        let k = TerminalEnd::from_json(&killed).unwrap();
+        assert_eq!(
+            (k.reason.as_deref(), k.exit_code, k.signal.as_deref()),
+            (Some("killed"), None, Some("9"))
+        );
+        // Still running, no key, a linked machine's pane, or a reason that is not a short word.
+        assert_eq!(
+            TerminalEnd::from_json(&json!({"address": "t6", "created_ms": 5})),
+            None
+        );
+        assert_eq!(
+            TerminalEnd::from_json(&json!({"address": "t6", "finished_ms": 9})),
+            None
+        );
+        assert_eq!(
+            TerminalEnd::from_json(
+                &json!({"address": "box/t6", "created_ms": 5, "finished_ms": 9})
+            ),
+            None
+        );
+        let odd = json!({"address": "t7", "created_ms": 5, "finished_ms": 9,
+            "reason": "a reason; with text", "signal": "SIGTERM"});
+        let o = TerminalEnd::from_json(&odd).unwrap();
+        assert_eq!((o.reason, o.signal.as_deref()), (None, Some("SIGTERM")));
+    }
 
     #[test]
     fn reads_the_attribution_labels_from_every_terminal() {

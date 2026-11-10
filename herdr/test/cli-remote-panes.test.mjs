@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { attachPath, readAttach } from "../mods/am-sidebar/attach.js";
-import { GUARD_DIR } from "../mods/am-sidebar/workers.js";
+import { GUARD_DIR, KILL_GUARD_DIR } from "../mods/am-sidebar/workers.js";
 import { AGY_FIXED_DENY } from "../mods/am-sidebar/models.js";
 import { WORKER_LINE } from "../mods/am-sidebar/briefingText.mjs";
 import { approveProject, recordFileOf } from "../mods/am-sidebar/approved.js";
@@ -28,6 +28,9 @@ const CORE = "core-of-vm";
 const ATLAS = "b-atlasaaaaa", HEDGE = "b-hedgeaaaaa";
 const KEEP = ["sh", "-c", "\"$@\"; exec \"${SHELL:-sh}\" -i", "sh", "hermes", "--tui"];
 const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755); };
+
+/** The warning a start on a machine with no `hc kill` shim prints (#955). */
+const NO_KILL_SHIM = /^\S.* runs on vm without the hc kill shim \(#955\): /;
 
 function scene(t, { terminals = [], tui = true } = {}) {
   const root = scratchRoot(t, "hb-panes-");
@@ -63,7 +66,15 @@ function scene(t, { terminals = [], tui = true } = {}) {
   env.HC_TERMINAL_ID = "t1";
   const cli = (args, more = {}) => {
     const r = spawnSync(process.execPath, [CLI, ...args], { cwd: root, env: { ...env, ...more }, encoding: "utf8" });
-    return { code: r.status, out: r.stdout, err: r.stderr, json: () => JSON.parse(r.stdout) };
+    // #955: vm in this scene has no automagik-herdr on its pane PATH, so a start of any agent but
+    // dsh-tui adds the "no hc kill shim there" warning. json() leaves that one line out, so each
+    // test still counts the warnings it is about; raw() is the answer as printed (the shim's own tests).
+    const raw = () => JSON.parse(r.stdout);
+    const json = () => {
+      const out = raw();
+      return Array.isArray(out?.warnings) ? { ...out, warnings: out.warnings.filter((w) => !NO_KILL_SHIM.test(w)) } : out;
+    };
+    return { code: r.status, out: r.stdout, err: r.stderr, json, raw };
   };
   const on = ["--machine", "vm", "--project", project];
   const calls = () => readJsonLines(logPath);
@@ -336,7 +347,7 @@ test("start --machine of a Claude bot with no app home there: none is made; one 
   assert.equal(existsSync(join(s.root, "vm/.config")), false, "no app home made there");
   assert.equal(existsSync(join(s.project, ".claude")), false);
   assert.equal(existsSync(join(s.home, ".claude")), false);
-  assert.deepEqual(withoutSession(agentPart(startedWith(s))), ["claude"], "started, without the briefing flag");
+  assert.deepEqual(withoutSession(agentPart(startedWith(s))), ["claude", "--permission-mode", "auto"], "started, without the briefing flag");
   assert.deepEqual(briefedIn(s.app), [], "never this computer's app home");
 });
 
@@ -354,10 +365,10 @@ test("start --machine of a Claude bot: it runs on a session id Herdr chose (--se
   assert.equal(r.code, 0, r.err);
   const run = s.calls().find((c) => c[0] === "run");
   const words = agentPart(startedWith(s));
-  assert.deepEqual(words.slice(0, 2), ["claude", "--session-id"]);
-  const id = words[2];
+  assert.deepEqual(words.slice(0, 4), ["claude", "--permission-mode", "auto", "--session-id"]);
+  const id = words[4];
   assert.match(id, UUID, "a random UUID, as Claude Code's --session-id takes");
-  assert.equal(words.length, 3);
+  assert.equal(words.length, 5);
   // The same id is the pane's label on vm, beside the seat's bot label: both are in the one hc run --on.
   assert.deepEqual(run.slice(0, 3), ["run", "--on", "vm"]);
   const labels = runLabels(run);
@@ -368,7 +379,7 @@ test("start --machine of a Claude bot: it runs on a session id Herdr chose (--se
   assert.equal(pane.labels.bot, HEDGE);
   // Output never shows a session id (RFC 0021): the argv's value and the label are masked, stderr too.
   const out = r.json();
-  assert.deepEqual(out.argv, ["claude", "--session-id", "***"]);
+  assert.deepEqual(out.argv, ["claude", "--permission-mode", "auto", "--session-id", "***"]);
   assert.equal(out.labels["agent.session"], "***");
   assert.equal(`${r.out}${r.err}`.includes(id), false);
   // The attach row is the starting machine's and names no session.
@@ -392,7 +403,7 @@ test("start --machine: an agent Herdr chooses no id for gets none, and a Claude 
   writeFileSync(join(own.app, "programs.json"), JSON.stringify({ programs: { claude: { run: ["claude", "--continue"] } } }));
   assert.equal(own.cli(["start", "Hedge", ...own.on]).code, 0);
   const ownRun = own.calls().find((c) => c[0] === "run");
-  assert.deepEqual(agentPart(startedWith(own)), ["claude", "--continue"]);
+  assert.deepEqual(agentPart(startedWith(own)), ["claude", "--continue", "--permission-mode", "auto"]);
   assert.equal("agent.session" in runLabels(ownRun), false);
 });
 
@@ -404,20 +415,20 @@ test("restart --machine --fresh of a Claude bot: the new conversation runs on a 
   const r = s.cli(["restart", "Hedge", ...s.on, "--fresh", "--force", "--json"]);
   assert.equal(r.code, 0, r.err);
   const fresh = lastRun();
-  assert.deepEqual(fresh.words.slice(0, 2), ["claude", "--session-id"]);
-  assert.match(fresh.words[2], UUID);
-  assert.notEqual(fresh.words[2], first);
-  assert.equal(fresh.words.length, 3);
-  assert.equal(runLabels(fresh.run)["agent.session"], fresh.words[2], "the new pane's label is the new session, never the old one carried");
-  assert.equal(s.hcState().terminals.find((x) => x.address === r.json().terminal || x.address === `vm/${r.json().terminal}`).labels["agent.session"], fresh.words[2]);
-  assert.deepEqual(r.json().argv, ["claude", "--session-id", "***"]);
-  assert.equal(`${r.out}${r.err}`.includes(fresh.words[2]), false);
+  assert.deepEqual(fresh.words.slice(0, 4), ["claude", "--permission-mode", "auto", "--session-id"]);
+  assert.match(fresh.words[4], UUID);
+  assert.notEqual(fresh.words[4], first);
+  assert.equal(fresh.words.length, 5);
+  assert.equal(runLabels(fresh.run)["agent.session"], fresh.words[4], "the new pane's label is the new session, never the old one carried");
+  assert.equal(s.hcState().terminals.find((x) => x.address === r.json().terminal || x.address === `vm/${r.json().terminal}`).labels["agent.session"], fresh.words[4]);
+  assert.deepEqual(r.json().argv, ["claude", "--permission-mode", "auto", "--session-id", "***"]);
+  assert.equal(`${r.out}${r.err}`.includes(fresh.words[4]), false);
   // A resume keeps its session: --resume <that id>, no --session-id, the label carried.
   const again = s.cli(["restart", "Hedge", ...s.on, "--force", "--json"]);
   assert.equal(again.code, 0, again.err);
   const resumed = lastRun();
-  assert.deepEqual(resumed.words, ["claude", "--resume", fresh.words[2]]);
-  assert.equal(runLabels(resumed.run)["agent.session"], fresh.words[2]);
+  assert.deepEqual(resumed.words, ["claude", "--permission-mode", "auto", "--resume", fresh.words[4]]);
+  assert.equal(runLabels(resumed.run)["agent.session"], fresh.words[4]);
 });
 
 test("start --machine with a pane-env that is left out: no app home there is used, not even the default one", (t) => {
@@ -430,7 +441,7 @@ test("start --machine with a pane-env that is left out: no app home there is use
   assert.equal(warnings.length, 2, warnings.join("\n"));
   assert.match(warnings[0], /pane-env on vm was left out \(line 1: HERDR_APP_HOME: "\/srv\/bots\/herdr-app " has a space at its start or end\)/);
   assert.match(warnings[1], /^Hedge runs on vm without its briefing in its system prompt or per turn: its \.herdr\/pane-env there was left out, so no app home there is used, not even the default one\./);
-  assert.deepEqual(withoutSession(agentPart(startedWith(s))), ["claude"]);
+  assert.deepEqual(withoutSession(agentPart(startedWith(s))), ["claude", "--permission-mode", "auto"]);
   assert.equal(startedWith(s).some((w) => w.startsWith("HERDR_APP_HOME=")), false);
   assert.deepEqual(briefedIn(vmApp(s)), [], "the default app home there is left alone");
   assert.equal(existsSync(join(s.project, ".claude")), false);
@@ -609,8 +620,8 @@ test("start --machine of an Antigravity bot: its 0600 permission file is written
   const r = s.cli(["start", "Atlas", ...s.on, "--json"]);
   assert.equal(r.code, 0, r.err);
   const file = agySeatFile(s);
-  assert.deepEqual(r.json().argv, ["agy", "--settings", file, "--mode", "auto"], "the command names the file there");
-  assert.deepEqual(agentPart(startedWith(s)), ["agy", "--settings", file, "--mode", "auto"]);
+  assert.deepEqual(r.json().argv, ["agy", "--settings", file, "--dangerously-skip-permissions", "--mode", "auto"], "the command names the file there");
+  assert.deepEqual(agentPart(startedWith(s)), ["agy", "--settings", file, "--dangerously-skip-permissions", "--mode", "auto"]);
   // Written on vm, in vm's app home, through hc: 0600 in a 0700 folder.
   assert.ok(existsSync(file), file);
   assert.equal(modeOf(file).toString(8), "600");
@@ -631,7 +642,7 @@ test("start --machine of an Antigravity bot: its 0600 permission file is written
   assert.equal(again.code, 0, again.err);
   const run = s.calls().filter((c) => c[0] === "run")[1];
   const words = agentPart(run.slice(run.indexOf("--") + 1));
-  assert.deepEqual(words, ["agy", "--settings", file, "--mode", "auto", "--continue"]);
+  assert.deepEqual(words, ["agy", "--settings", file, "--dangerously-skip-permissions", "--mode", "auto", "--continue"]);
   assert.equal(modeOf(file).toString(8), "600");
   assert.equal(existsSync(LOCAL_AGY_DIR(s)), false, "still here nothing");
 });
@@ -1153,6 +1164,44 @@ function dshTuiScene(t, { terminals = [], override = null, shipped = true, guard
   }
   return s;
 }
+
+// ---- #955: the `hc kill` shim on a linked machine, for every agent but dsh-tui ----
+
+/** An automagik-herdr on vm's pane PATH with the shim beside it, as an install there has. */
+function shimOnVm(s) {
+  const pack = join(s.root, "vm-shim-pack");
+  for (const d of ["bin", "hc-kill"]) mkdirSync(join(pack, d), { recursive: true });
+  exe(join(pack, "bin", "automagik-herdr"), "#!/bin/sh\nexit 0\n");
+  exe(join(pack, "hc-kill", "hc"), "#!/bin/sh\nexit 0\n");
+  writeFileSync(join(pack, "hcGuard.mjs"), "// remote guard\n");
+  symlinkSync(join(pack, "bin", "automagik-herdr"), join(s.root, "vm-bin", "automagik-herdr"));
+  return join(pack, "hc-kill");
+}
+
+test("start --machine (#955): a Claude bot gets that machine's hc kill shim first on its PATH, never this computer's, and no warning", (t) => {
+  const s = scene(t);
+  packAt(vmApp(s));
+  const shim = shimOnVm(s);
+  const r = s.cli(["start", "Hedge", ...s.on, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(r.raw().warnings, []);
+  const argv = startedWith(s);
+  const pathWord = argv.find((word) => word.startsWith("PATH="));
+  assert.ok(pathWord.startsWith(`PATH=${shim}:`), pathWord);
+  assert.equal(pathWord.includes(KILL_GUARD_DIR), false, "not this computer's shim folder");
+});
+
+test("start --machine (#955): a machine with no hc kill shim starts the bot without it and says so once", (t) => {
+  const s = scene(t);
+  packAt(vmApp(s));
+  const r = s.cli(["start", "Hedge", ...s.on, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const said = r.raw().warnings;
+  assert.equal(said.length, 1, said.join("\n"));
+  assert.match(said[0], /^Hedge runs on vm without the hc kill shim \(#955\): no automagik-herdr with hc-kill\/hc and hcGuard\.mjs beside it was found on its pane PATH; nothing there stops its hc kill\.$/);
+  const pathWord = startedWith(s).find((word) => word.startsWith("PATH="));
+  assert.equal(pathWord.split(":").some((dir) => dir.endsWith("/hc-kill")), false, pathWord);
+});
 
 const shippedWarning = (w, s) => /^dsh-TUI starts on vm from its shipped run \(dsh-tui\), skipping the programs\.json override here \(/
   .test(w) && w.includes(s.override) && w.includes("which isn't installed there.");

@@ -5,7 +5,7 @@ import { BotMark } from './mark.js'
 import { useLinger, useViewport, viewBottom } from './motion.js'
 import { t } from './i18n.js'
 import { useAnchoredMenu } from './model-menu.js'
-import { PermissionList, presetName } from './permission-picker.js'
+import { cliOfBot, PermissionList, presetName } from './permission-picker.js'
 import { currentPart } from './text.js'
 
 // -------------------------------------------------------------------------
@@ -122,7 +122,8 @@ export function ComposerPermission({ sessionId, useRoster, actions }) {
   const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu({ minWidth: 320 })
   if (!bot || !catalog?.options?.length || roster.readOnly || currentPart(bot) !== sessionId) return null
   const saved = bot.permission ?? catalog.defaultPreset
-  const name = presetName(saved, catalog)
+  const cli = cliOfBot(bot)
+  const name = presetName(saved, catalog, cli)
   const toggle = () => { if (isOpen) close(); else open() }
   const pick = value => Promise.resolve(actions.updateBot(bot.id, { permission: value })).then(
     () => { close(); return true },
@@ -139,7 +140,7 @@ export function ComposerPermission({ sessionId, useRoster, actions }) {
     shownPlace ? createPortal(h('div', {
       ref: menu, className: `bt-menu bt-menu-up bt-permission-menu${shownPlace.bottom !== undefined ? ' bt-menu-up' : ''}`,
       role: 'menu', 'aria-label': t('Permissions'), style: shownPlace, 'data-leaving': leaving || undefined,
-    }, h(PermissionList, { catalog, saved, onPick: pick, name: bot.name })), document.body) : null)
+    }, h(PermissionList, { catalog, saved, onPick: pick, name: bot.name, cli })), document.body) : null)
 }
 
 export function ComposerPlus({ sessionId, inputActions, useRoster, actions }) {

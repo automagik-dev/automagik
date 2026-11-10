@@ -218,6 +218,16 @@ the row says RSS; anon and file are the 5-minute split.
 The **350 MB unpacked target is not reachable** (546,556,270 bytes, 521.24 MiB across layers).
 The **350 MB compressed target is met** (176.7 MiB).
 
+The 350 MB goal is therefore the **compressed** size, the bytes a pull fetches. As an unpacked
+size it is not a trim goal any more: no small cut closes the gap. The office stack
+(`@deepseek-ai/libreoffice-kit-wasm`, 152,349,402 bytes, 145.3 MiB) is the only large
+discretionary piece, and the flattened rootfs without it is still 371.2 MiB (389.3 MB). Getting
+under 350 MB unpacked would also mean dropping the shell tools Bots use (bash, git, ripgrep and
+their libraries, 48.3 MiB), so it removes features rather than waste. A smaller unpacked image
+is a product decision (for example office fetched or run on demand), not image work to schedule
+here; it and the first-minute memory peak are tracked in
+[#638](https://github.com/automagik-si/automagik/issues/638).
+
 ## Health
 
 ```sh

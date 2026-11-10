@@ -14,6 +14,8 @@
 //!
 //! - Schema 3 adds per-call evidence, the `launch` and `link` tables and the attribution columns
 //!   of `usage` ([`crate::evidence`]).
+//! - Still schema 3, added in place by `sync`: `ev_error`, `pr` and how a launch's terminal ended
+//!   ([`crate::outcomes::record`], issue 899), for `usagemeter outcomes`.
 //!
 //! Every chunk of a log is applied in one transaction that adds its usage and its evidence,
 //! records its keys and advances the file's offset, so a killed run leaves either all of a chunk
@@ -26,6 +28,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 
 use crate::event::{Precision, RollupAttr, RollupKey, Tokens, key_hash};
 use crate::evidence::{self, Evidence, Interner};
+use crate::outcomes::record;
 use crate::sources::FileCtx;
 use crate::sources::codex::{CodexCtx, Cum};
 
@@ -486,11 +489,26 @@ impl Store {
         health: Health,
         now_ms: i64,
     ) -> rusqlite::Result<Health> {
+        self.apply_chunk_with(file, events, &[], health, now_ms)
+    }
+
+    /// [`Store::apply_chunk`], with the tool failures the chunk's lines flagged (issue 899): they
+    /// commit with the file's offset, so a failure is never read twice or skipped. The caller has
+    /// run [`record::ensure`] on this store.
+    pub fn apply_chunk_with(
+        &mut self,
+        file: &FileState,
+        events: &[Attributed],
+        errors: &[record::ErrorRow],
+        health: Health,
+        now_ms: i64,
+    ) -> rusqlite::Result<Health> {
         self.apply(
             Some(file),
             &file.source,
             None,
             events,
+            errors,
             health,
             now_ms,
             false,
@@ -507,7 +525,7 @@ impl Store {
         health: Health,
         now_ms: i64,
     ) -> rusqlite::Result<Health> {
-        self.apply(Some(file), "agy", None, events, health, now_ms, true)
+        self.apply(Some(file), "agy", None, events, &[], health, now_ms, true)
     }
 
     /// Applies usage that comes with no file (a Codex thread counted from its `tokens_used`) and
@@ -519,7 +537,16 @@ impl Store {
         health: Health,
         now_ms: i64,
     ) -> rusqlite::Result<Health> {
-        self.apply(None, "codex", Some(thread), events, health, now_ms, false)
+        self.apply(
+            None,
+            "codex",
+            Some(thread),
+            events,
+            &[],
+            health,
+            now_ms,
+            false,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -529,6 +556,7 @@ impl Store {
         source: &str,
         thread: Option<&CodexCtx>,
         events: &[Attributed],
+        errors: &[record::ErrorRow],
         health: Health,
         now_ms: i64,
         quiet_duplicates: bool,
@@ -538,6 +566,7 @@ impl Store {
             source,
             thread,
             events,
+            errors,
             health,
             now_ms,
             quiet_duplicates,
@@ -556,6 +585,7 @@ impl Store {
         source: &str,
         thread: Option<&CodexCtx>,
         events: &[Attributed],
+        errors: &[record::ErrorRow],
         mut health: Health,
         now_ms: i64,
         quiet_duplicates: bool,
@@ -614,6 +644,9 @@ impl Store {
         }
         if quiet_duplicates {
             health.usage_lines = health.events;
+        }
+        for e in errors {
+            record::insert(&tx, &mut self.intern, e)?;
         }
         upsert_rows(&tx, &rows, now_ms)?;
         if let Some(file) = file {
@@ -983,6 +1016,9 @@ fn clear(tx: &Transaction<'_>, from: i64) -> rusqlite::Result<()> {
              DELETE FROM ev_cwd;",
         )?;
     }
+    // The tool failures go with the rows they were read beside (the re-import records them
+    // again); the launches' ends and the pull requests stay, as the launches do.
+    record::clear(tx)?;
     tx.execute(
         "INSERT INTO meta(k, v) VALUES('counted_from_ms', ?1) ON CONFLICT(k) DO UPDATE SET v = excluded.v",
         [from.to_string()],

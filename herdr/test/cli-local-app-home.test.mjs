@@ -13,7 +13,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { GUARD_DIR } from "../mods/am-sidebar/workers.js";
+import { GUARD_DIR, KILL_GUARD_DIR } from "../mods/am-sidebar/workers.js";
 import { readJsonLines } from "./log-lines.mjs";
 import { scratchProject, scratchRoot } from "./scratch-project.mjs";
 
@@ -78,7 +78,7 @@ const afterDash = (run) => run.slice(run.indexOf("--") + 1);
 const calls = (s) => readJsonLines(s.logPath);
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 /** A scratch path as the fixture records it: the temp root, the guard folder, the briefing hash. */
-const norm = (root) => (word) => word.split(root).join("<root>").split(GUARD_DIR).join("<guard>")
+const norm = (root) => (word) => word.split(root).join("<root>").split(KILL_GUARD_DIR).join("<hc-kill>").split(GUARD_DIR).join("<guard>")
   .replace(/(\/briefings\/)[0-9a-f]{10}-/g, "$1<hash>-")
   // RFC 0021: a fresh Claude start's session id is random; only its place is pinned.
   .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, "<session-id>");
@@ -99,7 +99,7 @@ test("a local start with HERDR_APP_HOME set puts it in the pane's env word (#650
   const words = afterDash(runs(s)[0]);
   // The default Claude login's -u first (env takes options before assignments), then PATH, then
   // the app home word before the agent, as seatOnMachine puts a linked machine's.
-  assert.deepEqual(words.slice(0, 5), ["/usr/bin/env", "-u", "CLAUDE_CONFIG_DIR", `PATH=${s.bin}:/usr/bin:/bin`, `HERDR_APP_HOME=${s.app}`]);
+  assert.deepEqual(words.slice(0, 5), ["/usr/bin/env", "-u", "CLAUDE_CONFIG_DIR", `PATH=${KILL_GUARD_DIR}:${s.bin}:/usr/bin:/bin`, `HERDR_APP_HOME=${s.app}`]);
   assert.equal(words[5], "claude");
 });
 

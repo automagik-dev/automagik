@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
-  AGY_FIXED_DENY, AGY_READ_ALLOW, AGY_SHELL_READ, AGY_WRITE_ALLOW,
+  AGY_FIXED_DENY, AGY_KILL_DENY, AGY_READ_ALLOW, AGY_SHELL_READ, AGY_WRITE_ALLOW,
   agyPermissionPlan, agyRuleProblem, agySandbox, agySettingsArgs, agySettingsDir, agySettingsFile, agySettingsPlan,
   agyTrustedWorkspaces, normalizeAgyPermissions, withAgySettings, withoutAgySettings,
 } from "../mods/am-sidebar/models.js";
@@ -87,7 +87,7 @@ test("agyPermissionPlan: a writer seat gets its project's write_file, tools, gat
   assert.ok(!plan.allow.includes("command(gh pr merge)"), "merge is never allowed by the defaults");
   assert.ok(!plan.allow.includes("command(gh release view)"), "the fixed gh release deny would shadow it");
   for (const rule of AGY_FIXED_DENY) assert.equal(plan.allow.includes(rule), false, `no allow shadowed by ${rule}`);
-  assert.deepEqual(plan.deny, [...AGY_FIXED_DENY], "the fixed denies, all of them");
+  assert.deepEqual(plan.deny, [...AGY_FIXED_DENY, ...AGY_KILL_DENY], "the fixed denies, all of them");
   for (const rule of ["command(git push --force)", "command(git push --force-with-lease)", "command(git push -f)",
     "command(git push origin --force)", "command(git push origin -f)",
     "command(git push --mirror)", "command(git push --delete)", "command(git reset --hard)",
@@ -120,7 +120,7 @@ test("agyPermissionPlan: a reviewer seat and a review worker are read-only: no w
     for (const rule of ["command(gh pr create)", "command(gh pr edit)", "command(gh pr comment)", "command(gh release view)"]) {
       assert.equal(plan.allow.includes(rule), false, `a read-only launch never gets ${rule}`);
     }
-    assert.deepEqual(plan.deny, [...AGY_FIXED_DENY]);
+    assert.deepEqual(plan.deny, [...AGY_FIXED_DENY, ...AGY_KILL_DENY]);
   }
   // The writer roles keep write_file, bare command(hc), and the writer-only shell tools; the review role doesn't.
   for (const role of ["dev", "test", "fix"]) {
@@ -271,16 +271,31 @@ test("AGY_SHELL_READ (#840): 24 read-only shell tools in both default allow list
   }
 });
 
-test("README (#840): Antigravity permission caveat documents writer-only tools, prefix caveats, pipeline checks on agy 1.5.3, and read-only hc subcommands", () => {
+test("README (#955): Antigravity's section says what runs without a prompt, that allow rules do nothing under the flag, and where the boundary is", () => {
   const readme = readFileSync(new URL("../README.md", import.meta.url), "utf8");
-  assert.match(readme, /sed -n.*GNU `sed`'s `e` command.*`w` command.*`-i`/s);
-  assert.match(readme, /`rg --pre`/);
-  assert.match(readme, /`sort --compress-program`/);
-  assert.match(readme, /`sort -o`/);
-  assert.match(readme, /`uniq IN OUT`/);
-  assert.match(readme, /`echo`\/`printf` with a shell redirection/);
-  assert.match(readme, /observed on\s+`agy 1\.5\.3`, not documented by agy/);
-  assert.match(readme, /`hc ls`, `hc get`, `hc read`, `hc wait`, and `hc send`.*`hc run` and\s+`hc exec` are not allowed on read-only roles/s);
+  // What --dangerously-skip-permissions lets through, said plainly (#998 review).
+  assert.match(readme, /The allow rules do nothing under the flag\./);
+  assert.match(readme, /agy asks nothing and runs no classifier/);
+  for (const what of ["`python3 -c`", "`node -e`", "`bash -c`", "`sh`", "`env`", "`curl`", "`ssh`", "`cat x | sh`", "a child agent started by hand",
+    "a write to the launch's own settings file", "`gh api <endpoint> -X PUT ...`", "anything else no deny rule names"]) {
+    assert.ok(readme.includes(what), what);
+  }
+  assert.match(readme, /a plain \(non-force\) `git push`, to `dev` or `main` too/);
+  assert.match(readme, /The real boundary is the hc-proxy sandbox/);
+  assert.match(readme, /read-only by its brief only/);
+  // The paragraphs that claimed the narrow allow list or the per-command sh guard still hold are gone.
+  assert.doesNotMatch(readme, /still needs `sh` to be allowed/);
+  assert.doesNotMatch(readme, /The allow list is as narrow as the launch\s+needs/);
+  assert.doesNotMatch(readme, /are left out of every default list/);
+  // The deny list's additions and the verb that replaces hc kill for a lead.
+  for (const rule of ["`am edit`", "`am restart`", "`am rm`", "`am create`", "`rm -fr`", "`rm -r -f`", "`rm -Rf`", "`git -c`", "`git --git-dir`",
+    "`git restore .`", "`git checkout -f`", "`git branch --delete --force`"]) assert.ok(readme.includes(rule), rule);
+  assert.match(readme, /automagik-herdr worker kill <pane> {5}# or: am worker kill <pane>/);
+  // The owner's rule and its honest reach: enforced for dsh-TUI and Antigravity, not for Claude Code or Codex.
+  assert.match(readme, /`hc kill` is for the seat of a project's main bot only/);
+  assert.match(readme, /\| Claude Code, Codex, Antigravity and every other agent \(the `hc kill` shim is first on its PATH\) \| refused by the shim in every flag order/);
+  assert.match(readme, /\*\*The boundary is the hc-proxy sandbox, never the shim\.\*\*/);
+  assert.doesNotMatch(readme, /\*\*not enforced\.\*\*/, "the shim covers every agent's pane now");
   // #879: the file lists the launch's own folder, and agy 1.5.3's key is documented.
   assert.match(readme, /"trustedWorkspaces": \["<folder>"\]/);
   assert.match(readme, /`agy` 1\.5\.3 reads\s+`TrustedWorkspaces \[\]string json:"trustedWorkspaces,omitempty"` as a\s+top-level key of `--settings`/s);
@@ -341,7 +356,7 @@ test("agySettingsPlan: the JSON agy reads, both arrays in full, private path und
   assert.deepEqual(data.trustedWorkspaces, [SEAT], "the launch's own folder, the only trusted one");
   assert.ok(data.permissions.allow.includes("command(npm publish)"));
   assert.ok(data.permissions.allow.includes(`write_file(${SEAT})`));
-  assert.deepEqual(data.permissions.deny, [...AGY_FIXED_DENY]);
+  assert.deepEqual(data.permissions.deny, [...AGY_FIXED_DENY, ...AGY_KILL_DENY]);
   assert.equal(plan.allow.length, data.permissions.allow.length);
   assert.equal(agySettingsPlan({ bot: BOT, settingsDir: null }), null, "no folder, no file");
   assert.equal(agySettingsPlan({ bot: { name: "no id" }, settingsDir: SETTINGS }), null);
@@ -426,7 +441,7 @@ test("helperPlan with the launch's file: a worker gets its worktree rule and fil
     worker: { botId: BOT.id, worktree: SEAT, agent: "antigravity" }, session: null, agents,
     agy: { appHomeDir: APP, bot } });
   const path = agySettingsFile(SETTINGS, BOT.id, "worker", "dev", SEAT);
-  assert.deepEqual(worker.argv, ["agy", "--mode", "auto", "--settings", path, "--continue"]);
+  assert.deepEqual(worker.argv, ["agy", "--dangerously-skip-permissions", "--mode", "auto", "--settings", path, "--continue"]);
   assert.equal(worker.agySettings.path, path);
   assert.ok(JSON.parse(worker.agySettings.text).permissions.allow.includes(`write_file(${SEAT})`));
   // A non-worker pane's command is reused, its older permission file replaced, never doubled.

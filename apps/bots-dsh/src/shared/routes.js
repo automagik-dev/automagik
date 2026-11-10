@@ -10,6 +10,15 @@
 // The Claude Code plugin is retired (3.56), but Sessions and Bots stored on its ids still name them.
 const isClaudeCode = provider => provider === 'claude-code' || provider.startsWith('claude-code-')
 
+/**
+ * Whether a provider is one of the two coding CLIs' routes, Claude Code's and Codex's over ACP.
+ * Named one by one: another agent over ACP (acp-gemini, a test's acp-fake) is not one.
+ */
+const CODING_CLIS = Object.freeze(['acp-claude', 'acp-codex'])
+export const cliRoute = provider => CODING_CLIS.includes(provider)
+/** Whether a move from `from` to `to` leaves a coding CLI for another provider; another model of the same CLI does not. */
+export const leavesCli = (from, to) => cliRoute(from?.provider) && to?.provider !== from.provider
+
 export const CONNECTED_BY = Object.freeze(['native', 'pi-ai', 'claude-code-plugin', 'acp'])
 export const HARNESSES = Object.freeze(['dsh', 'claude-code', 'codex', 'gemini'])
 

@@ -44,8 +44,9 @@ export const POCKET_LINK = "pocket-link";
  * from a release that did not ship it) it goes to <app home>/mods-disabled/, where Herdr never
  * looks, and the person turns it on in the Mods panel. A copy already installed keeps its state,
  * on or off. am-quota is a personal tool for people who run their own CLIProxyAPI.
- * am-automations needs the herdr-automations scheduler, which the pack does not install (#220):
- * its panel names what is missing and the command that installs it.
+ * am-automations needs the herdr-automations scheduler. install.sh puts the build the pack pins in
+ * ~/.local/bin (#220); the pack's own updater does not, so the panel still ships off, and names
+ * what is missing with the command that installs it (Copy, or Install).
  */
 export const OFF_BY_DEFAULT = Object.freeze(["am-automations", "am-quota"]);
 /**
