@@ -22,6 +22,12 @@ const REQUESTS = {
  */
 export function serveAgent(implementation, stream) {
   const app = agent({ name: 'fake-agent' })
+  // The cancel is registered first. The SDK walks its handlers once per message, each message
+  // by itself, so a handler reached late is run late: behind the requests, a cancel written
+  // right before a prompt was taken after that prompt had started, and cancelled it.
+  if (typeof implementation.cancel === 'function') {
+    app.onNotification(session.cancel, ({ params }) => implementation.cancel(params))
+  }
   for (const [name, method] of Object.entries(REQUESTS)) {
     if (typeof implementation[name] !== 'function') continue
     app.onRequest(method, async ({ params }) => (await implementation[name](params)) ?? {})
@@ -30,9 +36,6 @@ export function serveAgent(implementation, stream) {
   // names: registered by its wire name, its params taken as they come.
   if (typeof implementation.setSessionModel === 'function') {
     app.onRequest('session/set_model', params => params, async ({ params }) => (await implementation.setSessionModel(params)) ?? {})
-  }
-  if (typeof implementation.cancel === 'function') {
-    app.onNotification(session.cancel, ({ params }) => implementation.cancel(params))
   }
   const { client } = app.connect(stream)
   return {
