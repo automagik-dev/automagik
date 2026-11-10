@@ -964,8 +964,6 @@ list carries only the questions still open, so the two RFCs do not drift into tw
 - **RFC 0024 Q17, the desktop's Cloud credential and local Bots.** Recommended: a
   delivery-H-style mask per OS; keep desktop Cloud sign-in off until it exists; or the platform
   owner's written acceptance.
-- **RFC 0024 Q18, until the three safeguards hold.** Recommended: Cloud workspaces stay
-  owner-only; the narrower no-shell-Bots alternative is not recommended.
 
 ### New here
 

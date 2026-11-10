@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (2026-11-10, by the owner; council review 2026-11-09: proceed with conditions, folded in; owner's answers: identity and billing, 2026-11-09; isolation, identity stand-up, hosting and the goal, 2026-11-10; Chat: Decided 19-25, 2026-11-09; amends RFC 0008; amended 2026-11-09 by [RFC 0025][25]) |
+| Status | Accepted (2026-11-10, by the owner; council review 2026-11-09: proceed with conditions, folded in; owner's answers: identity and billing, 2026-11-09; isolation, identity stand-up, hosting, the goal and Q18, 2026-11-10; Chat: Decided 19-25, 2026-11-09; amends RFC 0008; amended 2026-11-09 by [RFC 0025][25]) |
 | Goal | First goal (owner, 2026-11-10): by 23 Nov, the owner signs in and opens one hosted workspace in test mode, with no real charges: RFC 0024 deliveries 0-4 and RFC 0025 phase A. |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | none here (docs); desktop (3.N) for secure storage, sign-in and the rail; the server image and plugin (3.N.P) for the self-hosted gate and the web rail; the Cloud service in its own private repository in the owner's organisation (its contracts stay public here) |
@@ -37,8 +37,8 @@ its desktop client, its questions 2, 6 and 7 and its threat model). The owner an
 questions on 2026-11-09: the identity service is one new instance for Cloud, which Tactu may join
 later (Decided 13, corrected 2026-11-10: Arca keeps its own sign-in), and billing is Stripe
 directly, agentic payments included (Decided 14). On 2026-11-10 the owner decided the isolation
-unit, the identity instance's stand-up, where Cloud runs and the first goal (Decided 15 to 18);
-Automagik Chat settled the low-stakes questions (Decided 19 to 25).
+unit, the identity instance's stand-up, where Cloud runs, the first goal and the owner-only line
+(Decided 15 to 18 and 26); Automagik Chat settled the low-stakes questions (Decided 19 to 25).
 
 ## Motivation
 
@@ -162,6 +162,14 @@ From Automagik Chat (2026-11-09; recorded 2026-11-10):
     said the service starts private; the decision is now that it is private. The principal, the
     workspace token, the entitlements document and the rail's API are public here; the Cloud
     service is private.
+
+From the owner (2026-11-10, Q18):
+
+26. **Cloud workspaces stay owner-only until all three safeguards hold** (was open question 18):
+    an unforgeable principal channel, role-filtered DSH routes and the launch token out of the
+    Bots' reach ((f)). The narrower alternative, members and guests limited to Bots with no shell
+    or file tools in the meantime, is not adopted: a Bot's tools change over time, and one
+    mistake makes a member owner-equivalent.
 
 Carried, not new:
 
@@ -476,10 +484,10 @@ joins a workspace until all three hold:
    hook (Decided 21).
 3. **The launch token out of the Bots' reach.** DSH's token is masked from Bot commands.
 
-**Until all three exist, Cloud workspaces are owner-only**: only the organisation's owners and
-admins (or the individual of a personal account), who are owner-equivalent inside DSH anyway. The
-roles, invitations and Buzz's gate below are built and tested behind that line, and switched on for
-members and guests only when the three hold.
+**Until all three exist, Cloud workspaces are owner-only** (Decided 26): only the organisation's
+owners and admins (or the individual of a personal account), who are owner-equivalent inside DSH
+anyway. The roles, invitations and Buzz's gate below are built and tested behind that line, and
+switched on for members and guests only when the three hold.
 
 **Which Bots a person may talk to.** Buzz's author gate (RFC 0022), per Bot. In a workspace,
 "owners" means the organisation's owners and admins, or the individual of a personal account:
@@ -886,10 +894,7 @@ keep their meaning.
     per OS (the secret store, the session bus, the app's data folder) and keep desktop Cloud sign-in
     off on an OS until it exists there. The alternative is the owner's written acceptance of the
     risk for that OS ((d)).
-18. **Until the three safeguards hold.** Recommended: Cloud workspaces stay owner-only. The
-    reviewer's narrower alternative, members and guests limited to Bots with no shell or file tools
-    in the meantime, is not recommended: a Bot's tools change over time, and one mistake makes a
-    member owner-equivalent ((f)).
+18. **Until the three safeguards hold.** Answered in Decided 26.
 
 ## Tracking
 
