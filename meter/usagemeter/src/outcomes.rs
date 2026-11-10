@@ -8,8 +8,9 @@
 //! - **Failures, as raw counts**, per launch tag (bot, kind, role, squad), harness, kind and
 //!   source, and the unattributed by reason. Two kinds, both facts something else recorded:
 //!   `tool_error` (`harness_log`: a tool result the harness itself flagged as failed) and
-//!   `run_failed` (`hc_snapshot`: a launch whose terminal exited with a non-zero status or on a
-//!   signal). The counts are of harness-flagged failures, including expected ones (a red test run
+//!   `run_failed` (a launch whose terminal exited with a non-zero status or on a signal:
+//!   `hc_snapshot` when hc's list of finished terminals said so, `workers_ledger` when an `end`
+//!   row of Herdr's workers ledger copied it). The counts are of harness-flagged failures, including expected ones (a red test run
 //!   while working test-first, a grep with no match): they are not a quality verdict on their
 //!   own, and the report prints no rate, ratio, threshold, label or score. Behaviour scoring
 //!   stays in genie.
@@ -55,7 +56,11 @@ pub const NOTE: &str = "raw counts of failures a harness or hc recorded, includi
      their own";
 const TOOL_ERROR_RULE: &str = "harness-flagged failures, including expected ones";
 const RUN_FAILED_RULE: &str = "a launch whose terminal ended on its own with a non-zero exit \
-     status or on a signal; killed and stopped_by_restart are ends, never errors";
+     status or on a signal, as hc's list of finished terminals gave it (hc_snapshot) or as an end \
+     row of the workers ledger copied it (workers_ledger); killed and stopped_by_restart are \
+     ends, never errors";
+/// A count read from ends of both sources.
+const BOTH_END_SOURCES: &str = "hc_snapshot,workers_ledger";
 const RUN_FAILED: &str = "run_failed";
 
 const ABSENT: &str = "no meter store on this machine yet; open Herdr or run usagemeter sync";
@@ -872,6 +877,45 @@ struct ErrorAcc {
     unattributed: BTreeMap<NoTag, i64>,
     tool_errors: i64,
     run_failed: i64,
+    /// Where the failed runs' ends came from, and where every end read in the window did.
+    failed_from: EndSources,
+    ends_from: EndSources,
+}
+
+/// Which of the two sources of a launch's end a count was read from.
+#[derive(Default, Clone, Copy)]
+struct EndSources {
+    hc: bool,
+    ledger: bool,
+}
+
+impl EndSources {
+    fn add(&mut self, source: &str) {
+        if source == record::WORKERS_LEDGER {
+            self.ledger = true;
+        } else {
+            self.hc = true;
+        }
+    }
+
+    fn name(self) -> Option<&'static str> {
+        match (self.hc, self.ledger) {
+            (true, true) => Some(BOTH_END_SOURCES),
+            (true, false) => Some(record::HC_SNAPSHOT),
+            (false, true) => Some(record::WORKERS_LEDGER),
+            (false, false) => None,
+        }
+    }
+}
+
+/// The source a window's `run_failed` total names: where the failed runs it counts ended, as
+/// their rows say; with none counted, where the ends it read came from; with no end read at all,
+/// hc's list, the first place `sync` asks.
+fn run_failed_source(acc: &ErrorAcc) -> &'static str {
+    acc.failed_from
+        .name()
+        .or(acc.ends_from.name())
+        .unwrap_or(record::HC_SNAPSHOT)
 }
 
 /// The tool failures of one window, grouped as the store interned them.
@@ -990,6 +1034,9 @@ fn run_ends(
         if !named.is_empty() && !l.repo.as_deref().is_some_and(|r| named.contains(r)) {
             continue;
         }
+        if l.end_source.is_some() {
+            acc.ends_from.add(end_source(l));
+        }
         match end_of(l) {
             End::Ok => ends.exited_ok += 1,
             End::Killed => ends.killed += 1,
@@ -999,6 +1046,7 @@ fn run_ends(
             End::Failed => {
                 ends.failed += 1;
                 acc.run_failed += 1;
+                acc.failed_from.add(end_source(l));
                 match &l.bot {
                     Some(bot) => {
                         *acc.rows
@@ -1103,7 +1151,11 @@ fn window_out(
 ) -> rusqlite::Result<WindowOut> {
     let mut acc = ErrorAcc::default();
     let tool = tool_state(b, rd.errors_from, rd.complete);
-    tool_errors(c, b, rd.named, &mut acc)?;
+    // With no start recorded, the rows are not this store's window's to read (a reset by a meter
+    // that does not know them left them behind: `record::COUNTED_META`).
+    if rd.errors_from.is_some() {
+        tool_errors(c, b, rd.named, &mut acc)?;
+    }
     let ends = run_ends(b, rd.launches, rd.named, &mut acc);
     let ttp = time_to_pr(b, rd.branches, rd.launches, rd.with_pr, rd.named);
     let wanted = |l: &&Launch| {
@@ -1116,6 +1168,7 @@ fn window_out(
         return Ok(not_recorded(window, b, "no_data"));
     }
     let run_state = if ends.unknown > 0 { "partial" } else { "full" };
+    let run_source = run_failed_source(&acc);
     let mut rows: Vec<ErrorLine> = acc
         .rows
         .into_iter()
@@ -1174,7 +1227,7 @@ fn window_out(
             },
             run_failed: KindCount {
                 state: run_state,
-                source: record::HC_SNAPSHOT,
+                source: run_source,
                 count: Some(acc.run_failed),
             },
             unsupported_harnesses: unsupported_harnesses(),
@@ -1225,7 +1278,11 @@ fn report(
     let recorded = record::table_exists(c, "ev_error").map_err(Failure::sql)?
         && record::table_exists(c, "pr").map_err(Failure::sql)?
         && record::column_exists(c, "launch", "end_source").map_err(Failure::sql)?;
-    let errors_from = query::meta_i64(&meta, record::FROM_META).filter(|_| recorded);
+    // Failures recorded in another window than the store's (an older meter reset it since) are
+    // not read: until the next sync drops them, the window says `not_recorded`.
+    let same_window =
+        record::same_window(counted_from, query::meta_i64(&meta, record::COUNTED_META));
+    let errors_from = query::meta_i64(&meta, record::FROM_META).filter(|_| recorded && same_window);
     let bounds: Vec<(Window, query::Bounds)> = req
         .windows
         .iter()
@@ -1296,7 +1353,7 @@ fn report(
                 unsupported_harnesses: unsupported_harnesses(),
             },
             run_failed: RunFailedDef {
-                source: record::HC_SNAPSHOT,
+                source: BOTH_END_SOURCES,
                 rule: RUN_FAILED_RULE,
             },
         },
@@ -1697,6 +1754,42 @@ mod tests {
         let mut unseen = launch(Some("exited"), Some(1), None);
         unseen.end_source = None;
         assert!(end_of(&unseen) == End::Unknown);
+    }
+
+    #[test]
+    fn the_run_failed_total_names_the_sources_its_ends_came_from() {
+        let b = query::Bounds {
+            start: 0,
+            end: 100,
+            requested_start: 0,
+            clipped: false,
+        };
+        let ended = |source: &str, exit_code: i64| {
+            let mut l = launch(Some("exited"), Some(exit_code), None);
+            l.to = Some(50);
+            l.end_source = Some(source.into());
+            l
+        };
+        let source_of = |launches: &[Launch]| {
+            let mut acc = ErrorAcc::default();
+            let ends = run_ends(&b, launches, &BTreeSet::new(), &mut acc);
+            (ends.failed, run_failed_source(&acc))
+        };
+        let (hc, ledger) = (record::HC_SNAPSHOT, record::WORKERS_LEDGER);
+        assert_eq!(source_of(&[ended(hc, 1)]), (1, "hc_snapshot"));
+        assert_eq!(source_of(&[ended(ledger, 1)]), (1, "workers_ledger"));
+        assert_eq!(
+            source_of(&[ended(hc, 1), ended(ledger, 2)]),
+            (2, "hc_snapshot,workers_ledger")
+        );
+        // The source is the failed runs', as their rows say: an end that was fine adds none.
+        assert_eq!(
+            source_of(&[ended(hc, 0), ended(ledger, 1)]),
+            (1, "workers_ledger")
+        );
+        // No failed run: where the ends read came from, and hc's list when none was read.
+        assert_eq!(source_of(&[ended(ledger, 0)]), (0, "workers_ledger"));
+        assert_eq!(source_of(&[]), (0, "hc_snapshot"));
     }
 
     #[test]

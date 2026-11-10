@@ -292,7 +292,9 @@ request Herdr recorded (project, branch, number, repo, state and its times; no t
 address), kept 400 days; and on `launch` how its terminal ended (`end_reason`, `exit_code`,
 `signal`, `end_source`, `ended_ms`). An older meter reads and writes such a store as before. It
 does not record failures, so every sync stamps how far they go (`errors_through_ms` and the log
-offsets, in `meta`): when another sync ran in between, `errors_from_ms` moves to now.
+offsets, in `meta`): when another sync ran in between, `errors_from_ms` moves to now. It stamps
+the store's window too (`errors_counted_from_ms`): a reset by an older meter changes that window
+and empties the tables the failures point into, so the next sync drops the failures kept.
 
 - `repo` is `host/owner/repo` from the cwd's git remote, without credentials, port, query or
   fragment; worktrees resolve to their repository. No remote: null.
@@ -470,7 +472,7 @@ ratio, threshold, label or score; scoring behaviour stays in genie (RFC 0018 (c)
 | `error_kind` | `source` | What counts |
 |---|---|---|
 | `tool_error` | `harness_log` | A tool result the harness itself flagged as failed. **Claude Code:** a `tool_result` block with `is_error: true`, once per `tool_use_id`. **Codex:** an `event_msg` whose payload is `item_completed` and whose item has `status: "failed"` or an `exit_code` that is a non-zero integer, once per item `id` in its thread. |
-| `run_failed` | `hc_snapshot` | A launch whose terminal ended on its own with a non-zero exit status or on a signal, from hc's list of finished terminals (or, as `workers_ledger`, an `end` row that copied them). `killed` and `stopped_by_restart` are counted as ends (`run_ends`), never as errors. |
+| `run_failed` | `hc_snapshot` or `workers_ledger` | A launch whose terminal ended on its own with a non-zero exit status or on a signal: `hc_snapshot` from hc's list of finished terminals, `workers_ledger` from an `end` row that copied them once hc no longer lists the terminal. A window's total names the sources its failed runs came from (`hc_snapshot,workers_ledger` for both); with no failed run, the sources of the ends it read. `killed` and `stopped_by_restart` are counted as ends (`run_ends`), never as errors. |
 
 Both markers are pinned by fixtures in `tests/fixtures/tool-errors/` (with the expected ids in
 `expected.json`), and neither is reinterpreted. A tool failure resolves to its launch through the
@@ -486,6 +488,10 @@ links its session.
   store. A window that starts before it is `partial`, its count a lower bound. A sync by an
   older meter (after a rollback) reads logs without recording failures, so the next sync moves
   `errors_from` to its own time: the gap is unknown.
+- A reset by that older meter (a wider `--days`, `--backfill`) empties the tables a failure's
+  bot, harness and repo are read from and leaves the failures. They are never read against
+  those tables again: `tool_error` is `not_recorded` until the next sync, which drops them and
+  starts `errors_from` at its own time.
 - A launch whose end hc no longer listed when a sync next looked is `unknown` in `run_ends`, and
   `run_failed` is then `partial`.
 - A store no sync of this meter has prepared is `not_recorded` (the report creates nothing), and

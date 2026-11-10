@@ -515,7 +515,11 @@ fn failures_are_counted_per_window_bot_and_role_with_their_source() {
     // from its end row.
     let d7 = window(&v, "d7");
     assert_eq!(d7["errors"]["tool_error"]["count"], 5);
-    assert_eq!(d7["errors"]["run_failed"]["count"], 2);
+    // One failed run from hc's list, one from an end row: the total names both sources.
+    assert_eq!(
+        d7["errors"]["run_failed"],
+        json!({"state": "full", "source": "hc_snapshot,workers_ledger", "count": 2})
+    );
     assert_eq!(
         d7["errors"]["unattributed"],
         json!([{"state": "unlinked", "reason": "no_record", "harness": "claude-code",
@@ -1065,6 +1069,191 @@ fn a_sync_by_an_older_meter_moves_errors_from_and_the_window_is_partial() {
     assert!(t.contains("tool_error (harness_log): 4 [partial]"), "{t}");
 }
 
+/// What the reset of a meter from before issue 899 does to a store, statement for statement
+/// (v3.125.0's `reset_at`): every row, offset and piece of evidence goes, the tables a failure's
+/// ids point into are emptied (their ids then start again from 1), and the window moves. That
+/// meter does not know `ev_error`, so the failures stay.
+fn reset_by_an_older_meter(s: &Scene, counted_from: &str) {
+    let st = s.store();
+    st.conn
+        .execute_batch(
+            "DELETE FROM usage; DELETE FROM files; DELETE FROM seen; DELETE FROM sessions;
+             DELETE FROM health; DELETE FROM codex_threads;
+             DELETE FROM evidence; DELETE FROM ev_dirty; DELETE FROM ev_dim; DELETE FROM ev_actor;
+             DELETE FROM ev_cwd;
+             DELETE FROM meta WHERE k IN ('last_success_ms', 'last_run_ms', 'last_pending_bytes',
+               'last_pending_files', 'codex_watermark_ms', 'codex_bad_lines');",
+        )
+        .unwrap();
+    let from = t(counted_from).to_string();
+    st.set_meta("counted_from_ms", &from).unwrap();
+    st.set_meta("evidence_from_ms", &from).unwrap();
+}
+
+/// The tool failures the report attributes, as (bot, count), and those the store holds.
+fn tool_failures(w: &Value) -> Vec<(String, i64)> {
+    w["errors"]["rows"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["error_kind"] == "tool_error")
+        .map(|r| {
+            (
+                r["bot"].as_str().unwrap().to_owned(),
+                r["count"].as_i64().unwrap(),
+            )
+        })
+        .collect()
+}
+
+fn stored_failures(s: &Scene) -> Vec<(Option<String>, i64)> {
+    let st = s.store();
+    let mut q = st
+        .conn
+        .prepare(
+            "SELECT a.bot, count(*) FROM ev_error e LEFT JOIN ev_actor a ON a.id = e.actor
+             GROUP BY a.bot ORDER BY a.bot",
+        )
+        .unwrap();
+    q.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect()
+}
+
+#[test]
+fn a_reset_by_an_older_meter_never_leaves_a_failure_under_another_bot() {
+    let mut s = Scene::migrated(MIGRATED, &[]);
+    let (gh1, gh2, gh3) = (wt("gh-1"), wt("gh-2"), wt("gh-3"));
+    for cwd in [&gh1, &gh2, &gh3] {
+        s.store().cache_repo(cwd, Some(REPO), t(SYNCED)).unwrap();
+    }
+    let at = "2026-11-08T10:00:00Z";
+    s.start(start(
+        "t7711",
+        "b-dev",
+        "dev",
+        "claude",
+        &gh1,
+        "feat/gh-1",
+        at,
+        Some("sess-dev"),
+    ));
+    s.start(start(
+        "t7712",
+        "b-gone",
+        "fix",
+        "claude",
+        &gh2,
+        "feat/gh-2",
+        at,
+        Some("sess-gone"),
+    ));
+    let failed = |session: &str, cwd: &str, branch: &str, ts: &str, id: &str| {
+        claude_result(session, cwd, branch, ts, id, true)
+    };
+    write_claude(
+        &s,
+        "sess-dev",
+        &[
+            claude_call("sess-dev", &gh1, "feat/gh-1", "2026-11-08T10:10:00Z", 1),
+            failed(
+                "sess-dev",
+                &gh1,
+                "feat/gh-1",
+                "2026-11-08T10:11:00Z",
+                "tu-1",
+            ),
+            failed(
+                "sess-dev",
+                &gh1,
+                "feat/gh-1",
+                "2026-11-08T10:12:00Z",
+                "tu-2",
+            ),
+        ],
+    );
+    write_claude(
+        &s,
+        "sess-gone",
+        &[
+            claude_call("sess-gone", &gh2, "feat/gh-2", "2026-11-08T10:20:00Z", 1),
+            failed(
+                "sess-gone",
+                &gh2,
+                "feat/gh-2",
+                "2026-11-08T10:21:00Z",
+                "tu-9",
+            ),
+        ],
+    );
+    s.sync();
+    let before = report(&s, &["--window", "d1"]);
+    assert_eq!(
+        tool_failures(window(&before, "d1")),
+        [("b-dev".to_owned(), 2), ("b-gone".to_owned(), 1)]
+    );
+
+    // A rollback: the older meter widens the window, which resets the store. One session's log
+    // is gone by then, and a bot that never failed has started: its log is read first, so it and
+    // its branch take the ids the reset freed.
+    reset_by_an_older_meter(&s, "2026-08-26T00:00:00Z");
+    assert_eq!(stored_failures(&s), [(None, 3)], "that meter leaves them");
+    fs::remove_file(s.env.claude("-work-widgets/sess-gone.jsonl")).unwrap();
+    s.start(start(
+        "t7713",
+        "b-new",
+        "review",
+        "claude",
+        &gh3,
+        "feat/gh-3",
+        "2026-11-08T12:00:00Z",
+        Some("sess-a-new"),
+    ));
+    write_claude(
+        &s,
+        "sess-a-new",
+        &[claude_call(
+            "sess-a-new",
+            &gh3,
+            "feat/gh-3",
+            "2026-11-08T12:10:00Z",
+            1,
+        )],
+    );
+
+    // Until this meter syncs again, a report reads none of the failures left behind: no count,
+    // and never a 0.
+    let v = report(&s, &["--window", "d1"]);
+    assert_eq!(v["errors_from"], Value::Null);
+    let d1 = window(&v, "d1");
+    assert_eq!(
+        d1["errors"]["tool_error"],
+        json!({"state": "not_recorded", "source": "harness_log", "count": null})
+    );
+    assert_eq!(tool_failures(d1), []);
+
+    // This meter again: it drops them before it reads a log, and starts the failures from now.
+    s.sync_with(|o| o.now_ms = t("2026-11-08T19:56:00Z"));
+    let v = report(&s, &["--window", "d1"]);
+    assert_eq!(v["errors_from"], "2026-11-08T19:56:00Z");
+    // Only what the logs still hold is there, read again: the lost session's failure is gone,
+    // and nothing sits under the bot that took the freed ids.
+    assert_eq!(stored_failures(&s), [(Some("b-dev".to_owned()), 2)]);
+    let d1 = window(&v, "d1");
+    assert_eq!(
+        d1["errors"]["tool_error"],
+        json!({"state": "partial", "source": "harness_log", "count": 2})
+    );
+    assert_eq!(tool_failures(d1), [("b-dev".to_owned(), 2)]);
+
+    // The next sync of this meter keeps them: the window is the one they were recorded in.
+    s.sync_with(|o| o.now_ms = t("2026-11-08T19:58:00Z"));
+    let v = report(&s, &["--window", "d1"]);
+    assert_eq!(v["errors_from"], "2026-11-08T19:56:00Z");
+    assert_eq!(tool_failures(window(&v, "d1")), [("b-dev".to_owned(), 2)]);
+}
+
 #[test]
 fn a_launch_whose_end_no_one_recorded_makes_run_failed_partial() {
     let mut s = Scene::migrated(MIGRATED, &[]);
@@ -1262,6 +1451,8 @@ fn the_help_names_the_verb_and_what_its_counts_are() {
         "a tool_result block with is_error: true, once per tool_use_id",
         "an item_completed event whose item has status failed or a non-zero",
         "listed as unsupported, never counted as 0",
+        "run_failed (hc_snapshot, workers_ledger)",
+        "workers_ledger when an end row of Herdr's",
     ] {
         assert!(help.contains(needle), "--help lacks: {needle}");
     }

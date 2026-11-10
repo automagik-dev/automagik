@@ -460,9 +460,12 @@ and window, plus the unattributed by reason:
   - Codex: an `event_msg` whose payload is `item_completed` and whose item has
     `status: "failed"` or an `exit_code` that is a non-zero integer, counted once per item `id`
     in its thread (an item that holds both counts once).
-- `run_failed` (source `hc_snapshot`): a launch whose terminal ended on its own with a non-zero
-  exit status or on a signal, as hc's list of finished terminals records it. `killed` and
-  `stopped_by_restart` are printed as end counts, never as errors.
+- `run_failed` (source `hc_snapshot` or `workers_ledger`): a launch whose terminal ended on its
+  own with a non-zero exit status or on a signal. `hc_snapshot` when hc's list of finished
+  terminals records it; `workers_ledger` when hc no longer lists the terminal and an `end` row
+  of Herdr's workers ledger copied its reason, exit status and signal. A window's total names
+  the sources its failed runs came from. `killed` and `stopped_by_restart` are printed as end
+  counts, never as errors.
 
 The conditions it holds to:
 
@@ -474,12 +477,16 @@ The conditions it holds to:
 4. Unknown is never 0: a harness with no pinned marker (omp, dsh-tui, Antigravity) is
    `unsupported`; a window that starts before `errors_from`, or one after a sync that recorded
    no failures (an older meter, after a rollback), is `partial`; a store no sync has prepared is
-   `not_recorded`.
-5. No tool name, argument, output, error text, session, folder or terminal is printed, and the
-   meter stores no text of a failure: its session as a keyed hash and its folders as references
-   to the evidence's own folder rows, for re-attribution, kept for the evidence's retention;
-   prints none of them. Beside those a failure is kept as its time, harness, launch tag and a
-   keyed hash of its id ((b): 90 days or 1 GiB).
+   `not_recorded`. Failures left behind by an older meter's reset are dropped by the next sync,
+   never counted: until then `tool_error` is `not_recorded`.
+5. No tool name, argument, output or error text is stored or printed. The meter stores no text
+   of a failure: its session as a keyed hash and its folders as references to the evidence's own
+   folder rows, for re-attribution, kept for the evidence's retention; prints none of them.
+   A session and a folder are stored only as the evidence store already keeps them under (b):
+   the session and its parent as keyed hashes, the folders as ids of the folder rows interned in
+   `ev_cwd`, all pruned with the evidence (90 days or 1 GiB). They are there so a failure follows
+   its session when a later record links it, and no session, folder or terminal is ever printed.
+   Beside those a failure is kept as its time, harness, launch tag and a keyed hash of its id.
 6. It is not in the query envelope. A reader that wants a tool-error rate, a label or a score
    computes it in genie, from these counts or from its own annotations.
 

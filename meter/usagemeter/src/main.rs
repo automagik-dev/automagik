@@ -65,9 +65,12 @@ outcomes  Recorded failures and time to pull request (issue 899), per window: te
                 Codex: an item_completed event whose item has status failed or a non-zero
                 exit_code, once per item id. omp, dsh-tui and Antigravity have no pinned
                 marker: they are listed as unsupported, never counted as 0.
-            run_failed (hc_snapshot)  a launch whose terminal ended on its own with a
-                non-zero exit status or on a signal. killed and stopped_by_restart are
-                counted as ends, never as errors.
+            run_failed (hc_snapshot, workers_ledger)  a launch whose terminal ended on its
+                own with a non-zero exit status or on a signal: hc_snapshot when hc's list
+                of finished terminals says so, workers_ledger when an end row of Herdr's
+                workers ledger copied it. A window's total names the sources its failed
+                runs came from. killed and stopped_by_restart are counted as ends, never
+                as errors.
           Time to pull request is in seconds on two clocks, from the pull requests Herdr
           records in its workers ledger: from the branch's first commit (to_open_s,
           to_merge_s) and from its first worker launch (launch_to_open_s, launch_to_merge_s),

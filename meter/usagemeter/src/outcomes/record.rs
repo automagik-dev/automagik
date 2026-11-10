@@ -7,7 +7,10 @@
 //! and writes the store as before, without seeing them. That older meter moves the log offsets on
 //! without recording a failure, so each sync stamps how far the failures go
 //! ([`THROUGH_META`], [`FILES_META`]); when another sync has run since, the failures start again
-//! from now ([`FROM_META`]). What lies between is unknown, never 0.
+//! from now ([`FROM_META`]). What lies between is unknown, never 0. That older meter's reset also
+//! empties the tables a failure's ids point into without knowing the failures, so each sync
+//! stamps the window it recorded them in ([`COUNTED_META`]): once the store's window is another,
+//! the rows kept are dropped, never read against ids that now name something else.
 //!
 //! No row holds a tool name, an argument, an output or an error text: a failure is its time, its
 //! harness, the launch it resolves to and a keyed hash of its id.
@@ -29,6 +32,12 @@ pub const THROUGH_META: &str = "errors_through_ms";
 /// The `meta` key of the log offsets as the last recording run left them (`count|sum`): offsets
 /// that moved since were moved by a run that stamped nothing, an older meter's failed one included.
 pub const FILES_META: &str = "errors_files";
+/// The `meta` key of the store's `counted_from_ms` as the last sync of this meter found it. Every
+/// reset moves `counted_from_ms` (a reset is a wider window), and an older meter's reset empties
+/// `ev_dim`, `ev_actor` and `ev_cwd`, whose ids then start again from 1, while it leaves
+/// `ev_error` alone. So failures stamped with another window are rows whose ids may name another
+/// bot, harness or repo by now: [`ensure`] drops them, and a report does not read them.
+pub const COUNTED_META: &str = "errors_counted_from_ms";
 
 /// The one kind of failure a log yields, and where it comes from.
 pub const TOOL_ERROR: &str = "tool_error";
@@ -126,7 +135,11 @@ fn files_print(c: &Connection) -> rusqlite::Result<String> {
 ///   evidence's day bound, whose rows a prune would drop at once);
 /// - made now, over a store that has read logs: from now, since their failures were skipped;
 /// - a sync ran since the last one that recorded failures (an older meter, after a rollback), or
-///   the log offsets moved with no stamp: from now. The gap is unknown, never 0.
+///   the log offsets moved with no stamp: from now. The gap is unknown, never 0;
+/// - the store's window is not the one the failures were recorded in (an older meter reset the
+///   store, [`COUNTED_META`]): the failures kept are dropped, and they start again from now.
+///
+/// `counted_from` is the store's `counted_from_ms` as this sync left it.
 pub fn ensure(conn: &mut Connection, now_ms: i64, counted_from: i64) -> rusqlite::Result<()> {
     let tx = conn.transaction()?;
     tx.execute_batch(DDL)?;
@@ -137,9 +150,15 @@ pub fn ensure(conn: &mut Connection, now_ms: i64, counted_from: i64) -> rusqlite
     }
     let last_run = meta_i64(&tx, "last_run_ms")?;
     let files = files_print(&tx)?;
+    // The failures of another window: their ids are not to be trusted (see `COUNTED_META`).
+    let same_window = same_window(counted_from, meta_i64(&tx, COUNTED_META)?);
+    if !same_window {
+        tx.execute("DELETE FROM ev_error", [])?;
+    }
     let from = match meta_i64(&tx, FROM_META)? {
         None if files.starts_with("0|") => Some(counted_from.max(evidence::retention_cut(now_ms))),
         None => Some(now_ms),
+        Some(_) if !same_window => Some(now_ms),
         Some(_) => {
             let through = meta_i64(&tx, THROUGH_META)?;
             let stamped: Option<String> = tx
@@ -163,7 +182,15 @@ pub fn ensure(conn: &mut Connection, now_ms: i64, counted_from: i64) -> rusqlite
         }
         set_meta(&tx, FILES_META, &files)?;
     }
+    set_meta(&tx, COUNTED_META, &counted_from.to_string())?;
     tx.commit()
+}
+
+/// Whether the failures in the store were recorded in the window the store holds now: false after
+/// a reset by a meter that does not know them, until the next sync of this one. A report reads
+/// none of them then.
+pub fn same_window(counted_from: i64, stamped: Option<i64>) -> bool {
+    stamped == Some(counted_from)
 }
 
 /// Stamps a finished run: the failures go through `now_ms`, with the offsets as they stand. Called
@@ -180,8 +207,8 @@ pub fn clear(tx: &Transaction<'_>) -> rusqlite::Result<()> {
         tx.execute("DELETE FROM ev_error", [])?;
     }
     tx.execute(
-        "DELETE FROM meta WHERE k IN (?1, ?2, ?3)",
-        [FROM_META, THROUGH_META, FILES_META],
+        "DELETE FROM meta WHERE k IN (?1, ?2, ?3, ?4)",
+        [FROM_META, THROUGH_META, FILES_META, COUNTED_META],
     )?;
     Ok(())
 }
@@ -634,6 +661,40 @@ mod tests {
             Some(NOW - 20 * DAY),
             "every log is read again from its start"
         );
+    }
+
+    #[test]
+    fn failures_recorded_in_another_window_are_dropped_and_start_again_from_now() {
+        let mut s = Store::open_in_memory().unwrap();
+        sync(&mut s, NOW, NOW - 10 * DAY);
+        let tx = s.conn.transaction().unwrap();
+        let mut intern = Interner::default();
+        assert!(insert(&tx, &mut intern, &failure(NOW - DAY, 1)).unwrap());
+        tx.commit().unwrap();
+        let kept = |s: &Store| -> i64 {
+            s.conn
+                .query_row("SELECT count(*) FROM ev_error", [], |r| r.get(0))
+                .unwrap()
+        };
+        // The same window: kept, and the start stays.
+        ensure(&mut s.conn, NOW + 60_000, NOW - 10 * DAY).unwrap();
+        assert_eq!((kept(&s), from(&s)), (1, Some(NOW - 10 * DAY)));
+        // An older meter reset the store to a wider window: its ids are no longer these rows'.
+        ensure(&mut s.conn, NOW + 120_000, NOW - 20 * DAY).unwrap();
+        assert_eq!((kept(&s), from(&s)), (0, Some(NOW + 120_000)));
+        assert_eq!(
+            meta_i64(&s.conn, COUNTED_META).unwrap(),
+            Some(NOW - 20 * DAY)
+        );
+        // A store whose failures carry no window stamp (none can be trusted): the same.
+        let tx = s.conn.transaction().unwrap();
+        assert!(insert(&tx, &mut intern, &failure(NOW - DAY, 2)).unwrap());
+        tx.commit().unwrap();
+        s.conn
+            .execute("DELETE FROM meta WHERE k = ?1", [COUNTED_META])
+            .unwrap();
+        ensure(&mut s.conn, NOW + 180_000, NOW - 20 * DAY).unwrap();
+        assert_eq!((kept(&s), from(&s)), (0, Some(NOW + 180_000)));
     }
 
     fn failure(ts_ms: i64, ident: u8) -> ErrorRow {
