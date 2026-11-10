@@ -790,11 +790,11 @@ export function install(rt) {
     }
     for (const botId of Object.keys(room.sessions ?? {})) rt.dropGroupSession(room, botId)
     // Its tasks keep the level they run at as a cap, then take their Bot's own or lower.
-    rt.capTasks(task => task.roomId === id)
+    rt.capTasks(task => rt.taskOfRoom(task, id))
     delete state.rooms[id]
     rt.roomInbox.delete(id)
     rt.dropGroupLines(id)
-    await rt.reapplyTasks(task => task.roomId === id)
+    await rt.reapplyTasks(task => rt.taskOfRoom(task, id))
     await archived
     const failed = await saveForDelete()
     // Armed scheduled tasks refuse a plain archive and would keep delivering into
