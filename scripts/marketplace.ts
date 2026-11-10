@@ -12,7 +12,7 @@
  * `check` proves that each pinned commit of this repository is reachable from HEAD and holds, at
  * the entry's path, a package.json with the entry's name and version: a market installs exactly
  * that commit. A vetted plugin's commit is proven against its fork by dsh-marketplace's check.
- * automagik-dev/dsh-marketplace reads this file at each release (`v<version>`) for the titles,
+ * automagik-si/dsh-marketplace reads this file at each release (`v<version>`) for the titles,
  * categories and paths, and lists the plugins at that release's commit.
  */
 import { execFileSync } from 'node:child_process';
@@ -21,9 +21,11 @@ import { join } from 'node:path';
 import { parseMarketIndex } from '@deepseek-ai/dsh-plugin-market-index';
 import { VERSION } from './version';
 
-export const REPO_URL = 'https://github.com/automagik-dev/automagik';
+export const REPO_URL = 'https://github.com/automagik-si/automagik';
+/** The org before the move: an entry that still names it is ours, and still installs. */
+export const OLD_REPO_URL = 'https://github.com/automagik-dev/automagik';
 export const INDEX_PATH = join(import.meta.dir, '..', 'marketplace', 'automagik.json');
-export const INDEX_URL = 'https://raw.githubusercontent.com/automagik-dev/automagik/main/marketplace/automagik.json';
+export const INDEX_URL = 'https://raw.githubusercontent.com/automagik-si/automagik/main/marketplace/automagik.json';
 /**
  * The other repositories this index may list: Genie's (its DSH plugin, pinned where the
  * welcome installs it from, apps/welcome-dsh package.json automagik.genie) and the forks
@@ -68,8 +70,11 @@ interface Index {
   plugins: IndexPlugin[];
 }
 
-const isOurs = (source: IndexVersion['source']): source is GitSource =>
-  source.type === 'git' && source.url.replace(/\.git$/, '') === REPO_URL;
+const ours = (url: string) => {
+  const bare = url.replace(/\.git$/, '');
+  return bare === REPO_URL || bare === OLD_REPO_URL;
+};
+const isOurs = (source: IndexVersion['source']): source is GitSource => source.type === 'git' && ours(source.url);
 const isVetted = (source: IndexVersion['source']): source is GitSource =>
   source.type === 'git' && VETTED.includes(source.url.replace(/\.git$/, ''));
 
