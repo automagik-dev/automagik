@@ -1,4 +1,4 @@
-# RFC 0026: Code workers: a DSH Bot delegates to agents in Herdr
+# RFC 0028: Code workers: a DSH Bot delegates to agents in Herdr
 
 | Field | Value |
 |---|---|
