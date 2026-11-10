@@ -361,6 +361,9 @@ test("the shim sources only a safe provider env file, and leaves the arguments a
   const s = scene(t);
   await installDshTui({ forbiddenRoots: rootsOf(s), env: s.env, publishedAt: PUBLISHED });
   const guide = join(s.home, ".dsh", "deepseek.env");
+  // The env file's folder is the owner's alone, set here rather than left to the umask: on a
+  // umask-002 host it would be 0775, and the shim rightly refuses a file in it (#578).
+  chmodSync(join(s.home, ".dsh"), 0o700);
   const boot = (args = [], extra = {}) => {
     const r = s.runShim(args, extra);
     assert.equal(r.status, 0, r.stderr);
@@ -429,7 +432,7 @@ test("the shim sources only a safe provider env file, and leaves the arguments a
   chmodSync(guide, 0o600);
   writeFileSync(guide, "AM_TEST_KEY=from-default\n");
   const alt = join(s.root, "alt-dsh");
-  mkdirSync(alt);
+  mkdirSync(alt, { mode: 0o700 });
   symlinkSync(join(s.home, ".dsh", "profiles"), join(alt, "profiles"));
   writeFileSync(join(alt, "deepseek.env"), "AM_TEST_KEY=from-alt\n");
   chmodSync(join(alt, "deepseek.env"), 0o600);
