@@ -340,6 +340,17 @@ Contract 1's branch rows keep their meaning. Additive, so genie reads them only 
   `tokens_before_evidence` (below). Then `tokens_by_basis` (`session`, `label`, `worktree`),
   which adds up to `tokens_attributed`: how calls were tied to a launch. A bot row holds only
   attributed usage, so its other three counts are 0; the rest is in the envelope (below).
+- **`--by task`.** One row per task id with task-labelled usage in the repo and window, with
+  `attribution.precision: task_interval` (RFC 0018 M3); the branches named are an optional filter,
+  as for bots. The task key is the start row's `task` joined with its `project` (a) — never
+  inferred from a branch name. The row's `actors` names every launch tag that did the work, one
+  per (bot, kind, role, squad, unrecorded, harness), ordered like a bot row's key: a task answered
+  by several bots or roles names them all, never a guessed single one, and the actor list is
+  bounded with the row (`actors_omitted`) instead of cut. A task id the meter ties to more than
+  one checkout of the repo is never summed: its row is `missing` with `task_ambiguous` (D4), and
+  the meter never prints a checkout path. Its numbers are evidence-backed, so the branch row stays
+  the total. A window with no task labels is an `ok` answer with no task rows, and the branch
+  answer is unchanged: a reader falls back to it.
 - **Where the branch came from** is its own count, apart from how the call was tied:
   `tokens_by_branch_basis` (`log`, `ledger`, `none`), which adds up to `tokens.total`. On a branch
   row `none` is always 0, and `ledger` is the usage whose branch was filled from a start row.
@@ -573,8 +584,11 @@ release.
      checkout of the repo (two genie projects of one remote, each minting short ids) is never
      summed: its row is `missing` with the reason `task_ambiguous`. The meter never prints a
      checkout path, and does not wait for genie to make ids unique per repo. M3 adds that reason
-     and the task row; a new reason is additive (RFC 0018, Versioning), and the widened enum's
-     `task_interval` says so.
+     and the task row (its `task` and `actors`, and the no-task-label answer, are recorded in
+     (d)); a new reason is additive (RFC 0018, Versioning), and the widened enum's
+     `task_interval` says so. The tie is the launch's `project`, compared as a string; it is
+     judged over the queried repo and window, so a collision whose other checkout has no evidence
+     there is not seen, and a clone re-created at the same path cannot be told apart.
    - D5: `actor_unattributed` has `tokens_total`, `tokens_ambiguous`, `tokens_unlinked`,
      `tokens_before_evidence` and `parts`, one per reason with usage, each with its `state`
      (`ambiguous`, `unlinked`, `before_evidence`), `tokens_total` and `harnesses`. The reasons:
