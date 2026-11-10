@@ -378,6 +378,78 @@ export function sharedFresh({ name, old, cwd, sharers = [], agent, words, anywhe
 /** The helpers (hc get answers) that end with their parent's pane: live, die_with_parent. */
 export const doomedHelpers = (helpers = []) => helpers.filter((h) => h?.state === "live" && h.die_with_parent !== false && h.address);
 
+// Only the visible tail matters: old scrollback is not a current prompt or dialog.
+const screenLines = (text) => typeof text === "string" ? text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "").split("\n").slice(-40) : [];
+
+/** A turn still running: its spinner or interrupt hint, never an idle prompt. */
+const MID_TURN_SCREEN = /\b(?:esc to interrupt|ctrl\+c to interrupt|ctrl\+b to run in background)\b|(?:working|running|thinking)(?:[.…]+)?\s*\(\d+\s*(?:s|sec|m|min)\b/i;
+
+const CONFIRM_FOOTER = /\[y\/n\]|\(y\/n\)|enter to confirm|esc to cancel/i;
+const NUMBERED_DIALOG_CHOICE = /^\s*(?:[>❯›]\s*\d+[.)]\s+|\d+[.)]\s+(?:yes\b|no\b|allow\b|deny\b|proceed\b|cancel\b|skip\b))/i;
+const DIALOG_HEADER = /\?|^\s*(?:choose|select|pick|allow|run|do you|would you|are you sure)\b/i;
+const DIALOG_QUESTION = /(?:run this command\?|do you want to (?:proceed|make this edit|create|delete|run|execute|allow|overwrite)\b.*\?|would you like to run the following command\?|do you trust the contents of\b.*\?|requesting permission for:|^\s*allow\s+[^\n?]+\?|\d+\/\d+ answered.*(?:select|confirm))/i;
+
+/** A prompt glyph, unboxed or inside a frame: `> `, `│ > │`, `⌸ ❯ … ⛶`, `› Ask …`, omp's `╰─`. */
+export function isPromptLine(line) {
+  if (typeof line !== "string" || NUMBERED_DIALOG_CHOICE.test(line) || CONFIRM_FOOTER.test(line)) return false;
+  if (/^\s*╰─(?!─)/.test(line)) return true;
+  const bare = line.replace(/^[\s│┃|⌸]+|[\s│┃|⛶]+$/g, "");
+  if (/^(?:[>❯›$%](?:\s.*)?|.*[>❯›$%])$/.test(bare)) return true;
+  return /^\s*[│┃|⌸].*[│┃|⛶]\s*$/.test(line)
+    && (/[>❯›$%]/.test(line) || /\b(?:ask|type|enter|message|prompt|try)\b/i.test(line));
+}
+
+/** A visible permission or selection dialog belongs to the owner, never Herdr. */
+export function pendingDialog(screenText) {
+  const lines = screenLines(screenText).slice(-15).filter((line) => line.trim() !== "");
+  const isDialogLine = (line) => DIALOG_QUESTION.test(line) || CONFIRM_FOOTER.test(line) || NUMBERED_DIALOG_CHOICE.test(line);
+  let p = -1;
+  for (let i = lines.length - 1; i >= 0; i -= 1) if (isPromptLine(lines[i])) { p = i; break; }
+  // A prompt with only footer lines below it is idle: reply text above it is scrollback, not a
+  // live dialog (a real dialog hides the input line or sits below scrollback prompts).
+  if (p >= 0 && lines.length - 1 - p <= 5 && !lines.slice(p + 1).some(isDialogLine)) return null;
+  // No prompt at the bottom: scan the visible tail (a prompt there made this scrollback).
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (DIALOG_QUESTION.test(lines[i])) return { question: lines[i].trim().slice(0, 200), who: "the owner" };
+    if (!isDialogLine(lines[i])) continue;
+    // A choice belongs to a dialog only with no idle prompt below it (we would have returned).
+    for (let j = i - 1, seen = 0; j >= 0 && seen < 6; j -= 1) {
+      if (lines[j].trim() === "") continue;
+      seen += 1;
+      if (DIALOG_HEADER.test(lines[j])) return { question: lines[j].trim().slice(0, 200), who: "the owner" };
+    }
+    if (CONFIRM_FOOTER.test(lines[i])) return { question: lines[i].trim().slice(0, 200), who: "the owner" };
+  }
+  return null;
+}
+
+/** Missing captures retain the historic status-only behavior. */
+export function hasAgentPrompt(screenText) {
+  if (screenText == null || String(screenText).trim() === "") return true;
+  const screen = screenLines(screenText);
+  const lines = screen.slice(-12);
+  if (pendingDialog(screenText) || MID_TURN_SCREEN.test(screen.join("\n"))) return false;
+  return lines.some(isPromptLine);
+}
+
+/** A harness may report working while its background shell runs at an empty prompt. */
+export function hasBackgroundShellAtIdlePrompt(screenText) {
+  if (typeof screenText !== "string" || !screenText.trim() || pendingDialog(screenText)) return false;
+  const screen = screenLines(screenText);
+  const tail = screen.slice(-12).join("\n");
+  // The spinner can be many lines above the prompt (todos in between): scan the whole screen.
+  if (MID_TURN_SCREEN.test(screen.join("\n"))) return false;
+  return /^\s*(?:[│┃|⌸]\s*)?[>❯›](?:\s*[│┃|⛶])?\s*$/m.test(tail)
+    && /\b(\d+\s+(background\s+(task|shell|command)s?|shells?|bashes)|background\s+(shell|task|command)|running in the background)\b/i.test(tail);
+}
+
+/** The single restart idle rule, including panes that still have background work. */
+export function isPaneIdle(get, screenText = null) {
+  if (!get || get.state === "finished" || get.status?.state === "blocked" || pendingDialog(screenText)) return false;
+  if (["idle", "done"].includes(get.status?.state)) return hasAgentPrompt(screenText);
+  return get.status?.state === "working" && hasBackgroundShellAtIdlePrompt(screenText);
+}
+
 /**
  * Why a restart of `old` (hc get of the bot's live pane) is refused, or null. `name`: the
  * bot's name; `helpers`: hc get answers of the live terminals whose parent is the old pane.
@@ -389,9 +461,9 @@ export const doomedHelpers = (helpers = []) => helpers.filter((h) => h?.state ==
  * (a finished worker's pane stays open), then restart, never --tree, nor --force (it drops the
  * other checks too).
  */
-export function restartRefusal({ name, old, helpers = [], force = false, tree = false, onMachine = false }) {
+export function restartRefusal({ name, old, helpers = [], force = false, tree = false, onMachine = false, screen = null }) {
   if (force) return null;
-  if (old?.status?.state === "working") {
+  if (old?.status?.state === "working" && !isPaneIdle(old, screen)) {
     return `${name} is working in ${old.address}; restarting now would cut its turn in half. Wait until it is idle, or pass --force.`;
   }
   const doomed = doomedHelpers(helpers);
@@ -572,6 +644,8 @@ export function restartArgs({ botId, projectKey, agent = null, force = false, fr
  * overrides, or one a new conversation, --fresh, avoids).
  */
 export function restartAnswer(r) {
+  if (r?.code === 0 && r.out?.queued) return { terminal: r.out.terminal, replaced: null, queued: true,
+    reason: r.out.reason ?? null, dialog: r.out.dialog ?? null, warnings: [] };
   if (r?.code === 0 && r.out?.terminal) {
     return { terminal: r.out.terminal, replaced: r.out.replaced ?? null, warnings: Array.isArray(r.out.warnings) ? r.out.warnings : [] };
   }

@@ -883,11 +883,11 @@ test("launch text: who, role, instructions, how it works, lead and team by id; n
   const restart = /runs `automagik-herdr restart b-bbbbbbbbbb` in this project's folder \(or with --project <that folder>\), which keeps your agent and model, or uses Restart in your bot's menu in the Herdr sidebar, not your agent's own restart command\./;
   assert.match(text, restart);
   assert.match(text, /In pt-BR: "Para me reiniciar, rode `automagik-herdr restart b-bbbbbbbbbb` na pasta deste projeto \(ou com --project <essa pasta>\), que mantém meu agente e modelo/);
-  assert.doesNotMatch(text, /Claude|\/restart/, "the same text reaches codex, omp, pi, grok and hermes bots");
+  assert.match(text, /\/restart.*never works in a Herdr pane/, "the same restart advice reaches every harness");
   for (const agent of ["codex", "omp", "pi", "grok", "hermes"]) {
     const other = launchBriefingText({ self: { ...byId(f, ID.cap), agent }, file: f });
     assert.match(other, restart, agent);
-    assert.doesNotMatch(other, /Claude|\/restart/, agent);
+    assert.match(other, /\/restart.*never works in a Herdr pane/, agent);
   }
   assert.doesNotMatch(briefingText({ self: byId(f, ID.cap), file: f }), /automagik-herdr restart/, "an attached pane can /restart");
   assert.match(text, /Your lead: Genie \(bot b-aaaaaaaaaa\).*hc ls --label bot=b-aaaaaaaaaa/s);
@@ -1359,4 +1359,13 @@ test("cross-project lead (#850): directMembers, launchBriefingText, briefingText
   const hubTurn = await sc.brief({ HC_TERMINAL_ID: "t1", CLAUDE_PROJECT_DIR: sc.main, HERDR_APP_HOME: join(sc.root, "app") });
   assert.equal(hubTurn.stderr, "");
   assert.match(hubTurn.stdout, /SpokeMain \(bot b-5555555555, Runs spoke\): idle at t8\./);
+});
+
+
+test("#805 briefing gives the Herdr restart path and explains Claude's /restart hint", async () => {
+  const { restartLine } = await import("../mods/am-sidebar/briefingText.mjs");
+  const text = restartLine("b-main");
+  assert.match(text, /am restart b-main/);
+  assert.match(text, /Update installed · \/restart to apply/);
+  assert.match(text, /never works.*--append-system-prompt-file.*--settings/);
 });

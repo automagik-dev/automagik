@@ -551,6 +551,7 @@ export function doctor(ctx, part) {
   // Healthy, with a note and the command that changes it: never a reason for am to roll an install back.
   const note = (check, detail, fix = null) => checks.push({ part: part.id, check, ok: true, detail, fix });
   const done = (code) => ({ code: code ?? (checks.every((c) => c.ok) ? 0 : 1), checks });
+  if (part.kind === "pack") note("restart-path", "In a Herdr bot pane, restart the session with automagik-herdr restart <bot> (or am restart <bot>), never /restart.");
   const reinstall = `am install ${part.id}`;
   if (ctx.platform !== "darwin") { add("os", true, `not applicable: Automagik Herdr runs on macOS (Herdr is a Mac app); this is ${ctx.platform}`); return done(2); }
 
