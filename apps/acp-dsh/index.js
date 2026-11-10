@@ -27,7 +27,7 @@ import { adaptersHome, AdapterStore, CHECK_EVERY_MS } from './src/host/install.j
 import { drawImage, imageRefusal, imageSupport, SIGNED_OUT, UNAVAILABLE, unsupported } from './src/host/image.js'
 import { CliLogins } from './src/host/login.js'
 import { CREDENTIAL_ENV, URL_ENV } from './src/host/names.js'
-import { enginesFor, pressureGuard } from './src/host/pressure.js'
+import { enginesFor, PRESSURE_METHOD, pressureGuard } from './src/host/pressure.js'
 import { redactorFor } from './src/host/redact.js'
 import { agentRoute, carryEffort, crossed } from './src/host/switch.js'
 
@@ -886,7 +886,17 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   // reloaded compaction plugin) is covered before its guard prices the next switch. The
   // request listener is not prepended: compaction-basic's prepended listener calls `next()`
   // (this one) before it prices the switch.
-  const pressure = pressureGuard({ agentDestination: provider => agentRoute(agents, provider) })
+  // A compaction engine without that private method (a DSH update took it away, #871) is
+  // said once, as a warning: the switch to an agent then fails as it did without this guard.
+  let unguardedSaid = false
+  const pressure = pressureGuard({
+    agentDestination: provider => agentRoute(agents, provider),
+    onUnguarded: (reason) => {
+      if (unguardedSaid) return
+      unguardedSaid = true
+      warn(ctx, `the compaction engine ${reason === 'missing' ? 'has no' : 'does not let this plugin wrap'} ${PRESSURE_METHOD}: switching a conversation to Claude Code or Codex can fail (MODEL_SWITCH_COMPACTION_FAILED)`)
+    },
+  })
   const adoptPressure = (agent) => {
     if (agent === undefined || agent === null) return
     for (const engine of enginesFor(ctx, agent)) pressure.adopt(engine)

@@ -23,6 +23,7 @@ import { Updater } from "./updater.js";
 import { METER_EVERY_MS, METER_FIRST_MS, meterBin, syncMeter, syncTargets } from "./meter.js";
 import { parseMarker } from "./release.js";
 import { meterScope } from "./meterFleet.js";
+import { MACHINES_FIRST_MS, MACHINES_SHOWN_KEY, MACHINES_TICK_MS, STATE_FILE as MACHINES_STATE, failureNotice, parseState as parseMachines, startCycle } from "./machineUpdates.js";
 import { startBot, attachBot, botOfTerminal, modelTexts, sleepOf } from "./launch.js";
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
@@ -226,6 +227,10 @@ export default class Spaces extends View {
     // METER_EVERY_MS while Herdr is open, one run at a time (meter.js). No LaunchAgent, no daemon.
     this.meter = { busy: false };
     cx.timer.after(METER_FIRST_MS, (cx) => this.meterTick(cx));
+    // Every linked machine follows the signed lanes (#954, machineUpdates.js): one cycle of
+    // `automagik-herdr machines update` an hour, started apart and never waited for; its record
+    // is read at each look, and a machine that was not updated is said once.
+    cx.timer.after(MACHINES_FIRST_MS, (cx) => this.machinesTick(cx));
     // Cmd+V ("am-sidebar.paste") and Ctrl+V ("am-sidebar.paste_image"). An image
     // alone, into a terminal on another machine: sent there as a real PNG (pngPaste).
     // Otherwise as before: Cmd+V pastes text, or gives a local agent its Ctrl+V for an
@@ -558,6 +563,22 @@ export default class Spaces extends View {
         ({ wait } = await syncMeter({ exec, bin: meterBin(home()), get: shared, set: setShared, state: this.meter, machines, sleep: sleepOf(cx) }));
       } catch {}
       cx.timer.after(wait, (cx) => this.meterTick(cx));
+    });
+  }
+
+  // The linked machines' updates (#954): what the last cycle could not update, said once, then a
+  // cycle when one is due (startCycle: one an hour across sidebar copies).
+  machinesTick(cx) {
+    cx.spawn(async (cx) => {
+      try {
+        let text = null;
+        try { text = await readTextFile(`${appHome()}/automagik-herdr/${MACHINES_STATE}`); } catch {}
+        const { sig, notice } = failureNotice(parseMachines(text ?? ""), shared(MACHINES_SHOWN_KEY) ?? null);
+        if (sig !== (shared(MACHINES_SHOWN_KEY) ?? "")) setShared(MACHINES_SHOWN_KEY, sig);
+        if (notice) notify({ ...notice, timeout: 15000 });
+        await startCycle({ exec, cli: `${appHome()}/mods/am-sidebar/bin/automagik-herdr`, get: shared, set: setShared });
+      } catch {}
+      cx.timer.after(MACHINES_TICK_MS, (cx) => this.machinesTick(cx));
     });
   }
 

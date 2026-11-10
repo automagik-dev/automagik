@@ -8,12 +8,14 @@ import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { test } from 'node:test'
 import { markAgentLoopRequest } from '@deepseek-ai/dsh-llm'
+import { Session } from '@deepseek-ai/dsh-session'
 import { apply, Config, flagOf, SERVICE } from '../index.js'
 import { MODEL_STATE, withModels } from '../src/host/acp.js'
 import { AcpAdapter, NOTICE_KIND, promptOf } from '../src/host/adapter.js'
 import { AGENTS, isNative, launchOf } from '../src/host/agents.js'
 import { Catalog } from '../src/host/catalog.js'
 import { MODEL_ACCESS_REQUIRED } from '../src/host/names.js'
+import { assertLoadable, eventsOf } from './support/bridge-host.js'
 
 const FAKE = join(import.meta.dirname, '..', 'dev', 'fake-agent.mjs')
 const unixOnly = { skip: process.platform === 'win32' ? 'the fake CLIs use a POSIX shebang' : false }
@@ -32,7 +34,7 @@ function fakeCli(dir, name, env = {}) {
 const traceOf = file => (existsSync(file) ? readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line)) : [])
 
 // The plugin as DSH runs it, with one Session (`s1`) whose scoped tools and appended rows are kept.
-function host(t, { config = {}, clis = {}, cliStore } = {}) {
+function host(t, { config = {}, clis = {}, cliStore, session } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'acp-dsh-native-'))
   const registered = {}
   const routes = { now: [] }
@@ -43,7 +45,8 @@ function host(t, { config = {}, clis = {}, cliStore } = {}) {
   const logins = []
   const tools = new Map()
   const agent = {
-    session: { id: 's1', header: { cwd: dir }, append: (type, data, options) => { appended.push({ type, data, options }); return { seq: appended.length } } },
+    // `session`: a real DSH Session, for the tests that load its stored log with DSH's reader.
+    session: session ?? { id: 's1', header: { cwd: dir }, append: (type, data, options) => { appended.push({ type, data, options }); return { seq: appended.length } } },
     model: { current: () => ({ provider: 'acp-hermes', model: 'default' }) },
     options: { provider: 'acp-hermes' },
     status: 'idle',
@@ -367,4 +370,65 @@ test('a table agent with no mode for DSH\'s level says so once in the chat, and 
   await step(adapter, 'acp-later', 'plain', { messages })
   assert.equal(notices().length, 1)
   assert.deepEqual(promptOf([notices()[0].data, { role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'hi' }] }]), [{ type: 'text', text: 'hi' }])
+})
+
+// --- The write-time guard (#958) -----------------------------------------------------------------
+// The guard stands in front of a Session a bridge serves, because the bridge writes its rows out
+// of band. A native agent has no bridge, so the plugin writes nothing out of band for it: the
+// rows of its turns are DSH's own loop's. These run a turn on a real Session, between the rows
+// DSH's loop writes, and load the stored log with the pinned reader.
+const GUARD = Symbol.for('@automagik/acp-dsh/write-guard')
+const WROTE = new Set(['turn/start', 'step/start', 'request/header', 'step/end', 'turn/end'])
+function loop(session, provider) {
+  let turn = 0
+  return {
+    async turn(run) {
+      turn += 1
+      session.append('turn/start', { turn })
+      session.append('step/start', { turn, step: 1 })
+      session.append('request/header', { header: { config: { provider, model: 'default' } }, reason: 'initial' })
+      const chunks = await run()
+      session.append('step/end', { turn, step: 1 })
+      session.append('turn/end', { turn, reason: 'stop' })
+      return chunks
+    },
+  }
+}
+
+for (const id of NATIVE) {
+  test(`${id}: with dshTools on, its turns put no bridge row and no guard on the Session, and the stored log loads`, unixOnly, async (t) => {
+    const spec = AGENTS[id]
+    const scratch = mkdtempSync(join(tmpdir(), 'acp-dsh-native-cli-'))
+    t.after(() => rmSync(scratch, { recursive: true, force: true }))
+    const session = Session.create(`native-${spec.key}`)
+    const h = host(t, { session, config: { [spec.key]: true, dshTools: true }, clis: { [spec.cli]: fakeCli(scratch, spec.cli, { FAKE_ACP_MODES: 'default' }) } })
+    const dsh = loop(session, id)
+    const messages = []
+    const first = await dsh.turn(() => step(h.adapter, id, 'plain', { messages }))
+    assert.equal(first.at(-1).reason.kind, 'stop')
+    assertLoadable(session, ` after ${id}'s first turn`)
+    messages.push({ role: 'assistant', source: { kind: 'model', provider: id, model: 'default' }, content: [] })
+    await dsh.turn(() => step(h.adapter, id, 'plain', { messages }))
+    assertLoadable(session, ` after ${id}'s second turn`)
+    // Nothing but the loop's own rows: the plugin wrote none for this agent.
+    assert.deepEqual(session.snapshotEvents().map(event => event.type).filter(type => !WROTE.has(type)), [])
+    // No bridge was minted for it, so no guard was put on the Session either.
+    assert.equal(session[GUARD], undefined)
+    assert.deepEqual(eventsOf(session, 'plugin:acp-dsh/write-guard'), [])
+  })
+}
+
+test('the one row the plugin writes for a table agent with no mode, its level notice, is one the reader loads', unixOnly, async (t) => {
+  const scratch = mkdtempSync(join(tmpdir(), 'acp-dsh-native-cli-'))
+  t.after(() => rmSync(scratch, { recursive: true, force: true }))
+  const session = Session.create('native-later')
+  const h = host(t, { session })
+  const spawn = () => ({ command: fakeCli(scratch, 'later', {}), args: ['acp'] })
+  const catalog = new Catalog({ id: 'acp-later', name: 'Later', defaultName: 'Later', fallback: [{ id: 'default', name: 'Later' }], key: () => undefined, spawn })
+  const adapter = new AcpAdapter(h.ctx, new Map([['acp-later', { name: 'Later (ACP)', levelNotice: true, bridge: false, catalog, spawn }]]), { dshTools: () => true })
+  t.after(() => adapter.dispose())
+  await loop(session, 'acp-later').turn(() => step(adapter, 'acp-later', 'plain'))
+  assert.equal(eventsOf(session, 'user/message').filter(event => (event.data.message ?? event.data).source?.kind === NOTICE_KIND).length, 1)
+  assertLoadable(session, ' with the level notice')
+  assert.equal(session[GUARD], undefined)
 })

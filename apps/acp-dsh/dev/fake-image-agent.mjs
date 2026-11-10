@@ -41,7 +41,8 @@
 // servers, mode, CODEX_CONFIG, CODEX_HOME, permission answers, cancel, close) as JSON lines.
 import { appendFileSync } from 'node:fs'
 import { Readable, Writable } from 'node:stream'
-import { AgentSideConnection, PROTOCOL_VERSION, RequestError, ndJsonStream } from '@agentclientprotocol/sdk'
+import { PROTOCOL_VERSION, RequestError, ndJsonStream } from '@agentclientprotocol/sdk/unstable'
+import { serveAgent } from './serve-agent.mjs'
 
 const MODE = process.env.FAKE_IMAGE_MODE ?? 'ok'
 const TRACE = process.env.FAKE_IMAGE_TRACE
@@ -254,4 +255,4 @@ const implementation = {
   },
 }
 
-const conn = new AgentSideConnection(() => implementation, stream)
+const conn = serveAgent(implementation, stream)
