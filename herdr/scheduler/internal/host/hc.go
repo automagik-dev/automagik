@@ -133,14 +133,24 @@ func (h *hcHost) Do(s Session, a config.Automation, timeout time.Duration) error
 		}
 		turn = max(turn, w.Turn)
 		// Claude counts a turn when it starts, pi when it ends: having been
-		// seen at work is what says the prompt landed.
-		working = working || w.Status == "working" || w.Status == "blocked"
+		// seen at work is what says the prompt landed. Blocked is not that: a
+		// dialog can come up before the prompt is read (a trust or a permission
+		// mode question), and a run that went from it straight back to idle did
+		// no work at all (#938).
+		working = working || w.Status == "working"
 		switch {
 		case w.Reason == "exit":
 			return h.exitOutcome(s)
 		case w.Reason == "status" && w.Status == "error":
 			return fmt.Errorf("the agent reported an error")
-		case w.Reason == "status" && (turn > 0 || working) && (w.Status == "done" || w.Status == "idle"):
+		// done is the agent's own word for a finished turn, so it needs no
+		// second witness: a turn shorter than one wait is never seen working,
+		// and an agent that reports no turn count would otherwise be failed
+		// as "never started" with its work finished (#938).
+		case w.Reason == "status" && w.Status == "done":
+			return nil
+		// idle is also what an agent says before it has read its prompt.
+		case w.Reason == "status" && w.Status == "idle" && (turn > 0 || working):
 			return nil
 		}
 		// A dialog is not work: after the grace the run fails now, with the
@@ -229,26 +239,32 @@ func (h *hcHost) Close(s Session, a config.Automation) error {
 }
 
 // reportsWork asks the terminal itself: a wait that only checked in may not
-// carry the agent's state.
+// carry the agent's state. done counts: an agent that says so did start.
 func (h *hcHost) reportsWork(s Session) bool {
 	t, err := h.ops.Get(s.PaneID)
 	if err != nil || t.Status == nil {
 		return false
 	}
-	return t.Status.State == "working" || t.Status.State == "blocked"
+	return t.Status.State == "working" || t.Status.State == "blocked" || t.Status.State == "done"
 }
 
-// exitOutcome tells a run called off from one that crashed: closing the
-// run's space in the app kills its terminal; a crash exits on its own.
+// exitOutcome reads how the run's program ended. Closing the run's space in
+// the app kills its terminal: called off. Exit code 0 is a program that ended
+// on its own having succeeded (a template or a one-shot agent that leaves when
+// its task is over): done, where it used to be listed failed (#938). Any other
+// code, or none, is a crash.
 func (h *hcHost) exitOutcome(s Session) error {
 	t, err := h.ops.Get(s.PaneID)
 	if err != nil || t.Reason == "killed" {
 		return ErrCancelled
 	}
-	if t.ExitCode != nil {
-		return fmt.Errorf("the agent exited with code %d before finishing", *t.ExitCode)
+	if t.ExitCode == nil {
+		return fmt.Errorf("the agent exited before finishing")
 	}
-	return fmt.Errorf("the agent exited before finishing")
+	if *t.ExitCode == 0 {
+		return nil
+	}
+	return fmt.Errorf("the agent exited with code %d before finishing", *t.ExitCode)
 }
 
 // hcArgv is what hc runs: a template and its task, or the agent with its
