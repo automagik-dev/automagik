@@ -47,8 +47,8 @@ API and WebSocket authentication.
   is the unmodified `lib/index.js` of that package; its header says so at
   `apps/desktop/test/client-connection-cookie-lax.test.js:1-9`. The cookie and admission code
   can therefore be read from this repository without a DSH checkout.
-- RFC 0024 already assumes a gate in front and keeps the fallback as open question 11:
-  `docs/rfcs/0024-automagik-cloud.md:233-241`.
+- RFC 0024 already assumes a gate in front and keeps the fallback as Decided 21:
+  `docs/rfcs/0024-automagik-cloud.md:270-277`.
 
 **What a plugin can and cannot do.** It can register an exact or prefix route and call
 `ctx.connection.admit(request)` to reuse DSH's cookie check, and it can listen on
@@ -60,7 +60,7 @@ always the owner, so a plugin cannot invent a per-person principal either.
 
 **Unknown, and what it blocks.** Whether a later DSH ships a hook is unknown. It does not
 block this delivery: the architecture is a gate in front, and a future hook is its own change
-(RFC 0024 open question 11). It does block any plan that promises role-filtered DSH routes or
+(RFC 0024, Decided 21). It does block any plan that promises role-filtered DSH routes or
 in-DSH SSO before that hook exists.
 
 **What it means for the deliveries.**
@@ -438,8 +438,8 @@ company customer. #912 can test one issuer, one group claim and the operator-hel
   re-mint on `401` and re-read the launch token after a DSH restart. A transparent cookie is
   possible but inherits `SameSite`, port and non-`Secure` problems. This supports the RFC's
   recommended 12-hour idle gate session and 5-minute workspace token.
-- **RFC Q11, the gate now.** DSH 0.2.2-rc.1 has no hook, so the gate fronts every route and
-  WebSocket; the upstream hook is a later change, not a dependency. The RFC's assumption
+- **RFC 0024, Decided 21, the gate now.** DSH 0.2.2-rc.1 has no hook, so the gate fronts every
+  route and WebSocket; the upstream hook is a later change, not a dependency. The RFC's assumption
   stands.
 - **RFC Q14, federation.** No upstream OIDC or SAML federation and no SCIM target exist today.
   Decide before the first company customer; a later issuer move re-binds every person.
