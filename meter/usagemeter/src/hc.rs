@@ -201,9 +201,10 @@ pub struct Terminal {
     pub labels: Labels,
 }
 
-/// The labels Herdr (and an outside reviver) set that attribution reads. Only the session labels
-/// tie a call to a launch (the `label` basis); the others are recorded as seen and never tag a
-/// call, because the start row outranks them (RFC 0021 (a)).
+/// The labels Herdr (and an outside reviver) set that attribution reads. The session labels tie a
+/// call to a launch; `worker.of`/`worker.role` and a seat's `bot`/`role` tag a launch the snapshot
+/// shows with no start row (RFC 0026 (c)). A start row or the attach ledger's binding outranks
+/// them, and they are read only where no such record exists.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Labels {
     /// A seat's bot (`bot`).

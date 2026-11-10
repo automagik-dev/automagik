@@ -6,7 +6,8 @@ mod common;
 use std::fs;
 use std::path::Path;
 
-use common::{Env, U1, claude_line, now, write_lines};
+use common::{Env, U1, append, claude_line, now, write_lines};
+use meter::hc::{Labels, Terminal};
 
 /// A Claude transcript line of `session` in `cwd`, an hour before the test's now.
 fn line(msg: &str, session: &str, cwd: &str) -> String {
@@ -298,4 +299,353 @@ fn a_long_reason_keeps_its_start_and_the_ledger_note_within_the_bound() {
              the usage they would tag has no bot"
         )
     );
+}
+
+// ---- RFC 0026 (c): the label claims, through a sync ------------------------------------------
+
+/// A sync at `at` with hc's snapshot as given (the tests' own synthetic terminals).
+fn sync_at(env: &Env, at: i64, snapshot: Vec<Terminal>) -> meter::sync::Report {
+    let mut o = env.opts();
+    o.now_ms = at;
+    o.snapshot = Some(snapshot);
+    env.run(&o)
+}
+
+/// Gives the store this machine's core before the first sync: the in-process sync is handed the
+/// snapshot instead of hc's `server.status`, and a launch with no start row is keyed by this core.
+fn synthetic_core(env: &Env) {
+    fs::create_dir_all(env.state()).unwrap();
+    env.store().set_meta("machine", "core-synthetic").unwrap();
+}
+
+/// A live terminal the snapshot shows, with the labels the pack sets.
+fn terminal(
+    terminal: &str,
+    created: i64,
+    harness: &'static str,
+    cwd: &str,
+    labels: Labels,
+) -> Terminal {
+    Terminal {
+        terminal: terminal.into(),
+        created_ms: Some(created),
+        finished_ms: None,
+        harness: Some(harness),
+        cwd: Some(cwd.into()),
+        labels,
+    }
+}
+
+/// A Claude transcript line at `at`.
+fn claude_at(msg: &str, session: &str, cwd: &str, at: i64) -> String {
+    claude_line(
+        msg,
+        &format!("r-{msg}"),
+        &meter::time::format_rfc3339(at),
+        "model-a",
+        &U1,
+        0,
+    )
+    .replace(
+        r#""sessionId":"sess-1""#,
+        &format!(r#""sessionId":"{session}""#),
+    )
+    .replace(r#""cwd":"/work/app""#, &format!(r#""cwd":"{cwd}""#))
+}
+
+/// The store's one rollup row for the hour `at` falls in.
+fn row_at(env: &Env, at: i64) -> meter::store::UsageRow {
+    let hour = meter::time::hour_start(at);
+    let mut rows: Vec<_> = env
+        .store()
+        .rows_since(0)
+        .unwrap()
+        .into_iter()
+        .filter(|r| r.key.hour_ms == hour)
+        .collect();
+    assert_eq!(rows.len(), 1, "one row for {hour}: {rows:?}");
+    rows.remove(0)
+}
+
+/// Check (T3): a call in an unlogged, labelled worker's worktree is attributed at `label` basis
+/// from the first sync that saw the label; a call before that sync stays unlinked.
+#[test]
+fn a_labelled_unlogged_worker_is_attributed_at_label_basis_only_after_its_sighting() {
+    let env = Env::new();
+    let project = env.dir.path().join("project");
+    let wt = project
+        .join(".worktrees/gh-45")
+        .to_string_lossy()
+        .into_owned();
+    fs::create_dir_all(&wt).unwrap();
+    let t0 = now();
+    synthetic_core(&env);
+    let log = env.claude("-project-wt/s-hand.jsonl");
+    write_lines(&log, &[claude_at("m1", "s-hand", &wt, t0 - 3_600_000)]);
+    let seen = terminal(
+        "t7",
+        t0 - 7_200_000,
+        "claude-code",
+        &wt,
+        Labels {
+            worker_of: Some("b-hand".into()),
+            worker_role: Some("dev".into()),
+            ..Labels::default()
+        },
+    );
+    sync_at(&env, t0, vec![seen.clone()]);
+    // The call is before the first sighting: the meter claims only what it saw.
+    let early = row_at(&env, t0 - 3_600_000);
+    assert_eq!(
+        (early.key.bot, early.key.attr.unwrap().state.as_str()),
+        (None, "unlinked")
+    );
+    // A call after the sighting arrives next sync: the label claims it, at `label` basis.
+    append(&log, &(claude_at("m2", "s-hand", &wt, t0 + 600_000) + "\n"));
+    sync_at(&env, t0 + 1_800_000, vec![seen]);
+    let late = row_at(&env, t0 + 600_000);
+    assert_eq!(late.key.bot.as_deref(), Some("b-hand"));
+    assert_eq!(late.key.role.as_deref(), Some("dev"));
+    assert_eq!(late.key.squad, None);
+    assert_eq!(late.key.branch.as_deref(), Some("feat/x"));
+    let a = late.key.attr.unwrap();
+    assert_eq!(a.state, "attributed");
+    assert_eq!(a.kind.as_deref(), Some("worker"));
+    assert_eq!(a.basis.as_deref(), Some("label"));
+    assert_eq!(a.branch_basis, "log");
+    assert_eq!(a.unrecorded.as_deref(), Some("squad"));
+}
+
+/// Check (T9): a label-tagged worker whose harness logs no branch keeps it null: attributed and
+/// branch-unattributed at once.
+#[test]
+fn a_labelled_unlogged_omp_worker_keeps_its_branch_null() {
+    let env = Env::new();
+    let project = env.dir.path().join("project");
+    let wt = project
+        .join(".worktrees/gh-46")
+        .to_string_lossy()
+        .into_owned();
+    fs::create_dir_all(&wt).unwrap();
+    let t0 = now();
+    synthetic_core(&env);
+    let log = env.omp("-project/o-hand.jsonl");
+    write_lines(
+        &log,
+        &[format!(
+            r#"{{"type":"session","version":3,"id":"o-hand","timestamp":"{}","cwd":"{wt}"}}"#,
+            meter::time::format_rfc3339(t0 - 3_600_000)
+        )],
+    );
+    let seen = terminal(
+        "t8",
+        t0 - 7_200_000,
+        "omp",
+        &wt,
+        Labels {
+            worker_of: Some("b-omp".into()),
+            worker_role: Some("test".into()),
+            ..Labels::default()
+        },
+    );
+    sync_at(&env, t0, vec![seen.clone()]);
+    let mut message = format!(
+        concat!(
+            r#"{{"type":"message","id":"e1","timestamp":"{ts}","message":{{"role":"assistant","#,
+            r#""model":"model-a","content":[{{"type":"text","text":"FAKE"}}],"#,
+            r#""usage":{{"input":100,"output":20,"cacheRead":300,"cacheWrite":0,"#,
+            r#""totalTokens":420}}}}}}"#
+        ),
+        ts = meter::time::format_rfc3339(t0 + 600_000),
+    );
+    message.push('\n');
+    append(&log, &message);
+    sync_at(&env, t0 + 1_800_000, vec![seen]);
+    let row = row_at(&env, t0 + 600_000);
+    assert_eq!(row.key.bot.as_deref(), Some("b-omp"));
+    assert_eq!(row.key.role.as_deref(), Some("test"));
+    assert_eq!(row.key.branch, None);
+    let a = row.key.attr.unwrap();
+    assert_eq!(a.basis.as_deref(), Some("label"));
+    assert_eq!(a.branch_basis, "none");
+}
+
+/// Check (T3): a worker's label that changes empties the launch's claim for its whole span, and a
+/// recompute moves its calls to unlinked, never retags them.
+#[test]
+fn a_changed_worker_label_leaves_the_launchs_calls_unlinked_across_a_recompute() {
+    let env = Env::new();
+    let project = env.dir.path().join("project");
+    let wt = project
+        .join(".worktrees/gh-45")
+        .to_string_lossy()
+        .into_owned();
+    fs::create_dir_all(&wt).unwrap();
+    let t0 = now();
+    synthetic_core(&env);
+    let log = env.claude("-project-wt/s-hand.jsonl");
+    write_lines(&log, &[]);
+    let labels = |bot: &str| Labels {
+        worker_of: Some(bot.into()),
+        worker_role: Some("dev".into()),
+        ..Labels::default()
+    };
+    let first = terminal("t7", t0 - 7_200_000, "claude-code", &wt, labels("b-one"));
+    sync_at(&env, t0, vec![first.clone()]);
+    append(&log, &(claude_at("m1", "s-hand", &wt, t0 + 600_000) + "\n"));
+    sync_at(&env, t0 + 1_800_000, vec![first.clone()]);
+    assert_eq!(row_at(&env, t0 + 600_000).key.bot.as_deref(), Some("b-one"));
+    // The next sync sees a different worker.of on the same terminal.
+    let second = terminal("t7", t0 - 7_200_000, "claude-code", &wt, labels("b-two"));
+    let r = sync_at(&env, t0 + 2_700_000, vec![second.clone()]);
+    assert!(r.calls_moved > 0, "{r:?}");
+    let moved = row_at(&env, t0 + 600_000);
+    assert_eq!(
+        (moved.key.bot, moved.key.attr.unwrap().state.as_str()),
+        (None, "unlinked")
+    );
+    // A later call is unlinked too, never given the last label seen.
+    append(
+        &log,
+        &(claude_at("m2", "s-hand", &wt, t0 + 2_100_000) + "\n"),
+    );
+    sync_at(&env, t0 + 3_600_000, vec![second]);
+    let later = row_at(&env, t0 + 2_100_000);
+    assert_eq!(
+        (later.key.bot, later.key.attr.unwrap().state.as_str()),
+        (None, "unlinked")
+    );
+}
+
+/// Check (T9): a seat's changed label splits at the sync that saw it; the recompute keeps the
+/// earlier calls on the first bot and moves the later ones to the second, at `label` basis.
+#[test]
+fn a_seats_changed_label_splits_its_calls_at_the_sync_that_saw_it() {
+    let env = Env::new();
+    let project = env.dir.path().join("project");
+    let root = project.to_string_lossy().into_owned();
+    fs::create_dir_all(&root).unwrap();
+    let t0 = now();
+    synthetic_core(&env);
+    let log = env.claude("-project/s-seat.jsonl");
+    write_lines(&log, &[]);
+    let seat = |bot: &str| {
+        terminal(
+            "t2",
+            t0 - 7_200_000,
+            "claude-code",
+            &root,
+            Labels {
+                bot: Some(bot.into()),
+                role: Some("captain".into()),
+                session: Some("s-seat".into()),
+                ..Labels::default()
+            },
+        )
+    };
+    sync_at(&env, t0, vec![seat("b-first")]);
+    append(
+        &log,
+        &(claude_at("m1", "s-seat", &root, t0 + 600_000) + "\n"),
+    );
+    sync_at(&env, t0 + 1_800_000, vec![seat("b-first")]);
+    assert_eq!(
+        row_at(&env, t0 + 600_000).key.bot.as_deref(),
+        Some("b-first")
+    );
+    // The reattach changes the seat's bot label; a call before the sync that saw it keeps the
+    // first bot, one after it takes the second.
+    append(
+        &log,
+        &(claude_at("m2", "s-seat", &root, t0 + 4_200_000) + "\n"),
+    );
+    sync_at(&env, t0 + 5_400_000, vec![seat("b-second")]);
+    append(
+        &log,
+        &(claude_at("m3", "s-seat", &root, t0 + 7_800_000) + "\n"),
+    );
+    sync_at(&env, t0 + 9_000_000, vec![seat("b-second")]);
+    let (early, middle, late) = (
+        row_at(&env, t0 + 600_000),
+        row_at(&env, t0 + 4_200_000),
+        row_at(&env, t0 + 7_800_000),
+    );
+    assert_eq!(early.key.bot.as_deref(), Some("b-first"));
+    assert_eq!(middle.key.bot.as_deref(), Some("b-first"));
+    assert_eq!(late.key.bot.as_deref(), Some("b-second"));
+    for row in [&early, &middle, &late] {
+        assert_eq!(
+            row.key.attr.as_ref().unwrap().basis.as_deref(),
+            Some("label")
+        );
+        assert_eq!(row.key.attr.as_ref().unwrap().kind.as_deref(), Some("seat"));
+        assert_eq!(row.key.attr.as_ref().unwrap().state, "attributed");
+    }
+}
+
+/// Check (T3): the launch row's `source = snapshot` marker replays the claim once the terminal is
+/// gone: the sync that ends it keeps the calls attributed, never back to unlinked.
+#[test]
+fn a_label_claim_replays_from_the_launch_rows_source_marker() {
+    let env = Env::new();
+    let project = env.dir.path().join("project");
+    let wt = project
+        .join(".worktrees/gh-45")
+        .to_string_lossy()
+        .into_owned();
+    fs::create_dir_all(&wt).unwrap();
+    let t0 = now();
+    synthetic_core(&env);
+    let log = env.claude("-project-wt/s-hand.jsonl");
+    write_lines(&log, &[]);
+    let seen = terminal(
+        "t7",
+        t0 - 7_200_000,
+        "claude-code",
+        &wt,
+        Labels {
+            worker_of: Some("b-hand".into()),
+            worker_role: Some("dev".into()),
+            ..Labels::default()
+        },
+    );
+    sync_at(&env, t0, vec![seen.clone()]);
+    append(&log, &(claude_at("m1", "s-hand", &wt, t0 + 600_000) + "\n"));
+    sync_at(&env, t0 + 1_800_000, vec![seen]);
+    assert_eq!(
+        row_at(&env, t0 + 600_000).key.bot.as_deref(),
+        Some("b-hand")
+    );
+    // Its row says the labels supplied the tag, and keeps the timeline.
+    let (source, bound): (String, Option<String>) = env
+        .store()
+        .conn
+        .query_row(
+            "SELECT source, bound FROM launch WHERE terminal = 't7'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(source, "snapshot");
+    let bound = bound.unwrap();
+    assert!(bound.starts_with('~'), "{bound}");
+    assert!(bound.contains("b-hand"), "{bound}");
+    // hc no longer lists the terminal: the launch ends and is re-derived from its row alone. The
+    // call stays attributed; without the replay it would move to unlinked.
+    let r = sync_at(&env, t0 + 3_600_000, vec![]);
+    assert!(r.launches_changed > 0, "{r:?}");
+    // The merged timeline is written exactly as it was read: the end went to `valid_to`.
+    let again: Option<String> = env
+        .store()
+        .conn
+        .query_row("SELECT bound FROM launch WHERE terminal = 't7'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    assert_eq!(again.as_deref(), Some(bound.as_str()));
+    let row = row_at(&env, t0 + 600_000);
+    assert_eq!(row.key.bot.as_deref(), Some("b-hand"));
+    let a = row.key.attr.unwrap();
+    assert_eq!(a.state, "attributed");
+    assert_eq!(a.basis.as_deref(), Some("label"));
 }

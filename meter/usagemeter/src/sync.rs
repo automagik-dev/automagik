@@ -1397,7 +1397,8 @@ fn resolver(
     let mut r = Resolver::new(core, snapshot)
         .walk(opts.project_ledgers)
         .walk_within(opts.walk_within.clone())
-        .keyed(key);
+        .keyed(key)
+        .at(opts.now_ms);
     if let Some(home) = &opts.app_home {
         r.load_app_home(home);
     }
@@ -1503,6 +1504,10 @@ fn links_pass(
 ) -> Result<(), Error> {
     use sha2::Digest;
     let mut print = sha2::Sha256::new();
+    // The derivation's version: a sync compares its inputs against this fingerprint, so changing
+    // what a launch's tags are derived from (RFC 0026 delivery 3 added the label claims) revisits
+    // every launch once instead of waiting for its ledger or snapshot to change.
+    print.update(b"labels-v1\x1e");
     print.update(snap.print.as_bytes());
     for f in attr.resolver.files() {
         print.update(f.to_string_lossy().as_bytes());

@@ -60,10 +60,26 @@
 //! accepts that and every answer carries its [`Basis`], so `worktree` is never read as strongly
 //! as `session`.
 //!
+//! **The label claims** (RFC 0026 (c)). A launch the snapshot shows with no start row takes its
+//! tag from the terminal's labels: `worker.of` and `worker.role` (a worker role only) make a
+//! worker, else `bot` and `role` make a seat. Labels fill only bot, kind and role: `squad` is
+//! unrecorded, and `task`, `project` and `branch` are never taken from them. The tag is written on
+//! the launch row at sync (`source = snapshot` says the labels supplied it), and the bot intervals
+//! the labels named live in the row's `bound` column beside the attach ledger's bindings, each
+//! label interval marked with `~`; a later sync reads that timeline back and merges into it, never
+//! replacing it. A worker's claim runs from the first sync that saw its label to the launch's end:
+//! usage before it stays unlinked. A worker's label is set at launch and never rewritten, so a
+//! second bot in its timeline makes the claim empty for the whole span (fail-closed, derived from
+//! the column); a seat's `bot` may change with a reattach, and its claim follows each interval.
+//! A tag a label supplied is reported at [`Basis::Label`], whatever tied the call to the launch
+//! (a session row included). The timeline keeps at most [`BOUND_INTERVALS`] intervals; past that,
+//! or for a tag past its cap, the call is Unknown.
+//!
 //! **Fields**, from the launch's start row, frozen at launch: `bot` (`bot`, else `botId`; for a
 //! seat, the attach ledger's binding for the launch at the call's time when there is one), `kind`,
 //! `role`, `squad`, `task` with `project` (workers only), `branch`, `lead` and what the launch
-//! requested (`agent`, `model`, `effort`). Labels never overwrite them.
+//! requested (`agent`, `model`, `effort`). A start row or binding always wins: every field the
+//! ledger recorded is left alone, and the labels never overwrite it.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::OsString;
@@ -106,7 +122,8 @@ pub struct TaskKey {
 /// The launch a call belongs to, as its start row recorded it.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Tag {
-    /// `bot`, else `botId`; for a seat, the attach ledger's binding when it has one.
+    /// `bot`, else `botId`; for a seat, the attach ledger's binding when it has one; for a launch
+    /// with no start row, the snapshot's labels (RFC 0026 (c)).
     pub bot: String,
     pub kind: Kind,
     /// A worker's role (`dev`, `test`, `review`, `fix`), or a seat's pane role at launch (`main`,
@@ -136,6 +153,9 @@ pub struct Tag {
     pub swap: bool,
     /// The launch overrode the template's model: skip it in model evaluation.
     pub override_: bool,
+    /// The snapshot's labels supplied this tag, not a start row (RFC 0026 (c)): reported at
+    /// `label` basis, whatever tied the call to the launch.
+    pub label: bool,
 }
 
 impl Tag {
@@ -205,6 +225,87 @@ impl Basis {
             Basis::Worktree => "worktree",
         }
     }
+}
+
+/// The roles a worker's `worker.role` label may carry (`workers.js` `ROLES`). Any other value is
+/// no role, never a role the query would print as one.
+const WORKER_ROLES: [&str; 4] = ["dev", "test", "review", "fix"];
+
+/// The most intervals a launch's `bound` timeline keeps and is still read: past it the launch's
+/// calls are Unknown, as they are for a tag past its cap ([`tag_fits`]).
+pub const BOUND_INTERVALS: usize = 16;
+
+/// One interval of a launch's bot timeline over `[from, to)` (`to` empty while open): the bot the
+/// attach ledger bound its pane to, or the bot a snapshot's labels named (RFC 0026 (c)).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Interval {
+    from: i64,
+    to: Option<i64>,
+    bot: String,
+    /// The snapshot's labels named this bot; the attach ledger writes the others.
+    label: bool,
+}
+
+impl Interval {
+    fn covers(&self, t: i64) -> bool {
+        self.from <= t && self.to.is_none_or(|e| t < e)
+    }
+}
+
+/// The tag a launch's snapshot labels supply (RFC 0026 (c)): `bot`, `kind` and `role`, never the
+/// task, project or branch. Its bot is the first the labels named; a seat's later bots live in the
+/// launch's timeline.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LabelTag {
+    /// The first bot the labels named; None once a worker's changed label emptied the claim (the
+    /// timeline still holds the bots that make it fail-closed).
+    bot: Option<String>,
+    kind: Kind,
+    role: Option<String>,
+}
+
+impl LabelTag {
+    /// The tag the claim reports. Labels fill only bot, kind and role: squad is unrecorded,
+    /// as is a role the label did not carry (or carried past its cap, or not as a worker role).
+    /// `label` is false for the seat tag the attach ledger's binding supplies.
+    fn tag(&self, bot: &str, label: bool) -> Tag {
+        let mut unrecorded = Vec::new();
+        if self.role.is_none() {
+            unrecorded.push("role");
+        }
+        unrecorded.push("squad");
+        Tag {
+            bot: bot.to_owned(),
+            kind: self.kind,
+            role: self.role.clone(),
+            squad: None,
+            unrecorded,
+            task: None,
+            project: None,
+            branch: None,
+            lead: None,
+            requested_agent: None,
+            requested_model: None,
+            requested_effort: None,
+            swap: false,
+            override_: false,
+            label,
+        }
+    }
+}
+
+/// What an earlier sync persisted of a launch with no start row (RFC 0026 (c)), read back from its
+/// `launch` row: the label tag's fields, and the `bound` timeline (label sightings and attach
+/// bindings) that sync recorded.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct StoredClaim {
+    kind: Option<Kind>,
+    bot: Option<String>,
+    role: Option<String>,
+    /// Every interval the `bound` column holds, label sightings and attach bindings.
+    timeline: Vec<Interval>,
+    /// The stored timeline was past [`BOUND_INTERVALS`]: its calls are Unknown, never guessed.
+    over_cap: bool,
 }
 
 // One per call, consumed at once: boxing the tag would cost an allocation per call.
@@ -357,6 +458,17 @@ struct Launch {
     end_basis: Option<&'static str>,
     /// Its first start row's place in its ledger.
     src: Option<String>,
+    /// The tag the snapshot's labels supply for a launch with no start row (RFC 0026 (c)).
+    label: Option<LabelTag>,
+    /// The bot timeline the `bound` column keeps: attach bindings and the label sightings earlier
+    /// syncs persisted, read back and merged.
+    timeline: Vec<Interval>,
+    /// The timeline is past [`BOUND_INTERVALS`]: the launch's calls are Unknown.
+    over_cap: bool,
+    /// A worker's label changed: two bots in its timeline make its claim empty for its whole span.
+    fail_closed: bool,
+    /// The label claim this sync's snapshot shows: (kind, bot, role), merged into the timeline.
+    sighting: Option<(Kind, String, Option<String>)>,
 }
 
 impl Launch {
@@ -474,6 +586,13 @@ pub struct Resolver {
     key: Option<SessionKey>,
     /// Session labels earlier snapshots saw: (agent, session hash, launch key).
     label_history: Vec<(String, String, String)>,
+    /// What earlier syncs persisted of launches with no start row, by launch key: the label tag
+    /// and the `bound` timeline (RFC 0026 (c)).
+    claims: HashMap<String, StoredClaim>,
+    /// When this sync reads the snapshot: the first moment a label it saw can claim usage. None
+    /// until [`Resolver::at`] is called, so a resolver built without a sync time adds no sighting
+    /// to a launch (the persisted ones still apply).
+    now: Option<i64>,
     oversized: Vec<PathBuf>,
     homes: Vec<PathBuf>,
     bytes_read: u64,
@@ -500,6 +619,13 @@ impl Resolver {
     /// Whether project app homes are looked for above each call's cwd.
     pub fn walk(mut self, on: bool) -> Resolver {
         self.walk = on;
+        self
+    }
+
+    /// When this sync reads hc's snapshot: a label it shows can claim usage from then on, never
+    /// earlier (RFC 0026 (c)'s span: "from the first sync that saw the label").
+    pub fn at(mut self, now_ms: i64) -> Resolver {
+        self.now = Some(now_ms);
         self
     }
 
@@ -572,6 +698,29 @@ impl Resolver {
             });
         }
         self.label_history.extend(labels.iter().cloned());
+        // What an earlier sync persisted of a launch with no start row: its label tag's fields and
+        // its `bound` timeline, so a recompute replays the same answer (RFC 0026 (c)).
+        for h in launches {
+            let (timeline, over_cap) = match h.bound.as_deref() {
+                Some(v) => parse_bound(v),
+                None => (Vec::new(), false),
+            };
+            let kind = match h.kind.as_deref() {
+                Some("worker") => Some(Kind::Worker),
+                Some("seat") => Some(Kind::Seat),
+                _ => None,
+            };
+            self.claims.insert(
+                h.lkey.clone(),
+                StoredClaim {
+                    kind,
+                    bot: h.bot.clone(),
+                    role: h.role.clone(),
+                    timeline,
+                    over_cap,
+                },
+            );
+        }
         self.index = None;
     }
 
@@ -608,9 +757,9 @@ impl Resolver {
         }
     }
 
-    /// The launches and links this resolver derives, as the `launch` and `link` tables keep them.
-    /// Links of a launch no start row records, and of a launch with no key, are left out.
-    pub fn records(&mut self) -> (Vec<LaunchRecord>, Vec<LinkRecord>) {
+    /// The index of launches and links, built once from what has been read, the claims earlier
+    /// syncs persisted and this sync's snapshot time.
+    fn index(&mut self) -> Option<&Index> {
         if self.index.is_none() {
             self.index = Some(build(
                 &self.rows,
@@ -618,16 +767,26 @@ impl Resolver {
                 &self.snapshot,
                 &self.linked,
                 &self.label_history,
+                &self.claims,
+                self.now,
             ));
         }
-        let Some(ix) = self.index.as_ref() else {
+        self.index.as_ref()
+    }
+
+    /// The launches and links this resolver derives, as the `launch` and `link` tables keep them.
+    /// Links of a launch no start row records, and of a launch with no key, are left out.
+    pub fn records(&mut self) -> (Vec<LaunchRecord>, Vec<LinkRecord>) {
+        let Some(ix) = self.index() else {
             return (Vec::new(), Vec::new());
         };
         let mut launches = Vec::new();
         let keys: Vec<Option<String>> = ix.launches.iter().map(Launch::lkey).collect();
         for (l, lkey) in ix.launches.iter().zip(&keys) {
             let Some(lkey) = lkey else { continue };
-            let tag = l.tags.first();
+            // A worker's changed label empties the claim and writes no tag back: the timeline in
+            // `bound` is what keeps it fail-closed across a recompute.
+            let tag = l.tags.first().filter(|_| !l.fail_closed);
             launches.push(LaunchRecord {
                 lkey: lkey.clone(),
                 core: l.core.clone(),
@@ -651,19 +810,7 @@ impl Resolver {
                 end_basis: l.end_basis.map(str::to_owned),
                 source: if l.logged { "ledger" } else { "snapshot" }.into(),
                 source_ref: l.src.clone(),
-                bound: l.key.as_ref().and_then(|k| ix.bindings.get(k)).map(|b| {
-                    let mut v: Vec<String> = b
-                        .iter()
-                        .map(|(from, to, bot)| {
-                            format!(
-                                "{from}-{}:{bot}",
-                                to.map_or(String::new(), |t| t.to_string())
-                            )
-                        })
-                        .collect();
-                    v.sort();
-                    v.join(";")
-                }),
+                bound: render_bound(&l.timeline),
             });
         }
         let mut links = Vec::new();
@@ -860,16 +1007,7 @@ impl Resolver {
                 self.discover(cwd);
             }
         }
-        if self.index.is_none() {
-            self.index = Some(build(
-                &self.rows,
-                self.core.as_deref(),
-                &self.snapshot,
-                &self.linked,
-                &self.label_history,
-            ));
-        }
-        let Some(ix) = self.index.as_ref() else {
+        let Some(ix) = self.index() else {
             return Resolution::Unlinked;
         };
         ix.resolve(call)
@@ -879,16 +1017,7 @@ impl Resolver {
     /// launch is that computer's, so the meter here cannot tie it to a bot (RFC 0021 Decided 6).
     /// Asked of a call [`Resolver::resolve`] left unlinked, to say why.
     pub fn elsewhere(&mut self, call: &Call) -> bool {
-        if self.index.is_none() {
-            self.index = Some(build(
-                &self.rows,
-                self.core.as_deref(),
-                &self.snapshot,
-                &self.linked,
-                &self.label_history,
-            ));
-        }
-        let (Some(ix), Some(agent)) = (self.index.as_ref(), agent_of(call.harness)) else {
+        let (Some(ix), Some(agent)) = (self.index(), agent_of(call.harness)) else {
             return false;
         };
         [call.session, call.parent_session]
@@ -957,9 +1086,10 @@ impl Index {
             if l.agent.as_deref().is_some_and(|a| a != agent) || !l.covers(t) {
                 return None;
             }
-            // A seat, or a terminal with no start row, competes but never names the call by its
-            // folder; a worker of an unrecorded harness may be this call's.
-            if l.kind != Some(Kind::Worker) || !l.logged {
+            // A seat, or a terminal with no start row and no label claim, competes but never
+            // names the call by its folder; a worker the snapshot's labels tagged may be this
+            // call's (RFC 0026 (c)), from the sync that saw the label on.
+            if l.kind != Some(Kind::Worker) || (!l.logged && l.label.is_none()) {
                 return Some(Claim::Unrecorded);
             }
             if l.agent.is_none() {
@@ -974,21 +1104,16 @@ impl Index {
     fn claim(&self, i: usize, t: i64) -> Claim {
         let l = &self.launches[i];
         if !l.logged {
-            return Claim::Unrecorded;
+            return self.label_claim(l, t);
         }
-        if !l.complete || l.unsure || l.from.is_none() || l.tags.is_empty() {
+        if l.over_cap || !l.complete || l.unsure || l.from.is_none() || l.tags.is_empty() {
             return Claim::Unknown;
         }
         let bound = l
-            .key
-            .as_ref()
-            .filter(|_| l.kind == Some(Kind::Seat))
-            .and_then(|k| self.bindings.get(k))
-            .and_then(|b| {
-                b.iter()
-                    .find(|(from, to, _)| *from <= t && to.is_none_or(|e| t < e))
-            })
-            .map(|(_, _, bot)| bot.clone());
+            .timeline
+            .iter()
+            .find(|iv| !iv.label && iv.covers(t))
+            .map(|iv| iv.bot.clone());
         // A binding to a bot past the cap cannot be read: the seat's call is Unknown, never the
         // start row's bot or a shortened name.
         if bound.as_deref().is_some_and(|b| !fits(b)) {
@@ -1006,6 +1131,76 @@ impl Index {
                 })
                 .collect(),
         )
+    }
+
+    /// What a launch with no start row says at `t` (RFC 0026 (c)): the attach ledger's binding
+    /// names a seat's bot over its interval; with no binding, the snapshot's labels name the tag
+    /// from the first sync that saw them. A tag past its cap, a timeline past [`BOUND_INTERVALS`],
+    /// or a worker whose label changed is never a guess: the first two are Unknown, the last
+    /// claims nothing.
+    fn label_claim(&self, l: &Launch, t: i64) -> Claim {
+        if l.from.is_some_and(|f| t < f) || l.to.is_some_and(|e| t >= e) {
+            return Claim::Unrecorded;
+        }
+        if l.over_cap {
+            return Claim::Unknown;
+        }
+        let bindings: Vec<&Interval> = l.timeline.iter().filter(|i| !i.label).collect();
+        if !bindings.is_empty() {
+            let Some(iv) = bindings.iter().find(|i| i.covers(t)) else {
+                return Claim::Unrecorded;
+            };
+            if !fits(&iv.bot) {
+                return Claim::Unknown;
+            }
+            let seat = LabelTag {
+                bot: None,
+                kind: Kind::Seat,
+                role: None,
+            };
+            return Claim::Tags(vec![seat.tag(&iv.bot, false)]);
+        }
+        let Some(tag) = &l.label else {
+            return Claim::Unrecorded;
+        };
+        if l.fail_closed {
+            return Claim::Unrecorded;
+        }
+        match tag.kind {
+            Kind::Worker => {
+                // A worker's label runs from the first sync that saw it to the launch's end;
+                // usage before that sync stays unlinked (RFC 0026 (c)'s span).
+                let Some(from) = l.timeline.iter().filter(|i| i.label).map(|i| i.from).min() else {
+                    return Claim::Unrecorded;
+                };
+                if t < from {
+                    return Claim::Unrecorded;
+                }
+                let Some(bot) = tag.bot.as_deref() else {
+                    return Claim::Unrecorded;
+                };
+                if !fits(bot) {
+                    return Claim::Unknown;
+                }
+                Claim::Tags(vec![tag.tag(bot, true)])
+            }
+            Kind::Seat => {
+                // A seat's tag is used only where a session record ties the call here; its bot
+                // follows each interval the labels named, so a reattach moves the later calls.
+                let Some(iv) = l
+                    .timeline
+                    .iter()
+                    .filter(|i| i.label && i.covers(t))
+                    .max_by_key(|i| i.from)
+                else {
+                    return Claim::Unrecorded;
+                };
+                if !fits(&iv.bot) {
+                    return Claim::Unknown;
+                }
+                Claim::Tags(vec![tag.tag(&iv.bot, true)])
+            }
+        }
     }
 }
 
@@ -1035,7 +1230,11 @@ fn judge(claims: impl Iterator<Item = Claim>, basis: Basis) -> Resolution {
     for t in &tags[1..] {
         out.merge(t);
     }
-    Resolution::Tag(out, basis)
+    // A tag a snapshot's label supplied is reported at `label` basis, whatever tied the call to
+    // the launch: the label is the weakest link in the answer (RFC 0026 (c)).
+    let label = tags.iter().any(|t| t.label);
+    out.label = label;
+    Resolution::Tag(out, if label { Basis::Label } else { basis })
 }
 
 /// The launch keyed `(core, terminal, created)`, where a row with no `core` matches any core.
@@ -1067,6 +1266,8 @@ fn build(
     snapshot: &[Terminal],
     linked: &[Terminal],
     label_history: &[(String, String, String)],
+    claims: &HashMap<String, StoredClaim>,
+    now: Option<i64>,
 ) -> Index {
     let foreign = |c: &Option<String>| !same_core(c.as_deref(), core);
     let mut ix = Index::default();
@@ -1143,6 +1344,11 @@ fn build(
             unsure: false,
             end_basis: None,
             src: group.iter().find_map(|s| s.src.clone()),
+            label: None,
+            timeline: Vec::new(),
+            over_cap: false,
+            fail_closed: false,
+            sighting: None,
         });
     }
     let mut by_tc: HashMap<(String, i64), Vec<usize>> = HashMap::new();
@@ -1190,6 +1396,11 @@ fn build(
             unsure: false,
             end_basis: t.finished_ms.map(|_| "finished"),
             src: None,
+            label: None,
+            timeline: Vec::new(),
+            over_cap: false,
+            fail_closed: false,
+            sighting: label_sighting(t),
         });
     }
     // Ends: end rows, and the attach ledger's end and detach rows.
@@ -1291,6 +1502,85 @@ fn build(
         }
     }
     ix.bindings = fold_attach(rows.attach.iter().filter(|a| !foreign(&a.key.0)));
+    // The bot timeline each launch's `bound` column keeps: the attach ledger's bindings, and for a
+    // launch with no start row the label sightings earlier syncs persisted, read back and merged
+    // (RFC 0026 (c)). A start row outranks both: its tags stand, and only its bindings show.
+    for l in &mut ix.launches {
+        let bound = l.key.as_ref().and_then(|k| ix.bindings.get(k));
+        l.timeline = capped(bound.map(|b| intervals(b)).unwrap_or_default());
+        l.over_cap = l.timeline.len() > BOUND_INTERVALS;
+    }
+    for l in &mut ix.launches {
+        if l.logged {
+            continue;
+        }
+        let Some(lkey) = l.lkey() else { continue };
+        let stored = claims.get(&lkey);
+        // A stored timeline past the cap cannot be read: keep it as it was, so the launch's calls
+        // stay Unknown and a recompute keeps that answer.
+        if stored.is_some_and(|s| s.over_cap) {
+            l.over_cap = true;
+            if let Some(s) = stored {
+                l.timeline = s.timeline.clone();
+                l.label = s.kind.map(|kind| LabelTag {
+                    bot: s.bot.clone(),
+                    kind,
+                    role: s.role.clone(),
+                });
+            }
+            l.fail_closed = l
+                .label
+                .as_ref()
+                .is_some_and(|t| t.kind == Kind::Worker && distinct_label_bots(&l.timeline) > 1);
+            continue;
+        }
+        // The attach ledger is the authority for the panes it binds; when it names none (an
+        // app home not read on this machine), the bindings an earlier sync persisted stand.
+        if l.timeline.is_empty() {
+            l.timeline = stored
+                .map(|s| s.timeline.iter().filter(|i| !i.label).cloned().collect())
+                .unwrap_or_default();
+        }
+        let mut labels: Vec<Interval> = stored
+            .map(|s| s.timeline.iter().filter(|i| i.label).cloned().collect())
+            .unwrap_or_default();
+        let mut label = stored.and_then(|s| {
+            s.kind.map(|kind| LabelTag {
+                bot: s.bot.clone(),
+                kind,
+                role: s.role.clone(),
+            })
+        });
+        if let (Some((kind, bot, role)), Some(at)) = (&l.sighting, now) {
+            see_label(&mut labels, at, bot);
+            // A row whose worker label changed has no tag to seed from: the fresh sighting only
+            // restores the claim's shape, and the timeline (two bots) keeps it fail-closed.
+            if label.is_none() {
+                label = Some(LabelTag {
+                    bot: Some(bot.clone()),
+                    kind: *kind,
+                    role: role.clone(),
+                });
+            }
+        }
+        labels.append(&mut l.timeline);
+        l.timeline = capped(labels);
+        l.over_cap = l.timeline.len() > BOUND_INTERVALS;
+        l.fail_closed = label
+            .as_ref()
+            .is_some_and(|t| t.kind == Kind::Worker && distinct_label_bots(&l.timeline) > 1);
+        if let Some(t) = &label {
+            l.kind = Some(t.kind);
+            // A worker's changed label makes the claim empty for its whole span: no tag is
+            // written back, only the timeline that derives the fail-closed state.
+            if !l.fail_closed
+                && let Some(bot) = t.bot.as_deref()
+            {
+                l.tags = vec![t.tag(bot, true)];
+            }
+        }
+        l.label = label;
+    }
     // Links, per agent and session.
     let mut raw: HashMap<(String, String), Vec<Link>> = HashMap::new();
     for (i, l) in ix.launches.iter().enumerate() {
@@ -1548,6 +1838,154 @@ fn parse_start(row: &Map<String, Value>) -> Option<StartRow> {
     })
 }
 
+/// The intervals a launch's `bound` column holds, as the attach ledger's fold gives them.
+fn intervals(b: &[(i64, Option<i64>, String)]) -> Vec<Interval> {
+    b.iter()
+        .map(|(from, to, bot)| Interval {
+            from: *from,
+            to: *to,
+            bot: bot.clone(),
+            label: false,
+        })
+        .collect()
+}
+
+/// The label claim a snapshot terminal shows, when its labels carry one (RFC 0026 (c)): a
+/// worker's `worker.of` and `worker.role` (a role only when it is one of [`WORKER_ROLES`]), else a
+/// seat's `bot` and `role`. A role past its cap is no role; a bot past it is still kept, so the
+/// claim is Unknown rather than a shortened name.
+fn label_sighting(t: &Terminal) -> Option<(Kind, String, Option<String>)> {
+    if let Some(bot) = &t.labels.worker_of {
+        if !column_safe(bot) {
+            return None;
+        }
+        let role = t
+            .labels
+            .worker_role
+            .clone()
+            .filter(|r| fits(r) && WORKER_ROLES.contains(&r.as_str()));
+        return Some((Kind::Worker, bot.clone(), role));
+    }
+    let bot = t.labels.bot.as_ref()?;
+    if !column_safe(bot) {
+        return None;
+    }
+    let role = t.labels.role.clone().filter(|r| fits(r));
+    Some((Kind::Seat, bot.clone(), role))
+}
+
+/// Whether a bot can be written in the `bound` timeline, whose intervals are `;`-separated and
+/// `:`-split: a bot holding one would read back as another interval. Such a label names no bot,
+/// rather than a mangled one.
+fn column_safe(bot: &str) -> bool {
+    !bot.contains([';', ':', '\n', '\r'])
+}
+
+/// Merges one sync's label sighting into the label intervals: the same bot keeps the interval from
+/// the first sync that saw it; a different bot closes the interval before this sync and opens the
+/// next (a seat's reattach moves the later calls). A worker's second bot is kept too: the timeline
+/// is its fail-closed state, two bots and no claim.
+fn see_label(timeline: &mut Vec<Interval>, at: i64, bot: &str) {
+    let last = timeline
+        .iter_mut()
+        .filter(|i| i.label)
+        .max_by_key(|i| i.from);
+    match last {
+        Some(iv) if iv.bot == bot => return,
+        Some(iv) if iv.to.is_none() => iv.to = Some(at),
+        _ => {}
+    }
+    timeline.push(Interval {
+        from: at,
+        to: None,
+        bot: bot.to_owned(),
+        label: true,
+    });
+}
+
+/// The bots a worker's label timeline names.
+fn distinct_label_bots(timeline: &[Interval]) -> usize {
+    let mut bots: Vec<&str> = timeline
+        .iter()
+        .filter(|i| i.label)
+        .map(|i| i.bot.as_str())
+        .collect();
+    bots.sort_unstable();
+    bots.dedup();
+    bots.len()
+}
+
+/// The timeline as the `bound` column keeps it: canonical order, one interval per span and bot, and
+/// at most [`BOUND_INTERVALS`] + 1 intervals, so a timeline past the cap still reads as such
+/// instead of looking like a short one.
+fn capped(mut timeline: Vec<Interval>) -> Vec<Interval> {
+    timeline.sort_by(|a, b| (a.from, a.to, &a.bot, a.label).cmp(&(b.from, b.to, &b.bot, b.label)));
+    timeline.dedup();
+    timeline.truncate(BOUND_INTERVALS + 1);
+    timeline
+}
+
+/// The `bound` column's value: intervals joined by `;`, each `[~]from-[to]:bot` (an empty `to`
+/// while open), `~` marking the interval a label named. The attach ledger's intervals keep the
+/// shape the column always had. None for no intervals.
+fn render_bound(timeline: &[Interval]) -> Option<String> {
+    if timeline.is_empty() {
+        return None;
+    }
+    Some(
+        timeline
+            .iter()
+            .map(|i| {
+                format!(
+                    "{}{}-{}:{}",
+                    if i.label { "~" } else { "" },
+                    i.from,
+                    i.to.map_or(String::new(), |t| t.to_string()),
+                    i.bot
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(";"),
+    )
+}
+
+/// Reads a `bound` column's intervals, and whether it was past [`BOUND_INTERVALS`]. A value the
+/// format cannot read is treated as no timeline: it names no bot, never a guessed one.
+fn parse_bound(v: &str) -> (Vec<Interval>, bool) {
+    let mut out = Vec::new();
+    for part in v.split(';').filter(|p| !p.is_empty()) {
+        let (label, rest) = match part.strip_prefix('~') {
+            Some(r) => (true, r),
+            None => (false, part),
+        };
+        let Some((range, bot)) = rest.split_once(':') else {
+            return (Vec::new(), false);
+        };
+        let Some((from, to)) = range.rsplit_once('-') else {
+            return (Vec::new(), false);
+        };
+        let Ok(from) = from.parse::<i64>() else {
+            return (Vec::new(), false);
+        };
+        let to = if to.is_empty() {
+            None
+        } else {
+            match to.parse::<i64>() {
+                Ok(t) => Some(t),
+                Err(_) => return (Vec::new(), false),
+            }
+        };
+        out.push(Interval {
+            from,
+            to,
+            bot: bot.to_owned(),
+            label,
+        });
+    }
+    let over = out.len() > BOUND_INTERVALS;
+    (out, over)
+}
+
 /// The most characters a bot, role or squad may have: the query contract prints each, capped at
 /// 64 (`envelope.schema.json`), and RFC 0018 bounds every printed string.
 pub const TAG_CHARS: usize = 64;
@@ -1604,6 +2042,7 @@ fn parse_tag(row: &Map<String, Value>, kind: Kind) -> Option<Tag> {
         requested_effort: owned(row, "effort"),
         swap: flag(row, "swap"),
         override_: flag(row, "override"),
+        label: false,
     })
 }
 
@@ -1641,9 +2080,13 @@ fn parse_attach(row: &Map<String, Value>) -> Option<AttachRow> {
         "end" => AttachEvent::End,
         _ => return None,
     };
+    let bot = owned(row, "bot")?;
+    if !column_safe(&bot) {
+        return None;
+    }
     Some(AttachRow {
         event,
-        bot: owned(row, "bot")?,
+        bot,
         key: (
             Some(owned(row, "core")?),
             owned(row, "terminal")?,
