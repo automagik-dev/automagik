@@ -20,7 +20,7 @@ const TOOLS = [
   { name: 'read', description: 'Read a file', parameters: { type: 'object', properties: { file_path: { type: 'string' } } } },
 ]
 
-function host({ sandbox = 'workspace-write', policy = 'ask', answer = 'allowed-once', tools = TOOLS, preset = 'standard', definitions = tools, turn = 3, fail } = {}) {
+function host({ sandbox = 'workspace-write', policy = 'ask', answer = 'allowed-once', tools = TOOLS, preset = 'standard', definitions = tools, turn = 3, fail, content, attachments } = {}) {
   const session = Session.create('s1')
   session.append('turn/start', { turn })
   session.append('step/start', { turn, step: 1 })
@@ -40,7 +40,8 @@ function host({ sandbox = 'workspace-write', policy = 'ask', answer = 'allowed-o
           execute: async ({ calls }) => {
             executed.push({ name: calls[0].name, arguments: calls[0].arguments })
             if (fail !== undefined) throw fail
-            return { results: [{ callId: calls[0].id, result: { content: [{ type: 'text', text: `ran ${calls[0].name}` }], isError: false } }] }
+            const blocks = typeof content === 'function' ? content(calls[0]) : content
+            return { results: [{ callId: calls[0].id, result: { content: blocks ?? [{ type: 'text', text: `ran ${calls[0].name}` }], isError: false } }] }
           },
         }
       }
@@ -56,6 +57,7 @@ function host({ sandbox = 'workspace-write', policy = 'ask', answer = 'allowed-o
         }
       }
       if (name === 'sandboxPolicy') return { resolve: () => ({ mode: sandbox }) }
+      if (name === 'attachments') return attachments
       if (name === 'agentPresets') return { presetForSession: () => preset }
       return undefined
     },
@@ -344,6 +346,140 @@ test('a DSH tool call asks DSH before it runs, then writes the call and its resu
     assert.ok(call.seq < result.seq)
   } finally {
     h.bc.dispose()
+  }
+})
+
+test('an image tool result reaches the model as ACP image content, never as empty text', async () => {
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+  const ref = { attachmentId: `sha256:${'a'.repeat(64)}`, mediaType: 'image/png', bytes: 68, width: 1, height: 1 }
+  const read = []
+  const shot = { name: 'browser_screenshot', description: 'Take a screenshot', parameters: { type: 'object', properties: {} } }
+  const h = host({
+    tools: [...TOOLS, shot],
+    turn: 1,
+    content: [{ type: 'text', text: 'Screenshot of https://example.com/.' }, { type: 'image', attachment: ref }],
+    attachments: {
+      readImage: async (attachment) => {
+        read.push(attachment)
+        return { ref: attachment, data: Buffer.from(png, 'base64') }
+      },
+    },
+  })
+  try {
+    await h.backchannel.listen()
+    const record = h.backchannel.mint({ sessionId: 's1', agent: h.agent, name: 'Fake agent' })
+    h.backchannel.announce(record)
+    const response = await fetch(h.backchannel.urlFor(record), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${record.credential}` },
+      body: JSON.stringify({ op: 'call', name: 'browser_screenshot', arguments: {}, callId: 'shot-1' }),
+    })
+    const body = await response.json()
+    assert.equal(body.isError, false)
+    // The model sees the screenshot as ACP's image content, beside the text line it already had.
+    assert.deepEqual(body.content, [
+      { type: 'text', text: 'Screenshot of https://example.com/.' },
+      { type: 'image', data: png, mimeType: 'image/png' },
+    ])
+    assert.deepEqual(read, [ref])
+    // DSH's own row keeps the durable attachment: the bytes are not duplicated into the log.
+    const result = h.session.snapshotEvents().find(event => event.type === 'tool/result')
+    assert.deepEqual(result.data.message.content, [
+      { type: 'text', text: 'Screenshot of https://example.com/.' },
+      { type: 'image', attachment: ref },
+    ])
+    assert.doesNotMatch(JSON.stringify(result.data), new RegExp(png.slice(0, 24)))
+    assert.doesNotThrow(() => assertLoadable(h.session))
+  } finally {
+    h.backchannel.dispose()
+  }
+})
+
+test('an inline image block passes through once, not encoded again', async () => {
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+  const shot = { name: 'browser_screenshot', description: 'Take a screenshot', parameters: { type: 'object', properties: {} } }
+  const h = host({
+    tools: [...TOOLS, shot],
+    content: [{ type: 'image', data: png, mediaType: 'image/png' }],
+  })
+  try {
+    await h.backchannel.listen()
+    const record = h.backchannel.mint({ sessionId: 's1', agent: h.agent, name: 'Fake agent' })
+    h.backchannel.announce(record)
+    const response = await fetch(h.backchannel.urlFor(record), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${record.credential}` },
+      body: JSON.stringify({ op: 'call', name: 'browser_screenshot', arguments: {} }),
+    })
+    const body = await response.json()
+    assert.deepEqual(body.content, [{ type: 'image', data: png, mimeType: 'image/png' }])
+  } finally {
+    h.backchannel.dispose()
+  }
+})
+
+// A browser_screenshot tool answering with `content`, as the agent's MCP call receives it.
+async function screenshotResult(content) {
+  const shot = { name: 'browser_screenshot', description: 'Take a screenshot', parameters: { type: 'object', properties: {} } }
+  const h = host({ tools: [...TOOLS, shot], content })
+  try {
+    await h.backchannel.listen()
+    const record = h.backchannel.mint({ sessionId: 's1', agent: h.agent, name: 'Fake agent' })
+    h.backchannel.announce(record)
+    const response = await fetch(h.backchannel.urlFor(record), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${record.credential}` },
+      body: JSON.stringify({ op: 'call', name: 'browser_screenshot', arguments: {} }),
+    })
+    return await response.json()
+  } finally {
+    h.backchannel.dispose()
+  }
+}
+
+test('an inline image over 5 MiB becomes a text placeholder, never image content', async () => {
+  // One byte over the cap. The bridge sizes base64 from its length, so this payload is never decoded.
+  const oversized = Buffer.alloc(5 * 1024 * 1024 + 1).toString('base64')
+  const body = await screenshotResult([{ type: 'image', data: oversized, mediaType: 'image/png' }])
+  assert.deepEqual(body.content, [{ type: 'text', text: '[image unavailable: image/png; larger than 5 MiB]' }])
+})
+
+test('a non-image inline block becomes a text placeholder, never image content', async () => {
+  const pdf = Buffer.from('%PDF-1.7\n').toString('base64')
+  const body = await screenshotResult([{ type: 'image', data: pdf, mediaType: 'application/pdf' }])
+  assert.deepEqual(body.content, [{ type: 'text', text: '[image unavailable: application/pdf; not a supported image type]' }])
+})
+
+test('a small png and a small jpeg inline image pass through byte for byte', async () => {
+  // A 1x1 png and a 1x1 jpeg, each base64 of the bytes the tool answered with.
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+  const jpeg = '/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q=='
+  for (const [data, mimeType] of [[png, 'image/png'], [jpeg, 'image/jpeg']]) {
+    const body = await screenshotResult([{ type: 'image', data, mediaType: mimeType }])
+    assert.deepEqual(body.content, [{ type: 'image', data, mimeType }])
+  }
+})
+
+test('text and resource results keep their single text block', async () => {
+  const h = host({
+    content: [
+      { type: 'text', text: 'first line' },
+      { type: 'resource', resource: { uri: 'file:///notes.txt', text: 'resource text' } },
+    ],
+  })
+  try {
+    await h.backchannel.listen()
+    const record = h.backchannel.mint({ sessionId: 's1', agent: h.agent, name: 'Fake agent' })
+    h.backchannel.announce(record)
+    const response = await fetch(h.backchannel.urlFor(record), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${record.credential}` },
+      body: JSON.stringify({ op: 'call', name: 'bash', arguments: {} }),
+    })
+    const body = await response.json()
+    assert.deepEqual(body.content, [{ type: 'text', text: 'first line\nresource text' }])
+  } finally {
+    h.backchannel.dispose()
   }
 })
 
