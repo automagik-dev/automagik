@@ -49,10 +49,10 @@ function nodes(tree, match) {
 }
 
 // `harness`: the window has DSH's own settings to send the user to, as the plugin does.
-function dock(models, { model, ready = true, harness = true } = {}) {
+function dock(models, { model, ready = true, harness = true, routePolicy } = {}) {
   const picked = []
   const bot = { id: 'chief', name: 'Omni', model }
-  const roster = { ready, byId: { chief: bot }, models, defaultModel: models[0]?.ref }
+  const roster = { ready, byId: { chief: bot }, models, defaultModel: models[0]?.ref, ...(routePolicy ? { routePolicy } : {}) }
   const tree = ModelChoiceDock({
     sessionId: bot.id, useRoster: select => select(roster),
     actions: {
@@ -164,6 +164,13 @@ test('an unavailable model offers the provider groups, each model route, and a w
   buttons[1][0].props.onClick()
   assert.deepEqual(picked, [['chief', 'local/flash']])
   assert.equal(nodes(tree, node => node.type === 'button' && node.children.includes('Manage models')).length, 1)
+})
+
+test('a route the bot type hides is no choice in the first-model dock either', () => {
+  const acp = { ref: 'acp-claude/default', provider: 'acp-claude', providerName: 'Claude Code', name: 'Default' }
+  const { tree } = dock([...models, acp], { model: 'gone/flash', routePolicy: { default: ['native'] } })
+  assert.deepEqual(nodes(tree, node => node.props.className === 'bt-model-choice-group').map(group => group.props['aria-label']), ['DeepSeek', 'Ollama'])
+  assert.equal(nodes(tree, node => node.props.className === 'bt-model-choice-provider').some(node => node.children[0].includes('ACP')), false)
 })
 
 test('an empty catalog offers setup choices, Connect an AI first, and a ready model needs no choice dock', () => {

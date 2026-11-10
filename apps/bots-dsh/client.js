@@ -5260,7 +5260,8 @@ function ModelChoiceDock({ sessionId, useRoster, actions }) {
   }, [shown, sessionId]);
   if (!shown) return null;
   const models = roster.models ?? [];
-  const usable = models.filter(usableModel);
+  const routes = routesFor(bot, roster);
+  const usable = models.filter(usableModel).filter((model) => routes.includes(modelRoute(roster, model.ref).route));
   const lost = bot.model ? !models.some((model) => model.ref === bot.model) : false;
   const run2 = (promise) => Promise.resolve(promise).then(() => {
     setError("");

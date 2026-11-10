@@ -761,8 +761,9 @@ export function ModelChoiceDock({ sessionId, useRoster, actions }) {
   if (!shown) return null
   const models = roster.models ?? []
   // A model whose provider has no API key or sign-in fails every turn, so it is no choice;
-  // nor is one another connection already offers.
-  const usable = models.filter(usableModel)
+  // nor is one another connection already offers, nor one on a route this bot type hides.
+  const routes = routesFor(bot, roster)
+  const usable = models.filter(usableModel).filter(model => routes.includes(modelRoute(roster, model.ref).route))
   const lost = bot.model ? !models.some(model => model.ref === bot.model) : false
   const run = promise => Promise.resolve(promise).then(() => { setError(''); return true }, (failure) => { setError(failure?.message ?? String(failure)); return false })
   // An unknown catalog (none listed) cannot tell a lost model from a slow provider.
