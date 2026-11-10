@@ -79,6 +79,17 @@ three views:
   #501). A sent key with an empty value is removed, a key not sent is kept. So `agent_args` always
   goes, `[]` for none (leaving it out would keep the old flags after `Agent default`), and the form
   still sends back `catch_up_minutes`, `disabled` (a paused entry stays paused) and `workflow`.
+- **A new automation by `put` alone gets the form's flags** (#938), from the scheduler build after
+  0.12.1-am.1 only: the pinned 0.12.1-am.1 (`scheduler.js`) does not have it, so until the pin
+  moves a bot must send `agent_args` itself or its Codex run stays sandboxed. That later build's
+  `put` applies the automatic mode (`AUTO_ARGS` in `modes.js`; `config.DefaultAgentArgs` in the scheduler) to a new
+  automation whose request has no `agent_args` key, so one a bot writes runs with the access the
+  same one made here has. The form always sends the key, so nothing changes for it. The two tables
+  are held equal through `test/fixtures/automation-put-parity.json`: the panel's test checks the
+  form's payload, the scheduler's `main_test.go` that the real `put` writes the same file for both.
+- **A run's status is the scheduler's** (#938): the panel shows `status` from `history --json` as
+  it is and derives none of its own (the row's dot while a run is live is the terminal's state, a
+  different thing). A wrong `done` or `failed` is fixed in `herdr/scheduler/internal/host`.
 - **Closing a run's workspace** (#498): the scheduler closes a fresh run's workspace once the run
   is `done` when its entry says `close_workspace: on-success` (v0.12.0; failed and blocked runs
   stay open; refused with `workspace: existing`, so a workspace you already had is never closed).

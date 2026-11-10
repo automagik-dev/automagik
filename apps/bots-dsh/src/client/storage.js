@@ -10,6 +10,7 @@ export const STORAGE = {
   agentSessions: 'omni-ui:agent-sessions',
   browserWidth: 'omni-ui:browser-width',
   browsers: 'omni-ui.browser.v2',
+  permissionAsked: 'omni-ui:permission-asked',
 }
 
 // No legacy names: the keys before this prefix were shared with DS Bot.

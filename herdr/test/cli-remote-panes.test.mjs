@@ -347,31 +347,88 @@ test("start --machine of a Claude bot with no app home there: none is made; one 
   assert.equal(existsSync(join(s.root, "vm/.config")), false, "no app home made there");
   assert.equal(existsSync(join(s.project, ".claude")), false);
   assert.equal(existsSync(join(s.home, ".claude")), false);
-  assert.deepEqual(agentPart(startedWith(s)), ["claude", "--permission-mode", "auto"], "started, without the flag");
+  assert.deepEqual(withoutSession(agentPart(startedWith(s))), ["claude", "--permission-mode", "auto"], "started, without the briefing flag");
   assert.deepEqual(briefedIn(s.app), [], "never this computer's app home");
-  // RFC 0021: a linked machine's launch is unchanged: no --session-id, no agent.session label, no workers row here.
-  assert.equal(startedWith(s).some((w) => w === "--session-id" || w.startsWith("agent.session=")), false);
 });
 
-test("start --machine of a Claude bot with an app home there but no briefing entry: its briefing file (0600, folder 0700), noHookThere", (t) => {
+// RFC 0026 (e), T9's linked seat: the pane's agent.session label is the linked machine's own
+// record of the seat's session, so its meter can tie the session to the seat's bot label there.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+/** An agent argv without `--session-id <id>` (the id Herdr chose, different every run). */
+const withoutSession = (argv) => { const i = argv.indexOf("--session-id"); return i < 0 ? argv : [...argv.slice(0, i), ...argv.slice(i + 2)]; };
+/** The hc run call's labels, as { key: value }. */
+const runLabels = (run) => Object.fromEntries(run.flatMap((w, i) => (run[i - 1] === "--label" ? [[w.slice(0, w.indexOf("=")), w.slice(w.indexOf("=") + 1)]] : [])));
+
+test("start --machine of a Claude bot: it runs on a session id Herdr chose (--session-id), set as its agent.session label there, as a local start", (t) => {
   const s = scene(t);
-  mkdirSync(vmApp(s), { recursive: true });
   const r = s.cli(["start", "Hedge", ...s.on, "--json"]);
   assert.equal(r.code, 0, r.err);
-  assert.deepEqual(r.json().warnings.length, 1, r.json().warnings.join("\n"));
-  assert.match(r.err, /Hedge runs on vm without its per-turn briefing/);
-  assert.match(r.json().warnings.join(" "), /automagik-herdr machine install vm/);
-  assert.equal(r.json().hookWritten, false);
-  assert.equal(existsSync(join(s.project, ".claude")), false, "no hook there pointing at a missing briefing.mjs");
-  // The system prompt still has it: the file in vm's own app home ($HOME/.config/herdr-app there).
+  const run = s.calls().find((c) => c[0] === "run");
   const words = agentPart(startedWith(s));
-  assert.deepEqual(words.slice(0, 2), ["claude", "--append-system-prompt-file"]);
-  assert.ok(words[2].startsWith(`${vmApp(s)}/automagik-herdr/briefings/`), words[2]);
-  assert.match(readFileSync(words[2], "utf8"), /^<herdr-bot>\n[^]*You are Hedge/);
-  // Private, as a local start writes it (briefedLaunch: 0600 in 0700), whatever the umask there.
-  assert.equal(modeOf(words[2]).toString(8), "600");
-  assert.equal(modeOf(join(vmApp(s), "automagik-herdr/briefings")).toString(8), "700");
-  assert.deepEqual(briefedIn(s.app), [], "never this computer's app home");
+  assert.deepEqual(words.slice(0, 4), ["claude", "--permission-mode", "auto", "--session-id"]);
+  const id = words[4];
+  assert.match(id, UUID, "a random UUID, as Claude Code's --session-id takes");
+  assert.equal(words.length, 5);
+  // The same id is the pane's label on vm, beside the seat's bot label: both are in the one hc run --on.
+  assert.deepEqual(run.slice(0, 3), ["run", "--on", "vm"]);
+  const labels = runLabels(run);
+  assert.equal(labels["agent.session"], id);
+  assert.equal(labels.bot, HEDGE);
+  const pane = s.hcState().terminals.find((x) => x.address === "vm/t100");
+  assert.equal(pane.labels["agent.session"], id);
+  assert.equal(pane.labels.bot, HEDGE);
+  // Output never shows a session id (RFC 0021): the argv's value and the label are masked, stderr too.
+  const out = r.json();
+  assert.deepEqual(out.argv, ["claude", "--permission-mode", "auto", "--session-id", "***"]);
+  assert.equal(out.labels["agent.session"], "***");
+  assert.equal(`${r.out}${r.err}`.includes(id), false);
+  // The attach row is the starting machine's and names no session.
+  const [row] = s.rows();
+  assert.deepEqual([row.event, row.terminal, row.machine, row.core, row.by], ["attach", "t100", "vm", CORE, "start"]);
+  assert.equal(JSON.stringify(s.rows()).includes(id), false);
+  // Every start chooses its own.
+  const s2 = scene(t);
+  assert.equal(s2.cli(["start", "Hedge", ...s2.on]).code, 0);
+  assert.notEqual(agentPart(startedWith(s2))[2], id);
+});
+
+test("start --machine: an agent Herdr chooses no id for gets none, and a Claude command that picks its own session keeps it", (t) => {
+  const s = scene(t);
+  assert.equal(s.cli(["start", "Atlas", ...s.on]).code, 0);
+  const run = s.calls().find((c) => c[0] === "run");
+  assert.equal(run.includes("--session-id"), false);
+  assert.equal("agent.session" in runLabels(run), false);
+  // programs.json's claude row resumes a session of the person's: no --session-id beside it, no label.
+  const own = scene(t);
+  writeFileSync(join(own.app, "programs.json"), JSON.stringify({ programs: { claude: { run: ["claude", "--continue"] } } }));
+  assert.equal(own.cli(["start", "Hedge", ...own.on]).code, 0);
+  const ownRun = own.calls().find((c) => c[0] === "run");
+  assert.deepEqual(agentPart(startedWith(own)), ["claude", "--continue", "--permission-mode", "auto"]);
+  assert.equal("agent.session" in runLabels(ownRun), false);
+});
+
+test("restart --machine --fresh of a Claude bot: the new conversation runs on a new chosen id, the pane's new agent.session label; a resume keeps its own", (t) => {
+  const s = scene(t);
+  assert.equal(s.cli(["start", "Hedge", ...s.on]).code, 0);
+  const first = agentPart(startedWith(s))[2];
+  const lastRun = () => { const run = s.calls().filter((c) => c[0] === "run").at(-1); return { run, words: agentPart(run.slice(run.indexOf("--") + 1)) }; };
+  const r = s.cli(["restart", "Hedge", ...s.on, "--fresh", "--force", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const fresh = lastRun();
+  assert.deepEqual(fresh.words.slice(0, 4), ["claude", "--permission-mode", "auto", "--session-id"]);
+  assert.match(fresh.words[4], UUID);
+  assert.notEqual(fresh.words[4], first);
+  assert.equal(fresh.words.length, 5);
+  assert.equal(runLabels(fresh.run)["agent.session"], fresh.words[4], "the new pane's label is the new session, never the old one carried");
+  assert.equal(s.hcState().terminals.find((x) => x.address === r.json().terminal || x.address === `vm/${r.json().terminal}`).labels["agent.session"], fresh.words[4]);
+  assert.deepEqual(r.json().argv, ["claude", "--permission-mode", "auto", "--session-id", "***"]);
+  assert.equal(`${r.out}${r.err}`.includes(fresh.words[4]), false);
+  // A resume keeps its session: --resume <that id>, no --session-id, the label carried.
+  const again = s.cli(["restart", "Hedge", ...s.on, "--force", "--json"]);
+  assert.equal(again.code, 0, again.err);
+  const resumed = lastRun();
+  assert.deepEqual(resumed.words, ["claude", "--permission-mode", "auto", "--resume", fresh.words[4]]);
+  assert.equal(runLabels(resumed.run)["agent.session"], fresh.words[4]);
 });
 
 test("start --machine with a pane-env that is left out: no app home there is used, not even the default one", (t) => {
@@ -384,7 +441,7 @@ test("start --machine with a pane-env that is left out: no app home there is use
   assert.equal(warnings.length, 2, warnings.join("\n"));
   assert.match(warnings[0], /pane-env on vm was left out \(line 1: HERDR_APP_HOME: "\/srv\/bots\/herdr-app " has a space at its start or end\)/);
   assert.match(warnings[1], /^Hedge runs on vm without its briefing in its system prompt or per turn: its \.herdr\/pane-env there was left out, so no app home there is used, not even the default one\./);
-  assert.deepEqual(agentPart(startedWith(s)), ["claude", "--permission-mode", "auto"]);
+  assert.deepEqual(withoutSession(agentPart(startedWith(s))), ["claude", "--permission-mode", "auto"]);
   assert.equal(startedWith(s).some((w) => w.startsWith("HERDR_APP_HOME=")), false);
   assert.deepEqual(briefedIn(vmApp(s)), [], "the default app home there is left alone");
   assert.equal(existsSync(join(s.project, ".claude")), false);

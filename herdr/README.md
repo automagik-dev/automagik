@@ -134,6 +134,15 @@ each connected machine after this computer, one at a time. `automagik-herdr mete
 keeps it to this computer, and `--no-usagemeter` covers the linked machines too; both are
 remembered.
 
+Where you agreed to usagemeter, the same 10-minute run also asks each of those machines for its
+bot-tag coverage (`usagemeter coverage --window d30 --json`, a read of that machine's own store)
+and writes one record of the answers, `automagik-herdr/fleet-coverage.json` in the app home,
+beside the install record: readable by you alone (0600) and replaced on every run. It holds, per
+machine, token counts by class, bot and repository (no session id, no path), and names the
+machines that did not answer (`missing`, with why) and the linked machines usagemeter is not on
+(`out_of_scope`); a machine that did not answer is unknown, never counted as zero. Its contract
+is `meter/schema/fleet/v1/` in the repository. `--uninstall` removes it.
+
 **Updating to this release from an earlier one:** the update is run by the earlier release's
 command, which has no usagemeter step, so run `automagik-herdr meter install` once afterwards. It
 installs usagemeter on this computer and every connected linked machine, and records that you
@@ -496,6 +505,7 @@ automagik-herdr worker "<task>" (--branch B [--base REF] | --worktree DIR)
 automagik-herdr worker kill <pane>   # from a bot's pane: end one worker that bot started; any other pane is refused
 automagik-herdr update [--check | --rollback]
 automagik-herdr meter install [--machine M | --linked | --local] | meter uninstall
+automagik-herdr machines [update [--machine M | --linked | --local] | --auto on|off|status [--machine M]]
 automagik-herdr dsh-tui install | update | uninstall | doctor
 ```
 
@@ -650,6 +660,55 @@ automagik-herdr dsh-tui install | update | uninstall | doctor
   transcript, and the workers it started. The match is exact once a pane's detach or end row is
   written; a terminal id hc reused before then can briefly show the new pane's session. It
   writes nothing; a removed bot is named by its id.
+
+## After a restart of the computer
+
+A restart of the computer ends every agent. herdr-core keeps each pane it was told to keep and
+puts a bare shell in it; a pane it did not keep is gone. `automagik-herdr revive` brings the bots
+back:
+
+- Every bot the attach ledger binds on this computer whose pane is gone, or is a bare shell, is
+  restarted by `automagik-herdr restart --tree`: in its pane's space, tab and folder, resumed by
+  its session id where its agent allows it, its helpers (workers included) under the new pane.
+  The main bot comes first, each bot after its lead. A pane with a program in front is never
+  touched.
+- Each project's main bot gets one message: who resumed, who is on a new conversation and why,
+  who is not back, and the command that brings it back by hand. The same report is kept in
+  `<app home>/automagik-herdr/revive-last.json` (it holds no session id).
+- `automagik-herdr revive --dry-run` prints what it would do and touches nothing.
+- A resume that finds nothing is tried once more as a new conversation, and the report says so.
+- A pane that is gone whole comes back in the folder its last seat row names, in the project's
+  space; its old tab is not on record.
+- A bot whose agent was quit, its pane left at a shell, comes back too: revive cannot tell that
+  from a restart of the computer. To keep a bot down across restarts, detach it
+  (`automagik-herdr detach <bot>`): a detached bot is never brought back. Every report says so.
+
+Session ids. Claude gets its id from Herdr at launch. dsh-TUI and Antigravity take none at
+launch, so the pack reads the id from what each leaves on disk (DSH's session folders for the
+pane's folder, Antigravity's prompt history: only its time, folder and conversation id) and
+records it as it does Claude's: a session row in the workers ledger and the pane's
+`agent.session` label. Anyone can leave a session in that folder with no pane the pack knows (a
+terminal of your own, DSH Desktop), so the pack takes only a pane's first conversation: the one
+session born within two minutes after the pane started. It records none, and the bot comes back
+on a new conversation, which the report says, when two sessions were born then, when none was,
+or when another pane of that agent in that folder (any hc pane, whoever started it, and every
+launch the workers ledger names) started within two minutes before the pane or before that
+session. A session born later is never taken, and a recorded id is never replaced. What stays
+unknowable: a session someone started outside hc in that folder inside those two minutes, when
+the pane's own agent left none. A conversation started later inside the pane is not followed:
+the bot resumes its first one. DSH's home is `$DSH_HOME`, else `~/.dsh`.
+
+The login service. `install.sh --revive` (or a yes when it asks; `--yes` never installs it)
+runs `automagik-herdr revive service install`: on Linux a systemd user unit,
+`~/.config/systemd/user/automagik-herdr-revive.service`, enabled and never started on the spot.
+The unit has no start timeout (the pass bounds its own waits), and what the pass prints, which
+the user journal keeps, is counts only: no folder, no bot name.
+At login it runs `automagik-herdr revive --boot --wait 600`: it waits for herdr-core, runs once
+per boot, and also takes the bots whose ended pane another command swept since the boot.
+`loginctl enable-linger` makes it run at boot with nobody logged in.
+`automagik-herdr revive service uninstall` (and `install.sh --uninstall`) removes the unit when
+it is the pack's. macOS (launchd) is not built yet: run `automagik-herdr revive` by hand there.
+Panes on a linked machine are that machine's own to bring back.
 
 ## The attach ledger
 
@@ -1032,6 +1091,36 @@ daily), with no second notice. Turn it off with `automagik-herdr update --auto o
 in the status bar; then a new release is only announced, as before. It applies only to a pack
 `install.sh` installed from a signed release (its record in `<app home>/automagik-herdr/` has a
 `sequence=`); the setting lives beside it, in `auto-update.json`.
+
+### Every linked machine
+
+```bash
+automagik-herdr machines                        # what each machine runs, and how its last update went
+automagik-herdr machines update                 # one update of them all now
+automagik-herdr machines --auto off --machine M # M opts out (on again: --auto on); no --machine: this computer
+```
+
+The machines linked into your Herdr (`hc machine ls`) follow the releases too, with no one at each
+of them. About 90 seconds after the sidebar loads and then once an hour, the computer that runs
+Herdr starts `automagik-herdr machines update`: on each connected machine it runs that machine's
+own `am update` (am, then the pack where one is installed), so every check is made there, by the
+copy installed there, against the keys it pins: the signed pointer, the tarball's sha256, never a
+release older than one it took, and the replaced copy kept (`am rollback automagik.am`,
+`automagik-herdr update --rollback`). Then usagemeter, as `meter install` does (the signed
+meter-lane pointer checked here, the build's sha256 on the machine, never a downgrade, the old
+binary kept as `usagemeter.prev`): on a machine that has one, or on all of them once you agreed to
+that, and never after `install.sh --no-usagemeter`. This computer's am and usagemeter follow in the
+same run; its pack is the sidebar's own update above.
+
+`automagik-herdr machines` shows the last answer of each machine: its am, pack and usagemeter
+versions, and what the last run did or why it did not (a pointer it could not verify, a download
+that failed, a machine that was not connected). A machine that was not updated is also said once in
+a notice. The record is `<app home>/automagik-herdr/linked-updates.json`.
+
+It is on by default. A machine opts out with its own switch, the file `~/.automagik/linked-update`
+holding `off` (`automagik-herdr machines --auto off` there, or `--machine M` from here): the run
+reads it first and starts nothing on that machine. `AUTOMAGIK_HERDR_NO_UPDATE=1` on the computer
+that runs Herdr turns the whole run off.
 
 Updates come from the Automagik monorepo's GitHub releases, through one signed pointer: the
 `herdr-lane` release's `pack.json` names the newest pack release (not GitHub's "latest", often a

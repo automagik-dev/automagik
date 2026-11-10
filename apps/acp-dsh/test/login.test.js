@@ -544,3 +544,39 @@ test('the sign-in process runs with the CLI\'s own updates off', async () => {
   assert.equal(h.children[0].opts.env.DISABLE_UPDATES, '1')
   assert.equal(h.children[0].opts.env.HOME, '/automagik/private-home')
 })
+
+// #871 (L4): the check runs on every send and delivery for a day after a Claude link was shown,
+// so its cost is bounded per call: one keyed hash per distinct candidate, not one per `#token`.
+test('loginTextMatches: a megabyte of text costs one hash per distinct candidate, and a state in it is still found', async t => {
+  const h = harness()
+  t.after(() => h.logins.dispose())
+  h.logins.start(CLAUDE)
+  await settle()
+  showClaudeLink(h.children[0].child)
+  let hashes = 0
+  const hashState = h.logins.hashState.bind(h.logins)
+  h.logins.hashState = (state) => { hashes += 1; return hashState(state) }
+  const counted = (text) => { hashes = 0; const found = h.logins.textMatches(text); return { found, hashes } }
+  const other = 'another_state_0123456789x'
+  assert.equal(other.length, STATE.length)
+
+  // One token repeated to the megabyte: hashed once, whichever reading it is found in.
+  const repeated = `#${other} `.repeat(Math.ceil(1_000_000 / (other.length + 2)))
+  assert.ok(repeated.length >= 1_000_000)
+  assert.deepEqual(counted(repeated), { found: false, hashes: 1 })
+
+  // Every token different: never more than the stated bound, 2 x 1,000,000 / (length + 1).
+  let distinct = ''
+  for (let index = 0; distinct.length < 1_000_000; index++) distinct += `#${String(index).padStart(STATE.length, 'a')} `
+  const worst = counted(distinct)
+  assert.equal(worst.found, false)
+  assert.ok(worst.hashes <= Math.ceil(2 * 1_000_000 / (STATE.length + 1)), `${worst.hashes} hashes`)
+
+  // The shown state is found among the repeats, before and after them, in either reading.
+  const half = repeated.slice(0, 400_000)
+  assert.equal(counted(`${half}code#${STATE} ${half}`).found, true)
+  assert.equal(counted(`${half}code#${STATE.slice(0, 7)} ${STATE.slice(7)}`).found, true)
+  assert.equal(counted(`code#${STATE} ${half}`).hashes, 1, 'a match ends the check')
+  // A token that only starts like the repeated one is its own candidate.
+  assert.equal(counted(`#${other} #${other.slice(0, -1)}Z #${other}`).hashes, 2)
+})

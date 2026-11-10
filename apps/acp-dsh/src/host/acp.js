@@ -4,11 +4,21 @@
 // wait on each one and answer its permission request through DSH.
 import { spawn } from 'node:child_process'
 import { Readable, Writable } from 'node:stream'
-import { ClientSideConnection, PROTOCOL_VERSION, ndJsonStream } from '@agentclientprotocol/sdk'
+// The `/unstable` entry: stable ACP v1 plus `session/fork` (how acp-codex's tool set follows a
+// preset change) and the session updates newer adapters send (a stable-only parser refuses an
+// update it does not know, and the whole notification with it).
+import { PROTOCOL_VERSION, client, methods, ndJsonStream } from '@agentclientprotocol/sdk/unstable'
 import { isBridgeName } from './names.js'
 
 const STDERR_KEEP = 4000
+// How long a closed connection waits for the agent's exit, which says why (start()).
+const EXIT_GRACE_MS = 500
 const TERMINAL = new Set(['completed', 'failed'])
+// SDK 2.x refuses an incoming message over 32 MiB by default and closes the connection on it.
+// An image call carries its picture twice (content and rawOutput), base64: one a little over the
+// 12 MiB this plugin keeps (image.js) would end the turn as a dead agent instead of the "too
+// large" answer. The cap stays, four times wider.
+const MAX_MESSAGE_BYTES = 128 * 1024 * 1024
 
 /**
  * The structured tool name a call carries, when the adapter sends one: Claude Code puts it at
@@ -78,13 +88,21 @@ export class AgentRun {
     gone.catch(() => {})
     this.gone = gone
     child.stdin.on('error', () => {})
-    const stream = ndJsonStream(Writable.toWeb(child.stdin), Readable.toWeb(child.stdout))
-    this.conn = new ClientSideConnection(() => ({
-      sessionUpdate: params => this.onUpdate(params.update),
-      requestPermission: params => this.onPermission(params),
-    }), stream)
+    const stream = ndJsonStream(Writable.toWeb(child.stdin), Readable.toWeb(child.stdout), { maxMessageBytes: MAX_MESSAGE_BYTES })
+    this.conn = connect(this, stream)
     const ready = (async () => {
       this.init = await this.conn.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} })
+      // The agent answers the version it will speak: the one asked for, or its own latest when
+      // it does not support that one. Going on over another version would read its messages
+      // with the wrong shapes, so the session stops here with what to do about it.
+      const answered = this.init?.protocolVersion
+      if (answered !== PROTOCOL_VERSION) {
+        const error = new Error(answered > PROTOCOL_VERSION
+          ? `its connector speaks a newer ACP protocol (version ${answered}) than this app (version ${PROTOCOL_VERSION}): update Automagik`
+          : `its connector speaks ACP protocol version ${answered ?? 'unknown'}, and this app speaks version ${PROTOCOL_VERSION}: update the connector`)
+        error.code = 'acp_protocol_mismatch'
+        throw error
+      }
       const session = await this.conn.newSession({
         cwd,
         mcpServers,
@@ -102,8 +120,18 @@ export class AgentRun {
     try {
       await Promise.race([ready, gone])
     } catch (error) {
+      // An agent that dies at its start closes its output a moment before its exit is
+      // reported, and the closed connection says nothing of why. Its exit does (the code and
+      // what it wrote), so that is the failure when it follows at once.
+      let reason = error
+      if (this.exited === undefined && (child.stdout.readableEnded || child.stdout.destroyed)) {
+        let timer
+        const exit = await Promise.race([gone.catch(left => left), new Promise((resolve) => { timer = setTimeout(resolve, EXIT_GRACE_MS) })])
+        clearTimeout(timer)
+        if (exit !== undefined) reason = exit
+      }
       this.dispose()
-      throw error
+      throw reason
     } finally {
       this.letGo()
     }
@@ -119,10 +147,10 @@ export class AgentRun {
    * @returns {Promise<string>} the forked session id
    */
   async fork({ cwd, mcpServers }) {
-    if (typeof this.conn.unstable_forkSession !== 'function') throw new Error('it cannot fork its session')
+    if (typeof this.conn.forkSession !== 'function') throw new Error('it cannot fork its session')
     const source = this.sessionId
     const answer = await this.held(() => Promise.race([
-      this.conn.unstable_forkSession({ sessionId: source, cwd, mcpServers }),
+      this.conn.forkSession({ sessionId: source, cwd, mcpServers }),
       this.gone,
     ]))
     this.sessionId = answer.sessionId
@@ -225,6 +253,7 @@ export class AgentRun {
     const wanted = [modeIds].flat()
     const offered = new Set((this.modes?.availableModes ?? []).map(mode => mode.id))
     const modeId = wanted.find(id => offered.has(id))
+    try { this.spec.onMode?.({ wanted, offered: [...offered], chosen: modeId }) } catch {}
     if (modeId === undefined) throw new Error(`it offers none of the modes ${wanted.join(', ')} (it offers ${[...offered].join(', ') || 'no modes'})`)
     if (this.modes?.currentModeId === modeId) return
     await this.held(() => Promise.race([this.conn.setSessionMode({ sessionId: this.sessionId, modeId }), this.gone]))
@@ -363,7 +392,11 @@ export class AgentRun {
     permission?.answer(refusal(tool.refused, permission.options))
   }
 
-  onPermission(params) {
+  /**
+   * @param {any} params the agent's `session/request_permission`
+   * @param {AbortSignal} [signal] aborts when the agent withdraws the request (`$/cancel_request`)
+   */
+  onPermission(params, signal) {
     const known = this.tools.get(params.toolCall?.toolCallId)
     const tool = known ?? this.seeTool({ status: 'pending', ...params.toolCall })
     // The question's own title ("Run command?") names the question, not the call the card shows.
@@ -398,8 +431,40 @@ export class AgentRun {
       }
       permission.title = title
       tool.permission = permission
+      // The agent took its question back (it cancelled the request, or the connection closed):
+      // nothing waits for an answer any more, so the dialog must not stay up for it.
+      const withdraw = () => permission.answer({ outcome: { outcome: 'cancelled' } })
+      if (signal?.aborted) return withdraw()
+      signal?.addEventListener('abort', withdraw, { once: true })
       for (const listener of tool.listeners) listener()
     })
+  }
+}
+
+/**
+ * This plugin's side of one ACP connection (SDK 2.x: an app with typed handlers, and the peer
+ * context for what it asks the agent). The returned object keeps one named method per request
+ * the plugin makes, so a caller never spells a wire method name.
+ * @param {AgentRun} run
+ * @param {import('@agentclientprotocol/sdk/unstable').Stream} stream
+ */
+function connect(run, stream) {
+  const connection = client({ name: 'automagik-acp-dsh' })
+    .onNotification(methods.client.session.update, ({ params }) => run.onUpdate(params.update))
+    .onRequest(methods.client.session.requestPermission, ({ params, signal }) => run.onPermission(params, signal))
+    .connect(stream)
+  const agent = connection.agent
+  const { session } = methods.agent
+  return {
+    connection,
+    initialize: params => agent.request(methods.agent.initialize, params),
+    newSession: params => agent.request(session.new, params),
+    forkSession: params => agent.request(session.fork, params),
+    closeSession: params => agent.request(session.close, params),
+    setSessionMode: params => agent.request(session.setMode, params),
+    setSessionConfigOption: params => agent.request(session.setConfigOption, params),
+    prompt: params => agent.request(session.prompt, params),
+    cancel: params => agent.notify(session.cancel, params),
   }
 }
 
