@@ -23,8 +23,8 @@
 // passes. Each lane keeps its own sequence and failures: Genie's numbers are not Automagik's.
 import { createHash, createPublicKey, verify } from 'node:crypto'
 import { execFile } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { basename, dirname, join, resolve } from 'node:path'
 import { promisify } from 'node:util'
 import { compareVersions } from './update.js'
 import { LANE_KEYS } from './lane-keys.js'
@@ -40,11 +40,15 @@ export const LANE_URL = 'https://github.com/automagik-si/automagik/releases/down
 // the Automagik plugins a person added from the market (Portuguese). It names no Unfold plugin:
 // none is preinstalled and this lane does not carry them, Unfold's own release ships them
 // (Refs marketplace/unfold); an installed one is left exactly as it is, as Genie's lane does
-// Genie; a plugin that is not installed is never taken. Swapping a plugin's folder is safe because
-// a lane patch never changes what a plugin is installed by: scripts/lane.ts (kindOf, INSTALL_FIELDS)
-// makes any change to a plugin's dependencies, peers, engines or entry points a full release, a new
-// app, and never a plugin-only patch. So the dependencies pnpm laid out for the installed version
-// are the new version's too.
+// Genie; a plugin that is not installed is never taken. A lane patch never changes what a plugin
+// is installed by: scripts/lane.ts (kindOf, INSTALL_FIELDS) makes any change to a plugin's
+// dependencies, peers, engines or entry points a full release, a new app, and never a plugin-only
+// patch. So the dependencies pnpm laid out for the installed version are the new version's too.
+// Those pnpm put inside the plugin's own folder (its node_modules: ACP's SDK) are not in the
+// tarball, so the swap copies them into the new folder first (carryDependencies). Then one check,
+// no more than this: a dependency whose package folder was found from the plugin's folder before
+// the swap is still found after it, or the swap is undone (lostDependencies). What a carried
+// package holds is not looked at again: it is a copy of the one that worked.
 export const AUTOMAGIK_PLUGINS = Object.freeze(['@automagik/bots-dsh', '@automagik/welcome-dsh', '@automagik/acp-dsh', '@automagik/locale-pt-br-dsh'])
 export const PUBLISHERS = Object.freeze([
   { publisher: 'automagik', url: LANE_URL, keys: LANE_KEYS.automagik, sameLine: true, plugins: AUTOMAGIK_PLUGINS },
@@ -179,7 +183,7 @@ export const stagedOf = home => readJson(files(home).staged, null)
  * page that never drew), put the previous ones back. Returns what it did: 'applied', 'restored',
  * 'trial' (a trial still runs this start) or null.
  */
-export function beforeStart({ home, target, log = () => {} }) {
+export function beforeStart({ home, target, log = () => {}, link = symlinkSync }) {
   const { applied: appliedFile, staged: stagedFile, bad: badFile } = files(home)
   const applied = readJson(appliedFile, null)
   if (applied?.pending) {
@@ -205,8 +209,17 @@ export function beforeStart({ home, target, log = () => {} }) {
   const moved = []
   const metadata = keepMetadata(home, target)
   try {
-    for (const plugin of plugins) {
+    // Nothing has moved yet: what each plugin finds of its dependencies where it is installed,
+    // and its own node_modules copied into the folder that takes its place.
+    const places = plugins.map((plugin) => {
       const real = realpathSync(join(target, 'node_modules', plugin.name))
+      // Those the version going in names: one it no longer names is not missed.
+      const found = dependenciesOf(plugin.dir).filter(name => foundFrom(real, name))
+      carryDependencies(real, plugin.dir, { link })
+      return { real, found }
+    })
+    for (const [index, plugin] of plugins.entries()) {
+      const { real } = places[index]
       const previous = `${real}.lane-prev`
       rmSync(previous, { recursive: true, force: true })
       renameSync(real, previous)
@@ -214,9 +227,14 @@ export function beforeStart({ home, target, log = () => {} }) {
       renameSync(plugin.dir, real)
       if (plugin.archive && existsSync(plugin.archive)) pinLanePackage(target, { name: plugin.name, version: plugin.version, integrity: plugin.integrity, archive: plugin.archive })
     }
+    // In place, where Node will look: a dependency a plugin found before and not now undoes it all.
+    const lost = plugins.flatMap((plugin, index) => lostDependencies(places[index]).map(name => `${plugin.name} would lose ${name}`))
+    if (lost.length > 0) throw fail(lost.join(', '))
   } catch (error) {
     restore({ plugins: moved, metadata }, log)
-    log(`lane: ${staged.version} could not be put in place (${error.message}); nothing changed`)
+    // Not downloaded and tried again at every look: only once the app has started again.
+    for (const [publisher, { version }] of Object.entries(lanesOf(staged))) refused.add(refusalOf(home, publisher, version))
+    log(`lane: ${staged.version} could not be put in place (${error.message}); nothing changed, and it waits for the app's next start`)
     return null
   }
   const lanes = lanesOf(staged)
@@ -228,6 +246,68 @@ export function beforeStart({ home, target, log = () => {} }) {
   log(`lane: ${staged.version} is in place; this start is its trial`)
   return 'applied'
 }
+
+// The lane versions this run of the app could not put in place, as <home> <publisher>@<version>.
+// Kept in memory alone, never in bad.json: the next run of the app tries each once more.
+const refused = new Set()
+const refusalOf = (home, publisher, version) => `${home}\n${publisher}@${version}`
+
+const present = path => lstatSync(path, { throwIfNoEntry: false }) !== undefined
+
+// The dependencies the plugin in `dir` names. Peers are DSH's to supply, and optional ones may be
+// absent: neither is asked about.
+const dependenciesOf = dir => Object.keys(readJson(join(dir, 'package.json'), {})?.dependencies ?? {})
+
+// Whether the package folder of `name` is found from `dir` where Node looks for it: the
+// node_modules of `dir` and of each folder above it, links followed. Its folder and package.json,
+// nothing more: not its entry points, nor what it depends on in turn.
+function foundFrom(dir, name) {
+  for (let at = dir; ; at = dirname(at)) {
+    if (basename(at) !== 'node_modules' && existsSync(join(at, 'node_modules', name, 'package.json'))) return true
+    if (dirname(at) === at) return false
+  }
+}
+
+/**
+ * The dependencies pnpm put inside the installed plugin's folder (`real`) go into the `staged`
+ * one, copied: the installed folder stays whole, so putting it back needs nothing more. A staged
+ * folder with its own node_modules keeps it. Links are made again as links with their text
+ * unchanged and are never followed, so nothing outside the two folders is read or written; a
+ * relative one is right again once the staged folder stands where the installed one stood. A
+ * link to a folder that may not be made as a symbolic link (Windows without that right: EPERM)
+ * is made as a junction to the same place. `link` is fs.symlinkSync, a test's own otherwise.
+ */
+export function carryDependencies(real, staged, { link = symlinkSync } = {}) {
+  const from = join(real, 'node_modules')
+  const to = join(staged, 'node_modules')
+  if (!present(from) || present(to)) return
+  const copy = (source, copied) => {
+    const stat = lstatSync(source)
+    if (stat.isSymbolicLink()) {
+      const text = readlinkSync(source)
+      // What it names from where it is installed, which is where its copy ends up.
+      const named = resolve(dirname(source), text)
+      const folder = statSync(named, { throwIfNoEntry: false })?.isDirectory() === true
+      try {
+        link(text, copied, folder ? 'dir' : 'file')
+      } catch (error) {
+        if (error?.code !== 'EPERM' || !folder) throw error
+        link(named, copied, 'junction')
+      }
+    } else if (stat.isDirectory()) {
+      mkdirSync(copied)
+      for (const entry of readdirSync(source)) copy(join(source, entry), join(copied, entry))
+    } else if (stat.isFile()) {
+      copyFileSync(source, copied)
+    } else {
+      throw fail(`${source} is neither a file, a folder nor a link`)
+    }
+  }
+  copy(from, to)
+}
+
+// After the swap: the dependencies `found` before it whose folder is no longer found from `real`.
+const lostDependencies = ({ real, found }) => found.filter(name => !foundFrom(real, name))
 
 function restore(applied, log) {
   for (const { file, copy } of applied.metadata ?? []) {
@@ -335,14 +415,16 @@ export function pinLanePackage(target, { name, version, integrity, archive }) {
 
 /**
  * What this app remembers of `publisher`'s lane: the sequence it took last (a later one must not
- * be older) and the versions found bad.
+ * be older) and the versions not to take: those found bad, and those this run of the app could
+ * not put in place (beforeStart), which the next run tries again.
  */
 export function laneMemory(home, publisher = 'automagik') {
   const { applied, taken, bad } = files(home)
   const last = Math.max(readJson(taken, {})[publisher] ?? 0, lanesOf(readJson(applied, null))[publisher]?.sequence ?? 0)
   // A bare version is from before each lane kept its own: it was Automagik's.
   const versions = readJson(bad, []).map(entry => (/^\d/.test(entry) ? `automagik@${entry}` : entry))
-  return { last, bad: versions.filter(entry => entry.startsWith(`${publisher}@`)).map(entry => entry.slice(publisher.length + 1)) }
+  const now = [...refused].filter(entry => entry.startsWith(`${home}\n${publisher}@`)).map(entry => entry.slice(home.length + 1))
+  return { last, bad: [...new Set([...versions, ...now])].filter(entry => entry.startsWith(`${publisher}@`)).map(entry => entry.slice(publisher.length + 1)) }
 }
 
 /** The version `publisher`'s lane has waiting, if any. */

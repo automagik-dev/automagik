@@ -20,7 +20,10 @@
  *   bun scripts/am-lane.ts posted <am.json> <dir>     refuse to post it when <dir> holds the posted
  *       pointer (am.json, am.json.sig), it verifies, and its sequence is higher; or when <dir> holds
  *       a posted pointer that does not verify, unless AM_LANE_REPLACE_UNVERIFIED=true (the
- *       release's replace_unverified_am_pointer input)
+ *       release's replace_unverified_am_pointer input). A half-written pointer (one of the two
+ *       files, left by an upload that failed) is never read as nothing posted: am.json alone that
+ *       names this same am is this release's own post and is finished; any other half is refused
+ *       with the command that removes the orphan (--repo comes from GITHUB_REPOSITORY)
  *   bun scripts/am-lane.ts check-key                  before the tag, on every release: while
  *       am-keys.json lists no key, or AM_LANE_KEY is unset, a ::warning:: and `sign=no` (the
  *       release attaches am but posts no am-lane: the key is the owner's to add, and the window
@@ -40,7 +43,7 @@ import { createHash, generateKeyPairSync } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { basename, join } from 'node:path';
 // @ts-expect-error am's plain JavaScript, no types
-import { LANE_RELEASE, PART, REPOSITORY, RELEASES, SCHEMA_VERSION, sequenceOf, tarballName, verifyPointer } from '../am/lib/lane.mjs';
+import { LANE_RELEASE, PART, REPO, REPOSITORY, RELEASES, SCHEMA_VERSION, sequenceOf, tarballName, verifyPointer } from '../am/lib/lane.mjs';
 // The pointer's repository and tarball URL come from am/lib/lane.mjs (am's part): they move with it.
 import { keyIdOf, publicOf } from './herdr-lane';
 import { ROOT, signLane } from './lane';
@@ -113,13 +116,29 @@ export function keyVerdict(privatePem: string | undefined, keys: AmKey[]): { ver
 }
 
 /**
+ * Whether a posted am.json with no signature is this release's own half-written post: the upload
+ * of am.json went through and its signature's did not (#768). It names the same am as `next` in
+ * every field but issuedAt, which a re-run of the job sets anew, so posting `next` over it changes
+ * nothing a reader acts on and cannot lower the sequence.
+ */
+export function ownHalfPost(next: Buffer, posted: Buffer | null, postedSig: string | null): boolean {
+  if (!posted || postedSig !== null) return false;
+  const named = (bytes: Buffer) => JSON.stringify({ ...JSON.parse(bytes.toString('utf8')), issuedAt: null });
+  try { return named(posted) === named(next); } catch { return false; }
+}
+
+/**
  * Why `next` (am.json's bytes) must not replace the posted pointer, or null when it may: as
  * herdr-lane's postedProblem. Nothing posted yet is no reason to stop; a posted pointer that
  * verifies with a higher sequence always stops it; one that does not verify stops it too, unless
- * `replaceUnverified` (the release's replace_unverified_am_pointer input).
+ * `replaceUnverified` (the release's replace_unverified_am_pointer input). One of the two files
+ * alone is a half-written pointer, never nothing posted: this release's own (ownHalfPost) is
+ * finished; any other is refused like an unverifiable one, and the reason names the command that
+ * removes the orphan on `repo` (a dispatch cannot repair it: with nothing to cut, the job is skipped).
  */
-export function postedProblem(next: Buffer, posted: Buffer | null, postedSig: string | null, keys: AmKey[], { replaceUnverified = false } = {}): string | null {
+export function postedProblem(next: Buffer, posted: Buffer | null, postedSig: string | null, keys: AmKey[], { replaceUnverified = false, repo = REPO as string } = {}): string | null {
   if (!posted && postedSig === null) return null;
+  if (ownHalfPost(next, posted, postedSig)) return null;
   let current: AmPointer;
   try {
     if (!posted) throw new Error('am.json is missing');
@@ -128,6 +147,10 @@ export function postedProblem(next: Buffer, posted: Buffer | null, postedSig: st
   } catch (error) {
     if (replaceUnverified) return null;
     const why = (error as Error).message.replace(/^am lane: /, '');
+    const orphan = !posted ? 'am.json.sig' : postedSig === null ? 'am.json' : null;
+    if (orphan) {
+      return `the posted am-lane pointer is half-written (${why}: only ${orphan} is posted, left by an upload that failed), so it does not verify and its sequence is unknown: refusing to replace it. Once you have checked that no newer am was released, remove the orphan and re-run this job: gh release delete-asset ${LANE_RELEASE} ${orphan} --repo ${repo} --yes`;
+    }
     return `the posted am-lane pointer does not verify (${why}), so its sequence is unknown: refusing to replace it. Dispatch the release with replace_unverified_am_pointer=true once you have checked it is not newer`;
   }
   const mine = JSON.parse(next.toString('utf8')) as AmPointer;
@@ -164,13 +187,16 @@ if (import.meta.main) {
     const sig = read('am.json.sig');
     const next = readFileSync(file);
     const postedSig = sig === null ? null : sig.toString('utf8');
-    const problem = postedProblem(next, posted, postedSig, readKeys());
+    const repo = process.env.GITHUB_REPOSITORY || REPO;
+    const problem = postedProblem(next, posted, postedSig, readKeys(), { repo });
     const replaceUnverified = process.env.AM_LANE_REPLACE_UNVERIFIED === 'true';
-    if (problem && replaceUnverified && postedProblem(next, posted, postedSig, readKeys(), { replaceUnverified }) === null) {
+    if (problem && replaceUnverified && postedProblem(next, posted, postedSig, readKeys(), { replaceUnverified, repo }) === null) {
       console.log(`::warning::am lane: ${problem.split(': refusing')[0]}; replacing it (replace_unverified_am_pointer)`);
     } else if (problem) {
       console.error(`am lane: ${problem}`);
       process.exit(1);
+    } else if (ownHalfPost(next, posted, postedSig)) {
+      console.log('::warning::am lane: the posted pointer is half-written (am.json without am.json.sig) and names this same am: finishing this release\'s own post');
     } else {
       console.log(posted || sig ? 'am lane: the posted pointer is not newer' : 'am lane: no pointer posted yet');
     }

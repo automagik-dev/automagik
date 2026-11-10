@@ -214,6 +214,9 @@ test("install copies the sandbox wrapper byte-equal and installs the managed dsh
   }
   assert.ok(readFileSync(join(stableRoot, "bin", "run.sh"), "utf8").includes(`# am-node: ${process.execPath}`));
   assert.ok(readFileSync(join(stableRoot, "guard", "hc")).equals(readFileSync(join(packRootOf(), "guard", "hc"))), "the guard is byte-equal");
+  // #955: the hc kill shim a sandboxed bot's worker of another agent gets, executable as the pack's.
+  assert.ok(readFileSync(join(stableRoot, "hc-kill", "hc")).equals(readFileSync(join(packRootOf(), "hc-kill", "hc"))), "the hc kill shim is byte-equal");
+  assert.ok(statSync(join(stableRoot, "hc-kill", "hc")).mode & 0o111, "and executable");
   assert.ok(patch.includes("runnerFailureSignatures: ['hc-socket-mask: ']"), patch);
   const state = sandboxState(s.env, { forbiddenRoots: rootsOf(s) });
   assert.equal(state.current, true);
