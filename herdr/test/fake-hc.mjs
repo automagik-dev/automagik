@@ -311,6 +311,16 @@ switch (words[0]) {
     out({ address });
     break;
   }
+  case "send": {
+    // The text typed into a terminal, kept in state.sent ([{ to, text }]); state.failSend: terminals that refuse it.
+    const t = find(words[1]);
+    if (!t || t.state !== "live") fail(JSON.stringify({ error: { kind: "not_found", message: `no terminal ${words[1]}` } }), 3);
+    if ((state.failSend ?? []).includes(t.address)) fail(JSON.stringify({ error: { kind: "blocked", message: `${t.address} is blocked` } }), 9);
+    state.sent = [...(state.sent ?? []), { to: t.address, text: words.slice(2).join(" ") }];
+    save();
+    out({ address: t.address });
+    break;
+  }
   case "kill": {
     const t = find(words[1]);
     if (!t) fail(`no terminal ${words[1]}`);

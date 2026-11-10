@@ -151,6 +151,7 @@ export const ALLOWLIST = [
   ["herdr/mods/am-sidebar/bin/automagik-herdr.mjs", "unlinkSync(aside)", 1, "the CLI's own files: .herdr/bots.json in a project, its lock and temp files beside them"],
   ["herdr/mods/am-sidebar/bin/automagik-herdr.mjs", "unlinkSync(lock)", 1, "the CLI's own files: .herdr/bots.json in a project, its lock and temp files beside them"],
   ["herdr/mods/am-sidebar/bin/automagik-herdr.mjs", "unlinkSync(path)", 1, "the CLI's own files: .herdr/bots.json in a project, its lock and temp files beside them"],
+  ["herdr/mods/am-sidebar/bin/automagik-herdr.mjs", "unlinkSync(unit)", 1, "the revive login service's own systemd user unit under ~/.config/systemd/user (#939), only when its first line is the pack's mark: never mods/ or layouts/"],
   ["herdr/mods/am-sidebar/bin/automagik-herdr.mjs", "unlinkSync(tmp)", 2, "the queued-restarts.json temp in <app home>/automagik-herdr and the CLI's own files: .herdr/bots.json in a project, its lock and temp files beside them"],
   ["herdr/mods/am-sidebar/bin/automagik-herdr.mjs", "renameSync(tmp, file)", 3, "queued-restarts.json and its sibling temp files under <app home>/automagik-herdr, never mods/ or layouts/"],
   ["herdr/mods/am-sidebar/bin/automagik-herdr.mjs", "renameSync(tmp, path)", 2, "the CLI's own files: .herdr/bots.json in a project, its lock and temp files beside them; and a bot's launch briefing file under <app home>/automagik-herdr/"],

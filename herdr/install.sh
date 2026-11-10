@@ -9,6 +9,8 @@
 #   ... | bash -s -- --no-usagemeter  leave usagemeter alone everywhere (install and --uninstall)
 #   ... | bash -s -- --usagemeter-local-only  usagemeter on this computer only, no linked machine
 #   ... | bash -s -- --dsh-tui | --no-dsh-tui  install (or leave) dsh-TUI as a Herdr agent
+#   ... | bash -s -- --revive | --no-revive    install (or leave) the login service that brings
+#                                              the bots back after a restart (Linux, #939)
 #
 # It checks the OS, Node and Herdr (herdrdev's, dev.herdr.app: offering its own installer from
 # releases.herdr.dev, no sudo, asking first),
@@ -96,6 +98,11 @@ main() {
   # DSH as a Herdr agent (#561): ask, yes or no. Third-party: only --dsh-tui or an explicit
   # answer installs it; --yes never does.
   DSH_TUI=ask
+  # The login service that brings the bots back after a restart of this computer (#939): ask, yes
+  # or no. It changes what runs at login, so only --revive or an explicit answer installs it;
+  # --yes never does. Linux (a systemd user unit); the CLI writes and removes it.
+  REVIVE=ask
+  REVIVE_UNIT=$HOME/.config/systemd/user/automagik-herdr-revive.service
 
   YES=0
   ADOPT=0
@@ -110,6 +117,8 @@ main() {
       --usagemeter-local-only) FLEET_OK=0 ;;
       --dsh-tui) DSH_TUI=yes ;;
       --no-dsh-tui) DSH_TUI=no ;;
+      --revive) REVIVE=yes ;;
+      --no-revive) REVIVE=no ;;
       --version) [ $# -ge 2 ] || { echo "--version needs a version, like 0.2.0" >&2; exit 2; }; WANT=${2#v}; shift ;;
       --version=*) WANT=${1#--version=}; WANT=${WANT#v} ;;
       --help|-h) usage; exit 0 ;;
@@ -148,6 +157,7 @@ usage() {
 Automagik Herdr installer
 
   install.sh [--yes] [--version <v>] [--adopt] [--no-usagemeter | --usagemeter-local-only]
+             [--dsh-tui | --no-dsh-tui] [--revive | --no-revive]
                                        install or update the pack and the automagik-herdr command
   install.sh --uninstall [--yes]       move the pack out of mods/, put back what was there before;
                                        refused while the layout Herdr shows names a pack mod
@@ -167,6 +177,11 @@ machine: install skips it, and --uninstall keeps it even where this installer pu
 ~/.local/bin, so Herdr's built-in DSH entry works; --no-dsh-tui leaves DSH alone. Without either,
 the installer asks (unless --yes), and a machine with no dsh gets one line saying how to get it.
 --uninstall removes dsh-TUI (the plugin and the shim) when this installer put it there.
+--revive installs the login service that brings the bots back after a restart of this computer
+('automagik-herdr revive --boot': each bot whose pane is gone or a bare shell is restarted in its
+place, resumed where its agent allows). Linux only for now: a systemd user unit, enabled, never
+started on the spot. --no-revive leaves it alone. Without either, the installer asks (--yes never
+installs it). --uninstall removes the unit when it is this pack's.
 EOF
 }
 
@@ -474,6 +489,7 @@ uninstall() {
   layout_guard "$mods" "$drop"
   # dsh-TUI (the plugin and the shim) goes while its command and the pack are still in place.
   dsh_tui_uninstall
+  revive_uninstall
   # How the layout and the folders leave: through the pack's updater (update.mjs pack-out, which
   # runs them through layoutSafe.mjs, journalled) when Node is here and the installed updater has
   # the command (read from its usage line: nothing runs, nothing is written); else this script's
@@ -858,6 +874,46 @@ dsh_tui_step() {
   fi
   printf '%s\n' "$dsh_out" | sed 's/^/  /'
 }
+# The login service that runs 'automagik-herdr revive --boot' (#939). The unit is the pack CLI's
+# ('automagik-herdr revive service install'); this step only decides whether to ask. Linux only:
+# on another OS nothing is asked and nothing is written.
+revive_step() {
+  [ "$(uname -s)" = Linux ] || return 0
+  [ "$REVIVE" = no ] && { say "Left the revive login service alone (--no-revive)."; return 0; }
+  [ -x "$LINK" ] || return 0
+  if [ -f "$REVIVE_UNIT" ] && [ "$REVIVE" = ask ]; then return 0; fi
+  if [ "$REVIVE" = ask ] && [ "$YES" = 1 ]; then
+    say "Left the revive login service alone: --yes never changes what runs at login; 'automagik-herdr revive service install' or this installer with --revive adds it."
+    return 0
+  fi
+  if [ "$REVIVE" = ask ] && ! ask_opt_in "Bring the bots back by themselves after a restart of this computer (a login service that runs 'automagik-herdr revive --boot')?"; then
+    say "Left the revive login service alone; 'automagik-herdr revive service install' adds it later."
+    return 0
+  fi
+  revive_rc=0
+  revive_out=$("$LINK" revive service install <"/dev/null" 2>&1) || revive_rc=$?
+  if [ "$revive_rc" != 0 ]; then
+    say "Warning: the revive login service was not installed: $(printf '%s\n' "$revive_out" | sed -n '$p')"
+    return 0
+  fi
+  printf '%s\n' "$revive_out" | sed 's/^/  /'
+}
+# --uninstall: the unit goes through the command that wrote it, while the pack and its link are
+# still in place, and only when its first line is the pack's mark (revive.js UNIT_MARK).
+revive_uninstall() {
+  [ -f "$REVIVE_UNIT" ] || return 0
+  if ! sed -n '1p' "$REVIVE_UNIT" 2>/dev/null | grep -q '^# Automagik Herdr: brings the bots back after a restart'; then
+    say "Left $REVIVE_UNIT: it is not this installer's."
+    return 0
+  fi
+  if link_ours && [ -f "$PACK/bin/automagik-herdr.mjs" ] && grep -q 'revive service' "$PACK/bin/automagik-herdr.mjs" 2>/dev/null; then
+    revive_rc=0
+    revive_out=$("$LINK" revive service uninstall <"/dev/null" 2>&1) || revive_rc=$?
+    if [ "$revive_rc" = 0 ]; then printf '%s\n' "$revive_out" | sed 's/^/  /'; return 0; fi
+  fi
+  rm -f "$REVIVE_UNIT" && say "Removed $REVIVE_UNIT (systemctl --user daemon-reload drops it from systemd)."
+  return 0
+}
 # --uninstall: the plugin and the shim go through the command that put them there, while the pack
 # and its link are still in place. A pack from before this command removes its own shim, nothing
 # else; the predicate is the CLI's shimIsOurs (the marker and the exec line), not any mention of
@@ -1169,6 +1225,7 @@ install() {
     *) say "Add ~/.local/bin to your PATH: echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.zshrc" ;;
   esac
   dsh_tui_step
+  revive_step
 
   # ---- f. next ----
   # The hooks notice after everything else the run printed and before its last lines, so it is read.

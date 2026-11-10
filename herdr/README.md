@@ -650,6 +650,43 @@ automagik-herdr dsh-tui install | update | uninstall | doctor
   written; a terminal id hc reused before then can briefly show the new pane's session. It
   writes nothing; a removed bot is named by its id.
 
+## After a restart of the computer
+
+A restart of the computer ends every agent. herdr-core keeps each pane it was told to keep and
+puts a bare shell in it; a pane it did not keep is gone. `automagik-herdr revive` brings the bots
+back:
+
+- Every bot the attach ledger binds on this computer whose pane is gone, or is a bare shell, is
+  restarted by `automagik-herdr restart --tree`: in its pane's space, tab and folder, resumed by
+  its session id where its agent allows it, its helpers (workers included) under the new pane.
+  The main bot comes first, each bot after its lead. A pane with a program in front is never
+  touched.
+- Each project's main bot gets one message: who resumed, who is on a new conversation and why,
+  who is not back, and the command that brings it back by hand. The same report is kept in
+  `<app home>/automagik-herdr/revive-last.json` (it holds no session id).
+- `automagik-herdr revive --dry-run` prints what it would do and touches nothing.
+- A resume that finds nothing is tried once more as a new conversation, and the report says so.
+- A pane that is gone whole comes back in the folder its last seat row names, in the project's
+  space; its old tab is not on record.
+
+Session ids. Claude gets its id from Herdr at launch. dsh-TUI and Antigravity take none at
+launch, so the pack reads the id from what each leaves on disk (DSH's session folders for the
+pane's folder, Antigravity's prompt history: only its time, folder and conversation id) and
+records it as it does Claude's: a session row in the workers ledger and the pane's
+`agent.session` label. It records one only when it can be told from every other pane's: two
+panes of one agent started within two minutes of each other in one folder get none, and come
+back on a new conversation, which the report says.
+
+The login service. `install.sh --revive` (or a yes when it asks; `--yes` never installs it)
+runs `automagik-herdr revive service install`: on Linux a systemd user unit,
+`~/.config/systemd/user/automagik-herdr-revive.service`, enabled and never started on the spot.
+At login it runs `automagik-herdr revive --boot --wait 600`: it waits for herdr-core, runs once
+per boot, and also takes the bots whose ended pane another command swept since the boot.
+`loginctl enable-linger` makes it run at boot with nobody logged in.
+`automagik-herdr revive service uninstall` (and `install.sh --uninstall`) removes the unit when
+it is the pack's. macOS (launchd) is not built yet: run `automagik-herdr revive` by hand there.
+Panes on a linked machine are that machine's own to bring back.
+
 ## The attach ledger
 
 Which pane plays which bot is recorded in one file, `<app home>/automagik-herdr/attach.jsonl`
