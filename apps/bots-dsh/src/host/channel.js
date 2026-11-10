@@ -162,15 +162,30 @@ export function install(rt) {
   // Updates change the dsh profile, not the team, so a reading host may run them too.
   const privacy = createPrivacy()
   const pets = createPets({ home: () => rt.home, warn: (...args) => rt.warn?.(...args) })
-  const READS = new Set(['privacy', 'pets', 'pets-browse', 'image-access', 'image-progress', 'state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'context-status', 'usage-stats', 'memory-review-status', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking', 'agent-presets', 'avatar-library', 'model-state', 'cli-login-current', 'cli-login-status', 'cli-login-connections', 'cli-login-accounts', 'cli-login-noticed'])
+  const READS = new Set(['privacy', 'pets', 'pets-browse', 'image-access', 'image-progress', 'state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'context-status', 'usage-stats', 'memory-review-status', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'diagnostics-permissions', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking', 'agent-presets', 'avatar-library', 'model-state', 'cli-login-current', 'cli-login-status', 'cli-login-connections', 'cli-login-accounts', 'cli-login-noticed'])
   // Sign-in (cli-login.js): its replies are never cached by the browser.
   const CLI_LOGIN = new Set(['cli-login-start', 'cli-login-current', 'cli-login-status', 'cli-login-answer', 'cli-login-cancel', 'cli-login-connections', 'cli-login-confirm', 'cli-login-accounts', 'cli-login-noticed'])
   // The endpoints whose text reaches a Bot or a model: one that carries a Claude sign-in state
   // acp-dsh showed is refused before anything is queued (cli-login.js, loginTextMatches).
   const CODE_GUARDED = new Set(['send', 'side-ask', 'answer-question', 'view-reply', 'memory-ask'])
-  const textsOf = (value, depth = 0, out = []) => {
-    if (typeof value === 'string') out.push(value)
-    else if (depth < 4 && value !== null && typeof value === 'object') for (const item of Object.values(value).slice(0, 200)) textsOf(item, depth + 1, out)
+  // Every string of the payload, at any depth and width, its keys included (#871): the walk
+  // stops at nothing, so no nesting hides a text. The payload is the parsed JSON body of one
+  // buffered request, so the walk is linear in a size DSH already bounds, and has no cycle
+  // (`seen` only keeps another caller's object from looping). None of these endpoints takes a
+  // file: an attachment reaches a Bot through DSH's own composer, never through this route.
+  const textsOf = (payload) => {
+    const out = []
+    const seen = new Set()
+    const stack = [payload]
+    while (stack.length > 0) {
+      const value = stack.pop()
+      if (typeof value === 'string') out.push(value)
+      else if (value !== null && typeof value === 'object' && !seen.has(value)) {
+        seen.add(value)
+        if (Array.isArray(value)) for (const item of value) stack.push(item)
+        else for (const key of Object.keys(value)) stack.push(key, value[key])
+      }
+    }
     return out
   }
 
@@ -248,6 +263,10 @@ export function install(rt) {
   const handle = async (endpoint, payload, signal) => {
     try {
       const body = payload ?? {}
+      // The permission section of the diagnostics page (permission-diagnostics.js): answered
+      // from memory before the refresh below, which may load the team or take its lock. It
+      // takes no input.
+      if (endpoint === 'diagnostics-permissions') return ok(rt.permissionDiagnostics())
       await rt.refresh()
       const readOnly = rt.readOnly()
       // An endpoint another Omni plugin serves (extend.js) says itself whether it only reads.

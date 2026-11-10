@@ -289,6 +289,12 @@ deadline wins. No signal is requested for this status mismatch.
 echoes that value back through `put` writes an explicit 2. A `put` that omits the
 key preserves the file's value; sending `0` removes the key and uses the default.
 
+A new automation written with `put` and no `agent_args` key starts on the same
+automatic mode as one made in the panel's form: `--dangerously-bypass-approvals-and-sandbox`
+for codex, `--dangerously-skip-permissions` for claude, nothing for any other agent,
+a template or a workflow. Send the key to choose your own flags (`[]` for the
+agent's own default). An edit (`--original`) never adds them.
+
 For Copilot, `mcp_config` becomes `--additional-mcp-config @<path>`; the `@`
 tells Copilot to read the file rather than parse its path as inline JSON.
 Other agents still receive `--mcp-config <path>`.

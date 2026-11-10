@@ -60,6 +60,7 @@ const FAILURES = {
   TRANSPORT: 'Could not reach the model service',
   SESSION: 'Its group conversation could not open',
   SESSION_RESET: 'Its group conversation could not open, so it starts a new one next time',
+  PERMISSION: 'Its permission level could not be set here, so it took no turn',
 }
 
 export function failureLabel(code, message) {

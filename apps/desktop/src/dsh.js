@@ -610,6 +610,7 @@ export function freePort() {
 // and compiled again on every start, and the page's origin (its localStorage: the composer's
 // unsent drafts) changed with it. Only the port is reused, never a server: dsh still binds it
 // itself, and the page still signs in with the launch URL its own output carries.
+// When the port is taken the origin still moves: the drafts follow it through drafts.js (#141).
 export const portFileOf = home => join(home, 'dsh-port')
 
 /** The port in `file`, or null when there is none or it is not an unprivileged port. */
@@ -637,14 +638,40 @@ export function portFree(port) {
   })
 }
 
+// How long a start waits for the stored port when something still listens on it, and how often
+// it looks again. The usual holder is the dsh of the run before, still shutting down (a restart,
+// an update, a quick relaunch): taking a new port at once moved the page's origin, and the
+// composer's unsent drafts with it (#141).
+export const PORT_WAIT_MS = 3000
+export const PORT_WAIT_STEP_MS = 100
+
+const defaultSleep = ms => new Promise(done => setTimeout(done, ms))
+
 /**
  * The port to start dsh on: the one it served on last time (`file`) while nothing else
- * listens there, else a new free one. `fresh` finds the new one (freePort).
+ * listens there, else a new free one. `fresh` finds the new one (freePort). A stored port that
+ * is taken gets a short, bounded wait first: it is looked at again every `stepMs` for at most
+ * `waitMs` on the clock `now`, and no more than `waitMs / stepMs` times whatever that clock
+ * says, so a start is never held longer than the window. `onWaited(ms, freed)` tells a wait
+ * that happened. `free`, `sleep` and `now` are the port check, the wait and the clock (tests
+ * pass their own).
  */
-export async function launchPort(file, fresh = freePort) {
+export async function launchPort(file, fresh = freePort, { waitMs = PORT_WAIT_MS, stepMs = PORT_WAIT_STEP_MS, free = portFree, sleep = defaultSleep, now = Date.now, onWaited } = {}) {
   const stored = storedPort(file)
-  if (stored !== null && await portFree(stored)) return stored
-  return fresh()
+  if (stored === null) return fresh()
+  if (await free(stored)) return stored
+  const began = now()
+  const waited = () => now() - began
+  const step = Math.max(1, stepMs)
+  let freed = false
+  for (let looks = Math.ceil(waitMs / step); looks > 0 && !freed; looks -= 1) {
+    const left = waitMs - waited()
+    if (left <= 0) break
+    await sleep(Math.min(step, left))
+    freed = await free(stored)
+  }
+  if (waitMs > 0) onWaited?.(waited(), freed)
+  return freed ? stored : fresh()
 }
 
 /**

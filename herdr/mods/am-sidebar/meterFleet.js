@@ -221,3 +221,282 @@ export function resultLine(r) {
     default: return `Warning: usagemeter ${where}: ${r.why ?? "failed"}.`;
   }
 }
+
+// ---- The fleet coverage record (RFC 0026 (e), delivery 5) ----
+//
+// The sidebar's meter run (meter.js) asks each machine's own usagemeter for its bot-tag coverage
+// (`usagemeter coverage --window <FLEET_WINDOW> --json`) and writes one record beside the pack's
+// install record: the machines that answered with their counts, classes, bots and repos, and
+// the ones that did not, by name. The fleet number is a reader's sum over it (fleetSum), over
+// the summed tokens and never the mean of the machines' ratios. Every field of an answer is
+// read, checked and written again by name: nothing a machine's meter prints is passed through,
+// so the record holds no session id, request hash, path or raw log id whatever a meter (or a
+// machine) answers. The contract is meter/schema/fleet/v1/.
+
+/** The record's version (`v`). */
+export const FLEET_V = 1;
+/** The one window the record holds: d30, the outcome window (RFC 0026 (a)). */
+export const FLEET_WINDOW = "d30";
+/** The record, beside the install record under the app home; 0600, replaced on every run. */
+export const FLEET_FILE = "automagik-herdr/fleet-coverage.json";
+/** The most one machine's entry may take as JSON, and the whole record (RFC 0026 (g)). */
+export const FLEET_ENTRY_MAX = 64 * 1024;
+export const FLEET_RECORD_MAX = 1024 * 1024;
+/** The longest answer (in characters) that is read at all; a longer one is `invalid`. */
+export const FLEET_ANSWER_MAX = 512 * 1024;
+/** This computer's name in the record (`here: true` tells it from a linked machine so named). */
+export const FLEET_HERE = "local";
+/** The five classes, in the report's order: [state, reason]. */
+export const FLEET_PARTS = Object.freeze([["ambiguous", "claimants_differ"], ["unlinked", "no_record"], ["unlinked", "dsh_tui_seat"],
+  ["unlinked", "other_machine"], ["before_evidence", "before_evidence"]]);
+/**
+ * Why a machine is in `missing`: `timeout` (past the run's 30 s), a coverage exit by name
+ * (`no_coverage` 2: its meter has no coverage verb; `no_store` 10; `locked` 11; `newer_store` 12;
+ * `outdated_store` 13; `error` for 1 and any other exit, the exit beside it), `no_meter` (no
+ * usagemeter there), `unreachable` (the program could not be run there), `disconnected` (linked,
+ * not connected now), `invalid` (an answer that is not a v1 coverage record for the window) and
+ * `record_full` (its entry did not fit the record's 1 MiB).
+ */
+export const FLEET_REASONS = Object.freeze(["timeout", "no_coverage", "no_store", "locked", "newer_store", "outdated_store", "error",
+  "no_meter", "unreachable", "disconnected", "invalid", "record_full"]);
+const EXIT_REASON = Object.freeze({ 2: "no_coverage", 10: "no_store", 11: "locked", 12: "newer_store", 13: "outdated_store", 127: "no_meter" });
+/** A coverage exit (not 0) as a `missing` row's `{ reason, exit }`. */
+export const exitReason = (code) => ({ reason: EXIT_REASON[code] ?? "error", exit: Number.isSafeInteger(code) && code >= 0 && code <= 255 ? code : null });
+
+/**
+ * A share as the report prints it: four decimals, null (never 0) over nothing, and a share above
+ * 0 is never rounded to 0 (it keeps its exact value), as usagemeter's own.
+ */
+export function fleetRatio(part, total) {
+  if (!(total > 0)) return null;
+  const v = Math.max(0, part) / total;
+  const r = Math.round(v * 10_000) / 10_000;
+  return r === 0 && v > 0 ? v : r;
+}
+
+const count = (x) => (Number.isSafeInteger(x) && x >= 0 ? x : null);
+const TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z$/;
+const time = (x) => (typeof x === "string" && TIME.test(x) ? x : null);
+const METER_VERSION = /^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$/;
+// A bot id, a machine id: one word of at most 64 characters with no separator a path has.
+const WORD = /^[^\s/\\\u0000-\u001f\u007f]{1,64}$/;
+// Contract 1's normalized repo, `host/owner/repo`: never absolute, no backslash, no `..` part.
+const REPO = /^[a-z0-9.-]+(\/[^/\s\\\u0000-\u001f\u007f]+)+$/;
+const repoName = (x) => (typeof x === "string" && x.length <= 512 && REPO.test(x) && !x.split("/").includes("..") ? x : null);
+
+/** The four counts and their sum, or null when one is not a count or `total` is not their sum. */
+function totalsOf(t) {
+  const out = { attributed: count(t?.attributed), ambiguous: count(t?.ambiguous), unlinked: count(t?.unlinked),
+    before_evidence: count(t?.before_evidence), total: count(t?.total) };
+  if (Object.values(out).includes(null)) return null;
+  return out.attributed + out.ambiguous + out.unlinked + out.before_evidence === out.total ? out : null;
+}
+function basisOf(b) {
+  const out = { session: count(b?.session), label: count(b?.label), worktree: count(b?.worktree) };
+  return Object.values(out).includes(null) ? null : out;
+}
+function botLine(b, named) {
+  const tokens = count(b?.tokens), basis = basisOf(b?.tokens_by_basis);
+  if (tokens === null || !basis) return null;
+  if (!named) return { tokens, tokens_by_basis: basis };
+  return typeof b.bot === "string" && WORD.test(b.bot) ? { bot: b.bot, tokens, tokens_by_basis: basis } : null;
+}
+function repoLine(r, named) {
+  const totals = totalsOf(r?.totals);
+  if (!totals) return null;
+  if (!named) return { totals };
+  const repo = repoName(r.repo);
+  return repo && ["measured", "no_usage", "unknown"].includes(r.state) ? { repo, state: r.state, totals } : null;
+}
+/** A list of at most 50 lines, each read by `line`; null when it is not one or a line is not. */
+function linesOf(list, line) {
+  if (!Array.isArray(list) || list.length > 50) return null;
+  const out = list.map((x) => line(x, true));
+  return out.includes(null) ? null : out;
+}
+/** A string's length in UTF-8 bytes (no Buffer or TextEncoder: a mod's runtime may have neither). */
+export function utf8Length(s) {
+  let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x80) n += 1;
+    else if (c < 0x800) n += 2;
+    else if (c >= 0xd800 && c <= 0xdbff && i + 1 < s.length && (s.charCodeAt(i + 1) & 0xfc00) === 0xdc00) { n += 4; i++; }
+    else n += 3;
+  }
+  return n;
+}
+const size = (x) => utf8Length(JSON.stringify(x));
+
+/** `entry` with its bot and repo lists cut to `bots` and `repos` lines; the cut ones are counted and summed into the `other` lines. */
+function cutEntry(entry, bots, repos) {
+  const out = { ...entry };
+  if (bots < entry.bots.length) {
+    const cut = entry.bots.slice(bots);
+    const other = entry.bots_other ?? { tokens: 0, tokens_by_basis: { session: 0, label: 0, worktree: 0 } };
+    out.bots = entry.bots.slice(0, bots);
+    out.bots_omitted = entry.bots_omitted + cut.length;
+    out.bots_other = { tokens: other.tokens + cut.reduce((n, b) => n + b.tokens, 0),
+      tokens_by_basis: Object.fromEntries(["session", "label", "worktree"].map((k) => [k, other.tokens_by_basis[k] + cut.reduce((n, b) => n + b.tokens_by_basis[k], 0)])) };
+    out.truncated = true;
+  }
+  if (repos < entry.repos.length) {
+    const cut = entry.repos.slice(repos);
+    const other = entry.repos_other?.totals ?? { attributed: 0, ambiguous: 0, unlinked: 0, before_evidence: 0, total: 0 };
+    out.repos = entry.repos.slice(0, repos);
+    out.repos_omitted = entry.repos_omitted + cut.length;
+    out.repos_other = { totals: Object.fromEntries(Object.keys(other).map((k) => [k, other[k] + cut.reduce((n, r) => n + r.totals[k], 0)])) };
+    out.truncated = true;
+  }
+  return out;
+}
+/** `entry` within `max` bytes of JSON: its lists halved (cutEntry) until it fits. */
+function fitEntry(entry, max = FLEET_ENTRY_MAX) {
+  let out = entry;
+  while (size(out) > max && (out.bots.length || out.repos.length)) out = cutEntry(out, out.bots.length >> 1, out.repos.length >> 1);
+  return out;
+}
+
+/**
+ * One machine's entry from what its `usagemeter coverage --window <FLEET_WINDOW> --json` printed:
+ * `{ entry }`, or `{ reason: "invalid" }` when it is not a v1 coverage record holding that window
+ * with counts that add up. `machine`: its name (a linked machine's as hc lists it, FLEET_HERE for
+ * this computer, `here` true). Every field is copied by name after its check; the lists are the
+ * report's (50 at most, the rest already counted in its `other` lines), cut further only to keep
+ * the entry within FLEET_ENTRY_MAX, with `truncated: true`.
+ */
+export function coverageEntry(machine, stdout, { here = false } = {}) {
+  const bad = { reason: "invalid" };
+  if (typeof stdout !== "string" || stdout.length > FLEET_ANSWER_MAX) return bad;
+  let r = null;
+  try { r = JSON.parse(stdout); } catch { return bad; }
+  if (!r || typeof r !== "object" || Array.isArray(r) || r.v !== 1 || !Array.isArray(r.windows)) return bad;
+  const w = r.windows.find((x) => x?.window === FLEET_WINDOW);
+  const totals = totalsOf(w?.totals);
+  if (!totals) return bad;
+  // The classes: each of the five exactly once, and each state's classes add up to its count.
+  if (!Array.isArray(w.parts) || w.parts.length !== FLEET_PARTS.length) return bad;
+  const parts = FLEET_PARTS.map(([state, reason]) => {
+    const p = w.parts.filter((x) => x?.state === state && x?.reason === reason);
+    return p.length === 1 && count(p[0].tokens) !== null ? { state, reason, tokens: p[0].tokens } : null;
+  });
+  if (parts.includes(null)) return bad;
+  for (const state of ["ambiguous", "unlinked", "before_evidence"]) {
+    if (parts.filter((p) => p.state === state).reduce((n, p) => n + p.tokens, 0) !== totals[state]) return bad;
+  }
+  const bots = linesOf(w.bots, botLine), repos = linesOf(w.repos, repoLine);
+  const botsOmitted = count(w.bots_omitted), reposOmitted = count(w.repos_omitted);
+  const botsOther = w.bots_other == null ? null : botLine(w.bots_other, false);
+  const reposOther = w.repos_other == null ? null : repoLine(w.repos_other, false);
+  if (!bots || !repos || botsOmitted === null || reposOmitted === null) return bad;
+  if ((w.bots_other != null && !botsOther) || (w.repos_other != null && !reposOther)) return bad;
+  const start = time(w.start), end = time(w.end), countedFrom = time(r.counted_from);
+  const flags = [w.complete, w.stale, w.clipped];
+  if (!start || !end || !countedFrom || flags.some((f) => typeof f !== "boolean")) return bad;
+  if (typeof r.meter_version !== "string" || r.meter_version.length > 64 || !METER_VERSION.test(r.meter_version)) return bad;
+  if (!["full", "partial", "none"].includes(w.evidence)) return bad;
+  if ((r.as_of != null && !time(r.as_of)) || (w.evidence_from != null && !time(w.evidence_from))) return bad;
+  return { entry: fitEntry({
+    machine, here: Boolean(here), machine_id: typeof r.machine === "string" && WORD.test(r.machine) ? r.machine : null,
+    meter_version: r.meter_version, as_of: time(r.as_of), evidence_from: time(w.evidence_from), evidence: w.evidence,
+    counted_from: countedFrom, start, end, complete: w.complete, stale: w.stale, clipped: w.clipped,
+    truncated: w.truncated === true || botsOmitted > 0 || reposOmitted > 0,
+    totals, bot_coverage: fleetRatio(totals.attributed, totals.total),
+    inspected: fleetRatio(totals.attributed, totals.attributed + totals.ambiguous + totals.unlinked),
+    parts, bots, bots_omitted: botsOmitted, bots_other: botsOther, repos, repos_omitted: reposOmitted, repos_other: reposOther,
+  }) };
+}
+
+/**
+ * Which linked machines a fleet run asks, from the sidebar's machine list (no temporary ones):
+ * `ask` (in the meter's scope and connected: meter.js syncTargets' rule), `disconnected` (in
+ * scope, not connected now: named in `missing`) and `outOfScope` (linked, but the person did not
+ * agree to usagemeter there). A name the record cannot hold (MACHINE_NAME) is left out of all three.
+ */
+export function fleetPlan(machines, scope = null, owned = []) {
+  const plan = { ask: [], disconnected: [], outOfScope: [] };
+  for (const m of machines ?? []) {
+    if (!m || m.temporary || typeof m.name !== "string" || !MACHINE_NAME.test(m.name)) continue;
+    const inScope = scope === "all" || (scope !== "none" && owned.includes(m.name));
+    (inScope ? (m.state === "connected" ? plan.ask : plan.disconnected) : plan.outOfScope).push(m.name);
+  }
+  return plan;
+}
+
+/**
+ * The record: `answers` in the order asked, each `{ machine, here?, entry }` or `{ machine, here?,
+ * reason, exit? }`; `disconnected` and `outOfScope` from fleetPlan. Within FLEET_RECORD_MAX: past
+ * it the largest entry's lists are halved (`truncated`), and an entry with no line left to cut
+ * moves to `missing` as `record_full`, last machine first; nothing is cut without being counted.
+ */
+export function fleetRecord({ generatedAt, answers = [], disconnected = [], outOfScope = [] }) {
+  const missingRow = (a) => ({ machine: a.machine, here: Boolean(a.here), reason: FLEET_REASONS.includes(a.reason) ? a.reason : "error",
+    ...(Number.isSafeInteger(a.exit) ? { exit: a.exit } : {}) });
+  const record = {
+    v: FLEET_V, generated_at: generatedAt, window: FLEET_WINDOW,
+    machines: answers.filter((a) => a.entry).map((a) => a.entry),
+    missing: [...answers.filter((a) => !a.entry).map(missingRow), ...disconnected.map((machine) => ({ machine, here: false, reason: "disconnected" }))],
+    out_of_scope: [...outOfScope],
+  };
+  while (size(record) > FLEET_RECORD_MAX && record.machines.length) {
+    const sizes = record.machines.map((e) => (e.bots.length || e.repos.length ? size(e) : -1));
+    const i = sizes.indexOf(Math.max(...sizes));
+    if (sizes[i] >= 0) { const e = record.machines[i]; record.machines[i] = cutEntry(e, e.bots.length >> 1, e.repos.length >> 1); continue; }
+    const last = record.machines.pop();
+    record.missing.push({ machine: last.machine, here: last.here, reason: "record_full" });
+  }
+  return record;
+}
+
+/**
+ * The fleet number, a reader's sum of a record (RFC 0026 (e)): the machines' four counts added
+ * as tokens, the classes by reason, the bots by bot id and the repos by name, and the ratios
+ * over the summed tokens (token-weighted, never the mean of the machines' ratios). `answered`
+ * of `machines` (those that answered, plus `missing`; `out_of_scope` is apart and never counted,
+ * neither as a machine nor as 0). `lower_bound`: a machine that answered is stale, incomplete
+ * or clipped, so the token totals are "at least"; the ratio is always "over counted
+ * usage", never a bound. `bots_other` and `repos_other`: what the machines' capped lists left
+ * unnamed, so a bot's or repo's own line is a lower bound whenever they are above zero.
+ */
+export function fleetSum(record) {
+  const zero = () => ({ attributed: 0, ambiguous: 0, unlinked: 0, before_evidence: 0, total: 0 });
+  const add = (into, t) => { for (const k of Object.keys(into)) into[k] += t[k]; return into; };
+  const basis = () => ({ session: 0, label: 0, worktree: 0 });
+  const entries = record?.machines ?? [];
+  const totals = zero(), bots = new Map(), repos = new Map();
+  const parts = FLEET_PARTS.map(([state, reason]) => ({ state, reason, tokens: 0 }));
+  const botsOther = { tokens: 0, tokens_by_basis: basis() }, reposOther = zero();
+  const addBot = (into, b) => { into.tokens += b.tokens; add(into.tokens_by_basis, b.tokens_by_basis); };
+  for (const e of entries) {
+    add(totals, e.totals);
+    for (const p of e.parts) parts.find((x) => x.reason === p.reason).tokens += p.tokens;
+    for (const b of e.bots) {
+      if (!bots.has(b.bot)) bots.set(b.bot, { bot: b.bot, tokens: 0, tokens_by_basis: basis(), machines: [] });
+      const line = bots.get(b.bot);
+      addBot(line, b);
+      line.machines.push(e.machine);
+    }
+    if (e.bots_other) addBot(botsOther, e.bots_other);
+    for (const r of e.repos) {
+      if (!repos.has(r.repo)) repos.set(r.repo, { repo: r.repo, totals: zero(), machines: [] });
+      const line = repos.get(r.repo);
+      add(line.totals, r.totals);
+      line.machines.push(e.machine);
+    }
+    if (e.repos_other) add(reposOther, e.repos_other.totals);
+  }
+  const answered = entries.length, machines = answered + (record?.missing?.length ?? 0);
+  return {
+    window: record?.window ?? null, answered, machines, over: `over ${answered} of ${machines} machines`,
+    missing: (record?.missing ?? []).map((m) => m.machine), out_of_scope: [...(record?.out_of_scope ?? [])],
+    lower_bound: entries.some((e) => !e.complete || e.stale || e.clipped),
+    totals, bot_coverage: fleetRatio(totals.attributed, totals.total),
+    inspected: fleetRatio(totals.attributed, totals.attributed + totals.ambiguous + totals.unlinked),
+    parts: parts.map((p) => ({ ...p, share: fleetRatio(p.tokens, totals.total) })),
+    bots: [...bots.values()].sort((a, b) => b.tokens - a.tokens || (a.bot < b.bot ? -1 : 1)).map((b) => ({ ...b, share: fleetRatio(b.tokens, totals.total) })),
+    bots_other: botsOther,
+    repos: [...repos.values()].sort((a, b) => b.totals.total - a.totals.total || (a.repo < b.repo ? -1 : 1))
+      .map((r) => ({ ...r, bot_coverage: fleetRatio(r.totals.attributed, r.totals.total) })),
+    repos_other: reposOther,
+  };
+}
