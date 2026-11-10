@@ -1908,6 +1908,128 @@ test("#487: --uninstall with no answer from Herdr names the pack's own layout it
   assert.doesNotMatch(r.out, /pack's own layout/);
 });
 
+// ---- #525: what --uninstall's layout check cannot read or list is said, never passed over ----
+
+/** An installed pack whose layout and reference copy both hold `body` (so --uninstall removes the layout). */
+function packLayoutOf(t, body) {
+  const s = scratch(t);
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes").code, 0);
+  const layout = join(s.appHome, "layouts", "automagik.json");
+  if (body != null) for (const f of [layout, join(s.state, "automagik.json")]) writeFileSync(f, body);
+  return { s, layout };
+}
+/** No Node: one on PATH that fails, as an older one does. */
+const noNode = (s) => exe(join(s.bin, "node"), "#!/bin/sh\nexit 1\n");
+/** A layout cut off after its last block: it does not parse, and its text names the mod. */
+const CUT_OFF = '{"id":"root","children":[{"id":"spaces","content":{"mod":"am-sidebar"}}],';
+const NO_ANSWER = "no layout from herdr-app status: no herdr-app, Herdr is not running, or it did not answer in \\d+s";
+const AFTER = "Switch layouts \\(ctrl-shift-l\\), or run this installer again to put the pack back\\.";
+
+test("#525: no answer from Herdr, Node there, the pack's own layout does not parse: the #489 line wins over #487's", (t) => {
+  const { s, layout } = packLayoutOf(t, CUT_OFF);
+  const r = s.run("--uninstall");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, new RegExp(`^Uninstalling the pack without knowing the layout Herdr shows \\(${NO_ANSWER}\\), and its own layout \\(\\S+/layouts/automagik\\.json\\) does not read: `
+    + `its text names am-sidebar, and Herdr drops a layout whose mod is gone \\(plain Herdr instead\\)\\. Showing it\\? ${AFTER}$`, "m"));
+  assert.doesNotMatch(r.out, /Removing the pack's own layout|could not be checked without Node/);
+  assert.match(r.out, /through its updater/);
+  assert.equal(existsSync(layout), false);
+});
+
+test("#525: without Node 22.7, a pack layout Herdr does not name is said as not checked, its text read instead", (t) => {
+  const said = new RegExp("^Uninstalling the pack without knowing the layout Herdr shows \\(Herdr shows the layout \"\\.\\./elsewhere\", a name with a path, so no file in \\S+/layouts was read\\), "
+    + "and its own layout \\(\\S+/layouts/automagik\\.json\\) could not be checked without Node 22\\.7 or later: its text names ((?:am-[a-z-]+, )*am-[a-z-]+), "
+    + `and Herdr drops a layout whose mod is gone \\(plain Herdr instead\\)\\. Showing it\\? ${AFTER}$`, "m");
+  // Corrupt (it and its reference copy), then as shipped: without Node neither can be told apart.
+  for (const body of [CUT_OFF, null]) {
+    const { s, layout } = packLayoutOf(t, body);
+    s.addHerdrApp();
+    s.show("../elsewhere");
+    noNode(s);
+    const r = s.run("--uninstall");
+    assert.equal(r.code, 0, r.err);
+    const names = r.out.match(said)?.[1].split(", ");
+    assert.ok(names?.includes("am-sidebar"), `body: ${body}\n${r.out}`);
+    assert.match(r.out, /Removing the pack with this script \(no Node 22\.7 or later\)\./);
+    assert.equal(existsSync(layout), false);
+  }
+  // With Node the same home says the #489 line for the corrupt one, and nothing for the one that reads.
+  const corrupt = packLayoutOf(t, CUT_OFF);
+  corrupt.s.addHerdrApp();
+  corrupt.s.show("../elsewhere");
+  const c = corrupt.s.run("--uninstall");
+  assert.match(c.out, /and its own layout \(\S+\) does not read: its text names am-sidebar/);
+  assert.doesNotMatch(c.out, /could not be checked without Node/);
+  const fine = packLayoutOf(t, null);
+  fine.s.addHerdrApp();
+  fine.s.show("../elsewhere");
+  assert.doesNotMatch(fine.s.run("--uninstall").out, /its own layout|pack's own layout/);
+});
+
+test("#525: a layout file that cannot be read (mode 000) is said, Node or not, and so is the shown one", { skip: process.getuid?.() === 0 && "root reads every file" }, (t) => {
+  const line = (why) => new RegExp(`^Uninstalling the pack without knowing the layout Herdr shows \\(${why}\\), and \\S+/layouts/mine\\.json could not be read: `
+    + "if it names (?:am-[a-z-]+, )*am-[a-z-]+ and Herdr shows it, Herdr drops it \\(plain Herdr instead\\)\\. Showing it\\? " + `${AFTER}$`, "m");
+  for (const node of [true, false]) {
+    for (const shown of [null, "mine"]) {
+      const { s } = packLayoutOf(t, null);
+      const mine = join(s.appHome, "layouts", "mine.json");
+      writeFileSync(mine, JSON.stringify({ id: "root", children: [{ id: "spaces", content: { mod: "am-sidebar" } }] }));
+      if (shown) { s.addHerdrApp(); s.show(shown); }
+      if (!node) noNode(s);
+      chmodSync(mine, 0o000);
+      let r;
+      try { r = s.run("--uninstall"); } finally { chmodSync(mine, 0o644); }
+      assert.equal(r.code, 0, r.err);
+      assert.match(r.out, line(shown ? "Herdr shows mine, and \\S+/layouts/mine\\.json could not be read" : NO_ANSWER), `node: ${node}, shown: ${shown}\n${r.out}`);
+      assert.doesNotMatch(r.err, /Permission denied/, "no grep on a file it cannot read");
+      assert.equal(existsSync(s.pack), false);
+    }
+  }
+});
+
+test("#525: a layouts/ that cannot be listed is said, Node or not", { skip: process.getuid?.() === 0 && "root lists every folder" }, (t) => {
+  for (const node of [true, false]) {
+    const { s } = packLayoutOf(t, null);
+    const layouts = join(s.appHome, "layouts");
+    if (!node) noNode(s);
+    // Back to listable before the scratch home's cleanup, which runs first among the after hooks.
+    chmodSync(layouts, 0o300);
+    let r;
+    try { r = s.run("--uninstall"); } finally { chmodSync(layouts, 0o755); }
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, new RegExp(`^Uninstalling the pack without knowing the layout Herdr shows \\(${NO_ANSWER}\\), and \\S+/layouts could not be listed, so no layout in it was checked: `
+      + `if one names (?:am-[a-z-]+, )*am-[a-z-]+ and Herdr shows it, Herdr drops it \\(plain Herdr instead\\)\\. Showing one\\? ${AFTER}$`, "m"), `node: ${node}\n${r.out}`);
+    assert.equal(existsSync(s.pack), false);
+  }
+});
+
+test("#525: no answer from Herdr and a pack layout naming no pack mod: removed, said as maybe the one shown; kept in a linked layouts/, nothing said", (t) => {
+  const BARE = '{"id":"root","children":[{"id":"p","content":{"mod":"pane"}}]}\n';
+  for (const node of [true, false]) {
+    const { s, layout } = packLayoutOf(t, BARE);
+    if (!node) noNode(s);
+    const r = s.run("--uninstall");
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, new RegExp(`^Removing the pack's own layout \\S+/layouts/automagik\\.json without knowing the layout Herdr shows \\(${NO_ANSWER}\\), so it may be the one shown\\. `
+      + "If Herdr shows it, Herdr drops it \\(plain Herdr instead\\): switch layouts \\(ctrl-shift-l\\), or run this installer again to put the pack back\\.$", "m"), `node: ${node}\n${r.out}`);
+    assert.doesNotMatch(r.out, /its text names/);
+    assert.equal(existsSync(layout), false);
+    // A linked layouts/ keeps it (#448), and it names no mod that leaves: nothing to say of it.
+    const k = packLayoutOf(t, BARE);
+    const layouts = join(k.s.appHome, "layouts"), theirs = join(k.s.root, "their-layouts");
+    cpSync(layouts, theirs, { recursive: true });
+    rmSync(layouts, { recursive: true });
+    symlinkSync(theirs, layouts);
+    if (!node) noNode(k.s);
+    const kept = k.s.run("--uninstall");
+    assert.equal(kept.code, 0, kept.err);
+    assert.doesNotMatch(kept.out, /the pack's own layout/, `node: ${node}\n${kept.out}`);
+    assert.match(kept.out, /^Left \S+\/layouts\/automagik\.json: \S+\/layouts is a link, your own folder/m);
+    assert.equal(readFileSync(join(theirs, "automagik.json"), "utf8"), BARE);
+  }
+});
+
 test("--uninstall doesn't wait for a herdr-app status that never answers", (t) => {
   const s = scratch(t);
   s.publish("9.9.0");

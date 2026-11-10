@@ -339,7 +339,9 @@ mods_said() {
 # herdr-app, Herdr not running, a name with a path, no such file) it goes on, naming each layout
 # whose blocks name one ($2: the pack's own layout file when this run removes it, left out unless
 # Node finds it does not parse, #489, or Herdr gave no answer at all, #487: then said as removed,
-# or kept in a linked layouts/; refused too while Herdr shows that file).
+# or kept in a linked layouts/; refused too while Herdr shows that file). What this script cannot
+# check is said as well (#525): that file without Node (whether it parses), a layout file it
+# cannot read, and a layouts/ it cannot list.
 lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 layout_guard() {
   shown=$(shown_layout)
@@ -347,7 +349,9 @@ layout_guard() {
   case $shown in
     '') why="no layout from herdr-app status: no herdr-app, Herdr is not running, or it did not answer in ${STATUS_SECONDS}s" ;;
     */*|.|..) why="Herdr shows the layout \"$shown\", a name with a path, so no file in $APP_HOME/layouts was read" ;;
-    *) [ -f "$APP_HOME/layouts/$shown.json" ] || why="Herdr shows $shown, and $APP_HOME/layouts/$shown.json is not there" ;;
+    *)
+      if [ ! -f "$APP_HOME/layouts/$shown.json" ]; then why="Herdr shows $shown, and $APP_HOME/layouts/$shown.json is not there"
+      elif [ ! -r "$APP_HOME/layouts/$shown.json" ]; then why="Herdr shows $shown, and $APP_HOME/layouts/$shown.json could not be read"; fi ;;
   esac
   set -f
   IFS=,
@@ -376,16 +380,31 @@ layout_guard() {
   if [ -z "$why" ] && [ -n "$2" ] && [ ! -L "$APP_HOME/layouts" ] && [ "$(lower "$shown.json")" = "$(lower "${2##*/}")" ]; then
     fail "the $shown layout is this package's (layouts/${2##*/}) and Herdr shows it: removing the package takes it away (plain Herdr instead). Switch layouts first ($how), then uninstall the pack."
   fi
-  [ -n "$why" ] && [ -n "$on" ] || return 0
+  [ -n "$why" ] || return 0
+  on_said=$(printf '%s' "$on" | sed 's/,/, /g')
+  # A layouts/ this script cannot list (#525): none of its files is checked, and that is said.
+  if [ -n "$on" ] && [ -d "$APP_HOME/layouts" ] && ! ls "$APP_HOME/layouts" >/dev/null 2>&1; then
+    say "Uninstalling the pack without knowing the layout Herdr shows ($why), and $APP_HOME/layouts could not be listed, so no layout in it was checked: if one names $on_said and Herdr shows it, Herdr drops it (plain Herdr instead). Showing one? Switch layouts (ctrl-shift-l), or run this installer again to put the pack back."
+    return 0
+  fi
   for f in "$APP_HOME"/layouts/*.json; do
     [ -f "$f" ] || continue
+    # A layout file this script cannot read (mode 000, #525): said, as layoutSafe.mjs says one
+    # that does not read.
+    if [ ! -r "$f" ]; then
+      if [ -n "$on" ]; then
+        say "Uninstalling the pack without knowing the layout Herdr shows ($why), and $f could not be read: if it names $on_said and Herdr shows it, Herdr drops it (plain Herdr instead). Showing it? Switch layouts (ctrl-shift-l), or run this installer again to put the pack back."
+      fi
+      continue
+    fi
     # The pack's own layout this run removes: while Herdr gave a name (a path, no such file), not
-    # the one shown, so left out unless it does not parse (#489: Node reads it; without Node, left
-    # out). With no answer at all (#487) it may be the one shown: said either way, Node or not.
+    # the one shown, so left out unless it does not parse (#489: Node reads it; without Node it
+    # cannot be checked, and that is said, #525). With no answer at all (#487) it may be the one
+    # shown: said either way, Node or not.
     reads=
     if [ "$f" = "$2" ]; then
       if node_ok; then if json_reads "$f"; then reads=yes; else reads=no; fi; fi
-      if [ -n "$shown" ] && [ "$reads" != no ]; then continue; fi
+      if [ -n "$shown" ] && [ "$reads" = yes ]; then continue; fi
     fi
     has=
     set -f
@@ -395,10 +414,24 @@ layout_guard() {
     done
     unset IFS
     set +f
-    [ -n "$has" ] || continue
+    if [ -z "$has" ]; then
+      # The pack's own layout naming no pack mod that leaves, with no answer from Herdr: removed,
+      # it may still be the one shown, said as layoutSafe.mjs says it (#525). One a linked layouts/
+      # keeps, or one that does not parse, loses nothing: not said, there as here.
+      if [ "$f" = "$2" ] && [ -z "$shown" ] && [ "$reads" != no ] && [ ! -L "$APP_HOME/layouts" ]; then
+        say "Removing the pack's own layout $f without knowing the layout Herdr shows ($why), so it may be the one shown. If Herdr shows it, Herdr drops it (plain Herdr instead): switch layouts (ctrl-shift-l), or run this installer again to put the pack back."
+      fi
+      continue
+    fi
     name=${f##*/}
     if [ "$f" = "$2" ] && [ "$reads" = no ]; then
       say "Uninstalling the pack without knowing the layout Herdr shows ($why), and its own layout ($f) does not read: its text names $has, and Herdr drops a layout whose mod is gone (plain Herdr instead). Showing it? Switch layouts (ctrl-shift-l), or run this installer again to put the pack back."
+      continue
+    fi
+    # Herdr gave a name that is not this file, and without Node nothing says whether it parses
+    # (#525): its text is read instead, and what it names is said, never passed over silently.
+    if [ "$f" = "$2" ] && [ -n "$shown" ]; then
+      say "Uninstalling the pack without knowing the layout Herdr shows ($why), and its own layout ($f) could not be checked without Node $NODE_MIN or later: its text names $has, and Herdr drops a layout whose mod is gone (plain Herdr instead). Showing it? Switch layouts (ctrl-shift-l), or run this installer again to put the pack back."
       continue
     fi
     if [ "$f" = "$2" ]; then
