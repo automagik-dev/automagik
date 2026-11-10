@@ -1506,11 +1506,16 @@ export function notifyMainBotOfRestore({ modsDir, version, restored, failed = []
       // The project's own live binding first; ids are shared across a project's worktrees, so
       // hc ls alone can name another checkout's pane.
       let terminal = null;
+      let blocked = false;
+      const isBlocked = (state) => state?.status?.state === "blocked" || state?.status === "blocked";
       const binding = bindings.byBot.get(main.id);
       if (binding?.project === dir) {
         try {
           const get = JSON.parse(hcRun(["get", binding.terminal, "--json"]));
-          if (get.state === "live" && get.created_ms === binding.created_ms) terminal = binding.terminal;
+          if (get.state === "live" && get.created_ms === binding.created_ms) {
+            terminal = binding.terminal;
+            blocked = isBlocked(get);
+          }
         } catch {}
       }
       if (!terminal) {
@@ -1520,10 +1525,17 @@ export function notifyMainBotOfRestore({ modsDir, version, restored, failed = []
           const live = terminals.filter((t) => t?.state === "live" && t.address);
           const under = (cwd) => typeof cwd === "string"
             && (resolve(cwd) === dir || resolve(cwd).startsWith(dir === "/" ? "/" : `${dir}/`));
-          terminal = live.find((t) => under(t.cwd))?.address ?? live[0]?.address ?? null;
+          const chosen = live.find((t) => under(t.cwd)) ?? live[0] ?? null;
+          terminal = chosen?.address ?? null;
+          blocked = isBlocked(chosen);
         } catch {}
       }
       if (!terminal) continue;
+      // Never type into a blocked main pane: keep it pending for the next check tick.
+      if (blocked) {
+        if (!pendingBots.includes(main.id)) pendingBots.push(main.id);
+        continue;
+      }
       try {
         hcRun(["send", terminal, text]);
         if (!notifiedBots.includes(main.id)) notifiedBots.push(main.id);

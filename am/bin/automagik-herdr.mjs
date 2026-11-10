@@ -3863,6 +3863,13 @@ async function readScreenText(terminal) {
   try { return JSON.parse(r.stdout)?.text ?? null; } catch { return null; }
 }
 
+/** End a queued watcher only while it is the live pane this queue started (never a reused address). */
+async function killQueuedWatcher(watcher) {
+  if (!watcher) return;
+  const state = await hcState(watcher);
+  if (state.state === "live" && state.get?.labels?.["herdr.queued-restart"]) await hc(["kill", watcher]);
+}
+
 async function queuedRestarts(opts, ref) {
   const project = opts.project ? (await projectFor(opts)).key : null;
   if (opts.queued) {
@@ -3870,8 +3877,14 @@ async function queuedRestarts(opts, ref) {
       for (let i = rows.length - 1; i >= 0; i -= 1) {
         const e = rows[i];
         const state = await hcState(e.terminal);
-        if (["gone", "finished"].includes(state.state) || (state.get && e.created_ms != null && state.get.created_ms !== e.created_ms)) {
-          if (e.watcher) await hc(["kill", e.watcher]);
+        // A dead watcher means this entry can never fire, even while its pane still runs.
+        let stale = ["gone", "finished"].includes(state.state) || (state.get && e.created_ms != null && state.get.created_ms !== e.created_ms);
+        if (!stale && e.watcher) {
+          const wState = await hcState(e.watcher);
+          stale = ["gone", "finished"].includes(wState.state);
+        }
+        if (stale) {
+          await killQueuedWatcher(e.watcher);
           rows.splice(i, 1);
         }
       }
@@ -3889,7 +3902,7 @@ async function queuedRestarts(opts, ref) {
     const i = rows.findIndex((e) => e.botId === id && (!project || e.project === project));
     if (i < 0) return null;
     const [e] = rows.splice(i, 1);
-    if (e.watcher) await hc(["kill", e.watcher]);
+    await killQueuedWatcher(e.watcher);
     return e;
   });
   return opts.json ? { id, canceled: Boolean(entry), terminal: entry?.terminal ?? null }
@@ -3900,43 +3913,70 @@ const RETRY_QUEUED = Symbol("retry-queued");
 
 async function runQueuedRestart(opts) {
   const queueId = opts["run-queued"];
+  const began = Date.now();
+  const maxMs = Math.max(1000, Number(process.env.AUTOMAGIK_HERDR_QUEUE_MAX_MS) || 86_400_000);
+  const helperMaxMs = Math.max(50, Number(process.env.AUTOMAGIK_HERDR_QUEUE_HELPER_WAIT_MS) || 30_000);
   const current = () => readRestartQueue().find((e) => e.id === queueId);
   let entry = current();
   if (!entry) return PRINTED;
-  for (;;) {
-    const state = await hcState(entry.terminal);
-    if (["gone", "finished"].includes(state.state) || (state.get && entry.created_ms != null && state.get.created_ms !== entry.created_ms)) {
-      await editRestartQueue((rows) => { const i = rows.findIndex((e) => e.id === queueId); if (i >= 0) rows.splice(i, 1); });
-      return PRINTED;
+  let helperBlockedSince = null;
+  const drop = () => editRestartQueue((rows) => { const i = rows.findIndex((e) => e.id === queueId); if (i >= 0) rows.splice(i, 1); });
+  try {
+    for (;;) {
+      if (Date.now() - began >= maxMs) return PRINTED;
+      const state = await hcState(entry.terminal);
+      if (["gone", "finished"].includes(state.state) || (state.get && entry.created_ms != null && state.get.created_ms !== entry.created_ms)) {
+        return PRINTED;
+      }
+      // A blocked pane is never idle: skip the screen read (an hc RPC on every poll).
+      const screen = state.get?.status?.state !== "blocked" && state.get ? await readScreenText(entry.terminal) : null;
+      const idle = isPaneIdle(state.get, screen);
+      // The watcher's own helper check: a live helper is waited out before cmdRestart is asked.
+      const helpers = idle ? await helpersOf(entry.terminal, { strict: Boolean(entry.options?.tree) }) : [];
+      let helperRefusal = idle
+        ? restartRefusal({ name: entry.botName, old: { ...state.get, status: { state: "idle" } }, helpers,
+          force: false, tree: entry.options?.tree })
+        : null;
+      if (idle && !helperRefusal) {
+        const saved = Object.fromEntries(Object.entries(entry.options ?? {}).filter(([, value]) => value !== null));
+        const callOpts = { ...saved, "fresh-shared": saved.freshShared, project: entry.project, force: false,
+          json: opts.json, _queuedTarget: entry };
+        const result = await cmdRestart(callOpts, [entry.botId]);
+        if (result !== RETRY_QUEUED) return result;
+        // cmdRestart's fire-time check kept it: wait for the helper or the next idle at the slow floor.
+        helperRefusal = callOpts._queuedRefusal ?? null;
+      }
+      const blockedByHelpers = Boolean(helperRefusal);
+      if (blockedByHelpers) {
+        helperBlockedSince ??= Date.now();
+        if (Date.now() - helperBlockedSince >= helperMaxMs) {
+          await drop(); // out of the queue before the person hears why
+          if (isPaneIdle(state.get, screen)) {
+            try { await hc(["send", entry.terminal, `${entry.botName}: queued restart refused — ${helperRefusal}`]); } catch {}
+          }
+          throw new CliError(helperRefusal, 1, { refused: "helpers", terminal: entry.terminal });
+        }
+      } else {
+        helperBlockedSince = null;
+      }
+      const start = Date.now();
+      // hc wait returns at once for a blocked pane: poll those, and a pane kept for its helpers,
+      // at the slower floor instead of spinning the wait at the fast one.
+      if (state.get?.status?.state === "working" && !blockedByHelpers) {
+        await hc(["wait", entry.terminal, "--timeout", "25", "--json"], { timeout: 30000 });
+      }
+      const raw = process.env.AUTOMAGIK_HERDR_QUEUE_POLL_MS?.trim();
+      const configured = raw ? Number(raw) : NaN;
+      const poll = Number.isFinite(configured)
+        ? Math.max(1, configured)
+        : (state.get?.status?.state === "working" && !blockedByHelpers ? 250 : 2000);
+      if (Date.now() - start < poll) await new Promise((done) => setTimeout(done, poll - (Date.now() - start)));
+      entry = current();
+      if (!entry) return PRINTED;
     }
-    // A blocked pane is never idle: skip the screen read (an hc RPC on every poll).
-    const screen = state.get?.status?.state !== "blocked" && state.get ? await readScreenText(entry.terminal) : null;
-    const idle = isPaneIdle(state.get, screen);
-    let blockedByHelpers = false;
-    if (idle && !entry.options?.tree) {
-      const helpers = await helpersOf(entry.terminal);
-      blockedByHelpers = doomedHelpers(helpers).length > 0;
-    }
-    if (idle && !blockedByHelpers) {
-      const saved = Object.fromEntries(Object.entries(entry.options ?? {}).filter(([, value]) => value !== null));
-      const result = await cmdRestart({ ...saved, "fresh-shared": saved.freshShared, project: entry.project, force: false,
-        json: opts.json, _queuedTarget: entry }, [entry.botId]);
-      if (result !== RETRY_QUEUED) return result;
-    }
-    const start = Date.now();
-    // hc wait returns at once for a blocked pane: poll those, and a pane kept for its helpers,
-    // at the slower floor instead of spinning the wait at the fast one.
-    if (state.get?.status?.state === "working" && !blockedByHelpers) {
-      await hc(["wait", entry.terminal, "--timeout", "25", "--json"], { timeout: 30000 });
-    }
-    const raw = process.env.AUTOMAGIK_HERDR_QUEUE_POLL_MS;
-    const configured = raw === undefined ? NaN : Number(raw);
-    const poll = Number.isFinite(configured)
-      ? Math.max(1, configured)
-      : (state.get?.status?.state === "working" && !blockedByHelpers ? 250 : 2000);
-    if (Date.now() - start < poll) await new Promise((done) => setTimeout(done, poll - (Date.now() - start)));
-    entry = current();
-    if (!entry) return PRINTED;
+  } finally {
+    // Every exit path leaves no stale entry: fired, canceled, expired, or a failed fire.
+    await drop();
   }
 }
 
@@ -3945,7 +3985,7 @@ async function queueRestart({ bot, key, old, screen, opts, wanted, plan }) {
   const queueId = randomUUID();
   const entry = await editRestartQueue(async (rows) => {
     const i = rows.findIndex((e) => e.botId === bot.id);
-    if (i >= 0) { const [prev] = rows.splice(i, 1); if (prev.watcher) await hc(["kill", prev.watcher]); }
+    if (i >= 0) { const [prev] = rows.splice(i, 1); await killQueuedWatcher(prev.watcher); }
     const e = { id: queueId, botId: bot.id, botName: bot.name, project: key, terminal: old.address, created_ms: old.created_ms ?? null,
       reason: dialog ? "blocked" : "working", dialog, options: { fresh: Boolean(opts.fresh), agent: opts.agent ?? null,
         model: opts.model ?? null, save: Boolean(opts.save), tree: Boolean(opts.tree), freshShared: Boolean(opts["fresh-shared"]),
@@ -3954,8 +3994,21 @@ async function queueRestart({ bot, key, old, screen, opts, wanted, plan }) {
     const file = queuePath(), tmp = `${file}.${process.pid}`;
     writeFileSync(tmp, JSON.stringify([...rows, e]), { mode: 0o600 });
     chmodSync(tmp, 0o600); renameSync(tmp, file);
+    // env -i: herdr-core's environment does not leak into the watcher. Only these explicit
+    // values and the queue/agent variables the watcher and its tests need are passed.
+    const watcherEnv = [
+      `HOME=${home()}`,
+      `HERDR_APP_HOME=${appHome()}`,
+      `PATH=${launchPath(process.execPath, key).path}`,
+      ...Object.entries(process.env)
+        .filter(([k, v]) => v !== undefined && (
+          k.startsWith("AUTOMAGIK_HERDR_") ||
+          ["USER", "LOGNAME", "TMPDIR", "XDG_RUNTIME_DIR", "HC_SOCKET", "HC_TERMINAL_ID", "HERMES_HOME", "VIRTUAL_ENV"].includes(k)
+        ))
+        .map(([k, v]) => `${k}=${v}`),
+    ];
     const r = await hc(["run", "--bg", "--json", "--rm", "--no-parent", "--cwd", key, "--label", `herdr.queued-restart=${bot.id}`,
-      "--", "/usr/bin/env", `HERDR_APP_HOME=${appHome()}`, `PATH=${launchPath(process.execPath, key).path}`,
+      "--", "/usr/bin/env", "-i", ...watcherEnv,
       process.execPath, fileURLToPath(import.meta.url), "restart", bot.id, "--project", key, "--run-queued", queueId]);
     let watcher;
     try { watcher = r.code === 0 ? JSON.parse(r.stdout)?.address : null; } catch {}
@@ -4024,19 +4077,29 @@ async function cmdRestart(opts, [ref]) {
   // The old pane: the one the attach ledger names for the bot, as hc confirms it.
   const view = await attachView();
   const held = view.live.get(bot.id) ?? null;
-  const old = held && local(held.get?.address ?? held.binding.terminal) ? { ...held.get, address: held.get?.address ?? held.binding.terminal } : null;
+  let old = held && local(held.get?.address ?? held.binding.terminal) ? { ...held.get, address: held.get?.address ?? held.binding.terminal } : null;
   if (opts._queuedTarget && (!old || old.address !== opts._queuedTarget.terminal
     || (opts._queuedTarget.created_ms != null && old.created_ms !== opts._queuedTarget.created_ms))) return PRINTED;
+  // attachView caches its first hc get for the whole watcher run: a queued fire must judge the
+  // pane's status now, not the state it had when the watcher started.
+  if (opts._queuedTarget && old) {
+    const now = await hcState(old.address);
+    if (now.state !== "live" || !now.get) return PRINTED;
+    old = { ...old, ...now.get, address: old.address };
+  }
   const screen = old ? await readScreenText(old.address) : null;
   const helpers = old ? await helpersOf(old.address, { strict: Boolean(opts.tree) }) : [];
+  // Helpers remain a refusal even when the parent's turn could otherwise be queued.
+  const refusal = old ? restartRefusal({ name: bot.name, old: { ...old, status: { state: "idle" } }, helpers, force: opts.force, tree: opts.tree }) : null;
   if (old && opts._queuedTarget) {
-    // Repeat the watcher's checks at fire time: a helper that appeared, or a pane that turned
-    // busy again after the queue was read, is waited for instead of being ended with the pane.
-    if (!isPaneIdle(old, screen) || (!opts.tree && doomedHelpers(helpers).length > 0)) return RETRY_QUEUED;
-  } else if (old) {
-    // Helpers remain a refusal even when the parent's turn could otherwise be queued.
-    const refusal = restartRefusal({ name: bot.name, old: { ...old, status: { state: "idle" } }, helpers, force: opts.force, tree: opts.tree });
-    if (refusal) throw new CliError(refusal, 1, { refused: "helpers", terminal: old.address });
+    // The single fire-time check: a helper that appeared, or a pane that turned busy again
+    // after the queue was read, is waited for instead of being ended with the pane.
+    if (refusal || (!opts.force && !isPaneIdle(old, screen))) {
+      if (refusal) opts._queuedRefusal = refusal;
+      return RETRY_QUEUED;
+    }
+  } else if (refusal) {
+    throw new CliError(refusal, 1, { refused: "helpers", terminal: old.address });
   }
   const agents = agentTable();
   const ledger = workerLedgerRows();
@@ -4127,9 +4190,14 @@ async function cmdRestart(opts, [ref]) {
       return i < 0 ? null : rows.splice(i, 1)[0];
     });
     if (!consumed) return PRINTED;
-  } else {
-    // A direct restart supersedes a queued one: its watcher must not start a second replacement
-    // while this one hands the bot over. No entry: leave the queue file alone.
+  }
+  let seat = await launchSeat(project, bot, { agent: plan.agent, model: plan.model, argv: plan.argv, cwd, place,
+    carry: { ...carry, ...(plan.sessionId ? { [SESSION_LABEL]: plan.sessionId } : {}) }, session: sessionOfPlan(plan, resumeId),
+    replacing: old ? held.binding : null });
+  if (seat.running) return opts.json ? { id: bot.id, running: seat.running } : `${bot.name} is already running in ${seat.running}.`;
+  // A direct restart supersedes a queued one only once it really started: its watcher must not
+  // start a second replacement while this one hands the bot over.
+  if (!opts._queuedTarget) {
     let queued = false;
     try { queued = readRestartQueue().some((e) => e.botId === bot.id); } catch {}
     if (queued) {
@@ -4137,15 +4205,11 @@ async function cmdRestart(opts, [ref]) {
         const i = rows.findIndex((e) => e.botId === bot.id);
         if (i < 0) return null;
         const [e] = rows.splice(i, 1);
-        if (e.watcher) await hc(["kill", e.watcher]);
+        await killQueuedWatcher(e.watcher);
         return e;
       });
     }
   }
-  let seat = await launchSeat(project, bot, { agent: plan.agent, model: plan.model, argv: plan.argv, cwd, place,
-    carry: { ...carry, ...(plan.sessionId ? { [SESSION_LABEL]: plan.sessionId } : {}) }, session: sessionOfPlan(plan, resumeId),
-    replacing: old ? held.binding : null });
-  if (seat.running) return opts.json ? { id: bot.id, running: seat.running } : `${bot.name} is already running in ${seat.running}.`;
   const warnings = seat.hook.warnings;
   const say = (w) => { warnings.push(w); report([w]); };
   // #597: the replacement is built from the bot's source (a live template's current command, or

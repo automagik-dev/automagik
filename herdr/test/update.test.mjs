@@ -2662,3 +2662,37 @@ test("#805 checkForUpdate retries a pending rollback notice", async (t) => {
   assert.deepEqual(note.notifiedBots, ["b-main"]);
   assert.deepEqual(note.pendingBots, []);
 });
+
+test("#805 a blocked main pane is kept pending and never receives the notice", async (t) => {
+  const { notifyMainBotOfRestore } = await import("../mods/am-sidebar/update.mjs");
+  const { attachLine, attachRow } = await import("../mods/am-sidebar/attach.js");
+  const root = mkdtempSync(join(tmpdir(), "restore-blocked-pane-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const modsDir = join(root, "app/mods"), state = stateDirOf(modsDir);
+  const p1 = join(root, "one"), p2 = join(root, "two");
+  for (const [dir, id] of [[p1, "b-aaaaaaaaaa"], [p2, "b-cccccccccc"]]) {
+    mkdirSync(join(dir, ".herdr"), { recursive: true });
+    writeFileSync(join(dir, ".herdr/bots.json"), JSON.stringify({ bots: [{ id, kind: "main" }] }));
+  }
+  mkdirSync(state, { recursive: true });
+  writeFileSync(join(state, "attach.jsonl"), attachLine(attachRow({ event: "attach", bot: "b-cccccccccc", terminal: "t6", created_ms: 20, core: "fake", project: p2, by: "start" })));
+  const calls = [];
+  const hcRun = (args) => {
+    calls.push(args);
+    if (args[0] === "get") return JSON.stringify({ state: "live", created_ms: 20, status: { state: "blocked" } });
+    if (args[0] === "ls") {
+      const label = args[args.indexOf("--label") + 1];
+      return JSON.stringify({ terminals: label === "bot=b-aaaaaaaaaa" ? [{ address: "t5", state: "live", cwd: p1, status: "blocked" }] : [] });
+    }
+    throw new Error("send must not run on a blocked pane");
+  };
+  assert.deepEqual(notifyMainBotOfRestore({ modsDir, projectDir: p1, version: "0.2.0", restored: "0.1.0", failed: ["am-tabs"], hcRun }), { sent: false });
+  let note = JSON.parse(readFileSync(join(state, "restore-notified.json"), "utf8"));
+  assert.deepEqual(note.pendingBots, ["b-aaaaaaaaaa", "b-cccccccccc"]);
+  assert.deepEqual(note.notifiedBots, []);
+  assert.deepEqual(notifyMainBotOfRestore({ modsDir, projectDir: p2, version: "0.3.0", restored: "0.1.0", failed: ["am-tabs"], hcRun }), { sent: false });
+  note = JSON.parse(readFileSync(join(state, "restore-notified.json"), "utf8"));
+  assert.deepEqual(note.pendingBots, ["b-cccccccccc"]);
+  assert.deepEqual(note.notifiedBots, []);
+  assert.equal(calls.filter((c) => c[0] === "send").length, 0);
+});

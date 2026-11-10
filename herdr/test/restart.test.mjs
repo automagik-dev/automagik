@@ -3,6 +3,7 @@
 // pane) and the labels carried over. The hc side is in cli.test.mjs.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import { AGENTS, canResume, continuesAnywhere, resumeArgs, withoutModel, withoutResume } from "../mods/am-sidebar/models.js";
 import { carriedLabels, commandArgv, continueRefusal, helperArgs, helperPlan, ledgerSession, launchChange, paneCommand, paneLaunch, paneSession, planText,
@@ -11,6 +12,7 @@ import { carriedLabels, commandArgv, continueRefusal, helperArgs, helperPlan, le
 
 const SID = "0f3c2a4e-1b2d-4c5e-9f60-718293a4b5c6";
 const SID2 = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d";
+const screenFixture = (name) => readFileSync(new URL(`../mods/pocket-link/chat/fixtures/screens/${name}`, import.meta.url), "utf8");
 
 const claude = { agent: "claude", model: "claude-opus-5-5" };
 
@@ -541,4 +543,58 @@ test("#805 shared idle: a working background shell at an empty prompt is idle", 
 test("#805 sidebar understands a queued restart", () => {
   assert.deepEqual(restartAnswer({ code: 0, out: { queued: true, terminal: "t5", reason: "working" } }),
     { terminal: "t5", replaced: null, queued: true, reason: "working", dialog: null, warnings: [] });
+});
+
+test("#805 H1: a spinner above 10 todo lines is still mid-turn", async () => {
+  const { isPaneIdle, hasAgentPrompt, hasBackgroundShellAtIdlePrompt } = await import("../mods/am-sidebar/restart.js");
+  const todos = Array.from({ length: 10 }, (_, i) => `  ⎿ todo ${i + 1}`);
+  const screen = ["Thinking… (5s · esc to interrupt)", ...todos, "────────", "❯ ", "────────", "  1 background task"].join("\n");
+  const old = { address: "t5", state: "live", status: { state: "working" } };
+  assert.equal(hasAgentPrompt(screen), false);
+  assert.equal(hasBackgroundShellAtIdlePrompt(screen), false);
+  assert.equal(isPaneIdle(old, screen), false);
+  const working = screen.replace("Thinking… (5s · esc to interrupt)", "Working… (5s · esc to interrupt)");
+  assert.equal(hasAgentPrompt(working), false);
+  assert.equal(isPaneIdle(old, working), false);
+  // Low A: prose with parentheses is not a turn timer.
+  assert.equal(hasAgentPrompt("I am working (3 files left) on it\n❯ "), true);
+});
+
+test("#805 H3: real Claude and Codex footers keep reply text above the prompt as scrollback", async () => {
+  const { pendingDialog, isPaneIdle } = await import("../mods/am-sidebar/restart.js");
+  const idle = { address: "t5", state: "live", status: { state: "idle" } };
+  const replies = ["Do you want to create the PR now?", "Do you want to run the full gate?", "Allow the push to dev?",
+    "Do you want to proceed?", "Do you want to proceed with the merge?", "Merge now?\n1. Yes\n2. No\nEnter to confirm",
+    "Which should I do?\n1. Skip\n2. Proceed"];
+  for (const [name, prompt] of [["claude-idle.txt", '❯ Try "how does <filepath> work?"'], ["codex-idle.txt", "› Ask Codex to do anything"]]) {
+    const fixture = screenFixture(name);
+    assert.ok(fixture.includes(prompt), name);
+    for (const reply of replies) {
+      const screen = fixture.replace(prompt, `${reply}\n\n${prompt}`);
+      assert.equal(pendingDialog(screen), null, `${name}: ${reply}`);
+      assert.equal(isPaneIdle(idle, screen), true, `${name}: ${reply}`);
+    }
+  }
+  const dialog = screenFixture("claude-dialog.txt");
+  assert.equal(pendingDialog(dialog)?.question, "Do you want to proceed?");
+  assert.equal(isPaneIdle(idle, dialog), false);
+});
+
+test("#805 M1: an omp ╰─ prompt is an idle prompt", async () => {
+  const { isPromptLine, hasAgentPrompt, pendingDialog, isPaneIdle } = await import("../mods/am-sidebar/restart.js");
+  const omp = screenFixture("omp-idle.txt");
+  assert.equal(isPromptLine("╰─"), true);
+  assert.equal(isPromptLine("╰─ half typed words"), true);
+  assert.equal(isPromptLine("╰─── Wall: 0.02s · Timeout: 60s ────────────"), false);
+  assert.equal(pendingDialog(omp), null);
+  assert.equal(hasAgentPrompt(omp), true);
+  assert.equal(isPaneIdle({ address: "t5", state: "live", status: { state: "idle" } }, omp), true);
+});
+
+test("#805 H3: a markdown list above an idle prompt with many footers is not a dialog", async () => {
+  const { pendingDialog, isPaneIdle } = await import("../mods/am-sidebar/restart.js");
+  const screen = ["Which option?", "1. First item", "2. Second item", '❯ Try "how does <filepath> work?"',
+    "  footer one", "  footer two", "  footer three", "  footer four", "  footer five", "  footer six"].join("\n");
+  assert.equal(pendingDialog(screen), null);
+  assert.equal(isPaneIdle({ address: "t5", state: "live", status: { state: "idle" } }, screen), true);
 });
