@@ -20,9 +20,10 @@ Automagik has two identity models, and plugins see one principal from either.
   self-hosted calls Cloud.
 - **Automagik Cloud**: our sign-in for customers, companies with people or individuals who
   invite others. A single new identity service (a self-hosted Pocket ID, an OpenID Connect
-  provider with passkeys) shared by all the owner's products only authenticates; Cloud's own
-  database holds organisations, members, roles, invitations and the workspace rail, keyed by
-  issuer and subject, never by email. Each workspace is a hosted instance with its own Bots,
+  provider with passkeys) serves Cloud and only authenticates; Tactu may move to it later, while
+  Arca keeps its own sign-in. Cloud's own database holds organisations, members, roles,
+  invitations and the workspace rail, keyed by issuer and subject, never by email. Each workspace
+  is a hosted instance with its own Bots,
   people, Omni channels, data and terminals; a rail lists them and its `+` creates one, on the
   web and on the desktop. Until three safeguards exist ((f), "Before anyone but an owner
   joins"), a Cloud workspace is for its owners only.
@@ -33,8 +34,9 @@ invitations, the rail by entitlement rather than a fork, which Bots each person 
 where workspaces run, how Cloud users reach the identity service, what is paid, how a
 self-hosted instance may be linked to Cloud, and the phases. It amends RFC 0008 (its web sign-in,
 its desktop client, its questions 2, 6 and 7 and its threat model). The owner answered two
-questions on 2026-11-09: the identity service is one new instance shared by all his products
-(Decided 13), and billing is Stripe directly, agentic payments included (Decided 14).
+questions on 2026-11-09: the identity service is one new instance for Cloud, which Tactu may join
+later (Decided 13, corrected 2026-11-10: Arca keeps its own sign-in), and billing is Stripe
+directly, agentic payments included (Decided 14).
 
 ## Motivation
 
@@ -108,13 +110,14 @@ Automagik Orchestrator). Nine conditions, numbered 4 to 12:
 
 From the owner's answers (2026-11-09, asked by the Automagik Orchestrator):
 
-13. **One new identity service for all the owner's products** (open question 1). A single new
-    identity service (a self-hosted Pocket ID) shared by all the owner's products: Automagik
-    Cloud uses it, and Tactu and Arca move to it too. It is a new instance, not the one Tactu uses
-    today. Isolation between products comes from a separate OIDC client and separate groups per
-    product, and from Cloud's own database for organisations and roles. Standing the instance up
-    waits on the owner's separate OK. Moving Tactu and Arca to it is their own work, later, and
-    not a delivery of this RFC.
+13. **One new identity service for Cloud** (open question 1). A single new identity service (a
+    self-hosted Pocket ID): Cloud uses it, and Tactu may move to it later, as its own project's
+    decision. It is a new instance, not the one Tactu uses today. Isolation between products
+    comes from a separate OIDC client and separate groups per product, and from Cloud's own
+    database for organisations and roles. Standing the instance up waits on the owner's separate
+    OK. Moving Tactu to it is its own work, later, and not a delivery of this RFC.
+    *Corrected 2026-11-10 (Arca's orchestrator, via Automagik Chat):* Arca keeps its own sign-in
+    (its own passkey approvals) and does not move to the new identity service.
 14. **Billing is Stripe, directly** (open question 9), "including support to agentic payments"
     (the owner, verbatim). Cloud uses Stripe Billing itself, a subscription per workspace, and
     Stripe's signed webhooks update Cloud's entitlements; no other billing app. Agentic payments
@@ -156,9 +159,9 @@ Proposed here: everything else.
 - **The Cloud service**: the control plane: accounts, organisations, memberships, invitations,
   entitlements and the rail; the only relying party of the identity service; mints workspace
   tokens. It runs no Bot.
-- **The identity service**: the single new Pocket ID shared by all the owner's products (Decided
-  13), which Cloud signs people in with. Its address, client ids and group names are not written
-  in this repository.
+- **The identity service**: the single new Pocket ID that Cloud signs people in with (Decided 13;
+  corrected 2026-11-10: Tactu may move to it later, Arca keeps its own sign-in). Its address,
+  client ids and group names are not written in this repository.
 - **Principal**: who is acting, as plugins see it ((b)). Not DSH's own `principal` caller field
   (RFC 0015), which DSH writes only for a caller other than its owner; (b) says how they meet.
 
@@ -387,12 +390,13 @@ or a guest, never as its owner.
 **Invitations are Cloud records.** Single use, with an expiry, revocable, and checked on the
 server when accepted. An email may address an invitation, but membership binds to the `(issuer,
 sub)` of the person who accepts it, never to the email. If the person has no account at the
-identity service yet, they need one first. The identity service is shared by all the owner's
-products (Decided 13), so its admin key reaches every product's accounts. Cloud's web tier never
-holds it. A one-use signup link comes from a narrow, audited backend job in the operator's
-control, which takes only "one link, one use, Cloud's group, this expiry" and is never reachable
-from a workspace or a page. Cloud's client and groups are Cloud's own, separate from Tactu's and
-Arca's, so an account made for Cloud gets nothing in another product.
+identity service yet, they need one first. The identity service is Cloud's (Decided 13), and
+Tactu may join it later, so its admin key reaches Cloud's accounts and, if Tactu moves, Tactu's
+too; Arca keeps its own sign-in, outside it. Cloud's web tier never holds it. A one-use signup
+link comes from a narrow, audited backend job in the operator's control, which takes only "one
+link, one use, Cloud's group, this expiry" and is never reachable from a workspace or a page.
+Cloud's client and groups are Cloud's own, separate from Tactu's and Arca's, so an account made
+for Cloud gets nothing in another product.
 
 The organisation shows each member with the invitation they used, and an owner or admin can remove
 them at once.
@@ -465,6 +469,9 @@ build host**, from the server image the release already builds, scans and smokes
 of a claim. One image, no second one for Cloud. Each workspace pins the image by the digest the
 release itself recorded, never `:latest` (RFC 0019 notes the published image is not signed), and
 the Cloud service rolls releases one workspace first.
+
+**The identity service and the first test workspace VMs** run in a restricted Incus project on
+Arca's own hosting, operated by Arca; no host name is written in this repository.
 
 **Builds stay where RFC 0019 put them** (GitHub Actions for the image; Arca's GitLab, on the build
 host, for the Linux gates). The build host runs no workspace and holds no Cloud key and no
@@ -685,8 +692,8 @@ or the owner accepts the risk in writing for that OS.
   the internet and from every workspace.
 - **Authorization.** Cloud's database, checked on every request; never email, never group claims.
 - **Account takeover.** Passkeys only. An admin of the identity service can mint a login code for
-  any account, in every product that shares it (Decided 13): one admin, the owner, with its audit
-  log reviewed; the admin key only in the operator's narrow, audited signup job.
+  any account in it, Cloud's and, if Tactu moves, Tactu's (Decided 13): one admin, the owner, with
+  its audit log reviewed; the admin key only in the operator's narrow, audited signup job.
 - **One workspace against another.** Its own review gate ((g)): a VM each, one-audience tokens, no
   shared volume, network or credential.
 - **A member against an owner.** Inside DSH, every person the gate lets through is the owner, and a
@@ -795,24 +802,27 @@ host name, issuer or client id in a test or a default config.
 No outside person joins a workspace before the isolation review has passed and a restore has worked
 once, and no member or guest before the three safeguards of (f) hold.
 
-**Later, outside this RFC's deliveries:** Tactu and Arca move to the new identity service (Decided
-13), each by its own plan: a new client and groups there, and every person re-bound, since
-principals are keyed by `(issuer, sub)`.
+**Later, outside this RFC's deliveries:** Tactu may move to the new identity service (Decided 13),
+as its own project's decision: a new client and groups there, and its people re-bound, since
+principals are keyed by `(issuer, sub)`. Arca keeps its own sign-in (its own passkey approvals).
 
 ## Open questions
 
 1. **Which identity service.** *Decided by the owner, 2026-11-09 (Decided 13):* a single new
-   identity service (a self-hosted Pocket ID) shared by all the owner's products; Tactu and Arca
-   move to it later. The trade-offs, as they now stand:
-   - *Blast radius.* Shared across products: an incident in the identity service, or its admin,
-     reaches every product's people. Isolation between products comes from a separate OIDC client
-     and separate groups per product, and from Cloud's own database for organisations and roles,
-     not from separate instances.
+   identity service (a self-hosted Pocket ID) that Cloud uses; Tactu may move to it later, as its
+   own project's decision. *Corrected 2026-11-10 (Arca's orchestrator, via Automagik Chat):* Arca
+   keeps its own sign-in (its own passkey approvals) and does not move. The trade-offs, as they
+   now stand:
+   - *Blast radius.* Shared by Cloud and, if it moves, Tactu: an incident in the identity
+     service, or its admin, reaches their people. Isolation between products comes from a
+     separate OIDC client and separate groups per product, and from Cloud's own database for
+     organisations and roles, not from separate instances.
    - *Operations.* One instance to run, back up, restore and upgrade, with one break-glass admin
-     and one public ingress. Its admin key reaches every product, so it lives only in the
-     operator's narrow, audited signup job.
-   - *Branding.* One sign-in page and passkey host for all the owner's products.
-   - *Later.* Tactu and Arca re-bind their people to the new issuer when they move.
+     and one public ingress. Its admin key reaches Cloud and, if it moves, Tactu, so it lives only
+     in the operator's narrow, audited signup job.
+   - *Branding.* One sign-in page and passkey host for Cloud and, if it moves, Tactu; Arca keeps
+     its own.
+   - *Later.* Tactu re-binds its people to the new issuer if it moves; Arca keeps its own sign-in.
    Standing it up waits on the owner's separate OK.
 2. **Where Cloud roles live.** Decided by the council: Cloud's database ((e)). Kept for the record.
 3. **Isolation unit.** *Decided by the owner, 2026-11-10: one Incus VM per workspace.* An
