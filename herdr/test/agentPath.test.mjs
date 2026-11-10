@@ -518,3 +518,29 @@ test("AGENT_PATH_SH: PATH_PREPEND folders with spaces, $, backticks and quotes a
   assert.equal(runs(got.path, "claude").stdout, "odd node\n");
   assert.equal(existsSync(canary), false, "nothing in it ran");
 });
+
+test("agentOnMachine (#1033): on Darwin, failing security show-keychain-info returns no-keychain; exit 0 returns found", async (t) => {
+  const s = scratch(t);
+  const hc = join(s.root, "hc-bin");
+  const denied = "security: SecKeychainCopySettings <NULL>: User interaction is not allowed.";
+  exe(join(hc, "codex"), "#!/bin/sh\n");
+  exe(join(hc, "uname"), "#!/bin/sh\necho Darwin\n");
+  exe(join(hc, "security"), `#!/bin/sh\nif [ "$1" = show-keychain-info ]; then\n  echo "${denied}" >&2\n  exit 36\nfi\nexit 2\n`);
+  assert.deepEqual(await agentOnMachine(service(s, { hc }), "codex"), {
+    state: "no-keychain",
+    detail: denied,
+    login: true,
+  });
+  assert.deepEqual(await agentOnMachine(service(s, { hc, exit: "1" }), "codex"), {
+    state: "no-keychain",
+    detail: denied,
+    login: false,
+  });
+  exe(join(hc, "security"), '#!/bin/sh\n[ "$1" = show-keychain-info ] && exit 0\nexit 2\n');
+  assert.deepEqual(await agentOnMachine(service(s, { hc }), "codex"), {
+    state: "found",
+    path: [hc, "/usr/bin", "/bin"].join(":"),
+    file: join(hc, "codex"),
+    login: true,
+  });
+});

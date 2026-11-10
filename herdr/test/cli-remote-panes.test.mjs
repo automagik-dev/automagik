@@ -1316,3 +1316,60 @@ test("restart --machine #612: an argv built from the table gets the same fallbac
   assert.ok(out.warnings.some((w) => shippedWarning(w, s)), out.warnings.join("\n"));
   assert.ok(s.calls().some((c) => c[0] === "kill" && c[1] === "vm/t9"), "the old pane ends once the new one runs");
 });
+
+// ---- #1033: on macOS, a core with no login keychain access (security show-keychain-info fails) is refused before hc run, kill or file writes ----
+
+test("start and restart --machine (#1033): on Darwin when security show-keychain-info fails, refused with the keychain/Aqua hint before hc run, kill or writing files; exit 0 succeeds", (t) => {
+  const s = agyScene(t);
+  packAt(vmApp(s));
+  const vmBin = join(s.root, "vm-bin");
+  const denied = "security: SecKeychainCopySettings <NULL>: User interaction is not allowed.";
+  exe(join(vmBin, "uname"), "#!/bin/sh\necho Darwin\n");
+  exe(join(vmBin, "security"), `#!/bin/sh\nif [ "$1" = show-keychain-info ]; then\n  echo "${denied}" >&2\n  exit 36\nfi\nexit 2\n`);
+  s.setState((st) => {
+    st.machines[0].uname = "Darwin arm64";
+    st.terminals.push(atlasPane({ foreground: { argv: ["agy"], name: "agy" }, status: { state: "idle", app: "agy" } }));
+  });
+  assert.equal(s.cli(["attach", "Atlas", "vm/t8", ...s.on]).code, 0);
+  const beforeCalls = s.calls().length;
+
+  for (const args of [
+    ["start", "Hedge", ...s.on],
+    ["restart", "Atlas", ...s.on, "--force"],
+  ]) {
+    const r = s.cli(args);
+    assert.equal(r.code, 1, args.join(" "));
+    assert.match(r.err, /herdr-core on vm has no access to the macOS login keychain: "security show-keychain-info" failed \(security: SecKeychainCopySettings <NULL>: User interaction is not allowed\.\)/);
+    assert.match(r.err, /no Claude Code or gh login/);
+    assert.match(r.err, /security show-keychain-info/);
+    assert.match(r.err, /hc server status/);
+  }
+
+  // Also check `start --machine` of an Antigravity bot when not attached:
+  assert.equal(s.cli(["detach", "Atlas", ...s.on]).code, 0);
+  const startAgy = s.cli(["start", "Atlas", ...s.on]);
+  assert.equal(startAgy.code, 1);
+  assert.match(startAgy.err, /herdr-core on vm has no access to the macOS login keychain: "security show-keychain-info" failed/);
+  assert.equal(s.cli(["attach", "Atlas", "vm/t8", ...s.on]).code, 0);
+
+  // Refused before running hc run, killing the old pane, or writing agySettings / briefing / hook files:
+  const since = s.calls().slice(beforeCalls);
+  assert.deepEqual(since.filter((c) => c[0] === "run" || c[0] === "kill"), []);
+  assert.equal(s.hcState().terminals.find((x) => x.address === "vm/t8")?.state, "live", "vm/t8 is untouched");
+  assert.equal(existsSync(agySeatFile(s)), false, "agySettings was not written before agentThere refused");
+  assert.deepEqual(briefedIn(vmApp(s)), [], "no briefing file written");
+  assert.equal(existsSync(join(s.project, ".claude")), false, "no hook written");
+
+  // Once security show-keychain-info exits 0, start and restart both succeed:
+  exe(join(vmBin, "security"), '#!/bin/sh\n[ "$1" = show-keychain-info ] && exit 0\nexit 2\n');
+  const started = s.cli(["start", "Hedge", ...s.on, "--json"]);
+  assert.equal(started.code, 0, started.err);
+  assert.equal(started.json().terminal, "t100");
+  assert.equal(briefedIn(vmApp(s)).length, 1);
+
+  const restarted = s.cli(["restart", "Atlas", ...s.on, "--force", "--json"]);
+  assert.equal(restarted.code, 0, restarted.err);
+  assert.deepEqual([restarted.json().terminal, restarted.json().replaced], ["t101", "t8"]);
+  assert.equal(existsSync(agySeatFile(s)), true);
+  assert.ok(s.calls().some((c) => c[0] === "kill" && c[1] === "vm/t8"));
+});
