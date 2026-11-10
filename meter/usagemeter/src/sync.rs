@@ -1837,10 +1837,15 @@ fn read_agy_into_store(
     agy_pending: &mut Option<String>,
     agy_unreadable: &mut Option<String>,
 ) -> io::Result<ReadOutcome> {
-    let cursor = state.ctx.agy.as_ref().map_or(-1, |a| a.max_gen);
+    let (cursor, cursor_ts) = state
+        .ctx
+        .agy
+        .as_ref()
+        .map_or((-1, -1), |a| (a.max_gen, a.cursor_ts));
     let read = match crate::sources::agy::read(
         std::path::Path::new(&state.path),
         cursor,
+        cursor_ts,
         now,
         limits.deadline,
     ) {
@@ -1866,6 +1871,7 @@ fn read_agy_into_store(
     }
     state.ctx.agy = Some(crate::sources::agy::AgyCtx {
         max_gen: read.max_gen,
+        cursor_ts: read.cursor_ts,
     });
     // A stopped read leaves bytes pending; a full one does not. The generation cursor, not the
     // byte offset, is where the next run resumes.

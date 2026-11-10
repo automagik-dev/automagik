@@ -19,7 +19,7 @@ use std::collections::HashSet;
 use std::path::Path;
 use std::time::Instant;
 
-use rusqlite::{Connection, OpenFlags};
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::event::{Precision, Tokens, UsageEvent};
@@ -48,6 +48,11 @@ pub struct AgyCtx {
     /// the repeats.
     #[serde(default = "no_generation")]
     pub max_gen: i64,
+    /// The first step time of the row at [`AgyCtx::max_gen`], or 0 when that row has none, or -1
+    /// when an older context did not record it. Checked each run: a missing row or a different
+    /// time means the conversation was rewound and refilled, so it is read from the start again.
+    #[serde(default = "no_generation")]
+    pub cursor_ts: i64,
 }
 
 /// Before the first read nothing is counted, and the first row is index 0.
@@ -59,6 +64,7 @@ impl Default for AgyCtx {
     fn default() -> AgyCtx {
         AgyCtx {
             max_gen: no_generation(),
+            cursor_ts: no_generation(),
         }
     }
 }
@@ -79,6 +85,8 @@ pub struct Read {
     /// The highest `gen_metadata.idx` processed. A refused or incomplete row leaves it below
     /// that row, so the next sync reads it again instead of losing its usage.
     pub max_gen: i64,
+    /// The first step time of the row at [`Read::max_gen`] (0 when it has none, -1 at no row).
+    pub cursor_ts: i64,
     /// Rows refused or still being written. They hold the cursor, while the rows after them are
     /// still counted; the next sync re-reads them.
     pub held: i64,
@@ -379,6 +387,57 @@ fn newest_mtime_ms(path: &Path) -> Option<i64> {
     }
 }
 
+/// The step times for `wanted`, in chunks under SQLite's variable limit. None when the deadline
+/// passed before every chunk was read.
+fn step_times(
+    conn: &Connection,
+    wanted: &[i64],
+    deadline: Option<Instant>,
+) -> Result<Option<std::collections::HashMap<i64, i64>>, Failure> {
+    let unreadable = || Failure::Unreadable("an agy transcript could not be read this time".into());
+    let mut times = std::collections::HashMap::new();
+    for chunk in wanted.chunks(400) {
+        if deadline.is_some_and(|d| Instant::now() >= d) {
+            return Ok(None);
+        }
+        let list = std::iter::repeat_n("?", chunk.len())
+            .collect::<Vec<_>>()
+            .join(",");
+        let mut stmt = conn
+            .prepare(&format!(
+                "SELECT idx, metadata FROM steps WHERE idx IN ({list})"
+            ))
+            .map_err(|_| unreadable())?;
+        let mut rows = stmt
+            .query(rusqlite::params_from_iter(chunk.iter()))
+            .map_err(|_| unreadable())?;
+        while let Some(r) = rows.next().map_err(|_| unreadable())? {
+            let Ok(idx) = r.get::<_, i64>(0) else {
+                continue;
+            };
+            let Ok(md) = r.get::<_, Vec<u8>>(1) else {
+                continue;
+            };
+            if let Some(t) = step_time(&md) {
+                times.insert(idx, t);
+            }
+        }
+    }
+    Ok(Some(times))
+}
+
+/// The first step time a generation row names, or None when it names no timed step.
+fn first_step_time(conn: &Connection, data: &[u8]) -> Result<Option<i64>, Failure> {
+    let steps = match generation(data) {
+        Ok(Decoded::Call { steps, .. }) | Ok(Decoded::Incomplete { steps }) => steps,
+        _ => return Ok(None),
+    };
+    let Some(times) = step_times(conn, &steps, None)? else {
+        return Ok(None);
+    };
+    Ok(steps.iter().filter_map(|i| times.get(i)).min().copied())
+}
+
 /// Opens one conversation database read-only: no writes, no checkpoint on close, and a query-only
 /// connection as the second guard. A small helper so a test can assert the mode on a writable file.
 fn open_read_only(path: &Path) -> Result<Connection, Failure> {
@@ -444,7 +503,13 @@ fn check_shape(conn: &Connection) -> Result<(), Failure> {
 /// Reads every generation above `cursor` from one conversation database. The file is never
 /// written; `deadline` stops the read between rows. A refused or incomplete row keeps the cursor
 /// below it, so a later sync reads it again rather than losing its usage.
-pub fn read(path: &Path, cursor: i64, now: i64, deadline: Instant) -> Result<Read, Failure> {
+pub fn read(
+    path: &Path,
+    cursor: i64,
+    cursor_ts: i64,
+    now: i64,
+    deadline: Instant,
+) -> Result<Read, Failure> {
     let unreadable = || Failure::Unreadable("an agy transcript could not be read this time".into());
     // A row with no usage block yet waits while its database (or its WAL) keeps changing, and is
     // taken as a failed generation once both have been quiet for INCOMPLETE_MS.
@@ -480,13 +545,42 @@ pub fn read(path: &Path, cursor: i64, now: i64, deadline: Instant) -> Result<Rea
             r.get(0)
         })
         .map_err(|_| unreadable())?;
-    // A conversation whose highest index fell below the cursor was reset, compacted or undone:
-    // read from index -1 (so 0 is included) and let the row hashes below drop the rows that did
-    // not change. A reused index whose row changed is a new call and counts.
+    // A conversation whose highest index fell below the cursor, or whose cursor row is missing or
+    // names a different first step, was reset, compacted or undone, possibly refilled again before
+    // this sync. Read from index -1 (so 0 is included); the step-time key drops every unchanged
+    // row, and a reused index with a new call has a new step time and counts.
     let mut from = cursor;
     if max_db < cursor {
         from = -1;
+    } else if cursor >= 0 {
+        let same = if cursor_ts < 0 {
+            false // an older context did not record the cursor row's time: scan once more
+        } else {
+            match conn
+                .query_row(
+                    "SELECT data FROM gen_metadata WHERE idx = ?1",
+                    [cursor],
+                    |r| r.get::<_, Vec<u8>>(0),
+                )
+                .optional()
+                .map_err(|_| unreadable())?
+            {
+                None => false,
+                Some(data) => {
+                    let ts = first_step_time(&conn, &data)?;
+                    match (cursor_ts, ts) {
+                        (0, None) => true,
+                        (c, Some(t)) => c == t,
+                        _ => false,
+                    }
+                }
+            }
+        };
+        if !same {
+            from = -1;
+        }
     }
+    let next_ts = if from >= 0 { cursor_ts } else { -1 };
     let mut stmt = conn
         .prepare("SELECT idx, data FROM gen_metadata WHERE idx > ?1 ORDER BY idx")
         .map_err(|_| unreadable())?;
@@ -519,44 +613,21 @@ pub fn read(path: &Path, cursor: i64, now: i64, deadline: Instant) -> Result<Rea
     }
     let mut wanted: Vec<i64> = wanted.into_iter().collect();
     wanted.sort_unstable();
-    let mut times: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
-    for chunk in wanted.chunks(400) {
-        if Instant::now() >= deadline {
-            return Ok(Read {
-                max_gen: cursor,
-                stopped: true,
-                ..Read::default()
-            });
-        }
-        let list = std::iter::repeat_n("?", chunk.len())
-            .collect::<Vec<_>>()
-            .join(",");
-        let mut stmt = conn
-            .prepare(&format!(
-                "SELECT idx, metadata FROM steps WHERE idx IN ({list})"
-            ))
-            .map_err(|_| unreadable())?;
-        let mut rows = stmt
-            .query(rusqlite::params_from_iter(chunk.iter()))
-            .map_err(|_| unreadable())?;
-        while let Some(r) = rows.next().map_err(|_| unreadable())? {
-            let Ok(idx) = r.get::<_, i64>(0) else {
-                continue;
-            };
-            let Ok(md) = r.get::<_, Vec<u8>>(1) else {
-                continue;
-            };
-            if let Some(t) = step_time(&md) {
-                times.insert(idx, t);
-            }
-        }
-    }
+    let Some(times) = step_times(&conn, &wanted, Some(deadline))? else {
+        return Ok(Read {
+            max_gen: cursor,
+            cursor_ts,
+            stopped: true,
+            ..Read::default()
+        });
+    };
     let mut out = Read {
         max_gen: from,
         stopped,
         ..Read::default()
     };
     let mut next = from;
+    let mut next_by_idx: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
     let mut held_at: Option<i64> = None;
     for (idx, dec) in decoded {
         let dec = match dec {
@@ -569,7 +640,9 @@ pub fn read(path: &Path, cursor: i64, now: i64, deadline: Instant) -> Result<Rea
             }
         };
         match dec {
-            Decoded::Incomplete { .. } => {
+            Decoded::Incomplete { steps } => {
+                let ts = steps.iter().filter_map(|i| times.get(i)).min().copied();
+                next_by_idx.insert(idx, ts.unwrap_or(0));
                 if db_recent {
                     out.held += 1;
                     held_at.get_or_insert(idx);
@@ -583,6 +656,7 @@ pub fn read(path: &Path, cursor: i64, now: i64, deadline: Instant) -> Result<Rea
                 steps,
             } => {
                 let ts = steps.iter().filter_map(|i| times.get(i)).min().copied();
+                next_by_idx.insert(idx, ts.unwrap_or(0));
                 if tokens.is_zero() {
                     if db_recent {
                         out.held += 1;
@@ -659,6 +733,11 @@ pub fn read(path: &Path, cursor: i64, now: i64, deadline: Instant) -> Result<Rea
         next = next.min(h.saturating_sub(1));
     }
     out.max_gen = next;
+    out.cursor_ts = if next >= 0 {
+        next_by_idx.get(&next).copied().unwrap_or(next_ts)
+    } else {
+        -1
+    };
     Ok(out)
 }
 

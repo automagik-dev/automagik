@@ -830,3 +830,78 @@ fn a_recent_wal_keeps_a_placeholder_held() {
     assert!(reason.contains("still being written"), "{reason}");
     assert!(!env.totals().contains_key("gemini-4-argon"));
 }
+
+#[test]
+fn a_rewind_refilled_before_a_sync_is_still_read() {
+    let env = Env::new();
+    let path = env.agy("conv-refill.db");
+    write_db(&path, at("2026-01-15T09:55:00Z"));
+    env.run(&env.opts());
+    assert_eq!(env.totals()["claude-opus-5-5"].total(), 6_600);
+
+    // agy rewinds gen 1 and writes a new Opus call at the same index before the next sync.
+    let c = Connection::open(&path).unwrap();
+    c.execute("DELETE FROM gen_metadata WHERE idx = 1", [])
+        .unwrap();
+    c.execute(
+        "UPDATE steps SET metadata = ?1 WHERE idx = 3",
+        [step_metadata(at("2026-01-15T11:10:00Z") / 1000)],
+    )
+    .unwrap();
+    drop(c);
+    put_gen(&path, 1, &opus_gen(&usage(900, 0, 0, 100, 0), &[3]));
+    let r = env.run(&env.opts());
+    assert_eq!(r.health.events, 1, "{r:?}");
+    assert_eq!(env.totals()["gemini-4-argon"].total(), 5_250);
+    assert_eq!(env.totals()["claude-opus-5-5"].total(), 7_600);
+    let (status, reason) = agy_source(&r.summary.expect("a summary"));
+    assert_eq!(status, "ok", "{reason}");
+}
+
+#[test]
+fn two_rewound_rows_refilled_before_a_sync_are_both_read() {
+    let env = Env::new();
+    let path = env.agy("conv-refill-two.db");
+    base_db(&path, at("2026-01-15T09:55:00Z"));
+    let c = Connection::open(&path).unwrap();
+    c.execute(
+        "INSERT INTO steps(idx, step_type, status, metadata) VALUES(10, 15, 3, ?1)",
+        [step_metadata(at("2026-01-15T10:04:00Z") / 1000)],
+    )
+    .unwrap();
+    drop(c);
+    put_gen(
+        &path,
+        0,
+        &gemini_gen(&usage(1000, 4000, 50, 200, 120), &[1, 2]),
+    );
+    put_gen(&path, 1, &opus_gen(&usage(500, 6000, 0, 100, 60), &[3]));
+    put_gen(&path, 2, &opus_gen(&usage(1900, 0, 0, 100, 0), &[10]));
+    env.run(&env.opts());
+    assert_eq!(env.totals()["claude-opus-5-5"].total(), 6_600 + 2_000);
+
+    // Both newest calls are rewound and refilled at the same indices before the next sync.
+    let c = Connection::open(&path).unwrap();
+    c.execute("DELETE FROM gen_metadata WHERE idx IN (1, 2)", [])
+        .unwrap();
+    c.execute(
+        "UPDATE steps SET metadata = ?1 WHERE idx = 3",
+        [step_metadata(at("2026-01-15T11:10:00Z") / 1000)],
+    )
+    .unwrap();
+    c.execute(
+        "UPDATE steps SET metadata = ?1 WHERE idx = 10",
+        [step_metadata(at("2026-01-15T11:11:00Z") / 1000)],
+    )
+    .unwrap();
+    drop(c);
+    put_gen(&path, 1, &opus_gen(&usage(900, 0, 0, 100, 0), &[3]));
+    put_gen(&path, 2, &opus_gen(&usage(2900, 0, 0, 100, 0), &[10]));
+    let r = env.run(&env.opts());
+    assert_eq!(r.health.events, 2, "{r:?}");
+    assert_eq!(env.totals()["gemini-4-argon"].total(), 5_250);
+    assert_eq!(
+        env.totals()["claude-opus-5-5"].total(),
+        6_600 + 2_000 + 1_000 + 3_000
+    );
+}
