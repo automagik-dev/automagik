@@ -59,7 +59,7 @@ Security gaps are named by title only until their fix merges. Details go to a pr
 | [0024](0024-automagik-cloud.md) | Automagik Cloud: two identity models, workspaces and the rail | Accepted (2026-11-10, by the owner; council 2026-11-09: proceed with conditions, folded in; owner's answers: Q1 and Q9, 2026-11-09; amended by [0025](0025-cloud-economics.md): Q8, D14, (g)) | none (ships outside the five milestones) |
 | [0025](0025-cloud-economics.md) | Automagik Cloud economics: billing, managed tokens and agentic payments | Accepted (2026-11-10, by the owner; council 2026-11-09: revise, conditions folded in; owner's decisions 2026-11-09; amends RFC 0024) | none (ships outside the five milestones) |
 | [0026](0026-bot-tag-coverage.md) | Bot-tag coverage | Queued (amends RFC 0021: Decided 5 and 6) | none (ships outside the five milestones) |
-| [0027](0027-automagik-site-and-readme.md) | README, launch film and automagik.si | Accepted (2026-11-10, by the owner: the story, the site base and the 2026-11-16 deadline; he OKs the exact README text and a site preview before go-live; D1-D4 open) | none (ships outside the five milestones) |
+| [0027](0027-automagik-site-and-readme.md) | README, launch film and automagik.si | Accepted (2026-11-10, by the owner: the story, the site base and the 2026-11-16 deadline; Q1-Q4 answered 2026-11-10; D1-D4 and D3b open; M1/M2 folded) | none (ships outside the five milestones) |
 
 Milestones, in the owner's order:
 
