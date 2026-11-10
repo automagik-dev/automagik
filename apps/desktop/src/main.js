@@ -243,7 +243,7 @@ async function launch() {
     mark: step => started.mark(step),
     // The port dsh served on last time, while it is still free: the page's URL, and so its
     // cached bundle and its storage, stay the same (dsh.js launchPort).
-    port: () => launchPort(portFileOf(home)),
+    port: () => launchPort(portFileOf(home), undefined, { onWaited: portWaited(started) }),
     // The profile is in place before dsh reads it.
     profile: async () => {
       // Before this start's dsh first reads its settings: dsh 0.2.2 moves settings.yaml into
@@ -292,6 +292,9 @@ async function launch() {
 // each restart of DSH alone.
 let dshTools = null
 let dshLog = null
+
+// A start that waited for dsh's last port (dsh.js launchPort) notes it in `steps` (start.log).
+const portWaited = steps => (ms, freed) => steps.mark(`waited ${ms} ms for dsh's last port: ${freed ? 'free again' : 'still taken'}`)
 
 // Start dsh on `port` and resolve with it once it is ready. `steps` notes the moments (start.log).
 function spawnDsh(port, steps) {
@@ -574,7 +577,7 @@ async function cycleDsh(prepare, status) {
     if (quitting) throw appStopped('the app is quitting')
     dshProcess = dshRun()
     const prepared = prepare()
-    const running = await spawnDsh(await launchPort(portFileOf(home)), out)
+    const running = await spawnDsh(await launchPort(portFileOf(home), undefined, { onWaited: portWaited(out) }), out)
     await forgetDshLogins(session.defaultSession.cookies, dshOrigin).catch(() => {})
     if (!window || !page || page.webContents.isDestroyed()) throw appStopped('the window is gone')
     await page.webContents.loadURL(pageUrlOf(running, dshOrigin))
