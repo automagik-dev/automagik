@@ -1,6 +1,7 @@
 use std::process::ExitCode;
 use std::time::Duration;
 
+use meter::coverage;
 use meter::query::{self, Located};
 use meter::store::{SCHEMA_VERSION, Store};
 use meter::sync::{self, Options, Outcome};
@@ -15,6 +16,7 @@ Usage:
   usagemeter query --repo HOST/OWNER/REPO --branch B [--branch B ...] --json
                    [--window d1|d7|d30] [--contract 1] [--stale-after SECONDS]
   usagemeter query --repo HOST/OWNER/REPO --by bot [--branch B ...] --json [...]
+  usagemeter coverage [--window d1|d7|d30 ...] [--repo HOST/OWNER/REPO ...] [--json]
   usagemeter --version
 
 sync      Read new harness usage (omp, Claude Code, Codex, dsh-tui, Antigravity) into the store and
@@ -37,6 +39,11 @@ query     Usage and estimated cost per branch of one repo, as the contract 1 env
           does; only sync refreshes the store. Capability meter.usage@1.
   --by bot        One row per bot (RFC 0021): bot, kind, role, squad and harness, from the
                   usage tied to a launch; any --branch is then a filter, and none is needed.
+coverage  The store's bot-tag coverage (RFC 0026 (a)): text by default, or one JSON record with
+          --json. Every window's counted usage splits into attributed, ambiguous, unlinked and
+          before_evidence, per repo (50 shown, the rest counted and summed) and per bot (50 shown,
+          the rest summed), with the old definition's frozen-tag residue beside the headline. It
+          opens the store read-only, as `status` does; only `sync` refreshes the store.
 
 The state lives in METER_STATE_DIR if set, else $AM_HOME/meter, else ~/.automagik/meter.
 The first sync moves the meter's files out of the pre-0.5.0 default directory.
@@ -48,7 +55,9 @@ the store was written by a newer meter (sync writes nothing to it). stderr says 
 
 Exit status of query: 0 answered, 1 error, 2 bad request, 10 no store, 11 no snapshot in time,
 12 store from a newer meter, 13 store needs sync to migrate it, 14 contract not served, 15 the
-answer is past the output cap.";
+answer is past the output cap.
+Exit status of coverage: 0 reported, 1 error, 2 bad request, 10 no store, 11 no snapshot in time,
+12 store from a newer meter, 13 store needs sync to migrate it.";
 
 /// `sync` did nothing because files in the state directory must be resolved by hand first.
 const EXIT_BLOCKED: u8 = 3;
@@ -391,6 +400,27 @@ fn cmd_status() -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
+fn cmd_coverage(args: &[String]) -> ExitCode {
+    use std::io::Write;
+    let a = coverage::run(args, &query::Ctx::from_env());
+    let text = if a.stdout.is_empty() {
+        a.stderr.unwrap_or_default()
+    } else {
+        a.stdout
+    };
+    let written = if a.code == query::exit::OK {
+        let mut out = std::io::stdout().lock();
+        out.write_all(text.as_bytes()).and_then(|()| out.flush())
+    } else {
+        let mut err = std::io::stderr().lock();
+        err.write_all(text.as_bytes()).and_then(|()| err.flush())
+    };
+    if written.is_err() {
+        return ExitCode::from(query::exit::ERROR);
+    }
+    ExitCode::from(a.code)
+}
+
 fn cmd_query(args: &[String]) -> ExitCode {
     use std::io::Write;
     let a = query::run(args, &query::Ctx::from_env());
@@ -412,6 +442,7 @@ fn main() -> ExitCode {
     let r = match cmd.as_deref() {
         Some("sync") => cmd_sync(rest),
         Some("query") => return cmd_query(&rest),
+        Some("coverage") => return cmd_coverage(&rest),
         Some("status") if rest.is_empty() => cmd_status(),
         Some("status") => Err("status takes no options".into()),
         Some("--version" | "-V" | "version") => {

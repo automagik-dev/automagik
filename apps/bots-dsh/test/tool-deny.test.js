@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { apply } from '../index.js'
+import { ROUTE } from '../src/host/constants.js'
 import { DENY_MAX, DENY_NAME_MAX, cleanDenyTools } from '../src/host/tool-deny.js'
 import { fakeContext } from './fake-ctx.js'
 
@@ -81,12 +82,20 @@ function bench({ served = SERVED, scoped = [] } = {}) {
     sessionTitle: { rename: async () => {} },
     sessions: { get: sessionId => sessions.get(sessionId), flush: async () => {} },
   })
+  let route
+  const register = ctx.connection.fetch.register
+  ctx.connection.fetch.register = (options) => {
+    if (options.path === ROUTE) route = options
+    return register(options)
+  }
   apply(ctx, { home })
+  // The browser's own path to a change: the POST route, no acting Bot.
+  const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/bot', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))).json()
   const stop = () => {
     ctx.dispose()
     rmSync(home, { recursive: true, force: true, maxRetries: 5 })
   }
-  return { ctx, home, stop, restricted, lifted, warnings, agents, sessions }
+  return { ctx, home, stop, restricted, lifted, warnings, agents, sessions, call }
 }
 
 const team = (t, options) => {
@@ -165,6 +174,32 @@ test('an update adds, replaces and clears the list, lifting what it set before',
   assert.equal(bot.denyTools, undefined)
   assert.equal(restricted.filter(entry => entry.sessionId === bot.id).length, 2)
 
+  const stored = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'))
+  assert.equal(stored.bots[bot.id].denyTools, undefined)
+})
+
+test('the user update-bot route, with no acting Bot, persists add, replace and clear', async (t) => {
+  const { ctx, home, call } = team(t)
+  const rt = ctx.provided.get('omniTeam')
+  const bot = await rt.createBot({ name: 'Analista', denyTools: ['bash'], pickModel: true, instructions: 'Read only.' })
+
+  const added = await call('update-bot', { id: bot.id, denyTools: ['bash', 'omni_send'] })
+  assert.equal(added.ok, true)
+  assert.deepEqual(added.value.denyTools, ['bash', 'omni_send'])
+
+  // Cleaned like the host cleans it, and the response is the record the client keeps.
+  const replaced = await call('update-bot', { id: bot.id, denyTools: [' write ', 'write', '', 'read'] })
+  assert.equal(replaced.ok, true)
+  assert.deepEqual(replaced.value.denyTools, ['write', 'read'])
+
+  // The roster view spreads each record, so the list reaches the settings form.
+  const state = await call('state', {})
+  assert.equal(state.ok, true)
+  assert.deepEqual(state.value.bots.find(entry => entry.id === bot.id).denyTools, ['write', 'read'])
+
+  const cleared = await call('update-bot', { id: bot.id, denyTools: null })
+  assert.equal(cleared.ok, true)
+  assert.equal(cleared.value.denyTools, undefined)
   const stored = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'))
   assert.equal(stored.bots[bot.id].denyTools, undefined)
 })
