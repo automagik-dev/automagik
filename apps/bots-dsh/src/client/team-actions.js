@@ -103,6 +103,18 @@ export function teamActions({ call, after, partFor, roster, ui, live, cards, hel
     deleteAvatar: id => call('avatar-delete', { id }),
     createRoom: (members, options = {}) => after(call('create-room', { members, ...options })),
     updateBot: (id, patch) => after(call('update-bot', { id, ...patch })),
+    // A model on another route: the host starts a new conversation with a handoff note
+    // (parts.js). `patch` carries the thinking level picked with it.
+    switchRoute: (id, ref, patch = {}) => after(call('switch-route', { id, ...patch, model: ref })),
+    switchRouteInChat: async (id, ref, patch = {}) => {
+      try { return await after(call('switch-route', { id, ...patch, model: ref })) } catch (error) {
+        // A signed-out agent opens its sign-in row; the pick is made again after it.
+        const provider = cliProviderOf(ref)
+        if (error?.code === 'bot/sign-in-required' && provider && openCliLogin(id, provider)) return undefined
+        if (error?.code === 'bot/account-confirm-required' && provider && openCliLogin(id, provider)) return undefined
+        throw error
+      }
+    },
     // A model chosen in a Bot's chat (rule 2): an agent that is signed out opens the sign-in row
     // in that chat instead of failing; the Bot keeps its model until the sign-in is done.
     // `patch` goes with the model in the same update (its thinking level).

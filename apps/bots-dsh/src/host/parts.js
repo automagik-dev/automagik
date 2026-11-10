@@ -24,6 +24,7 @@ import { RESUME_DELAY_MS } from './resume.js'
 import { switchFailure } from './model-state.js'
 import { turnFailure } from './turns.js'
 import { contextPolicy } from '../shared/context-policy.js'
+import { crossesHarness } from '../shared/routes.js'
 import { clip, createClock, escapeRegExp, estimateTokens, splitRef, textOf } from './text.js'
 import { checkShownView, inputsSummary, normalizeView, validateViewAnswer, viewSummary } from '../shared/views.js'
 
@@ -1126,7 +1127,7 @@ export function install(rt) {
       // A state write that fails here (full disk, a file another program holds, a lost lock)
       // must not end up as an unhandled rejection, which stops the whole host.
       .catch(error => rt.warn('ds-bot: the switch of %s did not finish: %s', agent.id, error))
-    return true
+    return job
   }
 
   async function runSwitch(agent, job) {
@@ -1941,6 +1942,58 @@ export function install(rt) {
     return { id: botId, sessionId, status: 'checkpointed', context: await contextStatus(botId) }
   }
 
+  // A route change is a harness change (RFC 0030, Decided 6 and 10): the old harness writes
+  // a handoff note while idle, a fresh part opens with it, and only then does the Bot's model
+  // record name the new route. A conversation with nothing said yet is simply taken over.
+  async function switchRoute(botId, model) {
+    const bot = rt.botOf(botId)
+    if (bot === undefined) throw Object.assign(new Error('Unknown Bot'), { code: 'bot/not-found' })
+    if (readOnly()) throw Object.assign(new Error(rt.readOnly()), { code: 'bot/read-only' })
+    if (bot.sessionPinned === true) throw refused('refused', pinnedText(bot, 'fresh'))
+    const current = bot.model ?? bot.appliedModel
+    if (typeof current !== 'string' || !crossesHarness(current, model)) throw refused('refused', `${bot.name} is already on that route.`)
+    const target = await rt.resolveModel(model, { checkAccess: true, keep: bot.model })
+    const agent = await rt.resolveAgent(rt.chatOf(botId))
+    const previous = { model: bot.model, effort: bot.effort }
+    let said = true
+    // The team's own kickoff is not a conversation yet: a Bot still on its greeting simply
+    // takes the new route, with no note to write.
+    try { said = agent.session.deriveMessages().some(message => message.role === 'user' && message.source?.kind === 'user') } catch {}
+    if (!said) {
+      rt.noteModelChoice?.(bot, target)
+      bot.model = target
+      delete bot.effort
+      try {
+        await rt.applyModel(bot, { force: true })
+      } catch (error) {
+        if (previous.model === undefined) delete bot.model
+        else bot.model = previous.model
+        if (previous.effort === undefined) delete bot.effort
+        else bot.effort = previous.effort
+        throw error
+      }
+      await rt.save()
+      return { id: botId, model: target, status: 'switched' }
+    }
+    const job = startSwitch(agent, { hard: true, target })
+    if (!job) throw refused('busy', `${bot.name} is already moving to a new conversation.`)
+    rt.noteModelChoice?.(bot, target)
+    bot.model = target
+    delete bot.effort
+    await rt.save()
+    // The fresh part may fail before its first answer: the record goes back with it, so the
+    // Bot never reads as moved to a route that did not take it.
+    void job.done.then(async () => {
+      if (job.moved || bot.model !== target) return
+      if (previous.model === undefined) delete bot.model
+      else bot.model = previous.model
+      if (previous.effort === undefined) delete bot.effort
+      else bot.effort = previous.effort
+      await rt.save()
+    }).catch(() => {})
+    return { id: botId, model: target, status: 'switching' }
+  }
+
   // The user's "New conversation" for a Bot's own chat: once the Bot is idle, it goes on in
   // a fresh part.
   async function startFresh(botId) {
@@ -2027,7 +2080,7 @@ export function install(rt) {
     return { sessionId: parts.at(-1).sessionId, ...(await partPage(parts, index, cursor)) }
   }
 
-  Object.assign(rt, { clock, partsOf, historyEntry, partLines, noteText, earlierPage, chatPage, displayItems, followFolder, heldBack, startFresh, keepAdoptedSession, contextStatus, checkpointBot, switchJobs: () => switches.values(),
+  Object.assign(rt, { clock, partsOf, historyEntry, partLines, noteText, earlierPage, chatPage, displayItems, followFolder, heldBack, startFresh, switchRoute, keepAdoptedSession, contextStatus, checkpointBot, switchJobs: () => switches.values(),
     // A fresh part still waiting for its first answer: its failure goes back with the part.
     awaitingFirstAnswer: id => awaiting.has(id) })
 }
