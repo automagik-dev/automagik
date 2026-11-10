@@ -42,6 +42,7 @@ function host(t, { config = {}, clis = {}, cliStore, session } = {}) {
   const disposers = []
   const appended = []
   const installs = []
+  const storeCalls = []
   const logins = []
   const tools = new Map()
   const agent = {
@@ -78,6 +79,11 @@ function host(t, { config = {}, clis = {}, cliStore, session } = {}) {
     lastError: () => undefined,
     lastFailure: () => undefined,
     update: async (pkg) => { installs.push(pkg) },
+    // The connector's last-known-good and rollback (install.js): recorded, never thrown, because
+    // the Session start swallows what these throw.
+    stateOf: (pkg) => { storeCalls.push(['stateOf', pkg]); return undefined },
+    markGood: (pkg) => { storeCalls.push(['markGood', pkg]) },
+    rollback: (pkg) => { storeCalls.push(['rollback', pkg]); return { version: '0.0.1' } },
     dispose: () => {},
   }
   apply(ctx, { claude: false, codex: false, ...config }, {
@@ -88,7 +94,7 @@ function host(t, { config = {}, clis = {}, cliStore, session } = {}) {
     catalogHome: join(dir, 'catalog'),
   })
   t.after(() => { for (const fn of disposers) fn(); rmSync(dir, { recursive: true, force: true }) })
-  return { dir, ctx, agent, appended, installs, logins, routes, tools, service: services[SERVICE], get adapter() { return registered.adapter } }
+  return { dir, ctx, agent, appended, installs, storeCalls, logins, routes, tools, service: services[SERVICE], get adapter() { return registered.adapter } }
 }
 
 async function step(adapter, provider, text, { model = 'default', messages = [] } = {}) {
@@ -221,6 +227,34 @@ for (const id of NATIVE) {
     assert.ok(h.tools.has('acp_tool'))
   })
 }
+
+// #1000's start-before-replace and rollback are the connector store's: a native agent has no
+// connector, so a start that works marks nothing good, and one that fails is reported and
+// never sent back to "the release before it" (the fake store here would grant one).
+test('a native agent never reaches the connector store: nothing is marked good, and a failed start is not rolled back or retried', unixOnly, async (t) => {
+  const scratch = mkdtempSync(join(tmpdir(), 'acp-dsh-native-cli-'))
+  t.after(() => rmSync(scratch, { recursive: true, force: true }))
+  const starts = join(scratch, 'starts')
+  const broken = join(scratch, 'omp')
+  writeFileSync(broken, `#!/bin/sh\necho start >> ${quote(starts)}\nexit 3\n`)
+  chmodSync(broken, 0o755)
+  const h = host(t, { config: { hermes: true, omp: true }, clis: { hermes: fakeCli(scratch, 'hermes', { FAKE_ACP_MODES: 'default' }), omp: broken } })
+  const agents = (await h.service.status()).agents
+  for (const id of NATIVE) {
+    const connector = agents.find(agent => agent.id === id).connector
+    assert.equal(connector.previous, undefined)
+    assert.equal(connector.rolledBack, undefined)
+  }
+  const ok = await step(h.adapter, 'acp-hermes', 'plain')
+  assert.equal(ok.at(-1).reason.kind, 'stop')
+  const failed = await step(h.adapter, 'acp-omp', 'plain')
+  assert.equal(failed.at(-1).reason.kind, 'error')
+  assert.match(failed.at(-1).reason.failure.message, /did not start: .*exited \(3\)/)
+  assert.ok(existsSync(starts), 'the broken CLI was started')
+  // The status read the two connectors' state (Claude Code's and Codex's rows), and only theirs.
+  assert.deepEqual(h.storeCalls.filter(([name, pkg]) => name !== 'stateOf' || pkg === undefined), [])
+  assert.deepEqual(h.installs, [])
+})
 
 test('a native agent with no "default" mode fails the turn rather than run in whatever mode it started in', unixOnly, async (t) => {
   const scratch = mkdtempSync(join(tmpdir(), 'acp-dsh-native-cli-'))

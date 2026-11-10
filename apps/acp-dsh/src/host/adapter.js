@@ -654,38 +654,56 @@ export class AcpAdapter extends LlmAdapter {
       if (live === undefined) {
         crossing = replaying && prior !== undefined && prior !== options.provider
         const state = { provider: options.provider, name: agent.name, run: undefined, calls: new Set(), toolIds: new Map(), open: false, dshAgent, bridge: undefined, replay: undefined, owed: undefined, drifted: false }
-        try {
-          const spec = await agent.spawn()
-          if (this.bridgeOn(agent)) {
-            await this.backchannel.listen()
-            state.bridge = this.backchannel.mint({ sessionId, agent: dshAgent, name: agent.name })
+        // A connector release that passed its start check is still unproven until it opens a
+        // session. One that fails here goes back to the release before it (install.js), and the
+        // session start is tried once more on that one: the turn is not lost to a bad release.
+        for (let attempt = 0; ; attempt += 1) {
+          try {
+            const spec = await agent.spawn()
+            if (this.bridgeOn(agent)) {
+              await this.backchannel.listen()
+              state.bridge = this.backchannel.mint({ sessionId, agent: dshAgent, name: agent.name })
+            }
+            this.diagnostics?.started(sessionId, this, agent, state)
+            const run = new AgentRun({
+              ...spec,
+              cwd: dshAgent?.session?.header?.cwd ?? homedir(),
+              name: agent.name,
+              mcpServers: state.bridge === undefined ? [] : [this.bridgeServer(state.bridge)],
+              ...(this.bridgeOn(agent) && agent.disableBuiltInTools === true
+                ? { sessionMeta: { disableBuiltInTools: true } }
+                : {}),
+              dshTools: this.bridgeOn(agent),
+              onReady: state.bridge === undefined ? undefined : () => this.ready(agent, state),
+              onToolCall: tool => this.checkDrift(sessionId, agent, tool),
+              onMode: seen => this.diagnostics?.mode(sessionId, state, seen),
+            })
+            state.run = run
+            this.live.set(sessionId, state)
+            await run.start()
+            try { agent.proven?.() } catch {}
+            break
+          } catch (error) {
+            state.run?.dispose()
+            state.run = undefined
+            if (state.bridge !== undefined) this.backchannel?.revoke(state.bridge)
+            state.bridge = undefined
+            this.live.delete(sessionId)
+            if (isAuthRequired(error)) {
+              this.signedOut(options.provider)
+              return yield signInFailure(agent, error)
+            }
+            // A missing bridge is this computer's config, not the release: no rollback for it.
+            let back = false
+            if (attempt === 0 && error?.code !== 'acp_bridge_missing' && options.signal?.aborted !== true) {
+              try { back = agent.rollback?.(error) === true } catch {}
+            }
+            if (back) {
+              try { this.ctx.logger?.warn?.(`acp-dsh: ${agent.name} did not start on its newest connector (${error?.message ?? error}); trying the one before it`) } catch {}
+              continue
+            }
+            return yield finish('error', `${agent.name} did not start: ${error?.message ?? error}`, error?.code === 'acp_bridge_missing' ? 'acp_bridge_missing' : undefined)
           }
-          this.diagnostics?.started(sessionId, this, agent, state)
-          const run = new AgentRun({
-            ...spec,
-            cwd: dshAgent?.session?.header?.cwd ?? homedir(),
-            name: agent.name,
-            mcpServers: state.bridge === undefined ? [] : [this.bridgeServer(state.bridge)],
-            ...(this.bridgeOn(agent) && agent.disableBuiltInTools === true
-              ? { sessionMeta: { disableBuiltInTools: true } }
-              : {}),
-            dshTools: this.bridgeOn(agent),
-            onReady: state.bridge === undefined ? undefined : () => this.ready(agent, state),
-            onToolCall: tool => this.checkDrift(sessionId, agent, tool),
-            onMode: seen => this.diagnostics?.mode(sessionId, state, seen),
-          })
-          state.run = run
-          this.live.set(sessionId, state)
-          await run.start()
-        } catch (error) {
-          state.run?.dispose()
-          if (state.bridge !== undefined) this.backchannel?.revoke(state.bridge)
-          this.live.delete(sessionId)
-          if (isAuthRequired(error)) {
-            this.signedOut(options.provider)
-            return yield signInFailure(agent, error)
-          }
-          return yield finish('error', `${agent.name} did not start: ${error?.message ?? error}`, error?.code === 'acp_bridge_missing' ? 'acp_bridge_missing' : undefined)
         }
         live = state
         fresh = true
