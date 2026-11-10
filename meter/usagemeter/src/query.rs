@@ -112,14 +112,17 @@ pub struct Answer {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Window {
+pub(crate) enum Window {
     D1,
     D7,
     D30,
 }
 
 impl Window {
-    fn name(self) -> &'static str {
+    /// Contract 1's windows, in the order a report prints them.
+    pub(crate) const ALL: [Window; 3] = [Window::D1, Window::D7, Window::D30];
+
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Window::D1 => "d1",
             Window::D7 => "d7",
@@ -127,12 +130,46 @@ impl Window {
         }
     }
 
-    fn days(self) -> i64 {
+    pub(crate) fn days(self) -> i64 {
         match self {
             Window::D1 => 1,
             Window::D7 => 7,
             Window::D30 => 30,
         }
+    }
+
+    /// The window's place in contract 1's order.
+    pub(crate) fn index(self) -> usize {
+        match self {
+            Window::D1 => 0,
+            Window::D7 => 1,
+            Window::D30 => 2,
+        }
+    }
+}
+
+/// A window's bounds, as the query reads it: contract 1's `d1`/`d7`/`d30`, clipped to
+/// `counted_from` and ending at the end of the hour that holds the watermark (the generated time's
+/// hour while there is none). The coverage report prints the same numbers, so the two cannot
+/// disagree about what a window is.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Bounds {
+    pub(crate) requested_start: i64,
+    pub(crate) start: i64,
+    pub(crate) end: i64,
+    pub(crate) clipped: bool,
+}
+
+pub(crate) fn bounds(meta: &BTreeMap<String, String>, window: Window, now_ms: i64) -> Bounds {
+    let end = hour_start(watermark(meta).unwrap_or(now_ms)) + HOUR_MS;
+    let requested_start = end - window.days() * DAY_MS;
+    let counted_from = meta_i64(meta, "counted_from_ms").unwrap_or(requested_start);
+    let start = requested_start.max(counted_from);
+    Bounds {
+        requested_start,
+        start,
+        end,
+        clipped: start > requested_start,
     }
 }
 
@@ -333,7 +370,7 @@ struct BranchRow {
 }
 
 #[derive(Serialize, Clone, Copy)]
-struct TokensOut {
+pub(crate) struct TokensOut {
     input: i64,
     cache_read: i64,
     cache_write_5m: i64,
@@ -343,7 +380,7 @@ struct TokensOut {
     /// reasoning is inside `output` and unknown, never 0.
     reasoning: Option<i64>,
     unsplit: i64,
-    total: i64,
+    pub(crate) total: i64,
 }
 
 /// Nothing yet: every count 0, reasoning a known 0 until a row that does not log it is added.
@@ -503,7 +540,7 @@ fn json_bounded(s: &str, max: usize) -> String {
     out
 }
 
-fn quoted(s: &str) -> String {
+pub(crate) fn quoted(s: &str) -> String {
     let cut: String = s.chars().take(QUOTED_CHARS).collect();
     if cut.len() < s.len() {
         format!("\"{cut}…\"")
@@ -980,7 +1017,7 @@ pub const READ_ONLY_FOLDER: &str = "the state folder cannot be written and the s
      and -shm files, which SQLite needs to read it without writing; make the folder writable, or \
      read it where a reader already left them";
 
-fn is_busy(e: &rusqlite::Error) -> bool {
+pub(crate) fn is_busy(e: &rusqlite::Error) -> bool {
     matches!(e, rusqlite::Error::SqliteFailure(f, _)
         if matches!(f.code, ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked))
 }
@@ -989,26 +1026,31 @@ fn is_busy(e: &rusqlite::Error) -> bool {
 // Reading the snapshot.
 
 /// One hourly usage row of the repo, as the query reads it.
-struct UsageRead {
+pub(crate) struct UsageRead {
+    /// The row's repo: null for a folder that is not a checkout with a remote.
+    pub(crate) repo: Option<String>,
     /// The branch the row holds: logged, or filled from a worker's start row.
-    branch: Option<String>,
-    harness: String,
-    model: String,
-    hour_ms: i64,
-    tokens: TokensOut,
-    total_only: bool,
-    reported_usd: Option<f64>,
+    pub(crate) branch: Option<String>,
+    pub(crate) harness: String,
+    pub(crate) model: String,
+    pub(crate) hour_ms: i64,
+    pub(crate) tokens: TokensOut,
+    pub(crate) total_only: bool,
+    pub(crate) reported_usd: Option<f64>,
     /// How the row's calls were attributed, judged against `evidence_from`.
-    class: Class,
+    pub(crate) class: Class,
     /// `log`, `ledger` or `none`.
-    branch_basis: BranchBasis,
+    pub(crate) branch_basis: BranchBasis,
     /// The bot key, for an attributed row.
-    bot: Option<BotKey>,
+    pub(crate) bot: Option<BotKey>,
+    /// The rollup still carries a bot tag (its own `bot` column): on a row before evidence, the
+    /// old live-terminal definition's residue (RFC 0026 (a), `before_evidence_tagged`).
+    pub(crate) tagged: bool,
 }
 
 /// How a rollup row's calls count in the four actor counts (RFC 0021 (d)).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Class {
+pub(crate) enum Class {
     /// Before `evidence_from` (or all of it while that is null), and every row written before
     /// schema 3 (`actor_state` null, the frozen tags): never attributed, whatever it names.
     Before,
@@ -1018,22 +1060,33 @@ enum Class {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Basis {
+pub(crate) enum Basis {
     Session,
     Label,
     Worktree,
 }
 
+impl Basis {
+    /// `0` session, `1` label, `2` worktree: the order `tokens_by_basis` reports.
+    pub(crate) fn index(self) -> usize {
+        match self {
+            Basis::Session => 0,
+            Basis::Label => 1,
+            Basis::Worktree => 2,
+        }
+    }
+}
+
 /// Why an unlinked call has no bot, in the schema's reason order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum Unlinked {
+pub(crate) enum Unlinked {
     NoRecord,
     DshTuiSeat,
     OtherMachine,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BranchBasis {
+pub(crate) enum BranchBasis {
     Log,
     Ledger,
     None,
@@ -1042,14 +1095,14 @@ enum BranchBasis {
 /// A bot row's key, in the order rows are sorted: byte order, null first, `unrecorded` in its
 /// enum's order.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct BotKey {
-    bot: String,
-    kind: String,
-    role: Option<String>,
-    squad: Option<String>,
+pub(crate) struct BotKey {
+    pub(crate) bot: String,
+    pub(crate) kind: String,
+    pub(crate) role: Option<String>,
+    pub(crate) squad: Option<String>,
     /// 0 `[]`, 1 `["role"]`, 2 `["squad"]`, 3 `["role", "squad"]`.
-    unrecorded: u8,
-    harness: String,
+    pub(crate) unrecorded: u8,
+    pub(crate) harness: String,
 }
 
 impl BotKey {
@@ -1184,110 +1237,10 @@ fn read(
     let evidence_from = meta_i64(&meta, crate::evidence::FROM_META);
     // Every row of the repo in the window, through `usage_repo_branch`: branch rows read the
     // branches named, and the actor counts (`actor_unattributed`, bot rows) the whole repo.
-    // A schema 3 store a meter before RFC 0021 delivery 6 wrote has no `reason` column until its
-    // next sync adds it: its ambiguous and unlinked rows read as they were, with no reason.
-    let reason: bool = c.query_row(
-        "SELECT count(*) > 0 FROM pragma_table_info('usage') WHERE name = 'reason'",
-        [],
-        |r| r.get(0),
-    )?;
     let mut rows = Vec::new();
-    {
-        let mut st = c.prepare(&format!(
-            "SELECT branch, harness, model, hour_ms, input_uncached, cache_read, cache_write_5m,
-               cache_write_1h, output, reasoning, unsplit, precision, reported_usd, actor_state,
-               basis, branch_basis, {}, bot, kind, role, squad, unrecorded
-             FROM usage WHERE repo = ?1 AND hour_ms >= ?2 AND hour_ms < ?3",
-            if reason { "reason" } else { "NULL" }
-        ))?;
-        let mut q = st.query(rusqlite::params![repo, from, to])?;
-        while let Some(r) = q.next()? {
-            let harness: String = r.get(1)?;
-            let mut t = TokensOut {
-                input: nonneg(r.get(4)?),
-                cache_read: nonneg(r.get(5)?),
-                cache_write_5m: nonneg(r.get(6)?),
-                cache_write_1h: nonneg(r.get(7)?),
-                output: nonneg(r.get(8)?),
-                reasoning: crate::sources::Source::from_harness(&harness)
-                    .filter(|s| s.logs_reasoning())
-                    .map(|_| nonneg(r.get(9).ok().flatten())),
-                unsplit: nonneg(r.get(10)?),
-                total: 0,
-            };
-            t.total = split_total(&t).saturating_add(t.unsplit);
-            let hour_ms: i64 = r.get(3)?;
-            let branch: Option<String> = r.get::<_, Option<String>>(0)?.filter(|b| !b.is_empty());
-            let state: Option<String> = r.get(13)?;
-            let basis: Option<String> = r.get(14)?;
-            let reason: Option<String> = r.get(16)?;
-            let class = classify(
-                evidence_from,
-                hour_ms,
-                state.as_deref(),
-                basis.as_deref(),
-                reason.as_deref(),
-            );
-            let branch_basis = match (r.get::<_, Option<String>>(15)?.as_deref(), &branch) {
-                (_, None) => BranchBasis::None,
-                (Some("ledger"), Some(_)) => BranchBasis::Ledger,
-                _ => BranchBasis::Log,
-            };
-            let fits = |s: &String| crate::ledger::tag_fits(s);
-            let bot = match (
-                class,
-                r.get::<_, Option<String>>(17)?,
-                r.get::<_, Option<String>>(18)?,
-            ) {
-                (Class::Attributed(_), Some(bot), Some(kind))
-                    if matches!(kind.as_str(), "worker" | "seat") && fits(&bot) =>
-                {
-                    let role: Option<String> = r.get(19)?;
-                    let squad: Option<String> = r.get(20)?;
-                    let unrecorded: Option<String> = r.get(21)?;
-                    let listed = |k: &str| {
-                        unrecorded
-                            .as_deref()
-                            .is_some_and(|u| u.split(',').any(|f| f == k))
-                    };
-                    // A role the start row left null is as unknown as one it left out, and one
-                    // past the contract's cap (a store written before the cap) is unrecorded.
-                    let no_role = listed("role") || role.as_ref().is_none_or(|r| !fits(r));
-                    let no_squad = listed("squad") || squad.as_ref().is_some_and(|s| !fits(s));
-                    Some(BotKey {
-                        bot,
-                        kind,
-                        role: role.filter(|_| !no_role),
-                        squad: squad.filter(|_| !no_squad),
-                        unrecorded: u8::from(no_role) | (u8::from(no_squad) << 1),
-                        harness: harness.clone(),
-                    })
-                }
-                _ => None,
-            };
-            // An attributed row whose bot key cannot be read (no bot, a kind that is neither
-            // worker nor seat, a bot past the cap) names no bot row: it counts as ambiguous, so
-            // its tokens land in actor_unattributed and every sum holds.
-            let class = match (class, &bot) {
-                (Class::Attributed(_), None) => Class::Ambiguous,
-                _ => class,
-            };
-            rows.push(UsageRead {
-                branch,
-                harness,
-                model: r.get(2)?,
-                hour_ms,
-                tokens: t,
-                total_only: r.get::<_, String>(11)? == "total_only",
-                reported_usd: r
-                    .get::<_, Option<f64>>(12)?
-                    .filter(|u| u.is_finite() && *u >= 0.0),
-                class,
-                branch_basis,
-                bot,
-            });
-        }
-    }
+    scan_usage(c, Some(&[repo]), from, to, evidence_from, &mut |r| {
+        rows.push(r);
+    })?;
     let repo_seen = rows.iter().any(|r| r.tokens.total > 0)
         || c.query_row(
             "SELECT EXISTS(SELECT 1 FROM usage WHERE repo = ?1)",
@@ -1303,6 +1256,136 @@ fn read(
         repo_seen,
         evidence_from,
     })))
+}
+
+/// Reads the usage rows in `from..to`, classified against `evidence_from`, one at a time: the
+/// query collects them, the coverage report sums them, so the two cannot read a row differently.
+/// `repos` names the repos to read; `None` reads every repo and the usage that has none (which
+/// the report shows beside the ratio, never in it). One read transaction is the caller's.
+pub(crate) fn scan_usage(
+    c: &Connection,
+    repos: Option<&[&str]>,
+    from: i64,
+    to: i64,
+    evidence_from: Option<i64>,
+    f: &mut dyn FnMut(UsageRead),
+) -> rusqlite::Result<()> {
+    // A schema 3 store a meter before RFC 0021 delivery 6 wrote has no `reason` column until its
+    // next sync adds it: its ambiguous and unlinked rows read as they were, with no reason.
+    let reason: bool = c.query_row(
+        "SELECT count(*) > 0 FROM pragma_table_info('usage') WHERE name = 'reason'",
+        [],
+        |r| r.get(0),
+    )?;
+    let mut params: Vec<&dyn rusqlite::ToSql> = Vec::new();
+    for r in repos.unwrap_or(&[]) {
+        params.push(r);
+    }
+    let mut sql = String::from(
+        "SELECT repo, branch, harness, model, hour_ms, input_uncached, cache_read,
+           cache_write_5m, cache_write_1h, output, reasoning, unsplit, precision, reported_usd,
+           actor_state, basis, branch_basis, ",
+    );
+    sql.push_str(if reason { "reason" } else { "NULL" });
+    sql.push_str(", bot, kind, role, squad, unrecorded FROM usage WHERE ");
+    if let Some(rs) = repos.filter(|rs| !rs.is_empty()) {
+        let names: Vec<String> = (1..=rs.len()).map(|i| format!("?{i}")).collect();
+        sql.push_str(&format!("repo IN ({}) AND ", names.join(", ")));
+    }
+    let (from_at, to_at) = (params.len() + 1, params.len() + 2);
+    sql.push_str(&format!("hour_ms >= ?{from_at} AND hour_ms < ?{to_at}"));
+    params.push(&from);
+    params.push(&to);
+    let mut st = c.prepare(&sql)?;
+    let mut q = st.query(params.as_slice())?;
+    while let Some(r) = q.next()? {
+        let harness: String = r.get(2)?;
+        let mut t = TokensOut {
+            input: nonneg(r.get(5)?),
+            cache_read: nonneg(r.get(6)?),
+            cache_write_5m: nonneg(r.get(7)?),
+            cache_write_1h: nonneg(r.get(8)?),
+            output: nonneg(r.get(9)?),
+            reasoning: crate::sources::Source::from_harness(&harness)
+                .filter(|s| s.logs_reasoning())
+                .map(|_| nonneg(r.get(10).ok().flatten())),
+            unsplit: nonneg(r.get(11)?),
+            total: 0,
+        };
+        t.total = split_total(&t).saturating_add(t.unsplit);
+        let hour_ms: i64 = r.get(4)?;
+        let repo: Option<String> = r.get::<_, Option<String>>(0)?.filter(|p| !p.is_empty());
+        let branch: Option<String> = r.get::<_, Option<String>>(1)?.filter(|b| !b.is_empty());
+        let state: Option<String> = r.get(14)?;
+        let basis: Option<String> = r.get(15)?;
+        let reason: Option<String> = r.get(17)?;
+        let class = classify(
+            evidence_from,
+            hour_ms,
+            state.as_deref(),
+            basis.as_deref(),
+            reason.as_deref(),
+        );
+        let branch_basis = match (r.get::<_, Option<String>>(16)?.as_deref(), &branch) {
+            (_, None) => BranchBasis::None,
+            (Some("ledger"), Some(_)) => BranchBasis::Ledger,
+            _ => BranchBasis::Log,
+        };
+        let fits = |s: &String| crate::ledger::tag_fits(s);
+        let stored_bot: Option<String> = r.get(18)?;
+        let tagged = stored_bot.as_deref().is_some_and(|b| !b.is_empty());
+        let bot = match (class, stored_bot, r.get::<_, Option<String>>(19)?) {
+            (Class::Attributed(_), Some(bot), Some(kind))
+                if matches!(kind.as_str(), "worker" | "seat") && fits(&bot) =>
+            {
+                let role: Option<String> = r.get(20)?;
+                let squad: Option<String> = r.get(21)?;
+                let unrecorded: Option<String> = r.get(22)?;
+                let listed = |k: &str| {
+                    unrecorded
+                        .as_deref()
+                        .is_some_and(|u| u.split(',').any(|f| f == k))
+                };
+                // A role the start row left null is as unknown as one it left out, and one
+                // past the contract's cap (a store written before the cap) is unrecorded.
+                let no_role = listed("role") || role.as_ref().is_none_or(|r| !fits(r));
+                let no_squad = listed("squad") || squad.as_ref().is_some_and(|s| !fits(s));
+                Some(BotKey {
+                    bot,
+                    kind,
+                    role: role.filter(|_| !no_role),
+                    squad: squad.filter(|_| !no_squad),
+                    unrecorded: u8::from(no_role) | (u8::from(no_squad) << 1),
+                    harness: harness.clone(),
+                })
+            }
+            _ => None,
+        };
+        // An attributed row whose bot key cannot be read (no bot, a kind that is neither
+        // worker nor seat, a bot past the cap) names no bot row: it counts as ambiguous, so
+        // its tokens land in actor_unattributed and every sum holds.
+        let class = match (class, &bot) {
+            (Class::Attributed(_), None) => Class::Ambiguous,
+            _ => class,
+        };
+        f(UsageRead {
+            repo,
+            branch,
+            harness,
+            model: r.get(3)?,
+            hour_ms,
+            tokens: t,
+            total_only: r.get::<_, String>(12)? == "total_only",
+            reported_usd: r
+                .get::<_, Option<f64>>(13)?
+                .filter(|u| u.is_finite() && *u >= 0.0),
+            class,
+            branch_basis,
+            bot,
+            tagged,
+        });
+    }
+    Ok(())
 }
 
 fn split_total(t: &TokensOut) -> i64 {
@@ -1478,16 +1561,22 @@ impl Acc {
 }
 
 fn machine_of(meta: &BTreeMap<String, String>) -> Machine {
-    let id = meta
-        .get("machine")
+    Machine {
+        id: machine_id(meta),
+        scope: "local",
+    }
+}
+
+/// The store's machine name, as the query and the coverage report report it.
+pub(crate) fn machine_id(meta: &BTreeMap<String, String>) -> String {
+    meta.get("machine")
         .or_else(|| meta.get("machine_fallback"))
         .map(|s| chars(s, MACHINE_ID_CHARS))
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "unknown".into());
-    Machine { id, scope: "local" }
+        .unwrap_or_else(|| "unknown".into())
 }
 
-fn meta_i64(meta: &BTreeMap<String, String>, k: &str) -> Option<i64> {
+pub(crate) fn meta_i64(meta: &BTreeMap<String, String>, k: &str) -> Option<i64> {
     meta.get(k).and_then(|v| v.trim().parse().ok())
 }
 
@@ -1702,11 +1791,8 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
     };
     let stale_ms = req.stale_after_s * 1000;
     let window_of = |meta: &BTreeMap<String, String>| -> (i64, i64) {
-        let w = watermark(meta);
-        let end = hour_start(w.unwrap_or(ctx.now_ms)) + HOUR_MS;
-        let requested = end - req.window.days() * DAY_MS;
-        let counted_from = meta_i64(meta, "counted_from_ms").unwrap_or(requested);
-        (requested.max(counted_from), end)
+        let b = bounds(meta, req.window, ctx.now_ms);
+        (b.start, b.end)
     };
     let snap = match read(&conn, &req.repo, window_of) {
         Ok(Read::Snapshot(s)) => s,
@@ -1771,15 +1857,14 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
     let meta = &snap.meta;
     let w = watermark(meta);
     let counted_from = meta_i64(meta, "counted_from_ms").unwrap_or(0);
-    let (start, end) = window_of(meta);
-    let requested_start = end - req.window.days() * DAY_MS;
-    let clipped = start > requested_start;
+    let b = bounds(meta, req.window, ctx.now_ms);
+    let clipped = b.clipped;
     let window_info = WindowInfo {
         name: req.window.name(),
-        requested_start: format_rfc3339(requested_start),
-        start: format_rfc3339(start),
-        end: format_rfc3339(end),
-        clipped,
+        requested_start: format_rfc3339(b.requested_start),
+        start: format_rfc3339(b.start),
+        end: format_rfc3339(b.end),
+        clipped: b.clipped,
     };
     let backlog = Backlog {
         bytes: meta_i64(meta, "last_pending_bytes").map(|v| v.max(0)),
@@ -2183,7 +2268,7 @@ fn absent(
 
 /// When the last sync finished its pass (a run that stopped at its time budget still finished;
 /// `ingestion.complete` and `backlog` say what it left).
-fn watermark(meta: &BTreeMap<String, String>) -> Option<i64> {
+pub(crate) fn watermark(meta: &BTreeMap<String, String>) -> Option<i64> {
     meta_i64(meta, "last_run_ms").or_else(|| meta_i64(meta, "last_success_ms"))
 }
 
