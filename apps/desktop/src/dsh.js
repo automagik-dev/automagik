@@ -610,6 +610,7 @@ export function freePort() {
 // and compiled again on every start, and the page's origin (its localStorage: the composer's
 // unsent drafts) changed with it. Only the port is reused, never a server: dsh still binds it
 // itself, and the page still signs in with the launch URL its own output carries.
+// When the port is taken the origin still moves: the drafts follow it through drafts.js (#141).
 export const portFileOf = home => join(home, 'dsh-port')
 
 /** The port in `file`, or null when there is none or it is not an unprivileged port. */

@@ -40,6 +40,7 @@ import { sendPaneClose } from './pane-close.js'
 import { createQuitGuard, quitPrompt, requestQuit } from './quit-guard.js'
 import { applyNow, applyStaged, appStopped, causeOf, changesOf, stillIdle, readAutoApply, settingsFileOf, writeAutoApply } from './auto-apply.js'
 import { readChoices, writeOverlay } from './privacy.js'
+import { draftsFileOf, PAGE_DRAFTS, saveDrafts, takeDrafts } from './drafts.js'
 import { CHECK_EVERY_MS, compareVersions, isReleasePage, startUpdates, updateMode } from './update.js'
 import {
   DSH_TUI_LABEL, DSH_TUI_LOG, dshTuiModuleDir, dshTuiRunnerOf, dshTuiSupported, ensurePathLine,
@@ -502,7 +503,7 @@ function restartForLane({ away = false, why } = {}) {
   update = { ...update, state: 'restarting', version: laneReady?.version ?? update?.version }
   publishUpdate()
   void fade(window, { to: 0, reduced: lessMotion() })
-    .then(() => { out.mark('window gone'); return dshProcess.stop() })
+    .then(async () => { out.mark('window gone'); await keepPageDrafts(); return dshProcess.stop() })
     .finally(() => {
       out.mark('dsh stopped')
       app.relaunch()
@@ -569,6 +570,7 @@ async function cycleDsh(prepare, status) {
     sendState({ ready: false, status })
     // The Bot team opens the same chat again once the page is back (bots-dsh reopen.js).
     await page?.webContents.executeJavaScript("try { sessionStorage.setItem('omni-ui:reopen', '1') } catch {}").catch(() => {})
+    await keepPageDrafts()
     await dshProcess.stop()
     out.mark('dsh stopped')
     if (quitting) throw appStopped('the app is quitting')
@@ -657,6 +659,41 @@ function publishUpdate() {
   if (page && !page.webContents.isDestroyed()) page.webContents.send('automagik-updates', presentUpdate())
 }
 const fromPage = event => page !== null && event.sender === page.webContents
+// The composer's unsent drafts (drafts.js, #141), for dsh's page only and only while its main
+// frame is on dsh's origin: the page's preload takes them back as it starts, when the origin is
+// not the one they were kept on, and sends them as they change. The origin kept with them is the
+// one dsh serves, never one the page names. The take is synchronous in the page, so it only reads
+// (and at most rewrites) one small file and always answers: { moved, entries }, or null, which
+// tells the preload to keep out.
+const draftsFrom = event => fromPage(event) && event.senderFrame != null
+  && event.senderFrame === page.webContents.mainFrame && event.senderFrame.origin === dshOrigin
+ipcMain.on('automagik-drafts-take', (event) => {
+  let back = null
+  try { if (draftsFrom(event)) back = takeDrafts(draftsFileOf(home), dshOrigin) } catch {}
+  event.returnValue = back
+})
+ipcMain.on('automagik-drafts-keep', (event, entries) => {
+  try { if (draftsFrom(event)) saveDrafts(draftsFileOf(home), dshOrigin, entries) } catch {}
+})
+// The page's drafts as they are now, kept before dsh is stopped for a restart of DSH alone or a
+// quit: the page's own last send may be up to its interval old, and the next dsh may serve on
+// another origin, where this page's sends are refused.
+// Never holds a restart or a quit: a page that does not answer in a second keeps its last send.
+async function keepPageDrafts() {
+  if (!page || page.webContents.isDestroyed()) return
+  const origin = dshOrigin
+  try {
+    if (page.webContents.mainFrame?.origin !== origin) return
+    const entries = await Promise.race([
+      page.webContents.executeJavaScript(PAGE_DRAFTS),
+      new Promise(done => setTimeout(done, 1000, null)),
+    ])
+    if (entries !== null && !page.webContents.isDestroyed() && page.webContents.mainFrame?.origin === origin && dshOrigin === origin) {
+      saveDrafts(draftsFileOf(home), origin, entries)
+    }
+  } catch {}
+}
+
 ipcMain.handle('automagik-updates-status', event => (fromPage(event) ? presentUpdate() : null))
 // The sidebar's update button: restart into a downloaded update, open the release page of one
 // this copy cannot install itself (a deb), or check.
@@ -868,7 +905,7 @@ function installUpdate({ away = false } = {}) {
   }
   setTimeout(() => {
     void fade(window, { to: 0, reduced: lessMotion() })
-      .then(() => { out.mark('window gone'); return dshProcess.stop() })
+      .then(async () => { out.mark('window gone'); await keepPageDrafts(); return dshProcess.stop() })
       .finally(() => {
         out.mark('dsh stopped')
         noteRestart(RESTART_NOTE(), { from: app.getVersion(), to: update?.version })
@@ -1023,6 +1060,6 @@ function stopAndQuit() {
   const out = leave('quit')
   // The window goes at once; dsh stops behind it, so a quit never looks stuck.
   return fade(window, { to: 0, reduced: lessMotion() })
-    .then(() => { out.mark('window gone'); return dshProcess.stop() })
+    .then(async () => { out.mark('window gone'); await keepPageDrafts(); return dshProcess.stop() })
     .finally(() => { out.mark('dsh stopped'); app.quit() })
 }
