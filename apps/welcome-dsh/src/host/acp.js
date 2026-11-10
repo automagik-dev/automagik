@@ -73,6 +73,9 @@ export function agentView(agent) {
       ...(typeof agent.connector?.logPath === 'string' ? { logPath: shownPath(agent.connector.logPath) } : {}),
     },
     ...(typeof agent.signedIn === 'boolean' ? { signedIn: agent.signedIn } : {}),
+    // Signed in on this computer, to an account the person has not confirmed for the app
+    // (#869, acp-dsh's consent): only that it waits, never who it is.
+    ...(agent.signedIn === true && agent.consent === 'needed' ? { consent: 'needed' } : {}),
     listed: agent.model?.listed === true,
     restartNeeded: agent.restartNeeded === true,
   }
@@ -94,6 +97,8 @@ export function acpService(ctx) {
 export function agentRunning(agent) {
   if (agent === undefined || agent === null) return false
   if (agent.cli?.found !== true || agent.cli.state === 'installing' || agent.cli.state === 'failed' || agent.cli.updating === true) return false
+  // An account that waits for the person's word answers no turn (#869).
+  if (agent.consent === 'needed') return false
   return agent.on === true && agent.connector?.state === 'ready' && agent.restartNeeded !== true && agent.signedIn === true
 }
 

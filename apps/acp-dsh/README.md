@@ -178,7 +178,7 @@ A settings page reads the agents through this host service; the plugin stays hos
 
 | Method | Does |
 |---|---|
-| `status()` | Each agent: `{ id, key, name, on, cli: { found, installUrl, state, managed, version?, error?, diagnostic?, logPath?, updating? }, connector: { state, version?, error?, updating? }, signedIn?, model: { provider, id, name, listed }, restartNeeded }`. CLI state is `missing`, `installing`, `failed` or `ready`; connector state is `off`, `no-cli`, `installing`, `failed` or `ready`. Errors are redacted. Spawns nothing. |
+| `status()` | Each agent: `{ id, key, name, on, cli: { found, installUrl, state, managed, version?, error?, diagnostic?, logPath?, updating? }, connector: { state, version?, error?, updating? }, signedIn?, consent?, model: { provider, id, name, listed }, restartNeeded }`. CLI state is `missing`, `installing`, `failed` or `ready`; connector state is `off`, `no-cli`, `installing`, `failed` or `ready`. Errors are redacted. Spawns nothing. |
 | `inspect(id)` | One agent's `status()` row with a fresh sign-in check, for a Bot about to be put on it. Asks that CLI's sign-in status only; installs, enables and starts nothing. Simultaneous checks share one probe, and an answer stands for 3 seconds (`refresh()` clears it). Undefined for an id that is no agent here. |
 | `refresh()` | Looks for the CLIs again (one installed after DSH started is offered now), then asks each CLI whether it is signed in (`claude auth status --json`, of which only `loggedIn` is read; `codex login status`, by its exit code). No agent turn. |
 | `retry(id)` | Retries the required CLI and its connector, and answers at once. Does not turn its model switch on. |
@@ -187,10 +187,62 @@ A settings page reads the agents through this host service; the plugin stays hos
 | `loginStatus(id, attemptId)` / `loginAnswer(id, attemptId, value)` / `loginCancel(id, attemptId)` | Reads an attempt (an ended one stays readable for 60 seconds), sends Claude's pasted `code#state` to the CLI (which then has 90 seconds to confirm), or ends it. |
 | `loginTextMatches(text)` | Whether a text carries a Claude sign-in state shown in the last 24 hours. Only a boolean: the states are kept as keyed hashes in memory. |
 | `loginActive()` | How many attempts are starting or waiting. |
-| `imageAccess()` | `{ ready, signedIn?, reason?, unsupported? }`: whether Codex can draw an image now, on its own ChatGPT sign-in (Codex on, its CLI found, its connector installed, `codex login status` says signed in; an unknown sign-in is asked once; the image run's checks hold for this Codex, else not ready, with `reason`: `unsupported` (and `unsupported: true`), `config` or `unreadable`). Reads no credential and starts no sign-in. |
+| `account(id, { fresh? })` | For the DSH owner's views only: `{ id, signedIn?, consent?, ref?, account?: { kind: 'account' \| 'key', email?, org?, plan? }, notice? }`. Who the CLI is signed in as, read from the CLI itself (below); never on a `status()` or `inspect()` row, in a log or in an event. `ref` names the account read and goes back with `accountConfirm`. |
+| `accountConfirm(id, { ref? })` | The person's word that the app may use the account this CLI is signed in to. Asks the CLI again, records the consent and announces `acp-dsh/login-ready`. Another account than `ref` is refused (`acp-account/changed`); a signed-out CLI too (`acp-account/signed-out`). |
+| `accountNoticed(id)` | The one-time notice of a vendor carried through an upgrade was shown. |
+| `imageAccess()` | `{ ready, signedIn?, reason?, unsupported? }`: whether Codex can draw an image now, on its own ChatGPT sign-in (Codex on, its CLI found, its connector installed, `codex login status` says signed in; an unknown sign-in is asked once; the person confirmed its account, else `reason: 'account'`; the image run's checks hold for this Codex, else not ready, with `reason`: `unsupported` (and `unsupported: true`), `config` or `unreadable`). Reads no credential and starts no sign-in. |
 | `generateImage({ prompt, size?, quality?, background?, signal?, timeoutMs? })` | Draws one image with the Codex CLI (`src/host/image.js`) and resolves `{ base64, mimeType: 'image/png' }`. Refusals carry an `acp/image-*` code (`signed-out`, `usage-limit`, `timeout`, `unavailable`, `failed`, `stopped`, `refused`) and a message to show as it is. |
 | `keepImages(keeper)` | Where an image an agent makes in a chat is kept, so the chat can show it (`src/host/agent-image.js`). `keeper` is `{ start?({ callId, sessionId, via }), keep({ callId, sessionId, base64, mimeType, via }) -> Promise<{ file }>, fail?({ callId, sessionId, error }) }`; one at a time, and the call returns its disposer. The Bot team registers its images folder. |
 | `bridge()` | `{ on, probesPass }`: whether `dshTools` is on, and whether a real probe on this machine passes — the per-session bridge gets a fresh credential, answers MCP `initialize` and `tools/list`, and lists at least one tool. A success is cached per installed adapter version; a failure is retried after ten minutes or the next app start. A missing adapter or a failed probe says no. The Bot team reads it before its one-time move of Claude Bots onto `acp-claude`, so no Bot moves onto a route whose bridge cannot work. |
+
+**One sign-in per OS user, used only with the person's word (#869).** A CLI's sign-in belongs to
+the OS user: the plugin sets neither `CLAUDE_CONFIG_DIR` nor `CODEX_HOME`, so Bots, the image
+run, the welcome and the person's terminal share one account per vendor. The app uses that
+account only after the person said so, once per vendor and per account (`src/host/consent.js`):
+
+- A row of `status()` and `inspect()` carries `consent` for a signed-in agent: `given` (the
+  person confirmed the account, or signed in to it from the app), `carried` (an install made by
+  an earlier version already offered the vendor, and it is signed in; a notice says so once) or
+  `needed`. Signed out or not known, there is no `consent`. A vendor an earlier version offered
+  stays marked to be carried until its CLI is first read signed in: a check that says "signed
+  out" may be a read that failed (a CLI that cannot load its config exits as signed out, a
+  locked keychain), and a Bot that worked before the upgrade never goes silent for it.
+- While it is `needed`, a turn about to open on that agent ends as `MODEL_ACCESS_REQUIRED` before
+  any process starts (never answered by another model), `imageAccess()` is `{ ready: false,
+  signedIn: true, reason: 'account' }`, `generateImage` refuses, and a `loginStart` that finds
+  the CLI already signed in announces nothing. A call that continues a turn is never checked.
+  The turn's text is the Bot team's own (`Confirm the account of <agent> before using this
+  model.`), so its row is translated.
+- The account is read with the sign-in check. The first read of a process, of a CLI or after a
+  sign-out, and every read of an agent that waits for the person, is waited for. For an agent
+  that already has the person's word the answer stands and the account is read behind it, so no
+  status, picker or turn waits on the CLI; `refresh()`, `account()` and `accountConfirm()` wait
+  for it. Known bound: a terminal that moves to another account while the app runs is noticed
+  at the next sign-in check (`SIGNED_IN_TTL_MS`), and the turn that triggers that check still
+  runs; the next one is refused.
+- Who it is comes from the CLI's own status (`src/host/account.js`): Claude Code's
+  `auth status --json` (`email`, `orgId`, `orgName`, `subscriptionType`, or the source of a key)
+  and Codex's app-server `account/read` (`email`, `planType`, or an API key). No token, key or
+  credential file is read. An account the CLI does not show can still be confirmed. A
+  subscription token in the environment (`authMethod: oauth_token`) is shown as a sign-in whose
+  account the CLI does not say, never as an API key. Known limit: a key or a token is told
+  apart only by where it comes from, so another key in the same variable reads as the same
+  account.
+- The record is `accounts.json` beside the adapters, owner-only: per vendor the consent, when,
+  and HMAC-SHA256 digests of what names the account (kind, email, organisation id, key source),
+  under a key made for this install. No email,
+  organisation or plan is stored. It is written before this version installs a connector, so a
+  connector found with no record means an earlier version, and that vendor is carried. While
+  the record cannot be written, no new connector is installed (one already installed is still
+  updated). Several DSH processes may share the home: the file is read again before each read
+  and each write, and a process writes only the vendors it changed.
+- A read that fails changes nothing: an unknown sign-in is the agent's own answer to give, as
+  before, and an account that cannot be read never turns a consented vendor into `needed`. Only
+  another account, read for certain, asks again (a field both reads have differs; a CLI release
+  that starts or stops printing a field is not another account); the first account coming back
+  needs nothing.
+- Not in this version: a separate sign-in for Bots (an isolated CLI home), sign-out and switch
+  account. A sign-in started from the app still replaces the terminal's.
 
 **Images through Codex.** `generateImage` is a one-off codex-acp session that asks Codex's
 built-in image tool for one picture (owner decision D-g): an empty scratch folder as its working

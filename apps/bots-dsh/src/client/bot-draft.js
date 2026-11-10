@@ -11,7 +11,7 @@ export function freshBotName(roster, base = 'New Bot') {
 // The form starts on the DSH default model when it is served, else the first one that is set
 // up (a key, a sign-in or a signed-in agent; never a route a CLI covers). With
 // none set up the form starts on no model.
-const setUp = model => !model.needsKey && !model.needsSignIn && !model.covered
+const setUp = model => !model.needsKey && !model.needsSignIn && !model.covered && !model.needsAccount
 export function startModel(roster) {
   const models = (roster.models ?? []).filter(setUp)
   return (models.find(model => model.ref === roster.defaultModel) ?? models.find(model => model.superseded !== true) ?? models[0])?.ref ?? ''

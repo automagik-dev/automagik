@@ -43,6 +43,8 @@ export function stateOf(agent) {
   if (agent.connector.state !== 'ready') return agent.connector.state
   if (agent.restartNeeded) return 'restart'
   if (agent.signedIn !== true) return agent.signedIn === false ? 'login-required' : 'sign-in-unknown'
+  // Signed in on this computer, to an account that waits for the person's word (#869).
+  if (agent.consent === 'needed') return 'account'
   return 'ready'
 }
 
@@ -57,6 +59,7 @@ export function badgeOf(agent) {
   if (state === 'restart') return t('Restart needed')
   if (state === 'login-required') return t('Sign-in needed')
   if (state === 'sign-in-unknown') return t('Check sign-in')
+  if (state === 'account') return t('Confirm account')
   if (state === 'ready') return t('Ready')
   return null
 }
@@ -91,7 +94,10 @@ export function agentLines(agent) {
     return lines
   }
   lines.push({ tone: 'ok', text: agent.cli.version ? t('Found the {cli} CLI on this computer (version {version}).', { cli, version: agent.cli.version }) : t('Found the {cli} CLI on this computer.', { cli }) })
-  if (agent.signedIn === true) lines.push({ tone: 'ok', text: t('Signed in to {name}.', { name }) })
+  if (agent.signedIn === true && agent.consent !== 'needed') lines.push({ tone: 'ok', text: t('Signed in to {name}.', { name }) })
+  // Already signed in on this computer (the terminal's sign-in): the Bot's chat shows the
+  // account and asks before any Bot uses it.
+  if (agent.signedIn === true && agent.consent === 'needed' && !cliBusy(agent)) lines.push({ tone: 'bad', text: t('{name} is signed in on this computer. Confirm its account in a Bot\'s chat before Bots use it.', { name }), action: 'login', label: t('Confirm account') })
   // Signed out (and only then): the chat's sign-in row, or the terminal command (D7).
   if (agent.signedIn === false && !cliBusy(agent)) {
     lines.push({ tone: 'bad', text: t('Not signed in to {name}. Sign in from a Bot\'s chat.', { name }), action: 'login' })
@@ -210,7 +216,7 @@ export function AcpLine({ line, agent, acp, busy }) {
       line.text,
       line.link ? [' ', h('a', { key: 'link', className: 'oai-link', href: line.link.href, target: '_blank', rel: 'noreferrer' }, line.link.text)] : null,
       line.action === 'retry' ? h('button', { type: 'button', className: 'oai-ghost oai-acp-act', disabled: busy, onClick: () => acp.retry(agent) }, t('Retry')) : null,
-      line.action === 'login' ? h('button', { type: 'button', className: 'oai-ghost oai-acp-act', disabled: busy, onClick: () => acp.login(agent) }, t('Sign in')) : null,
+      line.action === 'login' ? h('button', { type: 'button', className: 'oai-ghost oai-acp-act', disabled: busy, onClick: () => acp.login(agent) }, line.label ?? t('Sign in')) : null,
       line.action === 'check' ? h('button', { type: 'button', className: 'oai-ghost oai-acp-act', disabled: busy, onClick: () => acp.check(agent) }, t('Check again')) : null),
     line.details ? h('details', { className: 'oai-acp-details' },
       h('summary', null, t('Install details')),

@@ -23,6 +23,18 @@
 // step drops such a message before it reaches a model or a transcript row (`dropLoginCodes`, from
 // parts.js's pre-step).
 //
+// The account (#869): a CLI's sign-in is one per OS user, shared with the person's terminal. A
+// CLI that is already signed in is used by Bots only after the person said so (acp-dsh keeps
+// that record). So `cli-login-start` asks acp-dsh first, before any sign-in starts: an agent
+// signed in to an account that waits for the person answers `{ status: 'confirm', account }`
+// (who it is, read by acp-dsh from the CLI: an email, an organisation, a plan, or that it is an
+// API key), and `cli-login-confirm` is their "Use this account". acp-dsh then announces the
+// agent ready, so the model chosen with the entry is applied exactly as after a sign-in. The
+// account is shown on these owner-only endpoints and nowhere else: not in team state, a
+// message, a tool, a model call or a log. `cli-login-accounts` and `cli-login-noticed` serve
+// the one-time notice of a vendor carried through an upgrade. With an acp-dsh that keeps no
+// such record, every answer is as it was.
+//
 // Residual risk (RFC 0003's amendment, RFC 0023 section 3): a send from DSH's own composer is
 // admitted by DSH's session controller, which records it (`agent/inbox/spliced`) before any
 // plugin hook runs. The page refuses it only for a state that page showed; after a reload or in a
@@ -34,6 +46,8 @@ const BOT_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/
 const ATTEMPT = /^[A-Za-z0-9_-]{24,128}$/
 const PROMPT = /^[A-Za-z0-9_-]{1,128}$/
 const MODEL_REF = /^[a-z][a-z0-9-]{0,63}\/[^\s/][^\s]{0,199}$/
+// The account a confirm step showed, as acp-dsh named it (a digest, or `unknown`).
+const ACCOUNT_REF = /^[A-Za-z0-9_-]{1,64}$/
 // How long the result of applying a chosen model can still be read by the Bot's view.
 export const OUTCOME_TTL_MS = 60_000
 const METHODS = { start: 'loginStart', current: 'loginCurrent', status: 'loginStatus', answer: 'loginAnswer', cancel: 'loginCancel' }
@@ -53,6 +67,12 @@ const ERRORS = {
 // The page branches on these two, never on their (translated) wording: an ended attempt asks the
 // agent's own sign-in first (rule 4), a restart interrupts the row.
 const ERROR_CODES = { 'acp-login/not-found': 'bot/login-ended', 'acp-login/disposed': 'bot/login-restarted' }
+// The confirm step's refusals: the page reads the account again on the first, and offers the
+// sign-in on the second.
+const ACCOUNT_ERRORS = {
+  'acp-account/changed': ['The account changed. Check it and confirm again.', 'bot/account-changed'],
+  'acp-account/signed-out': ['This coding agent is not signed in any more. Sign in to use it.', 'bot/account-signed-out'],
+}
 const failed = (message, code = 'bot/refused') => Object.assign(new Error(message), { code })
 const invalid = () => failed('This sign-in request is not valid.', 'bot/invalid')
 
@@ -107,7 +127,30 @@ export function cliLoginView(value, provider, attemptId) {
   return view
 }
 
+// One shown value of an account: a single bounded line.
+const shown = (value, max) => {
+  if (typeof value !== 'string') return undefined
+  const text = [...value].filter(char => char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127).join('').trim().slice(0, max)
+  return text === '' ? undefined : text
+}
+
+/** What a confirm step shows of acp-dsh's `account()` answer: only these fields. */
+export function cliAccountView(value) {
+  const account = value?.account
+  const email = shown(account?.email, 254)
+  const org = shown(account?.org, 120)
+  const plan = shown(account?.plan, 40)
+  return {
+    ref: typeof value?.ref === 'string' && ACCOUNT_REF.test(value.ref) ? value.ref : 'unknown',
+    ...(account !== null && typeof account === 'object' ? { kind: account.kind === 'key' ? 'key' : 'account' } : {}),
+    ...(email ? { email } : {}),
+    ...(org ? { org } : {}),
+    ...(plan ? { plan } : {}),
+  }
+}
+
 const ACTIONS = {
+  confirm: ['botId', 'provider', 'ref', 'model'],
   start: ['botId', 'provider', 'model'],
   current: ['botId', 'provider'],
   status: ['botId', 'provider', 'attemptId'],
@@ -123,6 +166,7 @@ function fields(payload, action) {
     || (allowed.has('attemptId') && (typeof payload.attemptId !== 'string' || !ATTEMPT.test(payload.attemptId)))) throw invalid()
   // The model the entry is for: one of this agent's, or none (a view that only attaches).
   if (payload.model !== undefined && (typeof payload.model !== 'string' || !MODEL_REF.test(payload.model) || payload.model.split('/')[0] !== payload.provider)) throw invalid()
+  if (payload.ref !== undefined && (typeof payload.ref !== 'string' || !ACCOUNT_REF.test(payload.ref))) throw invalid()
   if (action === 'answer' && (typeof payload.value !== 'string' || payload.value.length > 8192 || !/^[\x21-\x7e]+$/.test(payload.value))) {
     throw payload.provider === 'acp-claude' ? failed(CODE_HINT, 'bot/invalid') : invalid()
   }
@@ -130,6 +174,7 @@ function fields(payload, action) {
 }
 
 const CONNECTOR_STATES = new Set(['off', 'no-cli', 'installing', 'failed', 'ready'])
+const CONSENTS = new Set(['given', 'carried', 'needed'])
 // Authentication and model readiness are separate. A CLI can stay signed in when its model
 // switch is off or its connector needs repair; neither condition makes a returning person sign
 // in again.
@@ -140,6 +185,8 @@ const connectionView = (id, agent) => ({
   enabled: agent?.id === id && agent.on === true,
   connectorState: agent?.id === id && CONNECTOR_STATES.has(agent.connector?.state) ? agent.connector.state : 'unknown',
   restartNeeded: agent?.id === id && agent.restartNeeded === true,
+  // The person's word for the signed-in account (#869), when acp-dsh says: never who it is.
+  ...(agent?.id === id && agent.signedIn === true && CONSENTS.has(agent.consent) ? { consent: agent.consent } : {}),
 })
 
 const refOf = route => (typeof route?.provider === 'string' && route.provider !== '' && typeof route?.model === 'string' && route.model !== ''
@@ -231,6 +278,76 @@ export function install(rt) {
     return outcome.ok ? { ref: outcome.ref, state: 'applied' } : { ref: outcome.ref, state: 'failed', message: outcome.message, kept: outcome.kept }
   }
 
+  // The account an agent is signed in to while it waits for the person's word, else undefined:
+  // signed out, already consented, or an acp-dsh that keeps no such record. `probe` asks the CLI
+  // (acp-dsh's shared, briefly cached check); without it only acp-dsh's last answer is read and
+  // nothing is spawned unless that answer already says the account waits.
+  async function pendingAccount(provider, { probe }) {
+    const service = acp()
+    if (typeof service?.account !== 'function') return undefined
+    try {
+      if (!probe) {
+        const rows = typeof service.status === 'function' ? (await service.status())?.agents : undefined
+        const row = Array.isArray(rows) ? rows.find(agent => agent?.id === provider) : undefined
+        if (row?.signedIn !== true || row.consent !== 'needed') return undefined
+      }
+      const seen = await service.account(provider)
+      return seen?.id === provider && seen.signedIn === true && seen.consent === 'needed' ? cliAccountView(seen) : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  // "Use this account": the person's word for the account the confirm step showed. The model
+  // chosen with the entry is kept first, so acp-dsh's announcement applies it (applyChoices).
+  const confirm = async (payload) => {
+    const body = fields(payload, 'confirm')
+    const bot = rt.botOf(body.botId)
+    if (bot === undefined) throw failed('This Bot is no longer available.', 'bot/not-found')
+    const service = acp()
+    if (typeof service?.accountConfirm !== 'function') throw failed(ERRORS['acp-login/unavailable'])
+    if (body.model !== undefined) registerChoice(bot, body.provider, body.model)
+    try {
+      await service.accountConfirm(body.provider, body.ref === undefined ? {} : { ref: body.ref })
+    } catch (error) {
+      const [message, code] = ACCOUNT_ERRORS[error?.code] ?? ['The account could not be confirmed. Try again.', 'bot/refused']
+      throw failed(message, code)
+    }
+    const choice = choiceOf(body.botId, body.provider)
+    return { id: body.provider, status: 'ready', ...(choice ? { choice } : {}) }
+  }
+
+  // The vendors Bots use on a sign-in that was already there before this version (carried), for
+  // the one-time notice. acp-dsh's last answer is read first; the CLI is asked only for a vendor
+  // that may be due its notice.
+  const accounts = async (payload) => {
+    if (payload !== undefined && payload !== null && (typeof payload !== 'object' || Array.isArray(payload) || Object.keys(payload).length !== 0)) throw invalid()
+    const out = {}
+    const service = acp()
+    if (typeof service?.account !== 'function' || typeof service.status !== 'function') return { accounts: out }
+    let rows
+    try { rows = (await service.status())?.agents } catch {}
+    for (const id of PROVIDERS) {
+      const row = Array.isArray(rows) ? rows.find(agent => agent?.id === id) : undefined
+      if (row === undefined || row.on === false || row.cli?.found === false || row.signedIn === false) continue
+      if (row.signedIn === true && row.consent !== 'carried') {
+        if (CONSENTS.has(row.consent)) out[id] = { consent: row.consent }
+        continue
+      }
+      let seen
+      try { seen = await service.account(id) } catch { continue }
+      if (seen?.id !== id || seen.signedIn !== true || !CONSENTS.has(seen.consent)) continue
+      out[id] = { consent: seen.consent, ...(seen.consent === 'carried' && seen.notice === true ? { notice: true, account: cliAccountView(seen) } : {}) }
+    }
+    return { accounts: out }
+  }
+
+  const noticed = async (payload) => {
+    if (payload === null || typeof payload !== 'object' || Array.isArray(payload) || Object.keys(payload).some(key => key !== 'provider') || !PROVIDERS.has(payload.provider)) throw invalid()
+    try { await acp()?.accountNoticed?.(payload.provider) } catch {}
+    return { id: payload.provider }
+  }
+
   const connections = async (payload) => {
     if (payload !== undefined && payload !== null && (typeof payload !== 'object' || Array.isArray(payload) || Object.keys(payload).length !== 0)) throw invalid()
     const ids = [...PROVIDERS]
@@ -260,6 +377,15 @@ export function install(rt) {
     // The explicit entry's choice is kept before the attempt starts: an agent already signed
     // in reports ready at once.
     if (action === 'start' && body.model !== undefined) registerChoice(bot, body.provider, body.model)
+    // A CLI already signed in, to an account that waits for the person: the confirm step, before
+    // any sign-in starts. Their "Use this account" (confirm) is what makes the agent ready.
+    if (action === 'start') {
+      const account = await pendingAccount(body.provider, { probe: true })
+      if (account !== undefined) {
+        const choice = choiceOf(body.botId, body.provider)
+        return { id: body.provider, status: 'confirm', account, ...(choice ? { choice } : {}) }
+      }
+    }
     let value
     try {
       const service = acp()
@@ -276,16 +402,29 @@ export function install(rt) {
     }
     if (action === 'current' && (value === undefined || value === null)) {
       const choice = choiceOf(body.botId, body.provider)
-      return { id: body.provider, attempt: null, ...(choice ? { choice } : {}) }
+      const account = await pendingAccount(body.provider, { probe: false })
+      return { id: body.provider, attempt: null, ...(account ? { account } : {}), ...(choice ? { choice } : {}) }
     }
     const view = cliLoginView(value, body.provider, action === 'start' || action === 'current' ? undefined : body.attemptId)
     const choice = choiceOf(body.botId, body.provider)
+    // An attempt that ended ready on a CLI that was already signed in (it raced the check
+    // above): the same confirm step, never "done".
+    if (view.status === 'ready') {
+      const account = await pendingAccount(body.provider, { probe: false })
+      if (account !== undefined) {
+        const waiting = { id: body.provider, status: 'confirm', account, ...(choice ? { choice } : {}) }
+        return action === 'current' ? { id: body.provider, attempt: null, account, ...(choice ? { choice } : {}) } : waiting
+      }
+    }
     if (choice !== undefined) view.choice = choice
     return action === 'current' ? { id: body.provider, attempt: view } : view
   }
 
   const actions = {
     'cli-login-connections': connections,
+    'cli-login-confirm': confirm,
+    'cli-login-accounts': accounts,
+    'cli-login-noticed': noticed,
     ...Object.fromEntries(Object.keys(METHODS).map(action => [`cli-login-${action}`, run(action)])),
   }
 

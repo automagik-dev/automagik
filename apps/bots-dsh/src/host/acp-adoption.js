@@ -109,6 +109,9 @@ async function acpClaudeState(ctx) {
     }
     if (agent?.signedIn !== true) return { state: 'waiting' }
   }
+  // Signed in, to an account the person has not confirmed for Bots (#869): the route takes no
+  // one yet. Waiting, never gone: nothing already moved goes back for it.
+  if (agent.consent === 'needed') return { state: 'waiting' }
   try {
     const models = await ctx.llm.listModels(ACP_AGENT)
     const listed = (Array.isArray(models) ? models : []).map(model => model?.id).filter(id => typeof id === 'string')
