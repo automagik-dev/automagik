@@ -330,7 +330,13 @@ automations:
   `template`, `agent_args`, `mcp_config`, `blocked_grace_minutes` or
   `close_workspace: on-success`: the loader refuses each by name.
 - At the timeout the program and everything it started get SIGTERM, then
-  SIGKILL ten seconds later.
+  SIGKILL ten seconds later if anything is left. A scheduler told to stop
+  (SIGINT, SIGTERM, a service stop) ends its running commands the same way and
+  records them `failed`.
+- There is no way to stop one running command yet: it ends when it exits or at
+  `timeout_minutes`, so give a command a timeout that fits it. A scheduler that
+  is killed outright, or a `herdr-automations run` interrupted by hand, leaves
+  its command running.
 
 Why this exists, and what was turned down: [ADR 0013](docs/adr/0013-a-command-is-a-run-the-scheduler-does-itself.md).
 

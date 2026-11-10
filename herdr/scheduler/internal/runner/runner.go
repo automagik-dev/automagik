@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/DnzzL/herdr-automations/internal/command"
@@ -29,6 +30,8 @@ type Runner struct {
 	host     host.Host
 	notifier *notify.Notifier
 	inFlight sync.Map
+	// commands counts the command runs whose status is not recorded yet.
+	commands atomic.Int32
 	// exec runs a command, and bots reports its result. Fields so the tests
 	// can stand in for a program and for herdr-core; nil means the real ones.
 	exec func(config.Command, time.Duration) command.Result
@@ -58,6 +61,11 @@ func (r *Runner) Busy() bool {
 	r.inFlight.Range(func(_, _ any) bool { busy = true; return false })
 	return busy
 }
+
+// CommandsRunning is how many command runs have not recorded how they ended.
+// The daemon waits for it to reach zero after command.Shutdown, so a stopped
+// scheduler leaves no command run listed as running.
+func (r *Runner) CommandsRunning() int { return int(r.commands.Load()) }
 
 // Run executes the automation synchronously.
 //
@@ -107,6 +115,7 @@ func (r *Runner) Run(a config.Automation, trigger history.Trigger) error {
 // timeout or a program that would not start is failed, with the exit code and
 // the last lines of stderr kept beside it.
 func (r *Runner) runCommand(id string, a config.Automation, trigger history.Trigger) error {
+	r.commands.Add(1)
 	r.record(id, a.Name, trigger, history.StatusRunning, host.Session{}, "")
 
 	run := r.exec
@@ -123,8 +132,11 @@ func (r *Runner) runCommand(id string, a config.Automation, trigger history.Trig
 		rec.Status, rec.Error, rec.Stderr = history.StatusFailed, res.Problem, res.Stderr
 	}
 	r.write(rec, rec.Result)
+	r.commands.Add(-1)
 
-	if a.Notify != "" {
+	// A command the scheduler ended because it is stopping reports nothing:
+	// the process is on its way out, and hc send may wait minutes.
+	if a.Notify != "" && !res.Stopped {
 		// After the record: the status must not wait on a bot that is busy.
 		// The outcome of the report is a second copy of the same record, the
 		// way a seen mark is, so a reader always finds the status in the last.

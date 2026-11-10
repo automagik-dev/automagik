@@ -50,7 +50,13 @@ A third kind of work, `command:`, that the scheduler daemon runs itself.
   History keeps the exit code (absent when there is none), the last ten lines
   of stderr, and one result line: the last line of stdout when it worked, else
   the failure and the last line of stderr. At the timeout the whole process
-  group gets SIGTERM, then SIGKILL ten seconds later.
+  group gets SIGTERM, then SIGKILL ten seconds later if anything in the group
+  is left, whether or not the program itself already exited.
+- **A daemon told to stop ends its commands first.** A command is in its own
+  process group, so the SIGINT or SIGTERM that stops the daemon does not reach
+  it. The daemon ends each running command the same way the timeout does,
+  waits up to twelve seconds for them to record `failed` ("stopped: the
+  scheduler was stopping"), and sends no report for them.
 - **`notify: <bot>` sends that one line to a bot**, the way bots already
   message each other: the terminal labelled `bot=<id>` is looked up
   (`hc ls --label bot=<id>`) and the line goes in through `hc send`. A name no
@@ -132,6 +138,19 @@ is what ships.
   with no Herdr open wants the login service.
 - A command run has no workspace to open from the board or the panel; its
   record is the whole of it.
+- **There is no Stop for a running command yet.** An agent run is called off
+  by closing its workspace; a command has none, and no CLI verb or panel
+  button ends one. A command that hangs holds its slot until
+  `timeout_minutes` (default 60), so set a timeout that fits the job. A stop
+  verb is a follow-up.
+- A daemon that is killed outright (SIGKILL, a crash, power loss) cannot end
+  its commands: they run on with no timeout and their history stays `running`.
+  The same holds for a command started by hand with `herdr-automations run`
+  when that process is interrupted: only the daemon ends its commands on a
+  stop signal.
+- A start failure names the home folder as `~` in the result line, which goes
+  to a bot's terminal. The program's own stderr is passed on as it wrote it,
+  cleaned of control sequences only.
 - `herdr-automations cleanup` skips command entries: they have no repo and
   make no worktree.
 - CONTEXT.md's "Work" now has three kinds, and the README no longer says an

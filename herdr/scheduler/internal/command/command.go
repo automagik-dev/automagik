@@ -7,6 +7,7 @@
 package command
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -35,6 +36,25 @@ const (
 // the tests do not wait ten seconds.
 var killGrace = 10 * time.Second
 
+// groupPoll is how often a group that was told to end is asked whether
+// anything in it is left.
+const groupPoll = 50 * time.Millisecond
+
+// stopping is closed by Shutdown: every running command is ended the way the
+// timeout ends one, and none is started after it.
+var (
+	stopping     = make(chan struct{})
+	stoppingOnce sync.Once
+)
+
+// Shutdown ends every running command and refuses new ones: SIGTERM to each
+// one's process group, SIGKILL after the grace. The daemon calls it when it is
+// told to stop, because a command is in its own process group and a signal
+// aimed at the daemon's does not reach it; without this a stopped scheduler
+// would leave the command running with no timeout and no record of its end.
+// It returns at once; the runs record themselves as they end.
+func Shutdown() { stoppingOnce.Do(func() { close(stopping) }) }
+
 // Result is how a command ended.
 type Result struct {
 	// ExitCode is the program's exit status; nil when it has none: it never
@@ -42,6 +62,8 @@ type Result struct {
 	ExitCode *int
 	// TimedOut says the timeout ended it.
 	TimedOut bool
+	// Stopped says the scheduler ended it because it was itself told to stop.
+	Stopped bool
 	// Problem is why it failed, in one line; empty for exit 0.
 	Problem string
 	// LastLine is the last line of stdout that is not blank.
@@ -80,6 +102,10 @@ func Run(c config.Command, timeout time.Duration) Result {
 		}
 		cwd = home
 	}
+	// Said here: exec reports a missing folder as the program not being found.
+	if info, err := os.Stat(cwd); err != nil || !info.IsDir() {
+		return Result{Problem: "could not start: no working folder " + clean(homeless(cwd))}
+	}
 	cmd := exec.Command(c.Argv[0], c.Argv[1:]...)
 	cmd.Dir = cwd
 	cmd.Env = environment(c.Env)
@@ -91,8 +117,13 @@ func Run(c config.Command, timeout time.Duration) Result {
 	// the run: Wait gives up on the pipes after the grace.
 	cmd.WaitDelay = killGrace
 
+	select {
+	case <-stopping:
+		return Result{Stopped: true, Problem: "not started: the scheduler was stopping"}
+	default:
+	}
 	if err := cmd.Start(); err != nil {
-		return Result{Problem: "could not start: " + clean(err.Error())}
+		return Result{Problem: "could not start: " + clean(homeless(err.Error()))}
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
@@ -102,13 +133,10 @@ func Run(c config.Command, timeout time.Duration) Result {
 	case <-done:
 	case <-time.After(timeout):
 		res.TimedOut = true
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-		select {
-		case <-done:
-		case <-time.After(killGrace):
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-			<-done
-		}
+		endGroup(cmd.Process.Pid, done)
+	case <-stopping:
+		res.Stopped = true
+		endGroup(cmd.Process.Pid, done)
 	}
 	res.LastLine = lastLine(stdout.String())
 	res.Stderr = lastLines(stderr.String(), stderrLines)
@@ -117,6 +145,8 @@ func Run(c config.Command, timeout time.Duration) Result {
 	switch {
 	case res.TimedOut:
 		res.Problem = fmt.Sprintf("timed out after %s", timeout)
+	case res.Stopped:
+		res.Problem = "stopped: the scheduler was stopping"
 	case state == nil:
 		res.Problem = "ended without an exit status"
 	case state.ExitCode() < 0:
@@ -132,6 +162,52 @@ func Run(c config.Command, timeout time.Duration) Result {
 		}
 	}
 	return res
+}
+
+// endGroup ends a command's whole process group: SIGTERM, the grace, SIGKILL.
+// It returns once the program has been waited for.
+//
+// The program exiting is not the group ending. A program that leaves on
+// SIGTERM can have started a child that ignores it and holds none of the
+// pipes: Wait returns at once and that child would run on with no bound. So
+// the grace is waited out while anything in the group is left, and the SIGKILL
+// is sent whether or not the program itself is still there.
+func endGroup(pgid int, done <-chan error) {
+	_ = syscall.Kill(-pgid, syscall.SIGTERM)
+	grace := time.NewTimer(killGrace)
+	defer grace.Stop()
+	poll := time.NewTicker(groupPoll)
+	defer poll.Stop()
+	exited := false
+	for {
+		select {
+		case <-done:
+			exited, done = true, nil // a nil channel never fires again
+		case <-poll.C:
+		case <-grace.C:
+			_ = syscall.Kill(-pgid, syscall.SIGKILL)
+			if !exited {
+				<-done
+			}
+			return
+		}
+		// Nothing left in the group: no SIGKILL, so a group id the system
+		// hands out again later is never signalled.
+		if exited && errors.Is(syscall.Kill(-pgid, 0), syscall.ESRCH) {
+			return
+		}
+	}
+}
+
+// homeless writes the home folder as ~ in a message that leaves the machine's
+// owner: the result line goes into a bot's terminal, and Go's exec errors
+// quote the full path of a program or folder they could not open.
+func homeless(msg string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || len(home) < 2 {
+		return msg
+	}
+	return strings.ReplaceAll(msg, home, "~")
 }
 
 // environment is the daemon's environment with the automation's on top.

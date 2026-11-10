@@ -50,11 +50,13 @@ CONTEXT.md                     — patched: work has three kinds; command, resul
 internal/api/api.go            — patched: ls --json carries blocked_grace_minutes, kinds, command and notify; history a command run's result
 internal/api/api_test.go       — patched: the listing carries blocked_grace_minutes and its default; kinds, a command entry, a command run
 internal/cleanup/cleanup.go    — patched: a command entry has no repo to scan
-internal/command/command.go    — added: runs a command, its exit status, last lines and timeout (#938)
-internal/command/command_test.go — added: exit 0, other exits, signal, timeout and its group, start failure, cleaned lines
+internal/command/command.go    — added: runs a command, its exit status, last lines, timeout and shutdown (#938)
+internal/command/command_test.go — added: exit 0, other exits, signal, timeout and its group, start failure, cleaned lines, shutdown
 internal/config/config.go      — patched: blocked_grace_minutes, its default and range; existing mode may close its tab; command and notify
 internal/config/config_test.go — patched: the grace defaults, -1, and existing + on-success load; command entries that load and that do not
 internal/config/edit_test.go   — patched: put's merge cases for blocked_grace_minutes; existing + on-success accepted
+internal/daemon/daemon.go      — patched: a daemon told to stop ends its running commands first
+internal/daemon/daemon_test.go — patched: the stop ends a running command and waits for its record
 internal/hc/hc.go              — patched: hc read, the blocked run's screen; live terminals by label; hc send
 internal/history/history.go    — patched: a command run's exit code, result line, stderr and report
 internal/notify/bot.go         — added: a result line to a bot, by its label, through hc send (#938)
@@ -117,7 +119,8 @@ why. The loader no longer refuses that combination, and `ls --json` / `put` carr
 
 The command kind (#938, ADR 0013): an automation may name `command:` (argv, a working folder,
 env) instead of a prompt or a workflow. The daemon starts the program itself, as its own user, with
-no pane and no model, bounded by `timeout_minutes`. Exit 0 is `done`; any other exit, a signal, the
+no pane and no model, bounded by `timeout_minutes` (SIGTERM to its process group, SIGKILL after ten seconds if anything in the
+group is left; a daemon told to stop ends its commands the same way). Exit 0 is `done`; any other exit, a signal, the
 timeout or a program that would not start is `failed`, with the exit code, the last lines of stderr
 and a one-line result in history. `notify: <bot>` sends that line to the terminal labelled
 `bot=<id>` (else a terminal by that name) through `hc send`; what became of the report is recorded

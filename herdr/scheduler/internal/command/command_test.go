@@ -126,3 +126,94 @@ func TestOnlyTheEndOfALongOutputIsKept(t *testing.T) {
 		t.Fatalf("got %q", res.LastLine)
 	}
 }
+
+// The program leaves on SIGTERM at once; its child ignores SIGTERM and holds
+// neither pipe, so Wait returns immediately. The grace is still waited out
+// and the group still gets its SIGKILL (the Reviewer's probe on PR 995).
+func TestTheTimeoutEndsAChildThatIgnoresTermAndHoldsNoPipe(t *testing.T) {
+	old := killGrace
+	killGrace = 300 * time.Millisecond
+	defer func() { killGrace = old }()
+
+	mark := filepath.Join(t.TempDir(), "mark")
+	script := `(trap '' TERM; sleep 2; echo late > "` + mark + `") >/dev/null 2>&1 & echo started; sleep 30`
+	start := time.Now()
+	res := Run(sh(script), 300*time.Millisecond)
+	took := time.Since(start)
+	if !res.TimedOut || res.OK() {
+		t.Fatalf("want a timeout, got %+v", res)
+	}
+	if took < 550*time.Millisecond {
+		t.Fatalf("the run returned after %s: the grace was not waited out while a child was alive", took)
+	}
+	if took > 1500*time.Millisecond {
+		t.Fatalf("the run was held %s past a 300ms timeout and a 300ms grace", took)
+	}
+	time.Sleep(2500 * time.Millisecond)
+	if _, err := os.Stat(mark); err == nil {
+		t.Fatal("a child of the command outlived the timeout")
+	}
+}
+
+// A group that ends on SIGTERM is not waited on for the whole grace.
+func TestAGroupThatEndsOnTermDoesNotWaitOutTheGrace(t *testing.T) {
+	start := time.Now()
+	res := Run(sh(`sleep 30 & sleep 30`), 200*time.Millisecond)
+	if !res.TimedOut {
+		t.Fatalf("got %+v", res)
+	}
+	if took := time.Since(start); took > 3*time.Second {
+		t.Fatalf("held %s although everything left on SIGTERM (the grace is %s)", took, killGrace)
+	}
+}
+
+// The result line goes into a bot's terminal: a start failure names the home
+// folder as ~, never by its path.
+func TestAStartFailureDoesNotNameTheHomeFolder(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for _, c := range []config.Command{
+		{Argv: []string{filepath.Join(home, "bin", "no-such-program")}},
+		{Argv: []string{"/bin/sh", "-c", "true"}, Cwd: filepath.Join(home, "no-such-folder")},
+	} {
+		res := Run(c, time.Minute)
+		if res.OK() || !strings.HasPrefix(res.Problem, "could not start: ") {
+			t.Fatalf("got %+v", res)
+		}
+		if strings.Contains(res.Line(), home) {
+			t.Fatalf("the line names the home folder: %q", res.Line())
+		}
+		if !strings.Contains(res.Problem, "~/") {
+			t.Fatalf("the path lost its ~: %q", res.Problem)
+		}
+	}
+}
+
+// Last in the file: Shutdown is for a process that is leaving, and stays set.
+func TestShutdownEndsARunningCommandAndRefusesNewOnes(t *testing.T) {
+	old := killGrace
+	killGrace = 300 * time.Millisecond
+	defer func() { killGrace = old }()
+
+	mark := filepath.Join(t.TempDir(), "mark")
+	got := make(chan Result, 1)
+	go func() { got <- Run(sh(`(sleep 2; echo late > "`+mark+`") & sleep 30`), time.Hour) }()
+	time.Sleep(200 * time.Millisecond)
+	Shutdown()
+	Shutdown() // twice is once
+	select {
+	case res := <-got:
+		if !res.Stopped || res.TimedOut || res.OK() || res.ExitCode != nil || res.Problem != "stopped: the scheduler was stopping" {
+			t.Fatalf("got %+v", res)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the command outlived Shutdown")
+	}
+	time.Sleep(2500 * time.Millisecond)
+	if _, err := os.Stat(mark); err == nil {
+		t.Fatal("a child of the command outlived Shutdown")
+	}
+	if res := Run(sh(`echo hi`), time.Minute); !res.Stopped || res.OK() || !strings.HasPrefix(res.Problem, "not started") {
+		t.Fatalf("a command started after Shutdown: %+v", res)
+	}
+}

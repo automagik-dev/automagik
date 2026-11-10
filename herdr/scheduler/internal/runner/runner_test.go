@@ -662,3 +662,32 @@ func TestACommandStillSkipsAnOverlappingRun(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A command the stopping scheduler ended is failed and says why; no report is
+// sent from a process on its way out, and the run no longer counts as running.
+func TestACommandEndedByAStoppingSchedulerIsFailedAndNotReported(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	bots := &fakeBots{}
+	r := New(refusingHost{t})
+	r.bots = bots
+	during := -1
+	r.exec = func(config.Command, time.Duration) command.Result {
+		during = r.CommandsRunning()
+		return command.Result{Stopped: true, Problem: "stopped: the scheduler was stopping"}
+	}
+	a := commandAutomation("sleep 600")
+	a.Notify = "b-captain"
+	if err := r.Run(a, "cron"); err == nil {
+		t.Fatal("want the failure returned")
+	}
+	run := runs(t)[0]
+	if run.Status != history.StatusFailed || run.Error != "stopped: the scheduler was stopping" || run.Notified != "" {
+		t.Fatalf("run = %+v", run)
+	}
+	if len(bots.sent) != 0 {
+		t.Fatalf("a report was sent while stopping: %v", bots.sent)
+	}
+	if during != 1 || r.CommandsRunning() != 0 {
+		t.Fatalf("commands running: %d during, %d after; want 1 and 0", during, r.CommandsRunning())
+	}
+}
