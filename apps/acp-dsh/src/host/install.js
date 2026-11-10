@@ -4,6 +4,13 @@
 // runs a half-installed adapter. They live in Automagik's home, not in the DSH profile: DSH's
 // pnpm owns the profile's node_modules and would reconcile anything put there.
 //
+// A new release must start before it replaces the one in use (#958): once installed in its
+// fresh folder it is asked `initialize` (`check`, handshake.js). One that fails stays out: the
+// adapter in use is the last-known-good, the failed version is not tried again for BAD_TTL_MS,
+// and `current.json` says what happened (`rolledBack`). One that passes is still unproven until
+// it has opened a session (`markGood`): until then the version before it stays on disk, and a
+// session start that fails goes back to it (`rollback`).
+//
 // Not pinned (RFC 0003, as amended): the agents' CLIs update themselves, and an adapter that
 // lags its CLI breaks first. What is checked is what npm publishes: the exact package name, the
 // registry's integrity for every tarball, no install scripts, and no bundled CLI.
@@ -15,7 +22,15 @@ import { findCommand, isExecutable } from './agents.js'
 import { batchSafe } from './batch-spawn.js'
 
 const REGISTRY = 'https://registry.npmjs.org'
-export const CHECK_EVERY_MS = 24 * 60 * 60 * 1000
+// npm is asked again once the last check is this old. The timer that asks runs every
+// CHECK_TICK_MS: a 24-hour timer beside a 24-hour window skipped every other day, because the
+// check a tick starts lands a moment after the tick, so the next tick still found it fresh.
+export const CHECK_EVERY_MS = 20 * 60 * 60 * 1000
+export const CHECK_TICK_MS = 4 * 60 * 60 * 1000
+// How long a release that failed its start check is left alone. The vendor's fix is a new
+// version, which is tried at once; the same version is tried again after this, in case what
+// failed was this computer and not the release.
+export const BAD_TTL_MS = 3 * 24 * 60 * 60 * 1000
 export const INSTALL_TIMEOUT_MS = 10 * 60 * 1000
 // What a failed install keeps for the settings page: the end of the installer output.
 export const DIAGNOSTIC_MAX = 4000
@@ -169,10 +184,12 @@ export async function defaultInstall(dir, pkg, version, env, { signal } = {}) {
 
 export class AdapterStore {
   /**
-   * @param {{ home?: string, env?: NodeJS.ProcessEnv, latest?: typeof latestVersion, install?: typeof defaultInstall, now?: () => number, log?: (message: string) => void }} [options]
+   * @param {{ home?: string, env?: NodeJS.ProcessEnv, latest?: typeof latestVersion, install?: typeof defaultInstall, now?: () => number, log?: (message: string) => void, check?: (pkg: string, staged: { path: string, version: string }) => Promise<void> }} [options]
+   *   `check` starts a staged adapter and rejects when it does not answer; it may also be set
+   *   later (`store.check = ...`), once the caller knows how to spawn each adapter.
    */
-  constructor({ home = adaptersHome(), env = process.env, latest = latestVersion, install = defaultInstall, now = Date.now, log = () => {} } = {}) {
-    Object.assign(this, { home, env, latest, install, now, log })
+  constructor({ home = adaptersHome(), env = process.env, latest = latestVersion, install = defaultInstall, now = Date.now, log = () => {}, check } = {}) {
+    Object.assign(this, { home, env, latest, install, now, log, check })
     this.running = new Map()
     this.failures = new Map()
     this.installing = new Set()
@@ -214,6 +231,60 @@ export class AdapterStore {
     return existsSync(path) ? { path, version: current.version } : undefined
   }
 
+  /** What `current.json` records beside the version in use: the one before it, a rollback. */
+  stateOf(pkg) {
+    const current = readJson(join(this.home, folderOf(pkg), 'current.json'))
+    if (!current?.version) return undefined
+    const bad = current.bad?.version !== undefined && this.now() - current.bad.at < BAD_TTL_MS ? current.bad : undefined
+    return {
+      version: current.version,
+      proven: current.proven !== false,
+      ...(current.previous ? { previous: current.previous } : {}),
+      // A rollback is shown while the version it left is still held back.
+      ...(current.rolledBack && bad?.version === current.rolledBack.from ? { rolledBack: current.rolledBack } : {}),
+      ...(bad ? { bad } : {}),
+    }
+  }
+
+  /** The adapter in use opened a session: it is the last-known-good from now on. */
+  markGood(pkg) {
+    const file = join(this.home, folderOf(pkg), 'current.json')
+    const current = readJson(file)
+    if (!current?.version || current.proven !== false) return
+    try {
+      writeJson(file, { ...current, proven: true })
+    } catch {}
+  }
+
+  /**
+   * The adapter in use did not start. While it is unproven and the version before it is still
+   * on disk, go back to that one: `current.json` names it again, and the failed version is
+   * held back for BAD_TTL_MS.
+   * @returns {{ path: string, version: string } | undefined} the adapter now in use, when it changed
+   */
+  rollback(pkg, bin, reason) {
+    const folder = join(this.home, folderOf(pkg))
+    const file = join(folder, 'current.json')
+    const current = readJson(file)
+    if (!current?.version || current.proven !== false || !current.previous || current.previous === current.version) return undefined
+    if (!existsSync(join(folder, current.previous, 'node_modules', ...pkg.split('/'), bin))) return undefined
+    const why = homeRelativeText(redactText(String(reason?.message ?? reason ?? 'it did not start'))).slice(0, 300)
+    const at = this.now()
+    try {
+      writeJson(file, {
+        version: current.previous,
+        checkedAt: current.checkedAt ?? at,
+        proven: true,
+        bad: { version: current.version, at, reason: why },
+        rolledBack: { from: current.version, to: current.previous, at, reason: why },
+      })
+    } catch {
+      return undefined
+    }
+    this.log(`${pkg}@${current.version} did not start (${why}); back on ${current.previous}`)
+    return this.binOf(pkg, bin)
+  }
+
   /** Install the newest release unless it is already here and was checked within a day. */
   update(pkg, bin, { force = false } = {}) {
     const busy = this.running.get(pkg)
@@ -252,6 +323,14 @@ export class AdapterStore {
     if (signal.aborted) throw new Error('install stopped: DSH is quitting')
     mkdirSync(folder, { recursive: true })
     this.dropStale(folder)
+    // A release that failed its start check here stays out until a newer one is published or
+    // its hold runs out; the adapter in use goes on.
+    const held = current?.bad?.version === version && this.now() - current.bad.at < BAD_TTL_MS
+    if (held && have) {
+      writeJson(join(folder, 'current.json'), { ...current, checkedAt: this.now() })
+      return have
+    }
+    let installedNew = false
     if (have?.version !== version) {
       const tmp = join(folder, `.install-${process.pid}-${this.now()}`)
       rmSync(tmp, { recursive: true, force: true })
@@ -266,6 +345,30 @@ export class AdapterStore {
         if (!existsSync(join(tmp, 'node_modules', ...pkg.split('/'), bin))) throw new Error(`${pkg}@${version} installed without ${bin}`)
         const bundled = platformPackages(tmp)
         if (bundled.length > 0) throw new Error(`${pkg}@${version} installed the CLIs it bundles (${bundled.join(', ')}); refused`)
+        // Start it before it replaces the one in use. With nothing in use there is no
+        // last-known-good to keep: a first install is promoted either way, unproven.
+        let failed
+        try {
+          await this.check?.(pkg, { path: join(tmp, 'node_modules', ...pkg.split('/'), bin), version })
+        } catch (error) {
+          failed = error
+        }
+        if (signal.aborted) throw new Error('install stopped: DSH is quitting')
+        if (failed !== undefined && have) {
+          const why = homeRelativeText(redactText(String(failed?.message ?? failed))).slice(0, 300)
+          const at = this.now()
+          rmSync(tmp, { recursive: true, force: true })
+          writeJson(join(folder, 'current.json'), {
+            ...current,
+            version: have.version,
+            checkedAt: at,
+            bad: { version, at, reason: why },
+            rolledBack: { from: version, to: have.version, at, reason: why },
+          })
+          this.log(`${pkg}@${version} failed its start check (${why}); staying on ${have.version}`)
+          return have
+        }
+        if (failed !== undefined) this.log(`${pkg}@${version} failed its start check (${failed?.message ?? failed}); installed anyway: nothing else is here`)
         const target = join(folder, version)
         rmSync(target, { recursive: true, force: true })
         renameSync(tmp, target)
@@ -276,10 +379,25 @@ export class AdapterStore {
         this.installing.delete(tmp)
       }
       this.log(`installed ${pkg}@${version}`)
+      installedNew = true
     }
-    writeJson(join(folder, 'current.json'), { version, checkedAt: this.now(), ...(have && have.version !== version ? { previous: have.version } : current?.previous ? { previous: current.previous } : {}) })
-    // Keep the one in use and the one before it (a Session may still run it); drop the rest.
-    const keep = new Set([version, have?.version].filter(Boolean))
+    const previous = have && have.version !== version ? have.version : current?.previous
+    // A new release is unproven until it has opened a session (markGood); one already in use
+    // keeps what it was.
+    const proven = installedNew ? false : current?.proven !== false
+    // A held-back release is remembered only while the adapter it was kept out for is in use:
+    // once a newer release took its place, that rollback is over.
+    const bad = !installedNew && current?.bad?.version !== undefined && current.bad.version !== version && this.now() - current.bad.at < BAD_TTL_MS ? current.bad : undefined
+    writeJson(join(folder, 'current.json'), {
+      version,
+      checkedAt: this.now(),
+      ...(previous && previous !== version ? { previous } : {}),
+      ...(proven ? {} : { proven: false }),
+      ...(bad ? { bad, ...(current.rolledBack?.from === bad.version ? { rolledBack: current.rolledBack } : {}) } : {}),
+    })
+    // Keep the one in use and the one before it (a Session may still run it, and an unproven
+    // release goes back to it); drop the rest.
+    const keep = new Set([version, have?.version, proven ? undefined : previous].filter(Boolean))
     for (const name of readdirSync(folder)) {
       if (name === 'current.json' || name.startsWith('.') || keep.has(name)) continue
       rmSync(join(folder, name), { recursive: true, force: true })
