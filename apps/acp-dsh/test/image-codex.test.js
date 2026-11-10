@@ -19,9 +19,9 @@ const CODEX = process.env.AUTOMAGIK_TEST_CODEX
 const skip = ADAPTER && CODEX ? false : 'set AUTOMAGIK_TEST_CODEX_ACP and AUTOMAGIK_TEST_CODEX to run against a real Codex'
 
 function home(t, config = '') {
-  // Codex matches a project's trust entry against the folder it resolved, and the macOS temp
-  // folder is reached through the /var -> /private/var symlink: name it as Codex will.
-  const root = realpathSync(mkdtempSync(join(tmpdir(), 'acp-image-codex-')))
+  // The root stays as mkdtemp names it: the macOS temp folder is reached through a symlink,
+  // and the product must resolve the run's folder before it trusts or starts in it.
+  const root = mkdtempSync(join(tmpdir(), 'acp-image-codex-'))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   for (const dir of ['home', 'codex', 'cwd']) mkdirSync(join(root, dir))
   if (config !== '') writeFileSync(join(root, 'codex', 'config.toml'), config)
@@ -36,7 +36,7 @@ const cli = (launch, args) => new Promise((resolve, reject) => {
 test('real Codex: the shipped lists pass, and the tools left are the allowed ones', { skip }, async (t) => {
   const { root, launch } = home(t)
   const made = await imageSetup(launch, { cwd: join(root, 'cwd') })
-  assert.deepEqual(made.overrides.projects, { [join(root, 'cwd')]: { trust_level: 'trusted' } })
+  assert.deepEqual(made.overrides.projects, { [realpathSync(join(root, 'cwd'))]: { trust_level: 'trusted' } })
   assert.deepEqual(made.servers, [])
   for (const name of made.extras) assert.ok(IMAGE_FEATURES_ALSO_OFF.includes(name))
   const offered = readOffered(await cli(launch, ['debug', 'prompt-input', ...configArgs(made.overrides)]))
@@ -76,6 +76,7 @@ test('real Codex: the person\'s own MCP servers and skills are turned off by the
   mkdirSync(join(root, 'cwd', '.codex'))
   writeFileSync(join(root, 'cwd', '.codex', 'config.toml'), '[mcp_servers.of_the_folder]\ncommand = "true"\n')
   const inside = await imageSetup(launch, { cwd: join(root, 'cwd') })
+  assert.deepEqual(inside.overrides.projects, { [realpathSync(join(root, 'cwd'))]: { trust_level: 'trusted' } })
   assert.deepEqual(inside.servers.toSorted(), ['docs.search', 'of_the_folder', 'plain'])
   assert.deepEqual(inside.overrides.mcp_servers.of_the_folder, { enabled: false })
 })
