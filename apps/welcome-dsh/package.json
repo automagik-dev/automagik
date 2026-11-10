@@ -72,8 +72,8 @@
   "automagik": {
     "omni": {
       "repository": "https://github.com/automagik-dev/omni",
-      "version": "2.261108.2",
-      "commit": "8f07f40bfb165741b3c0f48bce5b0f597dbef174"
+      "version": "2.261109.2",
+      "commit": "de4489d98aee9d92b3a9822825a9e18dd6a0b27a"
     },
     "genie": {
       "repository": "https://github.com/automagik-dev/genie",
