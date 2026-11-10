@@ -296,8 +296,9 @@ updater (the herdr lane's pack pointer).
 
 **Recommended:**
 
-1. **Fix-only from this RFC's acceptance** until the app's Code mode ships (deliveries 1 and 2 in a stable release):
-   security and breakage fixes on the herdr lane as today; no new features in the pack's UI.
+1. **Fix-only from this RFC's acceptance** until the app's Code mode ships (deliveries 1 and 2 in
+   a stable release): security and breakage fixes on the herdr lane as today; no new features in
+   the pack's UI.
 2. **One last pack release** after the app's Code mode ships. Its update notice says Code now
    lives in the Automagik app, with a link. Installed packs keep working; nothing switches them
    off remotely, and the pack never deletes data. The herdr-lane pointer is signed one last time;
@@ -314,8 +315,8 @@ updater (the herdr lane's pack pointer).
   product, glue only", "Code is herdr-app, used exactly as today with its mods", and "Nothing in
   Herdr is rebuilt" as a ban on drawing terminals in the app. Kept in a narrow sense: the app does
   not rebuild herdr-app's spaces, tabs, splits or layouts.
-- **Deliveries 1-6 stand** until deliveries 1 and 2 here ship in a stable release: the switch keeps raising herdr-app for
-  people who use it, then is replaced by the flip.
+- **Deliveries 1-6 stand** until deliveries 1 and 2 here ship in a stable release: the switch
+  keeps raising herdr-app for people who use it, then is replaced by the flip.
 - **Delivery 7 (one install) stands, re-scoped:** the code set installs herdr-core and `am`, not
   herdr-app and the pack.
 - **Delivery 8 (shared Bots) stands for its desktop and plugin parts:** one Bot id in both
@@ -405,9 +406,9 @@ fake ledgers and a herdr-core started for the test, never a live Herdr install.
 4. **Route, then model, and the handoff note** (plugin; after Q13 and Q14, and the owner's
    drawing approved). *Check:* the routes list Native, ACP, Herdr in that order; each bot type
    lists only the routes Q13 gives it (a DSH bot: Native only); a route change warns before the
-   person confirms; the note is written by the old harness, falls back to the plain note when the old
-   harness fails, is redacted (a saved secret in the transcript never appears in it), and the
-   new conversation starts with it as a card; a model change inside a route keeps the
+   person confirms; the note is written by the old harness, falls back to the plain note when
+   the old harness fails, is redacted (a saved secret in the transcript never appears in it),
+   and the new conversation starts with it as a card; a model change inside a route keeps the
    conversation. *Rollback:* today's menu and RFC 0003's replay.
 5. **Automations and Accounts as pages** (plugin and am). *Check:* the page lists, adds and
    removes an automation through the `herdr-automations` CLI's `--json`, and a quota switch
