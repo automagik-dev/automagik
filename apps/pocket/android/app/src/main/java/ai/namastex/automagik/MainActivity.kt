@@ -591,7 +591,7 @@ fun statusLabel(word: String, kind: String) = stateName(word).let { if (word == 
 /** A count in a small card, as Today's header and a project's show them. [onClick] makes it open Home's deck. */
 @Composable fun CountCard(number: Int, text: String, color: Color, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
     Column(modifier.clip(RoundedCornerShape(12.dp)).background(Surface).border(1.dp, Border, RoundedCornerShape(12.dp))
-        .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier).padding(12.dp, 10.dp)) {
+        .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier).padding(TodayTiles.PAD_DP.dp, 10.dp)) {
         Text(number.toString(), color = color, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
         TileLabel(text)
     }

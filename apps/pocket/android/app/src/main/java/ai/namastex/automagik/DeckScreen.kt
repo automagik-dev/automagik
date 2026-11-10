@@ -36,7 +36,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** A card's menu read: [done] separates "not read yet" from a read that found no menu. */
 private data class MenuRead(val menu: Prompt.Menu?, val done: Boolean)
@@ -84,6 +86,10 @@ class DeckMemory {
     LaunchedEffect(view is Teams.DeckView.Clear) { memory.complete = view is Teams.DeckView.Clear }
     // The card being answered stays composed through its exit, even if Home has already dropped it.
     var leaving by remember { mutableStateOf<Teams.DeckCard?>(null) }
+    // The animation may never report (software rendering or animations off); advance on the clock instead.
+    LaunchedEffect(leaving) {
+        if (leaving != null) { delay(Teams.DECK_EXIT_MS); leaving = null }
+    }
     val showing = leaving ?: (view as? Teams.DeckView.Cards)?.cards?.firstOrNull()
     // Read the cards behind the top one before they arrive, so a swipe does not show a terminal-only frame.
     val menuCache = remember { mutableStateMapOf<String, MenuRead>() }
@@ -146,7 +152,7 @@ class DeckMemory {
         // The Scaffold's snackbar sits under this layer; answer outcomes overlay it here without moving the card.
         message?.takeIf { it.isNotBlank() }?.let {
             Text(it, color = Ink, fontSize = 13.sp, lineHeight = 18.sp, textAlign = TextAlign.Center,
-                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 124.dp).fillMaxWidth()
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 193.dp).fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp)).background(Raised).border(1.dp, Border, RoundedCornerShape(12.dp))
                     .padding(horizontal = 12.dp, vertical = 10.dp))
         }
@@ -184,10 +190,15 @@ class DeckMemory {
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     // Read again every 2 s, as the terminal screen does: a menu that wasn't drawn yet, or changed, shows its answers.
     // Not while the app is stopped ([Background.poll]). A chat card has no terminal menu to read.
+    var sending by remember { mutableStateOf(false) }
     var read by remember(card.ref, card.chat) { mutableStateOf(initialMenuDone) }
     val menu by produceState<Prompt.Menu?>(initialMenu, card.ref, card.chat) {
         if (card.chat != null) { value = null; read = true; return@produceState }
-        Background.poll(lifecycle.started(), 2_000) { vm.readMenu(card.ref) }.collect { value = it; read = true }
+        Background.poll(lifecycle.started(), 2_000) { vm.readMenu(card.ref) }.collect {
+            // A leaving card keeps the menu it was answered from; the agent is moving on by then.
+            value = Teams.deckMenu(value, it, sending)
+            read = true
+        }
     }
     val waitingForMenu = !read && card.chat == null && card.kind == "permission"
     val choices = remember(menu, card.kind, card.chat) {
@@ -195,7 +206,6 @@ class DeckMemory {
     }
     val yes = choices.firstOrNull()
     val no = choices.lastOrNull()?.takeIf { choices.size >= 2 }
-    var sending by remember { mutableStateOf(false) }
     val dx = remember { Animatable(0f) }
     val dy = remember { Animatable(0f) }
     val threshold = with(LocalDensity.current) { 110.dp.toPx() }
@@ -214,7 +224,10 @@ class DeckMemory {
             if (sent) {
                 // Count before the exit so the All clear sentence is right even if Home drops the card first.
                 onAnswered()
-                scope.launch { dx.animateTo(direction * 1400f, tween(180)); onGone() }
+                scope.launch {
+                    withTimeoutOrNull(Teams.DECK_EXIT_MS) { dx.animateTo(direction * 1400f, tween(180)) }
+                    onGone()
+                }
             } else {
                 sending = false
                 scope.launch { launch { dx.animateTo(0f, tween(180)) }; dy.animateTo(0f, tween(180)) }

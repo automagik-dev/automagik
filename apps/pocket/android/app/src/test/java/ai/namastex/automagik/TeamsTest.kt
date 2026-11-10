@@ -2,7 +2,9 @@ package ai.namastex.automagik
 
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.File
@@ -556,6 +558,17 @@ class TeamsTest {
         // A machine dropped while another is still connected: its waiting cards are offline, not all clear.
         assertEquals(Teams.DeckView.Offline(1), Teams.deckView(emptyList(), emptySet(), anyConnected = true, waiting = 0, offline = 1))
         assertEquals(Teams.DeckView.Clear, Teams.deckView(emptyList(), emptySet(), anyConnected = true, waiting = 0, offline = 0))
+    }
+
+    @Test fun aLeavingCardKeepsItsMenuAndTheDeckAdvancesWithoutAnAnimation() {
+        val menu = Prompt.Menu(listOf("1. Yes", "2. No"), 0, "Run?")
+        val next = menu.copy(cursor = 1)
+        assertSame(menu, Teams.deckMenu(menu, null, sending = true))
+        assertSame(menu, Teams.deckMenu(menu, next, sending = true))
+        assertSame(next, Teams.deckMenu(menu, next, sending = false))
+        assertFalse(Teams.deckExitDone(0))
+        assertFalse(Teams.deckExitDone(249))
+        assertTrue(Teams.deckExitDone(250))
     }
 
     @Test fun eachPreviewRequestShowsItsOwnCommand() {

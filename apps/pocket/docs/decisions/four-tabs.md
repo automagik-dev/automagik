@@ -47,13 +47,13 @@ placement and the progress strip do not.
   Home carries the agents that need you (Today's badge), Team the bots that need you.
 - Home is `OverviewScreen` with no space (`MainActivity.kt:402`), the spend tile `SpendCount`
   (`MainActivity.kt:447`). `ProjectsTest.homeShowsTodaysCountsAndCarriesItsBadge` checks its counts.
-- Home's needs-you deck (`DeckScreen.kt:74`): one card per entry of Home's own Needs you list, the
+- Home's needs-you deck (`DeckScreen.kt:76`): one card per entry of Home's own Needs you list, the
   list its count tile, badge and cards use (`Teams.deckCards`, `Teams.kt:355`). Right is Yes, left is
   No, up opens the chat or terminal; the same three buttons sit under the card, with the YES/NO
   stamps as the card leans. The header counts the cards left. A row with a Bot chat and no terminal
   opens the chat instead of sending keys. `Teams.deckView` (`Teams.kt:376`) and `Teams.swipe`
-  (`Teams.kt:395`) hold the end state and the gesture rule; `Teams.deckAfterSelection`
-  (`Teams.kt:387`) keeps the deck through a card's Back and closes it for any other selection.
+  (`Teams.kt:403`) hold the end state and the gesture rule; `Teams.deckAfterSelection`
+  (`Teams.kt:395`) keeps the deck through a card's Back and closes it for any other selection.
   `PocketApp` owns the open state
   (`MainActivity.kt:127`), and Home's needs-you count tile and **Review** bar open it
   (`MainActivity.kt:441`, `:470`), so a later "Answer all" button opens the same screen. A card's

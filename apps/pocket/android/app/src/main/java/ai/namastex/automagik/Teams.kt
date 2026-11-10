@@ -380,6 +380,14 @@ object Teams {
         return if (lost > 0) DeckView.Offline(lost) else DeckView.Clear
     }
 
+    /** The deck's exit window: after this the deck advances even if the exit animation never reported back. */
+    const val DECK_EXIT_MS = 250L
+    fun deckExitDone(elapsedMs: Long) = elapsedMs >= DECK_EXIT_MS
+
+    /** A leaving card keeps its last menu; a new read lands only while the card is not leaving. */
+    fun deckMenu(current: Prompt.Menu?, incoming: Prompt.Menu?, sending: Boolean): Prompt.Menu? =
+        if (sending) current else incoming
+
     /**
      * The deck's open state and "opened from the deck" flag after a selection: Back from a card opened from the deck
      * keeps the deck and clears the flag; a selection from anywhere else closes it.
