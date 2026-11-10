@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | In delivery (deliveries 1-6: #817, #825, #827, #835, #875; #849 closed, carried by #875; delivery 7 (reaching machines) is not delivered; 8 open; Q1-Q6 answered by Chat 2026-11-09, Decided 5 and 6 reopened by the owner 2026-11-10) |
+| Status | In delivery (deliveries 1-6: #817, #825, #827, #835, #875; #849 closed, carried by #875; delivery 7 (reaching machines) is not delivered; 8 open; Q1-Q6 answered by Chat 2026-11-09, Decided 5 and 6 reopened by the owner 2026-11-10; amended by [RFC 0026](0026-bot-tag-coverage.md) (#914), 2026-11-10) |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | none here (docs); herdr (3.N.P) for ledger rows; meter (3.N.P, RFC 0017) for the crate |
 | Created | 2026-11-09 |
@@ -84,16 +84,26 @@ owner's ask to compare bots across agents:
 4. **The backfill**: the operator runs it once per machine after delivery 7, back to the later
    of the oldest ledger row and the retention bound; earlier hours stay unknown. Decided by Chat,
    2026-11-09: explicit and bounded.
-5. **dsh-tui seats stay unlinked for now.** Decided by Chat, 2026-11-09: no record ties them to a
-   terminal, and DSH's live session index is a private file whose format may change. Later,
-   either DSH records the terminal it runs in, or Herdr labels a dsh-tui pane with its session id
-   when it learns it (a resume), which (f) 5 then writes as a session row.
-6. **Linked-machine panes are unknown** until a fleet query is designed (RFC 0018's question 3):
-   such a launch has its rows on one computer and its logs on another. Decided by Chat,
-   2026-11-09: neither meter can link it without guessing.
+5. **dsh-tui seats are tagged where a record ties them to a terminal.** Reopened by the owner,
+   2026-11-10: the 2026-11-09 decision left them unlinked. DSH records the pane's terminal id in
+   the session's start line, from `HC_TERMINAL_ID`, which hc already sets in a pane; the meter
+   links that session to the launch on the terminal, and the seat's `bot` label names it. Where
+   the pack knows a session id, its session row or `agent.session` label is the second witness;
+   for dsh-tui it often does not (`-c` restarts write none), so DSH's field is the record for
+   such a seat. What stays unknown: a session started before DSH writes the field, a pane without
+   the variable, a launch with no record. RFC 0026 (d), (e).
+6. **Linked machines' bots are tagged by their own machine's meter.** Reopened by the owner,
+   2026-11-10: they are tagged too. A linked machine runs its own meter and store, so its local
+   usage and its workers are tagged there; a seat started elsewhere has its attach row only in
+   the starting machine's ledger, so the linked machine will tag it by its pane's `bot` label
+   through a session record (a Herdr-chosen Claude id in RFC 0026 delivery 5, DSH's terminal
+   field in delivery 4), else names it unknown. The fleet coverage is the token-weighted sum of
+   the machines' answers (RFC 0026 (e)), never a session-level join. `other_machine` stays for a
+   call whose sole record is another machine's (a moved log). Replicated records would need a
+   fleet-wide session key; RFC 0026 (e) says why it is not built and leaves it to Chat.
 
-*Reopened by the owner, 2026-11-10, after later work:* Decided 5 and 6 are open again; Decided 1
-to 4 stand.
+*Reopened by the owner, 2026-11-10, after later work:* Decided 5 and 6 are replaced above, in
+RFC 0026 (d) and (e), ruled by Chat and acked by genie on 2026-11-10; Decided 1 to 4 stand.
 
 Proposed here: everything else.
 
@@ -122,7 +132,7 @@ overwrite what the start row recorded.
 | claude | session (start or session row); label; worktree | session (start or session row); label |
 | codex | worktree; label (`revive.session`) | label; session row when Herdr learns it |
 | omp | worktree; label (`revive.session`) | label; session row when Herdr learns it |
-| dsh-tui | worktree (the header's `cwd`) | none yet (Decided, 5) |
+| dsh-tui | worktree (the header's `cwd`) | the header's terminal, else a session row (Decided, 5) |
 | agy | later: the conversation's workspace folder | later |
 
 - **Claude** sessions are the best covered: Herdr can choose a new Claude session's id itself
@@ -137,8 +147,10 @@ overwrite what the start row recorded.
   when it carries a session id on a restart or resume (f). The pack never sets `revive.session`
   itself (an outside reviver does), so a fresh codex or omp seat has no session row until its
   first restart or resume; that gap is accepted below.
-- **dsh-tui** workers resolve by worktree from the session header's `cwd`. A dsh-tui seat has no
-  session-to-terminal record yet; Decided 5 says how one could come.
+- **dsh-tui** workers resolve by worktree from the session header's `cwd`. A dsh-tui seat is
+  tied to its launch by the terminal id the session header carries, which DSH records from the
+  pane's environment (Decided, 5), else by a session row or a label the snapshot saw when the
+  pack knows the id. A session with none of them stays unlinked; RFC 0026 (d).
 - **agy** is later: the meter has no agy source yet. Its conversations record their workspace
   folder, so its workers resolve by worktree once Herdr launches agy workers with start rows.
 
@@ -351,6 +363,11 @@ Contract 1's branch rows keep their meaning. Additive, so genie reads them only 
   filter, that usage could belong to a branch named, so its rows are `partial` while
   `unattributed` is above zero, as branch rows are.
 
+**The reasons narrow as RFC 0026's records land (amended 2026-11-10).** `dsh_tui_seat` is a
+dsh-tui session no record ties to a terminal, and `other_machine` a call whose only record is
+another machine's; both stay for what is genuinely unknown. The five reasons, their states and
+their sums are unchanged; RFC 0026 carries the coverage metric these counts feed.
+
 **A window that straddles `evidence_from`.** Two rules would keep "unknown is never 0":
 
 | | A. A fourth count, `tokens_before_evidence` | B. The whole `actor` object null |
@@ -480,6 +497,9 @@ parent's file is gone, the session the fork's header names as its seed, if DSH r
   branches). Delivery 2 also updates RFC 0018's envelope and row tables for the fields above.
 - RFC 0017's delivery 4 Check gains "RFC 0021 delivery 2 merged (enum widened)", amended by that
   delivery (#822) with the lane's hold.
+- Amended 2026-11-10 by RFC 0026: the dsh-tui session header's terminal id (DSH's format,
+  additive), the coverage report (a local verb, not contract 1) and the fleet coverage record
+  (local, the pack's). Query contract 1 and the store's schema 3 are unchanged.
 - Unchanged: the `herdr-meter` doc stays `schema_version` 2; its `tasks[].bots` simply fills in.
 
 ## Threat model
@@ -526,7 +546,8 @@ release.
      apart (genie mints its short ids per clone): such tasks are refused or marked ambiguous, or
      genie makes its ids unique per repo. Delivery 2's enum and M3's task row agree on it.
    - D5: `actor_unattributed` gives distinct reasons for usage whose launch row is on another
-     machine (Decided, 6) and for dsh-tui seats (Decided, 5), so a card can say why.
+     machine (Decided, 6; RFC 0026 (e)) and for dsh-tui seats (Decided, 5; RFC 0026 (d)), so a
+     card can say why.
    - Reviewer: the order against RFC 0017's delivery 4, which is scheduled in parallel, is
      enforced, not only stated: RFC 0017's delivery 4 Check gains "RFC 0021 delivery 2 merged
      (enum widened)", or a schema test in the crate fails while `attribution.precision` lacks
@@ -557,10 +578,11 @@ release.
    - D5: `actor_unattributed` has `tokens_total`, `tokens_ambiguous`, `tokens_unlinked`,
      `tokens_before_evidence` and `parts`, one per reason with usage, each with its `state`
      (`ambiguous`, `unlinked`, `before_evidence`), `tokens_total` and `harnesses`. The reasons:
-     `claimants_differ`; `no_record`; `dsh_tui_seat` (Decided, 5); `other_machine` (Decided, 6),
-     where this machine's hc or ledgers show the terminal was started from another computer,
-     else `no_record`; `before_evidence`. Each part carries its state, so a reader that meets a
-     reason added later still knows which count it is in.
+     `claimants_differ`; `no_record`; `dsh_tui_seat` (Decided, 5; RFC 0026 (d));
+     `other_machine` (Decided, 6; RFC 0026 (e)), where this machine's hc or ledgers show the
+     terminal was started from another computer, else `no_record`; `before_evidence`. Each part
+     carries its state, so a reader that meets a reason added later still knows which count it
+     is in.
    - A bot with no row is 0 only when `actor_unattributed.absent_bot_is_zero` is true: a
      `--by bot` answer, nothing unattributed to a bot, and RFC 0018's zero conditions for the
      whole answer, `unattributed` 0 included under a branch filter ((d)); else unknown.
@@ -650,18 +672,31 @@ release.
 
 agy follows once the meter has an agy source and Herdr launches agy workers with start rows.
 
+Amended 2026-11-10: RFC 0026 adds the dsh-tui terminal record (its delivery 4) and the fleet
+coverage (its delivery 5); they change none of this order, and delivery 8's backfill is the
+measurement RFC 0026 (i) describes.
+
 ## Open questions
 
-Decided 5 and 6 were reopened by the owner on 2026-11-10, after later work; the other four stand.
-The six questions this RFC asked were decided by Chat on 2026-11-09 (Decided, 1 to 6).
+The six questions this RFC asked were decided by Chat on 2026-11-09 (Decided, 1 to 6). Decided 5
+and 6 were reopened by the owner on 2026-11-10 and replaced above; their mechanisms are RFC 0026
+(d) and (e), and genie ACKed this amendment on 2026-11-10.
+
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: #897, #898, #899, #915.
+- Merged changes that cite this RFC: #817, #822, #825, #827, #834, #835, #875 (last merged 2026-11-10).
 
 ## Links
 
 - RFCs: [0017](0017-usagemeter-crate.md), the crate, the meter lane (deliveries 4 to 6) and the
   build rule; [0018](0018-meter-query-contract.md), the query contract, the evidence contract (b),
-  slice M3 and the invariants; [0014](0014-shared-bot-registry.md), the shared Bot registry.
-- Pull requests: #798 (the sync finds hc); automagik-dev/usagemeter#6 (the worker-ledger reader
-  and its review).
+  slice M3 and the invariants; [0014](0014-shared-bot-registry.md), the shared Bot registry;
+  [0026](0026-bot-tag-coverage.md), which re-decides 5 and 6 and measures the coverage they move.
+- Pull requests: #798 (the sync finds hc); #875 (delivery 6, the query's actors); #897 (the
+  bot-tag coverage outcome); automagik-dev/usagemeter#6 (the worker-ledger reader and its review).
 - Crate: `meter/usagemeter/src/ledger.rs`, `sync.rs` (`Attributor`), `hc.rs` (`LiveTerminal`),
   `store.rs` (`usage`, `sessions`), `sources/dsh_tui.rs`, `query.rs`;
   `meter/schema/query/v1/envelope.schema.json`.

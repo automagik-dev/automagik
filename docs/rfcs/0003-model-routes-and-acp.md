@@ -606,6 +606,13 @@ the next check or the existing `retry(id)` service. Shutdown cancels incomplete 
 This amends D17's desktop CLI ownership only. Adapter installation, authentication, model
 selection, the conversation UI and the existing model-enable switches keep their own contracts.
 
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: none.
+- Merged changes that cite this RFC: #186, #187, #189, #349, #520, #522, #537, #557, #559, #569 (last merged 2026-11-06).
+
 ## Links
 
 - #130 per-teammate models (runtime patch)

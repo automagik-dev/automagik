@@ -13,7 +13,7 @@ import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 
 export const LANE_KEYS = Object.freeze(JSON.parse(readFileSync(new URL('./lane-keys.json', import.meta.url), 'utf8')).keys)
-export const RELEASES = 'https://github.com/automagik-dev/automagik/releases/download/'
+export const RELEASES = 'https://github.com/automagik-si/automagik/releases/download/'
 const SCHEMA_VERSION = 1
 const MAX_TARBALL = 64 * 1024 * 1024
 const TIMEOUT_MS = 60_000

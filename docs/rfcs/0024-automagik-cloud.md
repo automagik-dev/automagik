@@ -728,7 +728,8 @@ host name, issuer or client id in a test or a default config.
    (organisations, scoped API keys, email-bound invitations, federation, SCIM); passkeys on
    `localhost` and platform authenticators per OS and browser; `safeStorage` without a Linux secret
    store; what a desktop mask needs per OS ((d)). *Check:* a written record, private where it names
-   hosts. *Rollback:* none needed.
+   hosts. *Record:* [the public evidence record](../cloud/0024-delivery-0-evidence.md).
+   *Rollback:* none needed.
 1. **Desktop secure storage and RFC 8252 sign-in** (desktop, 3.N; first, Decided 11; behind a
    setting, with no Cloud yet). `safeStorage` with the Linux fallback detected; the system-browser
    flow with PKCE, `state`, `nonce`, issuer and audience checks and the exact loopback redirect.
@@ -879,6 +880,13 @@ principals are keyed by `(issuer, sub)`. Arca keeps its own sign-in (its own pas
     reviewer's narrower alternative, members and guests limited to Bots with no shell or file tools
     in the meantime, is not recommended: a Bot's tools change over time, and one mistake makes a
     member owner-equivalent ((f)).
+
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: #902, #903, #904, #905, #906, #907, #908, #909, #910, #911, #912.
+- Merged changes that cite this RFC: #866, #888, #913 (last merged 2026-11-10).
 
 ## Links
 

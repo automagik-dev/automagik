@@ -174,6 +174,13 @@ also keeps the code off DSH's input triggers and its undo history.
 5. Where does this go first: an issue on DSH's tracker, a patch in the desktop's runtime patches
    (which would make it a desktop release, RFC 0011), or both?
 
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: #871.
+- Merged changes that cite this RFC: #860 (last merged 2026-11-09).
+
 ## Links
 
 - [0003](0003-model-routes-and-acp.md), amendment of 2026-11-09: the workarounds this would remove.

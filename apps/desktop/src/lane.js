@@ -30,7 +30,7 @@ import { compareVersions } from './update.js'
 import { LANE_KEYS } from './lane-keys.js'
 import { tarOf } from './tar.js'
 
-export const LANE_URL = 'https://github.com/automagik-dev/automagik/releases/download/plugin-lane/lane.json'
+export const LANE_URL = 'https://github.com/automagik-si/automagik/releases/download/plugin-lane/lane.json'
 // Each publisher's lane, the keys it is signed with, and the plugins it may replace: a lane never
 // touches another's. `sameLine`: its base is an app release, and the app takes it only on that
 // 3.N line (Automagik's plugins are built against one app). Genie's plugin follows its own
@@ -48,7 +48,7 @@ export const LANE_URL = 'https://github.com/automagik-dev/automagik/releases/dow
 export const AUTOMAGIK_PLUGINS = Object.freeze(['@automagik/bots-dsh', '@automagik/welcome-dsh', '@automagik/acp-dsh', '@automagik/locale-pt-br-dsh'])
 export const PUBLISHERS = Object.freeze([
   { publisher: 'automagik', url: LANE_URL, keys: LANE_KEYS.automagik, sameLine: true, plugins: AUTOMAGIK_PLUGINS },
-  { publisher: 'genie', url: 'https://raw.githubusercontent.com/automagik-dev/genie/lane/lane.json', keys: LANE_KEYS.genie, sameLine: false, plugins: ['@automagik/genie-dsh'] },
+  { publisher: 'genie', url: 'https://raw.githubusercontent.com/automagik-si/genie/lane/lane.json', keys: LANE_KEYS.genie, sameLine: false, plugins: ['@automagik/genie-dsh'] },
 ])
 const SCHEMA_VERSION = 1
 const MAX_TARBALL = 64 * 1024 * 1024

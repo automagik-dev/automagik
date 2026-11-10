@@ -271,7 +271,7 @@ test('the shipped profile bundles the Bot team first, Omni\'s plugins, the welco
   assert.match(patch, /^- id: ui-settings-models\n {2}config:\n {4}credentialOnboarding: false$/m)
   // Automagik's market, where Genie is; pairing adds the Omni's market beside it
   // (apps/omni-channels-dsh omni-link.js).
-  assert.match(patch, /^- id: plugin-market\n {2}config:\n {4}indexes:\n {6}- https:\/\/raw\.githubusercontent\.com\/automagik-dev\/dsh-marketplace\/main\/index\.json$/m)
+  assert.match(patch, /^- id: plugin-market\n {2}config:\n {4}indexes:\n {6}- https:\/\/raw\.githubusercontent\.com\/automagik-si\/dsh-marketplace\/main\/index\.json$/m)
   // Omni's dsh-subscriptions has no local-Ollama fallback to switch off.
   assert.doesNotMatch(patch, /ollamaFallback/)
 })

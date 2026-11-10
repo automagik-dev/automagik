@@ -6,7 +6,7 @@ import { OMNI_PLUGINS } from '../src/host/bot-types.js'
 
 export const PKG = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 export const V = PKG.version
-export const RELEASE = `https://github.com/automagik-dev/automagik/releases/download/v${V}/`
+export const RELEASE = `https://github.com/automagik-si/automagik/releases/download/v${V}/`
 // This repository's release carries none of Unfold's plugins (Refs marketplace/unfold): they are
 // built and tested here, Unfold's own release ships them, and Unfold's own instance brings them
 // bundled. The release fixture serves and lists only what this repository's release carries: the
@@ -28,7 +28,7 @@ export const entryOf = (plugin, bytes = tarballOf(plugin)) => ({
 })
 export const laneOf = ({ version = V, plugins = SHIPPED.map(plugin => entryOf(plugin)) } = {}) => Buffer.from(JSON.stringify({
   schemaVersion: 1, publisher: 'automagik', keyId: 'test-key', sequence: 1, issuedAt: '2026-10-28T00:00:00Z',
-  repository: 'https://github.com/automagik-dev/automagik', version, commit: '0'.repeat(40), base: version, plugins,
+  repository: 'https://github.com/automagik-si/automagik', version, commit: '0'.repeat(40), base: version, plugins,
 }))
 export const signatureOf = bytes => sign(null, bytes, privateKey).toString('base64')
 

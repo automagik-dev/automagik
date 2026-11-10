@@ -21,15 +21,19 @@ import { join } from 'node:path';
 import { parseMarketIndex } from '@deepseek-ai/dsh-plugin-market-index';
 import { VERSION } from './version';
 
-export const REPO_URL = 'https://github.com/automagik-dev/automagik';
+export const REPO_URL = 'https://github.com/automagik-si/automagik';
+/** The old name GitHub still redirects: entries pinned before their part moved still pass. */
+export const LEGACY_REPO_URL = 'https://github.com/automagik-dev/automagik';
+export const REPO_URLS = [REPO_URL, LEGACY_REPO_URL];
 export const INDEX_PATH = join(import.meta.dir, '..', 'marketplace', 'automagik.json');
-export const INDEX_URL = 'https://raw.githubusercontent.com/automagik-dev/automagik/main/marketplace/automagik.json';
+export const INDEX_URL = 'https://raw.githubusercontent.com/automagik-si/automagik/main/marketplace/automagik.json';
 /**
  * The other repositories this index may list: Genie's (its DSH plugin, pinned where the
  * welcome installs it from, apps/welcome-dsh package.json automagik.genie) and the forks
  * Automagik reviewed.
  */
 export const VETTED = [
+  'https://github.com/automagik-si/genie',
   'https://github.com/automagik-dev/genie',
   'https://github.com/automagik-genie/dsh-subscriptions',
 ];
@@ -69,7 +73,7 @@ interface Index {
 }
 
 const isOurs = (source: IndexVersion['source']): source is GitSource =>
-  source.type === 'git' && source.url.replace(/\.git$/, '') === REPO_URL;
+  source.type === 'git' && REPO_URLS.includes(source.url.replace(/\.git$/, ''));
 const isVetted = (source: IndexVersion['source']): source is GitSource =>
   source.type === 'git' && VETTED.includes(source.url.replace(/\.git$/, ''));
 
@@ -107,7 +111,7 @@ export function checkIndex(value: unknown, repoDir: string): string[] {
       const at = `${plugin.name}@${entry.version}`;
       if (isVetted(entry.source)) continue;
       if (!isOurs(entry.source)) {
-        problems.push(`${at}: every source is a commit of ${REPO_URL} or of a vetted fork`);
+        problems.push(`${at}: every source is a commit of ${REPO_URL}, its old name, or a vetted fork`);
         continue;
       }
       const { commit, path = '.' } = entry.source;
