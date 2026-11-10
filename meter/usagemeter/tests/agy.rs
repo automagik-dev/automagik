@@ -128,7 +128,8 @@ CREATE TABLE gen_metadata (idx integer, data blob, size integer NOT NULL DEFAULT
 CREATE TABLE trajectory_metadata_blob (id text DEFAULT 'main', data blob, PRIMARY KEY (id));
 ";
 
-fn write_db(path: &Path, created: i64) {
+/// The schema, the conversation metadata and steps 0-3, with no generation rows yet.
+fn base_db(path: &Path, created: i64) {
     let c = Connection::open(path).unwrap();
     c.execute_batch(DDL).unwrap();
     c.execute(
@@ -153,36 +154,44 @@ fn write_db(path: &Path, created: i64) {
         )
         .unwrap();
     }
+}
+
+/// Writes or replaces one generation row.
+fn put_gen(path: &Path, idx: i64, data: &[u8]) {
+    let c = Connection::open(path).unwrap();
+    c.execute(
+        "INSERT OR REPLACE INTO gen_metadata(idx, data, size) VALUES(?1, ?2, ?3)",
+        params![idx, data, data.len() as i64],
+    )
+    .unwrap();
+}
+
+fn gemini_gen(usage: &[u8], steps: &[u64]) -> Vec<u8> {
+    generation(
+        steps,
+        "exec-1",
+        "gemini-4-argon",
+        "Gemini 4 Argon (High)",
+        usage,
+    )
+}
+
+fn opus_gen(usage: &[u8], steps: &[u64]) -> Vec<u8> {
+    generation(
+        steps,
+        "exec-2",
+        "claude-opus-5-5",
+        "Claude Opus 5.5 (High)",
+        usage,
+    )
+}
+
+fn write_db(path: &Path, created: i64) {
+    base_db(path, created);
     let gemini = usage(1000, 4000, 50, 200, 120);
     let opus = usage(500, 6000, 0, 100, 60);
-    for (idx, data) in [
-        (
-            0,
-            generation(
-                &[1, 2],
-                "exec-1",
-                "gemini-4-argon",
-                "Gemini 4 Argon (High)",
-                &gemini,
-            ),
-        ),
-        (
-            1,
-            generation(
-                &[3],
-                "exec-2",
-                "claude-opus-5-5",
-                "Claude Opus 5.5 (High)",
-                &opus,
-            ),
-        ),
-    ] {
-        c.execute(
-            "INSERT INTO gen_metadata(idx, data, size) VALUES(?1, ?2, ?3)",
-            params![idx, data, data.len() as i64],
-        )
-        .unwrap();
-    }
+    put_gen(path, 0, &gemini_gen(&gemini, &[1, 2]));
+    put_gen(path, 1, &opus_gen(&opus, &[3]));
 }
 
 fn ledger(env: &Env, created: i64) {
@@ -306,6 +315,17 @@ fn a_fixture_conversation_counts_gemini_and_opus_with_a_bot_and_a_session_key() 
     assert_eq!(row["harness"], "agy");
     assert_eq!(row["tokens"]["total"], 11_850);
     assert_eq!(row["tokens"]["reasoning"], 180);
+    // Gemini has no bundled price row: its tokens are visible as unpriced, never silently priced.
+    assert_eq!(row["cost"]["state"], "partial");
+    assert!(
+        row["cost"]["unpriced_models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m == "gemini-4-argon"),
+        "{}",
+        row["cost"]["unpriced_models"]
+    );
     let a = &row["attribution"]["actor"];
     assert_eq!(a["tokens_attributed"], 11_850);
     assert_eq!(a["tokens_unlinked"], 0);
@@ -389,4 +409,185 @@ fn a_full_read_does_not_leave_a_backlog() {
     let r = env.run(&env.opts());
     assert_eq!(r.pending_files, 0, "{r:?}");
     assert!(!r.stopped_by_budget);
+}
+
+/// The summary's agy source status and reason.
+fn agy_source(doc: &serde_json::Value) -> (String, String) {
+    let s = &doc["sources"]["agy"];
+    (
+        s["status"].as_str().unwrap_or("").to_string(),
+        s["reason"].as_str().unwrap_or("").to_string(),
+    )
+}
+
+#[test]
+fn a_refused_row_stays_unsupported_after_a_second_sync() {
+    let env = Env::new();
+    let path = env.agy("conv-refused.db");
+    write_db(&path, at("2026-01-15T09:55:00Z"));
+    let c = Connection::open(&path).unwrap();
+    c.execute("DELETE FROM steps", []).unwrap();
+    drop(c);
+    for run in 1..=2 {
+        let r = env.run(&env.opts());
+        let (status, reason) = agy_source(&r.summary.expect("a summary"));
+        assert_eq!(status, "unsupported", "run {run}: {reason}");
+        assert!(reason.contains("step time"), "run {run}: {reason}");
+        assert!(
+            env.store()
+                .rows_since(i64::MIN)
+                .unwrap()
+                .iter()
+                .all(|r| r.key.harness != "agy"),
+            "run {run}: a refused row became a zero row"
+        );
+    }
+}
+
+#[test]
+fn a_placeholder_generation_is_read_once_its_usage_arrives() {
+    let env = Env::new();
+    let path = env.agy("conv-placeholder.db");
+    base_db(&path, at("2026-01-15T09:55:00Z"));
+    // A model block with an empty usage block: the row exists before its usage does.
+    put_gen(&path, 0, &gemini_gen(&[], &[1, 2]));
+    put_gen(&path, 1, &opus_gen(&usage(500, 6000, 0, 100, 60), &[3]));
+
+    // The sync clock is just after the generation's steps: the row is recent and incomplete.
+    let mut o = env.opts();
+    o.now_ms = at("2026-01-15T10:03:00Z");
+    let r = env.run(&o);
+    let (status, reason) = agy_source(&r.summary.expect("a summary"));
+    assert_eq!(status, "ok", "{reason}");
+    assert_eq!(
+        r.health.events, 0,
+        "the incomplete row must hold the cursor"
+    );
+    assert!(env.totals().is_empty());
+
+    // The provider fills the row in place: the next sync must still read it.
+    put_gen(
+        &path,
+        0,
+        &gemini_gen(&usage(1000, 4000, 50, 200, 120), &[1, 2]),
+    );
+    let r = env.run(&o);
+    assert_eq!(r.health.events, 2, "{r:?}");
+    let t = env.totals();
+    assert_eq!(t["gemini-4-argon"].total(), 5_250);
+    assert_eq!(t["claude-opus-5-5"].total(), 6_600);
+    let (status, reason) = agy_source(&r.summary.expect("a summary"));
+    assert_eq!(status, "ok", "{reason}");
+}
+
+#[test]
+fn a_reset_with_reused_indices_counts_the_new_generation() {
+    let env = Env::new();
+    let path = env.agy("conv-reset.db");
+    write_db(&path, at("2026-01-15T09:55:00Z"));
+    env.run(&env.opts());
+    assert_eq!(env.totals()["gemini-4-argon"].total(), 5_250);
+
+    // The conversation is reset and reuses index 0 for a new, smaller call.
+    let c = Connection::open(&path).unwrap();
+    c.execute("DELETE FROM gen_metadata", []).unwrap();
+    drop(c);
+    put_gen(&path, 0, &gemini_gen(&usage(2000, 0, 0, 100, 20), &[1, 2]));
+    env.run(&env.opts());
+    let t = env.totals();
+    assert_eq!(t["gemini-4-argon"].total(), 5_250 + 2_100);
+    assert_eq!(t["claude-opus-5-5"].total(), 6_600);
+}
+
+#[test]
+fn an_unknown_only_usage_block_is_refused_by_name() {
+    let env = Env::new();
+    let path = env.agy("conv-unknown-usage.db");
+    base_db(&path, at("2026-01-15T09:55:00Z"));
+    put_gen(&path, 0, &gemini_gen(&uint(99, 3), &[1]));
+    let r = env.run(&env.opts());
+    let (status, reason) = agy_source(&r.summary.expect("a summary"));
+    assert_eq!(status, "unsupported", "{reason}");
+    assert!(reason.contains("none of the fields"), "{reason}");
+    assert!(env.totals().is_empty());
+}
+
+#[test]
+fn an_out_of_range_count_is_refused_by_name() {
+    let env = Env::new();
+    let path = env.agy("conv-negative.db");
+    base_db(&path, at("2026-01-15T09:55:00Z"));
+    let negative = [uint(2, u64::MAX), uint(3, 1)].concat();
+    put_gen(&path, 0, &gemini_gen(&negative, &[1]));
+    let r = env.run(&env.opts());
+    let (status, reason) = agy_source(&r.summary.expect("a summary"));
+    assert_eq!(status, "unsupported", "{reason}");
+    assert!(reason.contains("out of range"), "{reason}");
+    assert!(env.totals().is_empty());
+}
+
+#[test]
+fn a_refused_timeless_row_is_read_when_its_step_arrives() {
+    let env = Env::new();
+    let path = env.agy("conv-late-step.db");
+    write_db(&path, at("2026-01-15T09:55:00Z"));
+    let c = Connection::open(&path).unwrap();
+    c.execute("DELETE FROM steps WHERE idx IN (1, 2)", [])
+        .unwrap();
+    drop(c);
+    let r = env.run(&env.opts());
+    let (status, reason) = agy_source(&r.summary.expect("a summary"));
+    assert_eq!(status, "unsupported", "{reason}");
+    assert!(env.totals().is_empty());
+
+    // The step rows land after the generation row, as a live database may commit them.
+    let c = Connection::open(&path).unwrap();
+    for (idx, secs) in [
+        (1, at("2026-01-15T10:01:00Z") / 1000),
+        (2, at("2026-01-15T10:02:00Z") / 1000),
+    ] {
+        c.execute(
+            "INSERT INTO steps(idx, step_type, status, metadata) VALUES(?1, 15, 3, ?2)",
+            params![idx, step_metadata(secs)],
+        )
+        .unwrap();
+    }
+    drop(c);
+    let r = env.run(&env.opts());
+    let (status, reason) = agy_source(&r.summary.expect("a summary"));
+    assert_eq!(status, "ok", "{reason}");
+    let t = env.totals();
+    assert_eq!(t["gemini-4-argon"].total(), 5_250);
+    assert_eq!(t["claude-opus-5-5"].total(), 6_600);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_read_only_conversation_is_still_read() {
+    use std::os::unix::fs::PermissionsExt;
+    let env = Env::new();
+    let path = env.agy("conv-read-only.db");
+    write_db(&path, at("2026-01-15T09:55:00Z"));
+    let old = fs::metadata(&path).unwrap().permissions();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o444)).unwrap();
+    let r = env.run(&env.opts());
+    fs::set_permissions(&path, old).unwrap();
+    let (status, reason) = agy_source(&r.summary.expect("a summary"));
+    assert_eq!(status, "ok", "{reason}");
+    assert_eq!(r.health.events, 2);
+    assert_eq!(env.totals()["gemini-4-argon"].total(), 5_250);
+}
+
+#[test]
+fn a_malformed_model_blob_is_refused_through_sync() {
+    let env = Env::new();
+    let path = env.agy("conv-bad-model.db");
+    base_db(&path, at("2026-01-15T09:55:00Z"));
+    let g = [bytes(1, b"junk"), bytes(2, &[1])].concat();
+    put_gen(&path, 0, &g);
+    let r = env.run(&env.opts());
+    let (status, reason) = agy_source(&r.summary.expect("a summary"));
+    assert_eq!(status, "unsupported", "{reason}");
+    assert!(reason.contains("model metadata blob"), "{reason}");
+    assert!(env.totals().is_empty());
 }

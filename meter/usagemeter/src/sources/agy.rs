@@ -11,9 +11,9 @@
 //! unknown shape is refused: it makes the source `unsupported` with a named reason instead of
 //! counting zero.
 //!
-//! Nothing here writes the conversation database: it is opened read-only with a busy timeout, and
-//! one query reads the rows. A database in WAL mode may have its `-shm` sidecar created, as any
-//! read-only SQLite open may; no data is written.
+//! Nothing here writes the conversation data: it is opened read-only with a busy timeout, and
+//! checkpoint on close is off. A database in WAL mode may still have its `-wal` and `-shm`
+//! sidecars created or updated by a read-only SQLite open; the database bytes are not rewritten.
 
 use std::collections::HashSet;
 use std::path::Path;
@@ -30,6 +30,15 @@ pub const HARNESS: &str = "agy";
 
 /// How far a conversation's time may be from the sync and still be counted (a clock skew guard).
 const MAX_SKEW_MS: i64 = 2 * DAY_MS;
+/// A count above this is not a token count: it is a negative int64 written as a varint, or
+/// corruption. Either way its call is refused, never counted as `i64::MAX`.
+const MAX_CALL_TOKENS: u64 = 1_000_000_000_000;
+/// The `ModelUsageStats` fields the evidence names. A block with none of them is a shape this
+/// meter does not know; a block with only some (a model and no counts yet) is a known zero call.
+const KNOWN_USAGE_FIELDS: [u64; 16] = [1, 2, 3, 4, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17];
+/// A generation row with no usage block yet is incomplete while its database still changes. After
+/// this long, the row is taken as final (a generation that failed before a model call).
+const INCOMPLETE_MS: i64 = 30 * 60 * 1000;
 
 /// A conversation's read cursor, kept in the file row's JSON context.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,6 +46,10 @@ pub struct AgyCtx {
     /// The highest `gen_metadata.idx` counted. Later runs read only rows above it.
     #[serde(default = "no_generation")]
     pub max_gen: i64,
+    /// A database reset or compacted to lower indices starts a new epoch. Its reused indices are
+    /// new calls then, so they get new dedupe keys; epoch 0 keeps the keys earlier builds wrote.
+    #[serde(default)]
+    pub epoch: i64,
 }
 
 /// Before the first read nothing is counted, and the first row is index 0.
@@ -48,6 +61,7 @@ impl Default for AgyCtx {
     fn default() -> AgyCtx {
         AgyCtx {
             max_gen: no_generation(),
+            epoch: 0,
         }
     }
 }
@@ -69,8 +83,11 @@ pub struct Read {
     pub usage_lines: i64,
     /// Rows whose shape could not be read.
     pub skipped_lines: i64,
-    /// The highest `gen_metadata.idx` processed.
+    /// The highest `gen_metadata.idx` processed. A refused or incomplete row leaves it below
+    /// that row, so the next sync reads it again instead of losing its usage.
     pub max_gen: i64,
+    /// The reset epoch of this read (see [`AgyCtx::epoch`]).
+    pub epoch: i64,
     /// The deadline cut the read short; the next sync continues above [`Read::max_gen`].
     pub stopped: bool,
     /// A row or the file had an unknown shape. The rows already read still count.
@@ -250,28 +267,42 @@ fn trajectory(blob: &[u8]) -> Option<Workspace> {
     Some(Workspace { cwd, repo, branch })
 }
 
-/// `chat_model.usage` and the model strings of one generation.
-#[derive(Debug, Default)]
-struct Generation {
-    model: Option<String>,
-    tokens: Tokens,
-    steps: Vec<i64>,
+/// One `gen_metadata.data` row, decoded as far as it can be.
+#[derive(Debug)]
+enum Decoded {
+    /// A generation with a usage block and the steps it covers.
+    Call {
+        model: Option<String>,
+        tokens: Tokens,
+        steps: Vec<i64>,
+    },
+    /// A row whose usage block is not written yet (or absent): it may be updated in place.
+    Incomplete { steps: Vec<i64> },
 }
 
 /// `ModelUsageStats` inside `ChatModelMetadata.usage`. Input excludes cache reads (the real rows
 /// show a cache read larger than input, so input cannot include it) and output includes thinking.
-fn usage(b: &[u8]) -> Option<Tokens> {
-    let fs = fields(b)?;
-    let count = |no| i64::try_from(uint(&fs, no)).unwrap_or(i64::MAX);
-    let output = count(3);
-    Some(Tokens {
-        input_uncached: count(2),
-        cache_read: count(5),
-        cache_write_5m: count(4),
+fn usage(b: &[u8]) -> Result<Tokens, String> {
+    let fs = fields(b).ok_or("an agy usage block is not the shape this meter reads")?;
+    if !fs.iter().any(|f| KNOWN_USAGE_FIELDS.contains(&f.no)) {
+        return Err("an agy usage block has none of the fields this meter reads".into());
+    }
+    let count = |no| -> Result<i64, String> {
+        let v = uint(&fs, no);
+        if v > MAX_CALL_TOKENS {
+            return Err("an agy token count is out of range".into());
+        }
+        Ok(v as i64)
+    };
+    let output = count(3)?;
+    Ok(Tokens {
+        input_uncached: count(2)?,
+        cache_read: count(5)?,
+        cache_write_5m: count(4)?,
         cache_write_1h: 0,
         output,
         // Thinking is part of output. Never let a bad row make it larger than the output.
-        reasoning: count(9).min(output),
+        reasoning: count(9)?.min(output),
         unsplit: 0,
     })
 }
@@ -284,9 +315,9 @@ fn model_of(fs: &[Field<'_>]) -> Option<String> {
         .and_then(text)
 }
 
-/// One `gen_metadata.data` row. None when the row has no usage block (a generation that failed
-/// before a model call). Err when it has a usage block of an unknown shape.
-fn generation(data: &[u8]) -> Result<Option<Generation>, String> {
+/// Decodes one `gen_metadata.data` row. A model blob that does not parse, or a non-empty usage
+/// block with none of the known fields, is an unknown shape, never a zero-token call.
+fn generation(data: &[u8]) -> Result<Decoded, String> {
     let fs = fields(data).ok_or("an agy generation blob is not the shape this meter reads")?;
     let mut steps = Vec::new();
     for f in &fs {
@@ -304,26 +335,23 @@ fn generation(data: &[u8]) -> Result<Option<Generation>, String> {
             _ => {}
         }
     }
-    let mut found: Option<Generation> = None;
     for cm in subs(&fs, 1) {
-        let Some(cf) = fields(cm) else {
-            continue;
-        };
+        let cf =
+            fields(cm).ok_or("an agy model metadata blob is not the shape this meter reads")?;
         let Some(u) = sub(&cf, 4) else {
             continue;
         };
-        let Some(tokens) = usage(u) else {
-            return Err("an agy usage block is not the shape this meter reads".into());
-        };
-        if found.is_none() {
-            found = Some(Generation {
-                model: model_of(&cf),
-                tokens,
-                steps: std::mem::take(&mut steps),
-            });
+        if u.is_empty() {
+            continue; // a usage block with no fields yet: incomplete, not zero
         }
+        let tokens = usage(u)?;
+        return Ok(Decoded::Call {
+            model: model_of(&cf),
+            tokens,
+            steps,
+        });
     }
-    Ok(found)
+    Ok(Decoded::Incomplete { steps })
 }
 
 /// A step's metadata: field 1 is the time it started.
@@ -375,17 +403,37 @@ fn check_shape(conn: &Connection) -> Result<(), Failure> {
 }
 
 /// Reads every generation above `cursor` from one conversation database. The file is never
-/// written; `deadline` stops the read between rows.
-pub fn read(path: &Path, cursor: i64, deadline: Instant) -> Result<Read, Failure> {
+/// written; `deadline` stops the read between rows. A refused or incomplete row keeps the cursor
+/// below it, so a later sync reads it again rather than losing its usage.
+pub fn read(
+    path: &Path,
+    cursor: i64,
+    epoch: i64,
+    now: i64,
+    deadline: Instant,
+) -> Result<Read, Failure> {
+    let unreadable = || Failure::Unreadable("an agy transcript could not be read this time".into());
+    // A row with no usage block yet waits while its database keeps changing, and is taken as a
+    // failed generation once the database has been quiet for INCOMPLETE_MS.
+    let db_recent = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .is_none_or(|d| now.saturating_sub(d.as_millis() as i64) < INCOMPLETE_MS);
     let conn = Connection::open_with_flags(
         path,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .map_err(|_| Failure::Unreadable("an agy transcript could not be opened this time".into()))?;
+    conn.set_db_config(
+        rusqlite::config::DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE,
+        true,
+    )
+    .map_err(|_| unreadable())?;
     conn.busy_timeout(std::time::Duration::from_secs(2))
-        .map_err(|_| Failure::Unreadable("an agy transcript could not be read this time".into()))?;
+        .map_err(|_| unreadable())?;
     conn.pragma_update(None, "query_only", "ON")
-        .map_err(|_| Failure::Unreadable("an agy transcript could not be read this time".into()))?;
+        .map_err(|_| unreadable())?;
     check_shape(&conn)?;
     let blob: Vec<u8> = conn
         .query_row(
@@ -415,31 +463,26 @@ pub fn read(path: &Path, cursor: i64, deadline: Instant) -> Result<Read, Failure
         .query_row("SELECT coalesce(max(idx), -1) FROM gen_metadata", [], |r| {
             r.get(0)
         })
-        .map_err(|_| Failure::Unreadable("an agy transcript could not be read this time".into()))?;
-    // A conversation that was reset or compacted can reuse lower indices: read from the start
-    // again and let the dedupe set absorb what was counted before.
-    let mut from = cursor;
+        .map_err(|_| unreadable())?;
+    // A conversation reset or compacted to lower indices starts a new epoch and is read from
+    // index -1 (so 0 is included). The dedupe set still drops rows a reset copied, and the new
+    // epoch keeps a reused index from hiding a new call.
+    let (original_epoch, mut from, mut epoch) = (epoch, cursor, epoch);
     if max_db < cursor {
-        from = 0;
+        from = -1;
+        epoch = epoch.saturating_add(1);
     }
     let mut stmt = conn
         .prepare("SELECT idx, data FROM gen_metadata WHERE idx > ?1 ORDER BY idx")
-        .map_err(|_| Failure::Unreadable("an agy transcript could not be read this time".into()))?;
-    let mut rows = stmt
-        .query([from])
-        .map_err(|_| Failure::Unreadable("an agy transcript could not be read this time".into()))?;
+        .map_err(|_| unreadable())?;
+    let mut rows = stmt.query([from]).map_err(|_| unreadable())?;
     let mut gens: Vec<(i64, Vec<u8>)> = Vec::new();
     let mut stopped = false;
-    while let Some(r) = rows
-        .next()
-        .map_err(|_| Failure::Unreadable("an agy transcript could not be read this time".into()))?
-    {
-        let (idx, data): (i64, Vec<u8>) =
-            r.get(0)
-                .and_then(|i| r.get(1).map(|d| (i, d)))
-                .map_err(|_| {
-                    Failure::Unreadable("an agy transcript could not be read this time".into())
-                })?;
+    while let Some(r) = rows.next().map_err(|_| unreadable())? {
+        let (idx, data): (i64, Vec<u8>) = r
+            .get(0)
+            .and_then(|i| r.get(1).map(|d| (i, d)))
+            .map_err(|_| unreadable())?;
         gens.push((idx, data));
         if Instant::now() >= deadline {
             stopped = true;
@@ -447,48 +490,45 @@ pub fn read(path: &Path, cursor: i64, deadline: Instant) -> Result<Read, Failure
         }
     }
     drop(rows);
-    let mut out = Read {
-        max_gen: from,
-        ..Read::default()
-    };
-    let mut decoded = Vec::with_capacity(gens.len());
+    let mut decoded: Vec<(i64, Result<Decoded, String>)> = Vec::with_capacity(gens.len());
     let mut wanted: HashSet<i64> = HashSet::new();
     for (idx, data) in gens {
-        match generation(&data) {
-            Ok(Some(g)) => {
-                wanted.extend(g.steps.iter().copied());
-                decoded.push((idx, g));
+        let d = generation(&data);
+        match &d {
+            Ok(Decoded::Call { steps, .. }) | Ok(Decoded::Incomplete { steps }) => {
+                wanted.extend(steps.iter().copied());
             }
-            Ok(None) => {
-                out.usage_lines += 1;
-                out.max_gen = out.max_gen.max(idx);
-            }
-            Err(why) => {
-                out.skipped_lines += 1;
-                out.shape.get_or_insert(why);
-                out.max_gen = out.max_gen.max(idx);
-            }
+            _ => {}
         }
+        decoded.push((idx, d));
     }
+    let mut wanted: Vec<i64> = wanted.into_iter().collect();
+    wanted.sort_unstable();
     let mut times: std::collections::HashMap<i64, i64> = std::collections::HashMap::new();
-    if !wanted.is_empty() {
+    for chunk in wanted.chunks(400) {
+        if Instant::now() >= deadline {
+            return Ok(Read {
+                max_gen: cursor,
+                epoch: original_epoch,
+                stopped: true,
+                ..Read::default()
+            });
+        }
+        let list = std::iter::repeat_n("?", chunk.len())
+            .collect::<Vec<_>>()
+            .join(",");
         let mut stmt = conn
-            .prepare("SELECT idx, metadata FROM steps")
-            .map_err(|_| {
-                Failure::Unreadable("an agy transcript could not be read this time".into())
-            })?;
-        let mut rows = stmt.query([]).map_err(|_| {
-            Failure::Unreadable("an agy transcript could not be read this time".into())
-        })?;
-        while let Some(r) = rows.next().map_err(|_| {
-            Failure::Unreadable("an agy transcript could not be read this time".into())
-        })? {
+            .prepare(&format!(
+                "SELECT idx, metadata FROM steps WHERE idx IN ({list})"
+            ))
+            .map_err(|_| unreadable())?;
+        let mut rows = stmt
+            .query(rusqlite::params_from_iter(chunk.iter()))
+            .map_err(|_| unreadable())?;
+        while let Some(r) = rows.next().map_err(|_| unreadable())? {
             let Ok(idx) = r.get::<_, i64>(0) else {
                 continue;
             };
-            if !wanted.contains(&idx) {
-                continue;
-            }
             let Ok(md) = r.get::<_, Vec<u8>>(1) else {
                 continue;
             };
@@ -497,58 +537,103 @@ pub fn read(path: &Path, cursor: i64, deadline: Instant) -> Result<Read, Failure
             }
         }
     }
-    let now = crate::time::now_ms();
-    for (idx, g) in decoded {
-        out.usage_lines += 1;
-        out.max_gen = out.max_gen.max(idx);
-        if g.tokens.is_zero() {
-            continue;
+    let mut out = Read {
+        max_gen: from,
+        epoch,
+        stopped,
+        ..Read::default()
+    };
+    let mut next = from;
+    for (idx, dec) in decoded {
+        let dec = match dec {
+            Ok(d) => d,
+            Err(why) => {
+                out.skipped_lines += 1;
+                out.shape.get_or_insert(why);
+                break;
+            }
+        };
+        match dec {
+            Decoded::Incomplete { steps } => {
+                let recent = db_recent
+                    || steps
+                        .iter()
+                        .filter_map(|i| times.get(i))
+                        .any(|t| now.saturating_sub(*t) < INCOMPLETE_MS);
+                if recent {
+                    break;
+                }
+                next = idx;
+            }
+            Decoded::Call {
+                model,
+                tokens,
+                steps,
+            } => {
+                let ts = steps.iter().filter_map(|i| times.get(i)).min().copied();
+                let recent = ts.map_or(db_recent, |t| now.saturating_sub(t) < INCOMPLETE_MS);
+                if tokens.is_zero() {
+                    if recent {
+                        break;
+                    }
+                    out.usage_lines += 1;
+                    next = idx;
+                    continue;
+                }
+                let Some(ts) = ts else {
+                    out.skipped_lines += 1;
+                    out.shape.get_or_insert(
+                        "an agy usage row has no step time, so its hour is unknown".into(),
+                    );
+                    break;
+                };
+                if ts > now + MAX_SKEW_MS {
+                    out.skipped_lines += 1;
+                    out.shape
+                        .get_or_insert("an agy usage row is dated in the future".into());
+                    break;
+                }
+                let Some(model) = model else {
+                    out.skipped_lines += 1;
+                    out.shape
+                        .get_or_insert("an agy usage row names no model".into());
+                    break;
+                };
+                let Some(session) = conversation.as_deref() else {
+                    out.skipped_lines += 1;
+                    out.shape
+                        .get_or_insert("an agy transcript has no conversation id".into());
+                    break;
+                };
+                // The execution id is shared by every generation of a conversation, so it cannot
+                // tell two calls apart. The conversation id, epoch and generation index do.
+                let dedupe = if epoch == 0 {
+                    format!("agy|{session}|{idx}")
+                } else {
+                    format!("agy|{session}|e{epoch}|{idx}")
+                };
+                out.events.push(UsageEvent {
+                    dedupe_key: dedupe,
+                    ts_ms: ts,
+                    harness: HARNESS,
+                    model: clip(&model, 128),
+                    session: Some(session.to_string()),
+                    parent_session: None,
+                    cwd: workspace.cwd.clone(),
+                    session_cwd: workspace.cwd.clone(),
+                    branch: workspace.branch.clone(),
+                    repo: workspace.repo.clone(),
+                    tokens,
+                    precision: Precision::Exact,
+                    reported_usd: None,
+                    copied: false,
+                });
+                out.usage_lines += 1;
+                next = idx;
+            }
         }
-        let Some(ts) = g.steps.iter().filter_map(|i| times.get(i)).min().copied() else {
-            out.skipped_lines += 1;
-            out.shape
-                .get_or_insert("an agy usage row has no step time, so its hour is unknown".into());
-            continue;
-        };
-        if ts > now + MAX_SKEW_MS {
-            out.skipped_lines += 1;
-            out.shape
-                .get_or_insert("an agy usage row is dated in the future".into());
-            continue;
-        }
-        let Some(model) = g.model else {
-            out.skipped_lines += 1;
-            out.shape
-                .get_or_insert("an agy usage row names no model".into());
-            continue;
-        };
-        let Some(session) = conversation.as_deref() else {
-            out.skipped_lines += 1;
-            out.shape
-                .get_or_insert("an agy transcript has no conversation id".into());
-            continue;
-        };
-        // The execution id is shared by every generation of a conversation, so it cannot tell
-        // two calls apart. The conversation id and the generation index do.
-        let dedupe = format!("agy|{session}|{idx}");
-        out.events.push(UsageEvent {
-            dedupe_key: dedupe,
-            ts_ms: ts,
-            harness: HARNESS,
-            model: clip(&model, 128),
-            session: Some(session.to_string()),
-            parent_session: None,
-            cwd: workspace.cwd.clone(),
-            session_cwd: workspace.cwd.clone(),
-            branch: workspace.branch.clone(),
-            repo: workspace.repo.clone(),
-            tokens: g.tokens,
-            precision: Precision::Exact,
-            reported_usd: None,
-            copied: false,
-        });
     }
-    out.stopped = stopped;
+    out.max_gen = next;
     Ok(out)
 }
 
@@ -655,18 +740,17 @@ mod tests {
             }
         );
         let cm = chat_model(&u, "gemini-4-argon", "Gemini 4 Argon (High)");
-        assert_eq!(
-            generation(&[field(1, 2, &cm), field(2, 2, &[1, 2])].concat())
-                .unwrap()
-                .unwrap()
-                .model
-                .as_deref(),
-            Some("gemini-4-argon")
-        );
+        match generation(&[field(1, 2, &cm), field(2, 2, &[1, 2])].concat()).unwrap() {
+            Decoded::Call { model, steps, .. } => {
+                assert_eq!(model.as_deref(), Some("gemini-4-argon"));
+                assert_eq!(steps, [1, 2]);
+            }
+            other => panic!("expected a call, got {other:?}"),
+        }
     }
 
     #[test]
-    fn refuses_a_usage_row_without_a_step_time() {
+    fn a_missing_step_time_is_left_to_the_reader() {
         let u = usage_blob(10, 0, 0, 5, 0);
         let cm = chat_model(&u, "gemini-4-argon", "Gemini 4 Argon (High)");
         let g = [
@@ -675,21 +759,64 @@ mod tests {
             text_field(4, "exec-1"),
         ]
         .concat();
-        let parsed = generation(&g).unwrap().unwrap();
-        assert_eq!(parsed.steps, [1, 2]);
-        assert_eq!(parsed.model.as_deref(), Some("gemini-4-argon"));
-        let empty = [field(1, 2, &cm), field(2, 2, &[])].concat();
-        assert!(generation(&empty).unwrap().unwrap().steps.is_empty());
+        match generation(&g).unwrap() {
+            Decoded::Call { model, steps, .. } => {
+                assert_eq!(steps, [1, 2]);
+                assert_eq!(model.as_deref(), Some("gemini-4-argon"));
+            }
+            other => panic!("expected a call, got {other:?}"),
+        }
     }
 
     #[test]
-    fn a_zero_usage_row_is_not_an_event_and_a_garbage_blob_is_refused() {
+    fn a_zero_usage_row_is_a_call_and_a_garbage_blob_is_refused() {
         let u = usage_blob(0, 0, 0, 0, 0);
         let cm = chat_model(&u, "gemini-4-argon", "Gemini 4 Argon (High)");
         let g = [field(1, 2, &cm), field(2, 2, &[1])].concat();
-        let parsed = generation(&g).unwrap().unwrap();
-        assert!(parsed.tokens.is_zero());
+        match generation(&g).unwrap() {
+            Decoded::Call { tokens, .. } => assert!(tokens.is_zero()),
+            other => panic!("expected an empty call, got {other:?}"),
+        }
         assert!(generation(b"not a protobuf").is_err());
+    }
+
+    #[test]
+    fn a_row_without_a_usage_block_is_incomplete() {
+        let cm = uint_field(3, 1417);
+        let g = [field(1, 2, &cm), field(2, 2, &[1, 2])].concat();
+        match generation(&g).unwrap() {
+            Decoded::Incomplete { steps } => assert_eq!(steps, [1, 2]),
+            other => panic!("expected an incomplete row, got {other:?}"),
+        }
+        let empty = field(4, 2, &[]);
+        let g = [field(1, 2, &empty), field(2, 2, &[1])].concat();
+        assert!(matches!(
+            generation(&g).unwrap(),
+            Decoded::Incomplete { .. }
+        ));
+    }
+
+    #[test]
+    fn a_usage_block_with_only_unknown_fields_is_refused() {
+        let unknown = uint_field(99, 3);
+        assert!(super::usage(&unknown).is_err());
+        let cm = chat_model(&unknown, "gemini-4-argon", "Gemini 4 Argon (High)");
+        let g = [field(1, 2, &cm), field(2, 2, &[1])].concat();
+        assert!(generation(&g).is_err());
+    }
+
+    #[test]
+    fn an_out_of_range_token_count_is_refused() {
+        let negative = [uint_field(2, u64::MAX), uint_field(3, 1)].concat();
+        assert!(super::usage(&negative).is_err());
+        let huge = [uint_field(2, MAX_CALL_TOKENS + 1), uint_field(3, 1)].concat();
+        assert!(super::usage(&huge).is_err());
+    }
+
+    #[test]
+    fn a_malformed_model_blob_is_refused_not_skipped() {
+        let g = [field(1, 2, b"junk"), field(2, 2, &[1])].concat();
+        assert!(generation(&g).is_err());
     }
 
     #[test]

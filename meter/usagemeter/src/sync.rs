@@ -1825,27 +1825,36 @@ fn read_agy_into_store(
     agy_shape: &mut Option<String>,
     agy_unreadable: &mut Option<String>,
 ) -> io::Result<ReadOutcome> {
-    let cursor = state.ctx.agy.as_ref().map_or(-1, |a| a.max_gen);
-    let read =
-        match crate::sources::agy::read(std::path::Path::new(&state.path), cursor, limits.deadline)
-        {
-            Ok(r) => r,
-            Err(crate::sources::agy::Failure::Shape(why)) => {
-                agy_shape.get_or_insert(why);
-                report.unreadable += 1;
-                return Ok(ReadOutcome::default());
-            }
-            Err(crate::sources::agy::Failure::Unreadable(why)) => {
-                agy_unreadable.get_or_insert(why);
-                report.unreadable += 1;
-                return Ok(ReadOutcome::default());
-            }
-        };
+    let (cursor, epoch) = state
+        .ctx
+        .agy
+        .as_ref()
+        .map_or((-1, 0), |a| (a.max_gen, a.epoch));
+    let read = match crate::sources::agy::read(
+        std::path::Path::new(&state.path),
+        cursor,
+        epoch,
+        now,
+        limits.deadline,
+    ) {
+        Ok(r) => r,
+        Err(crate::sources::agy::Failure::Shape(why)) => {
+            agy_shape.get_or_insert(why);
+            report.unreadable += 1;
+            return Ok(ReadOutcome::default());
+        }
+        Err(crate::sources::agy::Failure::Unreadable(why)) => {
+            agy_unreadable.get_or_insert(why);
+            report.unreadable += 1;
+            return Ok(ReadOutcome::default());
+        }
+    };
     if let Some(why) = read.shape {
         agy_shape.get_or_insert(why);
     }
     state.ctx.agy = Some(crate::sources::agy::AgyCtx {
         max_gen: read.max_gen,
+        epoch: read.epoch,
     });
     // A stopped read leaves bytes pending; a full one does not. The generation cursor, not the
     // byte offset, is where the next run resumes.
