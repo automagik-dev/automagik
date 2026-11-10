@@ -20,9 +20,9 @@ import { SpaceIconDialog, spaceIconOverlay } from "./spaceIcon.js";
 import { ensureTheme, themeSettled } from "./theme.js";
 import { SHARED_RENAMES, carryShared } from "./migrate.js";
 import { Updater } from "./updater.js";
-import { METER_EVERY_MS, METER_FIRST_MS, meterBin, syncMeter, syncTargets } from "./meter.js";
+import { METER_EVERY_MS, METER_FIRST_MS, meterBin, syncMeter, syncTargets, writeFleetRecord } from "./meter.js";
 import { parseMarker } from "./release.js";
-import { meterScope } from "./meterFleet.js";
+import { fleetPlan, meterScope } from "./meterFleet.js";
 import { startBot, attachBot, botOfTerminal, modelTexts, sleepOf } from "./launch.js";
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
@@ -544,6 +544,8 @@ export default class Spaces extends View {
 
   // One due `usagemeter sync` through Herdr's exec, here and then on each connected linked machine
   // the person agreed to (meterScope "all", or one a meter install --machine put it on), then the next look.
+  // Where the person agreed to usagemeter at all (scope all or local), the same run asks each of
+  // those machines for its bot-tag coverage and writes the fleet record (RFC 0026 (e)).
   meterTick(cx) {
     cx.spawn(async (cx) => {
       let wait = METER_EVERY_MS;
@@ -555,7 +557,10 @@ export default class Spaces extends View {
           owned = Object.keys(record?.usagemeterOn ?? {});
         } catch {}
         const machines = syncTargets(this.machines, scope, owned);
-        ({ wait } = await syncMeter({ exec, bin: meterBin(home()), get: shared, set: setShared, state: this.meter, machines, sleep: sleepOf(cx) }));
+        const plan = fleetPlan(this.machines, scope, owned);
+        const fleet = scope === "all" || scope === "local" ? { disconnected: plan.disconnected, outOfScope: plan.outOfScope,
+          write: (text) => writeFleetRecord({ exec, writeText: writeTextFile, appHome: appHome(), text }) } : null;
+        ({ wait } = await syncMeter({ exec, bin: meterBin(home()), get: shared, set: setShared, state: this.meter, machines, sleep: sleepOf(cx), fleet }));
       } catch {}
       cx.timer.after(wait, (cx) => this.meterTick(cx));
     });
