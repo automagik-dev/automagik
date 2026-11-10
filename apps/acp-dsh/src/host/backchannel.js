@@ -412,7 +412,7 @@ export class Backchannel {
       abort: new AbortController(),
       // The controller of every call in flight (#957): each call has its own, so Stop, the end
       // of its turn or a caller that went away ends that call without revoking the bridge.
-      calls: new Set(),
+      controllers: new Set(),
     }
     this.records.set(credential, record)
     // From here the bridge may write rows on this Session: none the reader refuses (#958).
@@ -440,7 +440,7 @@ export class Backchannel {
     record.waiters.clear()
     // The write guard stays while a call of this bridge is still in flight: its step can end
     // before its body does, and the guard is what closes it then (`leave` releases it).
-    if (record.calls.size === 0) record.guard?.release()
+    if (record.controllers.size === 0) record.guard?.release()
   }
 
   /**
@@ -450,7 +450,7 @@ export class Backchannel {
    */
   cancel(record, reason = 'the call was stopped') {
     if (record === undefined) return
-    for (const controller of record.calls) {
+    for (const controller of record.controllers) {
       try {
         controller.abort(new Error(reason))
       } catch {}
@@ -548,12 +548,22 @@ export class Backchannel {
       response.once('close', () => {
         if (!response.writableEnded) gone.abort(new Error('the caller went away'))
       })
-      const result = await this.call(record, {
-        name: typeof body.name === 'string' ? body.name : '',
-        arguments: body.arguments ?? {},
-        callId: typeof body.callId === 'string' ? body.callId : undefined,
-        signal: gone.signal,
-      })
+      // Counted while it runs, its rows included: who ends this bridge with a call under way
+      // (the adapter's endSession) keeps the Session's write guard until the last one is back.
+      record.calls = (record.calls ?? 0) + 1
+      let result
+      try {
+        result = await this.call(record, {
+          name: typeof body.name === 'string' ? body.name : '',
+          arguments: body.arguments ?? {},
+          callId: typeof body.callId === 'string' ? body.callId : undefined,
+          signal: gone.signal,
+        })
+      } finally {
+        record.calls -= 1
+        if (record.calls === 0) record.drained?.()
+      }
+      this.diagnostics?.bridgeCall(record, result)
       // Revoked while the call was awaiting approval: the caller sees the refusal, not a result.
       if (result?.revoked === true) return reply(401, { error: 'refused' })
       return reply(200, result)
@@ -639,13 +649,13 @@ export class Backchannel {
     const onGone = () => own.abort(callerGone.reason)
     if (callerGone?.aborted) onGone()
     else callerGone?.addEventListener('abort', onGone, { once: true })
-    record.calls.add(own)
+    record.controllers.add(own)
     const stopped = AbortSignal.any([record.abort.signal, own.signal])
     const cancelled = () => settle([{ type: 'text', text: `${name} was stopped before it finished.` }], true, { name: 'BridgeCancelledError', code: 'BRIDGE_CANCELLED' })
     const leave = () => {
-      record.calls.delete(own)
+      record.controllers.delete(own)
       callerGone?.removeEventListener('abort', onGone)
-      if (record.closed && record.calls.size === 0) record.guard?.release()
+      if (record.closed && record.controllers.size === 0) record.guard?.release()
     }
     // The synthetic block is for the advertisement (and the review on Auto) only.
     let hideSynthetic

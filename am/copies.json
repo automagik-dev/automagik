@@ -62,6 +62,10 @@
       "to": "am/guard/hc"
     },
     {
+      "from": "herdr/mods/am-sidebar/hc-kill/hc",
+      "to": "am/hc-kill/hc"
+    },
+    {
       "from": "herdr/mods/am-sidebar/hcGuard.mjs",
       "to": "am/hcGuard.mjs"
     },
@@ -152,6 +156,10 @@
     {
       "from": "herdr/mods/am-sidebar/retired.js",
       "to": "am/retired.js"
+    },
+    {
+      "from": "herdr/mods/am-sidebar/revive.js",
+      "to": "am/revive.js"
     },
     {
       "from": "herdr/mods/am-sidebar/tidy.js",

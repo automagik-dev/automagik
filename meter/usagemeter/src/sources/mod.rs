@@ -6,6 +6,7 @@ pub mod claude;
 pub mod codex;
 pub mod dsh_tui;
 pub mod omp;
+pub mod tool_error;
 
 use serde::{Deserialize, Serialize};
 
@@ -91,6 +92,11 @@ pub struct FileCtx {
     /// it are all copies.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub seed_cut: bool,
+    /// A dsh-tui session's header named the terminal it runs in (RFC 0026 (d)): the pane's bare
+    /// local address, with `created_at` the session's own start record. None when the header has
+    /// no such field, or one that is no bare local address.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal: Option<String>,
     /// An Antigravity conversation's highest counted `gen_metadata.idx`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agy: Option<agy::AgyCtx>,

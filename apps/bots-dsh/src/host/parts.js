@@ -1330,14 +1330,18 @@ export function install(rt) {
   // Bot without a model of its own.
   // `target`: the model a switch moves to, ahead of the earlier part's route.
   async function freshRoute(bot, session, target) {
-    const ref = await rt.desiredModel(bot)
+    const ref = await rt.desiredModel(bot, { sessionId: session?.id, session })
     if (ref !== undefined) return { ref, effort: await rt.desiredEffort(bot, ref) }
     if (target !== undefined) return { ref: target, effort: undefined }
     const route = session?.requestHeader()?.config
     return route?.provider && route?.model ? { ref: `${route.provider}/${route.model}`, effort: route.reasoningEffort } : undefined
   }
+  // It answers whether the route was selected.
   const selectRoute = (bot, sessionId, { ref, effort }) => rt.selectSessionModel(sessionId, { ...splitRef(ref), ...(effort === undefined ? {} : { reasoningEffort: effort }) })
-    .catch(error => rt.warn('ds-bot: model for the fresh part of %s not applied: %s', bot.name, error))
+    .then(() => true, (error) => {
+      rt.warn('ds-bot: model for the fresh part of %s not applied: %s', bot.name, error)
+      return false
+    })
 
   async function moveOn(agent, job, signal) {
     job.started = true
@@ -1396,9 +1400,22 @@ export function install(rt) {
     const intended = dir !== undefined && await rt.isFolder(dir) ? dir : rt.teamFolder()
     const freshId = await rt.createSession(room ? `${bot.name} · ${room.name}` : bot.name, { dir, ...(bot.kind === 'dsh' ? { profile: bot.profile ?? null } : {}) })
     const picked = await freshRoute(bot, session, job.target)
-    if (picked !== undefined) await selectRoute(bot, freshId, picked)
+    const selected = picked === undefined || await selectRoute(bot, freshId, picked)
     await rt.applyPermission(bot, freshId, room)
       .catch(error => rt.warn('ds-bot: permission for the fresh part of %s not applied: %s', bot.name, error))
+    // At Full access with the Bot's coding CLI model not served, or not selected just above,
+    // the fresh part would answer on another provider's model: it is not kept, as one whose
+    // Bot is gone is not (below). The fresh Session is not the Bot's yet, so its level is read
+    // from the Bot or the group it is for, the one just applied to it. A model the person is
+    // switching to (`target`) is theirs: a selection of it that failed is not judged here.
+    try {
+      await rt.assertNotOffCli?.(bot, freshId, undefined, { owner: { bot, room }, unselected: !selected && job.target === undefined })
+    } catch (error) {
+      rt.warn('ds-bot: no fresh part for %s: %s', bot.name, error?.message ?? error)
+      await ctx.workspaceRegistry.archiveSession(freshId, { stopActivity: true })
+        .catch(failure => rt.warn('ds-bot: unused fresh part of %s not archived: %s', bot.name, failure))
+      return
+    }
     // The fresh part took several awaits: a Bot or group deleted meanwhile, a member that
     // left, or a part that is no longer the current one gets no fresh part.
     const current = room !== undefined ? room.sessions?.[bot.id] : rt.chatOf(bot.id)

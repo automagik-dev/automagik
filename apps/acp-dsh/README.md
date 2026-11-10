@@ -114,6 +114,19 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   preset with the same knobs keeps Manual (and the bridge's own approval). Full access lets every
   call through, as it does DSH's own tools. An agent that does not offer the strict mode fails
   the turn instead of running in its own default.
+- **An agent that stops answering never holds the chat.** Its start (`initialize`,
+  `session/new`, the bridge's first list) has 60 seconds, and each request after that and
+  before a prompt (a model, an effort, a mode, a fork, a close) has 15. Past the deadline, or
+  on Stop, the agent's process and its bridge are ended and the turn says what happened. A
+  start that hangs is usually a CLI waiting for the person (a first-run question, a keychain
+  dialog, an update), so that message says to open it once in a terminal. Stop ends the turn
+  at once and gives the agent 5 seconds to end its prompt, because `session/cancel` is only a
+  notification. An agent that ignores it is ended, and the next message starts a new agent
+  session with the chat replayed to it (with `dshTools: false`, the new-session notice
+  instead). A message sent while the agent is still on its last prompt waits those 5 seconds,
+  then gets a new session in the same turn. Ending an agent ends what it started too (the
+  command behind a stuck tool call): the agent leads its own process group, which is asked to
+  end and killed 3 seconds later if any of it is left; on Windows its process tree is killed.
 - **Claude Code keeps the person's own settings.** It loads their Claude Code settings (user,
   project and local) and asks DSH only for what those leave as "ask". A call their allow rules,
   saved "always allow" rules or PreToolUse/PermissionRequest hooks approve runs with no DSH
@@ -187,7 +200,7 @@ A settings page reads the agents through this host service; the plugin stays hos
 
 | Method | Does |
 |---|---|
-| `status()` | Each agent: `{ id, key, name, on, cli: { found, installUrl, state, managed, version?, error?, diagnostic?, logPath?, updating? }, connector: { state, version?, error?, updating? }, signedIn?, consent?, model: { provider, id, name, listed }, restartNeeded }`. CLI state is `missing`, `installing`, `failed` or `ready`; connector state is `off`, `no-cli`, `installing`, `failed` or `ready`. Errors are redacted. Spawns nothing. |
+| `status()` | Each agent: `{ id, key, name, on, cli: { found, installUrl, state, managed, version?, error?, diagnostic?, logPath?, updating? }, connector: { state, version?, error?, updating?, previous?, rolledBack? }, signedIn?, consent?, model: { provider, id, name, listed }, restartNeeded }`. CLI state is `missing`, `installing`, `failed` or `ready`; connector state is `off`, `no-cli`, `installing`, `failed` or `ready`. `connector.previous` is the release a failed start goes back to, while it is on disk; `connector.rolledBack` is `{ from, to, at, reason }` while a release that failed to start is held back. Errors are redacted. Spawns nothing. |
 | `inspect(id)` | One agent's `status()` row with a fresh sign-in check, for a Bot about to be put on it. Asks that CLI's sign-in status only; installs, enables and starts nothing. Simultaneous checks share one probe, and an answer stands for 3 seconds (`refresh()` clears it). Undefined for an id that is no agent here. |
 | `refresh()` | Looks for the CLIs again (one installed after DSH started is offered now), then asks each CLI whether it is signed in (`claude auth status --json`, of which only `loggedIn` is read; `codex login status`, by its exit code). No agent turn. |
 | `retry(id)` | Retries the required CLI and its connector, and answers at once. Does not turn its model switch on. |
@@ -202,6 +215,8 @@ A settings page reads the agents through this host service; the plugin stays hos
 | `imageAccess()` | `{ ready, signedIn?, reason?, unsupported? }`: whether Codex can draw an image now, on its own ChatGPT sign-in (Codex on, its CLI found, its connector installed, `codex login status` says signed in; an unknown sign-in is asked once; the person confirmed its account, else `reason: 'account'`; the image run's checks hold for this Codex, else not ready, with `reason`: `unsupported` (and `unsupported: true`), `config` or `unreadable`). Reads no credential and starts no sign-in. |
 | `generateImage({ prompt, size?, quality?, background?, signal?, timeoutMs? })` | Draws one image with the Codex CLI (`src/host/image.js`) and resolves `{ base64, mimeType: 'image/png' }`. Refusals carry an `acp/image-*` code (`signed-out`, `usage-limit`, `timeout`, `unavailable`, `failed`, `stopped`, `refused`) and a message to show as it is. |
 | `keepImages(keeper)` | Where an image an agent makes in a chat is kept, so the chat can show it (`src/host/agent-image.js`). `keeper` is `{ start?({ callId, sessionId, via }), keep({ callId, sessionId, base64, mimeType, via }) -> Promise<{ file }>, fail?({ callId, sessionId, error }) }`; one at a time, and the call returns its disposer. The Bot team registers its images folder. |
+| `holdTurns(gate)` | A veto on agent turns, for a plugin that must keep an agent from acting in a Session (the Bot team: a Session whose permission level could not be set). `gate({ sessionId, agent, provider })` is asked before every model step on an agent's route and again right before a turn's prompt is sent; it answers undefined to let the Session go, or the sentence the step answers with. It can only refuse: a gate that throws, takes longer than ten seconds, or answers anything else holds the Session with a fixed sentence, and a held Session's agent session is ended. Several plugins may register: any refusal wins, and the returned disposer removes only its own gate. With none registered nothing is asked. |
+| `endSession(sessionId, why?)` | Ends one Session's agent session now, a turn under way included: the agent's process is stopped, its bridge credential revoked, and the step answers `why`. The DSH Session and its transcript stay; the next turn starts a fresh agent session, which takes its permission mode again. Answers whether one was live. |
 | `bridge()` | `{ on, probesPass }`: whether `dshTools` is on, and whether a real probe on this machine passes — the per-session bridge gets a fresh credential, answers MCP `initialize` and `tools/list`, and lists at least one tool. A success is cached per installed adapter version; a failure is retried after ten minutes or the next app start. A missing adapter or a failed probe says no. The Bot team reads it before its one-time move of Claude Bots onto `acp-claude`, so no Bot moves onto a route whose bridge cannot work. |
 
 **One sign-in per OS user, used only with the person's word (#869).** A CLI's sign-in belongs to
@@ -437,6 +452,21 @@ with the desktop app's own pnpm (`AUTOMAGIK_PNPM`, never the person's) or else n
 place when complete, without install scripts or optional dependencies (the CLIs the adapters
 bundle); an install that pulls in a bundled CLI's platform package anyway is refused. The
 previous version stays for a Session still on it. Nothing is downloaded when a Session starts.
+
+npm is asked for a newer release once the last check is 20 hours old, by a timer that runs
+every 4 hours: at least once a day. A new release must start before it replaces the one in
+use. In its fresh folder it is spawned the way a Session would spawn it and asked
+`initialize`, nothing more (`src/host/handshake.js`): it must answer within 20 seconds, on the
+protocol version the library speaks. One that fails is removed, the connector in use stays
+(the last-known-good), and that version is not tried again for 3 days; a newer release is
+tried at once. One that passes is still unproven until it has opened a session: until then the
+release before it stays on disk, and a session start that fails on it (anything but a missing
+sign-in or a missing bridge) goes back to that release and tries the start once more, so the
+turn is not lost. A newer release that lands while the one in use is still unproven keeps the
+same way back: the last release that opened a session stays on disk until a newer one has, and a
+release gone back to is proven only if it had opened a session before. Both cases are logged and recorded in `current.json` (`bad`, `rolledBack`),
+and `status()` shows them while the failed version is held back. A first install has nothing
+to go back to: it is used even when its check fails, and the log says so.
 An install still running when DSH quits is killed with everything it started and its folder
 removed; one a killed DSH left behind is removed at the next start.
 Until the first install lands, the agent lists no model; a Session already on it says the
@@ -484,6 +514,16 @@ latest, and names each adapter that moved past `dev/acp-compat.json`, the record
 adapter versions the suite last passed against (`--record` writes it, after the suite and the
 real-adapter tests passed). The `ACP drift` workflow runs it daily and opens an issue on drift;
 every pull request checks the record against the pin.
+
+The same workflow has two more daily jobs. `adapters` installs the newest adapters and CLIs
+from npm (`node dev/install-adapters.mjs <folder>` does the adapters' half anywhere) and runs
+the suite with the real-adapter tests on and a wider fuzz; a red run opens an issue. `bump-check`
+runs when the pin is behind npm at all: it moves the pin and the lockfile on `dev`, runs lint,
+the suite and the real-adapter tests, and records the versions, with a read-only token and no
+credentials on disk. `bump-push`, which runs no package code, then pushes `bot/acp-sdk-<v>`
+with the pin, that lockfile and that record, and opens or updates an issue that names the
+branch and the results: Actions may not open pull requests in this repository, so a person
+opens it. Any failure opens or comments on one bump issue. It never merges.
 
 `test/real-adapters.test.js` starts the real adapters with this client in a throwaway home
 (never signed in, no model request): the handshake, the session start or its `auth_required`,

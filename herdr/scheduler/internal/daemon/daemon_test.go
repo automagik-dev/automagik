@@ -3,6 +3,7 @@ package daemon
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/DnzzL/herdr-automations/internal/config"
 	"github.com/DnzzL/herdr-automations/internal/herdr"
@@ -191,5 +192,44 @@ func TestOnlyTheServiceLeavesForTheInstalledBinary(t *testing.T) {
 		if got := shouldRelaunch(c.standby, c.stamp, run, c.installed); got != c.want {
 			t.Errorf("%s: got %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+// A daemon told to stop ends its running commands and waits for them to
+// record it: a command is in its own process group, so the signal that
+// stopped the daemon never reaches it (ADR 0013).
+func TestAStoppingDaemonEndsItsRunningCommands(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	runs := runner.New(nil)
+	a := config.Automation{
+		Name: "check", Cron: "@daily", TimeoutMinutes: 60,
+		Command: &config.Command{Argv: []string{"/bin/sh", "-c", "sleep 600"}},
+	}
+	ended := make(chan error, 1)
+	go func() { ended <- runs.Run(a, history.TriggerCron) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for runs.CommandsRunning() == 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	time.Sleep(200 * time.Millisecond) // let the program start
+	start := time.Now()
+	stopCommands(runs)
+	if took := time.Since(start); took > 5*time.Second {
+		t.Fatalf("stopping took %s for a command that leaves on SIGTERM", took)
+	}
+	if n := runs.CommandsRunning(); n != 0 {
+		t.Fatalf("%d command(s) still running after the stop", n)
+	}
+	last, err := history.LastRun("check")
+	if err != nil || last == nil {
+		t.Fatalf("no record: %v", err)
+	}
+	if last.Status != history.StatusFailed || last.Error != "stopped: the scheduler was stopping" {
+		t.Fatalf("record = %+v", last)
+	}
+	select {
+	case <-ended:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the run never returned")
 	}
 }

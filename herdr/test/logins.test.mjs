@@ -14,7 +14,7 @@ import { agentArgv, agentKeyOfArgv, briefingFileOf, briefingLaunch, detectModel,
 import { helperArgs, helperPlan, launchChange, paneCommand, restartPlan } from "../mods/am-sidebar/restart.js";
 import { startArgs } from "../mods/am-sidebar/launchArgs.js";
 import { AGENTS as TABLE } from "../mods/am-sidebar/models.js";
-import { workerArgs } from "../mods/am-sidebar/workers.js";
+import { KILL_GUARD_DIR, workerArgs } from "../mods/am-sidebar/workers.js";
 import { command } from "../mods/am-sidebar/argv.js";
 
 const ENV = "/usr/bin/env";
@@ -187,8 +187,8 @@ test("the launch builders put the login words on: start, a --tree helper, a work
   assert.deepEqual(helper(login2, ["sh", "-c", 'claude "$@"', "sh", "--continue"]), [ENV, "PATH=/a", `${CONFIG_VAR}=${DIR}`, "sh", "-c", 'claude "$@"', "sh", "--continue"]);
 
   const base = { botId: "b-aaaaaaaaaa", branch: "feat/x", name: "x", cwd: "/r", parent: "t1", agent: "claude", argv: ["claude"], task: "fix it", path: "/a" };
-  assert.deepEqual(tail(workerArgs({ ...base, login: loginA })), [ENV, "-u", CONFIG_VAR, "PATH=/a", "claude", "fix it"]);
-  assert.deepEqual(tail(workerArgs({ ...base, login: login2 })), [ENV, "PATH=/a", `${CONFIG_VAR}=${DIR}`, "claude", "fix it"]);
+  assert.deepEqual(tail(workerArgs({ ...base, login: loginA })), [ENV, "-u", CONFIG_VAR, `PATH=${KILL_GUARD_DIR}:/a`, "claude", "fix it"]);
+  assert.deepEqual(tail(workerArgs({ ...base, login: login2 })), [ENV, `PATH=${KILL_GUARD_DIR}:/a`, `${CONFIG_VAR}=${DIR}`, "claude", "fix it"]);
   const tpl = workerArgs({ ...base, agent: null, argv: null, template: "opus-rev", login: login2,
     templateArgv: ["sh", "-c", 'claude --model opus "$@"', "sh", "fix it"] });
   assert.ok(tpl.includes("worker.template=opus-rev"), "the template label kept");

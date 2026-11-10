@@ -252,11 +252,22 @@ func (w agentWork) await(s Session, timeout time.Duration) error {
 			if statusErr != nil {
 				return fmt.Errorf("read agent status after waiting: %w", statusErr)
 			}
-			if status == "working" {
-				time.Sleep(min(w.knobs.statusPoll, time.Until(deadline)))
-				continue
+			// Only the agent's own idle or done is a finished run. Herdr's wait
+			// also returns for an agent it can no longer read, and recording
+			// that as done listed runs done whose work had failed (#938).
+			switch status {
+			case "idle", "done":
+				return nil
+			case "error":
+				return fmt.Errorf("the agent reported an error")
+			case "working":
+			default:
+				// unknown, or a word this build does not know: not an answer
+				// yet. Keep waiting, and say so if the timeout comes first.
+				last = fmt.Errorf("the agent's status was %q at the run timeout, neither idle nor done", status)
 			}
-			return nil
+			time.Sleep(min(w.knobs.statusPoll, time.Until(deadline)))
+			continue
 		}
 		// The slice expired with the agent still working, which is the normal
 		// case. Keep it: if the deadline passes it is the most accurate thing

@@ -433,7 +433,7 @@ or consumer side once the calculation has moved.
 | Card cost, work, lead, start | cost: meter (query v1, task cost at M3); time: meter (M2) | genie computes the S0 time fields until M2 removes them; the board formats | M1 to M3 |
 | Card ETA | meter (lifecycle): comparable merged samples, with the basis | genie's S0 formula until M2; the board presents it | M2 |
 | Bots and lead association | meter (attribution) for bot per session, from durable evidence | the lead stays on genie's task record; unknown stays unknown | M3 |
-| Observability annotations and waste | meter: token counts, context size, `waste_usd`, `total_usd` and their price table | behaviour scores (tool errors, interrupts, rework, polling, compactions) are not usage, cost or time and stay; delivery stays | M5 |
+| Observability annotations and waste | meter: token counts, context size, `waste_usd`, `total_usd` and their price table; raw counts of recorded run failures and harness-flagged tool failures (`usagemeter outcomes`, not contract 1) | behaviour scores (tool-error rate and labels, interrupts, rework, polling, compactions) stay in genie: they are not usage, cost or time; delivery stays | M5; counts: #899 |
 | Benchmark economics | meter: normalized cost, coverage, root and child dedupe, cost per accepted result | quality judgments stay with the bench | M5 |
 | Runtime budget and depth controls | meter: the price math, exported as a frozen table the runtime reads | enforcement stays in the executing runtime; a scanner cannot stop a run | M4 |
 | mikro usage across session files, PG, Langfuse | meter (mikro source) reads one canonical record and counts it once | the other copies are projections; their delivery stays with mikro | M5 |
@@ -446,6 +446,54 @@ journal is a producer M5 reads beside the wish ledger; mikro's facts, egress and
 are attempt provenance, not a bill, and stay with mikro; mikro's batch, benchmark and output
 totals are projections of usage that is counted once at its source; the board's and the DSH
 board's formatting are presentation and stay.
+
+**Recorded failures are counted by the meter; scoring them stays in genie (amended for #899,
+acknowledged by genie).** `usagemeter outcomes` is a local, read-only verb like `coverage`. It is
+not contract 1, and it adds no field to the query envelope. It prints two raw counts, each a fact
+something else recorded, per launch tag (bot, kind, role, squad), harness, error kind, source
+and window, plus the unattributed by reason:
+
+- `tool_error` (source `harness_log`): harness-flagged failures, including expected ones. One
+  marker per harness, each pinned by a fixture in `meter/usagemeter/tests/fixtures/tool-errors/`
+  that genie's annotation test can read too:
+  - Claude Code: a `tool_result` block with `is_error: true`, counted once per `tool_use_id`.
+  - Codex: an `event_msg` whose payload is `item_completed` and whose item has
+    `status: "failed"` or an `exit_code` that is a non-zero integer, counted once per item `id`
+    in its thread (an item that holds both counts once).
+- `run_failed` (source `hc_snapshot` or `workers_ledger`): a launch whose terminal ended on its
+  own with a non-zero exit status or on a signal. `hc_snapshot` when hc's list of finished
+  terminals records it; `workers_ledger` when hc no longer lists the terminal and an `end` row
+  of Herdr's workers ledger copied its reason, exit status and signal. A window's total names
+  the sources its failed runs came from. `killed` and `stopped_by_restart` are printed as end
+  counts, never as errors.
+
+The conditions it holds to:
+
+1. Counts only: integers. No rate, ratio, threshold, label, score or per-session figure.
+2. One marker definition per harness, the two above, never reinterpreted by a reader.
+3. It is named as a fact wherever it is printed (`--help`, the README, the record's `note`): the
+   count includes expected failures (a red test run while working test-first, a grep with no
+   match) and is not a quality verdict on its own.
+4. Unknown is never 0: a harness with no pinned marker (omp, dsh-tui, Antigravity) is
+   `unsupported`; a window that starts before `errors_from`, or one after a sync that recorded
+   no failures (an older meter, after a rollback), is `partial`; a store no sync has prepared is
+   `not_recorded`. Failures left behind by an older meter's reset are dropped by the next sync,
+   never counted: until then `tool_error` is `not_recorded`.
+5. No tool name, argument, output or error text is stored or printed. The meter stores no text
+   of a failure: its session as a keyed hash and its folders as references to the evidence's own
+   folder rows, for re-attribution, kept for the evidence's retention; prints none of them.
+   A session and a folder are stored only as the evidence store already keeps them under (b):
+   the session and its parent as keyed hashes, the folders as ids of the folder rows interned in
+   `ev_cwd`, all pruned with the evidence (90 days or 1 GiB). They are there so a failure follows
+   its session when a later record links it, and no session, folder or terminal is ever printed.
+   Beside those a failure is kept as its time, harness, launch tag and a keyed hash of its id.
+6. It is not in the query envelope. A reader that wants a tool-error rate, a label or a score
+   computes it in genie, from these counts or from its own annotations.
+
+The same verb prints time to pull request on two clocks (the branch's first commit, and its
+first worker launch, to the pull request opened and merged), from `pr` rows Herdr appends to its
+workers ledger; that is elapsed time the meter reads, like a launch's start and end, and the
+lifecycle fields of M2 (`pr_lead_min`, `pr_open_min`) stay where this RFC puts them.
 
 ### (d) Upgrade, downgrade and the state-path move
 

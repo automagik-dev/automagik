@@ -296,59 +296,127 @@ describe('the cut reading the posted herdr-lane pointer before it posts its own'
   });
 });
 
-describe('the cut reading the posted am-lane pointer before it posts its own', () => {
+describe('the am-lane job reading the posted pointer, then posting its own', () => {
   const lines = workflow('release.yml');
   const start = lines.findIndex(line => line.trim() === 'mkdir -p am-lane/posted');
-  const end = lines.findIndex((line, i) => i > start && line.trim().startsWith('bun scripts/am-lane.ts posted '));
-  const block = start > -1 && end > start ? lines.slice(start, end + 1).join('\n') : '';
+  const check = lines.findIndex((line, i) => i > start && line.trim().startsWith('bun scripts/am-lane.ts posted '));
+  const end = lines.findIndex((line, i) => i > check && line.trim() === '');
+  const block = start > -1 && check > start && end > check ? lines.slice(start, end).join('\n') : '';
+  const DOWNLOAD = 'release download am-lane --repo owner/repo -p am.json -p am.json.sig -D am-lane/posted --clobber';
+  const UPLOADS = ['release upload am-lane am-lane/am.json --clobber --repo owner/repo', 'release upload am-lane am-lane/am.json.sig --clobber --repo owner/repo'];
 
-  function read(status: number, stderr = '') {
-    const dir = mkdtempSync(join(tmpdir(), 'am-lane-posted-'));
+  // gh's calls in order: each takes the next `plan` entry (its stderr; '' is success) and exits 1
+  // on any text; calls past the plan succeed. bun logs its arguments (the downgrade check ran) and
+  // exits `posted`; sleep logs its seconds and returns at once.
+  function post(plan: string[] = [], posted = 0) {
+    const dir = mkdtempSync(join(tmpdir(), 'am-lane-post-'));
     const bin = join(dir, 'bin');
     mkdirSync(bin);
-    writeFileSync(join(bin, 'gh'), `#!/usr/bin/env bash\necho "$*" >> "${dir}/gh.log"\nprintf '%s\\n' '${stderr}' >&2\nexit ${status}\n`);
-    writeFileSync(join(bin, 'bun'), `#!/usr/bin/env bash\necho "$*" >> "${dir}/bun.log"\n`);
-    chmodSync(join(bin, 'gh'), 0o755);
-    chmodSync(join(bin, 'bun'), 0o755);
-    const run = bash(`cd "${dir}"\n${block}`, [], { PATH: `${bin}:${process.env.PATH ?? ''}`, GITHUB_REPOSITORY: 'owner/repo' });
+    mkdirSync(join(dir, 'plan'));
+    plan.forEach((stderr, i) => writeFileSync(join(dir, 'plan', String(i + 1)), stderr));
+    writeFileSync(join(bin, 'gh'), `#!/usr/bin/env bash
+echo "$*" >> "${dir}/gh.log"
+n=$(wc -l < "${dir}/gh.log")
+if [ -s "${dir}/plan/$((n))" ]; then cat "${dir}/plan/$((n))" >&2; echo >&2; exit 1; fi
+exit 0
+`);
+    writeFileSync(join(bin, 'bun'), `#!/usr/bin/env bash\necho "$*" >> "${dir}/bun.log"\nexit ${posted}\n`);
+    writeFileSync(join(bin, 'sleep'), `#!/usr/bin/env bash\necho "$*" >> "${dir}/sleep.log"\n`);
+    for (const name of ['gh', 'bun', 'sleep']) chmodSync(join(bin, name), 0o755);
+    const run = bash(`cd "${dir}"\nmkdir -p am-lane\n${block}`, [], { PATH: `${bin}:${process.env.PATH ?? ''}`, GITHUB_REPOSITORY: 'owner/repo' });
     const log = (name: string) => { try { return readFileSync(join(dir, name), 'utf8').trim().split('\n').filter(Boolean); } catch { return []; } };
-    const result = { ...run, gh: log('gh.log'), bun: log('bun.log') };
+    const result = { ...run, gh: log('gh.log'), bun: log('bun.log'), sleep: log('sleep.log') };
     rmSync(dir, { recursive: true, force: true });
     return result;
   }
   const checked = ['scripts/am-lane.ts posted am-lane/am.json am-lane/posted'];
+  const HTTP_500 = 'HTTP 500 (https://api.github.com/repos/owner/repo/releases/assets/123456)';
 
   test('is found as the step writes it, with no error swallowed', () => {
     expect(block).not.toBe('');
-    expect(block).not.toContain('|| true');
+    expect(block).toContain('gh_retry am-lane/upload.err release upload am-lane');
+    // The one `|| true` guards the asset id's grep, which finds nothing in most errors.
+    expect(block.split('\n').filter(line => line.includes('|| true')).map(line => line.trim().split('=')[0])).toEqual(['asset']);
     expect(block).not.toContain('2>/dev/null');
   });
 
-  test('a posted pointer downloads: the downgrade check runs on it', () => {
-    const run = read(0);
+  test('a posted pointer downloads: the downgrade check runs on it, then am.json and its signature go up, one at a time', () => {
+    const run = post();
     expect(run.status).toBe(0);
-    expect(run.gh).toEqual(['release download am-lane --repo owner/repo -p am.json -p am.json.sig -D am-lane/posted --clobber']);
+    expect(run.gh).toEqual([DOWNLOAD, ...UPLOADS]);
     expect(run.bun).toEqual(checked);
-  }, 30_000);
+    expect(run.sleep).toEqual([]);
+  });
 
   test('no pointer posted yet (the first post): the run goes on to post', () => {
     for (const message of ['no assets match the file pattern', 'no assets to download', 'release not found']) {
-      const run = read(1, message);
+      const run = post([message]);
       expect(run.status).toBe(0);
       expect(run.out).toContain('am lane: nothing posted on am-lane yet');
       expect(run.bun).toEqual(checked);
+      expect(run.gh).toEqual([DOWNLOAD, ...UPLOADS]);
     }
-  }, 30_000);
+  });
 
-  test('any other error reading it stops the run', () => {
-    for (const message of ['HTTP 502: Bad Gateway', 'HTTP 401: Bad credentials', 'error connecting to api.github.com']) {
-      const run = read(1, message);
+  test('any other error reading it stops the run at once: no retry, no check, no upload', () => {
+    for (const message of ['HTTP 401: Bad credentials', 'error connecting to api.github.com', 'HTTP 404: Not Found']) {
+      const run = post([message]);
       expect(run.status).toBe(1);
       expect(run.err).toContain(message);
-      expect(run.out).toContain('::error::am lane: could not read the posted pointer; refusing to post blind');
+      expect(run.out).toContain('::error::am lane: could not read the posted pointer (the am-lane release of owner/repo); refusing to post blind');
+      expect(run.gh).toEqual([DOWNLOAD]);
       expect(run.bun).toEqual([]);
+      expect(run.sleep).toEqual([]);
     }
-  }, 30_000);
+  });
+
+  // #768, the read path: run 42563550141's HTTP 500 on the download of the posted am.json.
+  test('a server error reading it is tried again, three times in all; one that passes lets the post go on', () => {
+    for (const plan of [[HTTP_500], ['HTTP 502: Bad Gateway', HTTP_500]]) {
+      const run = post(plan);
+      expect(run.status).toBe(0);
+      expect(run.gh).toEqual([...plan.map(() => DOWNLOAD), DOWNLOAD, ...UPLOADS]);
+      expect(run.sleep).toEqual(['10', '20'].slice(0, plan.length));
+      expect(run.bun).toEqual(checked);
+    }
+  });
+
+  test('a server error on every read leaves the pointer untouched and refuses to post blind, naming the asset and the release', () => {
+    const run = post([HTTP_500, HTTP_500, HTTP_500]);
+    expect(run.status).toBe(1);
+    expect(run.gh).toEqual([DOWNLOAD, DOWNLOAD, DOWNLOAD]);
+    expect(run.sleep).toEqual(['10', '20']);
+    expect(run.bun).toEqual([]);
+    expect(run.err).toContain(HTTP_500);
+    expect(run.out).toContain('::error::am lane: could not read the posted pointer (the am-lane release of owner/repo, asset 123456); refusing to post blind. Nothing was changed: re-run the job');
+  });
+
+  test('a refusal from the downgrade check uploads nothing', () => {
+    const run = post([], 1);
+    expect(run.status).toBe(1);
+    expect(run.gh).toEqual([DOWNLOAD]);
+  });
+
+  // #768, the upload path: run 42539380273's HTTP 500 on the am.json asset.
+  test('a server error on an upload is tried again, each file on its own count', () => {
+    const run = post(['', HTTP_500, '', 'HTTP 503: Service Unavailable', HTTP_500]);
+    expect(run.status).toBe(0);
+    expect(run.gh).toEqual([DOWNLOAD, UPLOADS[0], UPLOADS[0], UPLOADS[1], UPLOADS[1], UPLOADS[1]]);
+    expect(run.sleep).toEqual(['10', '10', '20']);
+  });
+
+  test('an upload that fails three times, or with any other error, stops the job and says the pointer may be half-written', () => {
+    const json = post(['', HTTP_500, HTTP_500, HTTP_500]);
+    expect(json.status).toBe(1);
+    expect(json.gh).toEqual([DOWNLOAD, UPLOADS[0], UPLOADS[0], UPLOADS[0]]);
+    expect(json.out).toContain('::error::am lane: could not upload am.json to the am-lane release of owner/repo; the posted pointer may be half-written');
+    const sig = post(['', '', 'HTTP 422: Validation Failed']);
+    expect(sig.status).toBe(1);
+    expect(sig.gh).toEqual([DOWNLOAD, ...UPLOADS]);
+    expect(sig.sleep).toEqual([]);
+    expect(sig.err).toContain('HTTP 422: Validation Failed');
+    expect(sig.out).toContain('::error::am lane: could not upload am.json.sig to the am-lane release of owner/repo');
+  });
 });
 
 describe('every release carries am (RFC 0012)', () => {
