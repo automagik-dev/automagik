@@ -5,7 +5,7 @@
 // usagemeter reads. Pure: no `herdr`, `gpui-*` or `fs`, so `node --test`, the CLI and the
 // briefing hook share it. Apache-2.0.
 
-import { AGENTS, AGY_MODE_DEFAULT, agyModeArgs, agyModeOf, agyModeProblem, agySettingsArgs, effortArgs, hasEffortFlag, modelArgs, modelRefusal,
+import { AGENTS, AGY_MODE_DEFAULT, agyModeArgs, agyModeOf, agyModeProblem, agySettingsArgs, effortArgs, hasEffortFlag, launchRun, modelArgs, modelRefusal,
   promptArgs, resolveAgent } from "./models.js";
 import { TEMPLATE_SHAPE } from "./model.js";
 import { envWords } from "./logins.js";
@@ -301,7 +301,7 @@ export function workerPlan(bot, pick = {}, agents = AGENTS) {
     warnings.push(`${agents[agent].name} has no effort flag; effort ${effort} left out.`);
     effort = null;
   }
-  const argv = [...agents[agent].run, ...agyModeArgs(agent, agyMode), ...modelArgs(agent, model), ...effortArgs(agent, effort)];
+  const argv = [...launchRun(agent, agents[agent].run, bot), ...agyModeArgs(agent, agyMode), ...modelArgs(agent, model), ...effortArgs(agent, effort)];
   return { template: null, agent, model, effort, agyMode, argv, warnings };
 }
 

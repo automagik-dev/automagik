@@ -403,6 +403,28 @@ export function agyModeArgs(agentKey, mode = null) {
   return agentKey === "antigravity" ? ["--mode", agyModeOf(mode)] : [];
 }
 
+// Codex's auto mode (codex-cli 0.167.0 `--approve-for-me`): an approval request goes to Codex's
+// own reviewer instead of a person, and the workspace-write sandbox stays. The pack puts it on
+// every Codex launch it makes, so an unattended bot or worker never stops at an approval prompt
+// only a person can answer (#946). A bot's `codexAuto: false` opts out, and an hc template owns
+// a worker's command: the flag never reaches one.
+export const CODEX_AUTO_ARGS = Object.freeze(["--approve-for-me"]);
+
+/** Whether a launch of `agentKey` for `bot` passes Codex's auto mode: a Codex seat or worker, unless its bot opted out. */
+export const codexAutoOn = (agentKey, bot) => agentKey === "codex" && bot?.codexAuto !== false;
+
+/** The words Codex's auto mode adds, [] for every other agent and for a bot whose `codexAuto` is false. */
+export const codexAutoArgs = (agentKey, bot) => (codexAutoOn(agentKey, bot) ? [...CODEX_AUTO_ARGS] : []);
+
+/**
+ * The words `agentKey` starts with: the given run (Herdr's table, programs.json applied) and the
+ * flags this pack adds for that agent. Codex's auto mode is added here, so a bot's start, its
+ * restart and its workers all take it from the definition, never from an old pane's command.
+ */
+export function launchRun(agentKey, run, bot) {
+  return [...run, ...codexAutoArgs(agentKey, bot)];
+}
+
 // ---- Antigravity's per-launch permission list (--settings, #823) ----
 //
 // agy 1.5.3 reads a permission list from a session's --settings file, never saving it: the file

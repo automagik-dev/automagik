@@ -28,7 +28,7 @@ import { addressOf, attachKey, attachLine, attachPath, attachRow, closingRow, co
 import { PANE_ENV_PATH, agentOnMachine, interpreterPath, paneEnvOf } from "../agentPath.mjs";
 import { briefingFilePath, installHook, launchBriefingText, screenTail, stableBriefingPath, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
-import { AGENTS, AGY_MODE_DEFAULT, AGY_MODES, agentKeyOfArgv, agyModeArgs, agyModeOf, agyModeProblem, agyPermissionPlan, agyRuleProblem, agySandbox, agySettingsArgs, agySettingsDir, agySettingsPlan, choosesSession, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, modelArgs, modelRefusal, ownPromptIn, ownsSession, resolveAgent, resumeAfterTurn, resumesById,
+import { AGENTS, AGY_MODE_DEFAULT, AGY_MODES, agentKeyOfArgv, agyModeArgs, agyModeOf, agyModeProblem, agyPermissionPlan, agyRuleProblem, agySandbox, agySettingsArgs, agySettingsDir, agySettingsPlan, choosesSession, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, launchRun, modelArgs, modelRefusal, ownPromptIn, ownsSession, resolveAgent, resumeAfterTurn, resumesById,
   sessionIdArgs, shownModel, withAgySettings, withBriefing, withOverrides } from "../models.js";
 import { AG_MODELS_TIMEOUT_MS, agModelsSpawnResult, refreshAgModelsSync } from "../modelCache.js";
 import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, WORKTREES_EXCLUDE,
@@ -2846,8 +2846,8 @@ async function seatOnMachine(project, bot, over = {}) {
     }
   }
   // Herdr's table as this computer has it (programs.json applied): the Mac builds the command.
-  const command = withAgySettings(agentKey, over.argv ?? [...agent.run, ...agyModeArgs(agentKey, agyMode), ...modelArgs(bot.agent, bot.model)],
-    agySettings?.path);
+  const command = withAgySettings(agentKey, over.argv ?? [...launchRun(agentKey, agent.run, bot), ...agyModeArgs(agentKey, agyMode),
+    ...modelArgs(bot.agent, bot.model)], agySettings?.path);
   // #612: a local absolute override that isn't there falls back to the shipped run when that is.
   const there = await agentThere(machine, command, agent.name ?? agentKey, paneEnv.prepend,
     shippedRunFor(agentKey, agent.run, command));
@@ -2996,7 +2996,7 @@ async function restartOnMachine(opts, project, bot, entry) {
   // The old pane's launch, only to say when it differs from what the source launches now (#597).
   const oldLaunch = old ? paneCommand(old) : null;
   const planned = {
-    bot, run, runningAgent: old ? agentKeyOfArgv(unwrapKeep(old.foreground?.argv), agentTable()) : null, session: label,
+    bot, run: launchRun(agentKey, run, bot), runningAgent: old ? agentKeyOfArgv(unwrapKeep(old.foreground?.argv), agentTable()) : null, session: label,
     fresh: opts.fresh || !old, agent: entry ? entry.agent : undefined, model: entry ? (entry.model ?? "") : undefined,
   };
   let plan = restartPlan(planned);
@@ -3172,7 +3172,7 @@ async function launchSeat(project, bot, over = {}) {
   const labels = { ...paneLabels(file, bot.id, carry, lead ? leadPane(await liveRows(lead))?.labels ?? null : null), ...carry }; // A16
   const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
   // A Start's command, on a new session whose id Herdr chooses (Claude), unless it picks its own.
-  const source = over.argv ?? [...agent.run, ...agyModeArgs(agentKey, agyMode), ...modelArgs(bot.agent, bot.model)];
+  const source = over.argv ?? [...launchRun(agentKey, agent.run, bot), ...agyModeArgs(agentKey, agyMode), ...modelArgs(bot.agent, bot.model)];
   const chosen = !over.argv && choosesSession(agentKey) && !ownsSession(source) ? newSessionId() : null;
   const session = over.argv ? (over.session ?? null) : chosen;
   if (session && agentKey === "claude") labels[SESSION_LABEL] = session;
@@ -3799,7 +3799,7 @@ async function treePlans({ project, bot, old, helpers, view, ledger, agents, kno
     for (const k of ["agent.session", "revive.session"]) holdId(h.labels?.[k]);
     holdId(knownSession(h, agentKey)?.session);
     return { ...helperPlan({ get: h, worker, session: knownSession(h, agentKey)?.session ?? null,
-      agents, fresh, agy: { appHomeDir: appHome(), bot: agyBot, realpath: realDir, homeDir: home() } }), worker, binding, proxyIdentity,
+      agents, fresh, bot: agyBot, agy: { appHomeDir: appHome(), bot: agyBot, realpath: realDir, homeDir: home() } }), worker, binding, proxyIdentity,
       createdMs: Number.isSafeInteger(h.created_ms) ? h.created_ms : null };
   };
   let tree = doomed.map((h) => planOf(h));
@@ -4136,7 +4136,7 @@ async function cmdRestart(opts, [ref]) {
   const oldCwd = old?.foreground?.cwd ?? old?.cwd ?? null;
   const cwd = wanted ?? (oldCwd && isDir(oldCwd) ? (realDir(oldCwd) ?? oldCwd) : key);
   const planned = {
-    bot, run: startableAgent(bot, entry?.agent ?? bot.agent).run,
+    bot, run: launchRun(entry?.agent ?? bot.agent, startableAgent(bot, entry?.agent ?? bot.agent).run, bot),
     runningAgent, session: known?.session ?? null,
     fresh: opts.fresh || !old, agent: entry ? entry.agent : undefined, model: entry ? (entry.model ?? "") : undefined,
     template: oldTemplate?.command ? { name: oldTemplate.name, command: oldTemplate.command } : null,
