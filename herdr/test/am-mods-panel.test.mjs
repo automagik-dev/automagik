@@ -118,12 +118,29 @@ test("u on a pack mod asks, then runs automagik-herdr update in this app home; n
   await cx.settle();
   select(view, "am-footer");
   await key(view, cx, "u");
-  assert.match(view.confirm?.text ?? "", new RegExp(`update Automagik Herdr \\(all ${PACK_MODS.length} of its mods\\) with automagik-herdr update\\? \\(y/n\\)`));
+  // #219: a switched-off pack mod is named before the yes: the update keeps it off, where it is.
+  assert.equal(view.confirm?.text, `update Automagik Herdr (all ${PACK_MODS.length} of its mods; am-tabs is off and stays off, updated in mods-disabled/) with automagik-herdr update? (y/n)`);
   await key(view, cx, "y");
   await cx.settle();
   assert.equal(readFileSync(s.calls, "utf8"), `${s.appHome} update\n`);
   assert.match(view.message, /Up to date/);
   assert.ok(!state.calls.some((c) => c.kind === "exec" && c.command === "git"), "no per-mod clone");
+  // u on the switched-off one asks the same; with every pack mod on, nothing is added; two off are both named.
+  select(view, "am-tabs");
+  await key(view, cx, "u");
+  assert.match(view.confirm?.text ?? "", /; am-tabs is off and stays off, updated in mods-disabled\/\) with automagik-herdr update\?/);
+  await key(view, cx, "n");
+  await view.toggle(view.mods.find((m) => m.name === "am-tabs"), cx);
+  await cx.settle();
+  select(view, "am-footer");
+  await key(view, cx, "u");
+  assert.equal(view.confirm?.text, `update Automagik Herdr (all ${PACK_MODS.length} of its mods) with automagik-herdr update? (y/n)`);
+  await key(view, cx, "n");
+  for (const name of ["am-quota", "am-tabs"]) { await view.toggle(view.mods.find((m) => m.name === name), cx); await cx.settle(); }
+  select(view, "am-footer");
+  await key(view, cx, "u");
+  assert.match(view.confirm?.text ?? "", /of its mods; am-quota, am-tabs are off and stay off, updated in mods-disabled\/\) with/);
+  await key(view, cx, "n");
   // d on a pack mod says how the pack checks itself; it never clones to compare.
   await key(view, cx, "d");
   assert.match(view.message, /Automagik Herdr checks its own files/);

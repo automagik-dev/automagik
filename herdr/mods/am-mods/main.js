@@ -405,8 +405,12 @@ export default class ModManager extends View {
       this.message = core.POCKET_LINK_REFUSAL;
     } else if (ch === "u") {
       if (mod.kind === "pack") {
-        const count = this.mods.filter((m) => m.kind === "pack").length;
-        this.confirm = { text: `update ${core.PACK_TITLE} (all ${count} of its mods) with automagik-herdr update? (y/n)`, run: (cx) => this.updatePack(cx) };
+        // The pack's update takes every one of its mods, the switched-off ones too: updated where
+        // they are (mods-disabled/), never copied back into mods/. Said before the yes (#219).
+        const pack = this.mods.filter((m) => m.kind === "pack");
+        const off = pack.filter((m) => !m.enabled).map((m) => m.name);
+        const offSaid = !off.length ? "" : `; ${off.join(", ")} ${off.length === 1 ? "is off and stays" : "are off and stay"} off, updated in ${core.OFF_DIR}/`;
+        this.confirm = { text: `update ${core.PACK_TITLE} (all ${pack.length} of its mods${offSaid}) with automagik-herdr update? (y/n)`, run: (cx) => this.updatePack(cx) };
       } else if (mod.kind !== "installed") this.message = mod.kind === "herdr" ? "built-in mods update with Herdr" : "only mods installed from the marketplace have a source to update from";
       else if (!mod.enabled) this.message = `${mod.name} is off: switch it on before updating`;
       else cx.spawn(async (cx) => this.startReview(cx, mod.record.source));

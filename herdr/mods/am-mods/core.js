@@ -474,8 +474,10 @@ export async function listMods(io, { appHome, records }) {
     try { changed = Number((await run(io, "stat", ["-f", "%m", path])).trim()) * 1000 || null; } catch {}
     const record = owner.get(name) ?? null;
     // Pack first: the marker lists only folders the pack installer put in mods/ (a person's
-    // folder with a pack name is left alone by it, so never listed), switched off or not.
-    const ofPack = Boolean(pack?.mods.has(name));
+    // folder with a pack name is left alone by it, so never listed), switched off or not. A link
+    // under a pack name is never the pack's copy (#219): the installer and the updater put plain
+    // folders there and leave a link alone (a checkout), so it is the person's, like any link.
+    const ofPack = Boolean(pack?.mods.has(name)) && !links.has(path);
     const kind = ofPack ? "pack" : record ? "installed" : on && shipped.includes(name) ? "herdr" : meta.cloned_from ? "clone" : "local";
     mods.push({
       name,

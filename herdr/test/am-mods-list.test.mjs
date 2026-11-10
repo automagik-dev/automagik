@@ -104,6 +104,28 @@ test("only folders the marker lists are the pack's; without a marker a pack-name
   assert.ok(PACK_MODS.every((m) => none[m].kind !== "pack"));
 });
 
+// #219: the installer and the updater put plain folders under the pack's names and leave a link
+// alone, so a link there (a checkout) is the person's: never listed as the pack's, on or off.
+test("a link under a pack mod's name is the person's, not the pack's, in mods/ and in mods-disabled/ (#219)", async (t) => {
+  const appHome = home(t);
+  const ext = realpathSync(mkdtempSync(join(tmpdir(), "am-mods-checkout-")));
+  t.after(() => rmSync(ext, { recursive: true, force: true }));
+  for (const [m, dir] of [["am-sidebar", "mods"], ["am-tabs", "mods-disabled"]]) {
+    renameSync(join(appHome, dir, m), join(ext, m));
+    symlinkSync(join(ext, m), join(appHome, dir, m));
+  }
+  const mods = byName(await core.listMods(io, { appHome, records: [] }));
+  for (const m of ["am-sidebar", "am-tabs"]) {
+    assert.deepEqual([mods[m].kind, mods[m].pack, mods[m].symlink], ["local", null, true], m);
+    assert.notEqual(core.describeMod(mods[m]).source, core.PACK_SOURCE, m);
+  }
+  assert.equal(mods["am-tabs"].enabled, false);
+  // The pack's plain folders beside them are still the pack's.
+  assert.deepEqual(PACK_MODS.filter((m) => mods[m].kind === "pack"), PACK_MODS.filter((m) => !["am-sidebar", "am-tabs"].includes(m)));
+  const { groups } = core.groupMods(Object.values(mods));
+  assert.ok(groups.find((g) => g.key === "yours").mods.some((m) => m.name === "am-sidebar"), "listed under Yours");
+});
+
 test("a marker from before installed= dates the install by the marker file; no version= reads VERSION",
   { skip: process.platform !== "darwin" && "stat -f %m is the macOS form" }, async (t) => {
     const appHome = home(t, { marker: "mods=am-mods,am-sidebar\nlayout=added\nbefore=none\n" });
