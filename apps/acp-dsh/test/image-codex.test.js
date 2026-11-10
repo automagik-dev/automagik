@@ -6,7 +6,7 @@
 // request is sent, and nothing of the person's own Codex home is read or written.
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -19,7 +19,9 @@ const CODEX = process.env.AUTOMAGIK_TEST_CODEX
 const skip = ADAPTER && CODEX ? false : 'set AUTOMAGIK_TEST_CODEX_ACP and AUTOMAGIK_TEST_CODEX to run against a real Codex'
 
 function home(t, config = '') {
-  const root = mkdtempSync(join(tmpdir(), 'acp-image-codex-'))
+  // Codex matches a project's trust entry against the folder it resolved, and the macOS temp
+  // folder is reached through the /var -> /private/var symlink: name it as Codex will.
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'acp-image-codex-')))
   t.after(() => rmSync(root, { recursive: true, force: true }))
   for (const dir of ['home', 'codex', 'cwd']) mkdirSync(join(root, dir))
   if (config !== '') writeFileSync(join(root, 'codex', 'config.toml'), config)
