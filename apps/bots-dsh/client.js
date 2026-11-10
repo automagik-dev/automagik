@@ -606,6 +606,13 @@ var ZH = {
   "What may {name} do on its own?": "{name} 可以自行做什么？",
   "You choose. Nothing changes until you save.": "由你决定。保存之前不会有任何变化。",
   "You can change this any time in Details.": "你可以随时在“详情”中更改。",
+  // Full access on a Bot that runs on a coding CLI, shown as "Auto" (permission-picker.js).
+  '{cli} decides by itself and runs commands and changes files anywhere without asking you. Automagik asks it for its own "{mode}" mode, and does not review or ask. This holds while the Bot runs on {cli}.': "{cli} 自行决定，在任何位置运行命令、修改文件，都不会问你。Automagik 会请它使用自己的“{mode}”模式，不审查，也不询问。只要 Bot 在 {cli} 上运行，就一直如此。",
+  '{cli} will decide by itself and run without asking you. Automagik will ask it for its own "{mode}" mode, and will not review or ask. This holds while the Bot runs on {cli}.': "{cli} 将自行决定并直接运行，不会问你。Automagik 会请它使用自己的“{mode}”模式，不会审查，也不会询问。只要 Bot 在 {cli} 上运行，就一直如此。",
+  "Use Auto for {name}?": "要让 {name} 使用自动吗？",
+  "Use Auto": "使用自动",
+  '{cli} is in its mode "{mode}" here, not its no-ask mode.': "{cli} 在这里处于“{mode}”模式，而不是它的免询问模式。",
+  "The agent": "智能体",
   "Choose in the chat": "在对话中选择",
   "The permission level was saved, but some conversations could not take it and keep the level they had until DeepSeek Harness opens them again.": "权限级别已保存，但有些对话未能切换，在 DeepSeek Harness 重新打开它们之前仍保持原来的级别。",
   "New Bots start with": "新 Bot 的初始权限",
@@ -1707,6 +1714,8 @@ var HOST_ZH = {
   "Permissions are not available in this DeepSeek Harness": "这个 DeepSeek Harness 不支持权限设置",
   "The permission level could not be set, so nothing was started. Try again.": "权限级别未能设置，因此没有启动任何操作。请重试。",
   "The saved permission level is no longer offered, so nothing was started. Pick a permission level again.": "已保存的权限级别已不再提供，因此没有启动任何操作。请重新选择权限级别。",
+  "This Bot has Auto (full access) on its coding CLI, which is not available now, so nothing was started on another model. Fix the CLI or sign in to it, or pick another model for the Bot yourself.": "这个 Bot 在它的编程 CLI 上使用自动（完全权限），而该 CLI 现在不可用，因此没有在其他模型上启动任何操作。请修复该 CLI 或登录它，或者自己为这个 Bot 选择其他模型。",
+  "The model failed and no other model answered in its place: this Bot has Auto (full access) on its coding CLI and stays there. Fix the CLI or sign in to it, or pick another model for the Bot yourself.": "模型出错了，也没有其他模型代替它回答：这个 Bot 在它的编程 CLI 上使用自动（完全权限），所以留在那里。请修复该 CLI 或登录它，或者自己为这个 Bot 选择其他模型。",
   "Turn Auto review back on in Plugins to open this chat.": "请在插件中重新开启自动审查，才能打开这个对话。",
   "Avatar images must be PNG, JPEG, WebP, or GIF": "头像图片必须是 PNG、JPEG、WebP 或 GIF",
   "Avatar image is too large": "头像图片太大了",
@@ -2389,6 +2398,9 @@ function mountShellInstallers(tools) {
 
 // src/shared/routes.js
 var isClaudeCode = (provider) => provider === "claude-code" || provider.startsWith("claude-code-");
+var CODING_CLIS = Object.freeze(["acp-claude", "acp-codex"]);
+var cliRoute = (provider) => CODING_CLIS.includes(provider);
+var leavesCli = (from, to) => cliRoute(from?.provider) && to?.provider !== from.provider;
 var CONNECTED_BY = Object.freeze(["native", "pi-ai", "claude-code-plugin", "acp"]);
 var HARNESSES = Object.freeze(["dsh", "claude-code", "codex", "gemini"]);
 var PI_AI_NS = "llm-pi-ai";
@@ -18797,7 +18809,18 @@ var import_react53 = require("react");
 var LABELS = { "read-only": "Read only", "workspace-write": "Workspace", "danger-full-access": "Full access", [AUTO]: "Auto review" };
 var DANGER = /* @__PURE__ */ new Set(["danger-full-access"]);
 var presetDanger = (value) => DANGER.has(value);
-var presetName = (value, catalog) => LABELS[value] ? t(LABELS[value]) : catalog?.options?.find((option) => option.value === value)?.name ?? value;
+var CLI_MODES = { "acp-claude": "bypass permissions", "acp-codex": "full access" };
+var cliOfBot = (bot) => {
+  const id = cliProviderOf(bot?.model);
+  if (id === void 0 || cliProviderOf(bot.appliedModel) !== id) return void 0;
+  return { id, name: CLI_NAMES[id], mode: CLI_MODES[id] };
+};
+var CLI_TEXT = '{cli} decides by itself and runs commands and changes files anywhere without asking you. Automagik asks it for its own "{mode}" mode, and does not review or ask. This holds while the Bot runs on {cli}.';
+var CLI_CONFIRM = '{cli} will decide by itself and run without asking you. Automagik will ask it for its own "{mode}" mode, and will not review or ask. This holds while the Bot runs on {cli}.';
+var cliWords = (cli) => ({ cli: cli.name, mode: cli.mode });
+var cliAuto = (value, cli) => cli !== void 0 && presetDanger(value);
+var cliConfirmText = (cli) => t(CLI_CONFIRM, cliWords(cli));
+var presetName = (value, catalog, cli) => cliAuto(value, cli) ? t("Auto") : LABELS[value] ? t(LABELS[value]) : catalog?.options?.find((option) => option.value === value)?.name ?? value;
 var PermissionFallback = ({ fallback }) => fallback ? (0, import_react53.createElement)("div", { className: "bt-note" }, t("Runs as Workspace here")) : null;
 var TEXTS = {
   "read-only": "It cannot change files unless you allow that one action. It can still run commands and use the network and its other tools.",
@@ -18805,7 +18828,7 @@ var TEXTS = {
   [AUTO]: "A model reviews each action first. You are asked only about the ones it stops. The rest run with full access, and it can let a wrong one through.",
   "danger-full-access": "Runs commands and changes files anywhere without asking you. Choose it only when you trust what you asked for."
 };
-var presetText = (value, catalog) => Object.hasOwn(TEXTS, value) ? t(TEXTS[value]) : String(catalog?.options?.find((option) => option.value === value)?.description ?? "");
+var presetText = (value, catalog, cli) => cliAuto(value, cli) ? t(CLI_TEXT, cliWords(cli)) : Object.hasOwn(TEXTS, value) ? t(TEXTS[value]) : String(catalog?.options?.find((option) => option.value === value)?.description ?? "");
 function usePermissionPick({ saved, onPick, repick = false, confirmFull = false }) {
   const [pending, setPending] = (0, import_react53.useState)(null);
   const [confirming, setConfirming] = (0, import_react53.useState)(false);
@@ -18845,13 +18868,22 @@ function usePermissionPick({ saved, onPick, repick = false, confirmFull = false 
   };
   return { current, pick: pick2, confirming, cancel: () => setConfirming(false) };
 }
-function PermissionConfirm({ value, name, onConfirm, onCancel }) {
+function PermissionConfirm({ value, name, cli, onConfirm, onCancel }) {
   if (value === AUTO) {
     return (0, import_react53.createElement)(
       "div",
       { className: "bt-perm-confirm", role: "alert" },
       (0, import_react53.createElement)("span", { className: "bt-note" }, t("Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.")),
       (0, import_react53.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: onConfirm }, t("Use Auto review")),
+      (0, import_react53.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: onCancel }, t("Cancel"))
+    );
+  }
+  if (cliAuto(value, cli)) {
+    return (0, import_react53.createElement)(
+      "div",
+      { className: "bt-perm-confirm", role: "alert" },
+      (0, import_react53.createElement)("span", { className: "bt-note" }, (0, import_react53.createElement)("span", { className: "bt-danger" }, name === void 0 ? cliConfirmText(cli) : `${t("Use Auto for {name}?", { name })} ${cliConfirmText(cli)}`)),
+      (0, import_react53.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: onConfirm }, t("Use Auto")),
       (0, import_react53.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: onCancel }, t("Cancel"))
     );
   }
@@ -18885,13 +18917,13 @@ function PermissionPicker({ catalog, saved, onPick, repick = false, confirmFull 
     (0, import_react53.createElement)(PermissionConfirm, { value: confirming, onConfirm: () => pick2(confirming, true), onCancel: cancel })
   );
 }
-function PermissionOptions({ catalog, current, onPick, disabled = false }) {
+function PermissionOptions({ catalog, current, onPick, disabled = false, cli }) {
   return (0, import_react53.createElement)(
     "div",
     { className: "bt-q-list", role: "group", "aria-label": t("Permissions") },
     catalog.options.map((option) => {
       const danger = presetDanger(option.value) ? " bt-danger" : "";
-      const text2 = presetText(option.value, catalog);
+      const text2 = presetText(option.value, catalog, cli);
       return (0, import_react53.createElement)(
         "button",
         {
@@ -18906,7 +18938,7 @@ function PermissionOptions({ catalog, current, onPick, disabled = false }) {
         (0, import_react53.createElement)(
           "span",
           { className: "bt-q-body" },
-          (0, import_react53.createElement)("span", { className: `bt-q-label${danger}` }, presetName(option.value, catalog), option.value === AUTO ? (0, import_react53.createElement)("span", { className: "bt-perm-exp" }, t("Experimental")) : null),
+          (0, import_react53.createElement)("span", { className: `bt-q-label${danger}` }, presetName(option.value, catalog, cli), option.value === AUTO ? (0, import_react53.createElement)("span", { className: "bt-perm-exp" }, t("Experimental")) : null),
           text2 ? (0, import_react53.createElement)("span", { className: `bt-q-desc${danger}` }, text2) : null
         ),
         option.value === current ? (0, import_react53.createElement)("span", { className: "bt-q-check", title: t("Selected") }, (0, import_react53.createElement)(CheckIcon)) : null
@@ -18914,13 +18946,13 @@ function PermissionOptions({ catalog, current, onPick, disabled = false }) {
     })
   );
 }
-function PermissionList({ catalog, saved, onPick, repick = false, disabled = false, name }) {
+function PermissionList({ catalog, saved, onPick, repick = false, disabled = false, name, cli }) {
   const { current, pick: pick2, confirming, cancel } = usePermissionPick({ saved, onPick, repick, confirmFull: true });
   return (0, import_react53.createElement)(
     import_react53.Fragment,
     null,
-    (0, import_react53.createElement)(PermissionOptions, { catalog, current, onPick: (value) => pick2(value), disabled }),
-    confirming && !disabled ? (0, import_react53.createElement)(PermissionConfirm, { value: confirming, name, onConfirm: () => pick2(confirming, true), onCancel: cancel }) : null
+    (0, import_react53.createElement)(PermissionOptions, { catalog, current, onPick: (value) => pick2(value), disabled, cli }),
+    confirming && !disabled ? (0, import_react53.createElement)(PermissionConfirm, { value: confirming, name, cli, onConfirm: () => pick2(confirming, true), onCancel: cancel }) : null
   );
 }
 function PermissionExplanations({ catalog }) {
@@ -20605,30 +20637,43 @@ var PERM_REVIEWS = {
 var permText = (value) => typeof value === "string" ? value : void 0;
 var permTime = (value) => typeof value === "number" && Number.isFinite(value) ? permWhen(value) : void 0;
 var PERM_LEVELS = /* @__PURE__ */ new Set(["read-only", "workspace-write", "danger-full-access", "auto"]);
-function levelName(level) {
+function levelName(level, cli) {
   const value = permText(level?.value);
   if (value === void 0) return void 0;
-  return PERM_LEVELS.has(value) ? presetName(value) : t("A custom level");
+  return PERM_LEVELS.has(value) ? presetName(value, void 0, cli) : t("A custom level");
 }
-function levelFacts(row) {
+var NO_ASK = /* @__PURE__ */ new Set(["bypassPermissions", "agent-full-access"]);
+function noAskMissed(acp) {
+  if (acp === null || typeof acp !== "object" || acp.active !== true) return void 0;
+  const modes = acp.modes;
+  if (modes === null || typeof modes !== "object" || !Array.isArray(modes.wanted)) return void 0;
+  const asked2 = modes.wanted[0];
+  if (typeof asked2 !== "string" || !NO_ASK.has(asked2)) return void 0;
+  const current = permText(modes.current);
+  if (current === void 0 || current === "other" || NO_ASK.has(current)) return void 0;
+  return { mode: current };
+}
+function levelFacts(row, cli) {
   const out = [];
   if (row.presets === false) out.push(t("Permissions are not available in this DeepSeek Harness"));
-  const saved = levelName(row.saved);
+  const saved = levelName(row.saved, cli);
   if (saved !== void 0 && PERM_SAVED[row.source]) out.push(t(PERM_SAVED[row.source], { level: saved }));
   else if (row.source === "unknown") out.push(t("Saved level: not known now"));
   else if (row.presets !== false) out.push(t("No saved level: it uses the default of DeepSeek Harness"));
   if (row.presets !== false) {
-    const effective = levelName(row.effective);
+    const effective = levelName(row.effective, cli);
     if (row.open !== true) out.push(t("Not open now"));
     else if (effective !== void 0) out.push(t("Running as: {level}", { level: effective }));
     else out.push(t("Running as: not known now"));
   }
   if (row.fallback === true) out.push(t("Runs as Workspace here"));
   else if (row.differs === true && row.open === true) out.push(t("The level in force here is not the saved one."));
-  const missed = levelName(row.unapplied?.level);
+  const missed = levelName(row.unapplied?.level, cli);
   if (row.unapplied && typeof row.unapplied === "object") {
     out.push(t("Not applied: {level} could not be set on this conversation ({time}). Tools may be held back here until it is.", { level: missed ?? t("the saved level"), time: permTime(row.unapplied.at) ?? "?" }));
   }
+  const noAsk = cliAuto(row.effective?.value ?? row.saved?.value, cli) ? noAskMissed(row.acp) : void 0;
+  if (noAsk !== void 0) out.push(t('{cli} is in its mode "{mode}" here, not its no-ask mode.', { cli: cli.name, mode: noAsk.mode }));
   return out;
 }
 var modeList = (list) => Array.isArray(list) ? list.filter((item) => typeof item === "string" && item !== "other") : [];
@@ -20677,7 +20722,8 @@ function permissionRows(report, roster) {
   if (report === null || typeof report !== "object" || report.version !== PERMISSION_ANSWER || !Array.isArray(report.sessions)) return null;
   return report.sessions.flatMap((row) => {
     if (row === null || typeof row !== "object" || !["chat", "group", "task", "other"].includes(row.kind)) return [];
-    return [{ label: rowLabel(row, roster), level: levelFacts(row).join(" · "), agent: agentFacts(row.acp).join(" · ") }];
+    const cli = cliOfBot((roster?.bots ?? []).find((item) => item.id === row.botId));
+    return [{ label: rowLabel(row, roster), level: levelFacts(row, cli).join(" · "), agent: agentFacts(row.acp).join(" · ") }];
   });
 }
 function PermissionDiagnostics({ actions, roster, Section: Section2, Row: Row3 }) {
@@ -22259,6 +22305,8 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
   const busyRef = (0, import_react65.useRef)(false);
   const titleId = (0, import_react65.useId)();
   const draft = picked ?? saved;
+  const cli = cliOfBot(bot);
+  const auto = cliAuto(draft, cli);
   const offered = catalog.options.some((option) => option.value === draft);
   const asks = draft === AUTO || presetDanger(draft);
   const unchanged = picked === void 0 && bot.permission !== void 0;
@@ -22282,7 +22330,7 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
   const note = (0, import_react65.createElement)("div", { className: "bt-note" }, t(FOOTNOTE));
   const errorLine = error ? (0, import_react65.createElement)("div", { className: "bt-error", role: "alert", style: { padding: 0 } }, error) : null;
   if (confirming !== false && confirming === draft && offered) {
-    const name = presetName(draft, catalog);
+    const name = presetName(draft, catalog, cli);
     return (0, import_react65.createElement)(
       "form",
       { className: "bt-q", role: "alert", "aria-labelledby": titleId, "aria-busy": busy || void 0, "data-permission-confirm": draft, onSubmit: (event) => event.preventDefault() },
@@ -22292,11 +22340,11 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
         (0, import_react65.createElement)(
           "div",
           { className: "bt-q-text" },
-          (0, import_react65.createElement)("p", { className: "bt-q-title", id: titleId }, draft === AUTO ? name : t("Give {name} full access?", { name: bot.name })),
+          (0, import_react65.createElement)("p", { className: "bt-q-title", id: titleId }, draft === AUTO ? name : auto ? t("Use Auto for {name}?", { name: bot.name }) : t("Give {name} full access?", { name: bot.name })),
           draft === AUTO ? (0, import_react65.createElement)("div", { className: "bt-q-detail" }, t("Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.")) : (0, import_react65.createElement)(
             "div",
             { className: "bt-q-detail" },
-            (0, import_react65.createElement)("span", { className: "bt-danger" }, t("{name} will run commands and change files anywhere without asking you first.", { name: bot.name })),
+            (0, import_react65.createElement)("span", { className: "bt-danger" }, auto ? cliConfirmText(cli) : t("{name} will run commands and change files anywhere without asking you first.", { name: bot.name })),
             " ",
             t("Choose it only when you trust what you asked for.")
           )
@@ -22311,7 +22359,7 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
         // Never the second press of a double click on Save, which sat in this place.
         (0, import_react65.createElement)("button", { type: "button", className: "bt-q-submit", disabled: busy, onClick: (event) => {
           if (!(event.detail > 1)) send();
-        } }, draft === AUTO ? t("Use Auto review") : t("Give full access"))
+        } }, draft === AUTO ? t("Use Auto review") : auto ? t("Use Auto") : t("Give full access"))
       )
     );
   }
@@ -22343,7 +22391,7 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
     (0, import_react65.createElement)(PermissionOptions, { catalog, current: draft, onPick: (value) => {
       setError("");
       setPicked(value);
-    }, disabled: busy }),
+    }, disabled: busy, cli }),
     errorLine,
     note,
     (0, import_react65.createElement)(
@@ -22404,7 +22452,7 @@ function PermissionRow({ bot, roster, actions, run: run2 }) {
     (0, import_react66.createElement)("div", { className: "bt-section-title" }, t("Permissions")),
     // A Bot without its own preset may run on another one set in DSH, so its first pick always applies.
     // Every level with what it does; a window that can only view the team gets no live rows.
-    (0, import_react66.createElement)(PermissionList, { catalog, name: bot.name, saved: bot.permission ?? catalog.defaultPreset, repick: bot.permission === void 0, disabled: Boolean(roster.readOnly), onPick: (permission) => run2(actions.updateBot(bot.id, { permission })) }),
+    (0, import_react66.createElement)(PermissionList, { catalog, name: bot.name, saved: bot.permission ?? catalog.defaultPreset, repick: bot.permission === void 0, disabled: Boolean(roster.readOnly), cli: cliOfBot(bot), onPick: (permission) => run2(actions.updateBot(bot.id, { permission })) }),
     (0, import_react66.createElement)(PermissionFallback, { fallback: bot.permissionFallback }),
     roster.readOnly ? null : (0, import_react66.createElement)("button", { type: "button", className: "bt-more", onClick: () => reopenPermissionChoice(bot.id) }, t("Choose in the chat"))
   );

@@ -6,7 +6,7 @@ import { createElement as h, useEffect, useState } from 'react'
 import { CLI_NAMES } from './cli-login-model.js'
 import { quietly } from './diagnostics.js'
 import { dateLocale, t } from './i18n.js'
-import { presetName } from './permission-picker.js'
+import { cliAuto, cliOfBot, presetName } from './permission-picker.js'
 
 const PERMISSION_ANSWER = 1
 
@@ -56,21 +56,42 @@ const permTime = value => (typeof value === 'number' && Number.isFinite(value) ?
 // A level by the name the app shows for it. The host names only the stock levels; a preset of
 // the person's own arrives as `custom`, with neither its key nor its label.
 const PERM_LEVELS = new Set(['read-only', 'workspace-write', 'danger-full-access', 'auto'])
-function levelName(level) {
+// `cli`: the coding CLI the row's Bot runs on (cliOfBot), where Full access reads "Auto".
+function levelName(level, cli) {
   const value = permText(level?.value)
   if (value === undefined) return undefined
-  return PERM_LEVELS.has(value) ? presetName(value) : t('A custom level')
+  return PERM_LEVELS.has(value) ? presetName(value, undefined, cli) : t('A custom level')
 }
 
-function levelFacts(row) {
+// The CLIs' own no-ask modes, the first one asked of them at Full access (acp-dsh modeFor).
+const NO_ASK = new Set(['bypassPermissions', 'agent-full-access'])
+/**
+ * The mode a running CLI is in, when it was asked for its no-ask mode and the record says it is
+ * in another one now. Only the record's own `current` counts, and only while the agent runs:
+ * the mode asked for or chosen says nothing of where the CLI is, and neither does a stopped
+ * agent's last run. Answers `{ mode }` or undefined; nothing is inferred.
+ * @param {unknown} acp one row's `acp` (host/permission-diagnostics.js acpView)
+ */
+export function noAskMissed(acp) {
+  if (acp === null || typeof acp !== 'object' || acp.active !== true) return undefined
+  const modes = acp.modes
+  if (modes === null || typeof modes !== 'object' || !Array.isArray(modes.wanted)) return undefined
+  const asked = modes.wanted[0]
+  if (typeof asked !== 'string' || !NO_ASK.has(asked)) return undefined
+  const current = permText(modes.current)
+  if (current === undefined || current === 'other' || NO_ASK.has(current)) return undefined
+  return { mode: current }
+}
+
+function levelFacts(row, cli) {
   const out = []
   if (row.presets === false) out.push(t('Permissions are not available in this DeepSeek Harness'))
-  const saved = levelName(row.saved)
+  const saved = levelName(row.saved, cli)
   if (saved !== undefined && PERM_SAVED[row.source]) out.push(t(PERM_SAVED[row.source], { level: saved }))
   else if (row.source === 'unknown') out.push(t('Saved level: not known now'))
   else if (row.presets !== false) out.push(t('No saved level: it uses the default of DeepSeek Harness'))
   if (row.presets !== false) {
-    const effective = levelName(row.effective)
+    const effective = levelName(row.effective, cli)
     if (row.open !== true) out.push(t('Not open now'))
     else if (effective !== undefined) out.push(t('Running as: {level}', { level: effective }))
     else out.push(t('Running as: not known now'))
@@ -78,11 +99,14 @@ function levelFacts(row) {
   if (row.fallback === true) out.push(t('Runs as Workspace here'))
   // The host compared the two levels by their own keys: two custom ones may differ.
   else if (row.differs === true && row.open === true) out.push(t('The level in force here is not the saved one.'))
-  const missed = levelName(row.unapplied?.level)
+  const missed = levelName(row.unapplied?.level, cli)
   if (row.unapplied && typeof row.unapplied === 'object') {
     // No promise either way: whether the gate holds tools back depends on more than the mark.
     out.push(t('Not applied: {level} could not be set on this conversation ({time}). Tools may be held back here until it is.', { level: missed ?? t('the saved level'), time: permTime(row.unapplied.at) ?? '?' }))
   }
+  // Told with the level: the CLI is not in the mode this level asks of it.
+  const noAsk = cliAuto(row.effective?.value ?? row.saved?.value, cli) ? noAskMissed(row.acp) : undefined
+  if (noAsk !== undefined) out.push(t('{cli} is in its mode "{mode}" here, not its no-ask mode.', { cli: cli.name, mode: noAsk.mode }))
   return out
 }
 
@@ -140,7 +164,8 @@ export function permissionRows(report, roster) {
   if (report === null || typeof report !== 'object' || report.version !== PERMISSION_ANSWER || !Array.isArray(report.sessions)) return null
   return report.sessions.flatMap((row) => {
     if (row === null || typeof row !== 'object' || !['chat', 'group', 'task', 'other'].includes(row.kind)) return []
-    return [{ label: rowLabel(row, roster), level: levelFacts(row).join(' · '), agent: agentFacts(row.acp).join(' · ') }]
+    const cli = cliOfBot((roster?.bots ?? []).find(item => item.id === row.botId))
+    return [{ label: rowLabel(row, roster), level: levelFacts(row, cli).join(' · '), agent: agentFacts(row.acp).join(' · ') }]
   })
 }
 

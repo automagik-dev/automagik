@@ -9,6 +9,7 @@ pub mod event;
 pub mod evidence;
 pub mod hc;
 pub mod ledger;
+pub mod outcomes;
 pub mod paths;
 pub mod prices;
 pub mod query;

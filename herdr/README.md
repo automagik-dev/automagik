@@ -874,6 +874,13 @@ automagik-herdr worker "Fix the login redirect loop" --task gl-231 --worktree ..
   [Antigravity's permission list](#antigravitys-permission-list)); any other agent's launch
   line is unchanged. A template whose command runs `agy` is rebuilt with the file and its task;
   one whose command can't take words runs without the list, with a plain warning.
+- **The task:** an agent's task is the last word of its command (Antigravity's behind `-i`).
+  Kimi takes none there (#1032; kimi 2.5.0 reads a bare word as a command name and exits, and
+  its `-p, --prompt` is a one-shot print mode that ends after one answer), so a Kimi worker
+  starts bare and the task is sent as its first message: `hc wait <pane>` until Kimi says it is
+  ready (up to 30 s for one that reports no status), then `hc send <pane> "<task>"`. When hc
+  refuses the send (the pane waits for a sign-in or a trust answer, or has ended), the worker
+  is kept and a warning names the pane and the `hc send` to run by hand; `--json` lists it.
 - **Templates:** `--template T` runs the hc template `T` (`hc templates` lists them)
   instead of an agent, for seats whose command sets more than a model: a custom model
   provider, keys, flags. A template owns its command, so `--template` with `--agent`,
