@@ -151,3 +151,32 @@ test('a delivery carrying a shown state is never noted for a resend; one dropped
   h.rt.dropLoginCodes({ agent: { id: sessionId }, messages: [{ role: 'user', content: [{ type: 'text', text: `abc#${STATE}` }], source: { kind: 'bot', exchangeId } }] })
   assert.deepEqual(h.rt.unreadOf(sessionId), [])
 })
+
+// #871 (L3): the guard reads the whole payload. No depth, width or key hides a text from it.
+test('the send guard finds a shown sign-in state at any depth, width or key of the payload', async (t) => {
+  const h = await fixture(t)
+  const code = `abc#${STATE}`
+  const deep = (value, levels) => { let out = value; for (let level = 0; level < levels; level++) out = { next: out }; return out }
+  const wide = Array.from({ length: 600 }, (_, index) => `line ${index}`)
+  for (const [name, endpoint, payload] of [
+    ['six levels down', 'view-reply', { sessionId: 'first', viewId: 'v', values: deep(code, 6) }],
+    ['forty levels down', 'answer-question', { sessionId: 'first', questionId: 'q', answer: deep({ text: code }, 40) }],
+    ['past the 200th item of a list', 'view-reply', { sessionId: 'first', viewId: 'v', values: { rows: [...wide, code] } }],
+    ['past the 200th field of an object', 'view-reply', { sessionId: 'first', viewId: 'v', values: { ...Object.fromEntries(wide.map((line, index) => [`f${index}`, line])), last: code } }],
+    ['deep and wide at once', 'send', { sessionId: 'first', text: 'hello', extra: deep([...wide, [wide, { a: [code] }]], 12) }],
+    ['as a field name', 'view-reply', { sessionId: 'first', viewId: 'v', values: { [code]: 'yes' } }],
+  ]) {
+    const { result } = await h.call(endpoint, payload)
+    assert.equal(result.ok, false, name)
+    assert.equal(result.error.code, 'bot/refused', name)
+    assert.match(result.error.message, /sign-in code/, name)
+    assert.doesNotMatch(JSON.stringify(result), /expected_state/, name)
+  }
+  assert.deepEqual(h.prompts, [], 'nothing was queued')
+  // The same shapes without a shown state are not refused by the guard: the send goes on.
+  const { result } = await h.call('send', { sessionId: 'first', text: 'hello #not_a_shown_state_0123456789', extra: deep([...wide, [wide, { a: ['#tag'] }]], 12) })
+  assert.equal(result.ok, true)
+  assert.equal(h.prompts.length, 1)
+  assert.deepEqual(h.prompts[0].content, [{ type: 'text', text: 'hello #not_a_shown_state_0123456789' }])
+  assert.doesNotMatch(JSON.stringify(h.logged), /expected_state/)
+})
