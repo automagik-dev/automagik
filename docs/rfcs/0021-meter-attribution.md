@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | In delivery (deliveries 1-6: #817, #825, #827, #835, #875; #849 closed, carried by #875; delivery 7 (reaching machines) is not delivered; 8 open; Q1-Q6 answered by Chat 2026-11-09, Decided 5 and 6 reopened by the owner 2026-11-10) |
+| Status | In delivery (deliveries 1-6: #817, #825, #827, #835, #875; #849 closed, carried by #875; delivery 7 (reaching machines) is not delivered; 8 open; Q1-Q6 answered by Chat 2026-11-09, Decided 5 and 6 reopened by the owner 2026-11-10; amended by [RFC 0026](0026-bot-tag-coverage.md) (#914), 2026-11-10) |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | none here (docs); herdr (3.N.P) for ledger rows; meter (3.N.P, RFC 0017) for the crate |
 | Created | 2026-11-09 |
@@ -87,19 +87,23 @@ owner's ask to compare bots across agents:
 5. **dsh-tui seats are tagged where a record ties them to a terminal.** Reopened by the owner,
    2026-11-10: the 2026-11-09 decision left them unlinked. DSH records the pane's terminal id in
    the session's start line, from `HC_TERMINAL_ID`, which hc already sets in a pane; the meter
-   links that session to the launch on the terminal, and the pack's session row or
-   `agent.session` label on a resume stays the second witness. What stays unknown: a session
-   started before DSH writes the field, a pane without the variable, a launch with no record.
-   RFC 0026 (d).
+   links that session to the launch on the terminal, and the seat's `bot` label names it. Where
+   the pack knows a session id, its session row or `agent.session` label is the second witness;
+   for dsh-tui it often does not (`-c` restarts write none), so DSH's field is the record for
+   such a seat. What stays unknown: a session started before DSH writes the field, a pane without
+   the variable, a launch with no record. RFC 0026 (d), (e).
 6. **Linked machines' bots are tagged by their own machine's meter.** Reopened by the owner,
-   2026-11-10: they are tagged too. A linked machine runs its own meter and store, so its bots'
-   usage is attributed there; the fleet coverage is the token-weighted sum of the machines'
-   answers (RFC 0026 (e)), never a session-level join. `other_machine` stays only for a call
-   whose sole record is another machine's (a moved log). Replicated records would need a
-   fleet-wide session key; RFC 0026 (e) says why it is not built and leaves it to Chat.
+   2026-11-10: they are tagged too. A linked machine runs its own meter and store, so its local
+   usage and its workers are tagged there; a seat started elsewhere has its attach row only in
+   the starting machine's ledger, so the linked machine tags it by its pane's `bot` label through
+   a session record (a Herdr-chosen Claude id, DSH's terminal field), else names it unknown. The
+   fleet coverage is the token-weighted sum of the machines' answers (RFC 0026 (e)), never a
+   session-level join. `other_machine` stays for a call whose sole record is another machine's (a
+   moved log). Replicated records would need a fleet-wide session key; RFC 0026 (e) says why it
+   is not built and leaves it to Chat.
 
-*Reopened by the owner, 2026-11-10, after later work:* Decided 5 and 6 are replaced above; Decided
-1 to 4 stand.
+*Reopened by the owner, 2026-11-10, after later work:* Decided 5 and 6 are replaced above, in
+RFC 0026 (d) and (e), ruled by Chat and acked by genie on 2026-11-10; Decided 1 to 4 stand.
 
 Proposed here: everything else.
 
@@ -145,8 +149,8 @@ overwrite what the start row recorded.
   first restart or resume; that gap is accepted below.
 - **dsh-tui** workers resolve by worktree from the session header's `cwd`. A dsh-tui seat is
   tied to its launch by the terminal id the session header carries, which DSH records from the
-  pane's environment (Decided, 5), else by a session row or an `agent.session` label the
-  snapshot saw. A session with none of them stays unlinked; RFC 0026 (d).
+  pane's environment (Decided, 5), else by a session row or a label the snapshot saw when the
+  pack knows the id. A session with none of them stays unlinked; RFC 0026 (d).
 - **agy** is later: the meter has no agy source yet. Its conversations record their workspace
   folder, so its workers resolve by worktree once Herdr launches agy workers with start rows.
 
@@ -542,7 +546,8 @@ release.
      apart (genie mints its short ids per clone): such tasks are refused or marked ambiguous, or
      genie makes its ids unique per repo. Delivery 2's enum and M3's task row agree on it.
    - D5: `actor_unattributed` gives distinct reasons for usage whose launch row is on another
-     machine (Decided, 6) and for dsh-tui seats (Decided, 5), so a card can say why.
+     machine (Decided, 6; RFC 0026 (e)) and for dsh-tui seats (Decided, 5; RFC 0026 (d)), so a
+     card can say why.
    - Reviewer: the order against RFC 0017's delivery 4, which is scheduled in parallel, is
      enforced, not only stated: RFC 0017's delivery 4 Check gains "RFC 0021 delivery 2 merged
      (enum widened)", or a schema test in the crate fails while `attribution.precision` lacks
@@ -573,10 +578,11 @@ release.
    - D5: `actor_unattributed` has `tokens_total`, `tokens_ambiguous`, `tokens_unlinked`,
      `tokens_before_evidence` and `parts`, one per reason with usage, each with its `state`
      (`ambiguous`, `unlinked`, `before_evidence`), `tokens_total` and `harnesses`. The reasons:
-     `claimants_differ`; `no_record`; `dsh_tui_seat` (Decided, 5); `other_machine` (Decided, 6),
-     where this machine's hc or ledgers show the terminal was started from another computer,
-     else `no_record`; `before_evidence`. Each part carries its state, so a reader that meets a
-     reason added later still knows which count it is in.
+     `claimants_differ`; `no_record`; `dsh_tui_seat` (Decided, 5; RFC 0026 (d));
+     `other_machine` (Decided, 6; RFC 0026 (e)), where this machine's hc or ledgers show the
+     terminal was started from another computer, else `no_record`; `before_evidence`. Each part
+     carries its state, so a reader that meets a reason added later still knows which count it
+     is in.
    - A bot with no row is 0 only when `actor_unattributed.absent_bot_is_zero` is true: a
      `--by bot` answer, nothing unattributed to a bot, and RFC 0018's zero conditions for the
      whole answer, `unattributed` 0 included under a branch filter ((d)); else unknown.
