@@ -2,10 +2,10 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (2026-11-10, by the owner; council 2026-11-09: revise; platform owner decisions 2026-11-09; amends 0024) |
+| Status | Accepted (2026-11-10, by the owner; council 2026-11-09: revise; platform owner decisions 2026-11-09; Automagik Chat: legal review scope, 2026-11-09; amends 0024) |
 | Goal | First goal (owner, 2026-11-10): by 23 Nov, the owner signs in and opens one hosted workspace in test mode, with no real charges: RFC 0024 deliveries 0-4 and RFC 0025 phase A. |
 | Milestone | none (ships outside the five milestones) |
-| Lanes | none here (docs); desktop (3.N) or plugin (3.N.P) for a link; the Cloud service outside |
+| Lanes | none here (docs); desktop (3.N) or plugin (3.N.P) for a link; the Cloud service in its own private repository |
 | Created | 2026-11-09 |
 
 ## Summary
@@ -130,6 +130,12 @@ From the council review (2026-11-09; verdict revise; conditions folded in):
     and (g)'s "the workspace holds no Cloud credential", which now admits a scoped, short-lived,
     revocable gateway token and the control-plane identity that renews it. The amendments are
     listed below.
+
+From Automagik Chat (2026-11-09; recorded 2026-11-10):
+
+14. **The later outbound RFC defines the legal review's scope** (was new question 3). It names
+    the jurisdictions, tax, consumer protection, sanctions and dispute rules before any merchant
+    path is built; this RFC builds none of it.
 
 Carried, not new:
 
@@ -653,8 +659,8 @@ This RFC amends RFC 0024 (now Accepted) at each place marked there:
 - **Decided 14 ("being paid").** Was: Bots paying, or being paid, on a customer's behalf. Now:
   inbound first; outbound to third-party merchants is deferred to phase E, after a legal review
   and its own RFC.
-- **Question 9 (the billing system).** It records the follow-up RFC; 0025 is that RFC, and
-  "being paid" is deferred (0025, (j)).
+- **Decided 14's follow-up (the billing system).** It recorded the follow-up RFC; 0025 is
+  that RFC, and "being paid" is deferred (0025, (j)).
 - **(i) Billing and entitlements, first paragraph.** Its model-usage sentence now reads as the
   platform owner's decision 1: BYO free, managed tokens opt-in at a published margin, compute
   metered.
@@ -940,40 +946,20 @@ cannot waive it.
 
 ### Carried from RFC 0024
 
-The full question text stays in RFC 0024, and the answer is recorded there. This list is the
-pointer and the outcome, so the two RFCs do not drift into two homes.
+The full question text stays in RFC 0024, and an answer is recorded there. This list carries
+only the questions still open, so the two RFCs do not drift into two homes.
 
-- **RFC 0024 Q3, the isolation unit.** Decided by the owner, 2026-11-10: one Incus VM per
-  workspace; an unprivileged container only for the operator's own; never privileged. The gate
-  reviews how it is built.
 - **RFC 0024 Q4, who may invite.** Recommended: owners and admins, and the individual of a
   personal account; members and guests cannot.
 - **RFC 0024 Q5, recovery.** Recommended: a second passkey at the claim, recovery codes as slow
   hashes, and the host reset out of the Bots' reach; no email reset.
 - **RFC 0024 Q6, session lifetimes.** Recommended: self-hosted sessions slide with a 12-hour idle
   limit; Cloud workspace tokens 5 minutes; DSH's multi-day cookie is the delivery 0 evidence gap.
-- **RFC 0024 Q7, IP-only LAN installs.** Decided by Automagik Chat, 2026-11-10: no passkeys
-  there; an SSH tunnel or pairing from a signed-in session; no TOTP fallback without its own
-  review.
 - **RFC 0024 Q8, what is paid (amended).** Recommended: BYO free; managed tokens opt-in at a
   published margin; a per-workspace subscription with seats; compute metered; personal and
   self-hosted free; included seats and host shape at GO-LIVE.
-- **RFC 0024 Q10, moving a self-hosted instance into Cloud.** Decided by Automagik Chat,
-  2026-11-10: a separate, later decision; linking moves no data.
-- **RFC 0024 Q11, DSH's authentication hook.** Decided by Automagik Chat, 2026-11-10: the gate
-  now; propose a hook upstream (RFC 0023) and move to it only once DSH ships one.
-- **RFC 0024 Q12, Omni's sign-in.** Decided by Automagik Chat, 2026-11-10: Omni keeps its own for
-  outside Omnis; behind a gate it takes the gate's principal with its own sign-in off.
-- **RFC 0024 Q13, an optional external OIDC provider.** Decided by Automagik Chat, 2026-11-10:
-  not planned; the principal contract leaves room later.
 - **RFC 0024 Q14, federation for company customers.** Recommended: RFC 0024's delivery 0 checks
   it; decide before the first company customer, since a later issuer move re-binds everyone.
-- **RFC 0024 Q15, Pocket and Pocket Link.** Decided by Automagik Chat, 2026-11-10: unchanged;
-  Pocket pairs through Pocket Link's keys; a phone sign-in to a web instance is a passkey of the
-  same owner.
-- **RFC 0024 Q16, is the Cloud service open source?** Decided by Automagik Chat, 2026-11-10: its
-  contracts (principal, workspace token, entitlements, rail API) are public here; the service
-  starts private.
 - **RFC 0024 Q17, the desktop's Cloud credential and local Bots.** Recommended: a
   delivery-H-style mask per OS; keep desktop Cloud sign-in off until it exists; or the platform
   owner's written acceptance.
@@ -982,6 +968,8 @@ pointer and the outcome, so the two RFCs do not drift into two homes.
 
 ### New here
 
+New question 3 has moved to Decided 14.
+
 1. **The cap fractions and the starting cap.** Recommended: alerts at one half, four fifths and
    the cap; a new paying account starts with a low cap and managed tokens at zero until an
    organisation Owner opts in and raises it. The organisation Owner sets the actual amounts at
@@ -989,9 +977,6 @@ pointer and the outcome, so the two RFCs do not drift into two homes.
 2. **Prepaid credit terms.** Recommended: credit is bought in the account's currency, is not
    transferable and earns no interest; a refund or an expiry is the organisation Owner's written
    decision and a compensating ledger event, shown before a purchase.
-3. **The outbound legal review's scope (phase E).** *Decided by Automagik Chat, 2026-11-10:* the
-   later RFC names the jurisdictions, tax, consumer protection, sanctions and dispute rules
-   before any merchant path is built; this RFC builds none of it.
 4. **Unattended spend beyond a day.** Recommended: keep the 24-hour maximum on Pre-approve; a
    longer unattended run needs a fresh owner step-up or a separate design, not a longer TTL.
 
