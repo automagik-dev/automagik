@@ -75,8 +75,18 @@ fn resolver(rows: &[Value]) -> Resolver {
     resolver_seen(rows, vec![])
 }
 
+/// The tests' task worktrees: a folder under a project's `.worktrees`, with no disk behind it.
+fn worktrees(cwd: &str) -> bool {
+    cwd.contains("/.worktrees/")
+}
+
+/// A resolver on this machine's core with hc's snapshot as given.
+fn seen(snapshot: Vec<Terminal>) -> Resolver {
+    Resolver::new(Some(CORE.into()), snapshot).probe(worktrees)
+}
+
 fn resolver_seen(rows: &[Value], snapshot: Vec<Terminal>) -> Resolver {
-    let mut r = Resolver::new(Some(CORE.into()), snapshot);
+    let mut r = seen(snapshot);
     r.add_workers(&lines(rows));
     r
 }
@@ -893,4 +903,826 @@ fn a_tag_past_either_cap_is_never_read_or_cut_short() {
         assert_eq!(tag.unrecorded, ["role", "squad"], "{long:?}");
     }
     assert!(row(&"\"".repeat(48), "dev", "b-squad").is_some());
+}
+
+// ---- RFC 0026 (c): the label claims -------------------------------------------------------
+
+/// A launch with no start row, as an earlier sync recorded it, for the next sync's read-back.
+fn history_of(records: &[LaunchRecord], seen_last: Option<i64>) -> Vec<History> {
+    records
+        .iter()
+        .map(|l| History {
+            lkey: l.lkey.clone(),
+            core: l.core.clone(),
+            terminal: l.terminal.clone().unwrap_or_default(),
+            created_ms: l.created_ms.unwrap_or_default(),
+            valid_to: l.valid_to,
+            end_basis: l.end_basis.clone(),
+            source: l.source.clone(),
+            worktree: l.worktree.clone(),
+            seen_last,
+            live_cwd: l.worktree.clone(),
+            live_agent: l.agent.clone(),
+            kind: l.kind.clone(),
+            bot: l.bot.clone(),
+            role: l.role.clone(),
+            bound: l.bound.clone(),
+        })
+        .collect()
+}
+
+fn launch<'a>(records: &'a [LaunchRecord], terminal: &str) -> &'a LaunchRecord {
+    records
+        .iter()
+        .find(|l| l.terminal.as_deref() == Some(terminal))
+        .expect("the launch")
+}
+
+fn labelled(terminal: &str, created_min: i64, harness: &'static str, cwd: &str) -> Terminal {
+    live(terminal, created_min, harness, cwd)
+}
+
+/// Check (T3): a call in an unlogged, labelled worker's worktree is attributed at `label` basis;
+/// a call before the first sighting is unlinked.
+#[test]
+fn a_labelled_unlogged_worker_is_attributed_at_label_basis() {
+    let mut t7 = labelled("t7", 20, "codex", WT);
+    t7.labels.worker_of = Some("b-hand".into());
+    t7.labels.worker_role = Some("dev".into());
+    let mut r = resolver_seen(&[], vec![t7]).at(t(30));
+    let (got, basis) = tag(r.resolve(&call("codex", "rollout-1", WT, t(40))));
+    assert_eq!((got.bot.as_str(), basis), ("b-hand", Basis::Label));
+    assert_eq!(got.kind, Kind::Worker);
+    assert_eq!(got.role.as_deref(), Some("dev"));
+    // The labels fill bot, role and kind only: never the squad, task, project or branch.
+    assert_eq!(got.squad, None);
+    assert_eq!(got.task, None);
+    assert_eq!(got.project, None);
+    assert_eq!(got.branch, None);
+    assert_eq!(got.unrecorded, ["squad"]);
+    // The span starts at the first sync that saw the label: usage before it is never claimed.
+    assert_eq!(
+        r.resolve(&call("codex", "rollout-1", WT, t(25))),
+        Resolution::Unlinked
+    );
+    // A `worker.role` outside the worker roles names no role, and that is unrecorded, not none.
+    let mut t8 = labelled("t8", 20, "codex", WT_B);
+    t8.labels.worker_of = Some("b-hand2".into());
+    t8.labels.worker_role = Some("captain".into());
+    let mut r = resolver_seen(&[], vec![t8]).at(t(30));
+    let (got, _) = tag(r.resolve(&call("codex", "rollout-2", WT_B, t(40))));
+    assert_eq!(got.role, None);
+    assert_eq!(got.unrecorded, ["role", "squad"]);
+    // A label that cannot be written in the launch's timeline names no bot, never a mangled one.
+    let mut t9 = labelled("t9", 20, "codex", WT_B);
+    t9.labels.worker_of = Some("b-one;1-:b-two".into());
+    let mut r = resolver_seen(&[], vec![t9]).at(t(30));
+    assert_eq!(
+        r.resolve(&call("codex", "rollout-3", WT_B, t(40))),
+        Resolution::Unlinked
+    );
+}
+
+/// Check (T3): two differently labelled workers on one worktree are ambiguous, never a guess;
+/// equal tags collapse (a restarted worker on its own worktree is still that worker).
+#[test]
+fn two_labelled_workers_on_one_worktree_are_ambiguous_and_equal_tags_collapse() {
+    let mut dev = labelled("t7", 20, "codex", WT);
+    dev.labels.worker_of = Some("b-dev".into());
+    dev.labels.worker_role = Some("dev".into());
+    let mut rev = labelled("t8", 25, "codex", WT);
+    rev.labels.worker_of = Some("b-reviewer".into());
+    rev.labels.worker_role = Some("review".into());
+    let mut r = resolver_seen(&[], vec![dev.clone(), rev]).at(t(30));
+    assert_eq!(
+        r.resolve(&call("codex", "rollout-1", WT, t(40))),
+        Resolution::Ambiguous
+    );
+    // The same bot and role on a second terminal there: the tags are equal and collapse.
+    let mut again = labelled("t9", 35, "codex", WT);
+    again.labels.worker_of = Some("b-dev".into());
+    again.labels.worker_role = Some("dev".into());
+    let mut r = resolver_seen(&[], vec![dev, again]).at(t(30));
+    let (got, basis) = tag(r.resolve(&call("codex", "rollout-2", WT, t(40))));
+    assert_eq!((got.bot.as_str(), basis), ("b-dev", Basis::Label));
+}
+
+/// Check (T3): a worker's label that changes makes the launch's claim empty for its whole span,
+/// and its calls unlinked across a recompute, never retagged to the last label seen. The timeline
+/// in `bound` is what keeps the fail-closed state.
+#[test]
+fn a_worker_label_that_changes_claims_nothing_across_a_recompute() {
+    let mut first = labelled("t7", 20, "codex", WT);
+    first.labels.worker_of = Some("b-one".into());
+    first.labels.worker_role = Some("dev".into());
+    let mut r = resolver_seen(&[], vec![first]).at(t(30));
+    assert_eq!(
+        tag(r.resolve(&call("codex", "rollout-1", WT, t(40)))).0.bot,
+        "b-one"
+    );
+    let (before, _) = r.records();
+    let row = launch(&before, "t7");
+    assert_eq!(row.source, "snapshot");
+    assert_eq!(row.bot.as_deref(), Some("b-one"));
+    assert_eq!(row.kind.as_deref(), Some("worker"));
+    assert_eq!(
+        row.bound.as_deref(),
+        Some(format!("~@{}-:b-one", t(30)).as_str())
+    );
+    // The next sync sees a different `worker.of` on the same terminal.
+    let mut second = labelled("t7", 20, "codex", WT);
+    second.labels.worker_of = Some("b-two".into());
+    second.labels.worker_role = Some("dev".into());
+    let mut r2 = seen(vec![second]).at(t(50));
+    r2.add_history(&history_of(&before, Some(t(30))), &[], &HashMap::new());
+    for at in [t(40), t(55)] {
+        assert_eq!(
+            r2.resolve(&call("codex", "rollout-1", WT, at)),
+            Resolution::Unlinked,
+            "minute {}",
+            at
+        );
+    }
+    let (after, _) = r2.records();
+    let row = launch(&after, "t7");
+    // No tag is written back; the timeline holds both bots, and a recompute derives the same.
+    assert_eq!(row.bot, None);
+    assert_eq!(row.kind.as_deref(), Some("worker"));
+    let bound = row.bound.as_deref().unwrap();
+    assert!(
+        bound.contains("b-one") && bound.contains("b-two"),
+        "{bound}"
+    );
+    let mut r3 = seen(vec![]).at(t(60));
+    r3.add_history(&history_of(&after, Some(t(50))), &[], &HashMap::new());
+    assert_eq!(
+        r3.resolve(&call("codex", "rollout-1", WT, t(55))),
+        Resolution::Unlinked
+    );
+}
+
+/// Check (T9): a snapshot seat in the project root with `bot`/`role` and a session label is
+/// attributed at `label` basis; with no session record it is unlinked, never named by its cwd.
+#[test]
+fn a_labelled_seat_is_attributed_only_through_a_session_record() {
+    let mut seat = labelled("t2", 0, "claude-code", PROJECT);
+    seat.labels.bot = Some("b-captain".into());
+    seat.labels.role = Some("captain".into());
+    seat.labels.session = Some("s-seat".into());
+    let mut r = resolver_seen(&[], vec![seat.clone()]).at(t(10));
+    let (got, basis) = tag(r.resolve(&call("claude-code", "s-seat", PROJECT, t(20))));
+    assert_eq!((got.bot.as_str(), basis), ("b-captain", Basis::Label));
+    assert_eq!(got.kind, Kind::Seat);
+    assert_eq!(got.role.as_deref(), Some("captain"));
+    assert_eq!(got.unrecorded, ["squad"]);
+    // A session row ties the call instead: the tag the label supplied still reports `label`.
+    let mut row = seat;
+    row.labels.session = None;
+    let mut r = resolver_seen(&[hook_session("t2", "s-row", t(5))], vec![row]).at(t(10));
+    let (got, basis) = tag(r.resolve(&call("claude-code", "s-row", PROJECT, t(20))));
+    assert_eq!((got.bot.as_str(), basis), ("b-captain", Basis::Label));
+    // The same labels with no session record: the seat's project-root folder names nothing.
+    let mut plain = labelled("t3", 0, "claude-code", PROJECT);
+    plain.labels.bot = Some("b-captain".into());
+    plain.labels.role = Some("captain".into());
+    let mut r = resolver_seen(&[], vec![plain]).at(t(10));
+    assert_eq!(
+        r.resolve(&call("claude-code", "s-other", PROJECT, t(20))),
+        Resolution::Unlinked
+    );
+}
+
+/// Check (T9): a seat's changed label splits at the interval it was seen; the sync that saw the
+/// change moves the later calls, and the `bound` timeline keeps the split.
+#[test]
+fn a_seats_changed_label_splits_at_the_interval_it_was_seen() {
+    let seat = |bot: &str| {
+        let mut t = labelled("t2", 0, "claude-code", PROJECT);
+        t.labels.bot = Some(bot.into());
+        t.labels.role = Some("captain".into());
+        t.labels.session = Some("s-seat".into());
+        t
+    };
+    let mut r = resolver_seen(&[], vec![seat("b-first")]).at(t(10));
+    let (first, _) = r.records();
+    let mut r2 = seen(vec![seat("b-second")]).at(t(30));
+    r2.add_history(&history_of(&first, Some(t(10))), &[], &HashMap::new());
+    let (early, basis) = tag(r2.resolve(&call("claude-code", "s-seat", PROJECT, t(15))));
+    assert_eq!((early.bot.as_str(), basis), ("b-first", Basis::Label));
+    let (late, basis) = tag(r2.resolve(&call("claude-code", "s-seat", PROJECT, t(35))));
+    assert_eq!((late.bot.as_str(), basis), ("b-second", Basis::Label));
+    let (after, _) = r2.records();
+    assert_eq!(
+        launch(&after, "t2").bound.as_deref(),
+        Some(format!("~{}-{}:b-first;~{}-:b-second", t(10), t(30), t(30)).as_str())
+    );
+}
+
+/// Check (T9): a timeline past its cap leaves the call Unknown, never the last bot in it.
+#[test]
+fn a_timeline_past_its_cap_is_unknown() {
+    let mut seat_seen = labelled("t2", 0, "claude-code", PROJECT);
+    seat_seen.labels.bot = Some("b-label".into());
+    let mut rows = Vec::new();
+    for k in 0..=BOUND_INTERVALS {
+        rows.push(
+            json!({"v": 1, "event": "attach", "bot": format!("b-seat{k:04}"),
+               "project": PROJECT, "terminal": "t2", "core": CORE, "created_ms": t(0),
+               "machine": Value::Null, "at": iso(t(k as i64 + 1)), "by": "attach"}),
+        );
+    }
+    let mut r = resolver_seen(&[hook_session("t2", "s-seat", t(5))], vec![seat_seen]).at(t(30));
+    r.add_attach(&lines(&rows));
+    assert_eq!(
+        r.resolve(&call("claude-code", "s-seat", PROJECT, t(40))),
+        Resolution::Ambiguous
+    );
+    let (launches, _) = r.records();
+    let bound = launch(&launches, "t2").bound.as_deref().unwrap();
+    assert!(bound.split(';').count() > BOUND_INTERVALS, "{bound}");
+    // A logged seat's binding timeline is capped too: past it its calls are Unknown, never the
+    // last binding.
+    let mut r = resolver(&[
+        seat("t3", 0, "claude", "b-captain", "captain"),
+        hook_session("t3", "s-seat", t(5)),
+    ]);
+    let mut rows = Vec::new();
+    for k in 0..=BOUND_INTERVALS {
+        rows.push(
+            json!({"v": 1, "event": "attach", "bot": format!("b-seat{k:04}"),
+               "project": PROJECT, "terminal": "t3", "core": CORE, "created_ms": t(0),
+               "machine": Value::Null, "at": iso(t(k as i64 + 1)), "by": "attach"}),
+        );
+    }
+    r.add_attach(&lines(&rows));
+    assert_eq!(
+        r.resolve(&call("claude-code", "s-seat", PROJECT, t(40))),
+        Resolution::Ambiguous
+    );
+}
+
+/// Check (T9): a start row or an attach binding wins; the label never overwrites what the ledger
+/// recorded.
+#[test]
+fn a_start_row_or_attach_binding_wins_over_the_labels() {
+    let mut t1 = labelled("t1", 0, "codex", WT);
+    t1.labels.worker_of = Some("b-label".into());
+    t1.labels.worker_role = Some("dev".into());
+    let mut r =
+        resolver_seen(&[worker("t1", 0, WT, "codex", "b-ledger", "dev")], vec![t1]).at(t(10));
+    let (got, basis) = tag(r.resolve(&call("codex", "rollout-1", WT, t(20))));
+    assert_eq!((got.bot.as_str(), basis), ("b-ledger", Basis::Worktree));
+    // A seat bound by the attach ledger takes the binding's bot, not its label's.
+    let mut t2 = labelled("t2", 0, "claude-code", PROJECT);
+    t2.labels.bot = Some("b-label".into());
+    t2.labels.role = Some("captain".into());
+    let mut r = resolver_seen(&[hook_session("t2", "s-seat", t(5))], vec![t2]).at(t(10));
+    r.add_attach(&lines(&[
+        json!({"v": 1, "event": "attach", "bot": "b-bound",
+           "project": PROJECT, "terminal": "t2", "core": CORE, "created_ms": t(0),
+           "machine": Value::Null, "at": iso(t(2)), "by": "attach"}),
+    ]));
+    let (got, basis) = tag(r.resolve(&call("claude-code", "s-seat", PROJECT, t(20))));
+    assert_eq!((got.bot.as_str(), basis), ("b-bound", Basis::Session));
+    assert_eq!(got.kind, Kind::Seat);
+}
+
+/// Check (T9): a Claude seat on a linked machine, with the pack's chosen id and its labels, is
+/// attributed on its own machine and stays `other_machine` on this one.
+#[test]
+fn a_linked_machines_seat_is_attributed_on_its_own_machine() {
+    let seat = |terminal: &str| {
+        let mut t = labelled(terminal, 0, "claude-code", PROJECT);
+        t.labels.bot = Some("b-remote".into());
+        t.labels.role = Some("captain".into());
+        t.labels.session = Some("s-seat-remote".into());
+        t
+    };
+    // As this machine sees the pane: its address carries the machine's name, so it is foreign.
+    let mut here = Resolver::new(Some(CORE.into()), vec![seat("peer/t9")]).at(t(10));
+    let call_ = call("claude-code", "s-seat-remote", PROJECT, t(20));
+    assert_eq!(here.resolve(&call_), Resolution::Unlinked);
+    assert!(here.elsewhere(&call_));
+    // On its own machine (its core, the bare address) the same labels name the call.
+    let mut there = Resolver::new(Some("core-synthetic-b".into()), vec![seat("t9")]).at(t(10));
+    let (got, basis) = tag(there.resolve(&call_));
+    assert_eq!((got.bot.as_str(), basis), ("b-remote", Basis::Label));
+}
+
+/// The merged `bound` layout is stable across syncs: an unchanged label keeps its first sighting,
+/// and a change is written once and then re-read as it was.
+#[test]
+fn the_merged_bound_layout_is_stable_across_syncs() {
+    let seat = |bot: &str| {
+        let mut t = labelled("t2", 0, "claude-code", PROJECT);
+        t.labels.bot = Some(bot.into());
+        t.labels.session = Some("s-seat".into());
+        t
+    };
+    let mut r = resolver_seen(&[], vec![seat("b-first")]).at(t(10));
+    let (a, _) = r.records();
+    let mut r = seen(vec![seat("b-first")]).at(t(30));
+    r.add_history(&history_of(&a, Some(t(10))), &[], &HashMap::new());
+    let (b, _) = r.records();
+    assert_eq!(launch(&a, "t2").bound, launch(&b, "t2").bound);
+    let mut r = seen(vec![seat("b-second")]).at(t(50));
+    r.add_history(&history_of(&b, Some(t(30))), &[], &HashMap::new());
+    let (c, _) = r.records();
+    let mut r = seen(vec![seat("b-second")]).at(t(70));
+    r.add_history(&history_of(&c, Some(t(50))), &[], &HashMap::new());
+    let (d, _) = r.records();
+    assert_eq!(launch(&c, "t2").bound, launch(&d, "t2").bound);
+    assert_eq!(
+        launch(&d, "t2").bound.as_deref(),
+        Some(format!("~{}-{}:b-first;~{}-:b-second", t(10), t(50), t(50)).as_str())
+    );
+}
+
+// ---- Fixer on #949: what a label may never claim -------------------------------------------
+
+fn worker_label(terminal: &str, created_min: i64, cwd: &str, bot: &str) -> Terminal {
+    let mut t = labelled(terminal, created_min, "claude-code", cwd);
+    t.labels.worker_of = Some(bot.into());
+    t.labels.worker_role = Some("dev".into());
+    t
+}
+
+fn attach(terminal: &str, bot: &str, at: i64) -> Value {
+    json!({"v": 1, "event": "attach", "bot": bot, "project": PROJECT, "terminal": terminal,
+           "core": CORE, "created_ms": t(0), "machine": Value::Null, "at": iso(at),
+           "by": "attach"})
+}
+
+/// C1: a terminal in the project root that carries `worker.of` names no call by that folder. An
+/// unrelated session there stays unlinked, as it was without the label; with a live logged seat
+/// in the root the seat's answer stands, never ambiguous. Its own session still names it.
+#[test]
+fn a_label_only_worker_in_the_project_root_claims_nothing_by_folder() {
+    let mut claimer = worker_label("t7", 20, PROJECT, "b-claimer");
+    claimer.labels.session = Some("s-own".into());
+    let other = call("claude-code", "s-unrelated", PROJECT, t(40));
+    let mut r = resolver_seen(&[], vec![claimer.clone()]).at(t(30));
+    assert_eq!(r.resolve(&other), Resolution::Unlinked);
+    // The control: the same terminal with no label leaves the same answer.
+    let mut r = resolver_seen(&[], vec![labelled("t7", 20, "claude-code", PROJECT)]).at(t(30));
+    assert_eq!(r.resolve(&other), Resolution::Unlinked);
+    // Its own session, which a session label ties to the launch, is the label's to name.
+    let mut r = resolver_seen(&[], vec![claimer.clone()]).at(t(30));
+    let (got, basis) = tag(r.resolve(&call("claude-code", "s-own", PROJECT, t(40))));
+    assert_eq!((got.bot.as_str(), basis), ("b-claimer", Basis::Label));
+    // A live logged seat in the root: its own session is its own, and the unrelated session is
+    // what it was beside the seat alone (unlinked), not ambiguous.
+    let rows = [
+        seat("t1", 0, "claude", "b-captain", "captain"),
+        hook_session("t1", "s-seat", t(5)),
+    ];
+    let live_seat = labelled("t1", 0, "claude-code", PROJECT);
+    let mut alone = resolver_seen(&rows, vec![live_seat.clone()]).at(t(30));
+    let mut beside = resolver_seen(&rows, vec![live_seat, claimer]).at(t(30));
+    assert_eq!(alone.resolve(&other), Resolution::Unlinked);
+    assert_eq!(beside.resolve(&other), Resolution::Unlinked);
+    let own = call("claude-code", "s-seat", PROJECT, t(40));
+    assert_eq!(tag(beside.resolve(&own)), tag(alone.resolve(&own)));
+    assert_eq!(tag(beside.resolve(&own)).0.bot, "b-captain");
+    // Nothing in the row says the folder is the label's: the interval carries no worktree mark.
+    let (rows, _) = beside.records();
+    assert_eq!(
+        launch(&rows, "t7").bound.as_deref(),
+        Some(format!("~{}-:b-claimer", t(30)).as_str())
+    );
+}
+
+/// C1: a folder that is no task worktree is never the label's, and neither is a task worktree a
+/// seat sits in (logged, or bound by the attach ledger).
+#[test]
+fn a_label_only_worker_claims_no_folder_that_is_not_its_task_worktree() {
+    const PLAIN: &str = "/work/scratch/notes";
+    let mut r = resolver_seen(&[], vec![worker_label("t7", 20, PLAIN, "b-claimer")]).at(t(30));
+    assert_eq!(
+        r.resolve(&call("claude-code", "s-unrelated", PLAIN, t(40))),
+        Resolution::Unlinked
+    );
+    // A logged seat whose start row names the worktree.
+    let rows = [with(
+        seat("t1", 0, "claude", "b-captain", "captain"),
+        "worktree",
+        json!(WT),
+    )];
+    let claimer = worker_label("t7", 20, WT, "b-claimer");
+    let other = call("claude-code", "s-unrelated", WT, t(40));
+    let mut r = resolver_seen(&rows, vec![claimer.clone()]).at(t(30));
+    assert_eq!(r.resolve(&other), Resolution::Unlinked);
+    // A logged seat hc shows running there, away from its start row's folder.
+    let rows = [seat("t1", 0, "codex", "b-captain", "captain")];
+    let away = labelled("t1", 0, "codex", WT);
+    let mut r = resolver_seen(&rows, vec![away, claimer.clone()]).at(t(30));
+    assert_eq!(r.resolve(&other), Resolution::Unlinked);
+    // A seat with no start row that the attach ledger bound, sitting in the worktree.
+    let bound = labelled("t2", 0, "claude-code", WT);
+    let mut r = resolver_seen(&[], vec![bound, claimer.clone()]).at(t(30));
+    r.add_attach(&lines(&[attach("t2", "b-bound", t(2))]));
+    assert_eq!(r.resolve(&other), Resolution::Unlinked);
+    // The control: alone in its task worktree, the label names the call.
+    let mut r = resolver_seen(&[], vec![claimer]).at(t(30));
+    assert_eq!(tag(r.resolve(&other)).0.bot, "b-claimer");
+}
+
+/// C1: the folder is hc's live cwd, so a labelled worker that leaves its task worktree for the
+/// project root takes no claim with it: its folder claim is void for its whole span, in both
+/// folders, and stays void across a recompute. A worktree removed after the task is no such move.
+#[test]
+fn a_label_only_worker_that_leaves_its_worktree_loses_its_folder_claim() {
+    let mut r = resolver_seen(&[], vec![worker_label("t7", 20, WT, "b-hand")]).at(t(30));
+    assert_eq!(
+        tag(r.resolve(&call("claude-code", "s-1", WT, t(40)))).0.bot,
+        "b-hand"
+    );
+    let (first, _) = r.records();
+    // The worktree is gone from the disk at the next sync (nothing is a task worktree now), and
+    // the terminal is still there: the answer the first sync wrote replays.
+    let mut kept = Resolver::new(
+        Some(CORE.into()),
+        vec![worker_label("t7", 20, WT, "b-hand")],
+    )
+    .probe(|_| false)
+    .at(t(50));
+    kept.add_history(&history_of(&first, Some(t(30))), &[], &HashMap::new());
+    assert_eq!(
+        tag(kept.resolve(&call("claude-code", "s-1", WT, t(40))))
+            .0
+            .bot,
+        "b-hand"
+    );
+    assert_eq!(
+        launch(&kept.records().0, "t7").bound,
+        launch(&first, "t7").bound
+    );
+    // hc shows the terminal in the project root instead.
+    let mut moved = seen(vec![worker_label("t7", 20, PROJECT, "b-hand")]).at(t(50));
+    moved.add_history(&history_of(&first, Some(t(30))), &[], &HashMap::new());
+    for (cwd, at) in [(PROJECT, t(40)), (PROJECT, t(55)), (WT, t(40)), (WT, t(55))] {
+        assert_eq!(
+            moved.resolve(&call("claude-code", "s-unrelated", cwd, at)),
+            Resolution::Unlinked,
+            "{cwd} at {at}"
+        );
+    }
+    let (after, _) = moved.records();
+    assert_eq!(
+        launch(&after, "t7").bound.as_deref(),
+        Some(format!("~{}-:b-hand", t(30)).as_str())
+    );
+    // Back in the worktree, or gone: the interval lost its mark, and the claim stays void.
+    let mut back = seen(vec![worker_label("t7", 20, WT, "b-hand")]).at(t(70));
+    back.add_history(&history_of(&after, Some(t(50))), &[], &HashMap::new());
+    let mut gone = seen(vec![]).at(t(70));
+    gone.add_history(&history_of(&after, Some(t(50))), &[], &HashMap::new());
+    for r in [&mut back, &mut gone] {
+        for cwd in [PROJECT, WT] {
+            assert_eq!(
+                r.resolve(&call("claude-code", "s-unrelated", cwd, t(60))),
+                Resolution::Unlinked,
+                "{cwd}"
+            );
+        }
+    }
+    assert_eq!(
+        launch(&back.records().0, "t7").bound,
+        launch(&after, "t7").bound
+    );
+}
+
+/// C2: a seat with no start row that the attach ledger bound stays a seat when `worker.of` is
+/// added to its terminal. It never names a call by its project-root folder, and the binding's
+/// answer is the attach ledger's, reached only through a session record.
+#[test]
+fn a_bound_seat_that_adds_a_worker_label_stays_a_seat() {
+    let other = call("claude-code", "s-unrelated", PROJECT, t(40));
+    let own = call("claude-code", "s-seat", PROJECT, t(40));
+    let rows = [hook_session("t2", "s-seat", t(5))];
+    let binding = lines(&[attach("t2", "b-bound", t(2))]);
+    // The control: bound, no label.
+    let mut plain = resolver_seen(&rows, vec![labelled("t2", 0, "claude-code", PROJECT)]).at(t(10));
+    plain.add_attach(&binding);
+    assert_eq!(plain.resolve(&other), Resolution::Unlinked);
+    let control = tag(plain.resolve(&own));
+    assert_eq!(
+        (control.0.bot.as_str(), control.0.kind, control.1),
+        ("b-bound", Kind::Seat, Basis::Session)
+    );
+    // The same seat with `worker.of` (and a worker role) on its terminal.
+    for cwd in [PROJECT, WT] {
+        let labelled_seat = worker_label("t2", 0, cwd, "b-claimer");
+        let mut r = resolver_seen(&rows, vec![labelled_seat]).at(t(10));
+        r.add_attach(&binding);
+        assert_eq!(
+            r.resolve(&call("claude-code", "s-unrelated", cwd, t(40))),
+            Resolution::Unlinked,
+            "{cwd}"
+        );
+        // Its own session keeps the binding's answer, with no field from the label.
+        let got = tag(r.resolve(&own));
+        assert_eq!(got, control, "{cwd}");
+        assert!(!got.0.label);
+        // The row: a seat, no label tag, the attach ledger's interval alone.
+        let (records, _) = r.records();
+        let row = launch(&records, "t2");
+        assert_eq!(row.kind.as_deref(), Some("seat"));
+        assert_eq!((row.bot.as_deref(), row.role.as_deref()), (None, None));
+        assert_eq!(
+            row.bound.as_deref(),
+            Some(format!("{}-:b-bound", t(2)).as_str())
+        );
+    }
+    // A label seen before the binding existed: the binding still wins from the sync that reads it,
+    // and the row's kind becomes the binding's.
+    let mut r = resolver_seen(&rows, vec![worker_label("t2", 0, WT, "b-claimer")]).at(t(1));
+    let (before, _) = r.records();
+    assert_eq!(launch(&before, "t2").kind.as_deref(), Some("worker"));
+    let mut r2 = seen(vec![worker_label("t2", 0, WT, "b-claimer")]).at(t(10));
+    r2.add_workers(&lines(&rows));
+    r2.add_attach(&binding);
+    r2.add_history(&history_of(&before, Some(t(1))), &[], &HashMap::new());
+    assert_eq!(
+        r2.resolve(&call("claude-code", "s-unrelated", WT, t(40))),
+        Resolution::Unlinked
+    );
+    assert_eq!(tag(r2.resolve(&own)), control);
+    assert_eq!(launch(&r2.records().0, "t2").kind.as_deref(), Some("seat"));
+}
+
+/// A sync whose clock stepped back never re-tags a call an earlier sync answered: the interval it
+/// closes ends no earlier than the last sync that saw the launch.
+#[test]
+fn a_clock_that_steps_back_never_retags_earlier_calls() {
+    let seat = |bot: &str| {
+        let mut t = labelled("t2", 0, "claude-code", PROJECT);
+        t.labels.bot = Some(bot.into());
+        t.labels.session = Some("s-seat".into());
+        t
+    };
+    let at = |min| call("claude-code", "s-seat", PROJECT, t(min));
+    let mut r = resolver_seen(&[], vec![seat("b-a")]).at(t(10));
+    let (a, _) = r.records();
+    let mut r = seen(vec![seat("b-a")]).at(t(50));
+    r.add_history(&history_of(&a, Some(t(10))), &[], &HashMap::new());
+    assert_eq!(tag(r.resolve(&at(30))).0.bot, "b-a");
+    let (b, _) = r.records();
+    // The third sync reads an earlier clock, and a different bot.
+    let mut r = seen(vec![seat("b-b")]).at(t(20));
+    r.add_history(&history_of(&b, Some(t(50))), &[], &HashMap::new());
+    assert_eq!(tag(r.resolve(&at(30))).0.bot, "b-a");
+    assert_eq!(tag(r.resolve(&at(45))).0.bot, "b-a");
+    assert_eq!(tag(r.resolve(&at(55))).0.bot, "b-b");
+    let (c, _) = r.records();
+    assert_eq!(
+        launch(&c, "t2").bound.as_deref(),
+        Some(format!("~{}-{}:b-a;~{}-:b-b", t(10), t(50), t(50)).as_str())
+    );
+    // The store now says the launch was last seen at minute 20, and the clock is still behind
+    // the open interval: a third bot opens where that interval began, never before it.
+    let mut r = seen(vec![seat("b-c")]).at(t(25));
+    r.add_history(&history_of(&c, Some(t(20))), &[], &HashMap::new());
+    assert_eq!(tag(r.resolve(&at(30))).0.bot, "b-a");
+    assert_eq!(tag(r.resolve(&at(55))).0.bot, "b-c");
+    // A worker's first sighting follows the same rule: never before the launch was last seen.
+    let mut r = resolver_seen(&[], vec![labelled("t7", 20, "claude-code", WT)]).at(t(50));
+    let (plain, _) = r.records();
+    let mut r = seen(vec![worker_label("t7", 20, WT, "b-hand")]).at(t(30));
+    r.add_history(&history_of(&plain, Some(t(50))), &[], &HashMap::new());
+    assert_eq!(
+        r.resolve(&call("claude-code", "s-1", WT, t(40))),
+        Resolution::Unlinked
+    );
+    assert_eq!(
+        tag(r.resolve(&call("claude-code", "s-1", WT, t(55)))).0.bot,
+        "b-hand"
+    );
+}
+
+/// A label's bot is shape-checked before it is stored or names a call: within the printed caps
+/// and with no control character. One that fails is ignored: no claim, and nothing of it in the
+/// launch row.
+#[test]
+fn a_label_bot_with_a_bad_shape_is_ignored_and_never_stored() {
+    let bad = [
+        "/work/secret/key\u{1b}[2J".to_owned(),
+        "b-line\u{7}".to_owned(),
+        "b".repeat(TAG_CHARS + 1),
+        "b".repeat(100),
+        "\"".repeat(49),
+    ];
+    for bot in &bad {
+        // As a worker in its task worktree.
+        let mut r = resolver_seen(&[], vec![worker_label("t7", 20, WT, bot)]).at(t(30));
+        assert_eq!(
+            r.resolve(&call("claude-code", "s-1", WT, t(40))),
+            Resolution::Unlinked,
+            "{bot:?}"
+        );
+        // As a seat, through its own session label.
+        let mut seat = labelled("t2", 0, "claude-code", PROJECT);
+        seat.labels.bot = Some(bot.clone());
+        seat.labels.session = Some("s-seat".into());
+        let mut s = resolver_seen(&[], vec![seat]).at(t(30));
+        assert_eq!(
+            s.resolve(&call("claude-code", "s-seat", PROJECT, t(40))),
+            Resolution::Unlinked,
+            "{bot:?}"
+        );
+        for (records, terminal) in [(r.records().0, "t7"), (s.records().0, "t2")] {
+            let row = launch(&records, terminal);
+            assert_eq!(
+                (
+                    row.kind.as_deref(),
+                    row.bot.as_deref(),
+                    row.bound.as_deref()
+                ),
+                (None, None, None),
+                "{bot:?}"
+            );
+        }
+    }
+    // At the cap it is a bot like any other.
+    let at_cap = "b".repeat(TAG_CHARS);
+    let mut r = resolver_seen(&[], vec![worker_label("t7", 20, WT, &at_cap)]).at(t(30));
+    assert_eq!(
+        tag(r.resolve(&call("claude-code", "s-1", WT, t(40)))).0.bot,
+        at_cap
+    );
+    // A seat's role with a control character is no role; the bot still stands.
+    let mut seat = labelled("t2", 0, "claude-code", PROJECT);
+    seat.labels.bot = Some("b-captain".into());
+    seat.labels.role = Some("cap\u{1b}tain".into());
+    seat.labels.session = Some("s-seat".into());
+    let mut r = resolver_seen(&[], vec![seat]).at(t(30));
+    let (got, _) = tag(r.resolve(&call("claude-code", "s-seat", PROJECT, t(40))));
+    assert_eq!((got.bot.as_str(), got.role), ("b-captain", None));
+    assert_eq!(got.unrecorded, ["role", "squad"]);
+}
+
+/// What the disk says a task worktree is: a linked git worktree's root, never the main checkout,
+/// a submodule, a plain folder, or a `.git` reached through a link.
+#[test]
+fn only_a_linked_worktree_root_is_a_task_worktree() {
+    let dir = tempfile::tempdir().unwrap();
+    let at = |name: &str| dir.path().join(name);
+    let text = |p: &std::path::Path| p.to_string_lossy().into_owned();
+    // The main checkout: `.git` is a folder.
+    std::fs::create_dir_all(at("project/.git/worktrees/gh-45")).unwrap();
+    assert!(!task_worktree(&text(&at("project"))));
+    // A linked worktree: `.git` is a file naming a folder under the repository's `worktrees/`.
+    let linked = at("project/.worktrees/gh-45");
+    std::fs::create_dir_all(&linked).unwrap();
+    let gitdir = format!("gitdir: {}\n", text(&at("project/.git/worktrees/gh-45")));
+    std::fs::write(linked.join(".git"), &gitdir).unwrap();
+    assert!(task_worktree(&text(&linked)));
+    assert!(task_worktree(&format!("{}/", text(&linked))));
+    // A folder inside it is not its root, and a plain folder is nothing.
+    std::fs::create_dir_all(linked.join("src")).unwrap();
+    assert!(!task_worktree(&text(&linked.join("src"))));
+    std::fs::create_dir_all(at("plain")).unwrap();
+    assert!(!task_worktree(&text(&at("plain"))));
+    assert!(!task_worktree(&text(&at("missing"))));
+    // A submodule's `.git` file names a folder under `modules/`.
+    std::fs::create_dir_all(at("sub")).unwrap();
+    std::fs::write(at("sub/.git"), "gitdir: ../.git/modules/sub\n").unwrap();
+    assert!(!task_worktree(&text(&at("sub"))));
+    // Not a `gitdir:` file, and a relative folder.
+    std::fs::create_dir_all(at("odd")).unwrap();
+    std::fs::write(at("odd/.git"), "worktrees\n").unwrap();
+    assert!(!task_worktree(&text(&at("odd"))));
+    assert!(!task_worktree("project/.worktrees/gh-45"));
+    // A `.git` that is a link to a worktree's file is not read.
+    #[cfg(unix)]
+    {
+        std::fs::create_dir_all(at("linked")).unwrap();
+        std::os::unix::fs::symlink(linked.join(".git"), at("linked/.git")).unwrap();
+        assert!(!task_worktree(&text(&at("linked"))));
+    }
+}
+
+// ---- Reviewer on #949: a move no label saw, and an attach row the column cannot hold --------
+
+const PLAIN: &str = "/work/scratch/notes";
+
+/// The move is recorded whether or not the sync that sees it sees a label. A labelled worker in
+/// its task worktree whose terminal is then shown elsewhere with `sync2` (no label, or one that
+/// fails the shape check) has lost its folder claim for good: with the label back, in the new
+/// folder or in the worktree again, an unrelated session is unlinked at every time, and a
+/// recompute from the rows alone says the same.
+fn a_move_seen_with(sync2: impl Fn(&str) -> Terminal) {
+    let unrelated = |cwd, min| call("claude-code", "s-unrelated", cwd, t(min));
+    let mut r1 = resolver_seen(&[], vec![worker_label("t7", 20, WT, "b-hand")]).at(t(30));
+    assert_eq!(tag(r1.resolve(&unrelated(WT, 40))).0.bot, "b-hand");
+    let (first, _) = r1.records();
+    assert_eq!(
+        launch(&first, "t7").bound.as_deref(),
+        Some(format!("~@{}-:b-hand", t(30)).as_str())
+    );
+    // Sync 2: hc shows the terminal in a folder that is no worktree, with no usable label.
+    let mut r2 = seen(vec![sync2(PLAIN)]).at(t(50));
+    r2.add_history(&history_of(&first, Some(t(30))), &[], &HashMap::new());
+    for (cwd, min) in [(PLAIN, 40), (PLAIN, 55), (WT, 40)] {
+        assert_eq!(
+            r2.resolve(&unrelated(cwd, min)),
+            Resolution::Unlinked,
+            "sync 2, {cwd} at {min}"
+        );
+    }
+    let (second, _) = r2.records();
+    let row = launch(&second, "t7");
+    assert_eq!(row.worktree.as_deref(), Some(PLAIN));
+    // The row itself says the launch left: the interval is kept, its worktree mark is gone.
+    assert_eq!(
+        row.bound.as_deref(),
+        Some(format!("~{}-:b-hand", t(30)).as_str())
+    );
+    // Sync 3: the label is back, in the new folder or in the worktree again.
+    for back_in in [PLAIN, WT] {
+        let mut r3 = seen(vec![worker_label("t7", 20, back_in, "b-hand")]).at(t(70));
+        r3.add_history(&history_of(&second, Some(t(50))), &[], &HashMap::new());
+        for cwd in [PLAIN, WT] {
+            for min in [40, 55, 75] {
+                assert_eq!(
+                    r3.resolve(&unrelated(cwd, min)),
+                    Resolution::Unlinked,
+                    "sync 3 in {back_in}: {cwd} at {min}"
+                );
+            }
+        }
+        let (third, _) = r3.records();
+        assert_eq!(launch(&third, "t7").bound, row.bound, "{back_in}");
+        // A recompute once the terminal is gone, from the rows alone.
+        let mut r4 = seen(vec![]).at(t(90));
+        r4.add_history(&history_of(&third, Some(t(70))), &[], &HashMap::new());
+        for cwd in [PLAIN, WT] {
+            for min in [55, 75] {
+                assert_eq!(
+                    r4.resolve(&unrelated(cwd, min)),
+                    Resolution::Unlinked,
+                    "recompute after {back_in}: {cwd} at {min}"
+                );
+            }
+        }
+        assert_eq!(launch(&r4.records().0, "t7").bound, row.bound);
+    }
+}
+
+#[test]
+fn a_move_seen_without_a_label_voids_the_folder_claim_for_good() {
+    a_move_seen_with(|cwd| labelled("t7", 20, "claude-code", cwd));
+}
+
+#[test]
+fn a_move_seen_with_an_unsafe_label_voids_the_folder_claim_for_good() {
+    a_move_seen_with(|cwd| worker_label("t7", 20, cwd, "b:x"));
+    a_move_seen_with(|cwd| worker_label("t7", 20, cwd, "b-esc\u{1b}[2J"));
+}
+
+/// An attach row whose bot the `bound` column cannot hold still binds: it ends the binding
+/// before it, and a call under it is Unknown (ambiguous), never the earlier bot and never the
+/// malformed one. The row never reaches the column with its separator.
+#[test]
+fn an_attach_row_with_an_unwritable_bot_ends_the_earlier_binding_and_names_no_one() {
+    let binding = lines(&[
+        attach("t1", "b-a", t(2)),
+        attach("t1", "b:x", t(10)),
+        attach("t1", "b-c", t(30)),
+    ]);
+    let at = |min| call("claude-code", "s-seat", PROJECT, t(min));
+    // A logged seat, and a seat with no start row: the same answers.
+    let logged = [
+        seat("t1", 0, "claude", "b-captain", "captain"),
+        hook_session("t1", "s-seat", t(1)),
+    ];
+    let unlogged = [hook_session("t1", "s-seat", t(1))];
+    let shown = || vec![labelled("t1", 0, "claude-code", PROJECT)];
+    for (name, rows) in [("logged", &logged[..]), ("unlogged", &unlogged[..])] {
+        let mut r = resolver_seen(rows, shown()).at(t(50));
+        r.add_attach(&binding);
+        assert_eq!(tag(r.resolve(&at(5))).0.bot, "b-a", "{name}");
+        assert_eq!(r.resolve(&at(20)), Resolution::Ambiguous, "{name}");
+        assert_eq!(tag(r.resolve(&at(40))).0.bot, "b-c", "{name}");
+        let (records, _) = r.records();
+        let bound = launch(&records, "t1").bound.clone().unwrap();
+        assert_eq!(
+            bound,
+            format!("{}-{}:b-a;{}-{}:;{}-:b-c", t(2), t(10), t(10), t(30), t(30)),
+            "{name}"
+        );
+        // Read back from the row alone (no attach ledger at this sync), the nameless interval
+        // is still a binding that cannot be read.
+        if name == "unlogged" {
+            let mut again = seen(shown()).at(t(60));
+            again.add_workers(&lines(rows));
+            again.add_history(&history_of(&records, Some(t(50))), &[], &HashMap::new());
+            assert_eq!(again.resolve(&at(20)), Resolution::Ambiguous);
+            assert_eq!(tag(again.resolve(&at(5))).0.bot, "b-a");
+            assert_eq!(
+                launch(&again.records().0, "t1").bound.as_deref(),
+                Some(bound.as_str())
+            );
+        }
+    }
 }
