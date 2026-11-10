@@ -17,7 +17,7 @@ Usage:
   usagemeter query --repo HOST/OWNER/REPO --by bot [--branch B ...] --json [...]
   usagemeter --version
 
-sync      Read new harness usage (omp, Claude Code, Codex, dsh-tui) into the local store and
+sync      Read new harness usage (omp, Claude Code, Codex, dsh-tui, Antigravity) into the store and
           publish the summary doc to herdr-core. Does nothing within 10 minutes of a complete sync.
   --force         Run even if the last sync is recent.
   --backfill      Re-import the full history (slow; resumes across runs).
