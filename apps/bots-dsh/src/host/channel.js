@@ -137,6 +137,8 @@ export function install(rt) {
     ...rt.extended.live(),
     // Per Bot whose model menu a plugin owns, that menu (host-models.js); absent otherwise.
     ...rt.hostModelsView?.(),
+    // Per plan route whose Bots wait for its CLI (subscription-move.js), why; absent otherwise.
+    ...rt.subscriptionWaitingView?.(),
     // Channels moved to their own plugin: a team linked to an Omni (omni.json, which that
     // plugin keeps, or the older omni.url on this row) whose DSH has only this plugin
     // learns where they went.

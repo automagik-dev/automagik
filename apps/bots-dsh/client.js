@@ -542,6 +542,8 @@ var ZH = {
   "What this Bot is responsible for…": "这个 Bot 负责什么…",
   "Pick the model this Bot runs on.": "选择这个 Bot 使用的模型。",
   "This model is not available now. Pick another one.": "这个模型现在不可用，请换一个。",
+  "This Bot stays on {model} until {cli} is signed in.": "在 {cli} 登录之前，此 Bot 仍使用 {model}。",
+  "This Bot stays on {model} until {cli} is ready.": "在 {cli} 准备好之前，此 Bot 仍使用 {model}。",
   "Every message of this Bot runs on it.": "这个 Bot 的每条消息都用它。",
   "Applies from the next message.": "从下一条消息开始生效。",
   Profile: "资料",
@@ -4410,6 +4412,9 @@ function modelHint(bot, roster, state) {
   if (!shown.served && (roster.models ?? []).length > 0) return t("This model is not available now. Pick another one.");
   const served = servedOf(roster, shown.ref);
   if (served?.needsSignIn) return t("{model} needs a sign-in before it can answer.", { model: served.name });
+  const waiting = served?.covered ? roster.subscriptionWaiting?.[served.provider] : void 0;
+  if (waiting?.reason === "sign-in") return t("This Bot stays on {model} until {cli} is signed in.", { model: served.name, cli: waiting.cli });
+  if (waiting !== void 0) return t("This Bot stays on {model} until {cli} is ready.", { model: served.name, cli: waiting.cli });
   if (served?.needsKey || served?.covered) return t("This model is not available now. Pick another one.");
   const honest = modelStateLine(state, roster);
   if (honest !== void 0) return honest;

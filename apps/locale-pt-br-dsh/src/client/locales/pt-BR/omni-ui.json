@@ -627,6 +627,8 @@
   "What this Bot is responsible for…": "Pelo que este Bot é responsável…",
   "Pick the model this Bot runs on.": "Escolha o modelo que este Bot usa.",
   "This model is not available now. Pick another one.": "Este modelo não está disponível agora. Escolha outro.",
+  "This Bot stays on {model} until {cli} is signed in.": "Este Bot continua em {model} até que o login do {cli} seja feito.",
+  "This Bot stays on {model} until {cli} is ready.": "Este Bot continua em {model} até que o {cli} esteja pronto.",
   "Every message of this Bot runs on it.": "Toda mensagem deste Bot usa esse modelo.",
   "Applies from the next message.": "Vale a partir da próxima mensagem.",
   "Profile": "Perfil",

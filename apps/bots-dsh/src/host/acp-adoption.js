@@ -24,7 +24,7 @@
 // (turning Claude Code off turns it off for every Bot). A Bot subscription-move.js moved is its
 // own record's, never rebuilt here from `claudeCodeModel`.
 import { claudeFamilyOf, piAiClaudeOf } from './claude-models.js'
-import { anthropicSubscription } from './subscription-move.js'
+import { acpLoading, anthropicSubscription } from './subscription-move.js'
 
 const ACP_AGENT = 'acp-claude'
 
@@ -47,20 +47,6 @@ export function acpClaudeTarget(bot, listed) {
   const family = claudeFamilyOf(bot.claudeCodeModel) ?? claudeFamilyOf(`claude-code/${model}`)
   if (family !== undefined && listed.includes(family)) return `${ACP_AGENT}/${family}`
   return undefined
-}
-
-// Whether the ACP plugin is still on its way in: its loader entry exists and is enabled, but
-// it has not provided `acpAgents` yet. Missing service is not a missing route.
-function acpLoading(ctx) {
-  try {
-    const loader = ctx.get?.('loader')
-    if (loader === undefined || typeof loader.entries !== 'function') return false
-    for (const entry of loader.entries()) {
-      if (entry?.disabled === true) continue
-      if (String(entry?.options?.name ?? '').includes('acp-dsh')) return true
-    }
-  } catch {}
-  return false
 }
 
 /**
