@@ -140,7 +140,7 @@ func (h *hcHost) Do(s Session, a config.Automation, timeout time.Duration) error
 		working = working || w.Status == "working"
 		switch {
 		case w.Reason == "exit":
-			return h.exitOutcome(s)
+			return h.exitOutcome(s, turn > 0 || working)
 		case w.Reason == "status" && w.Status == "error":
 			return fmt.Errorf("the agent reported an error")
 		// done is the agent's own word for a finished turn, so it needs no
@@ -249,11 +249,15 @@ func (h *hcHost) reportsWork(s Session) bool {
 }
 
 // exitOutcome reads how the run's program ended. Closing the run's space in
-// the app kills its terminal: called off. Exit code 0 is a program that ended
-// on its own having succeeded (a template or a one-shot agent that leaves when
-// its task is over): done, where it used to be listed failed (#938). Any other
-// code, or none, is a crash.
-func (h *hcHost) exitOutcome(s Session) error {
+// the app kills its terminal: called off. A non-zero code, or none, is a crash.
+//
+// Exit code 0 is done only when nothing says the work was cut short (#938):
+// the program never reported a status (a plain program or a template's
+// script, where the exit code is the only word there is), or the agent's last
+// word was done, or idle after its turn (worked). An agent that left while
+// working or blocked, or idle before it read its prompt, was quit, and agents
+// exit 0 on a quit: that is not a finished run.
+func (h *hcHost) exitOutcome(s Session, worked bool) error {
 	t, err := h.ops.Get(s.PaneID)
 	if err != nil || t.Reason == "killed" {
 		return ErrCancelled
@@ -262,7 +266,10 @@ func (h *hcHost) exitOutcome(s Session) error {
 		return fmt.Errorf("the agent exited before finishing")
 	}
 	if *t.ExitCode == 0 {
-		return nil
+		switch {
+		case t.Status == nil, t.Status.State == "done", t.Status.State == "idle" && worked:
+			return nil
+		}
 	}
 	return fmt.Errorf("the agent exited with code %d before finishing", *t.ExitCode)
 }

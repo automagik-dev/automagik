@@ -113,8 +113,11 @@ it. Three verdicts were wrong on hc and one on Herdr:
   the agent's own word and is now enough. `idle` still needs one of the two, since an
   agent is idle before it reads its prompt.
 - Listed `failed` with the work finished (hc): a program that ended on its own with
-  exit code 0 was "exited with code 0 before finishing". Exit 0 is now `done`; any
-  other code, or none, is still a failure, and a killed terminal still `cancelled`.
+  exit code 0 was "exited with code 0 before finishing". Exit 0 is now `done` when
+  the program never reported a status (a plain program, a template's script), or its
+  last word was `done`, or `idle` after its turn. An agent that exits 0 while
+  `working` or `blocked`, or `idle` before any work, was quit and still fails, as does
+  any other code, or none; a killed terminal is still `cancelled`.
 - Listed `done` with no work (hc): `blocked` counted as proof the prompt landed, so a
   dialog before the first turn followed by `idle` was a finished run. Only `working`
   or a turn count is that proof now.
