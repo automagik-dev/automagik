@@ -459,6 +459,40 @@ node dev/dsh-check.mjs --agent codex    # the same on your own Codex (a few toke
 log: the agent's text, a `tool/call` of `acp_tool` with its `tool/result`, and the
 `approval/asked` and `approval/decided` pair for that call.
 
+### The ACP library, and a log that always loads
+
+The plugin speaks ACP through `@agentclientprotocol/sdk`, pinned to one exact version, on its
+`/unstable` entry (stable ACP v1, plus `session/fork` and the session updates newer adapters
+send). The agent's `initialize` answer is compared with the protocol version the library
+speaks: an agent that answers another one does not start, and the failure says whether to
+update Automagik or the connector.
+
+**The write-time guard** (`src/host/write-guard.js`). DSH's Session reader refuses a whole
+conversation for one bad step, and the bridge writes its rows beside DSH's own loop. While a
+bridge serves a Session, every row written on it passes the guard first, which keeps the same
+books as the reader. A `step/end` or `turn/end` over a call with no result closes the call
+first (as superseded, or cancelled at a turn's end; DSH's own not-started repair for a call
+that never started) and hides its advertisement; a result for a call that is not open, or
+stamped with a step that has ended, is not written; a call with no advertisement is refused.
+Each repair leaves a log line and a `plugin:acp-dsh/write-guard` record in the Session.
+
+`test/sequence-fuzz.test.js` drives random interleavings of calls, results, cancellations,
+overlapping calls and step and turn ends through the real back-channel on a real Session, and
+loads the log with the pinned reader after every move. `FUZZ_SEED` and `FUZZ_RUNS` replay one
+seed or widen the search.
+
+**Drift.** `node scripts/acp-drift.mjs` fails when the pin is more than one minor behind npm's
+latest, and names each adapter that moved past `dev/acp-compat.json`, the record of the SDK and
+adapter versions the suite last passed against (`--record` writes it, after the suite and the
+real-adapter tests passed). The `ACP drift` workflow runs it daily and opens an issue on drift;
+every pull request checks the record against the pin.
+
+`test/real-adapters.test.js` starts the real adapters with this client in a throwaway home
+(never signed in, no model request): the handshake, the session start or its `auth_required`,
+the bridge's first tool list, and Codex's fork and close. It is skipped unless
+`AUTOMAGIK_TEST_CLAUDE_ACP` and `AUTOMAGIK_TEST_CLAUDE`, or `AUTOMAGIK_TEST_CODEX_ACP` and
+`AUTOMAGIK_TEST_CODEX`, name an adapter's `dist/index.js` and its CLI.
+
 ## Contracts
 
 The plugin id `@automagik/acp-dsh`, the row id and storage prefix `acp-dsh`, the provider ids

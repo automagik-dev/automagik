@@ -22,7 +22,7 @@ import { ImagesSection } from './image-cell.js'
 import { AboutPage } from './about.js'
 import { ProvidersPage } from './providers-page.js'
 import { FolderMenu } from './folder-menu.js'
-import { PermissionFallback, PermissionPicker } from './permission-picker.js'
+import { PermissionExplanations, PermissionFallback, PermissionPicker } from './permission-picker.js'
 import { AUTO, AUTO_FALLBACK } from '../shared/permission-levels.js'
 import { routeOf } from '../shared/routes.js'
 import { t } from './i18n.js'
@@ -183,11 +183,14 @@ function PermissionsSection({ roster, actions, run }) {
   if (!catalog?.options?.length) return null
   const saved = roster.prefs?.permission
   const offered = catalog.options.some(option => option.value === AUTO)
+  // The choice sits under its label, as a group's does: the level names, the question
+  // before Auto review or Full access and what each level does all need the card's width.
   return h(SetSection, { title: t('Permissions') },
-    h(SetRow, { label: t('New Bots start with'), hint: t('Bots you already have keep their own.') },
-      h('div', { className: 'bt-drawer-permission' },
-        h(PermissionPicker, { catalog, saved: saved ?? catalog.defaultPreset, repick: saved === undefined, onPick: permission => run(actions.setPrefs({ permission })) }),
-        h(PermissionFallback, { fallback: saved === AUTO && !offered ? AUTO_FALLBACK : undefined }))))
+    h(SetRow, { label: t('New Bots start with'), hint: t('Bots you already have keep their own.') }),
+    h('div', { className: 'bt-set-row bt-bs-row bt-bs-stack bt-drawer-permission' },
+      h(PermissionPicker, { catalog, saved: saved ?? catalog.defaultPreset, repick: saved === undefined, confirmFull: true, onPick: permission => run(actions.setPrefs({ permission })) }),
+      h(PermissionFallback, { fallback: saved === AUTO && !offered ? AUTO_FALLBACK : undefined }),
+      h(PermissionExplanations, { catalog })))
 }
 
 // The model memory review runs on, and a part's note when its chat is on an agent (models.js

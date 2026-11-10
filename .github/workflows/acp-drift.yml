@@ -1,0 +1,102 @@
+name: ACP drift
+
+# apps/acp-dsh pins @agentclientprotocol/sdk exactly, and the app installs the newest ACP
+# adapters at run time, so the pin can fall behind what the adapters are built on with nothing
+# failing (#958 found it a major behind). Once a day this reads npm's latest for the SDK and
+# for each adapter (apps/acp-dsh/scripts/acp-drift.mjs) and compares them with the pin and with
+# apps/acp-dsh/dev/acp-compat.json, the versions the suite last passed against.
+#
+# When the pin is more than one minor behind npm's latest (a new major always is), or the
+# record names another SDK than the pin, the run fails and opens an issue with the report, or
+# adds a comment to the one already open. It changes no file and merges nothing: the bump is a
+# pull request through the normal review. An adapter that moved past the record is only named
+# in the run's summary. A run that could not read npm fails without an issue: the next run decides.
+#
+# Every pull request runs the offline half in the plugin's own suite
+# (apps/acp-dsh/test/acp-drift.test.js): the record names the pin and every adapter.
+
+on:
+  schedule:
+    # Off the top of the hour, where GitHub delays and drops scheduled runs.
+    - cron: '23 5 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: acp-drift
+  cancel-in-progress: false
+
+jobs:
+  drift:
+    name: SDK pin against npm
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    defaults:
+      run:
+        working-directory: apps/acp-dsh
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.9
+
+      - name: Compare the pin and the record with npm
+        id: drift
+        run: |
+          set -uo pipefail
+          node scripts/acp-drift.mjs --json > "${RUNNER_TEMP}/acp-drift.json"
+          code=$?
+          echo "code=${code}" >> "$GITHUB_OUTPUT"
+          {
+            echo '### ACP drift'
+            echo
+            if [ "${code}" = 2 ]; then
+              echo 'npm could not be read; nothing was compared.'
+            else
+              echo '```json'
+              cat "${RUNNER_TEMP}/acp-drift.json"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open or update the drift issue
+        if: steps.drift.outputs.code == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title='acp-dsh: the ACP SDK pin has drifted from npm'
+          body="${RUNNER_TEMP}/acp-drift-issue.md"
+          {
+            echo 'The daily ACP drift check failed.'
+            echo
+            echo '```json'
+            cat "${RUNNER_TEMP}/acp-drift.json"
+            echo '```'
+            echo
+            echo "Run: ${RUN_URL}"
+            echo
+            echo 'To clear it: bump `@agentclientprotocol/sdk` in `apps/acp-dsh/package.json` (exact version, with `bun.lock`), run the plugin suite and the real-adapter tests, then `node scripts/acp-drift.mjs --record`, in one pull request.'
+          } > "${body}"
+          number=$(gh issue list --repo "${GITHUB_REPOSITORY}" --state open --search "\"${title}\" in:title" --json number,title --jq "map(select(.title == \"${title}\")) | .[0].number // empty")
+          if [ -n "${number}" ]; then
+            gh issue comment "${number}" --repo "${GITHUB_REPOSITORY}" --body-file "${body}"
+          else
+            gh issue create --repo "${GITHUB_REPOSITORY}" --title "${title}" --body-file "${body}" --label bug --label area:dsh
+          fi
+
+      - name: Fail on drift or an unread npm
+        if: steps.drift.outputs.code != '0'
+        env:
+          CODE: ${{ steps.drift.outputs.code }}
+        run: |
+          echo "::error::acp-drift exited ${CODE} (1: drift, 2: npm could not be read)"
+          exit 1

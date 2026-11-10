@@ -89,6 +89,30 @@ export function updatePresentation(update, { checking = false, failed = false, p
   return { ...legacy, app: legacyPresentation(update, { checking, failed }), plugins: pluginsPresentation({ lane, fetching }) }
 }
 
+const VERSION_TEXT = /^\d+\.\d+\.\d+[0-9A-Za-z.+-]{0,40}$/
+const versionText = value => (typeof value === 'string' && value.length <= 64 && VERSION_TEXT.test(value) ? value : null)
+
+/**
+ * What this copy of the app is, for the Bot team's About page (preload.cjs
+ * `omniDesktop.updates.versions`): `{ app, dsh, plugins: [{ name, version }], updates }`. `app`
+ * is the app's own version, `dsh` its runtime's, `plugins` the installed plugins of the
+ * publishers the app follows (lane.js installedVersions, by name), and `updates` whether this
+ * copy updates at all (update.js updateMode). Version text only: no path, no setting.
+ */
+export function versionsAnswer({ app, dsh, plugins, mode } = {}) {
+  const listed = Object.entries(plugins ?? {})
+    .map(([name, version]) => ({ name, version: versionText(version) }))
+    .filter(plugin => plugin.version !== null)
+  return { app: versionText(app), dsh: versionText(dsh), plugins: listed, updates: mode === 'auto' || mode === 'notify' }
+}
+
+/**
+ * Whether a check that found the app up to date still failed: a lane could not be read
+ * (`laneFailed`) and nothing is staged (`staged`), so "up to date" would not be true. Any other
+ * result (an update found or ready, an error, a retry) already says what it is.
+ */
+export const laneMissedOf = ({ result, laneFailed, staged }) => result === 'latest' && laneFailed === true && !staged
+
 function pluginsPresentation({ lane, fetching }) {
   const auto = lane.auto !== false
   if (lane.applying) return { phase: 'installing', changes: lane.changes ?? [], auto }
