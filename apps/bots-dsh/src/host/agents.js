@@ -806,10 +806,15 @@ export function install(rt) {
   const endOf = task => task.endedAt ?? task.at ?? 0
   // `roomId`: the group whose Session asked for the task. Its result goes back to that
   // group, where the user saw the request, not to the Bot's own chat.
+  // Without one, a task started inside a group Session's tool call keeps that group as
+  // `levelRoomId`, which can only narrow its level (permissions.js); the report still goes
+  // to the Bot's own chat.
   async function startTask({ title, text, from, cwd, agentPreset, roomId }) {
+    // Read before the first await: the tool call this runs in may return before the rest.
+    const levelRoomId = roomId || from === undefined ? undefined : rt.callerGroup?.()
     const caller = state.bots?.[from]
     const sessionId = await createTaskSession(title, { cwd: cwd ?? caller?.workDir, agentPreset: agentPreset ?? caller?.profile })
-    tasks()[sessionId] = { title: String(title).slice(0, AGENT_SESSION_TITLE_MAX), from, at: Date.now(), status: 'working', ...(roomId ? { roomId } : {}) }
+    tasks()[sessionId] = { title: String(title).slice(0, AGENT_SESSION_TITLE_MAX), from, at: Date.now(), status: 'working', ...(roomId ? { roomId } : {}), ...(levelRoomId ? { levelRoomId } : {}) }
     // Only TASKS_KEPT ended tasks are remembered for their reports. The ended ones go first,
     // the one that ended longest ago first: a long task that just ended is fresh news.
     // A working record is never evicted, whatever its age or whether DSH still holds its
@@ -844,8 +849,18 @@ export function install(rt) {
     const live = await rt.resolveAgent(sessionId)
     // And at its Bot's permission level: DSH announced the Session before it was a task,
     // so its session/created listener could not. Before the first turn, as the model is.
-    await rt.applyTaskPermission(sessionId, live.session)
-      .catch(error => rt.warn('ds-bot: the task keeps the default permission, %s\'s was not applied: %s', caller?.name ?? from, error?.message ?? error))
+    // A task whose level did not hold takes no turn: the default it would run at may be
+    // wider. It ends as failed, so nothing resumes it, and its Session is archived, so
+    // nothing is typed into it at that default either.
+    try {
+      await rt.applyTaskPermission(sessionId, live.session, { start: true })
+    } catch (error) {
+      Object.assign(tasks()[sessionId] ?? {}, { status: 'failed', endedAt: Date.now(), summary: String(error?.message ?? error).slice(0, TASK_SUMMARY_MAX) })
+      await rt.save().catch(failure => rt.warn('ds-bot: saving a task failed: %s', failure))
+      await ctx.workspaceRegistry.archiveSession(sessionId, { stopActivity: true })
+        .catch(failure => rt.warn('ds-bot: the task %s that did not start was not archived: %s', sessionId, failure))
+      throw error
+    }
     // The Session existed before this task record did, so the tool deny list could not be
     // resolved then (a task is a task only once it is written down). Apply it now, before
     // the first turn, to the same agent the turn will use.
