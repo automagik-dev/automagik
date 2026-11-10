@@ -119,7 +119,8 @@ export function install(rt) {
   const manager = () => ctx.get?.('pluginManager')
 
   const status = {
-    name: PKG.name, current: PKG.version, latest: null, source: 'unknown', notesUrl: releasesUrl(),
+    // Inside the desktop app the source is known before any check, and with checks off too.
+    name: PKG.name, current: PKG.version, latest: null, source: inDesktopApp() ? 'app' : 'unknown', notesUrl: releasesUrl(),
     checkedAt: 0, phase: 'idle', installed: null, error: null,
   }
   // Where the newest version was found, and the spec that installs it.

@@ -1188,6 +1188,7 @@ var ZH = {
   "{share}% of all usage from {span}": "占 {span} 全部用量的 {share}%",
   // About
   "About Omni": "关于 Omni",
+  "About Automagik": "关于 Automagik",
   "Version {version}": "版本 {version}",
   "Star Omni on GitHub": "在 GitHub 上给 Omni 点 Star",
   "{count} stars": "{count} 个 Star",
@@ -1207,6 +1208,7 @@ var ZH = {
   "Installed from a local folder; update it there.": "从本地文件夹安装，请在那里更新。",
   "Updates are not offered for this install.": "这种安装方式不提供更新。",
   "Updates come with the Automagik app.": "随 Automagik 应用一起更新。",
+  "Updates are off in this copy of Automagik.": "此 Automagik 副本已关闭更新。",
   Links: "链接",
   "Source code": "源代码",
   "Release notes": "发布说明",
@@ -14560,6 +14562,22 @@ function useDesktopUpdate() {
   }, [bridge]);
   return { bridge, state };
 }
+function useDesktopVersions() {
+  const bridge = globalThis.omniDesktop?.updates;
+  const [versions, setVersions] = (0, import_react34.useState)(null);
+  (0, import_react34.useEffect)(() => {
+    if (typeof bridge?.versions !== "function") return void 0;
+    let live = true;
+    bridge.versions().then((next) => {
+      if (live && next && typeof next === "object") setVersions(next);
+    }, () => {
+    });
+    return () => {
+      live = false;
+    };
+  }, [bridge]);
+  return versions;
+}
 function Pill({ pill, busy, percent: percent3, onClick }) {
   return (0, import_react34.createElement)(
     "button",
@@ -20544,8 +20562,13 @@ var FEEDBACK_CSS = `
 var import_react59 = require("react");
 var CHEER_MS = 1800;
 var starCount = (count) => new Intl.NumberFormat(dateLocale(), { notation: "compact", maximumFractionDigits: 1 }).format(count);
-function botHint(update, app) {
-  if (update.source === "app" && app.bridge) return updatePill(appState(app.state))?.label ?? t("Updates come with the Automagik app.");
+var inApp = (update, app) => Boolean(app.bridge) || update.source === "app";
+var updatesOff = (versions) => versions?.updates === false;
+function botHint(update, app, versions) {
+  if (inApp(update, app)) {
+    if (updatesOff(versions)) return t("Updates are off in this copy of Automagik.");
+    return (app.bridge ? updatePill(appState(app.state))?.label : null) ?? t("Updates come with the Automagik app.");
+  }
   if (update.phase === "installing") return t("Updating Omni…");
   if (update.phase === "installed") return t("Restart DSH to start using Omni {version}.", { version: update.installed ?? update.latest });
   if (update.phase === "updated") return t("Omni {version} is installed.", { version: update.installed ?? update.latest });
@@ -20571,6 +20594,10 @@ function pluginHint(change, plugins) {
   if (plugins.phase === "downloading") return `${versions} · ${t("Downloading · {percent}%", { percent: plugins.percent ?? 0 })}`;
   if (plugins.phase === "installing") return `${versions} · ${t("Updating…")}`;
   return `${versions} · ${plugins.auto === false ? t("Waits for a restart") : t("Updates when no agent is at work")}`;
+}
+function versionRows({ versions, update, Row: Row3 }) {
+  const plugins = versions ? Array.isArray(versions.plugins) ? versions.plugins : [] : [{ name: update.name, version: update.current }];
+  return plugins.filter((plugin) => typeof plugin?.name === "string" && typeof plugin.version === "string").map((plugin) => (0, import_react59.createElement)(Row3, { key: `version:${plugin.name}`, label: pluginName(plugin.name), hint: t("Version {version}", { version: plugin.version }) }));
 }
 function pluginRows({ app, Row: Row3 }) {
   const plugins = splitsPlugins(app.state) ? app.state.plugins : null;
@@ -20601,6 +20628,7 @@ var linkProps = (href) => ({ className: "bt-soft bt-soft-sm bt-about-link", href
 function AboutPage({ useUpdate, actions, run: run2, Section: Section2, Row: Row3 }) {
   const update = useUpdate((value) => value) ?? {};
   const app = useDesktopUpdate();
+  const versions = useDesktopVersions();
   const [checking, setChecking] = (0, import_react59.useState)(false);
   const [stars, setStars] = (0, import_react59.useState)(null);
   (0, import_react59.useEffect)(() => {
@@ -20637,14 +20665,15 @@ function AboutPage({ useUpdate, actions, run: run2, Section: Section2, Row: Row3
   const dshShown = dshNew && dsh.available;
   const appPill = updatePill(appState(app.state));
   const appBusy = ["checking", "downloading", "installing"].includes(appState(app.state)?.phase);
-  const botControl = update.source === "app" ? app.bridge ? (0, import_react59.createElement)(
-    "button",
-    { type: "button", className: appPill?.primary ? "bt-fb-primary" : "bt-soft bt-soft-sm", disabled: appBusy, onClick: () => {
-      void app.bridge.open().catch(() => {
-      });
-    } },
-    appPill?.primary ? appPill.label : appBusy ? t("Checking…") : t("Check for updates")
-  ) : null : phase === "installed" || phase === "updated" ? null : update.available || phase === "installing" ? (0, import_react59.createElement)(
+  const ours = inApp(update, app);
+  const appCheck = () => {
+    void (typeof app.bridge.check === "function" ? app.bridge.check() : app.bridge.open()).catch(() => {
+    });
+  };
+  const botControl = ours ? app.bridge && !updatesOff(versions) ? appPill?.primary ? (0, import_react59.createElement)("button", { type: "button", className: "bt-fb-primary", disabled: appBusy, onClick: () => {
+    void app.bridge.open().catch(() => {
+    });
+  } }, appPill.label) : (0, import_react59.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", disabled: appBusy, onClick: appCheck }, appBusy ? t("Checking…") : t("Check for updates")) : null : phase === "installed" || phase === "updated" ? null : update.available || phase === "installing" ? (0, import_react59.createElement)(
     "button",
     { type: "button", className: "bt-fb-primary", disabled: phase === "installing", onClick: () => run2(actions.installUpdate()) },
     phase === "installing" ? t("Updating…") : phase === "failed" ? t("Try again") : t("Update")
@@ -20655,6 +20684,8 @@ function AboutPage({ useUpdate, actions, run: run2, Section: Section2, Row: Row3
     dshPhase === "installing" ? t("Updating…") : dshPhase === "failed" ? t("Try again") : t("Update")
   ) : null;
   const repo = update.repoUrl;
+  const version = ours ? versions?.app : update.current;
+  const plugins = ours ? versionRows({ versions, update, Row: Row3 }) : [];
   return [
     (0, import_react59.createElement)(
       "div",
@@ -20663,8 +20694,8 @@ function AboutPage({ useUpdate, actions, run: run2, Section: Section2, Row: Row3
       (0, import_react59.createElement)(
         "div",
         { className: "bt-about-copy" },
-        (0, import_react59.createElement)("span", { className: "bt-about-name" }, "Omni"),
-        update.current ? (0, import_react59.createElement)("span", { className: "bt-about-version" }, t("Version {version}", { version: update.current })) : null
+        (0, import_react59.createElement)("span", { className: "bt-about-name" }, "Automagik"),
+        version ? (0, import_react59.createElement)("span", { className: "bt-about-version" }, t("Version {version}", { version })) : null
       ),
       repo ? (0, import_react59.createElement)(
         "a",
@@ -20684,10 +20715,11 @@ function AboutPage({ useUpdate, actions, run: run2, Section: Section2, Row: Row3
     (0, import_react59.createElement)(
       Section2,
       { key: "updates", title: t("Updates") },
-      (0, import_react59.createElement)(Row3, { label: "Omni", hint: botHint(update, app) }, botControl, update.available && update.notesUrl ? (0, import_react59.createElement)("a", linkProps(update.notesUrl), t("What's new")) : null),
-      dsh?.current ? (0, import_react59.createElement)(Row3, { label: "DeepSeek Harness", hint: dshHint(dsh, dshShown) }, dshControl) : null,
+      (0, import_react59.createElement)(Row3, { label: ours ? "Automagik" : "Omni", hint: botHint(update, app, versions) }, botControl, update.available && update.notesUrl ? (0, import_react59.createElement)("a", linkProps(update.notesUrl), t("What's new")) : null),
+      dsh?.current ? (0, import_react59.createElement)(Row3, { label: "DeepSeek Harness", hint: dshHint(dsh, dshShown) }, dshControl) : ours && typeof versions?.dsh === "string" ? (0, import_react59.createElement)(Row3, { label: "DeepSeek Harness", hint: t("Version {version}", { version: versions.dsh }) }) : null,
       ...pluginRows({ app, Row: Row3 })
     ),
+    plugins.length > 0 ? (0, import_react59.createElement)(Section2, { key: "plugins", title: t("Plugins") }, ...plugins) : null,
     (0, import_react59.createElement)(
       Section2,
       { key: "links", title: t("Links") },
@@ -21005,7 +21037,7 @@ var PROVIDERS_CSS = `
 // src/client/settings.js
 var import_react61 = require("react");
 var capitalize3 = (word) => word[0].toUpperCase() + word.slice(1);
-var SETTINGS_PAGES = [["general", "General"], ["models", "Models"], ["bots", "Bots"], ["groups", "Group chats"], ["connectors", "Connectors"], ["capabilities", "Capabilities"], ["browser", "Browser"], ["schedules", "Scheduled tasks"], ["usage", "Usage"], ["secrets", "Secrets"], ["privacy", "Privacy"], ["feedback", "Feedback"], ["about", "About Omni"]];
+var SETTINGS_PAGES = [["general", "General"], ["models", "Models"], ["bots", "Bots"], ["groups", "Group chats"], ["connectors", "Connectors"], ["capabilities", "Capabilities"], ["browser", "Browser"], ["schedules", "Scheduled tasks"], ["usage", "Usage"], ["secrets", "Secrets"], ["privacy", "Privacy"], ["feedback", "Feedback"], ["about", "About Automagik"]];
 var PAGE_ICONS = { ...SETTINGS_ICONS, models: SlidersIcon, connectors: ConnectorIcon, capabilities: PlugIcon, browser: ConnectorIcon, schedules: ClockIcon, secrets: KeyIcon, privacy: ShieldIcon, feedback: FeedbackIcon, about: InfoIcon };
 function SetSection({ title, className = "", children }) {
   return (0, import_react61.createElement)("section", { className: `bt-set-section ${className}`.trim() }, (0, import_react61.createElement)("h3", null, title), (0, import_react61.createElement)("div", { className: "bt-set-card" }, children));

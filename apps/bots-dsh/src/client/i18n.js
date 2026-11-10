@@ -1144,6 +1144,7 @@ const ZH = {
   '{share}% of all usage from {span}': '占 {span} 全部用量的 {share}%',
   // About
   'About Omni': '关于 Omni',
+  'About Automagik': '关于 Automagik',
   'Version {version}': '版本 {version}',
   'Star Omni on GitHub': '在 GitHub 上给 Omni 点 Star',
   '{count} stars': '{count} 个 Star',
@@ -1163,6 +1164,7 @@ const ZH = {
   'Installed from a local folder; update it there.': '从本地文件夹安装，请在那里更新。',
   'Updates are not offered for this install.': '这种安装方式不提供更新。',
   'Updates come with the Automagik app.': '随 Automagik 应用一起更新。',
+  'Updates are off in this copy of Automagik.': '此 Automagik 副本已关闭更新。',
   Links: '链接',
   'Source code': '源代码',
   'Release notes': '发布说明',
