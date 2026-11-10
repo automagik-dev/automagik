@@ -120,7 +120,8 @@ const INSTALL_FIELDS = ['name', 'dependencies', 'peerDependencies', 'optionalDep
 // ships from the site, never from a release: no app build and no plugin reads it (#370).
 // The server image (server/: the automagik-web Dockerfile, its build, smoke, scan and
 // entrypoint) is built, scanned and published to ghcr.io by its own workflow
-// (.github/workflows/server-image.yml); no release carries it as an asset, so a server-only
+// (.github/workflows/server-image.yml); no release carries it as an asset (that workflow only
+// adds server-image.json, the pushed image's digest, to the content release), so a server-only
 // change cuts no release. It installs plugins from a pinned release, not from this checkout.
 // herdr/NOTICE never ships: pack.mjs archives only PACK_MODS and the layout files.
 // The Unfold plugins left this repository for Unfold's own, whose release ships them (RFC 0020).

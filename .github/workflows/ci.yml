@@ -56,6 +56,9 @@ jobs:
 
       - run: node herdr/scripts/privacy-check.mjs
 
+      # No Stripe key, price or account id in any tracked file (RFC 0025 phase A's check; #910).
+      - run: node server/secrecy.mjs --repo .
+
   herdr:
     # The herdr pack (herdr/, the old automagik-herdr CI): the real Herdr app's loader on every
     # pack mod (a pinned Linux herdr-app, headless), its tests, a syntax check of every pack mod
