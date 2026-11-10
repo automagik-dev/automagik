@@ -22,8 +22,10 @@ object ChatDemo {
     fun listing(): List<Chat.Terminal> = listOf(Chat.Terminal(TERMINAL, "", "dsh", "Captain", "blocked", "sample",
         registryId = BOT, kind = "approval", msg = "Needs your approval: $ASK", turn = 7))
 
+    private val CHATS = mapOf(HOST to listing())
+
     /** The listed chats by host id, keyed like [PocketViewModel.botChats] and the Team screen's `dsh`. */
-    fun chats(): Map<String, List<Chat.Terminal>> = mapOf(HOST to listing())
+    fun chats(): Map<String, List<Chat.Terminal>> = CHATS
 
     private val LONG = """
         The Android chat pass is ready for review. What changed:
@@ -33,25 +35,29 @@ object ChatDemo {
         • The composer is one pill with Send; the keyboard no longer covers it.
         • The chat bar carries the bot's pet, its name and what it is doing.
 
-        I left the app id, the version and the release metadata alone. The build and the unit tests are green, and lint
-        reports only the dependency warnings that were already there.
+        I left the app id, the version and the release metadata alone. The first unit-test run failed on a stale cache;
+        the rerun is green, and lint reports only the dependency warnings that were already there.
 
         If the drawer copy looks too long on a small screen, say so and I will shorten it before the next build.
         Otherwise I will check the generated release notes and attach the debug build.
     """.trimIndent()
 
     /**
-     * The chat the sample main bot would be in: a user's request, its long answer, the test run it reported, and the
-     * open approval and question it is waiting on, with the phone allowed to write (as a bridge with `dshWrite` does).
+     * The chat the sample main bot would be in: a user's request, its long answer, a failed test run and the green
+     * rerun, a receipt for an earlier approval, and the open approval and question it is waiting on, with the phone
+     * allowed to write (as a bridge with `dshWrite` does).
      */
-    fun state(terminal: String = TERMINAL) = Chat.State(
+    fun state(terminal: String = TERMINAL, now: Long = System.currentTimeMillis()) = Chat.State(
         terminal = terminal,
         rows = listOf(
             Chat.Row("sample-1", "text", role = "user", text = "Finish the release notes for the Android chat work, then check the build."),
             Chat.Row("sample-2", "text", role = "assistant", text = LONG),
             Chat.Row("sample-3", "tool-call", tool = "Bash", summary = "Run the Android unit tests",
                 input = "./gradlew :app:testDebugUnitTest"),
-            Chat.Row("sample-4", "tool-result", output = "BUILD SUCCESSFUL · unit tests green")),
+            Chat.Row("sample-4", "tool-result", ok = false, output = "FAILURE: 2 tests failed on a stale test cache."),
+            Chat.Row("sample-5", "tool-call", tool = "Bash", summary = "Rerun the Android unit tests",
+                input = "./gradlew :app:testDebugUnitTest --rerun-tasks"),
+            Chat.Row("sample-6", "tool-result", output = "BUILD SUCCESSFUL · unit tests green")),
         status = Chat.Status("blocked", "approval", "Needs your approval: $ASK"),
         approval = Chat.Row("sample-approval", "approval", source = "claude-code", turn = 7, tool = "Bash",
             summary = ASK, input = "./gradlew :app:testDebugUnitTest", choices = listOf("allow", "allow-always", "deny"),
@@ -60,5 +66,8 @@ object ChatDemo {
             prompt = "Which build should the notes cover?",
             options = listOf("The current preview", "The next tagged build", "Both, in separate sections"),
             open = true, answerable = true),
+        receipts = listOf(Chat.Receipt("sample-receipt", "approval", label = "Bash: $ASK", by = "phone", name = "Preview",
+            outcome = "allow", at = now - 3 * 60_000L)),
+        done = listOf("sample-receipt"),
         connected = true, dshWrite = true, more = false, synced = true)
 }

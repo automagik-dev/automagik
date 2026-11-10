@@ -139,6 +139,13 @@ object SpaceIcons {
 }
 
 /**
+ * The `dsh:` chats Team and Home read: the preview's one sample chat while the demo runs ([ChatDemo.chats]), else the
+ * last good listing of the saved [hosts].
+ */
+internal fun dshChats(demo: Boolean, last: Map<String, List<Chat.Terminal>>, hosts: List<String>) =
+    if (demo) ChatDemo.chats() else last.filterKeys { it in hosts }
+
+/**
  * Each connected, paired machine's `dsh:` chats, read again every 30 s while [reading] (Home or Team shows). A reading
  * in flight or failed keeps the last good one, so a bubble or a Home row does not flip between its chat and its
  * terminal.
@@ -152,8 +159,7 @@ object SpaceIcons {
     val read by vm.botChats.collectAsState()
     var last by remember { mutableStateOf(emptyMap<String, List<Chat.Terminal>>()) }
     LaunchedEffect(read) { read.forEach { (h, r) -> r?.getOrNull()?.let { last = last + (h to it) } } }
-    if (state.demo) return ChatDemo.chats()
-    return last.filterKeys { it in hosts }
+    return dshChats(state.demo, last, hosts)
 }
 
 /** A project's circle: its Herdr icon (emoji or image) on its tile colour, else its letter; All is a grid. */

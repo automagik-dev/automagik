@@ -22,6 +22,10 @@ class ChatDemoTest {
         val reply = s.rows.filter { it.kind == "text" && it.role == "assistant" }.maxOf { it.text.length }
         assertTrue("the sample answer is long enough to scroll", reply >= 400)
         assertTrue(s.rows.any { it.kind == "text" && it.role == "user" })
+        assertTrue("a failed tool result is drawn", s.rows.any { it.kind == "tool-result" && !it.ok })
+        val receipt = requireNotNull(s.receipts.singleOrNull())
+        assertEquals("approval", receipt.kind)
+        assertTrue(receipt.settled)
     }
 
     @Test fun theListingIsTheSampleMainBot() {
@@ -32,7 +36,15 @@ class ChatDemoTest {
         assertEquals(ChatDemo.BOT, row.registryId)
         val main = SpendDemo.MEMBERS.values.flatten().single { it.id == ChatDemo.BOT }
         assertTrue(main.main)
+        assertEquals(Teams.GENIE, main.pet)
         assertEquals(main.name, row.title)
+    }
+
+    @Test fun theTeamScreenServesTheSampleChatOnlyInTheDemo() {
+        val live = mapOf("box" to listOf(Chat.Terminal("dsh:s1", "", "dsh", "Lead", "idle", "session")))
+        assertEquals(ChatDemo.chats(), dshChats(demo = true, last = live, hosts = listOf("box")))
+        assertEquals(live, dshChats(demo = false, last = live, hosts = listOf("box")))
+        assertEquals(emptyMap<String, List<Chat.Terminal>>(), dshChats(demo = false, last = live, hosts = emptyList()))
     }
 
     @Test fun theSampleMainBotsBubbleOpensTheChat() {

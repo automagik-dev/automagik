@@ -363,6 +363,12 @@ class PocketViewModelChatTest {
         assertFalse(opened)
         vm.chatAnswer(checkNotNull(chat.approval), "allow")
         assertEquals(ChatDemo.SAMPLE_ONLY, vm.chat.value?.notice)
+        // A preview terminal with no sample chat keeps the old message: no rows from Captain.
+        vm.openChat(TerminalRef(ChatDemo.HOST, "t6"))
+        val other = checkNotNull(vm.chat.value)
+        assertEquals("t6", other.terminal)
+        assertTrue(other.rows.isEmpty())
+        assertEquals("Chat needs a connected machine.", other.error)
         vm.leaveDemo()
         assertTrue(vm.botChats.value[ChatDemo.HOST] == null)
     }

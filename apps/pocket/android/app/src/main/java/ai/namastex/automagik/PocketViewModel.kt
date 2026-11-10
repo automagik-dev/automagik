@@ -1015,7 +1015,11 @@ class PocketViewModel(application: Application, private val initDispatcher: Coro
         val gen = ++chatGen
         chatRef = ref
         _chat.value = Chat.carry(prior, Chat.State(ref.address, messages = unknown, resuming = resuming, error = if (resuming) Chat.RESUMING else null))
-        if (state.value.demo) { _chat.value = ChatDemo.state(ref.address); return }
+        if (state.value.demo) {
+            _chat.value = if (ref == ChatDemo.ref) ChatDemo.state(ref.address)
+                else Chat.State(ref.address, error = "Chat needs a connected machine.")
+            return
+        }
         chatJob = viewModelScope.launch(Dispatchers.IO) {
             val scope = CoroutineScope(coroutineContext + SupervisorJob(coroutineContext[Job]))
             var link: ChatLink? = null
