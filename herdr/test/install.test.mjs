@@ -20,6 +20,9 @@ const { OFF_BY_DEFAULT, OLD_PACK_NAME, PACK_MODS, V020_LAYOUT_SHA256, parseMarke
 const { meterKey, publishMeter: publishMeterLane, writePointer } = await import("./meter-lane-fake.mjs");
 /** The meter build the test lane names (sequence 2000005). */
 const MV = "3.200.5";
+/** The scheduler build the test release pins (#220), and the scheduler release's four assets. */
+const SV = "0.12.9-am.7";
+const SCHED_TARGETS = ["darwin_arm64", "darwin_amd64", "linux_arm64", "linux_amd64"];
 /** The pack mods a fresh install turns on (herdr-app checks those); OFF_BY_DEFAULT ones start off. */
 const ON_MODS = PACK_MODS.filter((m) => !OFF_BY_DEFAULT.includes(m));
 /** herdrdev's installer (D27), the only Herdr install.sh offers; and the app's bundle ids. */
@@ -128,6 +131,8 @@ fi
       writeFileSync(join(src, m, "main.js"), `${readFileSync(join(src, m, "main.js"), "utf8")}\n// release ${version}\n`);
     }
     writeFileSync(join(src, "am-sidebar", "VERSION"), `${version}\n`);
+    // The pack pins the scheduler release publishScheduler() made last (else the repo's own pin).
+    if (schedulerPin) writeFileSync(join(src, "am-automations", "scheduler.js"), schedulerPin);
     mkdirSync(join(src, "layouts"));
     cpSync(LAYOUT_SRC, join(src, "layouts", "automagik.json"));
     edit?.(src);
@@ -158,6 +163,54 @@ fi
     extraEnv.AUTOMAGIK_HERDR_METER_KEYS = meterKeyOf.keys;
     return publishMeterLane(rel, meterKeyOf, { version, ...opts });
   };
+  /**
+   * Publishes the scheduler release herdr-automations-v`version` in this release folder (#220): one
+   * fake build per target, a script that answers `version` (with `reports`), `ls --json` (the
+   * backend automations.yaml names, a pid once its service is "installed") and `service
+   * install|uninstall|status`, keeping its state and a log of its calls in $HOME/.fake-scheduler.
+   * It starts nothing and touches nothing outside its HOME. Every pack published after this pins
+   * these builds in its am-automations/scheduler.js, as the real one pins the real release;
+   * `pin` overrides a pinned sha256 by target. Returns { version, sums }.
+   */
+  let schedulerPin = null;
+  const publishScheduler = ({ version = SV, reports = version, pin = {} } = {}) => {
+    const dir = join(rel, "download", `herdr-automations-v${version}`);
+    mkdirSync(dir, { recursive: true });
+    const sums = {};
+    for (const target of SCHED_TARGETS) {
+      const file = join(dir, `herdr-automations_${target}`);
+      exe(file, `#!/bin/sh
+# a stand-in herdr-automations ${version} for ${target}
+S="$HOME/.fake-scheduler"
+mkdir -p "$S"
+printf '%s\\n' "$*" >> "$S/calls"
+cfg="$HOME/.config/herdr/plugins/config/automations/automations.yaml"
+case "$1" in
+  version) echo "${reports}" ;;
+  ls)
+    backend=
+    [ -f "$cfg" ] && backend=$(sed -n 's/^backend: *//p' "$cfg" | head -n 1)
+    pid=0
+    [ -f "$S/service" ] && pid=4242
+    printf '{"backend":"%s","paused":false,"scheduler":%s,"config":"%s","state":"%s","automations":null,"invalid":null}\\n' "$backend" "$pid" "$cfg" "$S" ;;
+  service)
+    case "$2" in
+      install) printf '%s\\n' "$0" > "$S/service"; printf '%s\\n' "$PATH" > "$S/service-path"; echo "Installed $S/service"; echo "Runs: $0" ;;
+      uninstall) rm -f "$S/service"; echo "Uninstalled; automations.yaml and history are left where they are" ;;
+      status) [ ! -f "$S/status-fails" ] || exit 3; if [ -f "$S/service" ]; then echo "service installed: true"; else echo "service installed: false"; fi ;;
+    esac ;;
+esac
+`);
+      sums[target] = pin[target] ?? sha(file);
+    }
+    schedulerPin = `export const SCHEDULER = Object.freeze({\n  repo: "automagik-dev/automagik",\n  version: "${version}",\n`
+      + `  sha256: Object.freeze({ arm64: "${sums.darwin_arm64}", amd64: "${sums.darwin_amd64}" }),\n`
+      + `  linux: Object.freeze({ arm64: "${sums.linux_arm64}", amd64: "${sums.linux_amd64}" }),\n});\n`
+      + `export function repairCommand() { return ""; }\n`;
+    return { version, sums };
+  };
+  /** The scheduler builds downloaded. */
+  const schedulerBuilds = () => readFileSync(curlLog, "utf8").split("\n").filter((l) => /\/herdr-automations_[a-z0-9_]+$/.test(l));
   /** The meter's downloads: the lane's two files and any build. */
   const meterCalls = () => readFileSync(curlLog, "utf8").split("\n").filter((l) => l.includes("/download/meter-lane/") || /\/usagemeter-[a-z0-9_-]+$/.test(l));
   /** The builds downloaded (not the pointer). */
@@ -174,7 +227,7 @@ fi
   /** Every pack folder's release (its VERSION), by name, on or off. */
   const versions = () => Object.fromEntries(PACK_MODS.map((m) => [m, /\/\/ release (\S+)\n$/.exec(readFileSync(join(where(m), "main.js"), "utf8"))?.[1]]));
   const all = (v) => Object.fromEntries(PACK_MODS.map((m) => [m, v]));
-  return { root, bin, home, apps, appHome, mods, state, where, pack, old, link, run, piped, publish, publishMeter, meterKey: meterKeyOf, meterCalls, meterBuilds, herdrInstallerCalls, brewCalls, addHerdrApp, show, herdrCalls, checks, mark, versions, all, extraEnv, herdrLog };
+  return { root, bin, home, apps, appHome, mods, state, where, pack, old, link, run, piped, publish, publishMeter, publishScheduler, schedulerBuilds, meterKey: meterKeyOf, meterCalls, meterBuilds, herdrInstallerCalls, brewCalls, addHerdrApp, show, herdrCalls, checks, mark, versions, all, extraEnv, herdrLog };
 }
 
 test("install.sh is POSIX sh", () => {
@@ -183,6 +236,7 @@ test("install.sh is POSIX sh", () => {
 
 test("a fresh install puts the pack and the command in place; a second run changes nothing", (t) => {
   const s = scratch(t);
+  s.publishScheduler();
   s.publish("9.9.0");
   s.publishMeter();
   const r = s.run("--yes");
@@ -458,8 +512,11 @@ test("--uninstall with nothing there before moves the pack out of mods/, never d
   const s = scratch(t);
   s.publish("9.9.0");
   assert.equal(s.run("--yes").code, 0);
+  // The fleet coverage record the sidebar's meter run writes beside the install record (RFC 0026 (e)).
+  writeFileSync(join(s.state, "fleet-coverage.json"), "{\"v\":1}\n", { mode: 0o600 });
   const r = s.run("--uninstall");
   assert.equal(r.code, 0, r.err);
+  assert.equal(existsSync(join(s.state, "fleet-coverage.json")), false, "the fleet record leaves with the pack");
   assert.equal(existsSync(s.pack), false);
   assert.deepEqual(readdirSync(s.mods), []);
   assert.equal(readFileSync(join(s.state, ".prev", "am-sidebar", "VERSION"), "utf8").trim(), "9.9.0");
@@ -950,6 +1007,7 @@ test("a clean same-version rerun checks every file and every mod, swaps nothing 
   const s = scratch(t);
   s.addHerdrApp();
   s.show("automagik");
+  s.publishScheduler();
   s.publish("9.9.0");
   s.publishMeter();
   assert.equal(s.run("--yes").code, 0);
@@ -1274,15 +1332,18 @@ test("no downgrade: a re-posted older signed pointer is refused by version or se
 
 test("every download keeps the path as written (curl --path-as-is), including Herdr's installer", () => {
   const calls = readFileSync(INSTALL, "utf8").split("\n").filter((l) => /^\s+curl /.test(l));
-  assert.equal(calls.length, 8);
+  assert.equal(calls.length, 9);
   for (const l of calls) assert.match(l, /--path-as-is/);
   // The meter's build: https only for a release on GitHub (a test's file:// folder: file only).
   assert.match(calls.find((line) => line.includes('"$ubase/$asset"')) ?? "", /--proto "\$uproto"/);
   assert.match(readFileSync(INSTALL, "utf8"), /case \$ubase in file:\/\/\*\) uproto='=file' ;; \*\) uproto='=https' ;; esac/);
   // Herdr's installer, an https URL, is fetched over https only, never a redirect to another scheme.
   assert.match(calls.find((line) => line.includes('"$HERDR_INSTALLER"')) ?? "", /--proto '=https'/);
+  // The scheduler's build (#220), the same way.
+  assert.match(calls.find((line) => line.includes('"$sbase/$sasset"')) ?? "", /--proto "\$sproto"/);
+  assert.match(readFileSync(INSTALL, "utf8"), /case \$sbase in file:\/\/\*\) sproto='=file' ;; \*\) sproto='=https' ;; esac/);
   for (const l of calls.filter((line) => !line.includes('"$HERDR_INSTALLER"'))) {
-    assert.match(l, /^\s+curl -fsSL --path-as-is (--proto "\$uproto" )?"(\$u?base\/|\$POINTER(\.sig)?"|\$upointer(\.sig)?")/);
+    assert.match(l, /^\s+curl -fsSL --path-as-is (--proto "\$[us]proto" )?"(\$[us]?base\/|\$POINTER(\.sig)?"|\$upointer(\.sig)?")/);
   }
   assert.doesNotMatch(readFileSync(INSTALL, "utf8"), /api\.github\.com|releases\?per_page|MAX_PAGES/, "no search through the releases");
 });
@@ -1693,7 +1754,7 @@ test("usagemeter: a dev build counts by its X.Y.Z; one with no version is left w
   // No version at all (not a usagemeter answer): left, with exactly one warning.
   exe(meterBin(s), "#!/bin/sh\necho 'something else 1.0'\n");
   const kept = sha(meterBin(s));
-  const none = s.run();
+  const none = s.run("--no-scheduler"); // this home's release has no scheduler build: its own warning is #220's tests'
   assert.equal(none.code, 0, none.err);
   assert.equal(none.out.split("\n").filter((l) => /^Warning:/.test(l)).length, 1, none.out);
   assert.match(none.out, /Warning: .*\/usagemeter reports no usagemeter version; left it as it is/);
@@ -2405,6 +2466,61 @@ test("--dsh-tui installs the opt-in dsh-TUI into its own dsh-tui profile; --unin
   assert.equal(readFileSync(join(s.home, ".dsh", ".credentials.yaml"), "utf8"), "keep: me\n");
 });
 
+test("--revive installs the login service through the pack's command (#939, Linux); --yes alone or no answer never does; --uninstall removes a unit that is the pack's", { skip: process.platform !== "linux" }, (t) => {
+  const s = scratch(t, { os: "Linux" });
+  s.addHerdrApp();
+  s.publish("9.9.0");
+  // A stand-in systemctl first on PATH: the user's own systemd is never asked.
+  const log = join(s.root, "systemctl.log");
+  exe(join(s.bin, "systemctl"), `#!/bin/sh\nprintf '%s\\n' "$*" >> "${log}"\nexit 0\n`);
+  const calls = () => (existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean) : []);
+  const unit = join(s.home, ".config", "systemd", "user", "automagik-herdr-revive.service");
+  // No terminal to answer at, and --yes: neither installs a thing that runs at login.
+  const quiet = s.run("--no-usagemeter");
+  assert.equal(quiet.code, 0, quiet.err + quiet.out);
+  assert.match(quiet.out, /Left the revive login service alone; 'automagik-herdr revive service install' adds it later\./);
+  const yes = s.run("--yes", "--no-usagemeter");
+  assert.equal(yes.code, 0, yes.err + yes.out);
+  assert.match(yes.out, /Left the revive login service alone: --yes never changes what runs at login/);
+  assert.equal(existsSync(unit), false);
+  assert.deepEqual(calls(), []);
+  const no = s.run("--no-revive", "--no-usagemeter");
+  assert.match(no.out, /Left the revive login service alone \(--no-revive\)\./);
+  assert.equal(existsSync(unit), false);
+  // --revive: the unit, written by the installed command, enabled and never started.
+  const r = s.run("--revive", "--no-usagemeter");
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(r.out, /Installed the revive login service/);
+  const text = readFileSync(unit, "utf8");
+  assert.match(text, /^# Automagik Herdr: brings the bots back after a restart of this computer/);
+  assert.ok(text.includes(`ExecStart="${s.link}" revive --boot --wait `), text);
+  assert.deepEqual(calls(), ["--user daemon-reload", "--user enable automagik-herdr-revive.service"]);
+  // Installed already: a later run asks nothing and leaves it.
+  const again = s.run("--no-usagemeter");
+  assert.equal(again.code, 0, again.err + again.out);
+  assert.doesNotMatch(again.out, /revive login service/);
+  const u = s.run("--uninstall", "--yes", "--no-usagemeter");
+  assert.equal(u.code, 0, u.err + u.out);
+  assert.match(u.out, /Removed the revive login service/);
+  assert.equal(existsSync(unit), false);
+  assert.ok(calls().includes("--user disable automagik-herdr-revive.service"), calls().join("; "));
+});
+
+test("--uninstall leaves a unit at the revive service's path that is not the pack's", { skip: process.platform !== "linux" }, (t) => {
+  const s = scratch(t, { os: "Linux" });
+  s.addHerdrApp();
+  s.publish("9.9.0");
+  exe(join(s.bin, "systemctl"), "#!/bin/sh\nexit 0\n");
+  assert.equal(s.run("--no-usagemeter").code, 0);
+  const unit = join(s.home, ".config", "systemd", "user", "automagik-herdr-revive.service");
+  mkdirSync(dirname(unit), { recursive: true });
+  writeFileSync(unit, "[Unit]\nDescription=mine\n");
+  const u = s.run("--uninstall", "--yes", "--no-usagemeter");
+  assert.equal(u.code, 0, u.err + u.out);
+  assert.match(u.out, /Left .*automagik-herdr-revive\.service: it is not this installer's\./);
+  assert.equal(readFileSync(unit, "utf8"), "[Unit]\nDescription=mine\n");
+});
+
 test("--dsh-tui writes minimumReleaseAgeExclude: [] for a release older than the profile's gate", (t) => {
   const s = scratch(t);
   s.publish("9.9.0");
@@ -2550,4 +2666,328 @@ test("#839: install.sh tightens existing 0644 and 0664 workers.jsonl and attach.
   const clean = s.run("--yes", "--no-usagemeter");
   assert.equal(clean.code, 0, clean.err);
   assert.doesNotMatch(clean.out, /tightened Herdr ledger/);
+});
+
+// ---- #220: the automations scheduler (herdr-automations), an installer-managed dependency ----
+// Every scheduler here is publishScheduler()'s stand-in script in a temp home: no real
+// herdr-automations runs, no login service is installed, and no real automations.yaml is read.
+
+const schedBin = (s) => join(s.home, ".local", "bin", "herdr-automations");
+const schedRecord = (s) => join(s.state, "scheduler");
+const schedConfig = (s) => join(s.home, ".config", "herdr", "plugins", "config", "automations", "automations.yaml");
+const schedState = (s) => join(s.home, ".fake-scheduler");
+/** What the stand-in scheduler was asked, in this home (the installer's smoke run uses a scratch HOME). */
+const schedCalls = (s) => (existsSync(join(schedState(s), "calls")) ? readFileSync(join(schedState(s), "calls"), "utf8").split("\n").filter(Boolean) : []);
+const schedLeftovers = (s) => (existsSync(dirname(schedBin(s))) ? readdirSync(dirname(schedBin(s))).filter((n) => n.startsWith(".herdr-automations")) : []);
+/** A scheduler the person installed themselves: answers `version` and `ls --json`, logs every call. */
+const plantScheduler = (path, version, { pid = 77 } = {}) => {
+  mkdirSync(dirname(path), { recursive: true });
+  exe(path, `#!/bin/sh\nprintf '%s\\n' "$*" >> "${path}.calls"\ncase "$1" in version) echo "${version}" ;; ls) echo '{"backend":"hc","scheduler":${pid},"config":"","automations":[]}' ;; esac\n`);
+};
+
+test("#220: install.sh holds no scheduler pin of its own: the build comes from the checked pack's scheduler.js", () => {
+  const text = readFileSync(INSTALL, "utf8");
+  assert.doesNotMatch(text, /\d+\.\d+\.\d+-am\.\d+|[0-9a-f]{64}/, "no version, no hash");
+  assert.match(text, /tar -xzf "\$TMP\/\$TGZ" -C "\$TMP\/x" am-automations\/scheduler\.js/);
+  assert.match(text, /\$RELEASES\/download\/herdr-automations-v\$swant/);
+  // The repo's own pin names all four builds, so no machine install.sh supports is left without one.
+  assert.match(text, /Darwin: \["darwin", S\.sha256\], Linux: \["linux", S\.linux\]/);
+});
+
+test("#220: a fresh host without herdr-automations gets the pinned build, backend hc, the login service and a ready check", async (t) => {
+  const { SCHEDULER } = await import("../mods/am-automations/scheduler.js");
+  for (const k of ["arm64", "amd64"]) for (const pins of [SCHEDULER.sha256, SCHEDULER.linux]) assert.match(pins[k], /^[0-9a-f]{64}$/);
+  for (const [os, arch, target] of [["Darwin", "arm64", "darwin_arm64"], ["Darwin", "x86_64", "darwin_amd64"], ["Linux", "x86_64", "linux_amd64"], ["Linux", "aarch64", "linux_arm64"]]) {
+    const s = scratch(t, { os, arch });
+    if (os === "Linux") s.addHerdrApp();
+    const { sums } = s.publishScheduler();
+    s.publish("9.9.0");
+    assert.equal(existsSync(schedBin(s)), false, "the host starts without the binary");
+    const r = s.run("--yes", "--no-usagemeter");
+    assert.equal(r.code, 0, r.err + r.out);
+    assert.match(r.out, new RegExp(`Installed herdr-automations 0\\.12\\.9-am\\.7 \\(.*/\\.local/bin/herdr-automations, pinned by the pack, checksum ok\\)`), target);
+    assert.equal(sha(schedBin(s)), sums[target], `${os} ${arch} gets its own build`);
+    assert.equal(lstatSync(schedBin(s)).mode & 0o777, 0o755);
+    assert.deepEqual(schedLeftovers(s), []);
+    assert.deepEqual(s.schedulerBuilds().map((u) => u.replace(/.*\/download\//, "")), [`herdr-automations-v${SV}/herdr-automations_${target}`]);
+    assert.equal(readFileSync(schedRecord(s), "utf8"), `version=${SV}\nsha256=${sums[target]}\nservice=installed\n`);
+    // The backend: this home had no automations.yaml, so it gets one for the app.
+    assert.equal(readFileSync(schedConfig(s), "utf8"), "backend: hc\n");
+    assert.match(r.out, /Automations: wrote .*automations\.yaml with 'backend: hc'/);
+    // The login service, through the binary's own command, with ~/.local/bin on its PATH.
+    assert.equal(readFileSync(join(schedState(s), "service"), "utf8").trim(), schedBin(s));
+    assert.ok(readFileSync(join(schedState(s), "service-path"), "utf8").trim().split(":").includes(dirname(schedBin(s))));
+    assert.match(r.out, /Automations: the scheduler's login service is installed and started\./);
+    // The runtime check: ls --json answers, the scheduler runs, the backend is the app's.
+    assert.match(r.out, /Automations: ready \(herdr-automations 0\.12\.9-am\.7, backend hc, scheduler running, pid 4242\)\./);
+    assert.deepEqual(schedCalls(s), ["ls --json", "service status", "service install", "ls --json", "version"]);
+    // A rerun: no download, no second service install, nothing rewritten, still ready.
+    const again = s.run("--no-usagemeter");
+    assert.equal(again.code, 0, again.err);
+    assert.match(again.out, /herdr-automations 0\.12\.9-am\.7: already installed/);
+    assert.match(again.out, /Automations: ready \(/);
+    assert.equal(s.schedulerBuilds().length, 1);
+    assert.equal(schedCalls(s).filter((c) => c === "service install").length, 1);
+    assert.equal(readFileSync(schedConfig(s), "utf8"), "backend: hc\n");
+  }
+});
+
+test("#220: with no terminal and no --yes the service is not started, and the check says Automations is not ready", (t) => {
+  const s = scratch(t);
+  s.publishScheduler();
+  s.publish("9.9.0");
+  const r = s.run("--no-usagemeter");
+  assert.equal(r.code, 0, r.err);
+  assert.ok(existsSync(schedBin(s)));
+  assert.equal(existsSync(join(schedState(s), "service")), false, "no service without a yes");
+  assert.ok(!schedCalls(s).includes("service install"));
+  assert.match(r.out, /the scheduler is installed but not started; 'herdr-automations service install' \(or Start in the Automations panel\)/);
+  assert.match(r.out, /Warning: Automations is not ready: herdr-automations 0\.12\.9-am\.7 answers \(backend hc\), but no scheduler is running/);
+  assert.equal(readFileSync(schedRecord(s), "utf8"), `version=${SV}\nsha256=${sha(schedBin(s))}\n`, "the service is not recorded as ours");
+  // Asked again on the next run (the scheduler still is not running); a yes starts it and records it.
+  const yes = s.run("--yes", "--no-usagemeter");
+  assert.equal(yes.code, 0, yes.err);
+  assert.match(yes.out, /herdr-automations 0\.12\.9-am\.7: already installed/);
+  assert.match(yes.out, /Automations: ready \(/);
+  assert.match(readFileSync(schedRecord(s), "utf8"), /\nservice=installed\n$/);
+  assert.equal(s.schedulerBuilds().length, 1, "no second download");
+});
+
+test("#220: an existing automations.yaml and its history are never edited, by install, update or --uninstall", (t) => {
+  const s = scratch(t);
+  s.publishScheduler();
+  s.publish("9.9.0");
+  const yaml = "backend: herdr\nautomations:\n  - name: nightly\n    cron: \"0 3 * * *\"\n    repo: /somewhere\n    prompt: tidy up\n";
+  mkdirSync(dirname(schedConfig(s)), { recursive: true });
+  writeFileSync(schedConfig(s), yaml);
+  const history = join(s.home, ".local", "state", "herdr", "plugins", "automations", "history.jsonl");
+  mkdirSync(dirname(history), { recursive: true });
+  writeFileSync(history, '{"run_id":"r1","automation":"nightly","status":"done"}\n');
+  const kept = () => { assert.equal(readFileSync(schedConfig(s), "utf8"), yaml); assert.equal(readFileSync(history, "utf8"), '{"run_id":"r1","automation":"nightly","status":"done"}\n'); };
+  const r = s.run("--yes", "--no-usagemeter");
+  assert.equal(r.code, 0, r.err);
+  kept();
+  assert.match(r.out, /Automations: left .*automations\.yaml as it is \(backend: herdr\); runs open in the Herdr app only with 'backend: hc' there\./);
+  assert.match(r.out, /Warning: Automations is not ready for the Herdr app: the scheduler runs \(pid 4242, herdr-automations 0\.12\.9-am\.7\), but with backend herdr/);
+  s.publishScheduler({ version: "0.12.9-am.8" });
+  s.publish("9.9.1");
+  assert.equal(s.run("--no-usagemeter").code, 0);
+  kept();
+  const u = s.run("--uninstall");
+  assert.equal(u.code, 0, u.err);
+  kept();
+  assert.match(u.out, /automations\.yaml and the run history are kept\./);
+});
+
+test("#220: a scheduler the person manages is never replaced, configured, started or removed", (t) => {
+  // In ~/.local/bin, not this installer's (the issue's workaround: upstream's own build).
+  const own = scratch(t);
+  own.publishScheduler();
+  own.publish("9.9.0");
+  plantScheduler(schedBin(own), "0.11.3");
+  const planted = sha(schedBin(own));
+  const r = own.run("--yes", "--no-usagemeter");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Automations scheduler: left .*\/herdr-automations as it is \(not installed by this installer; it reports version 0\.11\.3\)\./);
+  assert.equal(sha(schedBin(own)), planted);
+  assert.deepEqual(own.schedulerBuilds(), [], "nothing was downloaded");
+  assert.equal(existsSync(schedRecord(own)), false, "never recorded as ours");
+  assert.equal(existsSync(schedConfig(own)), false, "its configuration is the person's");
+  const asked = readFileSync(`${schedBin(own)}.calls`, "utf8").split("\n").filter(Boolean);
+  assert.ok(asked.every((c) => c === "version" || c === "ls --json"), asked.join(" | "));
+  // It is still checked: the person hears whether Automations is ready.
+  assert.match(r.out, /Automations: ready \(herdr-automations 0\.11\.3, backend hc, scheduler running, pid 77\)\./);
+  const u = own.run("--uninstall");
+  assert.equal(u.code, 0, u.err);
+  assert.equal(sha(schedBin(own)), planted);
+  // On PATH somewhere else: ~/.local/bin gets nothing.
+  const path = scratch(t);
+  path.publishScheduler();
+  path.publish("9.9.0");
+  plantScheduler(join(path.bin, "herdr-automations"), "0.12.1", { pid: 0 });
+  const p = path.run("--yes", "--no-usagemeter");
+  assert.equal(p.code, 0, p.err);
+  assert.match(p.out, /Automations scheduler: left .*\/bin\/herdr-automations as it is \(on PATH, not this installer's\)\./);
+  assert.equal(existsSync(schedBin(path)), false);
+  assert.deepEqual(path.schedulerBuilds(), []);
+  assert.match(p.out, /Warning: Automations is not ready: herdr-automations 0\.12\.1 answers \(backend hc\), but no scheduler is running/);
+  // A link at ~/.local/bin/herdr-automations (a dev checkout's) stays a link.
+  const linked = scratch(t);
+  linked.publishScheduler();
+  linked.publish("9.9.0");
+  const dev = join(linked.root, "dev-scheduler");
+  plantScheduler(dev, "dev");
+  mkdirSync(dirname(schedBin(linked)), { recursive: true });
+  symlinkSync(dev, schedBin(linked));
+  const l = linked.run("--yes", "--no-usagemeter");
+  assert.equal(l.code, 0, l.err);
+  assert.match(l.out, /Automations scheduler: left .*\/herdr-automations, a link or a folder, as it is\./);
+  assert.equal(readlinkSync(schedBin(linked)), dev);
+  assert.deepEqual(linked.schedulerBuilds(), []);
+});
+
+test("#220: a build that is not the pinned sha256, or does not run as the pinned version, installs nothing; the pack still installs", (t) => {
+  const bad = scratch(t);
+  bad.publishScheduler({ pin: { darwin_arm64: "0".repeat(64) } });
+  bad.publish("9.9.0");
+  const r = bad.run("--yes", "--no-usagemeter");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Warning: the automations scheduler was not installed: herdr-automations_darwin_arm64 is not the build the pack pins \(sha256 [0-9a-f]{64}, expected 0{64}\): nothing was installed\./);
+  assert.equal(existsSync(schedBin(bad)), false);
+  assert.equal(existsSync(schedRecord(bad)), false);
+  assert.equal(existsSync(schedConfig(bad)), false);
+  assert.deepEqual(schedLeftovers(bad), []);
+  assert.deepEqual(bad.versions(), bad.all("9.9.0"));
+  assert.doesNotMatch(r.out, /Automations: ready|Automations is not ready/, "nothing to check");
+  const other = scratch(t);
+  other.publishScheduler({ reports: "0.12.1" });
+  other.publish("9.9.0");
+  const o = other.run("--yes", "--no-usagemeter");
+  assert.equal(o.code, 0, o.err);
+  assert.match(o.out, /Warning: the automations scheduler was not installed: the new herdr-automations does not run as 0\.12\.9-am\.7 \(version said: 0\.12\.1\): nothing was installed\./);
+  assert.equal(existsSync(schedBin(other)), false);
+  assert.deepEqual(schedLeftovers(other), []);
+  // No scheduler release at all (offline, or not cut yet): a warning, never a failed install.
+  const none = scratch(t);
+  none.publish("9.9.0");
+  const n = none.run("--yes", "--no-usagemeter");
+  assert.equal(n.code, 0, n.err);
+  assert.match(n.out, /Warning: the automations scheduler was not installed: could not download file:.*\/herdr-automations_darwin_arm64\. The pack is installed; run this again later to retry\./);
+  // A machine the pack pins no build for.
+  const odd = scratch(t, { arch: "riscv64" });
+  odd.publishScheduler();
+  odd.publish("9.9.0");
+  assert.match(odd.run("--yes", "--no-usagemeter").out, /was not installed: the pack pins no herdr-automations 0\.12\.9-am\.7 build for Darwin riscv64\./);
+});
+
+test("#220: an update replaces only the binary this installer wrote, and restarts only its own service", (t) => {
+  const s = scratch(t);
+  s.publishScheduler();
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes", "--no-usagemeter").code, 0);
+  const first = sha(schedBin(s));
+  // A newer pack pins a newer build: swapped in, the service restarted without a question.
+  const next = s.publishScheduler({ version: "0.12.9-am.8" });
+  s.publish("9.9.1");
+  const r = s.run("--no-usagemeter");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Updated herdr-automations 0\.12\.9-am\.7 to 0\.12\.9-am\.8 \(/);
+  assert.notEqual(sha(schedBin(s)), first);
+  assert.equal(sha(schedBin(s)), next.sums.darwin_arm64);
+  assert.equal(readFileSync(schedRecord(s), "utf8"), `version=0.12.9-am.8\nsha256=${next.sums.darwin_arm64}\nservice=installed\n`);
+  assert.match(r.out, /login service is installed and started \(restarted on the new build\)\./);
+  assert.equal(schedCalls(s).filter((c) => c === "service install").length, 2);
+  assert.doesNotMatch(r.err, /Start the automations scheduler/, "its own service: no question");
+  assert.deepEqual(schedLeftovers(s), []);
+  // The person replaces it with their own: the next pin leaves it, and --uninstall leaves it too.
+  plantScheduler(schedBin(s), "0.13.0");
+  const theirs = sha(schedBin(s));
+  s.publishScheduler({ version: "0.12.9-am.9" });
+  s.publish("9.9.2");
+  const left = s.run("--yes", "--no-usagemeter");
+  assert.equal(left.code, 0, left.err);
+  assert.match(left.out, /left .*\/herdr-automations as it is \(not installed by this installer; it reports version 0\.13\.0\)/);
+  assert.equal(sha(schedBin(s)), theirs);
+  const u = s.run("--uninstall");
+  assert.equal(u.code, 0, u.err);
+  assert.match(u.out, /Left .*\/herdr-automations: it is not the herdr-automations 0\.12\.9-am\.8 this installer put there\./);
+  assert.equal(sha(schedBin(s)), theirs);
+  assert.equal(existsSync(schedRecord(s)), false);
+});
+
+test("#220: --uninstall removes the binary and the login service this installer put there; --no-scheduler leaves both", (t) => {
+  const s = scratch(t);
+  s.publishScheduler();
+  s.publish("9.9.0");
+  assert.equal(s.run("--yes", "--no-usagemeter").code, 0);
+  const keep = s.run("--uninstall", "--no-scheduler");
+  assert.equal(keep.code, 0, keep.err);
+  assert.match(keep.out, /Left .*\/herdr-automations \(--no-scheduler\)\./);
+  assert.ok(existsSync(schedBin(s)) && existsSync(join(schedState(s), "service")) && existsSync(schedRecord(s)));
+  // Installed again, it is still this installer's; a plain --uninstall takes both.
+  assert.equal(s.run("--yes", "--no-usagemeter").code, 0);
+  const u = s.run("--uninstall");
+  assert.equal(u.code, 0, u.err);
+  assert.match(u.out, /Removed the automations scheduler's login service\./);
+  assert.match(u.out, /Removed .*\/herdr-automations \(herdr-automations 0\.12\.9-am\.7\)\. automations\.yaml and the run history are kept\./);
+  assert.equal(existsSync(schedBin(s)), false);
+  assert.equal(existsSync(join(schedState(s), "service")), false);
+  assert.equal(existsSync(schedRecord(s)), false);
+  assert.equal(readFileSync(schedConfig(s), "utf8"), "backend: hc\n", "the configuration stays");
+});
+
+// The installer was told no; the person then started the service (Start in the panel runs exactly
+// this). That service restarts its program for good, so the binary it runs must not vanish under it.
+test("#220: --uninstall keeps the binary while a login service this installer did not start runs it", (t) => {
+  const own = scratch(t);
+  own.publishScheduler();
+  own.publish("9.9.0");
+  assert.equal(own.run("--no-usagemeter").code, 0);
+  assert.equal(spawnSync(schedBin(own), ["service", "install"], { env: { HOME: own.home, PATH: "/usr/bin:/bin" } }).status, 0);
+  const bytes = sha(schedBin(own));
+  const o = own.run("--uninstall");
+  assert.equal(o.code, 0, o.err);
+  assert.match(o.out, /Left .*\/herdr-automations: a login service this installer did not start runs it .* To remove both: herdr-automations service uninstall, then rm /);
+  assert.doesNotMatch(o.out, /Removed .*herdr-automations/);
+  assert.equal(sha(schedBin(own)), bytes, "the binary the service runs is still there");
+  assert.ok(existsSync(join(schedState(own), "service")), "the person's service stays");
+  assert.ok(!schedCalls(own).includes("service uninstall"), "never uninstalled for them");
+  assert.ok(existsSync(schedRecord(own)), "still recorded as this installer's binary");
+  // No answer to `service status` (asked with the install side's time limit): nobody knows whether
+  // a service runs it, so the binary stays then too.
+  writeFileSync(join(schedState(own), "status-fails"), "");
+  assert.equal(own.run("--no-usagemeter").code, 0);
+  const mute = own.run("--uninstall");
+  assert.equal(mute.code, 0, mute.err);
+  assert.match(mute.out, /Left .*\/herdr-automations: it gave no answer to 'service status' within 15 s, so whether a login service runs it is not known\./);
+  assert.equal(sha(schedBin(own)), bytes);
+  rmSync(join(schedState(own), "status-fails"));
+  assert.match(readFileSync(INSTALL, "utf8"), /! bounded 15 "\$sstat" "\$SCHED" service status/, "the uninstall side's question is bounded like the install side's");
+  // Once the person removes the service, a reinstall and --uninstall take the binary.
+  assert.equal(spawnSync(schedBin(own), ["service", "uninstall"], { env: { HOME: own.home, PATH: "/usr/bin:/bin" } }).status, 0);
+  assert.equal(own.run("--no-usagemeter").code, 0);
+  const gone = own.run("--uninstall");
+  assert.equal(gone.code, 0, gone.err);
+  assert.match(gone.out, /Removed .*\/herdr-automations \(herdr-automations 0\.12\.9-am\.7\)/);
+  assert.equal(existsSync(schedBin(own)), false);
+});
+
+// The panel's repair command (Copy, or Install) puts exactly the pinned bytes in ~/.local/bin with no
+// record. Those are adopted, so the next pin reaches them; any other bytes stay the person's.
+test("#220: a recordless binary that is exactly the pinned build is adopted without a download, then kept up to date", (t) => {
+  const s = scratch(t);
+  const { sums } = s.publishScheduler();
+  s.publish("9.9.0");
+  mkdirSync(dirname(schedBin(s)), { recursive: true });
+  cpSync(join(s.root, "release", "download", `herdr-automations-v${SV}`, "herdr-automations_darwin_arm64"), schedBin(s));
+  chmodSync(schedBin(s), 0o755);
+  const ino = lstatSync(schedBin(s)).ino;
+  const r = s.run("--yes", "--no-usagemeter");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /herdr-automations 0\.12\.9-am\.7: already installed \(.*\), exactly the build the pack pins; this installer keeps it up to date from now on\./);
+  assert.deepEqual(s.schedulerBuilds(), [], "nothing was downloaded");
+  assert.equal(lstatSync(schedBin(s)).ino, ino, "nothing was replaced");
+  assert.equal(readFileSync(schedRecord(s), "utf8"), `version=${SV}\nsha256=${sums.darwin_arm64}\nservice=installed\n`);
+  assert.match(r.out, /Automations: ready \(herdr-automations 0\.12\.9-am\.7, backend hc, scheduler running, pid 4242\)\./);
+  // The next pin reaches it.
+  const next = s.publishScheduler({ version: "0.12.9-am.8" });
+  s.publish("9.9.1");
+  const up = s.run("--no-usagemeter");
+  assert.equal(up.code, 0, up.err);
+  assert.match(up.out, /Updated herdr-automations 0\.12\.9-am\.7 to 0\.12\.9-am\.8 \(/);
+  assert.equal(sha(schedBin(s)), next.sums.darwin_arm64);
+});
+
+test("#220: --no-scheduler installs the pack and never downloads, configures or starts the scheduler", (t) => {
+  const s = scratch(t);
+  s.publishScheduler();
+  s.publish("9.9.0");
+  const r = s.run("--yes", "--no-usagemeter", "--no-scheduler");
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /Automations scheduler: skipped \(--no-scheduler\)\./);
+  assert.deepEqual(s.schedulerBuilds(), []);
+  assert.equal(existsSync(schedBin(s)), false);
+  assert.equal(existsSync(schedConfig(s)), false);
+  assert.equal(existsSync(schedState(s)), false);
+  assert.match(s.run("--help").out, /--no-scheduler leaves ~\/\.local\/bin\/herdr-automations/);
 });

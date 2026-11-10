@@ -1,0 +1,105 @@
+{
+  "about": "One new automation per agent, written two ways (#938): `put` is the definition as a bot sends it to herdr-automations put, with no agent_args; `form` is what the panel's form sends for the same definition (am-automations-panel.test.mjs holds it to the real form, under our scheduler build). herdr/scheduler/main_test.go puts both and requires the same automations.yaml, byte for byte.",
+  "cases": [
+    {
+      "agent": "codex",
+      "put": {
+        "name": "job",
+        "cron": "0 9 * * 1-5",
+        "repo": "/r",
+        "workspace": "worktree",
+        "workspace_id": "",
+        "agent": "codex",
+        "template": "",
+        "model": "",
+        "prompt": "tidy up",
+        "mcp_config": "",
+        "timeout_minutes": 60,
+        "close_workspace": "on-success"
+      },
+      "form": {
+        "name": "job",
+        "cron": "0 9 * * 1-5",
+        "repo": "/r",
+        "workspace": "worktree",
+        "workspace_id": "",
+        "agent": "codex",
+        "template": "",
+        "model": "",
+        "prompt": "tidy up",
+        "mcp_config": "",
+        "timeout_minutes": 60,
+        "agent_args": [
+          "--dangerously-bypass-approvals-and-sandbox"
+        ],
+        "close_workspace": "on-success"
+      }
+    },
+    {
+      "agent": "claude",
+      "put": {
+        "name": "job",
+        "cron": "0 9 * * 1-5",
+        "repo": "/r",
+        "workspace": "worktree",
+        "workspace_id": "",
+        "agent": "claude",
+        "template": "",
+        "model": "",
+        "prompt": "tidy up",
+        "mcp_config": "",
+        "timeout_minutes": 60,
+        "close_workspace": "on-success"
+      },
+      "form": {
+        "name": "job",
+        "cron": "0 9 * * 1-5",
+        "repo": "/r",
+        "workspace": "worktree",
+        "workspace_id": "",
+        "agent": "claude",
+        "template": "",
+        "model": "",
+        "prompt": "tidy up",
+        "mcp_config": "",
+        "timeout_minutes": 60,
+        "agent_args": [
+          "--dangerously-skip-permissions"
+        ],
+        "close_workspace": "on-success"
+      }
+    },
+    {
+      "agent": "pi",
+      "put": {
+        "name": "job",
+        "cron": "0 9 * * 1-5",
+        "repo": "/r",
+        "workspace": "worktree",
+        "workspace_id": "",
+        "agent": "pi",
+        "template": "",
+        "model": "",
+        "prompt": "tidy up",
+        "mcp_config": "",
+        "timeout_minutes": 60,
+        "close_workspace": "on-success"
+      },
+      "form": {
+        "name": "job",
+        "cron": "0 9 * * 1-5",
+        "repo": "/r",
+        "workspace": "worktree",
+        "workspace_id": "",
+        "agent": "pi",
+        "template": "",
+        "model": "",
+        "prompt": "tidy up",
+        "mcp_config": "",
+        "timeout_minutes": 60,
+        "agent_args": [],
+        "close_workspace": "on-success"
+      }
+    }
+  ]
+}

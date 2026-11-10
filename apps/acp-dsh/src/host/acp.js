@@ -2,7 +2,7 @@
 // session inside it, prompted once per DSH turn. What the agent streams lands in a queue the
 // adapter drains step by step; its tool calls are kept by id so the mirror tool (tool.js) can
 // wait on each one and answer its permission request through DSH.
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { Readable, Writable } from 'node:stream'
 // The `/unstable` entry: stable ACP v1 plus `session/fork` (how acp-codex's tool set follows a
 // preset change) and the session updates newer adapters send (a stable-only parser refuses an
@@ -11,6 +11,8 @@ import { PROTOCOL_VERSION, client, methods, ndJsonStream } from '@agentclientpro
 import { isBridgeName } from './names.js'
 
 const STDERR_KEEP = 4000
+// How long a closed connection waits for the agent's exit, which says why (start()).
+const EXIT_GRACE_MS = 500
 const TERMINAL = new Set(['completed', 'failed'])
 // SDK 2.x refuses an incoming message over 32 MiB by default and closes the connection on it.
 // An image call carries its picture twice (content and rawOutput), base64: one a little over the
@@ -52,12 +54,45 @@ export function contentImages(content) {
   return content.type === 'image' ? [content] : []
 }
 
+// How long the agent has to answer. A CLI that waits on a first-run question, a keychain dialog
+// or an update starts and then never answers, and the chat must not wait with it: the whole
+// start (initialize, session/new, the bridge's first list) has START_MS, and every request sent
+// after it and before a prompt (a model, an effort, a mode, a fork, a close) has REQUEST_MS.
+export const START_MS = 60_000
+export const REQUEST_MS = 15_000
+// How long the agent's processes have to end once asked to (SIGTERM) before they are killed.
+export const KILL_AFTER_MS = 3000
+const UNANSWERED = 'acp_unanswered'
+const STOPPED = 'acp_stopped'
+
+/** A wait as the person reads it: whole seconds (under one second, as a test sets it, in ms). */
+export const waited = ms => (ms >= 1000 ? `${Math.round(ms / 1000)} s` : `${ms} ms`)
+/** The agent did not answer a request before its deadline (`error.ms`). */
+export const isUnanswered = error => error?.code === UNANSWERED
+/** The turn's Stop ended the wait for a request. */
+export const isStopped = error => error?.code === STOPPED
+
+function unanswered(what, ms) {
+  const error = new Error(`it did not answer${what ? ` while ${what}` : ''} (${waited(ms)})`)
+  return Object.assign(error, { code: UNANSWERED, ms })
+}
+
+function stopped(what) {
+  const error = new Error(`it was stopped${what ? ` while ${what}` : ''}`)
+  return Object.assign(error, { code: STOPPED })
+}
+
 export class AgentRun {
   /**
-   * @param {{ command: string, args?: string[], env?: Record<string, string>, cwd: string, name: string }} spec
+   * @param {{ command: string, args?: string[], env?: Record<string, string>, cwd: string, name: string, startMs?: number, requestMs?: number, timers?: { setTimeout: typeof setTimeout, clearTimeout: typeof clearTimeout } }} spec
+   *   startMs, requestMs: the deadlines, START_MS and REQUEST_MS unless a test sets shorter ones.
+   *   timers: the clock the deadlines run on, for a test that moves it by hand.
    */
   constructor(spec) {
     this.spec = spec
+    this.startMs = spec.startMs ?? START_MS
+    this.requestMs = spec.requestMs ?? REQUEST_MS
+    this.timers = spec.timers ?? globalThis
     this.queue = []
     this.waiters = []
     this.tools = new Map()
@@ -66,10 +101,18 @@ export class AgentRun {
     this.exited = undefined
   }
 
-  async start() {
+  /**
+   * Spawn the agent and open its session. It ends early, with the process disposed, when the
+   * agent exits, when `signal` aborts (the person's Stop) or after `startMs` with no session.
+   * @param {{ signal?: AbortSignal }} [options]
+   */
+  async start({ signal } = {}) {
     const { command, args = [], env, cwd, mcpServers = [], sessionMeta } = this.spec
-    const child = spawn(command, args, { cwd, env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'] })
+    // Its own process group, where the platform has them: what the agent starts (the CLI behind
+    // an adapter, the command behind a tool call) is ended with it, as one group (`endTree`).
+    const child = spawn(command, args, { cwd, env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' })
     this.child = child
+    this.grouped = process.platform !== 'win32'
     // An idle agent never keeps DSH running: only a prompt in flight holds the event loop.
     child.unref()
     for (const pipe of [child.stdin, child.stdout, child.stderr]) pipe.unref?.()
@@ -80,6 +123,8 @@ export class AgentRun {
       child.once('error', error => fail(error))
       child.once('exit', (code, signal) => {
         this.exited = { code, signal }
+        // Whatever it left running goes too, however it ended: nothing reports to it any more.
+        this.endTree()
         fail(new Error(`${this.spec.name} exited (${signal ?? code})${this.stderr ? `: ${this.stderr.trim().split('\n').slice(-3).join(' ')}` : ''}`))
       })
     })
@@ -115,11 +160,25 @@ export class AgentRun {
       // a bridge that never listed its tools fails the turn here, before the prompt.
       await this.spec.onReady?.(this)
     })()
+    ready.catch(() => {})
     try {
-      await Promise.race([ready, gone])
+      await this.held(() => ready, { ms: this.startMs, signal, what: 'starting' })
     } catch (error) {
+      // The request nobody answered, for the log: the person is told only that it did not start.
+      if (isUnanswered(error)) error.step = this.init === undefined ? 'initialize' : this.sessionId === undefined ? 'session/new' : 'its DSH tools'
+      // An agent that dies at its start closes its output a moment before its exit is
+      // reported, and the closed connection says nothing of why. Its exit does (the code and
+      // what it wrote), so that is the failure when it follows at once. A deadline or a Stop
+      // is its own reason and waits for nothing.
+      let reason = error
+      if (!isUnanswered(error) && !isStopped(error) && this.exited === undefined && (child.stdout.readableEnded || child.stdout.destroyed)) {
+        let timer
+        const exit = await Promise.race([gone.catch(left => left), new Promise((resolve) => { timer = setTimeout(resolve, EXIT_GRACE_MS) })])
+        clearTimeout(timer)
+        if (exit !== undefined) reason = exit
+      }
       this.dispose()
-      throw error
+      throw reason
     } finally {
       this.letGo()
     }
@@ -130,17 +189,16 @@ export class AgentRun {
    * Replace this ACP session with a fork that carries the same conversation and the new server
    * set, then close the source session: `acp-codex` ignores `tools/list_changed` and a new server
    * list on resume, so this is how its tool set follows a preset or level change. Both bridges
-   * are the plugin's to end; the source's credential is revoked by the caller.
+   * are the plugin's to end; the source's credential is revoked by the caller. Each request
+   * has its deadline, and a close nobody answers is left like one that fails. The turn's Stop
+   * comes from the caller, which holds the whole fork (`held` with the signal and no deadline).
    * @param {{ cwd: string, mcpServers: any[] }} options
    * @returns {Promise<string>} the forked session id
    */
   async fork({ cwd, mcpServers }) {
     if (typeof this.conn.forkSession !== 'function') throw new Error('it cannot fork its session')
     const source = this.sessionId
-    const answer = await this.held(() => Promise.race([
-      this.conn.forkSession({ sessionId: source, cwd, mcpServers }),
-      this.gone,
-    ]))
+    const answer = await this.held(() => this.conn.forkSession({ sessionId: source, cwd, mcpServers }))
     this.sessionId = answer.sessionId
     if (answer.modes !== undefined && answer.modes !== null) this.modes = answer.modes
     if (Array.isArray(answer.configOptions)) this.options = answer.configOptions
@@ -149,7 +207,7 @@ export class AgentRun {
     // Session must never hold two bridges.
     try {
       if (typeof this.conn.closeSession === 'function') {
-        await this.held(() => Promise.race([this.conn.closeSession({ sessionId: source }), this.gone]))
+        await this.held(() => this.conn.closeSession({ sessionId: source }))
       }
     } catch {
       // A source session that will not close still ends with this process, which is disposed
@@ -170,16 +228,47 @@ export class AgentRun {
     clearInterval(this.hold)
     this.hold = undefined
   }
-  async held(work) {
+  /**
+   * One request to the agent, or a few of them as one piece of work. It is never waited for
+   * longer than the agent's process lives (`gone`), than the turn it is for (`signal`, the
+   * person's Stop) or than its deadline (`ms`, REQUEST_MS unless said; 0 for work whose own
+   * requests each have one). The wait that ends first is the error: `isUnanswered`, `isStopped`
+   * or the exit. A request cannot be taken back and the agent may still act on it, so a caller
+   * that gets one of the first two ends the run (`dispose`) rather than ask it anything else.
+   * @param {() => Promise<any>} work
+   * @param {{ ms?: number, signal?: AbortSignal, what?: string }} [options]
+   */
+  async held(work, { ms = this.requestMs, signal, what } = {}) {
     this.holdOn()
+    let timer
+    let onAbort
     try {
-      return await work()
+      if (signal?.aborted) throw stopped(what)
+      const waits = [work()]
+      if (this.gone !== undefined) waits.push(this.gone)
+      if (ms > 0) {
+        waits.push(new Promise((_, fail) => {
+          // The hold above keeps the event loop for it; a run disposed meanwhile does not.
+          timer = this.timers.setTimeout(() => fail(unanswered(what, ms)), ms)
+          timer.unref?.()
+        }))
+      }
+      if (signal !== undefined) {
+        waits.push(new Promise((_, fail) => {
+          onAbort = () => fail(stopped(what))
+          signal.addEventListener('abort', onAbort, { once: true })
+        }))
+      }
+      return await Promise.race(waits)
     } finally {
+      this.timers.clearTimeout(timer)
+      if (onAbort !== undefined) signal.removeEventListener('abort', onAbort)
       this.letGo()
     }
   }
 
-  get alive() { return this.child !== undefined && this.exited === undefined }
+  // A disposed run is over at once, though its process may take a moment to exit.
+  get alive() { return this.child !== undefined && this.exited === undefined && this.disposed !== true }
   get busy() { return this.prompting !== undefined }
 
   push(event) {
@@ -235,15 +324,17 @@ export class AgentRun {
    * them, not even the strict one, the turn fails rather than run in whatever mode the agent
    * started in (the person's own default, which may let calls through unasked).
    * @param {string | string[] | undefined} modeIds
+   * @param {{ signal?: AbortSignal }} [options] the turn's Stop
    */
-  async setMode(modeIds) {
+  async setMode(modeIds, { signal } = {}) {
     if (modeIds === undefined) return
     const wanted = [modeIds].flat()
     const offered = new Set((this.modes?.availableModes ?? []).map(mode => mode.id))
     const modeId = wanted.find(id => offered.has(id))
+    try { this.spec.onMode?.({ wanted, offered: [...offered], chosen: modeId }) } catch {}
     if (modeId === undefined) throw new Error(`it offers none of the modes ${wanted.join(', ')} (it offers ${[...offered].join(', ') || 'no modes'})`)
     if (this.modes?.currentModeId === modeId) return
-    await this.held(() => Promise.race([this.conn.setSessionMode({ sessionId: this.sessionId, modeId }), this.gone]))
+    await this.held(() => this.conn.setSessionMode({ sessionId: this.sessionId, modeId }), { signal, what: 'taking its permission mode' })
     this.modes = { ...this.modes, currentModeId: modeId }
   }
 
@@ -258,14 +349,15 @@ export class AgentRun {
    * or effort than the person chose.
    * @param {string} category
    * @param {string} value
+   * @param {{ signal?: AbortSignal }} [options] the turn's Stop
    */
-  async setOption(category, value) {
+  async setOption(category, value, { signal } = {}) {
     const option = this.option(category)
     if (option === undefined) throw new Error(`it has no ${category} setting`)
     const values = valuesOf(option)
     if (!values.some(choice => choice.value === value)) throw new Error(`it offers no ${category} ${value} (it offers ${values.map(choice => choice.value).join(', ') || 'none'})`)
     if (option.currentValue === value) return
-    const answer = await this.held(() => Promise.race([this.conn.setSessionConfigOption({ sessionId: this.sessionId, configId: option.id, value }), this.gone]))
+    const answer = await this.held(() => this.conn.setSessionConfigOption({ sessionId: this.sessionId, configId: option.id, value }), { signal, what: `taking its ${category}` })
     // The answer is the whole set: a new model may bring other efforts.
     this.options = answer?.configOptions ?? this.options.map(other => (other.id === option.id ? { ...other, currentValue: value } : other))
   }
@@ -276,16 +368,66 @@ export class AgentRun {
   }
 
   dispose() {
+    if (this.disposed === true) return
+    this.disposed = true
     this.letGo(true)
     for (const tool of this.tools.values()) tool.permission?.answer({ outcome: { outcome: 'cancelled' } })
     try { this.child?.stdin.end() } catch {}
     const child = this.child
-    if (child && child.exitCode === null && child.signalCode === null) {
-      child.kill('SIGTERM')
-      const timer = setTimeout(() => { try { child.kill('SIGKILL') } catch {} }, 3000)
-      timer.unref?.()
-      child.once('exit', () => clearTimeout(timer))
+    if (child && child.exitCode === null && child.signalCode === null) this.endTree()
+  }
+
+  /**
+   * End the agent and everything it started. A session that is over must leave nothing
+   * running: an agent that ignored a cancel is usually stuck in a tool command, and that
+   * command is its child or its child's child, which a signal to the agent alone would leave
+   * working in the person's folder beside the next session. The whole process group is asked
+   * to end, and what is left of it after KILL_AFTER_MS is killed; the agent's own exit does not
+   * end that wait while any of the group is alive. Windows has no groups: the process tree is
+   * killed there, at once. A process the agent put in a group of its own is not reached.
+   */
+  endTree() {
+    if (this.ending === true) return
+    this.ending = true
+    const child = this.child
+    const running = child?.exitCode === null && child?.signalCode === null
+    // No process id (it never started), or one that must never be negated into a group.
+    if (!Number.isInteger(child?.pid) || child.pid <= 1) {
+      try { child?.kill?.('SIGTERM') } catch {}
+      return
     }
+    if (!this.grouped) {
+      // taskkill walks the tree from the agent by parent id, so it runs only while the agent
+      // is still there: Windows gives an ended process's id to the next one.
+      if (!running) return
+      try {
+        execFile('taskkill', ['/T', '/F', '/PID', String(child.pid)], { windowsHide: true }, (error) => {
+          if (error) try { child.kill('SIGKILL') } catch {}
+        }).unref?.()
+      } catch {
+        try { child.kill('SIGKILL') } catch {}
+      }
+      return
+    }
+    // False once nobody is left in the group (the signal finds no process).
+    const signal = (name) => {
+      try {
+        process.kill(-child.pid, name)
+        return true
+      } catch {
+        return false
+      }
+    }
+    if (!signal('SIGTERM')) {
+      // No group to signal while the agent runs: it is ended alone rather than not at all.
+      if (running) try { child.kill('SIGTERM') } catch {}
+      return
+    }
+    const timer = this.timers.setTimeout(() => signal('SIGKILL'), KILL_AFTER_MS)
+    timer.unref?.()
+    // The agent gone with all of its group: nothing is left to kill, and the id is free again.
+    const settled = () => { if (!signal(0)) this.timers.clearTimeout(timer) }
+    if (running) child.once('exit', settled)
   }
 
   // --- the agent's side of the conversation ---------------------------------------------

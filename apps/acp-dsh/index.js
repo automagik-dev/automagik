@@ -23,10 +23,12 @@ import { Backchannel } from './src/host/backchannel.js'
 import { Catalog, cliStamp, DEFAULT_MODEL } from './src/host/catalog.js'
 import { CliStore, CLI_CHECK_EVERY_MS } from './src/host/clis.js'
 import { CONSENT_FILE, ConsentStore } from './src/host/consent.js'
-import { adaptersHome, AdapterStore, CHECK_EVERY_MS } from './src/host/install.js'
+import { adaptersHome, AdapterStore, CHECK_TICK_MS } from './src/host/install.js'
+import { handshake } from './src/host/handshake.js'
 import { drawImage, imageRefusal, imageSupport, SIGNED_OUT, UNAVAILABLE, unsupported } from './src/host/image.js'
 import { CliLogins } from './src/host/login.js'
 import { CREDENTIAL_ENV, URL_ENV } from './src/host/names.js'
+import { PermissionDiagnostics } from './src/host/permission-diagnostics.js'
 import { enginesFor, PRESSURE_METHOD, pressureGuard } from './src/host/pressure.js'
 import { redactorFor } from './src/host/redact.js'
 import { agentRoute, carryEffort, crossed } from './src/host/switch.js'
@@ -130,7 +132,10 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   // The chat's image keeper (`keepImages`): where an image an agent makes in a chat is kept so the
   // chat can show it. One at a time; the Bot team registers its images folder.
   let imageKeeper
+  // The turn gates (`holdTurns`): each registrant's own entry, so one never replaces another's.
+  const turnGates = new Set()
   const adapter = new AcpAdapter(ctx, agents, {
+    holds: () => [...turnGates].map(entry => entry.gate),
     images: () => imageKeeper,
     // The raw tri-state: an absent setting takes each agent's own switch in AcpAdapter.
     dshTools: () => flagOf(config.dshTools),
@@ -139,6 +144,9 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     onSignedOut: id => signedOut(id),
     access: id => consentGate(id),
   })
+  // What acted on each Session's permissions (permission-diagnostics.js): it only records.
+  const diagnostics = new PermissionDiagnostics()
+  adapter.diagnostics = backchannel.diagnostics = diagnostics
   // The kill switch is live: any change of `dshTools` ends the agent sessions and revokes their
   // bridges, so a credential minted while it was on cannot keep calling DSH tools and a Session
   // started with the bridge never runs on the old tool set. The next turn starts afresh.
@@ -217,6 +225,18 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       registration.replace?.(routes)
     }
   }
+  // A new connector release is started once before it replaces the one in use (install.js): it
+  // is spawned as a Session would spawn it and asked `initialize`, nothing more. Without the
+  // agent's CLI nothing could run it either way, so there is nothing to check.
+  if (store instanceof AdapterStore && store.check === undefined) {
+    store.check = async (pkg, staged) => {
+      const [id, spec] = Object.entries(AGENTS).find(([, entry]) => entry.adapter === pkg) ?? []
+      const cli = id === undefined ? undefined : clis.get(id)
+      if (cli === undefined) return
+      const node = nodeCommand()
+      await handshake({ command: node.command, args: [staged.path], env: { ...node.env, ...cliEnvironment(spec, cliDetails.get(id)), ...spec.env(cli) } }, { signal: store.quit?.signal })
+    }
+  }
   const install = (spec) => {
     // The first-run account record is on disk before this version installs a connector, so a
     // connector found with no record always means an earlier version (consent.js).
@@ -262,6 +282,14 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       spawn: () => ({ command: node.command, args: [store.binOf(spec.adapter, spec.bin).path], env: { ...node.env, ...cliEnv, ...spec.env(cli) } }),
     }),
     installed: () => store.binOf(spec.adapter, spec.bin) !== undefined,
+    // The connector in use opened a session: it is the last-known-good. One that did not start
+    // goes back to the release before it, when that is still here (install.js).
+    proven: () => store.markGood?.(spec.adapter),
+    rollback: (reason) => {
+      const back = store.rollback?.(spec.adapter, spec.bin, reason) !== undefined
+      if (back && !disposed) warn(ctx, `${spec.adapter}: the newest release did not start; running the one before it`)
+      return back
+    },
     spawn: () => {
       const bin = store.binOf(spec.adapter, spec.bin)
       if (bin === undefined) {
@@ -433,6 +461,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     const bin = cli === undefined ? undefined : store.binOf(spec.adapter, spec.bin)
     const busy = store.busy?.(spec.adapter) === true
     const failure = store.lastFailure?.(spec.adapter)
+    const connectorState = store.stateOf?.(spec.adapter)
     const cliFailure = cliStore?.lastFailure(spec.cliPackage)
     const cliBusy = cliStore?.busy(spec.cliPackage) === true
     const detail = cliDetails.get(id)
@@ -475,6 +504,10 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
           }
           : {}),
         ...(connector === 'ready' && busy ? { updating: true } : {}),
+        // The release before the one in use, and a rollback while the failed release is held
+        // back: "running the previous connector; the newest failed to start".
+        ...(bin && connectorState?.previous ? { previous: connectorState.previous } : {}),
+        ...(bin && connectorState?.rolledBack ? { rolledBack: connectorState.rolledBack } : {}),
       },
       ...(signIns.get(id) === undefined ? {} : { signedIn: signIns.get(id) }),
       // Only the state of the person's word for the signed-in account; who it is never rides here.
@@ -789,6 +822,40 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       return () => { if (imageKeeper === keeper) imageKeeper = undefined }
     },
     /**
+     * A veto on agent turns, for a plugin that must keep an agent from acting in a Session (the
+     * Bot team: a Session whose permission level could not be set). `gate({ sessionId, agent,
+     * provider })` is asked before every model step on an agent's route, and again right before
+     * a turn's prompt is sent. It answers (or resolves) undefined to let the Session go, or the
+     * sentence to answer the step with. It can only refuse: a gate that throws, takes longer
+     * than ten seconds, or answers anything else holds the Session with a fixed sentence. A held
+     * Session's agent session is ended (as `endSession`). Several plugins may register; any
+     * refusal wins, and the returned disposer removes only its own gate. With none registered
+     * nothing is asked.
+     */
+    holdTurns(gate) {
+      if (typeof gate !== 'function') return () => {}
+      const entry = { gate }
+      turnGates.add(entry)
+      return () => { turnGates.delete(entry) }
+    },
+    /**
+     * Ends one Session's agent session now, a turn under way included: the agent's process is
+     * stopped and its bridge credential revoked, and the step answers `why` (a sentence for the
+     * person; a fixed one without it). The DSH Session and its transcript stay; the next turn
+     * starts a fresh agent session. A turn still starting there is refused too. Answers whether
+     * one was live or starting.
+     */
+    endSession: (sessionId, why) => adapter.endSession(sessionId, why),
+    /**
+     * What acted on one Session's permissions, for a diagnostics view (read-only, a fresh plain
+     * copy, undefined for a Session that ran no agent here): { version, agent, startedAt, active,
+     * bridge?: { on, why, at, open? }, modes?: { wanted, offered, chosen?, fellToStrict, at,
+     * current?, applied? }, lastCall?: { path, kind, at }, bridgeCall?: { at }, reviewer?:
+     * { provider, model, ok, code?, at }, review?: { code, at } }. Identifiers and fixed values
+     * only: never a credential, a prompt, a file's content or path, or an account.
+     */
+    permissionDiagnostics: sessionId => diagnostics.read(sessionId),
+    /**
      * What the Bot team gates its one-time Claude move on: whether DSH's tools reach an agent
      * here (`dshTools`), and whether this machine's bridge really answers `initialize` and
      * `tools/list` for a freshly minted per-session credential. The answer is cached per
@@ -827,7 +894,10 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   // The fake agent alone changes nothing reconcile counts.
   if (registration === undefined) publish()
   ctx.provide?.(SERVICE, service)
-  ctx.on?.('llm/stream', aside(agents, ctx, () => flagOf(config.sideModel) ?? SIDE_MODEL, redact))
+  ctx.on?.('llm/stream', aside(agents, ctx, () => flagOf(config.sideModel) ?? SIDE_MODEL, redact, diagnostics))
+  // The record goes with its Session, and reads the review code of a call DSH's own gate refused.
+  ctx.on?.('agent/disposed', ({ agent } = {}) => diagnostics.drop(agent?.session?.id))
+  ctx.on?.('tools/result', (exec, result) => diagnostics.result(exec, result))
   // The other crossing: a transcript that carries an agent's turn is redacted before it is
   // handed back to a native provider. Live switching's rule, so it follows `dshTools`.
   const crossing = crossed(agents, ctx, redact, () => dshToolsOn(config.dshTools))
@@ -881,7 +951,8 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   }
   const first = setTimeout(() => { required(); refresh() }, FIRST_CHECK_MS)
   const cliChecks = cliStore ? setInterval(required, CLI_CHECK_EVERY_MS) : undefined
-  const daily = setInterval(() => { reconcile({ kick: false }); refresh() }, CHECK_EVERY_MS)
+  // Every few hours, so npm is asked at least once a day (install.js, CHECK_TICK_MS).
+  const daily = setInterval(() => { reconcile({ kick: false }); refresh() }, CHECK_TICK_MS)
   first.unref?.()
   daily.unref?.()
   cliChecks?.unref?.()
@@ -899,6 +970,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     cliStore?.dispose?.()
     adapter.dispose()
     backchannel.dispose()
+    diagnostics.clear()
   })
 }
 

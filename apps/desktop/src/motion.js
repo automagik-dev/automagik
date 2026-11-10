@@ -21,13 +21,24 @@ export function fade(win, { to, ms = FADE_MS, platform = process.platform, reduc
     if (to === 1) { win.setOpacity(0); win.show() }
     const start = now()
     const tick = () => {
-      if (win.isDestroyed()) return resolve()
-      const t = Math.min(1, (now() - start) / ms)
-      // Ease out: quick at first, settling at the end.
-      win.setOpacity(from + (to - from) * (1 - (1 - t) ** 2))
-      if (t < 1) return void timers.setTimeout(tick, FRAME_MS)
-      if (to === 0) { win.hide(); win.setOpacity(1) }
-      resolve()
+      try {
+        if (win.isDestroyed()) return resolve()
+        const t = Math.min(1, (now() - start) / ms)
+        // Ease out: quick at first, settling at the end.
+        win.setOpacity(from + (to - from) * (1 - (1 - t) ** 2))
+        if (t < 1) return void timers.setTimeout(tick, FRAME_MS)
+        if (to === 0) { win.hide(); win.setOpacity(1) }
+        resolve()
+      } catch {
+        // A frame that fails ends the fade where it was going, at once: a caller waiting on it
+        // (a close, a quit) is never left with a half-faded window and no answer.
+        try {
+          if (to === 0) win.hide()
+          win.setOpacity(1)
+          if (to === 1) win.show()
+        } catch {}
+        resolve()
+      }
     }
     tick()
   })

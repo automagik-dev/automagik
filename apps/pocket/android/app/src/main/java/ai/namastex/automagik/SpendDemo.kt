@@ -103,7 +103,7 @@ object SpendDemo {
 
     /** The preview's bot registries, keyed like [MachineState.members]: synthetic bots, Genie's pet for all. */
     val MEMBERS = mapOf(
-        "|~/work/herdr" to listOf(Teams.Member("b-demo-captain", "Captain", main = true, pet = null),
+        "|~/work/herdr" to listOf(Teams.Member("b-demo-captain", "Captain", main = true, pet = Teams.GENIE),
             Teams.Member("b-demo-dev", "Dev", main = false, pet = null), Teams.Member("b-demo-test", "Tester", main = false, pet = null),
             Teams.Member("b-demo-review", "Reviewer", main = false, pet = null)),
         "|~/work/website" to listOf(Teams.Member("b-demo-writer", "Writer", main = true, pet = null)),

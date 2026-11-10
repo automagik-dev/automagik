@@ -8,7 +8,10 @@
 #   ... | bash -s -- --uninstall      put back what was there before
 #   ... | bash -s -- --no-usagemeter  leave usagemeter alone everywhere (install and --uninstall)
 #   ... | bash -s -- --usagemeter-local-only  usagemeter on this computer only, no linked machine
+#   ... | bash -s -- --no-scheduler   leave herdr-automations and its login service alone
 #   ... | bash -s -- --dsh-tui | --no-dsh-tui  install (or leave) dsh-TUI as a Herdr agent
+#   ... | bash -s -- --revive | --no-revive    install (or leave) the login service that brings
+#                                              the bots back after a restart (Linux, #939)
 #
 # It checks the OS, Node and Herdr (herdrdev's, dev.herdr.app: offering its own installer from
 # releases.herdr.dev, no sudo, asking first),
@@ -31,7 +34,12 @@
 # older than a pointer it took before), checked against the sha256 that pointer names, never over a
 # newer one; and the same build on every connected linked machine (`hc machine ls`, through the
 # pack's `automagik-herdr meter install --linked`: each machine downloads and checks it itself); a
-# failure there is only a warning. When asked at a terminal (or with --dsh-tui; --yes
+# failure there is only a warning. It installs herdr-automations (the scheduler the Automations
+# panel drives, #220) to ~/.local/bin: the build the checked pack pins, checked against its sha256,
+# never over one this installer did not put there; with no automations.yaml yet it writes one saying
+# `backend: hc`, asks before starting the scheduler's login service, and says whether Automations
+# is ready (`ls --json`: the scheduler runs, the backend is the app's); a failure there is only a
+# warning too. When asked at a terminal (or with --dsh-tui; --yes
 # never does), it installs the pinned dsh-TUI into DSH's own `dsh-tui` profile and the `dsh-tui` shim
 # into ~/.local/bin, so Herdr's built-in DSH entry works; no dsh on PATH: one honest line, skipped. Safe to run again: a rerun of the installed
 # release downloads it all the same, checks every installed pack file against it, reinstalls a
@@ -93,9 +101,19 @@ main() {
   METER_OK=1
   # Linked machines too (meterFleet.js): 0 with --usagemeter-local-only (or --no-usagemeter).
   FLEET_OK=1
+  # The automations scheduler (#220): herdr-automations, the build the pack pins, and this
+  # installer's own record of it. 0 with --no-scheduler.
+  SCHED=$BIN_DIR/herdr-automations
+  SCHED_RECORD=$STATE/scheduler
+  SCHED_OK=1
   # DSH as a Herdr agent (#561): ask, yes or no. Third-party: only --dsh-tui or an explicit
   # answer installs it; --yes never does.
   DSH_TUI=ask
+  # The login service that brings the bots back after a restart of this computer (#939): ask, yes
+  # or no. It changes what runs at login, so only --revive or an explicit answer installs it;
+  # --yes never does. Linux (a systemd user unit); the CLI writes and removes it.
+  REVIVE=ask
+  REVIVE_UNIT=$HOME/.config/systemd/user/automagik-herdr-revive.service
 
   YES=0
   ADOPT=0
@@ -108,8 +126,11 @@ main() {
       --adopt) ADOPT=1 ;;
       --no-usagemeter) METER_OK=0; FLEET_OK=0 ;;
       --usagemeter-local-only) FLEET_OK=0 ;;
+      --no-scheduler) SCHED_OK=0 ;;
       --dsh-tui) DSH_TUI=yes ;;
       --no-dsh-tui) DSH_TUI=no ;;
+      --revive) REVIVE=yes ;;
+      --no-revive) REVIVE=no ;;
       --version) [ $# -ge 2 ] || { echo "--version needs a version, like 0.2.0" >&2; exit 2; }; WANT=${2#v}; shift ;;
       --version=*) WANT=${1#--version=}; WANT=${WANT#v} ;;
       --help|-h) usage; exit 0 ;;
@@ -148,13 +169,14 @@ usage() {
 Automagik Herdr installer
 
   install.sh [--yes] [--version <v>] [--adopt] [--no-usagemeter | --usagemeter-local-only]
+             [--no-scheduler] [--dsh-tui | --no-dsh-tui] [--revive | --no-revive]
                                        install or update the pack and the automagik-herdr command
   install.sh --uninstall [--yes]       move the pack out of mods/, put back what was there before;
                                        refused while the layout Herdr shows names a pack mod
   install.sh --help
 
 --yes answers yes to every question (installing Node on macOS, Herdr from releases.herdr.dev,
-switching Herdr to the automagik layout). It never installs dsh-TUI: that third-party package is
+switching Herdr to the automagik layout, starting the automations scheduler at login). It never installs dsh-TUI: that third-party package is
 opt-in by --dsh-tui or an explicit answer. --version installs that Automagik release; it must carry the
 pack (automagik-herdr-pack-<v>.tgz): not every release does.
 --adopt replaces a pack-named mod this installer did not install, after moving it to
@@ -163,10 +185,20 @@ pack (automagik-herdr-pack-<v>.tgz): not every release does.
 machine: install skips it, and --uninstall keeps it even where this installer put it.
 --usagemeter-local-only installs and removes it on this computer only, never on a linked machine
 (hc machine ls). Both are remembered for 'automagik-herdr update' and the sidebar's sync.
+--no-scheduler leaves ~/.local/bin/herdr-automations (the automations scheduler) and its login
+service alone: install skips them, and --uninstall keeps them even where this installer put them.
+Without it the installer puts the build the pack pins there (never over one it did not install),
+writes 'backend: hc' only where there is no automations.yaml yet, and asks before starting the
+login service.
 --dsh-tui installs the pinned dsh-TUI into DSH's own `dsh-tui` profile and the dsh-tui shim into
 ~/.local/bin, so Herdr's built-in DSH entry works; --no-dsh-tui leaves DSH alone. Without either,
 the installer asks (unless --yes), and a machine with no dsh gets one line saying how to get it.
 --uninstall removes dsh-TUI (the plugin and the shim) when this installer put it there.
+--revive installs the login service that brings the bots back after a restart of this computer
+('automagik-herdr revive --boot': each bot whose pane is gone or a bare shell is restarted in its
+place, resumed where its agent allows). Linux only for now: a systemd user unit, enabled, never
+started on the spot. --no-revive leaves it alone. Without either, the installer asks (--yes never
+installs it). --uninstall removes the unit when it is this pack's.
 EOF
 }
 
@@ -507,6 +539,7 @@ uninstall() {
   layout_guard "$mods" "$drop"
   # dsh-TUI (the plugin and the shim) goes while its command and the pack are still in place.
   dsh_tui_uninstall
+  revive_uninstall
   # How the layout and the folders leave: through the pack's updater (update.mjs pack-out, which
   # runs them through layoutSafe.mjs, journalled) when Node is here and the installed updater has
   # the command (read from its usage line: nothing runs, nothing is written); else this script's
@@ -634,6 +667,9 @@ uninstall() {
   if link_ours; then rm -f "$LINK"; say "Removed $LINK."
   elif [ -L "$LINK" ]; then say "Left $LINK: it points at $(readlink "$LINK"), not this install."; fi
   uninstall_meter
+  uninstall_scheduler
+  # The fleet coverage record the sidebar's meter run writes beside the record (meter.js).
+  rm -f "$STATE/fleet-coverage.json"
   rm -f "$MARK"
   say "Done. Your bots (.herdr/bots.json in each project) and Herdr's settings are untouched. Reload Herdr's mods."
 }
@@ -865,6 +901,319 @@ uninstall_meter() {
   fi
 }
 
+# ---- the automations scheduler (#220) ----
+# herdr-automations: the program the Automations panel drives and the login service that fires the
+# automations. Our build of the vendored fork (herdr/scheduler), from the release the pack itself
+# pins: am-automations/scheduler.js, read out of the tarball this run has already checked, so this
+# script holds no version and no hash of its own. Its own record, $SCHED_RECORD (version=, sha256=,
+# and service=installed once this installer started the login service), says which binary is this
+# installer's: only a regular file at $SCHED with exactly those bytes is ever replaced or removed.
+# One on PATH somewhere else, a link, or a file this installer did not write is the person's and
+# stays. automations.yaml and the run history are the scheduler's own: an existing file is never
+# edited, and nothing here removes either.
+
+# The sha256 of the file $1.
+sha_of() {
+  if command -v shasum >/dev/null 2>&1; then sha_out=$(shasum -a 256 "$1" </dev/null); else sha_out=$(sha256sum "$1" </dev/null); fi
+  printf '%s\n' "${sha_out%% *}"
+}
+# Runs "$@" with no stdin and its stdout in the file $2, killed after $1 seconds (macOS has no
+# `timeout`). The watchdog stops its own sleep when stopped, so no run leaves one behind.
+bounded() {
+  bsec=$1; bout=$2; shift 2
+  "$@" </dev/null >"$bout" 2>/dev/null &
+  basked=$!
+  (
+    nap=
+    trap '[ -z "$nap" ] || { kill "$nap"; wait "$nap"; }; exit 0' TERM
+    sleep "$bsec" &
+    nap=$!
+    wait "$nap" || true
+    kill -9 "$basked" 2>/dev/null
+  ) >/dev/null 2>&1 &
+  bdog=$!
+  brc=0
+  wait "$basked" 2>/dev/null || brc=$?
+  kill "$bdog" 2>/dev/null || true
+  wait "$bdog" 2>/dev/null || true
+  return "$brc"
+}
+sched_get() { sed -n "s/^$1=//p" "$SCHED_RECORD" 2>/dev/null | head -n 1; }
+# The record: $1 the version, $2 the sha256 of the binary this installer wrote, $3 `installed` when
+# it started the login service too (else empty). Written beside itself, then renamed.
+sched_record() {
+  mkdir -p "$STATE" || return 1
+  { printf 'version=%s\nsha256=%s\n' "$1" "$2" && { [ -z "$3" ] || printf 'service=%s\n' "$3"; }; } >"$SCHED_RECORD.new" \
+    || { rm -f "$SCHED_RECORD.new"; return 1; }
+  mv -f "$SCHED_RECORD.new" "$SCHED_RECORD"
+}
+# Whether $SCHED is the binary this installer put there: a regular file, still the recorded bytes.
+sched_ours() {
+  [ -f "$SCHED_RECORD" ] || return 1
+  { [ -f "$SCHED" ] && [ ! -L "$SCHED" ]; } || return 1
+  sown=$(sched_get sha256)
+  [ -n "$sown" ] && [ "$(sha_of "$SCHED")" = "$sown" ]
+}
+# What `<binary> version` says (its first line, nothing but version characters), or nothing.
+sched_version() {
+  bounded 10 "$TMP/sched-version" "$1" version || return 0
+  sed -n '1p' "$TMP/sched-version" | tr -cd '0-9A-Za-z.+-' | cut -c1-40
+}
+# The build the pack pins for this machine: prints `<version> <asset> <sha256>` from the checked
+# tarball's am-automations/scheduler.js; on a refusal prints why and returns 1. A release from
+# before the pin (--version <older>) has none. Node is checked before this runs.
+sched_pin() {
+  spin_js=$TMP/x/am-automations/scheduler.js
+  tar -xzf "$TMP/$TGZ" -C "$TMP/x" am-automations/scheduler.js </dev/null >/dev/null 2>&1 \
+    || { say "release $VERSION's pack pins no scheduler build"; return 1; }
+  { [ -f "$spin_js" ] && [ ! -L "$spin_js" ]; } || { say "$TGZ: am-automations/scheduler.js is not a plain file"; return 1; }
+  cp "$spin_js" "$TMP/scheduler-pin.mjs" || { say "could not read the pack's scheduler pin"; return 1; }
+  # shellcheck disable=SC2016 # JavaScript: its ${...} are template literals, not the shell's.
+  node --input-type=module -e '
+    import { pathToFileURL } from "node:url";
+    const [file, repo, os, machine] = process.argv.slice(1);
+    const no = (why) => { console.log(why); process.exit(1); };
+    let S;
+    try { S = (await import(pathToFileURL(file).href)).SCHEDULER; } catch { no("the scheduler pin in the pack cannot be read"); }
+    if (!S || S.repo !== repo || !/^\d+\.\d+\.\d+-am\.\d+$/.test(S.version || "")) no("the scheduler pin in the pack is not one this installer knows");
+    const arch = { arm64: "arm64", aarch64: "arm64", x86_64: "amd64", amd64: "amd64" }[machine];
+    const pins = { Darwin: ["darwin", S.sha256], Linux: ["linux", S.linux] }[os];
+    const sum = arch && pins && pins[1] ? pins[1][arch] : null;
+    if (!/^[0-9a-f]{64}$/.test(sum || "")) no(`the pack pins no herdr-automations ${S.version} build for ${os} ${machine}`);
+    console.log(`${S.version} herdr-automations_${pins[0]}_${arch} ${sum}`);
+  ' "$TMP/scheduler-pin.mjs" "$REPO" "$(uname -s 2>/dev/null)" "$(uname -m 2>/dev/null)" </dev/null 2>/dev/null
+}
+# Puts the pinned build at $SCHED: checked against the pack's sha256, written to a temp file beside
+# it, chmod 755, run once (`version` must be exactly the pinned one), renamed into place, recorded.
+# Sets SCHED_BIN to the scheduler the health check asks (ours, or the person's own, left as it is)
+# and SCHED_NEW=1 when this run put a new binary in place. Returns 1 with $why on a failure; the
+# caller only warns. Runs in a || list, where set -e is off: every step checks itself.
+install_scheduler() {
+  why=
+  SCHED_BIN=
+  SCHED_NEW=0
+  sother=$(command -v herdr-automations 2>/dev/null || :)
+  if [ -n "$sother" ] && [ "$sother" != "$SCHED" ]; then
+    say "Automations scheduler: left $sother as it is (on PATH, not this installer's)."
+    SCHED_BIN=$sother
+    return 0
+  fi
+  if [ -L "$SCHED" ] || { [ -e "$SCHED" ] && [ ! -f "$SCHED" ]; }; then
+    say "Automations scheduler: left $SCHED, a link or a folder, as it is."
+    if [ -x "$SCHED" ] && [ ! -d "$SCHED" ]; then SCHED_BIN=$SCHED; fi
+    return 0
+  fi
+  shad=
+  sforeign=0
+  if [ -f "$SCHED" ]; then
+    SCHED_BIN=$SCHED
+    if sched_ours; then shad=$(sched_get version); else sforeign=1; fi
+  fi
+  spin=$(sched_pin) || {
+    why=${spin:-the scheduler pin in the pack cannot be read}
+    [ "$sforeign" = 0 ] || { say "Automations scheduler: left $SCHED as it is (not installed by this installer)."; return 0; }
+    return 1
+  }
+  swant=${spin%% *}; srest=${spin#* }
+  sasset=${srest%% *}; ssum=${srest#* }
+  if [ "$sforeign" = 1 ]; then
+    # Not this installer's by the record. Exactly the pinned bytes (the panel's repair command puts
+    # them there) is adopted: recorded, nothing replaced, so a later pin reaches it. Anything else
+    # is the person's own and stays.
+    if [ "$(sha_of "$SCHED")" = "$ssum" ]; then
+      if sched_record "$swant" "$ssum" ""; then
+        say "herdr-automations $swant: already installed ($SCHED), exactly the build the pack pins; this installer keeps it up to date from now on."
+      else
+        say "Automations scheduler: left $SCHED as it is (the pinned build; its record, $SCHED_RECORD, could not be written)."
+      fi
+      return 0
+    fi
+    say "Automations scheduler: left $SCHED as it is (not installed by this installer; it reports version $(sched_version "$SCHED"))."
+    return 0
+  fi
+  if [ -n "$shad" ] && [ "$(sched_get sha256)" = "$ssum" ]; then
+    say "herdr-automations $swant: already installed ($SCHED)."
+    return 0
+  fi
+  sdir=$TMP/scheduler
+  mkdir -p "$sdir" || { why="could not make $sdir"; return 1; }
+  sbase=$RELEASES/download/herdr-automations-v$swant
+  case $sbase in file://*) sproto='=file' ;; *) sproto='=https' ;; esac
+  say "Downloading the automations scheduler (herdr-automations $swant, the build the pack pins)..."
+  curl -fsSL --path-as-is --proto "$sproto" "$sbase/$sasset" -o "$sdir/$sasset" </dev/null 2>/dev/null \
+    || { why="could not download $sbase/$sasset"; return 1; }
+  sgot=$(sha_of "$sdir/$sasset")
+  if [ "$sgot" != "$ssum" ]; then
+    why="$sasset is not the build the pack pins (sha256 $sgot, expected $ssum): nothing was installed"
+    return 1
+  fi
+  mkdir -p "$BIN_DIR" || { why="could not make $BIN_DIR"; return 1; }
+  spart=$(mktemp "$BIN_DIR/.herdr-automations.XXXXXX") || { why="could not write in $BIN_DIR"; return 1; }
+  if ! { cp "$sdir/$sasset" "$spart" && chmod 755 "$spart"; }; then rm -f "$spart"; why="could not write $SCHED"; return 1; fi
+  # Only after the sha256 matched: the new binary runs once, from beside the old one (a temp folder
+  # may be noexec), with no variable but a bare PATH and a scratch HOME, killed after 10 s; its
+  # whole answer must be exactly the pinned version.
+  bounded 10 "$sdir/smoke" env -i PATH=/usr/bin:/bin HOME="$sdir" "$spart" version || :
+  sran=$(cat "$sdir/smoke" 2>/dev/null)
+  if [ "$sran" != "$swant" ]; then
+    rm -f "$spart"
+    ssaid=$(printf '%s' "$sran" | tr '\n' ' ' | cut -c1-80)
+    why="the new herdr-automations does not run as $swant (version said: ${ssaid:-nothing}): nothing was installed"
+    return 1
+  fi
+  ssvc=$(sched_get service)
+  if ! mv -f "$spart" "$SCHED"; then rm -f "$spart"; why="could not write $SCHED"; return 1; fi
+  SCHED_BIN=$SCHED
+  SCHED_NEW=1
+  if [ -n "$shad" ]; then say "Updated herdr-automations $shad to $swant ($SCHED, pinned by the pack, checksum ok)."
+  else say "Installed herdr-automations $swant ($SCHED, pinned by the pack, checksum ok)."; fi
+  sched_record "$swant" "$ssum" "$ssvc" \
+    || say "Automations scheduler: its record ($SCHED_RECORD) could not be written; an update or --uninstall will leave $SCHED."
+  return 0
+}
+# What `ls --json` says, the health check's one question: prints `<backend> <pid> <config path>`
+# (backend herdr when the file names none, as the scheduler reads it; pid 0 when no scheduler runs);
+# returns 1 when the binary gives no listing within 15 s.
+sched_ls() {
+  bounded 15 "$TMP/sched-ls.json" "$1" ls --json || return 1
+  # shellcheck disable=SC2016 # JavaScript: its ${...} are template literals, not the shell's.
+  node -e '
+    let j;
+    try { j = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); } catch { process.exit(1); }
+    if (!j || typeof j !== "object" || Array.isArray(j) || !("scheduler" in j)) process.exit(1);
+    const backend = j.backend === undefined || j.backend === "" ? "herdr" : /^[a-z]{1,16}$/.test(j.backend) ? j.backend : "unknown";
+    const pid = Number.isSafeInteger(j.scheduler) && j.scheduler > 0 ? j.scheduler : 0;
+    const config = typeof j.config === "string" && j.config.startsWith("/") && !/[\r\n]/.test(j.config) ? j.config : "";
+    console.log(`${backend} ${pid} ${config}`);
+  ' "$TMP/sched-ls.json" </dev/null 2>/dev/null
+}
+# `service install` with ~/.local/bin on PATH (the service keeps the PATH it was installed with, to
+# find hc, git and the agents). Records that the service is this installer's.
+sched_service() {
+  case ":$PATH:" in *":$BIN_DIR:"*) spath=$PATH ;; *) spath=$PATH:$BIN_DIR ;; esac
+  if sout=$(PATH=$spath "$SCHED" service install </dev/null 2>&1); then
+    SCHED_STARTED=1
+    say "Automations: the scheduler's login service is installed and started${1:+ ($1)}."
+    sched_record "$(sched_get version)" "$(sched_get sha256)" installed \
+      || say "Automations scheduler: its record could not note the login service; --uninstall will leave the service."
+  else
+    say "Warning: the scheduler's login service was not started: $(printf '%s\n' "$sout" | sed -n '$p'). 'herdr-automations service install' retries it."
+  fi
+}
+# For the binary this installer put there only. The backend: a machine with no automations.yaml
+# gets one saying `backend: hc` (runs open in the Herdr app); an existing file is never edited.
+# The login service: asked for (--yes says yes; no terminal, no) unless the scheduler already
+# runs; restarted without asking only when it is this installer's and the binary was replaced.
+sched_setup() {
+  sls=$(sched_ls "$SCHED") || return 0
+  sbackend=${sls%% *}; srest=${sls#* }
+  spid=${srest%% *}; sconfig=${srest#* }
+  if [ -n "$sconfig" ] && [ ! -e "$sconfig" ] && [ ! -L "$sconfig" ]; then
+    if mkdir -p "${sconfig%/*}" && printf 'backend: hc\n' >"$sconfig"; then
+      say "Automations: wrote $sconfig with 'backend: hc' (runs open in the Herdr app)."
+    else
+      say "Warning: could not write $sconfig; set 'backend: hc' there for runs to open in the Herdr app."
+    fi
+  elif [ "$sbackend" != hc ] && [ "$sbackend" != auto ]; then
+    say "Automations: left ${sconfig:-automations.yaml} as it is (backend: $sbackend); runs open in the Herdr app only with 'backend: hc' there."
+  fi
+  ssvc=$(sched_get service)
+  if [ "$SCHED_NEW" = 1 ] && [ "$ssvc" = installed ]; then
+    sched_service "restarted on the new build"
+    return 0
+  fi
+  if [ "$spid" != 0 ]; then
+    [ "$SCHED_NEW" = 0 ] || say "Automations: a scheduler is already running (pid $spid), not started by this installer; restart it to run the new build."
+    return 0
+  fi
+  bounded 15 "$TMP/sched-status" "$SCHED" service status || :
+  if grep -q '^service installed: true' "$TMP/sched-status" 2>/dev/null && [ "$ssvc" != installed ]; then
+    say "Warning: a login service for herdr-automations is installed, not by this installer, and the scheduler is not running; left as it is. 'herdr-automations service install' restarts it."
+    return 0
+  fi
+  if ask "Start the automations scheduler when you log in (herdr-automations service install: a login service for your user, no sudo)?"; then
+    sched_service ""
+  else
+    say "Automations: the scheduler is installed but not started; 'herdr-automations service install' (or Start in the Automations panel) starts it at login."
+  fi
+}
+# The runtime check, for whichever scheduler this machine runs (ours, or the person's own): the
+# binary answers `ls --json`, the scheduler runs, and the backend is the app's. One line says which.
+sched_health() {
+  stries=0
+  while :; do
+    sls=$(sched_ls "$SCHED_BIN") \
+      || { say "Warning: Automations is not ready: $SCHED_BIN gave no answer to 'ls --json'."; return 0; }
+    sbackend=${sls%% *}; srest=${sls#* }
+    spid=${srest%% *}
+    # A service started a moment ago may not hold its lock yet: asked again, for 5 s at most.
+    if [ "$spid" != 0 ] || [ "$SCHED_STARTED" != 1 ] || [ "$stries" -ge 5 ]; then break; fi
+    stries=$((stries + 1))
+    sleep 1
+  done
+  sver=$(sched_version "$SCHED_BIN")
+  if [ "$spid" = 0 ]; then
+    say "Warning: Automations is not ready: herdr-automations ${sver:-?} answers (backend $sbackend), but no scheduler is running, so nothing runs on time. Start it: herdr-automations service install"
+  elif [ "$sbackend" != hc ] && [ "$sbackend" != auto ]; then
+    say "Warning: Automations is not ready for the Herdr app: the scheduler runs (pid $spid, herdr-automations ${sver:-?}), but with backend $sbackend its runs open in the Herdr TUI."
+  else
+    say "Automations: ready (herdr-automations ${sver:-?}, backend $sbackend, scheduler running, pid $spid)."
+  fi
+}
+# Runs in a || list, where set -e is off: every step checks itself.
+sched_step() {
+  SCHED_BIN=
+  SCHED_NEW=0
+  SCHED_STARTED=0
+  if [ "$SCHED_OK" = 0 ]; then say "Automations scheduler: skipped (--no-scheduler)."; return 0; fi
+  install_scheduler || say "Warning: the automations scheduler was not installed: $why. The pack is installed; run this again later to retry."
+  [ -n "$SCHED_BIN" ] || return 0
+  if [ "$SCHED_BIN" = "$SCHED" ] && sched_ours; then sched_setup; fi
+  sched_health
+}
+# --uninstall: the binary goes only while it is still the bytes this installer wrote, and the login
+# service only when this installer started it (through the binary's own `service uninstall`); while
+# a service someone else started is installed (`service status`), the binary stays too.
+# automations.yaml and the run history stay.
+uninstall_scheduler() {
+  [ -f "$SCHED_RECORD" ] || return 0
+  if [ "$SCHED_OK" = 0 ]; then say "Left $SCHED (--no-scheduler)."; return 0; fi
+  if ! sched_ours; then
+    if [ -e "$SCHED" ] || [ -L "$SCHED" ]; then say "Left $SCHED: it is not the herdr-automations $(sched_get version) this installer put there."; fi
+    rm -f "$SCHED_RECORD"
+    return 0
+  fi
+  # A login service this installer did not start (Start in the panel, or `service install` by hand)
+  # runs this binary and restarts it for good: the binary stays, so nothing relaunches a missing
+  # file, and the person removes both. The record stays with it: the binary is still ours.
+  # `service status` is asked with the same 15 s limit as the install side's questions; with no
+  # answer nobody knows whether a service runs it, so the binary stays then too.
+  if [ "$(sched_get service)" != installed ]; then
+    sstat=$(mktemp "${TMPDIR:-/tmp}/automagik-herdr-scheduler.XXXXXX") || sstat=
+    if [ -z "$sstat" ] || ! bounded 15 "$sstat" "$SCHED" service status; then
+      [ -z "$sstat" ] || rm -f "$sstat"
+      say "Left $SCHED: it gave no answer to 'service status' within 15 s, so whether a login service runs it is not known. To remove both: herdr-automations service uninstall, then rm $SCHED"
+      return 0
+    fi
+    if grep -q '^service installed: true' "$sstat"; then
+      rm -f "$sstat"
+      say "Left $SCHED: a login service this installer did not start runs it (removing the binary would leave that service restarting a missing file). To remove both: herdr-automations service uninstall, then rm $SCHED"
+      return 0
+    fi
+    rm -f "$sstat"
+  fi
+  if [ "$(sched_get service)" = installed ]; then
+    if sout=$("$SCHED" service uninstall </dev/null 2>&1); then
+      say "Removed the automations scheduler's login service."
+    else
+      say "Warning: the scheduler's login service was not removed: $(printf '%s\n' "$sout" | sed -n '$p'). Left $SCHED; run 'herdr-automations service uninstall', then remove it."
+      return 0
+    fi
+  fi
+  rm -f "$SCHED" && say "Removed $SCHED (herdr-automations $(sched_get version)). automations.yaml and the run history are kept."
+  rm -f "$SCHED_RECORD"
+}
+
 # ---- DSH as a Herdr agent (dsh-TUI, #561) ----
 # The profile, the pin and the shim are the pack CLI's (`automagik-herdr dsh-tui install`), which
 # writes DSH's own `dsh-tui` profile and never the desktop one. This step only decides whether to ask;
@@ -890,6 +1239,46 @@ dsh_tui_step() {
     return 0
   fi
   printf '%s\n' "$dsh_out" | sed 's/^/  /'
+}
+# The login service that runs 'automagik-herdr revive --boot' (#939). The unit is the pack CLI's
+# ('automagik-herdr revive service install'); this step only decides whether to ask. Linux only:
+# on another OS nothing is asked and nothing is written.
+revive_step() {
+  [ "$(uname -s)" = Linux ] || return 0
+  [ "$REVIVE" = no ] && { say "Left the revive login service alone (--no-revive)."; return 0; }
+  [ -x "$LINK" ] || return 0
+  if [ -f "$REVIVE_UNIT" ] && [ "$REVIVE" = ask ]; then return 0; fi
+  if [ "$REVIVE" = ask ] && [ "$YES" = 1 ]; then
+    say "Left the revive login service alone: --yes never changes what runs at login; 'automagik-herdr revive service install' or this installer with --revive adds it."
+    return 0
+  fi
+  if [ "$REVIVE" = ask ] && ! ask_opt_in "Bring the bots back by themselves after a restart of this computer (a login service that runs 'automagik-herdr revive --boot')?"; then
+    say "Left the revive login service alone; 'automagik-herdr revive service install' adds it later."
+    return 0
+  fi
+  revive_rc=0
+  revive_out=$("$LINK" revive service install <"/dev/null" 2>&1) || revive_rc=$?
+  if [ "$revive_rc" != 0 ]; then
+    say "Warning: the revive login service was not installed: $(printf '%s\n' "$revive_out" | sed -n '$p')"
+    return 0
+  fi
+  printf '%s\n' "$revive_out" | sed 's/^/  /'
+}
+# --uninstall: the unit goes through the command that wrote it, while the pack and its link are
+# still in place, and only when its first line is the pack's mark (revive.js UNIT_MARK).
+revive_uninstall() {
+  [ -f "$REVIVE_UNIT" ] || return 0
+  if ! sed -n '1p' "$REVIVE_UNIT" 2>/dev/null | grep -q '^# Automagik Herdr: brings the bots back after a restart'; then
+    say "Left $REVIVE_UNIT: it is not this installer's."
+    return 0
+  fi
+  if link_ours && [ -f "$PACK/bin/automagik-herdr.mjs" ] && grep -q 'revive service' "$PACK/bin/automagik-herdr.mjs" 2>/dev/null; then
+    revive_rc=0
+    revive_out=$("$LINK" revive service uninstall <"/dev/null" 2>&1) || revive_rc=$?
+    if [ "$revive_rc" = 0 ]; then printf '%s\n' "$revive_out" | sed 's/^/  /'; return 0; fi
+  fi
+  rm -f "$REVIVE_UNIT" && say "Removed $REVIVE_UNIT (systemctl --user daemon-reload drops it from systemd)."
+  return 0
 }
 # --uninstall: the plugin and the shim go through the command that put them there, while the pack
 # and its link are still in place. A pack from before this command removes its own shim, nothing
@@ -1169,6 +1558,7 @@ install() {
     fi
   fi
   meter_step
+  sched_step || :
   offer_switch
   layout_notes
 
@@ -1202,6 +1592,7 @@ install() {
     *) say "Add ~/.local/bin to your PATH: echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.zshrc" ;;
   esac
   dsh_tui_step
+  revive_step
 
   # ---- f. next ----
   # The hooks notice after everything else the run printed and before its last lines, so it is read.

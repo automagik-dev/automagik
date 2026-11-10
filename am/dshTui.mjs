@@ -329,6 +329,9 @@ export const STABLE_FILES = Object.freeze([
   "bin/dsh-sandbox.mjs", "bin/run.sh",
 ]);
 
+/** The folders copied whole: the hc guard and the `hc kill` shim (#955), each an `hc` entry over hcGuard.mjs. */
+export const STABLE_FOLDERS = Object.freeze(["guard", "hc-kill"]);
+
 /** Whether every stable file is byte-equal to the pack's copy (a stale copy is never run). */
 export function stableFilesCurrent(source, stable) {
   try {
@@ -339,11 +342,13 @@ export function stableFilesCurrent(source, stable) {
     const baked = bakedNodeOf(stable);
     if (!baked) return false;
     if (!readFileSync(join(stable, STABLE_RUNNER)).equals(Buffer.from(stableRunnerText(baked)))) return false;
-    const guardSource = join(source, "guard"), guardStable = join(stable, "guard");
-    const names = readdirSync(guardSource);
-    if (names.length !== readdirSync(guardStable).length) return false;
-    for (const name of names) {
-      if (!readFileSync(join(guardSource, name)).equals(readFileSync(join(guardStable, name)))) return false;
+    for (const folder of STABLE_FOLDERS) {
+      const guardSource = join(source, folder), guardStable = join(stable, folder);
+      const names = readdirSync(guardSource);
+      if (names.length !== readdirSync(guardStable).length) return false;
+      for (const name of names) {
+        if (!readFileSync(join(guardSource, name)).equals(readFileSync(join(guardStable, name)))) return false;
+      }
     }
     return true;
   } catch {
@@ -405,9 +410,10 @@ function copyStable(source, stable, node) {
       changed.push(to);
     }
   }
-  const guardFrom = join(source, "guard");
-  const guardTo = join(stable, "guard");
-  if (existsSync(guardFrom) && resolve(guardFrom) !== resolve(guardTo)) {
+  for (const folder of STABLE_FOLDERS) {
+    const guardFrom = join(source, folder);
+    const guardTo = join(stable, folder);
+    if (!existsSync(guardFrom) || resolve(guardFrom) === resolve(guardTo)) continue;
     mkdirSync(guardTo, { recursive: true, mode: 0o700 });
     for (const name of readdirSync(guardFrom)) {
       const from = join(guardFrom, name), to = join(guardTo, name);

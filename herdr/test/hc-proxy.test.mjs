@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 
 import { HC_PIN, MAX_CONNECTIONS, MAX_READ_LINES, MAX_REPLY_BYTES, METHOD_PARAMS, runProblem, socketPathLimit, startProxy } from "../mods/am-sidebar/hcProxy.mjs";
 import { approveProject, approvedSettingsDir, recordFileOf, sha256Of } from "../mods/am-sidebar/approved.js";
-import { ENV, GUARD_DIR, WORKER_OF_LABEL, stableGuardDir, stableHelper, stableRootOf, stableRunner, templateAgent, workerArgs, workerPlan } from "../mods/am-sidebar/workers.js";
+import { ENV, GUARD_DIR, KILL_GUARD_DIR, WORKER_OF_LABEL, stableGuardDir, stableHelper, stableKillDir, stableRootOf, stableRunner, templateAgent, workerArgs, workerPlan } from "../mods/am-sidebar/workers.js";
 import { stableRootProblem, stableRunnerText } from "../mods/am-sidebar/dshTui.mjs";
 import { commandArgv } from "../mods/am-sidebar/restart.js";
 import { agySettingsArgs, agySettingsFile } from "../mods/am-sidebar/models.js";
@@ -1235,7 +1235,7 @@ async function approvedWorkerScene(t, worker, botExtra = {}) {
   return { ...result, proxy, client };
 }
 
-function approvedParams(s, worker, templateCommand = null) {
+function approvedParams(s, worker, templateCommand = null, { killGuard = stableKillDir(s.stableRoot) } = {}) {
   const plan = workerPlan({ agent: "dsh-tui", worker });
   const task = "do the task";
   const runs = plan.agent ?? (templateCommand ? templateAgent(templateCommand) : null);
@@ -1246,6 +1246,8 @@ function approvedParams(s, worker, templateCommand = null) {
     cwd: s.worktree, parent: "t100", ...plan, task, path: s.env.PATH,
     project: s.project, taskId: "gn-1", lead: ID.dev,
     login: claude ? ["-u", "CLAUDE_CONFIG_DIR"] : [], agySettingsPath,
+    // #955: an approved worker's `hc kill` shim is the stable folder's copy, first on its PATH.
+    killGuard,
     templateArgv: plan.template && runs === "claude" ? commandArgv({ shell: templateCommand }, [task])
       : plan.template && runs === "antigravity" ? commandArgv({ shell: templateCommand }, [...agySettingsArgs("antigravity", agySettingsPath), task])
         : null });
@@ -1260,10 +1262,27 @@ function approvedParams(s, worker, templateCommand = null) {
     : args.slice(args.indexOf("--") + 1), labels, env: {} });
 }
 
+test("approved worker (#955): a sandboxed bot's worker of another agent keeps the pane's full guard, with no shim; the pack's own shim first is refused", async (t) => {
+  for (const agent of ["claude", "codex", "antigravity"]) {
+    const { s, client } = await approvedWorkerScene(t, { agent });
+    // The sandboxed pane's PATH holds the stable full guard, so the stable shim is not added:
+    // the worker's PATH word is the pane's own, the full guard still on it.
+    assert.ok(s.env.PATH.split(":").includes(s.stableGuard), s.env.PATH);
+    const good = approvedParams(s, { agent });
+    const at = good.argv.findIndex((word) => word.startsWith("PATH="));
+    assert.equal(good.argv[at], `PATH=${s.env.PATH}`);
+    assert.equal(good.argv[at].includes("/hc-kill"), false, good.argv[at]);
+    const own = await client.call("terminal.run", approvedParams(s, { agent }, null, { killGuard: KILL_GUARD_DIR }));
+    assert.match(own.error?.message ?? "", /does not match approved agent/, `${agent}, the pack's own shim first: ${JSON.stringify(own)}`);
+    assert.ok((await client.call("terminal.run", good)).result, `${agent}: the pane's own PATH is allowed`);
+  }
+});
+
 for (const worker of [{ agent: "codex", model: "chosen", effort: "high" },
   { agent: "claude", model: "chosen", effort: "high" }, { template: "dev-sol" }, { template: "agy-sol" },
   { agent: "antigravity", agyMode: "auto" }, { agent: "antigravity", agyMode: "accept-edits" },
-  { agent: "antigravity", agyMode: "plan" }]) {
+  // #1032: kimi's approved argv has no task word (its task is sent as its first message).
+  { agent: "antigravity", agyMode: "plan" }, { agent: "kimi" }]) {
   test(`approved worker allows named ${worker.template ?? `${worker.agent} (${worker.agyMode ?? "default"})`} with today's identity`, async (t) => {
     const { s, client, fake } = await approvedWorkerScene(t, worker);
     const template = worker.template ? fake.state.templates.find((row) => row.name === worker.template).command : null;
@@ -1469,6 +1488,34 @@ test("approved helper worker re-reads at spawn time and refuses after re-approva
   assert.match(answer.error.message,
     /^hc-proxy: terminal\.run: approved worker refused: worker allowance approval approvedAt changed; restart the pane after approval$/);
   assert.equal(fake.calls("terminal.run").length, 0, "the core never received the start");
+});
+
+test("approved worker #1032: a Kimi worker's argv is its approved command alone, with no task word; one with a task or an option is refused", async (t) => {
+  const worker = { agent: "kimi" };
+  const { s, client, fake } = await approvedWorkerScene(t, worker);
+  const params = approvedParams(s, worker);
+  // kimi 2.5.0 takes no first prompt on its command line: the last word is the program.
+  assert.equal(params.argv.at(-1), "kimi", JSON.stringify(params.argv));
+  assert.equal(params.argv.includes("do the task"), false);
+  for (const [name, argv] of [
+    ["a trailing task word", [...params.argv, "do the task"]],
+    ["its one-shot print mode", [...params.argv, "-p", "do the task"]],
+    ["an option of its own", [...params.argv, "--yolo"]],
+    ["another program", params.argv.map((word) => word === "kimi" ? "pi" : word)],
+    ["no argv", []],
+  ]) {
+    const answer = await client.call("terminal.run", { ...params, argv });
+    assert.match(answer.error?.message ?? "", /^hc-proxy: terminal\.run: approved worker argv refused: does not match approved agent kimi exactly$/, name);
+  }
+  assert.equal(fake.calls("terminal.run").length, 0, "nothing reached the core");
+  const answer = await client.call("terminal.run", params);
+  assert.ok(answer.result, JSON.stringify(answer));
+  assert.deepEqual(fake.calls("terminal.run").at(-1).params, { ...params, caller: "t100" });
+  // The other agents' rule is as it was: a last word that is an option is no task.
+  const codex = await approvedWorkerScene(t, { agent: "codex" });
+  const codexParams = approvedParams(codex.s, { agent: "codex" });
+  const refused = await codex.client.call("terminal.run", { ...codexParams, argv: [...codexParams.argv.slice(0, -1), "--yolo"] });
+  assert.match(refused.error?.message ?? "", /approved worker task must be one text word that is not an option/);
 });
 
 test("approved worker rejects extra argv and nonterminal RPC env overrides", async (t) => {
