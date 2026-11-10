@@ -753,6 +753,9 @@ export class AcpAdapter extends LlmAdapter {
     for (;;) {
       const event = await live.run.next(options.signal)
       if (event.type === 'end' || event.type === 'error') live.open = false
+      // The prompt is over (finished, failed or stopped): nobody waits for a DSH tool call the
+      // bridge still has in flight, so each is stopped; the bridge itself stays for the next turn.
+      if (event.type === 'end' || event.type === 'error' || event.type === 'aborted') this.backchannel?.cancel?.(live.bridge, event.type === 'aborted' ? 'the turn was stopped' : 'the turn ended')
       // Inbound text is logged as the agent said it: DSH does not redact at ingest, and neither
       // does this plugin. The redactor runs at each provider crossing instead — the replay out
       // (`replayBlocks`) and the transcript handed back to a native provider (`crossed`).

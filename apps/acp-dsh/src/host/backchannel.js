@@ -25,6 +25,10 @@ const MAX_BODY = 16 * 1024 * 1024
 const OUTPUT_LIMIT = 20_000
 // A reviewer that never answers must not hold the bridge's call forever. Auto only.
 const REVIEW_TIMEOUT_MS = 120_000
+// The call id a late result is recorded under once its own call was closed at a step's end.
+export const LATE_SUFFIX = '_late'
+// Rows that end a step or a turn: no bridge call may be open when one is written (#957).
+const BOUNDARY_EVENTS = new Set(['step/end', 'turn/end'])
 // Events that can change the Session's level while a review is pending.
 const LEVEL_EVENTS = new Set(['permission/preset', 'sandbox/mode', 'approval/policy'])
 
@@ -106,6 +110,16 @@ async function contentOf(content, attachments) {
     blocks.push(mcp ?? { type: 'text', text: unavailableText(image) })
   }
   return blocks
+}
+
+// The `error` of a tool/result row: a string name and, when there is one, a string code. A tool
+// may hand back any object as its error; only these two fields enter the log.
+function infoOf(info) {
+  if (info === undefined || info === null) return undefined
+  return {
+    name: typeof info.name === 'string' && info.name !== '' ? info.name : 'Error',
+    ...(typeof info.code === 'string' ? { code: info.code } : {}),
+  }
 }
 
 /** The agent's preset, as the preset registry records it; `standard` when no registry composes. */
@@ -240,6 +254,49 @@ export function reviewRouteOf(session, name) {
 }
 
 /**
+ * The marked assistant block that advertises one bridge call at its step, and the function that
+ * takes it off the surface again. A bridge call is out-of-band: DSH's loop never writes the
+ * assistant block that advertises a tool call, and the v4 Session loader requires one before
+ * every tool/call row (#842). The block is replaced with an empty developer message, which
+ * derives to no model message, so no later request or crossing sees the fake call (switch.js
+ * also skips it). Throws when the block cannot be written. `openStepOf` is hoisted.
+ * @returns {() => void} hide the block; a second call does nothing
+ */
+function advertise(session, { turn, step }, route, { id, name, raw }, log) {
+  let seq = session.append('assistant/message', {
+    turn,
+    step,
+    stream: [],
+    message: createAssistantMessage({
+      content: [{ type: 'tool-call', id, name, arguments: raw }],
+      source: { ...route, bridge: true, synthetic: SYNTHETIC_KIND },
+    }),
+  }, { surfaceOp: 'append' }).seq
+  return () => {
+    if (seq === undefined) return
+    const shadowed = seq
+    seq = undefined
+    // The replacement is a step row: the loader refuses one stamped with a step that is no
+    // longer the open one. The guard hides the block before its step ends; a block that still
+    // missed that is left alone (`aside` in adapter.js skips it for a native provider).
+    const open = openStepOf(session)
+    if (open === undefined || open.turn !== turn || open.step !== step) {
+      log('the synthetic bridge block was not removed: its step already ended')
+      return
+    }
+    try {
+      session.append('developer/message', {
+        turn,
+        step,
+        message: createDeveloperMessage({ content: [], source: { kind: SYNTHETIC_KIND } }),
+      }, { surfaceOp: { op: 'replace', startSeq: shadowed, endSeq: shadowed }, sourceEventSeqs: [shadowed] })
+    } catch (cause) {
+      log(`the synthetic bridge block was not removed: ${cause?.message ?? cause}`)
+    }
+  }
+}
+
+/**
  * The `acp_toolset_drift` record: a plugin record (replay-safe, outside DSH's released event
  * schemas) naming the structured call that should have been an MCP name. A reader that does not
  * know it retains and skips it.
@@ -268,7 +325,133 @@ export class Backchannel {
     this.log = log
     this.reviewTimeoutMs = reviewTimeoutMs
     this.records = new Map()
+    // Session -> the guard that keeps its bridge calls closed before a step or turn ends.
+    this.guards = new Map()
     this.closed = false
+  }
+
+  /**
+   * The Session's guard (#957). An agent runs its calls in parallel, so a bridge call can still
+   * be open when DSH ends the step it was recorded in: the loop writes `step/end` as soon as
+   * its own work is done, and nothing DSH dispatches comes before that row. The v4 loader
+   * refuses a step or turn that ends with an unresolved call, so the guard stands in front of
+   * the Session's own `append`: before a `step/end` or `turn/end` goes in, every bridge call
+   * still open gets a result row in its own step, and its advertisement leaves the surface.
+   * The real result, when it comes, is recorded as a call of its own in the step open then
+   * (`late`), never under the ended step's stamp. A result anyone else writes for an open call
+   * (DSH's interrupted-step recovery) closes it here too, so it is never answered twice.
+   */
+  guardOf(session) {
+    let guard = this.guards.get(session)
+    if (guard !== undefined) return guard
+    const own = Object.hasOwn(session, 'append')
+    const original = session.append
+    const open = new Map()
+    const closeOpen = () => {
+      for (const [id, entry] of open) {
+        try {
+          original.call(session, 'tool/result', {
+            turn: entry.turn,
+            step: entry.step,
+            message: createToolResultMessage({
+              callId: id,
+              content: [{ type: 'text', text: `${entry.name} was still running when its step ended. Its result, when it comes, is shown as a call of its own.` }],
+              isError: false,
+            }),
+          }, { surfaceOp: 'append', sourceEventSeqs: [entry.callSeq] })
+        } catch (cause) {
+          this.log(`an open bridge call was not closed before its step ended: ${cause?.message ?? cause}`)
+        }
+        open.delete(id)
+        entry.closed = true
+        entry.hide()
+      }
+    }
+    const append = (type, data, ...options) => {
+      if (BOUNDARY_EVENTS.has(type) && open.size > 0) closeOpen()
+      const event = original.call(session, type, data, ...options)
+      if (type === 'tool/result' && options[0]?.surfaceOp === 'append') {
+        const entry = open.get(data?.message?.toolCallId)
+        if (entry !== undefined && entry.turn === data.turn && entry.step === data.step) {
+          open.delete(data.message.toolCallId)
+          entry.closed = true
+          // Answered (by the bridge or by DSH's recovery): the block goes while its step is open.
+          entry.hide()
+        }
+      }
+      if (type === 'turn/end') {
+        // Nobody waits for a call once its turn is over: Stop, an error and a finished prompt
+        // all end here. A body that ignores its signal still cannot write (`late`).
+        for (const record of this.records.values()) if (record.agent?.session === session) this.cancel(record, 'the turn ended')
+      }
+      if (BOUNDARY_EVENTS.has(type)) this.release(session)
+      return event
+    }
+    guard = {
+      open,
+      // Calls in flight: one whose row was closed still owes a late result through this guard.
+      calls: 0,
+      /** Follow one recorded call until its result row is written. */
+      track: (id, entry) => {
+        open.set(id, entry)
+        return entry
+      },
+      remove: () => {
+        if (session.append !== append) return
+        if (own) session.append = original
+        else delete session.append
+      },
+    }
+    try {
+      session.append = append
+    } catch (cause) {
+      this.log(`the bridge cannot guard this Session's step ends: ${cause?.message ?? cause}`)
+    }
+    this.guards.set(session, guard)
+    return guard
+  }
+
+  /** Give the Session its own `append` back once no call is open and no live bridge serves it. */
+  release(session) {
+    const guard = this.guards.get(session)
+    if (guard === undefined || guard.open.size > 0 || guard.calls > 0) return
+    for (const record of this.records.values()) if (!record.closed && record.agent?.session === session) return
+    guard.remove()
+    this.guards.delete(session)
+  }
+
+  /**
+   * Record the result of a call whose own row was closed when its step ended: a call of its own
+   * (`<id>_late`, advertised like any bridge call) in the step open now, with the same name and
+   * arguments. With no open step there is no loadable place for it: it is dropped and logged,
+   * and the agent still gets it as the answer to its call.
+   */
+  late(session, guard, route, { id, name, raw }, content, isError, info) {
+    const position = openStepOf(session)
+    if (position === undefined) {
+      this.log(`the late result of ${name} (${id}) was not recorded: the Session has no open step`)
+      return
+    }
+    const lateId = `${id}${LATE_SUFFIX}`
+    let hide
+    let written = false
+    try {
+      hide = advertise(session, position, route, { id: lateId, name, raw }, this.log)
+      const callSeq = session.append('tool/call', { ...position, callId: lateId, name, arguments: raw }).seq
+      // Tracked before its result: a result row that fails leaves the guard to close the call.
+      guard.track(lateId, { ...position, name, callSeq, closed: false, hide })
+      session.append('tool/result', {
+        ...position,
+        message: createToolResultMessage({ callId: lateId, content, isError }),
+        ...(info === undefined ? {} : { error: info }),
+      }, { surfaceOp: 'append', sourceEventSeqs: [callSeq] })
+      written = true
+    } catch (cause) {
+      this.log(`the late result of ${name} (${id}) was not recorded: ${cause?.message ?? cause}`)
+    } finally {
+      // A call row left without its result stays tracked: the guard closes and hides it.
+      if (written || !guard.open.has(lateId)) hide?.()
+    }
   }
 
   async listen() {
@@ -315,6 +498,9 @@ export class Backchannel {
       closed: false,
       waiters: new Set(),
       abort: new AbortController(),
+      // The controller of every call in flight (#957): each call has its own, so Stop, the end
+      // of its turn or a caller that went away ends that call without revoking the bridge.
+      calls: new Set(),
     }
     this.records.set(credential, record)
     return record
@@ -338,6 +524,21 @@ export class Backchannel {
     } catch {}
     for (const wake of record.waiters) wake()
     record.waiters.clear()
+    if (record.agent?.session !== undefined) this.release(record.agent.session)
+  }
+
+  /**
+   * Stop every call this bridge has in flight, and keep the bridge: the adapter calls it when
+   * the agent's prompt ends, fails or is stopped, and the guard when the turn ends. An open
+   * approval dialog is withdrawn and a running tool body gets its abort signal.
+   */
+  cancel(record, reason = 'the call was stopped') {
+    if (record === undefined) return
+    for (const controller of record.calls) {
+      try {
+        controller.abort(new Error(reason))
+      } catch {}
+    }
   }
 
   /**
@@ -386,7 +587,7 @@ export class Backchannel {
 
   async handle(request, response) {
     const reply = (status, value) => {
-      if (response.writableEnded) return
+      if (response.writableEnded || response.destroyed) return
       response.writeHead(status, { 'content-type': 'application/json' })
       response.end(JSON.stringify(value))
     }
@@ -424,10 +625,18 @@ export class Backchannel {
       return reply(200, { tools: offeredTools(this.ctx, record.agent), generation: record.generation })
     }
     if (op === 'call') {
+      // The bridge puts no deadline on a call (a long wait, a slow command and an open approval
+      // dialog are all legitimate), so the caller going away is what ends one: an MCP
+      // `notifications/cancelled` or a dead bridge closes this request before its answer.
+      const gone = new AbortController()
+      response.once('close', () => {
+        if (!response.writableEnded) gone.abort(new Error('the caller went away'))
+      })
       const result = await this.call(record, {
         name: typeof body.name === 'string' ? body.name : '',
         arguments: body.arguments ?? {},
         callId: typeof body.callId === 'string' ? body.callId : undefined,
+        signal: gone.signal,
       })
       // Revoked while the call was awaiting approval: the caller sees the refusal, not a result.
       if (result?.revoked === true) return reply(401, { error: 'refused' })
@@ -471,9 +680,9 @@ export class Backchannel {
    * then does it run. Rows land on the Session as DSH's own tool rows do, so the chat shows the
    * call and its result; the bridge's call is the single record for it.
    * @param {any} record
-   * @param {{ name: string, arguments: any, callId?: string }} call
+   * @param {{ name: string, arguments: any, callId?: string, signal?: AbortSignal }} call `signal` ends this one call (its caller went away)
    */
-  async call(record, { name, arguments: args, callId }) {
+  async call(record, { name, arguments: args, callId, signal: callerGone }) {
     const error = (text) => ({ content: [{ type: 'text', text }], isError: true })
     const unavailable = (code, text) => ({ ...error(text), error: { name: 'AutoReviewUnavailableError', code } })
     const recordFailed = (text, code = 'BRIDGE_RECORD_FAILED') => ({ ...error(text), error: { name: 'BridgeRecordError', code } })
@@ -488,12 +697,9 @@ export class Backchannel {
     const raw = JSON.stringify(args ?? {})
     const approval = this.ctx?.get?.('approval')
     const level = levelOf(approval, session, this.ctx?.get?.('sandboxPolicy'), this.ctx?.get?.('permissionPresets'))
-    // A bridge call is out-of-band: DSH's loop never writes the assistant block that advertises
-    // a tool call, and the v4 Session loader requires one before every tool/call row (#842).
-    // Write that block for every level, with the same turn/step, id, name and raw arguments the
-    // tool/call row carries; Auto review reads the same block. It is marked synthetic and
-    // replaced once the call settles, so it never crosses to a provider (switch.js also skips
-    // it). A call with no open step cannot be recorded in a loadable shape: refuse it.
+    // Every level advertises the call (`advertise`, #842) with the same turn/step, id, name and
+    // raw arguments the tool/call row carries; Auto review reads the same block. A call with no
+    // open step cannot be recorded in a loadable shape: refuse it.
     let review
     if (level.auto) {
       review = reviewRouteOf(session, name)
@@ -509,59 +715,77 @@ export class Backchannel {
     const route = review === undefined
       ? routeOf(session)
       : { provider: review.provider, model: review.model }
-    let syntheticSeq
+    // From here the call has rows, and its step may end before it does (#957).
+    const guard = this.guardOf(session)
+    guard.calls += 1
+    // This call's own controller: `cancel` (Stop, the turn's end) and its caller going away
+    // abort it; a revocation still aborts every call through the record's signal.
+    const own = new AbortController()
+    const onGone = () => own.abort(callerGone.reason)
+    if (callerGone?.aborted) onGone()
+    else callerGone?.addEventListener('abort', onGone, { once: true })
+    record.calls.add(own)
+    const stopped = AbortSignal.any([record.abort.signal, own.signal])
+    const cancelled = () => settle([{ type: 'text', text: `${name} was stopped before it finished.` }], true, { name: 'BridgeCancelledError', code: 'BRIDGE_CANCELLED' })
+    const leave = () => {
+      record.calls.delete(own)
+      callerGone?.removeEventListener('abort', onGone)
+      guard.calls -= 1
+      this.release(session)
+    }
+    // The synthetic block is for the advertisement (and the review on Auto) only.
+    let hideSynthetic
     try {
-      syntheticSeq = session.append('assistant/message', {
-        turn,
-        step,
-        stream: [],
-        message: createAssistantMessage({
-          content: [{ type: 'tool-call', id, name, arguments: raw }],
-          source: { ...route, bridge: true, synthetic: SYNTHETIC_KIND },
-        }),
-      }, { surfaceOp: 'append' }).seq
+      hideSynthetic = advertise(session, { turn, step }, route, { id, name, raw }, this.log)
     } catch (cause) {
+      leave()
       return review === undefined
         ? recordFailed(`The bridge could not advertise ${name}: ${cause?.message ?? cause}`)
         : unavailable('AUTO_REVIEW_FAILED', `Auto review could not see this call: ${cause?.message ?? cause}`)
     }
-    // The synthetic block is for the advertisement (and the review on Auto) only. Replace it
-    // with an empty developer message: it derives to no model message, so no later request or
-    // crossing sees the fake call.
-    const hideSynthetic = () => {
-      if (syntheticSeq === undefined) return
-      const seq = syntheticSeq
-      syntheticSeq = undefined
-      try {
-        session.append('developer/message', {
-          turn,
-          step,
-          message: createDeveloperMessage({ content: [], source: { kind: SYNTHETIC_KIND } }),
-        }, { surfaceOp: { op: 'replace', startSeq: seq, endSeq: seq }, sourceEventSeqs: [seq] })
-      } catch (cause) {
-        this.log(`the synthetic bridge block was not removed: ${cause?.message ?? cause}`)
-      }
-    }
-    let callSeq
+    let entry
     try {
-      callSeq = session.append('tool/call', { turn, step, callId: id, name, arguments: raw }).seq
+      const callSeq = session.append('tool/call', { turn, step, callId: id, name, arguments: raw }).seq
+      entry = guard.track(id, { turn, step, name, callSeq, closed: false, hide: hideSynthetic })
     } catch (cause) {
       // A call without its row cannot be reviewed or shown: close the advertisement and refuse.
       hideSynthetic()
+      leave()
       return review === undefined
         ? recordFailed(`The bridge could not record ${name}: ${cause?.message ?? cause}`)
         : unavailable('AUTO_REVIEW_FAILED', `Auto review could not record this call: ${cause?.message ?? cause}`)
     }
-    const settle = async (content, isError, info) => {
-      try {
-        session.append('tool/result', {
+    let answered = false
+    const settle = async (content, isError, rawInfo) => {
+      answered = true
+      // The row is plain JSON with string fields: a tool's own error object is not trusted to be.
+      const info = infoOf(rawInfo)
+      const open = openStepOf(session)
+      if (entry.closed || open === undefined || open.turn !== turn || open.step !== step) {
+        // Its step ended first (or DSH closed it): the row under this id is already answered,
+        // and nothing may be written with the ended step's stamp.
+        this.late(session, guard, route, { id, name, raw }, content, isError, info)
+      } else {
+        const write = (rowContent, rowError, rowInfo) => session.append('tool/result', {
           turn,
           step,
-          message: createToolResultMessage({ callId: id, content, isError }),
-          ...(info === undefined ? {} : { error: info }),
-        }, callSeq === undefined ? undefined : { surfaceOp: 'append', sourceEventSeqs: [callSeq] })
-      } catch (cause) {
-        this.log(`bridge result row failed: ${cause?.message ?? cause}`)
+          message: createToolResultMessage({ callId: id, content: rowContent, isError: rowError }),
+          ...(rowInfo === undefined ? {} : { error: rowInfo }),
+        }, { surfaceOp: 'append', sourceEventSeqs: [entry.callSeq] })
+        try {
+          write(content, isError, info)
+        } catch (cause) {
+          // A result the log refuses (content or an error that is not plain JSON) must not leave
+          // the call open: record a minimal row that is always valid. The agent still gets the
+          // real answer below.
+          this.log(`bridge result row failed: ${cause?.message ?? cause}`)
+          try {
+            write([{ type: 'text', text: `The result of ${name} could not be recorded.` }], true, { name: 'BridgeRecordError', code: 'BRIDGE_RESULT_UNRECORDABLE' })
+          } catch (again) {
+            // Still tracked: the guard closes it before its step ends.
+            this.log(`bridge fallback result row failed: ${again?.message ?? again}`)
+          }
+        }
       }
       return {
         content: await contentOf(content, this.ctx?.get?.('attachments')),
@@ -587,7 +811,7 @@ export class Backchannel {
             callId: id,
             reason: `${record.name}: ${name}`,
             displayReason: { en: `${record.name} wants to run ${name}` },
-            signal: record.abort.signal,
+            signal: stopped,
           })
         } catch (cause) {
           outcome = 'unavailable'
@@ -601,9 +825,11 @@ export class Backchannel {
             await settle([{ type: 'text', text: `The bridge was revoked before ${name} ran.` }], true, { name: 'BridgeRevokedError', code: 'BRIDGE_REVOKED' })
             return { revoked: true }
           }
+          // Stop (or a caller that went away) withdrew the dialog: nobody refused the call.
+          if (own.signal.aborted) return await cancelled()
           const why = outcome === 'rejected' ? 'The person rejected' : 'DSH could not approve'
           const text = `${why} ${name}.`
-          return await settle([{ type: 'text', text }], true, { name: 'ApprovalDeniedError', code: outcome.toUpperCase() })
+          return await settle([{ type: 'text', text }], true, { name: 'ApprovalDeniedError', code: String(outcome).toUpperCase() })
         }
       }
       // The ask may have been answered after the bridge was revoked (a grant that lost its
@@ -613,6 +839,8 @@ export class Backchannel {
         await settle([{ type: 'text', text: `The bridge was revoked before ${name} ran.` }], true, { name: 'BridgeRevokedError', code: 'BRIDGE_REVOKED' })
         return { revoked: true }
       }
+      // Stopped while it waited for its approval: nothing may start now.
+      if (own.signal.aborted) return await cancelled()
       if (level.auto) {
         // A level that stopped being Auto before dispatch would let this call run unreviewed.
         // The subscription below also watches while the review is pending; this re-check covers
@@ -663,7 +891,7 @@ export class Backchannel {
       if (levelChanged) {
         return await settle([{ type: 'text', text: `Auto review cannot finish ${name}: the permission level changed.` }], true, { name: 'AutoReviewUnavailableError', code: 'AUTO_REVIEW_LEVEL_CHANGED' })
       }
-      const signal = controller === undefined ? record.abort.signal : AbortSignal.any([record.abort.signal, controller.signal])
+      const signal = controller === undefined ? stopped : AbortSignal.any([stopped, controller.signal])
       let settled
       try {
         settled = await tools.execute({
@@ -682,6 +910,7 @@ export class Backchannel {
         if (levelChanged) {
           return await settle([{ type: 'text', text: `Auto review cannot finish ${name}: the permission level changed.` }], true, { name: 'AutoReviewUnavailableError', code: 'AUTO_REVIEW_LEVEL_CHANGED' })
         }
+        if (own.signal.aborted) return await cancelled()
         const text = `Error: ${cause?.message ?? cause}`
         // The info lands in the tool/result row, which must be plain JSON: an Error with no
         // string code (or a non-string name) would leave an undefined field, the row would be
@@ -706,11 +935,18 @@ export class Backchannel {
       if (result === undefined) return await settle([{ type: 'text', text: 'The tool returned no result.' }], true)
       const info = result.isError === true ? (result.error?.info ?? (typeof result.error?.code === 'string' ? result.error : undefined)) : undefined
       return await settle(result.content ?? [], result.isError === true, info)
+    } catch (cause) {
+      // Nothing above is meant to throw; if it does, the call still gets its one result row.
+      this.log(`bridge call ${name} failed: ${cause?.message ?? cause}`)
+      if (answered) return error(`Error: ${cause?.message ?? cause}`)
+      return await settle([{ type: 'text', text: `Error: ${cause?.message ?? cause}` }], true, { name: 'BridgeCallError', code: 'BRIDGE_CALL_FAILED' })
     } finally {
       clearTimeout(timer)
       unwatch?.()
       unwatchPre?.()
+      // A call closed at its step's end had its block hidden there: this is then a no-op.
       hideSynthetic()
+      leave()
     }
   }
 

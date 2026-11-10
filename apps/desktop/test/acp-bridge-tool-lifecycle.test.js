@@ -341,3 +341,138 @@ test('an orphan tool/result still fails on the patched verifier', async (t) => {
   assert.equal(refused.message.ok, false)
   assert.match(refused.message.message, new RegExp(escape(ORPHAN_ERROR)))
 })
+
+// Issue #957: the shapes a bridged call left behind when its step ended before it did. Made
+// here, never copied from a real session. In turn 2 the bridge advertises call A (a marked
+// assistant block), records it, and step 1 ends with A open; step 2 then holds the bridge's
+// late rows, all stamped with step 1.
+const KNOWN_957 = new Set([...KNOWN, 'assistant/message', 'developer/message'])
+const advert = id => ({
+  type: 'assistant/message',
+  time: 0,
+  data: {
+    turn: 2,
+    step: 1,
+    stream: [],
+    message: { id: `ad-${id}`, role: 'assistant', content: [{ type: 'tool-call', id, name: 'job_output', arguments: '{}' }], source: { kind: 'model', provider: 'acp-fake', model: 'fake', bridge: true, synthetic: 'acp-bridge' } },
+  },
+  surfaceOp: 'append',
+})
+const callRow = id => ({ type: 'tool/call', time: 0, data: { turn: 2, step: 1, callId: id, name: 'job_output', arguments: '{}' } })
+const resultRow = (id, callSeq, step = 1) => ({
+  type: 'tool/result',
+  time: 0,
+  data: { turn: 2, step, message: { id: `result-${id}-${callSeq}-${step}`, role: 'tool', toolCallId: id, source: { kind: 'tool', callId: id }, content: [{ type: 'text', text: 'ok' }], isError: false } },
+  surfaceOp: 'append',
+  sourceEventSeqs: [callSeq],
+})
+const hideRow = adSeq => ({
+  type: 'developer/message',
+  time: 0,
+  data: { turn: 2, step: 1, message: { id: `hide-${adSeq}`, role: 'developer', content: [], source: { kind: 'acp-bridge' } } },
+  surfaceOp: { op: 'replace', startSeq: adSeq, endSeq: adSeq },
+  sourceEventSeqs: [adSeq],
+})
+const stepEnd = step => ({ type: 'step/end', time: 0, data: { turn: 2, step } })
+const stepStart = step => ({ type: 'step/start', time: 0, data: { turn: 2, step } })
+const turnEnd = { type: 'turn/end', time: 0, data: { turn: 2, reason: 'stop' } }
+// Turn 1 and the start of turn 2 as in EVENTS, then the given rows, numbered in order.
+const turnTwoRows = rows => [...structuredClone(EVENTS.slice(0, 7)), ...rows].map((event, seq) => ({ ...structuredClone(event), seq }))
+
+// seq 7 is A's advertisement, 8 its call, 9 B's advertisement, 10 B's call.
+const OPEN_HEAD = [advert('bridge_a'), callRow('bridge_a'), advert('bridge_b'), callRow('bridge_b'), resultRow('bridge_b', 10), hideRow(9)]
+const SHAPES = {
+  // The table in the issue: A open at step/end, its result and its block's replacement in step 2.
+  'the late result lands in the next step': turnTwoRows([...OPEN_HEAD, stepEnd(1), stepStart(2), resultRow('bridge_a', 8), hideRow(7), stepEnd(2), turnEnd]),
+  // The call never answers at all.
+  'the call is never answered': turnTwoRows([...OPEN_HEAD, stepEnd(1), turnEnd]),
+  // The late rows come after the turn has ended.
+  'the late result lands after turn/end': turnTwoRows([...OPEN_HEAD, stepEnd(1), turnEnd, resultRow('bridge_a', 8), hideRow(7)]),
+  // DSH's own recovery answered A in its step; the bridge's result came anyway (a double result).
+  'a second result after the recovery result': turnTwoRows([...OPEN_HEAD, resultRow('bridge_a', 8), stepEnd(1), stepStart(2), resultRow('bridge_a', 8), hideRow(7), stepEnd(2), turnEnd]),
+}
+const STILL_REFUSED = {
+  // Two late results for one call: only one is matched to it.
+  'two late results for one call': [turnTwoRows([...OPEN_HEAD, stepEnd(1), stepStart(2), resultRow('bridge_a', 8), resultRow('bridge_a', 8), stepEnd(2), turnEnd]), /tool\/result does not match an open turn and step/],
+  // A late result that claims the step it lands in was never recorded there.
+  'a late result stamped with the later step': [turnTwoRows([...OPEN_HEAD, stepEnd(1), stepStart(2), resultRow('bridge_a', 8, 2), stepEnd(2), turnEnd]), /has no advertised tool lifecycle/],
+  // A call that is not the bridge's (no marked block) left open: DSH's own rule stands.
+  'an open call that is not bridged': [turnTwoRows([
+    { ...advert('native_a'), data: { ...advert('native_a').data, message: { ...advert('native_a').data.message, source: { kind: 'model', provider: 'acp-fake', model: 'fake' } } } },
+    callRow('native_a'), stepEnd(1), turnEnd,
+  ]), /step\/end leaves unresolved tool call native_a/],
+  // A bridge call advertised but never started is not the out-of-band shape.
+  'a bridged call that never started': [turnTwoRows([advert('bridge_a'), stepEnd(1), turnEnd]), /step\/end leaves unresolved tool call bridge_a/],
+}
+
+test('#957: the unpatched loader and verifier refuse each open-call shape, the patched ones load it untouched', async (t) => {
+  const runtime = makeRuntime(t)
+  const before = await import(`${pathToFileURL(runtime.format).href}?before-957`)
+  const logs = {}
+  for (const [name, events] of Object.entries(SHAPES)) {
+    assert.throws(
+      () => before.restoreReleasedV4Artifact(artifactOf(events), KNOWN_957),
+      error => error.name === 'SessionFormatError',
+      `unpatched loader: ${name}`,
+    )
+    logs[name] = join(runtime.root, `${Object.keys(logs).length}.v4.jsonl`)
+    writeSyntheticLog(logs[name], events)
+    const refused = await verifyWithWorker(runtime.worker, logs[name], events.length)
+    assert.equal(refused.message.ok, false, `unpatched verifier: ${name}`)
+  }
+  // The issue's own error, on the issue's own shape.
+  assert.throws(
+    () => before.restoreReleasedV4Artifact(artifactOf(SHAPES['the late result lands in the next step']), KNOWN_957),
+    error => error.message === 'step/end leaves unresolved tool call bridge_a',
+  )
+
+  assert.deepEqual(patchRuntime(runtime.modules, runtime.patches).map(result => result.state), ['patched', 'patched'])
+  const patched = await import(`${pathToFileURL(runtime.format).href}?patched-957`)
+  for (const [name, events] of Object.entries(SHAPES)) {
+    const artifact = artifactOf(events)
+    const original = console.warn
+    const warnings = []
+    console.warn = (...args) => warnings.push(args.join(' '))
+    try {
+      assert.equal(patched.restoreReleasedV4Artifact(artifact, KNOWN_957), artifact, name)
+    } finally {
+      console.warn = original
+    }
+    assert.deepEqual(artifact.events, events, `${name}: no event is rewritten or discarded`)
+    assert.equal(warnings.length, 1, `${name}: one line reports the recovery`)
+    assert.match(warnings[0], /bridged tool call\(s\) left open at a step or turn end and \d+ late bridge row\(s\) \(#957\)/)
+    const bytes = readFileSync(logs[name], 'utf8')
+    const recovered = await verifyWithWorker(runtime.worker, logs[name], events.length)
+    assert.equal(recovered.message.ok, true, `patched verifier: ${name}: ${recovered.message.message}`)
+    assert.equal(readFileSync(logs[name], 'utf8'), bytes, `${name}: the session file is not rewritten`)
+  }
+  assert.match(
+    (() => {
+      const lines = []
+      const original = console.warn
+      console.warn = (...args) => lines.push(args.join(' '))
+      try { patched.restoreReleasedV4Artifact(artifactOf(SHAPES['the late result lands in the next step']), KNOWN_957) } finally { console.warn = original }
+      return lines[0]
+    })(),
+    /tolerated 1 bridged tool call\(s\) left open at a step or turn end and 2 late bridge row\(s\)/,
+  )
+})
+
+test('#957: the recovery stays narrow: a second late result, a wrong stamp and a call that is not bridged still fail', async (t) => {
+  const runtime = makeRuntime(t)
+  assert.deepEqual(patchRuntime(runtime.modules, runtime.patches).map(result => result.state), ['patched', 'patched'])
+  const patched = await import(`${pathToFileURL(runtime.format).href}?narrow-957`)
+  let index = 0
+  for (const [name, [events, message]] of Object.entries(STILL_REFUSED)) {
+    assert.throws(
+      () => loadWarnings({ restoreReleasedV4Artifact: artifact => patched.restoreReleasedV4Artifact(artifact, KNOWN_957) }, artifactOf(events)),
+      error => error.name === 'SessionFormatError' && message.test(error.message),
+      name,
+    )
+    const log = join(runtime.root, `refused-${index++}.v4.jsonl`)
+    writeSyntheticLog(log, events)
+    const refused = await verifyWithWorker(runtime.worker, log, events.length)
+    assert.equal(refused.message.ok, false, `patched verifier: ${name}`)
+    assert.match(refused.message.message, message, name)
+  }
+})
