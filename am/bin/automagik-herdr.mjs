@@ -212,7 +212,17 @@ const SELF_GUARD_DIR = (() => { try { return realpathSync(GUARD_DIR); } catch { 
 /**
  * A guard folder the CLI can vouch for (#643): this copy's own guard folder, or one whose
  * hcGuard.mjs is byte-equal to this copy's. A planted hcGuard.mjs no longer hides a folder
- * from realHcPath or gets a worker PATH word accepted.
+ * from realHcPath or gets a worker PATH word accepted. The `hc kill` shim's folder (#955,
+ * `hc-kill`, beside the same hcGuard.mjs) is vouched for by the same byte rule.
+ *
+ * Version skew (#955): a guard or shim folder of ANOTHER version (am and the pack installed at
+ * different versions, or a pane started before an update that moved the folder) is not
+ * byte-equal, so this CLI does not skip it and realHcPath takes its `hc` for the real one. The
+ * CLI's own kill (hcKill: restart, rm, worker kill) then runs through that other copy's shim
+ * or guard, which refuses it for a pane that is not a main bot's seat. It fails closed: the
+ * old pane stays and the verb says it wasn't ended; nothing is ended that the rule forbids.
+ * The shim's own lookup (hcGuard.mjs hcPastGuards) skips loosely, so bots' other hc calls are
+ * not affected. Bringing am and the pack to one version, then restarting the pane, clears it.
  */
 function isGuardDir(dir) {
   if (typeof dir !== "string" || dir === "") return false;
@@ -230,6 +240,7 @@ function isGuardDir(dir) {
  * the bot's direct calls (#624; #628 scopes send/keys/attach), not for the pack's own commands.
  * Skipping every guard folder (the pack's and am's) keeps `automagik-herdr worker` and the
  * remote commands working in a guarded pane, and never treats one guard as the real hc.
+ * Only a folder isGuardDir vouches for is skipped: see its note on version skew (fails closed).
  */
 function realHcPath() {
   const dirs = [...(process.env.PATH ?? "").split(":"), `${home()}/.local/bin`, dirname(process.execPath)];

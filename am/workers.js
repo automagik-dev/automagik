@@ -74,15 +74,25 @@ export const isKillGuardWord = (dir) => typeof dir === "string" && /(^|\/)hc-kil
 
 /**
  * `path` with `guard` first; a guard folder already on the PATH is moved to the front, never
- * repeated. A null guard leaves the path exactly as it is. This pack's other folder (the kill
- * shim under the full guard, or the full guard under the kill shim, as a worker of another
- * agent kind inherits from its bot's pane) is taken out: a pane has one of the two.
+ * repeated. A null guard leaves the path exactly as it is. A pane has one of the pack's two
+ * folders, and the stricter one wins:
+ * - the kill shim onto a PATH that already holds the full guard beside it (a Claude or Codex
+ *   worker started from a dsh-tui bot's pane inherits that pane's PATH): the PATH is left as
+ *   it is. The worker keeps the full guard it had before the shim existed, which limits its
+ *   send, label and run calls to the team and holds the same kill rule;
+ * - the full guard onto a PATH that holds the shim (a dsh-tui worker of a Claude bot): the
+ *   shim is taken out.
  */
 export function guardPathWith(path, guard) {
   if (!guard || !path) return path;
-  const own = [GUARD_DIR, KILL_GUARD_DIR];
-  const drop = own.includes(guard) ? own : [guard];
-  return [guard, ...String(path).split(":").filter((dir) => !drop.includes(dir))].join(":");
+  const words = String(path).split(":");
+  if (isKillGuardWord(guard)) {
+    const full = guard.replace(/hc-kill\/*$/, "guard");
+    if (words.includes(full) || (guard === KILL_GUARD_DIR && words.includes(GUARD_DIR))) return path;
+    return [guard, ...words.filter((dir) => dir !== guard)].join(":");
+  }
+  const drop = guard === GUARD_DIR ? [GUARD_DIR, KILL_GUARD_DIR] : [guard, guard.replace(/guard\/*$/, KILL_GUARD_NAME)];
+  return [guard, ...words.filter((dir) => !drop.includes(dir))].join(":");
 }
 
 /**

@@ -1262,17 +1262,19 @@ function approvedParams(s, worker, templateCommand = null, { killGuard = stableK
     : args.slice(args.indexOf("--") + 1), labels, env: {} });
 }
 
-test("approved worker (#955): its PATH starts with the stable folder's hc kill shim; the pack's own copy or none is refused", async (t) => {
+test("approved worker (#955): a sandboxed bot's worker of another agent keeps the pane's full guard, with no shim; the pack's own shim first is refused", async (t) => {
   for (const agent of ["claude", "codex", "antigravity"]) {
     const { s, client } = await approvedWorkerScene(t, { agent });
+    // The sandboxed pane's PATH holds the stable full guard, so the stable shim is not added:
+    // the worker's PATH word is the pane's own, the full guard still on it.
+    assert.ok(s.env.PATH.split(":").includes(s.stableGuard), s.env.PATH);
     const good = approvedParams(s, { agent });
     const at = good.argv.findIndex((word) => word.startsWith("PATH="));
-    assert.ok(good.argv[at].startsWith(`PATH=${stableKillDir(s.stableRoot)}:`), good.argv[at]);
-    for (const [name, killGuard] of [["the pack's own copy", KILL_GUARD_DIR], ["no shim", null]]) {
-      const answer = await client.call("terminal.run", approvedParams(s, { agent }, null, { killGuard }));
-      assert.match(answer.error?.message ?? "", /does not match approved agent/, `${agent}, ${name}: ${JSON.stringify(answer)}`);
-    }
-    assert.ok((await client.call("terminal.run", good)).result, `${agent}: the stable shim is allowed`);
+    assert.equal(good.argv[at], `PATH=${s.env.PATH}`);
+    assert.equal(good.argv[at].includes("/hc-kill"), false, good.argv[at]);
+    const own = await client.call("terminal.run", approvedParams(s, { agent }, null, { killGuard: KILL_GUARD_DIR }));
+    assert.match(own.error?.message ?? "", /does not match approved agent/, `${agent}, the pack's own shim first: ${JSON.stringify(own)}`);
+    assert.ok((await client.call("terminal.run", good)).result, `${agent}: the pane's own PATH is allowed`);
   }
 });
 

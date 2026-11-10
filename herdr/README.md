@@ -1461,8 +1461,19 @@ What the shim does not do, plainly:
 - On a linked machine the start uses that machine's own shim (the folder beside its
   `automagik-herdr`). A machine whose pack is older, or has none on its pane PATH, starts the
   bot without it and prints one warning: `<bot> runs on <machine> without the hc kill shim (#955)`.
-- Under the hc proxy, a sandboxed bot's worker of another agent gets the shim from the stable
-  folder (`dsh-tui install` copies it there); the proxy refuses the worker otherwise.
+- `dsh-tui install` copies the shim to the stable folder beside the guard; the proxy accepts
+  a worker's PATH only as the pack builds it.
+- A worker of another agent started from a dsh-TUI bot's pane inherits that pane's PATH, full
+  guard included. It keeps the full guard, as before this release, and gets no shim: the guard
+  holds the same kill rule and also limits the worker's `send`, `label` and `run` calls. The
+  same holds under the hc proxy, where the pane's PATH has the stable folder's guard.
+- Version skew fails closed. The CLI's own verbs (`restart`, `rm`, `worker kill`) reach the
+  real hc by skipping the guard and shim folders whose `hcGuard.mjs` is byte-equal to the
+  CLI's own copy. With am and the pack installed at different versions, a pane that one of
+  them started has the other version's shim first on its PATH; a restart asked from that pane
+  by the other CLI sends its kill through that shim, which refuses it unless the pane is a
+  main bot's seat. The old pane stays and the verb says it wasn't ended. Bring am and the pack
+  to one version and restart the pane.
 - It adds one short Node start to every `hc` call from those panes.
 
 ### The briefing hook (Claude bots)

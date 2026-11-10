@@ -1001,7 +1001,17 @@ test("the guard goes first on a dsh-tui PATH; every other named agent gets the h
     assert.equal(startArgs({ ...base, argv: [agent], agent, guard: null }).includes(`PATH=/bin`), true, `${agent}: an explicit null (a machine with no shim) adds none`);
   }
   // A worker of another agent kind inherits its bot's pane PATH: the pack's other folder is taken out.
-  assert.equal(guardPathWith(`${GUARD_DIR}:/a`, KILL_GUARD_DIR), `${KILL_GUARD_DIR}:/a`, "a Claude worker of a dsh-tui bot: the shim, not both");
+  // The stricter folder wins. A Claude or Codex worker started from a dsh-tui bot's pane inherits
+  // that pane's PATH: it keeps the full guard it had before the shim existed, and gets no shim.
+  assert.equal(guardPathWith(`${GUARD_DIR}:/a`, KILL_GUARD_DIR), `${GUARD_DIR}:/a`, "a Claude worker of a dsh-tui bot keeps the full guard");
+  assert.equal(guardPathWith(`/a:${GUARD_DIR}`, KILL_GUARD_DIR), `/a:${GUARD_DIR}`, "wherever it stands: the PATH is left as it is");
+  assert.equal(guardPathWith("/stable/guard:/a", "/stable/hc-kill"), "/stable/guard:/a", "the stable folder's pair too (a sandboxed bot's worker)");
+  assert.equal(guardPathWith("/other/guard:/a", "/stable/hc-kill"), "/stable/hc-kill:/other/guard:/a", "a guard that is not the shim's own neighbour does not count");
+  assert.equal(guardPathWith("/stable/hc-kill:/a", "/stable/guard"), "/stable/guard:/a", "the stable full guard takes its shim out");
+  for (const agent of ["claude", "codex", "antigravity", "omp"]) {
+    const inherited = workerArgs({ botId: ID.dev, branch: "b", cwd: "/w", parent: "t1", agent, argv: [agent], task: "t", path: `${GUARD_DIR}:/a:/b` });
+    assert.equal(inherited[inherited.indexOf("--") + 2], `PATH=${GUARD_DIR}:/a:/b`, `${agent} worker of a dsh-tui bot: the full guard, as before #955`);
+  }
   assert.equal(guardPathWith(`${KILL_GUARD_DIR}:/a`, GUARD_DIR), `${GUARD_DIR}:/a`, "a dsh-tui worker of a Claude bot: the full guard, not both");
   assert.equal(guardPathWith(`${KILL_GUARD_DIR}:/a`, KILL_GUARD_DIR), `${KILL_GUARD_DIR}:/a`, "already first: not repeated");
   assert.equal(guardPathWith(`${GUARD_DIR}:/a`, "/stable/guard"), `/stable/guard:${GUARD_DIR}:/a`, "another copy's folder leaves this pack's alone");
