@@ -655,6 +655,13 @@ agy follows once the meter has an agy source and Herdr launches agy workers with
 Decided 5 and 6 were reopened by the owner on 2026-11-10, after later work; the other four stand.
 The six questions this RFC asked were decided by Chat on 2026-11-09 (Decided, 1 to 6).
 
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: #897, #898, #899, #915.
+- Merged changes: #817, #822, #825, #827, #834, #835, #875 (last merged 2026-11-10).
+
 ## Links
 
 - RFCs: [0017](0017-usagemeter-crate.md), the crate, the meter lane (deliveries 4 to 6) and the

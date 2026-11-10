@@ -361,6 +361,13 @@ the orchestrator.
 
 None. The owner answered every question (D27 and Decided).
 
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: none (all tracked work is merged).
+- Merged changes: #205, #211, #236, #237, #238, #252, #259, #265, #272, #292, #302, #666 (last merged 2026-11-08).
+
 ## Links
 
 - Handoffs: `~/.config/herdr-app/handoffs/bot-system-unification.md` (D1, D4, D6, D7, D10, D12,

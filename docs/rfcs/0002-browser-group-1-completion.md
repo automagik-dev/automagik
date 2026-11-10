@@ -99,6 +99,13 @@ Order: 3a, then 3b, 3c and 3d. No other browser feature work merges before 3a.
    so each has its own test and rollback.
 4. **Trace caps.** Recommended: keep the last 50 runs or 30 days per Bot, whichever is smaller.
 
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: none (all tracked work is merged).
+- Merged changes: #203 (last merged 2026-11-03).
+
 ## Links
 
 - #121 in-app browser, #127 agent cursor

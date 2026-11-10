@@ -3,6 +3,7 @@
 | Field | Value |
 |---|---|
 | Status | Delivered (unverified: no delivery list; #190, #203 and #210 merged 2026-11-03; the owner OKd one version and the jump) |
+| Delivered | 2026-11-03 |
 | Milestone | n/a (process) |
 | Lanes | herdr (3.N.P), added here; pocket (3.N.P), added by Pocket's import |
 | Created | 2026-11-03 |
@@ -436,3 +437,10 @@ Resolved (t259's review, t22n's rulings, 2026-11-03):
 - Key rotation in two phases, the keyId taken from the secret's public key (t259's re-review, M3).
 - The Node floors: users' runtime Node 22.7 or later (the launcher, `install.sh`); tests on the
   newest Node 22 (22.15+, for `module.registerHooks`) and 24; no stub fallback.
+
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: #250.
+- Merged changes: #190, #203, #210, #278, #791, #806 (last merged 2026-11-09).

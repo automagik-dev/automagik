@@ -735,6 +735,13 @@ RFC 0017 leaves its question 7 open, to be answered by this RFC. The proposed an
    future am command that runs it) where Herdr is not open, and no daemon is added. The
    alternative is a scheduled job that am installs, which would need its own RFC.
 
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: #897, #899.
+- Merged changes: #764, #783, #788, #802, #806, #814, #817, #822, #825, #875 (last merged 2026-11-10).
+
 ## Links
 
 - RFCs:

@@ -3,6 +3,7 @@
 | Field | Value |
 |---|---|
 | Status | Delivered (2026-11-09: #790; hand-over #780, commit d0453789; Unfold's prerelease unfold-dsh-v3.108.7, weunfold/unfold#3; removal #854, commit 14b8fc50; answers: Q1-Q5, 2026-11-09; no question open) |
+| Delivered | 2026-11-09 |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | none: every step here touches only paths that never ship, so no step cuts a release |
 | Created | 2026-11-09 |
@@ -317,6 +318,13 @@ No new trust boundary: nothing installs from here before or after. Two notes:
 ## Open questions
 
 None. Questions 1 to 5 were answered by the owner on 2026-11-09 and are in Decided.
+
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: none (all tracked work is merged).
+- Merged changes: #790, #854 (last merged 2026-11-09).
 
 ## Links
 

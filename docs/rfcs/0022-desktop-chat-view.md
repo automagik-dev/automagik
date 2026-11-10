@@ -601,6 +601,13 @@ None. The eight questions this RFC asked were decided on 2026-11-09 (Decided, 1 
 owner, the rest by Chat as recommended, Q6 re-decided after review. Decided 9 (H before phase
 1) came from review the same day.
 
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: #852.
+- Merged changes: #847, #866 (last merged 2026-11-09).
+
 ## Links
 
 - RFCs: [0014](0014-shared-bot-registry.md) ("Herdr Bots in Automagik", "Other machines",

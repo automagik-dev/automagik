@@ -507,6 +507,13 @@ The guest half (delivery 2) runs on hosted Linux runners and gates every PR.
 None left. The owner answered all nine on 2026-11-04, each as the draft recommended: Q1-Q9 in
 Decided. The spike's numbers still pick between Q1's (a) and (b), and decide Q4's Windows 10.
 
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: none (all tracked work is merged).
+- Merged changes: #288, #292, #330, #349, #791 (last merged 2026-11-09).
+
 ## Links
 
 - Handoff for the Windows developer: [0016-windows-handoff.md](0016-windows-handoff.md).

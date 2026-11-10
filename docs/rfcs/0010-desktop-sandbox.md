@@ -228,6 +228,13 @@ Bot can read a key and send it out. D19 accepts this for now.
 5. **Unfold.** Recommended: Unfold consumes the same boundary API, so one supervisor serves
    both products.
 
+## Tracking
+
+Ledger pass (2026-11-10): the board links this RFC from its file.
+
+- Open issues: none (all tracked work is merged).
+- Merged changes: #188, #252, #288 (last merged 2026-11-04).
+
 ## Links
 
 - Handoff: `~/.config/herdr-app/handoffs/bot-system-unification.md` (D12, D13, D18, Arca and
