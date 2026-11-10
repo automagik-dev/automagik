@@ -4367,6 +4367,20 @@ test("RFC 0021: a seat start row carries core, created_ms, role, lead and squad;
   assert.equal(modeOf(ledgerPath(fresh.app)), 0o600);
   const main = seatRows(fresh)[0];
   assert.deepEqual([main.role, main.lead, main.squad], ["main", null, null], "the main bot heads no squad");
+  // #883: a symlink at the ledger's path is not followed: the file behind it keeps its bytes and
+  // its mode, and the start goes on with a warning.
+  const linked = scene(t);
+  linked.seed(team());
+  const behind = join(linked.root, "behind.jsonl");
+  writeFileSync(behind, "keep\n");
+  chmodSync(behind, 0o644);
+  mkdirSync(dirname(ledgerPath(linked.app)), { recursive: true });
+  symlinkSync(behind, ledgerPath(linked.app));
+  const viaLink = linked.cli(["start", "Genie"]);
+  assert.equal(viaLink.code, 0, viaLink.err);
+  assert.match(viaLink.err, /isn't in automagik-herdr\/workers\.jsonl, so its usage won't be tied to it: ELOOP/);
+  assert.equal(readFileSync(behind, "utf8"), "keep\n");
+  assert.equal(modeOf(behind), 0o644);
 });
 
 test("RFC 0021: core comes from hc server status, created_ms from hc get", (t) => {

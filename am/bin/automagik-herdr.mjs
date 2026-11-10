@@ -2207,9 +2207,11 @@ const report = (warnings) => { for (const w of warnings) process.stderr.write(`a
 
 /**
  * Appends one row to the workers ledger (workers.js) with a single O_APPEND write, the file the
- * owner's alone: made 0600, and set to 0600 again before every append (a file made under umask
- * 002 is 0664, and usagemeter refuses a group- or world-writable one; RFC 0021 (f) 6). Before
- * its first write in a run, an app home inside a git work tree (a project's) is kept out of git
+ * owner's alone: made 0600, and narrowed to its owner's bits again before every append (a file
+ * made under umask 002 is 0664, and usagemeter refuses a group- or world-writable one; RFC 0021
+ * (f) 6). The narrowing never widens a stricter mode, and the open never follows a symlink at
+ * the ledger's path (#883: tightenLedgers refuses one too; a Herdr ledger is a plain file).
+ * Before its first write in a run, an app home inside a git work tree (a project's) is kept out of git
  * (keepAppHomeOutOfGit): its rows hold session ids. The terminal runs already, so a failure only
  * comes back as a warning; null when written with nothing to say.
  */
@@ -2220,9 +2222,12 @@ export function appendLedger(row, appHomeDir = appHome()) {
     mkdirSync(path.slice(0, path.lastIndexOf("/")), { recursive: true });
     const outOfGit = keepAppHomeOutOfGit(appHomeDir);
     if (outOfGit) notes.push(outOfGit);
-    const fd = openSync(path, "a", LEDGER_MODE);
+    const fd = openSync(path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0), LEDGER_MODE);
     try {
-      try { fchmodSync(fd, LEDGER_MODE); } catch (e) {
+      try {
+        const mode = fstatSync(fd).mode & 0o777;
+        if ((mode & ~LEDGER_MODE) !== 0) fchmodSync(fd, mode & LEDGER_MODE);
+      } catch (e) {
         notes.push(`${path} couldn't be made private (chmod 600: ${e?.message ?? e}); usagemeter won't read a ledger others can write`);
       }
       writeSync(fd, ledgerLine(row));

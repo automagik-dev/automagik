@@ -927,6 +927,22 @@ test("#839: doctorDshTui and cmdDshTui doctor report wide or unowned ledgers rea
   const text = await cmdDshTui({}, ["doctor"], io);
   assert.match(text, /FAIL herdr-ledgers: .* \(fix: chmod 600 /);
 
+  // #883: the exec bits count as wider than 0600, and an owner-unreadable ledger (0070), which
+  // install and update leave alone without a word, is reported here with the chmod to run.
+  chmodSync(globalWorkers, 0o700);
+  chmodSync(projAttach, 0o070);
+  try {
+    const odd = await cmdDshTui({ json: true, project }, ["doctor"], io);
+    const oddCheck = odd.checks.find((c) => c.check === "herdr-ledgers");
+    assert.equal(oddCheck.ok, false);
+    assert.match(oddCheck.detail, /workers\.jsonl is mode 0700, wider than 0600/);
+    assert.match(oddCheck.detail, /attach\.jsonl is mode 0070, wider than 0600/);
+    assert.equal(oddCheck.fix, `chmod 600 '${globalWorkers}' '${projAttach}'`);
+    assert.equal(lstatSync(projAttach).mode & 0o777, 0o070, "doctor is read-only");
+  } finally {
+    chmodSync(projAttach, 0o600);
+  }
+
   chmodSync(globalWorkers, 0o600);
   chmodSync(projAttach, 0o600);
 
