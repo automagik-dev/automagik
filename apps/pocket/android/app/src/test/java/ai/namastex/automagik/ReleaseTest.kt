@@ -40,7 +40,7 @@ class ReleaseTest {
     // minutes-since-2025 codes the old automagik-pocket builds carry, and the APK stays on its own vX.Y.Z release.
     @Test fun takesTheMonorepoBuildOverAnOldOneAndNeverGoesBack() {
         val monorepo = Release.parse(json(code = 3057000, name = "3.57.0",
-            url = "https://github.com/automagik-dev/automagik/releases/download/v3.57.0/automagik-pocket-3.57.0.apk"))!!
+            url = "https://github.com/automagik-si/automagik/releases/download/v3.57.0/automagik-pocket-3.57.0.apk"))!!
         assertTrue(Updater.isNewer(monorepo, 966485))
         assertFalse(Updater.isNewer(monorepo, 3057000))
         // A pointer that names an older build (a forged or stale latest.json) is never offered.
