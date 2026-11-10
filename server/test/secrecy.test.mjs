@@ -149,6 +149,34 @@ test('an exact allowlist entry excuses one path, and a key may never be allowlis
   assert.equal(applyAllowlist([hit], [{ file: 'opt/leak/key.txt', rule: 'key', match: key, reason: 'never' }]).kept.length, 1)
 })
 
+test('the ACP SDK example home paths have one exact entry each, and each is necessary', () => {
+  const sdk = 'opt/automagik/profile/node_modules/@agentclientprotocol/sdk'
+  const unixHome = ['', 'home', 'user'].join('/')
+  const winHome = ['C:', 'Users', 'user'].join('\\')
+  const zodFile = ` * such as ${home('user')},\n * ${winHome}\\project\n`
+  const jsonFile = `{"description": "such as ${home('user')}"}\n`
+  const expected = [
+    [`${sdk}/dist/v2/schema/zod.gen.js`, zodFile, unixHome],
+    [`${sdk}/dist/v2/schema/zod.gen.js`, zodFile, winHome],
+    [`${sdk}/dist/v2/unstable/schema/zod.gen.js`, zodFile, unixHome],
+    [`${sdk}/dist/v2/unstable/schema/zod.gen.js`, zodFile, winHome],
+    [`${sdk}/schema/v2/schema.json`, jsonFile, unixHome],
+    [`${sdk}/schema/v2/schema.unstable.json`, jsonFile, unixHome],
+  ]
+  const dir = rootfs()
+  for (const [file, content] of expected) write(dir, file, content)
+  const entries = loadAllowlist()
+  assert.deepEqual(scanTree(dir, undefined, entries).hits, [])
+  for (const [file, , match] of expected) {
+    const found = entries.filter((entry) => entry.file === file && entry.rule === 'home-path' && entry.match === match)
+    assert.equal(found.length, 1, `${file}: expected one exact entry for ${match}`)
+    assert.match(found[0].reason, /ACP SDK/)
+    assert.match(found[0].reason, /not a host account/)
+    const kept = scanTree(dir, undefined, entries.filter((entry) => entry !== found[0])).hits
+    assert.deepEqual(kept.map((hit) => [hit.file, hit.rule, hit.match]), [[file, 'home-path', match]])
+  }
+})
+
 test('the redaction regex in the image code is not mistaken for a token', () => {
   const dir = rootfs()
   cpSync(join(HERE, '..', 'lib.mjs'), join(dir, 'opt/automagik/lib.mjs'))
