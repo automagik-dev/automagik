@@ -5,7 +5,7 @@
 // Pure: no `herdr`, `gpui-kit`, `gpui-base` or `fs`, so briefing.mjs runs it under plain
 // node and `node --test` runs it too. Apache-2.0.
 
-import { effectiveLead, MAX_INSTRUCTIONS } from "./model.js";
+import { cleanProjectPath, effectiveLead, inferProjectOf, MAX_INSTRUCTIONS, projectEntriesOf } from "./model.js";
 import { BRIEFING_MARK, BRIEFINGS_DIR } from "./models.js";
 import { OLD_PACK_NAME, PACK_NAME } from "./release.js";
 
@@ -63,10 +63,43 @@ export function statusWord(status, running, unreachable = false) {
 
 /**
  * The bots that report straight to `selfId` (by A1's effective lead, so a member whose
- * lead falls back counts under the main bot), in file order. Planned bots are skipped (A3).
+ * lead falls back counts under the main bot, and a bot in another project with `leadProject`
+ * pointing to this project and `lead` pointing to `selfId` counts too), in file order.
+ * Planned bots are skipped (A3).
  */
-export function directMembers(file, selfId) {
-  return file.bots.filter((b) => b.id !== selfId && !b.planned && b.kind === "member" && effectiveLead(file, b.id).lead === selfId);
+export function directMembers(file, selfId, { project = null, projects = null } = {}) {
+  const ownProject = inferProjectOf(file, selfId, project, projects);
+  const out = [];
+  const seen = new Set();
+  for (const b of file?.bots ?? []) {
+    if (!b || b.id === selfId || b.planned || b.kind !== "member") continue;
+    const eff = effectiveLead(file, b.id, { project: ownProject || null, projects });
+    if (eff.lead === selfId && (!eff.leadProject || (ownProject && eff.leadProject === ownProject))) {
+      out.push(b);
+      seen.add(`${ownProject}\0${b.id}`);
+    }
+  }
+  if (projects) {
+    const entries = projectEntriesOf(projects);
+    for (const [otherKey, otherFile] of entries) {
+      if ((ownProject && otherKey === ownProject) || otherFile === file) continue;
+      for (const b of otherFile?.bots ?? []) {
+        if (!b || b.planned || (b.kind !== "member" && !b.leadProject)) continue;
+        const pair = `${otherKey}\0${b.id}`;
+        if (seen.has(pair)) continue;
+        const targetKey = cleanProjectPath(b.leadProject);
+        const effProjects = ownProject || !targetKey || entries.some(([k]) => k === targetKey)
+          ? projects
+          : [...entries, [targetKey, file]];
+        const eff = effectiveLead(otherFile, b.id, { project: otherKey || null, projects: effProjects });
+        if (eff.lead === selfId && eff.leadProject && (!ownProject || eff.leadProject === ownProject)) {
+          out.push(b);
+          seen.add(pair);
+        }
+      }
+    }
+  }
+  return out;
 }
 
 // Keeps the end of a text (a screen tail's newest lines), marked when cut.
@@ -171,7 +204,7 @@ export const restartLine = (botId) => `To restart you, the person runs \`automag
  * `automagik-herdr brief`. The hook's once-only print compares this text, so it changes only
  * when the file does.
  */
-export function launchBriefingText({ self, file, guard = null, isGit = true }) {
+export function launchBriefingText({ self, file, guard = null, isGit = true, project = null, projects = null, lead: givenLead = null }) {
   const kind = self.kind === "main" ? "this project's main bot" : "a team member";
   const instructions = String(self.instructions ?? "");
   const shown = instructions.length > MAX_INSTRUCTIONS ? `${instructions.slice(0, MAX_INSTRUCTIONS)}… [cut at ${MAX_INSTRUCTIONS} characters]` : instructions;
@@ -183,13 +216,15 @@ export function launchBriefingText({ self, file, guard = null, isGit = true }) {
   ];
   if (shown.trim()) lines.push("Instructions:", shown.trim());
   lines.push(...workerLines(self, isGit), ...guardLines(self, guard), liveLine(self.id), restartLine(self.id));
-  const leadId = self.kind === "member" ? effectiveLead(file, self.id).lead : "";
-  const lead = leadId ? file.bots.find((b) => b.id === leadId) : null;
+  const eff = self.kind === "member" || self.leadProject
+    ? effectiveLead(file, self.id, { project, projects })
+    : { lead: "", leadProject: null, leadBot: null, warning: null };
+  const lead = givenLead ?? eff.leadBot ?? (eff.lead && !eff.leadProject ? file.bots.find((b) => b.id === eff.lead) : null);
   if (lead) {
     lines.push("", `Your lead: ${lead.name} (bot ${lead.id}). Report to it with \`hc send <terminal> "<result or blocker>"\` when you are done `
       + `or stuck; find its current terminal with \`hc ls --label bot=${lead.id}\` first, never from an older message.`);
   }
-  const team = directMembers(file, self.id);
+  const team = directMembers(file, self.id, { project, projects });
   if (team.length) {
     lines.push("", "Your team (bots that report to you, from .herdr/bots.json):");
     for (const m of team) lines.push(`- ${m.name} (bot ${m.id}${m.role ? `, ${m.role}` : ""})`);

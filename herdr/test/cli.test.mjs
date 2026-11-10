@@ -4101,6 +4101,139 @@ test("RFC 0021: no session id in the codex provider-gone note, on stderr or in -
   }
 });
 
+test("cross-project lead (#850): create, edit, ls, show, brief and dsh-tui doctor support reciprocal --lead-project and --cross-member", (t) => {
+  const s = scene(t);
+  s.seed(team());
+
+  // Create a second git project (spoke) under s.root.
+  const spoke = join(s.root, "spoke");
+  mkdirSync(spoke);
+  git(spoke, "init", "-q");
+  git(spoke, "commit", "-q", "--allow-empty", "-m", "start");
+
+  // Create SpokeMain in spoke reporting to Genie in s.project via --lead and --lead-project.
+  // Before Genie reciprocates with --cross-member, the CLI warns that the link is one-sided.
+  const createdMain = s.cli([
+    "create",
+    "--project", spoke,
+    "--kind", "main",
+    "--name", "SpokeMain",
+    "--agent", "claude",
+    "--omni",
+    "--lead", "Genie",
+    "--lead-project", s.project,
+    "--json",
+  ]);
+  assert.equal(createdMain.code, 0, createdMain.err);
+  assert.match(createdMain.err, /is one-sided/);
+  const spokeMainId = createdMain.json().id;
+  assert.equal(createdMain.json().bot.lead, ID.main);
+  assert.equal(createdMain.json().bot.leadProject, s.project);
+
+  // Create SpokeMember in spoke reporting to Captain in s.project.
+  const createdMem = s.cli([
+    "create",
+    "--project", spoke,
+    "--name", "SpokeMember",
+    "--agent", "claude",
+    "--omni",
+    "--lead", "Captain",
+    "--lead-project", s.project,
+    "--json",
+  ]);
+  assert.equal(createdMem.code, 0, createdMem.err);
+  assert.match(createdMem.err, /is one-sided/);
+  assert.equal(createdMem.json().bot.lead, ID.cap);
+  assert.equal(createdMem.json().bot.leadProject, s.project);
+
+  // While one-sided, dsh-tui doctor flags the lead checks as not ok (is one-sided).
+  const docOneSided = s.cli(["dsh-tui", "doctor", "--project", spoke, "--json"]);
+  const oneSidedChecks = docOneSided.json().checks.filter((c) => c.check.startsWith("lead:"));
+  assert.equal(oneSidedChecks.length, 2);
+  assert.equal(oneSidedChecks.every((c) => !c.ok && /is one-sided/.test(c.detail)), true);
+
+  // Reciprocate from s.project on Genie and Captain via --cross-member <bot>@<dir>.
+  const recGenie = s.cli(["edit", "Genie", "--project", s.project, "--cross-member", `SpokeMain@${spoke}`, "--json"]);
+  assert.equal(recGenie.code, 0, recGenie.err);
+  assert.equal(recGenie.err, "");
+  assert.deepEqual(recGenie.json().bot.crossMembers, [{ id: spokeMainId, project: spoke }]);
+
+  const recCap = s.cli(["edit", "Captain", "--project", s.project, "--cross-member", `SpokeMember@${spoke}`, "--json"]);
+  assert.equal(recCap.code, 0, recCap.err);
+  assert.equal(recCap.err, "");
+
+  // Refusals: missing folder, folder with no .herdr/bots.json, missing bot, planned lead, or cross-project cycle.
+  const missingDir = s.cli(["edit", "SpokeMember", "--project", spoke, "--lead", "Genie", "--lead-project", join(s.root, "nope")]);
+  assert.equal(missingDir.code, 2);
+  assert.match(missingDir.err, /is not a folder/);
+
+  const noBotsDir = join(s.root, "empty-proj");
+  mkdirSync(noBotsDir);
+  const noBots = s.cli(["edit", "SpokeMember", "--project", spoke, "--lead", "Genie", "--lead-project", noBotsDir]);
+  assert.equal(noBots.code, 1);
+  assert.match(noBots.err, /No \.herdr\/bots\.json in/);
+
+  const noSuchBot = s.cli(["edit", "SpokeMember", "--project", spoke, "--lead", "Nobody", "--lead-project", s.project]);
+  assert.equal(noSuchBot.code, 1);
+  assert.match(noSuchBot.err, /no bot "Nobody"/i);
+
+  const plannedLead = s.cli(["edit", "SpokeMember", "--project", spoke, "--lead", "Studio", "--lead-project", s.project]);
+  assert.equal(plannedLead.code, 1);
+  assert.match(plannedLead.err, /planned/);
+
+  // Cross-project cycle refusal: editing Captain in s.project to report to SpokeMember in spoke.
+  const cycle = s.cli(["edit", "Captain", "--project", s.project, "--lead", "SpokeMember", "--lead-project", spoke]);
+  assert.equal(cycle.code, 1);
+  assert.match(cycle.err, /reports to Captain, so it can't be its lead/);
+
+  // ls, show, brief, and dsh-tui doctor in spoke and s.project once reciprocal.
+  const lsOut = s.cli(["ls", "--project", spoke]);
+  assert.equal(lsOut.code, 0, lsOut.err);
+  assert.match(lsOut.out, new RegExp(`main → Genie \\(${s.project.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\)`));
+  assert.match(lsOut.out, new RegExp(`→ Captain \\(${s.project.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\)`));
+
+  const showJson = s.cli(["show", "SpokeMain", "--project", spoke, "--json"]);
+  assert.equal(showJson.code, 0, showJson.err);
+  assert.equal(showJson.json().lead, ID.main);
+  assert.equal(showJson.json().leadName, "Genie");
+  assert.equal(showJson.json().leadProject, s.project);
+  const showText = s.cli(["show", "SpokeMain", "--project", spoke]);
+  assert.equal(showText.code, 0, showText.err);
+  assert.match(showText.out, new RegExp(`lead\\s+Genie \\(${ID.main}\\) in ${s.project.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+
+  const showGenie = s.cli(["show", "Genie", "--project", s.project]);
+  assert.equal(showGenie.code, 0, showGenie.err);
+  assert.match(showGenie.out, /cross members\s+SpokeMain/);
+
+  const briefSpoke = s.cli(["brief", "SpokeMain", "--project", spoke]);
+  assert.equal(briefSpoke.code, 0, briefSpoke.err);
+  assert.match(briefSpoke.out, /Your lead: Genie \(bot b-aaaaaaaaaa\)/);
+
+  const briefHub = s.cli(["brief", "Genie", "--project", s.project]);
+  assert.equal(briefHub.code, 0, briefHub.err);
+  assert.match(briefHub.out, new RegExp(`SpokeMain \\(bot ${spokeMainId}`));
+
+  const doc = s.cli(["dsh-tui", "doctor", "--project", spoke, "--json"]);
+  const docChecks = doc.json().checks.filter((c) => c.check.startsWith("lead:"));
+  assert.equal(docChecks.length, 2);
+  assert.equal(docChecks.every((c) => c.ok), true);
+
+  // Clearing with --no-lead-project, --lead-project="", and --no-cross-members.
+  const clearMain = s.cli(["edit", "SpokeMain", "--project", spoke, "--no-lead-project", "--json"]);
+  assert.equal(clearMain.code, 0, clearMain.err);
+  assert.equal(clearMain.json().bot.lead, undefined);
+  assert.equal(clearMain.json().bot.leadProject, undefined);
+
+  const clearMem = s.cli(["edit", "SpokeMember", "--project", spoke, "--lead-project=", "--json"]);
+  assert.equal(clearMem.code, 0, clearMem.err);
+  assert.equal(clearMem.json().bot.lead, undefined);
+  assert.equal(clearMem.json().bot.leadProject, undefined);
+
+  const clearGenieCm = s.cli(["edit", "Genie", "--project", s.project, "--no-cross-members", "--json"]);
+  assert.equal(clearGenieCm.code, 0, clearGenieCm.err);
+  assert.equal(clearGenieCm.json().bot.crossMembers, undefined);
+});
+
 test("#858: scratch helpers isolate TMPDIR inside a project with .git and .herdr/bots.json, warn once, and fail loudly on an unisolated folder", (t) => {
   const box = scratchRoot(t, "hb-858-");
   const outer = join(box, "outer");
@@ -4199,4 +4332,3 @@ test("#858: non-git scratch folder stops at the scene ceiling and create --proje
   assert.match(plainMode.out.trim(), /^b-[a-z2-7]{10}$/);
   assert.match(plainMode.err, new RegExp(`saved in ${s.botsPath} \\(project ${s.project}, resolved from --project ${sub}\\)\\.`));
 });
-

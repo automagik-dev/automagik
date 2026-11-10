@@ -468,13 +468,14 @@ build and run their own teams.
 automagik-herdr ls [--all]                 bots: kind, lead, category, rank, code, planned, agent, model, pane, status
 automagik-herdr show <bot>                 one bot in full
 automagik-herdr create --name N --agent A [--kind main|member] [--role R] [--code true|false]
-       [--instructions TEXT | --instructions-file F|-] [--lead BOT] [--category ID]
+       [--instructions TEXT | --instructions-file F|-] [--lead BOT [--lead-project DIR]] [--category ID]
+       [--cross-member BOT@DIR]...
        [--character C --colour K | --omni] [--model M] [--rank R]
        [--agy-mode auto|accept-edits|plan] [--agy-allow RULE]... [--agy-deny RULE]...
        [--planned-wave N [--planned-note T]]
        [--worker-agent A] [--worker-model M] [--worker-effort E] [--worker-agy-mode M]
        [--worker-template T]
-automagik-herdr edit <bot> [the create options] [--code true|false] [--unplanned] [--no-model] [--no-category] [--rank=]
+automagik-herdr edit <bot> [the create options] [--code true|false] [--unplanned] [--no-model] [--no-category] [--no-lead-project] [--no-cross-members] [--rank=]
 automagik-herdr rm <bot>
 automagik-herdr category ls | add --title T [--sub S] [--id ID] | edit <id> | rm <id> | order <id>...
 automagik-herdr start <bot> [--space ID] [--tab ID]
@@ -877,11 +878,16 @@ verb but `send` (`hc events --terminal`/`--children-of` included), and any `--on
 allowed `send`.
 
 `send` is scoped to the caller's team: its lead chain (`effectiveLead` up), its declared lead
-chain (`bot.lead`, then that bot's lead, while each id is listed in bots.json, planned entries
-included — so a captain whose lead is a planned Orchestrator reaches it), its members
-(`descendantsOf`), the project's main bot (`mainBotOf`), its own workers (`worker.of` = the
-caller's bot) and the shared tester/reviewer/fixer ranks in bots.json (`RANKS`). The existing
-reviewer/fixer pane-label path also remains; a `role=tester` label alone grants nothing.
+chain (`bot.lead`, then that bot's lead, while each id is listed in the project's bots.json,
+planned entries included — so a captain whose lead is a planned Orchestrator reaches it), its
+members (`descendantsOf`), the project's main bot (`mainBotOf`), its own workers (`worker.of` =
+the caller's bot) and the shared tester/reviewer/fixer ranks in bots.json (`RANKS`). Across
+projects (`--lead-project` paired with `--cross-member <bot>@<dir>` on the lead), `send` adds
+only the direct `lead <-> member` link (never the lead's upward chain or main bot, and never the
+member's team or workers), and the guard and proxy read the other project's `0600` approved
+snapshot (`approved/`), never its live `.herdr/bots.json`; a one-sided or unapproved link fails
+closed. The existing reviewer/fixer pane-label path also remains; a `role=tester` label alone
+grants nothing.
 A captain bot may send to another squad's captain when both bots.json ranks are `captain`.
 Its workers do not inherit that rule, and a `role=captain` label alone grants nothing.
 A pm, integrator or fixer bot the project lists may also send to any bot the project lists,
@@ -1075,9 +1081,15 @@ on this computer are labelled. The lead's pane is the one the attach ledger ties
 ```
 
 - Exactly one bot has `kind: "main"`. Every other bot is a `member`.
-- `lead` is the id of the bot a member reports to. Without one, the member reports to the
-  main bot. A lead that is missing, planned or part of a cycle counts as the main bot, and
-  the row shows a warning.
+- `lead` is the id of the bot a member (or a `main` bot with `leadProject`) reports to. Without
+  one, a member reports to the main bot. `leadProject` is an optional absolute main-checkout
+  path (`--lead <bot> --lead-project <dir>`, cleared with `--no-lead-project` or
+  `--lead-project=""`): the lead lives in that other project on the same machine, and the bot
+  (or the whole team under a cross-project `main` bot) nests under that lead in the sidebar,
+  receives briefings and parent pane wiring across the two projects, and can exchange `hc send`
+  messages with its cross-project lead chain and reports. A lead (or `leadProject`) that is
+  missing, planned or part of a cycle falls back to the project's main bot (or no lead for a
+  `main` bot), and the row shows a warning.
 - `category` places a bot that reports to the main bot under a category header. Bots
   deeper down show under their lead and ignore it. A category id is a lowercase slug
   (`a-z`, `0-9`, single dashes, like `quality-gate`), since it goes into a pane label. A new
