@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Imports automagik-dev/automagik-pocket (branch dev) with its history into the branch checked out
+# Imports automagik-si/automagik-pocket (branch dev) with its history into the branch checked out
 # here (docs/rfcs/0011-monorepo-parts-and-releases.md, "Pocket"): the phone app and its docs under
 # apps/pocket/, Pocket Link (desktop/pocket-link/) under herdr/mods/pocket-link/, its README, recipe,
 # keys, licence and preview beside the mod, the way the pack's own mods keep theirs.
 #
 #   scripts/import-pocket.sh [<source>] [<branch>]
 #
-# <source> defaults to https://github.com/automagik-dev/automagik-pocket.git, <branch> to dev.
+# <source> defaults to https://github.com/automagik-si/automagik-pocket.git, <branch> to dev.
 # It clones the source into a temporary folder, rewrites THAT clone with `git filter-repo` (never
 # this repository), and merges the result here with `--allow-unrelated-histories`. Tags are not
 # fetched: the old repo's v0.N.0 tags are not releases of this one.
@@ -20,7 +20,7 @@
 # Needs git-filter-repo (`brew install git-filter-repo` or `pip install git-filter-repo`).
 set -euo pipefail
 
-SOURCE=${1:-https://github.com/automagik-dev/automagik-pocket.git}
+SOURCE=${1:-https://github.com/automagik-si/automagik-pocket.git}
 BRANCH=${2:-dev}
 PREFIX=apps/pocket
 LINK=herdr/mods/pocket-link

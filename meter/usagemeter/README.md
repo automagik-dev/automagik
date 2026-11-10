@@ -6,13 +6,13 @@ It is shared by two Automagik products:
 Automagik Herdr on the desktop, and the Automagik Pocket phone app through its Pocket Link mod,
 which install it with `install.sh` and run it on the machines they
 reach. Rows follow `ae/1` (agent event envelope, revision 3, owned by automagik-herdr). Design:
-[RFC 0005](https://github.com/automagik-dev/automagik-pocket/blob/dev/docs/rfcs/0005-usage-meter.md).
+[RFC 0005](https://github.com/automagik-si/automagik-pocket/blob/dev/docs/rfcs/0005-usage-meter.md).
 
 It runs once and exits. It has no daemon, no listener and makes no network calls; the only process
 it talks to is the local `hc`.
 
 This project used to live in the `meter/` folder of
-[automagik-pocket](https://github.com/automagik-dev/automagik-pocket), where it was built as
+[automagik-pocket](https://github.com/automagik-si/automagik-pocket), where it was built as
 `automagik-meter`; it moved here with its history. Its store, summary doc and environment
 variables did not change, so an existing install keeps its data. Since 0.5.0 the store lives in
 `~/.automagik/meter/` and the first `sync` moves it there (see [What it stores](#what-it-stores)).
@@ -54,7 +54,7 @@ build the pointer names (check its signature with `bun scripts/meter-lane.ts ver
 checkout):
 
 ```sh
-base=https://github.com/automagik-dev/automagik/releases/download
+base=https://github.com/automagik-si/automagik/releases/download
 curl -fLO "$base/meter-lane/meter.json" -fLO "$base/meter-lane/meter.json.sig"
 v=$(sed -n 's/^  "version": "\(.*\)",$/\1/p' meter.json)
 curl -fLO "$base/v$v/usagemeter-linux-x86_64" -fLO "$base/v$v/usagemeter.SHA256SUMS"
@@ -310,6 +310,7 @@ usagemeter sync --no-publish    # update the store only
 usagemeter sync --backfill      # import the full history instead of 30 days (resumes across runs)
 usagemeter sync --evidence-backfill --days 90   # per-call evidence for the last 90 days, re-tagged
 usagemeter status               # what the store holds, as JSON
+usagemeter coverage             # the store's bot-tag coverage, per window, repo and bot
 usagemeter --version
 ```
 
@@ -399,6 +400,39 @@ the meter ties to more than one checkout of the repo is never summed: its row is
 `reason: task_ambiguous`, and the meter never prints a checkout path. Its numbers are
 evidence-backed, so the branch row stays the total. A window with no task labels is an `ok`
 answer with `rows: []` and the branch answer unchanged: a reader falls back to it.
+
+## Coverage
+
+```sh
+usagemeter coverage                                   # text: d1, d7 and d30, every repo
+usagemeter coverage --window d7 --window d30          # only those windows
+usagemeter coverage --repo example.com/acme/widgets   # narrow the rows (repeatable)
+usagemeter coverage --json                            # one record, for a fleet step
+```
+
+The store's bot-tag coverage (RFC 0026 (a)), over the same rows a `--by bot` answer counts: every
+row of `usage` whose repo is in scope and whose hour is in the window, with tokens above zero.
+They split into `attributed`, `ambiguous` (`claimants_differ`), `unlinked` (`no_record`,
+`dsh_tui_seat`, `other_machine`) and `before_evidence`; the four counts are the total.
+`bot_coverage` is attributed over total, four decimals, null (never 0) when nothing is counted;
+`inspected` is attributed over the usage not before evidence, and is always printed beside it as
+the diagnostic. The unit is tokens, never rows or cost. Usage with no repo is outside the
+denominator and printed as `no_repo` store-wide, even with `--repo` (it belongs to no query
+answer); `before_evidence_tagged` is the old definition's frozen tag, never in the numerator.
+Each repo gets its four counts and ratio, each bot its attributed tokens, share and tie mix, with
+the contract's `unrecorded` fields left visible: at most 50 repos and 50 bots are shown, the rest
+are counted (`repos_omitted`, `bots_omitted`) and summed into an `other` line, so every total
+includes every repo and bot, and `truncated` says when a list was capped. A zero class share or a
+repo with no usage is a vouched 0 only when every source is `ok` or `absent` and no old folder's
+store is degraded; otherwise it is `unknown` (a null share / `state: unknown`), and the record
+names the unreadable sources (`incomplete_sources`, `all_vouch`). Ratios are always over counted
+usage, never a bound; only token totals are lower bounds while ingestion is incomplete, stale or
+the window is clipped. It opens the store read-only as `status` does and creates nothing (SQLite
+may add an empty `-wal` and a `-shm` beside the store, as for the query): exit 0 reported, 1
+error, 2 bad request, 10 no store, 11 no snapshot in time, 12 store from a newer meter, 13 store
+only `sync` can migrate. The 64 KiB output ceiling is the RFC 0018 reference-workload bound; the
+record itself is capped by the 50/50 lists, and delivery 5's per-machine entry bound cuts it
+further.
 
 ## The summary doc
 

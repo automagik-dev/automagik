@@ -266,7 +266,7 @@ The shape was read from DSH 0.2.1-rc.2:
 
 | Endpoint | Payload | Does |
 |---|---|---|
-| `state` | none | The flags; `deepseek` (a `DEEPSEEK_API_KEY` or a DeepSeek account sign-in is stored); `piAiRoutes`; `aiConnected`; `preload` (`omni`, `genie`, `unfold` or null); `host` (`unfold`, only when set). |
+| `state` | none | The flags; `deepseek` (a `DEEPSEEK_API_KEY` or a DeepSeek account sign-in is stored); `piAiRoutes`; `aiConnected`; `preload` (`omni`, `genie`, `unfold` or null); `host` (`unfold`, only when set); `machine` (`{ os, remoteHint? }`: the OS family DSH runs on, `macos`, `windows`, `linux` or `other`, and `remoteHint: true` when DSH was launched over SSH; never the hostname, user or home). |
 | `done` | `{ stepId, connected? }` | Sets the flag for `omni-welcome`, `omni-connect-ai` or `omni-connect`. Connect AI's Continue sends `connected: true`: the companion and the Omni Bot, made without a model, then get the team's default model (DSH's default model when it is served and has its key, else the first model that can run), and their held greetings go out. Skip sets nothing. |
 | `cliproxy` | `{ baseURL, apiKey }` | The route above; answers `{ route, baseURL, models }`. |
 | `ais` | none | Every row: `{ id, name, via, kind, ready, on, found, signIn?, keyUrl?, needs?, duplicates? }`, and dsh-subscriptions' accounts and hidden vendors. Names and states only. |

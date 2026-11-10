@@ -151,7 +151,7 @@ test('under host unfold, Omni\'s choices hold no new Omni of its own', () => {
   const omniType = { type: 'omni', groups: [] }
   const card = local => render(team.OmniCard({ power: { phase: 'none', detail: { sandbox: null }, busy: null, problem: null, use: () => {}, remote: () => {}, local, cancelPairing: () => {} }, onPower: () => {}, type: omniType, abilities: {}, onToggle: () => {}, live: null }))
   const titles = tree => findAll(tree, byClass('oai-destiny-tile')).filter(node => node.type === 'button').map(node => textOf(findAll(node, node => node.type === 'strong')[0]))
-  assert.deepEqual(titles(card(() => {})), ['Run Omni on this computer', 'An Omni somewhere else'])
+  assert.deepEqual(titles(card(() => {})), ['Run Omni on DSH\'s computer', 'An Omni somewhere else'])
   assert.deepEqual(titles(card(undefined)), ['An Omni somewhere else'])
 })
 

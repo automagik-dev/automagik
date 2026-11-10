@@ -2,8 +2,8 @@
 
 | Field | Value |
 |---|---|
-| Status | Delivered (unverified: no delivery list; #190, #203 and #210 merged 2026-11-03; the owner OKd one version and the jump) |
-| Delivered | 2026-11-03 |
+| Status | Accepted (process in use; delivery unverified: open work #207 and #215; #250 Play flavor deferred to Pocket; #190, #203 and #210 merged 2026-11-03; the owner OKd one version and the jump) |
+| Delivered | |
 | Milestone | n/a (process) |
 | Lanes | herdr (3.N.P), added here; pocket (3.N.P), added by Pocket's import |
 | Created | 2026-11-03 |
@@ -442,5 +442,6 @@ Resolved (t259's review, t22n's rulings, 2026-11-03):
 
 Ledger pass (2026-11-10): the board links this RFC from its file.
 
-- Open issues: #250.
+- Open issues: #207, #215.
+- Deferred to Pocket: #250 (Play distribution) - RFC 0011 Open question 2.
 - Merged changes that cite this RFC: #190, #203, #210, #278, #791, #806 (last merged 2026-11-09).

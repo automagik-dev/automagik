@@ -173,7 +173,7 @@ test("herdr.pack links automagik-herdr as install.sh does, leaves someone else's
   assert.ok(!existsSync(join(m.binDir, "am")), "am is the am part's (D34), never the pack's");
   const d = doctorOf(m, "herdr.pack");
   assert.deepEqual(failed(d), [], JSON.stringify(d.checks));
-  assert.deepEqual(d.checks.map((c) => c.check).filter((c) => !c.startsWith("dsh-tui")), ["record", "pack-version", "pack-mods", "briefing-entry", "briefing-hook", "command", "path", "node", "agent-antigravity"]);
+  assert.deepEqual(d.checks.map((c) => c.check).filter((c) => !c.startsWith("dsh-tui")), ["restart-path", "record", "pack-version", "pack-mods", "briefing-entry", "briefing-hook", "command", "path", "node", "agent-antigravity"]);
   const noPath = doctorOf(m, "herdr.pack", { PATH: "/usr/bin" });
   assert.equal(noPath.code, 0, "not on PATH is a note, never a rollback");
   assert.match(noPath.checks.find((c) => c.check === "path").fix, /export PATH=/);
@@ -272,7 +272,7 @@ test("herdr.pack uninstall: the whole pack out; hooks, entry point, keys and lin
   assert.match(uninstall(m.ctx(), P("herdr.pack")).detail, /not installed: nothing to do/, "idempotent");
   for (const id of PART_IDS) assert.equal(uninstall(m.ctx(), P(id)).ok, true, id);
   assert.equal(doctorOf(m, "herdr.pack").code, 1);
-  assert.equal(doctorOf(m, "herdr.pack").checks[0].fix, "am install herdr.pack");
+  assert.equal(doctorOf(m, "herdr.pack").checks.find((c) => c.check === "record").fix, "am install herdr.pack");
 
   // Reinstalled, then purged: the kept set goes too.
   install(m.ctx(), P("herdr.pack"), packSource);
@@ -802,4 +802,13 @@ test("doctor reports which briefing a project's hook runs: the pack's stable ent
   rmSync(join(m.mods, "am-sidebar", "briefing.mjs"));
   const neither = check();
   assert.match(neither.detail, /; neither the pack's entry \(.*\) nor am's entry \(.*\) is installed$/);
+});
+
+
+test("#805 pack doctor describes the supported restart path", (t) => {
+  const m = machine(t);
+  const note = doctorOf(m, "herdr.pack").checks.find((l) => l.check === "restart-path");
+  assert.ok(note);
+  assert.equal(note.ok, true);
+  assert.match(note.detail, /automagik-herdr restart <bot>.*am restart <bot>.*never \/restart/);
 });

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Imports automagik-dev/automagik-herdr (branch dev) under herdr/, with its history, into the
+# Imports automagik-si/automagik-herdr (branch dev) under herdr/, with its history, into the
 # branch checked out here (docs/rfcs/0011-monorepo-parts-and-releases.md).
 #
 #   scripts/import-herdr.sh [<source>] [<branch>] [<commit>]
 #
-# <source> defaults to https://github.com/automagik-dev/automagik-herdr.git, <branch> to dev.
+# <source> defaults to https://github.com/automagik-si/automagik-herdr.git, <branch> to dev.
 # <commit> pins the import to that commit of <branch> (the frozen SHA of the final re-run): it must
 # be the branch's tip or reachable from it, else the run stops before anything is merged.
 # It clones the source into a temporary folder, rewrites THAT clone with
@@ -21,7 +21,7 @@
 # Needs git-filter-repo (`brew install git-filter-repo` or `pip install git-filter-repo`).
 set -euo pipefail
 
-SOURCE=${1:-https://github.com/automagik-dev/automagik-herdr.git}
+SOURCE=${1:-https://github.com/automagik-si/automagik-herdr.git}
 BRANCH=${2:-dev}
 COMMIT=${3:-}
 PREFIX=herdr

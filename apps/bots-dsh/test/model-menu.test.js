@@ -537,3 +537,16 @@ test('in a Bot\'s chat the level goes with the model through the chat pick, and 
   assert.deepEqual(picks, [['model', 'deepseek/pro'], ['effort', 'high']])
   assert.deepEqual(fresh.updates, [])
 })
+
+test('a Bot kept on a plan route until its CLI can take it says so, not that its model is unavailable (#868)', () => {
+  const { modelHint } = module.exports
+  const bot = { id: 'b1', name: 'Ops', model: 'openai-codex/gpt-5.6-sol', appliedModel: 'openai-codex/gpt-5.6-sol' }
+  const roster = { ready: true, byId: { b1: bot }, models: lineup, defaultModel: 'deepseek/flash' }
+  const waiting = reason => ({ ...roster, subscriptionWaiting: { 'openai-codex': { to: 'acp-codex', cli: 'Codex', reason } } })
+  assert.equal(modelHint(bot, roster, undefined), 'This model is not available now. Pick another one.')
+  assert.equal(modelHint(bot, waiting('sign-in'), undefined), 'This Bot stays on 5.6 Sol until Codex is signed in.')
+  assert.equal(modelHint(bot, waiting('cli'), undefined), 'This Bot stays on 5.6 Sol until Codex is ready.')
+  assert.equal(modelHint(bot, waiting('checking'), undefined), 'This Bot stays on 5.6 Sol until Codex is ready.')
+  // Another route's wait says nothing about this Bot.
+  assert.equal(modelHint(bot, { ...roster, subscriptionWaiting: { anthropic: { to: 'acp-claude', cli: 'Claude Code', reason: 'sign-in' } } }, undefined), 'This model is not available now. Pick another one.')
+})

@@ -36,6 +36,9 @@ const HERDR_APP_BIN = mkdtempSync(join(tmpdir(), "herdr-app-bin-"));
 const HERDR_APP_CALLS = join(HERDR_APP_BIN, "calls");
 writeFileSync(join(HERDR_APP_BIN, "herdr-app"), `#!/bin/sh\nprintf '%s\\n' "$*" >> "${HERDR_APP_CALLS}"\nexit 0\n`);
 chmodSync(join(HERDR_APP_BIN, "herdr-app"), 0o755);
+// Restoration tests must never discover the host's live hc, even if cwd has a roster.
+writeFileSync(join(HERDR_APP_BIN, "hc"), "#!/bin/sh\nprintf '%s\\n' '{\"terminals\":[]}'\n");
+chmodSync(join(HERDR_APP_BIN, "hc"), 0o755);
 process.env.PATH = `${HERDR_APP_BIN}:${process.env.PATH ?? ""}`;
 after(() => rmSync(HERDR_APP_BIN, { recursive: true, force: true }));
 
@@ -2504,4 +2507,192 @@ test("#839: tightenLedgers refuses a ledger swapped for a symlink between inspec
   assert.equal(rFifo.warnings.length, 1);
   assert.match(rFifo.warnings[0], /attach\.jsonl is not a regular file: left as it is/);
   assert.ok(gitCalls <= 2, `expected distinct folders resolved at most once, got ${gitCalls} git calls`);
+});
+
+
+test("#805 restore notifies only the live project main bot once per version", async (t) => {
+  const { notifyMainBotOfRestore } = await import("../mods/am-sidebar/update.mjs");
+  assert.equal(typeof notifyMainBotOfRestore, "function");
+  const dir = mkdtempSync(join(tmpdir(), "restore-main-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const modsDir = join(dir, "app/mods"), projectDir = join(dir, "project");
+  mkdirSync(join(projectDir, ".herdr"), { recursive: true });
+  writeFileSync(join(projectDir, ".herdr/bots.json"), JSON.stringify({ bots: [{ id: "b-main", kind: "main" }, { id: "b-other", kind: "member" }] }));
+  const calls = [];
+  let live = false;
+  const hcRun = (args) => { calls.push(args); return JSON.stringify(args[0] === "ls" ? { terminals: live ? [{ address: "t5", state: "live" }] : [] } : {}); };
+  const args = { modsDir, projectDir, version: "0.2.0", restored: "0.1.0", failed: ["am-tabs"], hcRun };
+  assert.deepEqual(notifyMainBotOfRestore(args), { sent: false });
+  live = true;
+  assert.equal(notifyMainBotOfRestore(args).sent, true);
+  assert.deepEqual(notifyMainBotOfRestore(args), { sent: false });
+  const sends = calls.filter((c) => c[0] === "send");
+  assert.deepEqual(sends, [["send", "t5", "Automagik Herdr update 0.2.0 failed to load (am-tabs) and rolled back to 0.1.0; no restart is needed for 0.2.0."]]);
+  assert.deepEqual(calls.find((c) => c[0] === "ls"), ["ls", "--label", "bot=b-main", "--json"]);
+  const note = join(stateDirOf(modsDir), "restore-notified.json");
+  assert.equal((await import("node:fs")).statSync(note).mode & 0o777, 0o600);
+  assert.equal(JSON.parse(readFileSync(note)).botId, "b-main");
+  assert.deepEqual(notifyMainBotOfRestore({ ...args, version: "0.3.0", hcRun: () => { throw Error("missing hc"); } }), { sent: false });
+});
+
+
+test("#805 update restoration sends the main-bot notice and keeps its dedup record", async (t) => {
+  const h = autoHome(["0.2.0"]);
+  t.after(() => h.done());
+  const app = fakeCheckFailThenKill(join(h.home, "notify-check"));
+  const projectDir = join(h.home, "project");
+  mkdirSync(join(projectDir, ".herdr"), { recursive: true });
+  writeFileSync(join(projectDir, ".herdr/bots.json"), JSON.stringify({ bots: [{ id: "b-main", kind: "main" }] }));
+  const calls = [];
+  const hcRun = (args) => { calls.push(args); return JSON.stringify(args[0] === "ls" ? { terminals: [{ address: "t5", state: "live" }] } : {}); };
+  for (let n = 0; n < 2; n += 1) {
+    const r = await installUpdate({ keys, fetch: fakeFetch(h.table), env: {}, modsDir: h.mods, herdrApp: app.bin, projectDir, hcRun });
+    assert.equal(r.installed.restored.version, "0.1.0");
+  }
+  assert.equal(calls.filter((c) => c[0] === "send").length, 1);
+  assert.equal(JSON.parse(readFileSync(join(stateDirOf(h.mods), "restore-notified.json"))).failedVersion, "0.2.0");
+});
+
+test("#805 restore falls back to a live binding and the last bound project", async (t) => {
+  const { notifyMainBotOfRestore } = await import("../mods/am-sidebar/update.mjs");
+  const { attachLine, attachRow } = await import("../mods/am-sidebar/attach.js");
+  const root = mkdtempSync(join(tmpdir(), "restore-binding-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const modsDir = join(root, "app/mods"), state = stateDirOf(modsDir), projectDir = join(root, "project");
+  mkdirSync(join(projectDir, ".herdr"), { recursive: true });
+  mkdirSync(state, { recursive: true });
+  writeFileSync(join(projectDir, ".herdr/bots.json"), JSON.stringify({ bots: [{ id: "b-aaaaaaaaaa", kind: "main" }] }));
+  writeFileSync(join(state, "attach.jsonl"), attachLine(attachRow({ event: "attach", bot: "b-aaaaaaaaaa", terminal: "t5", created_ms: 10, core: "fake", project: projectDir, by: "start" })));
+  const calls = [];
+  let live = false;
+  const hcRun = (args) => { calls.push(args); return JSON.stringify(args[0] === "ls" ? { terminals: [] } : { state: live ? "live" : "finished", created_ms: 10 }); };
+  const args = { modsDir, version: "0.2.0", restored: "0.1.0", failed: ["am-tabs"], hcRun };
+  assert.deepEqual(notifyMainBotOfRestore({ ...args, projectDir }), { sent: false });
+  live = true;
+  const previous = process.cwd();
+  try {
+    process.chdir(root);
+    assert.equal(notifyMainBotOfRestore(args).sent, true);
+  } finally { process.chdir(previous); }
+  assert.deepEqual(calls.filter((c) => c[0] === "send").map((c) => c[1]), ["t5"]);
+  writeFileSync(join(projectDir, ".herdr/bots.json"), JSON.stringify({ bots: [] }));
+  assert.deepEqual(notifyMainBotOfRestore({ ...args, version: "0.3.0", projectDir }), { sent: false });
+});
+
+test("#805 a blocked main bot is recorded pending and notified on the next call", async (t) => {
+  const { notifyMainBotOfRestore } = await import("../mods/am-sidebar/update.mjs");
+  const dir = mkdtempSync(join(tmpdir(), "restore-pending-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const modsDir = join(dir, "app/mods"), projectDir = join(dir, "project");
+  mkdirSync(join(projectDir, ".herdr"), { recursive: true });
+  writeFileSync(join(projectDir, ".herdr/bots.json"), JSON.stringify({ bots: [{ id: "b-main", kind: "main" }] }));
+  const calls = [];
+  let blocked = true;
+  const hcRun = (args) => {
+    calls.push(args);
+    if (args[0] === "ls") return JSON.stringify({ terminals: [{ address: "t5", state: "live" }] });
+    if (args[0] === "send" && blocked) { const error = new Error("hc send failed"); error.status = 9; throw error; }
+    return "{}";
+  };
+  const args = { modsDir, projectDir, version: "0.2.0", restored: "0.1.0", failed: ["am-tabs"], hcRun };
+  assert.deepEqual(notifyMainBotOfRestore(args), { sent: false });
+  const note = () => JSON.parse(readFileSync(join(stateDirOf(modsDir), "restore-notified.json"), "utf8"));
+  assert.deepEqual(note().pendingBots, ["b-main"]);
+  assert.deepEqual(note().notifiedBots, []);
+  blocked = false;
+  assert.deepEqual(notifyMainBotOfRestore(args), { sent: true });
+  assert.deepEqual(note().notifiedBots, ["b-main"]);
+  assert.deepEqual(note().pendingBots, []);
+  assert.equal(calls.filter((c) => c[0] === "send").length, 2);
+  assert.deepEqual(notifyMainBotOfRestore(args), { sent: false });
+});
+
+test("#805 restore notifies every project main bot and prefers its own live binding", async (t) => {
+  const { notifyMainBotOfRestore } = await import("../mods/am-sidebar/update.mjs");
+  const { attachLine, attachRow } = await import("../mods/am-sidebar/attach.js");
+  const root = mkdtempSync(join(tmpdir(), "restore-projects-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const modsDir = join(root, "app/mods"), state = stateDirOf(modsDir);
+  const p1 = join(root, "one"), p2 = join(root, "two");
+  for (const [dir, id] of [[p1, "b-aaaaaaaaaa"], [p2, "b-cccccccccc"]]) {
+    mkdirSync(join(dir, ".herdr"), { recursive: true });
+    writeFileSync(join(dir, ".herdr/bots.json"), JSON.stringify({ bots: [{ id, kind: "main" }] }));
+  }
+  mkdirSync(state, { recursive: true });
+  writeFileSync(join(state, "attach.jsonl"), attachLine(attachRow({ event: "attach", bot: "b-aaaaaaaaaa", terminal: "t5", created_ms: 10, core: "fake", project: p1, by: "start" })));
+  writeFileSync(join(dirname(modsDir), "am-sidebar-projects.json"), JSON.stringify({ projects: [{ path: p1 }, p2] }));
+  const calls = [];
+  const hcRun = (args) => {
+    calls.push(args);
+    if (args[0] === "get") return JSON.stringify({ state: "live", created_ms: 10 });
+    if (args[0] === "ls") {
+      const label = args[args.indexOf("--label") + 1];
+      if (label === "bot=b-aaaaaaaaaa") return JSON.stringify({ terminals: [{ address: "t9", state: "live", cwd: "/elsewhere" }] });
+      return JSON.stringify({ terminals: [{ address: "t8", state: "live", cwd: "/elsewhere" }, { address: "t6", state: "live", cwd: p2 }] });
+    }
+    return "{}";
+  };
+  assert.equal(notifyMainBotOfRestore({ modsDir, projectDir: p1, version: "0.2.0", restored: "0.1.0", failed: ["am-tabs"], hcRun }).sent, true);
+  assert.deepEqual(calls.filter((c) => c[0] === "send").map((c) => c[1]), ["t5", "t6"]);
+  assert.equal(calls.some((c) => c[0] === "ls" && c.includes("bot=b-aaaaaaaaaa")), false, "the project's live binding came first");
+  const note = JSON.parse(readFileSync(join(state, "restore-notified.json"), "utf8"));
+  assert.deepEqual(note.notifiedBots, ["b-aaaaaaaaaa", "b-cccccccccc"]);
+  assert.deepEqual(note.pendingBots, []);
+});
+
+test("#805 checkForUpdate retries a pending rollback notice", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "restore-tick-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const modsDir = join(dir, "app/mods"), state = stateDirOf(modsDir), projectDir = join(dir, "project");
+  mkdirSync(state, { recursive: true });
+  mkdirSync(join(projectDir, ".herdr"), { recursive: true });
+  writeFileSync(join(projectDir, ".herdr/bots.json"), JSON.stringify({ bots: [{ id: "b-main", kind: "main" }] }));
+  writeFileSync(join(state, RESTORE_FILE), JSON.stringify({ version: "0.1.0", failedVersion: "0.2.0", failed: ["am-tabs"], mod: "am-tabs" }));
+  writeFileSync(join(state, "restore-notified.json"), JSON.stringify({ failedVersion: "0.2.0", restoredVersion: "0.1.0", notifiedBots: [], pendingBots: ["b-main"] }));
+  const calls = [];
+  const hcRun = (args) => {
+    calls.push(args);
+    return JSON.stringify(args[0] === "ls" ? { terminals: [{ address: "t5", state: "live", cwd: projectDir }] } : {});
+  };
+  const r = await checkForUpdate({ modsDir, projectDir, env: {}, fetch: async () => ({ status: 404, ok: false }), hcRun });
+  assert.equal(r.disabled, false);
+  assert.equal(calls.filter((c) => c[0] === "send").length, 1);
+  assert.match(calls.find((c) => c[0] === "send")[2], /0\.2\.0/);
+  const note = JSON.parse(readFileSync(join(state, "restore-notified.json"), "utf8"));
+  assert.deepEqual(note.notifiedBots, ["b-main"]);
+  assert.deepEqual(note.pendingBots, []);
+});
+
+test("#805 a blocked main pane is kept pending and never receives the notice", async (t) => {
+  const { notifyMainBotOfRestore } = await import("../mods/am-sidebar/update.mjs");
+  const { attachLine, attachRow } = await import("../mods/am-sidebar/attach.js");
+  const root = mkdtempSync(join(tmpdir(), "restore-blocked-pane-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const modsDir = join(root, "app/mods"), state = stateDirOf(modsDir);
+  const p1 = join(root, "one"), p2 = join(root, "two");
+  for (const [dir, id] of [[p1, "b-aaaaaaaaaa"], [p2, "b-cccccccccc"]]) {
+    mkdirSync(join(dir, ".herdr"), { recursive: true });
+    writeFileSync(join(dir, ".herdr/bots.json"), JSON.stringify({ bots: [{ id, kind: "main" }] }));
+  }
+  mkdirSync(state, { recursive: true });
+  writeFileSync(join(state, "attach.jsonl"), attachLine(attachRow({ event: "attach", bot: "b-cccccccccc", terminal: "t6", created_ms: 20, core: "fake", project: p2, by: "start" })));
+  const calls = [];
+  const hcRun = (args) => {
+    calls.push(args);
+    if (args[0] === "get") return JSON.stringify({ state: "live", created_ms: 20, status: { state: "blocked" } });
+    if (args[0] === "ls") {
+      const label = args[args.indexOf("--label") + 1];
+      return JSON.stringify({ terminals: label === "bot=b-aaaaaaaaaa" ? [{ address: "t5", state: "live", cwd: p1, status: "blocked" }] : [] });
+    }
+    throw new Error("send must not run on a blocked pane");
+  };
+  assert.deepEqual(notifyMainBotOfRestore({ modsDir, projectDir: p1, version: "0.2.0", restored: "0.1.0", failed: ["am-tabs"], hcRun }), { sent: false });
+  let note = JSON.parse(readFileSync(join(state, "restore-notified.json"), "utf8"));
+  assert.deepEqual(note.pendingBots, ["b-aaaaaaaaaa", "b-cccccccccc"]);
+  assert.deepEqual(note.notifiedBots, []);
+  assert.deepEqual(notifyMainBotOfRestore({ modsDir, projectDir: p2, version: "0.3.0", restored: "0.1.0", failed: ["am-tabs"], hcRun }), { sent: false });
+  note = JSON.parse(readFileSync(join(state, "restore-notified.json"), "utf8"));
+  assert.deepEqual(note.pendingBots, ["b-cccccccccc"]);
+  assert.deepEqual(note.notifiedBots, []);
+  assert.equal(calls.filter((c) => c[0] === "send").length, 0);
 });

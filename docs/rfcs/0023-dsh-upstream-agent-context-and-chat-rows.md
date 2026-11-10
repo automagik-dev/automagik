@@ -1,4 +1,4 @@
-# RFC 0023: DSH upstream: agent context, a chat tail slot and a draft hook
+# RFC 0023: DSH upstream: agent context, a chat tail slot, a draft hook and a session terminal field
 
 | Field | Value |
 |---|---|
@@ -9,8 +9,9 @@
 
 ## Summary
 
-Three small extension points we would ask DeepSeek Harness (DSH) to add, so the Automagik plugins
-can drop three workarounds they carry today on DSH 0.2.2-rc.1:
+Four small extension points we would ask DeepSeek Harness (DSH) to add: three so the Automagik
+plugins can drop workarounds they carry today on DSH 0.2.2-rc.1, and one so the meter can tie a
+dsh-tui seat to the terminal it launched from:
 
 1. **A provider-managed context flag** on a model, so DSH's compaction guard skips a model that
    keeps its own context (an agent over ACP) instead of failing the switch.
@@ -18,15 +19,18 @@ can drop three workarounds they carry today on DSH 0.2.2-rc.1:
    conversation without leaning on DSH's rendered attributes.
 3. **A hook before a composer draft is persisted**, so a plugin can keep a value it recognises (a
    pasted sign-in code) out of the saved draft.
+4. **A terminal field on the session header**, so the meter can match a dsh-tui session to the
+   launch that started it, instead of leaving the call `dsh_tui_seat`.
 
-Each workaround is in RFC 0003's 2026-11-09 amendment. This RFC is the proposal only: it names
-the DSH code it would touch, what we would remove when each piece lands, and the questions for
-DSH's maintainers. It sets no Automagik contract.
+The first three workarounds are in RFC 0003's 2026-11-09 amendment; the fourth is RFC 0026's
+delivery 4a. This RFC is the proposal only: it names the DSH code it would touch, what we would
+remove when each piece lands, and the questions for DSH's maintainers. It sets no Automagik
+contract.
 
 ## Motivation
 
-All three come from putting Claude Code and Codex (acp-dsh's `acp-claude`, `acp-codex`) under the
-Bot team, and from signing in to their CLIs from a Bot's chat.
+The first three come from putting Claude Code and Codex (acp-dsh's `acp-claude`, `acp-codex`)
+under the Bot team, and from signing in to their CLIs from a Bot's chat.
 
 **1. The compaction guard on an agent.** `compaction-basic` prepends an `agent/request` listener
 that, whenever the request model differs from the previous request header's, calls
@@ -77,10 +81,20 @@ window that never showed the link, a pasted code is recorded there. This is the 
 residual risk of the sign-in row (RFC 0003's amendment); the team's own send endpoints, its
 deliveries, a group's running round and Pocket refuse such a text before anything records it.
 
+**4. A dsh-tui seat's terminal.** A dsh-tui call is found by its session header's `cwd` and the
+worker launch whose worktree it is; a seat's `cwd` is the project root, shared with whatever runs
+there by hand, so the meter cannot tie the seat to its launch and leaves the call `dsh_tui_seat`
+(RFC 0026 (d)). hc sets `HC_TERMINAL_ID` in every pane it starts, and the CLI already relies on
+it, but DSH's session start line (`type: "session"`, the file's first line) has a fixed key
+allowlist: required `type`, `version`, `id`, `createdAt`, `isSeeded` and `delegationDepth`,
+optional `cwd`, `parentSession`, `origin` and `agentPreset`. The session create API takes no
+header extras, and an unknown header key is refused on read. So the terminal is DSH's format to
+add, not a plugin hook: nothing a plugin registers can put it in the header.
+
 ## Design
 
-Each proposal is the smallest addition that removes one workaround. Names are suggestions for
-DSH's maintainers to change.
+Each proposal is the smallest addition that removes one workaround or ties a seat to its launch.
+Names are suggestions for DSH's maintainers to change.
 
 ### 1. Provider-managed context
 
@@ -155,11 +169,47 @@ type DraftFilter = (draft: { sessionId: string; text: string; reason: 'persist' 
 0003's amendment) can be dropped too is a product question, not part of this proposal: the lock
 also keeps the code off DSH's input triggers and its undo history.
 
+### 4. A terminal field on the session header
+
+One optional field on the session start line, the value of `HC_TERMINAL_ID` when it is set;
+absent for a session started outside hc or hosted by the desktop's own DSH.
+
+```ts
+// The session start line DSH writes first in the session file, one optional field more.
+interface SessionStartLine {
+  type: 'session'
+  // ...the keys DSH already writes
+  /** The terminal this session runs in, when the environment names one. */
+  terminal?: string
+}
+```
+
+- Owner: **DSH**. The v4 field must land in DSH core's read and write together: a DSH before the
+  field refuses a session that carries it. The additive claim covers only sessions without the
+  field: a newer DSH reads an older session that has none, and a DSH before the field still reads
+  sessions that do not carry it.
+- When 4b ships, the meter would read it: the dsh-tui source would carry the header's terminal
+  on the session, and the resolver would match it by address to a launch on the machine's own
+  core whose span covers the session's start. It would persist a normal `link` row at `session`
+  basis. A resumed session's first line would cover only the first launch's span; two launches on
+  the terminal whose spans overlap would name no launch, so the call would be ambiguous, never a
+  guess; a terminal that matches no launch row would be `no_record`. The pack's separate Claude
+  witness (RFC 0026 (d)) is unchanged.
+- **What we remove.** Nothing here: no workaround is removed. The meter's fallbacks and
+  `dsh_tui_seat` stay, and that share narrows.
+
+*Check:* RFC 0026 (h), T4; (i), P2 measured; G4 in `Acked by genie, 2026-11-10`, with the
+wording-only schema change merged with it or before it.
+*Rollback:* 4b reverts to `dsh_tui_seat`; the field is additive and an older meter ignores it.
+
 ## What does not change
 
 - Agents keep receiving the chat as acp-dsh's redacted, capped replay (RFC 0003).
 - The sign-in attempt stays in acp-dsh's host and its routes stay owner-only.
 - Nothing here asks DSH to know about sign-ins, Bots or ACP.
+- The meter's join rules and fallbacks stay RFC 0026's: a session without the field stays
+  `dsh_tui_seat`, a terminal that matches no launch row stays `no_record`, and neither is a guess.
+- Nothing here goes to DSH's maintainers without the owner's OK.
 
 ## Open questions
 
@@ -173,6 +223,8 @@ also keeps the code off DSH's input triggers and its undo history.
    client `submit` filter, since only the host sees every client's prompt?
 5. Where does this go first: an issue on DSH's tracker, a patch in the desktop's runtime patches
    (which would make it a desktop release, RFC 0011), or both?
+6. Does DSH want a header field rather than session metadata, and what name (`terminal`,
+   `terminalId`, `hcTerminal`)? May it be omitted when `HC_TERMINAL_ID` is unset?
 
 ## Tracking
 
@@ -184,4 +236,6 @@ Ledger pass (2026-11-10): the board links this RFC from its file.
 ## Links
 
 - [0003](0003-model-routes-and-acp.md), amendment of 2026-11-09: the workarounds this would remove.
+- [0026](0026-bot-tag-coverage.md): delivery 4a is the ask; (d) is the join.
+- Issue #897, the Meter task that delivers the meter half (4b).
 - `apps/acp-dsh/src/host/pressure.js`, `apps/bots-dsh/src/client/cli-login.js`.

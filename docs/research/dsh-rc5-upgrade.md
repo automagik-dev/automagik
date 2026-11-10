@@ -23,7 +23,7 @@ Target SRI: `sha512-WkyJZv4zl9sCAxSzRctGm58m0rilGqwR6pniBiLOz5CPDfHfDuAUicg0AAaz
 
 Baseline CLI SRI, from actual baseline lock: `sha512-8gxl6zOi6vx1sDolH+vjh9txrpbXD+t74Z2YfWkEBtR3xP2YEtk0bbLkgLZRnYQgDxCoXitXyXDKn5k0+6iXrg==`. Registry metadata does not supply a `gitHead` proving a reproducible package build: the official tag/release identifies source, while tarball SRI pins the independently retrieved published package. No unsupported source-to-binary attestation is claimed.
 
-The target is **not master**, `0.2.2-alpha.2`, a stable substitute, or a guessed installed version. No duplicate rc5 wish/design history or open PR was found in this copy / read-only forge searches. Related merged [PR #35](https://github.com/automagik-dev/automagik/pull/35) owns the all-pin tooling; [PR #160](https://github.com/automagik-dev/automagik/pull/160) separately pinned the Claude default source.
+The target is **not master**, `0.2.2-alpha.2`, a stable substitute, or a guessed installed version. No duplicate rc5 wish/design history or open PR was found in this copy / read-only forge searches. Related merged [PR #35](https://github.com/automagik-si/automagik/pull/35) owns the all-pin tooling; [PR #160](https://github.com/automagik-si/automagik/pull/160) separately pinned the Claude default source.
 
 ## 2. Exact upstream delta
 
@@ -74,12 +74,12 @@ Read-only issue evidence retrieved 2026-10-30T21:48Z–21:51Z; all below were OP
 
 | Existing track | Attributable conclusion |
 |---|---|
-| [#141 drafts](https://github.com/automagik-dev/automagik/issues/141) | Reasoning-only delta does not address ephemeral-origin draft persistence. No crash/draft deletion experiment; exhausted planning budget not revived. |
-| [#162 MCP auth](https://github.com/automagik-dev/automagik/issues/162) | Report distinguishes configuration save from HTTP401 auth failure; no MCP/OAuth implementation changed. Root cause still unknown; no login or auth fix claimed. |
-| [#161 rendering](https://github.com/automagik-dev/automagik/issues/161) | A thinking display fix is not evidence that blank historical conversation bodies are fixed. Missing root cause and attributable reproduction/test remain open. |
-| [#164 stopped wish retention](https://github.com/automagik-dev/automagik/issues/164) | No task/Live retention change. Disappearing UI entries are not proof of deleted sessions or checkouts. No retention-policy change implemented. |
-| [#166 memory review](https://github.com/automagik-dev/automagik/issues/166) | No memory/checkpoint behavior change. Reported no-op/limit symptoms remain unproven causes; exhausted memory budget not reset. |
-| Claude defaults / [PR #160](https://github.com/automagik-dev/automagik/pull/160) | Existing reviewed Claude Auto source commit retained. No upstream Claude change in this interval. [#120 task permissions](https://github.com/automagik-dev/automagik/issues/120) is a distinct open source-analysis report, not proof about Claude adapter defaults. No default-permission widening. |
+| [#141 drafts](https://github.com/automagik-si/automagik/issues/141) | Reasoning-only delta does not address ephemeral-origin draft persistence. No crash/draft deletion experiment; exhausted planning budget not revived. |
+| [#162 MCP auth](https://github.com/automagik-si/automagik/issues/162) | Report distinguishes configuration save from HTTP401 auth failure; no MCP/OAuth implementation changed. Root cause still unknown; no login or auth fix claimed. |
+| [#161 rendering](https://github.com/automagik-si/automagik/issues/161) | A thinking display fix is not evidence that blank historical conversation bodies are fixed. Missing root cause and attributable reproduction/test remain open. |
+| [#164 stopped wish retention](https://github.com/automagik-si/automagik/issues/164) | No task/Live retention change. Disappearing UI entries are not proof of deleted sessions or checkouts. No retention-policy change implemented. |
+| [#166 memory review](https://github.com/automagik-si/automagik/issues/166) | No memory/checkpoint behavior change. Reported no-op/limit symptoms remain unproven causes; exhausted memory budget not reset. |
+| Claude defaults / [PR #160](https://github.com/automagik-si/automagik/pull/160) | Existing reviewed Claude Auto source commit retained. No upstream Claude change in this interval. [#120 task permissions](https://github.com/automagik-si/automagik/issues/120) is a distinct open source-analysis report, not proof about Claude adapter defaults. No default-permission widening. |
 
 ## 5. Ranked opportunities (recommendations only)
 

@@ -2,10 +2,10 @@
 
 `automagik.json` is this repository's [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin market index (format 1): the Bot team and the welcome, each a git source pinned to a release commit with the plugin's folder, and the outside plugins Automagik vetted (`VETTED` in `scripts/marketplace.ts`: the Claude Code provider and the AI subscriptions, reviewed forks under automagik-genie), each pinned to the commit that was reviewed. Each release lists itself here (`release.yml` runs `bun scripts/marketplace.ts pin v<version>`), and `bun scripts/marketplace.ts check` proves every entry: DSH's own parser, and each of this repository's commits holds the package and version it lists (dsh-marketplace's check proves the vetted forks' commits).
 
-Most people add the Automagik market, which lists these plugins with every other Automagik product's, at each release ([automagik-dev/dsh-marketplace](https://github.com/automagik-dev/dsh-marketplace)):
+Most people add the Automagik market, which lists these plugins with every other Automagik product's, at each release ([automagik-si/dsh-marketplace](https://github.com/automagik-si/dsh-marketplace)):
 
 ```
-https://raw.githubusercontent.com/automagik-dev/dsh-marketplace/main/index.json
+https://raw.githubusercontent.com/automagik-si/dsh-marketplace/main/index.json
 ```
 
 ## Add it to your DSH
@@ -19,7 +19,7 @@ The market ships with DSH as an optional bundle. Turn it on, then add the index:
    - id: plugin-market
      config:
        indexes:
-         - https://raw.githubusercontent.com/automagik-dev/dsh-marketplace/main/index.json
+         - https://raw.githubusercontent.com/automagik-si/dsh-marketplace/main/index.json
    ```
 
 DSH asks before it installs anything, and installs exactly the version listed. Every Omni also serves a market for its own release (`https://<your-omni>/api/market/index.json`) with the release of these plugins it was tested with.

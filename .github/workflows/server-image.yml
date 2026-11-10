@@ -3,7 +3,7 @@ name: Server image
 # The Automagik server image (server/): the automagik-web DeepSeek Harness profile, with the
 # plugins from one chosen release, built from the dispatched tree. Every change builds, smokes
 # and scans it; a dispatch or a published release then pushes it to
-# ghcr.io/automagik-dev/automagik-server as :<content>-<short sha> and, when allowed, :latest.
+# ghcr.io/automagik-si/automagik-server as :<content>-<short sha> and, when allowed, :latest.
 # The tag and the org.opencontainers.image.version label are the content release (the plugin
 # tarballs' release, without its v); org.opencontainers.image.revision is the full workflow
 # commit. :latest moves only for a non-prerelease content release and never to a version older
@@ -323,7 +323,7 @@ jobs:
           retention-days: 1
 
   publish:
-    name: Publish ghcr.io/automagik-dev/automagik-server
+    name: Publish ghcr.io/automagik-si/automagik-server
     needs: image
     if: needs.image.outputs.publish == 'true'
     runs-on: ubuntu-24.04
@@ -338,7 +338,7 @@ jobs:
       TAG: ${{ needs.image.outputs.tag }}
       REVISION: ${{ needs.image.outputs.revision }}
       LATEST: ${{ needs.image.outputs.latest }}
-      GHCR: ghcr.io/automagik-dev/automagik-server
+      GHCR: ghcr.io/automagik-si/automagik-server
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:

@@ -79,7 +79,7 @@ layout above. The prefix is `AUTOMAGIK_UPGRADE_*` on purpose: the unit already s
 The latest release comes from the GitHub API, never a hardcoded version:
 
 ```sh
-gh api repos/automagik-dev/automagik/releases/latest --jq .tag_name
+gh api repos/automagik-si/automagik/releases/latest --jq .tag_name
 ```
 
 `--to <tag>` (with or without the `v`) overrides it. A prerelease target is refused.
@@ -242,7 +242,7 @@ sudo tar -C "$HOME/prod/automagik/runtime" -czf "$BK/runtime-before.tgz" .
 VER=3.49.0
 REL="$HOME/prod/automagik/releases/$VER"
 mkdir -p "$REL/dist" && cd "$REL/dist"
-gh release download "v$VER" -R automagik-dev/automagik -D . \
+gh release download "v$VER" -R automagik-si/automagik -D . \
   --pattern 'plugins.json' --pattern 'PLUGINS.SHA256SUMS' \
   --pattern 'lane.json' --pattern 'lane.json.sig' \
   --pattern 'automagik-bots-dsh-*.tgz' --pattern 'automagik-welcome-dsh-*.tgz' \

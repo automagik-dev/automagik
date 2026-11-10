@@ -94,7 +94,7 @@ jobs:
       held: ${{ steps.hold.outputs.held }}
     env:
       GH_TOKEN: ${{ github.token }}
-      OMNI: automagik-dev/omni
+      OMNI: automagik-si/omni
       DRY_RUN: ${{ inputs.dry_run && 'true' || 'false' }}
       WANT_VERSION: ${{ inputs.omni_version }}
       WANT_COMMIT: ${{ inputs.omni_commit }}

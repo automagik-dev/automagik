@@ -110,6 +110,9 @@ export function teamActions({ call, after, partFor, roster, ui, live, cards, hel
       try { return await after(call('update-bot', { id, ...patch, model: ref })) } catch (error) {
         const provider = cliProviderOf(ref)
         if (error?.code === 'bot/sign-in-required' && provider && openCliLogin(id, provider, ref)) return undefined
+        // An agent already signed in on this computer, to an account the person has not
+        // confirmed for Bots (#869): the same row, at its account step.
+        if (error?.code === 'bot/account-confirm-required' && provider && openCliLogin(id, provider, ref)) return undefined
         throw error
       }
     },
@@ -120,6 +123,9 @@ export function teamActions({ call, after, partFor, roster, ui, live, cards, hel
     cliLoginAnswer: (botId, provider, attemptId, value) => call('cli-login-answer', loginPayload(botId, provider, { attemptId, value })),
     cliLoginCancel: (botId, provider, attemptId) => call('cli-login-cancel', loginPayload(botId, provider, { attemptId })),
     cliLoginConnections: () => call('cli-login-connections', {}),
+    cliLoginConfirm: (botId, provider, ref, model) => call('cli-login-confirm', loginPayload(botId, provider, { ...(ref === undefined ? {} : { ref }), ...(model === undefined ? {} : { model }) })),
+    cliLoginAccounts: () => call('cli-login-accounts', {}),
+    cliLoginNoticed: provider => call('cli-login-noticed', { provider }),
     contextStatus: botId => call('context-status', { botId }),
     usageStats: (botId, sessionId) => call('usage-stats', { botId, sessionId }),
     memoryReviewStatus: botId => call('memory-review-status', { botId }),
