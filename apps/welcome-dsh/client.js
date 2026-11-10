@@ -8973,6 +8973,18 @@ var PT_BR = {
   "Your Omni on this computer": "Seu Omni neste computador",
   "Omni on this Mac": "Omni neste Mac",
   "Omni on this computer": "Omni neste computador",
+  "Your Omni on this PC": "Seu Omni neste PC",
+  "Omni on this PC": "Omni neste PC",
+  "Your Omni on your Linux server": "Seu Omni no seu servidor Linux",
+  "Omni on your Linux server": "Omni no seu servidor Linux",
+  "Your Omni on your Mac": "Seu Omni no seu Mac",
+  "Omni on your Mac": "Omni no seu Mac",
+  "Your Omni on your Windows PC": "Seu Omni no seu PC com Windows",
+  "Omni on your Windows PC": "Omni no seu PC com Windows",
+  "Your Omni on your server": "Seu Omni no seu servidor",
+  "Omni on your server": "Omni no seu servidor",
+  "Your Omni on DSH's computer": "Seu Omni no computador do DSH",
+  "Omni on DSH's computer": "Omni no computador do DSH",
   "port {port}": "porta {port}",
   "saved in your Omni CLI": "salvo na sua CLI do Omni",
   "Not answering right now.": "Não está respondendo agora.",
@@ -8983,9 +8995,21 @@ var PT_BR = {
   "Connect {omni}": "Conectar {omni}",
   "Already on this Mac": "Já está neste Mac",
   "Already on this computer": "Já está neste computador",
+  "Already on this PC": "Já está neste PC",
+  "Already on your Linux server": "Já está no seu servidor Linux",
+  "Already on your Mac": "Já está no seu Mac",
+  "Already on your Windows PC": "Já está no seu PC com Windows",
+  "Already on your server": "Já está no seu servidor",
+  "Already on DSH's computer": "Já está no computador do DSH",
   "Saved in your Omni CLI": "Salvo na sua CLI do Omni",
   "Run Omni on this Mac": "Rodar o Omni neste Mac",
   "Run Omni on this computer": "Rodar o Omni neste computador",
+  "Run Omni on this PC": "Rodar o Omni neste PC",
+  "Run Omni on your Linux server": "Rodar o Omni no seu servidor Linux",
+  "Run Omni on your Mac": "Rodar o Omni no seu Mac",
+  "Run Omni on your Windows PC": "Rodar o Omni no seu PC com Windows",
+  "Run Omni on your server": "Rodar o Omni no seu servidor",
+  "Run Omni on DSH's computer": "Rodar o Omni no computador do DSH",
   "A private Omni of its own, set up for you": "Um Omni privado, só seu, configurado para você",
   "An Omni somewhere else": "Um Omni em outro lugar",
   "On a server, or the link Omni sent you": "Em um servidor, ou o link que o Omni enviou para você",
@@ -10558,6 +10582,54 @@ function resetPower() {
   for (const listener of Array.from(listeners)) listener();
 }
 
+// src/client/where.js
+var DESKTOP_OS = { darwin: "macos", linux: "linux", win32: "windows" };
+var OS_FAMILIES = /* @__PURE__ */ new Set(["macos", "linux", "windows", "other"]);
+function isLoopbackHost(hostname) {
+  if (typeof hostname !== "string") return false;
+  const name = hostname.trim().toLowerCase().replace(/^\[/, "").replace(/\]$/, "").replace(/\.$/, "");
+  if (name === "") return false;
+  if (name === "localhost" || name.endsWith(".localhost")) return true;
+  if (name === "::1" || name === "0:0:0:0:0:0:0:1" || name === "0.0.0.0") return true;
+  const v4 = name.replace(/^::ffff:/, "");
+  if (/^127(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}$/.test(v4)) return true;
+  return /^::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}$/.test(name);
+}
+function viewerOsOf(navigator2) {
+  if (!navigator2 || typeof navigator2 !== "object") return void 0;
+  const hinted = navigator2.userAgentData?.platform;
+  if (typeof hinted === "string" && hinted !== "") {
+    if (/^macOS$/i.test(hinted)) return "macos";
+    if (/^Windows$/i.test(hinted)) return "windows";
+    if (/^Linux$/i.test(hinted)) return "linux";
+    return "other";
+  }
+  const platform = typeof navigator2.platform === "string" ? navigator2.platform : "";
+  if (platform === "") return void 0;
+  if (/^Mac/i.test(platform)) return "macos";
+  if (/^Win/i.test(platform)) return "windows";
+  if (/^Linux/i.test(platform)) return /Android/i.test(String(navigator2.userAgent ?? "")) ? "other" : "linux";
+  return "other";
+}
+var osOfHost = (machine) => OS_FAMILIES.has(machine?.os) ? machine.os : void 0;
+function whereOf({ machine, scope = globalThis } = {}) {
+  const host = osOfHost(machine);
+  const desktop = scope?.omniDesktop;
+  if (desktop !== void 0 && desktop !== null) {
+    const platform = desktop.platform;
+    return { at: "here", os: Object.hasOwn(DESKTOP_OS, platform) ? DESKTOP_OS[platform] : host ?? "other" };
+  }
+  const hostname = scope?.location?.hostname;
+  const readable = typeof hostname === "string" && hostname !== "";
+  if (readable && !isLoopbackHost(hostname)) return { at: "remote", os: host ?? "other" };
+  if (host === void 0) return { at: "unknown" };
+  if (machine.remoteHint === true) return { at: "remote", os: host };
+  if (!readable) return { at: "unknown" };
+  const viewer = viewerOsOf(scope?.navigator);
+  if (viewer !== void 0 && viewer !== "other" && host !== "other" && viewer !== host) return { at: "remote", os: host };
+  return { at: "here", os: host };
+}
+
 // src/client/team.js
 var import_react6 = require("react");
 var WAKE_MS = 1100;
@@ -10719,7 +10791,31 @@ var around = (text, name, node) => {
   return [before, node, after];
 };
 var titleIn = (omni, choice) => omni.source === "sandbox" ? choice.title.charAt(0).toLowerCase() + choice.title.slice(1) : choice.title;
-var onMac = (scope = globalThis) => /Mac/i.test(scope.navigator?.platform ?? "") || /Mac OS X/.test(scope.navigator?.userAgent ?? "");
+var HERE = { at: "here", os: "other" };
+function placeOf(where = HERE) {
+  const os2 = where?.os;
+  if (where?.at === "remote") {
+    switch (os2) {
+      case "linux":
+        return { sandbox: t("Your Omni on your Linux server"), local: t("Omni on your Linux server"), already: t("Already on your Linux server"), run: t("Run Omni on your Linux server") };
+      case "macos":
+        return { sandbox: t("Your Omni on your Mac"), local: t("Omni on your Mac"), already: t("Already on your Mac"), run: t("Run Omni on your Mac") };
+      case "windows":
+        return { sandbox: t("Your Omni on your Windows PC"), local: t("Omni on your Windows PC"), already: t("Already on your Windows PC"), run: t("Run Omni on your Windows PC") };
+      default:
+        return { sandbox: t("Your Omni on your server"), local: t("Omni on your server"), already: t("Already on your server"), run: t("Run Omni on your server") };
+    }
+  }
+  if (where?.at === "unknown") return { sandbox: t("Your Omni on DSH's computer"), local: t("Omni on DSH's computer"), already: t("Already on DSH's computer"), run: t("Run Omni on DSH's computer") };
+  switch (os2) {
+    case "macos":
+      return { sandbox: t("Your Omni on this Mac"), local: t("Omni on this Mac"), already: t("Already on this Mac"), run: t("Run Omni on this Mac") };
+    case "windows":
+      return { sandbox: t("Your Omni on this PC"), local: t("Omni on this PC"), already: t("Already on this PC"), run: t("Run Omni on this PC") };
+    default:
+      return { sandbox: t("Your Omni on this computer"), local: t("Omni on this computer"), already: t("Already on this computer"), run: t("Run Omni on this computer") };
+  }
+}
 var hostOf = (url) => {
   try {
     return new URL(url).host;
@@ -10734,8 +10830,9 @@ var portOf = (url) => {
     return "";
   }
 };
-function foundChoice(omni, { mac = false } = {}) {
-  const title = omni.source === "sandbox" ? mac ? t("Your Omni on this Mac") : t("Your Omni on this computer") : omni.local ? mac ? t("Omni on this Mac") : t("Omni on this computer") : hostOf(omni.url);
+function foundChoice(omni, { where = HERE } = {}) {
+  const place = placeOf(where);
+  const title = omni.source === "sandbox" ? place.sandbox : omni.local ? place.local : hostOf(omni.url);
   const port = omni.local ? portOf(omni.url) : "";
   const sub = [omni.version ? `v${omni.version}` : null, port ? t("port {port}", { port }) : null, !omni.local ? t("saved in your Omni CLI") : null].filter(Boolean).join(" · ");
   const row = (action, note = null) => ({ id: omni.id, title, sub, action, note });
@@ -10992,23 +11089,24 @@ var ICONS = {
   remote: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20m0 2c1.1 1.4 2 3.8 2.2 7H9.8c.2-3.2 1.1-5.6 2.2-7M4.1 13h3.7c.1 2.4.7 4.6 1.6 6.1A8 8 0 0 1 4.1 13m12.1 0h3.7a8 8 0 0 1-5.3 6.1c.9-1.5 1.5-3.7 1.6-6.1M4.1 11a8 8 0 0 1 5.3-6.1C8.5 6.4 7.9 8.6 7.8 11zm12.1 0c-.1-2.4-.7-4.6-1.6-6.1a8 8 0 0 1 5.3 6.1zM9.8 13h4.4c-.2 3.2-1.1 5.6-2.2 7-1.1-1.4-2-3.8-2.2-7"
 };
 var Icon = ({ name }) => (0, import_react6.createElement)("svg", { viewBox: "0 0 24 24", "aria-hidden": true }, (0, import_react6.createElement)("path", { d: ICONS[name], fill: "currentColor" }));
-function destinyOf(omnis = [], { mac = false, newOmni = true } = {}) {
-  const rows = omnis.map((omni) => ({ omni, choice: foundChoice(omni, { mac }) }));
+function destinyOf(omnis = [], { where = HERE, newOmni = true } = {}) {
+  const place = placeOf(where);
+  const rows = omnis.map((omni) => ({ omni, choice: foundChoice(omni, { where }) }));
   const tiles = rows.filter((row) => row.choice.action).map(({ omni, choice }) => ({
     id: omni.id,
     icon: omni.local ? "here" : "remote",
     omni,
     title: choice.action === "use" ? t("Use {omni}", { omni: titleIn(omni, choice) }) : t("Connect {omni}", { omni: titleIn(omni, choice) }),
-    sub: choice.sub || (omni.local ? mac ? t("Already on this Mac") : t("Already on this computer") : t("Saved in your Omni CLI"))
+    sub: choice.sub || (omni.local ? place.already : t("Saved in your Omni CLI"))
   }));
-  if (newOmni && !rows.some((row) => row.omni.source === "sandbox")) tiles.push({ id: "local", icon: "sandbox", title: mac ? t("Run Omni on this Mac") : t("Run Omni on this computer"), sub: t("A private Omni of its own, set up for you") });
+  if (newOmni && !rows.some((row) => row.omni.source === "sandbox")) tiles.push({ id: "local", icon: "sandbox", title: place.run, sub: t("A private Omni of its own, set up for you") });
   tiles.push({ id: "remote", icon: "remote", title: t("An Omni somewhere else"), sub: t("On a server, or the link Omni sent you") });
   return { tiles, waiting: rows.filter((row) => !row.choice.action).map((row) => row.choice) };
 }
-function Destiny({ omnis, busy, onUse, onLocal, onRemote }) {
+function Destiny({ omnis, machine, busy, onUse, onLocal, onRemote }) {
   const [remote, setRemote] = (0, import_react6.useState)(false);
   if (remote) return (0, import_react6.createElement)(Remote, { busy, onRemote, onBack: () => setRemote(false) });
-  const { tiles, waiting } = destinyOf(omnis, { mac: onMac(), newOmni: typeof onLocal === "function" });
+  const { tiles, waiting } = destinyOf(omnis, { where: whereOf({ machine }), newOmni: typeof onLocal === "function" });
   const pick = (tile) => tile.id === "remote" ? setRemote(true) : tile.id === "local" ? onLocal() : onUse(tile.omni);
   return (0, import_react6.createElement)(
     "div",
@@ -11057,7 +11155,7 @@ function Inside({ phase, detail, power, live }) {
   if (phase === "sandbox") return (0, import_react6.createElement)(InstallLog, { text: detail?.log ?? "", label: t("What Omni's installer printed") });
   if (phase === "failed" && detail?.log) return (0, import_react6.createElement)("div", null, (0, import_react6.createElement)(InstallLog, { text: detail.log, label: t("What Omni's installer printed") }), (0, import_react6.createElement)("p", { className: "oai-inside-note oai-bad", title: detail.message }, t("What went wrong is above. Power Omni on to try again.")));
   if ((phase === "none" || phase === "found") && power.unowned) return (0, import_react6.createElement)(Unowned, { ...power.unowned, busy: power.busy, onRemote: power.remote, onBack: power.forgetUnowned });
-  if (phase === "none" || phase === "found") return (0, import_react6.createElement)(Destiny, { omnis: detail?.omnis ?? [], busy: power.busy, onUse: power.use, onLocal: power.local, onRemote: power.remote });
+  if (phase === "none" || phase === "found") return (0, import_react6.createElement)(Destiny, { omnis: detail?.omnis ?? [], machine: power.machine, busy: power.busy, onUse: power.use, onLocal: power.local, onRemote: power.remote });
   if (phase === "linked" && channels.length > 0) {
     return (0, import_react6.createElement)(
       "div",
@@ -11439,7 +11537,7 @@ function TeamStep(props) {
       setSaving(false);
     }
   }
-  const omniPower = { ...power, local: state.host === "unfold" ? void 0 : power.sandbox };
+  const omniPower = { ...power, local: state.host === "unfold" ? void 0 : power.sandbox, machine: state.machine };
   const speech = lastPressed === "genie" && genieSpeechOf(geniePower.phase) || lastPressed === "unfold" && unfoldSpeechOf(unfoldPower.phase) || speechOf(phase, name, power.detail?.origin);
   return (0, import_react6.createElement)(
     Stage,
