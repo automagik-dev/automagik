@@ -87,6 +87,29 @@
 //! one that fails is ignored. An interval never opens or closes before the last sync that saw the
 //! launch, so a clock that steps back re-tags nothing.
 //!
+//! **dsh-tui seats** (RFC 0026 (d)). A dsh-tui session is found by its worker's worktree; a seat's
+//! folder is the project root, which names no launch. Two records tie such a session to its
+//! terminal, and both give `session` links:
+//!
+//! - The session's own header may name the terminal it runs in ([`Resolver::witness`]): the pane's
+//!   bare local address, with the session's start. Its launch is the one on that address, on this
+//!   machine's core, whose span covers that start. The link runs from the start to that launch's
+//!   end, or to the session's next link in another launch (a resume). Two launches on the address
+//!   that both cover the start name no launch: the session's calls are ambiguous from then on,
+//!   never a guess between them, whatever their tags. An address no launch covers ties nothing:
+//!   the call is found as before, and when nothing names it, it is unlinked with `no_record`
+//!   (a record exists, its launch does not), never `dsh_tui_seat`.
+//! - The pane's `agent.session` label, and a `session` row, as for every harness. For dsh-tui the
+//!   label is a start-time record of the session like the header's, so its link is a `session`
+//!   link too; it stays the second witness, holding over its launch's life: a launch it names
+//!   beside the header's, or a row's, with a different tag makes the call ambiguous, while a
+//!   launch that began after a header or row link did is a resume and closes that link.
+//!
+//! The tag is the launch's as everywhere: its start row's, the attach ledger's binding, else the
+//! seat's `bot` label, which keeps the answer at `label` basis. A session none of these records
+//! names stays `dsh_tui_seat`. The links are kept in the `link` table; a later sync replays them
+//! ([`Resolver::add_session_links`]) with no log re-read and no live label.
+//!
 //! **Fields**, from the launch's start row, frozen at launch: `bot` (`bot`, else `botId`; for a
 //! seat, the attach ledger's binding for the launch at the call's time when there is one), `kind`,
 //! `role`, `squad`, `task` with `project` (workers only), `branch`, `lead` and what the launch
@@ -221,7 +244,9 @@ impl Tag {
 /// How a call was tied to its launch, strongest first.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum Basis {
-    /// A Herdr row (a start row's `session`, or a `session` row) names the session.
+    /// A start-time record names the session: a Herdr row (a start row's `session`, or a
+    /// `session` row), or a dsh-tui session's own terminal record (its header, or its pane's
+    /// session label; RFC 0026 (d)).
     Session,
     /// A session label the hc snapshot showed on the launch's terminal names it.
     Label,
@@ -548,6 +573,44 @@ struct Link {
     from: Option<i64>,
     to: Option<i64>,
     basis: Basis,
+    /// A session label a snapshot showed made it: the second witness, which holds over its
+    /// launch's life instead of from a row's time. For every harness but dsh-tui this is the
+    /// `label` basis; a dsh-tui label gives a `session` link (RFC 0026 (d)).
+    sighted: bool,
+    /// For a link whose launch is not known here (`launch` None): the end an earlier sync
+    /// recorded for it, when it is one the store replayed.
+    until: Option<i64>,
+    /// A dsh-tui header whose terminal two or more launches cover at the session's start: it
+    /// names no launch, so a call it covers is ambiguous, never a guess (RFC 0026 (d)).
+    overlap: bool,
+}
+
+/// The ledger's agent name of dsh-tui, the one harness whose sessions carry a terminal record.
+const DSH_AGENT: &str = "dsh-tui";
+
+/// A dsh-tui session's own start record (RFC 0026 (d)): the terminal its header names (the
+/// pane's bare local address) and when the session started.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Header {
+    terminal: String,
+    /// The header's `createdAt`. None: the record names a terminal, but no launch can be said to
+    /// cover a start that is not known.
+    at: Option<i64>,
+}
+
+/// A dsh-tui session's link as an earlier sync kept it in the `link` table
+/// ([`crate::evidence::session_links`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionLink {
+    /// The ledger's agent name.
+    pub agent: String,
+    /// The session's keyed hash, hex.
+    pub session: String,
+    pub lkey: String,
+    pub valid_from: Option<i64>,
+    pub valid_to: Option<i64>,
+    /// A session label made it ([`crate::evidence::LinkRecord::sighted`]).
+    pub sighted: bool,
 }
 
 impl Link {
@@ -579,6 +642,8 @@ struct Index {
     /// running in), a seat the attach ledger bound, a seat the labels named. A worker known only
     /// by its label never names a call by such a folder (RFC 0026 (c), (e)).
     seated: HashSet<String>,
+    /// The launches on each terminal address: where a dsh-tui header's terminal is looked up.
+    by_terminal: HashMap<String, Vec<usize>>,
 }
 
 /// What one claimant says about a call.
@@ -615,6 +680,12 @@ pub struct Resolver {
     key: Option<SessionKey>,
     /// Session labels earlier snapshots saw: (agent, session hash, launch key).
     label_history: Vec<(String, String, String)>,
+    /// The dsh-tui session links earlier syncs kept (RFC 0026 (d)).
+    session_history: Vec<SessionLink>,
+    /// dsh-tui sessions whose header names a terminal, by session (hashed as the calls' are).
+    /// Kept beside the index, never in it: a header is learned as its log is read, and joining
+    /// it to the launches when a call asks costs no rebuild.
+    headers: HashMap<String, Header>,
     /// What earlier syncs persisted of launches with no start row, by launch key: the label tag
     /// and the `bound` timeline (RFC 0026 (c)).
     claims: HashMap<String, StoredClaim>,
@@ -764,6 +835,68 @@ impl Resolver {
         self.index = None;
     }
 
+    /// Adds the dsh-tui session links earlier syncs kept (RFC 0026 (d)): a session its header, a
+    /// `session` row or its pane's label tied to a launch stays tied when a later sync reads no
+    /// log and sees no label, so a recompute replays the same answer.
+    pub fn add_session_links(&mut self, links: &[SessionLink]) {
+        self.session_history.extend(links.iter().cloned());
+        self.index = None;
+    }
+
+    /// A dsh-tui session's own start record (RFC 0026 (d)): its header names `terminal`, the
+    /// address of the pane it runs in, and the session started at `started_ms`. `session` is the
+    /// session as calls name it (its keyed hash when the resolver is keyed). An address with a
+    /// `/` is another machine's view of a pane and is never used.
+    pub fn witness(&mut self, session: &str, terminal: &str, started_ms: Option<i64>) {
+        if terminal.is_empty() || terminal.contains('/') {
+            return;
+        }
+        self.headers.insert(
+            session.to_owned(),
+            Header {
+                terminal: terminal.to_owned(),
+                at: started_ms,
+            },
+        );
+    }
+
+    /// A fingerprint of the header records known ([`Resolver::witness`]): empty for none, so a
+    /// store with no such record fingerprints as it did before they existed.
+    pub fn witness_print(&self) -> String {
+        if self.headers.is_empty() {
+            return String::new();
+        }
+        let mut all: Vec<(&String, &Header)> = self.headers.iter().collect();
+        all.sort_by(|a, b| a.0.cmp(b.0));
+        let mut print = <sha2::Sha256 as sha2::Digest>::new();
+        for (session, h) in all {
+            sha2::Digest::update(
+                &mut print,
+                format!("{session}\x1f{}\x1f{:?}\x1e", h.terminal, h.at),
+            );
+        }
+        crate::event::hex(&sha2::Digest::finalize(print))
+    }
+
+    /// Whether a start-time record names the call's session (or its parent's): a dsh-tui header
+    /// with a terminal, a `session` row, a session label, or a link an earlier sync kept. Asked
+    /// of a dsh-tui call [`Resolver::resolve`] left unlinked: with such a record the reason is
+    /// `no_record` (its launch is missing, ended or names no bot), without one `dsh_tui_seat`.
+    pub fn witnessed(&mut self, call: &Call) -> bool {
+        let Some(agent) = agent_of(call.harness) else {
+            return false;
+        };
+        self.index();
+        let links = self.index.as_ref().and_then(|ix| ix.links.get(agent));
+        [call.session, call.parent_session]
+            .into_iter()
+            .flatten()
+            .any(|s| {
+                (agent == DSH_AGENT && self.headers.contains_key(s))
+                    || links.is_some_and(|m| m.get(s).is_some_and(|l| !l.is_empty()))
+            })
+    }
+
     /// Ledgers not read because they are larger than [`LEDGER_CAP`].
     pub fn oversized(&self) -> &[PathBuf] {
         &self.oversized
@@ -806,8 +939,11 @@ impl Resolver {
                 self.core.as_deref(),
                 &self.snapshot,
                 &self.linked,
-                &self.label_history,
-                &self.claims,
+                Kept {
+                    labels: &self.label_history,
+                    sessions: &self.session_history,
+                    claims: &self.claims,
+                },
                 Sighted {
                     now: self.now,
                     probe: self.probe.unwrap_or(task_worktree),
@@ -820,9 +956,11 @@ impl Resolver {
     /// The launches and links this resolver derives, as the `launch` and `link` tables keep them.
     /// Links of a launch no start row records, and of a launch with no key, are left out.
     pub fn records(&mut self) -> (Vec<LaunchRecord>, Vec<LinkRecord>) {
-        let Some(ix) = self.index() else {
+        self.index();
+        let Some(ix) = self.index.as_ref() else {
             return (Vec::new(), Vec::new());
         };
+        let core = self.core.as_deref();
         let mut launches = Vec::new();
         let keys: Vec<Option<String>> = ix.launches.iter().map(Launch::lkey).collect();
         for (l, lkey) in ix.launches.iter().zip(&keys) {
@@ -857,28 +995,45 @@ impl Resolver {
             });
         }
         let mut links = Vec::new();
+        let mut keep = |agent: &str, session: &str, ls: &[Link]| {
+            for k in ls {
+                let Some(Some(lkey)) = k.launch.map(|i| &keys[i]) else {
+                    continue;
+                };
+                links.push(LinkRecord {
+                    harness: agent.to_owned(),
+                    session: session.to_owned(),
+                    lkey: lkey.clone(),
+                    basis: k.basis.as_str().into(),
+                    valid_from: k.from,
+                    valid_to: k.to,
+                    sighted: k.sighted,
+                });
+            }
+        };
         for (agent, by) in &ix.links {
-            for (session, ls) in by {
-                for k in ls {
-                    let Some(Some(lkey)) = k.launch.map(|i| &keys[i]) else {
-                        continue;
-                    };
-                    links.push(LinkRecord {
-                        harness: agent.clone(),
-                        session: session.clone(),
-                        lkey: lkey.clone(),
-                        basis: k.basis.as_str().into(),
-                        valid_from: k.from,
-                        valid_to: k.to,
-                    });
+            for session in by.keys() {
+                let header = self.headers.get(session).filter(|_| agent == DSH_AGENT);
+                if let Some(ls) = ix.session_links(agent, session, header, core) {
+                    keep(agent, session, &ls);
                 }
+            }
+        }
+        // The sessions only their header names.
+        let linked = ix.links.get(DSH_AGENT);
+        for (session, h) in &self.headers {
+            if linked.is_some_and(|m| m.contains_key(session)) {
+                continue;
+            }
+            if let Some(ls) = ix.session_links(DSH_AGENT, session, Some(h), core) {
+                keep(DSH_AGENT, session, &ls);
             }
         }
         links.sort_by(|a, b| {
             (&a.harness, &a.session, &a.lkey, &a.basis)
                 .cmp(&(&b.harness, &b.session, &b.lkey, &b.basis))
         });
-        (launches, links)
+        (launches, one_per_launch(links))
     }
 
     /// Ledgers not read because anyone but their owner could write them.
@@ -1050,10 +1205,11 @@ impl Resolver {
                 self.discover(cwd);
             }
         }
-        let Some(ix) = self.index() else {
+        self.index();
+        let Some(ix) = self.index.as_ref() else {
             return Resolution::Unlinked;
         };
-        ix.resolve(call)
+        ix.resolve(call, &self.headers, self.core.as_deref())
     }
 
     /// Whether a record of another machine names the call's session (or its parent's): its
@@ -1080,14 +1236,75 @@ enum Parsed {
 }
 
 impl Index {
-    fn resolve(&self, call: &Call) -> Resolution {
+    /// The link a dsh-tui session's header gives (RFC 0026 (d)): to the launch on the address the
+    /// header names, on this machine's core, whose span covers the session's start. Two or more
+    /// such launches name none ([`Link::overlap`]); no such launch, or a start that is not known,
+    /// gives no link at all.
+    fn header_link(&self, h: &Header, core: Option<&str>) -> Option<Link> {
+        let at = h.at?;
+        let on: Vec<usize> = self
+            .by_terminal
+            .get(&h.terminal)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|&i| {
+                let l = &self.launches[i];
+                on_this_core(l.core.as_deref(), core) && l.covers(at)
+            })
+            .collect();
+        let (launch, overlap) = match on[..] {
+            [] => return None,
+            [i] => (Some(i), false),
+            _ => (None, true),
+        };
+        Some(Link {
+            launch,
+            at: Some(at),
+            from: None,
+            to: None,
+            basis: Basis::Session,
+            sighted: false,
+            until: None,
+            overlap,
+        })
+    }
+
+    /// A session's links, placed: the index's own, and for a dsh-tui session whose header names a
+    /// terminal, that record's link among them. None when nothing links the session.
+    fn session_links(
+        &self,
+        agent: &str,
+        session: &str,
+        header: Option<&Header>,
+        core: Option<&str>,
+    ) -> Option<std::borrow::Cow<'_, [Link]>> {
+        let kept = self.links.get(agent).and_then(|m| m.get(session));
+        match (kept, header.and_then(|h| self.header_link(h, core))) {
+            (None, None) => None,
+            (Some(kept), None) => Some(std::borrow::Cow::Borrowed(kept)),
+            (kept, Some(link)) => {
+                let mut all = kept.cloned().unwrap_or_default();
+                all.push(link);
+                place(&mut all, &self.launches, agent == DSH_AGENT);
+                Some(std::borrow::Cow::Owned(all))
+            }
+        }
+    }
+
+    fn resolve(
+        &self,
+        call: &Call,
+        headers: &HashMap<String, Header>,
+        core: Option<&str>,
+    ) -> Resolution {
         let Some(agent) = agent_of(call.harness) else {
             return Resolution::Unlinked;
         };
         let t = call.at_ms;
-        let by_session = self.links.get(agent);
         for s in [call.session, call.parent_session].into_iter().flatten() {
-            let Some(links) = by_session.and_then(|m| m.get(s)) else {
+            let header = headers.get(s).filter(|_| agent == DSH_AGENT);
+            let Some(links) = self.session_links(agent, s, header, core) else {
                 continue;
             };
             let covering: Vec<&Link> = links.iter().filter(|l| l.covers(t)).collect();
@@ -1100,6 +1317,8 @@ impl Index {
                 Basis::Label
             };
             let claims = covering.iter().map(|l| match (l.launch, l.from) {
+                // Two launches on the header's terminal: no launch is named, never one guessed.
+                _ if l.overlap => Claim::Unknown,
                 (Some(i), Some(_)) => self.claim(i, t),
                 (Some(_), None) => Claim::Unknown,
                 (None, _) => Claim::Unrecorded,
@@ -1289,6 +1508,15 @@ fn judge(claims: impl Iterator<Item = Claim>, basis: Basis) -> Resolution {
     Resolution::Tag(out, if label { Basis::Label } else { basis })
 }
 
+/// What earlier syncs kept, read back for this sync's index: the session labels they saw (agent,
+/// session, launch key), the dsh-tui session links, and each unlogged launch's stored claim.
+#[derive(Clone, Copy)]
+struct Kept<'a> {
+    labels: &'a [(String, String, String)],
+    sessions: &'a [SessionLink],
+    claims: &'a HashMap<String, StoredClaim>,
+}
+
 /// How this sync's label sightings are read: when the snapshot was taken (None: no sighting is
 /// added), and what says a folder is a task worktree.
 #[derive(Clone, Copy)]
@@ -1320,16 +1548,32 @@ fn same_core(a: Option<&str>, b: Option<&str>) -> bool {
     }
 }
 
+/// Whether a launch that recorded `launch` as its core ran on this machine (`core`), for a join
+/// by terminal address alone (a dsh-tui header's): its core is this one, or it recorded none (a
+/// row written before RFC 0021). With this machine's core unknown, a launch that names a core
+/// may be another machine's at the same address, so it is never matched.
+fn on_this_core(launch: Option<&str>, core: Option<&str>) -> bool {
+    match (launch, core) {
+        (Some(l), Some(c)) => l == c,
+        (Some(_), None) => false,
+        (None, _) => true,
+    }
+}
+
 fn build(
     rows: &Rows,
     core: Option<&str>,
     snapshot: &[Terminal],
     linked: &[Terminal],
-    label_history: &[(String, String, String)],
-    claims: &HashMap<String, StoredClaim>,
+    kept: Kept<'_>,
     sighted: Sighted,
 ) -> Index {
     let Sighted { now, probe } = sighted;
+    let Kept {
+        labels: label_history,
+        sessions: session_history,
+        claims,
+    } = kept;
     let foreign = |c: &Option<String>| !same_core(c.as_deref(), core);
     let mut ix = Index::default();
     // Sessions another machine's records name: never claimants here, only the reason why not.
@@ -1701,6 +1945,9 @@ fn build(
                     from: None,
                     to: None,
                     basis: Basis::Session,
+                    sighted: false,
+                    until: None,
+                    overlap: false,
                 });
             }
         }
@@ -1742,6 +1989,9 @@ fn build(
                     from: None,
                     to: None,
                     basis: Basis::Session,
+                    sighted: false,
+                    until: None,
+                    overlap: false,
                 });
         }
     }
@@ -1763,7 +2013,10 @@ fn build(
                 at: Some(created),
                 from: None,
                 to: None,
-                basis: Basis::Label,
+                basis: label_basis(agent),
+                sighted: true,
+                until: None,
+                overlap: false,
             });
     }
     // Session labels earlier syncs saw: the same second witness, for launches since gone.
@@ -1778,10 +2031,7 @@ fn build(
             continue;
         };
         let links = raw.entry((agent.clone(), session.clone())).or_default();
-        if links
-            .iter()
-            .any(|l| l.basis == Basis::Label && l.launch == Some(i))
-        {
+        if links.iter().any(|l| l.sighted && l.launch == Some(i)) {
             continue;
         }
         links.push(Link {
@@ -1789,24 +2039,130 @@ fn build(
             at: ix.launches[i].from,
             from: None,
             to: None,
-            basis: Basis::Label,
+            basis: label_basis(agent),
+            sighted: true,
+            until: None,
+            overlap: false,
         });
     }
+    // The dsh-tui session links earlier syncs kept (RFC 0026 (d)): the header's, a row's and a
+    // label's, for a sync that reads no log and sees no label. One whose launch is not known here
+    // (its ledger is not read now) still stands for the span the store recorded: it names no
+    // bot, and it is never dropped for the folder to name another.
+    for s in session_history {
+        let launch = by_lkey.get(&s.lkey).copied();
+        let links = raw.entry((s.agent.clone(), s.session.clone())).or_default();
+        let link = match launch {
+            Some(i) if s.sighted => {
+                if links.iter().any(|l| l.sighted && l.launch == Some(i)) {
+                    continue;
+                }
+                Link {
+                    launch: Some(i),
+                    at: ix.launches[i].from,
+                    from: None,
+                    to: None,
+                    basis: Basis::Session,
+                    sighted: true,
+                    until: None,
+                    overlap: false,
+                }
+            }
+            _ => {
+                // The ledger, read again, gave this very link: once is enough.
+                if launch.is_some()
+                    && links
+                        .iter()
+                        .any(|l| !l.sighted && l.launch == launch && l.at == s.valid_from)
+                {
+                    continue;
+                }
+                Link {
+                    launch,
+                    at: s.valid_from,
+                    from: None,
+                    to: None,
+                    basis: Basis::Session,
+                    sighted: false,
+                    until: s.valid_to,
+                    overlap: false,
+                }
+            }
+        };
+        links.push(link);
+    }
     for ((agent, session), mut links) in raw {
-        place(&mut links, &ix.launches);
+        place(&mut links, &ix.launches, agent == DSH_AGENT);
         ix.links.entry(agent).or_default().insert(session, links);
     }
+    ix.by_terminal = by_terminal;
     ix
 }
 
-/// Sets each link's interval. A ledger link holds from its row's time (a start row's: its launch's
-/// start), never before its launch began, until its launch ends or the session's next ledger link
-/// elsewhere begins. A label link holds over its launch's life: it is a second witness,
-/// never closed by the ledger, so where the two disagree the call is ambiguous.
-fn place(links: &mut [Link], launches: &[Launch]) {
+/// The basis of a link a session label made: `label`, and for dsh-tui `session`, whose label is
+/// a start-time record of the session like its header's (RFC 0026 (d)).
+fn label_basis(agent: &str) -> Basis {
+    if agent == DSH_AGENT {
+        Basis::Session
+    } else {
+        Basis::Label
+    }
+}
+
+/// One record per session, launch and basis, as the `link` table keys them. A dsh-tui session
+/// can be tied to one launch by several records at once (its header, a row, its pane's label);
+/// they are one link there: the rows' and header's span when there is one (it starts when the
+/// session entered the launch), else the label's.
+fn one_per_launch(links: Vec<LinkRecord>) -> Vec<LinkRecord> {
+    let mut out: Vec<LinkRecord> = Vec::with_capacity(links.len());
+    for l in links {
+        let same = |o: &LinkRecord| {
+            o.harness == DSH_AGENT
+                && o.harness == l.harness
+                && o.session == l.session
+                && o.lkey == l.lkey
+                && o.basis == l.basis
+        };
+        let Some(kept) = out
+            .iter_mut()
+            .rev()
+            .take_while(|o| o.harness == l.harness)
+            .find(|o| same(o))
+        else {
+            out.push(l);
+            continue;
+        };
+        match (kept.sighted, l.sighted) {
+            (true, false) => *kept = l,
+            (false, true) => {}
+            _ => {
+                kept.valid_from = match (kept.valid_from, l.valid_from) {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    _ => None,
+                };
+                kept.valid_to = match (kept.valid_to, l.valid_to) {
+                    (Some(a), Some(b)) => Some(a.max(b)),
+                    _ => None,
+                };
+            }
+        }
+    }
+    out
+}
+
+/// Sets each link's interval. A ledger link (a row's, a dsh-tui header's, or one of those the
+/// store replayed) holds from its record's time (a start row's: its launch's start), never before
+/// its launch began, until its launch ends or the session's next ledger link elsewhere begins. A
+/// label link holds over its launch's life: it is a second witness, never closed by the ledger,
+/// so where the two disagree the call is ambiguous.
+///
+/// `resumes` (dsh-tui, RFC 0026 (d)): a label link on a launch that began after a ledger link did
+/// is the session resumed there, and closes that ledger link; one on a launch that was already
+/// running is a second witness of the same span and closes nothing.
+fn place(links: &mut [Link], launches: &[Launch], resumes: bool) {
     let launch_from = |l: &Link| l.launch.and_then(|i| launches[i].from);
-    links.sort_by_key(|l| (l.basis, l.at.or_else(|| launch_from(l)), l.launch));
-    let ledger = links.iter().filter(|l| l.basis == Basis::Session).count();
+    links.sort_by_key(|l| (l.sighted, l.at.or_else(|| launch_from(l)), l.launch));
+    let ledger = links.iter().filter(|l| !l.sighted).count();
     let (ledger_links, label_links) = links.split_at_mut(ledger);
     for l in ledger_links.iter_mut() {
         l.from = match (l.launch, launch_from(l), l.at) {
@@ -1819,7 +2175,10 @@ fn place(links: &mut [Link], launches: &[Launch]) {
         .iter()
         .enumerate()
         .map(|(i, l)| {
-            let end = l.launch.and_then(|j| launches[j].to);
+            let end = match l.launch {
+                Some(j) => launches[j].to,
+                None => l.until,
+            };
             let next = ledger_links[i + 1..]
                 .iter()
                 .filter(|n| n.launch != l.launch)
@@ -1833,10 +2192,25 @@ fn place(links: &mut [Link], launches: &[Launch]) {
     for (l, to) in ledger_links.iter_mut().zip(ends) {
         l.to = to;
     }
-    for l in label_links {
+    for l in label_links.iter_mut() {
         if let Some(j) = l.launch {
             l.from = launches[j].from;
             l.to = launches[j].to;
+        }
+    }
+    if !resumes {
+        return;
+    }
+    for l in ledger_links.iter_mut() {
+        let Some(from) = l.from else { continue };
+        let resumed = label_links
+            .iter()
+            .filter(|s| s.launch != l.launch)
+            .filter_map(|s| s.from)
+            .filter(|at| *at > from)
+            .min();
+        if let Some(at) = resumed {
+            l.to = Some(l.to.map_or(at, |e| e.min(at)));
         }
     }
 }
@@ -1996,7 +2370,7 @@ fn label_sighting(t: &Terminal) -> Option<(Kind, String, Option<String>)> {
 /// Whether a bot can be written in the `bound` timeline, whose intervals are `;`-separated and
 /// `:`-split: a bot holding one would read back as another interval. Such a label names no bot,
 /// rather than a mangled one.
-fn column_safe(bot: &str) -> bool {
+pub(crate) fn column_safe(bot: &str) -> bool {
     !bot.contains([';', ':', '\n', '\r'])
 }
 
