@@ -18,7 +18,7 @@ import { linkInArgs, parseDeepLink, registerSchemes } from './deeplink.js'
 import { fade, PAGE_IN_CSS } from './motion.js'
 import { noteRestart, restartLine, steps } from './timeline.js'
 import { startUp } from './startup.js'
-import { dismissSplash, showUpdateSplash } from './splash.js'
+import { dismissSplash, markSplashStep, showUpdateSplash } from './splash.js'
 import { PUBLISHERS, TRIAL_MS, beforeStart, checkLane, confirm as confirmLane, installedVersions, laneMemory, stage as stageLane, stagedOf, stagedVersion, trialFailed } from './lane.js'
 import {
   ANONYMOUS_ID, appHome, automagikHome, backupSettingsOrLog, busyFileOf, dshEnv, dshRun,
@@ -34,7 +34,7 @@ import { openRequest, pickSpace } from './herdr-space.js'
 import { openLatest } from './herdr-update.js'
 import { tableColor, updatePresentation, WINDOW_ACTIONS, windowChrome, windowPageLayout } from './frame.js'
 import { dataPathsOf, PRODUCT } from './identity.js'
-import { awayInstall, LOOK_EVERY_MS, readBusy } from './idle.js'
+import { LOOK_EVERY_MS, readBusy } from './idle.js'
 import { appMenuTemplate } from './menu.js'
 import { sendPaneClose } from './pane-close.js'
 import { createQuitGuard, quitPrompt, requestQuit } from './quit-guard.js'
@@ -143,6 +143,8 @@ app.on('open-url', (event, url) => {
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
+  // Opened again after an update: the splash that update left up (splash.js) moves its bar on.
+  markSplashStep(home, 'starting')
   app.on('second-instance', (_event, argv) => {
     // `omni desktop` or `genie desktop` while the app runs: kept for the next start.
     preloadOf({ home: root, argv, env: {} })
@@ -640,16 +642,9 @@ function watchUpdates() {
     })
     if (why === 'apply') void applyLaneNow({ auto: true })
   }, LOOK_EVERY_MS).unref?.()
-  if (mode !== 'auto') return
-  // A downloaded update goes in while the person is away (idle.js); else at a quit or Restart.
-  const away = setInterval(() => {
-    const state = { idleMs: powerMonitor.getSystemIdleTime() * 1000, focused: window?.isFocused() === true, busy: readBusy(busyFileOf(home)) }
-    if (awayInstall({ ready: updates.ready, ...state }) === 'install' && !laneApplying) {
-      clearInterval(away)
-      log.info(`update: ${updates.ready} installs now, while the computer is not in use`)
-      installUpdate({ away: true })
-    }
-  }, LOOK_EVERY_MS)
+  // A downloaded app update never goes in by itself (#859): the app keeps running the version it
+  // has, the sidebar says "Restart to update", and it installs when the person presses that or
+  // quits the app.
 }
 
 // The update shows in the page's sidebar (the Bot team's, bottom left, as in DSH's own app),
@@ -894,12 +889,13 @@ async function offerDshTuiPath(answer) {
 // the new app before it opens it, and the app opened again meanwhile cancels the install. So
 // the sidebar says "Installing" before the window goes, and on macOS a splash (splash.js)
 // stays on screen while macOS swaps the app, until the new copy's page is in; where the
-// splash cannot go up, a notification says it instead.
+// splash cannot go up, a notification says it instead. Only the person's Restart comes here
+// (the sidebar's button, `automagik-updates-open`): nothing calls it on a timer.
 const RESTART_NOTICE_MS = 600
-function installUpdate({ away = false } = {}) {
+function installUpdate() {
   if (!updates?.ready || quitting) return
   quitting = true
-  const out = leave(away ? 'update while away' : 'update restart')
+  const out = leave('update restart')
   update = { ...update, state: 'restarting' }
   publishUpdate()
   const splash = showUpdateSplash({ home, product: PRODUCT, version: update?.version })
@@ -912,6 +908,8 @@ function installUpdate({ away = false } = {}) {
       .finally(() => {
         out.mark('dsh stopped')
         noteRestart(RESTART_NOTE(), { from: app.getVersion(), to: update?.version })
+        // The splash's bar moves on: this copy is closed, and macOS takes over.
+        markSplashStep(home, 'installing')
         updates.install()
       })
   }, RESTART_NOTICE_MS)
