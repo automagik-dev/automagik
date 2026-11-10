@@ -112,7 +112,7 @@ describe('pocket-lane is never taken for a release', () => {
 
   test('the app reads pocket-lane by default, and -Ppocket.updateUrl= still overrides it', () => {
     const gradle = read('apps/pocket/android/app/build.gradle.kts');
-    expect(gradle).toContain('providers.gradleProperty("pocket.updateUrl").orElse("https://github.com/automagik-dev/automagik/releases/download/pocket-lane/latest.json")');
+    expect(gradle).toContain('providers.gradleProperty("pocket.updateUrl").orElse("https://github.com/automagik-si/automagik/releases/download/pocket-lane/latest.json")');
     expect(gradle).not.toContain('releases/latest/download');
   });
 });
