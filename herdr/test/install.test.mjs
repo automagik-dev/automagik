@@ -512,8 +512,11 @@ test("--uninstall with nothing there before moves the pack out of mods/, never d
   const s = scratch(t);
   s.publish("9.9.0");
   assert.equal(s.run("--yes").code, 0);
+  // The fleet coverage record the sidebar's meter run writes beside the install record (RFC 0026 (e)).
+  writeFileSync(join(s.state, "fleet-coverage.json"), "{\"v\":1}\n", { mode: 0o600 });
   const r = s.run("--uninstall");
   assert.equal(r.code, 0, r.err);
+  assert.equal(existsSync(join(s.state, "fleet-coverage.json")), false, "the fleet record leaves with the pack");
   assert.equal(existsSync(s.pack), false);
   assert.deepEqual(readdirSync(s.mods), []);
   assert.equal(readFileSync(join(s.state, ".prev", "am-sidebar", "VERSION"), "utf8").trim(), "9.9.0");
@@ -2339,6 +2342,61 @@ test("--dsh-tui installs the opt-in dsh-TUI into its own dsh-tui profile; --unin
   assert.deepEqual(JSON.parse(readFileSync(join(profile, "package.json"), "utf8")).dependencies, {});
   assert.ok(dsh.calls().includes("plugin --profile dsh-tui remove @deepseek-harness-tui/dsh-tui"));
   assert.equal(readFileSync(join(s.home, ".dsh", ".credentials.yaml"), "utf8"), "keep: me\n");
+});
+
+test("--revive installs the login service through the pack's command (#939, Linux); --yes alone or no answer never does; --uninstall removes a unit that is the pack's", { skip: process.platform !== "linux" }, (t) => {
+  const s = scratch(t, { os: "Linux" });
+  s.addHerdrApp();
+  s.publish("9.9.0");
+  // A stand-in systemctl first on PATH: the user's own systemd is never asked.
+  const log = join(s.root, "systemctl.log");
+  exe(join(s.bin, "systemctl"), `#!/bin/sh\nprintf '%s\\n' "$*" >> "${log}"\nexit 0\n`);
+  const calls = () => (existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean) : []);
+  const unit = join(s.home, ".config", "systemd", "user", "automagik-herdr-revive.service");
+  // No terminal to answer at, and --yes: neither installs a thing that runs at login.
+  const quiet = s.run("--no-usagemeter");
+  assert.equal(quiet.code, 0, quiet.err + quiet.out);
+  assert.match(quiet.out, /Left the revive login service alone; 'automagik-herdr revive service install' adds it later\./);
+  const yes = s.run("--yes", "--no-usagemeter");
+  assert.equal(yes.code, 0, yes.err + yes.out);
+  assert.match(yes.out, /Left the revive login service alone: --yes never changes what runs at login/);
+  assert.equal(existsSync(unit), false);
+  assert.deepEqual(calls(), []);
+  const no = s.run("--no-revive", "--no-usagemeter");
+  assert.match(no.out, /Left the revive login service alone \(--no-revive\)\./);
+  assert.equal(existsSync(unit), false);
+  // --revive: the unit, written by the installed command, enabled and never started.
+  const r = s.run("--revive", "--no-usagemeter");
+  assert.equal(r.code, 0, r.err + r.out);
+  assert.match(r.out, /Installed the revive login service/);
+  const text = readFileSync(unit, "utf8");
+  assert.match(text, /^# Automagik Herdr: brings the bots back after a restart of this computer/);
+  assert.ok(text.includes(`ExecStart="${s.link}" revive --boot --wait `), text);
+  assert.deepEqual(calls(), ["--user daemon-reload", "--user enable automagik-herdr-revive.service"]);
+  // Installed already: a later run asks nothing and leaves it.
+  const again = s.run("--no-usagemeter");
+  assert.equal(again.code, 0, again.err + again.out);
+  assert.doesNotMatch(again.out, /revive login service/);
+  const u = s.run("--uninstall", "--yes", "--no-usagemeter");
+  assert.equal(u.code, 0, u.err + u.out);
+  assert.match(u.out, /Removed the revive login service/);
+  assert.equal(existsSync(unit), false);
+  assert.ok(calls().includes("--user disable automagik-herdr-revive.service"), calls().join("; "));
+});
+
+test("--uninstall leaves a unit at the revive service's path that is not the pack's", { skip: process.platform !== "linux" }, (t) => {
+  const s = scratch(t, { os: "Linux" });
+  s.addHerdrApp();
+  s.publish("9.9.0");
+  exe(join(s.bin, "systemctl"), "#!/bin/sh\nexit 0\n");
+  assert.equal(s.run("--no-usagemeter").code, 0);
+  const unit = join(s.home, ".config", "systemd", "user", "automagik-herdr-revive.service");
+  mkdirSync(dirname(unit), { recursive: true });
+  writeFileSync(unit, "[Unit]\nDescription=mine\n");
+  const u = s.run("--uninstall", "--yes", "--no-usagemeter");
+  assert.equal(u.code, 0, u.err + u.out);
+  assert.match(u.out, /Left .*automagik-herdr-revive\.service: it is not this installer's\./);
+  assert.equal(readFileSync(unit, "utf8"), "[Unit]\nDescription=mine\n");
 });
 
 test("--dsh-tui writes minimumReleaseAgeExclude: [] for a release older than the profile's gate", (t) => {

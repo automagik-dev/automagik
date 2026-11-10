@@ -1,0 +1,88 @@
+{
+  "v": 1,
+  "generated_at": "2026-01-15T12:10:00.000Z",
+  "window": "d30",
+  "machines": [
+    {
+      "machine": "local",
+      "here": true,
+      "machine_id": "core-1",
+      "meter_version": "0.4.0",
+      "as_of": "2026-01-15T12:04:00Z",
+      "evidence_from": "2025-12-20T00:00:00Z",
+      "evidence": "partial",
+      "counted_from": "2025-12-17T00:00:00Z",
+      "start": "2025-12-17T00:00:00Z",
+      "end": "2026-01-15T13:00:00Z",
+      "complete": true,
+      "stale": false,
+      "clipped": true,
+      "truncated": false,
+      "totals": { "attributed": 600, "ambiguous": 50, "unlinked": 250, "before_evidence": 100, "total": 1000 },
+      "bot_coverage": 0.6,
+      "inspected": 0.6667,
+      "parts": [
+        { "state": "ambiguous", "reason": "claimants_differ", "tokens": 50 },
+        { "state": "unlinked", "reason": "no_record", "tokens": 200 },
+        { "state": "unlinked", "reason": "dsh_tui_seat", "tokens": 50 },
+        { "state": "unlinked", "reason": "other_machine", "tokens": 0 },
+        { "state": "before_evidence", "reason": "before_evidence", "tokens": 100 }
+      ],
+      "bots": [
+        { "bot": "b-examplebot1", "tokens": 400, "tokens_by_basis": { "session": 300, "label": 100, "worktree": 0 } },
+        { "bot": "b-examplebot2", "tokens": 200, "tokens_by_basis": { "session": 0, "label": 0, "worktree": 200 } }
+      ],
+      "bots_omitted": 0,
+      "bots_other": null,
+      "repos": [
+        { "repo": "example.com/acme/widgets", "state": "measured",
+          "totals": { "attributed": 600, "ambiguous": 50, "unlinked": 250, "before_evidence": 100, "total": 1000 } }
+      ],
+      "repos_omitted": 0,
+      "repos_other": null
+    },
+    {
+      "machine": "lin",
+      "here": false,
+      "machine_id": "core-2",
+      "meter_version": "0.4.0",
+      "as_of": "2026-01-15T12:06:00Z",
+      "evidence_from": null,
+      "evidence": "none",
+      "counted_from": "2025-12-17T00:00:00Z",
+      "start": "2025-12-17T00:00:00Z",
+      "end": "2026-01-15T13:00:00Z",
+      "complete": false,
+      "stale": false,
+      "clipped": true,
+      "truncated": true,
+      "totals": { "attributed": 100, "ambiguous": 0, "unlinked": 900, "before_evidence": 8000, "total": 9000 },
+      "bot_coverage": 0.0111,
+      "inspected": 0.1,
+      "parts": [
+        { "state": "ambiguous", "reason": "claimants_differ", "tokens": 0 },
+        { "state": "unlinked", "reason": "no_record", "tokens": 900 },
+        { "state": "unlinked", "reason": "dsh_tui_seat", "tokens": 0 },
+        { "state": "unlinked", "reason": "other_machine", "tokens": 0 },
+        { "state": "before_evidence", "reason": "before_evidence", "tokens": 8000 }
+      ],
+      "bots": [
+        { "bot": "b-examplebot1", "tokens": 90, "tokens_by_basis": { "session": 0, "label": 90, "worktree": 0 } }
+      ],
+      "bots_omitted": 1,
+      "bots_other": { "tokens": 10, "tokens_by_basis": { "session": 0, "label": 10, "worktree": 0 } },
+      "repos": [
+        { "repo": "example.com/acme/widgets", "state": "measured",
+          "totals": { "attributed": 100, "ambiguous": 0, "unlinked": 900, "before_evidence": 8000, "total": 9000 } }
+      ],
+      "repos_omitted": 0,
+      "repos_other": null
+    }
+  ],
+  "missing": [
+    { "machine": "far", "here": false, "reason": "timeout" },
+    { "machine": "old", "here": false, "reason": "no_coverage", "exit": 2 },
+    { "machine": "away", "here": false, "reason": "disconnected" }
+  ],
+  "out_of_scope": ["guest"]
+}

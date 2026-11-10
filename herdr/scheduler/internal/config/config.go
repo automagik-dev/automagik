@@ -304,6 +304,28 @@ func PromptArgs(kind, prompt string) []string {
 	return []string{prompt}
 }
 
+// defaultAgentArgs are the flags a new automation starts its agent with when
+// the request names none: the automatic mode, in which an unattended run can
+// work at all (codex outside its sandbox and approvals, claude past its
+// permission prompts). The panel's form writes the same words for a new entry
+// (AUTO_ARGS in mods/am-automations/modes.js; a test holds the two tables
+// equal), so an automation a bot writes with `put` runs with the access the
+// same one made in the form has (#938).
+var defaultAgentArgs = map[string][]string{
+	"codex":  {"--dangerously-bypass-approvals-and-sandbox"},
+	"claude": {"--dangerously-skip-permissions"},
+}
+
+// DefaultAgentArgs returns the automatic mode's flags for a new automation
+// run by this agent kind ("" is the default agent), or nil when the kind has
+// none. The slice is the caller's.
+func DefaultAgentArgs(kind string) []string {
+	if kind == "" {
+		kind = "claude"
+	}
+	return append([]string(nil), defaultAgentArgs[kind]...)
+}
+
 // Dir is where automations.yaml lives.
 func Dir() string { return hostpath.ConfigDir() }
 

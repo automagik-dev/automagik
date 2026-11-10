@@ -212,8 +212,8 @@
             },
             "window": { "enum": ["d1", "d7", "d30"] },
             "by": {
-              "enum": ["bot"],
-              "description": "What a row is keyed by, when the request passed --by with a value other than branch, the default: bot gives bot rows (RFC 0021 (d)); a bot with no row is 0 only when actor_unattributed.absent_bot_is_zero is true, else unknown. Absent for branch rows, whether or not --by branch was passed. M3 adds task (RFC 0018, --by task), which only a reader that asks for it meets."
+              "enum": ["bot", "task"],
+              "description": "What a row is keyed by, when the request passed --by with a value other than branch, the default: bot gives bot rows (RFC 0021 (d)), and task gives task rows keyed by repo and task id (RFC 0018 M3, RFC 0021 D4). A bot with no row is 0 only when actor_unattributed.absent_bot_is_zero is true, else unknown. Absent for branch rows, whether or not --by branch was passed. A bot or task query may name no branch: the branches named are then a filter. A reader that does not ask for a value never meets its rows."
             },
             "branch_count": { "type": "integer", "minimum": 0, "description": "Branches named, duplicates counted." },
             "branches": {
@@ -234,8 +234,8 @@
     },
     "rows": {
       "type": "array",
-      "description": "Branch rows in request order (one per distinct branch named), or, with query.by bot, bot rows: one per bot key with attributed usage, ordered by bot, kind, role, squad, unrecorded (in its enum's order) and harness (byte order, null first). A row's kind is its attribution.precision (RFC 0021 D1).",
-      "items": { "oneOf": [{ "$ref": "#/$defs/branchRow" }, { "$ref": "#/$defs/botRow" }] }
+      "description": "Branch rows in request order (one per distinct branch named), or, with query.by bot, bot rows: one per bot key with attributed usage, ordered by bot, kind, role, squad, unrecorded (in its enum's order) and harness (byte order, null first), or, with query.by task, task rows: one per task id with task-labelled usage under the filter, ordered by task (byte order), each row's actors ordered by the same bot key. A row's kind is its attribution.precision (RFC 0021 D1).",
+      "items": { "oneOf": [{ "$ref": "#/$defs/branchRow" }, { "$ref": "#/$defs/botRow" }, { "$ref": "#/$defs/taskRow" }] }
     }
   },
   "allOf": [
@@ -373,7 +373,7 @@
       }
     },
     {
-      "description": "RFC 0021 D1 and D2: a --by bot answer holds bot rows only, with actor_unattributed, and every other answer branch rows only, whatever --by asks.",
+      "description": "RFC 0021 D1 and D2: a --by bot answer holds bot rows only, with actor_unattributed; a --by task answer holds task rows only; every other answer holds branch rows only, whatever --by asks.",
       "if": {
         "required": ["query"],
         "properties": {
@@ -386,7 +386,19 @@
         "properties": { "rows": { "items": { "required": ["bot"] } } }
       },
       "else": {
-        "properties": { "rows": { "items": { "required": ["branch"] } } }
+        "if": {
+          "required": ["query"],
+          "properties": {
+            "status": { "const": "ok" },
+            "query": { "type": "object", "required": ["by"], "properties": { "by": { "const": "task" } } }
+          }
+        },
+        "then": {
+          "properties": { "rows": { "items": { "required": ["task"] } } }
+        },
+        "else": {
+          "properties": { "rows": { "items": { "required": ["branch"] } } }
+        }
       }
     },
     {
@@ -726,13 +738,13 @@
       "properties": {
         "precision": {
           "enum": ["branch_window", "task_interval", "actor_interval"],
-          "description": "What the row's numbers are, never task cost before M3. branch_window: a branch row, the repo and branch total over the window (RFC 0018). actor_interval: a bot row (--by bot), only usage tied to a launch that names the bot, at evidence-backed call times (RFC 0021 (d)). task_interval: M3's task rows (--by task), keyed by repo and task id; a task id the meter ties to more than one checkout of the repo is never summed, and its row is missing with the reason task_ambiguous, which M3 adds (RFC 0021 D4). Widened in place from branch_window alone, before any release ships the meter (RFC 0018, Versioning)."
+          "description": "What the row's numbers are. branch_window: a branch row, the repo and branch total over the window (RFC 0018). actor_interval: a bot row (--by bot), only usage tied to a launch that names the bot, at evidence-backed call times (RFC 0021 (d)). task_interval: a task row (--by task), the repo's task-labelled usage in the window, keyed by repo and task id; a task id the meter ties to more than one checkout of the repo is never summed, and its row is missing with the reason task_ambiguous (RFC 0021 D4). It was widened in place from branch_window alone before the first release that shipped the meter; from that release on, a new `--by` value with its row kind and its reasons is additive under RFC 0018's Versioning, so a release that ships the meter keeps contract 1 for this row."
         },
         "exclusive": { "const": false },
         "shared": { "type": "boolean" },
         "coverage": {
           "enum": ["complete", "partial"],
-          "description": "partial when the repo has usage with no branch in the window (envelope unattributed) and the row could be owed some of it: every branch row, and every bot row of a --by bot query that names branches. The row's numbers are then a lower bound. A bot row of a --by bot query that names no branch counts usage with no branch itself (tokens_by_branch_basis.none), so it is always complete. Separate from source health, from price coverage and from the actor share, which attribution.actor and actor_unattributed report and which never moves this (RFC 0021 D3)."
+          "description": "partial when the repo has usage with no branch in the window (envelope unattributed) and the row could be owed some of it: every branch row, and every bot or task row of a --by bot or --by task query that names branches. The row's numbers are then a lower bound. A bot or task row of a query that names no branch counts usage with no branch itself (tokens_by_branch_basis.none), so it is always complete. Separate from source health, from price coverage and from the actor share, which attribution.actor and actor_unattributed report and which never moves this (RFC 0021 D3)."
         },
         "actor": { "$ref": "#/$defs/actor" }
       }
@@ -773,6 +785,120 @@
           }
         }
       }
+    },
+    "taskRow": {
+      "description": "A task row (--by task, attribution.precision task_interval, RFC 0018 M3, RFC 0021 D4): the usage in the repo and window attributed to one task id, with the launch tags that did the work (actors). One row per task id. A task id the meter ties to more than one checkout of the repo is never summed: its row is missing with the reason task_ambiguous (RFC 0021 D4), and the meter never prints a checkout path. The branches named are an optional filter, as for --by bot. Its numbers are evidence-backed (task_interval), so the branch row stays the total for a reader that needs one.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "task", "actors", "actors_omitted", "state", "reason", "tokens", "cost", "token_precision",
+        "attribution", "activity", "incomplete_sources"
+      ],
+      "properties": {
+        "task": { "type": "string", "minLength": 1, "maxLength": 64, "description": "Genie's short task id (gn-42, gh-1415, gl-231), joined with its project. Never inferred from a branch name, and never cut short: an id the contract cannot print is left out of the rows." },
+        "actors": {
+          "type": "array",
+          "description": "The launch tags that did the task's work, one per (bot, kind, role, squad, unrecorded, harness) with usage, ordered by that key (byte order, null first, unrecorded in its enum's order). A task answered by several bots or roles names them all; it never guesses a single one. The row's numbers are theirs together.",
+          "items": { "$ref": "#/$defs/taskActor" }
+        },
+        "actors_omitted": { "type": "integer", "minimum": 0, "description": "Actor keys the row's 2,304-byte bound left out (the trailing ones in key order); above 0, the task had more workers than the row can name, and a reader shows at least." },
+        "state": { "enum": ["measured", "stale", "missing"] },
+        "reason": { "enum": [null, "task_ambiguous", "ingestion_stale"] },
+        "tokens": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/tokens" }] },
+        "cost": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/cost" }] },
+        "token_precision": { "enum": [null, "exact", "mixed", "total_only"] },
+        "attribution": {
+          "$ref": "#/$defs/attribution",
+          "properties": {
+            "precision": { "const": "task_interval" },
+            "shared": { "const": false },
+            "actor": {
+              "properties": {
+                "tokens_ambiguous": { "const": 0 },
+                "tokens_unlinked": { "const": 0 },
+                "tokens_before_evidence": { "const": 0 }
+              }
+            }
+          }
+        },
+        "activity": { "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/activity" }] },
+        "incomplete_sources": { "type": "array", "items": { "type": "string" } }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "state": { "const": "measured" } } },
+          "then": { "properties": { "reason": { "const": null } } }
+        },
+        {
+          "if": { "properties": { "state": { "const": "stale" } } },
+          "then": { "properties": { "reason": { "const": "ingestion_stale" } } }
+        },
+        {
+          "if": { "properties": { "state": { "const": "missing" } } },
+          "then": {
+            "properties": {
+              "reason": { "const": "task_ambiguous" },
+              "tokens": { "type": "null" },
+              "cost": { "type": "null" },
+              "activity": { "type": "null" },
+              "token_precision": { "const": null },
+              "actors": { "maxItems": 0 },
+              "actors_omitted": { "const": 0 },
+              "attribution": { "properties": { "actor": false } }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "state": { "enum": ["measured", "stale"] } } },
+          "then": {
+            "properties": {
+              "tokens": { "type": "object", "properties": { "total": { "type": "integer", "minimum": 1 } } },
+              "cost": { "type": "object", "properties": { "state": { "enum": ["priced", "partial", "unpriced"] } } },
+              "activity": { "type": "object" },
+              "token_precision": { "enum": ["exact", "mixed", "total_only"] },
+              "attribution": { "required": ["actor"] }
+            }
+          }
+        },
+        {
+          "description": "A measured or stale row that names no actor had more than its bound could hold: it says how many it left out, never a silent cut.",
+          "if": {
+            "properties": {
+              "state": { "enum": ["measured", "stale"] },
+              "actors": { "maxItems": 0 }
+            }
+          },
+          "then": { "properties": { "actors_omitted": { "minimum": 1 } } }
+        }
+      ]
+    },
+    "taskActor": {
+      "description": "One launch tag that did part of a task's work: the bot key a bot row is keyed by, without its numbers. kind is always worker: a seat never records a task (RFC 0021 (a)).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bot", "kind", "role", "squad", "unrecorded", "harness"],
+      "properties": {
+        "bot": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "kind": { "const": "worker" },
+        "role": { "type": ["string", "null"], "minLength": 1, "maxLength": 64, "description": "The start row's role (dev, test, review or fix). null only when unrecorded names it." },
+        "squad": { "type": ["string", "null"], "minLength": 1, "maxLength": 64, "description": "The bot heading the launching bot's lead chain, frozen at launch (RFC 0021 (e)). null for the main bot, which heads no squad, or, when unrecorded names it, unknown." },
+        "unrecorded": {
+          "enum": [[], ["role"], ["squad"], ["role", "squad"]],
+          "description": "The key fields the launch's start row did not record (rows written before RFC 0021 delivery 3): each is null, and unknown, never none."
+        },
+        "harness": { "type": "string", "minLength": 1, "maxLength": 64 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "unrecorded": { "enum": [[], ["squad"]] } } },
+          "then": { "properties": { "role": { "type": "string" } } },
+          "else": { "properties": { "role": { "type": "null" } } }
+        },
+        {
+          "if": { "properties": { "unrecorded": { "enum": [["squad"], ["role", "squad"]] } } },
+          "then": { "properties": { "squad": { "type": "null" } } }
+        }
+      ]
     },
     "botRow": {
       "description": "A bot row (--by bot, attribution.precision actor_interval, RFC 0021 (d)): the usage in the repo and window attributed to one bot key, (bot, kind, role, squad, unrecorded, harness): unrecorded is in the key because a null squad is the main bot's when recorded and unknown when not, and the two never share a row. Squad is part of the key because it is frozen per launch: a bot re-led within the window has a row per squad. A row exists only for attributed usage, so a bot with no row is unknown while actor_unattributed is above 0, never 0. While ingestion.complete is false (a sync stopped at its budget, or a re-import, left usage unread), a bot row's numbers are a lower bound and a reader shows \"at least\", as for a branch row (RFC 0018).",
