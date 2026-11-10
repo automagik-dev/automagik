@@ -110,8 +110,9 @@ Antigravity:
 - An input-only generation counts what it holds once its database and WAL have been quiet for 30
   minutes; output written after that is not added, because the cursor is already past the row.
 - A new call that reuses an index and the previous call's first step time keeps the old dedupe
-  key and is not counted. The format writes a new call's steps with new times, so this is a
-  stated limit rather than a path the reader expects.
+  key and is not counted. That includes a same-index retry that keeps the old step; the format
+  writes a new call's steps with new times, so this is a stated limit, not a path the reader
+  expects.
 
 Codex:
 
