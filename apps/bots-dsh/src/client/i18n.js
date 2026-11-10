@@ -1438,6 +1438,9 @@ const ZH = {
   'Restart to update to {version}': '重启以更新到 {version}',
   'Installing the update…': '正在安装更新…',
   'Update check failed · Retry': '检查更新失败 · 重试',
+  'Updating · {percent}% · {done} of {total} MB': '正在更新 · {percent}% · {done} / {total} MB',
+  'Update download failed · Retry': '更新下载失败 · 重试',
+  'Update could not be verified · Retry': '无法验证更新 · 重试',
   // The Work / Code switch (work-code-switch.js, RFC 0013).
   'Work or code': '工作或代码',
   'Work': '工作',
