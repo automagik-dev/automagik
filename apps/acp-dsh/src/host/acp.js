@@ -366,6 +366,9 @@ export class AgentRun {
       try {
         await this.held(() => this.conn.setSessionModel(params), { signal, what: `taking its ${category}` })
       } catch (error) {
+        // A request nobody answered, or one the turn's Stop ended, goes up as it is: the turn
+        // ends the session on it (adapter.js `abandoned`), which a wrapped error would hide.
+        if (isUnanswered(error) || isStopped(error)) throw error
         // An agent can list a model it then cannot resolve (seen with Hermes: "Internal error",
         // the reason only in the error's data). Say which model and, when it is a plain word, why.
         const details = typeof error?.data?.details === 'string' && /^[\w .:-]{1,80}$/.test(error.data.details) ? ` (${error.data.details})` : ''
