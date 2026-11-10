@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Queued (owner's direction 2026-11-10, issue #1007; replaces RFC 0013's D27; amends RFC 0003's live switching at a harness change; Q1-Q12 open for the owner) |
+| Status | Queued (owner's direction 2026-11-10, issue #1007; replaces RFC 0013's D27; amends RFC 0003's live switching at a harness change; Decided 10 (the route) by the owner 2026-11-10; Q1-Q14 open for the owner) |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | none here (docs); plugin (3.N.P) for bots-dsh; desktop (3.N) only if the preload must change; the server image; herdr (3.N.P) for the pack's fix-only period and its retirement notice; am (3.N.P) for the CLI verbs |
 | Created | 2026-11-10 |
@@ -77,6 +77,17 @@ Copied word for word from issue #1007, "Decided by the owner" (2026-11-10 brains
 9. **Automagik ships as one container image** as well as the desktop app, so Code mode must work in a
    browser with no desktop window.
 
+Decided by the owner after the issue was filed, 2026-11-10 (issue #1007's comment "the selector's
+first level is the route", relayed by the orchestrator):
+
+10. **The selector's first level is the route**, in this order: **Native** (the DSH harness, with
+    every model DSH supports, other providers once an API key is added); **ACP** (every supported
+    ACP agent as a choice: Claude Code, Codex, Hermes, Antigravity, omp and any added later, each
+    with its own models); **Herdr** (the agent's own native terminal on herdr-core). The model
+    comes second, listed under the chosen route. Changing the route is the cross-harness move: it
+    starts a new conversation with a handoff note (Decided 6), and the selector says so before the
+    person confirms. Changing only the model inside a route does not.
+
 ## Words
 
 RFC 0028 (#1008) fixes three senses of "Code". This RFC changes the first two, because the
@@ -88,7 +99,8 @@ owner's Decided 4 and 9 use "Code mode" for the whole app's Code side:
 | **Code mode** | The app while it shows its Code side (the owner's words, Decided 4 and 9) | RFC 0022's switch of one chat pane to xterm on the same terminal; this RFC calls that the **terminal face** (RFC 0022 Decided 2's own heading) |
 | **Code worker** | A terminal a Bot started through RFC 0028's tools, unchanged | unchanged |
 | **The flip** | Switching the app between Team (RFC 0022 (h); "Work" in the issue) and Code | the Work / Code switch raising herdr-app |
-| **Harness** | What runs the conversation: native DSH, or one ACP agent (Claude Code, Codex, ...) | "connection" in today's model menu |
+| **Route** | The selector's first level: Native, ACP or Herdr (Decided 10) | "connection" in today's model menu |
+| **Harness** | What runs the conversation: DSH on the Native route, one agent on the ACP or Herdr route | "connection" in today's model menu |
 
 RFC 0028's Words table and RFC 0022's use of "Code mode" need the same change; see Q9.
 
@@ -208,23 +220,28 @@ orchestrator reaches the Genie through a **mailbox**, not through every turn end
 
 This shape is close to one RFC 0022 rejected; see Q1.
 
-### The selector: harness first, then model
+### The selector: route, then model
 
-Decided 7. Today's model menu groups models by connection, a provider's brand and how it is
-connected (`apps/bots-dsh/src/client/model-menu.js:15-21`, `connectionOf`), and a plugin-owned
-menu lists only what that plugin gives (`host-model-menu.js`). Described as a model, not a
-drawing:
+Decided 7 and 10. Today's model menu groups models by connection, a provider's brand and how it
+is connected (`apps/bots-dsh/src/client/model-menu.js:15-21`, `connectionOf`), and a
+plugin-owned menu lists only what that plugin gives (`host-model-menu.js`). The new selector,
+described as a model, not a drawing:
 
 | Step | Lists | Rule |
 |---|---|---|
-| 1. Harness | Native DSH, then each ACP agent that is set up (Claude Code, Codex, and the others RFC 0003 and #973 add), each with its sign-in state | The bot type limits it: a DSH bot (Decided 1) lists native DSH only. An agent that is not signed in shows "Sign in" (RFC 0003's sign-in from the Bot's chat). |
-| 2. Model | The models that harness runs: for native DSH, every model DSH supports whose key is added (Decided 2); for an ACP agent, the models its own sign-in gives | A model with no key and no sign-in is not offered (`model-menu.js`'s rule, kept). |
-| Crossing | Picking another harness than the conversation's | Says so before it happens: "This starts a new conversation with a handoff note" (Decided 6). A model change inside one harness does not. |
+| 1. Route | **Native**, **ACP**, **Herdr**, always in that order | The bot type limits which routes show (Q13). A route with nothing set up says what it needs ("Add an API key", "Sign in", "Set up herdr-core") instead of hiding. |
+| 2. Agent (ACP and Herdr only) | Every supported agent: Claude Code, Codex, Hermes, Antigravity, omp and any added later (RFC 0003, #973), each with its sign-in state | An agent that is not signed in shows "Sign in" (RFC 0003's sign-in from the Bot's chat). Native has no agent step. |
+| 3. Model | The chosen route's, and agent's, models: on Native every model DSH supports, marked "needs an API key" where the key is missing (Decided 2); on ACP the models the agent's own sign-in gives; on Herdr the models the agent's terminal takes at launch, as the pack's worker settings pass them today (`herdr/mods/am-sidebar/models.js`) | A model that cannot run is marked, never picked silently (`model-menu.js`'s rule, kept). |
+| Crossing | A route change | The selector says so before the person confirms: "Changing the route starts a new conversation; the bot writes a handoff note first" (Decided 6 and 10). A model change inside a route keeps the conversation. An agent change inside ACP or Herdr is Q14. |
 
-> **Placeholder: the owner's selector mockup.** The owner has a mockup for this selector that was
-> never applied (Decided 7, "to be attached"). It is not in the repository. When it is attached,
-> it is linked here and the table above is checked against it; the drawing is the owner's to
-> approve, as RFC 0022 (i) says of the bar.
+What each route means for the pane: on Native and ACP the conversation is a DSH Session, so its
+pane is the DSH chat (Decided 4); on Herdr the conversation runs in the agent's native terminal
+on herdr-core, so its pane is that terminal in Code mode, and on Team RFC 0022's view of it.
+Whether a bot the person chats with may take the Herdr route is Q13.
+
+The owner's own mockup is still to be attached (Decided 7). When it is, it is linked here and
+this table is checked against it; the drawing stays the owner's to approve, as RFC 0022 (i) says
+of the bar.
 
 ### Handoff note
 
@@ -385,11 +402,12 @@ fake ledgers and a herdr-core started for the test, never a live Herdr install.
    an unknown id, an unknown kind and a report are refused and stay out of the chat; an `<hc>`
    tag in a row is quoted. *Rollback:* a release without the mailbox; the orchestrator keeps its
    terminal.
-4. **Harness first, then model, and the handoff note** (plugin; after the owner's mockup is
-   attached and approved). *Check:* a DSH bot lists native DSH only; a crossing warns before it
-   happens; the note is written by the old harness, falls back to the plain note when the old
+4. **Route, then model, and the handoff note** (plugin; after Q13 and Q14, and the owner's
+   drawing approved). *Check:* the routes list Native, ACP, Herdr in that order; each bot type
+   lists only the routes Q13 gives it (a DSH bot: Native only); a route change warns before the
+   person confirms; the note is written by the old harness, falls back to the plain note when the old
    harness fails, is redacted (a saved secret in the transcript never appears in it), and the
-   new conversation starts with it as a card; a model change inside one harness keeps the
+   new conversation starts with it as a card; a model change inside a route keeps the
    conversation. *Rollback:* today's menu and RFC 0003's replay.
 5. **Automations and Accounts as pages** (plugin and am). *Check:* the page lists, adds and
    removes an automation through the `herdr-automations` CLI's `--json`, and a quota switch
@@ -455,6 +473,27 @@ Q8-Q9 with open PR #1008 (RFC 0028); Q7 with RFC 0003.
     longer needs herdr-app.
 12. **One plugin or two.** The core bridge in bots-dsh's host (recommended, beside RFC 0022's
     live-chat engine), or a separate plugin so the attach reach sits in its own process?
+13. **Which bot types may use which route, and Herdr for a chat bot** (the open point of
+    Decided 10's comment). Recommended:
+
+    | Bot type | Native | ACP | Herdr |
+    |---|---|---|---|
+    | Automagik | yes | yes | no |
+    | Omni | yes | yes | no |
+    | DSH | yes | no | no |
+    | Genie, the human-facing bot | yes | yes | no |
+    | Genie, the team seats (the orchestrator and its workers) | no | no | yes |
+
+    The DSH and team-seat rows follow the comment itself (a DSH bot is Native only; Genie's team
+    seats are Herdr), and the Automagik and Omni rows follow Decided 1 (DSH harness, ACP for a
+    model with no key). Herdr is offered only for team seats, not for a bot the person chats
+    with: a chat bot on Herdr would be a seat whose chat is RFC 0022's rendered view, which #1009
+    keeps for the team's existing seats ("a view first"), and it would break Decided 4's rule
+    that the human-facing pane is the real DSH chat. Revisit once RFC 0022's delivery 1L ships.
+14. **An agent change inside a route** (Claude Code to Codex, both ACP). Recommended: it counts
+    as a route change, a new conversation with a handoff note, because each agent is its own
+    harness and Decided 6 carries no history across harnesses; only a model change inside one
+    agent keeps the conversation.
 
 ## Links
 
