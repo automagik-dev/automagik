@@ -316,7 +316,11 @@ function interactive(node) {
     'aria-haspopup' in node.attrs || 'tabindex' in node.attrs || 'data-menu' in node.attrs
 }
 
-test('the top bar drags the window, and its empty space still drags on every platform', () => {
+function describe(node) {
+  return `${node.tag}${[...node.classes].map(name => `.${name}`).join('')}`
+}
+
+test('the top bar drags the window, and its sanctioned empty space still drags on every platform', () => {
   const barRule = rules.find(rule => splitTop(rule.prelude).includes('.bar'))
   assert.equal(appRegionOf(barRule), 'drag', 'the bar itself is the drag region')
   for (const platform of PLATFORMS) {
@@ -324,9 +328,13 @@ test('the top bar drags the window, and its empty space still drags on every pla
     assert.equal(appRegion(bar), 'drag', `${platform}: the bar drags the window`)
     const spacer = bar.children.find(node => node.classes.has('spacer'))
     assert.equal(appRegion(spacer), 'drag', `${platform}: the empty bar space still drags`)
+    // The bar's own padding and gaps are inside its drag region, and the .spacer is the one
+    // sanctioned empty child. Any other child is no-drag by default, so a control cannot
+    // inherit the drag region; an unknown empty filler is inert instead of dragging.
     const empty = element('div', { class: 'empty-space' }, bar)
     bar.children.push(empty)
-    assert.equal(appRegion(empty), 'drag', `${platform}: a later empty area still drags`)
+    assert.equal(appRegion(empty), 'no-drag',
+      `${platform}: a new unclassed child is no-drag by default, never a drag region`)
   }
 })
 
@@ -363,6 +371,13 @@ test('a control added to the top bar later is no-drag without a new rule', () =>
     ['div', { 'aria-haspopup': 'menu' }],
     ['div', { 'data-menu': 'bar' }],
     ['div', { tabindex: '0' }],
+    // Kinds the old enumerated allowlist did not name: the default must cover them instead.
+    ['details', {}],
+    ['option', {}],
+    ['video', { controls: '' }],
+    ['am-menu', {}],
+    ['am-button', {}],
+    ['div', { contenteditable: 'true' }],
   ]
   for (const platform of PLATFORMS) {
     const bar = barTree(platform)
@@ -372,6 +387,27 @@ test('a control added to the top bar later is no-drag without a new rule', () =>
       assert.equal(appRegion(control), 'no-drag', `${platform}: a new ${tag} in the bar must be no-drag`)
       bar.children.pop()
     }
+  }
+})
+
+// The bar's real markup, not a list of the element kinds this stylesheet knows: every element
+// in the subtree except the bar's own empty box and the .spacer must take clicks. An unknown
+// custom element stands in for a control added later, so a new kind cannot inherit the drag
+// region without a new rule.
+test('the real bar subtree has no drag surface for a control, only its empty surface drags', () => {
+  for (const platform of PLATFORMS) {
+    const bar = barTree(platform)
+    const spacer = bar.children.find(node => node.classes.has('spacer'))
+    assert.ok(spacer, `${platform}: the bar has its sanctioned empty spacer`)
+    walk(bar, node => {
+      if (node === bar || node === spacer) return
+      assert.equal(appRegion(node), 'no-drag',
+        `${platform}: ${describe(node)} in the real bar must take clicks, not drag the window`)
+    })
+    const control = element('am-menu', {}, bar)
+    bar.children.push(control)
+    assert.equal(appRegion(control), 'no-drag',
+      `${platform}: an unknown bar control is no-drag by default`)
   }
 })
 

@@ -48,11 +48,15 @@ body.darwin .frame{border-radius:0;box-shadow:none}
 .piece:focus-visible{outline:2px solid var(--ring);outline-offset:2px}
 
 .bar{height:var(--bar);display:flex;align-items:center;gap:10px;padding:0 9px 0 14px;-webkit-app-region:drag}
-/* Empty bar space drags the window; anything in it that takes input opts out on every
-   platform. A drag region swallows pointer events, menus included, so the brand (the bar's
-   right-click menu surface) is no-drag too, and a future control in here is covered by the
-   same rule rather than inheriting the drag region. */
-.bar :is(.brand,.controls,a,button,input,label,select,summary,textarea,[contenteditable],[role=button],[role=checkbox],[role=link],[role=menu],[role=menubar],[role=menuitem],[role=menuitemcheckbox],[role=menuitemradio],[role=option],[role=radio],[role=slider],[role=switch],[role=tab],[aria-haspopup],[tabindex],[data-menu]){-webkit-app-region:no-drag}
+/* The bar drags the window only where it is empty: its own padding and gaps, and the .spacer,
+   the sanctioned empty middle. Every direct child is no-drag by default, whatever its tag or
+   attributes, so a control of a kind this stylesheet has never seen (a custom element,
+   details, a media element) takes clicks instead of inheriting the drag region. A drag region
+   swallows pointer events, menus included, so the brand, the bar's right-click menu surface,
+   is covered too: a new control is safe by default, while a new empty filler that is not
+   .spacer stays inert instead of dragging. */
+.bar > *{-webkit-app-region:no-drag}
+.bar > .spacer{-webkit-app-region:drag}
 body.darwin .bar{padding-left:84px}
 .brand{display:flex;align-items:center;gap:8px}
 .brand-mark{width:21px;height:18px}
