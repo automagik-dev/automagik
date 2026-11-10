@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (2026-11-10, by the owner: the story, the site base and the 2026-11-16 deadline; Q1-Q4 answered 2026-11-10; he OKs the exact README text, the film cut and a site preview before go-live) |
+| Status | Accepted (2026-11-10, by the owner: the story, the site base and the 2026-11-16 deadline; Q1-Q4 answered 2026-11-10, Q5 open; he OKs the exact README text, the film cut and a site preview before go-live) |
 | Goal | By 2026-11-16: a stranger opens the repository, watches the film in the README, and reaches a live automagik.si that shows every building block with one working call to action. |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | none here (docs and a static site: `README.md` and `apps/landing/` are in `NEVER_SHIPPED`, so they ship to no install) |
@@ -58,8 +58,9 @@ already recorded.
 
 - **The story is "open building blocks".** automagik.si is the superintelligence open building
   blocks; each part is shown as its own block, usable alone: Team mode on DSH, Code mode on
-  Herdr, Genie, Omni, Pocket, the meter and Cloud. Open means the set is open to use and
-  compose, each block on its own; it does not mean every block is open source. This repository,
+  Herdr, Genie, Omni, Pocket, the meter and Cloud. Open, in this RFC's reading of his answer,
+  means the set is open to use and compose, each block on its own; it does not mean every block
+  is open source. This repository,
   Genie and Omni are Apache-2.0; Cloud is the private, paid hosted service (RFC 0024).
 - **The site starts from the Genie's draft** ("Your own agent force") and its brand brief,
   extended to the whole set and moved into this repository.
@@ -75,7 +76,7 @@ The four questions, answered 2026-11-10:
   no build step; previews first; `automagik.dev` 301s to `automagik.si`.
 - **Q2, music: a CC0 instrumental.** The team picks it, and the track, licence and scope go in
   `apps/landing/assets/film/LICENSES.md`; he OKs it with the cut.
-- **Q3, Arca and the private app: no blocks.** Neither appears on the page.
+- **Q3, no additional product blocks.** None appears on the page.
 - **Q4, the call to action: Download and a Cloud waitlist** on the first screen. Download stays
   the primary button; the waitlist is a real form, designed in "The waitlist" and delivered as
   D3b by 2026-11-15.
@@ -96,7 +97,8 @@ code... genie omni."
   print under it says what open covers: this repository, Genie and Omni are Apache-2.0; Cloud is
   a private, paid service, and its contracts are public.
 - **The README's first line:** "Automagik is superintelligence, in open building blocks: a team
-  of AI agents in your chats, and each part usable on its own, with Cloud still in design." The
+  of AI agents in your chats, and each part usable on its own once it ships; Cloud is still in
+  design." The
   tagline stays: "A team of AI helpers that lives in your chats."
 - **Free and open source, Apache-2.0, for this repository, Genie and Omni**, said exactly that
   way, in the first screen's small print and the footer. Cloud is never called free or open: it
@@ -133,7 +135,7 @@ Caveats stay in the small print, never as status chips:
   pack's install.
 
 Unfold is not one of the seven: it is a separate product and the owner's list does not include
-it (RFC [0020](0020-unfold-plugins-leave.md)). Arca and the private app: Q3 in Decided.
+it (RFC [0020](0020-unfold-plugins-leave.md)). No additional product blocks: Q3 in Decided.
 
 Each block links to its own README or RFC, all under the `automagik-si` org: Team and Pocket to
 their app folders, Code to `herdr/`, Genie to `genie`, Omni to `omni`, the meter to
@@ -160,11 +162,12 @@ The order, top to bottom:
    their content: the plugin table, installing into your own DSH, history, versions and
    releases, develop, license.
 
-The film is one committed file, played by the site. The README plays a GitHub attachment of the
-same bytes: at D2 the owner drags the rendered mp4 into a PR comment, the attachment URL and the
-file's sha256 go in "The film" below and in the README, and the README's player points at the
-attachment. The poster in the repo is the fallback. github.com's CSP only plays media from
-GitHub's own hosts, so the site's URL cannot be the README player.
+The film is one cut in two encodes. The site plays the committed file, which may be larger; the
+README plays a GitHub attachment of the same cut, 10 MB or under: at D2 the owner drags that
+encode into a PR comment, the attachment URL and the attachment's sha256 go in "The film" below
+and in the README, and the README's player points at the attachment. The poster in the repo is
+the fallback. github.com's CSP only plays media from GitHub's own hosts and caps video
+attachments at 10 MB, so the site's URL cannot be the README player.
 
 The app's README (`apps/desktop/README.md`) gets the same corrected sentences for the four
 claims in "The claims to fix"; the root README and the app README do not disagree.
@@ -228,67 +231,84 @@ one link to the repository. Q1 is answered: `automagik.dev` 301s to `automagik.s
 
 The first screen carries the second action: a small card under the download buttons, visually
 secondary, with the honest line "Cloud is coming. There is no date yet. Leave your email and we
-will tell you when it is ready." Download stays the primary button; the waitlist never outranks
-it in the DOM, the colour or the space.
+will use it only to tell you when Cloud opens." Download stays the primary button; the waitlist
+never outranks it in the DOM, the colour or the space. Until Q5 is answered, it only stores: no
+email is sent and no mail service is integrated.
 
 - **The form.** One native HTML form, no JavaScript: `method="post"`, `action="/api/waitlist"`,
   `input type="email" name="email" autocomplete="email" required maxlength="254"`, a hidden
-  `action=add`, and a submit button. The function returns a small HTML page, so the page still
-  has no script.
-- **The privacy note.** Under the form, short and expandable: what is kept (the email and the UTC
-  time it was added), why (to tell you when Cloud is ready), the legal basis (your consent), how
-  long (until Cloud launches or you remove it, reviewed every six months), who hosts it
-  (Cloudflare, as the processor, in the region the store is set to), no sharing beyond that
-  processor, no analytics, no cookies, and the LGPD rights (confirmation, access, correction,
-  deletion). Removal is a second small form in the same `details`, posting `action=remove`; it
-  deletes the row and answers the same whether or not the email was there.
-  The `privacy` role address at automagik.si is for access and correction; it is a role address,
-  not personal data, and D3b adds it to the privacy list's allowed emails for the page.
+  `action=add`, and a submit button. Under the button, one visible line: "By joining, I agree to
+  one email when Cloud opens. See the privacy note." The function returns a small HTML page, so
+  the page still has no script.
+- **The privacy note.** Under the form, short and expandable: the controller (Namastex Labs, the
+  owner's entity) and the `privacy` role address at automagik.si for access and correction; what
+  is kept (the email and the UTC time it was added); why (the one email when Cloud opens); the
+  legal basis (your consent, withdrawn by removing the row); how long (until Cloud launches or
+  you remove it, reviewed every six months); who processes it and where (Cloudflare, as the
+  processor, with the transfer abroad and the D1 jurisdiction named); no sharing beyond that
+  processor; no analytics, no cookies; and the rights: confirmation, access, correction,
+  deletion, to withdraw consent, and to complain to the ANPD or, in the EU, the local
+  supervisory authority. It says the address is not verified and there is no double opt-in.
+  Removal is a second small form in the same `details`, posting `action=remove`; it deletes the
+  row and answers the same whether or not the email was there. Only the owner can read or
+  export the list; no agent does.
 - **The function.** `apps/landing/functions/api/waitlist.js`, one Pages Function, POST only:
   `application/x-www-form-urlencoded`; trim and lowercase the email; reject over 254 characters
   or a malformed address with 400; accept `action=add` or `action=remove` only. Add:
   `INSERT INTO waitlist(email, created_at) VALUES (?, ?) ON CONFLICT(email) DO NOTHING`;
   remove: `DELETE FROM waitlist WHERE email = ?`; both return the same small HTML page. It never
-  sends email, never calls `fetch`, never redirects to a caller's URL, and logs no email, IP or
-  user agent. That is the "no open relay" rule: it can only write or delete one row.
+  sends email, never calls `fetch`, never redirects to a caller's URL, does no rate limiting and
+  logs no email, IP or user agent. That is the "no open relay" rule: it can only write or delete
+  one row.
 - **The store.** D1, not KV: a unique email, a timestamp, one statement to delete, and an easy
   export for a privacy request. The binding `WAITLIST_DB`; the table
   `waitlist(email TEXT PRIMARY KEY, created_at TEXT NOT NULL)`; the schema in
   `apps/landing/waitlist/schema.sql`; the setup steps in `apps/landing/waitlist/README.md`. It
-  holds only the email and the timestamp: no IP, no user agent, no referrer, no source. Preview
-  and production use separate databases; no test row reaches the production store.
-- **The limits.** A Cloudflare Rate Limiting binding `WAITLIST_LIMITER`, five requests a minute
-  per `CF-Connecting-IP`; the IP is the key and is not stored. Without the binding or the
-  database, the function answers 503 rather than accepting anything. There is no CAPTCHA, no
-  third-party script, no cookie, and no email is sent, so there is no open relay and no list to
-  scrape from the page.
+  holds only the email and the timestamp: no IP, no user agent, no referrer, no source. Its D1
+  jurisdiction is set in the owner's account (a jurisdiction, not a location hint) and named in
+  the note. Preview and production use separate databases; no test row reaches production.
+- **The limits.** A Cloudflare WAF rate rule on the production domain, path `/api/waitlist`, is
+  the limiter (Cloudflare counts per location, so the limit is approximate). It is account
+  configuration, not a Pages Functions binding: the function has no limiter, sees no IP and
+  never rate-limits in code. The preview is a `*.pages.dev` host not
+  covered by the domain rule; it is unlisted, `noindex` and owner-only, with its own database,
+  so the block is checked on production at D4. A missing D1 binding or a failed write is a 503
+  with the failure page, never a success.
 - **The failure rule.** The success page is returned only after the D1 write resolves. If the
-  write throws, the function answers 503 with "We could not save that. Try again in a minute";
-  it never returns the success text. `apps/landing/waitlist.test.mjs` injects a D1 that throws
-  and asserts exactly that; `verify-browser.mjs` submits the form against a 503 and asserts the
-  success text is absent, then against a 200 and asserts it is present.
-- **The owner's part.** The database, the database bindings (preview and production), the rate
-  limiter and the role address are created in his Cloudflare account by him, or with his OK; the
-  PR carries the schema, the function and the setup steps, never a credential. The agent does
-  not touch the account.
+  write throws or the binding is missing, the function answers 503 with "We could not save that.
+  Try again in a minute"; it never returns the success text. `apps/landing/waitlist.test.mjs`
+  injects a D1 that throws and asserts exactly that; `verify-browser.mjs` submits the form
+  against a 503 and asserts the success text is absent, then against a 200 and asserts it is
+  present.
+- **The owner's part.** The database, the database bindings (preview and production), the WAF
+  rate rule and the `privacy` role address are created in his Cloudflare account by him, or with
+  his OK. The bindings are made in the dashboard: no `wrangler.toml` with an account, database
+  or zone id is committed, and the setup steps use placeholders. Only the owner can read or
+  export the list; an access request is answered from that export. The agent does not touch the
+  account.
+- **Not Cloud.** A waitlist row never becomes a Cloud account, a Pocket ID user or a billing
+  customer, and is never imported into Cloud's identity service. It is an announcement list,
+  not a sign-up.
 - **The test bar.** A row is exactly `(email, created_at)`; a duplicate is one row; an invalid
   address is 400; a non-POST is 405; a wrong content type is 415; a store failure is 503 with no
-  success text; a missing binding is 503; the sixth request in a minute is 429; a remove deletes
-  and gives the same page; no `Set-Cookie`; no third-party request; no email in any log.
+  success text; a missing binding is 503; a remove deletes and gives the same page; no
+  `Set-Cookie`; no third-party request; no email in any log; no email is sent. The WAF block is
+  a production check at D4, not a function test. No account or database id is committed.
 
 ### The film
 
 - **Source:** the storyboard, scene for scene, exactly as written: 16:9, 1920×1080, 30 fps,
   0:58, music only, no voice-over and no sound effects on top of the track.
-- **One file:** H.264 and AAC, faststart, under 25 MB, at `apps/landing/assets/film/` with a
-  poster frame. No LFS in this repository, so the web encode is the file; no master in the repo.
-- **The README player is a GitHub attachment of the same file.** At D2 the owner uploads the
-  rendered mp4 by dragging it into a PR comment; the attachment URL and the file's sha256 are
-  recorded in the table below and in the README, next to the poster. The poster is the fallback
-  if the player does not render. The site plays the committed file. One encode, one sha256; the
-  attachment is a copy, not a second edit.
-- **Metadata stripped** before the file is committed: the privacy matcher reads the mp4's
-  and the poster's readable strings.
+- **Two encodes of one cut.** The site plays the committed
+  `apps/landing/assets/film/automagik-launch.mp4` (H.264 and AAC, faststart, no LFS, no master in
+  the repo); it may be the larger file. The README plays a GitHub attachment, which GitHub caps
+  at 10 MB on this plan, so D2 makes a 10 MB-or-under encode of the same cut and uploads that.
+- **The README player is that 10 MB attachment.** At D2 the owner drags the encode into a PR
+  comment; the attachment URL and the attachment's sha256 go in the table below and in the
+  README, next to the poster. The poster is the fallback. The site's committed file is the same
+  cut, may be larger, and is not the attachment.
+- **Metadata stripped** before either file is committed or uploaded: the privacy matcher reads
+  both mp4s' and the poster's readable strings.
 - **The end card** names `github.com/automagik-si/automagik`; #921 moves the live URLs from
   `automagik-dev` and the film follows it.
 - **The storyboard's open items are resolved or cut, never filled in:** the group's name before
@@ -296,13 +316,15 @@ it in the DOM, the colour or the space.
   app (never a new pet), the music (Q2: a CC0 track, picked by the team), and the page version
   the film shows (D3's page, re-pulled at build).
 - **Music:** one CC0 instrumental, picked by the team, roughly 100-110 BPM, sparse to full and
-  easing before the end card. The track, licence and its scope go in `LICENSES.md`; he OKs it
-  with the cut. No track without a written licence.
+  easing before the end card. `LICENSES.md` records the track's source URL, the creator, the
+  download date and a saved copy of the CC0 deed; he OKs it with the cut. No track without a
+  written licence.
 
 | Item | Value |
 |---|---|
-| README player | the GitHub attachment URL, uploaded by the owner at D2 |
-| sha256 | the same file's sha256, recorded with the URL at D2, in this table and the README |
+| Site file | `apps/landing/assets/film/automagik-launch.mp4`, the site's encode (may be larger) |
+| README player | the GitHub attachment URL, a 10 MB-or-under encode, uploaded by the owner at D2 |
+| sha256 | the attachment's sha256, taken from the downloaded attachment at D2, in this table and the README |
 
 **Frame rules:** no account emails, keys, QR codes, home-folder paths or anyone's real chats; the
 person is "You"; no metrics, users or dates beyond the sources; a missing fact is cut, not
@@ -339,7 +361,7 @@ the repo or the owner's words do not support it, it does not ship.
 | `README.md:1-3` | "Automagik's plugins for DeepSeek Harness (DSH), and the Automagik desktop app that runs them." | That is the repository's contents, not the product a stranger meets. | Lead with the product; keep this as the developer section's first line. |
 | Whole set | "Free and open source, Apache-2.0" about the set, and Cloud among the open blocks. | This repository, Genie and Omni are Apache-2.0; Cloud is the private, paid hosted service, with only its contracts public (RFC 0024). | Scope the Apache line to the three; Cloud's footnote says private, paid, not live, not open source. |
 | Two modes | The app download alone gives both modes. | Code mode needs Herdr and the pack; RFC 0013 delivery 7 ("one install") is open. | D1 and the site say Code needs Herdr and the pack; the app download alone does not set it up. |
-| README film | The README plays the film from the site's URL. | github.com's CSP only plays media from GitHub's own hosts. | One GitHub attachment, its URL and sha256 recorded, the poster as the fallback (M2). |
+| README film | The README plays the film from the site's URL. | github.com's CSP only plays media from GitHub's own hosts and caps video attachments at 10 MB. | One GitHub attachment, 10 MB or under, its URL and sha256 recorded, the poster as the fallback (M2). |
 | Naming | The app's switch says **Work**; the owner calls the mode **Team**. | RFC 0013: the shipped switch is Work/Code; the owner's rename to Team is not in the code. | "Team mode (the app's switch still says Work)" in the small print; screenshots keep the app's label. |
 
 The source read's other flags are the same kind of thing: a claim stated more broadly than the
@@ -352,7 +374,7 @@ claim by claim, so the owner can see none was dropped.
 |---|---|---|
 | **Page contract** | `node --test apps/landing/landing.test.mjs` | One `h1`; the sections and anchors; every image is a capture, a brand mark or the film's poster, and every screen capture matches its digest; every `href` is local or on the reviewed allow-list; exactly one film element; no script, iframe or analytics; only the two waitlist forms, with their action and method; the privacy scan of the page files; the responsive rules. |
 | **Browser** | `node apps/landing/verify-browser.mjs` (with `LANDING_CHROME` on Linux/CI) | 1440, 1024, 390 and 320 px: no sideways scroll, every image answers 200 and decodes, no request outside the page. D3 adds `video/mp4` and the poster; D3b submits the form against a 503 and a 200. |
-| **Waitlist** | `node --test apps/landing/waitlist.test.mjs` | One row of exactly `(email, created_at)`; a duplicate is one row; an invalid email is 400; a non-POST is 405; a wrong type is 415; a store failure is 503 with no success text; a missing binding is 503; the sixth request a minute is 429; remove deletes and answers the same; no `Set-Cookie`, no third-party request, no email in a log. |
+| **Waitlist** | `node --test apps/landing/waitlist.test.mjs` | One row of exactly `(email, created_at)`; a duplicate is one row; an invalid email is 400; a non-POST is 405; a wrong type is 415; a store failure is 503 with no success text; a missing binding is 503; remove deletes and answers the same; no `Set-Cookie`, no third-party request, no email in a log; no email is sent. The WAF block is a D4 production check. |
 | **Rendered README** | a screenshot attached to D1's PR by its author | The rendered github.com page at 1440 px: one `h1`, the film player (or the poster fallback) and the download buttons. |
 | **Privacy matcher** | `node herdr/scripts/privacy-check.mjs` from the root | No home path, private name, account, email, secret or database file in the new text, or in the film's and the poster's readable strings. Run before every push. |
 | **Link check** | The landing test's allow-list, then `curl -fsSIL` on each destination at D4 | No unreviewed outbound link; the README attachment, the poster, the download and the waitlist answer as expected on the live site. |
@@ -367,18 +389,20 @@ claim by claim, so the owner can see none was dropped.
 - **`apps/landing/`** is the site's source of truth: one `index.html`, `styles.css`, and
   `assets/{brand,screens,film}`. Its anchors are `#film`, `#blocks`, `#team`, `#code`, `#genie`,
   `#omni`, `#pocket`, `#meter`, `#cloud` and `#install`.
-- **The film paths:** `apps/landing/assets/film/automagik-launch.mp4` and
-  `apps/landing/assets/film/automagik-launch-poster.webp`, plus `LICENSES.md` beside them.
-- **The README's film** is one GitHub attachment URL, recorded with the file's sha256 in "The
-  film" and in the README; the poster in the repo is the fallback. The attachment is the same
-  bytes as the committed film; the file stays the source of truth.
+- **The film paths:** `apps/landing/assets/film/automagik-launch.mp4` (the site's encode) and
+  `apps/landing/assets/film/automagik-launch-poster.webp`, plus `LICENSES.md` beside them. The
+  README's film is a GitHub attachment URL, a 10 MB-or-under encode of the same cut; its sha256
+  is recorded in "The film" and in the README, and the poster is the fallback.
 - **`POST /api/waitlist`** is the site's one endpoint: `application/x-www-form-urlencoded`,
   `action=add|remove`, `email` up to 254 characters. It answers 200 (the same page for add and
-  remove), 400, 405, 415, 429 or 503; it never sends email, redirects or sets a cookie. The store
-  is the D1 table `waitlist(email TEXT PRIMARY KEY, created_at TEXT NOT NULL)`, through the
-  `WAITLIST_DB` binding; the rate limit is the `WAITLIST_LIMITER` binding.
-  The `privacy` role address at automagik.si is the contact; D3b adds it to the privacy list's
-  allowed emails, since it is a public role address.
+  remove), 400, 405, 415 or 503; it never sends email, redirects or sets a cookie. The store is
+  the D1 table `waitlist(email TEXT PRIMARY KEY, created_at TEXT NOT NULL)`, through the
+  `WAITLIST_DB` binding; its jurisdiction is set and named in the note. The production domain's
+  WAF rate rule on `/api/waitlist` bounds the path; it is account configuration, not a code
+  binding. No `wrangler.toml` with an account, database or zone id is committed. The `privacy`
+  role address at automagik.si is the contact; D3b adds it to the privacy list's allowed emails.
+- **The waitlist is not Cloud:** a row never becomes a Cloud account, Pocket ID user or billing
+  customer, and is never imported into Cloud's identity service.
 - **The README's first screen** contains the film, the download links and the link to the site's
   Cloud waitlist; the developer sections stay below it.
 - **The reviewed destinations** are exactly the landing test's allow-list; a new outbound link
@@ -389,24 +413,31 @@ claim by claim, so the owner can see none was dropped.
 ## Threat model
 
 - **Who can reach it:** anyone. The page is static; the waitlist is one server endpoint
-  (`POST /api/waitlist`) with a D1 binding and a rate limiter. It accepts one email and a
-  timestamp, never sends email, never fetches another site, sets no cookie and uses no analytics
-  or third party. The download is a link; the waitlist is a row.
-- **Waitlist abuse:** the rate limit bounds one IP; validation bounds the field; the D1 unique
-  key makes a duplicate a no-op; there is no open relay (no email, no fetch, no redirect) and no
-  CAPTCHA or third party. A bot within the limit can add addresses; the list is not an email
-  sender, and the owner can delete rows.
+  (`POST /api/waitlist`) with a D1 binding. It accepts one email and a timestamp, never sends
+  email, never fetches another site, sets no cookie and uses no analytics or third party. The
+  download is a link; the waitlist is a row.
+- **Waitlist abuse:** a Cloudflare WAF rate rule on the production domain bounds the path; the
+  function has no limiter and no IP. Validation bounds the field; the D1 unique key makes a
+  duplicate a no-op; there is no open relay (no email, no fetch, no redirect) and no CAPTCHA or
+  third party. A bot within the rule can add addresses; the list is not an email sender, and the
+  owner can delete rows.
+- **Consent cannot be proven:** there is no double opt-in; anyone can add or remove any address.
+  The list is an announcement list, not a verified or transactional list, and is not used for
+  anything that needs proven consent.
 - **Enumeration and removal:** add and remove answer the same page whether or not the email
   exists; the success page shows no timestamp; the remove page says "If that email was on the
-  list, it's removed"; the remove form deletes the row.
-- **A false success:** the success page is written only after the D1 write resolves. A throw, a
-  missing binding or a missing limiter is a 503 with the failure page; the unit and browser
-  tests cover it.
+  list, it's removed"; the remove form deletes the row. Only the owner can read or export the
+  list; an access request is answered from that export; no agent reads it.
+- **A false success:** the success page is written only after the D1 write resolves. A throw or
+  a missing binding is a 503 with the failure page; the unit and browser tests cover it.
 - **The waitlist data:** only email and timestamp; no IP, user agent or referrer; no cookie; no
-  analytics; no third party; Cloudflare is the processor and the region is named; the database
-  is in the owner's account, reached only through the binding; preview and production are
-  separate; the privacy note states purpose, consent, retention, sharing, rights and removal;
-  The `privacy` role address at automagik.si handles access and correction.
+  analytics; no third party; the controller is Namastex Labs; Cloudflare is the processor, the
+  transfer abroad and the D1 jurisdiction are named; the database is in the owner's account,
+  reached only through the binding; preview and production are separate; the privacy note states
+  purpose, consent, retention, sharing, the rights (including withdrawal and the ANPD or an EU
+  authority) and removal; the `privacy` role address handles access and correction. A row never
+  becomes a Cloud account, Pocket ID user or billing customer, and is never imported into
+  Cloud's identity service.
 - **Private data in a public front door:** the privacy matcher scans the new text, the film's
   readable strings and the poster; the film's frame rules keep out emails, keys, QR codes, home
   paths and real chats; the screens are captures from the isolated fixture, never a live
@@ -417,7 +448,8 @@ claim by claim, so the owner can see none was dropped.
 - **A dead or wrong download:** the CTA is checked live at D4 against the file it names; no
   third-party binary and no redirect shortener.
 - **The music licence:** a written licence and its scope in `LICENSES.md`; no track ships
-  without one. A licence that requires credit gets its credit in the footer.
+  without one. The CC0 deed is saved with it; a licence that requires credit gets its credit in
+  the footer.
 - **A bad deploy or a lost domain:** deploys come from the repository only, under the owner's
   hosting account; no credential is in the page or the repo. Undo is redeploying the previous
   commit and removing the custom domain or DNS record. The film and the page stay in history;
@@ -426,18 +458,18 @@ claim by claim, so the owner can see none was dropped.
 ## Deliveries
 
 Each delivery is one pull request against `dev`, except D4, which is the hosting change and the
-merge of D1's PR. None cuts a release. The dates run to the owner's 2026-11-16 deadline; Q1 and
-Q2 are answered, so nothing here waits on a question.
+merge of D1's PR. None cuts a release. The dates run to the owner's 2026-11-16 deadline; Q1-Q4
+are answered, Q5 (the launch email) is open and blocks no delivery here, since D3b only stores.
 
 **D1, Wednesday 2026-11-11: the README PR.**
 
 - *What ships:* the rewritten `README.md` in the order above and the corrected
   `apps/desktop/README.md`, with the film section, the seven blocks, the corrected claims and
-  the developer sections below; the Apache-2.0 line scoped to
-  this repository, Genie and Omni; Cloud's footnote private and paid; Code mode names Herdr and
-  the pack; the link to the site's Cloud waitlist; links follow #921's `automagik-si` org, with
-  no new `automagik-dev` URL. The film section carries the poster and the film text; D2 adds
-  the player (the GitHub attachment URL), its sha256 line and the README line.
+  the developer sections below; the Apache-2.0 line scoped to this repository, Genie and Omni;
+  Cloud's footnote private and paid; Code mode names Herdr and the pack; the link to the site's
+  Cloud waitlist; links follow #921's `automagik-si` org, with no new `automagik-dev` URL. The
+  film section carries the poster and the film text; D2 adds the 10 MB player, its sha256 line
+  and the README line.
 - *Check:* the owner reads the exact text of both READMEs in the PR and OKs it; `bun
   scripts/lane.ts ships <last tag>` says no; the privacy matcher is clean; every link that is
   live answers 200 (the site, the waitlist and the film are checked at D4); each approval
@@ -450,24 +482,27 @@ Q2 are answered, so nothing here waits on a question.
 
 **D2, Friday 2026-11-13: the film.**
 
-- *What ships:* the rendered film and its poster in `apps/landing/assets/film/`, from the
-  storyboard, with the team's CC0 track and its licence in `LICENSES.md`; the owner uploads the
-  same mp4 as a GitHub attachment in a PR comment, and the attachment URL and the file's sha256
-  go in "The film" table and in the README.
+- *What ships:* the site's encode and the poster in `apps/landing/assets/film/`, from the
+  storyboard, with the team's CC0 track and its licence in `LICENSES.md` (source URL, creator,
+  download date and the saved CC0 deed); a 10 MB-or-under encode of the same cut, uploaded by the
+  owner as a GitHub attachment in a PR comment; the attachment URL and the attachment's sha256
+  in "The film" table and in the README.
 - *Check:* the owner watches the cut and OKs it, the music with it; `ffprobe` says 0:58 (under a
   minute), 1920x1080, 30 fps, one audio track (the owner's watch covers no voice-over and no
-  SFX); the file is under 25 MB; `sha256sum` of the committed file equals the recorded sha256
-  and the attachment's; the privacy matcher is clean on the mp4 and the poster; the storyboard's
-  frame rules hold; its `[TBD]`s are resolved or cut.
-- *Rollback:* delete the two assets and the attachment line; D3 ships without the player, or
-  with the poster linking to the site film, and names the gap; nothing is public until D4.
+  SFX); the attachment is 10 MB or under; `curl -L` the attachment and compute its sha256: it
+  equals the recorded value, which also proves GitHub did not re-encode it; the site's file is
+  the same cut and may be larger; the privacy matcher is clean on both files and the poster; the
+  storyboard's frame rules hold; its `[TBD]`s are resolved or cut.
+- *Rollback:* delete the site file and the poster; remove the attachment line; the GitHub
+  comment can stay; D3 ships without the player, or with the poster linking to the site film, and
+  names the gap; nothing is public until D4.
 
 **D3, Saturday 2026-11-14: the site in the repo, with a preview.**
 
 - *What ships:* `apps/landing/` becomes the automagik.si page, from the Genie's draft, extended
-  to the seven blocks, with the real captures, the film (the committed file), the brand assets,
-  the Install section and the updated `CAPTURES.md`; `landing.test.mjs` allows exactly one film
-  element and the new sources and anchors; the `landing` CI job (`bun install` for
+  to the seven blocks, with the real captures, the film (the committed site encode), the brand
+  assets, the Install section and the updated `CAPTURES.md`; `landing.test.mjs` allows exactly
+  one film element and the new sources and anchors; the `landing` CI job (`bun install` for
   playwright-core, the runner's Chrome or an installed one, `LANDING_CHROME`); a Cloudflare
   Pages preview, unlisted and `noindex`. The waitlist card is D3b.
 - *Check:* the page test is green; the browser check passes at 1440, 1024, 390 and 320 px; the
@@ -480,44 +515,52 @@ Q2 are answered, so nothing here waits on a question.
 **D3b, Sunday 2026-11-15: the Cloud waitlist.**
 
 - *What ships:* the waitlist card on the first screen (Download stays the primary button), the
-  native form and the remove form, the short LGPD-aware privacy note, the Pages Function
-  `apps/landing/functions/api/waitlist.js`, the D1 schema and setup steps, the rate-limit
-  binding, the test `apps/landing/waitlist.test.mjs`, the page test's allowance of exactly those
-  two forms, and the public role address's allowed entry in
+  native form with the consent line and the remove form, the short LGPD-aware privacy note
+  (controller, contact, transfer, D1 jurisdiction, rights, ANPD/EU, removal), the Pages Function
+  `apps/landing/functions/api/waitlist.js`, the D1 schema and setup steps, the page test's
+  allowance of exactly those two forms, and the `privacy` role address's allowed entry in
   `herdr/scripts/privacy-list.json`. The owner creates the database, the preview and production
-  bindings, the rate limiter and the `privacy` role address in his account; the preview uses its
-  own database.
+  bindings, the WAF rate rule and the `privacy` role address in his account, in the dashboard;
+  no `wrangler.toml` with an account, database or zone id is committed; the preview uses its own
+  database. The waitlist only stores: no email is sent and no mail service is integrated.
 - *Check:* the test bar above; the owner submits a test email on the preview, sees exactly one
-  row `(email, created_at)`, removes it and sees it gone; a D1 that throws is 503 and never the
-  success text; the sixth request in a minute is 429; the page has no cookie, no third-party
-  request, no analytics and no email in a log; the privacy matcher is clean on the page and the
-  function; the privacy note names what, why, retention, the processor, the rights and removal;
-  Download is the first action in the DOM; the owner OKs the preview.
-- *Rollback:* revert the PR; remove the form, the function, the schema and the bindings; delete
-  the D1 database, the only copy of the waitlist (no email was ever sent, so no one is waiting on
-  a message); the site returns to Download only.
+  row `(email, created_at)`, removes it and sees it gone; no email is sent; a D1 that throws is
+  503 and never the success text; the WAF rule is set for production and the preview is
+  owner-only (the block is checked at D4); the page has no cookie, no third-party request, no
+  analytics and no email in a log; the privacy matcher is clean on the page and the function; the
+  privacy note names the controller, the transfer, the D1 jurisdiction, the rights and removal;
+  the consent line shows by the button; a row never becomes a Cloud account; no account or
+  database id is committed; Download is the first action in the DOM; the owner OKs the preview.
+- *Rollback:* revert the PR; remove the form, the function, the schema, the bindings and the WAF
+  rule; delete the D1 database, the only copy of the waitlist (no email was ever sent, so no one
+  is waiting on a message); the site returns to Download only.
 
 **D4, Monday 2026-11-16: go-live, after the OKs.**
 
 - *What ships:* `automagik.si` is attached to the Pages project and its DNS record added; the
   preview's `noindex` is removed; HTTPS and the canonical URL are checked; `automagik.dev` 301s
-  to the new site; the README PR merges with the GitHub attachment player and the waitlist line;
-  the first screen's Apache line stays scoped and Cloud's footnote stays private and paid.
+  to the new site; the README PR merges with the 10 MB GitHub attachment player and the waitlist
+  line; the first screen's Apache line stays scoped and Cloud's footnote stays private and paid.
 - *Check, the happy delivery by hand in a clean browser:* open the repository, watch the film in
   the README (the GitHub attachment), click through to automagik.si, see the seven blocks, use
   the download and try the waitlist with a test email, then remove it. `curl -fsSI
   https://automagik.si` answers 200 with HTTPS; the film answers `video/mp4`; every block link
-  answers 200; the waitlist row is exactly the test email and a timestamp, and is gone after the
-  remove; the page has no `noindex`, no analytics, no cookie and no third party.
+  answers 200; the WAF rule blocks a burst on `/api/waitlist`; the waitlist row is exactly the
+  test email and a timestamp, and is gone after the remove, and no email was sent; the page has
+  no `noindex`, no analytics, no cookie and no third party.
 - *Rollback:* remove the custom domain and DNS record; revert the README merge; apply D3b's
   rollback if the waitlist is the failure; the preview stays available to the owner; installed
   apps are untouched.
 
 ## Open questions
 
-None: the owner answered Q1-Q4 on 2026-11-10, in Decided. Q4's design is "The waitlist" and
-D3b; the Reviewer's M1 and M2 are folded into this revision (Cloud's footnote and the scoped
-Apache line; the GitHub attachment player).
+**Q5. The launch email, and who sends it.**
+*Recommended:* one email only, when Cloud opens, sent by the owner from his own account or a
+transactional service he picks; the privacy note names the sender and the processor before the
+first send; the email has the removal path; the list is deleted after that send. Until he
+answers, the waitlist only stores: no email is sent and no mail service is integrated.
+
+Q1-Q4 are answered 2026-11-10, in Decided; Q4's design is "The waitlist" and D3b.
 
 ## Links
 
