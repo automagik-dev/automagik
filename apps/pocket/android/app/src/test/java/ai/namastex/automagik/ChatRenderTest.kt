@@ -1,6 +1,7 @@
 package ai.namastex.automagik
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -35,5 +36,89 @@ class ChatRenderTest {
         val links = shown.getLinkAnnotations(0, shown.length)
         assertEquals(listOf("https://evil.example/steal?c="), links.map { shown.text.substring(it.start, it.end) })
         assertTrue(opened.isEmpty())
+    }
+
+    private fun chat(terminal: String = "dsh:s1", title: String = "", registryId: String? = null) =
+        Chat.Terminal(terminal, "machine", "codex", title, "blocked", "chat", true, registryId)
+
+    private fun member(id: String, name: String, pet: String?) = Teams.Member(id, name, false, pet)
+
+    private fun pane(bot: String? = null, title: String = "Review") =
+        CoreTerminal("t1", title, "~/project", "live", "blocked", "codex", "", 80, 24,
+            labels = if (bot == null) emptyMap() else mapOf("bot" to bot))
+
+    @Test fun barTakesTheBotChatsNameAndItsRegistryPet() {
+        val identity = chatIdentity(chat(title = "Integrator", registryId = "b-1"), null,
+            listOf(member("b-1", "Integrator", "wisp")), Teams.NEEDS_YOU)
+        assertEquals("Integrator", identity.name)
+        assertEquals("wisp", identity.pet)
+        assertEquals(Teams.NEEDS_YOU, identity.pose)
+    }
+
+    @Test fun barFallsBackFromListingToRegistryToPaneThenAutomagikBot() {
+        val listing = chat(title = "", registryId = "b-2")
+        val terminal = pane(bot = "b-2", title = "Pane title")
+        assertEquals("Reviewer", chatIdentity(listing, terminal, listOf(member("b-2", "Reviewer", "capy")), Teams.IDLE).name)
+        assertEquals("capy", chatIdentity(listing, terminal, listOf(member("b-2", "Reviewer", "capy")), Teams.IDLE).pet)
+        // A pane with no listing is still its labelled bot's.
+        assertEquals("Reviewer", chatIdentity(null, terminal, listOf(member("b-2", "Reviewer", "capy")), Teams.IDLE).name)
+        // No registry member: the pane's title, then the app's word for an unnamed chat.
+        assertEquals("Pane title", chatIdentity(null, terminal, emptyList(), Teams.IDLE).name)
+        val unnamed = chatIdentity(null, null, emptyList(), Teams.IDLE)
+        assertEquals(Cockpit.BOT, unnamed.name)
+        assertNull(unnamed.pet)
+    }
+
+    @Test fun aDshSessionIdFindsItsRegistryMember() {
+        val identity = chatIdentity(chat(terminal = "dsh:s1"), null, listOf(member("s1", "Integrator", "wisp")), Teams.NEEDS_YOU)
+        assertEquals("Integrator", identity.name)
+        assertEquals("wisp", identity.pet)
+    }
+
+    @Test fun theOpenCardLeavesTheMessageListAndKeepsFoldedCalls() {
+        val approval = Chat.Row(id = "a1", kind = "approval", open = true, tool = "Bash", summary = "git status",
+            choices = listOf("allow", "allow-always", "deny"))
+        val question = Chat.Row(id = "q1", kind = "question", open = true, prompt = "Which branch?", options = listOf("dev"))
+        val text = Chat.Row("t1", "text", text = "hello")
+        val tool = Chat.Row("c1", "tool-call", tool = "Bash", summary = "ls")
+        val state = Chat.State("dsh:s1", rows = listOf(approval, text, question, tool), approval = approval, question = question)
+        assertEquals(listOf("t1", "c1"), chatListRows(state).map { it.id })
+        assertEquals(listOf("q1", "a1"), chatPending(state).map { it.id })
+        assertTrue(chatListRows(state).any { it.kind == "tool-call" })
+    }
+
+    @Test fun aClosedQuestionStaysInTheTranscriptAndIsNotPinned() {
+        val closed = Chat.Row(id = "q1", kind = "question", open = false, prompt = "Old question?")
+        val state = Chat.State("dsh:s1", rows = listOf(closed), question = closed)
+        assertTrue(chatPending(state).isEmpty())
+        assertEquals(listOf("q1"), chatListRows(state).map { it.id })
+    }
+
+    @Test fun anOpenCardNeedsThePersonEvenBeforeTheStatusSaysSo() {
+        val approval = Chat.Row(id = "a1", kind = "approval", open = true)
+        assertEquals(Teams.NEEDS_YOU, chatPose(Chat.State("dsh:s1", status = Chat.Status("working"), approval = approval)))
+        assertEquals(Teams.WORKING, chatPose(Chat.State("dsh:s1", status = Chat.Status("working"))))
+        assertEquals(Teams.IDLE, chatPose(Chat.State("dsh:s1", status = Chat.Status("idle"))))
+        assertEquals(Teams.DONE, chatPose(Chat.State("dsh:s1", status = Chat.Status("done"))))
+        assertEquals(Teams.FAILED, chatPose(Chat.State("dsh:s1", status = Chat.Status("error"))))
+        assertEquals(Teams.ASLEEP, chatPose(Chat.State("dsh:s1", gone = true)))
+    }
+
+    @Test fun theBarKeepsTheStateText() {
+        assertEquals("Needs you · Waiting for approval",
+            chatStateLine(Chat.State("dsh:s1", status = Chat.Status("blocked", msg = "Waiting for approval"))))
+        assertEquals("Ended", chatStateLine(Chat.State("dsh:s1", gone = true)))
+        assertEquals("Machine offline", chatStateLine(Chat.State("dsh:s1", offline = true)))
+    }
+
+    @Test fun theMockSizesArePinned() {
+        assertEquals(52f, ChatStyle.CARD_BUTTON_HEIGHT.value)
+        assertEquals(26f, ChatStyle.CARD_BUTTON_RADIUS.value)
+        assertEquals(16f, ChatStyle.CARD_BUTTON_TEXT.value)
+        assertEquals(17f, ChatStyle.CARD_CONFIRM_TEXT.value)
+        assertEquals(300f, ChatStyle.PENDING_MAX_HEIGHT.value)
+        assertEquals(56f, ChatStyle.COMPOSER_HEIGHT.value)
+        assertEquals(28f, ChatStyle.COMPOSER_RADIUS.value)
+        assertEquals(17f, ChatStyle.COMPOSER_TEXT.value)
     }
 }

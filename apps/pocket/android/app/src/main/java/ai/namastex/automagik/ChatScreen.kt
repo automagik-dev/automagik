@@ -5,7 +5,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -16,10 +18,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -30,6 +34,72 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.text.DateFormat
 import java.util.Date
+
+/**
+ * The chat's thumb sizes, from Chat.dc.html: the decision card's 52 px buttons and the composer's 56 px pill with its
+ * 17 px field. One source for the mock's targets, and the render test reads it back.
+ */
+object ChatStyle {
+    val CARD_RADIUS = 22.dp
+    val CARD_BUTTON_HEIGHT = 52.dp
+    val CARD_BUTTON_RADIUS = 26.dp
+    val CARD_BUTTON_TEXT = 16.sp
+    val CARD_CONFIRM_TEXT = 17.sp
+    val PENDING_MAX_HEIGHT = 300.dp
+    val COMPOSER_RADIUS = 28.dp
+    val COMPOSER_HEIGHT = 56.dp
+    val COMPOSER_TEXT = 17.sp
+}
+
+/** What the chat bar says the bot is: its name, the pet to draw (null reads as Genie) and the pose for the open state. */
+data class ChatIdentity(val name: String, val pet: String?, val pose: String)
+
+/** The bot's registry id: the chat's served id, else its `dsh:<id>`, else the pane's `bot` label. */
+private fun chatBotId(chat: Chat.Terminal?, terminal: CoreTerminal?): String? =
+    chat?.registryId?.takeIf { it.isNotBlank() }
+        ?: chat?.terminal?.takeIf { Chat.isDsh(it) }?.substringAfter(Chat.DSH_PREFIX)?.takeIf { it.isNotBlank() }
+        ?: terminal?.labels?.get("bot")?.trim()?.takeIf { it.isNotBlank() }
+
+/**
+ * The chat bar's bot: the listing's title, the registry member's name, then the pane's title; a chat with none is
+ * [Cockpit.BOT]. The pet is the member's, so a bot without one wears Genie ([Pets.load] falls back).
+ */
+fun chatIdentity(chat: Chat.Terminal?, terminal: CoreTerminal?, members: Collection<Teams.Member>, pose: String): ChatIdentity {
+    val member = chatBotId(chat, terminal)?.let { id -> members.find { it.id == id } }
+    val name = listOfNotNull(chat?.title, member?.name, terminal?.title)
+        .map { ChatText.clean(it).trim() }.firstOrNull { it.isNotEmpty() } ?: Cockpit.BOT
+    return ChatIdentity(name, member?.pet, pose)
+}
+
+/** The pet's pose: an open card always needs the person, however late the status line is; gone or offline dozes. */
+fun chatPose(s: Chat.State): String = when {
+    s.approval != null || s.question != null -> Teams.NEEDS_YOU
+    s.gone || s.offline -> Teams.ASLEEP
+    // A live pane's words, as Teams.poseOf reads them: done and error are not sleep.
+    s.status.state == "working" -> Teams.WORKING
+    s.status.state == "blocked" -> Teams.NEEDS_YOU
+    s.status.state == "done" -> Teams.DONE
+    s.status.state == "error" -> Teams.FAILED
+    s.status.state == "idle" -> Teams.IDLE
+    else -> Teams.ASLEEP
+}
+
+/** The open card, fixed above the composer: a question first, then an approval, each once. */
+fun chatPending(s: Chat.State): List<Chat.Row> =
+    listOfNotNull(s.question?.takeIf { it.open }, s.approval?.takeIf { it.open }).distinctBy { it.id }
+
+/** The transcript rows the message list draws: the fixed card is not also left scrolling in it. */
+fun chatListRows(s: Chat.State): List<Chat.Row> {
+    val fixed = chatPending(s).map { it.id }.toSet()
+    return if (fixed.isEmpty()) s.rows else s.rows.filterNot { it.id in fixed }
+}
+
+/** The bar's second line, as the chat has always said it: state word, then the engine's message. */
+fun chatStateLine(s: Chat.State): String = when {
+    s.gone -> "Ended"
+    s.offline -> "Machine offline"
+    else -> stateName(s.status.state) + s.status.msg.takeIf { it.isNotBlank() }?.let { " · " + ChatText.clean(it) }.orEmpty()
+}
 
 /**
  * Prose spans as the text a Compose [Text] draws: every span's characters as they are, nothing parsed as markup.
@@ -52,15 +122,24 @@ fun chatAnnotated(spans: List<ChatText.Span>, open: (String) -> Unit): Annotated
 @Composable fun ChatPane(vm: PocketViewModel, ref: TerminalRef, onShowTerminal: (() -> Unit)?, onBack: () -> Unit, modifier: Modifier = Modifier) {
     DisposableEffect(ref) { vm.openChat(ref); onDispose { vm.closeChat(ref) } }
     val s = vm.chat.collectAsStateWithLifecycle().value?.takeIf { it.terminal == ref.address } ?: Chat.State(ref.address)
-    val bot = vm.botChats.collectAsStateWithLifecycle().value[ref.hostId]?.getOrNull()?.find { it.terminal == ref.address }?.title.orEmpty()
+    val app by vm.state.collectAsStateWithLifecycle()
+    val chat = vm.botChats.collectAsStateWithLifecycle().value[ref.hostId]?.getOrNull()?.find { it.terminal == ref.address }
+    val terminal = app.machines[ref.hostId]?.terminals?.find { it.address == ref.address }
+    val members = remember(app.machines[ref.hostId]?.members) {
+        app.machines[ref.hostId]?.members?.values?.flatten().orEmpty()
+    }
+    val pose = chatPose(s)
+    val identity = remember(chat, terminal, members, pose) { chatIdentity(chat, terminal, members, pose) }
     val openLink = rememberLinkOpener()
     val list = rememberLazyListState()
     var draft by remember(ref) { mutableStateOf("") }
     var confirmDraft by remember(ref) { mutableStateOf<Chat.Message?>(null) }
-    val count = s.rows.size + s.screen.size + s.messages.size + s.receipts.size + (if (s.approval != null) 1 else 0) + (if (s.question != null) 1 else 0)
+    val rows = remember(s.rows, s.approval?.id, s.question?.id) { chatListRows(s) }
+    val pending = remember(s.question, s.approval) { chatPending(s) }
+    val count = rows.size + s.screen.size + s.messages.size + s.receipts.size
     LaunchedEffect(count) { val items = list.layoutInfo.totalItemsCount; if (count > 0 && items > 0) list.animateScrollToItem(items - 1) }
     Column(modifier.background(Canvas)) {
-        ChatBar(s, onBack, onShowTerminal?.takeIf { ChatActions.canShowTerminal(s) }, vm::chatInterrupt, vm::reconnectChat)
+        ChatBar(s, identity, onBack, onShowTerminal?.takeIf { ChatActions.canShowTerminal(s) }, vm::chatInterrupt, vm::reconnectChat)
         s.notice?.let { notice ->
             Row(Modifier.fillMaxWidth().background(Raised).padding(start = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(notice, fontSize = 12.sp, color = Ink, modifier = Modifier.weight(1f))
@@ -69,25 +148,28 @@ fun chatAnnotated(spans: List<ChatText.Span>, open: (String) -> Unit): Annotated
         }
         LazyColumn(Modifier.fillMaxWidth().weight(1f).alpha(if (s.offline || s.gone) .55f else 1f), state = list,
             contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (s.rows.isNotEmpty() && s.more) item("earlier") {
+            if (rows.isNotEmpty() && s.more) item("earlier") {
                 TextButton(onClick = vm::chatEarlier, modifier = Modifier.fillMaxWidth()) { Text("Load earlier", fontSize = 12.sp) }
             }
             if (s.screenOnly) item("screen-only") { Hint("History appears when this pane’s transcript is found.") }
-            items(s.rows, key = { "r:" + it.id }) { ChatRowView(it, s, vm, openLink) }
+            items(rows, key = { "r:" + it.id }) { ChatRowView(it, s, vm, openLink) }
             if (s.screen.isNotEmpty()) item("live") { Hint("Live from the screen") }
             items(s.screen, key = { "s:" + it.id }) { ChatRowView(it, s, vm, openLink) }
-            items(s.receipts, key = { "x:" + it.id }) { ReceiptCard(it, bot, vm::dismissReceipt) }
-            s.question?.let { q -> item("q:" + q.id) { ChatRowView(q, s, vm, openLink) } }
-            s.approval?.let { a -> item("a:" + a.id) { ChatRowView(a, s, vm, openLink) } }
+            items(s.receipts, key = { "x:" + it.id }) { ReceiptCard(it, identity.name, vm::dismissReceipt) }
             items(s.messages, key = { "m:" + it.id }) { m -> MessageView(m, s, onSendNow = { confirmDraft = it }, onCancel = vm::chatCancelHeld, onRetry = vm::chatRetry) }
-            if (count == 0 && s.error == null) item("empty") { Hint(if (s.connected) "No messages yet." else "Connecting chat…") }
+            if (count == 0 && pending.isEmpty() && s.error == null) item("empty") { Hint(if (s.connected) "No messages yet." else "Connecting chat…") }
         }
         val why = ChatActions.whyNoSend(s)
-        if (why != null) Text(why, fontSize = 12.sp, color = Muted,
-            modifier = Modifier.fillMaxWidth().background(Chrome).padding(14.dp).navigationBarsPadding())
-        else if (ChatActions.canSend(s)) Row(Modifier.fillMaxWidth().background(Chrome).padding(10.dp, 4.dp).navigationBarsPadding(), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(draft, { draft = it }, placeholder = { Text("Message this agent…", fontSize = 12.sp) }, modifier = Modifier.weight(1f), maxLines = 5, shape = RoundedCornerShape(12.dp))
-            IconButton(onClick = { vm.chatSend(draft); draft = "" }, enabled = draft.isNotBlank()) { Icon(Icons.AutoMirrored.Outlined.Send, "Send message", tint = Accent) }
+        Column(Modifier.fillMaxWidth().background(Chrome).navigationBarsPadding()) {
+            if (pending.isNotEmpty()) Column(Modifier.fillMaxWidth().heightIn(max = ChatStyle.PENDING_MAX_HEIGHT)
+                .verticalScroll(rememberScrollState())
+                .padding(start = 12.dp, end = 12.dp, top = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                for (row in pending) PendingCard(row, s, vm)
+            }
+            if (why != null) Text(why, fontSize = 12.sp, color = Muted,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp))
+            else if (ChatActions.canSend(s)) ChatComposer(draft, { draft = it }, { vm.chatSend(draft); draft = "" }, draft.isNotBlank(), identity.name)
         }
     }
     confirmDraft?.let { m ->
@@ -98,19 +180,28 @@ fun chatAnnotated(spans: List<ChatText.Span>, open: (String) -> Unit): Annotated
     }
 }
 
-@Composable private fun ChatBar(s: Chat.State, onBack: () -> Unit, onShowTerminal: (() -> Unit)?, onInterrupt: () -> Unit, onReconnect: () -> Unit) {
+@Composable private fun ChatBar(s: Chat.State, identity: ChatIdentity, onBack: () -> Unit, onShowTerminal: (() -> Unit)?, onInterrupt: () -> Unit, onReconnect: () -> Unit) {
     Column(Modifier.fillMaxWidth().background(Chrome)) {
-        Row(Modifier.fillMaxWidth().padding(end = 4.dp).heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, top = 8.dp, bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "Back to agents") }
-            Dot(stateColor(s.status.state))
-            Spacer(Modifier.width(8.dp))
-            Text(when {
-                s.gone -> "Ended"
-                s.offline -> "Machine offline"
-                else -> stateName(s.status.state) + s.status.msg.takeIf { it.isNotBlank() }?.let { " · " + ChatText.clean(it) }.orEmpty()
-            }, fontSize = 12.sp, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-            if (ChatActions.canInterrupt(s)) TextButton(onClick = onInterrupt) { Icon(Icons.Outlined.StopCircle, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("Interrupt", fontSize = 12.sp) }
-            if (onShowTerminal != null) TextButton(onClick = onShowTerminal) { Icon(Icons.Outlined.Terminal, null, Modifier.size(16.dp)); Spacer(Modifier.width(4.dp)); Text("Show terminal", fontSize = 12.sp) }
+            Surface(color = Surface, shape = RoundedCornerShape(24.dp), border = BorderStroke(1.dp, Border),
+                modifier = Modifier.weight(1f).height(48.dp)) {
+                Row(Modifier.fillMaxSize().padding(start = 6.dp, end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(36.dp)) {
+                        PetView(identity.pet, identity.pose, 36.dp)
+                        Box(Modifier.align(Alignment.BottomEnd).size(12.dp).background(stateColor(s.status.state), CircleShape)
+                            .border(2.dp, Surface, CircleShape))
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(identity.name, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Ink,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text(chatStateLine(s), fontSize = 12.sp, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+            if (ChatActions.canInterrupt(s)) IconButton(onClick = onInterrupt) { Icon(Icons.Outlined.StopCircle, "Interrupt", tint = Blocked) }
+            if (onShowTerminal != null) IconButton(onClick = onShowTerminal) { Icon(Icons.Outlined.Terminal, "Show terminal", tint = Ink) }
         }
         s.error?.let { error ->
             Row(Modifier.fillMaxWidth().padding(start = 14.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -119,6 +210,29 @@ fun chatAnnotated(spans: List<ChatText.Span>, open: (String) -> Unit): Annotated
             }
         }
         HorizontalDivider(color = Border)
+    }
+}
+
+/** The composer at the mock's size: a 56 dp pill with a 17 px field and Send (no attach or mic yet). */
+@Composable private fun ChatComposer(draft: String, onDraft: (String) -> Unit, onSend: () -> Unit, enabled: Boolean, name: String) {
+    Surface(color = Surface, shape = RoundedCornerShape(ChatStyle.COMPOSER_RADIUS), border = BorderStroke(1.dp, Border),
+        modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 8.dp).heightIn(min = ChatStyle.COMPOSER_HEIGHT)) {
+        Row(Modifier.fillMaxWidth().padding(start = 18.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            BasicTextField(draft, onDraft, maxLines = 5,
+                textStyle = TextStyle(color = Ink, fontSize = ChatStyle.COMPOSER_TEXT, lineHeight = 22.sp),
+                cursorBrush = SolidColor(Accent),
+                modifier = Modifier.weight(1f).padding(vertical = 14.dp),
+                decorationBox = { field ->
+                    Box {
+                        if (draft.isEmpty()) Text("Message $name", fontSize = ChatStyle.COMPOSER_TEXT, color = Muted,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        field()
+                    }
+                })
+            IconButton(onClick = onSend, enabled = enabled, modifier = Modifier.size(48.dp)) {
+                Icon(Icons.AutoMirrored.Outlined.Send, "Send message", tint = if (enabled) Accent else Muted)
+            }
+        }
     }
 }
 
@@ -181,22 +295,41 @@ fun chatAnnotated(spans: List<ChatText.Span>, open: (String) -> Unit): Annotated
 /** An approval or a question: buttons only where [ChatActions] gives them; else what to do instead. */
 @Composable private fun PendingCard(row: Chat.Row, s: Chat.State, vm: PocketViewModel) {
     val choices = ChatActions.choices(s, row)
-    Surface(color = Blocked.copy(alpha = .08f), shape = RoundedCornerShape(12.dp), border = BorderStroke(1.dp, Blocked.copy(alpha = .4f)), modifier = Modifier.fillMaxWidth()) {
+    Surface(color = Blocked.copy(alpha = .08f), shape = RoundedCornerShape(ChatStyle.CARD_RADIUS),
+        border = BorderStroke(1.5.dp, Blocked.copy(alpha = .5f)), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp)) {
-            Text(if (row.kind == "approval") "Needs your approval" else "Question", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Blocked)
+            Text(if (row.kind == "approval") "Needs your approval" else "Question", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Blocked)
             Spacer(Modifier.height(4.dp))
             val what = if (row.kind == "approval") listOf(row.tool, row.summary).filter { it.isNotBlank() }.distinct().joinToString(": ") else row.prompt
             if (what.isNotBlank() && what != Chat.ANSWER_ON_COMPUTER) Text(ChatText.clean(what), fontSize = 13.sp, color = Ink)
             if (row.input.isNotBlank()) { Spacer(Modifier.height(6.dp)); Mono(row.input) }
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(10.dp))
             val options = ChatActions.options(s, row)
             if (options.isNotEmpty()) QuestionOptions(row, s, options, vm)
             else if (choices.isEmpty()) Text(ChatActions.pendingNote(s, row), fontSize = 12.sp, color = Muted)
-            else Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                for (c in choices) {
-                    val label = when (c) { "allow" -> "Allow"; "allow-always" -> "Always allow"; else -> "Deny" }
-                    if (c == "deny") OutlinedButton(onClick = { vm.chatAnswer(row, c) }) { Text(label, fontSize = 13.sp) }
-                    else Button(onClick = { vm.chatAnswer(row, c) }) { Text(label, fontSize = 13.sp) }
+            else Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // The mock's order: No, Always, Yes, with Yes taking the wider third.
+                for (c in choices.sortedBy { when (it) { "deny" -> 0; "allow-always" -> 1; else -> 2 } }) {
+                    val weight = if (c == "allow") 1.4f else 1f
+                    val shape = RoundedCornerShape(ChatStyle.CARD_BUTTON_RADIUS)
+                    val button = Modifier.weight(weight).height(ChatStyle.CARD_BUTTON_HEIGHT)
+                    when (c) {
+                        "deny" -> OutlinedButton(onClick = { vm.chatAnswer(row, c) }, modifier = button, shape = shape,
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Ink), border = BorderStroke(1.5.dp, Border),
+                            contentPadding = PaddingValues(horizontal = 8.dp)) {
+                            Text("No", fontSize = ChatStyle.CARD_BUTTON_TEXT, fontWeight = FontWeight.SemiBold)
+                        }
+                        "allow-always" -> OutlinedButton(onClick = { vm.chatAnswer(row, c) }, modifier = button, shape = shape,
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = Accent), border = BorderStroke(1.5.dp, Accent),
+                            contentPadding = PaddingValues(horizontal = 8.dp)) {
+                            Text("Always", fontSize = ChatStyle.CARD_BUTTON_TEXT, fontWeight = FontWeight.Bold)
+                        }
+                        else -> Button(onClick = { vm.chatAnswer(row, c) }, modifier = button, shape = shape,
+                            colors = ButtonDefaults.buttonColors(containerColor = Accent, contentColor = OnAccent),
+                            contentPadding = PaddingValues(horizontal = 8.dp)) {
+                            Text("Yes", fontSize = ChatStyle.CARD_CONFIRM_TEXT, fontWeight = FontWeight.Bold)
+                        }
+                    }
                 }
             }
         }
@@ -229,18 +362,25 @@ fun chatAnnotated(spans: List<ChatText.Span>, open: (String) -> Unit): Annotated
 @Composable private fun QuestionOptions(row: Chat.Row, s: Chat.State, options: List<String>, vm: PocketViewModel) {
     var picked by remember(row.id) { mutableStateOf(listOf<Int>()) }
     var typed by remember(row.id) { mutableStateOf("") }
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         options.forEachIndexed { i, label ->
-            if (row.multi) Row(Modifier.fillMaxWidth().clickable { picked = if (i in picked) picked - i else picked + i }, verticalAlignment = Alignment.CenterVertically) {
+            if (row.multi) Row(Modifier.fillMaxWidth().heightIn(min = ChatStyle.CARD_BUTTON_HEIGHT)
+                .clickable { picked = if (i in picked) picked - i else picked + i }, verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(checked = i in picked, onCheckedChange = { picked = if (it) picked + i else picked - i })
-                Text(ChatText.clean(label), fontSize = 13.sp, color = Ink)
+                Text(ChatText.clean(label), fontSize = ChatStyle.CARD_BUTTON_TEXT, color = Ink)
             }
-            else OutlinedButton(onClick = { vm.chatAnswerQuestion(row, listOf(i)) }, modifier = Modifier.fillMaxWidth()) { Text(ChatText.clean(label), fontSize = 13.sp) }
+            else OutlinedButton(onClick = { vm.chatAnswerQuestion(row, listOf(i)) },
+                modifier = Modifier.fillMaxWidth().heightIn(min = ChatStyle.CARD_BUTTON_HEIGHT), shape = RoundedCornerShape(ChatStyle.CARD_BUTTON_RADIUS)) {
+                Text(ChatText.clean(label), fontSize = ChatStyle.CARD_BUTTON_TEXT)
+            }
         }
-        if (row.multi) Button(onClick = { vm.chatAnswerQuestion(row, picked) }, enabled = picked.isNotEmpty()) { Text("Submit", fontSize = 13.sp) }
+        if (row.multi) Button(onClick = { vm.chatAnswerQuestion(row, picked) }, enabled = picked.isNotEmpty(),
+            modifier = Modifier.heightIn(min = ChatStyle.CARD_BUTTON_HEIGHT), shape = RoundedCornerShape(ChatStyle.CARD_BUTTON_RADIUS)) {
+            Text("Submit", fontSize = ChatStyle.CARD_BUTTON_TEXT)
+        }
         if (ChatActions.canType(s, row)) Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(typed, { typed = it.replace("\n", " ") }, placeholder = { Text("Or type an answer…", fontSize = 12.sp) },
-                modifier = Modifier.weight(1f), singleLine = true, shape = RoundedCornerShape(12.dp))
+            OutlinedTextField(typed, { typed = it.replace("\n", " ") }, placeholder = { Text("Or type an answer…", fontSize = 13.sp) },
+                textStyle = TextStyle(fontSize = 16.sp), modifier = Modifier.weight(1f), singleLine = true, shape = RoundedCornerShape(ChatStyle.CARD_BUTTON_RADIUS))
             TextButton(onClick = { vm.chatAnswerQuestion(row, emptyList(), typed) }, enabled = typed.isNotBlank()) { Text("Send", fontSize = 13.sp) }
         }
     }
