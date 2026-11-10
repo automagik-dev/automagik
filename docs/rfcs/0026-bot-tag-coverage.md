@@ -115,7 +115,9 @@ most, the rest summed into `other`), and every total includes every repo.
 one bot id and keeps their `unrecorded` fields visible, so a launch whose squad was not recorded
 never hides behind one whose squad was. The sum of the bot shares is the bot coverage: the
 per-bot lines are the numerator's split, not a second metric. The bot list is capped at 50
-lines by tokens, with `bots_shown` and `bots_omitted`; every total includes every bot.
+lines by tokens, with `bots_shown` and `bots_omitted`; the omitted bots are summed into an
+`other` line, so the shares still add up to the coverage, and a bot whose line is omitted has a
+lower-bound total ("at least"). Every total includes every bot.
 
 **A per-bot rate is not computable, and is not faked.** "Of this bot's usage, how much is
 tagged" needs the usage the bot failed to get, and untagged usage names no bot; an ambiguous call
@@ -217,11 +219,14 @@ seat's project-root cwd ((e)). A start row or binding always wins.
   ambiguous (`claimants_differ`) and not a guess between them. A start row always wins: every
   field the ledger recorded is left alone, and the label never overwrites it.
 - **A label that changes.** A worker's label is set at launch and never rewritten: a later
-  different `worker.of` clears the launch's claim, and its calls become unlinked, never re-tagged
-  to the last label seen. A seat's `bot` label can change with a reattach, so it is kept as a
-  timeline in the launch row's existing `bound` column (the attach binding's own shape), and the
-  claim follows each interval: the sync that saw the change moves the later calls to the new bot.
-  No new column; a recompute replays both states.
+  different `worker.of` makes the launch's claim empty for its whole span, and its calls become
+  unlinked, never re-tagged to the last label seen. A seat's `bot` label can change with a
+  reattach, so its claim follows each interval: the sync that saw the change moves the later
+  calls to the new bot. Both live as a timeline in the launch row's existing `bound` column
+  (the attach binding's own shape): delivery 3 reads it back and merges into it, never overwrites
+  it, and caps its intervals — past the cap the call is Unknown, as a tag past its cap is. Two
+  different bots in a worker's timeline are the fail-closed state, derived from the column, so a
+  recompute keeps it; no new column.
 - **The basis is `label`.** A tag a label supplied is reported at `label` basis, whatever tied
   the call to the launch: the label is the weakest link in it. `session` stays a start-time
   record naming the session, and `worktree` a cwd match to a *logged* launch, for tags those
@@ -261,9 +266,11 @@ the session; the resolver matches it, by address (the variable holds the pane's 
 launch on this machine's core whose span covers the session's start. Its bot is the start row's
 `botId`, the attach ledger's binding, or the seat's `bot` label ((c)). The link is persisted as a
 normal `link` row at `session` basis; a tag the seat's label supplied still reports `label` ((c)).
-So a later recompute and a backfill replay it without re-reading the log. The link ends with the
-launch: a later session row for the same session in another launch closes it, and when a session
-is resumed into the same log, the first line's terminal covers only the first launch's span.
+On a linked machine the variable is the pane's bare local address, matched against that machine's
+own launch; the starting machine's `/`-prefixed view is never used. So a later recompute and a
+backfill replay it without re-reading the log. The link ends with the launch: a later session
+row for the same session in another launch closes it, and when a session is resumed into the
+same log, the first line's terminal covers only the first launch's span.
 Two launches on the terminal whose spans overlap name no launch: the call is ambiguous, never a
 guess. A session whose terminal matches no launch row (an old pack, a ledger not read) stays
 unlinked with `no_record`.
@@ -299,25 +306,28 @@ that. Chat ruled: ask DSH first, and keep this fallback tested either way (C2).
 every connected machine (RFC 0017 delivery 6; RFC 0018 (a)), so that machine's resolver counts
 its own logs, and its own workers are tagged there by their start rows and labels. A seat started
 on a linked machine is different: its attach row is written in the starting machine's ledger,
-with the linked core and its `machine` name, and a linked meter skips another machine's rows
-(ledger.rs). The linked machine's own record of that seat is its hc snapshot: the pane's `bot`
-and `role` labels, plus a session record. So the seat's `bot` label, used only through a session
-tie ((c)), is the record path; a seat with neither is named unknown, not guessed.
+with the linked core and its `machine` name; the linked machine never has the row, and the
+starting machine's meter skips it (ledger.rs). The linked machine's own record of that seat is
+its hc snapshot: the pane's `bot` and `role` labels, plus a session record. So the seat's `bot`
+label, used only through a session tie ((c)), is the record path; a seat with neither is named
+unknown, not guessed.
 
-**A linked seat's session record.** A Claude seat started on a linked machine gets the same
-Herdr-chosen session id and `agent.session` label as a local start; without that its session has
-no local record and the seat stays unknown. A dsh-tui seat gets it from DSH's terminal field
-((d)). A codex or omp seat stays unknown until a session label or row names it, as on a local
-machine. Owner of the Claude half: **Herdr**. A seat whose session record exists but whose pane
-carries no bot label is `no_record`, never the starting machine's binding guessed.
+**A linked seat's session record.** A Claude seat started on a linked machine will get the same
+Herdr-chosen session id and `agent.session` label as a local start (delivery 5); without that its
+session has no local record and the seat stays unknown. A dsh-tui seat gets it from DSH's terminal
+field ((d), delivery 4). A codex or omp seat stays unknown until a session label or row names
+it, as on a local machine. Owner of the Claude half: **Herdr**. A seat whose session record
+exists but whose pane carries no bot label is `no_record`, never the starting machine's binding
+guessed.
 
 **The fleet number is a sum of answers.** The fleet layer adds the machines' four counts as
 tokens, and the per-repo and per-bot lines by their keys, then computes the ratio over the summed
 tokens: token-weighted, never the mean of the machines' ratios. A machine that answers but is
 stale or incomplete has lower-bound token totals, never a lower-bound ratio: the fleet ratio is
 "over counted usage". A machine that does not answer is named in `missing`, with its query exit
-(10, 11, 12, 13 or 1) or `timeout`, and its tokens are unknown; the number is reported as "over N
-of M machines", never as the fleet's coverage. A machine outside the fleet's meter scope is
+(2 `no_coverage` when its meter has no `coverage` verb, 10, 11, 12, 13 or 1) or `timeout`, and
+its tokens are unknown; the number is reported as "over N of M machines", never as the fleet's
+coverage. A machine outside the fleet's meter scope is
 `out_of_scope`, apart from `missing`. The coverage run shares the sync's 30 s cap.
 
 **The record.** One JSON object, one entry per machine that answered:
@@ -417,8 +427,9 @@ Each delivery names the test that proves it; the ones this RFC requires:
 - **T2, one source of truth.** For the same store and window, the report's repo counts equal the
   query's `--by bot` answer: the sum of the bot rows plus `actor_unattributed.tokens_total`, the
   parts equal `actor_unattributed.parts`, and the per-bot lines sum the bot rows' tokens by bot
-  id. For a branch answer, each row's `attribution.actor` adds up to the report's totals for that
-  branch.
+  id; with more than 50 bots, the omitted ones are in the `other` line and their per-bot totals
+  are lower bounds. For a branch answer, each row's `attribution.actor` adds up to the report's
+  totals for that branch.
 - **T3, worker labels.** A call in an unlogged, labelled worker's worktree is attributed at
   `label` basis; a call before the first sighting is unlinked; two differently labelled workers on
   one worktree are ambiguous; a label that changes makes the launch's calls unlinked, not the new
@@ -439,8 +450,9 @@ Each delivery names the test that proves it; the ones this RFC requires:
 - **T9, a seat's labels.** A snapshot seat in the project root with `bot`/`role` and a session
   label is attributed at `label` basis; with no session record it is unlinked; a changed worker
   label leaves its calls unlinked across a recompute, while a seat's change splits at the
-  interval it was seen; a start row or attach binding wins. A Claude seat started on a linked
-  machine, with the pack's chosen id and label, is attributed on its own machine.
+  interval it was seen; a timeline past its cap leaves the call Unknown; a start row or attach
+  binding wins. A Claude seat started on a linked machine, with the pack's chosen id and label,
+  is attributed on its own machine.
 - The gate is the crate's (`fmt`, `clippy`, `test`), the docs-only lane check for this RFC, and
   `node herdr/scripts/privacy-check.mjs` on the tree.
 
@@ -498,10 +510,11 @@ number. Both are read-only; neither changes the store.
 ## Threat model
 
 - **Labels can be set by anyone who can run `hc label`.** That was already true for the `label`
-  basis (RFC 0021); the worker claim extends it to a bot tag. Bounds: one launch, only the span
-  the meter saw, never over a start row, a changed label fails closed to unlinked, and the amount
-  of usage never moves, only its name. The worst a relabel can do is put a bot's name on usage
-  the terminal could already reach.
+  basis (RFC 0021); the worker and seat claims extend it to a bot tag. Bounds: one launch, only
+  the span the meter saw, never over a start row or binding; a worker's changed label fails
+  closed to unlinked, and a seat's relabel moves only its later calls, at the interval the sync
+  saw. The amount of usage never moves, only its name; the worst is a bot's name on usage the
+  terminal could already reach.
 - **The DSH terminal field.** It is written by the harness in its own local log; a process that
   can write that log can claim a terminal, but the launch must exist and name a bot, so the worst
   case is a name on a call whose terminal the writer could already use. No raw id reaches an
@@ -524,8 +537,11 @@ is named.
    classes, per repo and per bot, the horizons and the frozen-tag diagnostic, on the query's
    read-only open. *Check:* T1, T2, T8 and the (g) ceilings. *Rollback:* revert; no store changed.
 3. **The label claims** (crate; meter lane). (c) in the resolver and the snapshot's launch row,
-   for workers and seats. *Check:* T3; T9's local cases; P1 measured. *Rollback:* revert and
-   rebuild the affected sessions; the claims stop, and a rebuild returns their calls to unlinked.
+   for workers and seats, with the `bound` timeline read back and merged (it is written today,
+   never read back), its intervals capped (past the cap the call is Unknown), and a worker's
+   fail-closed state derived from it. *Check:* T3; T9's local cases; P1 measured. *Rollback:*
+   revert and rebuild the affected sessions; the claims stop, and a rebuild returns their calls
+   to unlinked.
 4. **The dsh-tui seat**, in two parts: **4a**, DSH writes the terminal field (owner: DSH; nothing
    ships here); **4b**, the meter reads it and links (crate; meter lane), plus the check that the
    pack's resume row is written (owner: Herdr). *Check:* T4; P2 measured; the G4 wording-only

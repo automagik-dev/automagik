@@ -95,12 +95,12 @@ owner's ask to compare bots across agents:
 6. **Linked machines' bots are tagged by their own machine's meter.** Reopened by the owner,
    2026-11-10: they are tagged too. A linked machine runs its own meter and store, so its local
    usage and its workers are tagged there; a seat started elsewhere has its attach row only in
-   the starting machine's ledger, so the linked machine tags it by its pane's `bot` label through
-   a session record (a Herdr-chosen Claude id, DSH's terminal field), else names it unknown. The
-   fleet coverage is the token-weighted sum of the machines' answers (RFC 0026 (e)), never a
-   session-level join. `other_machine` stays for a call whose sole record is another machine's (a
-   moved log). Replicated records would need a fleet-wide session key; RFC 0026 (e) says why it
-   is not built and leaves it to Chat.
+   the starting machine's ledger, so the linked machine will tag it by its pane's `bot` label
+   through a session record (a Herdr-chosen Claude id in RFC 0026 delivery 5, DSH's terminal
+   field in delivery 4), else names it unknown. The fleet coverage is the token-weighted sum of
+   the machines' answers (RFC 0026 (e)), never a session-level join. `other_machine` stays for a
+   call whose sole record is another machine's (a moved log). Replicated records would need a
+   fleet-wide session key; RFC 0026 (e) says why it is not built and leaves it to Chat.
 
 *Reopened by the owner, 2026-11-10, after later work:* Decided 5 and 6 are replaced above, in
 RFC 0026 (d) and (e), ruled by Chat and acked by genie on 2026-11-10; Decided 1 to 4 stand.
