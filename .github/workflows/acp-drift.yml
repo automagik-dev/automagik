@@ -15,15 +15,17 @@ name: ACP drift
 #    sequence fuzz on a wider search and the real-adapter tests against them, on Linux and
 #    macOS. An adapter release that breaks the client is seen the same day: a red run opens an
 #    issue with the end of the failing output.
-# 3. bump: when npm's latest SDK is not the pin, bumps the pin and bun.lock on a branch, runs
-#    the same suite, fuzz and real-adapter tests on it, and opens a pull request to dev that
-#    also moves the record. It goes through the normal review and the plugin lane, so the
-#    desktop app picks it up through its own update. It never merges by itself; a red run opens
-#    an issue with the failing output and no pull request.
+# 3. bump: when npm's latest SDK is not the pin, bumps the pin and bun.lock on dev, runs the
+#    same lint, suite, fuzz and real-adapter tests on it and moves the record (bump-check). That
+#    job runs npm's newest code, so it holds a read-only token and no credentials on disk. A
+#    second job (bump-push), which runs no package code, then takes only bun.lock and the record
+#    from it, writes the pin itself, and pushes bot/acp-sdk-<v> (moved onto the newest dev when
+#    it is already there and still only the bot's commit). Actions may not open pull requests
+#    in this repository, so it opens or updates an issue that names the branch and the results;
+#    a person opens the pull request, which goes through the normal review and the plugin lane.
+#    Any failure in either job opens or comments on one bump issue. It never merges.
 #
-# A pull request opened with GITHUB_TOKEN does not start CI by itself: close and reopen it, or
-# push to its branch, before review. The run that opened it links its own results.
-# A run that could not read npm fails without an issue: the next run decides.
+# A drift run that could not read npm fails without an issue: the next run decides.
 #
 # Every pull request runs the offline half in the plugin's own suite
 # (apps/acp-dsh/test/acp-drift.test.js): the record names the pin and every adapter.
@@ -43,6 +45,7 @@ concurrency:
 jobs:
   drift:
     name: SDK pin against npm
+    if: github.repository == 'automagik-si/automagik'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -116,6 +119,7 @@ jobs:
 
   adapters:
     name: Newest adapters (${{ matrix.os }})
+    if: github.repository == 'automagik-si/automagik'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -170,10 +174,12 @@ jobs:
           tail -n 60 "${RUNNER_TEMP}/acp-daily.log"
           echo "code=${code}" >> "$GITHUB_OUTPUT"
           # The real-adapter tests must have run, not been skipped: a skip proves nothing.
-          if ! grep -q '^✔ real Claude Code: the adapter answers initialize' "${RUNNER_TEMP}/acp-daily.log"; then
-            echo "::error::the real-adapter tests did not run"
-            echo "code=3" >> "$GITHUB_OUTPUT"
-          fi
+          for agent in 'Claude Code' 'Codex'; do
+            if ! grep -q "^✔ real ${agent}: the adapter answers initialize" "${RUNNER_TEMP}/acp-daily.log"; then
+              echo "::error::the real-adapter tests did not run for ${agent}"
+              echo "code=3" >> "$GITHUB_OUTPUT"
+            fi
+          done
 
       - name: Open or update the issue
         if: steps.run.outputs.code != '0'
@@ -212,23 +218,32 @@ jobs:
         if: steps.run.outputs.code != '0'
         run: exit 1
 
-  bump:
-    name: Bump the SDK pin when npm moved
+  bump-check:
+    name: The newest SDK on dev
+    if: github.repository == 'automagik-si/automagik'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    # It runs npm's newest SDK, adapters and CLIs: a read-only token, and none left on disk.
     permissions:
-      contents: write
-      pull-requests: write
-      issues: write
+      contents: read
     defaults:
       run:
         working-directory: apps/acp-dsh
     env:
       DO_NOT_TRACK: '1'
+    outputs:
+      move: ${{ steps.latest.outputs.move }}
+      pin: ${{ steps.latest.outputs.pin }}
+      latest: ${{ steps.latest.outputs.latest }}
+      base: ${{ steps.latest.outputs.base }}
+      code: ${{ steps.run.outputs.code }}
+      claude: ${{ steps.run.outputs.claude }}
+      codex: ${{ steps.run.outputs.codex }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: dev
+          persist-credentials: false
 
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
@@ -240,22 +255,23 @@ jobs:
 
       - name: Is npm's latest SDK the pin?
         id: latest
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           pin=$(node -p "require('./package.json').dependencies['@agentclientprotocol/sdk']")
           latest=$(npm view @agentclientprotocol/sdk version)
-          branch="bot/acp-sdk-${latest}"
-          echo "pin=${pin}" >> "$GITHUB_OUTPUT"
-          echo "latest=${latest}" >> "$GITHUB_OUTPUT"
-          echo "branch=${branch}" >> "$GITHUB_OUTPUT"
+          # It names a branch and an issue: a plain version only.
+          if ! printf '%s' "${latest}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::npm gave no plain version for the SDK: ${latest}"
+            exit 1
+          fi
+          {
+            echo "pin=${pin}"
+            echo "latest=${latest}"
+            echo "base=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
           if [ "${pin}" = "${latest}" ]; then
             echo "move=false" >> "$GITHUB_OUTPUT"
             echo "The pin ${pin} is npm's latest."
-          elif [ -n "$(gh pr list --repo "${GITHUB_REPOSITORY}" --state open --head "${branch}" --json number --jq '.[0].number // empty')" ]; then
-            echo "move=false" >> "$GITHUB_OUTPUT"
-            echo "A pull request for ${latest} is already open."
           else
             echo "move=true" >> "$GITHUB_OUTPUT"
           fi
@@ -295,62 +311,181 @@ jobs:
           FUZZ_RUNS: '2000'
         run: |
           set -uo pipefail
+          echo "claude=${ACP_CLAUDE_VERSION:-unknown}" >> "$GITHUB_OUTPUT"
+          echo "codex=${ACP_CODEX_VERSION:-unknown}" >> "$GITHUB_OUTPUT"
           # The record must name the new pin before the suite's own check of it runs.
-          node scripts/acp-drift.mjs --record
-          { bun run lint && npm test; } > "${RUNNER_TEMP}/acp-bump.log" 2>&1
+          { node scripts/acp-drift.mjs --record && bun run lint && npm test; } > "${RUNNER_TEMP}/acp-bump.log" 2>&1
           code=$?
           tail -n 60 "${RUNNER_TEMP}/acp-bump.log"
           echo "code=${code}" >> "$GITHUB_OUTPUT"
-          if ! grep -q '^✔ real Claude Code: the adapter answers initialize' "${RUNNER_TEMP}/acp-bump.log"; then
-            echo "::error::the real-adapter tests did not run"
-            echo "code=3" >> "$GITHUB_OUTPUT"
-          fi
+          for agent in 'Claude Code' 'Codex'; do
+            if ! grep -q "^✔ real ${agent}: the adapter answers initialize" "${RUNNER_TEMP}/acp-bump.log"; then
+              echo "::error::the real-adapter tests did not run for ${agent}"
+              echo "code=3" >> "$GITHUB_OUTPUT"
+            fi
+          done
 
-      - name: Open the pull request
-        if: steps.latest.outputs.move == 'true' && steps.run.outputs.code == '0'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PIN: ${{ steps.latest.outputs.pin }}
-          LATEST: ${{ steps.latest.outputs.latest }}
-          BRANCH: ${{ steps.latest.outputs.branch }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      # What bump-push takes from here: the lockfile, the record and the log, never code to run.
+      - name: Hand over the lockfile, the record and the log
+        if: always() && steps.latest.outputs.move == 'true'
+        run: |
+          mkdir -p "${RUNNER_TEMP}/acp-bump"
+          cp bun.lock dev/acp-compat.json "${RUNNER_TEMP}/acp-bump/" || true
+          cp "${RUNNER_TEMP}/acp-bump.log" "${RUNNER_TEMP}/acp-bump/" || true
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always() && steps.latest.outputs.move == 'true'
+        with:
+          name: acp-bump
+          path: ${{ runner.temp }}/acp-bump/
+          retention-days: 7
+          if-no-files-found: warn
+
+  bump-push:
+    name: Push the SDK bump branch
+    needs: bump-check
+    # Also after a failed or timed-out check, to report it; not when the run is cancelled.
+    if: >-
+      !cancelled() && github.repository == 'automagik-si/automagik' &&
+      (needs.bump-check.outputs.move == 'true' || needs.bump-check.result == 'failure' ||
+      needs.bump-check.result == 'cancelled')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Runs no package code: git, gh and the runner's Node on the files it names. Actions may not
+    # open pull requests in this repository, so the branch is announced in an issue instead.
+    permissions:
+      contents: write
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      CHECKED: ${{ needs.bump-check.result == 'success' && needs.bump-check.outputs.code == '0' }}
+      PIN: ${{ needs.bump-check.outputs.pin }}
+      LATEST: ${{ needs.bump-check.outputs.latest }}
+      BASE: ${{ needs.bump-check.outputs.base }}
+      CLAUDE: ${{ needs.bump-check.outputs.claude }}
+      CODEX: ${{ needs.bump-check.outputs.codex }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        if: env.CHECKED == 'true'
+        with:
+          ref: ${{ needs.bump-check.outputs.base }}
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        if: env.CHECKED == 'true'
+        with:
+          node-version: 24.9
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        if: needs.bump-check.outputs.move == 'true'
+        continue-on-error: true
+        with:
+          name: acp-bump
+          path: ${{ runner.temp }}/acp-bump
+
+      - name: Commit the bump and push the branch
+        id: push
+        if: env.CHECKED == 'true'
         run: |
           set -euo pipefail
+          # What the check job handed over is data: a plain version and two data files.
+          printf '%s' "${LATEST}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'
+          branch="bot/acp-sdk-${LATEST}"
+          echo "branch=${branch}" >> "$GITHUB_OUTPUT"
+          # The pin is written here, from dev's own package.json; only the lockfile and the
+          # record come from the job that ran npm's code.
+          node -e "
+            const fs = require('node:fs')
+            const file = 'apps/acp-dsh/package.json'
+            const json = JSON.parse(fs.readFileSync(file, 'utf8'))
+            json.dependencies['@agentclientprotocol/sdk'] = process.env.LATEST
+            fs.writeFileSync(file, JSON.stringify(json, null, 2) + '\n')
+          "
+          cp "${RUNNER_TEMP}/acp-bump/bun.lock" apps/acp-dsh/bun.lock
+          cp "${RUNNER_TEMP}/acp-bump/acp-compat.json" apps/acp-dsh/dev/acp-compat.json
+          other=$(git diff --name-only | grep -vxF -e apps/acp-dsh/package.json -e apps/acp-dsh/bun.lock -e apps/acp-dsh/dev/acp-compat.json || true)
+          if [ -n "${other}" ]; then
+            echo "::error::the bump changed more than the pin, the lockfile and the record: ${other}"
+            exit 1
+          fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git checkout -b "${BRANCH}"
-          git add package.json bun.lock dev/acp-compat.json
-          git commit -m "chore(acp-dsh): bump the ACP SDK pin from ${PIN} to ${LATEST}"
-          git push origin "${BRANCH}"
-          body="${RUNNER_TEMP}/acp-bump-pr.md"
-          {
-            echo "The daily ACP run found \`@agentclientprotocol/sdk\` ${LATEST} on npm; the pin was ${PIN}."
-            echo
-            echo "On this branch the plugin lint, the suite, the sequence fuzz (2000 seeds) and the real-adapter tests passed against claude-agent-acp ${ACP_CLAUDE_VERSION:-unknown} and codex-acp ${ACP_CODEX_VERSION:-unknown}: ${RUN_URL}"
-            echo
-            echo 'It was opened with GITHUB_TOKEN, which starts no CI: close and reopen it (or push to it) before review. It never merges by itself.'
-          } > "${body}"
-          gh pr create --repo "${GITHUB_REPOSITORY}" --base dev --head "${BRANCH}" --title "chore(acp-dsh): bump the ACP SDK pin from ${PIN} to ${LATEST}" --body-file "${body}"
+          git add apps/acp-dsh/package.json apps/acp-dsh/bun.lock apps/acp-dsh/dev/acp-compat.json
+          subject="chore(acp-dsh): bump the ACP SDK pin from ${PIN} to ${LATEST}"
+          git commit -m "${subject}"
+          remote=$(git ls-remote --heads origin "refs/heads/${branch}" | cut -f1)
+          if [ -z "${remote}" ]; then
+            git push origin "HEAD:refs/heads/${branch}"
+            echo "state=pushed" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Already there from an earlier run. Moved onto this dev only while it is still the
+          # bot's one commit; a branch someone has pushed to is theirs and is left alone.
+          git fetch --no-tags --depth=1 origin "${remote}"
+          tip=$(git log -1 --format='%ae%n%s' "${remote}")
+          if [ "${tip}" != "$(printf '%s\n%s' '41898282+github-actions[bot]@users.noreply.github.com' "${subject}")" ]; then
+            echo "state=kept" >> "$GITHUB_OUTPUT"
+            echo "${branch} has commits that are not this job's: left as it is."
+          elif git diff --quiet "${remote}" HEAD; then
+            echo "state=same" >> "$GITHUB_OUTPUT"
+          else
+            git push --force-with-lease="refs/heads/${branch}:${remote}" origin "HEAD:refs/heads/${branch}"
+            echo "state=updated" >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Open or update the issue
-        if: steps.latest.outputs.move == 'true' && steps.run.outputs.code != '0'
+      - name: Open or update the issue that names the branch
+        if: steps.push.outcome == 'success'
         env:
-          GH_TOKEN: ${{ github.token }}
-          PIN: ${{ steps.latest.outputs.pin }}
-          LATEST: ${{ steps.latest.outputs.latest }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          BRANCH: ${{ steps.push.outputs.branch }}
+          STATE: ${{ steps.push.outputs.state }}
         run: |
           set -euo pipefail
-          title="acp-dsh: the suite fails on ACP SDK ${LATEST}"
-          body="${RUNNER_TEMP}/acp-bump-issue.md"
+          title="acp-dsh: ACP SDK ${LATEST} is ready on ${BRANCH}"
+          body="${RUNNER_TEMP}/acp-bump-ready.md"
           {
-            echo "The daily ACP run bumped the pin from ${PIN} to ${LATEST} and the run failed, so no pull request was opened."
+            echo "The daily ACP run found \`@agentclientprotocol/sdk\` ${LATEST} on npm; the pin on dev is ${PIN}."
+            echo
+            echo "Branch: \`${BRANCH}\` (${STATE}), on dev at ${BASE}."
+            echo
+            echo "Passed on it: the plugin lint, the suite, the sequence fuzz (2000 seeds) and the real-adapter tests for Claude Code and Codex, against claude-agent-acp ${CLAUDE:-unknown} and codex-acp ${CODEX:-unknown}."
             echo
             echo '```'
-            grep -n '^✖' "${RUNNER_TEMP}/acp-bump.log" | head -n 40 || true
-            echo '...'
-            tail -n 40 "${RUNNER_TEMP}/acp-bump.log" | cut -c1-400
+            grep -E '^ℹ (tests|pass|fail|skipped) ' "${RUNNER_TEMP}/acp-bump/acp-bump.log" | cut -c1-80 || true
             echo '```'
+            echo
+            echo "Run: ${RUN_URL}"
+            echo
+            echo "Actions may not open pull requests in this repository: open one from \`${BRANCH}\` to \`dev\` (\`gh pr create --base dev --head ${BRANCH}\`); it then runs CI and goes through the normal review. A later run moves the branch onto the newest dev while no one else has pushed to it. Close this issue once the bump merges."
+          } > "${body}"
+          number=$(gh issue list --repo "${GITHUB_REPOSITORY}" --state open --search "\"${title}\" in:title" --json number,title --jq "map(select(.title == \"${title}\")) | .[0].number // empty")
+          if [ -n "${number}" ]; then
+            # Edited, not commented: one notice per release, not one a day.
+            gh issue edit "${number}" --repo "${GITHUB_REPOSITORY}" --body-file "${body}"
+          else
+            gh issue create --repo "${GITHUB_REPOSITORY}" --title "${title}" --body-file "${body}" --label area:dsh
+          fi
+
+      - name: Open or update the issue for a failure
+        if: failure() || env.CHECKED != 'true'
+        env:
+          RESULT: ${{ needs.bump-check.result }}
+          CODE: ${{ needs.bump-check.outputs.code }}
+        run: |
+          set -euo pipefail
+          title='acp-dsh: the daily ACP SDK bump fails'
+          body="${RUNNER_TEMP}/acp-bump-issue.md"
+          {
+            if [ "${CHECKED}" = 'true' ]; then
+              echo "The checks passed on ACP SDK ${LATEST} (the pin is ${PIN}), but its branch could not be pushed or announced: see the run."
+            else
+              echo "The daily ACP bump of the SDK pin from ${PIN:-unknown} to ${LATEST:-unknown} failed (check job: ${RESULT}, exit ${CODE:-none}), so no branch was pushed."
+              echo
+              echo '```'
+              grep -n '^✖' "${RUNNER_TEMP}/acp-bump/acp-bump.log" | head -n 40 || true
+              echo '...'
+              tail -n 40 "${RUNNER_TEMP}/acp-bump/acp-bump.log" | cut -c1-400 || echo 'no output: it failed before the suite ran'
+              echo '```'
+            fi
             echo
             echo "Run: ${RUN_URL}"
           } > "${body}"
@@ -361,6 +496,6 @@ jobs:
             gh issue create --repo "${GITHUB_REPOSITORY}" --title "${title}" --body-file "${body}" --label bug --label area:dsh
           fi
 
-      - name: Fail when the bumped run failed
-        if: steps.latest.outputs.move == 'true' && steps.run.outputs.code != '0'
+      - name: Fail when the bump did not go through
+        if: env.CHECKED != 'true'
         run: exit 1

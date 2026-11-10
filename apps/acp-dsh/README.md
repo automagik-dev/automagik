@@ -178,7 +178,7 @@ A settings page reads the agents through this host service; the plugin stays hos
 
 | Method | Does |
 |---|---|
-| `status()` | Each agent: `{ id, key, name, on, cli: { found, installUrl, state, managed, version?, error?, diagnostic?, logPath?, updating? }, connector: { state, version?, error?, updating?, previous?, rolledBack? }, signedIn?, consent?, model: { provider, id, name, listed }, restartNeeded }`. CLI state is `missing`, `installing`, `failed` or `ready`; connector state is `off`, `no-cli`, `installing`, `failed` or `ready`. `connector.previous` is the release before the one in use; `connector.rolledBack` is `{ from, to, at, reason }` while a release that failed to start is held back. Errors are redacted. Spawns nothing. |
+| `status()` | Each agent: `{ id, key, name, on, cli: { found, installUrl, state, managed, version?, error?, diagnostic?, logPath?, updating? }, connector: { state, version?, error?, updating?, previous?, rolledBack? }, signedIn?, consent?, model: { provider, id, name, listed }, restartNeeded }`. CLI state is `missing`, `installing`, `failed` or `ready`; connector state is `off`, `no-cli`, `installing`, `failed` or `ready`. `connector.previous` is the release a failed start goes back to, while it is on disk; `connector.rolledBack` is `{ from, to, at, reason }` while a release that failed to start is held back. Errors are redacted. Spawns nothing. |
 | `inspect(id)` | One agent's `status()` row with a fresh sign-in check, for a Bot about to be put on it. Asks that CLI's sign-in status only; installs, enables and starts nothing. Simultaneous checks share one probe, and an answer stands for 3 seconds (`refresh()` clears it). Undefined for an id that is no agent here. |
 | `refresh()` | Looks for the CLIs again (one installed after DSH started is offered now), then asks each CLI whether it is signed in (`claude auth status --json`, of which only `loggedIn` is read; `codex login status`, by its exit code). No agent turn. |
 | `retry(id)` | Retries the required CLI and its connector, and answers at once. Does not turn its model switch on. |
@@ -438,7 +438,9 @@ protocol version the library speaks. One that fails is removed, the connector in
 tried at once. One that passes is still unproven until it has opened a session: until then the
 release before it stays on disk, and a session start that fails on it (anything but a missing
 sign-in or a missing bridge) goes back to that release and tries the start once more, so the
-turn is not lost. Both cases are logged and recorded in `current.json` (`bad`, `rolledBack`),
+turn is not lost. A newer release that lands while the one in use is still unproven keeps the
+same way back: the last release that opened a session stays on disk until a newer one has, and a
+release gone back to is proven only if it had opened a session before. Both cases are logged and recorded in `current.json` (`bad`, `rolledBack`),
 and `status()` shows them while the failed version is held back. A first install has nothing
 to go back to: it is used even when its check fails, and the log says so.
 An install still running when DSH quits is killed with everything it started and its folder
@@ -491,10 +493,13 @@ every pull request checks the record against the pin.
 
 The same workflow has two more daily jobs. `adapters` installs the newest adapters and CLIs
 from npm (`node dev/install-adapters.mjs <folder>` does the adapters' half anywhere) and runs
-the suite with the real-adapter tests on and a wider fuzz; a red run opens an issue. `bump`
-runs when the pin is behind npm at all: it moves the pin and the lockfile on a branch, runs
-lint and the suite, records the versions, and opens a pull request to `dev`, or an issue with
-the failure when the suite is red. It never merges.
+the suite with the real-adapter tests on and a wider fuzz; a red run opens an issue. `bump-check`
+runs when the pin is behind npm at all: it moves the pin and the lockfile on `dev`, runs lint,
+the suite and the real-adapter tests, and records the versions, with a read-only token and no
+credentials on disk. `bump-push`, which runs no package code, then pushes `bot/acp-sdk-<v>`
+with the pin, that lockfile and that record, and opens or updates an issue that names the
+branch and the results: Actions may not open pull requests in this repository, so a person
+opens it. Any failure opens or comments on one bump issue. It never merges.
 
 `test/real-adapters.test.js` starts the real adapters with this client in a throwaway home
 (never signed in, no model request): the handshake, the session start or its `auth_required`,

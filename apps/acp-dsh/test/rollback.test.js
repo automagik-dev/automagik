@@ -135,6 +135,63 @@ test('the release before stays on disk until the new one has opened a session', 
   world.nextCheck()
   await store.update(PKG, BIN)
   assert.deepEqual(versionsOn(world.home), ['1.1.0'])
+  assert.equal(store.stateOf(PKG).previous, undefined, 'a release no longer on disk is not named')
+  assert.equal(current(world.home).previous, undefined)
+})
+
+test('untested releases in a row keep the last one that worked as the way back', async (t) => {
+  // The Reviewer's probe on PR 1000: 1.0.0 opened a session, 2.0.0 and 3.0.0 passed the start
+  // check with no session between them.
+  const world = storeOf(t)
+  const { store } = world
+  await store.update(PKG, BIN)
+  store.markGood(PKG)
+  world.version = '2.0.0'
+  world.nextCheck()
+  await store.update(PKG, BIN)
+  world.version = '3.0.0'
+  world.nextCheck()
+  await store.update(PKG, BIN)
+  assert.deepEqual(current(world.home), { version: '3.0.0', checkedAt: world.now, previous: '1.0.0', previousProven: true, proven: false })
+  // 2.0.0 stays too: a Session may still run it.
+  assert.deepEqual(versionsOn(world.home), ['1.0.0', '2.0.0', '3.0.0'])
+  // A fourth untested release: 2.0.0 goes, 1.0.0 stays.
+  world.version = '4.0.0'
+  world.nextCheck()
+  await store.update(PKG, BIN)
+  assert.deepEqual(versionsOn(world.home), ['1.0.0', '3.0.0', '4.0.0'])
+  assert.equal(store.stateOf(PKG).previous, '1.0.0')
+  const back = store.rollback(PKG, BIN, new Error('it exited (1)'))
+  assert.equal(back.version, '1.0.0')
+  const after = current(world.home)
+  assert.equal(after.version, '1.0.0')
+  assert.equal(after.proven, undefined, 'proven: it had opened a session')
+  assert.equal(store.stateOf(PKG).proven, true)
+})
+
+test('a rollback to a release that never opened a session leaves it unproven', async (t) => {
+  // A record whose way back is untested (as an earlier build of this connector wrote it).
+  const world = storeOf(t)
+  const { store } = world
+  world.version = '2.0.0'
+  await store.update(PKG, BIN)
+  mkdirSync(join(world.home, FOLDER, '1.0.0', 'node_modules', ...PKG.split('/'), 'dist'), { recursive: true })
+  writeFileSync(join(world.home, FOLDER, '1.0.0', 'node_modules', ...PKG.split('/'), BIN), '//\n')
+  writeFileSync(join(world.home, FOLDER, 'current.json'), JSON.stringify({ version: '2.0.0', checkedAt: world.now, previous: '1.0.0', proven: false }))
+  assert.equal(store.rollback(PKG, BIN, new Error('x')).version, '1.0.0')
+  assert.equal(current(world.home).proven, false, 'never marked proven by being rolled back to')
+  assert.equal(store.stateOf(PKG).proven, false)
+  // It opens a session: now it is proven.
+  store.markGood(PKG)
+  assert.equal(store.stateOf(PKG).proven, true)
+})
+
+test('the status names no previous release whose folder is gone', async (t) => {
+  const world = storeOf(t)
+  const { store } = world
+  await store.update(PKG, BIN)
+  writeFileSync(join(world.home, FOLDER, 'current.json'), JSON.stringify({ version: '1.0.0', checkedAt: world.now, previous: '0.9.0' }))
+  assert.equal(store.stateOf(PKG).previous, undefined)
 })
 
 test('a release that fails its first session start goes back to the one before it', async (t) => {

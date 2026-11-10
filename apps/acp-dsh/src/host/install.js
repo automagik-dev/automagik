@@ -9,7 +9,10 @@
 // adapter in use is the last-known-good, the failed version is not tried again for BAD_TTL_MS,
 // and `current.json` says what happened (`rolledBack`). One that passes is still unproven until
 // it has opened a session (`markGood`): until then the version before it stays on disk, and a
-// session start that fails goes back to it (`rollback`).
+// session start that fails goes back to it (`rollback`). A newer release that installs while
+// the one in use is still untested keeps that same way back: `previous` moves on only once the
+// release in use has opened a session, so a run of untested releases never drops the last one
+// that worked, and `previousProven` records whether `previous` ever opened a session.
 //
 // Not pinned (RFC 0003, as amended): the agents' CLIs update themselves, and an adapter that
 // lags its CLI breaks first. What is checked is what npm publishes: the exact package name, the
@@ -236,10 +239,12 @@ export class AdapterStore {
     const current = readJson(join(this.home, folderOf(pkg), 'current.json'))
     if (!current?.version) return undefined
     const bad = current.bad?.version !== undefined && this.now() - current.bad.at < BAD_TTL_MS ? current.bad : undefined
+    // Only a previous release still on disk is named: one the cleanup dropped is no way back.
+    const previous = current.previous && current.previous !== current.version && existsSync(join(this.home, folderOf(pkg), current.previous)) ? current.previous : undefined
     return {
       version: current.version,
       proven: current.proven !== false,
-      ...(current.previous ? { previous: current.previous } : {}),
+      ...(previous ? { previous } : {}),
       // A rollback is shown while the version it left is still held back.
       ...(current.rolledBack && bad?.version === current.rolledBack.from ? { rolledBack: current.rolledBack } : {}),
       ...(bad ? { bad } : {}),
@@ -259,7 +264,8 @@ export class AdapterStore {
   /**
    * The adapter in use did not start. While it is unproven and the version before it is still
    * on disk, go back to that one: `current.json` names it again, and the failed version is
-   * held back for BAD_TTL_MS.
+   * held back for BAD_TTL_MS. The release gone back to keeps its own state: proven only when
+   * it had opened a session before (`previousProven`), never because it was rolled back to.
    * @returns {{ path: string, version: string } | undefined} the adapter now in use, when it changed
    */
   rollback(pkg, bin, reason) {
@@ -274,7 +280,7 @@ export class AdapterStore {
       writeJson(file, {
         version: current.previous,
         checkedAt: current.checkedAt ?? at,
-        proven: true,
+        ...(current.previousProven === true ? {} : { proven: false }),
         bad: { version: current.version, at, reason: why },
         rolledBack: { from: current.version, to: current.previous, at, reason: why },
       })
@@ -381,23 +387,30 @@ export class AdapterStore {
       this.log(`installed ${pkg}@${version}`)
       installedNew = true
     }
-    const previous = have && have.version !== version ? have.version : current?.previous
     // A new release is unproven until it has opened a session (markGood); one already in use
     // keeps what it was.
     const proven = installedNew ? false : current?.proven !== false
+    // The way back: the release in use when it has opened a session; while it is untested, the
+    // way back it already had (the last release that worked), never the untested one.
+    const haveProven = current?.proven !== false
+    const moveOn = installedNew && have !== undefined && haveProven
+    const previous = moveOn ? have.version : current?.previous
+    const previousProven = moveOn ? true : current?.previousProven === true
+    // Once the release in use is proven it needs no way back, and the folder goes below.
+    const keepPrevious = !proven && previous !== undefined && previous !== version
     // A held-back release is remembered only while the adapter it was kept out for is in use:
     // once a newer release took its place, that rollback is over.
     const bad = !installedNew && current?.bad?.version !== undefined && current.bad.version !== version && this.now() - current.bad.at < BAD_TTL_MS ? current.bad : undefined
     writeJson(join(folder, 'current.json'), {
       version,
       checkedAt: this.now(),
-      ...(previous && previous !== version ? { previous } : {}),
+      ...(keepPrevious ? { previous, previousProven } : {}),
       ...(proven ? {} : { proven: false }),
       ...(bad ? { bad, ...(current.rolledBack?.from === bad.version ? { rolledBack: current.rolledBack } : {}) } : {}),
     })
-    // Keep the one in use and the one before it (a Session may still run it, and an unproven
-    // release goes back to it); drop the rest.
-    const keep = new Set([version, have?.version, proven ? undefined : previous].filter(Boolean))
+    // Keep the one in use, the one it replaces (a Session may still run it) and, while the one
+    // in use is unproven, its way back; drop the rest.
+    const keep = new Set([version, have?.version, keepPrevious ? previous : undefined].filter(Boolean))
     for (const name of readdirSync(folder)) {
       if (name === 'current.json' || name.startsWith('.') || keep.has(name)) continue
       rmSync(join(folder, name), { recursive: true, force: true })
