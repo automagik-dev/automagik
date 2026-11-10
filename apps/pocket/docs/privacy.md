@@ -9,8 +9,8 @@ tags: [privacy, policy, play]
 
 Effective 2026-11-06. Applies to the Android app **Automagik Pocket** (app ID
 `ai.namastex.automagik`), published from
-[automagik-dev/automagik](https://github.com/automagik-dev/automagik/tree/dev/apps/pocket) (`apps/pocket/`;
-before 2026-11, [automagik-dev/automagik-pocket](https://github.com/automagik-dev/automagik-pocket)).
+[automagik-si/automagik](https://github.com/automagik-si/automagik/tree/dev/apps/pocket) (`apps/pocket/`;
+before 2026-11, [automagik-si/automagik-pocket](https://github.com/automagik-si/automagik-pocket)).
 
 ## In short
 
@@ -128,5 +128,5 @@ Changes to this policy are made in this file, and its history is public in the r
 
 ## Contact
 
-Open an issue on [GitHub](https://github.com/automagik-dev/automagik/issues). For a
+Open an issue on [GitHub](https://github.com/automagik-si/automagik/issues). For a
 security problem, use private reporting as described in [SECURITY.md](../SECURITY.md).

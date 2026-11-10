@@ -50,13 +50,13 @@ the build they have.
 Installed copies find the new `latest.json` at their next check (on launch, then every 6 hours).
 
 The usage meter is released from its own repository,
-[automagik-dev/usagemeter](https://github.com/automagik-dev/usagemeter).
+[automagik-si/usagemeter](https://github.com/automagik-si/usagemeter).
 
 ## 3. Check a release
 
-1. `gh release view pocket-lane -R automagik-dev/automagik` and
-   `gh release download pocket-lane -R automagik-dev/automagik -p latest.json -O -` show the build
-   phones are offered; `gh release view vX.Y.Z -R automagik-dev/automagik` shows its APK.
+1. `gh release view pocket-lane -R automagik-si/automagik` and
+   `gh release download pocket-lane -R automagik-si/automagik -p latest.json -O -` show the build
+   phones are offered; `gh release view vX.Y.Z -R automagik-si/automagik` shows its APK.
 2. Download the APK and check its signer against the fingerprint in
    [SECURITY.md](../../SECURITY.md):
 
@@ -67,7 +67,7 @@ The usage meter is released from its own repository,
 3. On a phone with the previous release: open the app, or **Settings → About → Check for updates**.
 
 Releases up to v0.23.0, and the bridge release, are on the archived
-[automagik-dev/automagik-pocket](https://github.com/automagik-dev/automagik-pocket/releases).
+[automagik-si/automagik-pocket](https://github.com/automagik-si/automagik-pocket/releases).
 
 ## 4. Don'ts
 
