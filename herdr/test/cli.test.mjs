@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 
 import { checkBots, parseBots } from "../mods/am-sidebar/model.js";
 import { writeBotsFile, findBot, CliError, listProject, causeLine } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
-import { GUARD_DIR, ledgerPath, readLedger } from "../mods/am-sidebar/workers.js";
+import { GUARD_DIR, KILL_GUARD_DIR, ledgerPath, readLedger } from "../mods/am-sidebar/workers.js";
 import { AGY_FIXED_DENY, AGY_SHELL_READ, agySettingsDir, agySettingsFile, withoutBriefing } from "../mods/am-sidebar/models.js";
 import { WORKER_LINE, amPartHookCommand } from "../mods/am-sidebar/briefingText.mjs";
 import { restartAnswer } from "../mods/am-sidebar/restart.js";
@@ -3265,8 +3265,8 @@ test("restart #213: the pane always gets the CLI's PATH, so a bare codex (#!/usr
   const parts = agentParts(run);
   // Before #213 nothing was passed here (this PATH already had node), and the pane got herdr-core's.
   assert.deepEqual(parts.prefix, ["/usr/bin/env"]);
-  assert.deepEqual(parts.env, [`PATH=${path}`, `HERDR_APP_HOME=${s.app}`],
-    "PATH and the CLI's app home: no env word lost or leaked (#650)");
+  assert.deepEqual(parts.env, [`PATH=${KILL_GUARD_DIR}:${path}`, `HERDR_APP_HOME=${s.app}`],
+    "the hc kill shim (#955), then the CLI's PATH, and its app home: no env word lost or leaked (#650)");
   assert.deepEqual(plain(parts.words), ["codex", "--approve-for-me", "resume", "--last"]);
 });
 
@@ -3768,7 +3768,22 @@ test("restart: the pane's PATH leaves out the caller's venv, node_modules/.bin a
   const r = s.cli(["restart", "Captain", "--json"], { env: { PATH: path, VIRTUAL_ENV: "/v/env" } });
   assert.equal(r.code, 0, r.err);
   const run = runCall(s.calls());
-  assert.equal(run[run.indexOf("--") + 2], `PATH=${bin}:/usr/bin:/bin`);
+  assert.equal(run[run.indexOf("--") + 2], `PATH=${KILL_GUARD_DIR}:${bin}:/usr/bin:/bin`);
+});
+
+test("restart (#955): from a pane with the hc kill shim first on PATH, the CLI still ends the old pane (the real hc), and the new pane has the shim once", (t) => {
+  const s = captainScene(t, { agent: "codex", over: { foreground: { argv: ["codex"], cwd: "/x" }, argv: ["codex"] } });
+  const bin = join(s.root, "bin");
+  // The caller is no main bot's seat: its own `hc kill` through the shim would be refused, and a
+  // restart that ended its old pane that way would stop here.
+  const path = `${KILL_GUARD_DIR}:${bin}:${dirname(process.execPath)}:/usr/bin:/bin`;
+  const r = s.cli(["restart", "Captain", "--json"], { env: { PATH: path } });
+  assert.equal(r.code, 0, r.err);
+  assert.ok(s.calls().some((call) => call[0] === "kill" && call[1] === "t6"), "the old pane was ended through the real hc");
+  const run = runCall(s.calls());
+  const word = run[run.indexOf("--") + 2];
+  assert.ok(word.startsWith(`PATH=${KILL_GUARD_DIR}:`), word);
+  assert.equal(word.split(":").filter((dir) => dir.endsWith("/hc-kill")).length, 1, "the shim's folder is on the new pane's PATH once");
 });
 
 test("attach by a pane's name writes hc's terminal id, so whois by id finds it (#261 review)", (t) => {

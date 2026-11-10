@@ -14,7 +14,7 @@ import { createHash } from "node:crypto";
 import { applyBotEdit, checkBots, parseBots, swapProblem } from "../mods/am-sidebar/model.js";
 import { AGY_FIXED_DENY, AGY_SHELL_READ, agySettingsDir, agySettingsFile, effortArgs, promptArgs } from "../mods/am-sidebar/models.js";
 import { ENV, GUARD_DIR, WORKER_OF_LABEL, stableGuardDir, stableHelper, stableRunner, baseCandidates, hcProxyEnabled, branchNamesTask, branchSlug, parseWorktrees, readLedger, reapCandidates, runsTemplate, workLeft, sessionChange, startRow, swapArm, swapByte, templateAgent,
-  workerArgs, workerBranch, workerPlan, workerRole, workerTaskId, writesWorktree } from "../mods/am-sidebar/workers.js";
+  KILL_GUARD_DIR, workerArgs, workerBranch, workerPlan, workerRole, workerTaskId, writesWorktree } from "../mods/am-sidebar/workers.js";
 import { approveProject, recordFileOf } from "../mods/am-sidebar/approved.js";
 import { stableRunnerText } from "../mods/am-sidebar/dshTui.mjs";
 import { startProxy } from "../mods/am-sidebar/hcProxy.mjs";
@@ -535,7 +535,7 @@ test("worker: hc run --bg as a child of the bot's pane, in the worktree, with th
     "worker.effort=medium"]);
   // The agent gets the calling pane's PATH (herdr-core's lacks ~/.bun/bin, where omp lives),
   // as argv words, never a shell string.
-  assert.deepEqual(runArgv(run).slice(0, 3), ["/usr/bin/env", `PATH=${s.path}`, "codex"]);
+  assert.deepEqual(runArgv(run).slice(0, 3), ["/usr/bin/env", `PATH=${KILL_GUARD_DIR}:${s.path}`, "codex"]);
   const made = s.hcState().terminals.find((x) => x.address === "t100");
   assert.equal(made.parent, "t1");
   assert.equal(made.cwd, wt);
@@ -1119,7 +1119,7 @@ test("workers.js: hc run arguments, slugs, worktree list, base order, ledger row
     model: agyPlan.model, effort: agyPlan.effort, agyMode: agyPlan.agyMode, argv: agyPlan.argv, task: "fix the build", path: "/x/bin" }),
   ["run", "--bg", "--json", "--name", "feat-a", "--cwd", "/p/wt", "--label", `worker.of=${ID.dev}`, "--label", "branch=feat/a",
     "--label", "worker.model=gemini-4-argon-high", "--label", "worker.effort=high", "--parent", "t1", "--",
-    "/usr/bin/env", "PATH=/x/bin", "agy", "--mode", "auto", "--model", "gemini-4-argon-high", "--effort", "high", "-i", "fix the build"]);
+    "/usr/bin/env", `PATH=${KILL_GUARD_DIR}:/x/bin`, "agy", "--mode", "auto", "--model", "gemini-4-argon-high", "--effort", "high", "-i", "fix the build"]);
   // A chosen mode is kept in the label, so Restart --tree runs the worker with the same --mode.
   const plan = workerPlan({ name: "A", agent: "antigravity", worker: { agyMode: "plan" } });
   assert.ok(labelsOf(workerArgs({ botId: ID.dev, branch: "feat/a", cwd: "/p/wt", parent: "t1", agent: plan.agent,

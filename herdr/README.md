@@ -1342,17 +1342,39 @@ caller's pane to), it is not a bot's seat, it is not the caller's own pane, it i
 computer, and hc does not report it as `working`. A worker stuck mid-turn is the main bot's to
 end.
 
-Where the rule is enforced, and where it is not:
+Where the rule is enforced:
 
 | Launch | `hc kill` from a worker or a non-main seat |
 | --- | --- |
 | dsh-TUI (the hc guard is first on its PATH) | refused by the guard, with one line naming `worker kill`. `hc --json kill` and any other flag before the command are refused too. |
+| Claude Code, Codex, Antigravity and every other agent (the `hc kill` shim is first on its PATH) | refused by the shim in every flag order (`hc kill t3`, `hc --json kill t3`, `hc kill --json t3`), with one line naming `worker kill`. Every other hc call goes to the real hc untouched. |
 | A sandboxed pane (the per-pane hc proxy) | the proxy ends only the caller's own worker, for a main bot too; a worker's own kill is refused. |
-| Antigravity | `command(hc kill)` and `command(hc --json kill)` are in the launch's deny list; another flag before `kill`, or `hc` by an absolute path, is not caught. |
-| Claude Code, Codex and every other agent | **not enforced.** Nothing of the pack's sits between these agents and `hc`: the guard is on a dsh-TUI pane's PATH only, and the pack writes them no deny rule. Their briefing names `worker kill`, and that is all. |
+| Antigravity, as well | `command(hc kill)` and `command(hc --json kill)` are in the launch's deny list. |
 
-The guard and the deny list are guardrails: an absolute path to the real `hc` goes around
-both. The boundary is the hc-proxy sandbox.
+**The `hc kill` shim** (`hc-kill/hc` in the pack and in am, the same rule as the guard's): the
+pack puts its folder first on the PATH of every seat, worker and `restart --tree` helper it
+starts for an agent other than dsh-TUI. A call whose command is `kill` is allowed only from a
+pane the attach ledger binds to a bot that is `kind: "main"` in its project's `bots.json`;
+a worker, a member's seat, a pane the ledger does not know and a call with no
+`HC_TERMINAL_ID` are refused (exit 2, one line). `hc kill --help` and every other call run the
+real hc with the same words, input, output and exit code, and the shim reads nothing for them.
+`automagik-herdr worker kill` calls the real hc itself, past the shim and the guard.
+
+What the shim does not do, plainly:
+
+- It stops the honest path only. The real `hc` by its full path, a copy of it, a raw socket,
+  `hc connect`, or a `PATH` the agent changes goes around it, as it goes around the guard and
+  the deny list. **The boundary is the hc-proxy sandbox, never the shim.**
+- A worker started from an hc template in hc's own form (`<template> <task>`) keeps the
+  template's command and environment, so it gets no shim; a template the pack rebuilds for a
+  Claude login has no PATH word either.
+- A pane started before this release keeps the PATH it has until its next restart.
+- On a linked machine the start uses that machine's own shim (the folder beside its
+  `automagik-herdr`). A machine whose pack is older, or has none on its pane PATH, starts the
+  bot without it and prints one warning: `<bot> runs on <machine> without the hc kill shim (#955)`.
+- Under the hc proxy, a sandboxed bot's worker of another agent gets the shim from the stable
+  folder (`dsh-tui install` copies it there); the proxy refuses the worker otherwise.
+- It adds one short Node start to every `hc` call from those panes.
 
 ### The briefing hook (Claude bots)
 

@@ -8,12 +8,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { GUARD_DIR, guardPath, workerArgs } from "../mods/am-sidebar/workers.js";
+import { GUARD_DIR, KILL_GUARD_DIR, guardPath, guardPathWith, paneGuardOf, workerArgs } from "../mods/am-sidebar/workers.js";
 import { startArgs } from "../mods/am-sidebar/launchArgs.js";
+import { hcVerbOf } from "../mods/am-sidebar/hcGuard.mjs";
 
 const ID = {
   main: "b-aaaaaaaaaa", cap: "b-bbbbbbbbbb", dev: "b-cccccccccc",
@@ -477,6 +478,137 @@ test("hc kill (#955): a flag before the command is refused for everyone, the mai
   assert.deepEqual(killsSeen(s), []);
 });
 
+// ---- the hc kill shim: the same rule on every other agent's pane (#955) ----
+
+const KILL_SHIM = join(KILL_GUARD_DIR, "hc");
+/** The shim as a Claude, Codex or Antigravity pane runs it: its folder first on PATH, then the real hc's. */
+const shimRun = (s, args, extra = {}) => spawnSync(process.execPath, [KILL_SHIM, ...args],
+  { env: envFor(s, { PATH: `${KILL_GUARD_DIR}:${s.bin}:${dirname(process.execPath)}`, ...extra }), encoding: "utf8" });
+function assertShimRefused(r, why) {
+  assert.equal(r.status, 2, `a refusal exits 2: ${r.stderr}`);
+  assert.equal(r.stderr.trim().split("\n").length, 1, `exactly one stderr line: ${JSON.stringify(r.stderr)}`);
+  assert.match(r.stderr, /^hc kill shim: refused kill: /);
+  assert.match(r.stderr, /\(#955\)\. This shim is a guardrail on the pane's PATH, not a boundary\.\n$/);
+  if (why) assert.match(r.stderr, why);
+  assert.equal(r.stdout, "", "a refusal prints nothing on stdout");
+}
+/** Every order hc takes `kill` in: its one option before, between and after. */
+const KILL_ORDERS = [["kill", "t105"], ["--json", "kill", "t105"], ["kill", "--json", "t105"], ["kill", "t105", "--json"]];
+
+test("the kill shim's entry is an executable file beside hcGuard.mjs, and names the command of a call", () => {
+  assert.ok(statSync(KILL_SHIM).mode & 0o111, "hc-kill/hc is executable");
+  assert.equal(dirname(KILL_GUARD_DIR), dirname(GUARD_DIR), "beside the full guard's folder");
+  assert.equal(hcVerbOf(["kill", "t1"]), "kill");
+  assert.equal(hcVerbOf(["--json", "kill", "t1"]), "kill");
+  assert.equal(hcVerbOf(["send", "t1", "kill"]), "send", "kill as text is no kill");
+  assert.equal(hcVerbOf(["--json", "send", "kill"]), "send");
+  assert.equal(hcVerbOf([]), "");
+  assert.equal(hcVerbOf(["--version"]), "");
+});
+
+test("kill shim (#955): per agent kind and per bot kind, hc kill in every flag order is the main bot's seat only", (t) => {
+  // The roster's kind decides, never the agent: Claude Code, Codex and Antigravity panes get the shim;
+  // a dsh-tui roster gives the same answers (its panes run the full guard, which uses the same rule).
+  for (const agent of ["claude", "codex", "antigravity", "dsh-tui"]) {
+    const s = killScene(t);
+    const file = team();
+    for (const b of file.bots) b.agent = agent;
+    writeFileSync(join(s.project, ".herdr", "bots.json"), `${JSON.stringify(file, null, 2)}\n`);
+    for (const args of KILL_ORDERS) {
+      const said = `${agent}: hc ${args.join(" ")}`;
+      writeFileSync(s.logPath, "");
+      const main = shimRun(s, args, { HC_TERMINAL_ID: "t103" });
+      assert.equal(main.status, 0, `${said} from the main bot's seat: ${main.stderr}`);
+      assert.deepEqual(killsSeen(s), [args], `${said}: the main bot's kill arrives word for word`);
+      for (const [who, terminal] of [["a member lead's seat", "t101"], ["a member's seat", "t100"], ["a member's seat with a lead that is no main bot", "t102"]]) {
+        writeFileSync(s.logPath, "");
+        assertShimRefused(shimRun(s, args, { HC_TERMINAL_ID: terminal }),
+          /hc kill is for a project's main bot only; end a worker you started with automagik-herdr worker kill <pane>/);
+        assert.deepEqual(killsSeen(s), [], `${said} from ${who}: no kill reached hc`);
+      }
+      // A worker never kills: a member's and the main bot's own alike.
+      writeFileSync(s.logPath, "");
+      assertShimRefused(shimRun(s, args, { HC_TERMINAL_ID: "t105" }), /hc kill is for a project's main bot only, never a worker/);
+      assert.deepEqual(killsSeen(s), [], `${said} from a worker: no kill reached hc`);
+    }
+  }
+});
+
+test("kill shim (#955): a main bot's own worker is a worker; a seat on a roster edited to main gets kill", (t) => {
+  const s = killScene(t);
+  const state = JSON.parse(readFileSync(s.statePath, "utf8"));
+  state.get.t105.labels["worker.of"] = ID.main;
+  writeFileSync(s.statePath, JSON.stringify(state));
+  assertShimRefused(shimRun(s, ["kill", "t110"], { HC_TERMINAL_ID: "t105" }), /never a worker/);
+  // The kind is the roster's, read on every call: no label and no environment word grants it.
+  writeFileSync(s.logPath, "");
+  assertShimRefused(shimRun(s, ["kill", "t105"], { HC_TERMINAL_ID: "t101", AM_BOT_KIND: "main", HERDR_BOT_KIND: "main" }));
+  assert.deepEqual(killsSeen(s), []);
+});
+
+test("kill shim (#955): every other hc call goes to the real hc untouched, for a seat, a worker and an unknown pane", (t) => {
+  const s = killScene(t);
+  const others = [["send", "t105", "status?"], ["send", "t105", "kill"], ["--json", "send", "t105", "kill"], ["exec", "--", "sh", "-c", "echo kill"],
+    ["run", "--bg", "claude"], ["keys", "t105", "enter"], ["interrupt", "t105"], ["rm", "t105"], ["read", "t105"], ["label", "t105", "a=b"],
+    ["file", "write", "/x"], ["machine", "ls"], ["server", "status"], ["attach", "t105"], ["ls", "--all"], ["get", "t105"],
+    ["--version"], ["--skill"], ["--help"], ["kill", "--help"], ["kill", "-h"], []];
+  for (const terminal of ["t103", "t101", "t100", "t105", "t121"]) {
+    for (const args of others) {
+      writeFileSync(s.logPath, "");
+      const r = shimRun(s, args, { HC_TERMINAL_ID: terminal, HC_STUB_CODE: "7" });
+      // The stub answers ls and get itself (exit 0); everything else exits with the code it was given.
+      const stubAnswers = ["ls", "get"].includes(args[0]);
+      assert.equal(r.status, stubAnswers ? 0 : 7, `hc ${args.join(" ")} from ${terminal}: the real hc's exit code (${r.stderr})`);
+      assert.doesNotMatch(r.stderr, /hc kill shim/, `hc ${args.join(" ")}: the shim says nothing`);
+      assert.deepEqual(calls(s), [args], `hc ${args.join(" ")} from ${terminal}: one call, word for word, and nothing read for it`);
+    }
+  }
+  // No HC_TERMINAL_ID at all: still passed on (only a kill needs a caller).
+  writeFileSync(s.logPath, "");
+  const bare = spawnSync(process.execPath, [KILL_SHIM, "send", "t105", "hi"], { env: (() => {
+    const env = envFor(s, { PATH: `${KILL_GUARD_DIR}:${s.bin}:${dirname(process.execPath)}` });
+    delete env.HC_TERMINAL_ID;
+    return env;
+  })(), encoding: "utf8" });
+  assert.equal(bare.status, 0, bare.stderr);
+  assert.deepEqual(calls(s), [["send", "t105", "hi"]]);
+});
+
+test("kill shim (#955): a kill it cannot check is refused; no real hc is exit 127; it never hands a call to another guard", (t) => {
+  const s = killScene(t);
+  // A pane that is neither bound nor a worker.
+  assertShimRefused(shimRun(s, ["kill", "t105"], { HC_TERMINAL_ID: "t121" }), /neither bound in the attach ledger nor a worker pane/);
+  // No terminal id; a ledger anyone could have written (never read).
+  assertShimRefused(shimRun(s, ["kill", "t105"], { HC_TERMINAL_ID: "" }), /a call without HC_TERMINAL_ID cannot be checked/);
+  chmodSync(join(s.app, "automagik-herdr", "attach.jsonl"), 0o666);
+  assertShimRefused(shimRun(s, ["kill", "t105"], { HC_TERMINAL_ID: "t103" }), /the caller could not be checked/);
+  chmodSync(join(s.app, "automagik-herdr", "attach.jsonl"), 0o600);
+  assert.deepEqual(killsSeen(s), []);
+  // No real hc on PATH: said once, exit 127, for a kill and for any other call.
+  for (const args of [["kill", "t105"], ["ls"]]) {
+    const none = shimRun(s, args, { HC_TERMINAL_ID: "t103", PATH: `${KILL_GUARD_DIR}:${dirname(process.execPath)}` });
+    assert.equal(none.status, 127, none.stderr);
+    assert.equal(none.stderr, "hc kill shim: the real hc is not on PATH (#955).\n");
+  }
+  // The full guard's folder after the shim (a Claude worker that inherited a dsh-tui pane's PATH):
+  // the shim goes past it to the real hc, so a call the full guard refuses is still passed on.
+  writeFileSync(s.logPath, "");
+  const past = shimRun(s, ["exec", "--", "true"], { HC_TERMINAL_ID: "t100", PATH: `${KILL_GUARD_DIR}:${GUARD_DIR}:${s.bin}:${dirname(process.execPath)}` });
+  assert.equal(past.status, 0, past.stderr);
+  assert.deepEqual(calls(s), [["exec", "--", "true"]]);
+  // The shim's folder after the full guard: the guard does not take the shim for the real hc.
+  writeFileSync(s.logPath, "");
+  const under = guardRun(s, ["ls"], { HC_TERMINAL_ID: "t100", PATH: `${GUARD_DIR}:${KILL_GUARD_DIR}:${s.bin}:${dirname(process.execPath)}` });
+  assert.equal(under.status, 0, under.stderr);
+  assert.deepEqual(calls(s), [["ls"]], "one call: the guard went straight to the real hc");
+  // And a dsh-tui worker's PATH word that starts with the shim's folder is no guard to the full guard.
+  writeFileSync(s.logPath, "");
+  const shape = guardRun(s, ["run", "--bg", "--cwd", s.worktree, "--parent", "t100", "--label", `worker.of=${ID.dev}`, "--",
+    "/usr/bin/env", `PATH=${KILL_GUARD_DIR}:/bin`, "dsh-tui", "--", "task"], { HC_TERMINAL_ID: "t100" });
+  assertRefused(shape);
+  assert.match(shape.stderr, /the PATH word does not start with a guard/);
+});
+
 test("a captain reaches its declared lead even when that lead is planned", (t) => {
   const s = sharedScene(t);
   writeFileSync(s.logPath, "");
@@ -846,7 +978,7 @@ test("the guard shim's own failure lines name #628", (t) => {
   assert.match(broken.stderr, /internal error/);
 });
 
-test("the guard goes first on a dsh-tui PATH and nowhere else; non-dsh-tui argv is unchanged", () => {
+test("the guard goes first on a dsh-tui PATH; every other named agent gets the hc kill shim there (#955); no agent, no change", () => {
   assert.equal(guardPath("/a:/b", "claude"), "/a:/b");
   assert.equal(guardPath("/a:/b", null), "/a:/b");
   assert.equal(guardPath(null, "dsh-tui"), null);
@@ -854,15 +986,32 @@ test("the guard goes first on a dsh-tui PATH and nowhere else; non-dsh-tui argv 
   assert.equal(guardPath(`${GUARD_DIR}:/a`, "dsh-tui"), `${GUARD_DIR}:/a`, "already first: not repeated");
 
   const base = { botId: ID.dev, name: "dev", cwd: "/p", parent: ["--no-parent"], path: "/bin" };
-  const claude = startArgs({ ...base, argv: ["claude"], agent: "claude" });
-  assert.deepEqual(claude, startArgs({ ...base, argv: ["claude"] }), "an old caller (no agent) is unchanged");
-  assert.deepEqual(claude, ["run", "--bg", "--json", "--name", "dev", "--cwd", "/p", "--label", `bot=${ID.dev}`,
-    "--no-parent", "--", "/usr/bin/env", "PATH=/bin", "claude"]);
+  assert.deepEqual(startArgs({ ...base, argv: ["claude"] }), ["run", "--bg", "--json", "--name", "dev", "--cwd", "/p", "--label", `bot=${ID.dev}`,
+    "--no-parent", "--", "/usr/bin/env", "PATH=/bin", "claude"], "an old caller (no agent) is unchanged");
+  // #955: one folder per pane. dsh-tui keeps the full guard; every other agent kind gets the kill shim.
+  assert.equal(paneGuardOf("dsh-tui"), GUARD_DIR);
+  assert.equal(paneGuardOf(null), null);
+  assert.notEqual(KILL_GUARD_DIR, GUARD_DIR);
+  for (const agent of ["claude", "codex", "antigravity", "omp", "hermes", "pi", "opencode"]) {
+    assert.equal(paneGuardOf(agent), KILL_GUARD_DIR, agent);
+    const seat = startArgs({ ...base, argv: [agent], agent });
+    assert.deepEqual(seat.slice(seat.indexOf("--") + 1), ["/usr/bin/env", `PATH=${KILL_GUARD_DIR}:/bin`, agent], `${agent} seat`);
+    const worker = workerArgs({ botId: ID.dev, branch: "b", cwd: "/w", parent: "t1", agent, argv: [agent], task: "t", path: "/a:/b" });
+    assert.equal(worker[worker.indexOf("--") + 2], `PATH=${KILL_GUARD_DIR}:/a:/b`, `${agent} worker`);
+    assert.equal(startArgs({ ...base, argv: [agent], agent, guard: null }).includes(`PATH=/bin`), true, `${agent}: an explicit null (a machine with no shim) adds none`);
+  }
+  // A worker of another agent kind inherits its bot's pane PATH: the pack's other folder is taken out.
+  assert.equal(guardPathWith(`${GUARD_DIR}:/a`, KILL_GUARD_DIR), `${KILL_GUARD_DIR}:/a`, "a Claude worker of a dsh-tui bot: the shim, not both");
+  assert.equal(guardPathWith(`${KILL_GUARD_DIR}:/a`, GUARD_DIR), `${GUARD_DIR}:/a`, "a dsh-tui worker of a Claude bot: the full guard, not both");
+  assert.equal(guardPathWith(`${KILL_GUARD_DIR}:/a`, KILL_GUARD_DIR), `${KILL_GUARD_DIR}:/a`, "already first: not repeated");
+  assert.equal(guardPathWith(`${GUARD_DIR}:/a`, "/stable/guard"), `/stable/guard:${GUARD_DIR}:/a`, "another copy's folder leaves this pack's alone");
   const dsh = startArgs({ ...base, argv: ["dsh-tui"], agent: "dsh-tui" });
   assert.deepEqual(dsh.slice(dsh.indexOf("--") + 1), ["/usr/bin/env", `PATH=${GUARD_DIR}:/bin`, "dsh-tui"]);
 
   const omp = workerArgs({ botId: ID.dev, branch: "b", cwd: "/w", parent: "t1", agent: "omp", argv: ["omp"], task: "t", path: "/a:/b" });
-  assert.deepEqual(omp.slice(omp.indexOf("--") + 1), ["/usr/bin/env", "PATH=/a:/b", "omp", "t"]);
+  assert.deepEqual(omp.slice(omp.indexOf("--") + 1), ["/usr/bin/env", `PATH=${KILL_GUARD_DIR}:/a:/b`, "omp", "t"]);
+  const noShim = workerArgs({ botId: ID.dev, branch: "b", cwd: "/w", parent: "t1", agent: "omp", argv: ["omp"], task: "t", path: "/a:/b", killGuard: null });
+  assert.deepEqual(noShim.slice(noShim.indexOf("--") + 1), ["/usr/bin/env", "PATH=/a:/b", "omp", "t"], "killGuard null: none");
   const dshWorker = workerArgs({ botId: ID.dev, branch: "b", cwd: "/w", parent: "t1", agent: "dsh-tui", argv: ["dsh-tui"], task: "t", path: "/a:/b" });
   assert.deepEqual(dshWorker.slice(dshWorker.indexOf("--") + 1), ["/usr/bin/env", `PATH=${GUARD_DIR}:/a:/b`, "dsh-tui", "--", "t"]);
 });

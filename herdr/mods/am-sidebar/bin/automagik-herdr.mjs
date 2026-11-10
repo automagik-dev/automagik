@@ -32,9 +32,9 @@ import { AGENTS, AGY_MODE_DEFAULT, AGY_MODES, AUTO_MODE, AUTO_MODE_NONE, agentKe
   sessionIdArgs, shownModel, withAgySettings, withBriefing, withOverrides } from "../models.js";
 import { AG_MODELS_TIMEOUT_MS, agModelsSpawnResult, refreshAgModelsSync } from "../modelCache.js";
 import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, WORKTREES_EXCLUDE,
-  GUARD_DIR, SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, guardPathWith,
+  GUARD_DIR, KILL_GUARD_DIR, KILL_GUARD_NAME, SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, guardPathWith,
   LEDGER_MODE, endRow, finishedEnds, launchKey, ledgerLine, ledgerPath, optionLike, paneArgs, readLedger, reapCandidates, reapPath, reapRow,
-  sessionRow, stableGuardDir, stableRootOf,
+  sessionRow, stableGuardDir, stableKillDir, stableRootOf,
   parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
   taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, templateAgent, workerArgs, workerBranch, workerKillRefusal, workerPlan, workerRole, worktreeFolder,
   workLeft, writesWorktree } from "../workers.js";
@@ -245,6 +245,13 @@ async function hcReal(args, { timeout } = {}) {
   if (r.code === 127) throw new CliError("hc (herdr-core) is not on PATH.");
   return r;
 }
+/**
+ * End a pane for one of this CLI's own verbs (restart, rm, a stray pane of a failed start, a
+ * --tree helper): the real hc, past the pane's guard and its `hc kill` shim. Those refuse a bot's
+ * own `hc kill` unless it is its project's main bot (#955); a restart a member or a lead asks for
+ * is this CLI's checked work, as `worker kill` is, and must still end the old pane.
+ */
+const hcKill = (terminal, options) => hcReal(["kill", terminal], options);
 /** `hc <args> --json` through the real hc, parsed; a failed call throws (as hcJson does). */
 async function hcRealJson(args) {
   const r = await hcReal([...args, "--json"]);
@@ -2647,17 +2654,18 @@ while [ -L "$p" ]; do
   case $to in /*) p=$to ;; *) p=$(dirname "$p")/$to ;; esac
 done
 dir=$(cd "$(dirname "$p")" && pwd -P) || exit 5
-guard=$dir/../guard
+guard=$dir/../\${2:-guard}
 [ -x "$guard/hc" ] && [ -f "$dir/../hcGuard.mjs" ] || exit 4
 cd "$guard" && pwd -P`;
-async function guardThere(machine, path) {
+/** `folder`: `guard` (a dsh-tui seat's full guard) or the `hc kill` shim's (#955, every other agent). */
+async function guardThere(machine, path, folder = "guard") {
   if (typeof path !== "string" || !path) return { dir: null, why: "it gave no pane PATH to probe" };
-  const r = await remoteIo.exec("sh", ["-c", GUARD_PROBE_SH, "sh", path], machine, { timeout: AGENT_WAIT_S });
+  const r = await remoteIo.exec("sh", ["-c", GUARD_PROBE_SH, "sh", path, ...(folder === "guard" ? [] : [folder])], machine, { timeout: AGENT_WAIT_S });
   if (r.code === -1) {
     return { dir: null, why: `its guard probe could not run there (${hcSaid(r.stderr) || "no answer"})` };
   }
   if (r.code === 4) {
-    return { dir: null, why: "no automagik-herdr with guard/hc and hcGuard.mjs beside it was found on its pane PATH" };
+    return { dir: null, why: `no automagik-herdr with ${folder}/hc and hcGuard.mjs beside it was found on its pane PATH` };
   }
   if (r.code !== 0) {
     return { dir: null, why: `its guard probe failed there (${hcSaid(r.stderr) || `exit ${r.code}`})` };
@@ -2893,12 +2901,15 @@ async function seatOnMachine(project, bot, over = {}) {
   // A remote dsh-tui seat gets the guard its own machine has, resolved there (#624); with none,
   // no guard on PATH and no briefing paragraph claiming one, and one warning says what the
   // probe found: no guard, a failed probe, or a folder a PATH word cannot carry (#643).
-  const remote = agentKey === "dsh-tui" ? await guardThere(machine, there.path) : null;
+  // Any other agent gets that machine's `hc kill` shim the same way (#955), and is told when it has none.
+  const remote = await guardThere(machine, there.path, agentKey === "dsh-tui" ? "guard" : KILL_GUARD_NAME);
   const remoteGuard = remote?.dir ?? null;
-  const guardWarnings = agentKey === "dsh-tui" && !remoteGuard
-    ? [`${bot.name} runs on ${machine} without the hc guard (#624): ${remote?.why ?? "its guard was not found"}; `
-      + `its hc calls are not guarded.`]
-    : [];
+  const guardWarnings = remoteGuard ? []
+    : agentKey === "dsh-tui"
+      ? [`${bot.name} runs on ${machine} without the hc guard (#624): ${remote?.why ?? "its guard was not found"}; `
+        + `its hc calls are not guarded.`]
+      : [`${bot.name} runs on ${machine} without the hc kill shim (#955): ${remote?.why ?? "its shim was not found"}; `
+        + `nothing there stops its hc kill.`];
   // The briefing there, as a local start has it (#582), in that machine's app home while it is
   // there (briefingHomeOn: asked only when a file or the hook needs one; never made).
   const needsHome = !briefingOwnConfig(agentKey) && (briefingWay(agentKey) === "file" || briefingHook(agentKey));
@@ -2936,7 +2947,7 @@ async function seatOnMachine(project, bot, over = {}) {
       // It may run anyway: found by the name it was given (hc ls) and ended, never left beside the bot's pane.
       let stray = null;
       try { stray = rowsOf(parsed(await hc(["ls", "--json"], callBound()), ["ls"])).find((x) => x?.name === name && String(x.address ?? "").startsWith(`${machine}/`))?.address ?? null; } catch { stray = null; }
-      const killed = stray ? (await hc(["kill", stray], callBound())).code === 0 : false;
+      const killed = stray ? (await hcKill(stray, callBound())).code === 0 : false;
       const said = r.killed ? `didn't answer within ${(DEADLINE === null ? 15000 : DEADLINE_CALL_MS) / 1000} s` : `gave no terminal address (${r.stdout.trim() || "nothing"})`;
       throw new CliError(`hc run on ${machine} ${said}; `
         + (killed ? `the pane it started (${stray}, named ${name}) was ended.` : `if a pane named ${name} started there, end it with hc kill.`));
@@ -2944,7 +2955,7 @@ async function seatOnMachine(project, bot, over = {}) {
     const get = await hcGet(address, callBound()).catch(() => null);
     if (!Number.isSafeInteger(get?.created_ms)) {
       // No created_ms: no row can name it, so it isn't left running beside the bot's pane.
-      const killed = (await hc(["kill", address], callBound())).code === 0;
+      const killed = (await hcKill(address, callBound())).code === 0;
       throw new CliError(`${address} started, but hc get gave no created_ms, so it could have no attach row; `
         + (killed ? "it was ended." : `it couldn't be ended: end it with hc kill ${address}.`));
     }
@@ -3105,7 +3116,7 @@ async function restartOnMachine(opts, project, bot, entry) {
         throw await exitedBefore(seat.address, `${old.address} still runs ${bot.name}, untouched.`
           + (plan.mode === "resume" ? ` Try automagik-herdr restart ${bot.id} --machine ${machine} --project ${key} --fresh.` : ""));
       }
-      const ended = (await hc(["kill", seat.address])).code === 0;
+      const ended = (await hcKill(seat.address)).code === 0;
       throw new CliError(`${seat.address} didn't keep an agent in front within ${RESTART_WAIT_MS / 1000}s${ended ? ", so it was ended" : ` and couldn't be ended (hc kill ${seat.address})`}; `
           + `${old.address} still runs ${bot.name}, untouched.`);
     }
@@ -3123,11 +3134,11 @@ async function restartOnMachine(opts, project, bot, entry) {
         return undefined;
       });
     } catch (e) {
-      await hc(["kill", seat.address]);
+      await hcKill(seat.address);
       throw new CliError(`${seat.address} was ended and ${old.address} still runs ${bot.name}: the attach ledger wasn't written (${e?.message ?? e}).`);
     }
     if (lost !== undefined) {
-      await hc(["kill", seat.address]);
+      await hcKill(seat.address);
       throw new CliError(`${bot.name} was attached to ${lost} while it restarted, so ${seat.address} was ended and nothing changed.`);
     }
     // The old pane is the one the ledger moved from, never a terminal id reused there since.
@@ -3136,7 +3147,7 @@ async function restartOnMachine(opts, project, bot, entry) {
       const w = `${old.address} is another terminal now (its created_ms changed), so it wasn't ended; ${seat.address} plays ${bot.name}.`;
       warnings.push(w); report([w]);
     } else if (before) {
-    const killed = await hc(["kill", old.address]);
+    const killed = await hcKill(old.address);
     if (killed.code !== 0) { const w = `${old.address} wasn't ended (hc kill: ${hcSaid((killed.stderr || killed.stdout).trim())}); end it with hc kill ${old.address}.`; warnings.push(w); report([w]); }
     }
   }
@@ -3633,7 +3644,7 @@ async function helperEnded(terminal, ms = 5000) {
   };
   const first = await wait(ms);
   if (first) return first;
-  const k = await hc(["kill", terminal]);
+  const k = await hcKill(terminal);
   const second = await wait(k.code === 0 ? ms : 0);
   if (second) return second;
   return { ended: false, live: true, why: `it still runs after its parent ended${k.code === 0 ? ` and ${ms / 1000}s after hc kill ${terminal}` : ` (hc kill ${terminal} failed: ${(k.stderr || k.stdout).trim()})`}` };
@@ -3666,7 +3677,8 @@ function byHand(p, parent) {
 /** A --tree helper is another start: resolve its own bot's approved switch afresh too. */
 function helperCommand(p, warn = () => {}) {
   const path = launchPath(p.argv[0], p.cwd).path;
-  if (!p.proxyIdentity) return { argv: p.argv, path };
+  // #955: a helper of any agent but dsh-tui gets the `hc kill` shim first, as a new worker does.
+  if (!p.proxyIdentity) return { argv: p.argv, path: guardPathWith(path, p.agent && p.agent !== "dsh-tui" ? KILL_GUARD_DIR : null) };
   const { botId, project } = p.proxyIdentity;
   const bot = loadProject(project).file.bots.find((entry) => entry.id === botId) ?? { id: botId };
   if (!proxyEnabled(approvedProxyState({ project, bot }), process.platform, warn)) {
@@ -3742,7 +3754,7 @@ async function rerunHelpers(plans, parent, say) {
         failed(why.text);
         continue;
       }
-      const killed = (await hc(["kill", address])).code === 0;
+      const killed = (await hcKill(address)).code === 0;
       failed(`${address} didn't keep an agent in front within ${RESTART_WAIT_MS / 1000}s${killed ? ", so it was ended" : ` and couldn't be ended (hc kill ${address})`}`);
       continue;
     }
@@ -3909,7 +3921,7 @@ async function readScreenText(terminal) {
 async function killQueuedWatcher(watcher) {
   if (!watcher) return;
   const state = await hcState(watcher);
-  if (state.state === "live" && state.get?.labels?.["herdr.queued-restart"]) await hc(["kill", watcher]);
+  if (state.state === "live" && state.get?.labels?.["herdr.queued-restart"]) await hcKill(watcher);
 }
 
 async function queuedRestarts(opts, ref) {
@@ -4311,7 +4323,7 @@ async function cmdRestart(opts, [ref]) {
         throw await exitedBefore(seat.terminal, `${old.address} still runs ${bot.name}, untouched.`
           + (plan.mode === "resume" ? ` Try automagik-herdr restart ${bot.id} --fresh.` : ""));
       }
-      const ended = (await hc(["kill", seat.terminal])).code === 0;
+      const ended = (await hcKill(seat.terminal)).code === 0;
       throw new CliError(`${seat.terminal} didn't keep an agent in front within ${RESTART_WAIT_MS / 1000}s${ended ? ", so it was ended" : ` and couldn't be ended (hc kill ${seat.terminal})`}; `
           + `${old.address} still runs ${bot.name}, untouched.`);
     }
@@ -4322,11 +4334,11 @@ async function cmdRestart(opts, [ref]) {
       if (!Number.isSafeInteger(created)) throw new CliError(`hc get gave no created_ms for ${seat.terminal}`);
       moved = await attachMoved(bot, held.binding, seat.terminal, created, key);
     } catch (e) {
-      await hc(["kill", seat.terminal]);
+      await hcKill(seat.terminal);
       throw new CliError(`${seat.terminal} was ended and ${old.address} still runs ${bot.name}: the attach ledger wasn't written (${e?.message ?? e}).`);
     }
     if (moved.lost !== undefined) {
-      await hc(["kill", seat.terminal]);
+      await hcKill(seat.terminal);
       throw new CliError(`${bot.name} was attached to ${moved.lost} while it restarted, so ${seat.terminal} was ended and nothing changed.`);
     }
     await seat.logSeat(created);
@@ -4339,7 +4351,7 @@ async function cmdRestart(opts, [ref]) {
     // --tree: the old pane ends now, its helpers with it, so nothing types into a pane on the
     // bot's session while the new one runs it; then each helper runs again under the new pane.
     if (plans.length) {
-      const k = await hc(["kill", old.address]);
+      const k = await hcKill(old.address);
       if (k.code === 0) {
         oldEnded = true;
         await endOld();
@@ -4395,10 +4407,10 @@ async function cmdRestart(opts, [ref]) {
     await new Promise((done) => process.stderr.write("", done));
     // The end row only once the kill succeeded: this process usually ends with the pane first,
     // and then the old launch has none (usagemeter's snapshot ends it instead).
-    if ((await hc(["kill", old.address])).code === 0) await endOld();
+    if ((await hcKill(old.address)).code === 0) await endOld();
     return PRINTED;
   }
-  const killed = await hc(["kill", old.address]);
+  const killed = await hcKill(old.address);
   if (killed.code !== 0) say(`${old.address} wasn't ended (hc kill: ${(killed.stderr || killed.stdout).trim()}); end it with hc kill ${old.address}.`);
   else await endOld();
   return answer();
@@ -5730,6 +5742,8 @@ async function cmdWorker(opts, rest) {
       login: claudeLogin(templateArgv ?? plan.argv ?? [], warnings),
       path: runPath?.path ?? process.env.PATH, taskId, project: project.key, lead,
       agySettingsPath: agySettings && !templateArgv ? agySettings.path : null,
+      // #955: the proxy matches a worker's `hc kill` shim as the stable folder's copy.
+      ...(proxied ? { killGuard: stableKillDir(stableRootOf()) } : {}),
       sandbox: plan.agent === "dsh-tui" && proxyEnabled(
         approvedProxyState({ project: project.key, bot }), process.platform,
         (warning) => warnings.push(warning)) });

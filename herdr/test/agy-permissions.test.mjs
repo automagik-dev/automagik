@@ -293,7 +293,9 @@ test("README (#955): Antigravity's section says what runs without a prompt, that
   assert.match(readme, /automagik-herdr worker kill <pane> {5}# or: am worker kill <pane>/);
   // The owner's rule and its honest reach: enforced for dsh-TUI and Antigravity, not for Claude Code or Codex.
   assert.match(readme, /`hc kill` is for the seat of a project's main bot only/);
-  assert.match(readme, /\| Claude Code, Codex and every other agent \| \*\*not enforced\.\*\*/);
+  assert.match(readme, /\| Claude Code, Codex, Antigravity and every other agent \(the `hc kill` shim is first on its PATH\) \| refused by the shim in every flag order/);
+  assert.match(readme, /\*\*The boundary is the hc-proxy sandbox, never the shim\.\*\*/);
+  assert.doesNotMatch(readme, /\*\*not enforced\.\*\*/, "the shim covers every agent's pane now");
   // #879: the file lists the launch's own folder, and agy 1.5.3's key is documented.
   assert.match(readme, /"trustedWorkspaces": \["<folder>"\]/);
   assert.match(readme, /`agy` 1\.5\.3 reads\s+`TrustedWorkspaces \[\]string json:"trustedWorkspaces,omitempty"` as a\s+top-level key of `--settings`/s);

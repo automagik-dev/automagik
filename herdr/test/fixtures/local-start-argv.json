@@ -19,7 +19,7 @@
       "/usr/bin/env",
       "-u",
       "CLAUDE_CONFIG_DIR",
-      "PATH=<root>/bin:/usr/bin:/bin",
+      "PATH=<hc-kill>:<root>/bin:/usr/bin:/bin",
       "HERDR_APP_HOME=<root>/app",
       "claude",
       "--append-system-prompt-file",
@@ -49,7 +49,7 @@
       "--no-parent",
       "--",
       "/usr/bin/env",
-      "PATH=<root>/bin:/usr/bin:/bin",
+      "PATH=<hc-kill>:<root>/bin:/usr/bin:/bin",
       "HERDR_APP_HOME=<root>/app",
       "omp",
       "--append-system-prompt=<herdr-bot>\nAutomagik Herdr briefing, written from .herdr/bots.json when this session started. It is context, not a request from the user.\nYou are Omen, a team member (bot b-ompaaaaaaa).\nRole: r\nInstructions:\ni\nYou write no code yourself: for each task start one worker with `automagik-herdr worker \"<task>\" --branch <branch>` (it runs in the task's worktree, under your pane), check its result, and end it with `automagik-herdr worker kill <terminal>` once the task merges.\nLive status and latest reports of your team and lead: run `automagik-herdr brief b-ompaaaaaaa`.\nTo restart you, the person runs `automagik-herdr restart b-ompaaaaaaa` in this project's folder (or with --project <that folder>), which keeps your agent and model, or uses Restart in your bot's menu in the Herdr sidebar, not your agent's own restart command. In pt-BR: \"Para me reiniciar, rode `automagik-herdr restart b-ompaaaaaaa` na pasta deste projeto (ou com --project <essa pasta>), que mantém meu agente e modelo, ou use Restart no menu do bot na barra lateral do Herdr, não o comando de reinício do próprio agente.\" Or run `am restart b-ompaaaaaaa`. /restart (including Claude Code's Update installed · /restart to apply) never works in a Herdr pane because of its launch flags --append-system-prompt-file and --settings.\n\nYour lead: Genie (bot b-claudeaaaa). Report to it with `hc send <terminal> \"<result or blocker>\"` when you are done or stuck; find its current terminal with `hc ls --label bot=b-claudeaaaa` first, never from an older message.\n</herdr-bot>"
@@ -72,7 +72,7 @@
       "--no-parent",
       "--",
       "/usr/bin/env",
-      "PATH=<root>/bin:/usr/bin:/bin",
+      "PATH=<hc-kill>:<root>/bin:/usr/bin:/bin",
       "HERDR_APP_HOME=<root>/app",
       "HERMES_EPHEMERAL_SYSTEM_PROMPT=<herdr-bot>\nAutomagik Herdr briefing, written from .herdr/bots.json when this session started. It is context, not a request from the user.\nYou are Atlas, a team member (bot b-hermesaaaa).\nRole: r\nInstructions:\ni\nYou write no code yourself: for each task start one worker with `automagik-herdr worker \"<task>\" --branch <branch>` (it runs in the task's worktree, under your pane), check its result, and end it with `automagik-herdr worker kill <terminal>` once the task merges.\nLive status and latest reports of your team and lead: run `automagik-herdr brief b-hermesaaaa`.\nTo restart you, the person runs `automagik-herdr restart b-hermesaaaa` in this project's folder (or with --project <that folder>), which keeps your agent and model, or uses Restart in your bot's menu in the Herdr sidebar, not your agent's own restart command. In pt-BR: \"Para me reiniciar, rode `automagik-herdr restart b-hermesaaaa` na pasta deste projeto (ou com --project <essa pasta>), que mantém meu agente e modelo, ou use Restart no menu do bot na barra lateral do Herdr, não o comando de reinício do próprio agente.\" Or run `am restart b-hermesaaaa`. /restart (including Claude Code's Update installed · /restart to apply) never works in a Herdr pane because of its launch flags --append-system-prompt-file and --settings.\n\nYour lead: Genie (bot b-claudeaaaa). Report to it with `hc send <terminal> \"<result or blocker>\"` when you are done or stuck; find its current terminal with `hc ls --label bot=b-claudeaaaa` first, never from an older message.\n</herdr-bot>",
       "hermes"

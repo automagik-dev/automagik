@@ -2,7 +2,7 @@
   "/usr/bin/env",
   "-u",
   "CLAUDE_CONFIG_DIR",
-  "PATH=<root>/bin:/usr/bin:/bin",
+  "PATH=<hc-kill>:<root>/bin:/usr/bin:/bin",
   "claude",
   "--append-system-prompt-file",
   "<root>/box/.config/herdr-app/automagik-herdr/briefings/<hash>-b-mainaaaaaa.md",

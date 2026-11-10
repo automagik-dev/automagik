@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { attachPath, readAttach } from "../mods/am-sidebar/attach.js";
-import { GUARD_DIR } from "../mods/am-sidebar/workers.js";
+import { GUARD_DIR, KILL_GUARD_DIR } from "../mods/am-sidebar/workers.js";
 import { AGY_FIXED_DENY } from "../mods/am-sidebar/models.js";
 import { WORKER_LINE } from "../mods/am-sidebar/briefingText.mjs";
 import { approveProject, recordFileOf } from "../mods/am-sidebar/approved.js";
@@ -28,6 +28,9 @@ const CORE = "core-of-vm";
 const ATLAS = "b-atlasaaaaa", HEDGE = "b-hedgeaaaaa";
 const KEEP = ["sh", "-c", "\"$@\"; exec \"${SHELL:-sh}\" -i", "sh", "hermes", "--tui"];
 const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755); };
+
+/** The warning a start on a machine with no `hc kill` shim prints (#955). */
+const NO_KILL_SHIM = /^\S.* runs on vm without the hc kill shim \(#955\): /;
 
 function scene(t, { terminals = [], tui = true } = {}) {
   const root = scratchRoot(t, "hb-panes-");
@@ -63,7 +66,15 @@ function scene(t, { terminals = [], tui = true } = {}) {
   env.HC_TERMINAL_ID = "t1";
   const cli = (args, more = {}) => {
     const r = spawnSync(process.execPath, [CLI, ...args], { cwd: root, env: { ...env, ...more }, encoding: "utf8" });
-    return { code: r.status, out: r.stdout, err: r.stderr, json: () => JSON.parse(r.stdout) };
+    // #955: vm in this scene has no automagik-herdr on its pane PATH, so a start of any agent but
+    // dsh-tui adds the "no hc kill shim there" warning. json() leaves that one line out, so each
+    // test still counts the warnings it is about; raw() is the answer as printed (the shim's own tests).
+    const raw = () => JSON.parse(r.stdout);
+    const json = () => {
+      const out = raw();
+      return Array.isArray(out?.warnings) ? { ...out, warnings: out.warnings.filter((w) => !NO_KILL_SHIM.test(w)) } : out;
+    };
+    return { code: r.status, out: r.stdout, err: r.stderr, json, raw };
   };
   const on = ["--machine", "vm", "--project", project];
   const calls = () => readJsonLines(logPath);
@@ -1096,6 +1107,44 @@ function dshTuiScene(t, { terminals = [], override = null, shipped = true, guard
   }
   return s;
 }
+
+// ---- #955: the `hc kill` shim on a linked machine, for every agent but dsh-tui ----
+
+/** An automagik-herdr on vm's pane PATH with the shim beside it, as an install there has. */
+function shimOnVm(s) {
+  const pack = join(s.root, "vm-shim-pack");
+  for (const d of ["bin", "hc-kill"]) mkdirSync(join(pack, d), { recursive: true });
+  exe(join(pack, "bin", "automagik-herdr"), "#!/bin/sh\nexit 0\n");
+  exe(join(pack, "hc-kill", "hc"), "#!/bin/sh\nexit 0\n");
+  writeFileSync(join(pack, "hcGuard.mjs"), "// remote guard\n");
+  symlinkSync(join(pack, "bin", "automagik-herdr"), join(s.root, "vm-bin", "automagik-herdr"));
+  return join(pack, "hc-kill");
+}
+
+test("start --machine (#955): a Claude bot gets that machine's hc kill shim first on its PATH, never this computer's, and no warning", (t) => {
+  const s = scene(t);
+  packAt(vmApp(s));
+  const shim = shimOnVm(s);
+  const r = s.cli(["start", "Hedge", ...s.on, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(r.raw().warnings, []);
+  const argv = startedWith(s);
+  const pathWord = argv.find((word) => word.startsWith("PATH="));
+  assert.ok(pathWord.startsWith(`PATH=${shim}:`), pathWord);
+  assert.equal(pathWord.includes(KILL_GUARD_DIR), false, "not this computer's shim folder");
+});
+
+test("start --machine (#955): a machine with no hc kill shim starts the bot without it and says so once", (t) => {
+  const s = scene(t);
+  packAt(vmApp(s));
+  const r = s.cli(["start", "Hedge", ...s.on, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const said = r.raw().warnings;
+  assert.equal(said.length, 1, said.join("\n"));
+  assert.match(said[0], /^Hedge runs on vm without the hc kill shim \(#955\): no automagik-herdr with hc-kill\/hc and hcGuard\.mjs beside it was found on its pane PATH; nothing there stops its hc kill\.$/);
+  const pathWord = startedWith(s).find((word) => word.startsWith("PATH="));
+  assert.equal(pathWord.split(":").some((dir) => dir.endsWith("/hc-kill")), false, pathWord);
+});
 
 const shippedWarning = (w, s) => /^dsh-TUI starts on vm from its shipped run \(dsh-tui\), skipping the programs\.json override here \(/
   .test(w) && w.includes(s.override) && w.includes("which isn't installed there.");
