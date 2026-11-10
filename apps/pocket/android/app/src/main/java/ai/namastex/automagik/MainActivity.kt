@@ -304,7 +304,7 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
         val offline = all.filter { state.machines[it.ref.hostId]?.connected != true }
         DeckScreen(cards, offline, vm, anyConnected, deckMemory, state.message, onClose = { deckOpen = false },
             onOpen = { ref -> deckReturn = true; openFromDeck(ref) },
-            onBackToTeams = { deckOpen = false })
+            onBackHome = { deckOpen = false })
     }
     vm.sheet.collectAsStateWithLifecycle().value?.let { StatsSheetHost(it, onDismiss = vm::closeStats) }
     if (pairDesktop) PairDialog(state.pairing, onDismiss = { pairDesktop = false }, onScan = ::scan, onPair = vm::pair)
@@ -423,12 +423,12 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
         }
         // Today: the counts and nothing else above the agents; spent today joins them once a usage meter reports.
         if (space == null) item(key = "today") {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(TodayTiles.GAP_DP.dp)) {
-                CountCard(pulse.needsYou, if (pulse.needsYou == 1) "needs you" else "need you", Blocked, Modifier.weight(1f),
+            Row(Modifier.fillMaxWidth().height(TodayTiles.HEIGHT_DP.dp), horizontalArrangement = Arrangement.spacedBy(TodayTiles.GAP_DP.dp)) {
+                CountCard(pulse.needsYou, if (pulse.needsYou == 1) "needs you" else "need you", Blocked, Modifier.weight(1f).fillMaxHeight(),
                     onClick = if (pulse.needsYou > 0) onReviewNeedsYou else null)
-                CountCard(pulse.working, "working", Working, Modifier.weight(1f))
-                CountCard(pulse.machines, "connected", Ink, Modifier.weight(1f))
-                rememberSpend(state).takeIf { !it.coverage.none }?.let { SpendCount(it, Modifier.weight(1f)) }
+                CountCard(pulse.working, "working", Working, Modifier.weight(1f).fillMaxHeight())
+                CountCard(pulse.machines, "connected", Ink, Modifier.weight(1f).fillMaxHeight())
+                rememberSpend(state).takeIf { !it.coverage.none }?.let { SpendCount(it, Modifier.weight(1f).fillMaxHeight()) }
             }
             Spacer(Modifier.height(12.dp))
             val focus = LocalFocusManager.current

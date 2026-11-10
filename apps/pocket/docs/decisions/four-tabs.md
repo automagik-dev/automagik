@@ -59,7 +59,7 @@ placement and the progress strip do not.
   (`MainActivity.kt:427`, `:444`), so a later "Answer all" button opens the same screen. A card's
   terminal or chat keeps the deck's answers on the way Back, and a disconnected machine's requests
   show the offline end. The last answer shows All clear ("You answered N requests. Your bots are
-  back to work."), the bot hops once, and **Back to Teams** returns to Home, where the deck opened.
+  back to work."), the bot hops once, and **Back to Home** closes the deck.
   Tested in `TeamsTest` and `HomeChatsTest`.
 - Code (wish group 3), the desktop's Herdr window made mobile:
   - The spaces and bots tree (`Sidebar.rows`, drawn by `sidebarRows`) places each project's bots under

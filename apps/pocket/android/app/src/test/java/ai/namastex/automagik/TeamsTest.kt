@@ -565,6 +565,9 @@ class TeamsTest {
         val second = previewMenu(sample("t8", "Run the lint check?"))
         assertTrue("npm run lint" in second)
         assertTrue("npm test" !in second)
+        val third = previewMenu(sample("t9", "Approve the sample deploy?"))
+        assertTrue("./deploy.sh" in third)
+        assertTrue("npm test" !in third)
     }
 
     @Test fun backFromADeckOpenedCardReturnsToTheDeckAndAnExternalSelectionClosesIt() {

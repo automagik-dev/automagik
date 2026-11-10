@@ -68,7 +68,7 @@ class DeckMemory {
  */
 @Composable fun DeckScreen(cards: List<Teams.DeckCard>, offline: List<Teams.DeckCard>, vm: PocketViewModel,
                            connected: Boolean, memory: DeckMemory, message: String?,
-                           onClose: () -> Unit, onOpen: (TerminalRef) -> Unit, onBackToTeams: () -> Unit) {
+                           onClose: () -> Unit, onOpen: (TerminalRef) -> Unit, onBackHome: () -> Unit) {
     BackHandler(onBack = onClose)
     LaunchedEffect(cards.size) { memory.seen = maxOf(memory.seen, cards.size) }
     val answered = memory.answered
@@ -94,13 +94,6 @@ class DeckMemory {
                 }
                 IconButton(onClick = onClose) { Icon(Icons.Outlined.Close, "Close the deck", tint = Muted) }
             }
-            // The Scaffold's snackbar sits under this layer; answer outcomes show here instead.
-            message?.takeIf { it.isNotBlank() }?.let {
-                Spacer(Modifier.height(8.dp))
-                Text(it, color = Ink, fontSize = 13.sp, lineHeight = 18.sp, textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Raised)
-                        .border(1.dp, Border, RoundedCornerShape(12.dp)).padding(12.dp))
-            }
             when (view) {
                 is Teams.DeckView.Cards -> {
                     val card = view.cards.first()
@@ -111,12 +104,19 @@ class DeckMemory {
                 }
                 Teams.DeckView.Clear -> DeckEnd(Teams.DONE, "All clear", if (answered.isEmpty()) "No bot is waiting on you."
                     else "You answered ${answered.size} ${if (answered.size == 1) "request" else "requests"}. Your bots are back to work.",
-                    celebrate = answered.isNotEmpty(), action = "Back to Teams", onAction = onBackToTeams, Modifier.weight(1f))
+                    celebrate = answered.isNotEmpty(), action = "Back to Home", onAction = onBackHome, Modifier.weight(1f))
                 is Teams.DeckView.Offline -> DeckEnd(Teams.ASLEEP, "Offline: can't answer",
                     if (view.waiting == 1) "1 bot was waiting when the connection dropped. Reconnect to answer."
                     else "${view.waiting} bots were waiting when the connection dropped. Reconnect to answer.",
                     celebrate = false, action = "Back to Home", onAction = onClose, Modifier.weight(1f))
             }
+        }
+        // The Scaffold's snackbar sits under this layer; answer outcomes overlay it here without moving the card.
+        message?.takeIf { it.isNotBlank() }?.let {
+            Text(it, color = Ink, fontSize = 13.sp, lineHeight = 18.sp, textAlign = TextAlign.Center,
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 54.dp).fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp)).background(Raised).border(1.dp, Border, RoundedCornerShape(12.dp))
+                    .padding(horizontal = 12.dp, vertical = 10.dp))
         }
     }
 }
@@ -171,7 +171,8 @@ class DeckMemory {
         sending = true
         view.performHapticFeedback(if (Build.VERSION.SDK_INT >= 30) HapticFeedbackConstants.CONFIRM else HapticFeedbackConstants.VIRTUAL_KEY)
         // The card leaves only when the answer reached the agent; otherwise it comes back (the outcome shows as a message).
-        vm.answer(card.ref, card.message, m.dialog, m.options, choice) { sent ->
+        val short = if (choice.index == yes?.index) "Yes" else if (choice.index == no?.index) "No" else choice.button
+        vm.answer(card.ref, card.message, m.dialog, m.options, choice, short = short) { sent ->
             sending = false
             if (sent) onAnswered() else scope.launch { launch { dx.animateTo(0f) }; dy.animateTo(0f) }
         }
@@ -186,10 +187,9 @@ class DeckMemory {
                         Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp).alpha(.7f), verticalAlignment = Alignment.CenterVertically) {
                             PetView(Teams.GENIE, Teams.NEEDS_YOU, 34.dp)
                             Spacer(Modifier.width(10.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(next.title, color = Muted, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                if (next.where.isNotBlank()) Text(next.where, color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            }
+                            Text(next.title, color = Muted, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1,
+                                overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                            if (next.where.isNotBlank()) Text(next.where, color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
                 }
