@@ -39,16 +39,37 @@ const textOf = (content) => {
   return content.map((block) => (block?.type === 'text' ? block.text ?? '' : block?.type === 'resource' ? block.resource?.text ?? '' : '')).filter(Boolean).join('\n')
 }
 
+// Inline image blocks are base64 text already, and one large or undecodable picture would
+// otherwise reach the agent's model whole: only the types every provider decodes, and at most
+// 5 MiB decoded.
+const INLINE_IMAGE_TYPES = Object.freeze(new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']))
+const MAX_INLINE_IMAGE_BYTES = 5 * 1024 * 1024
+
+// The decoded byte count of base64 text, from its length: the payload is sized, never decoded,
+// so checking a block does not cost its decode.
+const base64Bytes = (data) => Math.floor((data.length * 3) / 4) - (data.endsWith('==') ? 2 : data.endsWith('=') ? 1 : 0)
+
+// Why an inline image block cannot go to the agent as image content, or undefined when it can:
+// its type is one the agent's model decodes and its payload is within the cap.
+function inlineImageProblem(block) {
+  if (!INLINE_IMAGE_TYPES.has(block.mimeType ?? block.mediaType)) return 'not a supported image type'
+  if (base64Bytes(block.data) > MAX_INLINE_IMAGE_BYTES) return 'larger than 5 MiB'
+  return undefined
+}
+
 // The MCP image content of one DSH image block, in the shape an ACP agent's model accepts:
 // `{ type: 'image', data, mimeType }`. Inline data is already base64 and passes through as it is
-// (never encoded twice); a durable attachment (`attachment`, DSH's own image block) is read and
-// encoded once. Undefined when the bytes cannot be recovered: no attachment store is mounted, or
-// it refused the reference.
+// (never encoded twice) when it is a supported image type within the cap; a durable attachment
+// (`attachment`, DSH's own image block) is read and encoded once. Undefined when the bytes cannot
+// be recovered: unsupported or oversized inline data, no attachment store is mounted, or it
+// refused the reference.
 async function mcpImage(block, attachments) {
   const mimeType = block.mimeType ?? block.mediaType ?? block.attachment?.mediaType
   if (typeof block.data === 'string' && block.data !== '') {
-    // ACP image content needs its media type; an untyped block is not guessed at.
-    return mimeType === undefined ? undefined : { type: 'image', data: block.data, mimeType }
+    // ACP image content needs a media type the model decodes, and no block may push an
+    // unbounded payload at it; an untyped, unsupported or oversized block is not guessed at.
+    if (inlineImageProblem(block) !== undefined) return undefined
+    return { type: 'image', data: block.data, mimeType }
   }
   if (block.attachment === undefined) return undefined
   try {
@@ -59,6 +80,16 @@ async function mcpImage(block, attachments) {
   } catch {
     return undefined
   }
+}
+
+// The one-line text an image's place in the result becomes when its bytes cannot reach the
+// model: the media type it named, then why.
+function unavailableText(image) {
+  const type = image.mimeType ?? image.mediaType ?? 'unknown media type'
+  const reason = typeof image.data === 'string' && image.data !== ''
+    ? inlineImageProblem(image)
+    : 'the attachment could not be read'
+  return `[image unavailable: ${type}; ${reason}]`
 }
 
 // A DSH tool result as MCP content: its text exactly as before (one joined, truncated block),
@@ -72,7 +103,7 @@ async function contentOf(content, attachments) {
   const blocks = text === '' ? [] : [{ type: 'text', text: clipped }]
   for (const image of images) {
     const mcp = await mcpImage(image, attachments)
-    blocks.push(mcp ?? { type: 'text', text: `[image unavailable: ${image.mimeType ?? image.mediaType ?? 'unknown media type'}; the attachment could not be read]` })
+    blocks.push(mcp ?? { type: 'text', text: unavailableText(image) })
   }
   return blocks
 }

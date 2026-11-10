@@ -418,6 +418,48 @@ test('an inline image block passes through once, not encoded again', async () =>
   }
 })
 
+// A browser_screenshot tool answering with `content`, as the agent's MCP call receives it.
+async function screenshotResult(content) {
+  const shot = { name: 'browser_screenshot', description: 'Take a screenshot', parameters: { type: 'object', properties: {} } }
+  const h = host({ tools: [...TOOLS, shot], content })
+  try {
+    await h.backchannel.listen()
+    const record = h.backchannel.mint({ sessionId: 's1', agent: h.agent, name: 'Fake agent' })
+    h.backchannel.announce(record)
+    const response = await fetch(h.backchannel.urlFor(record), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${record.credential}` },
+      body: JSON.stringify({ op: 'call', name: 'browser_screenshot', arguments: {} }),
+    })
+    return await response.json()
+  } finally {
+    h.backchannel.dispose()
+  }
+}
+
+test('an inline image over 5 MiB becomes a text placeholder, never image content', async () => {
+  // One byte over the cap. The bridge sizes base64 from its length, so this payload is never decoded.
+  const oversized = Buffer.alloc(5 * 1024 * 1024 + 1).toString('base64')
+  const body = await screenshotResult([{ type: 'image', data: oversized, mediaType: 'image/png' }])
+  assert.deepEqual(body.content, [{ type: 'text', text: '[image unavailable: image/png; larger than 5 MiB]' }])
+})
+
+test('a non-image inline block becomes a text placeholder, never image content', async () => {
+  const pdf = Buffer.from('%PDF-1.7\n').toString('base64')
+  const body = await screenshotResult([{ type: 'image', data: pdf, mediaType: 'application/pdf' }])
+  assert.deepEqual(body.content, [{ type: 'text', text: '[image unavailable: application/pdf; not a supported image type]' }])
+})
+
+test('a small png and a small jpeg inline image pass through byte for byte', async () => {
+  // A 1x1 png and a 1x1 jpeg, each base64 of the bytes the tool answered with.
+  const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+  const jpeg = '/9j/4AAQSkZJRgABAQEAYABgAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAABAAEBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAACf/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AKp//2Q=='
+  for (const [data, mimeType] of [[png, 'image/png'], [jpeg, 'image/jpeg']]) {
+    const body = await screenshotResult([{ type: 'image', data, mediaType: mimeType }])
+    assert.deepEqual(body.content, [{ type: 'image', data, mimeType }])
+  }
+})
+
 test('text and resource results keep their single text block', async () => {
   const h = host({
     content: [

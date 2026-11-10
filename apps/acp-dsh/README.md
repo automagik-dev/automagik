@@ -226,11 +226,13 @@ later replay carries it. Other links are left as the agent wrote them.
 a read of a picture) keeps it when the bridge hands the call to the agent: the back-channel reads
 the durable attachment and answers the agent's MCP call with ACP image content
 (`{ type: 'image', data, mimeType }`), beside the text it already carried; an inline image block
-passes through as the base64 it already is, never encoded twice. The agent's own call that
-answers with an image keeps the same picture in its mirror result, stored once in DSH's
-attachment store as `{ type: 'image', attachment }`, so the chat's card, the stored result and a
-later replay show it; with no attachment store mounted the call keeps its text result rather than
-writing inline base64 into the log. Text and resource results keep the single text block they had.
+passes through as the base64 it already is, never encoded twice, when it is `image/png`,
+`image/jpeg`, `image/gif` or `image/webp` and at most 5 MiB decoded; anything else becomes a
+one-line text placeholder saying why. The agent's own call that answers with an image keeps the
+same picture in its mirror result, stored once in DSH's attachment store as
+`{ type: 'image', attachment }`, so the chat's card, the stored result and a later replay show it;
+with no attachment store mounted the call keeps its text result rather than writing inline base64
+into the log. Text and resource results keep the single text block they had.
 
 The switches are not the service's: a page writes them in the `acp-dsh` settings entry
 through DSH's settings service (the welcome does, `src/host/acp.js` there).
