@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { LlmAdapter, boundContextSummary, createUserMessage, isAgentLoopRequest } from '@deepseek-ai/dsh-llm'
-import { AgentRun, valuesOf } from './acp.js'
+import { AgentRun, isStopped, isUnanswered, valuesOf, waited } from './acp.js'
 import { recordDrift } from './backchannel.js'
 import { DEFAULT_MODEL } from './catalog.js'
 import { BRIDGE_NAME, CREDENTIAL_ENV, isAuthRequired, MODEL_ACCESS_REQUIRED, SYNTHETIC_KIND, URL_ENV } from './names.js'
@@ -17,7 +17,9 @@ import { agentRoute, answered, boundaryNotice, isHandoff, lastProviderOf, missed
 import { ImageLinks, savedPathsOf } from './agent-image.js'
 import { callArguments, entered, levelOf, mirrorTool, TOOL_NAME } from './tool.js'
 
-const CANCEL_WAIT_MS = 5000
+// How long a prompt has to end after it was asked to stop. `session/cancel` is a notification:
+// nothing says the agent took it, and one that ignores it would stay busy for good.
+export const CANCEL_WAIT_MS = 5000
 // A bridge that never listed its tools fails the turn: codex-acp skips a server whose name the
 // person's own Codex config defines, and a Session must not run with half a tool set.
 const BRIDGE_READY_MS = 15_000
@@ -56,6 +58,36 @@ const FINISH = { end_turn: 'stop', max_tokens: 'max-tokens', max_turn_requests: 
 // session or of a prompt. The turn fails with its own code, never ACP_AGENT: a sign-in answers
 // it, another model does not (the Bot team never falls back on it).
 const signInFailure = (name, error) => finish('error', `${name} is not signed in: ${error?.message ?? error}`, MODEL_ACCESS_REQUIRED)
+const STOPPED = () => finish('aborted', 'Stopped', 'ABORTED')
+
+/**
+ * What the person reads when the agent did not answer in time. A start that hangs is usually a
+ * CLI waiting for the person (a first-run question, a keychain dialog, an update), so it says
+ * where to look; any later request ended the session, so it says the next message starts one.
+ * @param {string} name the agent's name
+ * @param {string} doing `starting`, or what was asked of it before the prompt
+ * @param {number} ms how long it had
+ */
+export function unansweredText(name, doing, ms) {
+  if (doing === 'starting') return `${name} did not answer while starting (${waited(ms)}). Open it once in a terminal to check it is not waiting for you, then send again.`
+  return `${name} did not answer while ${doing} (${waited(ms)}), so its session was ended. Send again to start a new one.`
+}
+
+// Resolves after `ms`, or as soon as `signal` aborts; `clear` withdraws both.
+function pause(ms, signal) {
+  let clear
+  const done = new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms)
+    timer.unref?.()
+    signal?.addEventListener('abort', resolve, { once: true })
+    clear = () => {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', resolve)
+    }
+    if (signal?.aborted) resolve()
+  })
+  return { done, clear }
+}
 
 // The blocks of one model step: text and reasoning open as they come, close before a tool call.
 class Blocks {
@@ -276,31 +308,35 @@ export function aside(providers, ctx, sideModel = () => SIDE_MODEL, redact = tex
  * @param {string} model
  * @param {string | undefined} effort
  * @param {() => string | undefined} [ownEffort]
+ * @param {{ signal?: AbortSignal }} [options] the turn's Stop, for each request
  */
-export async function choose(run, model, effort, ownEffort) {
+export async function choose(run, model, effort, ownEffort, { signal } = {}) {
   const option = run.option('model')
   if (option === undefined) {
     if (model !== DEFAULT_MODEL) throw new Error(`it offers no choice of model, so not ${model}`)
   } else {
     const target = model === DEFAULT_MODEL && !valuesOf(option).some(choice => choice.value === DEFAULT_MODEL) ? run.startModel : model
-    if (target !== undefined) await run.setOption('model', target)
+    if (target !== undefined) await run.setOption('model', target, { signal })
   }
-  if (effort !== undefined) return run.setOption('thought_level', effort)
+  if (effort !== undefined) return run.setOption('thought_level', effort, { signal })
   const levels = run.option('thought_level')
   if (levels === undefined) return
   const offered = valuesOf(levels).map(choice => choice.value)
-  if (offered.includes(DEFAULT_MODEL)) return run.setOption('thought_level', DEFAULT_MODEL)
+  if (offered.includes(DEFAULT_MODEL)) return run.setOption('thought_level', DEFAULT_MODEL, { signal })
   const own = ownEffort?.()
-  if (own !== undefined && offered.includes(own)) await run.setOption('thought_level', own)
+  if (own !== undefined && offered.includes(own)) await run.setOption('thought_level', own, { signal })
 }
 
 export class AcpAdapter extends LlmAdapter {
   /**
    * @param {import('@deepseek-ai/cordis').Context} ctx
    * @param {Map<string, { name: string, catalog: import('./catalog.js').Catalog, installed?(): boolean, spawn(): { command: string, args?: string[], env?: Record<string, string> } }>} agents
+   *   An agent's own `startMs` and `requestMs` replace acp.js's deadlines; `cancelWaitMs`
+   *   replaces CANCEL_WAIT_MS. Tests set them, so none waits a real deadline out.
    */
-  constructor(ctx, agents, { dshTools = () => false, backchannel, redactor, onSignedOut, images = () => undefined, access } = {}) {
+  constructor(ctx, agents, { dshTools = () => false, backchannel, redactor, onSignedOut, images = () => undefined, access, cancelWaitMs = CANCEL_WAIT_MS } = {}) {
     super()
+    this.cancelWaitMs = cancelWaitMs
     // Asked before a turn opens on an agent (#869): a text when its signed-in account has not
     // been confirmed for the app, else undefined. Never asked for a call that continues a turn.
     this.access = access
@@ -312,7 +348,7 @@ export class AcpAdapter extends LlmAdapter {
     this.backchannel = backchannel
     this.redact = redactor ?? (text => text)
     this.live = new Map()
-    this.tool = mirrorTool({ runOf: sessionId => this.live.get(sessionId), approval: () => ctx.get?.('approval'), sandboxPolicy: () => ctx.get?.('sandboxPolicy'), permissionPresets: () => ctx.get?.('permissionPresets'), images, attachments: () => ctx.get?.('attachments') })
+    this.tool = mirrorTool({ runOf: sessionId => this.live.get(sessionId), cancelled: (sessionId, live) => this.reap(sessionId, live), approval: () => ctx.get?.('approval'), sandboxPolicy: () => ctx.get?.('sandboxPolicy'), permissionPresets: () => ctx.get?.('permissionPresets'), images, attachments: () => ctx.get?.('attachments') })
     // A new chat's first model step lists its tools after `agent/created`: register the mirror
     // tool there in every agent's own scope, with the step condition that admits it only on
     // this adapter's routes. A chat is created on DSH's default route and may be picked to an
@@ -413,11 +449,84 @@ export class AcpAdapter extends LlmAdapter {
    * credential minted while `dshTools` was on cannot keep reaching DSH tools.
    */
   endSessions() {
-    for (const live of this.live.values()) {
-      live.run?.dispose()
-      if (live.bridge !== undefined) this.backchannel?.revoke(live.bridge)
+    for (const [sessionId, live] of this.live) this.end(sessionId, live)
+  }
+
+  /**
+   * End one agent session now: its process, its bridge credential and its place in `live`. The
+   * DSH Session keeps its transcript, so the next turn starts a new agent session and the
+   * replay carries the chat to it.
+   */
+  end(sessionId, live) {
+    clearTimeout(live.reaper)
+    live.reaper = undefined
+    live.reaping = undefined
+    live.open = false
+    live.run?.dispose()
+    if (live.bridge !== undefined) this.backchannel?.revoke(live.bridge)
+    if (this.live.get(sessionId) === live) this.live.delete(sessionId)
+  }
+
+  /**
+   * The agent was just asked to stop its prompt (a Stop, a stopped tool call, drift). Nothing
+   * says it will: a prompt still open after `cancelWaitMs` is an agent that ignored the cancel,
+   * and its session ends here, on the app's side. Otherwise the run would stay busy, its
+   * process would go on with whatever it was doing, and every later message would fail.
+   */
+  reap(sessionId, live) {
+    const prompt = live?.run?.prompting
+    if (prompt === undefined || live.reaping === prompt) return
+    clearTimeout(live.reaper)
+    live.reaping = prompt
+    const timer = setTimeout(() => {
+      if (live.reaper !== timer) return
+      live.reaper = undefined
+      live.reaping = undefined
+      if (live.run.prompting !== prompt) return
+      this.warn(`${live.name} did not stop its answer within ${waited(this.cancelWaitMs)} of being asked: its session was ended`)
+      this.end(sessionId, live)
+    }, this.cancelWaitMs)
+    timer.unref?.()
+    live.reaper = timer
+  }
+
+  /**
+   * A new turn found the agent still on its last prompt: ask it to stop and wait for the end,
+   * no longer than `cancelWaitMs` or this turn's own Stop. Whether the prompt ended.
+   */
+  async stopping(live, signal) {
+    const prompt = live.run.prompting
+    await live.run.cancel()
+    const wait = pause(this.cancelWaitMs, signal)
+    try {
+      await Promise.race([prompt, wait.done])
+    } finally {
+      wait.clear()
     }
-    this.live.clear()
+    return !live.run.busy
+  }
+
+  /**
+   * A request before the prompt that the agent did not answer in time, or that the person's
+   * Stop ended: the agent may still act on it, so its session ends rather than be asked
+   * anything else. The turn's finish for either; undefined for any other error.
+   */
+  abandoned(sessionId, live, agent, error, doing) {
+    const left = this.unanswered(agent, error, doing)
+    if (left !== undefined) this.end(sessionId, live)
+    return left
+  }
+
+  /** The turn's finish for a request nobody answered, or one the turn's Stop ended. */
+  unanswered(agent, error, doing) {
+    if (isStopped(error)) return STOPPED()
+    if (!isUnanswered(error)) return undefined
+    this.warn(`${agent.name} did not answer ${error.step ?? `while ${doing}`} within ${waited(error.ms)}: its session was ended`)
+    return finish('error', unansweredText(agent.name, doing, error.ms))
+  }
+
+  warn(message) {
+    try { this.ctx.logger?.warn?.(`acp-dsh: ${message}`) } catch {}
   }
 
   /** The `session/new` server entry for one bridge: the adapter spawns it with this env only. */
@@ -462,23 +571,25 @@ export class AcpAdapter extends LlmAdapter {
    * A preset or level change on an agent that ignores `tools/list_changed` (`acp-codex`): fork
    * the ACP session with the new server set, close the source (with its bridge), and go on from
    * the fork. The fork continues the same conversation; the source is never left holding a
-   * second bridge.
+   * second bridge. Each of the fork's requests has its own deadline; `signal`, the turn's
+   * Stop, ends the wait for all of them.
    */
-  async refork(agent, live, dshAgent) {
+  async refork(agent, live, dshAgent, signal) {
     const previous = live.bridge
     const next = this.backchannel.mint({ sessionId: dshAgent?.session?.id, agent: dshAgent, name: agent.name })
     live.bridge = next
     try {
-      await live.run.fork({
+      await live.run.held(() => live.run.fork({
         cwd: dshAgent?.session?.header?.cwd ?? homedir(),
         mcpServers: [this.bridgeServer(next)],
-      })
+      }), { ms: 0, signal })
     } catch (error) {
       // The fork may already have moved the run to a new ACP session (a bridge that never
       // listed). Nothing can resume that half state: revoke both credentials, end the run and
       // let the next turn start clean.
       live.bridge = previous
       this.backchannel.revoke(next)
+      clearTimeout(live.reaper)
       live.run.dispose()
       this.live.delete(dshAgent?.session?.id ?? '')
       if (previous !== undefined) this.backchannel.revoke(previous)
@@ -514,6 +625,8 @@ export class AcpAdapter extends LlmAdapter {
       this.ctx.logger?.warn?.(`acp-dsh: acp_toolset_drift: ${name} is not an MCP tool${recorded ? '' : ' (the record could not be written)'}`)
     } catch {}
     void live?.run.cancel()
+    // The call that drifted is already running: an agent that ignores the cancel is ended.
+    this.reap(sessionId, live)
   }
 
   /**
@@ -530,9 +643,7 @@ export class AcpAdapter extends LlmAdapter {
     if (!this.bridgeOn(this.agents.get(live.provider))) return
     const provider = event.data?.provider
     if (agentRoute(this.agents, provider)) return
-    this.live.delete(session.id)
-    live.run.dispose()
-    if (live.bridge !== undefined && this.backchannel !== undefined) this.backchannel.revoke(live.bridge)
+    this.end(session.id, live)
     try {
       session.append?.('user/message', boundaryNotice('Switching to DSH'), { surfaceOp: 'append' })
     } catch (error) {
@@ -609,9 +720,7 @@ export class AcpAdapter extends LlmAdapter {
         return yield finish('stop')
       }
       if (live !== undefined && (live.provider !== options.provider || !live.run.alive)) {
-        live.run.dispose()
-        if (live.bridge !== undefined) this.backchannel?.revoke(live.bridge)
-        this.live.delete(sessionId)
+        this.end(sessionId, live)
         live = undefined
       }
       // The account this CLI is signed in to waits for the person's word (index.js, consent.js):
@@ -619,6 +728,23 @@ export class AcpAdapter extends LlmAdapter {
       let unconfirmed
       try { unconfirmed = await this.access?.(options.provider) } catch {}
       if (typeof unconfirmed === 'string' && unconfirmed !== '') return yield finish('error', unconfirmed, MODEL_ACCESS_REQUIRED)
+      // The agent is still on its last prompt (a Stop it has not answered yet, a turn DSH ended
+      // without it). Asked to stop, it has `cancelWaitMs`; one that will not end is replaced
+      // below by a new session in this same turn, which the replay carries the chat to, so the
+      // chat never waits on it again.
+      if (live !== undefined && live.run.busy) {
+        const ended = await this.stopping(live, options.signal)
+        if (options.signal?.aborted) {
+          if (!ended) this.reap(sessionId, live)
+          return yield STOPPED()
+        }
+        // `alive` and the map: the Stop's own wait (reap) may have ended it meanwhile.
+        if (!ended || !live.run.alive || this.live.get(sessionId) !== live) {
+          if (!ended) this.warn(`${agent.name} did not stop its last answer within ${waited(this.cancelWaitMs)}: a new session replaces it`)
+          this.end(sessionId, live)
+          live = undefined
+        }
+      }
       let fresh = false
       let crossing = false
       const prior = lastProviderOf(options.messages)
@@ -646,14 +772,18 @@ export class AcpAdapter extends LlmAdapter {
             dshTools: this.bridgeOn(agent),
             onReady: state.bridge === undefined ? undefined : () => this.ready(agent, state),
             onToolCall: tool => this.checkDrift(sessionId, agent, tool),
+            ...(agent.startMs === undefined ? {} : { startMs: agent.startMs }),
+            ...(agent.requestMs === undefined ? {} : { requestMs: agent.requestMs }),
           })
           state.run = run
           this.live.set(sessionId, state)
-          await run.start()
+          await run.start({ signal: options.signal })
         } catch (error) {
-          state.run?.dispose()
-          if (state.bridge !== undefined) this.backchannel?.revoke(state.bridge)
-          this.live.delete(sessionId)
+          this.end(sessionId, state)
+          // A Stop while it started ends the turn as any Stop does; a start nobody answered
+          // says where to look. Nothing is left of either: the process is gone with its bridge.
+          const left = this.unanswered(agent, error, 'starting')
+          if (left !== undefined) return yield left
           if (isAuthRequired(error)) {
             this.signedOut(options.provider)
             return yield signInFailure(agent.name, error)
@@ -701,32 +831,34 @@ export class AcpAdapter extends LlmAdapter {
         const changed = this.backchannel.refresh(live.bridge)
         if (changed && agent.refresh === 'fork') {
           try {
-            await this.refork(agent, live, dshAgent)
+            await this.refork(agent, live, dshAgent, options.signal)
           } catch (error) {
+            const left = this.unanswered(agent, error, 'refreshing its DSH tools')
+            if (left !== undefined) return yield left
             return yield finish('error', `${agent.name} would not refresh its DSH tools: ${error?.message ?? error}`, error?.code === 'acp_bridge_missing' ? 'acp_bridge_missing' : undefined)
           }
         }
-      }
-      if (live.run.busy) {
-        await live.run.cancel()
-        await Promise.race([live.run.prompting, new Promise(resolve => setTimeout(resolve, CANCEL_WAIT_MS).unref?.())])
-        if (live.run.busy) return yield finish('error', `${agent.name} is still finishing its last answer; send this again in a moment`)
       }
       // The Session's model and effort, then its level as the agent's own permission mode, before every prompt.
       try {
         await choose(
           live.run, options.model, options.reasoningEffort,
           () => agent.catalog?.ownEffort(options.model),
+          { signal: options.signal },
         )
       } catch (error) {
+        const left = this.abandoned(sessionId, live, agent, error, `taking ${options.model}`)
+        if (left !== undefined) return yield left
         const at = options.reasoningEffort ? ` at ${options.reasoningEffort} effort` : ''
         const reason = error?.message ?? error
         const why = `${agent.name} would not take ${options.model}${at}: ${reason}`
         return yield finish('error', why)
       }
       try {
-        await live.run.setMode(agent.modeFor?.(levelOf(this.ctx.get?.('approval'), dshAgent?.session, this.ctx.get?.('sandboxPolicy'), this.ctx.get?.('permissionPresets'))))
+        await live.run.setMode(agent.modeFor?.(levelOf(this.ctx.get?.('approval'), dshAgent?.session, this.ctx.get?.('sandboxPolicy'), this.ctx.get?.('permissionPresets'))), { signal: options.signal })
       } catch (error) {
+        const left = this.abandoned(sessionId, live, agent, error, 'taking DSH\'s permission level')
+        if (left !== undefined) return yield left
         return yield finish('error', `${agent.name} would not take DSH's permission level: ${error?.message ?? error}`)
       }
       // A new agent session in a chat that already has answers says so once, in a row of its
@@ -797,6 +929,8 @@ export class AcpAdapter extends LlmAdapter {
       } else if (event.type === 'aborted') {
         live.open = false
         await live.run.cancel()
+        // The turn ends here for the person; the agent's side of it has `cancelWaitMs` to end.
+        this.reap(sessionId, live)
         yield* shown()
         yield* blocks.close()
         return yield finish('aborted', 'Stopped', 'ABORTED')
@@ -821,10 +955,6 @@ export class AcpAdapter extends LlmAdapter {
   dispose() {
     try { this.offResult?.() } catch {}
     for (const agent of this.agents.values()) agent.catalog?.dispose()
-    for (const live of this.live.values()) {
-      live.run?.dispose()
-      if (live.bridge !== undefined) this.backchannel?.revoke(live.bridge)
-    }
-    this.live.clear()
+    for (const [sessionId, live] of this.live) this.end(sessionId, live)
   }
 }

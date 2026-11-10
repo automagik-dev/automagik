@@ -44,12 +44,41 @@ export function contentImages(content) {
   return content.type === 'image' ? [content] : []
 }
 
+// How long the agent has to answer. A CLI that waits on a first-run question, a keychain dialog
+// or an update starts and then never answers, and the chat must not wait with it: the whole
+// start (initialize, session/new, the bridge's first list) has START_MS, and every request sent
+// after it and before a prompt (a model, an effort, a mode, a fork, a close) has REQUEST_MS.
+export const START_MS = 60_000
+export const REQUEST_MS = 15_000
+const UNANSWERED = 'acp_unanswered'
+const STOPPED = 'acp_stopped'
+
+/** A wait as the person reads it: whole seconds (under one second, as a test sets it, in ms). */
+export const waited = ms => (ms >= 1000 ? `${Math.round(ms / 1000)} s` : `${ms} ms`)
+/** The agent did not answer a request before its deadline (`error.ms`). */
+export const isUnanswered = error => error?.code === UNANSWERED
+/** The turn's Stop ended the wait for a request. */
+export const isStopped = error => error?.code === STOPPED
+
+function unanswered(what, ms) {
+  const error = new Error(`it did not answer${what ? ` while ${what}` : ''} (${waited(ms)})`)
+  return Object.assign(error, { code: UNANSWERED, ms })
+}
+
+function stopped(what) {
+  const error = new Error(`it was stopped${what ? ` while ${what}` : ''}`)
+  return Object.assign(error, { code: STOPPED })
+}
+
 export class AgentRun {
   /**
-   * @param {{ command: string, args?: string[], env?: Record<string, string>, cwd: string, name: string }} spec
+   * @param {{ command: string, args?: string[], env?: Record<string, string>, cwd: string, name: string, startMs?: number, requestMs?: number }} spec
+   *   startMs, requestMs: the deadlines, START_MS and REQUEST_MS unless a test sets shorter ones.
    */
   constructor(spec) {
     this.spec = spec
+    this.startMs = spec.startMs ?? START_MS
+    this.requestMs = spec.requestMs ?? REQUEST_MS
     this.queue = []
     this.waiters = []
     this.tools = new Map()
@@ -58,7 +87,12 @@ export class AgentRun {
     this.exited = undefined
   }
 
-  async start() {
+  /**
+   * Spawn the agent and open its session. It ends early, with the process disposed, when the
+   * agent exits, when `signal` aborts (the person's Stop) or after `startMs` with no session.
+   * @param {{ signal?: AbortSignal }} [options]
+   */
+  async start({ signal } = {}) {
     const { command, args = [], env, cwd, mcpServers = [], sessionMeta } = this.spec
     const child = spawn(command, args, { cwd, env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'] })
     this.child = child
@@ -99,9 +133,12 @@ export class AgentRun {
       // a bridge that never listed its tools fails the turn here, before the prompt.
       await this.spec.onReady?.(this)
     })()
+    ready.catch(() => {})
     try {
-      await Promise.race([ready, gone])
+      await this.held(() => ready, { ms: this.startMs, signal, what: 'starting' })
     } catch (error) {
+      // The request nobody answered, for the log: the person is told only that it did not start.
+      if (isUnanswered(error)) error.step = this.init === undefined ? 'initialize' : this.sessionId === undefined ? 'session/new' : 'its DSH tools'
       this.dispose()
       throw error
     } finally {
@@ -154,16 +191,47 @@ export class AgentRun {
     clearInterval(this.hold)
     this.hold = undefined
   }
-  async held(work) {
+  /**
+   * One request to the agent, or a few of them as one piece of work. It is never waited for
+   * longer than the agent's process lives (`gone`), than the turn it is for (`signal`, the
+   * person's Stop) or than its deadline (`ms`, REQUEST_MS unless said; 0 for work whose own
+   * requests each have one). The wait that ends first is the error: `isUnanswered`, `isStopped`
+   * or the exit. A request cannot be taken back and the agent may still act on it, so a caller
+   * that gets one of the first two ends the run (`dispose`) rather than ask it anything else.
+   * @param {() => Promise<any>} work
+   * @param {{ ms?: number, signal?: AbortSignal, what?: string }} [options]
+   */
+  async held(work, { ms = this.requestMs, signal, what } = {}) {
     this.holdOn()
+    let timer
+    let onAbort
     try {
-      return await work()
+      if (signal?.aborted) throw stopped(what)
+      const waits = [work()]
+      if (this.gone !== undefined) waits.push(this.gone)
+      if (ms > 0) {
+        waits.push(new Promise((_, fail) => {
+          // The hold above keeps the event loop for it; a run disposed meanwhile does not.
+          timer = setTimeout(() => fail(unanswered(what, ms)), ms)
+          timer.unref?.()
+        }))
+      }
+      if (signal !== undefined) {
+        waits.push(new Promise((_, fail) => {
+          onAbort = () => fail(stopped(what))
+          signal.addEventListener('abort', onAbort, { once: true })
+        }))
+      }
+      return await Promise.race(waits)
     } finally {
+      clearTimeout(timer)
+      if (onAbort !== undefined) signal.removeEventListener('abort', onAbort)
       this.letGo()
     }
   }
 
-  get alive() { return this.child !== undefined && this.exited === undefined }
+  // A disposed run is over at once, though its process may take a moment to exit.
+  get alive() { return this.child !== undefined && this.exited === undefined && this.disposed !== true }
   get busy() { return this.prompting !== undefined }
 
   push(event) {
@@ -219,15 +287,16 @@ export class AgentRun {
    * them, not even the strict one, the turn fails rather than run in whatever mode the agent
    * started in (the person's own default, which may let calls through unasked).
    * @param {string | string[] | undefined} modeIds
+   * @param {{ signal?: AbortSignal }} [options] the turn's Stop
    */
-  async setMode(modeIds) {
+  async setMode(modeIds, { signal } = {}) {
     if (modeIds === undefined) return
     const wanted = [modeIds].flat()
     const offered = new Set((this.modes?.availableModes ?? []).map(mode => mode.id))
     const modeId = wanted.find(id => offered.has(id))
     if (modeId === undefined) throw new Error(`it offers none of the modes ${wanted.join(', ')} (it offers ${[...offered].join(', ') || 'no modes'})`)
     if (this.modes?.currentModeId === modeId) return
-    await this.held(() => Promise.race([this.conn.setSessionMode({ sessionId: this.sessionId, modeId }), this.gone]))
+    await this.held(() => this.conn.setSessionMode({ sessionId: this.sessionId, modeId }), { signal, what: 'taking its permission mode' })
     this.modes = { ...this.modes, currentModeId: modeId }
   }
 
@@ -242,14 +311,15 @@ export class AgentRun {
    * or effort than the person chose.
    * @param {string} category
    * @param {string} value
+   * @param {{ signal?: AbortSignal }} [options] the turn's Stop
    */
-  async setOption(category, value) {
+  async setOption(category, value, { signal } = {}) {
     const option = this.option(category)
     if (option === undefined) throw new Error(`it has no ${category} setting`)
     const values = valuesOf(option)
     if (!values.some(choice => choice.value === value)) throw new Error(`it offers no ${category} ${value} (it offers ${values.map(choice => choice.value).join(', ') || 'none'})`)
     if (option.currentValue === value) return
-    const answer = await this.held(() => Promise.race([this.conn.setSessionConfigOption({ sessionId: this.sessionId, configId: option.id, value }), this.gone]))
+    const answer = await this.held(() => this.conn.setSessionConfigOption({ sessionId: this.sessionId, configId: option.id, value }), { signal, what: `taking its ${category}` })
     // The answer is the whole set: a new model may bring other efforts.
     this.options = answer?.configOptions ?? this.options.map(other => (other.id === option.id ? { ...other, currentValue: value } : other))
   }
@@ -260,6 +330,8 @@ export class AgentRun {
   }
 
   dispose() {
+    if (this.disposed === true) return
+    this.disposed = true
     this.letGo(true)
     for (const tool of this.tools.values()) tool.permission?.answer({ outcome: { outcome: 'cancelled' } })
     try { this.child?.stdin.end() } catch {}

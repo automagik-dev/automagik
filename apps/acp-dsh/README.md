@@ -105,6 +105,17 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   preset with the same knobs keeps Manual (and the bridge's own approval). Full access lets every
   call through, as it does DSH's own tools. An agent that does not offer the strict mode fails
   the turn instead of running in its own default.
+- **An agent that stops answering never holds the chat.** Its start (`initialize`,
+  `session/new`, the bridge's first list) has 60 seconds, and each request after that and
+  before a prompt (a model, an effort, a mode, a fork, a close) has 15. Past the deadline, or
+  on Stop, the agent's process and its bridge are ended and the turn says what happened. A
+  start that hangs is usually a CLI waiting for the person (a first-run question, a keychain
+  dialog, an update), so that message says to open it once in a terminal. Stop ends the turn
+  at once and gives the agent 5 seconds to end its prompt, because `session/cancel` is only a
+  notification. An agent that ignores it is ended, and the next message starts a new agent
+  session with the chat replayed to it (with `dshTools: false`, the new-session notice
+  instead). A message sent while the agent is still on its last prompt waits those 5 seconds,
+  then gets a new session in the same turn.
 - **Claude Code keeps the person's own settings.** It loads their Claude Code settings (user,
   project and local) and asks DSH only for what those leave as "ask". A call their allow rules,
   saved "always allow" rules or PreToolUse/PermissionRequest hooks approve runs with no DSH
