@@ -738,7 +738,7 @@
       "properties": {
         "precision": {
           "enum": ["branch_window", "task_interval", "actor_interval"],
-          "description": "What the row's numbers are. branch_window: a branch row, the repo and branch total over the window (RFC 0018). actor_interval: a bot row (--by bot), only usage tied to a launch that names the bot, at evidence-backed call times (RFC 0021 (d)). task_interval: a task row (--by task), the repo's task-labelled usage in the window, keyed by repo and task id; a task id the meter ties to more than one checkout of the repo is never summed, and its row is missing with the reason task_ambiguous (RFC 0021 D4). Widened in place from branch_window alone, before any release ships the meter (RFC 0018, Versioning)."
+          "description": "What the row's numbers are. branch_window: a branch row, the repo and branch total over the window (RFC 0018). actor_interval: a bot row (--by bot), only usage tied to a launch that names the bot, at evidence-backed call times (RFC 0021 (d)). task_interval: a task row (--by task), the repo's task-labelled usage in the window, keyed by repo and task id; a task id the meter ties to more than one checkout of the repo is never summed, and its row is missing with the reason task_ambiguous (RFC 0021 D4). It was widened in place from branch_window alone before the first release that shipped the meter; from that release on, a new `--by` value with its row kind and its reasons is additive under RFC 0018's Versioning, so a release that ships the meter keeps contract 1 for this row."
         },
         "exclusive": { "const": false },
         "shared": { "type": "boolean" },

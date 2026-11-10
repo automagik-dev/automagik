@@ -15,6 +15,7 @@ Usage:
   usagemeter query --repo HOST/OWNER/REPO --branch B [--branch B ...] --json
                    [--window d1|d7|d30] [--contract 1] [--stale-after SECONDS]
   usagemeter query --repo HOST/OWNER/REPO --by bot [--branch B ...] --json [...]
+  usagemeter query --repo HOST/OWNER/REPO --by task [--branch B ...] --json [...]
   usagemeter --version
 
 sync      Read new harness usage (omp, Claude Code, Codex, dsh-tui, Antigravity) into the store and
@@ -37,6 +38,13 @@ query     Usage and estimated cost per branch of one repo, as the contract 1 env
           does; only sync refreshes the store. Capability meter.usage@1.
   --by bot        One row per bot (RFC 0021): bot, kind, role, squad and harness, from the
                   usage tied to a launch; any --branch is then a filter, and none is needed.
+  --by task       One row per task id (RFC 0018 M3, RFC 0021 D4): the task's usage and cost,
+                  with the launch tags that did the work in actors (bot, kind, role, squad,
+                  unrecorded, harness; keys past the row's bound are counted in actors_omitted,
+                  never cut). Any --branch is then a filter, and none is needed. A task id tied
+                  to more than one checkout of the repo is missing with reason task_ambiguous,
+                  and no checkout path is printed. A window with no task labels is an empty ok
+                  answer, and the branch row stays the fallback.
 
 The state lives in METER_STATE_DIR if set, else $AM_HOME/meter, else ~/.automagik/meter.
 The first sync moves the meter's files out of the pre-0.5.0 default directory.

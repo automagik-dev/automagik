@@ -412,12 +412,12 @@ rule, never enter it. A branch row keeps `branch_window` and its full total, the
 `evidence_from` included, which is RFC 0018 (b)'s fallback; only its `attribution.actor` counts
 split that total.
 
-`attribution.precision` was `"branch_window"` alone in the v1 schema. RFC 0018 says widening a
-type is breaking once a release ships the meter, and M3 already plans `task_interval`. No
-release ships the meter yet (`NEVER_SHIPPED` holds `meter/`), so delivery 2 widens the enum **in
-place** to `branch_window`, `task_interval`, `actor_interval` and adds the optional fields above
-in one schema pull request, before RFC 0017's delivery 4 cuts the first meter release.
-Otherwise the same change would make contract 2. genie reviews it.
+`attribution.precision` was `"branch_window"` alone in the v1 schema. Delivery 2 widened it in
+place to `branch_window`, `task_interval`, `actor_interval` and added the optional fields above
+in one schema pull request, before RFC 0017's delivery 4 cut the first release that shipped the
+meter; once a release ships the meter, RFC 0018's Versioning is what governs, and it makes a new
+`--by` value, with its row kind and its reasons, additive. That is the rule M3's `--by task` row
+uses, so the row keeps contract 1 rather than making contract 2. genie reviews the schema.
 
 ### (e) Squad
 
@@ -498,9 +498,9 @@ parent's file is gone, the session the fork's header names as its seed, if DSH r
   RFC 0018 (d).
 - Query contract 1, additive: `--by bot` with its bot row and `query.by` (and `by bot` in
   `request_sha256`), `attribution.actor` (its four counts, `tokens_by_basis`,
-  `tokens_by_branch_basis`), `actor_unattributed`; and, widened in place, which only a contract
-  no release ships may be (RFC 0018, Versioning): the `attribution.precision` enum, and the
-  rule that an answer names a branch, which a bot query need not.
+  `tokens_by_branch_basis`), `actor_unattributed`; and, widened in place before the first
+  release that shipped the meter (RFC 0018, Versioning): the `attribution.precision` enum, and
+  the rule that an answer names a branch, which a bot query need not.
 - Amends RFC 0018 in three places, so a branch may come from a worker launch's start row, with
   `branch_basis: ledger`, for a harness that logs none: (a)'s matching sentence (the branch
   "recorded from the log or the Codex thread"); its "Usage with no branch" rule, which let only

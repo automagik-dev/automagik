@@ -1371,8 +1371,12 @@ fn task_candidates(c: &Connection) -> rusqlite::Result<TaskCandidates> {
 fn task_calls(c: &Connection, repo: &str, from: i64, to: i64) -> rusqlite::Result<Vec<TaskCall>> {
     let TaskCandidates { sessions, cwds } = task_candidates(c)?;
     let mut kept: BTreeMap<i64, TaskCall> = BTreeMap::new();
+    // Three arms, one count per evidence id: a call's own session, its parent's (a sub-agent or a
+    // resumed child is tied through its parent, as the resolver ties it in ledger.rs), and its
+    // start folder. Each arm is one indexed column.
     for chunk in sessions.chunks(TASK_CANDIDATE_CHUNK) {
         read_task_calls(c, repo, from, to, TaskArm::Sessions(chunk), &mut kept)?;
+        read_task_calls(c, repo, from, to, TaskArm::Parents(chunk), &mut kept)?;
     }
     for chunk in cwds.chunks(TASK_CANDIDATE_CHUNK) {
         read_task_calls(c, repo, from, to, TaskArm::Cwds(chunk), &mut kept)?;
@@ -1382,8 +1386,26 @@ fn task_calls(c: &Connection, repo: &str, from: i64, to: i64) -> rusqlite::Resul
 
 /// Which evidence column the candidates of one statement name.
 enum TaskArm<'a> {
+    /// `e.session`, through `evidence_session`.
     Sessions(&'a [Vec<u8>]),
+    /// `e.parent`, through `evidence_parent`.
+    Parents(&'a [Vec<u8>]),
+    /// `e.session_cwd`, through `evidence_session_cwd`.
     Cwds(&'a [i64]),
+}
+
+/// A task id the contract can print: not empty, no control character (no blank row, no row
+/// carrying an escape), and within the tag bound. Only that is checked; Genie's id shape is not.
+fn task_id_fits(task: &str) -> bool {
+    !task.is_empty() && !task.chars().any(char::is_control) && crate::ledger::tag_fits(task)
+}
+
+/// `n` numbered placeholders starting at `first`.
+fn placeholders(first: usize, n: usize) -> String {
+    (0..n)
+        .map(|i| format!("?{}", first + i))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn read_task_calls(
@@ -1394,14 +1416,31 @@ fn read_task_calls(
     arm: TaskArm<'_>,
     kept: &mut BTreeMap<i64, TaskCall>,
 ) -> rusqlite::Result<()> {
-    let (column, n) = match &arm {
-        TaskArm::Sessions(s) => ("e.session", s.len()),
-        TaskArm::Cwds(s) => ("e.session_cwd", s.len()),
+    let mut values: Vec<rusqlite::types::Value> =
+        vec![from.into(), to.into(), repo.to_string().into()];
+    // A call is tied to its launch by its own session or by its parent's (ledger.rs), so the
+    // session hashes are matched against both columns. Matching only the own session drops a
+    // parent-only call with no count and can hide a second checkout from the ambiguity rule.
+    let predicate = match &arm {
+        TaskArm::Sessions(sessions) | TaskArm::Parents(sessions) => {
+            let list = placeholders(4, sessions.len());
+            for s in *sessions {
+                values.push(rusqlite::types::Value::Blob(s.clone()));
+            }
+            if matches!(arm, TaskArm::Parents(_)) {
+                format!("e.parent IS NOT NULL AND e.parent IN ({list})")
+            } else {
+                format!("e.session IN ({list})")
+            }
+        }
+        TaskArm::Cwds(ids) => {
+            let list = placeholders(4, ids.len());
+            for id in *ids {
+                values.push(rusqlite::types::Value::Integer(*id));
+            }
+            format!("e.session_cwd IN ({list})")
+        }
     };
-    let list = (0..n)
-        .map(|i| format!("?{}", i + 4))
-        .collect::<Vec<_>>()
-        .join(", ");
     let sql = format!(
         "SELECT e.id, d.branch, d.harness, d.model, e.ts_ms, e.input_uncached, e.cache_read,
            e.cache_write_5m, e.cache_write_1h, e.output, e.reasoning, e.unsplit, d.precision,
@@ -1409,23 +1448,10 @@ fn read_task_calls(
            a.task, a.project, a.filled_branch
          FROM evidence e JOIN ev_dim d ON d.id = e.dim JOIN ev_actor a ON a.id = e.actor
          WHERE e.ts_ms >= ?1 AND e.ts_ms < ?2 AND d.repo = ?3
-           AND a.state = 'attributed' AND a.task IS NOT NULL AND a.project IS NOT NULL
-           AND {column} IN ({list})"
+           AND a.state = 'attributed' AND a.task IS NOT NULL AND a.task <> ''
+           AND a.project IS NOT NULL
+           AND {predicate}"
     );
-    let mut values: Vec<rusqlite::types::Value> =
-        vec![from.into(), to.into(), repo.to_string().into()];
-    match arm {
-        TaskArm::Sessions(s) => {
-            for b in s {
-                values.push(rusqlite::types::Value::Blob(b.clone()));
-            }
-        }
-        TaskArm::Cwds(s) => {
-            for id in s {
-                values.push(rusqlite::types::Value::Integer(*id));
-            }
-        }
-    }
     let mut st = c.prepare(&sql)?;
     let mut q = st.query(rusqlite::params_from_iter(values))?;
     while let Some(r) = q.next()? {
@@ -1486,8 +1512,9 @@ fn read_task_calls(
             continue;
         };
         // Genie's task id is joined with its project; the id alone is not a key, and one the
-        // contract cannot print is never cut short.
-        if !crate::ledger::tag_fits(&task) {
+        // contract cannot print is never cut short. An empty id, or one with a control
+        // character, fails closed: no blank row, no row carrying an escape.
+        if !task_id_fits(&task) {
             continue;
         }
         let logged = branch.is_some();
@@ -2783,9 +2810,69 @@ mod tests {
     }
 
     #[test]
+    fn a_sub_agent_is_read_into_its_task_through_its_parent_session() {
+        use crate::store::Store;
+        // A worker linked by its session, started in a folder that is not the launch's worktree
+        // string, and its sub-agent: the sub-agent's own session names no link and its start
+        // folder no worktree, so only its parent ties it to the task (as the resolver ties it).
+        let store = Store::open_in_memory().unwrap();
+        store
+            .conn
+            .execute_batch(
+                "INSERT INTO launch(lkey, task, project, worktree, source, updated_ms) VALUES
+                   ('a', 'gn-1', '/work/a', '/work/a/.worktrees/gn-1', 'ledger', 0);
+                 INSERT INTO link(harness, session, lkey, basis) VALUES
+                   ('claude', x'01', 'a', 'session');
+                 INSERT INTO ev_cwd(id, path) VALUES (1, '/work/a');
+                 INSERT INTO ev_dim(id, harness, model, machine, repo, branch, precision) VALUES
+                   (1, 'claude-code', 'claude-opus-5-5', 'machine-a1b2c3',
+                    'example.com/acme/widgets', 'feat/gn-1', 'exact');
+                 INSERT INTO ev_actor(id, state, bot, kind, role, task, project, basis) VALUES
+                   (1, 'attributed', 'kite', 'worker', 'dev', 'gn-1', '/work/a', 'session');
+                 INSERT INTO evidence(id, ts_ms, dim, actor, session, parent, session_cwd, output)
+                 VALUES
+                   (1, 1000, 1, 1, x'01', NULL, 1, 10),
+                   (2, 2000, 1, 1, x'02', x'01', 1, 10),
+                   (3, 3000, 1, 1, x'03', x'09', 1, 10);",
+            )
+            .unwrap();
+        let calls = task_calls(&store.conn, "example.com/acme/widgets", 0, 10_000).unwrap();
+        assert_eq!(
+            calls.len(),
+            2,
+            "the worker's call and its sub-agent's, each once; a stranger's child is not read"
+        );
+        assert_eq!(calls.iter().map(|c| c.tokens.total).sum::<i64>(), 20);
+        assert!(calls.iter().all(|c| c.task == "gn-1"));
+
+        // A call both arms name (its session and its parent are task sessions) counts once.
+        store
+            .conn
+            .execute_batch(
+                "INSERT INTO link(harness, session, lkey, basis) VALUES
+                   ('claude', x'02', 'a', 'session');",
+            )
+            .unwrap();
+        let calls = task_calls(&store.conn, "example.com/acme/widgets", 0, 10_000).unwrap();
+        assert_eq!(calls.len(), 2, "one count per evidence id");
+        assert_eq!(calls.iter().map(|c| c.tokens.total).sum::<i64>(), 20);
+    }
+
+    #[test]
+    fn a_task_id_the_contract_cannot_print_does_not_fit() {
+        for bad in ["", "gn\u{1b}[2J", "gn\n41", "gn\t41", "\u{7f}", "\u{85}"] {
+            assert!(!task_id_fits(bad), "{bad:?}");
+        }
+        assert!(!task_id_fits(&"t".repeat(65)));
+        for ok in ["gn-41", "GN 41", "tâche-7", &"t".repeat(64)] {
+            assert!(task_id_fits(ok), "{ok:?}");
+        }
+    }
+
+    #[test]
     fn a_task_row_with_every_actor_at_its_largest_keeps_the_row_bound() {
-        let actor = |_| TaskActor {
-            bot: "b".repeat(64),
+        let actor = |i: usize| TaskActor {
+            bot: format!("{i:02}{}", "b".repeat(62)),
             kind: "worker",
             role: Some("r".repeat(64)),
             squad: Some("s".repeat(64)),
@@ -2844,15 +2931,32 @@ mod tests {
             }),
             incomplete_sources: Vec::new(),
         };
+        let all: Vec<String> = row.actors.iter().map(|a| a.bot.clone()).collect();
+        let total = row.tokens.as_ref().unwrap().total;
         fit_task_actors(&mut row);
         assert!(
             json(&row).len() <= ROW_BYTES,
             "a task row of {} bytes",
             json(&row).len()
         );
+        assert_eq!(
+            row.actors.len() + row.actors_omitted,
+            all.len(),
+            "every actor key is either kept or counted"
+        );
         assert!(
             row.actors_omitted > 0,
             "the bound left some actor keys out and said so"
+        );
+        assert_eq!(
+            row.actors.iter().map(|a| a.bot.clone()).collect::<Vec<_>>(),
+            all[..row.actors.len()],
+            "the kept keys are the leading ones, in order"
+        );
+        assert_eq!(
+            row.tokens.as_ref().unwrap().total,
+            total,
+            "the row's tokens are the task's, unchanged at the bound"
         );
     }
 
