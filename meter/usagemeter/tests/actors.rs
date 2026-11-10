@@ -453,6 +453,80 @@ fn a_call_an_849_meter_counted_moves_once_when_its_launch_is_learned() {
     assert_eq!(int(&rows[0]["tokens"]["total"]), 3300);
 }
 
+/// Copies each reason-less ambiguous or unlinked rollup under the id this meter derives for it
+/// (its reason included), as a pre-fix build of PR 875 could leave a store: one row under both ids.
+fn under_both_ids(s: &Scene) -> usize {
+    let rows = s.store().rows_since(i64::MIN).unwrap();
+    let c = rusqlite::Connection::open(s.env.state().join("meter.db")).unwrap();
+    let mut n = 0;
+    for r in rows {
+        let Some(a) = r.key.attr.as_ref() else {
+            continue;
+        };
+        if a.reason.is_some() || !["ambiguous", "unlinked"].contains(&a.state.as_str()) {
+            continue;
+        }
+        let mut k = r.key.clone();
+        if let Some(a) = k.attr.as_mut() {
+            a.reason = Some(
+                if a.state == "ambiguous" {
+                    "claimants_differ"
+                } else {
+                    "no_record"
+                }
+                .into(),
+            );
+        }
+        let p = if r.precision == "total_only" {
+            meter::event::Precision::TotalOnly
+        } else {
+            meter::event::Precision::Exact
+        };
+        let reason = k.attr.as_ref().unwrap().reason.clone();
+        c.execute_batch("CREATE TEMP TABLE dup AS SELECT * FROM usage WHERE 0")
+            .unwrap();
+        c.execute("INSERT INTO dup SELECT * FROM usage WHERE id = ?1", [&r.id])
+            .unwrap();
+        c.execute(
+            "UPDATE dup SET id = ?1, reason = ?2",
+            rusqlite::params![k.id(p), reason],
+        )
+        .unwrap();
+        c.execute_batch("INSERT INTO usage SELECT * FROM dup; DROP TABLE dup;")
+            .unwrap();
+        n += 1;
+    }
+    n
+}
+
+// The Reviewer's M1 on cf79aedb: a store holding a rollup under both ids (the older build's and
+// this one's) takes the re-key's merge, which keeps every total; and the sync that re-keys keeps a
+// counted generation first (RFC 0018 (d)), as any rewrite of a store's rows does.
+#[test]
+fn a_rekey_merges_a_row_under_both_ids_behind_a_generation() {
+    let mut s = upgraded(false);
+    assert_eq!(under_both_ids(&s), 3);
+    let before = totals(&s);
+    let r = s.sync();
+    assert!(r.generation.is_some(), "the re-key kept no generation");
+    assert_eq!(r.rekeyed, (3, 3));
+    assert_eq!(totals(&s), before, "a re-key never changes a total");
+    let left: i64 = s
+        .store()
+        .conn
+        .query_row(
+            "SELECT count(*) FROM usage WHERE reason IS NULL
+             AND actor_state IN ('ambiguous', 'unlinked')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(left, 0);
+    // The next sync has nothing to re-key, and keeps no new generation for it.
+    let r = s.sync();
+    assert_eq!(r.rekeyed, (0, 0));
+}
+
 // A store this meter re-keyed, then an older meter wrote again (a downgrade, then back): its rows
 // under the older ids are not re-keyed twice, and a move still takes each call out of the row
 // that holds it, by the older id. Totals never change.

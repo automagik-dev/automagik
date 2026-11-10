@@ -2016,6 +2016,27 @@ fn rows_metadata_and_refusals_stay_within_the_budget_table() {
     }
     eprintln!("the worst row takes {} bytes", len(row));
     assert!(len(row) <= query::ROW_BYTES, "a row of {} bytes", len(row));
+    // A bot row at its largest (the Reviewer's Low (b) on cf79aedb): bot, role and squad each at
+    // the 96-byte JSON cap, one by quotes, one by 4-byte characters, one by control characters.
+    {
+        let c = Connection::open(fx.db()).unwrap();
+        c.execute(
+            "UPDATE usage SET bot = ?1, role = ?2, squad = ?3 WHERE actor_state = 'attributed'",
+            params!["\"".repeat(48), "😀".repeat(24), "\u{1}".repeat(16)],
+        )
+        .unwrap();
+    }
+    let mut by_bot = args(&[]);
+    by_bot.extend(["--by".to_string(), "bot".to_string()]);
+    let (code, bots) = fx.query(&by_bot);
+    assert_eq!(code, 0, "{bots}");
+    assert!(schema().valid(&bots), "{:#?}", schema().errors(&bots));
+    let bot_rows = rows_of(&bots);
+    assert!(!bot_rows.is_empty(), "{bots}");
+    let widest = bot_rows.iter().map(len).max().unwrap();
+    eprintln!("the worst bot row takes {widest} bytes");
+    assert!(widest <= query::ROW_BYTES, "a bot row of {widest} bytes");
+    assert_eq!(bot_rows[0]["squad"], "\u{1}".repeat(16));
     let mut meta = v.clone();
     meta["rows"] = json!([]);
     meta["query"]["branches"] = json!([]);

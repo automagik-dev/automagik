@@ -199,6 +199,9 @@ pub struct Report {
     pub generation: Option<crate::store::Generation>,
     /// Generations removed because this run succeeded on the migrated store.
     pub generations_removed: Vec<PathBuf>,
+    /// Rollups an older build keyed without their reason, re-keyed by this run (after keeping a
+    /// generation), and how many of them were merged into a row already under the new id.
+    pub rekeyed: (usize, usize),
     /// This run migrated the store to the current schema (its generation stays until a later
     /// successful sync).
     pub migrated: bool,
@@ -745,6 +748,9 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
     // store is migrated in place, every row kept (RFC 0021 delivery 5).
     let outdated = peek.as_ref().is_some_and(|p| p.version < 2);
     let migrate = peek.as_ref().is_some_and(|p| p.version < SCHEMA_VERSION);
+    // A schema 3 store an older build wrote has rollups to re-key with their reason: a rewrite of
+    // its rows, so it keeps a counted generation first, as a migration does (RFC 0018 (d)).
+    let rekey = peek.as_ref().is_some_and(|p| p.needs_rekey);
     // A store that holds less than the default window (one filled when the default was 14 days)
     // widens once on its own: the installed trigger runs a plain `sync`.
     let wanted = if opts.backfill {
@@ -761,7 +767,7 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
     // A reset, or the evidence tables' first creation over a full store (RFC 0018 (d)), is
     // destructive when the store holds any row, whatever its window says.
     let holds_rows = peek.as_ref().is_some_and(|p| p.has_rows);
-    let destructive = (reset_from.is_some() || migrate) && holds_rows;
+    let destructive = (reset_from.is_some() || migrate || rekey) && holds_rows;
     let reimported = reset_from.is_some() && (stored.is_some() || holds_rows);
     // Writing to an existing store's schema (a reset, or the index an older store lacks) needs at
     // least twice the store's size free; without it nothing changes. A rebuild, a backfill or a
@@ -844,6 +850,11 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
                 .migrate(now, reset_from.filter(|_| outdated))
                 .map_err(Error)?;
         }
+        let rekeyed = if rekey {
+            crate::store::rekey_reasons(&store.conn)?
+        } else {
+            (0, 0)
+        };
         let counted_from = match reset_from {
             Some(from) if migrate && outdated => from,
             Some(from) => {
@@ -853,8 +864,8 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
             None => stored.unwrap_or(wanted),
         };
 
-        // A run that migrated always goes on: it reports the migration and its generation.
-        if !opts.force && !reimported && !migrate {
+        // A run that migrated or re-keyed always goes on: it reports that and its generation.
+        if !opts.force && !reimported && !migrate && !rekey {
             let last = store.meta_i64("last_success_ms")?;
             let pending = store.meta_i64("last_pending_bytes")?.unwrap_or(0);
             if let Some(last) = last
@@ -905,6 +916,7 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
             machine,
             generation,
             migrated: migrate,
+            rekeyed,
             ..Report::default()
         };
         let mut pending_sources: BTreeSet<Source> = BTreeSet::new();
@@ -1106,7 +1118,7 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
         if report.pending_bytes == 0 {
             store.set_meta("last_success_ms", &now.to_string())?;
             // A later sync that succeeded on the migrated store: its generation has done its job.
-            if !reimported && !migrate {
+            if !reimported && !migrate && !rekey {
                 for g in crate::store::generations(&opts.state_dir) {
                     match crate::store::remove_generation(&g) {
                         Ok(()) => report.generations_removed.push(g),

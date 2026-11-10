@@ -856,3 +856,41 @@ fn counts_say_how_many_and_never_which() {
     assert_eq!(c.by_basis.get("worktree"), Some(&1));
     assert!(!format!("{c:?}").contains("b-dev"));
 }
+
+// The Reviewer's Low (a) on PR 875, the parse side alone: a bot, role or squad within both caps
+// (64 characters, 96 bytes as JSON) is read as written; past either, a bot leaves the row with no
+// tag (its calls are then ambiguous) and a role or squad is unrecorded. Nothing is cut short.
+#[test]
+fn a_tag_past_either_cap_is_never_read_or_cut_short() {
+    let row = |bot: &str, role: &str, squad: &str| -> Option<Tag> {
+        let v = with(
+            with(
+                worker("t1", 0, WT, "claude", bot, role),
+                "squad",
+                json!(squad),
+            ),
+            "botId",
+            json!(bot),
+        );
+        parse_tag(v.as_object().unwrap(), Kind::Worker)
+    };
+    let at_cap = "b".repeat(TAG_CHARS);
+    let tag = row(&at_cap, "dev", "b-squad").unwrap();
+    assert_eq!(
+        (tag.bot.as_str(), tag.role.as_deref(), tag.squad.as_deref()),
+        (at_cap.as_str(), Some("dev"), Some("b-squad"))
+    );
+    assert!(tag.unrecorded.is_empty());
+    // Past the characters, or past the bytes as JSON (48 quotes take 96; a control character 6).
+    for long in [
+        "b".repeat(TAG_CHARS + 1),
+        "\"".repeat(49),
+        "\u{1}".repeat(17),
+    ] {
+        assert!(row(&long, "dev", "b-squad").is_none(), "bot {long:?}");
+        let tag = row("b-dev", &long, &long).unwrap();
+        assert_eq!((tag.role, tag.squad), (None, None), "{long:?}");
+        assert_eq!(tag.unrecorded, ["role", "squad"], "{long:?}");
+    }
+    assert!(row(&"\"".repeat(48), "dev", "b-squad").is_some());
+}

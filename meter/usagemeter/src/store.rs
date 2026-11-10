@@ -260,16 +260,6 @@ impl Store {
                     conn.execute_batch(&format!("ALTER TABLE usage ADD COLUMN {col} {ty}"))?;
                 }
             }
-            let keyed: Option<String> = conn
-                .query_row(
-                    "SELECT v FROM meta WHERE k = ?1",
-                    [evidence::REASON_KEYED_META],
-                    |r| r.get(0),
-                )
-                .optional()?;
-            if keyed.is_none() {
-                rekey_reasons(&conn)?;
-            }
         }
         let view: Option<String> = conn
             .query_row(
@@ -781,9 +771,11 @@ pub fn no_room(e: &rusqlite::Error) -> bool {
 /// an id without one) the reason that meter meant (`claimants_differ` for ambiguous, `no_record`
 /// for unlinked, the only ones it recorded) and the id this meter derives for it, merged into a
 /// row already under that id. One transaction; totals never change. Then `meta` records it, so
-/// later opens skip the scan.
-fn rekey_reasons(conn: &Connection) -> rusqlite::Result<()> {
+/// later runs skip it. `sync` alone calls it, under the lock, after keeping a counted generation
+/// (RFC 0018 (d)), as for any rewrite of a store's rows. Returns (rows re-keyed, of them merged).
+pub fn rekey_reasons(conn: &Connection) -> rusqlite::Result<(usize, usize)> {
     let tx = conn.unchecked_transaction()?;
+    let (mut rekeyed, mut merged) = (0usize, 0usize);
     struct Old {
         id: String,
         key: RollupKey,
@@ -847,35 +839,88 @@ fn rekey_reasons(conn: &Connection) -> rusqlite::Result<()> {
             |r| r.get(0),
         )?;
         if taken {
+            // The old row's counts, read first and added as values: no column of the statement
+            // can name two rows.
+            let (t, events, usd, usd_events, updated): (Tokens, i64, Option<f64>, i64, i64) = tx
+                .query_row(
+                    "SELECT input_uncached, cache_read, cache_write_5m, cache_write_1h, output,
+                            reasoning, unsplit, events, reported_usd, coalesce(usd_events, 0),
+                            updated_ms
+                     FROM usage WHERE id = ?1",
+                    [&o.id],
+                    |r| {
+                        Ok((
+                            Tokens {
+                                input_uncached: r.get(0)?,
+                                cache_read: r.get(1)?,
+                                cache_write_5m: r.get(2)?,
+                                cache_write_1h: r.get(3)?,
+                                output: r.get(4)?,
+                                reasoning: r.get(5)?,
+                                unsplit: r.get(6)?,
+                            },
+                            r.get(7)?,
+                            r.get(8)?,
+                            r.get(9)?,
+                            r.get(10)?,
+                        ))
+                    },
+                )?;
             tx.execute(
-                "UPDATE usage SET
-                   input_uncached = input_uncached + o.input_uncached,
-                   cache_read = cache_read + o.cache_read,
-                   cache_write_5m = cache_write_5m + o.cache_write_5m,
-                   cache_write_1h = cache_write_1h + o.cache_write_1h,
-                   output = output + o.output, reasoning = reasoning + o.reasoning,
-                   unsplit = unsplit + o.unsplit, events = usage.events + o.events,
-                   usd_events = coalesce(usage.usd_events, 0) + coalesce(o.usd_events, 0),
-                   reported_usd = CASE WHEN o.reported_usd IS NULL THEN usage.reported_usd
-                                       ELSE coalesce(usage.reported_usd, 0) + o.reported_usd END,
-                   updated_ms = max(usage.updated_ms, o.updated_ms)
-                 FROM (SELECT * FROM usage WHERE id = ?2) AS o
-                 WHERE usage.id = ?1",
-                params![new, o.id],
+                "UPDATE usage SET input_uncached = input_uncached + ?2,
+                   cache_read = cache_read + ?3, cache_write_5m = cache_write_5m + ?4,
+                   cache_write_1h = cache_write_1h + ?5, output = output + ?6,
+                   reasoning = reasoning + ?7, unsplit = unsplit + ?8, events = events + ?9,
+                   usd_events = coalesce(usd_events, 0) + ?10,
+                   reported_usd = CASE WHEN ?11 IS NULL THEN reported_usd
+                                       ELSE coalesce(reported_usd, 0) + ?11 END,
+                   updated_ms = max(updated_ms, ?12)
+                 WHERE id = ?1",
+                params![
+                    new,
+                    t.input_uncached,
+                    t.cache_read,
+                    t.cache_write_5m,
+                    t.cache_write_1h,
+                    t.output,
+                    t.reasoning,
+                    t.unsplit,
+                    events,
+                    usd_events,
+                    usd,
+                    updated
+                ],
             )?;
             tx.execute("DELETE FROM usage WHERE id = ?1", [&o.id])?;
+            merged += 1;
         } else {
             tx.execute(
                 "UPDATE usage SET id = ?1, reason = ?2 WHERE id = ?3",
                 params![new, reason, o.id],
             )?;
         }
+        rekeyed += 1;
     }
     tx.execute(
         "INSERT INTO meta(k, v) VALUES(?1, '1') ON CONFLICT(k) DO NOTHING",
         [evidence::REASON_KEYED_META],
     )?;
-    tx.commit()
+    tx.commit()?;
+    Ok((rekeyed, merged))
+}
+
+/// Whether a store needs [`rekey_reasons`]: schema 3 with evidence, written by a meter before RFC
+/// 0021 delivery 6 (no `rollups_reason_keyed` mark).
+pub fn needs_rekey(conn: &Connection) -> rusqlite::Result<bool> {
+    if !table_exists(conn, "evidence")? || !table_exists(conn, "meta")? {
+        return Ok(false);
+    }
+    let marked: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM meta WHERE k = ?1)",
+        [evidence::REASON_KEYED_META],
+        |r| r.get(0),
+    )?;
+    Ok(!marked)
 }
 
 /// Adds schema 3's columns and tables where they are missing.
@@ -953,6 +998,9 @@ pub struct Peek {
     pub has_rows: bool,
     /// Whether it has the `usage_repo_branch` index the query reads through.
     pub has_repo_index: bool,
+    /// Whether its rollups must be re-keyed with their reason ([`rekey_reasons`]): a rewrite of
+    /// rows, so `sync` keeps a generation first.
+    pub needs_rekey: bool,
 }
 
 /// Reads a store's version and window without writing a byte. None when there is no store yet:
@@ -987,11 +1035,13 @@ pub fn peek(path: &Path) -> rusqlite::Result<Option<Peek>> {
         [],
         |r| r.get(0),
     )?;
+    let needs_rekey = version == SCHEMA_VERSION && needs_rekey(&conn)?;
     Ok(Some(Peek {
         version,
         counted_from_ms,
         has_rows,
         has_repo_index,
+        needs_rekey,
     }))
 }
 

@@ -254,6 +254,13 @@ fn cmd_sync(args: Vec<String>) -> Result<ExitCode, String> {
                     );
                 }
             }
+            if r.rekeyed.0 > 0 {
+                println!(
+                    "meter: re-keyed {} rollup rows an older build wrote ({} merged); every total \
+                     kept, its generation kept until a later sync",
+                    r.rekeyed.0, r.rekeyed.1
+                );
+            }
             if r.calls_refused > 0 {
                 println!(
                     "meter: attribution: {} calls left where they were: no rollup row held them",

@@ -1233,7 +1233,7 @@ fn read(
                 (Some("ledger"), Some(_)) => BranchBasis::Ledger,
                 _ => BranchBasis::Log,
             };
-            let fits = |s: &String| s.chars().count() <= crate::ledger::TAG_CHARS;
+            let fits = |s: &String| crate::ledger::tag_fits(s);
             let bot = match (
                 class,
                 r.get::<_, Option<String>>(17)?,

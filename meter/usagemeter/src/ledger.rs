@@ -1550,9 +1550,20 @@ fn parse_start(row: &Map<String, Value>) -> Option<StartRow> {
 /// The most characters a bot, role or squad may have: the query contract prints each, capped at
 /// 64 (`envelope.schema.json`), and RFC 0018 bounds every printed string.
 pub const TAG_CHARS: usize = 64;
+/// The most bytes one takes as JSON, its escapes included (quotes aside): a control character
+/// takes 6 and a `"` 2, so the cap in characters alone could push a bot row past its 2,304-byte
+/// bound (RFC 0018). Three of them at this cap keep the worst bot row within it.
+pub const TAG_JSON_BYTES: usize = 96;
+
+/// Whether a bot, role or squad is printable: within both caps. One past them is never cut short
+/// (that could make two bots one): the caller treats it as unread or unrecorded.
+pub fn tag_fits(s: &str) -> bool {
+    s.chars().count() <= TAG_CHARS
+        && serde_json::to_string(s).is_ok_and(|j| j.len() - 2 <= TAG_JSON_BYTES)
+}
 
 fn fits(s: &str) -> bool {
-    s.chars().count() <= TAG_CHARS
+    tag_fits(s)
 }
 
 fn parse_tag(row: &Map<String, Value>, kind: Kind) -> Option<Tag> {
