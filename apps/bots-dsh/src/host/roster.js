@@ -305,8 +305,14 @@ export function install(rt) {
       await rt.save()
       // The greeting runs on the Bot's own model, once its provider is registered.
       void rt.waitForModel(bot)
-        .then(() => rt.applyModel(bot).catch(error => rt.warn('ds-bot: model for %s not applied: %s', cleanName, error)))
-        .then(() => sendKickoff(bot, { text, from: createdBy }))
+        .then(() => rt.applyModel(bot).then(() => false, (error) => {
+          rt.warn('ds-bot: model for %s not applied: %s', cleanName, error)
+          return true
+        }))
+        // At Full access with its coding CLI model not served, or not selected just above: no
+        // greeting on another model.
+        .then(unselected => rt.assertNotOffCli(bot, rt.chatOf(bot.id), undefined, { unselected }))
+        .then(() => sendKickoff(bot, { text, from: createdBy }), error => rt.warn('ds-bot: %s does not greet: %s', cleanName, error?.message ?? error))
       return bot
     } catch (error) {
       // The Bot's Session was already made: archive it instead of leaving an orphan.

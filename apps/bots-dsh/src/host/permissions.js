@@ -660,8 +660,41 @@ export function install(rt) {
     }
     return out
   }
+  // Whether a level is Full access by what it allows (no sandbox, no question), whatever its
+  // name. A level DSH cannot resolve is not known to be: false.
+  function wideLevel(service, name) {
+    try {
+      const spec = service.resolve(name)
+      return spec?.sandbox === 'danger-full-access' && spec?.approval === 'never'
+    } catch {
+      return false
+    }
+  }
+  // Whether a Session runs at Full access: the level DSH reports for `session` when the caller
+  // holds it, else the one its owner has saved (a task's, a group's, a Bot's, else the catalog
+  // default it started on). Without the presets service no level is set anywhere: false. It
+  // only reads, for the rule that a Bot at Full access on a coding CLI is never moved to
+  // another model on its own (fallback.js, models.js).
+  // `owner` ({ bot, room }): whose Session it is, for one made a moment ago that is not the
+  // Bot's yet (a fresh part, parts.js). It has no owner on record, so without this it would
+  // be read at the catalog default, which is not the level it was given.
+  function sessionWide(sessionId, session, owner) {
+    const service = presets()
+    if (service === undefined) return false
+    if (session !== undefined) {
+      try {
+        return wideLevel(service, service.current(session))
+      } catch {}
+    }
+    try {
+      const level = owner?.bot === undefined ? wantedBy(sessionId).level : owner.room?.permission ?? owner.bot.permission
+      return wideLevel(service, level ?? service.catalog().defaultPreset)
+    } catch {
+      return false
+    }
+  }
   // The Sessions that carry the mark now, as a fresh list.
   const unappliedSessions = () => [...unapplied.keys()]
 
-  Object.assign(rt, { permissionFactsOf, unappliedSessions, permissionCatalog, permissionFallbackOf, permissionKey, autoClosed, applyPermission, applyTaskPermission, levelHolds, reapplyTasks, capTasks, taskOfRoom, inToolCall, callerGroup, taskLevelOf, forgetTaskPermission, checkPreset, setPermission, inheritedPermission, cleanRoomPermission, setRoomPermission })
+  Object.assign(rt, { sessionWide, permissionFactsOf, unappliedSessions, permissionCatalog, permissionFallbackOf, permissionKey, autoClosed, applyPermission, applyTaskPermission, levelHolds, reapplyTasks, capTasks, taskOfRoom, inToolCall, callerGroup, taskLevelOf, forgetTaskPermission, checkPreset, setPermission, inheritedPermission, cleanRoomPermission, setRoomPermission })
 }

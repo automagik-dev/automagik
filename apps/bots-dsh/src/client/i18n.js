@@ -1673,6 +1673,8 @@ const HOST_ZH = {
   'Permissions are not available in this DeepSeek Harness': '这个 DeepSeek Harness 不支持权限设置',
   'The permission level could not be set, so nothing was started. Try again.': '权限级别未能设置，因此没有启动任何操作。请重试。',
   'The saved permission level is no longer offered, so nothing was started. Pick a permission level again.': '已保存的权限级别已不再提供，因此没有启动任何操作。请重新选择权限级别。',
+  "This Bot has Auto (full access) on its coding CLI, which is not available now, so nothing was started on another model. Fix the CLI or sign in to it, or pick another model for the Bot yourself.": "这个 Bot 在它的编程 CLI 上使用自动（完全权限），而该 CLI 现在不可用，因此没有在其他模型上启动任何操作。请修复该 CLI 或登录它，或者自己为这个 Bot 选择其他模型。",
+  "The model failed and no other model answered in its place: this Bot has Auto (full access) on its coding CLI and stays there. Fix the CLI or sign in to it, or pick another model for the Bot yourself.": "模型出错了，也没有其他模型代替它回答：这个 Bot 在它的编程 CLI 上使用自动（完全权限），所以留在那里。请修复该 CLI 或登录它，或者自己为这个 Bot 选择其他模型。",
   'Turn Auto review back on in Plugins to open this chat.': '请在插件中重新开启自动审查，才能打开这个对话。',
   'Avatar images must be PNG, JPEG, WebP, or GIF': '头像图片必须是 PNG、JPEG、WebP 或 GIF',
   'Avatar image is too large': '头像图片太大了',

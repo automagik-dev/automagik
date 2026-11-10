@@ -1619,5 +1619,7 @@
   "Use Auto for {name}?": "Usar Automático para {name}?",
   "Use Auto": "Usar Automático",
   "The agent": "O agente",
-  "{cli} is in its mode \"{mode}\" here, not its no-ask mode.": "O {cli} está no modo \"{mode}\" aqui, e não no modo sem perguntas."
+  "{cli} is in its mode \"{mode}\" here, not its no-ask mode.": "O {cli} está no modo \"{mode}\" aqui, e não no modo sem perguntas.",
+  "This Bot has Auto (full access) on its coding CLI, which is not available now, so nothing was started on another model. Fix the CLI or sign in to it, or pick another model for the Bot yourself.": "Este Bot tem Automático (acesso total) na CLI de programação que usa, que não está disponível agora, então nada foi iniciado em outro modelo. Corrija a CLI ou faça login na CLI, ou escolha você outro modelo para o Bot.",
+  "The model failed and no other model answered in its place: this Bot has Auto (full access) on its coding CLI and stays there. Fix the CLI or sign in to it, or pick another model for the Bot yourself.": "O modelo falhou e nenhum outro modelo respondeu no lugar: este Bot tem Automático (acesso total) na CLI de programação que usa e continua nessa CLI. Corrija a CLI ou faça login na CLI, ou escolha você outro modelo para o Bot."
 }
