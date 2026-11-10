@@ -190,6 +190,8 @@ export default class ModManager extends View {
     const layouts = (await exec("ls", [`${appHome()}/layouts`])).stdout.split("\n").filter(Boolean);
     r.pkg = pkg;
     r.record = record;
+    // A linked layouts/ (#511): the review says its layouts stay, as the install then does.
+    r.linkedLayouts = await core.linkedLayouts(io, appHome());
     r.plan = await core.planInstall(io, {
       appHome: appHome(), dir: r.fetched.dir, pkg, record, existingMods: this.mods.map((m) => m.name), existingLayouts: layouts,
     });
@@ -211,6 +213,8 @@ export default class ModManager extends View {
       const retired = core.retiredMods(r.record, r.plan);
       // With no shown layout to read, the retired mods go as before; say which layouts name them.
       const naming = typeof shown === "string" && shown ? {} : await core.layoutsNamingMods(io, appHome(), retired);
+      // A linked layouts/ is the person's folder (#511): applyInstall moves and writes no layout through it.
+      const linkedTo = await core.linkedLayouts(io, appHome());
       const rec = await core.applyInstall(io, {
         appHome: appHome(), plan: r.plan, source: r.source, prefix: r.pkg.prefix, sha: r.fetched.sha, record: r.record, shown, tree: layout(),
       });
@@ -219,10 +223,11 @@ export default class ModManager extends View {
       const verb = r.record ? "updated" : "installed";
       this.message = failures.length
         ? `${r.pkg.name} ${verb}, but herdr-app check failed for ${failures.map((f) => f.mod).join(", ")}: ${failures[0].error.split("\n")[0]}`
-        : `${r.pkg.name} ${verb} (${r.plan.mods.join(", ")})${r.plan.layouts.length ? `; layouts: ${r.plan.layouts.join(", ")} (switch with ctrl-shift-l)` : ""}`;
+        : `${r.pkg.name} ${verb} (${r.plan.mods.join(", ")})${r.plan.layouts.length && linkedTo == null ? `; layouts: ${r.plan.layouts.join(", ")} (switch with ctrl-shift-l)` : ""}`;
       const said = [
+        ...core.linkedLayoutsLines({ appHome: appHome(), target: linkedTo, record: r.record, plan: r.plan }),
         ...core.retiredModLines({ retired, held: rec.mods.filter((m) => !r.plan.mods.includes(m)), shown, naming }),
-        ...core.droppedLayoutLines({ dropped, held: rec.layouts.filter((l) => !r.plan.layouts.includes(l)), shown }),
+        ...(linkedTo == null ? core.droppedLayoutLines({ dropped, held: rec.layouts.filter((l) => !r.plan.layouts.includes(l)), shown }) : []),
       ];
       for (const l of said) this.message += ` · ${l}`;
       notify({ title: `mod ${verb}`, body: this.message, level: failures.length || said.length ? "warning" : "success" });
@@ -684,20 +689,22 @@ export default class ModManager extends View {
   }
 
   reviewView(t) {
-    const { plan, pkg, source, fetched, record } = this.review;
+    const { plan, pkg, source, fetched, record, linkedLayouts: linked = null } = this.review;
     const line = (text, color) => div().text_color(color ?? t.muted).child(text);
     const section = (title, lines) => v_flex().gap(2).child(div().font_semibold().text_color(t.foreground).child(title)).children(lines);
     const heldMods = core.heldRetiredMods({ record, plan, shown: shared("layout"), tree: layout() });
     const blocks = [
       section("What comes in", [
         line(`mods: ${plan.mods.map((m) => `mods/${m}`).join(", ")}`),
-        plan.layouts.length ? line(`layouts: ${plan.layouts.join(", ")} (your layout stays)`) : null,
+        plan.layouts.length && linked == null ? line(`layouts: ${plan.layouts.join(", ")} (your layout stays)`) : null,
+        // A linked layouts/ (#511): no layout is moved out of it or written into it.
+        ...core.linkedLayoutsLines({ appHome: appHome(), target: linked, record, plan }).map((l) => line(l, t.blocked)),
         // The record's mods this commit drops (#490): kept while the shown layout names it, else moved aside.
         ...core.retiredMods(record, plan).map((m) => (heldMods.includes(m)
           ? line(`mods/${m}: no longer shipped; kept while the shown layout names it (switch layouts, then update again)`, t.blocked)
           : line(`mods/${m}: no longer shipped; moved to the backup folder`))),
         // The record's layouts this commit drops (#431): kept while Herdr shows it, else moved aside.
-        ...core.droppedLayouts(record, plan).map((l) => (core.isShownLayout(shared("layout"), l)
+        ...(linked == null ? core.droppedLayouts(record, plan) : []).map((l) => (core.isShownLayout(shared("layout"), l)
           ? line(`layouts/${l}: no longer shipped; kept while Herdr shows it (switch layouts, then update again)`, t.blocked)
           : line(`layouts/${l}: no longer shipped; moved to the backup folder`))),
         line(`${pkg.files.length} file(s) · commit ${short(fetched.sha)}${record ? ` (installed: ${short(record.sha)})` : ""}${pkg.recipe ? "" : " · no RECIPE.md"}`),

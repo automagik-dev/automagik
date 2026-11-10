@@ -266,3 +266,41 @@ test("switching a mod back on through a linked mods/ is refused with why; it sta
   assert.ok(existsSync(join(h.appHome, "mods-disabled", "offmod", "mod.json")), "still off, where it was");
   assert.deepEqual(readdirSync(h.ext), ["scratch"], "nothing went into the linked mods/");
 });
+
+// ---- #511: a linked layouts/ is the person's folder: an update moves and writes no layout through it ----
+
+test("an update through a linked layouts/ leaves the record's layout as it is and adds none; the mods update; said with why (#511)", async (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "am-mods-linked-layouts-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const appHome = join(root, "app"), ext = join(root, "their-layouts"), base = join(root, "repo");
+  write(join(appHome, "mods", "scratch", "main.js"), "// v1\n");
+  write(join(ext, "scratchy.json"), "{\"mine\":true}\n");
+  symlinkSync(ext, join(appHome, "layouts"));
+  assert.equal(await core.linkedLayouts(io, appHome), ext);
+  write(join(base, "mods", "scratch", "main.js"), "// v2\n");
+  write(join(base, "layouts", "scratchy.json"), "{\"theirs\":2}\n");
+  write(join(base, "layouts", "extra.json"), "{}\n");
+  const record = { source: "someone/scratch", prefix: "", mods: ["scratch"], layouts: ["scratchy.json"], keys: [] };
+  const plan = { clashes: [], mods: ["scratch"], layouts: ["scratchy.json", "extra.json"], keyAdds: [], keyConflicts: [], risks: [], base };
+  const rec = await core.applyInstall(io, { appHome, plan, source: "someone/scratch", prefix: "", sha: "abc", record, shown: "main", tree: {} });
+  assert.equal(readFileSync(join(appHome, "mods", "scratch", "main.js"), "utf8"), "// v2\n", "the mod is updated");
+  assert.deepEqual(readdirSync(ext), ["scratchy.json"], "nothing added to the person's folder, nothing taken out");
+  assert.equal(readFileSync(join(ext, "scratchy.json"), "utf8"), "{\"mine\":true}\n");
+  assert.deepEqual(rec.layouts, ["scratchy.json"], "the record keeps its layout, and not the one left out");
+  assert.ok(!readdirSync(join(appHome, "automagik-herdr", "backup")).some((f) => f.startsWith("scratchy.json")), "no layout in the backup folder");
+  assert.deepEqual(core.linkedLayoutsLines({ appHome, target: ext, record, plan }), [
+    `layouts/ (${appHome}/layouts) is a link to ${ext}, your own folder, not one this install made: nothing is moved or written through it, so `
+    + "layouts/scratchy.json stays as it is and layouts/extra.json was not added. Put that folder in the link's place (a plain layouts/), "
+    + "then update again for this commit's layouts",
+  ]);
+  // A first install: the commit's layouts are left out, and the record lists none.
+  write(join(base, "mods", "other", "main.js"), "// v1\n");
+  const fresh = await core.applyInstall(io, { appHome, plan: { ...plan, mods: ["other"] }, source: "someone/other", prefix: "", sha: "abc", record: null });
+  assert.deepEqual(fresh.layouts, []);
+  assert.deepEqual(readdirSync(ext), ["scratchy.json"]);
+  assert.match(core.linkedLayoutsLines({ appHome, target: ext, record: null, plan })[0], /so layouts\/scratchy\.json, layouts\/extra\.json were not added\. /);
+  // A plain layouts/, or a package with no layout: nothing to say.
+  assert.deepEqual(core.linkedLayoutsLines({ appHome, target: null, record, plan }), []);
+  assert.deepEqual(core.linkedLayoutsLines({ appHome, target: ext, record: { ...record, layouts: [] }, plan: { ...plan, layouts: [] } }), []);
+  assert.equal(await core.linkedLayouts(io, join(root, "repo")), null);
+});

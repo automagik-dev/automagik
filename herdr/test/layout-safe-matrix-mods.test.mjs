@@ -31,7 +31,9 @@ const LINKED_MODS = "linked mods/ folder";
 /** #494, with Herdr showing another layout (main) that names no mod, so no layout guard stops a route first. */
 const LINKED_MODS_ANOTHER = "linked mods/ folder, another layout shown";
 const LINKED = [LINKED_MODS, LINKED_MODS_ANOTHER];
-const SHAPES = ["plain folder", "symlinked mod folder", "symlinked layout file", "symlinked layouts folder", NO_ANSWER, NOTHING, ...LINKED];
+/** #511: layouts/ itself a link to the person's folder, outside the app home. */
+const LINKED_LAYOUTS = "symlinked layouts folder";
+const SHAPES = ["plain folder", "symlinked mod folder", "symlinked layout file", LINKED_LAYOUTS, NO_ANSWER, NOTHING, ...LINKED];
 /** Today's gaps: `${route} | ${shape}` → the issue ("new": no issue tracks it yet). */
 const EXPECTED_FAIL = {};
 /** A refusal of a linked mods/ (#494): it names the link as the person's folder and moves nothing through it. */
@@ -87,7 +89,7 @@ function machine(t, shape, { layout, mod = "scratch", off = false }) {
   // Another layout shown (#494's second shape): main, naming no mod.
   const MAIN = { id: "root", children: [] };
   if (shape === LINKED_MODS_ANOTHER) write(join(appHome, "layouts", "main.json"), JSON.stringify(MAIN));
-  if (shape === "symlinked layouts folder") {
+  if (shape === LINKED_LAYOUTS) {
     write(join(ext, "layouts", "scratchy.json"), BODY);
     symlinkSync(join(ext, "layouts"), join(appHome, "layouts"));
   } else if (shape === "symlinked layout file") {
@@ -106,7 +108,9 @@ function machine(t, shape, { layout, mod = "scratch", off = false }) {
   // The package's next commit: its mod, and its layout only with `layout`.
   write(join(repo, "mods", mod, "main.js"), "// v2\n");
   write(join(repo, "mods", mod, "mod.json"), "{}");
-  if (layout) write(join(repo, "layouts", "scratchy.json"), JSON.stringify(LAYOUT));
+  // In a linked layouts/ the commit's copy differs from the person's file (#511): the same bytes
+  // would hide a write through the link from treeSum.
+  if (layout) write(join(repo, "layouts", "scratchy.json"), JSON.stringify(LAYOUT, null, shape === LINKED_LAYOUTS ? 2 : 0));
   const git = (...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-C", repo, ...args], { encoding: "utf8" }).trim();
   execFileSync("git", ["init", "-q", "-b", "main", repo]);
   git("add", "-A");
@@ -211,6 +215,12 @@ for (const [route, [next, go]] of Object.entries(ROUTES)) {
       if (LINKED.includes(shape)) {
         if (!gap) assert.deepEqual(state.shared.get("am.mods.installed").find((r) => r.source === m.source)?.mods, ["scratch"], `the record (${shape})`);
         return;
+      }
+      // #511: an update through a linked layouts/ says that its layouts stay, and why.
+      if (shape === LINKED_LAYOUTS && route.startsWith("package update")) {
+        assert.match(said, /layouts\/ \(\S+\) is a link to \S+, your own folder, not one this install made: nothing is moved or written through it, so layouts\/scratchy\.json stays as it is\./);
+        assert.equal(readFileSync(join(m.ext, "layouts", "scratchy.json"), "utf8"), JSON.stringify(LAYOUT), "the person's file, byte for byte");
+        assert.equal(existsSync(join(m.appHome, "automagik-herdr", "backup")) && readdirSync(join(m.appHome, "automagik-herdr", "backup")).some((f) => f.startsWith("scratchy.json")), false, "no layout moved to the backup folder");
       }
       // #431: the layout it kept stays in the record, so the next update after a switch moves it aside.
       if (route === "package update dropping the shown layout") {

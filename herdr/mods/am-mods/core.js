@@ -38,6 +38,37 @@ export async function linkedModsRefusal(io, appHome) {
   return linkedModsLine(mods, (await run(io, "readlink", [mods])).trim());
 }
 
+/**
+ * Where `<appHome>/layouts` points while it is a link (#511), else null: the person's own folder,
+ * so an update moves no layout out of it and writes none into it (as the pack's leaves its layout
+ * in a linked layouts/, #448).
+ */
+export async function linkedLayouts(io, appHome) {
+  const layouts = `${appHome}/layouts`;
+  if ((await io.exec("test", ["-L", layouts])).code !== 0) return null;
+  return (await run(io, "readlink", [layouts])).trim();
+}
+
+/**
+ * What an install or update says of a linked layouts/ (`target`, linkedLayouts; null: nothing):
+ * the record's layouts stay as they are (and stay the record's), and a layout the commit adds is
+ * not written. No layout of either: nothing.
+ */
+export function linkedLayoutsLines({ appHome, target, record, plan }) {
+  if (target == null) return [];
+  const stay = record?.layouts ?? [];
+  const own = lower(stay);
+  const added = (plan?.layouts ?? []).filter((l) => !own.has(String(l).toLowerCase()));
+  const list = (files) => files.map((f) => `layouts/${f}`).join(", ");
+  const parts = [
+    ...(stay.length ? [`${list(stay)} ${stay.length === 1 ? "stays as it is" : "stay as they are"}`] : []),
+    ...(added.length ? [`${list(added)} ${added.length === 1 ? "was" : "were"} not added`] : []),
+  ];
+  if (!parts.length) return [];
+  return [`layouts/ (${appHome}/layouts) is a link to ${target}, your own folder, not one this install made: nothing is moved or written through it, so `
+    + `${parts.join(" and ")}. Put that folder in the link's place (a plain layouts/), then update again for this commit's layouts`];
+}
+
 /** Moves a folder or file aside, stamped, and returns where it went: never a delete. */
 async function moveAside(io, appHome, path, name) {
   await run(io, "mkdir", ["-p", backupDir(appHome)]);
@@ -232,7 +263,8 @@ async function writeKeys(io, appHome, change) {
 // and only then are the record's old folders moved aside (never deleted) and the staged ones
 // renamed in; on any failure every folder goes back where it was, so no half-written mod is left.
 // `shown`: the name of the layout Herdr shows (`shared("layout")`), `tree` its tree (`layout()`);
-// no name read, nothing is held.
+// no name read, nothing is held. With layouts/ a link (linkedLayouts, #511) no layout moves or is
+// written: the record's stay there and in the record, the commit's new ones are left out.
 export async function applyInstall(io, { appHome, plan, source, prefix, sha, record, shown = null, tree = null }) {
   if (plan.clashes.length) throw new Error(`already there: ${plan.clashes.join(", ")}`);
   if ([...plan.mods, ...(record?.mods ?? [])].some(isPocketLink)) throw new Error(POCKET_LINK_REFUSAL);
@@ -241,7 +273,8 @@ export async function applyInstall(io, { appHome, plan, source, prefix, sha, rec
   // Before anything is staged or moved: nothing goes in or out through a linked mods/ (#494).
   const linked = await linkedModsRefusal(io, appHome);
   if (linked) throw new Error(linked);
-  await run(io, "mkdir", ["-p", `${appHome}/mods`, `${appHome}/layouts`, backupDir(appHome), stagingDir(appHome)]);
+  const layoutsLinked = (await linkedLayouts(io, appHome)) != null;
+  await run(io, "mkdir", ["-p", `${appHome}/mods`, ...(layoutsLinked ? [] : [`${appHome}/layouts`]), backupDir(appHome), stagingDir(appHome)]);
   const staged = [];
   try {
     for (const m of plan.mods) {
@@ -288,12 +321,12 @@ export async function applyInstall(io, { appHome, plan, source, prefix, sha, rec
       await run(io, "mv", [stage, dest]);
       placed.push([dest, stage]);
     }
-    for (const l of record?.layouts ?? []) {
+    for (const l of layoutsLinked ? [] : record?.layouts ?? []) {
       const p = `${appHome}/layouts/${l}`;
       if (held.includes(l)) continue;
       if (await present(io, p)) aside.push([p, await moveAside(io, appHome, p, l)]);
     }
-    for (const l of plan.layouts) {
+    for (const l of layoutsLinked ? [] : plan.layouts) {
       const to = `${appHome}/layouts/${l}`;
       if (await present(io, to)) throw new Error(`already there: layouts/${l}`);
       laid.push(to);
@@ -313,7 +346,7 @@ export async function applyInstall(io, { appHome, plan, source, prefix, sha, rec
   }
   const keys = [...(record?.keys ?? []).filter((k) => !plan.keyConflicts.some((c) => c.section === k.section && c.key === k.key)), ...plan.keyAdds];
   return {
-    source, prefix, sha, mods: [...plan.mods, ...heldMods], layouts: [...plan.layouts, ...held], keys: dedupeKeys(keys),
+    source, prefix, sha, mods: [...plan.mods, ...heldMods], layouts: layoutsLinked ? [...(record?.layouts ?? [])] : [...plan.layouts, ...held], keys: dedupeKeys(keys),
     risks: plan.risks.map((r) => r.label), at: new Date().toISOString(),
   };
 }
