@@ -23,7 +23,8 @@ import { Backchannel } from './src/host/backchannel.js'
 import { Catalog, cliStamp, DEFAULT_MODEL } from './src/host/catalog.js'
 import { CliStore, CLI_CHECK_EVERY_MS } from './src/host/clis.js'
 import { CONSENT_FILE, ConsentStore } from './src/host/consent.js'
-import { adaptersHome, AdapterStore, CHECK_EVERY_MS } from './src/host/install.js'
+import { adaptersHome, AdapterStore, CHECK_TICK_MS } from './src/host/install.js'
+import { handshake } from './src/host/handshake.js'
 import { drawImage, imageRefusal, imageSupport, SIGNED_OUT, UNAVAILABLE, unsupported } from './src/host/image.js'
 import { CliLogins } from './src/host/login.js'
 import { CREDENTIAL_ENV, URL_ENV } from './src/host/names.js'
@@ -221,6 +222,18 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       registration.replace?.(routes)
     }
   }
+  // A new connector release is started once before it replaces the one in use (install.js): it
+  // is spawned as a Session would spawn it and asked `initialize`, nothing more. Without the
+  // agent's CLI nothing could run it either way, so there is nothing to check.
+  if (store instanceof AdapterStore && store.check === undefined) {
+    store.check = async (pkg, staged) => {
+      const [id, spec] = Object.entries(AGENTS).find(([, entry]) => entry.adapter === pkg) ?? []
+      const cli = id === undefined ? undefined : clis.get(id)
+      if (cli === undefined) return
+      const node = nodeCommand()
+      await handshake({ command: node.command, args: [staged.path], env: { ...node.env, ...cliEnvironment(spec, cliDetails.get(id)), ...spec.env(cli) } }, { signal: store.quit?.signal })
+    }
+  }
   const install = (spec) => {
     // The first-run account record is on disk before this version installs a connector, so a
     // connector found with no record always means an earlier version (consent.js).
@@ -266,6 +279,14 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       spawn: () => ({ command: node.command, args: [store.binOf(spec.adapter, spec.bin).path], env: { ...node.env, ...cliEnv, ...spec.env(cli) } }),
     }),
     installed: () => store.binOf(spec.adapter, spec.bin) !== undefined,
+    // The connector in use opened a session: it is the last-known-good. One that did not start
+    // goes back to the release before it, when that is still here (install.js).
+    proven: () => store.markGood?.(spec.adapter),
+    rollback: (reason) => {
+      const back = store.rollback?.(spec.adapter, spec.bin, reason) !== undefined
+      if (back && !disposed) warn(ctx, `${spec.adapter}: the newest release did not start; running the one before it`)
+      return back
+    },
     spawn: () => {
       const bin = store.binOf(spec.adapter, spec.bin)
       if (bin === undefined) {
@@ -437,6 +458,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     const bin = cli === undefined ? undefined : store.binOf(spec.adapter, spec.bin)
     const busy = store.busy?.(spec.adapter) === true
     const failure = store.lastFailure?.(spec.adapter)
+    const connectorState = store.stateOf?.(spec.adapter)
     const cliFailure = cliStore?.lastFailure(spec.cliPackage)
     const cliBusy = cliStore?.busy(spec.cliPackage) === true
     const detail = cliDetails.get(id)
@@ -479,6 +501,10 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
           }
           : {}),
         ...(connector === 'ready' && busy ? { updating: true } : {}),
+        // The release before the one in use, and a rollback while the failed release is held
+        // back: "running the previous connector; the newest failed to start".
+        ...(bin && connectorState?.previous ? { previous: connectorState.previous } : {}),
+        ...(bin && connectorState?.rolledBack ? { rolledBack: connectorState.rolledBack } : {}),
       },
       ...(signIns.get(id) === undefined ? {} : { signedIn: signIns.get(id) }),
       // Only the state of the person's word for the signed-in account; who it is never rides here.
@@ -897,7 +923,8 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   }
   const first = setTimeout(() => { required(); refresh() }, FIRST_CHECK_MS)
   const cliChecks = cliStore ? setInterval(required, CLI_CHECK_EVERY_MS) : undefined
-  const daily = setInterval(() => { reconcile({ kick: false }); refresh() }, CHECK_EVERY_MS)
+  // Every few hours, so npm is asked at least once a day (install.js, CHECK_TICK_MS).
+  const daily = setInterval(() => { reconcile({ kick: false }); refresh() }, CHECK_TICK_MS)
   first.unref?.()
   daily.unref?.()
   cliChecks?.unref?.()
