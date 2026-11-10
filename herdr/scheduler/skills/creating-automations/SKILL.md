@@ -49,7 +49,26 @@ Instead of `prompt`, an entry may delegate to a herdr-workflows workflow:
     workflow: nightly-deps        # runs `hwf run nightly-deps` in the pane
 ```
 
-Exactly one of `prompt` / `workflow` is required.
+Or run a plain command, with no agent and no model. The scheduler starts the
+program itself, as the user, and the run is `done` on exit 0 and `failed` on
+anything else:
+
+```yaml
+  - name: daily-check
+    cron: "0 7 * * *"
+    command:
+      argv: ["./check.sh", "--all"]   # program first; not a shell line
+      cwd: ~/checks                   # optional; the home folder otherwise
+      env: { REGION: eu }             # optional
+    timeout_minutes: 10
+    notify: b-xxxxxxxx                # optional: a bot id; it is sent the one-line result
+```
+
+A command entry takes none of `repo`, `workspace`, `session`, `agent`, `model`,
+`template`, `agent_args`, `mcp_config`. Use it for anything deterministic: do
+not spend an agent on running one script.
+
+Exactly one of `prompt` / `workflow` / `command` is required.
 
 ## Rules
 

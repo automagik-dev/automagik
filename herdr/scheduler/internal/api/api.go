@@ -19,7 +19,10 @@ type Listing struct {
 	Scheduler int    `json:"scheduler"`
 	Config    string `json:"config"`
 	// State is the folder history.jsonl lives in, for the panel to watch.
-	State       string       `json:"state"`
+	State string `json:"state"`
+	// Kinds are the kinds of work this build runs: prompt, workflow, command.
+	// A panel offers the command form only when it reads "command" here.
+	Kinds       []string     `json:"kinds"`
 	Automations []Automation `json:"automations"`
 	Invalid     []Invalid    `json:"invalid"`
 }
@@ -37,10 +40,15 @@ type Automation struct {
 	Template       string           `json:"template,omitempty"`
 	Prompt         string           `json:"prompt,omitempty"`
 	Workflow       string           `json:"workflow,omitempty"`
-	MCPConfig      string           `json:"mcp_config,omitempty"`
-	AgentArgs      []string         `json:"agent_args,omitempty"`
-	TimeoutMinutes int              `json:"timeout_minutes"`
-	CatchUpMinutes int              `json:"catch_up_minutes"`
+	// Command is the program the scheduler runs itself, and Notify the bot its
+	// one-line result goes to (ADR 0013). A command entry has no repo,
+	// workspace or agent.
+	Command        *config.Command `json:"command,omitempty"`
+	Notify         string          `json:"notify,omitempty"`
+	MCPConfig      string          `json:"mcp_config,omitempty"`
+	AgentArgs      []string        `json:"agent_args,omitempty"`
+	TimeoutMinutes int             `json:"timeout_minutes"`
+	CatchUpMinutes int             `json:"catch_up_minutes"`
 	// BlockedGraceMinutes is how long an agent may sit on a dialog before the
 	// run fails; the loader fills in the default (2), -1 waits it out.
 	BlockedGraceMinutes int       `json:"blocked_grace_minutes"`
@@ -69,7 +77,13 @@ type Run struct {
 	Space      string         `json:"space,omitempty"`
 	Terminal   string         `json:"terminal,omitempty"`
 	Error      string         `json:"error,omitempty"`
-	Seen       bool           `json:"seen"`
+	// A command run's: its exit status (absent when it has none), its one
+	// line, the last lines of its stderr, and what became of the report.
+	ExitCode *int   `json:"exit_code,omitempty"`
+	Result   string `json:"result,omitempty"`
+	Stderr   string `json:"stderr,omitempty"`
+	Notified string `json:"notified,omitempty"`
+	Seen     bool   `json:"seen"`
 }
 
 // List reads the config and the latest run of each automation.
@@ -81,6 +95,7 @@ func List() (Listing, error) {
 	pid, _ := daemon.Running()
 	out := Listing{
 		Backend: cfg.Backend, Paused: cfg.Paused, Scheduler: pid, Config: config.Path(), State: config.StateDir(),
+		Kinds:       config.Kinds,
 		Automations: []Automation{}, Invalid: []Invalid{},
 	}
 	now := time.Now()
@@ -92,6 +107,7 @@ func List() (Listing, error) {
 			MCPConfig: a.MCPConfig, AgentArgs: a.AgentArgs, TimeoutMinutes: a.TimeoutMinutes,
 			CatchUpMinutes: a.CatchUpMinutes, BlockedGraceMinutes: a.BlockedGraceMinutes,
 			Disabled: a.Disabled, Line: a.Line,
+			Command: a.Command, Notify: a.Notify,
 		}
 		if a.Template != "" {
 			entry.Agent = "" // the default filled in at load; a template brings its own
@@ -129,5 +145,6 @@ func toRun(r history.Record) Run {
 		RunID: r.RunID, Automation: r.Automation, Status: r.Status, Trigger: string(r.Trigger),
 		Started: r.Started, At: r.At, Seconds: int(r.At.Sub(r.Started).Seconds()),
 		Space: r.WorkspaceID, Terminal: r.PaneID, Error: r.Error, Seen: r.Seen,
+		ExitCode: r.ExitCode, Result: r.Result, Stderr: r.Stderr, Notified: r.Notified,
 	}
 }
