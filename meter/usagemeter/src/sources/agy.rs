@@ -641,10 +641,9 @@ pub fn read(
         };
         match dec {
             Decoded::Incomplete { steps } => {
-                let complete = steps.iter().all(|i| times.contains_key(i));
                 let ts = steps.iter().filter_map(|i| times.get(i)).min().copied();
                 next_by_idx.insert(idx, ts.unwrap_or(0));
-                if !complete || db_recent {
+                if db_recent {
                     out.held += 1;
                     held_at.get_or_insert(idx);
                     continue;
@@ -656,15 +655,17 @@ pub fn read(
                 tokens,
                 steps,
             } => {
-                // A row waits until every step it names has a time: its key and its cursor time
-                // must not change when an earlier step's time lands after the first sync.
-                if !steps.iter().all(|i| times.contains_key(i)) {
+                // A recent row waits until every step it names has a time, so its key and cursor
+                // time do not change when an earlier step's time lands after the first sync. Once
+                // the database is quiet nothing can change: count it with the times present.
+                let complete = steps.iter().all(|i| times.contains_key(i));
+                let ts = steps.iter().filter_map(|i| times.get(i)).min().copied();
+                next_by_idx.insert(idx, ts.unwrap_or(0));
+                if !complete && db_recent {
                     out.held += 1;
                     held_at.get_or_insert(idx);
                     continue;
                 }
-                let ts = steps.iter().filter_map(|i| times.get(i)).min().copied();
-                next_by_idx.insert(idx, ts.unwrap_or(0));
                 if tokens.is_zero() {
                     if db_recent {
                         out.held += 1;

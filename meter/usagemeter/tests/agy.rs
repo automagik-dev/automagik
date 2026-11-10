@@ -972,3 +972,91 @@ fn a_counted_row_behind_a_hold_counts_once_when_its_output_grows() {
     assert_eq!(r.health.events, 0, "{r:?}");
     assert_eq!(env.totals()["claude-opus-5-5"].total(), 600);
 }
+
+#[test]
+fn a_quiet_row_with_a_missing_step_counts_with_the_times_present() {
+    use std::time::{Duration, SystemTime};
+    let env = Env::new();
+    let path = env.agy("conv-quiet-missing-step.db");
+    base_db(&path, at("2026-01-15T09:55:00Z"));
+    // Step 9 is never written; steps 2 and 3 have their times.
+    put_gen(&path, 0, &opus_gen(&usage(500, 0, 0, 100, 0), &[2, 3, 9]));
+    let old = SystemTime::UNIX_EPOCH + Duration::from_millis(at("2026-01-15T09:00:00Z") as u64);
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+    let mut o = env.opts();
+    o.now_ms = at("2026-01-15T12:00:00Z");
+    let r = env.run(&o);
+    assert_eq!(r.health.events, 1, "{r:?}");
+    let (status, reason) = agy_source(&r.summary.expect("a summary"));
+    assert_eq!(status, "ok", "{reason}");
+    assert_eq!(env.totals()["claude-opus-5-5"].total(), 600);
+    let saved = env.store().file(&path.to_string_lossy()).unwrap().unwrap();
+    let ctx = saved.ctx.agy.expect("an agy cursor");
+    assert_eq!(ctx.cursor_ts, at("2026-01-15T10:02:00Z") + 250);
+    let r = env.run(&o);
+    assert_eq!(r.health.events, 0, "{r:?}");
+}
+
+#[test]
+fn a_quiet_row_with_no_step_time_is_unsupported() {
+    use std::time::{Duration, SystemTime};
+    let env = Env::new();
+    let path = env.agy("conv-quiet-no-step-time.db");
+    base_db(&path, at("2026-01-15T09:55:00Z"));
+    put_gen(&path, 0, &opus_gen(&usage(500, 0, 0, 100, 0), &[2, 3]));
+    let c = Connection::open(&path).unwrap();
+    for idx in [2, 3] {
+        c.execute(
+            "UPDATE steps SET metadata = ?1 WHERE idx = ?2",
+            params![uint(3, 2), idx],
+        )
+        .unwrap();
+    }
+    drop(c);
+    let old = SystemTime::UNIX_EPOCH + Duration::from_millis(at("2026-01-15T09:00:00Z") as u64);
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+    let mut o = env.opts();
+    o.now_ms = at("2026-01-15T12:00:00Z");
+    let r = env.run(&o);
+    let (status, reason) = agy_source(&r.summary.expect("a summary"));
+    assert_eq!(status, "unsupported", "{reason}");
+    assert!(reason.contains("step time"), "{reason}");
+    assert!(env.totals().is_empty());
+}
+
+#[test]
+fn a_quiet_placeholder_with_a_missing_step_does_not_hold_forever() {
+    use std::time::{Duration, SystemTime};
+    let env = Env::new();
+    let path = env.agy("conv-quiet-placeholder-missing.db");
+    base_db(&path, at("2026-01-15T09:55:00Z"));
+    // A no-usage row names a step that is never written, then a valid row follows it.
+    put_gen(&path, 0, &gemini_gen(&[], &[2, 3, 9]));
+    put_gen(&path, 1, &opus_gen(&usage(500, 0, 0, 100, 0), &[3]));
+    let old = SystemTime::UNIX_EPOCH + Duration::from_millis(at("2026-01-15T09:00:00Z") as u64);
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .unwrap()
+        .set_modified(old)
+        .unwrap();
+    let mut o = env.opts();
+    o.now_ms = at("2026-01-15T12:00:00Z");
+    let r = env.run(&o);
+    assert_eq!(r.health.events, 1, "{r:?}");
+    let (status, reason) = agy_source(&r.summary.expect("a summary"));
+    assert_eq!(status, "ok", "{reason}");
+    assert_eq!(env.totals()["claude-opus-5-5"].total(), 600);
+    let saved = env.store().file(&path.to_string_lossy()).unwrap().unwrap();
+    assert_eq!(saved.ctx.agy.unwrap().max_gen, 1);
+}
