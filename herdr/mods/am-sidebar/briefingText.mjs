@@ -349,10 +349,18 @@ const amHomeOfStore = (store) => {
 /**
  * The hook command for a host with the am part and no pack: the am part's entry through its own
  * run.sh, told the app home a sidebar copy reads from its own place and the am home its entry
- * looks under. Both the runner and the entry are guarded: one missing exits 0 and prints nothing,
- * as the pack's forms do (`sh <missing file>` exits 2, which blocks a Claude prompt).
+ * looks under. Both the runner and the entry are guarded: one missing, or one this user cannot
+ * read (#815), exits 0 and prints nothing, as the pack's forms do for a missing runner
+ * (`sh <a file it cannot open>` exits 2, which blocks a Claude prompt).
  */
 export function amPartHookCommand(appHome, store) {
+  const runner = shQuoted(amPartRunnerPath(store));
+  const entry = shQuoted(amPartEntryPath(store));
+  const guards = [runner, entry].map((file) => `[ ! -f ${file} ] || [ ! -r ${file} ] || `).join("");
+  return `${guards}HERDR_APP_HOME=${shQuoted(appHome)} AM_HOME=${shQuoted(amHomeOfStore(store))} sh ${runner} ${entry}`;
+}
+/** The form #813 wrote, which guards on existence only: still read as ours, and replaced in place by the next installHook. */
+export function amPartHookCommandV1(appHome, store) {
   const runner = shQuoted(amPartRunnerPath(store));
   const entry = shQuoted(amPartEntryPath(store));
   return `[ ! -f ${runner} ] || [ ! -f ${entry} ] || HERDR_APP_HOME=${shQuoted(appHome)} AM_HOME=${shQuoted(amHomeOfStore(store))} sh ${runner} ${entry}`;
@@ -392,9 +400,11 @@ export const legacyHookCommand = (appHome) => runnerCommandFor(appHome, briefing
 export const directHookCommand = (appHome) => runnerCommandFor(appHome, briefingPath(appHome));
 /**
  * The script a command of the shapes written here names (hookCommand's, runnerCommandFor's,
- * commandFor's, amPartHookCommand's), or null for any other. The am part's form names its entry
- * as the script, its store's run.sh twice and the two env words; the guards and the sh argument
- * must line up, so a hand-edited command is not read as one of ours.
+ * commandFor's, amPartHookCommand's and the am part's earlier form), or null for any other. The
+ * am part's forms name the entry as the script, its store's run.sh and the two env words; the
+ * guards and the sh arguments must line up, and the runner and AM_HOME must be the ones of the
+ * store the entry is in (#815), so a hand-edited command, or one whose runner is some other
+ * script, is not read as one of ours.
  */
 export function scriptOf(command) {
   const text = String(command ?? "");
@@ -404,8 +414,24 @@ export function scriptOf(command) {
   if (viaEither) return unq(viaEither[3]);
   const viaRunner = new RegExp(`^\\[ ! -f ${q} \\] \\|\\| sh ${q} ${q}$`).exec(text);
   if (viaRunner) return viaRunner[1] === viaRunner[2] ? unq(viaRunner[3]) : null;
-  const viaAmPart = new RegExp(`^\\[ ! -f ${q} \\] \\|\\| \\[ ! -f ${q} \\] \\|\\| HERDR_APP_HOME=${q} AM_HOME=${q} sh ${q} ${q}$`).exec(text);
-  if (viaAmPart) return viaAmPart[1] === viaAmPart[5] && viaAmPart[2] === viaAmPart[6] ? unq(viaAmPart[6]) : null;
+  const amRun = `HERDR_APP_HOME=${q} AM_HOME=${q} sh ${q} ${q}$`;
+  /** The entry of an am-part command whose guards (`guarded`: each file's) line up with what it runs, in its own store. */
+  const amEntry = ([, , amHome, runner, entry], guarded) => {
+    if (!guarded.every(([file, same]) => file === same)) return null;
+    const store = amStoreOfEntry(unq(entry));
+    return store !== null && unq(runner) === amPartRunnerPath(store) && unq(amHome) === amHomeOfStore(store) ? unq(entry) : null;
+  };
+  const guard = `\\[ ! -f ${q} \\] \\|\\| \\[ ! -r ${q} \\] \\|\\| `;
+  const viaAmPart = new RegExp(`^${guard}${guard}${amRun}`).exec(text);
+  if (viaAmPart) {
+    const [, r1, r2, e1, e2, ...run] = viaAmPart;
+    return amEntry([null, ...run], [[r1, r2], [r1, run[2]], [e1, e2], [e1, run[3]]]);
+  }
+  const viaAmPartV1 = new RegExp(`^\\[ ! -f ${q} \\] \\|\\| \\[ ! -f ${q} \\] \\|\\| ${amRun}`).exec(text);
+  if (viaAmPartV1) {
+    const [, r1, e1, ...run] = viaAmPartV1;
+    return amEntry([null, ...run], [[r1, run[2]], [e1, run[3]]]);
+  }
   const viaNode = /^command -v node >\/dev\/null && node "((?:[^"\\]|\\.)*)" \|\| true$/.exec(text);
   return viaNode ? unq(viaNode[1]) : null;
 }
@@ -418,17 +444,59 @@ export const OURS = /\/(?:automagik-herdr|mods\/spaces-agents|mods\/am-sidebar)\
  * The briefing a project's hook command runs on this machine: `{ kind, script }`, kind
  * "pack-stable" (the stable entry under `appHome`), "pack-direct" (a sidebar folder's own
  * briefing) or "am-part" (am's installed entry, with its store and runner); null for a command
- * of another shape or one naming another app home. For am self doctor and the pack's.
+ * of another shape or one naming another app home. `amStore`, when given, is this host's am
+ * store: am's entry under another am home is null too, as the pack's under another app home is
+ * (#815); without it an am part under any home is named. For am self doctor and the pack's.
  */
-export function hookTargetOf(command, { appHome = null } = {}) {
+export function hookTargetOf(command, { appHome = null, amStore = null } = {}) {
   const script = scriptOf(command);
   if (script === null) return null;
   const home = typeof appHome === "string" ? appHome.replace(/\/+$/, "") : null;
   if (home && script === stableBriefingPath(home)) return { kind: "pack-stable", script };
   if (home && [PACK_NAME, OLD_PACK_NAME].some((m) => script === briefingPath(home, m))) return { kind: "pack-direct", script };
   const store = amStoreOfEntry(script);
-  if (store !== null) return { kind: "am-part", script, store, runner: amPartRunnerPath(store) };
-  return null;
+  if (store === null) return null;
+  if (typeof amStore === "string" && store !== amStore.replace(/\/+$/, "")) return null;
+  return { kind: "am-part", script, store, runner: amPartRunnerPath(store) };
+}
+
+/**
+ * The doctor's line for a project's briefing hook: one wording and one rule for `am self doctor`
+ * and the pack's doctor (#815). `text` is the project's `.claude/settings.local.json` (null: no
+ * such file), `readError` what stopped reading it; `isFile(path)` says whether a regular file is
+ * there. Returns `{ ok, detail, repair }`, repair "am" or "pack" (which install puts it right)
+ * or null. Only a hook naming an entry that is missing is a failure. A settings file that cannot
+ * be read or is not JSON is the project's state, not the part's: it is reported, named, and the
+ * doctor goes on (ok). No hook is a note too, saying so when neither entry is installed.
+ */
+export function hookDoctorLine({ file, text = null, readError = null, appHome, amStore, isFile }) {
+  const unchecked = (why) => ({ ok: true, repair: null, detail: `not checked: ${file} ${why}, so this project's briefing hook could not be read` });
+  if (readError !== null) return unchecked(`is unreadable (${readError})`);
+  let settings = null;
+  if (text !== null) {
+    try { settings = JSON.parse(text); } catch (e) { return unchecked(`is not valid JSON (${e.message})`); }
+  }
+  let target = null;
+  const list = settings?.hooks?.UserPromptSubmit;
+  for (const group of Array.isArray(list) ? list : []) {
+    for (const h of Array.isArray(group?.hooks) ? group.hooks : []) {
+      if (target === null && typeof h?.command === "string") target = hookTargetOf(h.command, { appHome, amStore });
+    }
+  }
+  if (target === null) {
+    const stable = stableBriefingPath(appHome), amEntry = amPartEntryPath(amStore);
+    const packThere = isFile(stable) || [PACK_NAME, OLD_PACK_NAME].some((m) => isFile(briefingPath(appHome, m)));
+    const amThere = isFile(amEntry) && isFile(amPartRunnerPath(amStore));
+    const neither = packThere || amThere ? "" : `; neither the pack's entry (${stable}) nor am's entry (${amEntry}) is installed`;
+    return { ok: true, repair: null, detail: `none: ${file} has no briefing hook${neither}` };
+  }
+  const am = target.kind === "am-part";
+  const kind = am ? "am's entry" : target.kind === "pack-stable" ? "the pack's stable entry" : "the pack's direct entry";
+  const ok = isFile(target.script) && (!am || isFile(target.runner));
+  return {
+    ok, repair: am ? "am" : "pack",
+    detail: ok ? `${kind} (${target.script}) in ${file}` : `${kind} (${target.script}), named in ${file}, is missing`,
+  };
 }
 
 /**
