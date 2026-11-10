@@ -433,6 +433,7 @@ export class Backchannel {
         arguments: body.arguments ?? {},
         callId: typeof body.callId === 'string' ? body.callId : undefined,
       })
+      this.diagnostics?.bridgeCall(record, result)
       // Revoked while the call was awaiting approval: the caller sees the refusal, not a result.
       if (result?.revoked === true) return reply(401, { error: 'refused' })
       return reply(200, result)

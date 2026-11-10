@@ -150,7 +150,8 @@ unencrypted and its credentials are `0600` files readable by same-UID processes,
   plaintext password, and exposes `getSelectedStorageBackend()` to detect it.
 - Electron v44.5.0 `shell/browser/api/electron_api_safe_storage.cc`: on Linux,
   `isEncryptionAvailable()` counts the `basic_text` fallback only after the app opts in,
-  so availability is not the safety signal; the backend is.
+  so availability alone is not the safety signal. The Linux rule is both: a backend name
+  that is a real store, and `isEncryptionAvailable()` answering true.
 - Electron's own Linux spec forces the opt-in and still expects `basic_text`:
   [spec](https://github.com/electron/electron/blob/v44.5.0/spec/api-safe-storage.spec.ts).
 - The app's own statement that it uses no `safeStorage`:
@@ -161,7 +162,9 @@ unencrypted and its credentials are `0600` files readable by same-UID processes,
 **What the implementation must do.**
 
 - After `ready`, on Linux, read `getSelectedStorageBackend()`; treat `basic_text` and
-  `unknown` as no secure store. Do not call `setUsePlainTextEncryption(true)`.
+  `unknown` as no secure store, and a named store whose `isEncryptionAvailable()` is not
+  true (a locked keyring) as no store for that launch. Do not call
+  `setUsePlainTextEncryption(true)`.
 - With a store, use the async API, handle `shouldReEncrypt`, and treat
   `isTemporarilyUnavailable` without losing the token. Without one, write nothing: keep the
   refresh token in memory and sign in per launch, with the reason in the UI.

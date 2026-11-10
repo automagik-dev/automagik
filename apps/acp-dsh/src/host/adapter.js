@@ -195,8 +195,10 @@ function redactedReview(options, redact) {
  * @param {{ llm?: { stream(options: object): AsyncIterable<object> }, get?: (name: string) => any }} [ctx]
  * @param {() => { provider?: string, model?: string } | undefined} [sideModel]
  * @param {(text: string) => string} [redact] the shared redactor, for Auto review
+ * @param {{ review(options: object): ((chosen: object, outcome: object) => void) | undefined }} [diagnostics]
+ *   told each review candidate and how it ended (permission-diagnostics.js); it only records
  */
-export function aside(providers, ctx, sideModel = () => SIDE_MODEL, redact = text => text) {
+export function aside(providers, ctx, sideModel = () => SIDE_MODEL, redact = text => text, diagnostics) {
   const answers = choice => typeof choice?.provider === 'string' && choice.provider !== ''
     && typeof choice.model === 'string' && choice.model !== ''
     && !agentRoute(providers, choice.provider)
@@ -260,6 +262,7 @@ export function aside(providers, ctx, sideModel = () => SIDE_MODEL, redact = tex
     const { reasoningEffort: _agentEffort, ...request } = routed
     return (async function* () {
       let last
+      const noteReviewer = diagnostics?.review(options)
       for (const chosen of await choicesFor()) {
         const chunks = []
         let failure
@@ -278,6 +281,7 @@ export function aside(providers, ctx, sideModel = () => SIDE_MODEL, redact = tex
         } catch (error) {
           failure = { message: error?.message ?? String(error), code: error?.code }
         }
+        noteReviewer?.(chosen, { finished, failure })
         if (failure === undefined && finished) {
           for (const chunk of chunks) yield chunk
           return
@@ -763,6 +767,7 @@ export class AcpAdapter extends LlmAdapter {
             await this.backchannel.listen()
             state.bridge = this.backchannel.mint({ sessionId, agent: dshAgent, name: agent.name })
           }
+          this.diagnostics?.started(sessionId, this, agent, state)
           const run = new AgentRun({
             ...spec,
             cwd: dshAgent?.session?.header?.cwd ?? homedir(),
@@ -774,6 +779,7 @@ export class AcpAdapter extends LlmAdapter {
             dshTools: this.bridgeOn(agent),
             onReady: state.bridge === undefined ? undefined : () => this.ready(agent, state),
             onToolCall: tool => this.checkDrift(sessionId, agent, tool),
+            onMode: seen => this.diagnostics?.mode(sessionId, state, seen),
             ...(agent.startMs === undefined ? {} : { startMs: agent.startMs }),
             ...(agent.requestMs === undefined ? {} : { requestMs: agent.requestMs }),
             timers: this.timers,
@@ -899,6 +905,7 @@ export class AcpAdapter extends LlmAdapter {
         yield* blocks.add('reasoning', event.text)
       } else if (event.type === 'tool') {
         const tool = live.run.tools.get(event.id)
+        this.diagnostics?.call(sessionId, live, tool)
         // A DSH tool call is not a mirror call: the bridge writes its rows and DSH draws the one
         // card from them. On `acp-codex` no structured name is proven, so any MCP call there is
         // left to the bridge too; its own tools keep their cards.

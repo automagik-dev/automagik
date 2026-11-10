@@ -311,6 +311,7 @@ export class AgentRun {
     const wanted = [modeIds].flat()
     const offered = new Set((this.modes?.availableModes ?? []).map(mode => mode.id))
     const modeId = wanted.find(id => offered.has(id))
+    try { this.spec.onMode?.({ wanted, offered: [...offered], chosen: modeId }) } catch {}
     if (modeId === undefined) throw new Error(`it offers none of the modes ${wanted.join(', ')} (it offers ${[...offered].join(', ') || 'no modes'})`)
     if (this.modes?.currentModeId === modeId) return
     await this.held(() => this.conn.setSessionMode({ sessionId: this.sessionId, modeId }), { signal, what: 'taking its permission mode' })
