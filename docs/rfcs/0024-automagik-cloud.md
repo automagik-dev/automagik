@@ -728,7 +728,8 @@ host name, issuer or client id in a test or a default config.
    (organisations, scoped API keys, email-bound invitations, federation, SCIM); passkeys on
    `localhost` and platform authenticators per OS and browser; `safeStorage` without a Linux secret
    store; what a desktop mask needs per OS ((d)). *Check:* a written record, private where it names
-   hosts. *Rollback:* none needed.
+   hosts. *Record:* [the public evidence record](../cloud/0024-delivery-0-evidence.md).
+   *Rollback:* none needed.
 1. **Desktop secure storage and RFC 8252 sign-in** (desktop, 3.N; first, Decided 11; behind a
    setting, with no Cloud yet). `safeStorage` with the Linux fallback detected; the system-browser
    flow with PKCE, `state`, `nonce`, issuer and audience checks and the exact loopback redirect.
