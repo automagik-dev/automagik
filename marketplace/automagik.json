@@ -5930,7 +5930,7 @@
           "publishTimestamp": 1794287182,
           "source": {
             "type": "git",
-            "url": "https://github.com/automagik-dev/automagik",
+            "url": "https://github.com/automagik-si/automagik",
             "commit": "eb312df32dc8e5d0817c17df07aad50c601e0c49",
             "path": "apps/locale-pt-br-dsh"
           },
@@ -8207,7 +8207,7 @@
           "publishTimestamp": 1794287182,
           "source": {
             "type": "git",
-            "url": "https://github.com/automagik-dev/automagik",
+            "url": "https://github.com/automagik-si/automagik",
             "commit": "eb312df32dc8e5d0817c17df07aad50c601e0c49",
             "path": "apps/acp-dsh"
           },
