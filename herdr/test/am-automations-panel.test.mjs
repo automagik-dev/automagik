@@ -907,3 +907,32 @@ test("envText and parseEnv: KEY=value words, quoted like the args line", () => {
   assert.equal(parseEnv("=x").problem, 'ENV: "=x" is not KEY=value');
   assert.equal(envText(undefined), "");
 });
+
+// ---- put and the form write the same file (#938) ----
+// A bot writes an automation with `herdr-automations put` and no agent_args; the form sends the
+// automatic mode's flags. Our put now applies the same default to a new automation, and the proof
+// is in two halves over one fixture: here, that `form` is what the real form sends for the
+// definition and `put` is that definition without agent_args; in herdr/scheduler/main_test.go, that
+// the real put writes the same automations.yaml for both.
+const PARITY = JSON.parse(readFileSync(new URL("./fixtures/automation-put-parity.json", import.meta.url), "utf8"));
+
+test("the put/form parity fixture covers every agent the form offers, and no other", () => {
+  assert.deepEqual(PARITY.cases.map((c) => c.agent).sort(), ALL.map((a) => a.key).sort());
+});
+
+for (const c of PARITY.cases) {
+  test(`a new ${c.agent} automation: the form sends the parity fixture's payload (#938)`, async () => {
+    const { s, view, cx, draw } = await stubPanel([], { version: OUR });
+    try {
+      await fillNew(view, cx, draw, c.agent, c.form.prompt);
+      await saveIt(view, cx);
+      const saved = s.saves();
+      assert.equal(saved.length, 1);
+      assert.deepEqual(saved[0].argv, ["put"]);
+      assert.deepEqual(saved[0].entry, c.form, "the fixture's form payload is the real form's");
+      const { agent_args: flags, ...definition } = c.form;
+      assert.deepEqual(c.put, definition, "the put side is the same definition, without agent_args");
+      assert.deepEqual(flags, AUTO_ARGS[c.agent] ? [...AUTO_ARGS[c.agent]] : [], "the form's default is the automatic mode");
+    } finally { s.done(); }
+  });
+}

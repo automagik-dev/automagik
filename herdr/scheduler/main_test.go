@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -129,6 +130,128 @@ func TestPutCarriesBlockedGrace(t *testing.T) {
 	})
 }
 
+// #938: a new automation written with put and no agent_args gets the form's
+// automatic mode. The fixture's form side is held to the real form by the
+// panel's own test (herdr/test/am-automations-panel.test.mjs); here the real
+// put must write the same file for both.
+func TestPutAndAFormSaveWriteTheSameFile(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "test", "fixtures", "automation-put-parity.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		Cases []struct {
+			Agent string          `json:"agent"`
+			Put   json.RawMessage `json:"put"`
+			Form  json.RawMessage `json:"form"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	if len(fixture.Cases) == 0 {
+		t.Fatal("the fixture has no cases")
+	}
+	flags := map[string]string{
+		"codex":  "--dangerously-bypass-approvals-and-sandbox",
+		"claude": "--dangerously-skip-permissions",
+	}
+	for _, c := range fixture.Cases {
+		t.Run(c.Agent, func(t *testing.T) {
+			var form struct {
+				AgentArgs *[]string `json:"agent_args"`
+			}
+			var put map[string]json.RawMessage
+			if json.Unmarshal(c.Form, &form) != nil || json.Unmarshal(c.Put, &put) != nil {
+				t.Fatal("unreadable case")
+			}
+			if _, sent := put["agent_args"]; sent || form.AgentArgs == nil {
+				t.Fatal("the put side must send no agent_args and the form side must")
+			}
+			answer, fromPut := runPut(t, "", string(c.Put))
+			if strings.Contains(answer, `"problem"`) {
+				t.Fatalf("put refused it: %s", answer)
+			}
+			answer, fromForm := runPut(t, "", string(c.Form))
+			if strings.Contains(answer, `"problem"`) {
+				t.Fatalf("put refused the form's: %s", answer)
+			}
+			if fromPut != fromForm {
+				t.Fatalf("put wrote\n%s\nthe form wrote\n%s", fromPut, fromForm)
+			}
+			if flag, auto := flags[c.Agent]; auto && !strings.Contains(fromPut, flag) {
+				t.Fatalf("no %s in\n%s", flag, fromPut)
+			} else if !auto && strings.Contains(fromPut, "agent_args") {
+				t.Fatalf("%s has no automatic mode, yet agent_args was written:\n%s", c.Agent, fromPut)
+			}
+		})
+	}
+}
+
+func TestPutDefaultAgentArgs(t *testing.T) {
+	const bare = `{"name":"job","cron":"0 9 * * 1-5","repo":"/x","prompt":"p"`
+	const codexAuto = "--dangerously-bypass-approvals-and-sandbox"
+
+	t.Run("no agent named is claude", func(t *testing.T) {
+		_, after := runPut(t, "", bare+`}`)
+		if !strings.Contains(after, "--dangerously-skip-permissions") {
+			t.Fatalf("the default agent's automatic flag is missing:\n%s", after)
+		}
+	})
+
+	t.Run("sent args stand as written", func(t *testing.T) {
+		_, after := runPut(t, "", bare+`,"agent":"codex","agent_args":["--sandbox","workspace-write"]}`)
+		if strings.Contains(after, codexAuto) || !strings.Contains(after, "workspace-write") {
+			t.Fatalf("hand-written agent_args were not kept as sent:\n%s", after)
+		}
+	})
+
+	t.Run("sent empty stays the agent's own default", func(t *testing.T) {
+		_, after := runPut(t, "", bare+`,"agent":"codex","agent_args":[]}`)
+		if strings.Contains(after, "agent_args") {
+			t.Fatalf("an explicit empty agent_args was filled in:\n%s", after)
+		}
+	})
+
+	t.Run("a template brings its own", func(t *testing.T) {
+		_, after := runPut(t, "backend: hc\n", `{"name":"job","cron":"0 9 * * 1-5","repo":"/x","prompt":"p","template":"reviewer"}`)
+		if strings.Contains(after, "agent_args") {
+			t.Fatalf("a template run was given flags:\n%s", after)
+		}
+	})
+
+	t.Run("a workflow has no agent", func(t *testing.T) {
+		_, after := runPut(t, "", `{"name":"job","cron":"0 9 * * 1-5","repo":"/x","workflow":"nightly"}`)
+		if strings.Contains(after, "agent_args") {
+			t.Fatalf("a workflow run was given flags:\n%s", after)
+		}
+	})
+
+	t.Run("a dry run answers and writes nothing", func(t *testing.T) {
+		answer, after := runPut(t, "", bare+`,"agent":"codex"}`, "--dry-run")
+		if strings.Contains(answer, `"problem"`) || after != "" {
+			t.Fatalf("answer %s, file %q", answer, after)
+		}
+	})
+
+	// An edit keeps the entry's own args (v0.12.0), and an entry that has none
+	// is not migrated: only a new automation gets the default.
+	t.Run("an edit keeps hand-written args", func(t *testing.T) {
+		with := "automations:\n  - name: triage\n    cron: \"0 9 * * 1-5\"\n    repo: /x\n    agent: codex\n    prompt: p\n    agent_args: [\"--sandbox\", \"read-only\"]\n"
+		_, after := runPut(t, with, `{"name":"triage","cron":"0 9 * * 1-5","repo":"/x","agent":"codex","prompt":"q"}`, "--original", "triage")
+		if strings.Contains(after, codexAuto) || !strings.Contains(after, "read-only") {
+			t.Fatalf("an edit changed the entry's agent_args:\n%s", after)
+		}
+	})
+
+	t.Run("an edit of an entry with none adds none", func(t *testing.T) {
+		_, after := runPut(t, putBase, `{"name":"triage","cron":"0 9 * * 1-5","repo":"/x","agent":"codex","prompt":"q"}`, "--original", "triage")
+		if strings.Contains(after, "agent_args") {
+			t.Fatalf("an edit migrated the entry onto the automatic mode:\n%s", after)
+		}
+	})
+}
+
 // The panel's command form writes through the same put: the command, its
 // folder, env and bot have to survive the JSON-to-config mapping (ADR 0013).
 func TestPutCarriesACommandAndItsBot(t *testing.T) {
@@ -149,6 +272,19 @@ func TestPutCarriesACommandAndItsBot(t *testing.T) {
 			t.Fatalf("a command entry was written with %q:\n%s", never, after)
 		}
 	}
+
+	// A bot writes a new command with put and no agent_args key. put's default
+	// agent args are for a new agent run only: given to a command they would be
+	// refused by the loader ("drop agent_args") and nothing would be written.
+	t.Run("a new command sent without agent_args gets none", func(t *testing.T) {
+		answer, written := runPut(t, "", `{"name":"probe","cron":"@daily","command":{"argv":["/bin/true"]}}`)
+		if strings.Contains(answer, `"problem"`) {
+			t.Fatalf("put refused a new command: %s", answer)
+		}
+		if !strings.Contains(written, "- /bin/true") || strings.Contains(written, "agent_args") || strings.Contains(written, "--dangerously") {
+			t.Fatalf("wrote:\n%s", written)
+		}
+	})
 
 	t.Run("an edit that sends no command keeps it", func(t *testing.T) {
 		_, kept := runPut(t, after, `{"name":"check","cron":"0 8 * * *"}`, "--original", "check")

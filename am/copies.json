@@ -90,6 +90,10 @@
       "to": "am/logins.js"
     },
     {
+      "from": "herdr/mods/am-sidebar/machineUpdates.js",
+      "to": "am/machineUpdates.js"
+    },
+    {
       "from": "herdr/mods/am-sidebar/meter-keys.json",
       "to": "am/meter-keys.json"
     },
@@ -148,6 +152,10 @@
     {
       "from": "herdr/mods/am-sidebar/retired.js",
       "to": "am/retired.js"
+    },
+    {
+      "from": "herdr/mods/am-sidebar/revive.js",
+      "to": "am/revive.js"
     },
     {
       "from": "herdr/mods/am-sidebar/tidy.js",

@@ -20,7 +20,8 @@
 import { spawn } from 'node:child_process'
 import { appendFileSync } from 'node:fs'
 import { Readable, Writable } from 'node:stream'
-import { AgentSideConnection, PROTOCOL_VERSION, RequestError, ndJsonStream } from '@agentclientprotocol/sdk'
+import { PROTOCOL_VERSION, RequestError, ndJsonStream } from '@agentclientprotocol/sdk/unstable'
+import { serveAgent } from './serve-agent.mjs'
 
 const MODELS = [
   { value: 'fake-large', name: 'Fake Large', efforts: ['low', 'medium', 'high'], effort: 'medium' },
@@ -122,7 +123,9 @@ function newSession(sessionId, cwd) {
 
 const implementation = {
   async initialize() {
-    return { protocolVersion: PROTOCOL_VERSION, agentCapabilities: { loadSession: false }, authMethods: [] }
+    // FAKE_ACP_PROTOCOL answers another protocol version, as an adapter built for a later ACP does.
+    const protocolVersion = process.env.FAKE_ACP_PROTOCOL === undefined ? PROTOCOL_VERSION : Number(process.env.FAKE_ACP_PROTOCOL)
+    return { protocolVersion, agentCapabilities: { loadSession: false }, authMethods: [] }
   },
   async newSession(params) {
     if (AUTH === 'session') throw RequestError.authRequired(undefined, 'run the CLI\'s login first')
@@ -133,7 +136,7 @@ const implementation = {
     trace({ event: 'new-answer', sessionId, at: Date.now() })
     return { sessionId, ...(OFFERS ? { configOptions: configOptions(session) } : {}) }
   },
-  async unstable_forkSession(params) {
+  async forkSession(params) {
     if (process.env.FAKE_ACP_FORK_FAIL === '1') throw RequestError.invalidParams(undefined, 'fork refused')
     const source = sessions.get(params.sessionId)
     if (source === undefined) throw RequestError.invalidParams(undefined, `Unknown session: ${params.sessionId}`)
@@ -202,6 +205,31 @@ const implementation = {
     await update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'Thinking it over.' } })
     await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `Fake agent, turn ${session.turns}: ` } })
     await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `you said "${said}".` } })
+    // Updates a newer or a broken adapter could send: a kind this client does not know, and a
+    // tool update with no call id. Neither may end the turn or hide what comes after.
+    if (/odd-updates/.test(said)) {
+      await update({ sessionUpdate: 'kind_from_the_future', detail: { anything: true } })
+      await update({ sessionUpdate: 'tool_call_update', status: 'completed' })
+      await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ' Still here.' } })
+      return { stopReason: 'end_turn' }
+    }
+    // A question the agent takes back before it is answered (`$/cancel_request`).
+    if (/withdraw/.test(said)) {
+      const toolCallId = `withdrawn-${session.turns}`
+      await update({ sessionUpdate: 'tool_call', toolCallId, title: 'echo withdrawn', kind: 'execute', status: 'pending', rawInput: { command: 'echo withdrawn' } })
+      const controller = new AbortController()
+      const asked = conn.requestPermission({
+        sessionId,
+        toolCall: { toolCallId, title: 'Run command?' },
+        options: [{ optionId: 'yes', name: 'Allow', kind: 'allow_once' }, { optionId: 'no', name: 'Reject', kind: 'reject_once' }],
+      }, { cancellationSignal: controller.signal })
+      setTimeout(() => controller.abort(), Number(process.env.FAKE_ACP_WITHDRAW_MS ?? 50))
+      const answer = await asked.then(value => value.outcome?.outcome, error => `error ${error?.code}`)
+      trace({ event: 'withdrawn', sessionId, answer })
+      await update({ sessionUpdate: 'tool_call_update', toolCallId, status: 'failed' })
+      await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ` Withdrawn: ${answer}.` } })
+      return { stopReason: 'end_turn' }
+    }
     // A plain answer with no tool call: the turn ends cleanly, for tests about the session.
     if (/plain/.test(said)) return { stopReason: 'end_turn' }
     if (/hang/.test(said)) {
@@ -343,4 +371,4 @@ const implementation = {
   },
 }
 
-const conn = new AgentSideConnection(() => implementation, stream)
+const conn = serveAgent(implementation, stream)

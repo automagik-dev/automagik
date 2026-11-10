@@ -103,6 +103,18 @@ function MemoryCard({ bot, actions }) {
 
 const noSubscribe = () => () => {}
 
+// A Bot's deny list as the settings field edits it: one exact tool name per line. A Bot
+// without a list shows an empty field, which means every tool is allowed.
+export function denyToolsText(bot) {
+  return (Array.isArray(bot?.denyTools) ? bot.denyTools : []).join('\n')
+}
+
+// Comma or newline separated, trimmed, case kept: the host takes exact tool names. Empty
+// entries are dropped, as the host drops them; the list is deduplicated in the field too.
+export function parseDenyTools(text) {
+  return [...new Set(String(text ?? '').split(/[\n,]+/).map(name => name.trim()).filter(Boolean))]
+}
+
 // A Bot's settings as grouped cards: who it is (avatar, name, role), what it runs on
 // (model), what it does (instructions), its memory and tasks, its Main Bot role, its
 // sidebar place, and copies.
@@ -171,6 +183,21 @@ export function BotSettingsForm({ bot, roster, actions, run }) {
       h(Row, { label: t('What this Bot does'), hint: t('Its job on the team. Part of the Bot\'s system prompt.'), stack: true },
         h(InlineText, { label: t('Instructions'), value: bot.instructions, multiline: true, placeholder: t('What this Bot is responsible for…'), onSave: instructions => save({ instructions }) }))),
     h(BotCapabilitiesCard, { bot, roster, actions, run, Card, SwitchRow }),
+    h(Card, { title: t('Tools') },
+      h(Row, {
+        label: t('Denied tools'),
+        hint: t('Exact tool names, one per line or comma separated, case-sensitive. Empty allows every tool.'),
+        stack: true,
+      }, h(InlineText, {
+        label: t('Denied tools'),
+        value: denyToolsText(bot),
+        multiline: true,
+        placeholder: 'bash, write',
+        onSave: (text) => {
+          const names = parseDenyTools(text)
+          save({ denyTools: names.length ? names : null })
+        },
+      }))),
     ...extraCards.map(entry => h(entry.Component, { key: entry.id, bot, roster, actions, run, Card, Row, SwitchRow })),
     roster.memory === false ? null : h(MemoryCard, { bot, actions }),
     h(BotSchedules, { bot, roster, actions }),

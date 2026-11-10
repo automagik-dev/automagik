@@ -47,8 +47,8 @@ API and WebSocket authentication.
   is the unmodified `lib/index.js` of that package; its header says so at
   `apps/desktop/test/client-connection-cookie-lax.test.js:1-9`. The cookie and admission code
   can therefore be read from this repository without a DSH checkout.
-- RFC 0024 already assumes a gate in front and keeps the fallback as open question 11:
-  `docs/rfcs/0024-automagik-cloud.md:233-241`.
+- RFC 0024 already assumes a gate in front and keeps the fallback as Decided 21:
+  `docs/rfcs/0024-automagik-cloud.md:270-277`.
 
 **What a plugin can and cannot do.** It can register an exact or prefix route and call
 `ctx.connection.admit(request)` to reuse DSH's cookie check, and it can listen on
@@ -60,7 +60,7 @@ always the owner, so a plugin cannot invent a per-person principal either.
 
 **Unknown, and what it blocks.** Whether a later DSH ships a hook is unknown. It does not
 block this delivery: the architecture is a gate in front, and a future hook is its own change
-(RFC 0024 open question 11). It does block any plan that promises role-filtered DSH routes or
+(RFC 0024, Decided 21). It does block any plan that promises role-filtered DSH routes or
 in-DSH SSO before that hook exists.
 
 **What it means for the deliveries.**
@@ -150,7 +150,8 @@ unencrypted and its credentials are `0600` files readable by same-UID processes,
   plaintext password, and exposes `getSelectedStorageBackend()` to detect it.
 - Electron v44.5.0 `shell/browser/api/electron_api_safe_storage.cc`: on Linux,
   `isEncryptionAvailable()` counts the `basic_text` fallback only after the app opts in,
-  so availability is not the safety signal; the backend is.
+  so availability alone is not the safety signal. The Linux rule is both: a backend name
+  that is a real store, and `isEncryptionAvailable()` answering true.
 - Electron's own Linux spec forces the opt-in and still expects `basic_text`:
   [spec](https://github.com/electron/electron/blob/v44.5.0/spec/api-safe-storage.spec.ts).
 - The app's own statement that it uses no `safeStorage`:
@@ -161,7 +162,9 @@ unencrypted and its credentials are `0600` files readable by same-UID processes,
 **What the implementation must do.**
 
 - After `ready`, on Linux, read `getSelectedStorageBackend()`; treat `basic_text` and
-  `unknown` as no secure store. Do not call `setUsePlainTextEncryption(true)`.
+  `unknown` as no secure store, and a named store whose `isEncryptionAvailable()` is not
+  true (a locked keyring) as no store for that launch. Do not call
+  `setUsePlainTextEncryption(true)`.
 - With a store, use the async API, handle `shouldReEncrypt`, and treat
   `isTemporarilyUnavailable` without losing the token. Without one, write nothing: keep the
   refresh token in memory and sign in per launch, with the reason in the UI.
@@ -438,8 +441,8 @@ company customer. #912 can test one issuer, one group claim and the operator-hel
   re-mint on `401` and re-read the launch token after a DSH restart. A transparent cookie is
   possible but inherits `SameSite`, port and non-`Secure` problems. This supports the RFC's
   recommended 12-hour idle gate session and 5-minute workspace token.
-- **RFC Q11, the gate now.** DSH 0.2.2-rc.1 has no hook, so the gate fronts every route and
-  WebSocket; the upstream hook is a later change, not a dependency. The RFC's assumption
+- **RFC 0024, Decided 21, the gate now.** DSH 0.2.2-rc.1 has no hook, so the gate fronts every
+  route and WebSocket; the upstream hook is a later change, not a dependency. The RFC's assumption
   stands.
 - **RFC Q14, federation.** No upstream OIDC or SAML federation and no SCIM target exist today.
   Decide before the first company customer; a later issuer move re-binds every person.
