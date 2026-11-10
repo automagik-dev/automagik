@@ -552,6 +552,9 @@ var ZH = {
   Role: "角色",
   "A few words on what it does.": "用几个词说明它做什么。",
   "Research, admin…": "研究、行政…",
+  Tools: "工具",
+  "Denied tools": "禁止使用的工具",
+  "Exact tool names, one per line or comma separated, case-sensitive. Empty allows every tool.": "精确的工具名，每行一个或用逗号分隔，区分大小写。留空表示允许所有工具。",
   "What this Bot does": "这个 Bot 做什么",
   "Its job on the team. Part of the Bot's system prompt.": "它在团队里的分工，会写进 Bot 的系统提示词。",
   "A copy with the same job and model, and fresh memory.": "复制分工和模型，记忆从零开始。",
@@ -16653,6 +16656,12 @@ function MemoryCard({ bot, actions }) {
 }
 var noSubscribe2 = () => () => {
 };
+function denyToolsText(bot) {
+  return (Array.isArray(bot?.denyTools) ? bot.denyTools : []).join("\n");
+}
+function parseDenyTools(text2) {
+  return [...new Set(String(text2 ?? "").split(/[\n,]+/).map((name) => name.trim()).filter(Boolean))];
+}
 function BotSettingsForm({ bot, roster, actions, run: run2 }) {
   const [editing, setEditing] = (0, import_react42.useState)(false);
   const [confirming, setConfirming] = (0, import_react42.useState)(false);
@@ -16753,6 +16762,24 @@ function BotSettingsForm({ bot, roster, actions, run: run2 }) {
       )
     ),
     (0, import_react42.createElement)(BotCapabilitiesCard, { bot, roster, actions, run: run2, Card, SwitchRow }),
+    (0, import_react42.createElement)(
+      Card,
+      { title: t("Tools") },
+      (0, import_react42.createElement)(Row, {
+        label: t("Denied tools"),
+        hint: t("Exact tool names, one per line or comma separated, case-sensitive. Empty allows every tool."),
+        stack: true
+      }, (0, import_react42.createElement)(InlineText, {
+        label: t("Denied tools"),
+        value: denyToolsText(bot),
+        multiline: true,
+        placeholder: "bash, write",
+        onSave: (text2) => {
+          const names = parseDenyTools(text2);
+          save({ denyTools: names.length ? names : null });
+        }
+      }))
+    ),
     ...extraCards.map((entry) => (0, import_react42.createElement)(entry.Component, { key: entry.id, bot, roster, actions, run: run2, Card, Row, SwitchRow })),
     roster.memory === false ? null : (0, import_react42.createElement)(MemoryCard, { bot, actions }),
     (0, import_react42.createElement)(BotSchedules, { bot, roster, actions }),
