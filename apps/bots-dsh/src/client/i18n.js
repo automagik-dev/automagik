@@ -578,6 +578,13 @@ const ZH = {
   "What may {name} do on its own?": "{name} 可以自行做什么？",
   "You choose. Nothing changes until you save.": "由你决定。保存之前不会有任何变化。",
   "You can change this any time in Details.": "你可以随时在“详情”中更改。",
+  // Full access on a Bot that runs on a coding CLI, shown as "Auto" (permission-picker.js).
+  "{cli} decides by itself and runs commands and changes files anywhere without asking you. Automagik asks it for its own \"{mode}\" mode, and does not review or ask. This holds while the Bot runs on {cli}.": "{cli} 自行决定，在任何位置运行命令、修改文件，都不会问你。Automagik 会请它使用自己的“{mode}”模式，不审查，也不询问。只要 Bot 在 {cli} 上运行，就一直如此。",
+  "{cli} will decide by itself and run without asking you. Automagik will ask it for its own \"{mode}\" mode, and will not review or ask. This holds while the Bot runs on {cli}.": "{cli} 将自行决定并直接运行，不会问你。Automagik 会请它使用自己的“{mode}”模式，不会审查，也不会询问。只要 Bot 在 {cli} 上运行，就一直如此。",
+  "Use Auto for {name}?": "要让 {name} 使用自动吗？",
+  "Use Auto": "使用自动",
+  "{cli} is in its mode \"{mode}\" here, not its no-ask mode.": "{cli} 在这里处于“{mode}”模式，而不是它的免询问模式。",
+  "The agent": "智能体",
   "Choose in the chat": "在对话中选择",
   'The permission level was saved, but some conversations could not take it and keep the level they had until DeepSeek Harness opens them again.': '权限级别已保存，但有些对话未能切换，在 DeepSeek Harness 重新打开它们之前仍保持原来的级别。',
   'New Bots start with': '新 Bot 的初始权限',
