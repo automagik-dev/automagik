@@ -6,8 +6,13 @@
 // ObjC bridge), from files copied out of the app first: the lockup and the script, in
 // <home>/splash. It stays until the new copy's page is in, which removes <home>/splash/up,
 // or two minutes pass. Elsewhere there is no splash.
+// Its bar is determinate, and moves on what happened, not on a clock: the splash is up while
+// this copy closes; this copy writes <home>/splash/installing as it hands over to macOS; the new
+// copy writes <home>/splash/starting once it runs; and its page going in, the last step, takes
+// the splash down.
+// It goes up only from a restart the person asked for (main.js installUpdate).
 import { spawn as spawnChild } from 'node:child_process'
-import { copyFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -15,9 +20,12 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 export const LOCKUP = join(HERE, 'splash', 'lockup.png')
 export const OSASCRIPT = '/usr/bin/osascript'
 export const SPLASH_MAX_MS = 120_000
+// The steps after the splash went up, in order: each is a file of that name beside "up".
+export const SPLASH_STEPS = Object.freeze(['installing', 'starting'])
 
 // A borderless, non-activating panel in the middle of the screen, in the system's own light or
-// dark material: the lockup, what is happening, and a spinner. It never takes focus. With "dry"
+// dark material: the lockup, what is happening, and a bar of the steps done (the files beside
+// "up", see SPLASH_STEPS). It never takes focus. With "dry"
 // it builds everything and shows nothing (a check that AppKit takes every call).
 export const SPLASH_SCRIPT = `ObjC.import('Cocoa');
 function run(argv) {
@@ -53,20 +61,24 @@ function run(argv) {
   line.setTextColor($.NSColor.secondaryLabelColor);
   line.setAlignment(1);
   line.setFrame($.NSMakeRect(20, 64, W - 40, 18));
-  const spinner = $.NSProgressIndicator.alloc.initWithFrame($.NSMakeRect((W - 20) / 2, 26, 20, 20));
-  spinner.setStyle(1);
-  spinner.setIndeterminate(true);
+  const steps = up.replace(/[^/]*$/, '');
+  const bar = $.NSProgressIndicator.alloc.initWithFrame($.NSMakeRect(90, 26, W - 180, 20));
+  bar.setStyle(0);
+  bar.setIndeterminate(false);
+  bar.setMinValue(0);
+  bar.setMaxValue(${SPLASH_STEPS.length + 2});
+  bar.setDoubleValue(1);
   card.addSubview(art);
   card.addSubview(heading);
   card.addSubview(line);
-  card.addSubview(spinner);
+  card.addSubview(bar);
   panel.setContentView(card);
   if (dry) return 'ok';
-  spinner.startAnimation(null);
   panel.orderFrontRegardless;
   const files = $.NSFileManager.defaultManager;
   const until = Date.now() + maxMs;
   while (files.fileExistsAtPath(up) && Date.now() < until) {
+    bar.setDoubleValue(${SPLASH_STEPS.map((step, at) => `files.fileExistsAtPath(steps + '${step}') ? ${at + 2}`).reverse().join(' : ')} : 1);
     $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.25));
   }
   panel.orderOut(null);
@@ -92,6 +104,8 @@ export function showUpdateSplash({ home, product, version, platform = process.pl
   const files = splashFiles(home)
   try {
     mkdirSync(files.dir, { recursive: true })
+    // A step an earlier update left must not move this one's bar.
+    for (const step of SPLASH_STEPS) rmSync(join(files.dir, step), { force: true })
     writeFileSync(files.script, SPLASH_SCRIPT)
     copyFileSync(image, files.image)
     writeFileSync(files.up, `${Date.now()}\n`)
@@ -110,7 +124,26 @@ export function showUpdateSplash({ home, product, version, platform = process.pl
   }
 }
 
+/**
+ * Says the update reached `step` (one of SPLASH_STEPS), for the splash's bar. Only while a
+ * splash is up: with none there is nothing to tell, and nothing is written. Answers whether it
+ * was said.
+ */
+export function markSplashStep(home, step) {
+  if (!SPLASH_STEPS.includes(step)) return false
+  const files = splashFiles(home)
+  try {
+    if (!existsSync(files.up)) return false
+    writeFileSync(join(files.dir, step), `${Date.now()}\n`)
+    return true
+  } catch {
+    return false
+  }
+}
+
 /** Takes the splash down: this copy is up and its page is in. */
 export function dismissSplash(home) {
-  try { rmSync(splashFiles(home).up, { force: true }) } catch {}
+  const files = splashFiles(home)
+  try { rmSync(files.up, { force: true }) } catch {}
+  for (const step of SPLASH_STEPS) { try { rmSync(join(files.dir, step), { force: true }) } catch {} }
 }

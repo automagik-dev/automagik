@@ -345,4 +345,31 @@ class PocketViewModelChatTest {
         assertEquals(listOf("dsh:s1"), seen.sections.first { it.rank == Cockpit.IDLE }.entries.map { it.ref.address })
         assertEquals("Answered on the phone (Pixel): Allow", vm.chatWatch.value.getValue(ChatWatch.key(host, "dsh:s1")).receipt)
     }
+
+    /** The preview opens its one sample main-bot chat with no bridge at all: the fixture is the whole chat. */
+    @Test fun thePreviewOpensItsSampleMainBotChatWithoutABridge() {
+        var opened = false
+        vm.chatOpener = { _, _, _ -> opened = true; error("the preview must not open a chat link") }
+        vm.enterDemo()
+        val bubbles = Teams.bubbles(Teams.build(vm.state.value.machines, System.currentTimeMillis()), ChatDemo.chats())
+        assertEquals(Teams.Opens.DshChat(ChatDemo.ref), bubbles.single { it.team.name == "herdr" }.opens)
+        assertEquals("Captain", vm.botChats.value[ChatDemo.HOST]?.getOrNull()?.single()?.title)
+        vm.openChat(ChatDemo.ref)
+        val chat = checkNotNull(vm.chat.value)
+        assertEquals(ChatDemo.TERMINAL, chat.terminal)
+        assertEquals("approval", chat.approval?.kind)
+        assertEquals("question", chat.question?.kind)
+        assertTrue(chat.rows.any { it.kind == "text" && it.role == "assistant" && it.text.length >= 400 })
+        assertFalse(opened)
+        vm.chatAnswer(checkNotNull(chat.approval), "allow")
+        assertEquals(ChatDemo.SAMPLE_ONLY, vm.chat.value?.notice)
+        // A preview terminal with no sample chat keeps the old message: no rows from Captain.
+        vm.openChat(TerminalRef(ChatDemo.HOST, "t6"))
+        val other = checkNotNull(vm.chat.value)
+        assertEquals("t6", other.terminal)
+        assertTrue(other.rows.isEmpty())
+        assertEquals("Chat needs a connected machine.", other.error)
+        vm.leaveDemo()
+        assertTrue(vm.botChats.value[ChatDemo.HOST] == null)
+    }
 }

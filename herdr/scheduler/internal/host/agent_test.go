@@ -477,6 +477,41 @@ func TestAwaitReturnsWhenTheAgentSettles(t *testing.T) {
 	}
 }
 
+// #938: Herdr's wait returning is not the agent saying it finished. Only its
+// own idle or done is a finished run; these used to be recorded done.
+func TestAwaitDoesNotCallAnAgentInErrorDone(t *testing.T) {
+	ops := &fakeOps{agentStatus: func(string) (string, error) { return "error", nil }}
+	err := agentWorkWith(ops, config.Automation{}).await(Session{PaneID: "p"}, time.Hour)
+	if err == nil || !strings.Contains(err.Error(), "reported an error") {
+		t.Fatalf("got %v, want the agent's error as a failure", err)
+	}
+}
+
+func TestAwaitDoesNotCallAnUnreadableAgentDone(t *testing.T) {
+	ops := &fakeOps{agentStatus: func(string) (string, error) { return "unknown", nil }}
+	err := agentWorkWith(ops, config.Automation{}).await(Session{PaneID: "p"}, 20*time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), `status was "unknown"`) {
+		t.Fatalf("got %v, want a failure naming the status", err)
+	}
+}
+
+// The other direction: a status Herdr could not read for a moment must not
+// fail a run that then finishes.
+func TestAwaitWaitsOutAnUnknownStatusThenDone(t *testing.T) {
+	states := []string{"unknown", "unknown", "working", "done"}
+	index := -1
+	ops := &fakeOps{
+		agentWait:   func(string, time.Duration) error { index++; return nil },
+		agentStatus: func(string) (string, error) { return states[index], nil },
+	}
+	if err := agentWorkWith(ops, config.Automation{}).await(Session{PaneID: "p"}, time.Hour); err != nil {
+		t.Fatalf("got %v, want the finished run reported done", err)
+	}
+	if index != 3 {
+		t.Fatalf("stopped waiting at %q", states[index])
+	}
+}
+
 func TestAwaitGivesUpAsSoonAsTheWorkspaceIsClosed(t *testing.T) {
 	// The failure this exists for: a run cancelled seconds in used to hold its
 	// in-flight slot for the whole timeout. One slice is all it should cost now.

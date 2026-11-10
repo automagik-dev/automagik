@@ -5,6 +5,7 @@ import { createElement as h, useEffect, useState } from 'react'
 import { clearClientErrors, clientErrors, clientFacts, failureLabel, issueUrl, WHAT_MAX } from './diagnostics.js'
 import { dateLocale, t } from './i18n.js'
 import { CloseIcon } from './icons.js'
+import { PermissionDiagnostics } from './permission-diagnostics.js'
 import { SPRING_SHAPE } from './motion.js'
 
 export const FeedbackIcon = () => h('svg', { width: 15, height: 15, viewBox: '0 0 20 20', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true },
@@ -57,7 +58,7 @@ function issueWindow() {
   }
 }
 
-export function FeedbackPage({ actions, run, Section, Row }) {
+export function FeedbackPage({ actions, run, Section, Row, roster }) {
   const [what, setWhat] = useState('')
   const [report, setReport] = useState(null)
   const [preview, setPreview] = useState(false)
@@ -118,6 +119,7 @@ export function FeedbackPage({ actions, run, Section, Row }) {
     note ? h('div', { key: 'note', className: 'bt-note bt-fb-note', role: 'status' },
       note,
       issueLink ? [' ', h('a', { key: 'link', href: issueLink, target: '_blank', rel: 'noopener noreferrer' }, t('Open the issue'))] : null) : null,
+    h(PermissionDiagnostics, { key: 'permissions', actions, roster, Section, Row }),
     h(Section, { key: 'errors', title: report ? t('Recent errors · {count}', { count: total }) : t('Recent errors') },
       shown.length === 0
         ? h(Row, { label: t('No errors recorded.'), hint: t('Failed model calls and Omni problems show here, newest first.') })

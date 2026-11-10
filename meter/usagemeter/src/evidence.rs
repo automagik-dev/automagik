@@ -925,13 +925,19 @@ pub struct History {
     pub seen_last: Option<i64>,
     pub live_cwd: Option<String>,
     pub live_agent: Option<String>,
+    /// A launch with no start row keeps the tag its snapshot's labels supplied (RFC 0026 (c)).
+    pub kind: Option<String>,
+    pub bot: Option<String>,
+    pub role: Option<String>,
+    /// Its `bound` timeline: the attach bindings, and the label sightings earlier syncs saw.
+    pub bound: Option<String>,
 }
 
 /// Stored launches with a key: their ends, and what earlier snapshots saw of them.
 pub fn history(c: &Connection) -> rusqlite::Result<Vec<History>> {
     let mut st = c.prepare(
         "SELECT lkey, core, terminal, created_ms, valid_to, end_basis, source, worktree, seen_last,
-                live_cwd, live_agent
+                live_cwd, live_agent, kind, bot, role, bound
          FROM launch WHERE terminal IS NOT NULL AND created_ms IS NOT NULL
          ORDER BY lkey",
     )?;
@@ -948,6 +954,10 @@ pub fn history(c: &Connection) -> rusqlite::Result<Vec<History>> {
             seen_last: r.get(8)?,
             live_cwd: r.get(9)?,
             live_agent: r.get(10)?,
+            kind: r.get(11)?,
+            bot: r.get(12)?,
+            role: r.get(13)?,
+            bound: r.get(14)?,
         })
     })?
     .collect()
@@ -1605,6 +1615,7 @@ mod tests {
     fn a_filled_branch_comes_only_from_a_worker_of_a_harness_that_logs_none() {
         use crate::ledger::Tag;
         let tag = |bot: &str, kind: Kind| Tag {
+            label: false,
             bot: bot.into(),
             kind,
             role: None,

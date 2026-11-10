@@ -1,0 +1,434 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://automagik.si/schema/meter/fleet/v1/fleet-coverage.schema.json",
+  "title": "The fleet coverage record, v1",
+  "description": "RFC 0026 (e). Written by the Automagik Herdr pack beside its install record (automagik-herdr/fleet-coverage.json under the app home, mode 0600), replaced on every run of the sidebar's meter step: the latest only, no history. One entry per machine whose own `usagemeter coverage --window <window> --json` answered, the machines that did not answer by name in `missing`, and the linked machines outside the meter's scope in `out_of_scope`. The fleet number is a reader's sum: add the machines' four counts as tokens, the parts by reason, the bots by bot id and the repos by name, and compute the ratio over the summed tokens (token-weighted, never the mean of the machines' ratios). Say it as \"over N of M machines\" (N = machines, M = machines + missing), never as the fleet's coverage, while `missing` is not empty; a machine in `missing` or `out_of_scope` has unknown tokens and is never counted as 0. A ratio is over counted usage, never a bound; only token totals are lower bounds, for an entry that is stale, incomplete or clipped. The record holds no session id, no request hash, no path and no raw log id. At most 64 KiB per machine entry and 1 MiB in all, as JSON.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "generated_at",
+    "window",
+    "machines",
+    "missing",
+    "out_of_scope"
+  ],
+  "properties": {
+    "v": {
+      "const": 1
+    },
+    "generated_at": {
+      "$ref": "#/$defs/time",
+      "description": "When the run that wrote the record ended asking."
+    },
+    "window": {
+      "enum": [
+        "d30"
+      ],
+      "description": "The one window every entry answers for. Each machine's window ends at its own watermark: `start` and `end` are per entry."
+    },
+    "machines": {
+      "type": "array",
+      "maxItems": 1024,
+      "items": {
+        "$ref": "#/$defs/entry"
+      }
+    },
+    "missing": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {
+        "$ref": "#/$defs/missing"
+      }
+    },
+    "out_of_scope": {
+      "type": "array",
+      "maxItems": 4096,
+      "items": {
+        "$ref": "#/$defs/machine"
+      },
+      "description": "Linked machines the person did not agree to usagemeter on (the install record's scope): apart from `missing`, and not part of M."
+    }
+  },
+  "$defs": {
+    "count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "time": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,9})?Z$",
+      "maxLength": 40
+    },
+    "machine": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$",
+      "description": "A linked machine's name as `hc machine ls` gives it; `local` for the computer that wrote the record (told apart by `here`)."
+    },
+    "ratio": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Four decimals; null, never 0, over no counted usage; a share above 0 is never rounded to 0."
+    },
+    "totals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attributed",
+        "ambiguous",
+        "unlinked",
+        "before_evidence",
+        "total"
+      ],
+      "description": "RFC 0021's four counts, in tokens, and their sum.",
+      "properties": {
+        "attributed": {
+          "$ref": "#/$defs/count"
+        },
+        "ambiguous": {
+          "$ref": "#/$defs/count"
+        },
+        "unlinked": {
+          "$ref": "#/$defs/count"
+        },
+        "before_evidence": {
+          "$ref": "#/$defs/count"
+        },
+        "total": {
+          "$ref": "#/$defs/count"
+        }
+      }
+    },
+    "basis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "session",
+        "label",
+        "worktree"
+      ],
+      "properties": {
+        "session": {
+          "$ref": "#/$defs/count"
+        },
+        "label": {
+          "$ref": "#/$defs/count"
+        },
+        "worktree": {
+          "$ref": "#/$defs/count"
+        }
+      }
+    },
+    "part": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "reason",
+        "tokens"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "ambiguous",
+            "unlinked",
+            "before_evidence"
+          ]
+        },
+        "reason": {
+          "enum": [
+            "claimants_differ",
+            "no_record",
+            "dsh_tui_seat",
+            "other_machine",
+            "before_evidence"
+          ]
+        },
+        "tokens": {
+          "$ref": "#/$defs/count"
+        }
+      }
+    },
+    "bot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bot",
+        "tokens",
+        "tokens_by_basis"
+      ],
+      "properties": {
+        "bot": {
+          "type": "string",
+          "pattern": "^[^\\s/\\\\\\u0000-\\u001f\\u007f]{1,64}$",
+          "description": "The bot id: the key a bot joins on across machines."
+        },
+        "tokens": {
+          "$ref": "#/$defs/count"
+        },
+        "tokens_by_basis": {
+          "$ref": "#/$defs/basis"
+        }
+      }
+    },
+    "bots_other": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "tokens",
+        "tokens_by_basis"
+      ],
+      "description": "The attributed tokens of the bots the list leaves out (`bots_omitted` of them); null when none is.",
+      "properties": {
+        "tokens": {
+          "$ref": "#/$defs/count"
+        },
+        "tokens_by_basis": {
+          "$ref": "#/$defs/basis"
+        }
+      }
+    },
+    "repo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repo",
+        "state",
+        "totals"
+      ],
+      "properties": {
+        "repo": {
+          "type": "string",
+          "pattern": "^[a-z0-9.-]+(/[^/\\s\\\\\\u0000-\\u001f\\u007f]+)+$",
+          "maxLength": 512,
+          "description": "Contract 1's normalized `host/owner/repo`; never a path."
+        },
+        "state": {
+          "enum": [
+            "measured",
+            "no_usage",
+            "unknown"
+          ]
+        },
+        "totals": {
+          "$ref": "#/$defs/totals"
+        }
+      }
+    },
+    "repos_other": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "totals"
+      ],
+      "description": "The summed counts of the repos the list leaves out (`repos_omitted` of them); null when none is.",
+      "properties": {
+        "totals": {
+          "$ref": "#/$defs/totals"
+        }
+      }
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "machine",
+        "here",
+        "machine_id",
+        "meter_version",
+        "as_of",
+        "evidence_from",
+        "evidence",
+        "counted_from",
+        "start",
+        "end",
+        "complete",
+        "stale",
+        "clipped",
+        "truncated",
+        "totals",
+        "bot_coverage",
+        "inspected",
+        "parts",
+        "bots",
+        "bots_omitted",
+        "bots_other",
+        "repos",
+        "repos_omitted",
+        "repos_other"
+      ],
+      "properties": {
+        "machine": {
+          "$ref": "#/$defs/machine"
+        },
+        "here": {
+          "type": "boolean",
+          "description": "True for the computer that wrote the record."
+        },
+        "machine_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[^\\s/\\\\\\u0000-\\u001f\\u007f]{1,64}$",
+          "description": "The machine name that store reports for itself; two entries with one id are one store counted twice."
+        },
+        "meter_version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+([-+][0-9A-Za-z.-]+)?$",
+          "maxLength": 64
+        },
+        "as_of": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "That store's watermark; null before its first sync."
+        },
+        "evidence_from": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/time"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence": {
+          "enum": [
+            "full",
+            "partial",
+            "none"
+          ],
+          "description": "Whether the window is wholly at or after `evidence_from`, starts before it, or has none."
+        },
+        "counted_from": {
+          "$ref": "#/$defs/time"
+        },
+        "start": {
+          "$ref": "#/$defs/time",
+          "description": "The window's effective start on that machine."
+        },
+        "end": {
+          "$ref": "#/$defs/time"
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "stale": {
+          "type": "boolean"
+        },
+        "clipped": {
+          "type": "boolean"
+        },
+        "truncated": {
+          "type": "boolean",
+          "description": "True when a bot or repo list was capped, by the report's 50 lines or by this record's 64 KiB per entry and 1 MiB in all. Every total still includes every bot and repo: the cut lines are counted in `*_omitted` and summed in `*_other`."
+        },
+        "totals": {
+          "$ref": "#/$defs/totals"
+        },
+        "bot_coverage": {
+          "$ref": "#/$defs/ratio",
+          "description": "attributed / total, over this machine's counted usage."
+        },
+        "inspected": {
+          "$ref": "#/$defs/ratio",
+          "description": "attributed / (attributed + ambiguous + unlinked): the diagnostic, never the headline."
+        },
+        "parts": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 5,
+          "items": {
+            "$ref": "#/$defs/part"
+          },
+          "description": "The five classes, each once; each state's classes add up to its count in `totals`."
+        },
+        "bots": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "$ref": "#/$defs/bot"
+          }
+        },
+        "bots_omitted": {
+          "$ref": "#/$defs/count"
+        },
+        "bots_other": {
+          "$ref": "#/$defs/bots_other"
+        },
+        "repos": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "$ref": "#/$defs/repo"
+          }
+        },
+        "repos_omitted": {
+          "$ref": "#/$defs/count"
+        },
+        "repos_other": {
+          "$ref": "#/$defs/repos_other"
+        }
+      }
+    },
+    "missing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "machine",
+        "here",
+        "reason"
+      ],
+      "description": "A machine in the meter's scope that gave no answer: its tokens are unknown.",
+      "properties": {
+        "machine": {
+          "$ref": "#/$defs/machine"
+        },
+        "here": {
+          "type": "boolean"
+        },
+        "reason": {
+          "enum": [
+            "timeout",
+            "no_coverage",
+            "no_store",
+            "locked",
+            "newer_store",
+            "outdated_store",
+            "error",
+            "no_meter",
+            "unreachable",
+            "disconnected",
+            "invalid",
+            "record_full"
+          ],
+          "description": "timeout: past the run's 30 s. A coverage exit by name: no_coverage (2: its meter has no coverage verb), no_store (10), locked (11), newer_store (12), outdated_store (13), error (1 or any other exit). no_meter: no usagemeter there. unreachable: the program could not be run there. disconnected: linked, not connected now. invalid: the answer is not a v1 coverage record for the window whose counts add up. record_full: its entry did not fit the record's 1 MiB."
+        },
+        "exit": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 255,
+          "description": "The coverage run's exit status, when it exited."
+        }
+      }
+    }
+  }
+}
