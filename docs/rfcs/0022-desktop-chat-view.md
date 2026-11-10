@@ -67,9 +67,9 @@ revised, he approves it, then it is built. The facts the revision rests on, read
 - No DSH-side code calls hc: `apps/bots-dsh/src`, `apps/acp-dsh/src` and `apps/desktop/src` have
   no hc call (one comment names an `hc machine` name, `registry.js:38`), and
   `apps/bots-dsh/src/host/live-chat/` does not exist.
-- A DSH chat on an ACP route starts its own agent: acp-dsh spawns the adapter
-  (`apps/acp-dsh/src/host/acp.js:63`) and opens a new session (`acp.js:88`), with no session load
-  or resume, and declares no client capabilities (`acp.js:87`). It never attaches to a running
+- A DSH chat on an ACP route starts its own agent: `AgentRun.start` in
+  `apps/acp-dsh/src/host/acp.js` spawns the adapter, declares no client capabilities and opens a
+  new session with `newSession`, with no session load or resume. It never attaches to a running
   pane.
 - The only view of an existing pane is Pocket Link's chat engine
   (`herdr/mods/pocket-link/chat/engine.js`), served to the phone.
@@ -132,6 +132,8 @@ Decided by Chat after review, 2026-11-09:
 9. **Delivery H comes before phase 1.** The link scoping to the shown seat, a mask on macOS
    (only Linux has one today, bwrap) and ssh coverage land before the view does. The owner is not
    asked to sign off the link's reach as a phase-0 risk ((f), "The link's reach"; Deliveries).
+   Narrowed by (k) if the owner confirms it (2026-11-10, Proposed): H then comes before a view
+   of a seat on another computer, and a seat on the desktop's own computer ships first (1L).
 
 Rejected, recorded so it is not proposed again:
 
@@ -518,7 +520,7 @@ click opens.
 | Code: machines | this computer first, then each linked machine the owner made | its projects, folded open |
 | Code: projects | the projects with a `shown[]` yes on that machine ((d)) | its bots, folded open |
 | Code: bots | each project's bots from the registry, its main bot first, each with its agent and status | the view in Code mode on the bot's pane; the view's switch flips to the rendered face where (d)'s table has one |
-| Code: workers | each bot's live workers, from the pack's workers ledger, under the bot that started them | the view in Code mode on the worker's pane |
+| Code: workers | each bot's live workers, under the bot that started them, from both sources: the pack's workers ledger, and the code workers a DSH Bot starts if RFC 0028 (#1008) lands (terminals labelled `automagik.bot`) | the view in Code mode on the worker's pane |
 
 Rules for both sides:
 
@@ -593,11 +595,11 @@ link ((f), "The link's reach"). #631 landing in full would not close that path; 
 - The first humanized bot, the General Orchestrator, runs on the owner's own computer, so 1L
   shows it.
 
-**A seat on another computer waits for H** (Decided 9, unchanged). It needs a machine link on
-the desktop's computer, and that link gives every process of the account the whole hc API on the
-linked machine, `exec` included. An owner-only view does not narrow what the link allows. H
-starts from #628 and #631's proxy method table (C2a and C2b are merged) and needs a macOS mask,
-which #631 lists as a later stage: in practice remote seats follow the parts of #631 that H
+**A seat on another computer waits for H** (Decided 9, narrowed by (k) if confirmed). It needs a
+machine link on the desktop's computer, and that link gives every process of the account the whole
+hc API on the linked machine, `exec` included. An owner-only view does not narrow what the link
+allows. H starts from #628 and #631's proxy method table (C2a and C2b are merged) and needs a macOS
+mask, which #631 lists as a later stage: in practice remote seats follow the parts of #631 that H
 builds on, not the whole issue.
 
 **The Code side widens H's scope.** H scopes the link to the one seat the view shows. Listing
@@ -808,13 +810,15 @@ becomes 0, 1L, 2L, B, then H, 1, 2, 3, 4 as decided, and I after H and RFC 0024 
 2L. **Writes from the rendered face, on this computer** (plugin; after 1L). Phase 2 for local
    seats. *Check:* phase 2's checks on a local seat. *Rollback:* as phase 2.
 B. **The Team and Code bar** (plugin; after 1L; the drawing approved by the owner first). (i)'s
-   model: the side switch replacing RFC 0013's Work and Code segments, Team's sections, Code's
-   tree of this computer from the registry and the two ledgers, humanized bots ((j)) as Team rows.
-   *Acceptance:* no row starts, stops or restarts anything; herdr-app still opens from a Code
-   row; a worker row opens Code mode on the worker's pane; Code lists linked machines only after
-   H. *Check:* with temp homes and fake ledgers (never a live Herdr), each part lists what (i)
-   says and each click opens what it says; no hc call writes. *Rollback:* a plugin release with
-   today's bar.
+   model: the side switch replacing RFC 0013's Work and Code segments, Team's sections, Code's tree
+   of this computer from the registry and the two ledgers, humanized bots ((j)) as Team rows.
+   *Acceptance:* no row starts, stops or restarts anything; herdr-app still opens from a Code row; a
+   worker row opens Code mode on the worker's pane; Code lists linked machines only after H; Code's
+   worker rows read both sources, the pack's workers ledger and, if RFC 0028 (#1008) lands, its code
+   workers (terminals labelled `automagik.bot`). *Check:* with temp homes, fake ledgers and a fake
+   hc (never a live Herdr), each part lists what (i) says and each click opens what it says; a
+   worker from either source is listed once, under its bot; no hc call writes. *Rollback:* a plugin
+   release with today's bar.
 I. **The owner's instance holds his links** (server image and plugin; after H and RFC 0024
    delivery 2). (l)'s four conditions. *Check:* before the claim, the instance refuses to show a
    seat and holds no link; after it, a DSH Bot's command on the instance cannot read a link's
@@ -877,8 +881,8 @@ Ledger pass (2026-11-10): the board links this RFC from its file.
   the amendment's race rule); [0013](0013-work-code-switch.md) (Code on a pane);
   [0021](0021-meter-attribution.md) (seats, and Decided 5 on dsh-tui sessions);
   [0011](0011-monorepo-parts-and-releases.md) (the lanes);
-  [0024](0024-automagik-cloud.md) ((c) self-hosted instances, (f) workspaces, amended by (l),
-  (j) linking, delivery 2 the gate).
+  [0024](0024-automagik-cloud.md) ((c) self-hosted instances, (f) workspaces, amendment
+  proposed by (l), Q17; (j) linking, delivery 2 the gate).
 - Code: `herdr/mods/pocket-link/chat/` (`engine.js`, `find.js`, `folder-rule.js`, `input.js`,
   `approve.js`, `question.js`); `herdr/test/fixtures/transcript-folder-rule.json`;
   `herdr/mods/pocket-link/bridge/` (`chat.mjs`, `guard.mjs`, `dsh-source.mjs`);

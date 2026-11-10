@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (2026-11-10, by the owner; council review 2026-11-09: proceed with conditions, folded in; owner's answers: identity and billing, 2026-11-09; isolation, identity stand-up, hosting, the goal and Q18, 2026-11-10; Chat: Decided 19-25, 2026-11-09; amends RFC 0008; amended 2026-11-09 by [RFC 0025][25]; (f)'s machine-link rule amended 2026-11-10 by [RFC 0022][22]'s (l)) |
+| Status | Accepted (2026-11-10, by the owner; council review 2026-11-09: proceed with conditions, folded in; owner's answers: identity and billing, 2026-11-09; isolation, identity stand-up, hosting, the goal and Q18, 2026-11-10; Chat: Decided 19-25, 2026-11-09; amends RFC 0008; amended 2026-11-09 by [RFC 0025][25]; (f)'s machine-link rule: amendment proposed by [RFC 0022][22]'s (l), Q17, 2026-11-10) |
 | Goal | First goal (owner, 2026-11-10): by 23 Nov, the owner signs in and opens one hosted workspace in test mode, with no real charges: RFC 0024 deliveries 0-4 and RFC 0025 phase A. |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | none here (docs); desktop (3.N) for secure storage, sign-in and the rail; the server image and plugin (3.N.P) for the self-hosted gate and the web rail; the Cloud service in its own private repository in the owner's organisation (its contracts stay public here) |
@@ -917,8 +917,8 @@ Ledger pass (2026-11-10): the board links this RFC from its file.
 
 - RFCs: [0008](0008-platform-and-web-instances.md) (amended here: its web sign-in, the desktop
   client, contracts, questions 2, 6, 7, the threat model); [0022](0022-desktop-chat-view.md)
-  (Decided 7, Buzz's gate, provenance, delivery H, the same-user reach, `front`; its (l) amends
-  (f): machine links on a self-hosted instance);
+  (Decided 7, Buzz's gate, provenance, delivery H, the same-user reach, `front`; amendment proposed
+  by 0022's (l), Q17: machine links on a self-hosted instance);
   [0014](0014-shared-bot-registry.md) (each workspace's Bot registry, `shown[]`, "Other
   machines"); [0015](0015-live-chat-projection.md) (DSH's `principal` caller field);
   [0019](0019-gitlab-mirror.md) (Arca's GitLab, the build host); [0010](0010-desktop-sandbox.md)
