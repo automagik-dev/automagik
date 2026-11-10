@@ -336,6 +336,25 @@ fn terminal(
     }
 }
 
+/// Makes `wt` a task worktree of `project` as git lays one out: the project's `.git` is a folder,
+/// the worktree's a file naming its folder under the repository's `worktrees/`.
+fn linked_worktree(project: &Path, wt: &str) {
+    let name = Path::new(wt).file_name().unwrap();
+    let gitdir = project.join(".git/worktrees").join(name);
+    fs::create_dir_all(&gitdir).unwrap();
+    fs::create_dir_all(wt).unwrap();
+    fs::write(
+        Path::new(wt).join(".git"),
+        format!("gitdir: {}\n", gitdir.to_string_lossy()),
+    )
+    .unwrap();
+}
+
+/// A live Claude terminal created two hours before `t0`.
+fn terminal_at(name: &str, t0: i64, cwd: &str, labels: Labels) -> Terminal {
+    terminal(name, t0 - 7_200_000, "claude-code", cwd, labels)
+}
+
 /// A Claude transcript line at `at`.
 fn claude_at(msg: &str, session: &str, cwd: &str, at: i64) -> String {
     claude_line(
@@ -377,7 +396,7 @@ fn a_labelled_unlogged_worker_is_attributed_at_label_basis_only_after_its_sighti
         .join(".worktrees/gh-45")
         .to_string_lossy()
         .into_owned();
-    fs::create_dir_all(&wt).unwrap();
+    linked_worktree(&project, &wt);
     let t0 = now();
     synthetic_core(&env);
     let log = env.claude("-project-wt/s-hand.jsonl");
@@ -426,7 +445,7 @@ fn a_labelled_unlogged_omp_worker_keeps_its_branch_null() {
         .join(".worktrees/gh-46")
         .to_string_lossy()
         .into_owned();
-    fs::create_dir_all(&wt).unwrap();
+    linked_worktree(&project, &wt);
     let t0 = now();
     synthetic_core(&env);
     let log = env.omp("-project/o-hand.jsonl");
@@ -480,7 +499,7 @@ fn a_changed_worker_label_leaves_the_launchs_calls_unlinked_across_a_recompute()
         .join(".worktrees/gh-45")
         .to_string_lossy()
         .into_owned();
-    fs::create_dir_all(&wt).unwrap();
+    linked_worktree(&project, &wt);
     let t0 = now();
     synthetic_core(&env);
     let log = env.claude("-project-wt/s-hand.jsonl");
@@ -593,7 +612,7 @@ fn a_label_claim_replays_from_the_launch_rows_source_marker() {
         .join(".worktrees/gh-45")
         .to_string_lossy()
         .into_owned();
-    fs::create_dir_all(&wt).unwrap();
+    linked_worktree(&project, &wt);
     let t0 = now();
     synthetic_core(&env);
     let log = env.claude("-project-wt/s-hand.jsonl");
@@ -628,7 +647,7 @@ fn a_label_claim_replays_from_the_launch_rows_source_marker() {
         .unwrap();
     assert_eq!(source, "snapshot");
     let bound = bound.unwrap();
-    assert!(bound.starts_with('~'), "{bound}");
+    assert!(bound.starts_with("~@"), "{bound}");
     assert!(bound.contains("b-hand"), "{bound}");
     // hc no longer lists the terminal: the launch ends and is re-derived from its row alone. The
     // call stays attributed; without the replay it would move to unlinked.
@@ -648,4 +667,129 @@ fn a_label_claim_replays_from_the_launch_rows_source_marker() {
     let a = row.key.attr.unwrap();
     assert_eq!(a.state, "attributed");
     assert_eq!(a.basis.as_deref(), Some("label"));
+}
+
+/// Fixer C1 on #949, through a sync: a terminal labelled `worker.of` in the project root (the main
+/// checkout), or in a folder that is no task worktree, names no call by that folder. An unrelated
+/// session that started there stays unlinked, as it was before the label claims.
+#[test]
+fn a_labelled_terminal_outside_a_task_worktree_claims_no_call_by_its_folder() {
+    let env = Env::new();
+    let project = env.dir.path().join("project");
+    let root = project.to_string_lossy().into_owned();
+    let wt = project
+        .join(".worktrees/gh-45")
+        .to_string_lossy()
+        .into_owned();
+    linked_worktree(&project, &wt);
+    // A folder under the project with no `.git` of its own.
+    let plain = project.join("notes").to_string_lossy().into_owned();
+    fs::create_dir_all(&plain).unwrap();
+    let t0 = now();
+    synthetic_core(&env);
+    let logs = [
+        (env.claude("-project/s-root.jsonl"), "s-root", &root),
+        (
+            env.claude("-project-notes/s-plain.jsonl"),
+            "s-plain",
+            &plain,
+        ),
+        (env.claude("-project-wt/s-wt.jsonl"), "s-wt", &wt),
+    ];
+    for (log, _, _) in &logs {
+        write_lines(log, &[]);
+    }
+    let claimer = |terminal: &str, cwd: &str, bot: &str| {
+        terminal_at(
+            terminal,
+            t0,
+            cwd,
+            Labels {
+                worker_of: Some(bot.into()),
+                worker_role: Some("dev".into()),
+                ..Labels::default()
+            },
+        )
+    };
+    let seen = vec![
+        claimer("t7", &root, "b-root"),
+        claimer("t8", &plain, "b-plain"),
+        claimer("t9", &wt, "b-wt"),
+    ];
+    sync_at(&env, t0, seen.clone());
+    // One call per folder, each in its own hour, after the labels were seen.
+    for (k, (log, session, cwd)) in logs.iter().enumerate() {
+        let at = t0 + 600_000 + k as i64 * 3_600_000;
+        append(log, &(claude_at(&format!("m{k}"), session, cwd, at) + "\n"));
+    }
+    sync_at(&env, t0 + 10_800_000, seen);
+    for k in 0..2 {
+        let row = row_at(&env, t0 + 600_000 + k * 3_600_000);
+        assert_eq!(
+            (row.key.bot, row.key.attr.unwrap().state.as_str()),
+            (None, "unlinked"),
+            "folder {k}"
+        );
+    }
+    // The control: the same label in a task worktree names its call.
+    let row = row_at(&env, t0 + 600_000 + 2 * 3_600_000);
+    assert_eq!(row.key.bot.as_deref(), Some("b-wt"));
+    assert_eq!(row.key.attr.unwrap().basis.as_deref(), Some("label"));
+}
+
+/// Fixer C2 on #949, through a sync: a seat with no start row that the attach ledger bound, with
+/// `worker.of` added to its terminal, stays a seat. An unrelated session in its project root is
+/// unlinked, never the binding's bot on the `worktree` basis.
+#[test]
+fn a_bound_seat_with_a_worker_label_never_names_its_project_root() {
+    let env = Env::new();
+    let project = env.dir.path().join("project");
+    let root = project.to_string_lossy().into_owned();
+    fs::create_dir_all(&root).unwrap();
+    let t0 = now();
+    synthetic_core(&env);
+    let attach = serde_json::json!({
+        "v": 1, "event": "attach", "bot": "b-bound", "project": root, "terminal": "t2",
+        "core": "core-synthetic", "created_ms": t0 - 7_200_000, "machine": null,
+        "at": meter::time::format_rfc3339(t0 - 7_000_000), "by": "attach"
+    });
+    write_ledger(
+        &env.home()
+            .join(".config/herdr-app/automagik-herdr/attach.jsonl"),
+        &[attach.to_string()],
+    );
+    let log = env.claude("-project/s-unrelated.jsonl");
+    write_lines(&log, &[]);
+    let seat = terminal_at(
+        "t2",
+        t0,
+        &root,
+        Labels {
+            worker_of: Some("b-claimer".into()),
+            worker_role: Some("dev".into()),
+            ..Labels::default()
+        },
+    );
+    sync_at(&env, t0, vec![seat.clone()]);
+    append(
+        &log,
+        &(claude_at("m1", "s-unrelated", &root, t0 + 600_000) + "\n"),
+    );
+    sync_at(&env, t0 + 1_800_000, vec![seat]);
+    let row = row_at(&env, t0 + 600_000);
+    assert_eq!(
+        (row.key.bot, row.key.attr.unwrap().state.as_str()),
+        (None, "unlinked")
+    );
+    let (kind, bot, bound): (Option<String>, Option<String>, Option<String>) = env
+        .store()
+        .conn
+        .query_row(
+            "SELECT kind, bot, bound FROM launch WHERE terminal = 't2'",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!((kind.as_deref(), bot), (Some("seat"), None));
+    assert!(!bound.unwrap().contains('~'));
 }

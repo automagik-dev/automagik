@@ -66,14 +66,25 @@
 //! unrecorded, and `task`, `project` and `branch` are never taken from them. The tag is written on
 //! the launch row at sync (`source = snapshot` says the labels supplied it), and the bot intervals
 //! the labels named live in the row's `bound` column beside the attach ledger's bindings, each
-//! label interval marked with `~`; a later sync reads that timeline back and merges into it, never
-//! replacing it. A worker's claim runs from the first sync that saw its label to the launch's end:
+//! label interval marked with `~` (`~@` when the sync that opened it found the worker in a task
+//! worktree); a later sync reads that timeline back and merges into it, never replacing it. A
+//! worker's claim runs from the first sync that saw its label to the launch's end:
 //! usage before it stays unlinked. A worker's label is set at launch and never rewritten, so a
 //! second bot in its timeline makes the claim empty for the whole span (fail-closed, derived from
 //! the column); a seat's `bot` may change with a reattach, and its claim follows each interval.
 //! A tag a label supplied is reported at [`Basis::Label`], whatever tied the call to the launch
-//! (a session row included). The timeline keeps at most [`BOUND_INTERVALS`] intervals; past that,
-//! or for a tag past its cap, the call is Unknown.
+//! (a session row included). The timeline keeps at most [`BOUND_INTERVALS`] intervals; past that
+//! the call is Unknown.
+//!
+//! Whoever can label a terminal chooses those labels, so a label reaches no further than the
+//! terminal could. A worker known only by its label names a call by folder only from a task
+//! worktree (a linked git worktree, checked when its interval opens, never the main checkout or a
+//! folder that is no worktree), only while hc shows it in that folder (a move voids the folder
+//! claim for the whole span), and never where a seat sits; elsewhere only its own session names
+//! it. A launch the attach ledger bound is a seat whatever its labels say. A label's bot is
+//! shape-checked (the printed caps, no control character) before it is stored or names anything;
+//! one that fails is ignored. An interval never opens or closes before the last sync that saw the
+//! launch, so a clock that steps back re-tags nothing.
 //!
 //! **Fields**, from the launch's start row, frozen at launch: `bot` (`bot`, else `botId`; for a
 //! seat, the attach ledger's binding for the launch at the call's time when there is one), `kind`,
@@ -244,6 +255,10 @@ struct Interval {
     bot: String,
     /// The snapshot's labels named this bot; the attach ledger writes the others.
     label: bool,
+    /// A worker's label interval opened while its terminal sat in a task worktree (a linked git
+    /// worktree, never the main checkout): only then may the label name calls by that folder.
+    /// Checked once, when the interval opens, so a worktree removed later replays the same answer.
+    folder: bool,
 }
 
 impl Interval {
@@ -306,6 +321,11 @@ struct StoredClaim {
     timeline: Vec<Interval>,
     /// The stored timeline was past [`BOUND_INTERVALS`]: its calls are Unknown, never guessed.
     over_cap: bool,
+    /// The folder the row recorded the launch in, when its label intervals were written.
+    worktree: Option<String>,
+    /// The last sync that saw the launch: a label interval never closes or opens before it, so a
+    /// sync whose clock stepped back cannot re-tag calls an earlier sync already answered.
+    seen_last: Option<i64>,
 }
 
 // One per call, consumed at once: boxing the tag would cost an allocation per call.
@@ -467,6 +487,9 @@ struct Launch {
     over_cap: bool,
     /// A worker's label changed: two bots in its timeline make its claim empty for its whole span.
     fail_closed: bool,
+    /// A worker the labels tagged may name calls by its folder: every label interval opened in a
+    /// task worktree, and the terminal never left that folder. False for everything else.
+    folder: bool,
     /// The label claim this sync's snapshot shows: (kind, bot, role), merged into the timeline.
     sighting: Option<(Kind, String, Option<String>)>,
 }
@@ -550,6 +573,10 @@ struct Index {
     /// is in that computer's ledger, so a call of it that nothing here claims is `other_machine`
     /// (RFC 0021 Decided 6, delivery 2 D5), never given a bot.
     foreign: HashSet<(String, String)>,
+    /// The folders a seat sits in: a logged seat's (its start row's folder, and the one hc shows it
+    /// running in), a seat the attach ledger bound, a seat the labels named. A worker known only
+    /// by its label never names a call by such a folder (RFC 0026 (c), (e)).
+    seated: HashSet<String>,
 }
 
 /// What one claimant says about a call.
@@ -593,6 +620,8 @@ pub struct Resolver {
     /// until [`Resolver::at`] is called, so a resolver built without a sync time adds no sighting
     /// to a launch (the persisted ones still apply).
     now: Option<i64>,
+    /// Tests: stands in for [`task_worktree`], so a synthetic path needs no folder on disk.
+    probe: Option<fn(&str) -> bool>,
     oversized: Vec<PathBuf>,
     homes: Vec<PathBuf>,
     bytes_read: u64,
@@ -626,6 +655,13 @@ impl Resolver {
     /// earlier (RFC 0026 (c)'s span: "from the first sync that saw the label").
     pub fn at(mut self, now_ms: i64) -> Resolver {
         self.now = Some(now_ms);
+        self
+    }
+
+    /// Tests: decides which folders are task worktrees instead of reading the disk.
+    #[cfg(test)]
+    fn probe(mut self, probe: fn(&str) -> bool) -> Resolver {
+        self.probe = Some(probe);
         self
     }
 
@@ -718,6 +754,8 @@ impl Resolver {
                     role: h.role.clone(),
                     timeline,
                     over_cap,
+                    worktree: h.worktree.as_deref().map(|w| normalize(w).to_owned()),
+                    seen_last: h.seen_last,
                 },
             );
         }
@@ -768,7 +806,10 @@ impl Resolver {
                 &self.linked,
                 &self.label_history,
                 &self.claims,
-                self.now,
+                Sighted {
+                    now: self.now,
+                    probe: self.probe.unwrap_or(task_worktree),
+                },
             ));
         }
         self.index.as_ref()
@@ -1092,6 +1133,13 @@ impl Index {
             if l.kind != Some(Kind::Worker) || (!l.logged && l.label.is_none()) {
                 return Some(Claim::Unrecorded);
             }
+            // A worker known only by its label names a call by folder only from a task worktree
+            // it never left, and never where a seat sits: the project root, a folder that is no
+            // worktree and a seat's folder stay what they were without the label (RFC 0026 (e)).
+            // Its own session still names it, through a link.
+            if !l.logged && (!l.folder || self.seated.contains(cwd)) {
+                return Some(Claim::Unrecorded);
+            }
             if l.agent.is_none() {
                 return Some(Claim::Unknown);
             }
@@ -1153,6 +1201,8 @@ impl Index {
             if !fits(&iv.bot) {
                 return Claim::Unknown;
             }
+            // The attach ledger's own answer, not a label's: a launch with a binding is a seat,
+            // whatever its labels say, so this tag is reached only through a session record.
             let seat = LabelTag {
                 bot: None,
                 kind: Kind::Seat,
@@ -1237,6 +1287,14 @@ fn judge(claims: impl Iterator<Item = Claim>, basis: Basis) -> Resolution {
     Resolution::Tag(out, if label { Basis::Label } else { basis })
 }
 
+/// How this sync's label sightings are read: when the snapshot was taken (None: no sighting is
+/// added), and what says a folder is a task worktree.
+#[derive(Clone, Copy)]
+struct Sighted {
+    now: Option<i64>,
+    probe: fn(&str) -> bool,
+}
+
 /// The launch keyed `(core, terminal, created)`, where a row with no `core` matches any core.
 fn find(
     by_tc: &HashMap<(String, i64), Vec<usize>>,
@@ -1267,8 +1325,9 @@ fn build(
     linked: &[Terminal],
     label_history: &[(String, String, String)],
     claims: &HashMap<String, StoredClaim>,
-    now: Option<i64>,
+    sighted: Sighted,
 ) -> Index {
+    let Sighted { now, probe } = sighted;
     let foreign = |c: &Option<String>| !same_core(c.as_deref(), core);
     let mut ix = Index::default();
     // Sessions another machine's records name: never claimants here, only the reason why not.
@@ -1348,6 +1407,7 @@ fn build(
             timeline: Vec::new(),
             over_cap: false,
             fail_closed: false,
+            folder: false,
             sighting: None,
         });
     }
@@ -1400,6 +1460,7 @@ fn build(
             timeline: Vec::new(),
             over_cap: false,
             fail_closed: false,
+            folder: false,
             sighting: label_sighting(t),
         });
     }
@@ -1544,6 +1605,20 @@ fn build(
         let mut labels: Vec<Interval> = stored
             .map(|s| s.timeline.iter().filter(|i| i.label).cloned().collect())
             .unwrap_or_default();
+        // An attach binding always wins: the launch is a seat, its kind the binding's and never
+        // the labels', so a `worker.of` added to a bound seat makes no worker of it and its
+        // project-root folder names nothing. The label intervals an earlier sync wrote are kept
+        // as they were read; no label is merged in and no label tag is derived.
+        if !l.timeline.is_empty() {
+            l.kind = Some(Kind::Seat);
+            labels.append(&mut l.timeline);
+            l.timeline = capped(labels);
+            l.over_cap = l.timeline.len() > BOUND_INTERVALS;
+            continue;
+        }
+        // The terminal is no longer in the folder its label intervals were written in: whatever
+        // it claimed by folder there is void, for its whole span.
+        let moved = !labels.is_empty() && stored.is_some_and(|s| s.worktree != l.worktree);
         let mut label = stored.and_then(|s| {
             s.kind.map(|kind| LabelTag {
                 bot: s.bot.clone(),
@@ -1552,7 +1627,12 @@ fn build(
             })
         });
         if let (Some((kind, bot, role)), Some(at)) = (&l.sighting, now) {
-            see_label(&mut labels, at, bot);
+            // Never before the last sync that saw the launch: a clock that stepped back must not
+            // move a label's start, or a seat's split, over calls already answered.
+            let at = at.max(stored.and_then(|s| s.seen_last).unwrap_or(at));
+            let worktree = l.worktree.as_deref();
+            let in_worktree = || *kind == Kind::Worker && worktree.is_some_and(probe);
+            see_label(&mut labels, at, bot, moved, in_worktree);
             // A row whose worker label changed has no tag to seed from: the fresh sighting only
             // restores the claim's shape, and the timeline (two bots) keeps it fail-closed.
             if label.is_none() {
@@ -1563,7 +1643,6 @@ fn build(
                 });
             }
         }
-        labels.append(&mut l.timeline);
         l.timeline = capped(labels);
         l.over_cap = l.timeline.len() > BOUND_INTERVALS;
         l.fail_closed = label
@@ -1571,6 +1650,10 @@ fn build(
             .is_some_and(|t| t.kind == Kind::Worker && distinct_label_bots(&l.timeline) > 1);
         if let Some(t) = &label {
             l.kind = Some(t.kind);
+            l.folder = t.kind == Kind::Worker
+                && !moved
+                && !l.timeline.is_empty()
+                && l.timeline.iter().all(|i| i.folder);
             // A worker's changed label makes the claim empty for its whole span: no tag is
             // written back, only the timeline that derives the fail-closed state.
             if !l.fail_closed
@@ -1580,6 +1663,19 @@ fn build(
             }
         }
         l.label = label;
+    }
+    for l in &ix.launches {
+        if let (Some(Kind::Seat), Some(w)) = (l.kind, &l.worktree) {
+            ix.seated.insert(normalize(w).to_owned());
+        }
+    }
+    for (cwd, there) in &ix.away {
+        if there
+            .iter()
+            .any(|&(i, _)| ix.launches[i].kind == Some(Kind::Seat))
+        {
+            ix.seated.insert(cwd.clone());
+        }
     }
     // Links, per agent and session.
     let mut raw: HashMap<(String, String), Vec<Link>> = HashMap::new();
@@ -1846,31 +1942,36 @@ fn intervals(b: &[(i64, Option<i64>, String)]) -> Vec<Interval> {
             to: *to,
             bot: bot.clone(),
             label: false,
+            folder: false,
         })
         .collect()
 }
 
 /// The label claim a snapshot terminal shows, when its labels carry one (RFC 0026 (c)): a
 /// worker's `worker.of` and `worker.role` (a role only when it is one of [`WORKER_ROLES`]), else a
-/// seat's `bot` and `role`. A role past its cap is no role; a bot past it is still kept, so the
-/// claim is Unknown rather than a shortened name.
+/// seat's `bot` and `role`. A bot that fails [`label_safe`] is ignored: the terminal then carries
+/// no claim at all, and nothing of it is stored. A role that fails it is no role.
 fn label_sighting(t: &Terminal) -> Option<(Kind, String, Option<String>)> {
     if let Some(bot) = &t.labels.worker_of {
-        if !column_safe(bot) {
+        if !label_safe(bot) {
             return None;
         }
         let role = t
             .labels
             .worker_role
             .clone()
-            .filter(|r| fits(r) && WORKER_ROLES.contains(&r.as_str()));
+            .filter(|r| WORKER_ROLES.contains(&r.as_str()));
         return Some((Kind::Worker, bot.clone(), role));
     }
     let bot = t.labels.bot.as_ref()?;
-    if !column_safe(bot) {
+    if !label_safe(bot) {
         return None;
     }
-    let role = t.labels.role.clone().filter(|r| fits(r));
+    let role = t
+        .labels
+        .role
+        .clone()
+        .filter(|r| fits(r) && !r.chars().any(char::is_control));
     Some((Kind::Seat, bot.clone(), role))
 }
 
@@ -1881,25 +1982,77 @@ fn column_safe(bot: &str) -> bool {
     !bot.contains([';', ':', '\n', '\r'])
 }
 
+/// The shape a label's bot must have to be stored or to name a call: writable in the
+/// `bound` timeline, within the printed caps ([`tag_fits`]) and free of control characters. Anyone
+/// who can label a terminal chooses this text, so one that fails is dropped, never stored or cut.
+fn label_safe(s: &str) -> bool {
+    column_safe(s) && fits(s) && !s.chars().any(char::is_control)
+}
+
+/// Whether `cwd` is the root of a task worktree: a linked git worktree, whose `.git` is a file
+/// naming a folder under the repository's `worktrees/`. The main checkout (the project root, whose
+/// `.git` is a folder), a submodule and a folder that is no worktree root are not. Read-only: one
+/// small file, never followed through a link.
+fn task_worktree(cwd: &str) -> bool {
+    let dot = Path::new(cwd).join(".git");
+    if !dot.is_absolute() {
+        return false;
+    }
+    match std::fs::symlink_metadata(&dot) {
+        Ok(m) if m.is_file() && m.len() <= 4096 => {}
+        _ => return false,
+    }
+    let Ok(text) = std::fs::read_to_string(&dot) else {
+        return false;
+    };
+    let Some(gitdir) = text.lines().next().and_then(|l| l.strip_prefix("gitdir:")) else {
+        return false;
+    };
+    Path::new(gitdir.trim())
+        .parent()
+        .and_then(Path::file_name)
+        .is_some_and(|n| n == "worktrees")
+}
+
 /// Merges one sync's label sighting into the label intervals: the same bot keeps the interval from
 /// the first sync that saw it; a different bot closes the interval before this sync and opens the
 /// next (a seat's reattach moves the later calls). A worker's second bot is kept too: the timeline
-/// is its fail-closed state, two bots and no claim.
-fn see_label(timeline: &mut Vec<Interval>, at: i64, bot: &str) {
+/// is its fail-closed state, two bots and no claim. An interval never closes, and the next never
+/// opens, before the open one began: a sync whose clock stepped back changes no earlier answer.
+///
+/// `in_worktree` is asked only when an interval opens, and its answer is kept with the interval
+/// ([`Interval::folder`]). `moved` (the terminal left the folder its intervals were written in)
+/// ends a folder-marked interval and opens an unmarked one, which voids the folder claim.
+fn see_label(
+    timeline: &mut Vec<Interval>,
+    at: i64,
+    bot: &str,
+    moved: bool,
+    in_worktree: impl FnOnce() -> bool,
+) {
+    // The open interval wins a tie on `from` (one closed as it opened, by a clamped clock).
     let last = timeline
         .iter_mut()
         .filter(|i| i.label)
-        .max_by_key(|i| i.from);
-    match last {
-        Some(iv) if iv.bot == bot => return,
-        Some(iv) if iv.to.is_none() => iv.to = Some(at),
-        _ => {}
+        .max_by_key(|i| (i.from, i.to.is_none()));
+    let mut at = at;
+    let mut same_bot = false;
+    if let Some(iv) = last {
+        same_bot = iv.bot == bot;
+        if same_bot && !(iv.folder && moved) {
+            return;
+        }
+        at = at.max(iv.from);
+        if iv.to.is_none() {
+            iv.to = Some(at);
+        }
     }
     timeline.push(Interval {
         from: at,
         to: None,
         bot: bot.to_owned(),
         label: true,
+        folder: !same_bot && !moved && in_worktree(),
     });
 }
 
@@ -1919,15 +2072,18 @@ fn distinct_label_bots(timeline: &[Interval]) -> usize {
 /// at most [`BOUND_INTERVALS`] + 1 intervals, so a timeline past the cap still reads as such
 /// instead of looking like a short one.
 fn capped(mut timeline: Vec<Interval>) -> Vec<Interval> {
-    timeline.sort_by(|a, b| (a.from, a.to, &a.bot, a.label).cmp(&(b.from, b.to, &b.bot, b.label)));
+    timeline.sort_by(|a, b| {
+        (a.from, a.to, &a.bot, a.label, a.folder).cmp(&(b.from, b.to, &b.bot, b.label, b.folder))
+    });
     timeline.dedup();
     timeline.truncate(BOUND_INTERVALS + 1);
     timeline
 }
 
-/// The `bound` column's value: intervals joined by `;`, each `[~]from-[to]:bot` (an empty `to`
-/// while open), `~` marking the interval a label named. The attach ledger's intervals keep the
-/// shape the column always had. None for no intervals.
+/// The `bound` column's value: intervals joined by `;`, each `[~[@]]from-[to]:bot` (an empty `to`
+/// while open), `~` marking the interval a label named and `~@` one that opened in a task
+/// worktree. The attach ledger's intervals keep the shape the column always had. None for no
+/// intervals.
 fn render_bound(timeline: &[Interval]) -> Option<String> {
     if timeline.is_empty() {
         return None;
@@ -1938,7 +2094,11 @@ fn render_bound(timeline: &[Interval]) -> Option<String> {
             .map(|i| {
                 format!(
                     "{}{}-{}:{}",
-                    if i.label { "~" } else { "" },
+                    match (i.label, i.folder) {
+                        (true, true) => "~@",
+                        (true, false) => "~",
+                        (false, _) => "",
+                    },
                     i.from,
                     i.to.map_or(String::new(), |t| t.to_string()),
                     i.bot
@@ -1954,9 +2114,10 @@ fn render_bound(timeline: &[Interval]) -> Option<String> {
 fn parse_bound(v: &str) -> (Vec<Interval>, bool) {
     let mut out = Vec::new();
     for part in v.split(';').filter(|p| !p.is_empty()) {
-        let (label, rest) = match part.strip_prefix('~') {
-            Some(r) => (true, r),
-            None => (false, part),
+        let (label, folder, rest) = match (part.strip_prefix("~@"), part.strip_prefix('~')) {
+            (Some(r), _) => (true, true, r),
+            (None, Some(r)) => (true, false, r),
+            (None, None) => (false, false, part),
         };
         let Some((range, bot)) = rest.split_once(':') else {
             return (Vec::new(), false);
@@ -1980,6 +2141,7 @@ fn parse_bound(v: &str) -> (Vec<Interval>, bool) {
             to,
             bot: bot.to_owned(),
             label,
+            folder,
         });
     }
     let over = out.len() > BOUND_INTERVALS;
