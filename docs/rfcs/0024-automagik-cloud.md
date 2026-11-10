@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (2026-11-10, by the owner; council review 2026-11-09: proceed with conditions, folded in; owner's answers: identity and billing, 2026-11-09; isolation, identity stand-up, hosting, the goal and Q18, 2026-11-10; Chat: Decided 19-25, 2026-11-09; amends RFC 0008; amended 2026-11-09 by [RFC 0025][25]) |
+| Status | Accepted (2026-11-10, by the owner; council review 2026-11-09: proceed with conditions, folded in; owner's answers: identity and billing, 2026-11-09; isolation, identity stand-up, hosting, the goal and Q18, 2026-11-10; Chat: Decided 19-25, 2026-11-09; amends RFC 0008; amended 2026-11-09 by [RFC 0025][25]; (f)'s machine-link rule amended 2026-11-10 by [RFC 0022][22]'s (l)) |
 | Goal | First goal (owner, 2026-11-10): by 23 Nov, the owner signs in and opens one hosted workspace in test mode, with no real charges: RFC 0024 deliveries 0-4 and RFC 0025 phase A. |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | none here (docs); desktop (3.N) for secure storage, sign-in and the rail; the server image and plugin (3.N.P) for the self-hosted gate and the web rail; the Cloud service in its own private repository in the owner's organisation (its contracts stay public here) |
@@ -469,8 +469,12 @@ either way.
 
 **One workspace is one hosted instance**: its own DSH, plugins, Bots and Bot registry, Omni and
 channels, volume, terminals and herdr-core. Not a shared multi-tenant runtime. Nothing in one
-workspace reads another's. A workspace never holds hc machine links to a member's own computers
-(RFC 0014's "Other machines"); reaching a person's machines from a workspace is out of scope.
+workspace reads another's. A Cloud workspace never holds hc machine links to a member's own
+computers (RFC 0014's "Other machines"); reaching a person's machines from a Cloud workspace is
+out of scope. A self-hosted instance is not a workspace: it may hold its one owner's links to his
+own computers, under RFC 0022's (l) (gated first, one human, delivery H's masks and scope, never
+carried to Cloud). Amended 2026-11-10 by RFC 0022's revision (Proposed there, Q17; in force
+once the owner approves it).
 
 **Before anyone but an owner joins.** Inside a workspace, DSH sees whoever the gate sends as DSH's
 owner, because the gate reaches it with DSH's launch token ((b)). Universal Bots have shell tools
@@ -913,7 +917,8 @@ Ledger pass (2026-11-10): the board links this RFC from its file.
 
 - RFCs: [0008](0008-platform-and-web-instances.md) (amended here: its web sign-in, the desktop
   client, contracts, questions 2, 6, 7, the threat model); [0022](0022-desktop-chat-view.md)
-  (Decided 7, Buzz's gate, provenance, delivery H, the same-user reach, `front`);
+  (Decided 7, Buzz's gate, provenance, delivery H, the same-user reach, `front`; its (l) amends
+  (f): machine links on a self-hosted instance);
   [0014](0014-shared-bot-registry.md) (each workspace's Bot registry, `shown[]`, "Other
   machines"); [0015](0015-live-chat-projection.md) (DSH's `principal` caller field);
   [0019](0019-gitlab-mirror.md) (Arca's GitLab, the build host); [0010](0010-desktop-sandbox.md)
@@ -931,4 +936,5 @@ Ledger pass (2026-11-10): the board links this RFC from its file.
   (private); the council report on this split (private). Concrete addresses, client ids and group
   names are kept in a private note, not here.
 
+[22]: 0022-desktop-chat-view.md
 [25]: 0025-cloud-economics.md
