@@ -340,6 +340,17 @@ Contract 1's branch rows keep their meaning. Additive, so genie reads them only 
   `tokens_before_evidence` (below). Then `tokens_by_basis` (`session`, `label`, `worktree`),
   which adds up to `tokens_attributed`: how calls were tied to a launch. A bot row holds only
   attributed usage, so its other three counts are 0; the rest is in the envelope (below).
+- **`--by task`.** One row per task id with task-labelled usage in the repo and window, with
+  `attribution.precision: task_interval` (RFC 0018 M3); the branches named are an optional filter,
+  as for bots. The task key is the start row's `task` joined with its `project` (a) — never
+  inferred from a branch name. The row's `actors` names every launch tag that did the work, one
+  per (bot, kind, role, squad, unrecorded, harness), ordered like a bot row's key: a task answered
+  by several bots or roles names them all, never a guessed single one, and the actor list is
+  bounded with the row (`actors_omitted`) instead of cut. A task id the meter ties to more than
+  one checkout of the repo is never summed: its row is `missing` with `task_ambiguous` (D4), and
+  the meter never prints a checkout path. Its numbers are evidence-backed, so the branch row stays
+  the total. A window with no task labels is an `ok` answer with no task rows, and the branch
+  answer is unchanged: a reader falls back to it.
 - **Where the branch came from** is its own count, apart from how the call was tied:
   `tokens_by_branch_basis` (`log`, `ledger`, `none`), which adds up to `tokens.total`. On a branch
   row `none` is always 0, and `ledger` is the usage whose branch was filled from a start row.
@@ -401,12 +412,12 @@ rule, never enter it. A branch row keeps `branch_window` and its full total, the
 `evidence_from` included, which is RFC 0018 (b)'s fallback; only its `attribution.actor` counts
 split that total.
 
-`attribution.precision` was `"branch_window"` alone in the v1 schema. RFC 0018 says widening a
-type is breaking once a release ships the meter, and M3 already plans `task_interval`. No
-release ships the meter yet (`NEVER_SHIPPED` holds `meter/`), so delivery 2 widens the enum **in
-place** to `branch_window`, `task_interval`, `actor_interval` and adds the optional fields above
-in one schema pull request, before RFC 0017's delivery 4 cuts the first meter release.
-Otherwise the same change would make contract 2. genie reviews it.
+`attribution.precision` was `"branch_window"` alone in the v1 schema. Delivery 2 widened it in
+place to `branch_window`, `task_interval`, `actor_interval` and added the optional fields above
+in one schema pull request, before RFC 0017's delivery 4 cut the first release that shipped the
+meter; once a release ships the meter, RFC 0018's Versioning is what governs, and it makes a new
+`--by` value, with its row kind and its reasons, additive. That is the rule M3's `--by task` row
+uses, so the row keeps contract 1 rather than making contract 2. genie reviews the schema.
 
 ### (e) Squad
 
@@ -487,9 +498,9 @@ parent's file is gone, the session the fork's header names as its seed, if DSH r
   RFC 0018 (d).
 - Query contract 1, additive: `--by bot` with its bot row and `query.by` (and `by bot` in
   `request_sha256`), `attribution.actor` (its four counts, `tokens_by_basis`,
-  `tokens_by_branch_basis`), `actor_unattributed`; and, widened in place, which only a contract
-  no release ships may be (RFC 0018, Versioning): the `attribution.precision` enum, and the
-  rule that an answer names a branch, which a bot query need not.
+  `tokens_by_branch_basis`), `actor_unattributed`; and, widened in place before the first
+  release that shipped the meter (RFC 0018, Versioning): the `attribution.precision` enum, and
+  the rule that an answer names a branch, which a bot query need not.
 - Amends RFC 0018 in three places, so a branch may come from a worker launch's start row, with
   `branch_basis: ledger`, for a harness that logs none: (a)'s matching sentence (the branch
   "recorded from the log or the Codex thread"); its "Usage with no branch" rule, which let only
@@ -573,8 +584,11 @@ release.
      checkout of the repo (two genie projects of one remote, each minting short ids) is never
      summed: its row is `missing` with the reason `task_ambiguous`. The meter never prints a
      checkout path, and does not wait for genie to make ids unique per repo. M3 adds that reason
-     and the task row; a new reason is additive (RFC 0018, Versioning), and the widened enum's
-     `task_interval` says so.
+     and the task row (its `task` and `actors`, and the no-task-label answer, are recorded in
+     (d)); a new reason is additive (RFC 0018, Versioning), and the widened enum's
+     `task_interval` says so. The tie is the launch's `project`, compared as a string; it is
+     judged over the queried repo and window, so a collision whose other checkout has no evidence
+     there is not seen, and a clone re-created at the same path cannot be told apart.
    - D5: `actor_unattributed` has `tokens_total`, `tokens_ambiguous`, `tokens_unlinked`,
      `tokens_before_evidence` and `parts`, one per reason with usage, each with its `state`
      (`ambiguous`, `unlinked`, `before_evidence`), `tokens_total` and `harnesses`. The reasons:

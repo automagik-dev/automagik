@@ -386,6 +386,21 @@ Actors (RFC 0021 (d)): every answer says who its tokens belong to.
   usage, the branches named (none needed) a filter. A bot with no row is 0 only when
   `actor_unattributed.absent_bot_is_zero` is true; otherwise it is unknown.
 
+```sh
+usagemeter query --repo example.com/acme/widgets --by task [--branch feat/x ...] --json
+```
+
+Tasks (RFC 0018 M3, RFC 0021 D4): one row per task id with task-labelled usage in the repo and
+window, at `attribution.precision: task_interval`; the branches named (none needed) are a filter.
+The row's `task` is Genie's short id, and its `actors` names every launch tag that did the work
+(bot, kind `worker`, role, squad, unrecorded, harness), ordered like a bot row's key: a task
+answered by several bots or roles names them all, never a guessed single one. The actor list is
+bounded with the row; keys past the bound are counted in `actors_omitted`, never cut. A task id
+the meter ties to more than one checkout of the repo is never summed: its row is `missing` with
+`reason: task_ambiguous`, and the meter never prints a checkout path. Its numbers are
+evidence-backed, so the branch row stays the total. A window with no task labels is an `ok`
+answer with `rows: []` and the branch answer unchanged: a reader falls back to it.
+
 ## Coverage
 
 ```sh
