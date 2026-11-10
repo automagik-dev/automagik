@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Delivered (2026-11-09: #790; hand-over #780, commit d0453789; Unfold's prerelease unfold-dsh-v3.108.7, weunfold/unfold#3; removal #854, commit 14b8fc50; answers: Q1-Q5, 2026-11-09; no question open) |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | none: every step here touches only paths that never ship, so no step cuts a release |
 | Created | 2026-11-09 |
@@ -245,7 +245,7 @@ manifests. Whether to keep them is Unfold's call; filter-repo can drop them.
 
 **Here:** nothing is rewritten. No pointer folder is left under `apps/`: `pluginNames()` reads every
 `apps/*-dsh`, so a stub folder would be read as a plugin. The pointer is this RFC, which records
-the hand-over commit and Unfold's first release when it moves to Shipped, and the removal commit's
+the hand-over commit and Unfold's first release when it moves to Delivered, and the removal commit's
 message, which names both.
 
 ### 6. The order of steps

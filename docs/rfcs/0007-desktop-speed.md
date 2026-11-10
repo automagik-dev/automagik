@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (delivery 2 merged: #184; delivery 4's async profile copy merged: #179) |
+| Status | In delivery (delivery 2: #184; delivery 4 in part: #179; slices 1, 3, 5 and 6 not found) |
 | Milestone | 1 (marks, stable port, toward the #141 fix); 5. The app opens fast |
 | Lanes | desktop (3.N) |
 | Created | 2026-10-30 |

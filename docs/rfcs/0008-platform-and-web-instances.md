@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft (amended 2026-11-09 by [RFC 0024](0024-automagik-cloud.md): the Summary, Web instances, the desktop client, Contracts, the threat model's Authentication and Undo lines, and questions 2, 6 and 7) |
+| Status | Queued (amended 2026-11-09 by [RFC 0024](0024-automagik-cloud.md), #866: the Summary, Web instances, the desktop client, Contracts, the threat model's Authentication and Undo lines, and questions 2, 6 and 7) |
 | Milestone | not scheduled |
 | Lanes | desktop (3.N); release tooling |
 | Created | 2026-10-30 |

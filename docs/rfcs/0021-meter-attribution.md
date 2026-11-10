@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft (amended 2026-11-10: the owner reopened Decided 5 and 6; RFC 0026) |
+| Status | In delivery (deliveries 1-6: #817, #825, #827, #835, #875; #849 closed, carried by #875; delivery 7 (reaching machines) is not delivered; 8 open; Q1-Q6 answered by Chat 2026-11-09, Decided 5 and 6 reopened by the owner 2026-11-10) |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | none here (docs); herdr (3.N.P) for ledger rows; meter (3.N.P, RFC 0017) for the crate |
 | Created | 2026-11-09 |
@@ -70,9 +70,8 @@ Carried, not new:
   ambiguity stays unknown and a bot is never guessed; anything captured comes from fork-and-exit
   runs (the sync) or from records Herdr already writes at start time.
 
-Decided by Chat, 2026-11-09, for this RFC's six questions; 5 and 6 were reopened by the owner
-on 2026-11-10 and are replaced below. They are technical, and they serve the owner's ask to
-compare bots across agents:
+Decided by Chat, 2026-11-09, for this RFC's six questions. They are technical, and they serve the
+owner's ask to compare bots across agents:
 
 1. **Squad** is the head of the launching bot's lead chain, frozen in the start row at launch (e).
    Decided by Chat, 2026-11-09: one rule for every bot, stable for history.
@@ -98,6 +97,9 @@ compare bots across agents:
    answers (RFC 0026 (e)), never a session-level join. `other_machine` stays only for a call
    whose sole record is another machine's (a moved log). Replicated records would need a
    fleet-wide session key; RFC 0026 (e) says why it is not built and leaves it to Chat.
+
+*Reopened by the owner, 2026-11-10, after later work:* Decided 5 and 6 are replaced above; Decided
+1 to 4 stand.
 
 Proposed here: everything else.
 
@@ -653,6 +655,8 @@ release.
    their own; attribution does not wait for them. Delivery 2 here must merge before RFC 0017's
    delivery 4.
    *Check:* a machine that took the pack release runs a meter whose `query --by bot` answers.
+   *Status (2026-11-10):* not delivered. v3.114.1 shipped the meter with #875 and the meter-lane
+   pointer names it, but no machine is shown running the pack release's `query --by bot`.
 8. **The backfill** (the operator, per machine). `usagemeter sync --evidence-backfill` back to the
    later of the oldest ledger row and the retention bound.
    *Acceptance (the Reviewer's item, required):* `--days` never asks past the retention bound
@@ -668,9 +672,9 @@ measurement RFC 0026 (i) describes.
 
 ## Open questions
 
-None. The six questions this RFC asked were decided by Chat on 2026-11-09 (Decided, 1 to 6).
-Amended 2026-11-10: 5 and 6 were reopened by the owner; their replacements are RFC 0026 (d) and
-(e), whose open questions are Chat's and genie's.
+The six questions this RFC asked were decided by Chat on 2026-11-09 (Decided, 1 to 6). Decided 5
+and 6 were reopened by the owner on 2026-11-10 and replaced above; their mechanisms are RFC 0026
+(d) and (e), whose open questions are Chat's and genie's.
 
 ## Links
 

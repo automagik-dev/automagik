@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (every question answered: see Decided and proposed; delivery 1 merged: #260; amended 2026-11-07: universal Bots, see Amendments) |
+| Status | In delivery (delivery 1: #260; universal-Bot amendment: #666, #670, #674, #684; 2-9 unconfirmed; every question answered) |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | plugin (3.N.P), desktop (3.N), herdr (3.N.P, [RFC 0011](0011-monorepo-parts-and-releases.md)) |
 | Created | 2026-11-03 |

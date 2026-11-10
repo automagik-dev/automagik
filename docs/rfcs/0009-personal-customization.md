@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Queued (no delivery PR found) |
 | Milestone | after 2. One message box (proposed name: Make it yours) |
 | Lanes | plugin (3.N.P), desktop (3.N) for the window shot |
 | Created | 2026-10-30 |

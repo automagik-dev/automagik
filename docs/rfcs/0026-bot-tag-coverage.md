@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Draft |
+| Status | Queued |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | none here (docs); meter (3.N.P); herdr (3.N.P) for the fleet step; DSH upstream |
 | Created | 2026-11-10 |

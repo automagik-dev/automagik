@@ -44,6 +44,7 @@ fn row(
             repo: repo.map(Into::into),
             branch: branch.map(Into::into),
             hour_ms,
+            ..RollupKey::default()
         },
         squad: None,
         tokens,

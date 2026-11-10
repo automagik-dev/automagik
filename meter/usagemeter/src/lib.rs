@@ -5,6 +5,7 @@
 //! Nothing here opens a network connection; the only process it talks to is the local `hc`.
 
 pub mod event;
+pub mod evidence;
 pub mod hc;
 pub mod ledger;
 pub mod paths;

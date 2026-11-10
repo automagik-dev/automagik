@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted |
+| Status | Accepted (unverified: no delivery PR found; #103, #121 and #127 predate the RFC) |
 | Milestone | 1. Safe browser and everyday fixes |
 | Lanes | plugin (3.N.P) |
 | Created | 2026-10-30 |
