@@ -938,9 +938,18 @@ export function agySandbox({ platform = process.platform, read = () => null } = 
 // How each agent takes a first prompt that starts an interactive session. Most read a bare
 // trailing argument; agy 1.5.3 only through `-i` / `--prompt-interactive` (a stray trailing
 // argument is an error).
+// kimi takes none on its command line (#1032). Read on 2026-11-10 from kimi 2.5.0
+// (@moonshot-ai/kimi-code; `kimi --version` prints 2.5.0), its --help: `Usage: kimi [options]
+// [command]`, and any other word is a command name: `unknown command '<word>'. See 'kimi
+// --help'.`, exit 1. Its one prompt option, `-p, --prompt <prompt>  Run one prompt
+// non-interactively and print the response.`, is a one-shot print mode: it ends after the answer
+// and refuses --yolo, --auto and --plan (`Cannot combine --prompt with --auto.`), and a worker
+// must stay interactive. So kimi starts bare, and its task is its first message, sent once it
+// says it is ready (it reports its status to hc; the CLI's worker verb: hc wait, then hc send).
 const PROMPT = {
   antigravity: (task) => ["-i", task],
   "dsh-tui": (task) => ["--", plainPrompt(task)],
+  kimi: () => [],
 };
 
 // dsh-tui's first prompt (a worker's task, a bot's briefing) goes after `--`, which DSH drops
@@ -954,6 +963,12 @@ export const plainPrompt = (text) => (/^\s*-/.test(String(text)) ? `${PROMPT_LAB
 export function promptArgs(agentKey, task) {
   return PROMPT[agentKey] ? PROMPT[agentKey](task) : [task];
 }
+
+/**
+ * Whether `agentKey` takes no first prompt on its command line (promptArgs gives it no word:
+ * kimi), so whoever starts it sends the task as its first message instead.
+ */
+export const promptByMessage = (agentKey) => promptArgs(agentKey, "x").length === 0;
 
 // How each agent picks up where it left off, for Restart: the words after its `run`. Each
 // was read from that agent's own --help on 2026-11-03 (claude, codex resume, pi, omp, kimi,
