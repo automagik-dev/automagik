@@ -33,6 +33,11 @@ val signing = Properties().apply {
     val password = System.getenv("POCKET_SIGNING_PASSWORD") ?: getProperty("passwordFile")?.let { File(it).takeIf(File::isFile)?.readText()?.trim() }
     password?.let { setProperty("password", it) }
 }
+// One shared debug key for debug APKs (docs/decisions/shared-debug-signing-key.md): CI passes
+// POCKET_DEBUG_STORE, a local build can pass -Ppocket.debugStore, and without either AGP's own
+// debug key stays. Debug only: the release signing config and the release build type are untouched.
+val sharedDebugStore: String? = System.getenv("POCKET_DEBUG_STORE")?.takeIf { it.isNotBlank() }
+    ?: providers.gradleProperty("pocket.debugStore").orNull?.takeIf { it.isNotBlank() }
 // The release version is the monorepo's one version (AGENTS.md): the root package.json, three levels above this
 // Gradle project, set by bun scripts/version.ts on each release. Never edited here.
 val appVersion: String = (groovy.json.JsonSlurper().parse(rootProject.file("../../../package.json")) as Map<*, *>)["version"] as String
@@ -58,13 +63,18 @@ android {
         // its own with -Ppocket.updateUrl=.
         val updates = providers.gradleProperty("pocket.updateUrl").orElse("https://github.com/automagik-si/automagik/releases/download/pocket-lane/latest.json")
         buildConfigField("String", "UPDATE_URL", "\"${updates.get()}\"") }
-    signingConfigs { if (signing.getProperty("storeFile") != null && signing.getProperty("password") != null) create("pocket") {
-        storeFile = file(signing.getProperty("storeFile")); storePassword = signing.getProperty("password")
-        keyAlias = signing.getProperty("alias", "pocket"); keyPassword = signing.getProperty("password") } }
+    signingConfigs {
+        // The shared debug key is a debug signing config of its own: the release build type never selects it.
+        sharedDebugStore?.let { store -> create("sharedDebug") {
+            storeFile = file(store); storePassword = "android"; keyAlias = "androiddebugkey"; keyPassword = "android" } }
+        if (signing.getProperty("storeFile") != null && signing.getProperty("password") != null) create("pocket") {
+            storeFile = file(signing.getProperty("storeFile")); storePassword = signing.getProperty("password")
+            keyAlias = signing.getProperty("alias", "pocket"); keyPassword = signing.getProperty("password") } }
     buildFeatures { compose = true; buildConfig = true }
     buildTypes {
-        // Debug builds use the release key too when it's here, so a build from Android Studio and the published ones update each other.
-        debug { signingConfigs.findByName("pocket")?.let { signingConfig = it } }
+        // Debug builds use the release key too when it's here, so a build from Android Studio and the published ones
+        // update each other. Else the shared debug key when one is provided, else AGP's own debug key.
+        debug { (signingConfigs.findByName("pocket") ?: signingConfigs.findByName("sharedDebug"))?.let { signingConfig = it } }
         release { isMinifyEnabled = false; signingConfig = signingConfigs.findByName("pocket") ?: signingConfigs.getByName("debug") } }
     compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
@@ -100,11 +110,12 @@ android {
 // it against the project while the task resolves it against the daemon's working directory. On a
 // read-only home, pin the debug keystore (and the task's default location, so AGP still creates it)
 // to the stable folder settings.gradle.kts uses when no name is adopted. A named folder, a writable
-// home or the release key keeps AGP's own location.
+// home, the release key or a shared debug key keeps AGP's own location.
 val stableDebugKeystore = File(gradle.gradleUserHomeDir, "android-user-home/debug.keystore")
 val emptyAndroidPrefsExport = listOf("ANDROID_USER_HOME", "ANDROID_SDK_HOME", "ANDROID_PREFS_ROOT")
     .any { System.getenv(it)?.isEmpty() == true || System.getProperty(it)?.isEmpty() == true }
-if (emptyAndroidPrefsExport && !File(System.getProperty("user.home")).canWrite() && android.signingConfigs.findByName("pocket") == null) {
+if (emptyAndroidPrefsExport && !File(System.getProperty("user.home")).canWrite() &&
+    android.signingConfigs.findByName("pocket") == null && sharedDebugStore == null) {
     android.signingConfigs.getByName("debug").storeFile = stableDebugKeystore
     tasks.withType(com.android.build.gradle.internal.tasks.ValidateSigningTask::class.java).configureEach {
         val validateTask = this

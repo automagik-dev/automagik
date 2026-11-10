@@ -458,8 +458,11 @@ test("--uninstall with nothing there before moves the pack out of mods/, never d
   const s = scratch(t);
   s.publish("9.9.0");
   assert.equal(s.run("--yes").code, 0);
+  // The fleet coverage record the sidebar's meter run writes beside the install record (RFC 0026 (e)).
+  writeFileSync(join(s.state, "fleet-coverage.json"), "{\"v\":1}\n", { mode: 0o600 });
   const r = s.run("--uninstall");
   assert.equal(r.code, 0, r.err);
+  assert.equal(existsSync(join(s.state, "fleet-coverage.json")), false, "the fleet record leaves with the pack");
   assert.equal(existsSync(s.pack), false);
   assert.deepEqual(readdirSync(s.mods), []);
   assert.equal(readFileSync(join(s.state, ".prev", "am-sidebar", "VERSION"), "utf8").trim(), "9.9.0");

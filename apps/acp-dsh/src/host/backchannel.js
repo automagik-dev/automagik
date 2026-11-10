@@ -18,6 +18,7 @@ import { appendPluginRecord } from '@deepseek-ai/dsh-session'
 import { SYNTHETIC_KIND } from './names.js'
 import { contentImages } from './acp.js'
 import { levelOf, TOOL_NAME } from './tool.js'
+import { guardSession } from './write-guard.js'
 
 /** How long a bridge's long-poll waits before answering "nothing changed". */
 export const WAIT_MS = 20_000
@@ -317,6 +318,8 @@ export class Backchannel {
       abort: new AbortController(),
     }
     this.records.set(credential, record)
+    // From here the bridge may write rows on this Session: none the reader refuses (#958).
+    record.guard = guardSession(agent?.session, { log: this.log })
     return record
   }
 
@@ -338,6 +341,7 @@ export class Backchannel {
     } catch {}
     for (const wake of record.waiters) wake()
     record.waiters.clear()
+    record.guard?.release()
   }
 
   /**
@@ -429,6 +433,7 @@ export class Backchannel {
         arguments: body.arguments ?? {},
         callId: typeof body.callId === 'string' ? body.callId : undefined,
       })
+      this.diagnostics?.bridgeCall(record, result)
       // Revoked while the call was awaiting approval: the caller sees the refusal, not a result.
       if (result?.revoked === true) return reply(401, { error: 'refused' })
       return reply(200, result)

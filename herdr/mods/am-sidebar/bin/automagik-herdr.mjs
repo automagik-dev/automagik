@@ -40,10 +40,11 @@ import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, 
   workLeft, writesWorktree } from "../workers.js";
 import { SESSION_MASK, carriedLabels, maskSession, commandArgv, continueRefusal, doomedHelpers, helperArgs, helperPlan, launchChange, ledgerSession, maskedArgv,
   isPaneIdle, pendingDialog, paneCommand, planText as restartText, restartPlan, sharedFresh, claudeSlug, paneSession, restartRefusal, sameSessions, sessionFor, sessionId, sharedFolders } from "../restart.js";
-import { autoStatus, readAuto, binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, managedPack, readMarker, relinkCli, rollback as rollbackPack, writeAuto, writeMarker } from "../update.mjs";
+import { autoStatus, readAuto, binDirOf, checkForUpdate, defaultModsDir, installUpdate, liveHome, managedPack, readMarker, relinkCli, rollback as rollbackPack, stateDirOf, writeAuto, writeMarker } from "../update.mjs";
 import { NO_UPDATE_ENV, PACK_NAME, POCKET_LINK, heldModLine, updatesOff } from "../release.js";
 import { MACHINE_NAME, OPT_IN, decodeExec, hcExecArgs, installOn, linkedMachines, meterScope, recordAfter, resultLine, uninstallOn } from "../meterFleet.js";
 import { readMeterLane } from "../meterLane.mjs";
+import { LOCK_FILE as MACHINES_LOCK, SET_AUTO, STATE_FILE as MACHINES_STATE, entryLine, meterResults, parseState, probeOn, stateAfter, stateLines, updateOn } from "../machineUpdates.js";
 import { SHARED_RENAMES, renamedFrom } from "../migrate.js";
 import { REMOTE_TEXT_MAX, RemoteFileError, StaleSnapshot, readRemoteText, removeRemoteText, utf8Length, writeRemoteText } from "../remoteFile.js";
 import { botHistory, historyLines } from "../inspect.js";
@@ -1331,6 +1332,20 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 one, e.g. one linked later; --linked: the machines only; --local:
                                 this computer only. A machine that fails is a warning. Running
                                 it records your yes (--local: this computer only) for updates
+  machines [--machine M]        what this computer and every linked machine run (am, the pack,
+                                usagemeter) and how each one's last update went
+  machines update [--machine M | --linked | --local]
+                                one update of them all now (Herdr starts one every hour): each
+                                connected linked machine runs its own \`am update\` (am, then the
+                                pack where one is installed: each signed pointer checked there
+                                against that machine's own keys, each tarball against its
+                                sha256, never an older one, the replaced one kept for a
+                                rollback), then usagemeter as meter install does, where there
+                                is one or you agreed to all. This computer: am and usagemeter
+                                (Herdr installs its pack). A machine that fails says why
+  machines --auto on|off|status [--machine M]
+                                whether this computer (or M) takes those updates: on unless
+                                it was switched off; off, nothing is run there
   meter uninstall               remove it from the linked machines the pack put it on (the
                                 install record says which), only where it is still that version
   dsh-tui install | update      DSH as a Herdr agent: the pinned dsh-TUI ${DSH_TUI.version} in its
@@ -1811,7 +1826,7 @@ async function editProjectFor(opts) {
   return loadProject(key, await writeDirOf(opts, key));
 }
 // The commands that take --machine: the definitions ones (and meter's own --machine).
-const ON_MACHINE = new Set(["ls", "show", "create", "edit", "rm", "category", "start", "restart", "attach", "detach", "whois", "meter", "doc"]);
+const ON_MACHINE = new Set(["ls", "show", "create", "edit", "rm", "category", "start", "restart", "attach", "detach", "whois", "meter", "doc", "machines"]);
 // A project's place in --json answers: `machine` only for a linked machine's.
 const placeOf = (project) => ({ project: project.key, ...(project.machine ? { machine: project.machine } : {}) });
 
@@ -2846,8 +2861,13 @@ async function seatOnMachine(project, bot, over = {}) {
     }
   }
   // Herdr's table as this computer has it (programs.json applied): the Mac builds the command.
-  const command = withAgySettings(agentKey, over.argv ?? [...agent.run, ...agyModeArgs(agentKey, agyMode), ...modelArgs(bot.agent, bot.model)],
-    agySettings?.path);
+  // A Start's command runs on a new session whose id Herdr chooses (Claude), as a local start's
+  // does (launchSeat; RFC 0026 (e)): the pane's agent.session label is that machine's own record
+  // of the seat's session. A command that picks its own session keeps it; a restart's plan
+  // (over.argv) brings its own id, in its argv and its carried label.
+  const source = over.argv ?? [...agent.run, ...agyModeArgs(agentKey, agyMode), ...modelArgs(bot.agent, bot.model)];
+  const chosen = !over.argv && choosesSession(agentKey) && !ownsSession(source) ? newSessionId() : null;
+  const command = withAgySettings(agentKey, chosen ? [...source, ...sessionIdArgs(agentKey, chosen)] : source, agySettings?.path);
   // #612: a local absolute override that isn't there falls back to the shipped run when that is.
   const there = await agentThere(machine, command, agent.name ?? agentKey, paneEnv.prepend,
     shippedRunFor(agentKey, agent.run, command));
@@ -2873,6 +2893,7 @@ async function seatOnMachine(project, bot, over = {}) {
   const env = { ...(paneEnv.appHome ? { HERDR_APP_HOME: paneEnv.appHome } : {}), ...briefed.env };
   const carry = over.carry ?? {};
   const labels = { ...paneLabels(file, bot.id, carry, null), ...carry };
+  if (chosen) labels[SESSION_LABEL] = chosen;
   const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
   // A start: that space only, the bot in a tab of its own (as launchSeat).
   if (over.place === undefined && deadlineLeft() < DEADLINE_MARGIN_MS + DEADLINE_PLACE_MS) {
@@ -2998,6 +3019,8 @@ async function restartOnMachine(opts, project, bot, entry) {
   const planned = {
     bot, run, runningAgent: old ? agentKeyOfArgv(unwrapKeep(old.foreground?.argv), agentTable()) : null, session: label,
     fresh: opts.fresh || !old, agent: entry ? entry.agent : undefined, model: entry ? (entry.model ?? "") : undefined,
+    // A new conversation there starts on an id chosen here too (RFC 0026 (e)), as cmdRestart's does.
+    newSession: newSessionId(),
   };
   let plan = restartPlan(planned);
   let cwd = key;
@@ -3031,7 +3054,7 @@ async function restartOnMachine(opts, project, bot, entry) {
     if (refusal) throw new CliError(refusal);
   }
   let seat = await seatOnMachine(project, bot, { agent: plan.agent, argv: plan.argv, cwd, place: old ? placementFrom([old]) : undefined,
-    carry: { ...carriedLabels(old), ...(session ? { [SESSION_LABEL]: session } : {}) }, replacing: Boolean(old) });
+    carry: { ...carriedLabels(old), ...(session ?? plan.sessionId ? { [SESSION_LABEL]: session ?? plan.sessionId } : {}) }, replacing: Boolean(old) });
   if (seat.running) return opts.json ? { id: bot.id, running: seat.running } : `${bot.name} is already running in ${seat.running}.`;
   const warnings = [...(turnNote ? [turnNote] : []), ...seat.warnings];
   // #597: the replacement is built from bots.json, never the pane's command; when they differ,
@@ -3054,7 +3077,7 @@ async function restartOnMachine(opts, project, bot, entry) {
       session = null;
       warnings.push(`${bot.name} starts on a new conversation: ${note}.`);
       report([warnings.at(-1)]);
-      const again = await seatOnMachine(project, bot, { agent: plan.agent, argv: plan.argv, cwd, place: placementFrom([old]), carry: carriedLabels(old), replacing: true });
+      const again = await seatOnMachine(project, bot, { agent: plan.agent, argv: plan.argv, cwd, place: placementFrom([old]), carry: { ...carriedLabels(old), ...(plan.sessionId ? { [SESSION_LABEL]: plan.sessionId } : {}) }, replacing: true });
       if (again.running) throw new CliError(`${bot.name} is running in ${again.running} now, so no new pane was started; ${old.address} still runs it, untouched.`);
       warnings.push(...again.warnings);
       report(again.warnings);
@@ -5916,6 +5939,121 @@ export async function cmdMeter(opts, [verb, ...rest], io = {}) {
     || (verb === "install" ? "usagemeter: no connected linked machine (hc machine ls)." : "usagemeter: no linked machine has the pack's usagemeter.");
 }
 
+// ---- every linked machine follows the lanes (machineUpdates.js, #954) ----
+
+/** `machines --auto on|off|status [--machine M]`: the machine's own switch, read or written there. */
+async function machinesAuto(opts) {
+  if (!["on", "off", "status"].includes(opts.auto)) throw new CliError("--auto takes on, off or status.", 2);
+  if (opts.linked || opts.local) throw new CliError("machines --auto takes --machine M, or nothing for this computer.", 2);
+  const machine = opts.machine ?? null;
+  if (machine !== null) await connectedMachine(machine, opts.auto === "status" ? "nothing was read" : "nothing was changed");
+  let on;
+  if (opts.auto === "status") {
+    const p = await probeOn(meterRun, machine);
+    if (p.why) throw new CliError(`The setting was not read${machine ? ` on ${machine}` : ""}: ${p.why}`);
+    on = p.auto;
+  } else {
+    const r = await meterRun(["sh", "-c", SET_AUTO, "sh", opts.auto], { on: machine, timeout: 30 });
+    if (r.code !== 0) throw new CliError(`The setting was not saved${machine ? ` on ${machine}` : ""}: ${(r.stderr || `exit ${r.code}`).trim().split("\n").pop()}`);
+    on = opts.auto === "on";
+  }
+  if (opts.json) return { machine, on };
+  return `Updates from the Herdr ${machine ?? "this computer"} is linked into: ${on ? "on" : "off"}.${on ? "" : " Nothing is updated there until `automagik-herdr machines --auto on`."}`;
+}
+
+/**
+ * `machines`: the record of what this computer and each linked machine run and how its last
+ * update went; `machines update`: one cycle now (machineUpdates.js updateOn, one machine at a
+ * time, one cycle at a time); `machines --auto`: a machine's own switch. `io` is the tests'
+ * (env, modsDir). The record and the lock live in the app home's automagik-herdr folder; with no
+ * app home (Herdr is not set up here) a cycle still runs and nothing is kept.
+ */
+export async function cmdMachines(opts, [verb, ...rest] = [], io = {}) {
+  const env = io.env ?? process.env;
+  const modsDir = io.modsDir ?? defaultModsDir(env);
+  if (rest.length || (verb !== undefined && verb !== "update")) throw new CliError(`machines takes update or nothing${verb ? `, not "${[verb, ...rest].join(" ")}"` : ""}.`, 2);
+  if (opts.auto !== undefined) {
+    if (verb) throw new CliError("Give --auto alone, without update.", 2);
+    return machinesAuto(opts);
+  }
+  if ([opts.machine !== undefined, opts.linked, opts.local].filter(Boolean).length > 1) throw new CliError("Give one of --machine, --linked and --local.", 2);
+  const stateDir = stateDirOf(modsDir);
+  const file = join(stateDir, MACHINES_STATE);
+  const readState = () => { try { return parseState(readFileSync(file, "utf8")); } catch { return parseState(""); } };
+  if (verb === undefined) {
+    if (opts.linked || opts.local) throw new CliError("--linked and --local go with machines update.", 2);
+    const state = readState();
+    const found = await meterMachines();
+    let linked = (found.machines ?? []).map((m) => m.name);
+    if (opts.machine !== undefined) {
+      if (!state.machines[opts.machine] && !linked.includes(opts.machine)) throw new CliError(`No linked machine "${opts.machine}" (hc machine ls).`, 2);
+      linked = [opts.machine];
+      state.here = null;
+      state.machines = state.machines[opts.machine] ? { [opts.machine]: state.machines[opts.machine] } : {};
+    }
+    if (opts.json) return { ...state, linked };
+    return stateLines(state, linked).join("\n") || "No machine has been checked yet: automagik-herdr machines update.";
+  }
+  if (updatesOff(env)) {
+    if (opts.json) return { disabled: true, entries: [], notes: [] };
+    return `Update checks are off (${NO_UPDATE_ENV}=1): nothing was updated anywhere.`;
+  }
+  const cycle = async () => {
+    const notes = [];
+    const record = readMarker(modsDir);
+    const scope = meterScope(record);
+    // The meter-lane pointer: read and checked here once, and only if some machine's usagemeter follows it.
+    let lane = null;
+    const laneOnce = () => (lane ??= readMeterLane({ env: process.env, recorded: record?.usagemeterSequence ?? null })
+      .catch((e) => ({ why: String(e?.message ?? e).split("\n")[0] })));
+    const found = opts.local ? { machines: [] } : await meterMachines();
+    if (found.why) {
+      if (opts.machine !== undefined) throw new CliError(`${opts.machine}: ${found.why}.`);
+      notes.push(`Linked machines: skipped (${found.why}).`);
+    }
+    let list = found.machines ?? [];
+    if (opts.machine !== undefined) {
+      list = list.filter((m) => m.name === opts.machine);
+      if (!list.length) throw new CliError(`No linked machine "${opts.machine}" (hc machine ls).`, 2);
+    }
+    const entries = [];
+    if (opts.machine === undefined && !opts.linked) entries.push(await updateOn(meterRun, null, { lane: laneOnce, scope }));
+    for (const m of list) {
+      entries.push(m.connected ? await updateOn(meterRun, m.name, { lane: laneOnce, scope })
+        : { machine: m.name, at: new Date().toISOString(), result: "disconnected", steps: [], why: [] });
+    }
+    const taken = lane ? await lane : null;
+    try { noteMeter(modsDir, meterResults(entries), null, taken?.pointer?.sequence ?? null); } catch (e) { notes.push(`usagemeter: the install record could not note it (${e?.message ?? e}).`); }
+    return { entries, notes, linked: found.machines && opts.machine === undefined && !opts.local ? found.machines.map((m) => m.name) : null };
+  };
+  let done;
+  if (!existsSync(dirname(stateDir))) {
+    done = await cycle();
+    done.notes.push(`No Herdr app home here (${dirname(stateDir)}): the result is not kept.`);
+  } else {
+    mkdirSync(stateDir, { recursive: true });
+    const run = async () => {
+      const out = await cycle();
+      const next = stateAfter(readState(), out.entries, { at: new Date().toISOString(), linked: out.linked });
+      const tmp = `${file}.${process.pid}`;
+      writeFileSync(tmp, `${JSON.stringify(next, null, 2)}\n`);
+      renameSync(tmp, file);
+      return out;
+    };
+    try {
+      done = await withLockAsync(join(stateDir, MACHINES_LOCK), run, { wait: 0, what: "the machines' update" });
+    } catch (e) {
+      if (e instanceof CliError) throw e;
+      throw new CliError(`Not updated: ${String(e?.message ?? e).split("\n")[0]}`);
+    }
+  }
+  if (opts.machine !== undefined && done.entries.some((e) => e.result === "failed" || e.result === "disconnected")) {
+    throw new CliError(done.entries.map(entryLine).join("\n"));
+  }
+  if (opts.json) return { entries: done.entries, notes: done.notes };
+  return [...done.entries.map(entryLine), ...done.notes].join("\n");
+}
+
 /**
  * `dsh-tui install|update|uninstall|doctor` (#561): DSH as a Herdr agent, in its own `dsh-tui`
  * profile, through the pinned dsh-TUI and the `dsh-tui` shim. `update` is the same idempotent
@@ -6174,7 +6312,7 @@ export async function cmdLaunchPath(_opts, [program, ...rest]) {
 
 const COMMANDS = { ls: cmdLs, show: cmdShow, create: cmdCreate, edit: cmdEdit, rm: cmdRm, category: cmdCategory,
   start: cmdStart, restart: cmdRestart, attach: cmdAttach, detach: cmdDetach, import: cmdImport, whois: cmdWhois, history: cmdHistory, brief: cmdBrief, update: cmdUpdate,
-  tidy: cmdTidy, forget: cmdForget, worker: cmdWorker, reap: cmdReap, meter: cmdMeter, "dsh-tui": cmdDshTui, doc: cmdDoc,
+  tidy: cmdTidy, forget: cmdForget, worker: cmdWorker, reap: cmdReap, meter: cmdMeter, machines: cmdMachines, "dsh-tui": cmdDshTui, doc: cmdDoc,
   proxy: cmdProxy, "launch-path": cmdLaunchPath };
 const NEEDS_BOT = new Set(["show", "edit", "rm", "start", "restart", "attach", "detach", "history", "brief"]);
 
@@ -6203,7 +6341,7 @@ export async function main(argv = process.argv.slice(2), io = {}) {
   try {
     if (NEEDS_BOT.has(command) && !rest[0] && !(command === "restart" && (opts.queued || opts["run-queued"]))) throw new CliError(`${command} needs a bot (its id or name).`, 2);
     if (opts.machine !== undefined && !ON_MACHINE.has(command)) {
-      throw new CliError(`${command} works on this computer only for now; --machine goes with ls, show, create, edit, rm, category, start, restart, attach, detach, whois, meter and doc.`, 2);
+      throw new CliError(`${command} works on this computer only for now; --machine goes with ls, show, create, edit, rm, category, start, restart, attach, detach, whois, meter, machines and doc.`, 2);
     }
     exitAfter.code = 0;
     const out = command === "proxy" ? await run(opts, rest, io) : await run(opts, rest);

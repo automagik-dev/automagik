@@ -601,6 +601,8 @@ uninstall() {
   if link_ours; then rm -f "$LINK"; say "Removed $LINK."
   elif [ -L "$LINK" ]; then say "Left $LINK: it points at $(readlink "$LINK"), not this install."; fi
   uninstall_meter
+  # The fleet coverage record the sidebar's meter run writes beside the record (meter.js).
+  rm -f "$STATE/fleet-coverage.json"
   rm -f "$MARK"
   say "Done. Your bots (.herdr/bots.json in each project) and Herdr's settings are untouched. Reload Herdr's mods."
 }

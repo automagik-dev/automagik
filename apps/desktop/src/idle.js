@@ -4,6 +4,9 @@
 // at work (welcome-dsh src/host/busy.js). A busy file that is missing or unreadable is an
 // older welcome, or a dsh that is not up: the update then waits for a quit or Restart. Pure:
 // main.js passes what it read.
+// Since #859 the app no longer restarts into its own update by itself: main.js does not call
+// awayInstall, and a downloaded update waits for the person's Restart or a quit. The rule stays
+// here, with its tests; readBusy and LOOK_EVERY_MS still serve the plugins (auto-apply.js).
 import { readFileSync } from 'node:fs'
 
 export const AWAY_MS = 15 * 60 * 1000

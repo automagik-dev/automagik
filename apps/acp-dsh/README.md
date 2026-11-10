@@ -178,7 +178,7 @@ A settings page reads the agents through this host service; the plugin stays hos
 
 | Method | Does |
 |---|---|
-| `status()` | Each agent: `{ id, key, name, on, cli: { found, installUrl, state, managed, version?, error?, diagnostic?, logPath?, updating? }, connector: { state, version?, error?, updating? }, signedIn?, consent?, model: { provider, id, name, listed }, restartNeeded }`. CLI state is `missing`, `installing`, `failed` or `ready`; connector state is `off`, `no-cli`, `installing`, `failed` or `ready`. Errors are redacted. Spawns nothing. |
+| `status()` | Each agent: `{ id, key, name, on, cli: { found, installUrl, state, managed, version?, error?, diagnostic?, logPath?, updating? }, connector: { state, version?, error?, updating?, previous?, rolledBack? }, signedIn?, consent?, model: { provider, id, name, listed }, restartNeeded }`. CLI state is `missing`, `installing`, `failed` or `ready`; connector state is `off`, `no-cli`, `installing`, `failed` or `ready`. `connector.previous` is the release a failed start goes back to, while it is on disk; `connector.rolledBack` is `{ from, to, at, reason }` while a release that failed to start is held back. Errors are redacted. Spawns nothing. |
 | `inspect(id)` | One agent's `status()` row with a fresh sign-in check, for a Bot about to be put on it. Asks that CLI's sign-in status only; installs, enables and starts nothing. Simultaneous checks share one probe, and an answer stands for 3 seconds (`refresh()` clears it). Undefined for an id that is no agent here. |
 | `refresh()` | Looks for the CLIs again (one installed after DSH started is offered now), then asks each CLI whether it is signed in (`claude auth status --json`, of which only `loggedIn` is read; `codex login status`, by its exit code). No agent turn. |
 | `retry(id)` | Retries the required CLI and its connector, and answers at once. Does not turn its model switch on. |
@@ -428,6 +428,21 @@ with the desktop app's own pnpm (`AUTOMAGIK_PNPM`, never the person's) or else n
 place when complete, without install scripts or optional dependencies (the CLIs the adapters
 bundle); an install that pulls in a bundled CLI's platform package anyway is refused. The
 previous version stays for a Session still on it. Nothing is downloaded when a Session starts.
+
+npm is asked for a newer release once the last check is 20 hours old, by a timer that runs
+every 4 hours: at least once a day. A new release must start before it replaces the one in
+use. In its fresh folder it is spawned the way a Session would spawn it and asked
+`initialize`, nothing more (`src/host/handshake.js`): it must answer within 20 seconds, on the
+protocol version the library speaks. One that fails is removed, the connector in use stays
+(the last-known-good), and that version is not tried again for 3 days; a newer release is
+tried at once. One that passes is still unproven until it has opened a session: until then the
+release before it stays on disk, and a session start that fails on it (anything but a missing
+sign-in or a missing bridge) goes back to that release and tries the start once more, so the
+turn is not lost. A newer release that lands while the one in use is still unproven keeps the
+same way back: the last release that opened a session stays on disk until a newer one has, and a
+release gone back to is proven only if it had opened a session before. Both cases are logged and recorded in `current.json` (`bad`, `rolledBack`),
+and `status()` shows them while the failed version is held back. A first install has nothing
+to go back to: it is used even when its check fails, and the log says so.
 An install still running when DSH quits is killed with everything it started and its folder
 removed; one a killed DSH left behind is removed at the next start.
 Until the first install lands, the agent lists no model; a Session already on it says the
@@ -447,6 +462,50 @@ node dev/dsh-check.mjs --agent codex    # the same on your own Codex (a few toke
 `dev/dsh-check.mjs` installs the plugin the way DSH installs any plugin and reads the Session
 log: the agent's text, a `tool/call` of `acp_tool` with its `tool/result`, and the
 `approval/asked` and `approval/decided` pair for that call.
+
+### The ACP library, and a log that always loads
+
+The plugin speaks ACP through `@agentclientprotocol/sdk`, pinned to one exact version, on its
+`/unstable` entry (stable ACP v1, plus `session/fork` and the session updates newer adapters
+send). The agent's `initialize` answer is compared with the protocol version the library
+speaks: an agent that answers another one does not start, and the failure says whether to
+update Automagik or the connector.
+
+**The write-time guard** (`src/host/write-guard.js`). DSH's Session reader refuses a whole
+conversation for one bad step, and the bridge writes its rows beside DSH's own loop. While a
+bridge serves a Session, every row written on it passes the guard first, which keeps the same
+books as the reader. A `step/end` or `turn/end` over a call with no result closes the call
+first (as superseded, or cancelled at a turn's end; DSH's own not-started repair for a call
+that never started) and hides its advertisement; a result for a call that is not open, or
+stamped with a step that has ended, is not written; a call with no advertisement is refused.
+Each repair leaves a log line and a `plugin:acp-dsh/write-guard` record in the Session.
+
+`test/sequence-fuzz.test.js` drives random interleavings of calls, results, cancellations,
+overlapping calls and step and turn ends through the real back-channel on a real Session, and
+loads the log with the pinned reader after every move. `FUZZ_SEED` and `FUZZ_RUNS` replay one
+seed or widen the search.
+
+**Drift.** `node scripts/acp-drift.mjs` fails when the pin is more than one minor behind npm's
+latest, and names each adapter that moved past `dev/acp-compat.json`, the record of the SDK and
+adapter versions the suite last passed against (`--record` writes it, after the suite and the
+real-adapter tests passed). The `ACP drift` workflow runs it daily and opens an issue on drift;
+every pull request checks the record against the pin.
+
+The same workflow has two more daily jobs. `adapters` installs the newest adapters and CLIs
+from npm (`node dev/install-adapters.mjs <folder>` does the adapters' half anywhere) and runs
+the suite with the real-adapter tests on and a wider fuzz; a red run opens an issue. `bump-check`
+runs when the pin is behind npm at all: it moves the pin and the lockfile on `dev`, runs lint,
+the suite and the real-adapter tests, and records the versions, with a read-only token and no
+credentials on disk. `bump-push`, which runs no package code, then pushes `bot/acp-sdk-<v>`
+with the pin, that lockfile and that record, and opens or updates an issue that names the
+branch and the results: Actions may not open pull requests in this repository, so a person
+opens it. Any failure opens or comments on one bump issue. It never merges.
+
+`test/real-adapters.test.js` starts the real adapters with this client in a throwaway home
+(never signed in, no model request): the handshake, the session start or its `auth_required`,
+the bridge's first tool list, and Codex's fork and close. It is skipped unless
+`AUTOMAGIK_TEST_CLAUDE_ACP` and `AUTOMAGIK_TEST_CLAUDE`, or `AUTOMAGIK_TEST_CODEX_ACP` and
+`AUTOMAGIK_TEST_CODEX`, name an adapter's `dist/index.js` and its CLI.
 
 ## Contracts
 
