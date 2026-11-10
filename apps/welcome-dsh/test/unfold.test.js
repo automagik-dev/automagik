@@ -126,10 +126,10 @@ test('the Unfold type\'s plugins are the Bot type plugin\'s own defaults, then t
 // the only plugin the welcome's flows can take from one.
 test('release and absent welcome sources resolve the Bot team to a release tarball', () => {
   const version = '3.35.2'
-  const ownRelease = `https://github.com/automagik-dev/automagik/releases/download/v${version}/automagik-welcome-dsh-${version}.tgz`
+  const ownRelease = `https://github.com/automagik-si/automagik/releases/download/v${version}/automagik-welcome-dsh-${version}.tgz`
   for (const source of [ownRelease, undefined]) {
     assert.deepEqual(installTargetOf(OMNI_PLUGINS[0], source, version), {
-      spec: `https://github.com/automagik-dev/automagik/releases/download/v${version}/automagik-bots-dsh-${version}.tgz`,
+      spec: `https://github.com/automagik-si/automagik/releases/download/v${version}/automagik-bots-dsh-${version}.tgz`,
       options: {},
     })
   }
@@ -137,9 +137,9 @@ test('release and absent welcome sources resolve the Bot team to a release tarba
 
 test('outside Unfold\'s own instance nothing of Unfold\'s installs: no unfold-* plugin, no git', async (t) => {
   // Even where every spec it could build would resolve, the install is refused before any of it runs.
-  const bundles = [{ name: PKG.name, availability: 'profile', enabled: true, source: `https://github.com/automagik-dev/automagik/releases/download/v${PKG.version}/automagik-welcome-dsh-${PKG.version}.tgz`, version: PKG.version }]
+  const bundles = [{ name: PKG.name, availability: 'profile', enabled: true, source: `https://github.com/automagik-si/automagik/releases/download/v${PKG.version}/automagik-welcome-dsh-${PKG.version}.tgz`, version: PKG.version }]
   const everything = [OMNI_PLUGINS[0], ...UNFOLD_PLUGINS, UNFOLD_PLUGIN]
-  const manager = fakeManager({ bundles, registry: new Set(everything.map(plugin => `https://github.com/automagik-dev/automagik/releases/download/v${PKG.version}/automagik-${plugin.dir}-${PKG.version}.tgz`)) })
+  const manager = fakeManager({ bundles, registry: new Set(everything.map(plugin => `https://github.com/automagik-si/automagik/releases/download/v${PKG.version}/automagik-${plugin.dir}-${PKG.version}.tgz`)) })
   let gitChecks = 0
   const team = { state: { bots: {} }, async load() {} }
   const home = folder(t)
@@ -197,7 +197,7 @@ test('in Unfold\'s instance a missing bundled plugin installs nothing: no npm, n
   ]
   for (const [endpoint, rows, phaseOf] of cases) {
     // Every spec resolves: an install would succeed, so only the guard stops it.
-    const manager = fakeManager({ bundles: [own, ...rows], registry: new Set([...OMNI_PLUGINS, ...UNFOLD_PLUGINS, UNFOLD_PLUGIN].map(plugin => `https://github.com/automagik-dev/automagik/releases/download/v${PKG.version}/automagik-${plugin.dir}-${PKG.version}.tgz`)) })
+    const manager = fakeManager({ bundles: [own, ...rows], registry: new Set([...OMNI_PLUGINS, ...UNFOLD_PLUGINS, UNFOLD_PLUGIN].map(plugin => `https://github.com/automagik-si/automagik/releases/download/v${PKG.version}/automagik-${plugin.dir}-${PKG.version}.tgz`)) })
     let gitChecks = 0
     const fake = host({ manager, team: { state: { bots: {} }, async load() {} }, env: UNFOLD, checkGit: async () => { gitChecks += 1; return null } })
     await value(fake, `${endpoint}-install`)
@@ -277,7 +277,7 @@ test('the overlay\'s empty plugin-market.indexes shows as no market source on th
   const sourcesFor = indexes => PluginMarket.prototype.listIndexes.call({ sources: PluginMarket.prototype.sources, config: PluginMarket.Config({ indexes }), cache: new Map(), errors: new Map() })
   assert.deepEqual(sourcesFor([]), [])
   // The Automagik app's profile lists its own market: one source.
-  const automagik = 'https://raw.githubusercontent.com/automagik-dev/dsh-marketplace/main/index.json'
+  const automagik = 'https://raw.githubusercontent.com/automagik-si/dsh-marketplace/main/index.json'
   assert.deepEqual(sourcesFor([automagik]).map(source => source.url), [automagik])
 })
 

@@ -1,4 +1,4 @@
-// Updates: the app follows its own releases, `v<version>` in automagik-dev/automagik on
+// Updates: the app follows its own releases, `v<version>` in automagik-si/automagik on
 // GitHub (the ones `omni desktop` downloads). Builds released from automagik-dev/omni-desktop
 // (up to 2.261023.x) reach these through that repository's last release, which is this app. A newer one downloads in the background and installs when
 // the app quits, or at once from the title bar's Restart now. electron-updater downloads
@@ -12,10 +12,10 @@
 import { existsSync, lstatSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { basename, join } from 'node:path'
 
-export const RELEASES_URL = 'https://api.github.com/repos/automagik-dev/automagik/releases?per_page=50'
+export const RELEASES_URL = 'https://api.github.com/repos/automagik-si/automagik/releases?per_page=50'
 export const DESKTOP_TAG_PREFIX = 'v'
-const DOWNLOADS = 'https://github.com/automagik-dev/automagik/releases/download/'
-const RELEASE_PAGE = 'https://github.com/automagik-dev/automagik/releases/tag/'
+const DOWNLOADS = 'https://github.com/automagik-si/automagik/releases/download/'
+const RELEASE_PAGE = 'https://github.com/automagik-si/automagik/releases/tag/'
 export const FIRST_CHECK_MS = 20_000
 // The app and plugin lanes share the same recurring check interval.
 export const CHECK_EVERY_MS = 15 * 60_000

@@ -6,15 +6,15 @@
 WhatsApp, Telegram, Slack and more, in one window, with helpers that act the moment something happens.</p>
 
 <p align="center">
-  <a href="https://github.com/automagik-dev/automagik/releases/latest/download/Automagik-Mac.dmg"><b>⬇ Download for Mac</b></a>
+  <a href="https://github.com/automagik-si/automagik/releases/latest/download/Automagik-Mac.dmg"><b>⬇ Download for Mac</b></a>
   &nbsp;·&nbsp;
-  <a href="https://github.com/automagik-dev/automagik/releases/latest/download/Automagik-Linux.deb"><b>⬇ Download for Linux (Ubuntu, Debian)</b></a>
+  <a href="https://github.com/automagik-si/automagik/releases/latest/download/Automagik-Linux.deb"><b>⬇ Download for Linux (Ubuntu, Debian)</b></a>
   &nbsp;·&nbsp;
-  <a href="https://github.com/automagik-dev/automagik/releases/latest/download/Automagik-Linux.AppImage">Linux (AppImage)</a>
+  <a href="https://github.com/automagik-si/automagik/releases/latest/download/Automagik-Linux.AppImage">Linux (AppImage)</a>
 </p>
 
 <p align="center"><sub>Mac with Apple silicon (M1 or newer), macOS 13 or newer · Linux on a 64-bit PC · Windows is not supported yet<br>
-Free and open source. <a href="https://github.com/automagik-dev/automagik/releases/latest">All downloads and what's new</a></sub></p>
+Free and open source. <a href="https://github.com/automagik-si/automagik/releases/latest">All downloads and what's new</a></sub></p>
 
 ---
 
@@ -36,7 +36,7 @@ You need two things. The app walks you through both, and you can skip either and
 
 ## Install on a Mac
 
-1. **[Download Automagik for Mac](https://github.com/automagik-dev/automagik/releases/latest/download/Automagik-Mac.dmg)**. It's about 330 MB.
+1. **[Download Automagik for Mac](https://github.com/automagik-si/automagik/releases/latest/download/Automagik-Mac.dmg)**. It's about 330 MB.
 2. Open the file you downloaded (**Automagik-Mac.dmg**, in your Downloads folder).
 3. In the window that opens, **drag the Automagik icon onto the Applications folder**.
 4. Open **Automagik** from your Applications folder (or press ⌘ Space and type *Automagik*).
@@ -48,11 +48,11 @@ You can then eject the Automagik disk in Finder's sidebar and delete the downloa
 
 **Ubuntu or Debian (recommended):**
 
-1. **[Download Automagik for Linux (.deb)](https://github.com/automagik-dev/automagik/releases/latest/download/Automagik-Linux.deb)**.
+1. **[Download Automagik for Linux (.deb)](https://github.com/automagik-si/automagik/releases/latest/download/Automagik-Linux.deb)**.
 2. Double-click the downloaded file and choose **Install**, or in a terminal run `sudo apt install ./Automagik-Linux.deb` from your Downloads folder.
 3. Open **Automagik** from your apps.
 
-**Other Linux (AppImage):** [download the AppImage](https://github.com/automagik-dev/automagik/releases/latest/download/Automagik-Linux.AppImage), right-click it, open **Properties → Permissions**, tick **Allow executing file as program**, then double-click it. If it doesn't start, your system may need `libfuse2` (on Ubuntu: `sudo apt install libfuse2t64`), or use the .deb instead.
+**Other Linux (AppImage):** [download the AppImage](https://github.com/automagik-si/automagik/releases/latest/download/Automagik-Linux.AppImage), right-click it, open **Properties → Permissions**, tick **Allow executing file as program**, then double-click it. If it doesn't start, your system may need `libfuse2` (on Ubuntu: `sudo apt install libfuse2t64`), or use the .deb instead.
 
 ## Your first five minutes
 
@@ -106,8 +106,8 @@ Until October 2026 this app was called Omni. An installed Omni updates itself in
 
 ## Help
 
-Something not working, or an idea? [Open an issue](https://github.com/automagik-dev/automagik/issues) and tell us what you did and what you saw.
+Something not working, or an idea? [Open an issue](https://github.com/automagik-si/automagik/issues) and tell us what you did and what you saw.
 
 ---
 
-<sub>For developers: this is the Automagik desktop app (until 3.261023.x named Omni): Automagik's Bot team and welcome with [Omni](https://github.com/automagik-dev/omni)'s channels and canvases, on a DeepSeek Harness of its own. `omni desktop` opens it with Omni preloaded, `genie desktop` with Genie. It was automagik-dev/omni-desktop until 2.261023.x; those installs update into it. How it's built, released and updated: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). Apache-2.0.</sub>
+<sub>For developers: this is the Automagik desktop app (until 3.261023.x named Omni): Automagik's Bot team and welcome with [Omni](https://github.com/automagik-si/omni)'s channels and canvases, on a DeepSeek Harness of its own. `omni desktop` opens it with Omni preloaded, `genie desktop` with Genie. It was automagik-dev/omni-desktop until 2.261023.x; those installs update into it. How it's built, released and updated: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). Apache-2.0.</sub>

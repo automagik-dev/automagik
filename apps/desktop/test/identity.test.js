@@ -106,7 +106,7 @@ test('the artifacts are named Automagik, and the CLIs and the update feeds still
     'Automagik-3.261024.1-mac-arm64.dmg',
     'Automagik-3.261024.1-mac-arm64.zip',
   ])
-  // What `omni desktop` (automagik-dev/omni packages/cli) and `genie desktop` match.
+  // What `omni desktop` (automagik-si/omni packages/cli) and `genie desktop` match.
   assert.match(appImage, /-linux-x86_64\.AppImage$/)
   assert.doesNotMatch(deb, /-linux-x86_64\.AppImage$/)
   assert.match(dmg, /-mac-arm64\.dmg$/)

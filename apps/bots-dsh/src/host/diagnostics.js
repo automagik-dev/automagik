@@ -20,7 +20,7 @@ const STACK_LINES = 8
 const FRAME = /^\s+at (?:async |new )?(?:.+?)(?:\(([^()]*):\d+:\d+\)|:native\)| \(native\)|([^()]*):\d+:\d+)$/
 const TEXT_MAX = 2000
 export const REPORT_ENTRIES = 20
-export const ISSUES_URL = 'https://github.com/automagik-dev/automagik/issues/new'
+export const ISSUES_URL = 'https://github.com/automagik-si/automagik/issues/new'
 
 const quote = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 

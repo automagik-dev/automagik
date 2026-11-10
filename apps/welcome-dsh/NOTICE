@@ -5,7 +5,7 @@ This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 
 The Omni octopus and its stage are copied from Automagik's own
 apps/bots-dsh (src/client/characters.js) and Omni's packages/api (src/login/pages.ts,
-https://github.com/automagik-dev/omni),
+https://github.com/automagik-si/omni),
 both Apache-2.0.
 
 At run time the plugin uses the @deepseek-ai/* packages and React of the DeepSeek

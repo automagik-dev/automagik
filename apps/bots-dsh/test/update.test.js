@@ -81,7 +81,7 @@ test('a registry install finds the newest version on the next registry and insta
   assert.equal(view.latest, '9.0.0')
   assert.equal(view.current, PKG.version)
   assert.equal(view.source, 'registry')
-  assert.equal(view.notesUrl, 'https://github.com/automagik-dev/automagik/releases')
+  assert.equal(view.notesUrl, 'https://github.com/automagik-si/automagik/releases')
   assert.equal(rt.updateStart().phase, 'installing')
   await flush()
   assert.deepEqual(installs, [[`${PKG.name}@9.0.0`, { registry: 'https://registry.npmmirror.com/' }]])
@@ -137,6 +137,25 @@ test('a versioned GitHub install follows the release to the repository\'s curren
   assert.deepEqual(installs, [['github:Fei2411/DS-Bot#v9.1.0&path:/ds-bot', {}]])
 })
 
+test('an installed copy on the old automagik-dev release address still updates', async () => {
+  const { rt, fetched, installs } = start({
+    source: 'github:automagik-dev/automagik#v3.114.0&path:/apps/bots-dsh',
+    answers: {
+      'https://api.github.com/repos/automagik-dev/automagik/releases/latest': {
+        tag_name: 'v9.1.0',
+        html_url: 'https://github.com/automagik-si/automagik/releases/tag/v9.1.0',
+      },
+    },
+  })
+  const view = await rt.updateCheck()
+  assert.equal(view.available, true)
+  assert.equal(view.latest, '9.1.0')
+  assert.deepEqual(fetched, ['https://api.github.com/repos/automagik-dev/automagik/releases/latest'])
+  rt.updateStart()
+  await flush()
+  assert.deepEqual(installs, [['github:automagik-si/automagik#v9.1.0&path:/apps/bots-dsh', {}]])
+})
+
 test('a linked checkout, an unversioned git install, or a disabled check never asks the network', async () => {
   for (const source of [`link:/work/${PKG.name}`, 'github:Fei2411/DS-Bot#main', undefined]) {
     const { rt, fetched } = start({ source })
@@ -162,10 +181,10 @@ test('in the desktop app, which updates as a whole, it never asks the network an
 })
 
 test('the star count comes from the repository, is kept for an hour, and survives a failed answer', async () => {
-  const repo = 'https://api.github.com/repos/automagik-dev/automagik'
+  const repo = 'https://api.github.com/repos/automagik-si/automagik'
   const answers = { [repo]: new Error('offline') }
   const { rt, fetched } = start({ source: `${PKG.name}@^${PKG.version}`, answers })
-  assert.equal(rt.updateView().repoUrl, 'https://github.com/automagik-dev/automagik')
+  assert.equal(rt.updateView().repoUrl, 'https://github.com/automagik-si/automagik')
   assert.equal(await rt.repoStars(), null)
   answers[repo] = { stargazers_count: 42 }
   assert.equal(await rt.repoStars(), 42)

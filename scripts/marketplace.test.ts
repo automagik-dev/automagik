@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { INDEX_PATH, REPO_URL, VETTED, checkIndex, pinIndex, unlisted } from './marketplace';
+import { INDEX_PATH, LEGACY_REPO_URL, REPO_URL, REPO_URLS, VETTED, checkIndex, pinIndex, unlisted } from './marketplace';
 import { pluginNames } from './release-plugins';
 
 const repoDir = join(import.meta.dir, '..');
@@ -19,7 +19,7 @@ type IndexPlugin = { name: string; versions: { source: { url: string; path?: str
 describe('market index', () => {
   test('lists every plugin of this repository, by its folder, and otherwise only vetted forks', () => {
     const index = JSON.parse(readFileSync(INDEX_PATH, 'utf8'));
-    const ours = index.plugins.filter((plugin: IndexPlugin) => plugin.versions[0]?.source.url === REPO_URL);
+    const ours = index.plugins.filter((plugin: IndexPlugin) => REPO_URLS.includes(plugin.versions[0]?.source.url));
     const listed = ours.map((plugin: IndexPlugin) => plugin.name);
     // A plugin not released yet is listed by its first release's pin, from its automagik.market.
     for (const name of pluginNames().filter((name) => !listed.includes(name))) {
@@ -36,7 +36,7 @@ describe('market index', () => {
     expect(listed.filter((name: string) => !pluginNames().includes(name))).toEqual([]);
     for (const plugin of ours) {
       for (const entry of plugin.versions) {
-        expect(entry.source.url).toBe(REPO_URL);
+        expect(REPO_URLS).toContain(entry.source.url);
         expect(entry.source.path).toBe(`apps/${plugin.name.replace('@automagik/', '')}`);
       }
     }
@@ -59,6 +59,8 @@ describe('market index', () => {
 
   test('a commit that holds the package passes', () => {
     expect(checkIndex(indexWith({ type: 'git', url: REPO_URL, commit: head, path: 'apps/bots-dsh' }), repoDir)).toEqual([]);
+    // An entry pinned before its part moved still passes: the old name redirects.
+    expect(checkIndex(indexWith({ type: 'git', url: LEGACY_REPO_URL, commit: head, path: 'apps/bots-dsh' }), repoDir)).toEqual([]);
   });
 
   test('an entry lists the DSH range its package.json declares, which covers the DSH its tests run on', () => {
