@@ -362,7 +362,8 @@ a place in a team, and keeps that team in front of every agent and of you.
   is `automagik-herdr brief <bot>`. A Claude pane attached while running gets the briefing
   once, from its hook, on its first turn and again after an edit or a compaction. An edit to a
   bot's instructions reaches it at its next `automagik-herdr restart`. Claude Code's `/restart`
-  refuses a session started with that briefing (`--append-system-prompt-file`), so the briefing
+  never works in a Herdr pane with its launch flags (`--append-system-prompt-file`,
+  `--settings`), including the hint `Update installed · /restart to apply`, so the briefing
   tells every bot, whatever its agent, to point you to `automagik-herdr restart <bot>` (run in
   the project's folder, or with `--project`; it keeps the bot's agent and model) or the bot's
   Restart instead of its agent's own restart command.
@@ -386,7 +387,7 @@ restarts it (Restart runs `automagik-herdr restart`; Restart on… restarts it o
 agent, a new conversation, the bot's definition keeping its agent), attaches it to the focused
 pane or detaches it; What happened shows `automagik-herdr history` for it (its panes, starts,
 sessions, the newest transcript, which a click copies, its workers) and the helpers its pane runs
-now. A planned bot's menu has no Run items. A restart refused because the bot is mid-turn offers
+now. A planned bot's menu has no Run items. A queued restart waits for its next idle. A refusal offers
 "Restart anyway". The Bots list and the Attach picker open on the bots the sidebar already
 knows and refresh behind.
 
@@ -479,6 +480,8 @@ automagik-herdr edit <bot> [the create options] [--code true|false] [--unplanned
 automagik-herdr rm <bot>
 automagik-herdr category ls | add --title T [--sub S] [--id ID] | edit <id> | rm <id> | order <id>...
 automagik-herdr start <bot> [--space ID] [--tab ID]
+automagik-herdr restart --queued [--project DIR] [--json]
+automagik-herdr restart --cancel <bot> [--project DIR] [--json]
 automagik-herdr restart <bot> [--fresh] [--agent A] [--model M [--save]] [--force]
 automagik-herdr attach <bot> <terminal> [--move]
 automagik-herdr detach <bot>
@@ -598,6 +601,12 @@ automagik-herdr dsh-tui install | update | uninstall | doctor
   shell, right after its own `space.new`, as the new space's one tab and that tab's one
   terminal. `AUTOMAGIK_HERDR_TAB_WAIT_MS` sets how long `start` and `worker` wait for Herdr to show
   the new pane (5000 by default); `0` turns this tab setup off.
+- `restart <bot>` (also `am restart <bot>`) queues a working or blocked bot for its next
+  idle prompt. A background shell at an empty agent prompt already counts as idle. A dialog
+  stays for the owner to answer: Herdr never sends keys or answers it. `restart --queued`
+  lists the queue; `restart --cancel <bot>` (or `restart <bot> --cancel`) cancels one. Both
+  accept `--project DIR` and `--json`. A second request replaces that bot's queued options.
+  `--force` restarts immediately; helpers still require `--tree` or `--force`.
 - `restart` runs the bot's agent again in its pane's place: the new pane starts in the same
   space, tab and folder with the same labels, and the old one is ended (`hc kill`) only once the
   new one has kept its agent in front at every check for 5 seconds (1.5 once the agent reports
@@ -623,8 +632,8 @@ automagik-herdr dsh-tui install | update | uninstall | doctor
   says so.
   `--fresh` starts a new conversation. `--agent` / `--model` swap the agent or model (always a new
   conversation: they don't cross agents); `bots.json` keeps the old ones unless `--save` is given.
-  A bot that isn't running is started. It is refused while the bot is working (it would cut the
-  turn in half) or has helpers, such as workers, that hc would end with its pane; `--force`
+  A bot that isn't running is started. A busy bot queues until idle. It is refused if it has
+  helpers, such as workers, that hc would end with its pane; `--force`
   restarts anyway. The old pane is found in the attach ledger; once the new pane has stayed up,
   the ledger moves the bot to it (the old binding detached, by `start`, reason `moved`; the new
   terminal attached, by `start`), and a replacement that didn't make it writes no rows. A bot

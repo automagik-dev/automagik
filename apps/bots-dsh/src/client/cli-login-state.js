@@ -5,12 +5,17 @@
 //
 // A row's life (the diagram in 2.3):
 //   offer        "To use {name} in this Bot, sign in"            [Sign in] [Not now]
+//   account      the CLI is already signed in on this computer: the account, and that Bots
+//                will use and bill it, shared with the terminal (#869)  [Use this account] [Not now]
 //   attempt      the link, the Codex code or the Claude code field, its expiry   [Cancel sign-in]
 //   done         "Done: signed in to {name}."  gone by itself after DONE_MS
 //   applyFailed  signed in, but the chosen model could not be used  gone after APPLY_FAILED_MS
 //   failed       one line                                        [Try again] [Close]
 //   interrupted  a restart ended the attempt                     [Try again] [Close]
-// A row that only offers or reports (offer, failed, interrupted) closes by itself when the Bot's
+// The account step comes before any sign-in starts: the host answers `confirm` where it would
+// have answered ready at once. "Use this account" is the person's word; the host then applies
+// the model chosen with the entry, exactly as after a sign-in (done, applyFailed).
+// A row that only offers or reports (offer, account, failed, interrupted) closes by itself when the Bot's
 // selected model moves to another provider: it is about a model the Bot left. A live attempt
 // stays, since it belongs to the CLI, not to the Bot's pick.
 import { APPLY_FAILED_MS, CLI_NAMES, DONE_MS, rememberLinkState } from './cli-login-model.js'
@@ -25,13 +30,16 @@ const EXPIRED = 'This sign-in expired. Start again.'
 const CHOICE_MS = 500
 const CHOICE_TRIES = 8
 const known = provider => Object.hasOwn(CLI_NAMES, provider)
-const CLOSES_ON_MOVE = new Set(['offer', 'failed', 'interrupted'])
+const CLOSES_ON_MOVE = new Set(['offer', 'account', 'failed', 'interrupted'])
+const ACCESS_REQUIRED = 'MODEL_ACCESS_REQUIRED'
+const ACCOUNT_CHANGED = 'bot/account-changed'
+const ACCOUNT_SIGNED_OUT = 'bot/account-signed-out'
 const providerOf = ref => (typeof ref === 'string' && ref.includes('/') ? ref.slice(0, ref.indexOf('/')) : undefined)
 const messageOf = error => (typeof error?.message === 'string' && error.message !== '' ? error.message : 'Could not continue this sign-in. Try again.')
 
 /**
  * @param {object} options
- * @param {object} options.actions the team actions: cliLoginStart/Current/Status/Answer/Cancel/Connections, refreshModels.
+ * @param {object} options.actions the team actions: cliLoginStart/Current/Status/Answer/Cancel/Connections/Confirm, refreshModels.
  * @param {number} [options.pollMs] how often a live attempt is read.
  * @param {() => number} [options.now]
  * @param {{ setTimeout: Function, clearTimeout: Function, setInterval: Function, clearInterval: Function }} [options.timers]
@@ -71,6 +79,9 @@ export function createCliLogin({ actions, pollMs = 1500, now = Date.now, timers 
   }
   const patchRow = (botId, seq, patch) => { if (live(botId, seq)) setRow(botId, { ...rowOf(botId), ...patch }) }
   const attemptRows = provider => Object.values(snapshot.rows).filter(row => row.provider === provider && row.stage === 'attempt')
+  const accountRows = provider => Object.values(snapshot.rows).filter(row => row.provider === provider && row.stage === 'account')
+  // Bot id -> the refused turn (its time) the account step was last offered for.
+  const offered = new Map()
   // A row that ended on its own leaves by itself, with no residue (D17, rule 8).
   function leaveAfter(botId, seq, ms) {
     timers.clearTimeout(rowTimers.get(botId))
@@ -96,6 +107,7 @@ export function createCliLogin({ actions, pollMs = 1500, now = Date.now, timers 
       for (const row of attemptRows(provider)) setRow(row.botId, { ...row, attempt: view })
       armPoll(provider)
     } else if (view.status === 'ready') succeed(provider, view)
+    else if (view.status === 'confirm') askAccount(provider, view.account)
     else if (view.status === 'cancelled') {
       stopPoll(provider)
       for (const row of attemptRows(provider)) setRow(row.botId, null)
@@ -103,6 +115,35 @@ export function createCliLogin({ actions, pollMs = 1500, now = Date.now, timers 
       stopPoll(provider)
       for (const row of attemptRows(provider)) setRow(row.botId, { ...row, stage: 'failed', attempt: null, busy: false, confirm: false, message: view.message ?? 'Sign-in did not finish. Try again.' })
     }
+  }
+
+  // The CLI was already signed in: every row of that agent asks the person about the account
+  // before anything else happens. No attempt is at work, so nothing is polled.
+  function askAccount(provider, account) {
+    stopPoll(provider)
+    for (const row of attemptRows(provider)) setRow(row.botId, { ...row, stage: 'account', attempt: null, busy: false, confirm: false, error: null, account: Object.freeze({ ...account }) })
+  }
+
+  // The person's word was taken: the rows of that agent end as after a sign-in.
+  function accountTaken(provider, botId, view) {
+    void Promise.resolve().then(() => actions.refreshModels?.()).catch(() => {})
+    for (const row of accountRows(provider)) {
+      setRow(row.botId, { ...row, stage: 'done', taken: true, account: undefined, busy: false, error: null })
+      leaveAfter(row.botId, row.seq, DONE_MS)
+      const choice = row.botId === botId ? view?.choice : undefined
+      if (choice?.state === 'failed') applyFailed(row.botId, row.seq, choice)
+      else void followChoice(row.botId, provider, row.seq)
+    }
+  }
+
+  // What the host says of an agent's account now, for one row: still waiting for the person
+  // (the account, read again), or not any more (the offer to sign in).
+  async function readAccount(botId, provider, seq, error) {
+    let current
+    try { current = await actions.cliLoginCurrent(botId, provider) } catch { current = undefined }
+    if (!live(botId, seq)) return
+    if (current?.account) patchRow(botId, seq, { stage: 'account', busy: false, error, account: Object.freeze({ ...current.account }) })
+    else patchRow(botId, seq, { stage: 'offer', busy: false, error, account: undefined })
   }
 
   function succeed(provider, view) {
@@ -149,8 +190,17 @@ export function createCliLogin({ actions, pollMs = 1500, now = Date.now, timers 
   async function ended(provider) {
     stopPoll(provider)
     let signedIn
-    try { signedIn = (await actions.cliLoginConnections())?.connections?.[provider]?.signedIn } catch { signedIn = undefined }
+    let connection
+    try {
+      connection = (await actions.cliLoginConnections())?.connections?.[provider]
+      signedIn = connection?.signedIn
+    } catch { signedIn = undefined }
     if (disposed) return
+    // Signed in, but to an account that waits for the person: the account step, never "done".
+    if (signedIn === true && connection?.consent === 'needed') {
+      for (const row of attemptRows(provider)) void readAccount(row.botId, provider, row.seq, null)
+      return
+    }
     if (signedIn === true) { succeed(provider, undefined); return }
     const last = attempts[provider]
     if (last?.expiresAt !== undefined && last.expiresAt > now()) interrupt(provider)
@@ -195,7 +245,7 @@ export function createCliLogin({ actions, pollMs = 1500, now = Date.now, timers 
       if (disposed || typeof botId !== 'string' || botId === '' || !known(provider)) return false
       const model = typeof ref === 'string' && ref.startsWith(`${provider}/`) ? ref : undefined
       const existing = rowOf(botId)
-      if (existing?.provider === provider && ['offer', 'attempt'].includes(existing.stage)) {
+      if (existing?.provider === provider && ['offer', 'attempt', 'account'].includes(existing.stage)) {
         setRow(botId, { ...existing, reveal: ++sequence, ...(model ? { ref: model } : {}) })
         // Another model chosen while the sign-in runs is the latest intent (rule 5): the host
         // keeps it in place of the older one. Start joins the live attempt, never opens a second.
@@ -223,6 +273,11 @@ export function createCliLogin({ actions, pollMs = 1500, now = Date.now, timers 
           if (!live(botId, seq)) return true
           setRow(botId, { ...rowOf(botId), stage: 'attempt', busy: false })
           applyView(provider, view)
+          return true
+        }
+        // Already signed in on this computer, to an account that waits for the person.
+        if (current?.account) {
+          setRow(botId, { ...rowOf(botId), stage: 'account', busy: false, account: Object.freeze({ ...current.account }) })
           return true
         }
       } catch {
@@ -269,6 +324,53 @@ export function createCliLogin({ actions, pollMs = 1500, now = Date.now, timers 
         patchRow(botId, seq, { busy: false })
         if (!failedCall(row.provider, error)) patchRow(botId, seq, { error: messageOf(error) })
         return false
+      }
+    },
+
+    /**
+     * "Use this account": the person's word for the account the row shows. The host records it
+     * and applies the model chosen with the entry; another account signed in meanwhile is
+     * shown instead, and nothing is taken for it.
+     */
+    async confirm(botId) {
+      const row = rowOf(botId)
+      if (disposed || row?.stage !== 'account' || row.busy) return false
+      const seq = row.seq
+      patchRow(botId, seq, { busy: true, error: null })
+      try {
+        const view = await actions.cliLoginConfirm(botId, row.provider, row.account?.ref, row.ref)
+        if (disposed) return false
+        accountTaken(row.provider, botId, view)
+        return true
+      } catch (error) {
+        if (!live(botId, seq)) return false
+        if (error?.code === ACCOUNT_CHANGED || error?.code === ACCOUNT_SIGNED_OUT) await readAccount(botId, row.provider, seq, messageOf(error))
+        else patchRow(botId, seq, { busy: false, error: messageOf(error) })
+        return false
+      }
+    },
+
+    /**
+     * A turn of a Bot was refused because its agent's account needs the person (the host's
+     * model state): the account step opens in that Bot's chat, once per refused turn. A turn
+     * refused for a missing sign-in opens nothing here, as before.
+     * @param {Record<string, { selected?: string | null, lastFailure?: { code?: string, ref?: string, at?: number } }>} [models]
+     */
+    followFailures(models) {
+      if (disposed || models === null || typeof models !== 'object') return
+      for (const [botId, state] of Object.entries(models)) {
+        const failure = state?.lastFailure
+        const provider = providerOf(failure?.ref)
+        if (failure?.code !== ACCESS_REQUIRED || failure.ref !== state.selected || !known(provider) || offered.get(botId) === failure.at) continue
+        offered.set(botId, failure.at)
+        if (rowOf(botId) !== undefined) continue
+        void (async () => {
+          let current
+          try { current = await actions.cliLoginCurrent(botId, provider) } catch { return }
+          if (disposed || rowOf(botId) !== undefined || !current?.account) return
+          const seq = ++sequence
+          setRow(botId, { botId, provider, ref: undefined, stage: 'account', busy: false, reveal: seq, seq, attempt: null, error: null, confirm: false, account: Object.freeze({ ...current.account }) })
+        })()
       }
     },
 

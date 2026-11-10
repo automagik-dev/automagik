@@ -86,6 +86,22 @@ var ZH = {
   "Sign-in did not finish. Try again.": "登录未完成，请重试。",
   "This sign-in expired. Start again.": "本次登录已过期，请重新开始。",
   "Sign-in cancelled.": "登录已取消。",
+  // The account step of that row (#869): a CLI already signed in on this computer.
+  "{name} on this computer is signed in as {account}.": "{name} 在这台电脑上已登录为 {account}。",
+  "{name} on this computer is already signed in. This version does not show which account.": "{name} 在这台电脑上已经登录。此版本不显示是哪个账号。",
+  "{name} on this computer uses an API key.": "{name} 在这台电脑上使用 API 密钥。",
+  "Bots will use and bill this account. It is the same sign-in your terminal uses.": "Bot 将使用此账号并由它计费。它与你的终端使用的是同一个登录。",
+  "Use this account": "使用此账号",
+  "Done: Bots will use this {name} account.": "完成：Bot 将使用这个 {name} 账号。",
+  "Your Bots use the {name} sign-in on this computer: {account}. It is shared with your terminal.": "你的 Bot 使用这台电脑上的 {name} 登录：{account}。它与你的终端共用。",
+  "Your Bots use the {name} sign-in on this computer. It is shared with your terminal.": "你的 Bot 使用这台电脑上的 {name} 登录。它与你的终端共用。",
+  "{model} waits for you to confirm its account.": "{model} 正在等你确认它的账号。",
+  "This model needs you to confirm the account of its coding agent.": "此模型需要你确认它的编程助手的账号。",
+  "Confirm account": "确认账号",
+  "Confirm the account of {connection} before using this model.": "使用此模型前，请确认 {connection} 的账号。",
+  "The account changed. Check it and confirm again.": "账号已变更。请检查后再次确认。",
+  "This coding agent is not signed in any more. Sign in to use it.": "此编程助手已不再登录。请登录后使用。",
+  "The account could not be confirmed. Try again.": "无法确认账号，请重试。",
   "The model could not be selected.": "无法选择此模型。",
   // A Bot's model: what it really did (model-state.js), and a model that cannot run now.
   "the new model": "新模型",
@@ -552,6 +568,9 @@ var ZH = {
   Role: "角色",
   "A few words on what it does.": "用几个词说明它做什么。",
   "Research, admin…": "研究、行政…",
+  Tools: "工具",
+  "Denied tools": "禁止使用的工具",
+  "Exact tool names, one per line or comma separated, case-sensitive. Empty allows every tool.": "精确的工具名，每行一个或用逗号分隔，区分大小写。留空表示允许所有工具。",
   "What this Bot does": "这个 Bot 做什么",
   "Its job on the team. Part of the Bot's system prompt.": "它在团队里的分工，会写进 Bot 的系统提示词。",
   "A copy with the same job and model, and fresh memory.": "复制分工和模型，记忆从零开始。",
@@ -1707,6 +1726,7 @@ var HOST_TEMPLATES = [
   "Turn on {connection} in Settings → Claude Code and Codex before using this model.",
   "Wait for {connection} to finish installing, or retry it in Settings → Claude Code and Codex.",
   "Sign in to {connection} before using this model.",
+  "Confirm the account of {connection} before using this model.",
   "{name} could not switch to {model}. It stays on {kept}."
 ].map((template) => {
   const names = [];
@@ -1824,7 +1844,7 @@ ${REST_NOTE}`);
 
 // src/client/api.js
 var ROUTE = "api/omni-ui";
-var REFUSALS = /* @__PURE__ */ new Set(["bot/refused", "bot/sign-in-required", "bot/invalid", "bot/read-only", "bot/not-found", "bot/browser-off", "bot/login-ended", "bot/login-restarted"]);
+var REFUSALS = /* @__PURE__ */ new Set(["bot/refused", "bot/sign-in-required", "bot/account-confirm-required", "bot/account-changed", "bot/account-signed-out", "bot/invalid", "bot/read-only", "bot/not-found", "bot/browser-off", "bot/login-ended", "bot/login-restarted"]);
 var isRefusal = (code) => REFUSALS.has(code) || code.startsWith("bot/adopt-");
 var call = async (endpoint, payload, signal) => {
   let response;
@@ -4412,6 +4432,7 @@ function modelHint(bot, roster, state) {
   if (!shown.served && (roster.models ?? []).length > 0) return t("This model is not available now. Pick another one.");
   const served = servedOf(roster, shown.ref);
   if (served?.needsSignIn) return t("{model} needs a sign-in before it can answer.", { model: served.name });
+  if (served?.needsAccount) return t("{model} waits for you to confirm its account.", { model: served.name });
   const waiting = served?.covered ? roster.subscriptionWaiting?.[served.provider] : void 0;
   if (waiting?.reason === "sign-in") return t("This Bot stays on {model} until {cli} is signed in.", { model: served.name, cli: waiting.cli });
   if (waiting !== void 0) return t("This Bot stays on {model} until {cli} is ready.", { model: served.name, cli: waiting.cli });
@@ -10622,6 +10643,7 @@ function teamActions({ call: call2, after, partFor, roster, ui: ui2, live, cards
       } catch (error) {
         const provider = cliProviderOf(ref);
         if (error?.code === "bot/sign-in-required" && provider && openCliLogin(id, provider, ref)) return void 0;
+        if (error?.code === "bot/account-confirm-required" && provider && openCliLogin(id, provider, ref)) return void 0;
         throw error;
       }
     },
@@ -10632,6 +10654,9 @@ function teamActions({ call: call2, after, partFor, roster, ui: ui2, live, cards
     cliLoginAnswer: (botId, provider, attemptId, value) => call2("cli-login-answer", loginPayload(botId, provider, { attemptId, value })),
     cliLoginCancel: (botId, provider, attemptId) => call2("cli-login-cancel", loginPayload(botId, provider, { attemptId })),
     cliLoginConnections: () => call2("cli-login-connections", {}),
+    cliLoginConfirm: (botId, provider, ref, model) => call2("cli-login-confirm", loginPayload(botId, provider, { ...ref === void 0 ? {} : { ref }, ...model === void 0 ? {} : { model } })),
+    cliLoginAccounts: () => call2("cli-login-accounts", {}),
+    cliLoginNoticed: (provider) => call2("cli-login-noticed", { provider }),
     contextStatus: (botId) => call2("context-status", { botId }),
     usageStats: (botId, sessionId) => call2("usage-stats", { botId, sessionId }),
     memoryReviewStatus: (botId) => call2("memory-review-status", { botId }),
@@ -16653,6 +16678,12 @@ function MemoryCard({ bot, actions }) {
 }
 var noSubscribe2 = () => () => {
 };
+function denyToolsText(bot) {
+  return (Array.isArray(bot?.denyTools) ? bot.denyTools : []).join("\n");
+}
+function parseDenyTools(text2) {
+  return [...new Set(String(text2 ?? "").split(/[\n,]+/).map((name) => name.trim()).filter(Boolean))];
+}
 function BotSettingsForm({ bot, roster, actions, run: run2 }) {
   const [editing, setEditing] = (0, import_react42.useState)(false);
   const [confirming, setConfirming] = (0, import_react42.useState)(false);
@@ -16670,8 +16701,13 @@ function BotSettingsForm({ bot, roster, actions, run: run2 }) {
   (0, import_react42.useEffect)(() => {
     setSignIn(null);
   }, [bot.id, bot.model]);
+  const [account, setAccount] = (0, import_react42.useState)(null);
+  (0, import_react42.useEffect)(() => {
+    setAccount(null);
+  }, [bot.id, bot.model]);
   const pickModel = (ref) => run2(actions.updateBot(bot.id, { model: ref }).catch((error) => {
     if (error?.code === "bot/sign-in-required" && cliProviderOf(ref)) setSignIn(ref);
+    if (error?.code === "bot/account-confirm-required" && cliProviderOf(ref)) setAccount(ref);
     throw error;
   }));
   const modelState = (0, import_react42.useSyncExternalStore)(actions.subscribeWork ?? noSubscribe2, () => actions.modelStateOf?.(bot.id));
@@ -16731,6 +16767,15 @@ function BotSettingsForm({ bot, roster, actions, run: run2 }) {
           actions.openCliLogin(bot.id, cliProviderOf(signIn), signIn);
           setSignIn(null);
         } }, t("Sign in"))
+      ) : null,
+      account && actions.openCliLogin ? (0, import_react42.createElement)(
+        "div",
+        { className: "bt-set-row bt-bs-row" },
+        (0, import_react42.createElement)("span", { className: "bt-set-copy" }, (0, import_react42.createElement)("span", { className: "bt-set-hint" }, t("This model needs you to confirm the account of its coding agent."))),
+        (0, import_react42.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: () => {
+          actions.openCliLogin(bot.id, cliProviderOf(account), account);
+          setAccount(null);
+        } }, t("Confirm account"))
       ) : null
     ),
     (0, import_react42.createElement)(
@@ -16753,6 +16798,24 @@ function BotSettingsForm({ bot, roster, actions, run: run2 }) {
       )
     ),
     (0, import_react42.createElement)(BotCapabilitiesCard, { bot, roster, actions, run: run2, Card, SwitchRow }),
+    (0, import_react42.createElement)(
+      Card,
+      { title: t("Tools") },
+      (0, import_react42.createElement)(Row, {
+        label: t("Denied tools"),
+        hint: t("Exact tool names, one per line or comma separated, case-sensitive. Empty allows every tool."),
+        stack: true
+      }, (0, import_react42.createElement)(InlineText, {
+        label: t("Denied tools"),
+        value: denyToolsText(bot),
+        multiline: true,
+        placeholder: "bash, write",
+        onSave: (text2) => {
+          const names = parseDenyTools(text2);
+          save({ denyTools: names.length ? names : null });
+        }
+      }))
+    ),
     ...extraCards.map((entry) => (0, import_react42.createElement)(entry.Component, { key: entry.id, bot, roster, actions, run: run2, Card, Row, SwitchRow })),
     roster.memory === false ? null : (0, import_react42.createElement)(MemoryCard, { bot, actions }),
     (0, import_react42.createElement)(BotSchedules, { bot, roster, actions }),
@@ -17581,7 +17644,7 @@ function freshBotName(roster, base = "New Bot") {
   while (taken.has(`${base.toLowerCase()} ${index}`)) index += 1;
   return `${base} ${index}`;
 }
-var setUp = (model) => !model.needsKey && !model.needsSignIn && !model.covered;
+var setUp = (model) => !model.needsKey && !model.needsSignIn && !model.covered && !model.needsAccount;
 function startModel(roster) {
   const models = (roster.models ?? []).filter(setUp);
   return (models.find((model) => model.ref === roster.defaultModel) ?? models.find((model) => model.superseded !== true) ?? models[0])?.ref ?? "";
@@ -24623,6 +24686,34 @@ function Attempt({ bot, row, roster, manager, secretPending, fieldRef }) {
     )
   );
 }
+function accountLabel(account) {
+  const who = account?.email ?? account?.org;
+  if (typeof who !== "string" || who === "") return void 0;
+  const more = [account.email ? account.org : void 0, account.plan].filter((value) => typeof value === "string" && value !== "").join(", ");
+  return more === "" ? who : `${who} (${more})`;
+}
+function accountLine(name, account) {
+  if (account?.kind === "key") return t("{name} on this computer uses an API key.", { name });
+  const label = accountLabel(account);
+  return label === void 0 ? t("{name} on this computer is already signed in. This version does not show which account.", { name }) : t("{name} on this computer is signed in as {account}.", { name, account: label });
+}
+async function announceCarried({ actions }) {
+  let accounts;
+  try {
+    accounts = (await actions.cliLoginAccounts?.())?.accounts;
+  } catch {
+    return false;
+  }
+  const due = Object.entries(accounts ?? {}).filter(([provider, entry]) => Object.hasOwn(CLI_NAMES, provider) && entry?.notice === true);
+  if (due.length === 0) return false;
+  actions.showNotice?.(due.map(([provider, entry]) => {
+    const label = entry.account?.kind === "key" ? void 0 : accountLabel(entry.account);
+    return label === void 0 ? t("Your Bots use the {name} sign-in on this computer. It is shared with your terminal.", { name: CLI_NAMES[provider] }) : t("Your Bots use the {name} sign-in on this computer: {account}. It is shared with your terminal.", { name: CLI_NAMES[provider], account: label });
+  }).join(" "));
+  for (const [provider] of due) void Promise.resolve().then(() => actions.cliLoginNoticed?.(provider)).catch(() => {
+  });
+  return true;
+}
 var modelName = (roster, ref) => typeof ref === "string" ? roster.models?.find((model) => model.ref === ref)?.name ?? (ref.split("/").slice(1).join("/") || ref) : "";
 function CliLoginRow({ bot, row, roster, manager, secretPending, seat, fieldRef }) {
   const name = CLI_NAMES[row.provider];
@@ -24646,10 +24737,24 @@ function CliLoginRow({ bot, row, roster, manager, secretPending, seat, fieldRef 
             (0, import_react67.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", disabled: row.busy, onClick: () => manager.dismiss(bot.id) }, t("Not now"))
           )
         );
+      case "account":
+        return (0, import_react67.createElement)(
+          import_react67.Fragment,
+          null,
+          (0, import_react67.createElement)("p", null, accountLine(name, row.account)),
+          (0, import_react67.createElement)("p", null, t("Bots will use and bill this account. It is the same sign-in your terminal uses.")),
+          row.error ? (0, import_react67.createElement)("p", { className: "bt-cli-error", role: "alert" }, hostText(row.error)) : null,
+          (0, import_react67.createElement)(
+            "div",
+            { className: "bt-cli-actions" },
+            (0, import_react67.createElement)("button", { type: "button", className: "bt-q-submit", disabled: row.busy, onClick: () => void manager.confirm(bot.id) }, t("Use this account")),
+            (0, import_react67.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", disabled: row.busy, onClick: () => manager.dismiss(bot.id) }, t("Not now"))
+          )
+        );
       case "attempt":
         return (0, import_react67.createElement)(Attempt, { bot, row, roster, manager, secretPending, fieldRef });
       case "done":
-        return (0, import_react67.createElement)("p", null, t("Done: signed in to {name}.", { name }));
+        return (0, import_react67.createElement)("p", null, row.taken ? t("Done: Bots will use this {name} account.", { name }) : t("Done: signed in to {name}.", { name }));
       case "applyFailed":
         return (0, import_react67.createElement)("p", null, t("Signed in, but {model} could not be used: {reason} This Bot stays on {kept}.", {
           model: modelName(roster, row.outcome?.ref) || name,
@@ -24780,7 +24885,10 @@ var EXPIRED = "This sign-in expired. Start again.";
 var CHOICE_MS = 500;
 var CHOICE_TRIES = 8;
 var known = (provider) => Object.hasOwn(CLI_NAMES, provider);
-var CLOSES_ON_MOVE = /* @__PURE__ */ new Set(["offer", "failed", "interrupted"]);
+var CLOSES_ON_MOVE = /* @__PURE__ */ new Set(["offer", "account", "failed", "interrupted"]);
+var ACCESS_REQUIRED = "MODEL_ACCESS_REQUIRED";
+var ACCOUNT_CHANGED = "bot/account-changed";
+var ACCOUNT_SIGNED_OUT = "bot/account-signed-out";
 var providerOf = (ref) => typeof ref === "string" && ref.includes("/") ? ref.slice(0, ref.indexOf("/")) : void 0;
 var messageOf = (error) => typeof error?.message === "string" && error.message !== "" ? error.message : "Could not continue this sign-in. Try again.";
 function createCliLogin({ actions, pollMs = 1500, now = Date.now, timers = globalThis, modelOf: modelOf2 }) {
@@ -24817,6 +24925,8 @@ function createCliLogin({ actions, pollMs = 1500, now = Date.now, timers = globa
     if (live(botId, seq)) setRow(botId, { ...rowOf(botId), ...patch });
   };
   const attemptRows = (provider) => Object.values(snapshot.rows).filter((row) => row.provider === provider && row.stage === "attempt");
+  const accountRows = (provider) => Object.values(snapshot.rows).filter((row) => row.provider === provider && row.stage === "account");
+  const offered = /* @__PURE__ */ new Map();
   function leaveAfter(botId, seq, ms) {
     timers.clearTimeout(rowTimers.get(botId));
     rowTimers.set(botId, timers.setTimeout(() => {
@@ -24842,6 +24952,7 @@ function createCliLogin({ actions, pollMs = 1500, now = Date.now, timers = globa
       for (const row of attemptRows(provider)) setRow(row.botId, { ...row, attempt: view });
       armPoll(provider);
     } else if (view.status === "ready") succeed(provider, view);
+    else if (view.status === "confirm") askAccount(provider, view.account);
     else if (view.status === "cancelled") {
       stopPoll(provider);
       for (const row of attemptRows(provider)) setRow(row.botId, null);
@@ -24849,6 +24960,32 @@ function createCliLogin({ actions, pollMs = 1500, now = Date.now, timers = globa
       stopPoll(provider);
       for (const row of attemptRows(provider)) setRow(row.botId, { ...row, stage: "failed", attempt: null, busy: false, confirm: false, message: view.message ?? "Sign-in did not finish. Try again." });
     }
+  }
+  function askAccount(provider, account) {
+    stopPoll(provider);
+    for (const row of attemptRows(provider)) setRow(row.botId, { ...row, stage: "account", attempt: null, busy: false, confirm: false, error: null, account: Object.freeze({ ...account }) });
+  }
+  function accountTaken(provider, botId, view) {
+    void Promise.resolve().then(() => actions.refreshModels?.()).catch(() => {
+    });
+    for (const row of accountRows(provider)) {
+      setRow(row.botId, { ...row, stage: "done", taken: true, account: void 0, busy: false, error: null });
+      leaveAfter(row.botId, row.seq, DONE_MS);
+      const choice = row.botId === botId ? view?.choice : void 0;
+      if (choice?.state === "failed") applyFailed(row.botId, row.seq, choice);
+      else void followChoice(row.botId, provider, row.seq);
+    }
+  }
+  async function readAccount(botId, provider, seq, error) {
+    let current;
+    try {
+      current = await actions.cliLoginCurrent(botId, provider);
+    } catch {
+      current = void 0;
+    }
+    if (!live(botId, seq)) return;
+    if (current?.account) patchRow(botId, seq, { stage: "account", busy: false, error, account: Object.freeze({ ...current.account }) });
+    else patchRow(botId, seq, { stage: "offer", busy: false, error, account: void 0 });
   }
   function succeed(provider, view) {
     stopPoll(provider);
@@ -24895,12 +25032,18 @@ function createCliLogin({ actions, pollMs = 1500, now = Date.now, timers = globa
   async function ended(provider) {
     stopPoll(provider);
     let signedIn;
+    let connection;
     try {
-      signedIn = (await actions.cliLoginConnections())?.connections?.[provider]?.signedIn;
+      connection = (await actions.cliLoginConnections())?.connections?.[provider];
+      signedIn = connection?.signedIn;
     } catch {
       signedIn = void 0;
     }
     if (disposed) return;
+    if (signedIn === true && connection?.consent === "needed") {
+      for (const row of attemptRows(provider)) void readAccount(row.botId, provider, row.seq, null);
+      return;
+    }
     if (signedIn === true) {
       succeed(provider, void 0);
       return;
@@ -24955,7 +25098,7 @@ function createCliLogin({ actions, pollMs = 1500, now = Date.now, timers = globa
       if (disposed || typeof botId !== "string" || botId === "" || !known(provider)) return false;
       const model = typeof ref === "string" && ref.startsWith(`${provider}/`) ? ref : void 0;
       const existing = rowOf(botId);
-      if (existing?.provider === provider && ["offer", "attempt"].includes(existing.stage)) {
+      if (existing?.provider === provider && ["offer", "attempt", "account"].includes(existing.stage)) {
         setRow(botId, { ...existing, reveal: ++sequence, ...model ? { ref: model } : {} });
         if (existing.stage === "attempt" && model && model !== existing.ref && !existing.busy) {
           const seq2 = existing.seq;
@@ -24978,6 +25121,10 @@ function createCliLogin({ actions, pollMs = 1500, now = Date.now, timers = globa
           if (!live(botId, seq)) return true;
           setRow(botId, { ...rowOf(botId), stage: "attempt", busy: false });
           applyView(provider, view);
+          return true;
+        }
+        if (current?.account) {
+          setRow(botId, { ...rowOf(botId), stage: "account", busy: false, account: Object.freeze({ ...current.account }) });
           return true;
         }
       } catch {
@@ -25020,6 +25167,55 @@ function createCliLogin({ actions, pollMs = 1500, now = Date.now, timers = globa
         patchRow(botId, seq, { busy: false });
         if (!failedCall(row.provider, error)) patchRow(botId, seq, { error: messageOf(error) });
         return false;
+      }
+    },
+    /**
+     * "Use this account": the person's word for the account the row shows. The host records it
+     * and applies the model chosen with the entry; another account signed in meanwhile is
+     * shown instead, and nothing is taken for it.
+     */
+    async confirm(botId) {
+      const row = rowOf(botId);
+      if (disposed || row?.stage !== "account" || row.busy) return false;
+      const seq = row.seq;
+      patchRow(botId, seq, { busy: true, error: null });
+      try {
+        const view = await actions.cliLoginConfirm(botId, row.provider, row.account?.ref, row.ref);
+        if (disposed) return false;
+        accountTaken(row.provider, botId, view);
+        return true;
+      } catch (error) {
+        if (!live(botId, seq)) return false;
+        if (error?.code === ACCOUNT_CHANGED || error?.code === ACCOUNT_SIGNED_OUT) await readAccount(botId, row.provider, seq, messageOf(error));
+        else patchRow(botId, seq, { busy: false, error: messageOf(error) });
+        return false;
+      }
+    },
+    /**
+     * A turn of a Bot was refused because its agent's account needs the person (the host's
+     * model state): the account step opens in that Bot's chat, once per refused turn. A turn
+     * refused for a missing sign-in opens nothing here, as before.
+     * @param {Record<string, { selected?: string | null, lastFailure?: { code?: string, ref?: string, at?: number } }>} [models]
+     */
+    followFailures(models) {
+      if (disposed || models === null || typeof models !== "object") return;
+      for (const [botId, state] of Object.entries(models)) {
+        const failure = state?.lastFailure;
+        const provider = providerOf(failure?.ref);
+        if (failure?.code !== ACCESS_REQUIRED || failure.ref !== state.selected || !known(provider) || offered.get(botId) === failure.at) continue;
+        offered.set(botId, failure.at);
+        if (rowOf(botId) !== void 0) continue;
+        void (async () => {
+          let current;
+          try {
+            current = await actions.cliLoginCurrent(botId, provider);
+          } catch {
+            return;
+          }
+          if (disposed || rowOf(botId) !== void 0 || !current?.account) return;
+          const seq = ++sequence;
+          setRow(botId, { botId, provider, ref: void 0, stage: "account", busy: false, reveal: seq, seq, attempt: null, error: null, confirm: false, account: Object.freeze({ ...current.account }) });
+        })();
       }
     },
     askCancel(botId) {
@@ -26047,6 +26243,18 @@ function apply(ctx) {
   cliLogin = createCliLogin({ actions, modelOf: (botId) => work.getSnapshot().models?.[botId]?.selected });
   actions.cliLogin = cliLogin;
   ctx.effect(() => work.subscribe(() => cliLogin.followModels()), "ds-bot: CLI sign-in rows follow the Bots' models");
+  ctx.effect(() => work.subscribe(() => cliLogin.followFailures(work.getSnapshot().models)), "ds-bot: CLI account step follows a refused turn");
+  ctx.effect(() => {
+    let told = false;
+    const tell = () => {
+      if (told || roster.getSnapshot().ready !== true) return;
+      told = true;
+      void announceCarried({ actions });
+    };
+    const off = roster.subscribe(tell);
+    tell();
+    return off;
+  }, "ds-bot: carried CLI sign-in notice");
   actions.inputActionsOf = (sessionId) => ctx.sessions.binding?.(sessionId)?.props?.inputActions;
   ctx.effect(() => () => cliLogin.dispose(), "ds-bot: CLI sign-in rows");
   ctx.effect(() => installKnownStateGuard({ onRefused: () => actions.showNotice(t("This message contains a sign-in code, so it was not sent. Paste the code only in the sign-in step.")) }), "ds-bot: sign-in code guard");

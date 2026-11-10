@@ -14,7 +14,12 @@ export const ACCESS_MESSAGES = Object.freeze({
   off: 'Turn on {connection} in Settings → Claude Code and Codex before using this model.',
   installing: 'Wait for {connection} to finish installing, or retry it in Settings → Claude Code and Codex.',
   signIn: 'Sign in to {connection} before using this model.',
+  // Signed in on this computer, to an account the person has not confirmed for Bots (#869).
+  account: 'Confirm the account of {connection} before using this model.',
 })
+// The refusal of a model whose agent is signed in to an account the person has not confirmed
+// (acp-dsh's `consent: 'needed'`): the sign-in card's confirm step answers it, a sign-in does not.
+export const ACCOUNT_CONFIRM_REQUIRED = 'bot/account-confirm-required'
 const ROUTE_WAIT_MS = 30_000
 // How often an agent whose sign-in acp-dsh has not checked yet is asked once, in the
 // background: the menu reads acp-dsh's last answer and never spawns a check when it opens.
@@ -39,8 +44,10 @@ const CLI_OF_SIGNIN = Object.freeze({ 'openai-codex': 'acp-codex', anthropic: 'a
 const PLAN_NAMES = Object.freeze({ 'openai-codex': 'ChatGPT', anthropic: 'Claude' })
 const coveredBy = entry => (entry.via === 'signin' ? CLI_OF_SIGNIN[entry.provider] : undefined)
 // What a Bot's own chat can start on: a provider with its key, an agent that is signed in, a
-// sign-in route of another provider that is stored, and never a route a CLI covers.
-export const configured = entry => !entry.needsKey && !entry.needsSignIn && !entry.covered
+// sign-in route of another provider that is stored, and never a route a CLI covers. An agent
+// signed in to an account nobody confirmed (`needsAccount`, #869) is never a default: a Bot
+// goes on it only by the person's own pick, which asks them first.
+export const configured = entry => !entry.needsKey && !entry.needsSignIn && !entry.covered && !entry.needsAccount
 // The model of a covered sign-in route on its agent, among `usable`: the same id, else the same
 // Claude family (Claude Code names its models `opus`, `sonnet`, `haiku`, or a versioned id such
 // as `claude-fable-5-1[1m]`), else the agent's own
@@ -98,6 +105,16 @@ export function install(rt) {
   // other catalog keeps the last answer. An unknown agent ready to run is checked once in the
   // background (acp-dsh's `inspect`, one `auth status`), at most every SIGN_IN_CHECK_MS.
   const agentSignIn = new Map()
+  // The agents signed in to an account the person has not confirmed (acp-dsh's `consent`). An
+  // older acp-dsh says nothing, and nothing is asked.
+  const agentUnconfirmed = new Set()
+  const noteConsent = (row) => {
+    const needed = row?.signedIn === true && row.consent === 'needed'
+    if (needed === agentUnconfirmed.has(row.id)) return false
+    if (needed) agentUnconfirmed.add(row.id)
+    else agentUnconfirmed.delete(row.id)
+    return true
+  }
   const signInChecks = new Map()
   const acpAgents = () => { try { return ctx.get?.('acpAgents') } catch { return undefined } }
   async function readAgentSignIns() {
@@ -110,6 +127,7 @@ export function install(rt) {
     if (!Array.isArray(rows)) return
     for (const row of rows) {
       if (typeof row?.id !== 'string') continue
+      noteConsent(row)
       if (typeof row.signedIn === 'boolean') { agentSignIn.set(row.id, row.signedIn); continue }
       agentSignIn.delete(row.id)
       const last = signInChecks.get(row.id)
@@ -117,6 +135,7 @@ export function install(rt) {
       signInChecks.set(row.id, Date.now())
       void Promise.resolve().then(() => agents.inspect(row.id)).then((seen) => {
         if (typeof seen?.signedIn !== 'boolean') return
+        noteConsent({ ...seen, id: row.id })
         agentSignIn.set(row.id, seen.signedIn)
         catalogCache = { at: 0, value: [] }
       }, () => {})
@@ -170,6 +189,8 @@ export function install(rt) {
       const how = routeOf(entry.provider).connectedBy === 'acp' ? { via: 'cli', ...(agentSignIn.get(entry.provider) === false ? { needsSignIn: true } : {}) } : auth.get(entry.provider)
       if (how?.via) entry.via = how.via
       if (how?.needsSignIn) entry.needsSignIn = true
+      // Still offered in the menu: picking it opens the confirm step in the Bot's chat.
+      if (how?.via === 'cli' && agentUnconfirmed.has(entry.provider)) entry.needsAccount = true
     }
     // DSH's own ChatGPT or Claude sign-in: its CLI serves that plan, signed in or not.
     for (const entry of entries) if (coveredBy(entry) !== undefined) entry.covered = true
@@ -284,7 +305,10 @@ export function install(rt) {
   // fails its turn as MODEL_ACCESS_REQUIRED. Any other provider keeps the catalog's own marks
   // (a missing key shows in the picker) and is not refused here.
   // `{ ready: true }` or `{ ready: false, code, message }`; `code` is `bot/sign-in-required`
-  // only when the CLI says it is signed out, the one case a sign-in answers.
+  // only when the CLI says it is signed out, the one case a sign-in answers, and
+  // `bot/account-confirm-required` only when acp-dsh says the signed-in account waits for the
+  // person's word (#869). An account that cannot be read, or an acp-dsh that says nothing of
+  // consent, never refuses.
   async function modelAccess(ref) {
     const route = splitRef(ref)
     if (route === undefined || route.model === '') return { ready: false, code: 'bot/refused', message: 'Choose an available model.' }
@@ -305,6 +329,8 @@ export function install(rt) {
     if (agent.on === false) return denied(ACCESS_MESSAGES.off)
     if (agent.cli?.found === false || agent.connector?.state === 'installing' || agent.connector?.state === 'failed' || agent.connector?.state === 'no-cli') return denied(ACCESS_MESSAGES.installing)
     if (agent.signedIn === false) return denied(ACCESS_MESSAGES.signIn, 'bot/sign-in-required')
+    if (noteConsent({ ...agent, id: provider })) catalogCache = { at: 0, value: [] }
+    if (agent.signedIn === true && agent.consent === 'needed') return denied(ACCESS_MESSAGES.account, ACCOUNT_CONFIRM_REQUIRED)
     return { ready: true, provider }
   }
 

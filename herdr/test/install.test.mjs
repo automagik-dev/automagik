@@ -2204,6 +2204,15 @@ test("a release whose update.mjs imports layoutSafe.mjs but lacks it installs no
   assert.equal(existsSync(s.pack), false);
 });
 
+test("#805 installer refuses an updater missing its attach-ledger dependency", (t) => {
+  const s = scratch(t);
+  s.publish("9.9.0", { edit: (src) => rmSync(join(src, "am-sidebar", "attach.js")) });
+  const r = s.run("--yes");
+  assert.equal(r.code, 1, r.out);
+  assert.match(r.err, /am-sidebar\/attach\.js is not a plain file: nothing was installed\./);
+  assert.equal(existsSync(s.pack), false);
+});
+
 /**
  * A fake `dsh` in the scratch PATH: it records every argv and, on `plugin --profile dsh-tui add`,
  * writes the dsh-tui profile the way DSH 0.2.2 does (base bundle, then the package); `remove`

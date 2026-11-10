@@ -186,7 +186,8 @@ export function createAiActions(ctx, { fetch: fetchImpl = globalThis.fetch, save
   // on pi-ai's anthropic route. On when the agent can answer, or when the key's route runs.
   async function cliRowFor(vendor, seen, base) {
     const agent = seen.agents?.find(row => row?.id === vendor.cli)
-    const cliSignedIn = agent?.cli?.found === true && agent.signedIn === true
+    // A CLI signed in to an account the person has not confirmed is not a connection yet (#869).
+    const cliSignedIn = agent?.cli?.found === true && agent.signedIn === true && agent.consent !== 'needed'
     const key = vendor.envRefs ? await keyOf(ctx, vendor) : null
     const legacy = legacyRoute(vendor, seen)
     const route = seen.routes[vendor.provider]

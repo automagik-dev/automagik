@@ -1085,9 +1085,14 @@ install() {
   # layoutSafe.mjs must carry it.
   tar -xzf "$TMP/$TGZ" -C "$TMP/x" "$side/retired.js" </dev/null >/dev/null 2>&1 || :
   tar -xzf "$TMP/$TGZ" -C "$TMP/x" "$side/layoutSafe.mjs" </dev/null >/dev/null 2>&1 || :
-  for f in update.mjs release.js migrate.js migrateHome.mjs migrateHooks.mjs briefingText.mjs model.js models.js retired.js layoutSafe.mjs; do
+  # #805: the restore notifier reads the shared attach ledger through attach.js.
+  # Old releases do not import it and may omit it.
+  tar -xzf "$TMP/$TGZ" -C "$TMP/x" "$side/attach.js" </dev/null >/dev/null 2>&1 || :
+  for f in update.mjs release.js migrate.js migrateHome.mjs migrateHooks.mjs briefingText.mjs model.js models.js retired.js layoutSafe.mjs attach.js; do
     case $f in
       retired.js) [ ! -e "$TMP/x/$side/$f" ] && [ ! -L "$TMP/x/$side/$f" ] && continue ;;
+      attach.js) [ ! -e "$TMP/x/$side/$f" ] && [ ! -L "$TMP/x/$side/$f" ] \
+        && ! grep -q '/attach\.js"' "$TMP/x/$side/update.mjs" && continue ;;
       layoutSafe.mjs) [ ! -e "$TMP/x/$side/$f" ] && [ ! -L "$TMP/x/$side/$f" ] \
         && ! grep -q '/layoutSafe\.mjs"' "$TMP/x/$side/update.mjs" && continue ;;
     esac

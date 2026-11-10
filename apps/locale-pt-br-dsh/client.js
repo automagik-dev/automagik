@@ -1577,6 +1577,21 @@ const pack = createPack({
     "Sign in to {name}": "Entrar em {name}",
     "This message contains a sign-in code, so it was not sent. Paste the code only in the sign-in step.": "Esta mensagem contém um código de login e por isso não foi enviada. Cole o código só na etapa de login.",
     "This model needs a sign-in to its coding agent.": "Este modelo precisa de login no agente de código.",
+    "{name} on this computer is signed in as {account}.": "{name} neste computador está com login na conta {account}.",
+    "{name} on this computer is already signed in. This version does not show which account.": "{name} neste computador já está com login feito. Esta versão não mostra em qual conta.",
+    "{name} on this computer uses an API key.": "{name} neste computador usa uma chave de API.",
+    "Bots will use and bill this account. It is the same sign-in your terminal uses.": "Os Bots vão usar esta conta e gerar cobrança nesta conta. É o mesmo login que o seu terminal usa.",
+    "Use this account": "Usar esta conta",
+    "Done: Bots will use this {name} account.": "Pronto: os Bots vão usar esta conta do {name}.",
+    "Your Bots use the {name} sign-in on this computer: {account}. It is shared with your terminal.": "Seus Bots usam o login do {name} neste computador: {account}. O login é compartilhado com o seu terminal.",
+    "Your Bots use the {name} sign-in on this computer. It is shared with your terminal.": "Seus Bots usam o login do {name} neste computador. O login é compartilhado com o seu terminal.",
+    "{model} waits for you to confirm its account.": "{model} espera você confirmar a conta.",
+    "This model needs you to confirm the account of its coding agent.": "Este modelo precisa que você confirme a conta do agente de código.",
+    "Confirm account": "Confirmar conta",
+    "Confirm the account of {connection} before using this model.": "Confirme a conta de {connection} antes de usar este modelo.",
+    "The account changed. Check it and confirm again.": "A conta mudou. Confira e confirme de novo.",
+    "This coding agent is not signed in any more. Sign in to use it.": "Este agente de código não está mais com login feito. Faça login para usar.",
+    "The account could not be confirmed. Try again.": "Não foi possível confirmar a conta. Tente de novo.",
     "This sign-in request is no longer valid. Start again.": "Este pedido de login não vale mais. Comece de novo.",
     "Paste the complete code shown by Claude, including the part after #.": "Cole o código completo exibido pelo Claude, incluindo a parte depois do #.",
     "This sign-in has ended. Start again.": "Este login terminou. Comece de novo.",
@@ -1593,7 +1608,10 @@ const pack = createPack({
     "Sign-in did not finish. Try again.": "O login não terminou. Tente de novo.",
     "This sign-in expired. Start again.": "Este login expirou. Comece de novo.",
     "Sign-in cancelled.": "Login cancelado.",
-    "The model could not be selected.": "Não foi possível selecionar o modelo."
+    "The model could not be selected.": "Não foi possível selecionar o modelo.",
+    "Tools": "Ferramentas",
+    "Denied tools": "Ferramentas bloqueadas",
+    "Exact tool names, one per line or comma separated, case-sensitive. Empty allows every tool.": "Nomes exatos de ferramentas, um por linha ou separados por vírgula, diferenciando maiúsculas de minúsculas. Vazio permite todas as ferramentas."
   }
 })
 return Object.defineProperty({ ...pack }, Symbol.toStringTag, { value: 'Module' })
