@@ -174,6 +174,10 @@ takes only its API key, ChatGPT is not offered a sign-in, and the Settings page 
 agents plugin is not running. Each Settings row says (and a Connect AI row shows the same lines
 while its CLI is missing, installing or failed, or signed in but not answering yet):
 
+- for Hermes, Antigravity and omp (acp-dsh's native-ACP agents, off until switched on): the
+  same row without a connector line, with what switching it on means while it is off, and with
+  the terminal command that signs in instead of a Bot's chat (`hermes acp --setup`,
+  `agy acp --login`, `omp login`); Automagik never installs these CLIs;
 - whether the agent's CLI (`claude`, `codex`) is on this computer, as acp-dsh's own store has
   it: installing or updating it by itself, failed with its error and **Retry**, or found with
   its version; with its install link and **Check again** when it is missing;
