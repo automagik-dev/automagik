@@ -11,7 +11,7 @@
 ## Summary
 
 This RFC writes down one launch's front door: one README, one film and one site, with a real
-Cloud waitlist. The README leads with the product and the film, then the seven building blocks;
+Cloud waitlist. The README leads with the umbrella, then the film and the seven building blocks;
 the site is the Genie's draft extended to the same seven, with the download as its one primary
 action and the waitlist as a second, optional one; the film is the storyboard rendered, embedded
 in both. It fixes the claims the current READMEs make that the source does not support, sets the
@@ -81,12 +81,23 @@ The four questions, answered 2026-11-10:
   the primary button; the waitlist is a real form, designed in "The waitlist" and delivered as
   D3b by 2026-11-15.
 
+Two more answers, in Chat's question dialog, 2026-11-10:
+
+- **The README opens with the Automagik umbrella first.** The desktop app (Team mode on DSH, Code
+  mode on Herdr, Genie, Omni) is its flagship right below it.
+- **The README names both the meter and Cloud.** Cloud is coming, never free or open, as this RFC
+  already says.
+
 Owner's words on the seven blocks (2026-11-10): "Open building blocks: automagik.si =
 superintelligence open building blocks; each part shown as its own block you can use alone
 (DSH team mode, Herdr code mode, Genie, Omni, Pocket, the meter/usagemeter, Cloud)."
 
 Owner's words on the scope (2026-11-10): "automagik is one product with the team mode dsh, herdr
 code... genie omni."
+
+His umbrella ruling, as the Unfold orchestrator relayed it: "automagik-si owns automagik, which
+is the umbrella with genie, omni, mykes, arca, etc... weunfold is the manifesto and unfold is the
+vitrine, it wont have other projects, for now."
 
 ## Design
 
@@ -559,6 +570,12 @@ are answered, Q5 (the launch email) is open and blocks no delivery here, since D
 transactional service he picks; the privacy note names the sender and the processor before the
 first send; the email has the removal path; the list is deleted after that send. Until he
 answers, the waitlist only stores: no email is sent and no mail service is integrated.
+
+**Q6. Mykes and Arca: blocks or named members of the umbrella?**
+Do Mykes and Arca appear on the README and the site as blocks of their own, or only as named
+members of the umbrella? *Recommended:* as named members only: Q3 rules out additional product
+blocks, and the owner's umbrella ruling names them among its members. The owner reads the exact
+README text in its PR and decides there, so the question blocks no delivery.
 
 Q1-Q4 are answered 2026-11-10, in Decided; Q4's design is "The waitlist" and D3b.
 
