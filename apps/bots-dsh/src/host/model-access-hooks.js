@@ -6,6 +6,11 @@
 // it is signed out refuses (modelAccess's `bot/sign-in-required`); a sign-in DSH cannot read
 // (unknown, an older acp-dsh, a failed check) passes, and the agent's own answer decides.
 //
+// The same refusal answers an agent signed in to an account the person has not confirmed for
+// Bots (#869, modelAccess's `bot/account-confirm-required`): the turn ends before anything is
+// sent or billed, with the same code, so no other model answers it either. Only acp-dsh saying
+// `consent: 'needed'` refuses; an account it cannot read passes.
+//
 // Only a turn's first call is checked: a call that continues a turn (a tool result already
 // answered the agent since the last message that opened it) passes as it is, so no step of a
 // running turn waits on the CLI's auth check, and no reading mid-turn ends a turn the agent
@@ -16,6 +21,7 @@
 // models.js `checkAccess`), and DSH's own controller is left as it ships.
 import { routeOf } from '../shared/routes.js'
 import { MODEL_ACCESS_REQUIRED } from './model-state.js'
+import { ACCOUNT_CONFIRM_REQUIRED } from './models.js'
 
 // The context DSH adds to every call of a turn is not what opens one.
 const opensTurn = message => message?.role === 'user' && message.source?.kind !== 'runtime-context'
@@ -44,7 +50,7 @@ export function install(rt) {
       } catch {
         access = undefined
       }
-      if (access?.ready === false && access.code === 'bot/sign-in-required') {
+      if (access?.ready === false && (access.code === 'bot/sign-in-required' || access.code === ACCOUNT_CONFIRM_REQUIRED)) {
         yield { type: 'finish', reason: { kind: 'error', failure: { code: MODEL_ACCESS_REQUIRED, message: access.message } } }
         return
       }

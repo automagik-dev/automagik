@@ -205,6 +205,45 @@ function Attempt({ bot, row, roster, manager, secretPending, fieldRef }) {
       h('button', { type: 'button', className: 'bt-soft bt-soft-sm', disabled: row.busy, onClick: () => manager.askCancel(bot.id) }, t('Cancel sign-in'))))
 }
 
+// Who a CLI is signed in as, in one line: the email (or the organisation), then what else the
+// CLI says of it. Undefined when the CLI does not show the account.
+export function accountLabel(account) {
+  const who = account?.email ?? account?.org
+  if (typeof who !== 'string' || who === '') return undefined
+  const more = [account.email ? account.org : undefined, account.plan].filter(value => typeof value === 'string' && value !== '').join(', ')
+  return more === '' ? who : `${who} (${more})`
+}
+
+// The first line of the account step (#869): the account, an API key, or that this CLI version
+// does not show which account.
+function accountLine(name, account) {
+  if (account?.kind === 'key') return t('{name} on this computer uses an API key.', { name })
+  const label = accountLabel(account)
+  return label === undefined
+    ? t('{name} on this computer is already signed in. This version does not show which account.', { name })
+    : t('{name} on this computer is signed in as {account}.', { name, account: label })
+}
+
+/**
+ * The one-time notice of a vendor whose sign-in was already used by Bots before this version
+ * (carried through the upgrade): which sign-in the Bots use, and that the terminal shares it.
+ * Shown once, then acknowledged to the host.
+ */
+export async function announceCarried({ actions }) {
+  let accounts
+  try { accounts = (await actions.cliLoginAccounts?.())?.accounts } catch { return false }
+  const due = Object.entries(accounts ?? {}).filter(([provider, entry]) => Object.hasOwn(CLI_NAMES, provider) && entry?.notice === true)
+  if (due.length === 0) return false
+  actions.showNotice?.(due.map(([provider, entry]) => {
+    const label = entry.account?.kind === 'key' ? undefined : accountLabel(entry.account)
+    return label === undefined
+      ? t('Your Bots use the {name} sign-in on this computer. It is shared with your terminal.', { name: CLI_NAMES[provider] })
+      : t('Your Bots use the {name} sign-in on this computer: {account}. It is shared with your terminal.', { name: CLI_NAMES[provider], account: label })
+  }).join(' '))
+  for (const [provider] of due) void Promise.resolve().then(() => actions.cliLoginNoticed?.(provider)).catch(() => {})
+  return true
+}
+
 const modelName = (roster, ref) => (typeof ref === 'string' ? roster.models?.find(model => model.ref === ref)?.name ?? (ref.split('/').slice(1).join('/') || ref) : '')
 
 function CliLoginRow({ bot, row, roster, manager, secretPending, seat, fieldRef }) {
@@ -223,8 +262,15 @@ function CliLoginRow({ bot, row, roster, manager, secretPending, seat, fieldRef 
         h('div', { className: 'bt-cli-actions' },
           h('button', { type: 'button', className: 'bt-q-submit', disabled: row.busy, onClick: () => void manager.start(bot.id) }, t('Sign in')),
           h('button', { type: 'button', className: 'bt-soft bt-soft-sm', disabled: row.busy, onClick: () => manager.dismiss(bot.id) }, t('Not now'))))
+      case 'account': return h(Fragment, null,
+        h('p', null, accountLine(name, row.account)),
+        h('p', null, t('Bots will use and bill this account. It is the same sign-in your terminal uses.')),
+        row.error ? h('p', { className: 'bt-cli-error', role: 'alert' }, hostText(row.error)) : null,
+        h('div', { className: 'bt-cli-actions' },
+          h('button', { type: 'button', className: 'bt-q-submit', disabled: row.busy, onClick: () => void manager.confirm(bot.id) }, t('Use this account')),
+          h('button', { type: 'button', className: 'bt-soft bt-soft-sm', disabled: row.busy, onClick: () => manager.dismiss(bot.id) }, t('Not now'))))
       case 'attempt': return h(Attempt, { bot, row, roster, manager, secretPending, fieldRef })
-      case 'done': return h('p', null, t('Done: signed in to {name}.', { name }))
+      case 'done': return h('p', null, row.taken ? t('Done: Bots will use this {name} account.', { name }) : t('Done: signed in to {name}.', { name }))
       case 'applyFailed': return h('p', null, t('Signed in, but {model} could not be used: {reason} This Bot stays on {kept}.', {
         model: modelName(roster, row.outcome?.ref) || name, reason: hostText(row.outcome?.message ?? ''), kept: modelName(roster, row.outcome?.kept) || t('its model'),
       }))

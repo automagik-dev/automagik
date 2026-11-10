@@ -195,7 +195,9 @@ export const restartLine = (botId) => `To restart you, the person runs \`automag
   + "in your bot's menu in the Herdr sidebar, not your agent's own restart command. In pt-BR: \"Para me reiniciar, "
   + `rode \`automagik-herdr restart ${botId}\` na pasta deste projeto (ou com --project <essa pasta>), que mantém `
   + "meu agente e modelo, ou use Restart no menu do bot na barra lateral do Herdr, não o comando de reinício do "
-  + "próprio agente.\"";
+  + `próprio agente." Or run \`am restart ${botId}\`. /restart (including Claude Code's `
+  + "Update installed · /restart to apply) never works in a Herdr pane because of its launch flags "
+  + "--append-system-prompt-file and --settings.";
 
 /**
  * The briefing a bot starts with, its agent's system prompt (≤ BRIEFING_LIMIT): who it is, its

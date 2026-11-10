@@ -119,11 +119,11 @@ test('with nothing connected, or a refusal, the tool says why and the card shows
 })
 
 // acp-dsh's acpAgents, as far as images use it: Codex's readiness and one drawing.
-const codexOf = ({ ready = true, made = { base64: PNG, mimeType: 'image/png' }, fail } = {}) => {
+const codexOf = ({ ready = true, unsupported, reason = unsupported ? 'unsupported' : undefined, made = { base64: PNG, mimeType: 'image/png' }, fail } = {}) => {
   const calls = []
   return {
     calls,
-    imageAccess: async () => ({ ready }),
+    imageAccess: async () => ({ ready, ...(reason ? { signedIn: true, reason } : {}), ...(unsupported ? { unsupported: true } : {}) }),
     generateImage: async (request) => {
       calls.push(request)
       if (fail) throw Object.assign(new Error(fail), { code: 'acp/image-usage-limit' })
@@ -160,6 +160,24 @@ test('an OpenAI key still comes first, unchanged; a signed-out Codex falls to th
   assert.equal(await nothing.access(), null)
   await assert.rejects(nothing.generate({ prompt: 'x', callId: 'n' }), /sign in to Codex/)
   assert.deepEqual(codex.calls, [])
+})
+
+test('a signed-in Codex that is not supported for drawing gives way to the earlier grant, and says so when nothing else draws', async (t) => {
+  const dir = folderOf(t)
+  const codex = codexOf({ ready: false, unsupported: true })
+  const grant = { [CODEX_RECORD]: { kind: 'grant', payload: { access: tokenFor('acct'), refresh: 'r', expires: 9e15 } } }
+  assert.deepEqual(await createImageGen({ credentials: () => storeOf(grant), codex: () => codex, folder: () => dir }).access(), { kind: 'chatgpt', model: 'gpt-image-2' })
+  const alone = createImageGen({ credentials: () => storeOf({}), codex: () => codex, folder: () => dir })
+  assert.equal(await alone.access(), null)
+  await assert.rejects(alone.generate({ prompt: 'x', callId: 'u' }), /not supported for drawing yet.*update Automagik.*OpenAI key/)
+  assert.deepEqual(codex.calls, [], 'Codex is never started')
+  // A Codex whose check did not hold for another reason gives way too, and says which.
+  for (const [reason, said] of [['config', /could not load its own configuration.*OpenAI key/], ['unreadable', /could not be checked for safe drawing.*OpenAI key/]]) {
+    const other = codexOf({ ready: false, reason })
+    assert.deepEqual(await createImageGen({ credentials: () => storeOf(grant), codex: () => other, folder: () => dir }).access(), { kind: 'chatgpt', model: 'gpt-image-2' })
+    await assert.rejects(createImageGen({ credentials: () => storeOf({}), codex: () => other, folder: () => dir }).generate({ prompt: 'x', callId: reason }), said)
+    assert.deepEqual(other.calls, [])
+  }
 })
 
 test('a Codex refusal is the tool\'s answer and the card shows it failed', async (t) => {

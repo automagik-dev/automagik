@@ -163,6 +163,15 @@ switch (words[0]) {
     }));
     // Like the real one: rows carry no labels and no created_ms.
     out({ terminals: rows.map(({ address, name, cwd, state: s, parent, status }) => ({ address, name, cwd, state: s, parent, status: status?.state, agent: status?.app })) });
+    // state.addAfterLs: a terminal that appears just after this answer (between two checks).
+    if (state.addAfterLs) {
+      state.addAfterLs.seen = (state.addAfterLs.seen ?? 0) + 1;
+      if (state.addAfterLs.seen === state.addAfterLs.nth) {
+        state.terminals.push(state.addAfterLs.terminal);
+        delete state.addAfterLs;
+        save();
+      }
+    }
     break;
   }
   case "get": {
@@ -200,10 +209,27 @@ switch (words[0]) {
     out(t);
     break;
   }
+  case "wait": {
+    const t = find(words[1]);
+    if (!t) fail(`no terminal ${words[1]}`, 3);
+    if (state.idleOnWait === t.address) { t.status = { state: "idle" }; t.screen = "❯ "; save(); }
+    out(t);
+    break;
+  }
   case "read": {
     const t = find(words[1]);
     if (!t) fail(`no terminal ${words[1]}`);
     out({ text: t.screen ?? "" });
+    // state.onRead: the screen (and status) changes just after this answer, between two checks.
+    if (state.onRead && state.onRead.terminal === t.address) {
+      state.onRead.seen = (state.onRead.seen ?? 0) + 1;
+      if (state.onRead.seen === state.onRead.nth) {
+        if (state.onRead.status) t.status = { ...(t.status ?? {}), state: state.onRead.status };
+        if (state.onRead.screen !== undefined) t.screen = state.onRead.screen;
+        delete state.onRead;
+        save();
+      }
+    }
     break;
   }
   case "label": {
