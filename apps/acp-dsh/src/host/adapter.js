@@ -55,7 +55,10 @@ const FINISH = { end_turn: 'stop', max_tokens: 'max-tokens', max_turn_requests: 
 // An agent whose CLI is not signed in says so with ACP's `auth_required`, at the start of its
 // session or of a prompt. The turn fails with its own code, never ACP_AGENT: a sign-in answers
 // it, another model does not (the Bot team never falls back on it).
-const signInFailure = (name, error) => finish('error', `${name} is not signed in: ${error?.message ?? error}`, MODEL_ACCESS_REQUIRED)
+// An agent with no sign-in in the app (`signInHint`, agents.js) names its own terminal command.
+const signInFailure = (agent, error) => finish('error', typeof agent.signInHint === 'string' && agent.signInHint !== ''
+  ? `${agent.name} is not signed in. Run \`${agent.signInHint}\` in a terminal, then send again.`
+  : `${agent.name} is not signed in: ${error?.message ?? error}`, MODEL_ACCESS_REQUIRED)
 
 // The blocks of one model step: text and reasoning open as they come, close before a tool call.
 class Blocks {
@@ -96,6 +99,20 @@ export const NOTICE_KIND = 'acp-session'
  */
 export function freshSessionNotice(name) {
   const summary = `A new ${name} session: it does not see this chat's earlier messages`
+  return createUserMessage({
+    content: [{ type: 'text', text: `[${summary}.]` }],
+    source: { kind: NOTICE_KIND, form: 'notice', summary: boundContextSummary(summary) },
+  })
+}
+
+/**
+ * The chat row that says the Session's level is not applied to this agent: it has no mode DSH
+ * knows how to set (`modeFor`, agents.js), so it runs under its own permission settings.
+ * Written once per agent session, the same kind of row as the new-session notice.
+ * @param {string} name the agent's name
+ */
+export function ownPermissionsNotice(name) {
+  const summary = `${name} runs under its own permission settings: this chat's level is not applied to it`
   return createUserMessage({
     content: [{ type: 'text', text: `[${summary}.]` }],
     source: { kind: NOTICE_KIND, form: 'notice', summary: boundContextSummary(summary) },
@@ -393,6 +410,10 @@ export class AcpAdapter extends LlmAdapter {
    */
   bridgeOn(agent) {
     if (this.backchannel === undefined) return false
+    // A row that declares no bridge (`bridge: false`, the native agents) gets none, even with
+    // `dshTools: true`: its bridge calls would not be recognised, so each would draw a mirror
+    // card beside the bridge's rows and ask twice.
+    if (agent?.bridge === false) return false
     const setting = this.dshTools()
     if (setting === true || setting === false) return setting
     return this.bridgeDefault(agent)
@@ -656,7 +677,7 @@ export class AcpAdapter extends LlmAdapter {
           this.live.delete(sessionId)
           if (isAuthRequired(error)) {
             this.signedOut(options.provider)
-            return yield signInFailure(agent.name, error)
+            return yield signInFailure(agent, error)
           }
           return yield finish('error', `${agent.name} did not start: ${error?.message ?? error}`, error?.code === 'acp_bridge_missing' ? 'acp_bridge_missing' : undefined)
         }
@@ -729,6 +750,14 @@ export class AcpAdapter extends LlmAdapter {
       } catch (error) {
         return yield finish('error', `${agent.name} would not take DSH's permission level: ${error?.message ?? error}`)
       }
+      // A table agent with no `modeFor` took no level above: say so once per agent session.
+      if (fresh && agent.levelNotice === true) {
+        try {
+          dshAgent?.session?.append?.('user/message', ownPermissionsNotice(agent.name), { surfaceOp: 'append' })
+        } catch (error) {
+          try { this.ctx.logger?.warn?.(`acp-dsh: the permission notice was not written: ${error?.message ?? error}`) } catch {}
+        }
+      }
       // A new agent session in a chat that already has answers says so once, in a row of its
       // own before the reply (bots-dsh's fallback.js writes its notice the same way). The
       // prompt below was read before it, and promptOf leaves it out of later ones.
@@ -791,7 +820,7 @@ export class AcpAdapter extends LlmAdapter {
         yield* blocks.close()
         if (isAuthRequired(event)) {
           this.signedOut(options.provider)
-          return yield signInFailure(agent.name, event)
+          return yield signInFailure(agent, event)
         }
         return yield finish('error', `${agent.name}: ${event.message}`)
       } else if (event.type === 'aborted') {

@@ -17,7 +17,8 @@ import { MODEL_ACCESS_REQUIRED } from '../src/host/names.js'
 
 const CLAUDE = AGENTS['acp-claude']
 const CODEX = AGENTS['acp-codex']
-const IDS = Object.keys(AGENTS)
+// The vendors with an account to confirm: a native agent (no adapter) has none.
+const IDS = Object.keys(AGENTS).filter(id => AGENTS[id].adapter !== undefined)
 const WORK = { kind: 'account', id: 'claude\norg-work\nana@work.example', facets: { kind: 'account', email: 'ana@work.example', org: 'org-work' }, email: 'ana@work.example', org: 'Acme', plan: 'team' }
 const HOME = { kind: 'account', id: 'claude\norg-home\nana@home.example', facets: { kind: 'account', email: 'ana@home.example', org: 'org-home' }, email: 'ana@home.example', plan: 'max' }
 const CODEX_WORK = { kind: 'account', id: 'codex\nchatgpt\nana@work.example', facets: { kind: 'account', email: 'ana@work.example' }, email: 'ana@work.example', plan: 'business' }

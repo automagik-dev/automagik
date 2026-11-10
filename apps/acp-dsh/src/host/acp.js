@@ -5,6 +5,7 @@
 import { spawn } from 'node:child_process'
 import { Readable, Writable } from 'node:stream'
 import { ClientSideConnection, PROTOCOL_VERSION, ndJsonStream } from '@agentclientprotocol/sdk'
+import { batchSafe } from './batch-spawn.js'
 import { isBridgeName } from './names.js'
 
 const STDERR_KEEP = 4000
@@ -60,7 +61,9 @@ export class AgentRun {
 
   async start() {
     const { command, args = [], env, cwd, mcpServers = [], sessionMeta } = this.spec
-    const child = spawn(command, args, { cwd, env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'] })
+    // Through batchSafe: a native agent's CLI can be a Windows batch file (hermes.cmd), which
+    // Node refuses to spawn without a shell.
+    const child = spawn(...batchSafe(command, args, { cwd, env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }))
     this.child = child
     // An idle agent never keeps DSH running: only a prompt in flight holds the event loop.
     child.unref()
@@ -92,7 +95,7 @@ export class AgentRun {
       })
       this.sessionId = session.sessionId
       this.modes = session.modes
-      this.options = session.configOptions ?? []
+      this.options = withModels(session.configOptions ?? [], session.models)
       // The model the agent started on: DSH's `default` model goes back to it.
       this.startModel = optionOf(this.options, 'model')?.currentValue
       // The session exists (the spike's ordering rule for the bridge's first announcement) and
@@ -127,7 +130,7 @@ export class AgentRun {
     ]))
     this.sessionId = answer.sessionId
     if (answer.modes !== undefined && answer.modes !== null) this.modes = answer.modes
-    if (Array.isArray(answer.configOptions)) this.options = answer.configOptions
+    if (Array.isArray(answer.configOptions)) this.options = withModels(answer.configOptions, answer.models ?? modelStateOf(this.options))
     this.tools.clear()
     // The fork's source is closed by us: the spike did not show the fork closing it, and a
     // Session must never hold two bridges.
@@ -249,9 +252,23 @@ export class AgentRun {
     const values = valuesOf(option)
     if (!values.some(choice => choice.value === value)) throw new Error(`it offers no ${category} ${value} (it offers ${values.map(choice => choice.value).join(', ') || 'none'})`)
     if (option.currentValue === value) return
+    if (option.id === MODEL_STATE) {
+      // The session's own model list (`session/set_model`), for an agent with no model option.
+      const params = { sessionId: this.sessionId, modelId: value }
+      try {
+        await this.held(() => Promise.race([typeof this.conn.request === 'function' ? this.conn.request('session/set_model', params) : this.conn.extMethod('session/set_model', params), this.gone]))
+      } catch (error) {
+        // An agent can list a model it then cannot resolve (seen with Hermes: "Internal error",
+        // the reason only in the error's data). Say which model and, when it is a plain word, why.
+        const details = typeof error?.data?.details === 'string' && /^[\w .:-]{1,80}$/.test(error.data.details) ? ` (${error.data.details})` : ''
+        throw new Error(`it could not switch to ${value}: ${error?.message ?? error}${details}`, { cause: error })
+      }
+      this.options = this.options.map(other => (other.id === MODEL_STATE ? { ...other, currentValue: value } : other))
+      return
+    }
     const answer = await this.held(() => Promise.race([this.conn.setSessionConfigOption({ sessionId: this.sessionId, configId: option.id, value }), this.gone]))
     // The answer is the whole set: a new model may bring other efforts.
-    this.options = answer?.configOptions ?? this.options.map(other => (other.id === option.id ? { ...other, currentValue: value } : other))
+    this.options = answer?.configOptions ? withModels(answer.configOptions, modelStateOf(this.options)) : this.options.map(other => (other.id === option.id ? { ...other, currentValue: value } : other))
   }
 
   async cancel() {
@@ -295,7 +312,7 @@ export class AgentRun {
         break
       }
       case 'config_option_update':
-        if (Array.isArray(update.configOptions)) this.options = update.configOptions
+        if (Array.isArray(update.configOptions)) this.options = withModels(update.configOptions, modelStateOf(this.options))
         break
       case 'current_mode_update':
         if (this.modes) this.modes = { ...this.modes, currentModeId: update.currentModeId }
@@ -410,6 +427,36 @@ function refusal(kind, options) {
     ? options.find(option => option.kind === 'reject_once') ?? options.find(option => option.kind === 'reject_always')
     : undefined
   return chosen ? { outcome: { outcome: 'selected', optionId: chosen.optionId } } : { outcome: { outcome: 'cancelled' } }
+}
+
+// The id of the model option made from a session's own model list (`models` in the answer to
+// `session/new`: `availableModels` and `currentModelId`, switched with `session/set_model`).
+// Hermes offers its models only there. No agent's own option can carry this id by accident.
+export const MODEL_STATE = '\u0000session-models'
+
+/**
+ * An agent's config options, with its session model list as the `model` option when it offers
+ * no model option of its own (an agent that offers both, as Antigravity does, keeps its own).
+ */
+export function withModels(options, models) {
+  if (optionOf(options, 'model') !== undefined) return options
+  const offered = (Array.isArray(models?.availableModels) ? models.availableModels : []).filter(model => typeof model?.modelId === 'string' && model.modelId !== '')
+  if (offered.length === 0) return options
+  return [...options, {
+    id: MODEL_STATE,
+    name: 'Model',
+    category: 'model',
+    type: 'select',
+    currentValue: typeof models.currentModelId === 'string' ? models.currentModelId : undefined,
+    options: offered.map(model => ({ value: model.modelId, name: typeof model.name === 'string' && model.name !== '' ? model.name : model.modelId, ...(typeof model.description === 'string' && model.description !== '' ? { description: model.description } : {}) })),
+  }]
+}
+
+// The session model list an option set was made from, to carry it over an answer that names
+// only the agent's own options.
+const modelStateOf = (options) => {
+  const made = (options ?? []).find(option => option?.id === MODEL_STATE)
+  return made === undefined ? undefined : { currentModelId: made.currentValue, availableModels: made.options.map(({ value, name, description }) => ({ modelId: value, name, description })) }
 }
 
 /** The option of `category` among an agent's session config options. */
