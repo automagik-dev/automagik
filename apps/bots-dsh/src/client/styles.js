@@ -1073,7 +1073,20 @@ body:not([data-bt-advanced]) [class*="_flowItem"][data-chat-flow-kind="turn-tail
 .bt-plus:active{scale:.9}
 .bt-plus svg{width:14px;height:14px;transition:${spring(SPRING_POP, 'rotate')}}
 .bt-plus[aria-expanded=true] svg{rotate:45deg}
-.bt-plus-menu{min-width:180px}
+.bt-plus-menu{min-width:360px;max-width:calc(100vw - 24px)}
+.bt-plus-menu .bt-plus-row{gap:8px;padding:7px 10px}
+.bt-plus-menu .bt-plus-row>svg{width:16px;height:16px;margin:0 1px}
+.bt-plus-menu .bt-menu-label{flex:none;font-weight:500;color:var(--bt-ink)}
+.bt-plus-menu .bt-plus-desc{flex:none;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--bt-ink-3);font-size:12px;line-height:18px}
+.bt-perm-chip{flex:none;display:inline-flex;align-items:center;gap:5px;height:28px;margin-left:6px;padding:0 2px;border:0;background:none;color:var(--bt-accent);font:inherit;font-size:12px;line-height:18px;font-weight:600;white-space:nowrap;cursor:pointer;transition:opacity .15s ease}
+.bt-perm-chip svg{flex:none;width:14px;height:14px}
+.bt-perm-chip:hover{opacity:.82}
+.bt-perm-chip:focus-visible{outline:2px solid var(--bt-accent);outline-offset:2px;border-radius:6px}
+.bt-permission-menu{min-width:min(380px,calc(100vw - 24px));max-height:min(460px,60vh);overflow-y:auto;padding:8px}
+.bt-permission-menu .bt-q-list{margin:0;gap:2px}
+.bt-permission-menu .bt-q-opt{padding:8px 10px;border-radius:8px}
+.bt-permission-menu .bt-q-desc{font-size:12px;line-height:16px;color:var(--bt-ink-3);white-space:normal}
+.bt-permission-menu .bt-perm-confirm{padding:4px 2px 2px}
 [data-composer-card] [class*="_tools"]{gap:0!important}
 [data-composer-card] [class*="_modes"]:empty{display:none!important}
 [data-composer-card] [class*="_activity"]:not(:has([data-slot] > *)){display:none!important}
@@ -1095,10 +1108,12 @@ body:not([data-bt-advanced]) [data-composer-dock]:not(:has(.bt-btw)){display:non
 .bt-native-note p{margin:0}
 .bt-native-note button{font:inherit;color:var(--bt-accent);background:none;border:0;cursor:pointer;text-decoration:underline}
 .bt-mic,.bt-voice{flex:none;width:28px;height:28px;border-radius:50%;border:0;padding:0;display:inline-grid;place-items:center;cursor:pointer;transition:background-color .15s ease,color .15s ease,${spring(SPRING_TAP, 'scale')}}
+[data-composer-card] .bt-mic{width:28px;background:transparent;box-shadow:none;color:var(--bt-ink-2)}
 .bt-mic{background:color-mix(in srgb,var(--bt-ink) 5%,transparent);box-shadow:inset 0 0 0 .5px var(--bt-line);color:var(--bt-ink-2)}
 .bt-mic:hover{background:color-mix(in srgb,var(--bt-ink) 10%,transparent);color:var(--bt-ink)}
 .bt-mic[aria-pressed=true]{background:#ff3e51;color:#fff;animation:bt-mic-pulse 1.4s ease-in-out infinite}
 @keyframes bt-mic-pulse{0%,100%{box-shadow:0 0 0 0 rgba(255,62,81,.35)}50%{box-shadow:0 0 0 5px rgba(255,62,81,0)}}
+[data-composer-card] .bt-voice{width:32px;height:32px}
 .bt-voice{display:none;background:var(--bt-accent);color:var(--bt-accent-ink,#fff);animation:bt-icon-swap ${SPRING_POP.duration}ms ${SPRING_POP.easing}}
 .bt-voice:hover{opacity:.9}
 .bt-mic:active,.bt-voice:active{scale:.9}

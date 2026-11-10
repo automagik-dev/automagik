@@ -439,6 +439,19 @@ test('a model that cannot run is marked in the route, the agent, the model row a
   assert.equal(nodes(ok, node => node.props.className === 'bt-model-provider')[0].children[0], 'Native · Anthropic · API key')
 })
 
+test('the composer bar is one plain line: route mark, model, effort, no provider line', () => {
+  const bot = { id: 'b1', name: 'Ops', model: 'deepseek/pro', appliedModel: 'deepseek/pro', effort: 'high' }
+  const roster = { ready: true, byId: { b1: bot }, models: cascade, defaultModel: 'deepseek/flash' }
+  const trigger = nodes(drawMenu({ bot, roster, actions: { updateBot: () => Promise.resolve() }, run: promise => promise, bar: true }), node => String(node.props.className ?? '').includes('bt-model-trigger'))[0]
+  assert.match(trigger.props.className, /bt-model-bar-trigger/)
+  assert.equal(trigger.props['data-bar'], true)
+  assert.equal(nodes(trigger, node => node.props.className === 'bt-model-bar-name')[0].children[0], 'DeepSeek Pro')
+  assert.equal(nodes(trigger, node => node.props.className === 'bt-model-bar-effort')[0].children[0], 'High')
+  assert.equal(nodes(trigger, node => node.props.className === 'bt-model-bar-route').length, 1)
+  // The route and provider stay in the menu, never in the bar.
+  assert.equal(nodes(trigger, node => node.props.className === 'bt-model-provider').length, 0)
+})
+
 test('the dock offers only what is set up, and a missing sign-in never asks for a key', () => {
   const buttons = tree => nodes(tree, node => node.type === 'button').map(button => button.children[0])
   // Lost model: the choices are the set-up connections only.

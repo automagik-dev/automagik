@@ -523,7 +523,7 @@ export function RouteConfirm({ bot, roster, current, target, onCancel, onConfirm
       h('button', { type: 'button', className: 'bt-model-confirm-go', onClick: onConfirm }, routeChanged ? t('Change route') : t('Change agent'))))
 }
 
-function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, chat = false, onPick, onPickEffort }) {
+function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, chat = false, bar = false, onPick, onPickEffort }) {
   const [view, setView] = useState(MENU_ROOT)
   // A route change waits for the person's word here, because it starts a new conversation.
   const [confirm, setConfirm] = useState(undefined)
@@ -703,14 +703,19 @@ function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, c
       ref: button, type: 'button', className: 'bt-model-change', 'aria-haspopup': 'menu', 'aria-expanded': isOpen,
       'aria-label': t('Change the model of {name}', { name: bot.name }), onClick: toggle,
     }, t('change')) : h('button', {
-      ref: button, type: 'button', className: 'bt-model-trigger', 'data-wide': wide || undefined,
-      'data-route': currentRoute?.route, 'aria-haspopup': 'menu', 'aria-expanded': isOpen,
+      ref: button, type: 'button', className: `bt-model-trigger${bar ? ' bt-model-bar-trigger' : ''}`, 'data-wide': wide || undefined,
+      'data-bar': bar || undefined, 'data-route': currentRoute?.route, 'aria-haspopup': 'menu', 'aria-expanded': isOpen,
       'aria-label': t('Model: {model}', { model: shown?.name ?? t('none') }),
       'data-missing': shown !== undefined && shown.unavailable && models.length > 0 ? '' : undefined, onClick: toggle,
     },
-    h('span', { className: 'bt-model-copy' },
-      h('span', { className: 'bt-model-name' }, shown?.name ?? t('Choose a model')),
-      second === null ? null : h('span', { className: 'bt-model-provider' }, second)),
+    bar
+      ? h('span', { className: 'bt-model-bar' },
+        currentRoute === undefined ? null : h('span', { className: 'bt-model-bar-route', 'aria-hidden': true }, h(ROUTE_ICON[currentRoute.route] ?? ConnectorIcon, { size: 14 })),
+        h('span', { className: 'bt-model-bar-name' }, shown?.name ?? t('Choose a model')),
+        effortLabel === undefined ? null : h('span', { className: 'bt-model-bar-effort' }, effortLabel))
+      : h('span', { className: 'bt-model-copy' },
+        h('span', { className: 'bt-model-name' }, shown?.name ?? t('Choose a model')),
+        second === null ? null : h('span', { className: 'bt-model-provider' }, second)),
     h(Caret)),
     shownPlace ? createPortal(h('div', { ref: menu, className: `bt-menu bt-model-menu${shownPlace.bottom !== undefined ? ' bt-menu-up' : ''}`, role: 'menu', 'aria-label': t('Model for {name}', { name: bot.name }), style: shownPlace, 'data-leaving': leaving || undefined, onKeyDown },
       confirmView ?? h(ModelSteps, {

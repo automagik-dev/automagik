@@ -1314,6 +1314,11 @@ const ZH = {
   'Its permission level could not be set here, so it took no turn': '它在这里的权限级别未能设置，所以这一轮没有发言',
   // The composer's +
   'Add files': '添加文件',
+  'Add photos & files': '添加照片和文件',
+  'Upload from computer': '从电脑上传',
+  'Continue in another conversation': '在另一个对话中继续',
+  'Run this chat later': '稍后运行此对话',
+  'Permissions: {level}': '权限：{level}',
   'Reference a chat': '引用对话',
   'Chat with {name}': '与 {name} 的对话',
   'Scheduled task': '定时任务',
