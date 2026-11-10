@@ -674,7 +674,7 @@ measurement RFC 0026 (i) describes.
 
 The six questions this RFC asked were decided by Chat on 2026-11-09 (Decided, 1 to 6). Decided 5
 and 6 were reopened by the owner on 2026-11-10 and replaced above; their mechanisms are RFC 0026
-(d) and (e), whose open questions are Chat's and genie's.
+(d) and (e), and genie ACKed this amendment on 2026-11-10.
 
 ## Links
 

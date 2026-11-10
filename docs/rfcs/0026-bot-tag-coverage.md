@@ -17,7 +17,8 @@ is reported without changing query contract 1, and closes or narrows the five cl
 durable records allow: worker labels, dsh-tui seats and linked machines (RFC 0021's Decided 5 and
 6, reopened by the owner on 2026-11-10), and history from the native logs. It sets the tests and
 the before and after measurement, and it names what stays unknown. No query-contract and no
-store-schema change is needed; RFC 0021 is amended in the same pull request.
+store-schema change is needed; RFC 0021 is amended in the same pull request. Chat ruled its four
+C questions and genie acked its four G ones on 2026-11-10.
 
 ## Motivation
 
@@ -118,8 +119,8 @@ per-bot lines are the numerator's split, not a second metric.
 **A per-bot rate is not computable, and is not faked.** "Of this bot's usage, how much is
 tagged" needs the usage the bot failed to get, and untagged usage names no bot; an ambiguous call
 names several, and RFC 0021's rollups key it with a null bot. Claimant tags would have to be
-stored per ambiguous row and reported, which is a store change and a contract addition; (f) and
-the open questions say why this RFC does not build it. What the owner compares bots on (tokens,
+stored per ambiguous row and reported, which is a store change and a contract addition; C1's
+ruling says why this RFC does not build it. What the owner compares bots on (tokens,
 cost, squad, harness) is complete without it.
 
 **What is outside the denominator, and shown beside it.** Usage whose `repo` is null (a folder
@@ -182,7 +183,8 @@ worded for "a Herdr row", and now also covers a harness's own start record (d); 
 `dsh_tui_seat` and `other_machine` reason descriptions point at Decided 5 and 6, whose reach this
 RFC narrows. The enum values, the fields, the states and the sums do not change. Refreshing those
 three descriptions is a wording-only edit in the schema file; it is named here and **not designed**
-(open question G4), so no delivery touches the schema.
+now (G4): one wording-only schema change carries them and PR 875's two description Lows, landing
+no later than delivery 4, so no other delivery touches the schema.
 
 ### (c) The worker-label class: `worker.of` and `worker.role`
 
@@ -214,13 +216,12 @@ labels, so a later recompute replays the same answer.
   start-time record naming the session, and `worktree` is a cwd match to a *logged* launch
   (0018's `tokens_by_basis`). `label`'s own wording, "an hc label seen at a sync named it",
   already covers a label that names the launch's bot on its own terminal. No new value, no schema
-  edit; genie confirms the reading (G1). If it wanted a new value, that is a contract change and
-  is out.
-- **The branch is not filled.** The worker's `branch` label is not a source for
-  `tokens_by_branch_basis`: the vocabulary is `log`, `ledger` and `none`, and a label is none of
-  them. A label-tagged dsh-tui or OMP worker keeps its branch null, so it counts as attributed
-  and as `unattributed` (branch-less) at once: bot coverage rises, branch coverage stays partial.
-  Adding a fourth value would be a contract change and is out.
+  edit; genie acked the reading (G1). A new value would be a contract change and is out.
+- **The branch and task are not filled.** The worker labels fill only bot, role and kind:
+  `task`, `project` and `branch` are never taken from them. The branch vocabulary is `log`,
+  `ledger` and `none`, so a label-tagged dsh-tui or OMP worker keeps its branch null: it counts
+  as attributed and as `unattributed` (branch-less) at once, so bot coverage rises while branch
+  coverage stays partial. Adding a fourth value would be a contract change and is out.
 
 **What it closes.** Unlogged workers (a hand-started `hc run`, a start row whose append failed),
 workers on a machine whose pack predates RFC 0021 delivery 3 (their rows carry no `core`,
@@ -270,8 +271,8 @@ the evidence bound is what limits the recovery, not the store.
 **The fallback if DSH declines.** The pack labels the pane when it learns the id (a resume) and
 writes the session row; the gap is a fresh seat's usage before its first resume, and it is
 visible as `dsh_tui_seat`. Reading DSH's private live-session index is not done: RFC 0021
-Decided 5 rejected it as an unstable format, and nothing since changes that. The choice is
-Chat's (C2).
+Decided 5 rejected it as an unstable format, and nothing since changes that. Chat ruled: ask
+DSH first, and keep this fallback tested either way (C2).
 
 ### (e) Linked machines: Decided 6, reopened
 
@@ -299,9 +300,10 @@ sum over the rest is not a bound on the truth.
 
 `totals` is the four counts and `total`, `parts` the classes, `bots` the per-bot lines and
 `repos` the per-repo lines (capped like the report's). No session id, no request hash, no path
-and no raw log id; the repo names are the normalized `host/owner/repo` form. It is written by
-the pack, beside its install record, mode 0600, replaced on every run (the latest only, no
-history). Owner: **Herdr**.
+and no raw log id; the repo names are the normalized `host/owner/repo` form. The record's `v: 1`
+ships with a JSON Schema and one example in `meter/schema/fleet/v1/`, which the pack's writer and
+genie's reader test against (G3). It is written by the pack, beside its install record, mode
+0600, replaced on every run (the latest only, no history). Owner: **Herdr**.
 
 **How `other_machine` shrinks.** A session resumed on another machine runs in a new launch there,
 and the pack's session row names it (RFC 0021 (f) 5), so the calls after the resume are that
@@ -315,8 +317,9 @@ usage; the fleet's sum does.
 hashes (each store's is random and private, RFC 0018 (b)), a second hash for evidence written
 before that key existed (the raw ids are gone, so it cannot be backfilled), a transport for the
 digests (paths and request ids excluded), a store column and a migration. It serves only the
-moved-log case above. Chat's call (C3): the recommendation is not now; if it is wanted, it is
-its own RFC with its own threat model. The `other_machine` description narrows (see (b)).
+moved-log case above. Chat ruled: not now (C3); the fleet record's sum closes the number, and
+replication, if ever wanted, is its own RFC with its own threat model. The `other_machine`
+description narrows (see (b)).
 
 ### (f) History, the backfill, and the horizon
 
@@ -419,10 +422,11 @@ number. Both are read-only; neither changes the store.
 - **The PR body carries aggregate numbers only**: the percentages and token totals per point, per
   window, per class, with no machine, repo, branch, bot or path named. The issue gets the same
   table; the raw records stay with the operator.
-- **The target** is set after P0, not from the old 12%, which counted frozen tags. The RFC
-  proposes: `d7` at least doubles from P0 to P3, `d30` does not fall from P0 to P3, `inspected`
-  rises at P1 and P2, and every class's movement is explained by its delivery. If a class does not
-  move, the delivery is not done and the reason is named.
+- **The target** is set after P0, not from the old 12%, which counted frozen tags. Chat ruled:
+  the owner sets it after P0, and this RFC's proposal is the floor for closing #897 (C4). The
+  proposal: `d7` at least doubles from P0 to P3, `d30` does not fall from P0 to P3, `inspected`
+  rises at P1 and P2, and every class's movement is explained by its delivery. If a class does
+  not move, the delivery is not done and the reason is named.
 - **What invalidates a point**: a store reset or migration, the 1 GiB bound pruning between
   points, a pack update landing mid-window, or the definition changing. Any of them restarts the
   comparison; none of them is averaged away.
@@ -432,16 +436,17 @@ number. Both are read-only; neither changes the store.
 - `usagemeter coverage`: a new local verb, read-only, fork-and-exit, not contract 1. Nothing genie
   reads changes; no install changes.
 - The fleet coverage record: local, versioned `v: 1`, written by the pack beside its install
-  record, read by genie and the phone. No session ids, request hashes or paths.
+  record, read by genie and the phone, with a JSON Schema and an example in
+  `meter/schema/fleet/v1/`. No session ids, request hashes or paths.
 - The dsh-tui session header's terminal field: DSH's format, additive, absent is valid.
 - The resolver's `label` claim for `worker.of` and `worker.role`: a rule, not a store column; the
   query reports it at `label` basis.
 - **Unchanged:** query contract 1 (`meter/schema/query/v1/`), the five reasons and their states,
   the store's schema 3, `workers.jsonl`'s format (the resume row is RFC 0021 (f) 5's),
   `meter.db`'s tables, and the state folder.
-- **RFC 0021 amended in the same pull request:** Decided 5 and 6, (a)'s dsh-tui row and bullet,
-  (d)'s reasons' reach, the Contracts list, the delivery pointer, the Open questions note and the
-  Links.
+- **RFC 0021 amended in the same pull request** (ACKed by genie, 2026-11-10): Decided 5 and 6,
+  (a)'s dsh-tui row and bullet, (d)'s reasons' reach, the Contracts list, the delivery pointer,
+  the Open questions note and the Links.
 
 ## Threat model
 
@@ -476,11 +481,13 @@ is named.
    claims stop, and a rebuild returns their calls to unlinked.
 4. **The dsh-tui seat**, in two parts: **4a**, DSH writes the terminal field (owner: DSH; nothing
    ships here); **4b**, the meter reads it and links (crate; meter lane), plus the check that the
-   pack's resume row is written (owner: Herdr). *Check:* T4; P2 measured. *Rollback:* 4b reverts
-   to `dsh_tui_seat`; 4a's field is additive and ignored by an older meter.
+   pack's resume row is written (owner: Herdr). *Check:* T4; P2 measured; the G4 wording-only
+   schema change is merged with it or before it. *Rollback:* 4b reverts to `dsh_tui_seat`; 4a's
+   field is additive and ignored by an older meter.
 5. **The fleet coverage** (Herdr pack; herdr lane). The fleet step runs the report on each
    connected machine and writes the record. *Check:* T5, with a fake fleet and one failing
-   machine. *Rollback:* revert the pack; each machine's own report stays, and the record disappears.
+   machine, and the record validates against its schema and example. *Rollback:* revert the pack;
+   each machine's own report stays, and the record disappears.
 6. **The backfill and the measurement** (operator; no code). A sync, the backfill to the horizon,
    then P0 to P3 on the real store and the aggregate table in the closing PR. *Check:* T6, T7 and
    (i). *Rollback:* none needed; the backfill keeps a generation and never changes a total.
@@ -489,39 +496,35 @@ is named.
 absence only leaves the `dsh_tui_seat` share in that table. Delivery 5 is filed under this RFC's
 umbrella, and its movement is measured in its own pull request.
 
+## Ruled by Chat, 2026-11-10
+
+- **C1, no per-bot rate.** The per-bot line (tokens, share, tie mix, unrecorded fields) is enough
+  for now; a rate needs claimant tags stored per ambiguous call and a new field, and it is not
+  built.
+- **C2, ask DSH first.** Delivery 4a is the ask; the pack's label-on-resume fallback is kept and
+  tested either way, and the `dsh_tui_seat` share shows the gap until the field exists.
+- **C3, no session replication.** The fleet record (e) closes the fleet number without a
+  fleet-wide session key; replication for moved logs stays out.
+- **C4, the target is the owner's.** The owner sets it after P0; this RFC's `d7` doubles and
+  `d30` does not fall is the floor for closing #897.
+
+## Acked by genie, 2026-11-10
+
+- **G1, the `label` basis stands.** Genie acked it, with start-row-wins and the fail-closed rule
+  kept tested (T3) and with worker labels never filling `task` or `branch` ((c)).
+- **G2, no envelope field.** Genie acked the derived metric: the counts in the answer, the number
+  computed by the reader, no new field in the envelope.
+- **G3, the fleet record, versioned.** Genie acked its shape and asked for a schema and an
+  example, which (e), Contracts and delivery 5 carry.
+- **G4, the three descriptions, with a deadline.** Genie acked leaving them now, and the one
+  wording-only schema change that carries them also carries PR 875's two description Lows: the
+  `claimants_differ` text not covering an unreadable tag, and the 96-JSON-byte tag rule. It lands
+  no later than delivery 4 ((b) and delivery 4).
+
 ## Open questions
 
-**G1, for genie.** Is `label` the right basis for a bot tag that a worker label named, with the
-schema's wording read as covering it? *Recommended:* yes; the value means "a label seen at a sync
-named it", no value changes, and a new basis would be a contract change this RFC does not make.
-
-**G2, for genie.** Is the derived metric enough (the counts in the answer, the number computed by
-the reader), with no new field in the envelope? *Recommended:* yes; the partition in (b) is exact,
-and a field would be an additive contract change on its own.
-
-**G3, for genie.** Does the fleet record (e) carry what a reader needs to sum, with bot ids and
-repo names only, no sessions? *Recommended:* yes; anything richer is the replication C3 rejects.
-
-**G4, for genie.** The three schema descriptions that read narrower (the `session` basis and two
-reasons): leave them for the next additive contract change, or refresh them now? *Recommended:*
-leave them now; the meanings are unchanged, and a wording-only edit can ride any later contract
-pull request.
-
-**C1, for Chat.** Is the per-bot line (tokens, share, tie mix, unrecorded fields) enough, with no
-per-bot rate? *Recommended:* yes now; a rate needs claimant tags stored per ambiguous call and a
-new field, and the owner's comparison does not need it.
-
-**C2, for Chat.** If DSH declines the terminal field, is the pack's label-on-resume enough, with
-the fresh-seat gap measured? *Recommended:* ask DSH first (4a); keep the fallback checked either
-way, and let the `dsh_tui_seat` share show the gap.
-
-**C3, for Chat.** Is the session-level replication for moved logs (a fleet-wide session key, a
-second hash, a transport) worth building? *Recommended:* not now; it serves only a log moved
-between machines, and (e) closes the fleet number without it.
-
-**C4, for Chat.** Should the target in (i) be the proposed one (d7 doubles, d30 does not fall,
-`inspected` rises), or does the owner set a number after P0? *Recommended:* the owner sets it after
-P0; the RFC's proposal is the floor for closing #897.
+None: Chat ruled C1 to C4 and genie acked G1 to G4 on 2026-11-10, above, and the delivery checks
+carry what the acks added.
 
 ## Links
 
