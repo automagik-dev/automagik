@@ -1113,6 +1113,18 @@ on this computer are labelled. The lead's pane is the one the attach ledger ties
   bot shows the model its pane runs: the one its command line names, else the agent's own
   configured default. A bot that isn't running shows no model in its sidebar row
   ("not running · role"), while `automagik-herdr ls` and `show` print its pin, else that default.
+- `codexAuto` is optional and says whether a Codex seat and its Codex workers get Codex's auto
+  mode, `--approve-for-me`: approval requests go to Codex's own reviewer instead of a person,
+  and commands still run in Codex's workspace-write sandbox (it is not full access and does not
+  widen the sandbox). `true` (the default) passes it; `false` leaves Codex its default approvals
+  for that bot, so its panes can stop at a prompt only a person can answer. Set it in the bot's
+  entry in `.herdr/bots.json`; `create` and `edit` have no option for it, and either keeps the
+  field. It applies to a Codex seat, its Start and Restart, and its Codex workers; every other
+  agent's launch line is unchanged, and a worker that runs an hc template keeps the template's
+  command. Inside that sandbox (no network by default) `hc` can't connect to its socket and the
+  git folder of a worktree is read-only, so an `hc` call or a commit goes out as an approval
+  request: with the flag Codex's reviewer answers it, without it a person must. The worktree
+  itself and the temp folder stay writable, so a gate that runs there needs no approval.
 - `agyMode` is optional: the Antigravity execution mode Start and Restart pass as
   `agy --mode <mode>`. One of `auto` (the default when absent), `accept-edits` or `plan`; any
   other value is refused at launch with one line and never passed to agy. It applies only to
@@ -1146,7 +1158,8 @@ on this computer are labelled. The lead's pane is the one the attach ledger ties
   and `effort`. `agyMode` is the Antigravity workers' `--mode` (auto when absent).
   `create|edit --worker-agent/--worker-model/--worker-effort/--worker-template/--worker-agy-mode` set them
   (an empty value clears one); the form keeps the field as it is. An invalid one is ignored
-  with a warning.
+  with a warning. A Codex worker passes `--approve-for-me` like its bot's seat, unless the bot's
+  `codexAuto` is false; a `template` owns the command and gets no flag.
 - Ids are `b-` plus 10 lowercase base32 characters. A bot's terminal carries the hc label
   `bot=<id>`.
 

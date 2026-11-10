@@ -3,7 +3,7 @@
 // the replacement carries over from the old pane. The CLI's `restart` runs it with hc; the
 // sidebar's Restart runs the CLI. Pure: no `herdr`, so `node --test` runs it. Apache-2.0.
 
-import { agentKeyOfArgv, agyModeArgs, agyModeProblem, agySettingsArgs, agySettingsDir, agySettingsPlan, canResume, effortArgs, modelArgs, ownsSession,
+import { agentKeyOfArgv, agyModeArgs, agyModeProblem, agySettingsArgs, agySettingsDir, agySettingsPlan, canResume, effortArgs, launchRun, modelArgs, ownsSession,
   resumeArgs, resumesById, sessionIdArgs, withoutAgySettings, withoutBriefing, withoutResume } from "./models.js";
 import { SQUAD_LABEL, SQUAD_MARK } from "./launchArgs.js";
 import { ENV, WORKER_AGY_MODE_LABEL, WORKER_EFFORT_LABEL, WORKER_MODEL_LABEL, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, templateAgent } from "./workers.js";
@@ -191,7 +191,7 @@ const ASSIGN = /^([A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)$/;
  */
 const NO_VALUE = Object.fromEntries(Object.entries({
   claude: ["-c", "--continue", "--dangerously-skip-permissions"],
-  codex: ["--yolo"],
+  codex: ["--yolo", "--approve-for-me"],
   hermes: ["--tui", "--yolo"],
   omp: ["--auto-approve", "-c", "--continue"],
   pi: ["-c", "--continue"],
@@ -419,14 +419,15 @@ export function restartRefusal({ name, old, helpers = [], force = false, tree = 
  * realpath, homeDir } when an Antigravity helper's permission list (#823) may be written here
  * (the bot it serves), null when the caller doesn't write one. `realpath` is the caller's
  * `(path) => string` (fs.realpathSync): the helper's folder is resolved to its canonical path
- * first (#884). `homeDir` is the person's home folder, never trusted (#884 Low A).
+ * first (#884). `homeDir` is the person's home folder, never trusted (#884 Low A). `bot` is the
+ * bot a rebuilt worker's command comes from: its `codexAuto` decides Codex's auto mode (#946).
  * A worker's command is rebuilt from its row (its task, the last word hc was given, isn't sent
  * twice) unless a template owns it;
  * any other helper's is its own launch command (paneCommand). Returns { name, replaced, cwd,
  * labels, agent, session, mode: "resume" | "fresh", resume, argv, agySettings (the file to write
  * first, or null), note }, or { name, replaced, error } when there is nothing to run.
  */
-export function helperPlan({ get, worker = null, session = null, agents, fresh = null, agy = null }) {
+export function helperPlan({ get, worker = null, session = null, agents, fresh = null, agy = null, bot = null }) {
   const name = typeof get?.name === "string" && get.name ? get.name : null;
   const replaced = get?.address ?? null;
   // A worker's worktree first (the ledger's), then the pane's folder, then its program's,
@@ -445,7 +446,7 @@ export function helperPlan({ get, worker = null, session = null, agents, fresh =
     const agyMode = labels[WORKER_AGY_MODE_LABEL] ?? null;
     const modeWhy = agent === "antigravity" ? agyModeProblem(agyMode) : null;
     if (modeWhy) return { name, replaced, error: `${name ?? replaced} can't be run again: ${modeWhy}` };
-    command = { argv: [...agents[agent].run, ...agyModeArgs(agent, agyMode), ...modelArgs(agent, model), ...effortArgs(agent, effort)] };
+    command = { argv: [...launchRun(agent, agents[agent].run, bot), ...agyModeArgs(agent, agyMode), ...modelArgs(agent, model), ...effortArgs(agent, effort)] };
   } else {
     const launch = paneCommand(get);
     if (launch?.shell !== undefined) command = launch;

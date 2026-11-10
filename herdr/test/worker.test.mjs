@@ -279,11 +279,23 @@ test("worker: the bot's worker defaults are used, and per-task --agent/--model/-
   assert.equal(r.code, 0, r.err);
   const out = r.json();
   assert.deepEqual([out.agent, out.model, out.effort], ["codex", "gpt-5.5", "medium"]);
-  assert.deepEqual(after(s.runs()[0]), ["codex", "--model", "gpt-5.5", "-c", "model_reasoning_effort=medium", "fix the login form"]);
+  assert.deepEqual(after(s.runs()[0]), ["codex", "--approve-for-me", "--model", "gpt-5.5", "-c", "model_reasoning_effort=medium", "fix the login form"]);
   const o = s.cli(["worker", "review it", "--branch", "feat/review", "--agent", "claude", "--model", "opus", "--effort", "max", "--json"]);
   assert.equal(o.code, 0, o.err);
   assert.deepEqual([o.json().agent, o.json().model, o.json().effort], ["claude", "opus", "max"]);
   assert.deepEqual(freshClaude(after(s.runs()[1])), ["claude", "--model", "opus", "--effort", "max", "review it"]);
+});
+
+test("worker #946: a bot's codexAuto false leaves its Codex workers on Codex's default approvals", (t) => {
+  const file = team();
+  file.bots[2].codexAuto = false;
+  const s = scene(t, { file });
+  const r = s.cli(["worker", "fix the login form", "--branch", "feat/login", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(after(s.runs()[0]), ["codex", "--model", "gpt-5.5", "-c", "model_reasoning_effort=medium", "fix the login form"]);
+  const o = s.cli(["worker", "tune it", "--branch", "feat/tune", "--agent", "codex", "--json"]);
+  assert.equal(o.code, 0, o.err);
+  assert.equal(s.runs()[1].includes("--approve-for-me"), false, "a per-task --agent codex keeps the opt-out");
 });
 
 test("worker: a bot with no worker field runs its own agent, with that agent's default model and effort", (t) => {
@@ -821,7 +833,7 @@ test("worker: a bots.json template default is used; a per-task --agent sets it a
   // --model alone is a per-task pick too: the default template steps aside for the default agent.
   const m = s.cli(["worker", "tune it", "--branch", "feat/tune", "--model", "gpt-6", "--json"]);
   assert.equal(m.code, 0, m.err);
-  assert.deepEqual(after(s.runs()[3]), ["codex", "--model", "gpt-6", "-c", "model_reasoning_effort=medium", "tune it"]);
+  assert.deepEqual(after(s.runs()[3]), ["codex", "--approve-for-me", "--model", "gpt-6", "-c", "model_reasoning_effort=medium", "tune it"]);
 });
 
 test("worker --template: an agent the command doesn't name skips the hook with a warning; no template list refuses", (t) => {

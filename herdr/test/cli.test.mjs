@@ -2343,7 +2343,7 @@ test("restart --agent swaps fresh without touching bots.json; --save writes the 
   const r = s.cli(["restart", "Genie", "--agent", "codex", "--json"]);
   assert.equal(r.code, 0, r.err);
   assert.deepEqual([r.json().mode, r.json().agent, r.json().saved], ["swap", "codex", false]);
-  assert.deepEqual(plain(agentWords(runCall(s.calls()))), ["codex"]);
+  assert.deepEqual(plain(agentWords(runCall(s.calls()))), ["codex", "--approve-for-me"]);
   assert.equal(readFileSync(s.botsPath, "utf8"), before, "bots.json untouched");
   // Again from the claude pin, written down this time (t100 is mid-turn in the fake: --force).
   const f = team();
@@ -2366,7 +2366,7 @@ test("restart a codex bot resumes with codex resume --last; a bot not running is
   s.seed(f);
   const r = s.cli(["restart", "Captain", "--json"]);
   assert.equal(r.code, 0, r.err);
-  assert.deepEqual(plain(runCall(s.calls())).slice(-3), ["codex", "resume", "--last"]);
+  assert.deepEqual(plain(runCall(s.calls())).slice(-4), ["codex", "--approve-for-me", "resume", "--last"]);
   assert.equal(r.json().replaced, "t6");
   // Genie isn't running: a plain start, nothing killed but t6.
   const started = s.cli(["restart", "Genie", "--json"]);
@@ -2432,7 +2432,7 @@ const runsOf = (s) => s.calls().filter((c) => c[0] === "run");
 const ownWords = (run) => plain(agentWords(run)).filter((w) => !w.includes("<herdr-bot>"));
 
 test("restart (#328): two bots on omp, then codex, in one folder: each resumes its own session id, from its label or the ledger", (t) => {
-  for (const [agent, words] of [["omp", (id) => [`--resume=${id}`]], ["codex", (id) => ["resume", id]]]) {
+  for (const [agent, words] of [["omp", (id) => [`--resume=${id}`]], ["codex", (id) => ["--approve-for-me", "resume", id]]]) {
     const s = shareScene(t, agent, { labels: ["sess-tester", "sess-dev"] });
     const a = s.cli(["restart", "Genie", "--json"]);
     assert.equal(a.code, 0, a.err);
@@ -2698,7 +2698,7 @@ test("restart #413: codex can't resume a thread whose model provider is gone: on
   assert.equal(r.code, 0, r.err);
   const [first, second] = runs(s);
   assert.deepEqual(plain(agentWords(first)).slice(-2), ["resume", SID], "it tried the thread first");
-  assert.deepEqual(plain(agentWords(second)), ["codex"], "then a new thread");
+  assert.deepEqual(plain(agentWords(second)), ["codex", "--approve-for-me"], "then a new thread");
   const j = r.json();
   assert.deepEqual([j.mode, j.terminal, j.replaced, j.session], ["fresh", "t101", "t6", null]);
   assert.equal(j.note, `codex can't resume its thread (***) (t100 said "${CODEX_GONE}"), so it starts on a new one`);
@@ -2815,7 +2815,7 @@ test("restart #597: a hand-started codex bot comes back from its source, not its
   const r = s.cli(["restart", "Captain", "--json"]);
   assert.equal(r.code, 0, r.err);
   const run = runCall(s.calls());
-  assert.deepEqual(plain(agentWords(run)), ["codex", "resume", SID], "the source's command, resumed by its session");
+  assert.deepEqual(plain(agentWords(run)), ["codex", "--approve-for-me", "resume", SID], "the source's command, resumed by its session");
   assert.match(r.err, /Captain: its pane's command differs from its source now \(drops -m=\*\*\*, -c=\*\*\*\)/);
   assert.equal(r.err.includes("gpt-a"), false, "the value is masked");
   assert.equal(r.json().session, "***"); // RFC 0021: masked
@@ -2843,7 +2843,7 @@ test("restart #213: the pane always gets the CLI's PATH, so a bare codex (#!/usr
   assert.deepEqual(parts.prefix, ["/usr/bin/env"]);
   assert.deepEqual(parts.env, [`PATH=${path}`, `HERDR_APP_HOME=${s.app}`],
     "PATH and the CLI's app home: no env word lost or leaked (#650)");
-  assert.deepEqual(plain(parts.words), ["codex", "resume", "--last"]);
+  assert.deepEqual(plain(parts.words), ["codex", "--approve-for-me", "resume", "--last"]);
 });
 
 /** Genie in t5 with two helpers that end with it (a worker on omp, a template on omp) and a member bot that outlives it. */
@@ -3415,7 +3415,7 @@ test("restart --cwd: a non-Claude resume into another folder is said; --cwd with
   assert.equal(r.code, 0, r.err);
   assert.match(r.err, new RegExp(`t100 runs in ${b}, not ${a}: codex finds its last conversation by folder, so it may not find it there\\.`));
   const run = runCall(s.calls());
-  assert.deepEqual([run[run.indexOf("--cwd") + 1], ...plain(agentWords(run))], [b, "codex", "resume", "--last"]);
+  assert.deepEqual([run[run.indexOf("--cwd") + 1], ...plain(agentWords(run))], [b, "codex", "--approve-for-me", "resume", "--last"]);
   // --machine: refused before anything is read or started, whatever DIR is.
   const m = s.cli(["restart", "Captain", "--machine", "box", "--cwd", b]);
   assert.equal(m.code, 2);
