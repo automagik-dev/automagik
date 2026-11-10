@@ -15,7 +15,7 @@ import { join } from 'node:path'
 import { test } from 'node:test'
 import { markAgentLoopRequest } from '@deepseek-ai/dsh-llm'
 import { Session } from '@deepseek-ai/dsh-session'
-import { AgentRun, REQUEST_MS, START_MS, isStopped, isUnanswered, waited } from '../src/host/acp.js'
+import { AgentRun, KILL_AFTER_MS, REQUEST_MS, START_MS, isStopped, isUnanswered, waited } from '../src/host/acp.js'
 import { AcpAdapter, CANCEL_WAIT_MS, unansweredText } from '../src/host/adapter.js'
 import { Backchannel } from '../src/host/backchannel.js'
 import { TOOL_NAME } from '../src/host/tool.js'
@@ -117,6 +117,8 @@ function fixture(t, { deaf, toolsOn, spec: extra = {}, cancelWaitMs, realClock =
     // What each prompt carried, and how many agent sessions were opened.
     prompts: () => events().filter(event => event.event === 'prompt').map(event => event.text),
     sessions: () => events().filter(event => event.event === 'new-session').length,
+    // The processes the agents started themselves (FAKE_ACP_CHILD), once each one runs.
+    children: () => events().filter(event => event.event === 'child').map(event => event.child),
     close,
   }
 }
@@ -191,6 +193,22 @@ function askedAgain(run) {
   }
   return () => asked
 }
+// Whether a process is still running. One that ended and waits for its parent to collect it
+// still takes a signal, so Linux is asked for its state too.
+function running(pid) {
+  try {
+    process.kill(pid, 0)
+  } catch {
+    return false
+  }
+  if (process.platform !== 'linux') return true
+  try {
+    return !/^\d+ \(.*\) Z /s.test(readFileSync(`/proc/${pid}/stat`, 'utf8'))
+  } catch {
+    return false
+  }
+}
+const ended = (pid, what) => until(() => !running(pid), `${what} to end`)
 // Whether a promise is still pending after the event loop had time to settle it.
 async function pending(promise) {
   let settled = false
@@ -581,6 +599,93 @@ test('a drifted built-in call whose cancel the agent ignores ends with its sessi
     assert.equal(h.adapter.live.size, 0)
     assert.equal(h.backchannel.records.size, 0)
     await gone(run)
+  } finally {
+    h.close()
+  }
+})
+
+// --- what the agent started ends with it --------------------------------------------------------
+//
+// An agent that ignores a cancel is usually stuck in a tool command, and that command is its
+// own child: ending the agent alone would leave it running in the person's folder, beside the
+// session that replaces it. The agent leads a process group and the group ends as one. Windows
+// has no groups (the tree is killed there), so these run where groups exist.
+const grouped = { skip: process.platform === 'win32' && 'Windows has no process groups' }
+
+test('a start nobody answers ends what the agent had started, not only the agent', grouped, async (t) => {
+  const h = fixture(t, { deaf: 'initialize' })
+  h.env.FAKE_ACP_CHILD = '1'
+  try {
+    const running_ = step(h, [user('plain')])
+    await until(() => h.unheard().includes('initialize') && h.children().length === 1, 'the agent and its child to run')
+    const run = h.live().run
+    const [child] = h.children()
+    assert.ok(running(child), 'the child runs while the start waits')
+    h.tick(START_MS)
+    assert.equal((await running_).at(-1).reason.kind, 'error')
+    await gone(run)
+    await ended(child, 'the child of an agent that never started')
+  } finally {
+    h.close()
+  }
+})
+
+test('a session ended for an ignored cancel takes the processes the agent started with it', grouped, async (t) => {
+  const h = fixture(t, { deaf: 'session/cancel' })
+  h.env.FAKE_ACP_CHILD = '1'
+  try {
+    const messages = []
+    await stoppedTurn(h, messages)
+    await until(() => h.unheard().includes('session/cancel') && h.children().length === 1, 'the cancel to reach the agent, with its child running')
+    const run = h.live().run
+    const [child] = h.children()
+    h.tick(CANCEL_WAIT_MS - 1)
+    assert.ok(running(child), 'nothing ends before the wait is over')
+    h.tick(1)
+    assert.equal(h.adapter.live.size, 0)
+    await gone(run)
+    await ended(child, 'the child of the ended session')
+    // The session that replaces it starts its own, and that one is left alone.
+    assert.match(textIn(await turn(h, messages, 'plain')), /turn 1: you said/)
+    await until(() => h.children().length === 2, 'the new agent\'s child to run')
+    assert.ok(running(h.children()[1]))
+  } finally {
+    h.close()
+  }
+})
+
+test('a process that ignores the request to end is killed once the agent\'s own time to end is up', grouped, async (t) => {
+  const h = fixture(t, { deaf: 'session/cancel' })
+  h.env.FAKE_ACP_CHILD = 'stubborn'
+  try {
+    await stoppedTurn(h, [])
+    await until(() => h.unheard().includes('session/cancel') && h.children().length === 1, 'the cancel to reach the agent, with its child running')
+    const run = h.live().run
+    const [child] = h.children()
+    h.tick(CANCEL_WAIT_MS)
+    // The agent ends when asked; its child was asked with it and goes on.
+    await gone(run)
+    h.tick(KILL_AFTER_MS - 1)
+    assert.ok(running(child), 'the agent\'s exit does not end the wait for the rest of its group')
+    h.tick(1)
+    await ended(child, 'the child that ignored SIGTERM')
+  } finally {
+    h.close()
+  }
+})
+
+test('an agent that ends by itself does not leave what it started behind', grouped, async (t) => {
+  const h = fixture(t)
+  h.env.FAKE_ACP_CHILD = '1'
+  try {
+    await turn(h, [], 'plain')
+    await until(() => h.children().length === 1, 'the agent\'s child to run')
+    const run = h.live().run
+    const [child] = h.children()
+    // The agent is gone with no word from the app (a crash, the person's own kill).
+    process.kill(run.child.pid, 'SIGKILL')
+    await gone(run)
+    await ended(child, 'the child of an agent that ended by itself')
   } finally {
     h.close()
   }

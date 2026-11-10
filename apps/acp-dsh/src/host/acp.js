@@ -2,7 +2,7 @@
 // session inside it, prompted once per DSH turn. What the agent streams lands in a queue the
 // adapter drains step by step; its tool calls are kept by id so the mirror tool (tool.js) can
 // wait on each one and answer its permission request through DSH.
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { Readable, Writable } from 'node:stream'
 // The `/unstable` entry: stable ACP v1 plus `session/fork` (how acp-codex's tool set follows a
 // preset change) and the session updates newer adapters send (a stable-only parser refuses an
@@ -58,6 +58,8 @@ export function contentImages(content) {
 // after it and before a prompt (a model, an effort, a mode, a fork, a close) has REQUEST_MS.
 export const START_MS = 60_000
 export const REQUEST_MS = 15_000
+// How long the agent's processes have to end once asked to (SIGTERM) before they are killed.
+export const KILL_AFTER_MS = 3000
 const UNANSWERED = 'acp_unanswered'
 const STOPPED = 'acp_stopped'
 
@@ -104,8 +106,11 @@ export class AgentRun {
    */
   async start({ signal } = {}) {
     const { command, args = [], env, cwd, mcpServers = [], sessionMeta } = this.spec
-    const child = spawn(command, args, { cwd, env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'] })
+    // Its own process group, where the platform has them: what the agent starts (the CLI behind
+    // an adapter, the command behind a tool call) is ended with it, as one group (`endTree`).
+    const child = spawn(command, args, { cwd, env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' })
     this.child = child
+    this.grouped = process.platform !== 'win32'
     // An idle agent never keeps DSH running: only a prompt in flight holds the event loop.
     child.unref()
     for (const pipe of [child.stdin, child.stdout, child.stderr]) pipe.unref?.()
@@ -116,6 +121,8 @@ export class AgentRun {
       child.once('error', error => fail(error))
       child.once('exit', (code, signal) => {
         this.exited = { code, signal }
+        // Whatever it left running goes too, however it ended: nothing reports to it any more.
+        this.endTree()
         fail(new Error(`${this.spec.name} exited (${signal ?? code})${this.stderr ? `: ${this.stderr.trim().split('\n').slice(-3).join(' ')}` : ''}`))
       })
     })
@@ -354,12 +361,60 @@ export class AgentRun {
     for (const tool of this.tools.values()) tool.permission?.answer({ outcome: { outcome: 'cancelled' } })
     try { this.child?.stdin.end() } catch {}
     const child = this.child
-    if (child && child.exitCode === null && child.signalCode === null) {
-      child.kill('SIGTERM')
-      const timer = setTimeout(() => { try { child.kill('SIGKILL') } catch {} }, 3000)
-      timer.unref?.()
-      child.once('exit', () => clearTimeout(timer))
+    if (child && child.exitCode === null && child.signalCode === null) this.endTree()
+  }
+
+  /**
+   * End the agent and everything it started. A session that is over must leave nothing
+   * running: an agent that ignored a cancel is usually stuck in a tool command, and that
+   * command is its child or its child's child, which a signal to the agent alone would leave
+   * working in the person's folder beside the next session. The whole process group is asked
+   * to end, and what is left of it after KILL_AFTER_MS is killed; the agent's own exit does not
+   * end that wait while any of the group is alive. Windows has no groups: the process tree is
+   * killed there, at once. A process the agent put in a group of its own is not reached.
+   */
+  endTree() {
+    if (this.ending === true) return
+    this.ending = true
+    const child = this.child
+    const running = child?.exitCode === null && child?.signalCode === null
+    // No process id (it never started), or one that must never be negated into a group.
+    if (!Number.isInteger(child?.pid) || child.pid <= 1) {
+      try { child?.kill?.('SIGTERM') } catch {}
+      return
     }
+    if (!this.grouped) {
+      // taskkill walks the tree from the agent by parent id, so it runs only while the agent
+      // is still there: Windows gives an ended process's id to the next one.
+      if (!running) return
+      try {
+        execFile('taskkill', ['/T', '/F', '/PID', String(child.pid)], { windowsHide: true }, (error) => {
+          if (error) try { child.kill('SIGKILL') } catch {}
+        }).unref?.()
+      } catch {
+        try { child.kill('SIGKILL') } catch {}
+      }
+      return
+    }
+    // False once nobody is left in the group (the signal finds no process).
+    const signal = (name) => {
+      try {
+        process.kill(-child.pid, name)
+        return true
+      } catch {
+        return false
+      }
+    }
+    if (!signal('SIGTERM')) {
+      // No group to signal while the agent runs: it is ended alone rather than not at all.
+      if (running) try { child.kill('SIGTERM') } catch {}
+      return
+    }
+    const timer = this.timers.setTimeout(() => signal('SIGKILL'), KILL_AFTER_MS)
+    timer.unref?.()
+    // The agent gone with all of its group: nothing is left to kill, and the id is free again.
+    const settled = () => { if (!signal(0)) this.timers.clearTimeout(timer) }
+    if (running) child.once('exit', settled)
   }
 
   // --- the agent's side of the conversation ---------------------------------------------

@@ -502,10 +502,11 @@ export class AcpAdapter extends LlmAdapter {
    */
   async stopping(live, signal) {
     const prompt = live.run.prompting
-    await live.run.cancel()
+    // The wait starts with the cancel, not after it: a write the agent no longer reads must
+    // not add its own deadline to this one.
     const wait = pause(this.cancelWaitMs, signal, this.timers)
     try {
-      await Promise.race([prompt, wait.done])
+      await Promise.race([live.run.cancel().then(() => prompt), wait.done])
     } finally {
       wait.clear()
     }
@@ -938,9 +939,10 @@ export class AcpAdapter extends LlmAdapter {
         return yield finish('error', `${agent.name}: ${event.message}`)
       } else if (event.type === 'aborted') {
         live.open = false
-        await live.run.cancel()
-        // The turn ends here for the person; the agent's side of it has `cancelWaitMs` to end.
+        // The turn ends here for the person; the agent's side of it has `cancelWaitMs` to end,
+        // counted from now, whether or not the agent still reads what it is sent.
         this.reap(sessionId, live)
+        await live.run.cancel()
         yield* shown()
         yield* blocks.close()
         return yield finish('aborted', 'Stopped', 'ABORTED')

@@ -115,7 +115,9 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   notification. An agent that ignores it is ended, and the next message starts a new agent
   session with the chat replayed to it (with `dshTools: false`, the new-session notice
   instead). A message sent while the agent is still on its last prompt waits those 5 seconds,
-  then gets a new session in the same turn.
+  then gets a new session in the same turn. Ending an agent ends what it started too (the
+  command behind a stuck tool call): the agent leads its own process group, which is asked to
+  end and killed 3 seconds later if any of it is left; on Windows its process tree is killed.
 - **Claude Code keeps the person's own settings.** It loads their Claude Code settings (user,
   project and local) and asks DSH only for what those leave as "ask". A call their allow rules,
   saved "always allow" rules or PreToolUse/PermissionRequest hooks approve runs with no DSH

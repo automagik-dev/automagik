@@ -23,6 +23,10 @@
 // list starts with a "default" row, as Claude Code's does; FAKE_ACP_NO_DEFAULT_EFFORT=1 leaves it
 // out, as Codex's does. FAKE_ACP_AUTH=session (or prompt) refuses `session/new` (or every
 // prompt) with ACP's auth_required, as an adapter whose CLI is signed out does.
+//
+// FAKE_ACP_CHILD=1 starts a process of its own before it serves, as an agent's tool command is
+// (a shell, a build), and traces its id (`child`) once it runs; FAKE_ACP_CHILD=stubborn starts
+// one that ignores SIGTERM. Either ends by itself after a minute, so a failed test leaves none.
 import { spawn } from 'node:child_process'
 import { appendFileSync } from 'node:fs'
 import { Readable, Writable } from 'node:stream'
@@ -128,6 +132,15 @@ function hearing(stream) {
     },
   })
   return { ...stream, readable: stream.readable.pipeThrough(heard) }
+}
+
+if (process.env.FAKE_ACP_CHILD !== undefined) {
+  const deaf = process.env.FAKE_ACP_CHILD === 'stubborn' ? "process.on('SIGTERM', () => {});" : ''
+  const child = spawn(process.execPath, ['-e', `${deaf} setTimeout(() => {}, 60_000); process.stdout.write('up')`], { stdio: ['ignore', 'pipe', 'ignore'] })
+  // Traced once it has run its first line: a stubborn one ignores the signal from then on.
+  child.stdout.once('data', () => trace({ event: 'child', child: child.pid }))
+  child.unref()
+  child.stdout.unref?.()
 }
 
 const stream = hearing(ndJsonStream(Writable.toWeb(process.stdout), Readable.toWeb(process.stdin)))
