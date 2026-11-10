@@ -76,6 +76,36 @@ export function install(rt) {
     return level !== AUTO
   }
 
+  // Sessions whose level was to be set and was not, with that level and when it was last
+  // tried: each still runs at whatever it had, which may be wider. No tool runs there
+  // until the level holds (levelHolds). Only a set that did not throw lifts a mark. Kept
+  // in memory only: a Session DSH opens again takes its level again (session/created), and
+  // is marked again when that fails.
+  const unapplied = new Map()
+  // Whether DSH offers `level` now. Auto counts: one DSH does not offer runs as its fallback.
+  function offers(level) {
+    try {
+      return level === AUTO || presets().catalog().options.some(option => option.value === level)
+    } catch {
+      return false
+    }
+  }
+  // One apply of `level` on a Session, inside its serial job. A Session DSH will not open
+  // while Auto review is off is not marked: nothing runs there (autoClosed). Nor is one
+  // whose saved level DSH no longer offers: no try could ever set it, so the Session is
+  // left as it always was, warned about, until the person picks a level again.
+  async function applyMarked(sessionId, level, session) {
+    try {
+      const held = await applyLevel(sessionId, level, session)
+      unapplied.delete(sessionId)
+      return held
+    } catch (error) {
+      if (error?.autoClosed !== true && offers(level)) unapplied.set(sessionId, { level, at: Date.now() })
+      else if (error?.autoClosed !== true) unapplied.delete(sessionId)
+      throw error
+    }
+  }
+
   // Sets the level on one of the Bot's Sessions: its group's there, else its own; a Bot
   // without one keeps DSH's default. `room` is for a group Session not indexed yet. The
   // level is read when the apply runs, not when it is queued. `start`: the Session is
@@ -86,7 +116,7 @@ export function install(rt) {
     return serial(sessionId, async () => {
       const name = room?.permission ?? bot.permission
       if (!name) return
-      const held = await applyLevel(sessionId, name, session)
+      const held = await applyMarked(sessionId, name, session)
       markFallback(room?.permission ? `room:${room.id}` : `bot:${bot.id}`, !held)
     })
   }
@@ -215,7 +245,7 @@ export function install(rt) {
     await serial(sessionId, async () => {
       const task = taskOf(sessionId)
       const level = task === undefined ? service.catalog().defaultPreset : taskLevel(task, service)
-      if (level) await applyLevel(sessionId, level, session)
+      if (level) await applyMarked(sessionId, level, session)
       // No level could be ranked: the task keeps its own, not a default that may be wider.
       else if (task?.from !== undefined) rt.warn('ds-bot: no permission level for the task %s can be ranked; it keeps its own', sessionId)
     })
@@ -288,7 +318,7 @@ export function install(rt) {
       return
     }
     const loaded = (ctx.sessions?.list?.() ?? []).find(session => session.id === sessionId)
-    await serial(sessionId, () => applyLevel(sessionId, level, loaded))
+    await serial(sessionId, () => applyMarked(sessionId, level, loaded))
   }
 
   // A Session of a Bot's own chat, of a group or of a task, as DSH opens it or as the
@@ -303,6 +333,97 @@ export function install(rt) {
     await applyPermission(bot, session.id, group && rt.roomOf(group.roomId), session)
   }
   const warnNotApplied = sessionId => error => rt.warn('ds-bot: permission for %s not applied: %s', sessionId, error)
+
+  // The Session of a tool call, or the nearest parent of a subagent child, that is marked.
+  // A child is in none of the team's maps and works under its parent's level.
+  function markedFor(agent) {
+    let current = agent?.id ?? agent?.session?.id
+    let header = agent?.session?.header
+    for (let depth = 0; typeof current === 'string' && depth < 32; depth += 1) {
+      if (unapplied.has(current)) return current
+      try {
+        header ??= ctx.sessions?.get?.(current)?.header
+      } catch {
+        return undefined
+      }
+      if (header?.origin !== 'subagent') return undefined
+      current = header.parentSession
+      header = undefined
+    }
+    return undefined
+  }
+  // Whether the Session reads the level it should run at: a saved Auto DSH does not offer
+  // runs as workspace-write. False when DSH cannot tell.
+  function reads(session, level) {
+    const service = presets()
+    if (service === undefined || session === undefined) return false
+    try {
+      return service.current(session) === (level === AUTO && !autoOffered(service) ? AUTO_FALLBACK : level)
+    } catch {
+      return false
+    }
+  }
+  // The level a marked Session should run at, as its owner has it now: a task's, a
+  // group's, a Bot's. No `level` when the owner has none of its own, or is gone.
+  function wantedBy(sessionId) {
+    const service = presets()
+    if (service === undefined) return {}
+    const task = taskOf(sessionId)
+    if (task !== undefined) return { level: taskLevel(task, service), task }
+    const group = rt.groupOwners.get(sessionId)
+    const bot = rt.botOf(group?.botId ?? rt.chatOwners.get(sessionId))
+    if (bot === undefined) return {}
+    const room = group && rt.roomOf(group.roomId)
+    return { level: room?.permission ?? bot.permission, bot, room }
+  }
+  // The apply again: the owner's level now, through the same apply as any other time.
+  // Where the owner has no level now (a level cleared or taken back since, a Bot gone),
+  // the level that was to be set is tried only when it is proven to allow less than what
+  // the Session reads: a raise that was taken back is never set, and such a Session, no
+  // wider than it was to be, is let go. One that cannot be compared stays marked.
+  async function retry(sessionId, session) {
+    const { level, bot, room, task } = wantedBy(sessionId)
+    if (task !== undefined && level) return applyTaskPermission(sessionId, session)
+    if (bot !== undefined && level) return applyPermission(bot, sessionId, room, session)
+    const service = presets()
+    const mark = unapplied.get(sessionId)
+    const target = session ?? (ctx.sessions?.list?.() ?? []).find(loaded => loaded.id === sessionId)
+    if (service === undefined || mark === undefined || target === undefined) return
+    const [to, from] = [rankOf(service, mark.level === AUTO && !autoOffered(service) ? AUTO_FALLBACK : mark.level), rankOf(service, service.current(target))]
+    if (to === undefined || from === undefined) return
+    if (to >= from) unapplied.delete(sessionId)
+    else return serial(sessionId, () => applyMarked(sessionId, mark.level, target))
+  }
+  // A failing set still writes to the Session's log, so a marked Session is not tried
+  // again at every call.
+  const LEVEL_RETRY_MS = 30_000
+  // Before a tool runs (the team's tools/execute guard, tool-deny.js): on a Session whose
+  // level was not set, the apply is tried again, and the call is refused while it does not
+  // hold. It only ever refuses: a Session that is not marked is not looked at.
+  async function levelHolds(exec) {
+    if (unapplied.size === 0) return
+    // No presets service any more: no level is set anywhere, so none is missed.
+    if (presets() === undefined) return unapplied.clear()
+    const sessionId = markedFor(exec?.agent)
+    if (sessionId === undefined) return
+    const own = sessionId === (exec.agent?.id ?? exec.agent?.session?.id) ? exec.agent?.session : undefined
+    await rt.load()
+    const mark = unapplied.get(sessionId)
+    if (mark === undefined) return
+    // It reads the level it should run at: nothing there is wider than chosen.
+    if (reads(own, wantedBy(sessionId).level ?? mark.level)) {
+      unapplied.delete(sessionId)
+      return
+    }
+    if (rt.readOnly() === undefined && Date.now() - mark.at >= (rt.levelRetryMs ?? LEVEL_RETRY_MS)) {
+      // Calls that arrive together share this try: the next ones find it just made.
+      mark.at = Date.now()
+      await retry(sessionId, own).catch(warnNotApplied(sessionId))
+    }
+    const left = unapplied.get(sessionId)
+    if (left === undefined) return
+    throw refusal(`The ${left.level} permission level could not be set on this conversation, so no tool runs here until it is. Tell the user: restarting DeepSeek Harness, or changing the permission level, tries again.`)
+  }
 
   // A Session DSH opens, after a restart too, gets its level. Once the team is loaded the
   // first preset is set within DSH's announce, before the Session is published; the
@@ -406,5 +527,5 @@ export function install(rt) {
     return true
   }
 
-  Object.assign(rt, { permissionCatalog, permissionFallbackOf, permissionKey, autoClosed, applyPermission, applyTaskPermission, reapplyTasks, capTasks, taskOfRoom, inToolCall, callerGroup, taskLevelOf, forgetTaskPermission, checkPreset, setPermission, inheritedPermission, cleanRoomPermission, setRoomPermission })
+  Object.assign(rt, { permissionCatalog, permissionFallbackOf, permissionKey, autoClosed, applyPermission, applyTaskPermission, levelHolds, reapplyTasks, capTasks, taskOfRoom, inToolCall, callerGroup, taskLevelOf, forgetTaskPermission, checkPreset, setPermission, inheritedPermission, cleanRoomPermission, setRoomPermission })
 }
