@@ -44,13 +44,19 @@ object TodayTiles {
     fun textWidthDp(screenDp: Int): Double = (screenDp - 2.0 * GUTTER_DP - (COUNT - 1) * GAP_DP) / COUNT - 2 * PAD_DP
 }
 
+/** A tile's second line: one line that shrinks rather than ellipsize at a large font setting. */
+@Composable fun TileLabel(text: String, modifier: Modifier = Modifier) {
+    BasicText(text, modifier = modifier, style = LocalTextStyle.current.copy(color = Muted, fontSize = 12.sp),
+        maxLines = 1, softWrap = false, autoSize = TextAutoSize.StepBased(7.sp, 12.sp, 1.sp))
+}
+
 /** Today's "spent today" count, beside needs you / working / connected; the caller shows it only when a meter reports. */
 @Composable fun SpendCount(view: Spend.View, modifier: Modifier = Modifier) {
     Column(modifier.clip(RoundedCornerShape(12.dp)).background(Surface).border(1.dp, Border, RoundedCornerShape(12.dp)).padding(TodayTiles.PAD_DP.dp, 10.dp)) {
         // One word that never wraps, shrinking to fit the tile; the theme's fixed line height (as CountCard's) keeps the row level.
         BasicText(Spend.compact(view.today()), style = LocalTextStyle.current.copy(color = Ink, fontSize = TodayTiles.MAX_SP.sp, fontWeight = FontWeight.SemiBold),
             maxLines = 1, softWrap = false, autoSize = TextAutoSize.StepBased(TodayTiles.MIN_SP.sp, TodayTiles.MAX_SP.sp, 1.sp))
-        Text("spent today", color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        TileLabel("spent today")
     }
 }
 

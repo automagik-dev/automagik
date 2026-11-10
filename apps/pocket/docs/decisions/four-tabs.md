@@ -47,7 +47,7 @@ placement and the progress strip do not.
   Home carries the agents that need you (Today's badge), Team the bots that need you.
 - Home is `OverviewScreen` with no space (`MainActivity.kt:400`), the spend tile `SpendCount`
   (`MainActivity.kt:438`). `ProjectsTest.homeShowsTodaysCountsAndCarriesItsBadge` checks its counts.
-- Home's needs-you deck (`DeckScreen.kt:71`): one card per entry of Home's own Needs you list, the
+- Home's needs-you deck (`DeckScreen.kt:72`): one card per entry of Home's own Needs you list, the
   list its count tile, badge and cards use (`Teams.deckCards`, `Teams.kt:355`). Right is Yes, left is
   No, up opens the chat or terminal; the same three buttons sit under the card, with the YES/NO
   stamps as the card leans. The header counts the cards left. A row with a Bot chat and no terminal

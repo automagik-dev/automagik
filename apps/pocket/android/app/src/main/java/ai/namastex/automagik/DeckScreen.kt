@@ -4,6 +4,7 @@ import android.os.Build
 import android.view.HapticFeedbackConstants
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -127,7 +128,7 @@ class DeckMemory {
         // The Scaffold's snackbar sits under this layer; answer outcomes overlay it here without moving the card.
         message?.takeIf { it.isNotBlank() }?.let {
             Text(it, color = Ink, fontSize = 13.sp, lineHeight = 18.sp, textAlign = TextAlign.Center,
-                modifier = Modifier.align(Alignment.TopCenter).padding(top = 54.dp).fillMaxWidth()
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 92.dp).fillMaxWidth()
                     .clip(RoundedCornerShape(12.dp)).background(Raised).border(1.dp, Border, RoundedCornerShape(12.dp))
                     .padding(horizontal = 12.dp, vertical = 10.dp))
         }
@@ -181,16 +182,20 @@ class DeckMemory {
     val dy = remember { Animatable(0f) }
     val threshold = with(LocalDensity.current) { 110.dp.toPx() }
     val amber = amber()
-    fun send(choice: Prompt.Choice?) {
+    fun send(choice: Prompt.Choice?, direction: Float) {
         val m = menu ?: return
         if (choice == null || sending) return
         sending = true
         view.performHapticFeedback(if (Build.VERSION.SDK_INT >= 30) HapticFeedbackConstants.CONFIRM else HapticFeedbackConstants.VIRTUAL_KEY)
-        // The card leaves only when the answer reached the agent; otherwise it comes back (the outcome shows as a message).
+        // The card moves to the swipe edge at once and only completes the exit when the answer reaches the agent;
+        // a rejected answer returns it, so the deck is never empty on a failed try.
+        val edge = direction * maxOf(kotlin.math.abs(dx.value), threshold * 1.15f)
+        scope.launch { launch { dx.animateTo(edge, tween(100)) }; dy.animateTo(0f, tween(100)) }
         val short = if (choice.index == yes?.index) "Yes" else if (choice.index == no?.index) "No" else choice.button
         vm.answer(card.ref, card.message, m.dialog, m.options, choice, short = short) { sent ->
             sending = false
-            if (sent) onAnswered() else scope.launch { launch { dx.animateTo(0f) }; dy.animateTo(0f) }
+            if (sent) scope.launch { dx.animateTo(direction * 1400f, tween(180)); onAnswered() }
+            else scope.launch { launch { dx.animateTo(0f, tween(180)) }; dy.animateTo(0f, tween(180)) }
         }
     }
     Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -200,15 +205,13 @@ class DeckMemory {
                 Box(Modifier.fillMaxWidth(1f - i * .05f).fillMaxHeight(.92f).offset(y = (i * 10).dp)
                     .clip(RoundedCornerShape(24.dp)).background(Surface.copy(alpha = 1f - i * .3f)).border(1.dp, Border, RoundedCornerShape(24.dp))) {
                     if (i == 1 && next != null) {
-                        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            PeekHeader(next, Alignment.Start)
+                            Spacer(Modifier.weight(1f))
                             if (next.where.isNotBlank()) Text(next.where, color = Muted, fontSize = 12.sp, maxLines = 1,
-                                overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                            else Spacer(Modifier.weight(1f))
-                            Spacer(Modifier.width(10.dp))
-                            PetView(Teams.GENIE, Teams.NEEDS_YOU, 34.dp)
-                            Spacer(Modifier.width(10.dp))
-                            Text(next.title, color = Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1,
                                 overflow = TextOverflow.Ellipsis)
+                            Spacer(Modifier.weight(1f))
+                            PeekHeader(next, Alignment.End)
                         }
                     }
                 }
@@ -221,8 +224,8 @@ class DeckMemory {
                         detectDragGestures(onDragEnd = {
                             scope.launch {
                                 when (Teams.swipe(dx.value, dy.value, threshold, yes != null && menu != null, no != null && menu != null)) {
-                                    Teams.Swipe.YES -> { launch { dx.animateTo(0f) }; dy.animateTo(0f); send(yes) }
-                                    Teams.Swipe.NO -> { launch { dx.animateTo(0f) }; dy.animateTo(0f); send(no) }
+                                    Teams.Swipe.YES -> send(yes, 1f)
+                                    Teams.Swipe.NO -> send(no, -1f)
                                     Teams.Swipe.OPEN -> { launch { dx.animateTo(0f) }; dy.animateTo(0f); onOpen() }
                                     Teams.Swipe.NONE -> { launch { dx.animateTo(0f) }; dy.animateTo(0f) }
                                 }
@@ -273,11 +276,20 @@ class DeckMemory {
         Spacer(Modifier.height(10.dp))
         // The same three answers as buttons, at thumb's reach.
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = { send(no) }, enabled = no != null && !sending, modifier = Modifier.weight(1f).height(56.dp)) { Text("No") }
+            OutlinedButton(onClick = { send(no, -1f) }, enabled = no != null && !sending, modifier = Modifier.weight(1f).height(56.dp)) { Text("No") }
             OutlinedButton(onClick = onOpen, modifier = Modifier.weight(1f).height(56.dp)) { Text(if (card.opensChat) "Open chat" else "Open") }
-            Button(onClick = { send(yes) }, enabled = yes != null && !sending, modifier = Modifier.weight(1f).height(56.dp),
+            Button(onClick = { send(yes, 1f) }, enabled = yes != null && !sending, modifier = Modifier.weight(1f).height(56.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Ok)) { Text("Yes") }
         }
+    }
+}
+
+/** The same next-card header at both edges, so a left or right drag reveals the mascot and name. */
+@Composable private fun PeekHeader(next: Teams.DeckCard, alignment: Alignment.Horizontal) {
+    Column(horizontalAlignment = alignment) {
+        PetView(Teams.GENIE, Teams.NEEDS_YOU, 26.dp)
+        Spacer(Modifier.height(2.dp))
+        Text(next.title, color = Ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

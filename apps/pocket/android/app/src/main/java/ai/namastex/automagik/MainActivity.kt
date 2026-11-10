@@ -574,7 +574,7 @@ fun statusLabel(word: String, kind: String) = stateName(word).let { if (word == 
     Column(modifier.clip(RoundedCornerShape(12.dp)).background(Surface).border(1.dp, Border, RoundedCornerShape(12.dp))
         .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier).padding(12.dp, 10.dp)) {
         Text(number.toString(), color = color, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
-        Text(text, color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        TileLabel(text)
     }
 }
 
@@ -596,7 +596,7 @@ fun statusLabel(word: String, kind: String) = stateName(word).let { if (word == 
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(t.agent, color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false)); Spacer(Modifier.weight(1f))
-                Dot(color, 6); Spacer(Modifier.width(6.dp)); Text(statusLabel(status, t.kind), color = color, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                Dot(color, 6); Spacer(Modifier.width(6.dp)); Text(stateName(status), color = color, fontSize = 12.sp, fontWeight = FontWeight.Medium)
             }
             Spacer(Modifier.height(6.dp)); Text(t.title, fontWeight = FontWeight.Medium, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (t.message.isNotBlank()) { Spacer(Modifier.height(6.dp)); Text(t.message, color = Muted, fontSize = 13.sp, lineHeight = 19.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) }
