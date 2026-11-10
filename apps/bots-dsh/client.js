@@ -607,6 +607,7 @@ var ZH = {
   "You choose. Nothing changes until you save.": "由你决定。保存之前不会有任何变化。",
   "You can change this any time in Details.": "你可以随时在“详情”中更改。",
   "Choose in the chat": "在对话中选择",
+  "The permission level was saved, but some conversations could not take it and keep the level they had until DeepSeek Harness opens them again.": "权限级别已保存，但有些对话未能切换，在 DeepSeek Harness 重新打开它们之前仍保持原来的级别。",
   "New Bots start with": "新 Bot 的初始权限",
   "Bots you already have keep their own.": "已有的 Bot 保留各自的权限。",
   "Background jobs": "后台任务",
