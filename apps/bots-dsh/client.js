@@ -43,6 +43,24 @@ module.exports = __toCommonJS(index_exports);
 // src/client/i18n.js
 var NAMESPACE = "omni-ui";
 var ZH = {
+  "This chat is changing routes. DSH handles approval questions on the route still running. Hermes’s tools follow the other computer’s rules; this computer’s sandbox does not protect them.": "此聊天正在切换路径。DSH 处理仍在运行的路径上的审批请求。Hermes 的工具遵循另一台电脑的规则；本机沙箱无法保护这些远程工具。",
+  "While this chat changes routes, Full access answers Hermes approval questions once without asking you, or lets a local route run commands and change files without asking. Hermes’s own rules still apply on the other computer; this computer’s sandbox does not protect it.": "此聊天切换路径期间，完全访问会一次性回答 Hermes 的审批请求而不再询问你，或允许本地路径不经询问运行命令和修改文件。Hermes 自身的规则仍适用于另一台电脑；本机沙箱无法保护那台电脑。",
+  "While this chat changes routes, a model reviews approval questions on the route that is running. You decide on the ones it stops. Hermes’s own rules still apply on the other computer; this computer’s sandbox does not protect it.": "此聊天切换路径期间，一个模型会审查仍在运行的路径上的审批请求。模型拦下的请求由你决定。Hermes 自身的规则仍适用于另一台电脑；本机沙箱无法保护那台电脑。",
+  "It is experimental and can allow or stop the wrong question.": "此功能处于实验阶段，可能错误地放行或拦截请求。",
+  "Connect once in a terminal to verify the SSH host key, then test again.": "先在终端中连接一次并核对 SSH 主机密钥，然后重试。",
+  "Run a new connection test before choosing or saving a profile.": "选择或保存配置前，请重新测试连接。",
+  "Check the profile on the other computer, then test again.": "检查另一台电脑上的配置，然后重试。",
+  "Check the Hermes version and this profile’s approval settings, then test again.": "检查 Hermes 版本和此配置的审批设置，然后重试。",
+  "Check the SSH user and key, then test again.": "检查 SSH 用户名和密钥，然后重试。",
+  "Check that SSH can reach the other computer and use your key.": "检查 SSH 是否能连接另一台电脑并使用你的密钥。",
+  "Enter your dashboard user and password again, then sign in.": "重新输入控制台用户名和密码，然后登录。",
+  "Enter a valid session token and test the connection again.": "输入有效的会话令牌，并重新测试连接。",
+  "Check that Hermes is running at this address and try again.": "检查 Hermes 是否在此地址运行，然后重试。",
+  "Hermes’s tools run on the other computer under its own rules. DSH handles its approval questions at this level. This computer’s file sandbox does not protect that computer.": "Hermes 的工具按自身规则在另一台电脑上运行。DSH 按照此权限等级处理审批请求。本机的文件沙箱无法保护那台电脑。",
+  "DSH answers each Hermes approval question once without asking you. Hermes’s own rules still apply on the other computer; this computer’s sandbox does not protect it.": "DSH 会一次性回答每项 Hermes 审批请求，不再询问你。Hermes 自身的规则仍适用于另一台电脑；本机沙箱无法保护那台电脑。",
+  "A model reviews Hermes’s approval questions. You decide on the ones it stops. Hermes’s own rules still apply on the other computer; this computer’s sandbox does not protect it.": "一个模型会审查 Hermes 的审批请求。模型拦下的请求由你决定。Hermes 自身的规则仍适用于另一台电脑；本机沙箱无法保护那台电脑。",
+  "Auto review uses a model to review Hermes’s approval questions. You decide on the ones it stops. It is experimental and can allow or stop the wrong question. Hermes’s own rules still apply on the other computer.": "自动审查使用模型检查 Hermes 的审批请求。模型拦下的请求由你决定。这是一项实验性功能，可能错误地放行或拦截请求。Hermes 自身的规则仍适用于另一台电脑。",
+  "DSH will answer each Hermes approval question once without asking you. Hermes’s own rules still apply on the other computer; this computer’s sandbox does not protect it.": "DSH 将一次性回答每项 Hermes 审批请求，不再询问你。Hermes 自身的规则仍适用于另一台电脑；本机沙箱无法保护那台电脑。",
   "Set up": "设置",
   "1 profile available": "1 个可用配置",
   "Your sign-in was accepted": "登录已接受",
@@ -4797,14 +4815,14 @@ var Note = ({ children, error = false }) => (0, import_react14.createElement)("d
 var Pair = ({ label, value }) => (0, import_react14.createElement)("div", { className: "bt-hw-pair" }, (0, import_react14.createElement)("span", null, label), (0, import_react14.createElement)("strong", null, value));
 function errorFor(error, draft) {
   const code = error?.code ?? "";
-  if (code.includes("host-key")) return { heading: t("SSH couldn’t sign in"), title: t("Confirm this computer’s SSH host key"), text: t("Connect to this host once in a terminal and check its host key. Then test again. A changed key must be checked before continuing."), ssh: true };
-  if (draft.mode === "ssh" && code === "bot/hermes-ssh-missing") return { heading: t("SSH couldn’t open Hermes"), title: t("Check the Hermes installation"), text: t("Install or update Hermes on the other computer, or enter its executable path. Then test again."), ssh: true };
-  if (code === "bot/hermes-expired") return { heading: t("Test this connection again"), title: t("The connection test expired"), text: t("Test again before choosing and saving a profile.") };
-  if (code === "bot/hermes-profiles") return { heading: t("We couldn’t list the profiles"), title: t("Check this Hermes profile list"), text: t("Refresh the list, or check that the profile is available on this Hermes.") };
-  if (code === "bot/hermes" || code === "bot/hermes-unsupported") return { heading: t("This Hermes can’t connect yet"), title: t("Check this Hermes version and profile"), text: t("Use a supported Hermes version and a profile that asks before running tools. Then test again.") };
-  if (draft.mode === "ssh") return { heading: t("SSH couldn’t sign in"), title: t("Check your SSH details"), text: t("Check the host and user. If your key is locked, unlock it in your SSH agent, or choose another key."), ssh: true };
-  if (code === "bot/hermes-auth") return { heading: t("We couldn’t sign in"), title: draft.authMode === "password" ? t("The sign-in wasn’t accepted") : t("The token wasn’t accepted"), text: draft.authMode === "password" ? t("Check your user and password, then sign in again.") : t("Check the token, or choose user and password if this Hermes asks you to sign in.") };
-  return { heading: t("We couldn’t connect"), title: t("Check the remote address"), text: t("Check the address and that Hermes is running, then test again.") };
+  if (code.includes("host-key")) return { heading: t("SSH couldn’t sign in"), title: t("Confirm this computer’s SSH host key"), text: t("Connect to this host once in a terminal and check its host key. Then test again. A changed key must be checked before continuing."), hint: t("Connect once in a terminal to verify the SSH host key, then test again."), ssh: true };
+  if (draft.mode === "ssh" && code === "bot/hermes-ssh-missing") return { heading: t("SSH couldn’t open Hermes"), title: t("Check the Hermes installation"), text: t("Install or update Hermes on the other computer, or enter its executable path. Then test again."), hint: t("Hermes must already be installed on the other computer."), ssh: true };
+  if (code === "bot/hermes-expired") return { heading: t("Test this connection again"), title: t("The connection test expired"), text: t("Test again before choosing and saving a profile."), hint: t("Run a new connection test before choosing or saving a profile.") };
+  if (code === "bot/hermes-profiles") return { heading: t("We couldn’t list the profiles"), title: t("Check this Hermes profile list"), text: t("Refresh the list, or check that the profile is available on this Hermes."), hint: t("Check the profile on the other computer, then test again.") };
+  if (code === "bot/hermes" || code === "bot/hermes-unsupported") return { heading: t("This Hermes can’t connect yet"), title: t("Check this Hermes version and profile"), text: t("Use a supported Hermes version and a profile that asks before running tools. Then test again."), hint: t("Check the Hermes version and this profile’s approval settings, then test again.") };
+  if (draft.mode === "ssh") return { heading: t("SSH couldn’t sign in"), title: t("Check your SSH details"), text: t("Check the host and user. If your key is locked, unlock it in your SSH agent, or choose another key."), hint: code === "bot/hermes-ssh-auth" ? t("Check the SSH user and key, then test again.") : t("Check that SSH can reach the other computer and use your key."), ssh: true };
+  if (code === "bot/hermes-auth") return { heading: t("We couldn’t sign in"), title: draft.authMode === "password" ? t("The sign-in wasn’t accepted") : t("The token wasn’t accepted"), text: draft.authMode === "password" ? t("Check your user and password, then sign in again.") : t("Check the token, or choose user and password if this Hermes asks you to sign in."), hint: draft.authMode === "password" ? t("Enter your dashboard user and password again, then sign in.") : t("Enter a valid session token and test the connection again.") };
+  return { heading: t("We couldn’t connect"), title: t("Check the remote address"), text: t("Check the address and that Hermes is running, then test again."), hint: t("Check that Hermes is running at this address and try again.") };
 }
 function HermesRemoteConnect({ onClose, onConnected, edit = false, initialView, onSaved }) {
   const [view, setView] = (0, import_react14.useState)(initialView ?? null);
@@ -5037,7 +5055,7 @@ function HermesRemoteConnect({ onClose, onConnected, edit = false, initialView, 
   } else if (step2 === "test") {
     if (status === "error") {
       heading = error?.heading ?? t("We couldn’t connect");
-      content = (0, import_react14.createElement)(import_react14.Fragment, null, (0, import_react14.createElement)("div", { className: "bt-hw-result bt-hw-failed", role: "alert" }, (0, import_react14.createElement)("span", { className: "bt-hw-result-icon" }, "!"), (0, import_react14.createElement)("h3", null, error?.title), (0, import_react14.createElement)("p", null, error?.text)), (0, import_react14.createElement)(Note, { error: true }, draft.mode === "ssh" ? t("Hermes must already be installed on the other computer.") : t("Your connection details are still here. Edit them and test again.")));
+      content = (0, import_react14.createElement)(import_react14.Fragment, null, (0, import_react14.createElement)("div", { className: "bt-hw-result bt-hw-failed", role: "alert" }, (0, import_react14.createElement)("span", { className: "bt-hw-result-icon" }, "!"), (0, import_react14.createElement)("h3", null, error?.title), (0, import_react14.createElement)("p", null, error?.text)), (0, import_react14.createElement)(Note, { error: true }, error?.hint));
       footer = (0, import_react14.createElement)(import_react14.Fragment, null, (0, import_react14.createElement)(Button, { onClick: testConnection, disabled: !validDetails }, t("Test again")), (0, import_react14.createElement)(Button, { primary: true, onClick: () => setStep("details") }, draft.mode === "ssh" ? t("Edit SSH details") : t("Edit sign-in"), " ←"));
     } else if (status === "connected") {
       heading = t("Hermes is ready");
@@ -5215,8 +5233,8 @@ function modelOf(bot, roster) {
   const ref = bot.model ?? bot.appliedModel;
   if (!ref) return void 0;
   const served = servedOf(roster, ref);
-  const [provider, ...rest2] = ref.split("/");
-  return { ref, name: served ? modelLabel(served) : rest2.join("/"), provider: served ? connectionOf(served) : provider, served: served !== void 0, unavailable: served === void 0 || unavailableModel(served) };
+  const [, ...rest2] = ref.split("/");
+  return { ref, name: served ? modelLabel(served) : rest2.join("/"), provider: modelRoute(roster, ref).connection, served: served !== void 0, unavailable: served === void 0 || unavailableModel(served) };
 }
 var SWITCH_FAILED = "MODEL_SWITCH_COMPACTION_FAILED";
 var MODEL_ACCESS_REQUIRED = "MODEL_ACCESS_REQUIRED";
@@ -5337,11 +5355,13 @@ function modelRoute(roster, ref) {
   const served = servedOf(roster, ref);
   const provider = providerOf(served ?? { ref });
   const route = served?.route?.connectedBy === "acp" ? "acp" : routeOfProvider(provider);
+  const remote = roster.prefs?.hermesRemote;
+  const remoteConnection = remote?.profile || (remote?.mode === "ssh" ? remote.ssh?.host : remote?.address?.replace(/^https?:\/\//, "").replace(/\/$/, ""));
   return {
     provider,
     route,
     harness: served?.route?.harness ?? routeOf(provider).harness,
-    connection: served ? connectionOf(served) : provider
+    connection: route === "hermes-remote" ? remoteConnection || routeName(route) : served ? connectionOf(served) : provider
   };
 }
 var MENU_ROOT = Object.freeze({ step: "routes" });
@@ -5833,7 +5853,7 @@ function DshModelMenu({ bot, roster, actions, run: run2, wide = false, link = fa
       return done;
     })
   } : actions;
-  const bits = shown === void 0 ? [] : [currentRoute ? routeName(currentRoute.route) : void 0, shown.provider].filter(Boolean);
+  const bits = shown === void 0 ? [] : [...new Set([currentRoute ? routeName(currentRoute.route) : void 0, shown.provider].filter(Boolean))];
   if (shown !== void 0 && shown.unavailable && models.length > 0) bits.push(t("not available"));
   else if (effortLabel !== void 0) bits.push(effortLabel);
   const second = bits.length > 0 ? bits.join(" · ") : null;
@@ -5957,7 +5977,7 @@ function modelWords(roster, ref) {
   return {
     model: served ? modelLabel(served) : rest2.join("/"),
     route: info === void 0 ? "" : routeName(info.route),
-    provider: served ? connectionOf(served) : provider
+    provider: info?.connection ?? (served ? connectionOf(served) : provider)
   };
 }
 function ModelLine({ bot, roster, actions, run: run2, modelRef, onPick, chat = false }) {
@@ -5965,7 +5985,7 @@ function ModelLine({ bot, roster, actions, run: run2, modelRef, onPick, chat = f
   return (0, import_react15.createElement)(
     "div",
     { className: "bt-model-line" },
-    (0, import_react15.createElement)("span", { className: "bt-model-line-text" }, words.route === "" ? t("Using {model} · {provider}", words) : t("Using {model} · {route} · {provider}", words)),
+    (0, import_react15.createElement)("span", { className: "bt-model-line-text" }, words.route === "" || words.route === words.provider ? t("Using {model} · {provider}", words) : t("Using {model} · {route} · {provider}", words)),
     (0, import_react15.createElement)("span", { className: "bt-model-line-sep", "aria-hidden": true }, "·"),
     (0, import_react15.createElement)(ModelMenu, { bot: modelRef ? { ...bot, model: modelRef } : bot, roster, actions, run: run2, link: true, chat, onPick })
   );
@@ -14973,6 +14993,12 @@ var import_react_dom9 = require("react-dom");
 var LABELS = { "read-only": "Read only", "workspace-write": "Workspace", "danger-full-access": "Full access", [AUTO]: "Auto review" };
 var DANGER = /* @__PURE__ */ new Set(["danger-full-access"]);
 var presetDanger = (value) => DANGER.has(value);
+var remoteOfBot = (bot) => {
+  const remote = (ref) => typeof ref === "string" && ref.startsWith("hermes-remote/");
+  const selected = remote(bot?.model), applied = remote(bot?.appliedModel);
+  if (bot?.model && bot?.appliedModel && selected !== applied) return "mixed";
+  return selected || applied;
+};
 var CLI_MODES = { "acp-claude": "bypass permissions", "acp-codex": "full access" };
 var cliOfBot = (bot) => {
   const id = cliProviderOf(bot?.model);
@@ -15004,7 +15030,18 @@ var TEXTS = {
   [AUTO]: "A model reviews each action first. You are asked only about the ones it stops. The rest run with full access, and it can let a wrong one through.",
   "danger-full-access": "Runs commands and changes files anywhere without asking you. Choose it only when you trust what you asked for."
 };
-var presetText = (value, catalog, cli) => cliAuto(value, cli) ? t(CLI_TEXT, cliWords(cli)) : Object.hasOwn(TEXTS, value) ? t(TEXTS[value]) : String(catalog?.options?.find((option) => option.value === value)?.description ?? "");
+var REMOTE_TEXT = "Hermes’s tools run on the other computer under its own rules. DSH handles its approval questions at this level. This computer’s file sandbox does not protect that computer.";
+var REMOTE_FULL = "DSH answers each Hermes approval question once without asking you. Hermes’s own rules still apply on the other computer; this computer’s sandbox does not protect it.";
+var REMOTE_AUTO = "A model reviews Hermes’s approval questions. You decide on the ones it stops. Hermes’s own rules still apply on the other computer; this computer’s sandbox does not protect it.";
+var REMOTE_AUTO_CONFIRM = "Auto review uses a model to review Hermes’s approval questions. You decide on the ones it stops. It is experimental and can allow or stop the wrong question. Hermes’s own rules still apply on the other computer.";
+var REMOTE_CONFIRM = "DSH will answer each Hermes approval question once without asking you. Hermes’s own rules still apply on the other computer; this computer’s sandbox does not protect it.";
+var MIXED_TEXT = "This chat is changing routes. DSH handles approval questions on the route still running. Hermes’s tools follow the other computer’s rules; this computer’s sandbox does not protect them.";
+var MIXED_FULL = "While this chat changes routes, Full access answers Hermes approval questions once without asking you, or lets a local route run commands and change files without asking. Hermes’s own rules still apply on the other computer; this computer’s sandbox does not protect it.";
+var MIXED_AUTO = "While this chat changes routes, a model reviews approval questions on the route that is running. You decide on the ones it stops. Hermes’s own rules still apply on the other computer; this computer’s sandbox does not protect it.";
+var MIXED_EXPERIMENTAL = "It is experimental and can allow or stop the wrong question.";
+var remoteConfirmText = (remote) => t(remote === "mixed" ? MIXED_FULL : REMOTE_CONFIRM);
+var autoConfirmText = (remote = false) => remote === "mixed" ? `${t(MIXED_AUTO)} ${t(MIXED_EXPERIMENTAL)}` : t(remote ? REMOTE_AUTO_CONFIRM : "Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.");
+var presetText = (value, catalog, cli, remote = false) => remote === "mixed" ? t(value === "danger-full-access" ? MIXED_FULL : value === AUTO ? MIXED_AUTO : MIXED_TEXT) : remote ? t(value === "danger-full-access" ? REMOTE_FULL : value === AUTO ? REMOTE_AUTO : REMOTE_TEXT) : cliAuto(value, cli) ? t(CLI_TEXT, cliWords(cli)) : Object.hasOwn(TEXTS, value) ? t(TEXTS[value]) : String(catalog?.options?.find((option) => option.value === value)?.description ?? "");
 function usePermissionPick({ saved, onPick, repick = false, confirmFull = false }) {
   const [pending, setPending] = (0, import_react35.useState)(null);
   const [confirming, setConfirming] = (0, import_react35.useState)(false);
@@ -15044,13 +15081,22 @@ function usePermissionPick({ saved, onPick, repick = false, confirmFull = false 
   };
   return { current, pick: pick2, confirming, asks, cancel: () => setConfirming(false) };
 }
-function PermissionConfirm({ value, name, cli, onConfirm, onCancel }) {
+function PermissionConfirm({ value, name, cli, remote, onConfirm, onCancel }) {
   if (value === AUTO) {
     return (0, import_react35.createElement)(
       "div",
       { className: "bt-perm-confirm", role: "alert" },
-      (0, import_react35.createElement)("span", { className: "bt-note" }, t("Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.")),
+      (0, import_react35.createElement)("span", { className: "bt-note" }, autoConfirmText(remote)),
       (0, import_react35.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: onConfirm }, t("Use Auto review")),
+      (0, import_react35.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: onCancel }, t("Cancel"))
+    );
+  }
+  if (remote) {
+    return (0, import_react35.createElement)(
+      "div",
+      { className: "bt-perm-confirm", role: "alert" },
+      (0, import_react35.createElement)("span", { className: "bt-note" }, (0, import_react35.createElement)("span", { className: "bt-danger" }, name === void 0 ? remoteConfirmText(remote) : `${t("Give {name} full access?", { name })} ${remoteConfirmText(remote)}`)),
+      (0, import_react35.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: onConfirm }, t("Give full access")),
       (0, import_react35.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: onCancel }, t("Cancel"))
     );
   }
@@ -15093,13 +15139,13 @@ function PermissionPicker({ catalog, saved, onPick, repick = false, confirmFull 
     (0, import_react35.createElement)(PermissionConfirm, { value: confirming, onConfirm: () => pick2(confirming, true), onCancel: cancel })
   );
 }
-function PermissionOptions({ catalog, current, onPick, disabled = false, cli }) {
+function PermissionOptions({ catalog, current, onPick, disabled = false, cli, remote = false }) {
   return (0, import_react35.createElement)(
     "div",
     { className: "bt-q-list", role: "group", "aria-label": t("Permissions") },
     catalog.options.map((option) => {
       const danger = presetDanger(option.value) ? " bt-danger" : "";
-      const text2 = presetText(option.value, catalog, cli);
+      const text2 = presetText(option.value, catalog, cli, remote);
       return (0, import_react35.createElement)(
         "button",
         {
@@ -15122,19 +15168,19 @@ function PermissionOptions({ catalog, current, onPick, disabled = false, cli }) 
     })
   );
 }
-function PermissionList({ catalog, saved, onPick, repick = false, disabled = false, name, cli }) {
+function PermissionList({ catalog, saved, onPick, repick = false, disabled = false, name, cli, remote = false }) {
   const { current, pick: pick2, confirming, cancel } = usePermissionPick({ saved, onPick, repick, confirmFull: true });
   return (0, import_react35.createElement)(
     import_react35.Fragment,
     null,
-    (0, import_react35.createElement)(PermissionOptions, { catalog, current, onPick: (value) => pick2(value), disabled, cli }),
-    confirming && !disabled ? (0, import_react35.createElement)(PermissionConfirm, { value: confirming, name, cli, onConfirm: (event) => {
+    (0, import_react35.createElement)(PermissionOptions, { catalog, current, onPick: (value) => pick2(value), disabled, cli, remote }),
+    confirming && !disabled ? (0, import_react35.createElement)(PermissionConfirm, { value: confirming, name, cli, remote, onConfirm: (event) => {
       if (event?.detail > 1) return;
       pick2(confirming, true);
     }, onCancel: cancel }) : null
   );
 }
-function PermissionSelect({ catalog, saved, onPick, repick = false, disabled = false, name, cli }) {
+function PermissionSelect({ catalog, saved, onPick, repick = false, disabled = false, name, cli, remote = false }) {
   const { current, pick: pick2, confirming, asks, cancel } = usePermissionPick({ saved, onPick, repick, confirmFull: true });
   const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu({ minWidth: Math.min(380, window.innerWidth - 24) });
   (0, import_react35.useEffect)(() => {
@@ -15191,7 +15237,7 @@ function PermissionSelect({ catalog, saved, onPick, repick = false, disabled = f
     }
   };
   const level = presetName(current, catalog);
-  const text2 = catalog.options.some((option) => option.value === current) ? presetText(current, catalog, cli) : "";
+  const text2 = catalog.options.some((option) => option.value === current) ? presetText(current, catalog, cli, remote) : "";
   const danger = presetDanger(current);
   return (0, import_react35.createElement)(
     import_react35.Fragment,
@@ -15225,8 +15271,8 @@ function PermissionSelect({ catalog, saved, onPick, repick = false, disabled = f
           if (event.detail > 1 && event.target.closest(".bt-q-opt")) event.stopPropagation();
         }
       },
-      (0, import_react35.createElement)(PermissionOptions, { catalog, current, onPick: choose, disabled, cli }),
-      confirming && !disabled ? (0, import_react35.createElement)(PermissionConfirm, { value: confirming, name, cli, onConfirm, onCancel }) : null
+      (0, import_react35.createElement)(PermissionOptions, { catalog, current, onPick: choose, disabled, cli, remote }),
+      confirming && !disabled ? (0, import_react35.createElement)(PermissionConfirm, { value: confirming, name, cli, remote, onConfirm, onCancel }) : null
     ), document.body) : null
   );
 }
@@ -15413,7 +15459,7 @@ function ComposerPermission({ sessionId, useRoster, actions }) {
       "aria-label": t("Permissions"),
       style: shownPlace,
       "data-leaving": leaving || void 0
-    }, (0, import_react36.createElement)(PermissionList, { catalog, saved, onPick: pick2, name: bot.name, cli })), document.body) : null
+    }, (0, import_react36.createElement)(PermissionList, { catalog, saved, onPick: pick2, name: bot.name, cli, remote: remoteOfBot(bot) })), document.body) : null
   );
 }
 function ComposerPlus({ sessionId, inputActions, useRoster, actions }) {
@@ -23772,6 +23818,7 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
   const titleId = (0, import_react69.useId)();
   const draft = picked ?? saved;
   const cli = cliOfBot(bot);
+  const remote = remoteOfBot(bot);
   const auto = cliAuto(draft, cli);
   const offered = catalog.options.some((option) => option.value === draft);
   const asks = draft === AUTO || presetDanger(draft);
@@ -23807,10 +23854,10 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
           "div",
           { className: "bt-q-text" },
           (0, import_react69.createElement)("p", { className: "bt-q-title", id: titleId }, draft === AUTO ? name : t("Give {name} full access?", { name: bot.name })),
-          draft === AUTO ? (0, import_react69.createElement)("div", { className: "bt-q-detail" }, t("Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.")) : (0, import_react69.createElement)(
+          draft === AUTO ? (0, import_react69.createElement)("div", { className: "bt-q-detail" }, autoConfirmText(remote)) : (0, import_react69.createElement)(
             "div",
             { className: "bt-q-detail" },
-            (0, import_react69.createElement)("span", { className: "bt-danger" }, auto ? cliConfirmText(cli) : t("{name} will run commands and change files anywhere without asking you first.", { name: bot.name })),
+            (0, import_react69.createElement)("span", { className: "bt-danger" }, remote ? remoteConfirmText(remote) : auto ? cliConfirmText(cli) : t("{name} will run commands and change files anywhere without asking you first.", { name: bot.name })),
             " ",
             t("Choose it only when you trust what you asked for.")
           )
@@ -23857,7 +23904,7 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
     (0, import_react69.createElement)(PermissionOptions, { catalog, current: draft, onPick: (value) => {
       setError("");
       setPicked(value);
-    }, disabled: busy, cli }),
+    }, disabled: busy, cli, remote }),
     errorLine,
     note,
     (0, import_react69.createElement)(
@@ -23920,7 +23967,7 @@ function PermissionRow({ bot, roster, actions, run: run2 }) {
     (0, import_react70.createElement)("div", { className: "bt-section-title" }, t("Permissions")),
     // A Bot without its own preset may run on another one set in DSH, so its first pick always applies.
     // The select explains the current level; its menu lets even a view-only window read every level.
-    (0, import_react70.createElement)(PermissionSelect, { catalog, name: bot.name, saved: bot.permission ?? catalog.defaultPreset, repick: bot.permission === void 0, disabled: Boolean(roster.readOnly), cli: cliOfBot(bot), onPick: (permission) => run2(actions.updateBot(bot.id, { permission })) }),
+    (0, import_react70.createElement)(PermissionSelect, { catalog, name: bot.name, saved: bot.permission ?? catalog.defaultPreset, repick: bot.permission === void 0, disabled: Boolean(roster.readOnly), cli: cliOfBot(bot), remote: remoteOfBot(bot), onPick: (permission) => run2(actions.updateBot(bot.id, { permission })) }),
     (0, import_react70.createElement)(PermissionFallback, { fallback: bot.permissionFallback, owner: bot, catalog }),
     roster.readOnly ? null : (0, import_react70.createElement)("button", { type: "button", className: "bt-more", onClick: () => reopenPermissionChoice(bot.id) }, t("Choose in the chat"))
   );

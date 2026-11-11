@@ -12,6 +12,14 @@ const DANGER = new Set(['danger-full-access'])
 
 export const presetDanger = value => DANGER.has(value)
 
+// Remote tools keep the remote computer's rules; a local file sandbox cannot contain them.
+export const remoteOfBot = bot => {
+  const remote = ref => typeof ref === 'string' && ref.startsWith('hermes-remote/')
+  const selected = remote(bot?.model), applied = remote(bot?.appliedModel)
+  if (bot?.model && bot?.appliedModel && selected !== applied) return 'mixed'
+  return selected || applied
+}
+
 // A Bot whose model runs on a coding CLI (Claude Code, Codex): there Full access is the CLI's
 // own no-ask mode, explained by the CLI's name. `mode` is the CLI's own word for that mode.
 // The stored level is the same one (danger-full-access): only the explanation differs, and
@@ -61,7 +69,24 @@ const TEXTS = {
   [AUTO]: 'A model reviews each action first. You are asked only about the ones it stops. The rest run with full access, and it can let a wrong one through.',
   'danger-full-access': 'Runs commands and changes files anywhere without asking you. Choose it only when you trust what you asked for.',
 }
-export const presetText = (value, catalog, cli) => (cliAuto(value, cli) ? t(CLI_TEXT, cliWords(cli)) : Object.hasOwn(TEXTS, value) ? t(TEXTS[value]) : String(catalog?.options?.find(option => option.value === value)?.description ?? ''))
+const REMOTE_TEXT = "Hermes’s tools run on the other computer under its own rules. DSH handles its approval questions at this level. This computer’s file sandbox does not protect that computer."
+const REMOTE_FULL = "DSH answers each Hermes approval question once without asking you. Hermes’s own rules still apply on the other computer; this computer’s sandbox does not protect it."
+const REMOTE_AUTO = "A model reviews Hermes’s approval questions. You decide on the ones it stops. Hermes’s own rules still apply on the other computer; this computer’s sandbox does not protect it."
+const REMOTE_AUTO_CONFIRM = "Auto review uses a model to review Hermes’s approval questions. You decide on the ones it stops. It is experimental and can allow or stop the wrong question. Hermes’s own rules still apply on the other computer."
+const REMOTE_CONFIRM = "DSH will answer each Hermes approval question once without asking you. Hermes’s own rules still apply on the other computer; this computer’s sandbox does not protect it."
+const MIXED_TEXT = "This chat is changing routes. DSH handles approval questions on the route still running. Hermes’s tools follow the other computer’s rules; this computer’s sandbox does not protect them."
+const MIXED_FULL = "While this chat changes routes, Full access answers Hermes approval questions once without asking you, or lets a local route run commands and change files without asking. Hermes’s own rules still apply on the other computer; this computer’s sandbox does not protect it."
+const MIXED_AUTO = "While this chat changes routes, a model reviews approval questions on the route that is running. You decide on the ones it stops. Hermes’s own rules still apply on the other computer; this computer’s sandbox does not protect it."
+const MIXED_EXPERIMENTAL = "It is experimental and can allow or stop the wrong question."
+export const remoteConfirmText = remote => t(remote === 'mixed' ? MIXED_FULL : REMOTE_CONFIRM)
+export const autoConfirmText = (remote = false) => remote === 'mixed'
+  ? `${t(MIXED_AUTO)} ${t(MIXED_EXPERIMENTAL)}`
+  : t(remote ? REMOTE_AUTO_CONFIRM : 'Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.')
+export const presetText = (value, catalog, cli, remote = false) => remote === 'mixed'
+  ? t(value === 'danger-full-access' ? MIXED_FULL : value === AUTO ? MIXED_AUTO : MIXED_TEXT)
+  : remote
+  ? t(value === 'danger-full-access' ? REMOTE_FULL : value === AUTO ? REMOTE_AUTO : REMOTE_TEXT)
+  : cliAuto(value, cli) ? t(CLI_TEXT, cliWords(cli)) : Object.hasOwn(TEXTS, value) ? t(TEXTS[value]) : String(catalog?.options?.find(option => option.value === value)?.description ?? '')
 
 // A pick shows at once and holds until the saved value catches up, or falls back when
 // `onPick` resolves false. `repick` lets the shown preset be picked again. Auto review is
@@ -102,11 +127,18 @@ export function usePermissionPick({ saved, onPick, repick = false, confirmFull =
 }
 
 // The question asked before Auto review or Full access is sent; `name` is the Bot it is for.
-function PermissionConfirm({ value, name, cli, onConfirm, onCancel }) {
+function PermissionConfirm({ value, name, cli, remote, onConfirm, onCancel }) {
   if (value === AUTO) {
     return h('div', { className: 'bt-perm-confirm', role: 'alert' },
-      h('span', { className: 'bt-note' }, t('Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.')),
+      h('span', { className: 'bt-note' }, autoConfirmText(remote)),
       h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: onConfirm }, t('Use Auto review')),
+      h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: onCancel }, t('Cancel')))
+  }
+  if (remote) {
+    return h('div', { className: 'bt-perm-confirm', role: 'alert' },
+      h('span', { className: 'bt-note' }, h('span', { className: 'bt-danger' }, name === undefined ? remoteConfirmText(remote)
+        : `${t('Give {name} full access?', { name })} ${remoteConfirmText(remote)}`)),
+      h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: onConfirm }, t('Give full access')),
       h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: onCancel }, t('Cancel')))
   }
   // A Bot on a coding CLI: the same question, in the words of what that CLI does there.
@@ -142,11 +174,11 @@ export function PermissionPicker({ catalog, saved, onPick, repick = false, confi
 // Every level the catalog offers, in its order, each with what it does: the current one
 // marked, Full access in the danger ink. No letter keys: a stray key never moves a level.
 // `cli`: the Bot's coding CLI (cliOfBot), when it runs on one.
-export function PermissionOptions({ catalog, current, onPick, disabled = false, cli }) {
+export function PermissionOptions({ catalog, current, onPick, disabled = false, cli, remote = false }) {
   return h('div', { className: 'bt-q-list', role: 'group', 'aria-label': t('Permissions') },
     catalog.options.map((option) => {
       const danger = presetDanger(option.value) ? ' bt-danger' : ''
-      const text = presetText(option.value, catalog, cli)
+      const text = presetText(option.value, catalog, cli, remote)
       return h('button', {
         key: option.value, type: 'button', className: 'bt-q-opt', disabled,
         'aria-pressed': option.value === current, 'data-permission': option.value,
@@ -161,15 +193,15 @@ export function PermissionOptions({ catalog, current, onPick, disabled = false, 
 
 // The explained list as the picker itself (Details): a click saves, as a segment did, through
 // the same one-save-at-a-time path; Auto review and Full access ask once first.
-export function PermissionList({ catalog, saved, onPick, repick = false, disabled = false, name, cli }) {
+export function PermissionList({ catalog, saved, onPick, repick = false, disabled = false, name, cli, remote = false }) {
   const { current, pick, confirming, cancel } = usePermissionPick({ saved, onPick, repick, confirmFull: true })
   return h(Fragment, null,
-    h(PermissionOptions, { catalog, current, onPick: value => pick(value), disabled, cli }),
-    confirming && !disabled ? h(PermissionConfirm, { value: confirming, name, cli, onConfirm: (event) => { if (event?.detail > 1) return; pick(confirming, true) }, onCancel: cancel }) : null)
+    h(PermissionOptions, { catalog, current, onPick: value => pick(value), disabled, cli, remote }),
+    confirming && !disabled ? h(PermissionConfirm, { value: confirming, name, cli, remote, onConfirm: (event) => { if (event?.detail > 1) return; pick(confirming, true) }, onCancel: cancel }) : null)
 }
 
 // Details keeps the pick and its save queue mounted while the explained menu opens and closes.
-export function PermissionSelect({ catalog, saved, onPick, repick = false, disabled = false, name, cli }) {
+export function PermissionSelect({ catalog, saved, onPick, repick = false, disabled = false, name, cli, remote = false }) {
   const { current, pick, confirming, asks, cancel } = usePermissionPick({ saved, onPick, repick, confirmFull: true })
   const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu({ minWidth: Math.min(380, window.innerWidth - 24) })
   useEffect(() => {
@@ -216,7 +248,7 @@ export function PermissionSelect({ catalog, saved, onPick, repick = false, disab
     }
   }
   const level = presetName(current, catalog)
-  const text = catalog.options.some(option => option.value === current) ? presetText(current, catalog, cli) : ''
+  const text = catalog.options.some(option => option.value === current) ? presetText(current, catalog, cli, remote) : ''
   const danger = presetDanger(current)
   return h(Fragment, null,
     h('button', {
@@ -229,8 +261,8 @@ export function PermissionSelect({ catalog, saved, onPick, repick = false, disab
       ref: menu, className: `bt-menu bt-permission-menu${shownPlace.bottom !== undefined ? ' bt-menu-up' : ''}`,
       role: 'dialog', 'aria-label': t('Permissions'), tabIndex: -1, style: shownPlace, 'data-leaving': leaving || undefined, onKeyDown,
       onClickCapture: (event) => { if (event.detail > 1 && event.target.closest('.bt-q-opt')) event.stopPropagation() },
-    }, h(PermissionOptions, { catalog, current, onPick: choose, disabled, cli }),
-    confirming && !disabled ? h(PermissionConfirm, { value: confirming, name, cli, onConfirm, onCancel }) : null), document.body) : null)
+    }, h(PermissionOptions, { catalog, current, onPick: choose, disabled, cli, remote }),
+    confirming && !disabled ? h(PermissionConfirm, { value: confirming, name, cli, remote, onConfirm, onCancel }) : null), document.body) : null)
 }
 
 // What every offered level does, as plain lines: for the places that keep the segmented choice.

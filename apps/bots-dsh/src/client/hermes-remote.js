@@ -24,14 +24,14 @@ const Pair = ({ label, value }) => h('div', { className: 'bt-hw-pair' }, h('span
 
 function errorFor(error, draft) {
   const code = error?.code ?? ''
-  if (code.includes('host-key')) return { heading: t('SSH couldn’t sign in'), title: t('Confirm this computer’s SSH host key'), text: t('Connect to this host once in a terminal and check its host key. Then test again. A changed key must be checked before continuing.'), ssh: true }
-  if (draft.mode === 'ssh' && code === 'bot/hermes-ssh-missing') return { heading: t('SSH couldn’t open Hermes'), title: t('Check the Hermes installation'), text: t('Install or update Hermes on the other computer, or enter its executable path. Then test again.'), ssh: true }
-  if (code === 'bot/hermes-expired') return { heading: t('Test this connection again'), title: t('The connection test expired'), text: t('Test again before choosing and saving a profile.') }
-  if (code === 'bot/hermes-profiles') return { heading: t('We couldn’t list the profiles'), title: t('Check this Hermes profile list'), text: t('Refresh the list, or check that the profile is available on this Hermes.') }
-  if (code === 'bot/hermes' || code === 'bot/hermes-unsupported') return { heading: t('This Hermes can’t connect yet'), title: t('Check this Hermes version and profile'), text: t('Use a supported Hermes version and a profile that asks before running tools. Then test again.') }
-  if (draft.mode === 'ssh') return { heading: t('SSH couldn’t sign in'), title: t('Check your SSH details'), text: t('Check the host and user. If your key is locked, unlock it in your SSH agent, or choose another key.'), ssh: true }
-  if (code === 'bot/hermes-auth') return { heading: t('We couldn’t sign in'), title: draft.authMode === 'password' ? t('The sign-in wasn’t accepted') : t('The token wasn’t accepted'), text: draft.authMode === 'password' ? t('Check your user and password, then sign in again.') : t('Check the token, or choose user and password if this Hermes asks you to sign in.') }
-  return { heading: t('We couldn’t connect'), title: t('Check the remote address'), text: t('Check the address and that Hermes is running, then test again.') }
+  if (code.includes('host-key')) return { heading: t('SSH couldn’t sign in'), title: t('Confirm this computer’s SSH host key'), text: t('Connect to this host once in a terminal and check its host key. Then test again. A changed key must be checked before continuing.'), hint: t('Connect once in a terminal to verify the SSH host key, then test again.'), ssh: true }
+  if (draft.mode === 'ssh' && code === 'bot/hermes-ssh-missing') return { heading: t('SSH couldn’t open Hermes'), title: t('Check the Hermes installation'), text: t('Install or update Hermes on the other computer, or enter its executable path. Then test again.'), hint: t('Hermes must already be installed on the other computer.'), ssh: true }
+  if (code === 'bot/hermes-expired') return { heading: t('Test this connection again'), title: t('The connection test expired'), text: t('Test again before choosing and saving a profile.'), hint: t('Run a new connection test before choosing or saving a profile.') }
+  if (code === 'bot/hermes-profiles') return { heading: t('We couldn’t list the profiles'), title: t('Check this Hermes profile list'), text: t('Refresh the list, or check that the profile is available on this Hermes.'), hint: t('Check the profile on the other computer, then test again.') }
+  if (code === 'bot/hermes' || code === 'bot/hermes-unsupported') return { heading: t('This Hermes can’t connect yet'), title: t('Check this Hermes version and profile'), text: t('Use a supported Hermes version and a profile that asks before running tools. Then test again.'), hint: t('Check the Hermes version and this profile’s approval settings, then test again.') }
+  if (draft.mode === 'ssh') return { heading: t('SSH couldn’t sign in'), title: t('Check your SSH details'), text: t('Check the host and user. If your key is locked, unlock it in your SSH agent, or choose another key.'), hint: code === 'bot/hermes-ssh-auth' ? t('Check the SSH user and key, then test again.') : t('Check that SSH can reach the other computer and use your key.'), ssh: true }
+  if (code === 'bot/hermes-auth') return { heading: t('We couldn’t sign in'), title: draft.authMode === 'password' ? t('The sign-in wasn’t accepted') : t('The token wasn’t accepted'), text: draft.authMode === 'password' ? t('Check your user and password, then sign in again.') : t('Check the token, or choose user and password if this Hermes asks you to sign in.'), hint: draft.authMode === 'password' ? t('Enter your dashboard user and password again, then sign in.') : t('Enter a valid session token and test the connection again.') }
+  return { heading: t('We couldn’t connect'), title: t('Check the remote address'), text: t('Check the address and that Hermes is running, then test again.'), hint: t('Check that Hermes is running at this address and try again.') }
 }
 
 // Route entry and Settings share the same wizard. A saved route connects without another
@@ -211,7 +211,7 @@ export function HermesRemoteConnect({ onClose, onConnected, edit = false, initia
   } else if (step === 'test') {
     if (status === 'error') {
       heading = error?.heading ?? t('We couldn’t connect')
-      content = h(Fragment, null, h('div', { className: 'bt-hw-result bt-hw-failed', role: 'alert' }, h('span', { className: 'bt-hw-result-icon' }, '!'), h('h3', null, error?.title), h('p', null, error?.text)), h(Note, { error: true }, draft.mode === 'ssh' ? t('Hermes must already be installed on the other computer.') : t('Your connection details are still here. Edit them and test again.')))
+      content = h(Fragment, null, h('div', { className: 'bt-hw-result bt-hw-failed', role: 'alert' }, h('span', { className: 'bt-hw-result-icon' }, '!'), h('h3', null, error?.title), h('p', null, error?.text)), h(Note, { error: true }, error?.hint))
       footer = h(Fragment, null, h(Button, { onClick: testConnection, disabled: !validDetails }, t('Test again')), h(Button, { primary: true, onClick: () => setStep('details') }, draft.mode === 'ssh' ? t('Edit SSH details') : t('Edit sign-in'), ' ←'))
     } else if (status === 'connected') {
       heading = t('Hermes is ready')

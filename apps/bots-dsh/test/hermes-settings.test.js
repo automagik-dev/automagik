@@ -71,7 +71,7 @@ async function renderSettings(t, call, { component = 'HermesRemoteSettings', pro
     onClose() {}, ...props,
   })))
   mount()
-  await waitFor(() => dom.window.document.querySelector(menu ? '.bt-model-trigger' : component === 'HermesRemoteConnect' ? '.bt-hermes-wizard:not([data-status=loading])' : 'section'), 'remote settings to render')
+  await waitFor(() => dom.window.document.querySelector(menu ? component === 'ModelLine' ? '.bt-model-line-text' : '.bt-model-trigger' : component === 'HermesRemoteConnect' ? '.bt-hermes-wizard:not([data-status=loading])' : 'section'), 'remote settings to render')
   const click = async label => { const button = [...dom.window.document.querySelectorAll('button')].find(node => node.textContent.replace(/[→←]/g, '').trim() === label || node.getAttribute('aria-label') === label); assert.ok(button, label); flushSync(() => button.click()) }
   const fill = async (label, value) => {
     const input = [...dom.window.document.querySelectorAll('input')].find(node => node.getAttribute('aria-label') === label)
@@ -253,7 +253,7 @@ test('SSH uses optional config defaults and a path reference, with clear strict 
   assert.equal(render.document.querySelector('input[aria-label="SSH host or config name"]').value, 'example.invalid')
 })
 
-test('SSH authentication errors show the approved key and installation guidance', async t => {
+test('SSH authentication errors show key guidance without an installation hint', async t => {
   const render = await startWizard(t, { 'hermes-remote-test': () => { throw Object.assign(Error('Fake refusal'), { code: 'bot/hermes-ssh-auth' }) } })
   await render.click('Through SSH'); await render.click('Continue')
   await render.fill('SSH host or config name', 'example.invalid')
@@ -261,7 +261,8 @@ test('SSH authentication errors show the approved key and installation guidance'
   await waitFor(() => render.document.querySelector('[data-status=error]'), 'SSH authentication frame')
   assert.match(render.document.body.textContent, /Check your SSH details/)
   assert.match(render.document.body.textContent, /unlock it in your SSH agent/)
-  assert.match(render.document.body.textContent, /Hermes must already be installed/)
+  assert.match(render.document.querySelector('.bt-hw-error-note').textContent, /Check the SSH user and key/)
+  assert.doesNotMatch(render.document.querySelector('.bt-hw-error-note').textContent, /Hermes must already be installed/)
 })
 
 test('saved Remote Hermes connects in one click without another setup or password prompt', async t => {
@@ -538,4 +539,59 @@ test('delayed cleanup from an aborted wizard cannot cancel a replacement test', 
   assert.ok(cancellations.length > 0)
   assert.ok(cancellations.every(call => call.payload.requestId === oldRequest && call.payload.testsOnly === true))
   oldResponse.resolve(testView())
+})
+
+test('wizard error strips give the action for the actual failure, not another error class', async t => {
+  const cases = [
+    ['remote', 'token', 'bot/hermes-auth', 'Enter a valid session token and test the connection again.'],
+    ['remote', 'password', 'bot/hermes-auth', 'Enter your dashboard user and password again, then sign in.'],
+    ['ssh', 'token', 'bot/hermes-ssh-host-key', 'Connect once in a terminal to verify the SSH host key, then test again.'],
+    ['ssh', 'token', 'bot/hermes-ssh-missing', 'Hermes must already be installed on the other computer.'],
+    ['ssh', 'token', 'bot/hermes-ssh-auth', 'Check the SSH user and key, then test again.'],
+    ['ssh', 'token', 'bot/hermes-ssh', 'Check that SSH can reach the other computer and use your key.'],
+    ['remote', 'token', 'bot/hermes', 'Check the Hermes version and this profile’s approval settings, then test again.'],
+    ['ssh', 'token', 'bot/hermes-unsupported', 'Check the Hermes version and this profile’s approval settings, then test again.'],
+    ['remote', 'token', 'bot/hermes-profiles', 'Check the profile on the other computer, then test again.'],
+    ['ssh', 'token', 'bot/hermes-profiles', 'Check the profile on the other computer, then test again.'],
+    ['remote', 'token', 'bot/hermes-expired', 'Run a new connection test before choosing or saving a profile.'],
+    ['ssh', 'token', 'bot/hermes-expired', 'Run a new connection test before choosing or saving a profile.'],
+    ['remote', 'token', 'bot/hermes-connection', 'Check that Hermes is running at this address and try again.'],
+  ]
+  for (const [mode, authMode, code, hint] of cases) await t.test(`${mode}/${authMode}/${code}`, async sub => {
+    const render = await startWizard(sub, { 'hermes-remote-test': () => { throw Object.assign(Error('Fake refusal'), { code }) } })
+    if (mode === 'ssh') {
+      await render.click('Through SSH'); await render.click('Continue')
+      await render.fill('SSH host or config name', 'example.invalid'); await render.click('Test SSH connection')
+    } else if (authMode === 'password') {
+      await render.click('Continue'); await render.fill('Remote address', 'https://example.invalid')
+      await render.click('User and password'); await render.fill('User', 'sample-profile'); await render.fill('Password', randomUUID())
+      await render.click('Sign in and test')
+    } else { await enterToken(render); await render.click('Test connection') }
+    await waitFor(() => render.document.querySelector('[data-status=error]'), 'matching error action strip')
+    const strip = render.document.querySelector('.bt-hw-error-note').textContent
+    assert.equal(strip, hint)
+    if (code !== 'bot/hermes-ssh-missing') assert.doesNotMatch(strip, /Hermes must already be installed/)
+  })
+})
+
+test('Remote Hermes chat line and Details identify the profile after the route only once', async t => {
+  for (const component of ['ModelLine', 'ModelMenu']) await t.test(component, async sub => {
+    const bot = { id: 'sample-profile', name: 'Sample', model: 'hermes-remote/sample-model' }
+    const roster = { models: [{ ref: bot.model, provider: 'hermes-remote', providerName: 'Remote Hermes', name: 'Sample model' }], prefs: { hermesRemote: { enabled: true, profile: 'sample-profile', address: 'https://example.invalid' } } }
+    const render = await renderSettings(sub, async () => connectedView(), { component, menu: true, props: { bot, roster, actions: {} } })
+    const summary = render.document.querySelector(component === 'ModelLine' ? '.bt-model-line-text' : '.bt-model-provider').textContent
+    assert.equal((summary.match(/Remote Hermes/g) ?? []).length, 1)
+    assert.match(summary, /Remote Hermes · sample-profile/)
+  })
+})
+
+test('a legacy Remote Hermes model without profile metadata still prints the route once', async t => {
+  for (const component of ['ModelLine', 'ModelMenu']) await t.test(component, async sub => {
+    const bot = { id: 'sample-profile', name: 'Sample', model: 'hermes-remote/sample-model' }
+    const roster = { models: [{ ref: bot.model, provider: 'hermes-remote', providerName: 'Remote Hermes', name: 'Sample model' }] }
+    const render = await renderSettings(sub, async () => connectedView(), { component, menu: true, props: { bot, roster, actions: {} } })
+    const summary = render.document.querySelector(component === 'ModelLine' ? '.bt-model-line-text' : '.bt-model-provider').textContent
+    assert.equal((summary.match(/Remote Hermes/g) ?? []).length, 1)
+    assert.doesNotMatch(summary, /Remote Hermes · Remote Hermes/)
+  })
 })

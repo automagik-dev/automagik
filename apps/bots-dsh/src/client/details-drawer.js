@@ -15,7 +15,7 @@ import { MemoryRow } from './memory-panel.js'
 import { ScheduleSummary } from './schedules.js'
 import { useGlide, useMorph } from './motion.js'
 import { MemberApprovals, MemberState, StopMemberWork, useMemberWork, workState } from './member-status.js'
-import { cliOfBot, PermissionFallback, PermissionSelect, presetDanger, presetName, presetText } from './permission-picker.js'
+import { remoteOfBot, cliOfBot, PermissionFallback, PermissionSelect, presetDanger, presetName, presetText } from './permission-picker.js'
 import { reopenPermissionChoice } from './permission-card.js'
 import { t } from './i18n.js'
 import { BotPills } from './capability-pills.js'
@@ -51,7 +51,7 @@ function PermissionRow({ bot, roster, actions, run }) {
     h('div', { className: 'bt-section-title' }, t('Permissions')),
     // A Bot without its own preset may run on another one set in DSH, so its first pick always applies.
     // The select explains the current level; its menu lets even a view-only window read every level.
-    h(PermissionSelect, { catalog, name: bot.name, saved: bot.permission ?? catalog.defaultPreset, repick: bot.permission === undefined, disabled: Boolean(roster.readOnly), cli: cliOfBot(bot), onPick: permission => run(actions.updateBot(bot.id, { permission })) }),
+    h(PermissionSelect, { catalog, name: bot.name, saved: bot.permission ?? catalog.defaultPreset, repick: bot.permission === undefined, disabled: Boolean(roster.readOnly), cli: cliOfBot(bot), remote: remoteOfBot(bot), onPick: permission => run(actions.updateBot(bot.id, { permission })) }),
     h(PermissionFallback, { fallback: bot.permissionFallback, owner: bot, catalog }),
     roster.readOnly ? null : h('button', { type: 'button', className: 'bt-more', onClick: () => reopenPermissionChoice(bot.id) }, t('Choose in the chat')))
 }

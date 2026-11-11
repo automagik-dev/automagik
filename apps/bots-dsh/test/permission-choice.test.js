@@ -33,6 +33,7 @@ const { outputFiles } = await build({
   stdin: { contents: [
     "export { PermissionPicker, PermissionList, PermissionExplanations, presetText } from './src/client/permission-picker.js'",
     "export { PermissionChoiceDock, reopenPermissionChoice } from './src/client/permission-card.js'",
+    "export { ComposerPermission } from './src/client/composer.js'",
     "export { BotPanel } from './src/client/browser-pane.js'",
     "export { GroupSettingsForm } from './src/client/group-settings.js'",
     "export { indexRoster } from './src/client/sources.js'",
@@ -103,6 +104,12 @@ const rowOf = (scope, value) => scope.querySelector(`.bt-q-opt[data-permission="
 const button = (scope, label) => [...scope.querySelectorAll('button')].find(node => node.textContent.trim() === label)
 const hook = value => select => select(value)
 const BOT = { id: 'omni', name: 'Omni', sessionId: 'omni', model: 'deepseek/v3' }
+const REMOTE_BOT = { ...BOT, model: 'hermes-remote/sample:model', appliedModel: 'hermes-remote/sample:model' }
+const remoteWords = scope => {
+  assert.match(scope.textContent, /Hermes.*approval questions?|approval questions?.*Hermes/)
+  assert.match(scope.textContent, /other computer/)
+  assert.doesNotMatch(scope.textContent, /Changes files inside its folder|It cannot change files unless|Runs commands and changes files anywhere/)
+}
 const teamOf = (indexRoster, { bot = BOT, catalog = THREE, readOnly, rooms = [] } = {}) => ({
   ...indexRoster({ bots: [bot], rooms }), permissions: catalog, models: [{ ref: 'deepseek/v3', id: 'v3' }], exchangeTurns: {}, questions: {}, sideChats: {}, memory: false, prefs: {},
   ...(readOnly ? { readOnly } : {}),
@@ -845,3 +852,94 @@ test('in the list, Full access confirmed while another save is open waits its tu
   assert.equal(open.length, 2)
   assert.equal(rowOf(document, 'danger-full-access').getAttribute('aria-pressed'), 'true')
 })
+
+test('Remote Hermes chat levels and both confirmations describe remote approvals, preserving explicit saves', async t => {
+  const { document, render, click, saves } = dock(t, { bot: REMOTE_BOT, catalog: FOUR })
+  await act(render)
+  remoteWords(card(document))
+  await click(rowOf(document, 'danger-full-access'))
+  await click(button(card(document), 'Save'))
+  remoteWords(card(document))
+  assert.match(card(document).textContent, /once without asking you/)
+  assert.deepEqual(saves, [])
+  await click(button(card(document), 'Cancel'))
+  await click(rowOf(document, 'auto'))
+  await click(button(card(document), 'Save'))
+  remoteWords(card(document))
+  assert.match(card(document).textContent, /model.*review/)
+  await click(button(card(document), 'Cancel'))
+  assert.deepEqual(saves, [])
+})
+
+test('Remote Hermes Details explains remote limits and its full-access confirmation without local file promises', async t => {
+  const { document, render, section, open, popup, click, saves } = details(t, { bot: { ...REMOTE_BOT, permission: 'workspace-write' }, catalog: FOUR })
+  await act(render)
+  remoteWords(section())
+  await open()
+  remoteWords(popup())
+  await click(rowOf(popup(), 'danger-full-access'))
+  remoteWords(popup())
+  assert.match(popup().textContent, /once without asking you/)
+  await click(button(popup(), 'Give full access'))
+  assert.deepEqual(saves, [{ id: BOT.id, patch: { permission: 'danger-full-access' } }])
+  assert.equal(document.querySelector('.bt-perm-confirm'), null)
+})
+
+test('Remote Hermes composer levels use the remote explanation for known and custom restrictive levels', async t => {
+  const { document, root, click, ComposerPermission, indexRoster } = mount(t)
+  const catalog = { ...FOUR, options: [...FOUR.options, { value: 'no-ask-custom', name: 'Careful', description: 'Changes files inside its folder.' }] }
+  const roster = teamOf(indexRoster, { bot: REMOTE_BOT, catalog })
+  const { actions, saves } = recorder()
+  await act(() => root.render(React.createElement(ComposerPermission, { sessionId: BOT.id, useRoster: hook(roster), actions })))
+  await click(document.querySelector('.bt-perm-chip'))
+  remoteWords(document.querySelector('.bt-permission-menu'))
+  assert.match(rowOf(document, 'no-ask-custom').textContent, /own rules/)
+  assert.deepEqual(saves, [])
+})
+
+
+for (const [direction, bot] of [
+  ['away from Remote Hermes', { ...REMOTE_BOT, model: BOT.model }],
+  ['toward Remote Hermes', { ...REMOTE_BOT, appliedModel: BOT.model }],
+]) {
+  test(`permission card during a handoff ${direction} explains both routes before confirming Full access`, async t => {
+    const { document, render, click, saves } = dock(t, { bot, catalog: FOUR })
+    await act(render)
+    remoteWords(card(document))
+    assert.match(card(document).textContent, /changing routes/)
+    await click(rowOf(document, 'danger-full-access'))
+    await click(button(card(document), 'Save'))
+    remoteWords(card(document))
+    assert.match(card(document).textContent, /local route run commands and change files/)
+    assert.match(card(document).textContent, /Hermes approval questions once/)
+    await click(button(card(document), 'Cancel'))
+    await click(rowOf(document, 'auto'))
+    await click(button(card(document), 'Save'))
+    remoteWords(card(document))
+    assert.match(card(document).textContent, /route that is running/)
+    assert.deepEqual(saves, [])
+  })
+
+  test(`Details during a handoff ${direction} retains the remote warning and conditional confirmation`, async t => {
+    const { render, section, open, popup, click, saves } = details(t, { bot: { ...bot, permission: 'workspace-write' }, catalog: FOUR })
+    await act(render)
+    remoteWords(section())
+    await open()
+    remoteWords(popup())
+    await click(rowOf(popup(), 'danger-full-access'))
+    assert.match(popup().textContent, /local route run commands and change files/)
+    assert.match(popup().textContent, /Hermes approval questions once/)
+    assert.deepEqual(saves, [])
+  })
+
+  test(`composer during a handoff ${direction} retains the remote warning`, async t => {
+    const { document, root, click, ComposerPermission, indexRoster } = mount(t)
+    const roster = teamOf(indexRoster, { bot, catalog: FOUR })
+    const { actions, saves } = recorder()
+    await act(() => root.render(React.createElement(ComposerPermission, { sessionId: BOT.id, useRoster: hook(roster), actions })))
+    await click(document.querySelector('.bt-perm-chip'))
+    remoteWords(document.querySelector('.bt-permission-menu'))
+    assert.match(document.querySelector('.bt-permission-menu').textContent, /changing routes/)
+    assert.deepEqual(saves, [])
+  })
+}

@@ -64,8 +64,8 @@ export function modelOf(bot, roster) {
   const ref = bot.model ?? bot.appliedModel
   if (!ref) return undefined
   const served = servedOf(roster, ref)
-  const [provider, ...rest] = ref.split('/')
-  return { ref, name: served ? modelLabel(served) : rest.join('/'), provider: served ? connectionOf(served) : provider, served: served !== undefined, unavailable: served === undefined || unavailableModel(served) }
+  const [, ...rest] = ref.split('/')
+  return { ref, name: served ? modelLabel(served) : rest.join('/'), provider: modelRoute(roster, ref).connection, served: served !== undefined, unavailable: served === undefined || unavailableModel(served) }
 }
 
 // What a Bot's model really did, from the host's model state (model-state.js): a switch that
@@ -217,11 +217,13 @@ export function modelRoute(roster, ref) {
   const served = servedOf(roster, ref)
   const provider = providerOf(served ?? { ref })
   const route = served?.route?.connectedBy === 'acp' ? 'acp' : routeOfProvider(provider)
+  const remote = roster.prefs?.hermesRemote
+  const remoteConnection = remote?.profile || (remote?.mode === 'ssh' ? remote.ssh?.host : remote?.address?.replace(/^https?:\/\//, '').replace(/\/$/, ''))
   return {
     provider,
     route,
     harness: served?.route?.harness ?? routeOf(provider).harness,
-    connection: served ? connectionOf(served) : provider,
+    connection: route === 'hermes-remote' ? remoteConnection || routeName(route) : served ? connectionOf(served) : provider,
   }
 }
 
@@ -722,7 +724,7 @@ function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, c
         }),
       }
     : actions
-  const bits = shown === undefined ? [] : [currentRoute ? routeName(currentRoute.route) : undefined, shown.provider].filter(Boolean)
+  const bits = shown === undefined ? [] : [...new Set([currentRoute ? routeName(currentRoute.route) : undefined, shown.provider].filter(Boolean))]
   if (shown !== undefined && shown.unavailable && models.length > 0) bits.push(t('not available'))
   else if (effortLabel !== undefined) bits.push(effortLabel)
   const second = bits.length > 0 ? bits.join(' · ') : null
@@ -804,7 +806,7 @@ function modelWords(roster, ref) {
   return {
     model: served ? modelLabel(served) : rest.join('/'),
     route: info === undefined ? '' : routeName(info.route),
-    provider: served ? connectionOf(served) : provider,
+    provider: info?.connection ?? (served ? connectionOf(served) : provider),
   }
 }
 
@@ -815,7 +817,7 @@ function modelWords(roster, ref) {
 export function ModelLine({ bot, roster, actions, run, modelRef, onPick, chat = false }) {
   const words = modelWords(roster, modelRef ?? bot.model ?? bot.appliedModel)
   return h('div', { className: 'bt-model-line' },
-    h('span', { className: 'bt-model-line-text' }, words.route === ''
+    h('span', { className: 'bt-model-line-text' }, words.route === '' || words.route === words.provider
       ? t('Using {model} · {provider}', words)
       : t('Using {model} · {route} · {provider}', words)),
     h('span', { className: 'bt-model-line-sep', 'aria-hidden': true }, '·'),

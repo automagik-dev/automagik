@@ -5,7 +5,7 @@ import { BotMark } from './mark.js'
 import { useLinger, useViewport, viewBottom } from './motion.js'
 import { t } from './i18n.js'
 import { useAnchoredMenu } from './model-menu.js'
-import { cliOfBot, PermissionList, presetName } from './permission-picker.js'
+import { remoteOfBot, cliOfBot, PermissionList, presetName } from './permission-picker.js'
 import { currentPart } from './text.js'
 
 // -------------------------------------------------------------------------
@@ -140,7 +140,7 @@ export function ComposerPermission({ sessionId, useRoster, actions }) {
     shownPlace ? createPortal(h('div', {
       ref: menu, className: `bt-menu bt-menu-up bt-permission-menu${shownPlace.bottom !== undefined ? ' bt-menu-up' : ''}`,
       role: 'menu', 'aria-label': t('Permissions'), style: shownPlace, 'data-leaving': leaving || undefined,
-    }, h(PermissionList, { catalog, saved, onPick: pick, name: bot.name, cli })), document.body) : null)
+    }, h(PermissionList, { catalog, saved, onPick: pick, name: bot.name, cli, remote: remoteOfBot(bot) })), document.body) : null)
 }
 
 export function ComposerPlus({ sessionId, inputActions, useRoster, actions }) {
