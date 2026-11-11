@@ -208,13 +208,16 @@ slots.register({ name: 'root', children: {
 slots.register({ name: 'conversation.composer.bar', inject: id => runtimes.get(id)?.inputProps ?? {} }, native.InputBar)
 slots.register({ name: 'conversation.input.dock', id: 'bot-cli-login', inject: face }, CliLoginConversation)
 const root = createRoot(document.getElementById('root'))
-window.showAccounts = () => {
+window.showAccounts = (failure) => {
   window.accountCalls = []
   const entry = { authScope: 'isolated', signedIn: true,
     account: { email: 'bot@example.test' }, terminal: { email: 'terminal@example.test' } }
   const actions = {
     cliLoginAccounts: async () => ({ accounts: { 'acp-codex': { ...entry } } }),
-    cliLoginSignOut: async () => { window.accountCalls.push('signout'); entry.signedIn = false },
+    cliLoginSignOut: async () => {
+      if (failure) throw Object.assign(new Error('private-process-diagnostic'), { code: failure })
+      window.accountCalls.push('signout'); entry.signedIn = false
+    },
     cliLoginSwitch: async () => { window.accountCalls.push('switch') },
     refreshModels: async () => {},
     openCliLogin: () => window.accountCalls.push('open'),

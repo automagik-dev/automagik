@@ -83,6 +83,20 @@ test('account settings distinguish terminal and Bot identities and confirm switc
     assert.deepEqual(await page.evaluate(() => window.accountCalls),
       ['switch', 'open', 'signout'])
   })
+test('blocked account recovery shows the support action and no private process diagnostic',
+  async t => {
+    const page = await fixture(t)
+    if (!page) return
+    await page.evaluate(() => window.showAccounts('bot/account-recovery'))
+    await page.getByRole('button', { name: 'Sign out', exact: true }).click()
+    await page.getByRole('button', { name: 'Continue', exact: true }).click()
+    const text = await page.getByRole('alert').innerText()
+    assert.match(text, /Close it and retry; if blocked, contact support/)
+    assert.doesNotMatch(text, /private-process-diagnostic/)
+    assert.deepEqual(await page.evaluate(() => window.accountCalls), [])
+    await page.getByText('Bots: bot@example.test', { exact: true }).waitFor()
+  })
+
 const field = page => page.locator('[data-cli-login-field] input')
 const editorOf = (page, id = 'alpha') => page.locator(`[data-conversation-session="${id}"] [data-composer-input]`)
 const calls = (page, endpoint) => page.evaluate(endpoint => window.calls.filter(call => call.endpoint === endpoint), endpoint)

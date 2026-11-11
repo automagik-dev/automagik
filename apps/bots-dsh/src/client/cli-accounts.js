@@ -1,6 +1,7 @@
 // Account controls stay in the owner's Bot settings, never in team state or a transcript.
 import { createElement as h, useEffect, useState } from 'react'
 import { CLI_NAMES } from './cli-login-model.js'
+import { ACCOUNT_RECOVERY_CODE, ACCOUNT_RECOVERY_HINT } from '../shared/cli-account.js'
 import { t } from './i18n.js'
 
 const botAccountName = account => account?.email ?? account?.org ?? t('Account not shown by the CLI')
@@ -41,8 +42,9 @@ export function CliAccounts({ bot, actions }) {
       await refresh()
       setPending(null)
       if (action === 'switch') actions.openCliLogin(bot.id, provider)
-    } catch {
-      setError(t('Account change failed. Close other app windows and try again.'))
+    } catch (error) {
+      setError(error?.code === ACCOUNT_RECOVERY_CODE ? t(ACCOUNT_RECOVERY_HINT)
+        : t('Account change failed. Close other app windows and try again.'))
     } finally { setBusy(false) }
   }
   const entries = Object.entries(accounts).filter(([id, entry]) => (

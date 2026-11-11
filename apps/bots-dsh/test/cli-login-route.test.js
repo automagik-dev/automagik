@@ -99,6 +99,24 @@ test('a native failure cannot echo the authorization answer or enter the diagnos
   assert.doesNotMatch(JSON.stringify({ result, state: h.rt.state, logged: h.logged }), /private-authorization-code|expected_state/)
 })
 
+test('owner sign-in and account controls preserve a safe recovery action without native details',
+  async t => {
+    const h = await fixture(t)
+    h.acp.authScope = 'isolated'
+    for (const method of ['loginStart', 'accountSwitch', 'accountSignOut']) {
+      h.acp[method] = async () => { throw Object.assign(new Error('private-path token-secret'), {
+        code: 'acp-account/unverified-login',
+      }) }
+    }
+    for (const action of ['start', 'switch', 'signout']) {
+      const { result } = await h.call(`cli-login-${action}`, h.payload)
+      assert.equal(result.error.code, 'bot/account-recovery')
+      assert.match(result.error.message, /Close it and retry; if blocked, contact support/)
+      assert.doesNotMatch(JSON.stringify({ result, logged: h.logged }),
+        /private-path|token-secret/)
+    }
+  })
+
 test('every send endpoint refuses a text carrying a shown sign-in state before anything is queued', async (t) => {
   const h = await fixture(t)
   const notes = []

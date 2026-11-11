@@ -216,7 +216,7 @@ for (const duringStartup of [true, false]) {
     }
     identity = JSON.parse(readFileSync(identityFile, 'utf8'))
     if (!duringStartup) assert.equal(readFileSync(ready, 'utf8'), 'ready')
-    assert.throws(() => recovered.begin('claude'), { code: 'acp-account/busy' })
+    assert.throws(() => recovered.begin('claude'), { code: 'acp-account/unverified-login' })
     // This kills the app only. Its independently running PowerShell supervisor must notice.
     const exited = new Promise(resolve => app.once('exit', resolve))
     app.kill('SIGKILL')
@@ -233,7 +233,9 @@ for (const duringStartup of [true, false]) {
         proof = readFileSync(done, 'utf8')
         assert.equal(proof, identity.nonce, 'no account change before full-job proof')
         break
-      } catch (error) { assert.equal(error.code, 'acp-account/busy') }
+      } catch (error) {
+        assert.ok(['acp-account/busy', 'acp-account/unverified-login'].includes(error.code))
+      }
       await new Promise(resolve => setTimeout(resolve, 20))
     }
     assert.equal(proof, identity.nonce, 'job-empty proof precedes any recovery')

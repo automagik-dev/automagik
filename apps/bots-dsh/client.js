@@ -43,6 +43,7 @@ module.exports = __toCommonJS(index_exports);
 // src/client/i18n.js
 var NAMESPACE = "omni-ui";
 var ZH = {
+  "A previous Bot sign-in may still be running. Close it and retry; if blocked, contact support.": "无法确认上次 Bot 登录已结束。请关闭该登录后重试；若仍受阻，请联系支持。",
   "Account not shown by the CLI": "CLI 未显示账号",
   "Account change failed. Close other app windows and try again.": "无法更改账号。请关闭其他应用窗口后重试。",
   "Bot accounts": "Bot 账号",
@@ -17225,6 +17226,10 @@ function MemoryDialog({ owner, actions, leaving = false }) {
   );
 }
 
+// src/shared/cli-account.js
+var ACCOUNT_RECOVERY_CODE = "bot/account-recovery";
+var ACCOUNT_RECOVERY_HINT = "A previous Bot sign-in may still be running. Close it and retry; if blocked, contact support.";
+
 // src/client/cli-accounts.js
 var import_react43 = require("react");
 var botAccountName = (account) => account?.email ?? account?.org ?? t("Account not shown by the CLI");
@@ -17270,8 +17275,8 @@ function CliAccounts({ bot, actions }) {
       await refresh();
       setPending(null);
       if (action === "switch") actions.openCliLogin(bot.id, provider);
-    } catch {
-      setError(t("Account change failed. Close other app windows and try again."));
+    } catch (error2) {
+      setError(error2?.code === ACCOUNT_RECOVERY_CODE ? t(ACCOUNT_RECOVERY_HINT) : t("Account change failed. Close other app windows and try again."));
     } finally {
       setBusy(false);
     }

@@ -11,7 +11,7 @@ export const LOGIN_RECORD_VERSION = 'login-trees-v1'
 const blocked = () => Object.assign(new Error(
   'Cannot verify that a previous Bot sign-in stopped. Account changes remain blocked. '
   + 'Close the previous sign-in and try again; contact support if this persists.',
-), { code: 'acp-account/busy' })
+), { code: 'acp-account/unverified-login' })
 
 export function recordLogin(env) {
   const home = env.AUTOMAGIK_BOT_CLI_HOME

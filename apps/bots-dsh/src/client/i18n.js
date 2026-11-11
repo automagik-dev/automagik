@@ -5,6 +5,8 @@
 export const NAMESPACE = 'omni-ui'
 
 const ZH = {
+  "A previous Bot sign-in may still be running. Close it and retry; if blocked, contact support.":
+    "无法确认上次 Bot 登录已结束。请关闭该登录后重试；若仍受阻，请联系支持。",
   "Account not shown by the CLI": "CLI 未显示账号",
   "Account change failed. Close other app windows and try again.": "无法更改账号。请关闭其他应用窗口后重试。",
   "Bot accounts": "Bot 账号",

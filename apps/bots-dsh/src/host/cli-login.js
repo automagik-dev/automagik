@@ -40,6 +40,8 @@
 // plugin hook runs. The page refuses it only for a state that page showed; after a reload or in a
 // window that never showed the link, the code reaches that Session record, and only the step's
 // drop keeps it from a model and the transcript. DSH 0.2.2 offers no hook before admission.
+import { ACCOUNT_RECOVERY_CODE, ACCOUNT_RECOVERY_HINT } from '../shared/cli-account.js'
+
 const PROVIDERS = new Set(['acp-codex', 'acp-claude'])
 const STATUS = new Set(['starting', 'waiting', 'ready', 'failed', 'cancelled', 'expired'])
 const BOT_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/
@@ -58,6 +60,7 @@ const DEVICE_FAILURES = new Set([
   'Codex could not start device sign-in. Check your connection and device-code login permissions in ChatGPT, then try again.',
 ])
 const ERRORS = {
+  'acp-account/unverified-login': ACCOUNT_RECOVERY_HINT,
   'acp-login/invalid': 'This sign-in request is no longer valid. Start again.',
   'acp-login/invalid-code': CODE_HINT,
   'acp-login/not-found': 'This sign-in has ended. Start again.',
@@ -66,7 +69,11 @@ const ERRORS = {
 }
 // The page branches on these two, never on their (translated) wording: an ended attempt asks the
 // agent's own sign-in first (rule 4), a restart interrupts the row.
-const ERROR_CODES = { 'acp-login/not-found': 'bot/login-ended', 'acp-login/disposed': 'bot/login-restarted' }
+const ERROR_CODES = {
+  'acp-login/not-found': 'bot/login-ended',
+  'acp-login/disposed': 'bot/login-restarted',
+  'acp-account/unverified-login': ACCOUNT_RECOVERY_CODE,
+}
 // The confirm step's refusals: the page reads the account again on the first, and offers the
 // sign-in on the second.
 const ACCOUNT_ERRORS = {
@@ -457,7 +464,10 @@ export function install(rt) {
       try {
         await service[method](body.provider, { label: body.botId })
         return { id: body.provider, signedIn: false }
-      } catch {
+      } catch (error) {
+        if (error?.code === 'acp-account/unverified-login') {
+          throw failed(ACCOUNT_RECOVERY_HINT, ACCOUNT_RECOVERY_CODE)
+        }
         throw failed('Account change failed. Close other app windows and try again.')
       }
     }])),
