@@ -36,7 +36,7 @@ async function waitFor(predicate, description) {
   }
 }
 
-async function renderSettings(t, call, { component = 'HermesRemoteSettings', props = {}, menu = false } = {}) {
+async function renderSettings(t, call, { component = 'HermesRemoteSettings', props = {}, menu = false, abortResponses = false } = {}) {
   const dom = new JSDOM('<div id="root"></div>')
   const keys = ['window', 'document', 'navigator', 'Element', 'HTMLElement', 'MutationObserver']
   const saved = keys.map(key => Object.getOwnPropertyDescriptor(globalThis, key))
@@ -46,8 +46,17 @@ async function renderSettings(t, call, { component = 'HermesRemoteSettings', pro
   const source = menu ? compiledMenu : compiled
   runInNewContext(source.outputFiles[0].text, { module, exports: module.exports, require: nativeRequire, window: dom.window, document: dom.window.document, navigator: dom.window.navigator, console, setTimeout, clearTimeout, AbortController, crypto: globalThis.crypto, getComputedStyle: dom.window.getComputedStyle.bind(dom.window), requestAnimationFrame: fn => setTimeout(fn, 0), cancelAnimationFrame: clearTimeout,
     fetch: async (_url, init) => ({ ok: true, json: async () => {
-      try { return { ok: true, value: await call(JSON.parse(init.body), init.signal) } }
-      catch (error) { return { ok: false, error: { code: error.code, message: 'Sample connection refused.' } } }
+      const result = (async () => {
+        try { return { ok: true, value: await call(JSON.parse(init.body), init.signal) } }
+        catch (error) { return { ok: false, error: { code: error.code, message: 'Sample connection refused.' } } }
+      })()
+      if (!abortResponses || !init.signal) return result
+      return new Promise((resolve, reject) => {
+        const abort = () => reject(Object.assign(new Error('Request aborted'), { name: 'AbortError' }))
+        if (init.signal.aborted) { abort(); return }
+        init.signal.addEventListener('abort', abort, { once: true })
+        result.then(value => { init.signal.removeEventListener('abort', abort); resolve(value) }, error => { init.signal.removeEventListener('abort', abort); reject(error) })
+      })
     } }),
   })
   const root = createRoot(dom.window.document.getElementById('root'))
@@ -56,11 +65,12 @@ async function renderSettings(t, call, { component = 'HermesRemoteSettings', pro
     keys.forEach((key, index) => saved[index] ? Object.defineProperty(globalThis, key, saved[index]) : delete globalThis[key])
   })
   const failures = []
-  flushSync(() => root.render(React.createElement(module.exports[component], {
-    run: promise => promise.catch(error => { failures.push(error); return false }),
+  const mount = () => flushSync(() => root.render(React.createElement(module.exports[component], {
+    key: randomUUID(), run: promise => promise.catch(error => { failures.push(error); return false }),
     Section: ({ children, title }) => React.createElement('section', null, title ? React.createElement('h3', null, title) : null, children),
     onClose() {}, ...props,
   })))
+  mount()
   await waitFor(() => dom.window.document.querySelector(menu ? '.bt-model-trigger' : component === 'HermesRemoteConnect' ? '.bt-hermes-wizard:not([data-status=loading])' : 'section'), 'remote settings to render')
   const click = async label => { const button = [...dom.window.document.querySelectorAll('button')].find(node => node.textContent.replace(/[→←]/g, '').trim() === label || node.getAttribute('aria-label') === label); assert.ok(button, label); flushSync(() => button.click()) }
   const fill = async (label, value) => {
@@ -72,7 +82,7 @@ async function renderSettings(t, call, { component = 'HermesRemoteSettings', pro
       input.dispatchEvent(new dom.window.Event('change', { bubbles: true }))
     })
   }
-  return { document: dom.window.document, click, fill, failures, root }
+  return { document: dom.window.document, click, fill, failures, root, mount }
 }
 
 const sampleView = () => ({ address: '', profile: 'Sample', enabled: false, credentialSet: true, models: [], sessions: [] })
@@ -139,7 +149,7 @@ const connectedView = () => ({ ...sampleView(), enabled: true, address: 'https:/
 const testView = () => ({ testId: randomUUID(), profiles: [{ id: 'sample-profile', name: 'sample-profile' }], status: 'connected' })
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
 
-async function startWizard(t, overrides = {}) {
+async function startWizard(t, overrides = {}, options = {}) {
   const calls = [], opened = [], closed = []
   const call = async (request, signal) => {
     calls.push(request)
@@ -152,7 +162,7 @@ async function startWizard(t, overrides = {}) {
     if (request.endpoint === 'hermes-remote-disconnect') return sampleView()
     throw Error('Unexpected fake endpoint')
   }
-  const render = await renderSettings(t, call, { component: 'HermesRemoteConnect', props: { onConnected: next => opened.push(next), onClose: () => closed.push(true) } })
+  const render = await renderSettings(t, call, { ...options, component: 'HermesRemoteConnect', props: { onConnected: next => opened.push(next), onClose: () => closed.push(true) } })
   return { ...render, calls, opened, closed }
 }
 
@@ -271,11 +281,13 @@ test('Cancel aborts a pending test and discards only test resources', async t =>
   await render.click('Cancel')
   assert.equal(signal.aborted, true)
   assert.equal(render.closed.length, 1)
-  assert.ok(!render.calls.some(call => call.endpoint === 'hermes-remote-disconnect'), 'a pending request is aborted, never a global disconnect')
+  const requestId = render.calls.find(call => call.endpoint === 'hermes-remote-test').payload.requestId
+  const cancelled = await waitFor(() => render.calls.find(call => call.endpoint === 'hermes-remote-disconnect'), 'pending test to cancel')
+  assert.deepEqual(cancelled.payload, { testsOnly: true, requestId })
   const answer = testView()
   pending.resolve(answer)
-  const close = await waitFor(() => render.calls.find(call => call.endpoint === 'hermes-remote-disconnect'), 'late test resources to close')
-  assert.deepEqual(close.payload, { testsOnly: true, testId: answer.testId })
+  const close = await waitFor(() => render.calls.find(call => call.endpoint === 'hermes-remote-disconnect' && call.payload.testId === answer.testId), 'late test resources to close')
+  assert.deepEqual(close.payload, { testsOnly: true, requestId, testId: answer.testId })
   assert.ok(!render.calls.some(call => call.endpoint === 'hermes-remote-save'))
 })
 
@@ -353,7 +365,7 @@ test('parent navigation releases the completed unsaved SSH test by its own ID', 
   await waitFor(() => render.document.querySelector('[data-status=connected]'), 'completed SSH test')
   flushSync(() => render.root.render(null))
   const released = await waitFor(() => render.calls.find(call => call.endpoint === 'hermes-remote-disconnect'), 'unmounted test lease to close')
-  assert.deepEqual(released.payload, { testsOnly: true, testId: answer.testId })
+  assert.deepEqual(released.payload, { testsOnly: true, requestId: render.calls.find(call => call.endpoint === 'hermes-remote-test').payload.requestId, testId: answer.testId })
   assert.ok(!render.calls.some(call => call.endpoint === 'hermes-remote-disconnect' && call.payload?.testsOnly !== true))
 })
 
@@ -415,8 +427,8 @@ test('navigation aborts a pending wizard test and releases a late test lease wit
   assert.equal(signal.aborted, true)
   const answer = testView()
   pending.resolve(answer)
-  const released = await waitFor(() => render.calls.find(call => call.endpoint === 'hermes-remote-disconnect'), 'late unmounted lease to close')
-  assert.deepEqual(released.payload, { testsOnly: true, testId: answer.testId })
+  const released = await waitFor(() => render.calls.find(call => call.endpoint === 'hermes-remote-disconnect' && call.payload.testId === answer.testId), 'late unmounted lease to close')
+  assert.deepEqual(released.payload, { testsOnly: true, requestId: render.calls.find(call => call.endpoint === 'hermes-remote-test').payload.requestId, testId: answer.testId })
 })
 
 test('Ready navigation does not discard a test already consumed by the saved connection', async t => {
@@ -471,4 +483,59 @@ test('an SSH contract refusal keeps version guidance instead of reporting an SSH
   assert.match(render.document.body.textContent, /Use a supported Hermes version/)
   assert.doesNotMatch(render.document.body.textContent, /Check your SSH details/)
   assert.doesNotMatch(render.document.body.textContent, /unlock it in your SSH agent/)
+})
+
+test('aborting a lost test response still releases the completed SSH lease by its request identity', async t => {
+  const response = deferred(), answer = testView()
+  let hostCompleted = false, activeRequest
+  const render = await startWizard(t, {
+    'hermes-remote-test': payload => { activeRequest = payload.requestId; hostCompleted = true; return response.promise },
+    'hermes-remote-disconnect': payload => { if (payload.requestId === activeRequest) activeRequest = undefined; return sampleView() },
+  }, { abortResponses: true })
+  await render.click('Through SSH'); await render.click('Continue')
+  await render.fill('SSH host or config name', 'example.invalid'); await render.click('Test SSH connection')
+  await waitFor(() => hostCompleted, 'host test completed while response is held')
+  const requestId = render.calls.find(call => call.endpoint === 'hermes-remote-test').payload.requestId
+  flushSync(() => render.root.render(null))
+  const cancellation = await waitFor(() => render.calls.find(call => call.endpoint === 'hermes-remote-disconnect'), 'request-scoped cleanup after response abort')
+  assert.deepEqual(cancellation.payload, { testsOnly: true, requestId })
+  await waitFor(() => activeRequest === undefined, 'the held SSH lease to close')
+  response.resolve(answer)
+  await new Promise(resolve => setImmediate(resolve))
+  assert.ok(!render.calls.some(call => call.endpoint === 'hermes-remote-disconnect' && call.payload.testId === answer.testId), 'AbortError prevents the test ID from ever reaching the UI')
+  assert.ok(!render.calls.some(call => call.endpoint === 'hermes-remote-disconnect' && !call.payload.requestId))
+})
+
+test('delayed cleanup from an aborted wizard cannot cancel a replacement test', async t => {
+  const oldResponse = deferred(), releaseOldCleanup = deferred()
+  let currentRequest, oldRequest, cleanupSettled = false
+  const render = await startWizard(t, {
+    'hermes-remote-test': payload => {
+      currentRequest = payload.requestId
+      if (!oldRequest) { oldRequest = payload.requestId; return oldResponse.promise }
+      return testView()
+    },
+    'hermes-remote-disconnect': async payload => {
+      if (payload.requestId === oldRequest) await releaseOldCleanup.promise
+      // Model the host's ownership check: an unscoped cancel would stop the new test.
+      if (!payload.requestId || payload.requestId === currentRequest) currentRequest = undefined
+      cleanupSettled = true
+      return sampleView()
+    },
+  }, { abortResponses: true })
+  await enterToken(render); await render.click('Test connection')
+  await waitFor(() => oldRequest, 'first test request')
+  render.mount()
+  await waitFor(() => render.document.querySelector('[data-step=connection]:not([data-status=loading])'), 'replacement wizard')
+  await enterToken(render); await render.click('Test connection')
+  await waitFor(() => render.document.querySelector('[data-status=connected]'), 'replacement test result')
+  const replacement = currentRequest
+  assert.notEqual(replacement, oldRequest)
+  releaseOldCleanup.resolve()
+  await waitFor(() => cleanupSettled, 'old scoped cleanup to finish')
+  assert.equal(currentRequest, replacement)
+  const cancellations = render.calls.filter(call => call.endpoint === 'hermes-remote-disconnect')
+  assert.ok(cancellations.length > 0)
+  assert.ok(cancellations.every(call => call.payload.requestId === oldRequest && call.payload.testsOnly === true))
+  oldResponse.resolve(testView())
 })

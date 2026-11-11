@@ -11,5 +11,5 @@ export function HermesMark({ size = 20 }) {
     h('img', { className: 'bt-hermes-mark-dark', src: dark, alt: '' }))
 }
 export const HERMES_MARK_CSS = `
-.bt-hermes-mark{display:inline-flex;flex:none;line-height:0}.bt-hermes-mark img{display:block;width:100%;height:100%;object-fit:contain;border-radius:22%}.bt-hermes-mark .bt-hermes-mark-dark{display:none}body[data-ds-dark-theme] .bt-hermes-mark .bt-hermes-mark-light{display:none}body[data-ds-dark-theme] .bt-hermes-mark .bt-hermes-mark-dark{display:block}
+.bt-hermes-mark{display:inline-flex;flex:none;line-height:0}.bt-hermes-mark img{display:block;width:100%;height:100%;object-fit:contain;border-radius:var(--bt-hermes-mark-radius,22%)}.bt-hermes-mark .bt-hermes-mark-dark{display:none}body[data-ds-dark-theme] .bt-hermes-mark .bt-hermes-mark-light{display:none}body[data-ds-dark-theme] .bt-hermes-mark .bt-hermes-mark-dark{display:block}
 `
