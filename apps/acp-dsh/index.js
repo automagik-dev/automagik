@@ -248,6 +248,9 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       await handshake({ command: node.command, args: [staged.path], env: { ...node.env, ...cliEnvironment(spec, cliDetails.get(id)), ...spec.env(cli) } }, { signal: store.quit?.signal })
     }
   }
+  // The connectors that wait for the account record (see `install`): connector package -> what
+  // the status and a turn say meanwhile. Without it the wait showed as "installing" for good.
+  const recordWaits = new Map()
   const install = (spec) => {
     // A native agent has no connector: its CLI is the ACP server.
     if (isNative(spec)) return Promise.resolve()
@@ -261,8 +264,12 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     // installed says nothing new, so its updates go on.
     if (consents !== undefined && !consents.saved && before === undefined) {
       if (!disposed) warn(ctx, `${spec.adapter} not installed yet: the account record could not be saved`)
+      // Said as a failed install, so the settings page shows why and offers Retry, which comes
+      // back here and tries the record again. Only the write error's code, never a path.
+      recordWaits.set(spec.adapter, { message: `the account record could not be saved (${consents.saveError ?? 'error'})` })
       return Promise.resolve()
     }
+    recordWaits.delete(spec.adapter)
     return store.update(spec.adapter, spec.bin).then(
       // A connector that landed (or moved up) is announced, so the picker lists its model now.
       () => { if (store.binOf(spec.adapter, spec.bin)?.version !== before && agents.has(idOf(spec))) publish() },
@@ -314,8 +321,9 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     spawn: () => {
       const { ready, command, args, env } = launch(spec, cli, id)
       if (!ready) {
-        const failed = store.lastError?.(spec.adapter)
         void install(spec)
+        // Read after the try above: a record that still cannot be saved is this turn's reason.
+        const failed = store.lastError?.(spec.adapter) ?? recordWaits.get(spec.adapter)?.message
         throw new Error(failed
           ? `its ACP adapter (${spec.adapter}) is still being installed; the last install failed: ${failed}`
           : `its ACP adapter (${spec.adapter}) is still being installed; send this again in a minute`)
@@ -488,7 +496,8 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     // A native agent has no connector to install: it is ready as soon as its CLI is found.
     const bin = cli === undefined || native ? undefined : store.binOf(spec.adapter, spec.bin)
     const busy = !native && store.busy?.(spec.adapter) === true
-    const failure = native ? undefined : store.lastFailure?.(spec.adapter)
+    // The installer's own failure first; else a connector that waits for the account record.
+    const failure = native ? undefined : store.lastFailure?.(spec.adapter) ?? recordWaits.get(spec.adapter)
     const connectorState = native ? undefined : store.stateOf?.(spec.adapter)
     // Only a CLI Automagik installs itself has an install to report; any other is found or missing.
     const managed = cliStore !== undefined && spec.cliPackage !== undefined
