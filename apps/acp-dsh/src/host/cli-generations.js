@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto'
 import {
   existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync,
 } from 'node:fs'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { unverifiedLogin } from './login-ownership.js'
 
 export const POINTER_ENV = 'AUTOMAGIK_BOT_CLI_POINTER'
@@ -23,7 +23,13 @@ export function alive(pid) {
 export function generationAt(pointer) {
   let generation
   try { generation = readFileSync(pointer, 'utf8') } catch (error) {
-    if (error.code === 'ENOENT') return 'legacy'
+    if (error.code === 'ENOENT') {
+      const root = dirname(dirname(pointer))
+      const vendor = basename(pointer)
+      if (existsSync(`${pointer}.activated`) || existsSync(join(root, 'homes', vendor))
+        || existsSync(join(root, 'retired', vendor))) throw unverifiedLogin()
+      return 'legacy'
+    }
     throw unverifiedLogin()
   }
   if (!UUID.test(generation)) throw unverifiedLogin()
@@ -120,6 +126,8 @@ export class CliGenerations {
   select(vendor, generation) {
     const pointer = this.pointer(vendor)
     mkdirSync(join(this.root, 'current'), { recursive: true, mode: 0o700 })
+    // An absent selection after activation is damage, never permission to revive legacy.
+    writeFileSync(`${pointer}.activated`, '', { mode: 0o600 })
     const next = `${pointer}.${randomUUID()}`
     writeFileSync(next, generation, { mode: 0o600 })
     renameSync(next, pointer)

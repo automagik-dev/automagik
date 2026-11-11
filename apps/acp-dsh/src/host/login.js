@@ -377,6 +377,7 @@ export class CliLogins {
     }
     owned.done.then(() => { ownership?.clear(); owned.dispose?.() }).catch(() => {})
     flow.process = owned
+    owned.home = env.AUTOMAGIK_BOT_CLI_HOME
     flow.child = owned.child
     this.children ??= new Map()
     if (!this.children.has(flow.id)) this.children.set(flow.id, new Set())
@@ -567,7 +568,18 @@ export class CliLogins {
   }
 
   async drain(id) {
-    await Promise.all([...(this.children?.get(id) ?? [])].map(owned => owned.stop()))
+    await Promise.all([...(this.children?.get(id) ?? [])]
+      .filter(owned => !owned.retired).map(owned => owned.stop()))
+  }
+
+  // Only after Reset published a different physical home: an unproved old controller can
+  // keep trying to stop, but cannot prevent sign-in to the new generation. Its durable record
+  // and old folder remain; done still clears them only after the original full-tree proof.
+  retire(id, home) {
+    if (home === undefined) return
+    for (const owned of this.children?.get(id) ?? []) {
+      if (owned.home === home) owned.retired = true
+    }
   }
 
   // The plugin stops (a DSH restart or an app quit): the CLI cannot outlive it. The busy signal

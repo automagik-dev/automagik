@@ -177,8 +177,14 @@ export class CliHomes {
             alive(Number(name.split('-')[0]))
           ))) continue
           const lock = join(old, 'changing')
-          if (existsSync(lock) && alive(Number(readFileSync(join(lock, 'pid'), 'utf8')))) {
-            continue
+          if (existsSync(lock)) {
+            const pid = Number(readFileSync(join(lock, 'pid'), 'utf8'))
+            const owner = readFileSync(join(lock, 'owner'), 'utf8')
+            if (alive(pid) || !/^\d+-[a-f0-9-]+$/.test(owner)
+              || Number(owner.split('-')[0]) !== pid) continue
+            const claim = join(lock, 'recovering')
+            if (existsSync(claim)
+              && alive(Number(readFileSync(claim, 'utf8').split('-')[0]))) continue
           }
           rmSync(old, { recursive: true, force: true })
           rmSync(join(directory, generation), { force: true })
@@ -218,7 +224,8 @@ export class CliHomes {
         // Pre-ownership versions cannot prove whether they left a detached login behind.
         let owner
         try { owner = readFileSync(join(lock, 'owner'), 'utf8') } catch {}
-        if (!owner || !/^\d+-[a-f0-9-]+$/.test(owner)) throw unverifiedLogin()
+        if (!owner || !/^\d+-[a-f0-9-]+$/.test(owner)
+          || Number(owner.split('-')[0]) !== pid) throw unverifiedLogin()
         // An older version's claimant may itself have died. The installation-level mutex
         // now serializes recovery, including cleanup of that dead claim. Re-read both owners
         // and the tree proof before removing anything; a live/replacement claim stays put.

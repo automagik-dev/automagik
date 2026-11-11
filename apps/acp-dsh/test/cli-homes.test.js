@@ -165,6 +165,38 @@ test('reset keeps captured work invalid even if old generation files change', t 
   assert.notEqual(fresh, old.HOME)
 })
 
+test('collection retains an abandoned legacy change lock with no owner proof', t => {
+  const { homes } = place(t)
+  const old = homes.environment('codex')
+  const pid = Number(spawnSync(process.execPath, ['-p', 'process.pid'], {
+    encoding: 'utf8',
+  }).stdout.trim())
+  const lock = join(old.HOME, 'changing')
+  mkdirSync(lock)
+  writeFileSync(join(lock, 'pid'), String(pid))
+  homes.reset('codex')
+  homes.collect('codex')
+  assert.equal(existsSync(old.HOME), true)
+  assert.equal(readFileSync(join(lock, 'pid'), 'utf8'), String(pid))
+})
+
+test('a missing selection after reset never revives an abandoned home on cold restart', t => {
+  const { homes } = place(t)
+  const legacy = homes.environment('codex').HOME
+  const first = homes.reset('codex')
+  homes.dispose()
+  rmSync(join(homes.root, 'current', 'codex'))
+  const cold = new CliHomes(homes.root)
+  t.after(() => cold.dispose())
+  assert.equal(cold.recovery('codex'), true)
+  assert.throws(() => cold.home('codex'), /previous Bot sign-in stopped/)
+  assert.throws(() => cold.environment('codex'), /previous Bot sign-in stopped/)
+  const second = cold.reset('codex')
+  assert.notEqual(second, first)
+  assert.notEqual(second, legacy)
+  assert.equal(cold.environment('codex').HOME, second)
+})
+
 test('a failed stop can be verified again after its process finally exits', async t => {
   const { homes } = place(t)
   const env = homes.environment('claude')

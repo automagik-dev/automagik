@@ -53,40 +53,47 @@ test('a crash during recovery cannot leave a permanently held recovery claim', t
   homes.end('claude')
 })
 
-test('a late real writer stays in the abandoned generation after owner reset', async t => {
-  const root = mkdtempSync(join(tmpdir(), 'bot-home-generation-'))
-  const homes = new CliHomes(root)
-  const old = homes.environment('codex')
-  // An interrupted launch has no tree identity, so normal recovery deliberately cannot clear it.
-  recordLogin(old)
-  const ready = join(root, 'ready')
-  const child = spawn(process.execPath, ['-e', [
-    "const fs=require('node:fs'),path=require('node:path');",
-    'fs.writeFileSync(process.argv[1],\'ready\');',
-    "setTimeout(()=>fs.writeFileSync(path.join(process.env.CODEX_HOME,'auth.json'),",
-    "'old-invented-credentials'),200);",
-  ].join(''), ready], { env: old, stdio: 'ignore' })
-  const exited = new Promise(resolve => child.once('exit', resolve))
-  t.after(async () => {
-    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+for (const proved of [false, true]) {
+  const proof = proved ? 'recorded group' : 'unproved pending launch'
+  test(`a late real writer stays in its abandoned home (${proof})`, {
+    skip: proved && process.platform === 'win32' && 'Unix group; Windows Job tested separately',
+  }, async t => {
+    const root = mkdtempSync(join(tmpdir(), 'bot-home-generation-'))
+    const homes = new CliHomes(root)
+    const old = homes.environment('codex')
+    // Persist before launch; the unproved case deliberately never gains tree identity.
+    const ownership = recordLogin(old)
+    const ready = join(root, 'ready')
+    const child = spawn(process.execPath, ['-e', [
+      "const fs=require('node:fs'),path=require('node:path');",
+      'fs.writeFileSync(process.argv[1],\'ready\');',
+      "setTimeout(()=>fs.writeFileSync(path.join(process.env.CODEX_HOME,'auth.json'),",
+      "'old-invented-credentials'),200);",
+    ].join(''), ready], { env: old, stdio: 'ignore', detached: proved })
+    if (proved) ownership.update({ kind: 'unix', group: child.pid })
+    const exited = new Promise(resolve => child.once('exit', resolve))
+    t.after(async () => {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+      await exited
+      homes.dispose()
+      rmSync(root, { recursive: true, force: true })
+    })
+    const deadline = Date.now() + 5000
+    while (!existsSync(ready) && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 10))
+    }
+    assert.equal(existsSync(ready), true)
+    homes.reset('codex')
+    const fresh = homes.environment('codex')
+    writeFileSync(join(fresh.CODEX_HOME, 'auth.json'), 'new-invented-credentials')
     await exited
-    homes.dispose()
-    rmSync(root, { recursive: true, force: true })
+    assert.equal(readFileSync(join(old.CODEX_HOME, 'auth.json'), 'utf8'),
+      'old-invented-credentials')
+    assert.equal(readFileSync(join(fresh.CODEX_HOME, 'auth.json'), 'utf8'),
+      'new-invented-credentials')
+    assert.throws(() => trackRun({ spec: { env: old } }), /account changed/)
+    homes.collect('codex')
+    assert.equal(existsSync(old.HOME), !proved,
+      'cleanup removes only a generation with full exit proof; pending evidence is retained')
   })
-  const deadline = Date.now() + 5000
-  while (!existsSync(ready) && Date.now() < deadline) {
-    await new Promise(resolve => setTimeout(resolve, 10))
-  }
-  assert.equal(existsSync(ready), true)
-  homes.reset('codex')
-  const fresh = homes.environment('codex')
-  writeFileSync(join(fresh.CODEX_HOME, 'auth.json'), 'new-invented-credentials')
-  await exited
-  assert.equal(readFileSync(join(old.CODEX_HOME, 'auth.json'), 'utf8'),
-    'old-invented-credentials')
-  assert.equal(readFileSync(join(fresh.CODEX_HOME, 'auth.json'), 'utf8'),
-    'new-invented-credentials')
-  assert.throws(() => trackRun({ spec: { env: old } }), /account changed/)
-  homes.collect('codex')
-  assert.equal(existsSync(old.HOME), true, 'unproved pending ownership was never deleted')
-})
+}

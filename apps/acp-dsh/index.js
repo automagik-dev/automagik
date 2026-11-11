@@ -984,6 +984,7 @@ export function apply(ctx, config = {}, {
       ])
       loginLocks.delete(id)
       reset.complete()
+      logins.retire(id, reset.home)
       consents?.forget(id)
       if (consents?.saveError) {
         throw accountFailure('unavailable', 'Bot sign-in was reset. Retry sign-in in the app.')

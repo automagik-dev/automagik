@@ -1,5 +1,6 @@
 // Fake vendor auth stores and CLI processes only. No real credential is read or copied.
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -14,7 +15,7 @@ import { MODEL_ACCESS_REQUIRED } from '../src/host/names.js'
 const tick = () => new Promise(resolve => setImmediate(resolve))
 const who = email => ({ kind: 'account', id: email, facets: { kind: 'account', email }, email })
 
-function fixture(t) {
+function fixture(t, { cold } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'isolated-accounts-'))
   const terminalHomes = { claude: join(root, 'terminal', '.claude'),
     codex: join(root, 'terminal', '.codex') }
@@ -60,6 +61,8 @@ function fixture(t) {
   let nextAccount = 'personal@example.test'
   let failLogout = false
   let imageCheck = async () => ({ ok: true })
+  let stuckLogin = false
+  const loginChildren = []
   const spawn = (cli, args, options) => {
     calls.push({ kind: 'login', cli, args, ...options })
     const child = new EventEmitter()
@@ -67,7 +70,10 @@ function fixture(t) {
     child.stdout = new PassThrough()
     child.stderr = new PassThrough()
     child.exitCode = child.signalCode = null
+    child.stuck = stuckLogin
+    loginChildren.push(child)
     child.kill = () => {
+      if (child.stuck) return false
       if (child.exitCode === null) {
         child.exitCode = 0
         queueMicrotask(() => child.emit('close', 0))
@@ -95,6 +101,28 @@ function fixture(t) {
     }
     return child
   }
+  if (cold) {
+    const privateRoot = join(root, 'cli-homes')
+    const home = join(privateRoot, 'codex')
+    mkdirSync(home, { recursive: true })
+    if (cold === 'pending' || cold === 'damaged') {
+      mkdirSync(join(home, 'login-trees'))
+      writeFileSync(join(home, 'login-trees', 'interrupted'), cold === 'damaged' ? '{'
+        : JSON.stringify({ kind: 'starting', app: 2, owner: 'previous-app' }))
+    } else if (cold === 'legacy') {
+      const pid = Number(spawnSync(process.execPath, ['-p', 'process.pid'], {
+        encoding: 'utf8',
+      }).stdout.trim())
+      mkdirSync(join(home, 'instances'))
+      writeFileSync(join(home, 'instances', `${pid}-legacy`), '')
+    } else if (cold === 'missing-pointer') {
+      const previous = new CliHomes(privateRoot)
+      previous.environment('codex')
+      previous.reset('codex')
+      previous.dispose()
+      rmSync(join(privateRoot, 'current', 'codex'))
+    }
+  }
   apply(ctx, {}, {
     store: { home: join(root, 'adapters'),
       binOf: () => ({ path: '/fake/adapter', version: '1' }), update: async () => {} },
@@ -114,6 +142,7 @@ function fixture(t) {
     imageSetup: (...args) => imageCheck(...args),
   })
   t.after(async () => {
+    for (const child of loginChildren) { child.stuck = false; child.kill() }
     for (const cleanup of cleanups) cleanup()
     await tick()
     rmSync(root, { recursive: true, force: true })
@@ -128,6 +157,7 @@ function fixture(t) {
   }
   return { service, adapter, auth, calls, events, root, terminal, login,
     next: email => { nextAccount = email }, fail: value => { failLogout = value },
+    stallLogin: value => { stuckLogin = value },
     imageCheck: check => { imageCheck = check } }
 }
 
@@ -168,6 +198,22 @@ for (const id of ['acp-claude', 'acp-codex']) {
     assert.ok(h.calls.filter(call => call.kind === 'logout').every(call =>
       call.cwd === launch.env[HOME_ENV]))
   })
+}
+
+for (const cold of ['pending', 'damaged', 'legacy', 'missing-pointer']) {
+  test(`cold ACP keeps owner recovery available for ${cold} while the other vendor works`,
+    async t => {
+      const h = fixture(t, { cold })
+      assert.equal(h.service.accountRecovery('acp-codex').required, true)
+      assert.equal(h.service.accountRecovery('acp-claude').required, false)
+      assert.equal((await h.service.inspect('acp-claude')).signedIn, false)
+      await h.service.accountReset('acp-codex')
+      assert.equal(h.service.accountRecovery('acp-codex').required, false)
+      await h.login('acp-codex')
+      assert.equal((await h.service.account('acp-codex', { fresh: true })).account.email,
+        'personal@example.test')
+      assert.equal(readFileSync(h.terminal, 'utf8'), 'terminal-work@example.test')
+    })
 }
 
 test('sign-out blocks new work and waits for running work before invoking logout', async t => {
@@ -298,3 +344,25 @@ test('image setup delayed across reset cannot authorize an old or new account', 
   release({ ok: true })
   assert.equal((await access).ready, false)
 })
+
+test('reset can sign in fresh after its old in-memory login cannot prove a stopped tree',
+  { timeout: 15_000 }, async t => {
+    const h = fixture(t)
+    h.stallLogin(true)
+    await h.login('acp-codex')
+    const old = h.adapter.agents.get('acp-codex').spawn().env
+    const interrupted = new CliHomes(join(h.root, 'cli-homes'))
+    recordLogin(interrupted.environment('codex'))
+    interrupted.dispose()
+    h.stallLogin(false)
+    await h.service.accountReset('acp-codex')
+    const fresh = h.adapter.agents.get('acp-codex').spawn().env
+    assert.notEqual(fresh[HOME_ENV], old[HOME_ENV])
+    assert.equal(existsSync(old[HOME_ENV]), true, 'unproved old home is still retained')
+    h.next('fresh-after-failed-drain@example.test')
+    await h.login('acp-codex')
+    h.auth.set(old.CODEX_HOME, 'late-old-login@example.test')
+    assert.equal((await h.service.account('acp-codex', { fresh: true })).account.email,
+      'fresh-after-failed-drain@example.test')
+    assert.equal(h.auth.get(old.CODEX_HOME), 'late-old-login@example.test')
+  })

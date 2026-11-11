@@ -300,6 +300,7 @@ generation. Abandoned folders are removed on later starts only after exit eviden
 unproved folders remain retained. Mutexes and app registrations live outside replaceable homes.
 Launches also check the installation's selected generation, so changing an old folder's local
 version or pause marker cannot revive a captured launch. Bot models and DSH history stay intact.
+Bot CLI user settings start empty; project settings still load from the working folder.
 Account details stay on owner-only routes, never in state, transcripts, model calls or logs.
 
 **Credential-store assumptions and missing live checks.** Claude's documented macOS Keychain

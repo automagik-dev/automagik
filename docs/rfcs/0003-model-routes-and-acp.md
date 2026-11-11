@@ -707,7 +707,8 @@ Pending-before-spawn, damaged and legacy evidence cannot supply that proof. Cold
 show recovery per vendor and offer an explicitly confirmed Reset Bot sign-in. Reset pauses
 admission and stops known work before selecting a fresh empty home generation and forgetting
 old account consent. It requires fresh in-app sign-in, preserves Bot models and history, and
-does not log out or copy the old account. The previous physical folder and its unproved records
+does not log out or copy the old account. Bot CLI user settings also start empty; project
+settings still load from the workspace. The previous physical folder and its unproved records
 remain at their original path: it is never renamed and reused. A surviving vendor process can
 write only to the abandoned generation. Cleanup removes it later only when exit is proven;
 unproved generations stay retained. Both serialization and app registrations sit outside the
