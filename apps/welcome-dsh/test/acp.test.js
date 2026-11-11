@@ -651,3 +651,82 @@ test('the rows read in pt-BR once it is the DSH language', () => {
     off()
   }
 })
+
+// --- The native-ACP agents (acp-dsh #959): Hermes, Antigravity, omp ----------------------------
+
+const NATIVE = {
+  'acp-hermes': { key: 'hermes', name: 'Hermes', cli: 'hermes', hint: 'hermes acp --setup' },
+  'acp-antigravity': { key: 'antigravity', name: 'Antigravity', cli: 'agy', hint: 'agy acp --login' },
+  'acp-omp': { key: 'omp', name: 'omp', cli: 'omp', hint: 'omp login' },
+}
+const nativeAgent = (id, over = {}) => agent(id, {
+  key: NATIVE[id].key,
+  name: NATIVE[id].name,
+  cli: { found: true, installUrl: 'https://example.com/install', signInHint: NATIVE[id].hint, state: 'ready' },
+  connector: { state: 'ready', native: true },
+  ...over,
+})
+
+test('the native agents pass through with their terminal sign-in command, and their switch is their own key', async () => {
+  const acp = fakeAcp([agent('acp-claude'), ...Object.keys(NATIVE).map(id => nativeAgent(id, { on: false, connector: { state: 'off', native: true }, signedIn: undefined }))])
+  const fake = host({ acp, entries: { 'omni-ai': {}, [ACP_ENTRY]: {} } })
+  const { value } = await fake.handle('acp', null)
+  assert.deepEqual(value.agents.map(row => row.id), ['acp-claude', 'acp-hermes', 'acp-antigravity', 'acp-omp'])
+  const hermes = value.agents.find(row => row.id === 'acp-hermes')
+  assert.deepEqual(hermes.connector, { state: 'off', native: true })
+  assert.equal(hermes.cli.signInHint, 'hermes acp --setup')
+  assert.equal(value.agents.find(row => row.id === 'acp-claude').connector.native, undefined)
+  for (const id of Object.keys(NATIVE)) assert.equal((await fake.handle('acp-switch', { id, on: true })).ok, true)
+  assert.deepEqual(fake.updates.map(update => update.patch), [{ hermes: true }, { antigravity: true }, { omp: true }])
+  // Only a plain command line is shown as the sign-in command.
+  for (const bad of ['hermes acp --setup; rm -rf x', 'Run `x`', '$(x)', 'a'.repeat(200), 7]) {
+    assert.equal(agentView(nativeAgent('acp-hermes', { cli: { found: true, signInHint: bad } })).cli.signInHint, undefined)
+  }
+})
+
+test('a native agent that is not installed is shown with its install page, not hidden', () => {
+  const acp = acpOf([])
+  const tree = rowOf(nativeAgent('acp-antigravity', { cli: { found: false, installUrl: 'https://antigravity.google/docs', signInHint: 'agy acp --login', state: 'missing' }, connector: { state: 'no-cli', native: true }, signedIn: undefined }), acp)
+  assert.equal(tree.props['data-state'], 'no-cli')
+  assert.match(textOf(tree), /Not installed/)
+  assert.match(textOf(tree), /The agy CLI is not on this computer/)
+  const [link] = findAll(tree, node => node.type === 'a')
+  assert.equal(link.props.href, 'https://antigravity.google/docs')
+  assert.equal(textOf(link), 'Install Antigravity')
+  assert.doesNotMatch(textOf(tree), /Installing/)
+})
+
+test('a native agent that is off says what turning it on means, and asks for no sign-in check', () => {
+  const tree = rowOf(nativeAgent('acp-hermes', { on: false, connector: { state: 'off', native: true }, signedIn: undefined }))
+  assert.equal(tree.props['data-state'], 'off')
+  assert.match(textOf(tree), /Off\. Turn it on to use Hermes as a model in DSH\./)
+  assert.match(textOf(tree), /Turning it on lets Automagik use the sign-in Hermes already has on this computer\./)
+  assert.doesNotMatch(textOf(tree), /has not been checked yet/)
+  assert.deepEqual(buttons(tree, 'Check again'), [])
+  // Claude Code keeps its own off row: no such line.
+  assert.doesNotMatch(textOf(rowOf(agent('acp-claude', { on: false, connector: { state: 'off' } }))), /Turning it on lets Automagik/)
+})
+
+test('a signed-out native agent names its terminal command, with no sign-in in a Bot\'s chat', () => {
+  const acp = acpOf([])
+  const tree = rowOf(nativeAgent('acp-omp', { signedIn: false }), acp)
+  assert.equal(tree.props['data-state'], 'login-required')
+  assert.match(textOf(tree), /Not signed in to omp\. Run omp login in a terminal, then check again\./)
+  assert.deepEqual(buttons(tree, 'Sign in'), [])
+  assert.doesNotMatch(textOf(tree), /Bot's chat/)
+  buttons(tree, 'Check again')[0].props.onClick()
+  assert.deepEqual(acp.acted, [['check', 'acp-omp']])
+  // The chat's sign-in bridge is never opened for one.
+  let opened = 0
+  assert.equal(ui.openChatLogin('acp-omp', { [ui.CHAT_LOGIN]: { open: () => { opened++; return true } } }), false)
+  assert.equal(opened, 0)
+})
+
+test('a ready native agent shows no connector line: its CLI is the ACP server', () => {
+  const tree = rowOf(nativeAgent('acp-hermes'))
+  assert.equal(tree.props['data-state'], 'ready')
+  assert.match(textOf(tree), /Signed in to Hermes\./)
+  assert.match(textOf(tree), /Ready: pick Hermes in the model picker\./)
+  assert.doesNotMatch(textOf(tree), /Connector/)
+  assert.match(textOf(tree), /Your own hermes CLI, as a model in DSH/)
+})

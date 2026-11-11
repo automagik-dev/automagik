@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | In delivery (deliveries 1-4, 6 and 7: #187, #189, #537, #557, #558, #559, #563, #569, #585, #594; 5 (Gemini) open; amended 2026-11-06, 2026-11-08 and 2026-11-09) |
+| Status | In delivery (deliveries 1-4, 6 and 7: #187, #189, #537, #557, #558, #559, #563, #569, #585, #594; 5 (Gemini) open; amended 2026-11-06, 2026-11-08, 2026-11-09 and 2026-11-10) |
 | Milestone | 2. One message box (route descriptor); 3. Other agents in the same chat (ACP) |
 | Lanes | plugin (3.N.P), desktop (3.N) |
 | Created | 2026-10-30 |
@@ -219,7 +219,11 @@ means the per-agent default (Contracts).
   review of ours. A bad or hijacked publish runs as the person, with what the agent CLI can
   already reach (their files, their sign-ins). What still holds: the exact package names, npm's
   integrity check of every tarball, no install scripts, no optional dependencies, nothing fetched
-  at spawn, and an install that fails leaves the previous adapter in place. The exact names cover
+  at spawn, and an install that fails leaves the previous adapter in place. Since #958 the same
+  holds for a release that installs and then does not start: it is asked `initialize` before it
+  replaces the one in use and is kept out for three days when it fails, and one that fails its
+  first session start goes back to the release before it (`apps/acp-dsh/src/host/install.js`).
+  That covers a release that cannot start, not one that starts and misbehaves. The exact names cover
   only the two adapters: their dependency tree (the agent SDKs, JSON-RPC and process helpers) is
   resolved fresh at each install, with no lockfile. Also new: the adapter
   carries its own copy of the agent's SDK (`claude-agent-acp` pins `@anthropic-ai/claude-agent-sdk`)
@@ -605,6 +609,38 @@ the next check or the existing `retry(id)` service. Shutdown cancels incomplete 
 
 This amends D17's desktop CLI ownership only. Adapter installation, authentication, model
 selection, the conversation UI and the existing model-enable switches keep their own contracts.
+
+## Amendment: native-ACP agents (2026-11-10)
+
+Owner ask (#959): offer the agents that speak ACP themselves beside Claude Code and Codex.
+Hermes (`hermes acp`), Antigravity (`agy acp`) and omp (`omp acp`) each answer ACP `initialize`
+and `session/new` from their own CLI, so the agent table takes a second kind of row: a CLI and
+its ACP arguments instead of an adapter package (`acp-hermes`, `acp-antigravity`, `acp-omp`).
+This amends "The person's own CLI, the newest adapter" for these rows only.
+
+- **Nothing is installed.** No adapter, and the CLI is never one of the required desktop CLIs:
+  an agent whose CLI is missing is listed with its install page, not hidden.
+- **Off by default; the switch is the person's word.** Each has its own live setting
+  (`hermes`, `antigravity`, `omp`), default off. Their sign-in is the CLI's own, shared with the
+  person's terminal, and no command of theirs names one account, so the per-account record of
+  #869 cannot cover them: turning the agent on is the consent. Claude Code and Codex keep
+  their record and confirm step unchanged.
+- **Sign-in is the agent's own answer.** There is no sign-in from a Bot's chat for them; the
+  person signs in in a terminal with the agent's own command, which a signed-out turn and the
+  settings row name. Signed in means the agent's ACP session opened; ACP's `auth_required`
+  means signed out. That is read with the model list (when the CLI changes, daily, and on the
+  person's "check again" while not signed in), never by a check of its own, because these
+  agents keep every session they open in their history.
+- **Models from the agent's session.** Config options when it offers them (Antigravity), else
+  the session's own model list and `session/set_model` (Hermes), else one `default` model (omp).
+- **The level.** Each is put in its `default` mode, the one that asks, and DSH's approval
+  answers under the Session's level. The agent's own permission settings still decide what it
+  asks about. A row with no known mode says once in the chat that the level is not applied.
+- **No DSH tool bridge yet.** `dshTools` does not reach a native row, even set to `true`, until
+  that agent's tool naming over ACP is proven as Claude Code's was in delivery 6.
+
+Open, tracked on #958: the sequence fuzz test and the daily handshake run should cover these
+three CLIs before their switches default to on.
 
 ## Tracking
 

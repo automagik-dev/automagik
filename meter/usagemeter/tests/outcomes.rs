@@ -110,6 +110,28 @@ fn claude_result(
     .to_string()
 }
 
+/// A Claude Code model-call failure line, written after Claude Code's own retries.
+fn claude_api_error(
+    session: &str,
+    cwd: &str,
+    branch: &str,
+    ts: &str,
+    uuid: &str,
+    flag: Value,
+) -> String {
+    json!({
+        "type": "assistant", "uuid": uuid, "timestamp": ts,
+        "sessionId": session, "cwd": cwd, "gitBranch": branch,
+        "isApiErrorMessage": flag, "apiErrorStatus": 429, "error": "rate_limit",
+        "message": {
+            "id": format!("msg_api_{uuid}"), "model": "<synthetic>", "role": "assistant",
+            "content": [{"type": "text", "text": "FAKE-API-ERROR-TEXT Rate limit reached"}],
+            "usage": {"input_tokens": 0, "output_tokens": 0}
+        }
+    })
+    .to_string()
+}
+
 fn write_claude(s: &Scene, file: &str, lines: &[String]) {
     common::write_lines(&s.env.claude(&format!("-work-widgets/{file}.jsonl")), lines);
 }
@@ -343,6 +365,9 @@ fn fleet() -> (Scene, Vec<TerminalEnd>) {
     let dev = |ts: &str, id: &str, failed: bool| {
         claude_result("sess-dev", &gh1, "feat/gh-1", ts, id, failed)
     };
+    let dev_api = |ts: &str, uuid: &str, flag: Value| {
+        claude_api_error("sess-dev", &gh1, "feat/gh-1", ts, uuid, flag)
+    };
     write_claude(
         &s,
         "sess-dev",
@@ -353,13 +378,28 @@ fn fleet() -> (Scene, Vec<TerminalEnd>) {
             // The same result written twice, and one that did not fail.
             dev("2026-11-08T10:12:00Z", "tu-2", true),
             dev("2026-11-08T10:13:00Z", "tu-3", false),
+            // A failed model call, repeated once, plus negative controls (false, string, user).
+            dev_api("2026-11-08T10:14:00Z", "uuid-api-1", json!(true)),
+            dev_api("2026-11-08T10:14:00Z", "uuid-api-1", json!(true)),
+            dev_api("2026-11-08T10:15:00Z", "uuid-api-2", json!(false)),
+            dev_api("2026-11-08T10:16:00Z", "uuid-api-3", json!("true")),
+            json!({
+                "type": "user", "uuid": "uuid-api-4", "timestamp": "2026-11-08T10:17:00Z",
+                "sessionId": "sess-dev", "cwd": gh1, "gitBranch": "feat/gh-1",
+                "isApiErrorMessage": true,
+                "message": {"role": "user", "content": "prompt quoting \"isApiErrorMessage\": true"}
+            })
+            .to_string(),
         ],
     );
     // A copy of a counted line in another file (a resumed session): the same failure.
     write_claude(
         &s,
         "sess-dev-resumed",
-        &[dev("2026-11-08T10:11:00Z", "tu-1", true)],
+        &[
+            dev("2026-11-08T10:11:00Z", "tu-1", true),
+            dev_api("2026-11-08T10:14:00Z", "uuid-api-1", json!(true)),
+        ],
     );
     write_claude(
         &s,
@@ -379,6 +419,14 @@ fn fleet() -> (Scene, Vec<TerminalEnd>) {
                 "2026-11-04T10:01:00Z",
                 "tu-9",
                 true,
+            ),
+            claude_api_error(
+                "sess-none",
+                "/work/elsewhere",
+                "main",
+                "2026-11-04T10:02:00Z",
+                "uuid-api-9",
+                json!(true),
             ),
         ],
     );
@@ -478,6 +526,10 @@ fn failures_are_counted_per_window_bot_and_role_with_their_source() {
         json!({"state": "full", "source": "harness_log", "count": 4})
     );
     assert_eq!(
+        d1["errors"]["api_error"],
+        json!({"state": "full", "source": "harness_log", "count": 1})
+    );
+    assert_eq!(
         d1["errors"]["run_failed"],
         json!({"state": "full", "source": "hc_snapshot", "count": 1})
     );
@@ -487,6 +539,12 @@ fn failures_are_counted_per_window_bot_and_role_with_their_source() {
         json!({"bot": "b-dev", "kind": "worker", "role": "dev", "squad": SQUAD,
                "harness": "claude-code", "error_kind": "tool_error", "source": "harness_log",
                "count": 2})
+    );
+    assert_eq!(
+        *row(d1, "b-dev", "api_error"),
+        json!({"bot": "b-dev", "kind": "worker", "role": "dev", "squad": SQUAD,
+               "harness": "claude-code", "error_kind": "api_error", "source": "harness_log",
+               "count": 1})
     );
     // Codex: a failed item with an exit status counts once, a failed one without counts, a
     // completed one does not.
@@ -502,7 +560,7 @@ fn failures_are_counted_per_window_bot_and_role_with_their_source() {
                "harness": "claude-code", "error_kind": "run_failed", "source": "hc_snapshot",
                "count": 1})
     );
-    assert_eq!(d1["errors"]["rows"].as_array().unwrap().len(), 3, "{d1}");
+    assert_eq!(d1["errors"]["rows"].as_array().unwrap().len(), 4, "{d1}");
     assert_eq!(d1["errors"]["unattributed"], json!([]));
     // A killed terminal and one stopped for a restart are ends, never errors.
     assert_eq!(
@@ -511,10 +569,11 @@ fn failures_are_counted_per_window_bot_and_role_with_their_source() {
                "unknown": 0})
     );
 
-    // The week adds the unlinked session's failure, by reason, and the omp worker's failed run
+    // The week adds the unlinked session's failures, by reason, and the omp worker's failed run
     // from its end row.
     let d7 = window(&v, "d7");
     assert_eq!(d7["errors"]["tool_error"]["count"], 5);
+    assert_eq!(d7["errors"]["api_error"]["count"], 2);
     // One failed run from hc's list, one from an end row: the total names both sources.
     assert_eq!(
         d7["errors"]["run_failed"],
@@ -522,8 +581,12 @@ fn failures_are_counted_per_window_bot_and_role_with_their_source() {
     );
     assert_eq!(
         d7["errors"]["unattributed"],
-        json!([{"state": "unlinked", "reason": "no_record", "harness": "claude-code",
-                "error_kind": "tool_error", "source": "harness_log", "count": 1}])
+        json!([
+            {"state": "unlinked", "reason": "no_record", "harness": "claude-code",
+             "error_kind": "api_error", "source": "harness_log", "count": 1},
+            {"state": "unlinked", "reason": "no_record", "harness": "claude-code",
+             "error_kind": "tool_error", "source": "harness_log", "count": 1}
+        ])
     );
     assert_eq!(
         *row(d7, "b-omp", "run_failed"),
@@ -532,6 +595,7 @@ fn failures_are_counted_per_window_bot_and_role_with_their_source() {
     );
     assert_eq!(d7["run_ends"]["failed"], 2);
     assert_eq!(window(&v, "d30")["errors"]["tool_error"]["count"], 5);
+    assert_eq!(window(&v, "d30")["errors"]["api_error"]["count"], 2);
 }
 
 #[test]
@@ -539,21 +603,37 @@ fn a_harness_with_no_pinned_marker_is_unsupported_never_zero() {
     let (s, _) = fleet();
     let v = report(&s, &["--window", "d7"]);
     let unsupported = json!(["agy", "dsh-tui", "omp"]);
+    let api_unsupported = json!(["agy", "codex", "dsh-tui", "omp"]);
     assert_eq!(
         v["error_kinds"]["tool_error"]["unsupported_harnesses"],
         unsupported
     );
+    assert_eq!(
+        v["error_kinds"]["api_error"]["unsupported_harnesses"],
+        api_unsupported
+    );
     let d7 = window(&v, "d7");
     assert_eq!(d7["errors"]["unsupported_harnesses"], unsupported);
-    // The omp worker ran in the window, and no row gives it a tool_error count of any size.
-    assert!(
-        d7["errors"]["rows"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|r| !(r["harness"] == "omp" && r["error_kind"] == "tool_error")),
-        "{d7}"
+    assert_eq!(
+        d7["errors"]["api_error_unsupported_harnesses"],
+        api_unsupported
     );
+    // The omp worker and the Codex fixer ran in the window: neither gets an unsupported count of
+    // any size.
+    for (harness, kind) in [
+        ("omp", "tool_error"),
+        ("omp", "api_error"),
+        ("codex", "api_error"),
+    ] {
+        assert!(
+            d7["errors"]["rows"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|r| !(r["harness"] == harness && r["error_kind"] == kind)),
+            "{d7}"
+        );
+    }
     let markers = v["error_kinds"]["tool_error"]["markers"]
         .as_object()
         .unwrap();
@@ -562,9 +642,21 @@ fn a_harness_with_no_pinned_marker_is_unsupported_never_zero() {
         ["claude-code", "codex"],
         "one rule per pinned harness"
     );
+    let api_markers = v["error_kinds"]["api_error"]["markers"]
+        .as_object()
+        .unwrap();
+    assert_eq!(
+        api_markers.keys().collect::<Vec<_>>(),
+        ["claude-code"],
+        "only Claude Code has a pinned api_error marker"
+    );
     let t = text(&s, &["--window", "d7"]);
     assert!(
         t.contains("unsupported (no pinned marker; unknown, never 0): agy, dsh-tui, omp"),
+        "{t}"
+    );
+    assert!(
+        t.contains("unsupported (no pinned marker; unknown, never 0): agy, codex, dsh-tui, omp"),
         "{t}"
     );
 }
@@ -580,10 +672,21 @@ fn the_count_is_named_as_a_fact_and_carries_no_rate_or_label() {
         "{note}"
     );
     assert!(note.contains("a grep with no match"), "{note}");
+    assert!(note.contains("usage-limit stops"), "{note}");
+    assert!(
+        note.contains("model calls that failed for the session, not each retried attempt"),
+        "{note}"
+    );
     assert!(note.contains("not a quality verdict"), "{note}");
     assert_eq!(
         v["error_kinds"]["tool_error"]["rule"],
         "harness-flagged failures, including expected ones"
+    );
+    assert_eq!(
+        v["error_kinds"]["api_error"]["rule"],
+        "harness-flagged model-call failures after the harness's own retries \
+         (model calls that failed for the session, not each retried attempt, including \
+         usage-limit stops; not a quality verdict on their own)"
     );
     let t = text(&s, &[]);
     assert!(t.contains(note), "{t}");
@@ -629,6 +732,15 @@ fn a_failure_follows_its_session_when_a_later_record_links_it() {
                 "tu-1",
                 true,
             ),
+            // Same raw id string as the tool_result above: kind-prefixed idents never collide.
+            claude_api_error(
+                "sess-late",
+                cwd,
+                "main",
+                "2026-11-08T10:02:00Z",
+                "tu-1",
+                json!(true),
+            ),
         ],
     );
     s.sync();
@@ -669,6 +781,11 @@ fn a_failure_follows_its_session_when_a_later_record_links_it() {
     let r = row(d1, "b-seat", "tool_error");
     assert_eq!(
         (&r["kind"], &r["role"], &r["count"]),
+        (&json!("seat"), &json!("lead"), &json!(1))
+    );
+    let r_api = row(d1, "b-seat", "api_error");
+    assert_eq!(
+        (&r_api["kind"], &r_api["role"], &r_api["count"]),
         (&json!("seat"), &json!("lead"), &json!(1))
     );
 }
@@ -790,8 +907,10 @@ fn a_repo_filter_keeps_only_that_repo() {
     // Nothing of that repo ran: no count is a 0.
     assert_eq!(d7["state"], "no_data", "{d7}");
     assert_eq!(d7["errors"]["tool_error"]["count"], Value::Null);
+    assert_eq!(d7["errors"]["api_error"]["count"], Value::Null);
     let v = report(&s, &["--window", "d7", "--repo", REPO]);
     assert_eq!(window(&v, "d7")["errors"]["tool_error"]["count"], 5);
+    assert_eq!(window(&v, "d7")["errors"]["api_error"]["count"], 2);
 }
 
 #[test]
@@ -891,6 +1010,8 @@ fn a_window_with_no_data_is_no_data_with_null_counts_and_percentiles() {
         assert_eq!(w["state"], "no_data", "{w}");
         assert_eq!(w["errors"]["tool_error"]["state"], "no_data");
         assert_eq!(w["errors"]["tool_error"]["count"], Value::Null);
+        assert_eq!(w["errors"]["api_error"]["state"], "no_data");
+        assert_eq!(w["errors"]["api_error"]["count"], Value::Null);
         assert_eq!(w["errors"]["run_failed"]["count"], Value::Null);
         assert_eq!(w["run_ends"], Value::Null);
         let t = &w["time_to_pr"];
@@ -918,6 +1039,7 @@ fn a_window_with_no_data_is_no_data_with_null_counts_and_percentiles() {
         t.contains("tool_error (harness_log): null [no_data]"),
         "{t}"
     );
+    assert!(t.contains("api_error (harness_log): null [no_data]"), "{t}");
     assert!(
         t.contains("run_failed (hc_snapshot): null [no_data]"),
         "{t}"
@@ -933,8 +1055,9 @@ fn a_store_no_sync_has_prepared_is_not_recorded_and_stays_untouched() {
         st.conn
             .execute_batch(
                 "DROP TABLE ev_error; DROP TABLE pr;
-                 DELETE FROM meta WHERE k IN ('errors_from_ms', 'errors_through_ms', 'errors_files');
-                 PRAGMA wal_checkpoint(TRUNCATE);",
+         DELETE FROM meta WHERE k IN ('errors_from_ms', 'errors_through_ms', 'errors_files',
+           'api_errors_from_ms', 'api_errors_through_ms', 'api_errors_files');
+         PRAGMA wal_checkpoint(TRUNCATE);",
             )
             .unwrap();
     }
@@ -942,10 +1065,15 @@ fn a_store_no_sync_has_prepared_is_not_recorded_and_stays_untouched() {
     let v = report(&s, &[]);
     assert_eq!(v["recorded"], false);
     assert_eq!(v["errors_from"], Value::Null);
+    assert_eq!(v["api_errors_from"], Value::Null);
     for w in v["windows"].as_array().unwrap() {
         assert_eq!(w["state"], "not_recorded", "{w}");
         assert_eq!(
             w["errors"]["tool_error"],
+            json!({"state": "not_recorded", "source": "harness_log", "count": null})
+        );
+        assert_eq!(
+            w["errors"]["api_error"],
             json!({"state": "not_recorded", "source": "harness_log", "count": null})
         );
         assert_eq!(w["errors"]["run_failed"]["count"], Value::Null);
@@ -997,19 +1125,98 @@ fn failures_start_at_errors_from_on_a_store_that_had_read_logs() {
         st.conn
             .execute_batch(
                 "DROP TABLE ev_error; DROP TABLE pr;
-                 DELETE FROM meta WHERE k IN ('errors_from_ms', 'errors_through_ms', 'errors_files');",
+         DELETE FROM meta WHERE k IN ('errors_from_ms', 'errors_through_ms', 'errors_files',
+           'api_errors_from_ms', 'api_errors_through_ms', 'api_errors_files');",
             )
             .unwrap();
     }
     s.sync_at("2026-11-08T19:55:00Z", 60, None);
     let v = report(&s, &["--window", "d1"]);
     assert_eq!(v["errors_from"], "2026-11-08T19:55:00Z");
+    assert_eq!(v["api_errors_from"], "2026-11-08T19:55:00Z");
     let d1 = window(&v, "d1");
     // The failure before it was never recorded: the window is partial, its count a lower bound.
     assert_eq!(d1["state"], "partial");
     assert_eq!(
         d1["errors"]["tool_error"],
         json!({"state": "partial", "source": "harness_log", "count": 0})
+    );
+    assert_eq!(
+        d1["errors"]["api_error"],
+        json!({"state": "partial", "source": "harness_log", "count": 0})
+    );
+}
+
+#[test]
+fn an_upgrade_from_issue_899_keeps_tool_error_full_and_marks_api_error_not_recorded_then_partial() {
+    let (s, ends) = fleet();
+    // Strip the issue-1026 meta stamps: even if an api_error row is in ev_error, a report with
+    // no api_errors_from_ms reads none of it and reports not_recorded (null, never 0).
+    {
+        let st = s.store();
+        st.conn
+            .execute_batch(
+                "DELETE FROM meta WHERE k IN ('api_errors_from_ms', 'api_errors_through_ms',
+                   'api_errors_files');",
+            )
+            .unwrap();
+    }
+    // Before sync: tool_error is full, api_error is not_recorded (null, never 0, and no row).
+    let before = report(&s, &["--window", "d1"]);
+    assert_eq!(before["errors_from"], scenes::COUNTED_FROM);
+    assert_eq!(before["api_errors_from"], Value::Null);
+    let d1 = window(&before, "d1");
+    assert_eq!(d1["state"], "partial");
+    assert_eq!(
+        d1["errors"]["tool_error"],
+        json!({"state": "full", "source": "harness_log", "count": 4})
+    );
+    assert_eq!(
+        d1["errors"]["api_error"],
+        json!({"state": "not_recorded", "source": "harness_log", "count": null})
+    );
+    assert!(
+        d1["errors"]["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| r["error_kind"] != "api_error"),
+        "{d1}"
+    );
+    s.store()
+        .conn
+        .execute("DELETE FROM ev_error WHERE kind = 'api_error'", [])
+        .unwrap();
+
+    // After sync on the already-read logs: tool_error stays full, api_error starts now (partial).
+    let gh1 = wt("gh-1");
+    let log = s.env.claude("-work-widgets/sess-dev.jsonl");
+    let fresh = claude_api_error(
+        "sess-dev",
+        &gh1,
+        "feat/gh-1",
+        "2026-11-08T19:54:00Z",
+        "uuid-api-after",
+        json!(true),
+    );
+    common::append(&log, &format!("{fresh}\n"));
+    let mut o = s.env.opts();
+    o.now_ms = t("2026-11-08T19:55:00Z");
+    o.days = Some(60);
+    o.ends = Some(ends);
+    s.env.run(&o);
+    let after = report(&s, &["--window", "d1"]);
+    assert_eq!(after["errors_from"], scenes::COUNTED_FROM);
+    assert_eq!(after["api_errors_from"], "2026-11-08T19:55:00Z");
+    let d1 = window(&after, "d1");
+    assert_eq!(d1["state"], "partial");
+    assert_eq!(
+        d1["errors"]["tool_error"],
+        json!({"state": "full", "source": "harness_log", "count": 4})
+    );
+    assert_eq!(
+        d1["errors"]["api_error"],
+        json!({"state": "partial", "source": "harness_log", "count": 1})
     );
 }
 
@@ -1058,6 +1265,7 @@ fn a_sync_by_an_older_meter_moves_errors_from_and_the_window_is_partial() {
     s.env.run(&o);
     let v = report(&s, &["--window", "d1"]);
     assert_eq!(v["errors_from"], "2026-11-08T19:56:00Z");
+    assert_eq!(v["api_errors_from"], "2026-11-08T19:56:00Z");
     let d1 = window(&v, "d1");
     assert_eq!(d1["state"], "partial", "{d1}");
     // What was recorded before the gap still counts, as a lower bound: never a full count.
@@ -1065,8 +1273,13 @@ fn a_sync_by_an_older_meter_moves_errors_from_and_the_window_is_partial() {
         d1["errors"]["tool_error"],
         json!({"state": "partial", "source": "harness_log", "count": 4})
     );
+    assert_eq!(
+        d1["errors"]["api_error"],
+        json!({"state": "partial", "source": "harness_log", "count": 1})
+    );
     let t = text(&s, &["--window", "d1"]);
     assert!(t.contains("tool_error (harness_log): 4 [partial]"), "{t}");
+    assert!(t.contains("api_error (harness_log): 1 [partial]"), "{t}");
 }
 
 /// What the reset of a meter from before issue 899 does to a store, statement for statement
@@ -1171,6 +1384,14 @@ fn a_reset_by_an_older_meter_never_leaves_a_failure_under_another_bot() {
                 "2026-11-08T10:12:00Z",
                 "tu-2",
             ),
+            claude_api_error(
+                "sess-dev",
+                &gh1,
+                "feat/gh-1",
+                "2026-11-08T10:13:00Z",
+                "uuid-dev-1",
+                json!(true),
+            ),
         ],
     );
     write_claude(
@@ -1185,6 +1406,14 @@ fn a_reset_by_an_older_meter_never_leaves_a_failure_under_another_bot() {
                 "2026-11-08T10:21:00Z",
                 "tu-9",
             ),
+            claude_api_error(
+                "sess-gone",
+                &gh2,
+                "feat/gh-2",
+                "2026-11-08T10:22:00Z",
+                "uuid-gone-1",
+                json!(true),
+            ),
         ],
     );
     s.sync();
@@ -1198,7 +1427,7 @@ fn a_reset_by_an_older_meter_never_leaves_a_failure_under_another_bot() {
     // is gone by then, and a bot that never failed has started: its log is read first, so it and
     // its branch take the ids the reset freed.
     reset_by_an_older_meter(&s, "2026-08-26T00:00:00Z");
-    assert_eq!(stored_failures(&s), [(None, 3)], "that meter leaves them");
+    assert_eq!(stored_failures(&s), [(None, 5)], "that meter leaves them");
     fs::remove_file(s.env.claude("-work-widgets/sess-gone.jsonl")).unwrap();
     s.start(start(
         "t7713",
@@ -1226,9 +1455,14 @@ fn a_reset_by_an_older_meter_never_leaves_a_failure_under_another_bot() {
     // and never a 0.
     let v = report(&s, &["--window", "d1"]);
     assert_eq!(v["errors_from"], Value::Null);
+    assert_eq!(v["api_errors_from"], Value::Null);
     let d1 = window(&v, "d1");
     assert_eq!(
         d1["errors"]["tool_error"],
+        json!({"state": "not_recorded", "source": "harness_log", "count": null})
+    );
+    assert_eq!(
+        d1["errors"]["api_error"],
         json!({"state": "not_recorded", "source": "harness_log", "count": null})
     );
     assert_eq!(tool_failures(d1), []);
@@ -1237,13 +1471,18 @@ fn a_reset_by_an_older_meter_never_leaves_a_failure_under_another_bot() {
     s.sync_with(|o| o.now_ms = t("2026-11-08T19:56:00Z"));
     let v = report(&s, &["--window", "d1"]);
     assert_eq!(v["errors_from"], "2026-11-08T19:56:00Z");
+    assert_eq!(v["api_errors_from"], "2026-11-08T19:56:00Z");
     // Only what the logs still hold is there, read again: the lost session's failure is gone,
     // and nothing sits under the bot that took the freed ids.
-    assert_eq!(stored_failures(&s), [(Some("b-dev".to_owned()), 2)]);
+    assert_eq!(stored_failures(&s), [(Some("b-dev".to_owned()), 3)]);
     let d1 = window(&v, "d1");
     assert_eq!(
         d1["errors"]["tool_error"],
         json!({"state": "partial", "source": "harness_log", "count": 2})
+    );
+    assert_eq!(
+        d1["errors"]["api_error"],
+        json!({"state": "partial", "source": "harness_log", "count": 1})
     );
     assert_eq!(tool_failures(d1), [("b-dev".to_owned(), 2)]);
 
@@ -1251,6 +1490,7 @@ fn a_reset_by_an_older_meter_never_leaves_a_failure_under_another_bot() {
     s.sync_with(|o| o.now_ms = t("2026-11-08T19:58:00Z"));
     let v = report(&s, &["--window", "d1"]);
     assert_eq!(v["errors_from"], "2026-11-08T19:56:00Z");
+    assert_eq!(v["api_errors_from"], "2026-11-08T19:56:00Z");
     assert_eq!(tool_failures(window(&v, "d1")), [("b-dev".to_owned(), 2)]);
 }
 
@@ -1334,12 +1574,17 @@ fn nothing_private_reaches_the_json_or_the_text() {
             ("a terminal", "t771"),
             ("a tool-use id", "tu-"),
             ("an item id", "item-"),
+            ("an api-error uuid", "uuid-api-"),
             ("a folder", "/work"),
             ("a folder", ".worktrees"),
             ("a home", "/home/"),
             ("a tool name", "FAKE-TOOL-NAME"),
             ("a tool's arguments", "FAKE-COMMAND"),
             ("an error text", "FAKE-ERROR-TEXT"),
+            ("an api-error text", "FAKE-API-ERROR-TEXT"),
+            ("an api-error status", "429"),
+            ("an api-error code", "rate_limit"),
+            ("a user prompt", "prompt quoting"),
             ("a pull request's title", "FAKE-PR-TITLE"),
             ("a pull request's author", "fake-author"),
             ("a pull request's address", "/pull/"),
@@ -1450,6 +1695,9 @@ fn the_help_names_the_verb_and_what_its_counts_are() {
         "not a quality verdict on their own",
         "a tool_result block with is_error: true, once per tool_use_id",
         "an item_completed event whose item has status failed or a non-zero",
+        "api_error (harness_log)",
+        "isApiErrorMessage: true, once per line uuid",
+        "usage-limit stops",
         "listed as unsupported, never counted as 0",
         "run_failed (hc_snapshot, workers_ledger)",
         "workers_ledger when an end row of Herdr's",

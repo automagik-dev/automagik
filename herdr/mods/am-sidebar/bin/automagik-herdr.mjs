@@ -34,6 +34,7 @@ import { AG_MODELS_TIMEOUT_MS, agModelsSpawnResult, refreshAgModelsSync } from "
 import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, WORKTREES_EXCLUDE,
   GUARD_DIR, KILL_GUARD_DIR, KILL_GUARD_NAME, SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, guardPathWith,
   LEDGER_MODE, endRow, finishedEnds, launchKey, ledgerLine, ledgerPath, optionLike, paneArgs, readLedger, reapCandidates, reapPath, reapRow,
+  prAskDue, prBranchKey, prBranches, prChecksPath, prChecksText, prLikely, prRowsFor, readPrChecks,
   sessionRow, stableGuardDir, stableKillDir, stableRootOf,
   parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
   taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, templateAgent, workerArgs, workerBranch, workerKillRefusal, workerPlan, workerRole, worktreeFolder,
@@ -1036,10 +1037,10 @@ function describe(project, bot, view, hcError, projects = null) {
   const seatAgy = bot.agent === "antigravity"
     ? agyPermissionPlan({ bot, scope: "seat", folder: project.key, realpath: realDir, homeDir: home() }) : null;
   const workerAgent = !worker ? resolveAgent(bot.agent) : worker.template ? null : resolveAgent(worker.agent ?? bot.agent);
-  // #884 M1: a review worker is read-only and is never auto-trusted, so its trusted folder is
-  // named as empty; a writer role's worktree is only known at launch, so its plan names it as such.
+  // #884 M1/#1046: a review worker is read-only, but it is trusted for its own worktree like any
+  // writer; the worktree is only known at launch, so its plan names it as such.
   const workerRoleOf = workerRole(bot).role;
-  const workerTrusted = workerRoleOf === "review" ? [] : ["<worktree>"];
+  const workerTrusted = ["<worktree>"];
   const workerAgy = workerAgent === "antigravity"
     ? agyPermissionPlan({ bot, scope: "worker", role: workerRoleOf, folder: null, realpath: realDir, homeDir: home() }) : null;
   const out = {
@@ -1447,12 +1448,12 @@ doesn't name runs unasked (inline code, scripts, sh, curl, ssh, a plain push, a 
 The lists are a guardrail against accidents; the boundary is the hc-proxy sandbox. A lead
 ends its own worker with \`worker kill <pane>\`: \`hc kill\` is denied to every worker and to
 every seat but a main bot's. The file
-also lists a writer launch's own folder in \`trustedWorkspaces\` -- the project folder for a
-seat, the worker's worktree for a worker, never a parent or the home folder -- so agy's
-first-run trust question is already answered. A read-only review launch (a review worker, a
-reviewer seat) is never auto-trusted: it has no trusted folder, so the file leaves
-\`trustedWorkspaces\` out instead of writing an empty list, and agy asks before it loads that
-checkout's project configuration. The pack never passes
+also lists the launch's own folder in \`trustedWorkspaces\` -- the project folder for a seat, the
+worker's worktree for a worker, the helper's folder for a helper, never a parent or the home
+folder -- so agy's first-run trust question is already answered on every role, a review worker
+(\`--role review\`) and a reviewer seat included. A launch at the home folder leaves
+\`trustedWorkspaces\` out instead of writing an empty list, so the person's saved trust list is
+never overwritten with []. The pack never passes
 --dangerously-skip-permissions and never writes agy's own saved settings, so the rest of its
 trust list and saved settings stay the person's. Its first prompt goes through -i, its resume
 through --conversation <id> (--fresh starts new).
@@ -2339,7 +2340,8 @@ export function appendLedger(row, appHomeDir = appHome()) {
       writeSync(fd, ledgerLine(row));
     } finally { closeSync(fd); }
   } catch (e) {
-    notes.push(`${row.terminal} runs, but it isn't in ${LEDGER_FILE}, so its usage won't be tied to it: ${e?.message ?? e}`);
+    notes.push(`${row.event === "pr" ? `${row.branch}'s pull request ${row.pr} isn't in ${LEDGER_FILE}, so usagemeter won't see it`
+      : `${row.terminal} runs, but it isn't in ${LEDGER_FILE}, so its usage won't be tied to it`}: ${e?.message ?? e}`);
   }
   return notes.length ? notes.join("; ") : null;
 }
@@ -2644,6 +2646,20 @@ function noInterpreterThere(name, seen, machine, quiet) {
 }
 
 /**
+ * #1033: on macOS, a herdr-core started over SSH runs outside the desktop GUI session, so
+ * `security show-keychain-info` fails and every terminal it starts lacks the login keychain.
+ */
+function noKeychainThere(machine, detail) {
+  const said = detail ? ` (${detail})` : "";
+  return new CliError(`herdr-core on ${machine} has no access to the macOS login keychain: "security show-keychain-info" failed${said}, `
+    + `typically because an incoming SSH connection started herdr-core outside the desktop GUI (Aqua) session, so any new terminal `
+    + `started there would have no Claude Code or gh login. Nothing was started. From a desktop (Aqua) terminal on ${machine} `
+    + `(where "security show-keychain-info" exits 0), stop the SSH-born "herdr-core serve" and any SSH-born "herdr-core hold" `
+    + `(leave older desktop holders running so existing live terminals stay untouched), remove the SSH-born holder socket, and `
+    + `immediately run "hc server status" in the same command line so an incoming SSH reconnect does not start it over SSH again.`);
+}
+
+/**
  * #612: `{ run: shipped, tail }` when `command` starts with the table's run (`run`: this
  * computer's programs.json override) whose first word differs from Herdr's shipped run for the
  * same agent key, `tail` the command's words after the override (its model and resume words);
@@ -2661,7 +2677,8 @@ function shippedRunFor(agentKey, run, command) {
  * (agentOnMachine: the login shell's, asked once, plus hc's, hc's first when it finds the agent,
  * and the user bin folders; `prepend`'s folders first, a project's pane-env PATH_PREPEND), so a
  * check that passes is a launch that finds it: refused when it
- * isn't there, when the interpreter its #! line names isn't, or when the machine doesn't answer.
+ * isn't there, when the interpreter its #! line names isn't, when a macOS core lacks access to
+ * the login keychain (#1033), or when the machine doesn't answer.
  * `shipped` (#612, shippedRunFor): when the table's override isn't there but the shipped run is,
  * that run and `tail` replace the command, with one warning naming the agent and the skipped
  * override's first word; when neither is there the refusal names both. Resolves
@@ -2672,10 +2689,12 @@ async function agentThere(machine, argv, name, prepend = null, shipped = null) {
   const seen = await agentOnMachine(exec, argv[0], { wait: AGENT_WAIT_S, prepend });
   const quiet = quietOn(machine, seen);
   if (seen.state === "away") throw unreachable(machine, seen);
+  if (seen.state === "no-keychain") throw noKeychainThere(machine, seen.detail);
   if (seen.state === "missing" && shipped) {
     const alt = await agentOnMachine(exec, shipped.run[0], { wait: AGENT_WAIT_S, prepend });
     const altQuiet = quietOn(machine, alt);
     if (alt.state === "away") throw unreachable(machine, alt);
+    if (alt.state === "no-keychain") throw noKeychainThere(machine, alt.detail);
     if (alt.state === "found") {
       return { path: alt.path, argv: [...shipped.run, ...shipped.tail],
         warnings: [`${name} starts on ${machine} from its shipped run (${shipped.run[0]}), skipping the `
@@ -2927,6 +2946,8 @@ async function seatOnMachine(project, bot, over = {}) {
   const paneEnv = await paneEnvOn(machine, key);
   // #823: agy reads its permission list from a file on its own machine, under that machine's
   // app home; with none there the start is refused rather than launched without its list.
+  // #1033: plan the path first so `command` and `agentThere` run before `ownFileOn` writes the
+  // file on `machine` (a refused non-GUI Mac or missing agent writes nothing there).
   let agySettings = null;
   if (agentKey === "antigravity") {
     const agyHome = await launchHomeOn(machine, bot, paneEnv, "its Antigravity permission list");
@@ -2936,11 +2957,6 @@ async function seatOnMachine(project, bot, over = {}) {
     const remoteHome = agyHome.dir.endsWith("/.config/herdr-app") ? agyHome.dir.slice(0, -"/.config/herdr-app".length) : null;
     agySettings = agySettingsPlan({ bot, scope: "seat", folder: over.cwd ?? key, settingsDir: agySettingsDir(agyHome.dir),
       homeDir: remoteHome });
-    try { await ownFileOn(machine, agySettings.path, agySettings.text); }
-    catch (e) {
-      throw new CliError(`${bot.name} wasn't started on ${machine}: its Antigravity permission list couldn't be written `
-        + `(${agySettings.path}: ${e?.message ?? e}).`);
-    }
   }
   // Herdr's table as this computer has it (programs.json applied): the Mac builds the command.
   // A Start's command runs on a new session whose id Herdr chooses (Claude), as a local start's
@@ -2953,6 +2969,13 @@ async function seatOnMachine(project, bot, over = {}) {
   // #612: a local absolute override that isn't there falls back to the shipped run when that is.
   const there = await agentThere(machine, command, agent.name ?? agentKey, paneEnv.prepend,
     shippedRunFor(agentKey, agent.run, command));
+  if (agySettings) {
+    try { await ownFileOn(machine, agySettings.path, agySettings.text); }
+    catch (e) {
+      throw new CliError(`${bot.name} wasn't started on ${machine}: its Antigravity permission list couldn't be written `
+        + `(${agySettings.path}: ${e?.message ?? e}).`);
+    }
+  }
   // A remote dsh-tui seat gets the guard its own machine has, resolved there (#624); with none,
   // no guard on PATH and no briefing paragraph claiming one, and one warning says what the
   // probe found: no guard, a failed probe, or a folder a PATH word cannot carry (#643).
@@ -5582,14 +5605,128 @@ async function settled(names, terms, gets = new Map()) {
 }
 const firstLine = (r) => (r.stderr || r.stdout || `exit ${r.code}`).trim().split("\n")[0];
 
-/** The branch's pull requests as gh lists them ([{ state }]), or null when gh is missing or fails. */
+/**
+ * The branch's pull requests as gh lists them ([{ number, state, createdAt, mergedAt, closedAt,
+ * baseRefName }]), or null when gh is missing or fails. Only what the cleanup's check and a
+ * `pr` row need is asked for: never a title, an author, a text or an address.
+ */
 async function pullRequestsOf(branch, cwd) {
   const gh = programPath("gh");
   if (!gh || !branch) return null;
-  const r = await runProgram(gh, ["pr", "list", "--head", branch, "--state", "all", "--json", "number,state", "--limit", "20"],
+  const r = await runProgram(gh, ["pr", "list", "--head", branch, "--state", "all", "--json", "number,state,createdAt,mergedAt,closedAt,baseRefName", "--limit", "20"],
     { cwd, timeout: GH_TIMEOUT });
   if (r.code !== 0) return null;
   try { const list = JSON.parse(r.stdout); return Array.isArray(list) ? list : null; } catch { return null; }
+}
+
+// ---- pull requests (#899): the sweep's `pr` rows ----
+
+/** A worker call's sweep asks gh for at most this many branches' pull requests; reap asks for every one that is due. */
+const PR_ASK_MAX = 3;
+
+/**
+ * The branches of `project` git shows a push of: one a remote has a branch of the same name
+ * for (its remote-tracking ref, kept until a prune), or whose upstream is a branch of its own
+ * name (git push -u, gh pr create; kept as long as the branch). A Set, or null when git can't
+ * say. A branch made from origin's dev has dev as its upstream: that is no push of it.
+ */
+async function pushedBranches(project) {
+  const refs = await git(["for-each-ref", "--format=%(refname)%09%(upstream)", "refs/heads", "refs/remotes"], project);
+  if (refs === null) return null;
+  const tracked = (ref) => /^refs\/remotes\/[^/]+\/(.+)$/.exec(ref ?? "")?.[1] ?? null;
+  const out = new Set();
+  for (const line of refs.split("\n")) {
+    const [ref, upstream] = line.split("\t");
+    const there = tracked(ref);
+    if (there) out.add(there);
+    if (ref.startsWith("refs/heads/") && tracked(upstream) === ref.slice(11)) out.add(ref.slice(11));
+  }
+  return out;
+}
+
+/**
+ * The author date of `branch`'s first commit in `project` (git's ISO text), or null when git
+ * can't tell: the oldest commit on the branch that is neither in `base` (the commit the
+ * worker's worktree started from, from its start row) nor on the branch its pull request
+ * targets as origin has it (`target`: a rebase on that branch, or a merge of it, brings its
+ * commits in, and they are not the worker's). Null when git knows neither commit, when the
+ * branch is gone, and when every commit of it is on the target now (a merge that kept them):
+ * the sweep then keeps what an earlier row recorded.
+ */
+async function firstCommitAt(project, branch, base, target) {
+  const not = [];
+  for (const ref of [/^[0-9a-f]{7,64}$/.test(base ?? "") ? base : null, target ? `refs/remotes/origin/${target}` : null]) {
+    if (ref && await git(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], project)) not.push(ref);
+  }
+  if (!not.length) return null;
+  const log = await git(["log", "--reverse", "--format=%aI", `refs/heads/${branch}`, "--not", ...not], project);
+  return log?.split("\n").find(Boolean) ?? null;
+}
+
+/**
+ * The sweep's `pr` rows (#899, workers.js): asks gh for the pull requests of the worker
+ * branches the ledger still follows (prBranches) and appends a row for each one that is new or
+ * whose state or times changed. `asked`: what gh already answered in this sweep, by branch
+ * (reapOne's check of a worktree with commits on no remote): used as it is, for any worker
+ * branch, with no second call. Any other branch is asked only when it is due (prAskDue; a
+ * branch git shows no push of, rarely), the likely ones first; `every` (reap) also asks for
+ * each likely one now. A worker call asks at most PR_ASK_MAX times, and nothing is asked once
+ * `budget` ms have passed since `start`. When each branch was asked is kept in the app home
+ * (pr-checks.json), so a later sweep goes on with the next ones. gh missing: nothing is done.
+ * Says nothing unless a row couldn't be written.
+ */
+async function recordPullRequests({ asked, start, budget, every, lines }) {
+  if (!programPath("gh")) return;
+  const rows = workerLedgerRows();
+  const now = Date.now();
+  const branches = prBranches(rows, now);
+  const file = prChecksPath(appHome());
+  let checked = new Map();
+  try { checked = readPrChecks(readText(file) ?? ""); } catch { /* asked again: nothing is lost */ }
+  const pushedIn = new Map();
+  const due = [];
+  for (const w of branches) {
+    const key = prBranchKey(w);
+    if (asked.has(key)) { due.push({ w, key, rank: 0, at: 0 }); continue; }
+    if (!w.followed || !isDir(w.project)) continue;
+    // Whether it was pushed only matters for a branch with no pull request recorded yet.
+    if (!w.recorded && !pushedIn.has(w.project)) pushedIn.set(w.project, await pushedBranches(w.project));
+    const pushed = !w.recorded && (pushedIn.get(w.project)?.has(w.branch) ?? false);
+    const at = prAskDue(w, { pushed, checked: checked.get(key) ?? null, now });
+    if (at <= now || (every && prLikely(w, pushed))) due.push({ w, key, rank: prLikely(w, pushed) ? 1 : 2, at });
+  }
+  if (!due.length) return;
+  due.sort((a, b) => a.rank - b.rank || a.at - b.at);
+  const core = await rowCore();
+  let calls = 0;
+  for (const { w, key } of due) {
+    let list = asked.get(key) ?? null;
+    if (!asked.has(key)) {
+      if ((!every && calls >= PR_ASK_MAX) || Date.now() - start > budget) break;
+      calls += 1;
+      list = await pullRequestsOf(w.branch, w.project);
+    }
+    // A failed answer counts as asked too: a gh that is signed out isn't run again by every call.
+    checked.set(key, Date.now());
+    if (!list?.length) continue;
+    const firsts = new Map();
+    const found = [];
+    for (const item of list) {
+      const target = typeof item?.baseRefName === "string" ? item.baseRefName : "";
+      if (!firsts.has(target)) firsts.set(target, await firstCommitAt(w.project, w.branch, w.base, target));
+      found.push({ ...item, firstCommitAt: firsts.get(target) });
+    }
+    for (const row of prRowsFor({ project: w.project, branch: w.branch, task: w.task, list: found, rows, core })) {
+      const unlogged = appendLedger(row);
+      if (unlogged) lines.push(unlogged);
+    }
+  }
+  // Written in place, under the sweep's lock (one writer): a write cut short reads as no file,
+  // and the same branches are then asked again sooner. Nothing is lost.
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, prChecksText(checked, branches.filter((w) => w.followed)), { mode: 0o600 });
+  } catch { /* asked again sooner */ }
 }
 
 /**
@@ -5597,9 +5734,10 @@ async function pullRequestsOf(branch, cwd) {
  * started in it since the sweep's hc ls), then checked for work (workLeft), looked at for a live
  * terminal once more, and removed with git worktree remove (no --force), then git worktree prune. Never throws: { result, why }, result
  * "waiting" (left for a later sweep, nothing recorded), "kept", "failed" or "removed". Any git
- * or hc failure keeps it (fails closed).
+ * or hc failure keeps it (fails closed). What gh answered for its branch is left in `asked`, by
+ * branch (prBranchKey), for the sweep's `pr` rows.
  */
-async function reapOne(c) {
+async function reapOne(c, asked = new Map()) {
   const path = c.worktree;
   const now = await hcTerminals(false);
   if (!now) return { result: "waiting" };
@@ -5618,7 +5756,10 @@ async function reapOne(c) {
     unpushed = Number(count.stdout.trim());
     if (count.code !== 0 || !Number.isSafeInteger(unpushed)) return { result: "kept", why: `git rev-list failed: ${firstLine(count)}` };
     branch = (await git(["symbolic-ref", "--short", "-q", "HEAD"], path))?.trim() || null;
-    if (unpushed > 0 && branch && branch === c.branch) prs = await pullRequestsOf(branch, main);
+    if (unpushed > 0 && branch && branch === c.branch) {
+      prs = await pullRequestsOf(branch, main);
+      if (c.project) asked.set(prBranchKey({ project: c.project, branch }), prs);
+    }
   }
   const why = workLeft({ changes, unpushed, prs, branch, expected: c.branch });
   if (why) return { result: "kept", why };
@@ -5643,13 +5784,16 @@ async function reapOne(c) {
  * hc failing skips the sweep. Each new outcome is a row in the cleanup file and a line.
  * `every` (reap): a line for every kept or failed one, even unchanged; without it (a worker
  * call), a kept one whose reason hasn't changed in REAP_QUIET_MS is skipped.
+ * The same sweep, under the same lock and budget, records the worker branches' pull requests
+ * in the workers ledger (#899, recordPullRequests), whether or not a worktree is left to remove.
  * Never throws: { removed, kept, failed, waiting, more, lines }.
  */
 async function reapWorktrees({ max = REAP_MAX, budget = REAP_BUDGET_MS, every = false } = {}) {
   const out = { removed: [], kept: [], failed: [], waiting: 0, more: 0, lines: [] };
   try {
-    const candidates = reapCandidates(workerLedgerRows(), reapRows());
-    if (!candidates.length) return out;
+    const ledger = workerLedgerRows();
+    const candidates = reapCandidates(ledger, reapRows());
+    if (!candidates.length && !prBranches(ledger).some((w) => w.followed)) return out;
     const lockDir = dirname(ledgerPath(appHome()));
     mkdirSync(lockDir, { recursive: true });
     let token;
@@ -5657,11 +5801,13 @@ async function reapWorktrees({ max = REAP_MAX, budget = REAP_BUDGET_MS, every = 
     try { token = await takeLockAsync(lock, 0); } catch { return out; }
     const stop = keepFresh(lock, token);
     try {
-      const terms = await hcTerminals(true);
+      const terms = candidates.length ? await hcTerminals(true) : [];
       if (!terms) { out.lines.push("worktree cleanup skipped: hc ls --all failed"); return out; }
       const start = Date.now();
       // The finished workers' terminals hc answered for: their end rows, after the loop.
       const gets = new Map();
+      // What gh answered for a candidate's branch: its pull requests' rows, after the loop.
+      const asked = new Map();
       for (const c of candidates) {
         if (!every && c.last?.result === "kept" && Date.now() - Date.parse(c.last.at) > REAP_QUIET_MS) continue;
         if (c.terminals.some((t) => terms.some((x) => x?.address === t && x.state !== "finished"))) { out.waiting += 1; continue; }
@@ -5677,7 +5823,7 @@ async function reapWorktrees({ max = REAP_MAX, budget = REAP_BUDGET_MS, every = 
           done = { result: "waiting" };
         } else {
           try {
-            done = await withLockAsync(worktreeLock(lockDir, path), () => reapOne(c), { wait: 0 });
+            done = await withLockAsync(worktreeLock(lockDir, path), () => reapOne(c, asked), { wait: 0 });
           } catch { done = { result: "waiting" }; }
         }
         if (done.result === "waiting") { out.waiting += 1; continue; }
@@ -5697,6 +5843,9 @@ async function reapWorktrees({ max = REAP_MAX, budget = REAP_BUDGET_MS, every = 
           const unlogged = appendLedger(row);
           if (unlogged) out.lines.push(unlogged);
         }
+      }
+      try { await recordPullRequests({ asked, start, budget, every, lines: out.lines }); } catch (e) {
+        out.lines.push(`pull requests not recorded: ${e?.message ?? e}`);
       }
       if (out.more) out.lines.push(`${out.more} more finished ${out.more === 1 ? "worker's worktree" : "workers' worktrees"} left for the next cleanup (automagik-herdr reap)`);
     } finally { stop(); dropLock(lock, token); }
@@ -6676,9 +6825,9 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
       const workerAgy = workerAgent === "antigravity"
         ? agyPermissionPlan({ bot: agent, scope: "worker", role: workerRoleOf, folder: null, realpath: realDir,
           homeDir: home() }) : null;
-      // #884 M1: a review worker is read-only and is never auto-trusted (it stops at agy's trust
-      // question); a writer role's worktree is only known at launch, so the plan names it as such.
-      const workerTrusted = workerRoleOf === "review" ? [] : ["<worktree>"];
+      // #884 M1/#1046: a review worker is read-only, but its own worktree is trusted like any
+      // writer's; the worktree is only known at launch, so the plan names it as such.
+      const workerTrusted = ["<worktree>"];
       if (seatAgy) bot.agyPermissions = { allow: seatAgy.allow, deny: seatAgy.deny, trustedWorkspaces: seatAgy.trustedWorkspaces };
       if (workerAgy) bot.workerAgyPermissions = { allow: workerAgy.allow, deny: workerAgy.deny, trustedWorkspaces: workerTrusted };
       const perms = [

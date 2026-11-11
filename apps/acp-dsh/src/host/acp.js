@@ -8,6 +8,7 @@ import { Readable, Writable } from 'node:stream'
 // preset change) and the session updates newer adapters send (a stable-only parser refuses an
 // update it does not know, and the whole notification with it).
 import { PROTOCOL_VERSION, client, methods, ndJsonStream } from '@agentclientprotocol/sdk/unstable'
+import { batchSafe } from './batch-spawn.js'
 import { isBridgeName } from './names.js'
 
 const STDERR_KEEP = 4000
@@ -63,6 +64,8 @@ export const REQUEST_MS = 15_000
 // How long the agent's processes have to end once asked to (SIGTERM) before they are killed.
 export const KILL_AFTER_MS = 3000
 const UNANSWERED = 'acp_unanswered'
+// The answer to a permission question that is withdrawn, or that nobody is left to answer.
+const CANCELLED = Object.freeze({ outcome: Object.freeze({ outcome: 'cancelled' }) })
 const STOPPED = 'acp_stopped'
 
 /** A wait as the person reads it: whole seconds (under one second, as a test sets it, in ms). */
@@ -110,7 +113,9 @@ export class AgentRun {
     const { command, args = [], env, cwd, mcpServers = [], sessionMeta } = this.spec
     // Its own process group, where the platform has them: what the agent starts (the CLI behind
     // an adapter, the command behind a tool call) is ended with it, as one group (`endTree`).
-    const child = spawn(command, args, { cwd, env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'], detached: process.platform !== 'win32' })
+    // Through batchSafe: a native agent's CLI can be a Windows batch file (hermes.cmd), which
+    // Node refuses to spawn without a shell.
+    const child = spawn(...batchSafe(command, args, { cwd, env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' }))
     this.child = child
     this.grouped = process.platform !== 'win32'
     // An idle agent never keeps DSH running: only a prompt in flight holds the event loop.
@@ -153,7 +158,7 @@ export class AgentRun {
       })
       this.sessionId = session.sessionId
       this.modes = session.modes
-      this.options = session.configOptions ?? []
+      this.options = withModels(session.configOptions ?? [], session.models)
       // The model the agent started on: DSH's `default` model goes back to it.
       this.startModel = optionOf(this.options, 'model')?.currentValue
       // The session exists (the spike's ordering rule for the bridge's first announcement) and
@@ -201,7 +206,7 @@ export class AgentRun {
     const answer = await this.held(() => this.conn.forkSession({ sessionId: source, cwd, mcpServers }))
     this.sessionId = answer.sessionId
     if (answer.modes !== undefined && answer.modes !== null) this.modes = answer.modes
-    if (Array.isArray(answer.configOptions)) this.options = answer.configOptions
+    if (Array.isArray(answer.configOptions)) this.options = withModels(answer.configOptions, answer.models ?? modelStateOf(this.options))
     this.tools.clear()
     // The fork's source is closed by us: the spike did not show the fork closing it, and a
     // Session must never hold two bridges.
@@ -298,6 +303,14 @@ export class AgentRun {
   prompt(prompt) {
     if (this.busy) throw new Error(`${this.spec.name} is still answering`)
     this.queue = []
+    this.promptEnded = false
+    // The calls of the prompts before this one are over for DSH too: their cards ran in turns
+    // that have ended, and a call already known never gets a second card. A question for one
+    // has nobody left to answer it (onPermission); one still stored is withdrawn here.
+    for (const tool of this.tools.values()) {
+      tool.unanswerable = true
+      tool.permission?.answer(CANCELLED)
+    }
     this.holdOn()
     const run = this.conn.prompt({ sessionId: this.sessionId, prompt })
     this.prompting = Promise.race([run, this.gone]).then(
@@ -309,6 +322,8 @@ export class AgentRun {
 
   endPrompt(event) {
     this.prompting = undefined
+    // From here to the next prompt, a call seen for the first time gets no card (seeTool).
+    this.promptEnded = true
     this.letGo()
     // A call the agent never closed is over with its turn; a question it never got an answer to is withdrawn.
     for (const tool of this.tools.values()) {
@@ -357,9 +372,26 @@ export class AgentRun {
     const values = valuesOf(option)
     if (!values.some(choice => choice.value === value)) throw new Error(`it offers no ${category} ${value} (it offers ${values.map(choice => choice.value).join(', ') || 'none'})`)
     if (option.currentValue === value) return
+    if (option.id === MODEL_STATE) {
+      // The session's own model list (`session/set_model`), for an agent with no model option.
+      const params = { sessionId: this.sessionId, modelId: value }
+      try {
+        await this.held(() => this.conn.setSessionModel(params), { signal, what: `taking its ${category}` })
+      } catch (error) {
+        // A request nobody answered, or one the turn's Stop ended, goes up as it is: the turn
+        // ends the session on it (adapter.js `abandoned`), which a wrapped error would hide.
+        if (isUnanswered(error) || isStopped(error)) throw error
+        // An agent can list a model it then cannot resolve (seen with Hermes: "Internal error",
+        // the reason only in the error's data). Say which model and, when it is a plain word, why.
+        const details = typeof error?.data?.details === 'string' && /^[\w .:-]{1,80}$/.test(error.data.details) ? ` (${error.data.details})` : ''
+        throw new Error(`it could not switch to ${value}: ${error?.message ?? error}${details}`, { cause: error })
+      }
+      this.options = this.options.map(other => (other.id === MODEL_STATE ? { ...other, currentValue: value } : other))
+      return
+    }
     const answer = await this.held(() => this.conn.setSessionConfigOption({ sessionId: this.sessionId, configId: option.id, value }), { signal, what: `taking its ${category}` })
     // The answer is the whole set: a new model may bring other efforts.
-    this.options = answer?.configOptions ?? this.options.map(other => (other.id === option.id ? { ...other, currentValue: value } : other))
+    this.options = answer?.configOptions ? withModels(answer.configOptions, modelStateOf(this.options)) : this.options.map(other => (other.id === option.id ? { ...other, currentValue: value } : other))
   }
 
   async cancel() {
@@ -453,7 +485,7 @@ export class AgentRun {
         break
       }
       case 'config_option_update':
-        if (Array.isArray(update.configOptions)) this.options = update.configOptions
+        if (Array.isArray(update.configOptions)) this.options = withModels(update.configOptions, modelStateOf(this.options))
         break
       case 'current_mode_update':
         if (this.modes) this.modes = { ...this.modes, currentModeId: update.currentModeId }
@@ -470,7 +502,14 @@ export class AgentRun {
       return known
     }
     const tool = { id: update.toolCallId, title: update.title ?? 'Tool', kind: update.kind ?? 'other', status: update.status ?? 'pending', content: update.content ?? [], locations: update.locations ?? [], rawInput: update.rawInput, rawOutput: update.rawOutput, listeners: new Set() }
+    // First seen after its prompt ended: its event lands behind the prompt's end, where no step
+    // reads it, and the next prompt drops it. No card will ever ask its question.
+    if (this.promptEnded === true) tool.unanswerable = true
     this.markCall(tool, update)
+    // Drift known at first sight, before its event is queued: the adapter reads the same mark
+    // when it takes the event and makes no card for it. A call found to be drift only later
+    // may already have its card, whose body still asks, so that one is not marked.
+    if (tool.drift === true) tool.unanswerable = true
     this.tools.set(tool.id, tool)
     this.push({ type: 'tool', id: tool.id })
     return tool
@@ -542,6 +581,12 @@ export class AgentRun {
     // DSH already refused this call before the mirror's body could ask (refuse): no body is
     // left to answer the agent, so the refusal is its answer.
     if (tool.refused !== undefined) return Promise.resolve(refusal(tool.refused, params.options ?? []))
+    // A question nobody will answer is answered here, at once, and only ever as cancelled: the
+    // agent would otherwise wait on it until the next turn's end. That is a call that gets no
+    // card (first seen after its prompt ended, left from an earlier prompt, or drift at its
+    // first sight) and one whose card's body is over (tool.js). Any other question waits for
+    // its card, as it always did: a call found to be drift after its card was made included.
+    if (tool.unanswerable === true || tool.mirrored === true) return Promise.resolve(CANCELLED)
     // A second question for the call while the first was not asked yet: the first is withdrawn,
     // or nothing would ever answer it. One already in its dialog keeps the dialog's answer.
     const earlier = tool.permission
@@ -592,6 +637,8 @@ function connect(run, stream) {
     closeSession: params => agent.request(session.close, params),
     setSessionMode: params => agent.request(session.setMode, params),
     setSessionConfigOption: params => agent.request(session.setConfigOption, params),
+    // The SDK names no method for a session's own model list (Hermes): sent by its wire name.
+    setSessionModel: params => agent.request('session/set_model', params),
     prompt: params => agent.request(session.prompt, params),
     cancel: params => agent.notify(session.cancel, params),
   }
@@ -604,6 +651,36 @@ function refusal(kind, options) {
     ? options.find(option => option.kind === 'reject_once') ?? options.find(option => option.kind === 'reject_always')
     : undefined
   return chosen ? { outcome: { outcome: 'selected', optionId: chosen.optionId } } : { outcome: { outcome: 'cancelled' } }
+}
+
+// The id of the model option made from a session's own model list (`models` in the answer to
+// `session/new`: `availableModels` and `currentModelId`, switched with `session/set_model`).
+// Hermes offers its models only there. No agent's own option can carry this id by accident.
+export const MODEL_STATE = '\u0000session-models'
+
+/**
+ * An agent's config options, with its session model list as the `model` option when it offers
+ * no model option of its own (an agent that offers both, as Antigravity does, keeps its own).
+ */
+export function withModels(options, models) {
+  if (optionOf(options, 'model') !== undefined) return options
+  const offered = (Array.isArray(models?.availableModels) ? models.availableModels : []).filter(model => typeof model?.modelId === 'string' && model.modelId !== '')
+  if (offered.length === 0) return options
+  return [...options, {
+    id: MODEL_STATE,
+    name: 'Model',
+    category: 'model',
+    type: 'select',
+    currentValue: typeof models.currentModelId === 'string' ? models.currentModelId : undefined,
+    options: offered.map(model => ({ value: model.modelId, name: typeof model.name === 'string' && model.name !== '' ? model.name : model.modelId, ...(typeof model.description === 'string' && model.description !== '' ? { description: model.description } : {}) })),
+  }]
+}
+
+// The session model list an option set was made from, to carry it over an answer that names
+// only the agent's own options.
+const modelStateOf = (options) => {
+  const made = (options ?? []).find(option => option?.id === MODEL_STATE)
+  return made === undefined ? undefined : { currentModelId: made.currentValue, availableModels: made.options.map(({ value, name, description }) => ({ modelId: value, name, description })) }
 }
 
 /** The option of `category` among an agent's session config options. */

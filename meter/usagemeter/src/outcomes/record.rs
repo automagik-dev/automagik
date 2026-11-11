@@ -32,6 +32,14 @@ pub const THROUGH_META: &str = "errors_through_ms";
 /// The `meta` key of the log offsets as the last recording run left them (`count|sum`): offsets
 /// that moved since were moved by a run that stamped nothing, an older meter's failed one included.
 pub const FILES_META: &str = "errors_files";
+/// The `meta` key of the start of the recorded model-call failures (`api_error`, ms, issue 1026):
+/// kept apart from [`FROM_META`] so a store upgraded from issue 899 keeps its `tool_error` start
+/// while `api_error` starts at the first sync that records it.
+pub const API_FROM_META: &str = "api_errors_from_ms";
+/// The `meta` key of the last run that recorded `api_error`: `last_run_ms` as this meter left it.
+pub const API_THROUGH_META: &str = "api_errors_through_ms";
+/// The `meta` key of the log offsets as the last `api_error`-recording run left them (`count|sum`).
+pub const API_FILES_META: &str = "api_errors_files";
 /// The `meta` key of the store's `counted_from_ms` as the last sync of this meter found it. Every
 /// reset moves `counted_from_ms` (a reset is a wider window), and an older meter's reset empties
 /// `ev_dim`, `ev_actor` and `ev_cwd`, whose ids then start again from 1, while it leaves
@@ -39,8 +47,9 @@ pub const FILES_META: &str = "errors_files";
 /// bot, harness or repo by now: [`ensure`] drops them, and a report does not read them.
 pub const COUNTED_META: &str = "errors_counted_from_ms";
 
-/// The one kind of failure a log yields, and where it comes from.
+/// The kinds of failure a log yields, and where they come from.
 pub const TOOL_ERROR: &str = "tool_error";
+pub const API_ERROR: &str = "api_error";
 pub const HARNESS_LOG: &str = "harness_log";
 /// A launch's end as hc's list of finished terminals gave it, or as an `end` row copied it.
 pub const HC_SNAPSHOT: &str = "hc_snapshot";
@@ -155,32 +164,39 @@ pub fn ensure(conn: &mut Connection, now_ms: i64, counted_from: i64) -> rusqlite
     if !same_window {
         tx.execute("DELETE FROM ev_error", [])?;
     }
-    let from = match meta_i64(&tx, FROM_META)? {
-        None if files.starts_with("0|") => Some(counted_from.max(evidence::retention_cut(now_ms))),
-        None => Some(now_ms),
-        Some(_) if !same_window => Some(now_ms),
-        Some(_) => {
-            let through = meta_i64(&tx, THROUGH_META)?;
-            let stamped: Option<String> = tx
-                .query_row("SELECT v FROM meta WHERE k = ?1", [FILES_META], |r| {
-                    r.get(0)
-                })
-                .optional()?;
-            let ran_since = last_run.is_some_and(|l| through.is_none_or(|t| l > t));
-            let moved = stamped.as_deref() != Some(files.as_str());
-            (ran_since || moved).then_some(now_ms)
-        }
-    };
-    if let Some(from) = from {
-        set_meta(&tx, FROM_META, &from.to_string())?;
-        // Until this run stamps its own end, the failures go as far as the logs were read.
-        match last_run {
-            Some(l) => set_meta(&tx, THROUGH_META, &l.to_string())?,
-            None => {
-                tx.execute("DELETE FROM meta WHERE k = ?1", [THROUGH_META])?;
+    for (from_meta, through_meta, files_meta) in [
+        (FROM_META, THROUGH_META, FILES_META),
+        (API_FROM_META, API_THROUGH_META, API_FILES_META),
+    ] {
+        let from = match meta_i64(&tx, from_meta)? {
+            None if files.starts_with("0|") => {
+                Some(counted_from.max(evidence::retention_cut(now_ms)))
             }
+            None => Some(now_ms),
+            Some(_) if !same_window => Some(now_ms),
+            Some(_) => {
+                let through = meta_i64(&tx, through_meta)?;
+                let stamped: Option<String> = tx
+                    .query_row("SELECT v FROM meta WHERE k = ?1", [files_meta], |r| {
+                        r.get(0)
+                    })
+                    .optional()?;
+                let ran_since = last_run.is_some_and(|l| through.is_none_or(|t| l > t));
+                let moved = stamped.as_deref() != Some(files.as_str());
+                (ran_since || moved).then_some(now_ms)
+            }
+        };
+        if let Some(from) = from {
+            set_meta(&tx, from_meta, &from.to_string())?;
+            // Until this run stamps its own end, the failures go as far as the logs were read.
+            match last_run {
+                Some(l) => set_meta(&tx, through_meta, &l.to_string())?,
+                None => {
+                    tx.execute("DELETE FROM meta WHERE k = ?1", [through_meta])?;
+                }
+            }
+            set_meta(&tx, files_meta, &files)?;
         }
-        set_meta(&tx, FILES_META, &files)?;
     }
     set_meta(&tx, COUNTED_META, &counted_from.to_string())?;
     tx.commit()
@@ -196,8 +212,12 @@ pub fn same_window(counted_from: i64, stamped: Option<i64>) -> bool {
 /// Stamps a finished run: the failures go through `now_ms`, with the offsets as they stand. Called
 /// with the run's own `last_run_ms`.
 pub fn stamp(c: &Connection, now_ms: i64) -> rusqlite::Result<()> {
-    set_meta(c, THROUGH_META, &now_ms.to_string())?;
-    set_meta(c, FILES_META, &files_print(c)?)
+    let now = now_ms.to_string();
+    let files = files_print(c)?;
+    set_meta(c, THROUGH_META, &now)?;
+    set_meta(c, FILES_META, &files)?;
+    set_meta(c, API_THROUGH_META, &now)?;
+    set_meta(c, API_FILES_META, &files)
 }
 
 /// A reset drops every log offset, so the logs are read again from their start: the failures go
@@ -207,16 +227,25 @@ pub fn clear(tx: &Transaction<'_>) -> rusqlite::Result<()> {
         tx.execute("DELETE FROM ev_error", [])?;
     }
     tx.execute(
-        "DELETE FROM meta WHERE k IN (?1, ?2, ?3, ?4)",
-        [FROM_META, THROUGH_META, FILES_META, COUNTED_META],
+        "DELETE FROM meta WHERE k IN (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        [
+            FROM_META,
+            THROUGH_META,
+            FILES_META,
+            COUNTED_META,
+            API_FROM_META,
+            API_THROUGH_META,
+            API_FILES_META,
+        ],
     )?;
     Ok(())
 }
 
-/// One tool failure, as ingestion hands it to the store.
+/// One harness-flagged failure (`tool_error` or `api_error`), as ingestion hands it to the store.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ErrorRow {
     pub ts_ms: i64,
+    pub kind: &'static str,
     pub dim: Dim,
     pub actor: Actor,
     pub session: Option<[u8; 16]>,
@@ -242,7 +271,7 @@ pub fn insert(tx: &Transaction<'_>, intern: &mut Interner, e: &ErrorRow) -> rusq
         )?
         .execute(params![
             e.ts_ms,
-            TOOL_ERROR,
+            e.kind,
             HARNESS_LOG,
             dim,
             actor,
@@ -345,8 +374,12 @@ pub fn reattribute(
 pub fn prune(tx: &Transaction<'_>, now_ms: i64) -> rusqlite::Result<usize> {
     let cut = evidence::retention_cut(now_ms).max(meta_i64(tx, evidence::FROM_META)?.unwrap_or(0));
     let n = tx.execute("DELETE FROM ev_error WHERE ts_ms < ?1", [cut])?;
-    if n > 0 && meta_i64(tx, FROM_META)?.is_some_and(|f| f < cut) {
-        set_meta(tx, FROM_META, &cut.to_string())?;
+    if n > 0 {
+        for k in [FROM_META, API_FROM_META] {
+            if meta_i64(tx, k)?.is_some_and(|f| f < cut) {
+                set_meta(tx, k, &cut.to_string())?;
+            }
+        }
     }
     tx.execute(
         "DELETE FROM pr WHERE at_ms < ?1",
@@ -568,6 +601,10 @@ mod tests {
         meta_i64(&s.conn, FROM_META).unwrap()
     }
 
+    fn api_from(s: &Store) -> Option<i64> {
+        meta_i64(&s.conn, API_FROM_META).unwrap()
+    }
+
     /// A log an earlier sync read as far as `offset`.
     fn read_log(s: &Store, path: &str, offset: i64) {
         s.conn
@@ -592,10 +629,12 @@ mod tests {
         let mut s = Store::open_in_memory().unwrap();
         ensure(&mut s.conn, NOW, NOW - 10 * DAY).unwrap();
         assert_eq!(from(&s), Some(NOW - 10 * DAY));
+        assert_eq!(api_from(&s), Some(NOW - 10 * DAY));
         // Never before the evidence's day bound: a prune would drop those rows at once.
         let mut s = Store::open_in_memory().unwrap();
         ensure(&mut s.conn, NOW, NOW - 400 * DAY).unwrap();
         assert_eq!(from(&s), Some(evidence::retention_cut(NOW)));
+        assert_eq!(api_from(&s), Some(evidence::retention_cut(NOW)));
     }
 
     #[test]
@@ -605,6 +644,7 @@ mod tests {
         s.set_meta("last_run_ms", &(NOW - DAY).to_string()).unwrap();
         ensure(&mut s.conn, NOW, NOW - 10 * DAY).unwrap();
         assert_eq!(from(&s), Some(NOW));
+        assert_eq!(api_from(&s), Some(NOW));
     }
 
     #[test]
@@ -620,6 +660,7 @@ mod tests {
                 Some(NOW - 10 * DAY),
                 "a run in between changes nothing"
             );
+            assert_eq!(api_from(&s), Some(NOW - 10 * DAY));
             read_log(&s, "/logs/a.jsonl", 100 + later - NOW);
             s.set_meta("last_run_ms", &later.to_string()).unwrap();
             stamp(&s.conn, later).unwrap();
@@ -627,6 +668,7 @@ mod tests {
         // A sync that did nothing (within the fresh interval) stamps nothing and moves nothing.
         ensure(&mut s.conn, NOW + 180_000, NOW - 10 * DAY).unwrap();
         assert_eq!(from(&s), Some(NOW - 10 * DAY));
+        assert_eq!(api_from(&s), Some(NOW - 10 * DAY));
     }
 
     #[test]
@@ -638,6 +680,7 @@ mod tests {
             .unwrap();
         ensure(&mut s.conn, NOW + 120_000, NOW - 10 * DAY).unwrap();
         assert_eq!(from(&s), Some(NOW + 120_000));
+        assert_eq!(api_from(&s), Some(NOW + 120_000));
 
         // One that read a log and died before its end stamp: the offsets moved all the same.
         let mut s = Store::open_in_memory().unwrap();
@@ -645,6 +688,7 @@ mod tests {
         read_log(&s, "/logs/a.jsonl", 100);
         ensure(&mut s.conn, NOW + 120_000, NOW - 10 * DAY).unwrap();
         assert_eq!(from(&s), Some(NOW + 120_000));
+        assert_eq!(api_from(&s), Some(NOW + 120_000));
     }
 
     #[test]
@@ -653,14 +697,17 @@ mod tests {
         read_log(&s, "/logs/a.jsonl", 100);
         sync(&mut s, NOW, NOW - 10 * DAY);
         assert_eq!(from(&s), Some(NOW));
+        assert_eq!(api_from(&s), Some(NOW));
         s.reset(NOW - 20 * DAY).unwrap();
         assert_eq!(from(&s), None);
+        assert_eq!(api_from(&s), None);
         ensure(&mut s.conn, NOW + 60_000, NOW - 20 * DAY).unwrap();
         assert_eq!(
             from(&s),
             Some(NOW - 20 * DAY),
             "every log is read again from its start"
         );
+        assert_eq!(api_from(&s), Some(NOW - 20 * DAY));
     }
 
     #[test]
@@ -679,9 +726,11 @@ mod tests {
         // The same window: kept, and the start stays.
         ensure(&mut s.conn, NOW + 60_000, NOW - 10 * DAY).unwrap();
         assert_eq!((kept(&s), from(&s)), (1, Some(NOW - 10 * DAY)));
+        assert_eq!(api_from(&s), Some(NOW - 10 * DAY));
         // An older meter reset the store to a wider window: its ids are no longer these rows'.
         ensure(&mut s.conn, NOW + 120_000, NOW - 20 * DAY).unwrap();
         assert_eq!((kept(&s), from(&s)), (0, Some(NOW + 120_000)));
+        assert_eq!(api_from(&s), Some(NOW + 120_000));
         assert_eq!(
             meta_i64(&s.conn, COUNTED_META).unwrap(),
             Some(NOW - 20 * DAY)
@@ -695,11 +744,34 @@ mod tests {
             .unwrap();
         ensure(&mut s.conn, NOW + 180_000, NOW - 20 * DAY).unwrap();
         assert_eq!((kept(&s), from(&s)), (0, Some(NOW + 180_000)));
+        assert_eq!(api_from(&s), Some(NOW + 180_000));
+    }
+
+    #[test]
+    fn a_store_upgraded_from_issue_899_keeps_errors_from_and_starts_api_errors_from_now() {
+        let mut s = Store::open_in_memory().unwrap();
+        sync(&mut s, NOW, NOW - 10 * DAY);
+        read_log(&s, "/logs/a.jsonl", 100);
+        stamp(&s.conn, NOW).unwrap();
+        // Strip the api_error stamps to leave the store as issue 899 left it.
+        s.conn
+            .execute(
+                "DELETE FROM meta WHERE k IN (?1, ?2, ?3)",
+                [API_FROM_META, API_THROUGH_META, API_FILES_META],
+            )
+            .unwrap();
+        assert_eq!((from(&s), api_from(&s)), (Some(NOW - 10 * DAY), None));
+        ensure(&mut s.conn, NOW + 60_000, NOW - 10 * DAY).unwrap();
+        assert_eq!(
+            (from(&s), api_from(&s)),
+            (Some(NOW - 10 * DAY), Some(NOW + 60_000))
+        );
     }
 
     fn failure(ts_ms: i64, ident: u8) -> ErrorRow {
         ErrorRow {
             ts_ms,
+            kind: TOOL_ERROR,
             dim: Dim {
                 harness: "claude-code".into(),
                 machine: "machine".into(),

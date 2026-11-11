@@ -158,14 +158,74 @@ export function install(rt) {
   // narrower of the one above and that group's, read live, so a Bot with a wide level does
   // not carry it into work asked for in a narrower group. It only ever narrows: a wider
   // group gives the task nothing, and where the report goes (`roomId`) is not changed.
+  // A task started from inside another task's tool call (`levelTaskId`, #1030) also never
+  // runs wider than that task is set to run at, read live and up the whole chain, whatever
+  // its own Bot, group or `roomId` say: the second hop does not leave the first one's level.
+  // A task no Bot asked for has no level of its own and keeps what its Session has, as
+  // without a parent: the parent can only lower that, when DSH reports a level there that
+  // is known to allow more; one that allows no more is left untouched, and one DSH reports
+  // no level for that can be ranked is not set either but held, as below. Where the two
+  // levels cannot be compared (one of them cannot be ranked, and they are not the same
+  // one), nothing proves the task allows no more than its parent: it is `unproven`, and
+  // no tool runs there (applyTaskPermission). A parent no longer known gives the narrowest
+  // level the catalog offers. A parent at Auto binds as workspace-write, whether its Auto
+  // holds or not: narrower than needed while it holds, and never above a parent whose Auto
+  // fell back. Only a start made while the task's tool call runs is bound (callerTask).
   const taskOf = sessionId => rt.state?.tasks?.[sessionId]
-  function taskLevel(task, service) {
-    if (task.from === undefined) return undefined
-    const bot = rt.botOf(task.from)
+  const taskLevel = (task, service) => taskRun(task, service).level
+  function taskRun(task, service, depth = 0) {
+    const linked = task.levelTaskId !== undefined
+    if (task.from === undefined) {
+      if (!linked) return {}
+      const has = readLevel(Object.keys(rt.state?.tasks ?? {}).find(id => rt.state.tasks[id] === task))
+      if (has === undefined || runRank(service, has) === undefined) return { unproven: true }
+      const bounded = boundedByParent(task, has, service, depth)
+      return bounded.unproven !== true && bounded.level === has ? {} : bounded
+    }
+    const bot = task.from === undefined ? undefined : rt.botOf(task.from)
     const room = task.roomId ? rt.roomOf(task.roomId) : undefined
-    const level = bot === undefined ? service.catalog().defaultPreset : room?.permission ?? bot.permission ?? service.catalog().defaultPreset
-    if (level === undefined) return level
-    return narrowedByCaller(task, task.permissionCap === undefined ? level : narrowerLevel(service, level, task.permissionCap), service)
+    const base = bot === undefined ? service.catalog().defaultPreset : room?.permission ?? bot.permission ?? service.catalog().defaultPreset
+    const level = base === undefined ? base : narrowedByCaller(task, task.permissionCap === undefined ? base : narrowerLevel(service, base, task.permissionCap), service)
+    if (!linked) return { level }
+    if (level === undefined) return { unproven: true }
+    return boundedByParent(task, level, service, depth)
+  }
+  // A level ranked as what it runs as: a saved Auto DSH does not offer runs as workspace-write.
+  const runRank = (service, name) => rankOf(service, name === AUTO && !autoOffered(service) ? AUTO_FALLBACK : name)
+  const PARENT_DEPTH = 32
+  // What bounds the children of a task with no level of its own (no Bot asked for it, or
+  // none could be ranked): the level DSH reports for its Session while that one is loaded.
+  // Never the catalog default, which may have changed since the Session took it.
+  function readLevel(sessionId) {
+    try {
+      const session = (ctx.sessions?.list?.() ?? []).find(loaded => loaded?.id === sessionId)
+      return session === undefined ? undefined : presets().current(session)
+    } catch {
+      return undefined
+    }
+  }
+  function boundedByParent(task, level, service, depth) {
+    const parent = taskOf(task.levelTaskId)
+    let bound
+    if (parent !== undefined && depth < PARENT_DEPTH) {
+      const run = taskRun(parent, service, depth + 1)
+      if (run.unproven === true) return { level, unproven: true }
+      bound = run.level ?? readLevel(task.levelTaskId)
+      // What its Session reads is taken only when it can be ranked.
+      if (run.level === undefined && bound !== undefined && runRank(service, bound) === undefined) bound = undefined
+      if (bound === AUTO) bound = AUTO_FALLBACK
+    }
+    const own = runRank(service, level)
+    if (bound === undefined) {
+      // The parent is gone, the chain is longer than any real one, or its level is unknown.
+      const narrowest = narrowestOffered(service)
+      if (own === undefined || narrowest === undefined) return { level, unproven: true }
+      return { level: runRank(service, narrowest) < own ? narrowest : level }
+    }
+    // The same level by name allows the same, ranked or not.
+    if (bound === level) return { level }
+    if (own === undefined || runRank(service, bound) === undefined) return { level, unproven: true }
+    return { level: narrowedTo(level, bound, service) }
   }
   // `level`, or the group's when that one is known to allow less: both are ranked as what
   // they run as (a saved Auto DSH does not offer runs as workspace-write). A level of the
@@ -174,7 +234,11 @@ export function install(rt) {
   function narrowedByCaller(task, level, service) {
     const asked = task.levelRoomId ? rt.roomOf(task.levelRoomId)?.permission : undefined
     if (level === undefined || !asked || asked === level) return level
-    const rank = name => rankOf(service, name === AUTO && !autoOffered(service) ? AUTO_FALLBACK : name)
+    return narrowedTo(level, asked, service)
+  }
+  // `level`, or `asked` when that one is known to allow less (narrowedByCaller's rules).
+  function narrowedTo(level, asked, service) {
+    const rank = name => runRank(service, name)
     const was = rank(level)
     if (was === undefined) return level
     // A group's Auto DSH does not offer goes by the name it runs as: were the task given
@@ -204,7 +268,9 @@ export function install(rt) {
     const sessionId = exec?.agent?.id ?? exec?.agent?.session?.id
     if (typeof sessionId !== 'string') return next()
     const call = { sessionId, header: exec.agent?.session?.header, active: true }
-    call.roomId = groupOfSession(call)
+    const owner = ownerOfSession(call)
+    call.roomId = owner?.roomId
+    call.taskId = owner?.taskId
     return callers.run(call, async () => {
       try {
         return await next()
@@ -213,15 +279,17 @@ export function install(rt) {
       }
     })
   }
-  // The group a Session speaks in. A subagent child is in none of the team's maps: it
-  // follows its parents, as the tool deny list does, up to the first Session the team
-  // knows, and has that one's group or none.
-  function groupOfSession({ sessionId, header }) {
+  // The group a Session speaks in (`roomId`), or the task it is (`taskId`). A subagent child
+  // is in none of the team's maps: it follows its parents, as the tool deny list does, up
+  // to the first Session the team knows, and has that one's group, that task, or neither.
+  const groupOfSession = call => ownerOfSession(call)?.roomId
+  function ownerOfSession({ sessionId, header }) {
     let current = sessionId
     for (let depth = 0; typeof current === 'string' && depth < 32; depth += 1) {
       const group = rt.groupOwners.get(current)
-      if (group !== undefined) return group.roomId
-      if (rt.selfOf?.(current) !== undefined || taskOf(current) !== undefined) return undefined
+      if (group !== undefined) return { roomId: group.roomId }
+      if (rt.selfOf?.(current) !== undefined) return undefined
+      if (taskOf(current) !== undefined) return { taskId: current }
       let from = header
       header = undefined
       try {
@@ -241,6 +309,36 @@ export function install(rt) {
     const call = callers.getStore()
     if (call?.active !== true) return undefined
     return call.roomId ?? groupOfSession(call)
+  }
+  // The task Session whose tool call this runs in, or undefined: as the group, only while
+  // the call runs. What the call left running (a timer, a queue another start drains) is
+  // not the task's: a store that outlives its call would bind starts that are not its own.
+  function callerTask() {
+    const call = callers.getStore()
+    if (call?.active !== true) return undefined
+    return call.taskId ?? ownerOfSession(call)?.taskId
+  }
+  // How many tasks deep a task started from `sessionId` would be; a loop counts as too deep.
+  function taskDepth(sessionId) {
+    let depth = 0
+    for (let task = taskOf(sessionId); task !== undefined && depth <= PARENT_DEPTH; depth += 1) task = task.levelTaskId === undefined ? undefined : taskOf(task.levelTaskId)
+    return depth
+  }
+  const TOO_DEEP = `A task started from a task can be ${PARENT_DEPTH} tasks deep at most, so nothing was started.`
+  function assertTaskDepth(sessionId) {
+    if (taskDepth(sessionId) >= PARENT_DEPTH) throw refusal(TOO_DEEP)
+  }
+  // The ended tasks a working task descends from: kept while it works (startTask).
+  function taskForebears() {
+    const held = new Set()
+    for (let task of Object.values(rt.state?.tasks ?? {})) {
+      if (task.status !== 'working') continue
+      for (let depth = 0; task?.levelTaskId !== undefined && depth <= PARENT_DEPTH; depth += 1) {
+        held.add(task.levelTaskId)
+        task = taskOf(task.levelTaskId)
+      }
+    }
+    return held
   }
   // Before a Bot or a group leaves the state: each task `match` picks keeps the level it
   // runs at now as its cap. Saved with the deletion.
@@ -269,13 +367,21 @@ export function install(rt) {
     if (rt.readOnly() !== undefined || service === undefined) return true
     await serial(sessionId, async () => {
       const task = taskOf(sessionId)
-      const level = task === undefined ? service.catalog().defaultPreset : taskLevel(task, service)
+      const { level, unproven } = task === undefined ? { level: service.catalog().defaultPreset } : taskRun(task, service)
+      if (unproven === true) {
+        // Marked, so no tool and no agent turn runs there until the two can be compared.
+        mark(sessionId, level ?? narrowestOffered(service) ?? AUTO_FALLBACK)
+        throw refusal(UNPROVEN)
+      }
       if (level) await applyMarked(sessionId, level, session)
+      // Compared with its parent and found no wider: nothing to set, and nothing holds it.
+      else if (task?.from === undefined && task?.levelTaskId !== undefined) unapplied.delete(sessionId)
       // No level could be ranked: the task keeps its own, not a default that may be wider.
       else if (task?.from !== undefined) rt.warn('ds-bot: no permission level for the task %s can be ranked; it keeps its own', sessionId)
     })
     return true
   }
+  const UNPROVEN = 'The permission level of this task cannot be compared with the level of the task that started it, so nothing runs here.'
   // Where work starts by itself (a task's first turn, a new Bot's greeting, a member's
   // first turn in a group) nothing runs on a Session whose level did not hold: the start
   // is refused, never left on DSH's default, which may be wider than the level chosen. A
@@ -320,7 +426,15 @@ export function install(rt) {
   // level was not set, apart from those that take it on opening, for the change that asked.
   async function reapplyTasks(match) {
     const left = []
-    const picked = Object.entries(rt.state?.tasks ?? {}).filter(([, task]) => match(task))
+    // And every task started from one of them, down the chain: it is bound by that one.
+    const follows = (task) => {
+      for (let depth = 0; task !== undefined && depth <= PARENT_DEPTH; depth += 1) {
+        if (match(task)) return true
+        task = task.levelTaskId === undefined ? undefined : taskOf(task.levelTaskId)
+      }
+      return false
+    }
+    const picked = Object.entries(rt.state?.tasks ?? {}).filter(([, task]) => follows(task))
     if (picked.length === 0 || rt.readOnly() !== undefined || presets() === undefined) return left
     const loaded = new Map((ctx.sessions?.list?.() ?? []).map(session => [session.id, session]))
     for (const [sessionId, task] of picked) {
@@ -415,7 +529,7 @@ export function install(rt) {
     const service = presets()
     if (service === undefined) return {}
     const task = taskOf(sessionId)
-    if (task !== undefined) return { level: taskLevel(task, service), task }
+    if (task !== undefined) return { ...taskRun(task, service), task }
     const group = rt.groupOwners.get(sessionId)
     const bot = rt.botOf(group?.botId ?? rt.chatOwners.get(sessionId))
     if (bot === undefined) return {}
@@ -428,8 +542,11 @@ export function install(rt) {
   // the Session reads: a raise that was taken back is never set, and such a Session, no
   // wider than it was to be, is let go. One that cannot be compared stays marked.
   async function retry(sessionId, session) {
-    const { level, bot, room, task } = wantedBy(sessionId)
-    if (task !== undefined && level) return applyTaskPermission(sessionId, session)
+    const { level, bot, room, task, unproven } = wantedBy(sessionId)
+    // A task no Bot asked for that hangs from a task has no level to set: the same apply
+    // compares it with its parent, and lifts the mark when it is no wider.
+    const bound = task !== undefined && task.from === undefined && task.levelTaskId !== undefined
+    if (task !== undefined && (level || unproven === true || bound)) return applyTaskPermission(sessionId, session)
     if (bot !== undefined && level) return applyPermission(bot, sessionId, room, session)
     const service = presets()
     const mark = unapplied.get(sessionId)
@@ -456,8 +573,16 @@ export function install(rt) {
     await rt.load()
     const mark = unapplied.get(sessionId)
     if (mark === undefined) return
-    // It reads the level it should run at: nothing there is wider than chosen.
-    if (reads(own, wantedBy(sessionId).level ?? mark.level)) {
+    // It reads the level it should run at: nothing there is wider than chosen. Not for a
+    // task that cannot be compared with its parent: the level it reads proves nothing.
+    const wanted = wantedBy(sessionId)
+    // A task with no level of its own, compared with its parent just now and found no
+    // wider: nothing is to be set there, so nothing holds it.
+    if (wanted.task !== undefined && wanted.task.from === undefined && wanted.task.levelTaskId !== undefined && wanted.unproven !== true && !wanted.level) {
+      unapplied.delete(sessionId)
+      return
+    }
+    if (wanted.unproven !== true && reads(own, wanted.level ?? mark.level)) {
       unapplied.delete(sessionId)
       return
     }
@@ -696,5 +821,5 @@ export function install(rt) {
   // The Sessions that carry the mark now, as a fresh list.
   const unappliedSessions = () => [...unapplied.keys()]
 
-  Object.assign(rt, { sessionWide, permissionFactsOf, unappliedSessions, permissionCatalog, permissionFallbackOf, permissionKey, autoClosed, applyPermission, applyTaskPermission, levelHolds, reapplyTasks, capTasks, taskOfRoom, inToolCall, callerGroup, taskLevelOf, forgetTaskPermission, checkPreset, setPermission, inheritedPermission, cleanRoomPermission, setRoomPermission })
+  Object.assign(rt, { sessionWide, permissionFactsOf, unappliedSessions, permissionCatalog, permissionFallbackOf, permissionKey, autoClosed, applyPermission, applyTaskPermission, levelHolds, reapplyTasks, capTasks, taskOfRoom, inToolCall, callerGroup, callerTask, assertTaskDepth, taskForebears, taskLevelOf, forgetTaskPermission, checkPreset, setPermission, inheritedPermission, cleanRoomPermission, setRoomPermission })
 }
