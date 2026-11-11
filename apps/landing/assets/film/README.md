@@ -8,9 +8,9 @@ after the owner uploads the prepared small encode and its downloaded bytes are c
 
 | File | Purpose | SHA-256 |
 |---|---|---|
-| [automagik-launch.mp4](automagik-launch.mp4) | Site encode; H.264 + AAC, 1920×1080, 30 fps, 58 seconds, faststart | `da5b79754c432e8d5498f2041b382a096cad7d105ec394ddf135f74bb3641988` |
-| [automagik-launch-poster.webp](automagik-launch-poster.webp) | End-card frame at 54.5 seconds; 1920×1080 | `65f757b8aaf797761086528399b49380bf16c8e90efa65ba8920d0a8425a48ce` |
-| Owner's prepared GitHub encode (outside this repository) | Same cut, under 10,000,000 bytes; not an uploaded attachment | `d670e589c14b143d988ec2ac7fd64d5f73ded1df5a0ecc8d660e74fcfb65c96c` |
+| [automagik-launch.mp4](automagik-launch.mp4) | Site encode; H.264 + AAC, 1920×1080, 30 fps, 58 seconds, faststart | `f93516a6fa1189feb5671d6e4685b58427b36d86b74e1eff0354b1ee38af1400` |
+| [automagik-launch-poster.webp](automagik-launch-poster.webp) | End-card frame at 54.5 seconds; 1920×1080 | `cf5811db552966049d461ee7eddf689cdcc43cf491403d19d4b8f53a50565ebc` |
+| Owner's prepared GitHub encode (outside this repository) | Same cut, under 10,000,000 bytes; not an uploaded attachment | `c3c8039a7592932ec8d5e0c3a24a4392ec0235768231f7d454928bad4bfff4b9` |
 
 The owner's channel is [Automagik on YouTube](https://www.youtube.com/channel/UCLX2lP-PaCbjDU6ZzgdJbOg).
 The film has not been uploaded.
@@ -30,10 +30,11 @@ The storyboard was read as data; its full file and private source location are n
 into the repository. The page comes from the pinned D3 source. Digests identify the versions used:
 
 - Storyboard SHA-256: `e5f2e39e076ddcc5887e42cb2979009dfdec65ae84eff10b1b02bf7eb36c25fd`.
-- D3 page from PR #1078, commit `4de231eff59d5b71ed61e5af60eb7dbd2c8ba7b6`.
-- D3 HTML SHA-256: `eb58e4daf3b8aacc6250ab3e9208cfc28d7f73f848f6e198db62f5b40ada8ceb`.
-- D3 CSS SHA-256: `e07282f0e4c35aea60ec8dd8a1aa804c295fda1a50d40ef64315d932d3bc2739`.
-- App artwork and fonts: this repository at `a6221926fae0fd85d4af8d03d71aad6370fc0317`,
+- D3 page from PR #1078, commit `5c8b81920047dd4736c6fd3855b3b310c9e46bb1`.
+- D3 HTML SHA-256: `ec339ab586756202dbcf16ab61f4f26df54ac3f70553ceba9339666e7c9e3b0b`.
+- D3 CSS SHA-256: `a69ebb3eb189cc7572c8b24f834dc42d2566239db3a6a764e195306f6e888cc3`.
+- D3 Stage-theme CSS SHA-256: `567238e48032359cd5637fe8da931327d9bf14bd1eb65268b145bbf8745a6a11`.
+- Chat artwork and fonts: this repository at `a6221926fae0fd85d4af8d03d71aad6370fc0317`,
   `apps/bots-dsh/src/client/art/`; existing character geometry from `src/client/characters.js`
   and dark Bot inks from `src/client/inks.js`. The character choices are for this film;
   no saved production Bot appearance is asserted.
@@ -43,7 +44,7 @@ into the repository. The page comes from the pinned D3 source. Digests identify 
 | The question | 0–7 s | Only the storyboard's greeting and question. The unknown pre-rename name is cut; “Automagik Launch” is used from the start. The person is “You”. |
 | The call | 7–13 s | The storyboard's supplied shortened Automagik reply and “devs and builders first.” No unsupplied long reply is invented. |
 | The hires | 13–24 s | Genie, GTM, group-name confirmation, Video Maker, in that order. Genie and Automagik use the app's existing expression sprites. GTM uses the app's star in tangerine (`#FF8A2E`); Video Maker uses its saucer in cobalt (`#5C78FF`), rendered by `characterMarkup` from the existing character set, as requested in frame review. The unverified model-version chips are cut. The confirmation keeps the fallback group name rather than inventing a former one. |
-| The Genie's page | 24–36 s | Literal viewport excerpts of D3 at `4de231ef` (PR #1078), in its own styles: hero and download actions, blocks, What makes it yours with the corrected permission rules, and its current Made by this team line. The chat keeps the Video Maker hire card and the approval message from scene 3; earlier scene-2 messages stay hidden, and scene 6 focuses that same approval message. No awaiting-D3 label or URL-bar text. Screen/demo chat captures and the film placeholder are outside the selected excerpts. |
+| The Genie's page | 24–36 s | Literal viewport excerpts of D3 at `5c8b8192` (PR #1078), in its own dark Stage styles: “Open building blocks of superintelligence.” and its starting-point action, upper and lower building-block card crops, then Made by this team / “From inside Automagik.” at 34.7 seconds. The framing, scroll times and scene duration are unchanged. The chat keeps the Video Maker hire card and the approval message from scene 3; earlier scene-2 messages stay hidden, and scene 6 focuses that same approval message. No awaiting-D3 label or URL-bar text. Screen/demo chat captures and the film placeholder are outside the selected excerpts. |
 | GTM's drafts | 36–47 s | The first three cards quoted by the storyboard, entering from the scene cut without a title-only pause, stamped “DRAFT · NOT POSTED”, with no social-media interface, metrics or timestamps. Their product claims are supported by the READMEs. Separate original draft files were not supplied; the storyboard is the source of these exact lines. The fourth, broad approval claim is cut following D1's correction. |
 | You stay the boss | 47–52 s | The storyboard's “nothing gets published, I approve the cut”, attributed to “You”, with the remaining interface dimmed. |
 | End card | 52–58 s | The app's own lockup, the storyboard's title and repository tagline, Mac/Linux line, and `github.com/automagik-si/automagik`. The licence line is scoped to this repository, Genie and Omni; Cloud's caveat stays in small print. Fade to black and silence at 58 seconds. |
@@ -59,7 +60,7 @@ encodes, the poster, contact sheet and YouTube thumbnail. The matcher checks bin
 strings; the authored text and D3 excerpts are scanned separately, and frames at every
 half-second of the timeline are read visually. Message geometry is also checked
 at half-second intervals and at 0.1-second intervals around transitions; the original
-24-second conversation rewind is a failing negative control. This does not substitute for the owner's watch and music OK.
+24-second conversation rewind and revision 3’s stale site headline are failing negative controls. The page excerpts are compared with the pinned D3 source; all film HTML is scanned for the replaced site copy. This does not substitute for the owner's watch and music OK.
 
 1. Review the full site cut and music, the scene contact sheet and the 20-second preview.
 2. If approved, upload the prepared small encode as a GitHub attachment in a PR comment.

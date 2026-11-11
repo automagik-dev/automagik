@@ -103,4 +103,5 @@ of a live profile. [film/automagik-launch-poster.webp](film/automagik-launch-pos
 film's end-card frame at 54.5 seconds. The scene decisions, source digests and review gaps are
 in [film/README.md](film/README.md); music and artwork provenance and the saved CC0 deed are
 in [film/LICENSES.md](film/LICENSES.md). Scene 4 shows viewport excerpts of D3’s page from PR #1078 at
-`4de231ef`, in its own styles. The owner approves the cut and music before publication.
+`5c8b8192`, in its own dark Stage styles, opening with “Open building blocks of superintelligence.”
+The owner approves the cut and music before publication.
