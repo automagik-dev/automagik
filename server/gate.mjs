@@ -2,7 +2,7 @@ import http from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { Transform } from 'node:stream'
 import { COOKIE, cookieSecret, LOCAL_TRUST_NOTICE, sessionCookie } from './gate-store.mjs'
-import { DSH_HOST, responseHeaders, upstreamHeaders } from './gate-upstream.mjs'
+import { agentMcpHeaders, DSH_HOST, responseHeaders, upstreamHeaders } from './gate-upstream.mjs'
 
 export function pinOrigin(value) {
   const url = new URL(value)
@@ -85,6 +85,37 @@ export function createGate({ origin: value, sessions, credentials, access, selfH
   }
   const server = http.createServer(async (req, res) => {
     if (reservedPathAlias(req.url, origin)) { answer(res, 400, { error: 'Non-canonical gate path' }); return }
+    // Literal target only: queries and aliases continue through the ordinary session gate.
+    // The upstream exact route admits only agent tokens, never a browser session alone.
+    if (req.url === '/api/omni-mcp') {
+      if (req.headers.host !== origin.host
+        || (req.headers.origin !== undefined && req.headers.origin !== origin.origin)
+        || req.headers['sec-fetch-site'] === 'cross-site') {
+        auditAccess({ status: 403, request_id: randomUUID() })
+        answer(res, 403, { error: 'Invalid MCP origin' })
+        return
+      }
+      try {
+        const cookie = await credentials.cookie()
+        const proxy = http.request({ hostname: DSH_HOST, port: credentials.port,
+          method: req.method, path: '/api/omni-mcp',
+          headers: agentMcpHeaders(req, credentials, cookie), timeout: 10000 }, upstream => {
+          // Refresh for the next call after a DSH restart; never replay this body.
+          if (upstream.statusCode === 401) credentials.cookie(true).catch(() => {})
+          res.writeHead(upstream.statusCode, responseHeaders(upstream.headers))
+          upstream.pipe(res)
+          upstream.on('error', () => res.destroy())
+        })
+        proxy.on('timeout', () => proxy.destroy(new Error('MCP timeout')))
+        proxy.on('error', () => {
+          if (!res.headersSent) answer(res, 502, { error: 'MCP unavailable' })
+          else res.destroy()
+        })
+        res.on('close', () => proxy.destroy())
+        req.pipe(proxy)
+      } catch { answer(res, 502, { error: 'MCP unavailable' }) }
+      return
+    }
     const authorization = await authorize(req)
     const family = authorization?.family
     if (selfHosted && await selfHosted.handle(req, res, family, { bootstrap })) return

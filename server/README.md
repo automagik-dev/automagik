@@ -643,3 +643,22 @@ WebSockets stay refused. Gate management paths use the literal `/_gate/` prefix.
 encoded, backslash, duplicate-slash or dot-segment spellings that enter that namespace get
 `400` before sign-in in both modes, including WebSocket upgrades. Ordinary upstream paths
 retain their raw spelling.
+
+### Agent MCP access
+
+A space with the Bot plugin exposes one separate agent entry through the gate:
+`https://<SPACE_ORIGIN>/api/omni-mcp`. The owner creates a named bearer token in
+**Settings → Agent access**. This exact HTTP path forwards only to the plugin's MCP handler,
+which checks the token on every call and audits reads, writes and authentication refusals.
+It supports MCP Streamable HTTP clients without a browser session or an Access exchange.
+
+The gate pins Host and Origin, rejects cross-site requests, strips caller cookies and identity
+headers, and supplies its own DSH credential only for that fixed upstream path. The plugin
+still refuses missing, wrong or revoked agent tokens; a browser cookie alone never admits MCP.
+Queries, alternate spellings and upgrades retain normal session authentication, as do all other
+web routes. Gate-level Host/origin refusals use the gate audit; calls reaching the plugin appear
+in the owner's activity list. No extra container port needs publishing.
+
+For direct private-network access, the plugin's `agentAccessHost` and `agentAccessPort` configure
+its separate listener; its defaults remain loopback and an OS-selected port. See the Bot
+plugin's [MCP setup and tool reference](../apps/bots-dsh/README.md#agent-access-mcp).

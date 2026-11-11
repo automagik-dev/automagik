@@ -454,3 +454,88 @@ dev/check.sh                             # all checks (see below)
 ## License
 
 [Apache-2.0](LICENSE)
+
+## Agent access (MCP)
+
+In **Settings → Agent access**, name the agent and choose **Create key**. Copy the key
+immediately; it is shown once. Keep it private: it grants the instance owner's space reads and
+Bot/group administration rights, including conversation text. **Revoke** asks first, then stops
+new calls at once, including existing MCP clients. An action already admitted may finish. The
+page lists each key with the day it was created and its last use, shows the address with an
+example setup under **Connect an agent**, and keeps an **Access log** of recent allowed and
+refused calls: the key's name, what it did, the target, the time, and configuration changes as
+before and after lines. The log filters by key; **Refresh** loads new activity. Normal team
+views show the edits too. In the protocol and in the files below, a key is an agent token.
+
+Each space serves MCP over Streamable HTTP, using JSON responses rather than an SSE subscription.
+The standalone listener starts when the first token is created and resumes on restart while an
+active token exists. It defaults to `127.0.0.1` and an OS-selected port, shown in Settings.
+Set the `omni-ui` plugin's `agentAccessHost` to the IP of the owner's private interface and
+`agentAccessPort` to an unused local port for direct access from another machine. Local, RFC1918,
+tailnet/CGNAT, IPv6 private and link-local addresses are accepted; public and wildcard bindings
+are refused. The plugin opens no public port by default. Use a trusted private network or TLS
+termination; the bearer token authenticates the agent but does not encrypt plain HTTP.
+
+Claude Code can use this project `.mcp.json` configuration (replace the placeholders):
+
+```json
+{
+  "mcpServers": {
+    "automagik": {
+      "type": "http",
+      "url": "http://<PRIVATE_INSTANCE_ADDRESS>:<MCP_PORT>/mcp",
+      "headers": {
+        "Authorization": "Bearer ${AUTOMAGIK_AGENT_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+Set `AUTOMAGIK_AGENT_TOKEN` in the agent's environment from your private token store. Keep the
+actual token out of checked-in configuration, URLs, command arguments and logs. The listener
+accepts bearer headers only, rejects URL queries, and rate limits failed authentication.
+Browser Origin headers are refused by default. `agentAccessOrigins` may list exact HTTP/HTTPS
+origins for clients that send one; it never enables credentialed browser CORS.
+
+On a web instance behind the session gate, use
+`https://<SPACE_ORIGIN>/api/omni-mcp` in the same client configuration. The gate forwards only
+that literal path to the plugin's token-authenticated MCP route. It carries the bearer on that
+hop, injects its own DSH credential, and drops browser cookies and identity/forwarding headers.
+Missing, wrong or revoked agent tokens cannot use the path, even with a valid browser session.
+Queries, aliases, WebSocket upgrades and all other routes keep the ordinary session gate.
+Gate Host/origin/cross-site rejections happen before MCP and use the gate's existing audit.
+Every request reaching MCP, including token refusals, appears in the owner's Access log.
+Web-gate clients must omit Origin; DSH accepts the internal cookie-authenticated hop that way.
+No separate public MCP listener or web session is needed. This path also supports future hosted
+spaces without changing the token protocol.
+
+An SSH tunnel remains an alternative when only local binding is wanted:
+
+```sh
+ssh -N -L <LOCAL_PORT>:127.0.0.1:<INSTANCE_MCP_PORT> <SSH_USER>@<INSTANCE_SSH_HOST>
+```
+
+Use `http://127.0.0.1:<LOCAL_PORT>/mcp` in the client configuration, with the same bearer header.
+For a container, the SSH endpoint must share the instance's network namespace.
+
+Read tools list/get Bots with role, instructions, model, effort, permission, folder and status;
+list/get groups and membership; list/get Bot and group conversations with running/waiting/idle
+state and last known activity; read text messages, safe settings, recent event metadata, and
+the recent audit window. Lists accept `offset` and `limit` (1–100, default 50) and return
+`nextOffset`. `read_messages` takes `id`, optional opaque `cursor`, and `limit`, returning
+`nextCursor`. Bot messages reuse the app's chat paging across earlier parts; group messages
+are newest first. Event activity covers up to 1,000 events seen since startup; an unknown last
+activity is `null`. No arbitrary native Session or attachment is addressable through these tools.
+
+Admin tools create/update/delete Bots and groups, edit instructions, model, effort and permission,
+manage membership, and set Main Bot. Creation uses the team's default permission; `update_bot`
+sets an explicit level through the same validator as Settings. Secret values, shell, files,
+plugin installation and token management are absent from the MCP tool surface. Stored secret
+values and agent token strings are redacted from all MCP responses and audit records.
+
+Tokens live only as hashes in private `agent-tokens.json` beside the team. `agent-audit.jsonl`
+keeps token name, tool, target, outcome and time for reads/writes; configuration writes also
+record changed-field before/after values. Message bodies and read results never enter the audit.
+Settings and `read_audit` expose up to the latest 200 complete records within the last 256 KiB.
+A `started` write with no completion was interrupted; check the configuration before retrying.
