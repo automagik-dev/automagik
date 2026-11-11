@@ -279,7 +279,7 @@ test("worker: the bot's worker defaults are used, and per-task --agent/--model/-
   assert.equal(r.code, 0, r.err);
   const out = r.json();
   assert.deepEqual([out.agent, out.model, out.effort], ["codex", "gpt-5.5", "medium"]);
-  assert.deepEqual(after(s.runs()[0]), ["codex", "--approve-for-me", "--model", "gpt-5.5", "-c", "model_reasoning_effort=medium", "fix the login form"]);
+  assert.deepEqual(after(s.runs()[0]), ["codex", "--approve-for-me", "--disable", "hooks", "--model", "gpt-5.5", "-c", "model_reasoning_effort=medium", "fix the login form"]);
   const o = s.cli(["worker", "review it", "--branch", "feat/review", "--agent", "claude", "--model", "opus", "--effort", "max", "--json"]);
   assert.equal(o.code, 0, o.err);
   assert.deepEqual([o.json().agent, o.json().model, o.json().effort], ["claude", "opus", "max"]);
@@ -724,11 +724,13 @@ test("worker #823: an Antigravity worker writes its 0600 permission file (its wo
     "command(find)", "command(awk)", "command(tee)", "command(sed)"]) {
     assert.equal(review.permissions.allow.includes(bad), false, `review worker never allows ${bad}`);
   }
-  // #884 M1/follow-up: a review launch is never auto-trusted, and its file leaves the key out
-  // entirely (an empty trustedWorkspaces would overwrite the person's saved list with []):
-  // agy stops at its trust question instead of loading a contributor's or fork's tree.
-  assert.equal("trustedWorkspaces" in review, false, "a review worker's settings leave the key out");
-  assert.equal(readFileSync(path2, "utf8").includes("trustedWorkspaces"), false, "not even as an empty list");
+  // #1046: a review worker is read-only in its allow list, but its own worktree is trusted like
+  // any writer's, so an unattended --role review worker never stops at agy's trust question.
+  assert.deepEqual(review.trustedWorkspaces, [cwd2], "the review worker's settings trust its own worktree");
+  for (const wrong of [s2.project, dirname(cwd2), s2.env.HOME, "/"]) {
+    assert.equal(review.trustedWorkspaces.includes(wrong), false, `never ${wrong}`);
+  }
+  assert.equal(readFileSync(path2, "utf8").includes("trustedWorkspaces"), true, "the key is written");
 });
 
 test("worker #879: a fake agy reads --settings and trusts only its session cwd, never a saved trust list", (t) => {
@@ -956,7 +958,7 @@ test("worker: a bots.json template default is used; a per-task --agent sets it a
   // --model alone is a per-task pick too: the default template steps aside for the default agent.
   const m = s.cli(["worker", "tune it", "--branch", "feat/tune", "--model", "gpt-6", "--json"]);
   assert.equal(m.code, 0, m.err);
-  assert.deepEqual(after(s.runs()[3]), ["codex", "--approve-for-me", "--model", "gpt-6", "-c", "model_reasoning_effort=medium", "tune it"]);
+  assert.deepEqual(after(s.runs()[3]), ["codex", "--approve-for-me", "--disable", "hooks", "--model", "gpt-6", "-c", "model_reasoning_effort=medium", "tune it"]);
 });
 
 test("worker --template: an agent the command doesn't name skips the hook with a warning; no template list refuses", (t) => {
