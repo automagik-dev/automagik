@@ -22,22 +22,28 @@ function trustedRequest(req, origin, upgrade, allowNavigation = false) {
 function reservedPathAlias(rawUrl, origin) {
   const raw = rawUrl.split('?', 1)[0]
   const reserved = path => path === '/_gate' || path.startsWith('/_gate/')
-  let candidate = raw
-  for (let depth = 0; depth < 8; depth++) {
+  const queue = [raw]
+  const seen = new Set(queue)
+  for (let i = 0; i < queue.length; i++) {
+    const candidate = queue[i]
+    if (reserved(candidate) && (candidate !== raw || !raw.startsWith('/_gate/'))) return true
     let normalized
     try { normalized = new URL(candidate, origin).pathname }
     catch { return true }
-    const collapsed = candidate.replace(/\\/g, '/').replace(/\/{2,}/g, '/')
-    if ([candidate, normalized, collapsed].some(reserved) &&
-      (!raw.startsWith('/_gate/') || candidate !== raw || normalized !== raw || collapsed !== raw || raw.includes('%'))) return true
-    let decoded
-    try { decoded = decodeURIComponent(candidate) }
-    catch { return reserved(candidate) }
-    if (decoded === candidate) return false
-    candidate = decoded
+    const forms = [normalized, candidate.replace(/\\/g, '/').replace(/\/{2,}/g, '/')]
+    try { forms.push(decodeURIComponent(candidate)) }
+    catch { if (reserved(candidate)) return true }
+    // Explore compositions too: collapsing empty segments changes which '..' is resolved.
+    for (const form of forms) {
+      if (form !== raw && (reserved(raw) || reserved(form))) return true
+      if (!seen.has(form)) {
+        if (seen.size >= 64) return true
+        seen.add(form)
+        queue.push(form)
+      }
+    }
   }
-  // Excessive nested encoding is not a supported alternate route spelling.
-  return true
+  return false
 }
 
 function answer(res, status, value) {
@@ -118,7 +124,7 @@ export function createGate({ origin: value, sessions, credentials, access, audit
       req.pipe(proxy)
     } catch { if (!res.headersSent) answer(res, 502, { error: 'DSH unavailable' }); else res.destroy() }
   })
-  server.on('connect', (req, socket) => refuseSocket(socket))
+  server.on('connect', (req, socket) => refuseSocket(socket, reservedPathAlias(req.url, origin) ? 400 : 401))
   server.on('upgrade', async (req, socket, head) => {
     socket.on('error', () => {})
     if (reservedPathAlias(req.url, origin)) { refuseSocket(socket, 400); return }

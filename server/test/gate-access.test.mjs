@@ -34,6 +34,8 @@ function request(port, { path = '/', method = 'GET', headers = {} } = {}) {
       res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body }))
     })
     req.on('error', reject)
+    req.on('connect', (response, socket) => { socket.destroy(); resolve({ status: response.statusCode, headers: response.headers, body: '' }) })
+    req.on('upgrade', (response, socket) => resolve({ status: response.statusCode, headers: response.headers, socket, body: '' }))
     req.setTimeout(5000, () => req.destroy(new Error('Test timeout')))
     req.end()
   })
@@ -59,6 +61,13 @@ async function fixture(t, env = ENV) {
   const upstream = http.createServer((req, res) => {
     proxied.push(req.headers)
     res.writeHead(200, { 'content-type': 'application/json', 'set-cookie': 'dsh-hidden=secret' }).end(JSON.stringify({ principal: JSON.parse(Buffer.from(req.headers['x-automagik-principal'], 'base64url')), cookie: req.headers.cookie }))
+  })
+  upstream.on('upgrade', (req, socket) => {
+    proxied.push(req.headers)
+    socket.on('error', () => {})
+    socket.on('end', () => socket.end())
+    socket.write('HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSet-Cookie: dsh-hidden=secret\r\n\r\n')
+    socket.on('data', data => socket.write(data))
   })
   const upstreamPort = await listen(upstream)
   const gate = createGate({ origin: ORIGIN, sessions, credentials: { port: upstreamPort, authority: `${DSH_HOST}:${upstreamPort}`, cookie: async () => 'dsh-credential=server-held' }, access, auditAccess: entry => audit.push(entry) })
@@ -325,10 +334,10 @@ https.get = denied; https.request = denied; globalThis.fetch = denied;
 test('reserved gate aliases get 400 before Access sign-in for encoded and dot-segment spellings', async t => {
   for (const env of [ENV, {}]) {
     const f = await fixture(t, env)
-    const paths = ['/_gate', '/_gate/../outside', '/x/../_gate/sessions', '/x/%2e%2e/_gate/sessions', '/%5fgate/sessions', '/_gat%65/sessions', '/%255fgate/sessions', '/_gate%2fsessions', '/%2f_gate/sessions', '/_gate/./sessions', '/_gate/%2e/sessions', '/_gate/session/../sessions', '/_gate/%73essions', '/_gate//sessions', '/_gate%5csessions']
+    const paths = ['/x//../_gate/sessions', '/x/..//_gate/sessions', '/.//_gate/sessions', '/_gate', '/_gate/../outside', '/x/../_gate/sessions', '/x/%2e%2e/_gate/sessions', '/%5fgate/sessions', '/_gat%65/sessions', '/%255fgate/sessions', '/_gate%2fsessions', '/%2f_gate/sessions', '/_gate/./sessions', '/_gate/%2e/sessions', '/_gate/session/../sessions', '/_gate/%73essions', '/_gate//sessions', '/_gate%5csessions']
     for (const path of paths) {
-      for (const headers of [assertion(f.token()), { ...assertion(f.token()), connection: 'Upgrade', upgrade: 'websocket', origin: ORIGIN }]) {
-        const response = await request(f.gatePort, { path, headers })
+      for (const options of [{ headers: assertion(f.token()) }, { method: 'CONNECT', headers: assertion(f.token()) }, { headers: { ...assertion(f.token()), connection: 'Upgrade', upgrade: 'websocket', origin: ORIGIN } }]) {
+        const response = await request(f.gatePort, { path, ...options })
         assert.equal(response.status, 400, `non-canonical gate path: ${path}`)
         assert.equal(response.headers['set-cookie'], undefined)
       }
@@ -358,4 +367,23 @@ test('invalid URL syntax is rejected before the reserved-path guard can throw', 
     assert.equal((await request(f.gatePort, { path })).status, 400)
   }
   assert.equal(f.fetched.length, 0)
+})
+
+test('Access can establish a WebSocket session and sends only its own cookie to the browser', async t => {
+  const f = await fixture(t)
+  const response = await request(f.gatePort, { path: '/api/remote.mux', headers: { ...assertion(f.token()), connection: 'Upgrade', upgrade: 'websocket', origin: ORIGIN } })
+  assert.equal(response.status, 101)
+  try {
+    assert.equal(response.headers['set-cookie'].length, 1)
+    assert.match(response.headers['set-cookie'][0], /^__Host-automagik-session=/)
+    assert.equal(f.proxied[0]['cf-access-jwt-assertion'], undefined)
+    assert.equal(f.proxied[0].cookie, 'dsh-credential=server-held')
+    const echoed = once(response.socket, 'data')
+    response.socket.write('owner')
+    assert.equal((await echoed)[0].toString(), 'owner')
+    const closed = once(response.socket, 'close')
+    response.socket.resume()
+    f.sessions.revokeAll()
+    await closed
+  } finally { response.socket.destroy() }
 })
