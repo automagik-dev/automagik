@@ -1951,7 +1951,16 @@ const pack = createPack({
     "Check the connection details without changing host-key protection.": "Verifique os dados da conexão sem alterar a proteção da chave do host.",
     "A chat is still running on this connection; stop it or wait.": "Ainda há um chat em execução nesta conexão; interrompa ou aguarde.",
     "Your connection settings were not changed.": "As configurações da conexão não foram alteradas.",
-    "Stop the chat or wait": "Interrompa o chat ou aguarde"
+    "Stop the chat or wait": "Interrompa o chat ou aguarde",
+    "Use SSH host {host}": "Usar host SSH {host}",
+    "No SSH hosts match your search.": "Nenhum host SSH corresponde à busca.",
+    "SSH hosts from your config": "Hosts SSH da sua configuração",
+    "Loading saved SSH hosts…": "Carregando hosts SSH salvos…",
+    "Saved SSH hosts could not be listed. Type a host below.": "Não foi possível listar os hosts SSH salvos. Digite um host abaixo.",
+    "No saved SSH hosts. Type a host below.": "Nenhum host SSH salvo. Digite um host abaixo.",
+    "Search SSH hosts": "Buscar hosts SSH",
+    "Search by name, address or user": "Busque por nome, endereço ou conta",
+    "Other hosts you have connected to": "Outros hosts aos quais você já se conectou"
   }
 })
 return Object.defineProperty({ ...pack }, Symbol.toStringTag, { value: 'Module' })

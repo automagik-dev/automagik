@@ -3,6 +3,7 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 import { readFile } from 'node:fs/promises'
 import { HermesTransport, RemoteChat, remoteAddress, HERMES_DEADLINES } from './hermes-transport.js'
 import { prepareHermesConnection, refreshHermesProfiles } from './hermes-connection.js'
+import { discoverSshHosts } from './hermes-ssh-hosts.js'
 import { MISSING_TOOLS, RemoteChatAdapter } from './remote-chat-adapter.js'
 import { refusal } from './refusal.js'
 
@@ -39,7 +40,7 @@ const connectionFailure = (error, native = false) => error?.cleanupUnknown === t
   ? refusal(CONNECTION_ERRORS[error.code], { code: error.code })
   : refusal(native && error?.code === 'bot/hermes' ? error.message : 'Remote Hermes could not connect.')
 
-export function install(rt, { transport = options => new HermesTransport(options), fetch: fetcher = globalThis.fetch, startSsh, now = Date.now, deadlines = HERMES_DEADLINES, testLifetime = TEST_LIFETIME } = {}) {
+export function install(rt, { transport = options => new HermesTransport(options), fetch: fetcher = globalThis.fetch, startSsh, sshHosts = discoverSshHosts, now = Date.now, deadlines = HERMES_DEADLINES, testLifetime = TEST_LIFETIME } = {}) {
   const { ctx, state } = rt
   const record = () => state.prefs?.hermesRemote ?? { enabled: false, models: [] }
   const sessions = () => state.hermesSessions ??= {}
@@ -600,6 +601,16 @@ export function install(rt, { transport = options => new HermesTransport(options
   adapter = new RemoteChatAdapter(rt, { open: openChat, models: () => record().models ?? [], identity, save: saveState, enabled })
   api.adapter = adapter
   rt.hooks.endpoint('hermes-remote', async () => { await rt.load(); await rt.loadSecrets(); return view() }, { read: true })
+  rt.hooks.endpoint('hermes-remote-ssh-hosts', async (_body, signal) => {
+    try {
+      const found = await sshHosts({ signal })
+      const project = rows => Array.isArray(rows) ? rows.flatMap(row => {
+        if (!row || typeof row.alias !== 'string' || !row.alias) return []
+        return [Object.fromEntries(['alias', 'hostname', 'user', 'port'].map(key => [key, typeof row[key] === 'string' ? row[key] : '']))]
+      }) : []
+      return { aliases: project(found?.aliases), knownHosts: project(found?.knownHosts) }
+    } catch { return { aliases: [], knownHosts: [] } }
+  }, { read: true })
   rt.hooks.endpoint('hermes-remote-test', (body, signal) => api.test(body, signal))
   rt.hooks.endpoint('hermes-remote-test-status', body => ({ stage: pendingTest?.requestId && pendingTest.requestId === body?.requestId
     ? pendingTest.stage : tested?.requestId && tested.requestId === body?.requestId ? 'connected' : 'reach' }), { read: true })

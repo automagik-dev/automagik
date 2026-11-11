@@ -5,6 +5,15 @@
 export const NAMESPACE = 'omni-ui'
 
 const ZH = {
+  "Use SSH host {host}": "使用 SSH 主机 {host}",
+  "No SSH hosts match your search.": "没有匹配的 SSH 主机。",
+  "SSH hosts from your config": "SSH 配置中的主机",
+  "Loading saved SSH hosts…": "正在加载已保存的 SSH 主机…",
+  "Saved SSH hosts could not be listed. Type a host below.": "无法列出已保存的 SSH 主机。请在下方输入主机。",
+  "No saved SSH hosts. Type a host below.": "没有已保存的 SSH 主机。请在下方输入主机。",
+  "Search SSH hosts": "搜索 SSH 主机",
+  "Search by name, address or user": "按名称、地址或用户名搜索",
+  "Other hosts you have connected to": "你曾连接过的其他主机",
   "A chat is still running on this connection; stop it or wait.": "此连接上仍有聊天正在运行；请停止聊天或等待。",
   "Your connection settings were not changed.": "你的连接设置没有更改。",
   "Stop the chat or wait": "停止聊天或等待",

@@ -67,6 +67,26 @@ function runtime(t, fixture, overrides = {}) {
 }
 const sshFetch = async url => url.endsWith('/api/status') ? response({ gateway_shared_with: ['sample-profile'] }) : response({ profiles: [{ name: 'sample-profile' }] })
 
+test('SSH discovery endpoint projects only four fields and accepts no browser filesystem options', async t => {
+  const f = dashboard(), calls = [], controller = new AbortController()
+  const row = { alias: 'sample-work', hostname: 'work.example.invalid', user: 'sample-user', port: '2200', identityfile: '/sample/unused', password: randomUUID(), options: { forbidden: true } }
+  const h = runtime(t, f, { sshHosts: async options => { calls.push(options); return { aliases: [row], knownHosts: [{ ...row, alias: 'previous.example.invalid' }], forbidden: true } } })
+  const before = JSON.stringify(h.rt.state)
+  const result = await h.endpoints.get('hermes-remote-ssh-hosts')({ sshDir: '/sample/ignored', env: { forbidden: true } }, controller.signal)
+  assert.deepEqual(Object.keys(result).sort(), ['aliases', 'knownHosts'])
+  for (const value of [...result.aliases, ...result.knownHosts]) assert.deepEqual(Object.keys(value).sort(), ['alias', 'hostname', 'port', 'user'])
+  assert.deepEqual(calls, [{ signal: controller.signal }])
+  assert.ok(!JSON.stringify(result).includes(row.password) && !JSON.stringify(result).includes('unused'))
+  assert.equal(JSON.stringify(h.rt.state), before)
+  assert.equal(h.snapshots.length, 0)
+  assert.equal(h.secretCalls.length, 0)
+})
+
+test('SSH discovery failures return an empty list without raw diagnostics', async t => {
+  const h = runtime(t, dashboard(), { sshHosts: async () => { throw Error('Private fixture diagnostic') } })
+  assert.deepEqual(await h.endpoints.get('hermes-remote-ssh-hosts')({}), { aliases: [], knownHosts: [] })
+})
+
 test('token auth uses its dedicated header, preserves the prefix and filters installed profiles to served profiles', async () => {
   const f = dashboard(), stages = []
   const c = await prepareHermesConnection(f.token, { fetch: f.fetch, deadlines, onProgress: stage => stages.push(stage) })

@@ -22,6 +22,56 @@ const Button = ({ children, primary = false, ...props }) => h('button', { type: 
 const Note = ({ children, error = false }) => h('div', { className: `bt-hw-note${error ? ' bt-hw-error-note' : ''}` }, h(ShieldIcon), h('span', null, children))
 const Pair = ({ label, value }) => h('div', { className: 'bt-hw-pair' }, h('span', null, label), h('strong', null, value))
 
+const sshHostRows = rows => {
+  const seen = new Set()
+  return (Array.isArray(rows) ? rows : []).slice(0, 2048).flatMap(row => {
+    if (!row || typeof row !== 'object') return []
+    const item = Object.fromEntries(['alias', 'hostname', 'user', 'port'].map(key => [key, typeof row[key] === 'string' && row[key].length <= 4096 && !/[\x00-\x1f\x7f]/.test(row[key]) ? row[key] : '']))
+    if (!item.alias || seen.has(item.alias)) return []
+    seen.add(item.alias)
+    return [item]
+  })
+}
+
+function SshHostPicker({ host, onPick }) {
+  const [listing, setListing] = useState({ status: 'loading', aliases: [], knownHosts: [] })
+  const [search, setSearch] = useState('')
+  const [otherOpen, setOtherOpen] = useState(false)
+  useEffect(() => {
+    let current = true
+    const controller = new AbortController()
+    // This optional list owns its request. Leaving Details must never abort the
+    // wizard's separate connection test or its progress request.
+    void api('hermes-remote-ssh-hosts', undefined, controller.signal).then(answer => {
+      if (current && !controller.signal.aborted) setListing({ status: 'ready', aliases: sshHostRows(answer?.aliases), knownHosts: sshHostRows(answer?.knownHosts) })
+    }).catch(error => {
+      if (current && !controller.signal.aborted && error?.name !== 'AbortError') setListing({ status: 'error', aliases: [], knownHosts: [] })
+    })
+    return () => { current = false; controller.abort() }
+  }, [])
+  const matches = item => [item.alias, item.hostname, item.user, item.port].some(value => value.toLowerCase().includes(search.trim().toLowerCase()))
+  const choices = (rows, label) => {
+    const filtered = rows.filter(matches)
+    return filtered.length ? h('div', { className: 'bt-hw-host-list', role: 'group', 'aria-label': label }, filtered.map(item => h('button', {
+      key: item.alias, type: 'button', className: 'bt-hw-host-choice', 'aria-pressed': host === item.alias,
+      'aria-label': t('Use SSH host {host}', { host: item.alias }), onClick: () => onPick(item),
+    }, h('span', null, h('strong', null, item.alias), h('small', null, [item.hostname !== item.alias ? item.hostname : '', item.user, item.port].filter(Boolean).join(' · '))), host === item.alias ? h(CheckIcon) : null)))
+      : h('p', { className: 'bt-hw-host-hint' }, t('No SSH hosts match your search.'))
+  }
+  const anyHosts = listing.aliases.length > 0 || listing.knownHosts.length > 0
+  return h('section', { className: 'bt-hw-host-picker', 'aria-label': t('SSH hosts from your config') },
+    h('strong', { className: 'bt-hw-host-title' }, t('SSH hosts from your config')),
+    listing.status === 'loading' ? h('p', { className: 'bt-hw-host-hint', role: 'status' }, t('Loading saved SSH hosts…'))
+      : listing.status === 'error' ? h('p', { className: 'bt-hw-host-hint', role: 'status' }, t('Saved SSH hosts could not be listed. Type a host below.'))
+      : !anyHosts ? h('p', { className: 'bt-hw-host-hint' }, t('No saved SSH hosts. Type a host below.'))
+      : h(Fragment, null,
+        h(Field, { label: t('Search SSH hosts'), value: search, onChange: setSearch, placeholder: t('Search by name, address or user') }),
+        listing.aliases.length ? choices(listing.aliases, t('SSH hosts from your config')) : null,
+        listing.knownHosts.length ? h(Fragment, null,
+          h('button', { type: 'button', className: 'bt-hw-other-hosts', 'aria-label': t('Other hosts you have connected to'), 'aria-expanded': otherOpen, onClick: () => setOtherOpen(value => !value) }, t('Other hosts you have connected to'), h('span', { 'aria-hidden': true }, otherOpen ? '−' : '+')),
+          otherOpen ? choices(listing.knownHosts, t('Other hosts you have connected to')) : null) : null))
+}
+
 function errorFor(error, draft) {
   const code = error?.code ?? ''
   if (code === 'bot/hermes-busy') return { heading: t('Remote Hermes'), title: t('A chat is still running on this connection; stop it or wait.'), text: t('Your connection settings were not changed.'), hint: t('Stop the chat or wait') }
@@ -125,6 +175,11 @@ export function HermesRemoteConnect({ onClose, onConnected, edit = false, initia
   useEffect(() => { dialog.current?.querySelector('input,button:not(:disabled)')?.focus() }, [step, status])
   const change = (key, value) => { if (saving.current) return; discardTest(testLease.current); setDraft(current => ({ ...current, [key]: value })); setTest(null); setError(null) }
   const ssh = (key, value) => { if (saving.current) return; discardTest(testLease.current); setTest(null); setDraft(current => ({ ...current, ssh: { ...current.ssh, [key]: value } })) }
+  const pickSshHost = item => {
+    if (saving.current) return
+    discardTest(testLease.current); setTest(null); setError(null)
+    setDraft(current => ({ ...current, ssh: { ...current.ssh, host: item.alias, user: item.user, port: item.port } }))
+  }
   const testConnection = async () => {
     if (saving.current) return
     discardTest(testLease.current)
@@ -205,6 +260,7 @@ export function HermesRemoteConnect({ onClose, onConnected, edit = false, initia
     if (draft.mode === 'ssh') {
       heading = t('Connect through SSH')
       content = h(Fragment, null, h('p', { className: 'bt-hw-lead' }, t('We’ll find Hermes on the other computer and start the connection.')),
+        h(SshHostPicker, { host: draft.ssh.host, onPick: pickSshHost }),
         h(Field, { label: t('SSH host or config name'), value: draft.ssh.host, onChange: value => ssh('host', value), hint: t('You can also use a name from your SSH config.') }),
         h('div', { className: 'bt-hw-two' }, h(Field, { label: t('User (optional)'), value: draft.ssh.user, onChange: value => ssh('user', value), placeholder: t('From SSH config') }), h(Field, { label: t('Port (optional)'), value: draft.ssh.port, onChange: value => ssh('port', value), placeholder: t('From SSH config'), type: 'text' })),
         h('div', { className: 'bt-hw-field' }, h('span', null, t('SSH key (optional)')), h('div', { className: 'bt-hw-file-choice' }, h('span', null, draft.ssh.identityFile || t('Use SSH agent or SSH config')), h(Button, { onClick: () => setChoosingKey(on => !on) }, t('Choose file…'))), h('small', null, t('The key stays on this computer.')), choosingKey ? h('div', { className: 'bt-hw-key-path' }, h(Field, { label: t('Key file path'), value: draft.ssh.identityFile, onChange: value => ssh('identityFile', value), placeholder: t('Path on the computer running Automagik'), hint: t('Enter a local path. The key is never uploaded or copied.') }), h(Button, { onClick: () => setChoosingKey(false) }, t('Use this path'))) : null),
@@ -295,6 +351,7 @@ export const HERMES_REMOTE_CSS = `${HERMES_MARK_CSS}
 .bt-hw-foot{padding:18px 28px;display:flex;justify-content:space-between;gap:12px;border-top:1px solid var(--st-line,var(--bt-line));background:var(--st-raised,var(--bt-main))}.bt-hw-button{height:38px;border:1px solid transparent;border-radius:8px;font:600 13px var(--bt-font);padding:0 15px;display:inline-flex;gap:10px;align-items:center;justify-content:center;white-space:nowrap;cursor:pointer}.bt-hw-primary{background:var(--st-cyan,var(--bt-accent));color:var(--st-cyan-ink,var(--bt-accent-ink,var(--bt-card)))}.bt-hw-secondary{background:var(--bt-card);border-color:var(--st-line,var(--bt-line-2));color:var(--bt-ink)}.bt-hw-button:disabled{background:var(--st-sunk,var(--bt-hover));color:var(--bt-ink-2);cursor:default}
 .bt-hw-checks{border:1px solid var(--st-line,var(--bt-line));border-radius:12px;overflow:hidden}.bt-hw-check-row{display:flex;gap:12px;align-items:center;padding:17px;border-bottom:1px solid var(--st-line,var(--bt-line))}.bt-hw-check-row:last-child{border:0}.bt-hw-check-row>div{display:flex;flex-direction:column;gap:4px}.bt-hw-check-row strong{font-size:13px}.bt-hw-check-row small{font-size:12px;color:var(--bt-ink-2)}.bt-hw-status{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:color-mix(in srgb,var(--bt-green) 10%,var(--bt-card));color:var(--bt-green)}.bt-hw-pending{background:var(--bt-hover);color:var(--bt-ink-2)}.bt-hw-working{background:var(--st-lilac,var(--bt-active));color:var(--st-lilac-ink,var(--bt-ink))}.bt-hw-spinner{width:17px;height:17px;border-radius:50%;border:2px solid var(--bt-line-2);border-top-color:var(--st-lilac-ink,var(--bt-ink));animation:bt-hw-spin .8s linear infinite}@keyframes bt-hw-spin{to{transform:rotate(360deg)}}
 .bt-hw-result{text-align:center;padding:10px 28px 28px}.bt-hw-result-icon{display:grid;place-items:center;width:58px;height:58px;margin:8px auto 16px;border-radius:50%}.bt-hw-result-icon svg{width:30px;height:30px}.bt-hw-success .bt-hw-result-icon{background:color-mix(in srgb,var(--bt-green) 10%,var(--bt-card));color:var(--bt-green)}.bt-hw-failed .bt-hw-result-icon{background:color-mix(in srgb,var(--bt-danger) 10%,var(--bt-card));color:var(--bt-danger);font-size:30px}.bt-hw-result h3{font:700 20px var(--bt-head-font,var(--bt-font));margin:0 0 10px}.bt-hw-result p{margin:0;color:var(--bt-ink-2);font-size:14px;line-height:22px}.bt-hw-summary{border:1px solid var(--st-line,var(--bt-line));border-radius:var(--bt-hw-summary-radius,11px);overflow:hidden;background:var(--st-raised,var(--bt-main))}.bt-hw-pair{display:flex;justify-content:space-between;gap:20px;padding:14px 16px;border-bottom:1px solid var(--st-line,var(--bt-line));font-size:13px}.bt-hw-pair:last-child{border:0}.bt-hw-pair span{color:var(--bt-ink-2)}.bt-hw-pair strong{font-weight:500;overflow-wrap:anywhere}.bt-hw-profiles{border:1px solid var(--st-cyan,var(--bt-accent));border-radius:12px;background:var(--st-raised,var(--bt-main));overflow:hidden}.bt-hw-profile{display:flex;align-items:center;gap:14px;width:100%;padding:20px;border:0;border-bottom:1px solid var(--bt-line);background:transparent;color:var(--bt-ink);text-align:left;cursor:pointer}.bt-hw-profile:last-child{border-bottom:0}.bt-hw-profile[aria-checked=true]{box-shadow:inset 0 0 0 1px var(--st-cyan,var(--bt-accent))}.bt-hw-profile>span:nth-child(2){display:flex;flex-direction:column;gap:5px}.bt-hw-profile strong{font-size:15px}.bt-hw-profile small{font-size:12px;color:var(--bt-ink-2)}.bt-hw-radio{width:18px;height:18px;box-sizing:border-box;border:1px solid var(--bt-line-2);border-radius:50%;background:var(--bt-card)}[aria-checked=true]>.bt-hw-radio{border:5px solid var(--st-cyan,var(--bt-accent))}.bt-hw-tag{margin-left:auto;padding:4px 8px;border-radius:6px;background:var(--st-lilac,var(--bt-active));color:var(--st-lilac-ink,var(--bt-ink));font-size:11px}.bt-hw-profile-tools{display:flex;justify-content:space-between;font-size:12px;color:var(--bt-ink-2);margin:14px 0 22px}.bt-hw-profile-tools button{border:0;background:none;padding:0;color:var(--bt-ink);font:inherit;text-decoration:underline;text-underline-offset:3px;cursor:pointer}.bt-hw-remember{display:flex;gap:9px;align-items:center;font-size:12px;color:var(--bt-green);margin:16px 0}.bt-hw-limits{font-size:12px;line-height:19px;color:var(--bt-ink-2);margin:18px 0 0}.bt-hw-compact{padding-top:0;padding-bottom:18px}.bt-hw-compact .bt-hw-result-icon{margin-top:0}
+.bt-hw-host-picker{margin:0 0 20px;padding:14px;border:1px solid var(--st-line,var(--bt-line-2));border-radius:12px;background:var(--st-raised,var(--bt-main));min-width:0}.bt-hw-host-title{display:block;font-size:13px;margin-bottom:10px}.bt-hw-host-picker .bt-hw-field{margin:0 0 10px;gap:6px}.bt-hw-host-picker .bt-hw-field>span{font-size:12px;font-weight:400;color:var(--bt-ink-2)}.bt-hw-host-picker .bt-hw-field input{height:34px;font-size:13px}.bt-hw-host-list{max-height:176px;overflow:auto;overscroll-behavior:contain;border:1px solid var(--st-line,var(--bt-line));border-radius:8px}.bt-hw-host-choice{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;border:0;border-bottom:1px solid var(--st-line,var(--bt-line));padding:9px 10px;background:transparent;color:var(--bt-ink);font:inherit;text-align:left;cursor:pointer}.bt-hw-host-choice:last-child{border-bottom:0}.bt-hw-host-choice:hover,.bt-hw-host-choice[aria-pressed=true]{background:var(--bt-hover)}.bt-hw-host-choice>span{display:flex;flex-direction:column;gap:3px;min-width:0}.bt-hw-host-choice strong{font-size:13px;font-weight:600;overflow-wrap:anywhere}.bt-hw-host-choice small{font-size:11px;color:var(--bt-ink-2);overflow-wrap:anywhere}.bt-hw-host-choice svg{flex:none;width:14px;height:14px;color:var(--st-cyan,var(--bt-accent))}.bt-hw-host-hint{margin:0;font-size:12px;line-height:18px;color:var(--bt-ink-2)}.bt-hw-other-hosts{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;border:0;background:none;color:var(--bt-ink-2);font:12px var(--bt-font);padding:12px 0 0;text-align:left;cursor:pointer}.bt-hw-other-hosts+ .bt-hw-host-list{margin-top:10px}
 @media(max-width:640px){.bt-hermes-wizard{width:calc(100vw - 20px);max-height:calc(100dvh - 20px)}.bt-hw-head,.bt-hw-content{padding:18px}.bt-hw-foot{padding:14px 18px}.bt-hw-cards,.bt-hw-two{grid-template-columns:1fr}.bt-hw-card{min-height:160px}.bt-hw-steps{gap:4px}.bt-hw-steps li{font-size:9px;gap:3px}.bt-hw-steps li>span{width:16px;height:16px}.bt-hw-card-action{margin-top:8px}}
 @media(prefers-reduced-motion:reduce){.bt-hw-spinner{animation:none}}
 `

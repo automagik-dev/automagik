@@ -39,7 +39,7 @@ async function waitFor(predicate, description) {
   }
 }
 
-async function renderSettings(t, call, { component = 'HermesRemoteSettings', props = {}, menu = false, abortResponses = false } = {}) {
+async function renderSettings(t, call, { component = 'HermesRemoteSettings', props = {}, menu = false, abortResponses = false, sshHosts = async () => ({ aliases: [], knownHosts: [] }) } = {}) {
   const dom = new JSDOM('<div id="root"></div>')
   const keys = ['window', 'document', 'navigator', 'Element', 'HTMLElement', 'MutationObserver']
   const saved = keys.map(key => Object.getOwnPropertyDescriptor(globalThis, key))
@@ -50,7 +50,7 @@ async function renderSettings(t, call, { component = 'HermesRemoteSettings', pro
   runInNewContext(source.outputFiles[0].text, { module, exports: module.exports, require: nativeRequire, window: dom.window, document: dom.window.document, navigator: dom.window.navigator, console, setTimeout, clearTimeout, AbortController, crypto: globalThis.crypto, getComputedStyle: dom.window.getComputedStyle.bind(dom.window), requestAnimationFrame: fn => setTimeout(fn, 0), cancelAnimationFrame: clearTimeout,
     fetch: async (_url, init) => ({ ok: true, json: async () => {
       const result = (async () => {
-        try { return { ok: true, value: await call(JSON.parse(init.body), init.signal) } }
+        try { const request = JSON.parse(init.body); return { ok: true, value: request.endpoint === 'hermes-remote-ssh-hosts' ? await sshHosts(request.payload, init.signal) : await call(request, init.signal) } }
         catch (error) { return { ok: false, error: { code: error.code, message: 'Sample connection refused.' } } }
       })()
       if (!abortResponses || !init.signal) return result
@@ -158,6 +158,7 @@ async function startWizard(t, overrides = {}, options = {}) {
     calls.push(request)
     if (overrides[request.endpoint]) return overrides[request.endpoint](request.payload, signal)
     if (request.endpoint === 'hermes-remote') return { ...sampleView(), enabled: false, profile: '', credentialSet: false }
+    if (request.endpoint === 'hermes-remote-ssh-hosts') return { aliases: [], knownHosts: [] }
     if (request.endpoint === 'hermes-remote-test') return testView()
     if (request.endpoint === 'hermes-remote-test-status') return { stage: 'open' }
     if (request.endpoint === 'hermes-remote-test-profiles') return { profiles: testView().profiles }
@@ -165,7 +166,7 @@ async function startWizard(t, overrides = {}, options = {}) {
     if (request.endpoint === 'hermes-remote-disconnect') return sampleView()
     throw Error('Unexpected fake endpoint')
   }
-  const render = await renderSettings(t, call, { ...options, component: 'HermesRemoteConnect', props: { onConnected: next => opened.push(next), onClose: () => closed.push(true) } })
+  const render = await renderSettings(t, call, { ...options, sshHosts: (payload, signal) => call({ endpoint: 'hermes-remote-ssh-hosts', payload }, signal), component: 'HermesRemoteConnect', props: { onConnected: next => opened.push(next), onClose: () => closed.push(true) } })
   return { ...render, calls, opened, closed }
 }
 
@@ -670,4 +671,115 @@ test('a legacy Remote Hermes model without profile metadata still prints the rou
     assert.equal((summary.match(/Remote Hermes/g) ?? []).length, 1)
     assert.doesNotMatch(summary, /Remote Hermes · Remote Hermes/)
   })
+})
+
+
+const hostInventory = () => ({
+  aliases: Array.from({ length: 14 }, (_, index) => ({ alias: index === 13 ? '192.0.2.10' : `sample-${String(index + 1).padStart(2, '0')}`, hostname: `sample-${index + 1}.example.invalid`, user: `sample-${index + 1}`, port: String(2200 + index) })),
+  knownHosts: Array.from({ length: 170 }, (_, index) => ({ alias: `other-${index + 1}.example.invalid`, hostname: `other-${index + 1}.example.invalid`, user: '', port: '' })),
+})
+
+test('SSH Details lists fourteen searchable aliases and keeps the larger known-host list collapsed', async t => {
+  const inventory = hostInventory()
+  const render = await startWizard(t, { 'hermes-remote-ssh-hosts': () => inventory })
+  assert.ok(!render.calls.some(call => call.endpoint === 'hermes-remote-ssh-hosts'))
+  await render.click('Through SSH')
+  assert.ok(!render.calls.some(call => call.endpoint === 'hermes-remote-ssh-hosts'), 'choosing the mode alone does not read hosts')
+  await render.click('Continue')
+  await waitFor(() => render.document.querySelectorAll('.bt-hw-host-choice').length === 14, 'configured SSH hosts')
+  assert.equal(render.document.querySelector('.bt-hw-other-hosts').getAttribute('aria-expanded'), 'false')
+  assert.ok(!render.document.body.textContent.includes('other-170.example.invalid'))
+  assert.match(render.document.querySelector('style').textContent, /bt-hw-host-list\{[^}]*max-height:[^}]*overflow:auto/)
+  await render.fill('Search SSH hosts', 'sample-12.example.invalid')
+  assert.equal(render.document.querySelectorAll('.bt-hw-host-choice').length, 1)
+  assert.equal(render.document.querySelector('.bt-hw-host-choice strong').textContent, 'sample-12')
+  await render.click('Use SSH host sample-12')
+  const input = label => render.document.querySelector(`input[aria-label="${label}"]`)
+  assert.equal(input('SSH host or config name').value, 'sample-12', 'connect with the alias, not the resolved display hostname')
+  assert.equal(input('User (optional)').value, 'sample-12')
+  assert.equal(input('Port (optional)').value, '2211')
+  await render.fill('Search SSH hosts', 'other-170.example.invalid')
+  assert.match(render.document.body.textContent, /No SSH hosts match your search/)
+  await render.click('Other hosts you have connected to')
+  assert.equal(render.document.querySelector('.bt-hw-other-hosts').getAttribute('aria-expanded'), 'true')
+  assert.equal(render.document.querySelectorAll('.bt-hw-host-choice').length, 1)
+  await render.click('Use SSH host other-170.example.invalid')
+  assert.equal(input('SSH host or config name').value, 'other-170.example.invalid')
+  assert.equal(input('User (optional)').value, '')
+  assert.equal(input('Port (optional)').value, '')
+  await render.fill('SSH host or config name', 'manual.example.invalid')
+  await render.click('Test SSH connection')
+  await waitFor(() => render.calls.some(call => call.endpoint === 'hermes-remote-test'), 'manually typed SSH test')
+  assert.equal(render.calls.find(call => call.endpoint === 'hermes-remote-test').payload.ssh.host, 'manual.example.invalid')
+  assert.ok(!JSON.stringify(render.calls.find(call => call.endpoint === 'hermes-remote-test').payload).includes('knownHosts'))
+})
+
+test('the SSH host picker projects only four fields and never takes an identity file from the listing', async t => {
+  const forbidden = randomUUID(), row = { alias: 'sample-alias', hostname: 'resolved.example.invalid', user: 'sample-user', port: '2200', IdentityFile: forbidden, identityFile: forbidden, extra: forbidden }
+  const render = await startWizard(t, { 'hermes-remote-ssh-hosts': () => ({ aliases: [row, row], knownHosts: [], extra: forbidden }) })
+  await render.click('Through SSH'); await render.click('Continue')
+  await waitFor(() => render.document.querySelector('.bt-hw-host-choice'), 'safe host choice')
+  assert.equal(render.document.querySelectorAll('.bt-hw-host-choice').length, 1, 'duplicate rows cannot generate key warnings containing host data')
+  assert.ok(!render.document.body.textContent.includes(forbidden))
+  await render.click('Use SSH host sample-alias')
+  await render.click('Test SSH connection')
+  await waitFor(() => render.calls.some(call => call.endpoint === 'hermes-remote-test'), 'selected alias test')
+  const draft = render.calls.find(call => call.endpoint === 'hermes-remote-test').payload
+  assert.equal(draft.ssh.host, 'sample-alias')
+  assert.equal(draft.ssh.identityFile, '')
+  assert.ok(!JSON.stringify(draft).includes(forbidden))
+})
+
+for (const failure of [false, true]) {
+  test(`SSH hosts ${failure ? 'failure' : 'empty list'} leaves manual entry available`, async t => {
+    const render = await startWizard(t, { 'hermes-remote-ssh-hosts': () => {
+      if (failure) throw Object.assign(Error('Optional listing failed'), { code: 'bot/refused' })
+      return { aliases: [], knownHosts: [] }
+    } })
+    await render.click('Through SSH'); await render.click('Continue')
+    await waitFor(() => render.document.body.textContent.includes(failure ? 'Saved SSH hosts could not be listed.' : 'No saved SSH hosts.'), 'optional host list result')
+    assert.equal(render.document.querySelector('.bt-hw-other-hosts'), null)
+    await render.fill('SSH host or config name', 'manual.example.invalid')
+    await render.click('Test SSH connection')
+    await waitFor(() => render.document.querySelector('[data-status=connected]'), 'manual SSH connection')
+  })
+}
+
+test('leaving SSH Details aborts only its host-list request, fences late replies, and preserves a connection test', async t => {
+  const list = deferred(), testing = deferred(); let listSignal, testSignal
+  const render = await startWizard(t, {
+    'hermes-remote-ssh-hosts': (_payload, signal) => { listSignal = signal; return list.promise },
+    'hermes-remote-test': (_payload, signal) => { testSignal = signal; return testing.promise },
+  })
+  await render.click('Through SSH'); await render.click('Continue')
+  await waitFor(() => listSignal, 'host list request')
+  await render.fill('SSH host or config name', 'manual.example.invalid')
+  await render.click('Test SSH connection')
+  await waitFor(() => testSignal, 'separate connection test request')
+  assert.notEqual(listSignal, testSignal)
+  assert.equal(listSignal.aborted, true)
+  assert.equal(testSignal.aborted, false)
+  list.resolve(hostInventory())
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(render.document.querySelector('.bt-hw-host-picker'), null, 'late host replies cannot restore Details')
+  testing.resolve(testView())
+  await waitFor(() => render.document.querySelector('[data-status=connected]'), 'connection test result')
+  assert.equal(testSignal.aborted, false)
+})
+
+test('switching away from SSH or unmounting aborts the optional list without retaining its values', async t => {
+  const lists = [], signals = []
+  const render = await startWizard(t, { 'hermes-remote-ssh-hosts': (_payload, signal) => { const list = deferred(); lists.push(list); signals.push(signal); return list.promise } })
+  await render.click('Through SSH'); await render.click('Continue')
+  await waitFor(() => signals.length === 1, 'first SSH list')
+  await render.click('Back'); await render.click('Remote address'); await render.click('Continue')
+  assert.equal(signals[0].aborted, true)
+  lists[0].resolve(hostInventory())
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(render.document.querySelector('.bt-hw-host-picker'), null)
+  await render.click('Back'); await render.click('Through SSH'); await render.click('Continue')
+  await waitFor(() => signals.length === 2, 'fresh SSH list after returning')
+  flushSync(() => render.root.unmount())
+  assert.equal(signals[1].aborted, true)
+  lists[1].resolve(hostInventory())
 })
