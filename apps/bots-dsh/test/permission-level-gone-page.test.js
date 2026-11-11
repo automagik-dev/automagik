@@ -220,7 +220,7 @@ test('the diagnostics row says what became of the conversation, for the four out
   const { permissionRows } = mount(t)
   const roster = { bots: [{ id: 'omni', name: 'Omni' }], rooms: [] }
   const row = notOffered => ({ kind: 'chat', botId: 'omni', open: true, source: 'bot', saved: { value: 'custom' }, effective: { value: 'workspace-write' }, differs: true, notOffered })
-  const told = notOffered => permissionRows({ version: 1, sessions: [row(notOffered)] }, roster)[0].level
+  const told = notOffered => permissionRows({ version: 2, sessions: [row(notOffered)] }, roster)[0].level
   const base = told(undefined)
   assert.equal(told('narrowed'), base.replace(' · The level in force', ' · The saved level is no longer offered: this conversation was lowered to the narrowest level that is. · The level in force'))
   assert.match(told('kept'), /already ran no wider than the narrowest level that is, so it was left as it is\./)

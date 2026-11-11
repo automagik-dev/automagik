@@ -1,6 +1,7 @@
 // A host message in the interface language: a language pack's entry for it wins, in any
 // language (the pt-BR pack, or a plugin's words); Chinese also has its patterns.
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { test } from 'node:test'
 import { hostText, installLocale } from '../src/client/i18n.js'
 
@@ -98,4 +99,34 @@ test('#877: only a value a template marks as a host message is worded in turn', 
     // Nor is a Session id beside a marked value: only the reason is read as a host message.
     assert.equal(hostText('Session Model cannot join Bot "Model" because this window cannot change the Bot team now. Model'), '会话 Model 无法加入 Bot "Model"，因为这个窗口现在不能修改 Bot 团队。模型')
   } finally { zh() }
+})
+
+test('Auto\'s refusals are worded with the Bot\'s name in Chinese and in the pt-BR pack', () => {
+  const stale = "Ada's permissions changed meanwhile, so nothing was saved. Look again and choose."
+  const offered = 'Auto is not offered for Ada here.'
+  const host = 'This host cannot save the Bot team.'
+  const person = "Only the person turns Auto on, from the Bot's permission choice."
+  // Without a language pack each stays as sent.
+  for (const message of [stale, offered, host, person]) assert.equal(hostText(message), message)
+  const dicts = {}
+  const zh = installLocale({
+    register: (ns, lang, dict) => { if (lang.startsWith('zh')) dicts.zh = dict; return () => {} },
+    bind: () => (key, params) => (dicts.zh?.[key] ?? key).replace(/\{(\w+)\}/g, (match, name) => params?.[name] ?? match),
+    getLocale: () => ({ active: 'zh-CN' }),
+  })
+  try {
+    assert.equal(hostText(stale), 'Ada 的权限在此期间已经改变，因此没有保存任何内容。请重新查看后再选择。')
+    assert.equal(hostText(offered), '这里不为 Ada 提供自动模式。')
+    assert.equal(hostText(host), '这台主机无法保存 Bot 团队。')
+    assert.equal(hostText(person), '只有用户本人能在 Bot 的权限选择中开启自动模式。')
+  } finally { zh() }
+  const pt = JSON.parse(readFileSync(new URL('../../locale-pt-br-dsh/src/client/locales/pt-BR/omni-ui.json', import.meta.url), 'utf8'))
+  const fill = (key, params) => (pt[key] ?? key).replace(/\{(\w+)\}/g, (match, name) => params?.[name] ?? match)
+  const off = installLocale({ register: () => () => {}, bind: () => fill, getLocale: () => ({ active: 'pt-BR' }) })
+  try {
+    assert.equal(hostText(stale), 'As permissões de Ada mudaram nesse meio-tempo, então nada foi salvo. Confira de novo e escolha.')
+    assert.equal(hostText(offered), 'O Automático não é oferecido para Ada aqui.')
+    assert.equal(hostText(host), 'Este host não pode salvar a equipe de Bots.')
+    assert.equal(hostText(person), 'Só a pessoa ativa o Automático, na escolha de permissão do Bot.')
+  } finally { off() }
 })

@@ -185,6 +185,8 @@ export function install(rt) {
     // Teams saved before the DSH Agent existed carry no `agents`; corrupt values reset.
     if (state.agents === null || typeof state.agents !== 'object' || Array.isArray(state.agents)) state.agents = {}
     let migrated = !hadCapabilities
+    if (state.autoStamp !== state.revision && rt.dropAutoMarks()) migrated = true
+    if (holder !== undefined) rt.dropAutoMarks()
     // The single DSH Agent of older teams splits into a DSH bot and the tasks record (agents.js).
     if (rt.migrateAgents?.()) migrated = true
     if (state.capabilities === null || typeof state.capabilities !== 'object' || Array.isArray(state.capabilities)) {
@@ -410,6 +412,7 @@ export function install(rt) {
     if (stuck !== undefined) return warnReadOnly()
     if (lockBroken) return true
     if (holder === undefined && lock.owns()) return true
+    rt.dropAutoMarks()
     // Lost the lock: retake it when nobody else holds it (its file was deleted), else
     // another host took it over and this one stops writing.
     if (holder === undefined) {
@@ -419,15 +422,45 @@ export function install(rt) {
     return warnReadOnly()
   }
 
+  rt.holdsLock = () => !stopped && !lockBroken && stuck === undefined && holder === undefined && lock.owns()
+  rt.dropAutoMarks = () => {
+    let dropped = false
+    for (const bot of Object.values(state.bots ?? {})) {
+      if (Object.hasOwn(bot, 'permissionAuto')) { delete bot.permissionAuto; dropped = true }
+    }
+    for (const task of Object.values(state.tasks ?? {})) {
+      for (const key of ['auto', 'autoRev']) if (Object.hasOwn(task, key)) { delete task[key]; dropped = true }
+    }
+    return dropped
+  }
+  rt.saveCopy = (change) => {
+    if (stopped || !writable()) return Promise.reject(new Error('This host cannot save the Bot team.'))
+    indexSessions()
+    rt.sweepAuto?.()
+    state.revision += 1
+    state.autoStamp = state.revision
+    state.version = STATE_VERSION
+    state.exchanges = state.exchanges.slice(-MAX_EXCHANGES)
+    const copy = JSON.parse(JSON.stringify(state))
+    change(copy)
+    return writeSnapshot(JSON.stringify(copy))
+  }
+
   const save = ({ required = false } = {}) => {
     if (stopped) return required ? Promise.reject(new Error('The Bot team cannot be saved after this host stopped.')) : writing
     indexSessions()
     // A reading host keeps the file's revision, so its window does not skip the next change.
     if (!writable()) return required ? Promise.reject(new Error(`This host cannot save the Bot team: ${readOnly()}`)) : writing
+    rt.sweepAuto?.()
     state.revision += 1
+    state.autoStamp = state.revision
     state.version = STATE_VERSION
     state.exchanges = state.exchanges.slice(-MAX_EXCHANGES)
     const snapshot = JSON.stringify(state)
+    return writeSnapshot(snapshot)
+  }
+
+  const writeSnapshot = (snapshot) => {
     const run = writing.then(async () => {
       const temp = `${statePath}.${process.pid}.tmp`
       try {

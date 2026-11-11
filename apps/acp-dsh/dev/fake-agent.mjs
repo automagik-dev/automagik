@@ -38,6 +38,7 @@
 // A prompt that says "unasked" runs one of its own tools without asking permission, as an agent
 // does when its mode (or a rule in the person's own CLI settings) lets the call through, and
 // traces `own-tool-ran` with the mode it ran in; "unasked twice" runs two.
+// FAKE_ACP_REFUSE_MODES=a,b refuses those session/set_mode requests with invalidParams.
 // FAKE_ACP_IGNORE_CANCEL=1 makes it ignore `session/cancel`, as a stuck agent would.
 import { spawn } from 'node:child_process'
 import { appendFileSync } from 'node:fs'
@@ -461,6 +462,8 @@ const implementation = {
 // Only a fake that offers modes takes `session/set_mode`; the others answer Method Not Found.
 if (MODES.length > 0) {
   implementation.setSessionMode = async ({ sessionId, modeId }) => {
+    // FAKE_ACP_REFUSE_MODES=a,b refuses those modes for permission tests.
+    if ((process.env.FAKE_ACP_REFUSE_MODES ?? '').split(',').includes(modeId)) throw RequestError.invalidParams(undefined, `Refused mode: ${modeId}`)
     if (!MODES.includes(modeId)) throw RequestError.invalidParams(undefined, `Unknown mode: ${modeId}`)
     const session = sessions.get(sessionId)
     if (session !== undefined) session.mode = modeId

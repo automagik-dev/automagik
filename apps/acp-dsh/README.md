@@ -114,11 +114,18 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   service below.
 - **The Session's level, as the agent's own mode.** Before each prompt the agent's ACP session
   mode follows the Session: Manual is Claude Code's `default` mode, whatever default mode its
-  own settings name; Codex runs in the sandbox that matches DSH's. Auto is Claude Code's `auto`
+  own settings name; Codex runs in the sandbox that matches DSH's. DSH Auto review is Claude Code's `auto`
   and Codex's `agent`; it is the preset's identity, never just its sandbox and ask, so a custom
   preset with the same knobs keeps Manual (and the bridge's own approval). Full access lets every
   call through, as it does DSH's own tools. An agent that does not offer the strict mode fails
   the turn instead of running in its own default.
+  A Workspace Session on unbridged Codex can instead take `agent` when the Bot team's
+  `ownMode` answerer returns exactly `true` twice, before the prompt. Every other Codex
+  Workspace prompt re-sends and confirms strict `workspace-write`, even if cached; refusal
+  ends the agent session and fails the turn. Auto never requests `bypassPermissions` or
+  `agent-full-access`. Codex's own reviewer decides those steps, based on the
+  [Codex 0.167.0 capture](test/fixtures/permission-payloads/README.md); later versions may
+  decide differently. Any approval Codex still requests goes to the person.
 - **An agent that stops answering never holds the chat.** Its start (`initialize`,
   `session/new`, the bridge's first list) has 60 seconds, and each request after that and
   before a prompt (a model, an effort, a mode, a fork, a close) has 15. Past the deadline, or
@@ -260,6 +267,9 @@ A settings page reads the agents through this host service; the plugin stays hos
 | `imageAccess()` | `{ ready, signedIn?, reason?, unsupported? }`: whether Codex can draw an image now, on its own ChatGPT sign-in (Codex on, its CLI found, its connector installed, `codex login status` says signed in; an unknown sign-in is asked once; the person confirmed its account, else `reason: 'account'`; the image run's checks hold for this Codex, else not ready, with `reason`: `unsupported` (and `unsupported: true`), `config` or `unreadable`). Reads no credential and starts no sign-in. |
 | `generateImage({ prompt, size?, quality?, background?, signal?, timeoutMs? })` | Draws one image with the Codex CLI (`src/host/image.js`) and resolves `{ base64, mimeType: 'image/png' }`. Refusals carry an `acp/image-*` code (`signed-out`, `usage-limit`, `timeout`, `unavailable`, `failed`, `stopped`, `refused`) and a message to show as it is. |
 | `keepImages(keeper)` | Where an image an agent makes in a chat is kept, so the chat can show it (`src/host/agent-image.js`). `keeper` is `{ start?({ callId, sessionId, via }), keep({ callId, sessionId, base64, mimeType, via }) -> Promise<{ file }>, fail?({ callId, sessionId, error }) }`; one at a time, and the call returns its disposer. The Bot team registers its images folder. |
+| `ownMode(answer)` | Registers one answerer for an unbridged Workspace Session's own mode. Only exact `true` within two seconds counts, twice per prompt. Returns a disposer for that registration; competing registrations disable own mode permanently. |
+| `ownModeOf(provider)` | `{ mode, bridged, answerer }` for a provider offering its own mode, otherwise undefined. |
+| `ownModeIn(sessionId)` | Whether that Session is busy on a prompt in its own mode. |
 | `holdTurns(gate)` | A veto on agent turns, for a plugin that must keep an agent from acting in a Session (the Bot team: a Session whose permission level could not be set). `gate({ sessionId, agent, provider })` is asked before every model step on an agent's route and again right before a turn's prompt is sent; it answers undefined to let the Session go, or the sentence the step answers with. It can only refuse: a gate that throws, takes longer than ten seconds, or answers anything else holds the Session with a fixed sentence, and a held Session's agent session is ended. Several plugins may register: any refusal wins, and the returned disposer removes only its own gate. With none registered nothing is asked. |
 | `endSession(sessionId, why?)` | Ends one Session's agent session now, a turn under way included: the agent's process is stopped, its bridge credential revoked, and the step answers `why`. The DSH Session and its transcript stay; the next turn starts a fresh agent session, which takes its permission mode again. Answers whether one was live. |
 | `bridge()` | `{ on, probesPass }`: whether `dshTools` is on, and whether a real probe on this machine passes — the per-session bridge gets a fresh credential, answers MCP `initialize` and `tools/list`, and lists at least one tool. A success is cached per installed adapter version; a failure is retried after ten minutes or the next app start. A missing adapter or a failed probe says no. The Bot team reads it before its one-time move of Claude Bots onto `acp-claude`, so no Bot moves onto a route whose bridge cannot work. |

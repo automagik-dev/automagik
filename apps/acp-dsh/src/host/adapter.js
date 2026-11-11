@@ -35,6 +35,7 @@ const DETAIL_WAIT_MS = 1500
 // answers from memory; the Bot team's may try to set a level again first (one Session resolve
 // and one preset write). Beside this adapter's other waits (5 s for a cancel, 15 s for a
 // bridge) ten seconds is ample, and running out only refuses the one step.
+export const OWN_MODE_WAIT_MS = 2_000
 export const HOLD_WAIT_MS = 10_000
 /** What a held Session's step answers when no gate gave a sentence of its own (it threw, never answered, or answered nothing readable). */
 export const HELD_TEXT = 'This conversation is on hold while its permission level is checked, so the agent is not running here. Send the message again in a moment.'
@@ -369,12 +370,14 @@ export class AcpAdapter extends LlmAdapter {
    *   replaces CANCEL_WAIT_MS; `timers` is the clock all three run on. Tests set them, so none
    *   waits a real deadline out.
    */
-  constructor(ctx, agents, { dshTools = () => false, backchannel, redactor, onSignedOut, images = () => undefined, access, holds, holdWaitMs = HOLD_WAIT_MS, cancelWaitMs = CANCEL_WAIT_MS, timers = globalThis } = {}) {
+  constructor(ctx, agents, { dshTools = () => false, backchannel, redactor, onSignedOut, images = () => undefined, access, holds, ownMode = () => undefined, ownModeWaitMs = OWN_MODE_WAIT_MS, holdWaitMs = HOLD_WAIT_MS, cancelWaitMs = CANCEL_WAIT_MS, timers = globalThis } = {}) {
     super()
     this.cancelWaitMs = cancelWaitMs
     this.timers = timers
     // The turn gates (index.js `holdTurns`): asked before an agent acts for a Session. They
     // only ever refuse; with none registered nothing is asked.
+    this.ownMode = ownMode
+    this.ownModeWaitMs = ownModeWaitMs
     this.holds = holds
     this.holdWaitMs = holdWaitMs
     // Session id -> the turn that is starting there (from its step's entry to its prompt):
@@ -404,7 +407,18 @@ export class AcpAdapter extends LlmAdapter {
     // turn would close that step's admission of the mirror tool and its call would fail as
     // UNKNOWN_TOOL. Take over the agents that are idle now, before their next step resolves;
     // for an agent still running, replace on the status edge to idle, after its current step.
-    this.ctx.on?.('agent/status', ({ agent, status } = {}) => { if (status === 'idle') this.registerMirror(agent) })
+    this.ctx.on?.('agent/status', ({ agent, status } = {}) => {
+      if (status !== 'idle') return
+      const id = agent?.session?.id
+      const live = this.live.get(id)
+      if (live?.own && live.run.busy) this.end(id, live)
+      this.registerMirror(agent)
+    })
+    this.ctx.on?.('agent/disposed', ({ agent } = {}) => {
+      const id = agent?.session?.id
+      const live = this.live.get(id)
+      if (live?.own) this.end(id, live)
+    })
     for (const agent of this.ctx.agents?.list?.() ?? []) this.registerMirror(agent)
     // A mirror call DSH refuses before its body (a gate, a failed review, the person's no, a
     // Stop) leaves the agent's permission question with nobody to answer it.
@@ -607,6 +621,25 @@ export class AcpAdapter extends LlmAdapter {
 
   warn(message) {
     try { this.ctx.logger?.warn?.(`acp-dsh: ${message}`) } catch {}
+  }
+
+  /** Ask once, bounded in time; only the exact answer true permits the own mode. */
+  async ownAnswer(sessionId, agent, provider) {
+    let timer
+    try {
+      const answer = this.ownMode()
+      if (typeof answer !== 'function') return 'none'
+      return await Promise.race([
+        Promise.resolve().then(() => answer({ sessionId, agent, provider })).then(value => value === true ? 'yes' : 'no', () => 'no'),
+        new Promise(resolve => { timer = setTimeout(resolve, this.ownModeWaitMs, 'late') }),
+      ])
+    } catch { return 'no' } finally { clearTimeout(timer) }
+  }
+
+  /** Whether this Session is busy on a prompt in its own mode. */
+  ownModeIn(sessionId) {
+    const live = this.live.get(sessionId)
+    return live?.own === true && live.run.busy === true
   }
 
   /**
@@ -912,7 +945,8 @@ export class AcpAdapter extends LlmAdapter {
         // instead of going on unseen until the person's next message (#969).
         if (live?.run?.busy === true) {
           void live.run.cancel()
-          this.reap(sessionId, live)
+          if (live.own) this.end(sessionId, live)
+          else this.reap(sessionId, live)
         }
         yield* blocks.add('text', `${agent.name} was interrupted before it finished, so it is not answering this turn any more.`)
         yield* blocks.close()
@@ -1102,12 +1136,34 @@ export class AcpAdapter extends LlmAdapter {
         const why = `${agent.name} would not take ${options.model}${at}: ${reason}`
         return yield finish('error', why)
       }
+      const level = levelOf(this.ctx.get?.('approval'), dshAgent?.session, this.ctx.get?.('sandboxPolicy'), this.ctx.get?.('permissionPresets'))
+      const modes = agent.modeFor?.(level)
+      const strict = modes?.at(-1)
+      const possible = agent.ownMode !== undefined && level.sandbox === 'workspace-write' && level.policy === 'ask' && !level.full && !level.auto
+      const candidate = possible && !this.bridgeOn(agent) && live.bridge === undefined && live.run.modes?.availableModes?.some(mode => mode.id === agent.ownMode)
+      let own = 'none'
+      if (candidate) {
+        own = await this.ownAnswer(sessionId, dshAgent, options.provider)
+        if (live.held !== undefined) return yield* stopped(live.held)
+        if (own === 'yes') {
+          try { await live.run.setMode([agent.ownMode], { signal: options.signal }) } catch (error) {
+            if (live.held !== undefined) return yield* stopped(live.held)
+            const left = this.abandoned(sessionId, live, agent, error, 'taking DSH\'s permission level')
+            if (left !== undefined) return yield left
+            own = 'refused'
+          }
+          if (live.held !== undefined) return yield* stopped(live.held)
+        }
+      }
       try {
-        await live.run.setMode(agent.modeFor?.(levelOf(this.ctx.get?.('approval'), dshAgent?.session, this.ctx.get?.('sandboxPolicy'), this.ctx.get?.('permissionPresets'))), { signal: options.signal })
+        if (possible && own !== 'yes') await live.run.setMode([strict], { signal: options.signal, force: true })
+        else if (!possible) await live.run.setMode(modes, { signal: options.signal })
+        if (live.held !== undefined) return yield* stopped(live.held)
       } catch (error) {
         if (live.held !== undefined) return yield* stopped(live.held)
         const left = this.abandoned(sessionId, live, agent, error, 'taking DSH\'s permission level')
         if (left !== undefined) return yield left
+        if (possible) this.end(sessionId, live)
         return yield finish('error', `${agent.name} would not take DSH's permission level: ${error?.message ?? error}`)
       }
       // Asked again right before the prompt: a Session held since the first ask (while consent,
@@ -1119,6 +1175,21 @@ export class AcpAdapter extends LlmAdapter {
       if (late !== undefined) {
         this.endSession(sessionId, late)
         return yield* stopped(late)
+      }
+      if (own === 'yes') {
+        const again = await this.ownAnswer(sessionId, dshAgent, options.provider)
+        if (live.held !== undefined) return yield* stopped(live.held)
+        if (again !== 'yes') {
+          own = 'changed'
+          try { await live.run.setMode([strict], { signal: options.signal, force: true }) } catch (error) {
+            if (live.held !== undefined) return yield* stopped(live.held)
+            const left = this.abandoned(sessionId, live, agent, error, 'taking DSH\'s permission level')
+            if (left !== undefined) return yield left
+            this.end(sessionId, live)
+            return yield finish('error', `${agent.name} would not take DSH's permission level: ${error?.message ?? error}`)
+          }
+          if (live.held !== undefined) return yield* stopped(live.held)
+        }
       }
       // A table agent with no `modeFor` took no level above: say so once per agent session.
       if (fresh && agent.levelNotice === true) {
@@ -1145,6 +1216,9 @@ export class AcpAdapter extends LlmAdapter {
       live.owed = undefined
       live.drifted = false
       live.open = true
+      live.own = own === 'yes'
+      // Record only a prompt where the own mode was in question; any other clears an older record.
+      this.diagnostics?.own(sessionId, live, possible ? { answer: own, taken: live.own } : undefined)
       live.run.prompt(prompt).catch(() => {})
     }
     // The turn stays open until its end is drained here: the agent may finish it before DSH
@@ -1199,11 +1273,13 @@ export class AcpAdapter extends LlmAdapter {
         yield* blocks.toolCall(id, TOOL_NAME, JSON.stringify(callArguments(tool)))
         return yield finish('tool-calls')
       } else if (event.type === 'end') {
+        live.own = false
         yield* shown()
         yield* blocks.close()
         if (event.stopReason === 'cancelled') return yield finish('aborted', 'Stopped', 'ABORTED')
         return yield finish(FINISH[event.stopReason] ?? 'stop')
       } else if (event.type === 'error') {
+        live.own = false
         yield* shown()
         yield* blocks.close()
         if (isAuthRequired(event)) {
@@ -1215,8 +1291,14 @@ export class AcpAdapter extends LlmAdapter {
         live.open = false
         // The turn ends here for the person; the agent's side of it has `cancelWaitMs` to end,
         // counted from now, whether or not the agent still reads what it is sent.
-        this.reap(sessionId, live)
-        await live.run.cancel()
+        if (live.own) {
+          const cancelling = live.run.cancel()
+          this.end(sessionId, live)
+          await cancelling
+        } else {
+          this.reap(sessionId, live)
+          await live.run.cancel()
+        }
         yield* shown()
         yield* blocks.close()
         return yield finish('aborted', 'Stopped', 'ABORTED')

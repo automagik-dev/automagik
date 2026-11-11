@@ -89,7 +89,7 @@ Every model entry gets a descriptor `{ harness, connectedBy }`, derived from its
   ACP session mode from the Session's level (its sandbox as DSH's sandbox-policy service resolves
   it, the deployment default included): Claude Code in Manual is Claude Code's `default` mode,
   whatever default mode the person's own Claude Code settings name; Codex in its sandbox matching
-  DSH's (`read-only`, `workspace-write`). DSH's Auto is Claude Code's `auto` and Codex's `agent`.
+  DSH's (`read-only`, `workspace-write`), except for the confirmed Bot Auto mode in the amendment below. DSH's Auto review is Claude Code's `auto` and Codex's `agent`.
   Full access is `bypassPermissions` and `agent-full-access`, and any ask that still comes is
   allowed, as DSH allows its own tools there. An agent that does not offer the strict mode
   (`default`; `read-only` or `workspace-write`) fails the turn; one that lacks a permissive mode
@@ -749,3 +749,21 @@ Ledger pass (2026-11-10): the board links this RFC from its file.
 - Amendment evidence: [acp-dsh-tools-spike.md](../research/acp-dsh-tools-spike.md) (adapters'
   `mcpServers`, `list_changed`, fork); [dsh-022-council.md](../research/dsh-022-council.md) (the
   council behind the 2026-11-06 decision).
+
+## Amendment: Auto on Codex (RFC 0031, 2026-11-11)
+
+A Bot's Auto choice stores Workspace plus `permissionAuto: 'acp-codex'`. Its DSH Sessions
+remain Workspace. Only unbridged Codex may take its own `agent` mode, after two exact,
+bounded `true` answers from the team's sole `acpAgents.ownMode` answerer. Otherwise strict
+`workspace-write` is re-sent and confirmed before the prompt; refusal ends the agent session.
+Auto never maps to `bypassPermissions` or `agent-full-access`, and approvals that Codex asks
+still reach the person. These claims rest on the Codex 0.167.0 capture; later versions may
+review differently. DSH Auto review and every other provider's modes stay as they were.
+
+Every message reaching the Bot's own current chat counts, including another Bot's and a
+schedule's (question 2: b). Ending Auto ends its agent sessions (question 3: yes). A task
+started from that chat while on Auto counts while the opener's mark and revision match;
+a new Bot created there inherits only when the opener actually runs in Codex's own mode.
+This narrows the no-inheritance and unscheduled-tasks statements of RFC 0031. Today own-mode
+Codex has no bridge and no team tools, so these creation paths are unreachable there;
+fake-acp tests cover the inheritance contract, and opened work runs as Workspace.

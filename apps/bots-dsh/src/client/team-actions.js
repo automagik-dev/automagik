@@ -102,6 +102,7 @@ export function teamActions({ call, after, partFor, roster, ui, live, cards, hel
     importAvatars: items => call('avatar-import', { items }),
     deleteAvatar: id => call('avatar-delete', { id }),
     createRoom: (members, options = {}) => after(call('create-room', { members, ...options })),
+    setBotAuto: (id, rev) => after(call('set-bot-auto', { id, rev })),
     updateBot: (id, patch) => after(call('update-bot', { id, ...patch })),
     // A model on another route: the host starts a new conversation with a handoff note
     // (parts.js). `patch` carries the thinking level picked with it.

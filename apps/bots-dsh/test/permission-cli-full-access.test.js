@@ -236,7 +236,7 @@ test('the card in the chat of a CLI Bot shows Full access, asks in the CLI\'s wo
 const row = (bot, acp, extra = {}) => ({ kind: 'chat', botId: bot.id, open: true, source: 'bot', saved: { value: FULL }, effective: { value: FULL }, ...(acp ? { acp } : {}), ...extra })
 const record = (agent, modes) => ({ agent, active: true, modes })
 const ROSTER = { bots: [CLAUDE, CODEX, NATIVE], rooms: [] }
-const report = sessions => ({ version: 1, sessions })
+const report = sessions => ({ version: 2, sessions })
 
 test('the diagnostics section names the level Full access on every route', () => {
   const { permissionRows } = load()

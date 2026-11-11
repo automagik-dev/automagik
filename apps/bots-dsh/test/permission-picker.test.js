@@ -159,3 +159,20 @@ test('repick still lets the shown preset be picked again', async () => {
   picker.requests[0].resolve(true)
   await picker.flush()
 })
+
+test('Auto row follows Workspace only when offered or saved, and uses its own action', async () => {
+  const { levelsOf, savedLevelOf, pickLevel } = module.exports
+  const catalog = { options: OPTIONS, defaultPreset: 'read-only' }
+  const bot = { id: 'bot', permission: 'workspace-write', autoOffered: true }
+  assert.deepEqual(Array.from(levelsOf(catalog, bot).options, row => row.value), ['read-only', 'workspace-write', 'workspace-write:auto', 'danger-full-access'])
+  assert.equal(levelsOf(catalog, {}).options.length, 3)
+  bot.permissionAuto = 'acp-codex'; bot.autoOffered = false
+  assert.equal(savedLevelOf(bot, catalog), 'workspace-write:auto')
+  assert.equal(levelsOf(catalog, bot).options.length, 4)
+  const calls = []
+  const actions = { setBotAuto: (...args) => calls.push(['auto', ...args]), updateBot: (...args) => calls.push(['level', ...args]) }
+  await pickLevel(actions, bot, 'workspace-write:auto', { id: 'original', rev: 7 })
+  assert.equal(JSON.stringify(calls), JSON.stringify([['auto', 'original', 7]]))
+  await pickLevel(actions, bot, 'workspace-write')
+  assert.equal(JSON.stringify(calls[1]), JSON.stringify(['level', 'bot', { permission: 'workspace-write' }]))
+})

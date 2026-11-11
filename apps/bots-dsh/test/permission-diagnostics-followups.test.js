@@ -199,22 +199,22 @@ test('marked Sessions under the cap come first, and the others fill what is left
 
 test('a loaded team with no Bot answers, and one never loaded does not', async (t) => {
   const empty = team(t, { file: { ...TEAM, mainBotIds: [], bots: {} } })
-  assert.deepEqual(empty.rt.permissionDiagnostics(), { version: 1, unavailable: true })
+  assert.deepEqual(empty.rt.permissionDiagnostics(), { version: 2, unavailable: true })
   assert.equal(empty.rt.teamLoaded(), false)
   await empty.rt.load()
   assert.equal(empty.rt.teamLoaded(), true)
-  assert.deepEqual(await read(empty.call), { version: 1, sessions: [] })
+  assert.deepEqual(await read(empty.call), { version: 2, sessions: [] })
 
   // No file yet: a new team, loaded and empty.
   const fresh = team(t, { file: null })
   await fresh.rt.load()
   assert.equal(fresh.rt.teamLoaded(), true)
-  assert.deepEqual(await read(fresh.call), { version: 1, sessions: [] })
+  assert.deepEqual(await read(fresh.call), { version: 2, sessions: [] })
 
   // A read does not load the team to find out.
   const cold = team(t)
   const load = t.mock.method(cold.rt, 'load')
-  assert.deepEqual(await read(cold.call), { version: 1, unavailable: true })
+  assert.deepEqual(await read(cold.call), { version: 2, unavailable: true })
   assert.equal(load.mock.callCount(), 0)
 })
 
@@ -223,7 +223,7 @@ test('a saved team that cannot be read is not a loaded one, until a team is save
   const corrupt = team(t, { file: '{"version":1,"bots":' })
   await corrupt.rt.load()
   assert.equal(corrupt.rt.teamLoaded(), false)
-  assert.deepEqual(await read(corrupt.call), { version: 1, unavailable: true })
+  assert.deepEqual(await read(corrupt.call), { version: 2, unavailable: true })
   // The first state read makes a new team and saves it: loaded from then on.
   await corrupt.call('state', {})
   assert.equal(corrupt.rt.teamLoaded(), true)
@@ -233,7 +233,7 @@ test('a saved team that cannot be read is not a loaded one, until a team is save
   const newer = team(t, { file: { ...TEAM, version: 9999 } })
   await newer.rt.load()
   assert.equal(newer.rt.teamLoaded(), false)
-  assert.deepEqual(await read(newer.call), { version: 1, unavailable: true })
+  assert.deepEqual(await read(newer.call), { version: 2, unavailable: true })
 
 })
 
@@ -258,7 +258,7 @@ test('an accessor that throws gives a safe answer: no error text, no failure not
   untouched = watch()
   const none = await call('diagnostics-permissions', {})
   untouched()
-  assert.deepEqual(none, { ok: true, value: { version: 1, unavailable: true } })
+  assert.deepEqual(none, { ok: true, value: { version: 2, unavailable: true } })
   assert.equal(noted.mock.callCount(), 0)
 })
 
@@ -302,12 +302,12 @@ test('a reread that fails makes the team not loaded, and a repaired file loads i
   write('{"version":1,"bots":')
   await rt.refresh()
   assert.equal(rt.teamLoaded(), false)
-  assert.deepEqual(await read(call), { version: 1, unavailable: true })
+  assert.deepEqual(await read(call), { version: 2, unavailable: true })
   // Saved by a version this one cannot read.
   write({ ...TEAM, version: 9999 })
   await rt.refresh()
   assert.equal(rt.teamLoaded(), false)
-  assert.deepEqual(await read(call), { version: 1, unavailable: true })
+  assert.deepEqual(await read(call), { version: 2, unavailable: true })
   // Repaired: the next refresh reads it, and the answer is back.
   write({ ...TEAM, revision: 3 })
   await rt.refresh()
@@ -322,7 +322,7 @@ test('a file that cannot be read at all is not a loaded team', async (t) => {
   await rt.load()
   assert.notEqual(rt.readOnly(), undefined)
   assert.equal(rt.teamLoaded(), false)
-  assert.deepEqual(await read(call), { version: 1, unavailable: true })
+  assert.deepEqual(await read(call), { version: 2, unavailable: true })
 })
 
 test('a save that fails does not make the team loaded; the one that succeeds does', async (t) => {
@@ -334,11 +334,11 @@ test('a save that fails does not make the team loaded; the one that succeeds doe
   mkdirSync(temp)
   await assert.rejects(rt.save())
   assert.equal(rt.teamLoaded(), false)
-  assert.deepEqual(await read(call), { version: 1, unavailable: true })
+  assert.deepEqual(await read(call), { version: 2, unavailable: true })
   rmSync(temp, { recursive: true })
   await rt.save()
   assert.equal(rt.teamLoaded(), true)
-  assert.deepEqual(await read(call), { version: 1, sessions: [] })
+  assert.deepEqual(await read(call), { version: 2, sessions: [] })
 })
 
 test('marked tasks come before unmarked chats when the answer overflows', async (t) => {

@@ -18,7 +18,7 @@
 import { AUTO, AUTO_FALLBACK } from '../shared/permission-levels.js'
 
 /** The answer's shape version: the window checks it before it reads a field. */
-export const VERSION = 1
+export const VERSION = 2
 /** The ACP record version this code reads. */
 export const ACP_VERSION = 1
 /**
@@ -75,9 +75,10 @@ function reviewerRoute(provider, model) {
  */
 export function acpView(raw) {
   try {
-    if (!plain(raw) || raw.version !== ACP_VERSION) return undefined
+    if (!plain(raw) || ![ACP_VERSION, 2].includes(raw.version)) return undefined
     const { agent, active, bridge, modes: mode, lastCall, reviewer, review } = raw
     const out = { agent: pick(AGENTS, agent), active: active === true }
+    if (raw.version === 2 && plain(raw.ownMode)) out.ownMode = kept({ answer: pick(new Set(['yes', 'no', 'late', 'none', 'changed', 'refused']), raw.ownMode.answer), taken: flag(raw.ownMode.taken), at: time(raw.ownMode.at) })
     if (plain(bridge)) {
       const { on, why, open } = bridge
       if (typeof on === 'boolean') out.bridge = kept({ on, why: pick(BRIDGE_WHY, why), open: on ? flag(open) : undefined })
@@ -178,6 +179,7 @@ export function install(rt) {
         botId: facts.botId,
         roomId: facts.roomId,
         open: session !== undefined,
+        auto: plain(facts.auto) ? kept({ counts: flag(facts.auto.counts), why: pick(new Set(['lock', 'level', 'deny', 'session', 'preset', 'route', 'agent']), facts.auto.why) }) : undefined,
         presets: facts.presets === false ? false : undefined,
         // `unknown`: a task's level cannot be told without DSH's levels.
         source: saved !== undefined ? facts.source : facts.kind === 'task' && facts.presets === false ? 'unknown' : 'none',
