@@ -139,8 +139,8 @@ docker exec automagik cat /data/dsh/launch-url
 
 ## Configuration
 
-`AUTOMAGIK_PUBLIC_URL` optionally names the public HTTPS URL served by your tunnel or reverse
-proxy, for example `https://example.invalid/`. Pass it with
+`AUTOMAGIK_PUBLIC_URL` optionally names the public HTTPS URL for a single-container run without
+the gate, served by your tunnel or reverse proxy, for example `https://example.invalid/`. Pass it with
 `--env AUTOMAGIK_PUBLIC_URL=https://example.invalid/` in the `docker run` command above.
 The entrypoint passes `--public-url <url>` and `--trusted-host <host[:port]>` to dsh, preserving
 an explicit non-default port. The proxy must reach the loopback listener and provide HTTPS;
@@ -316,6 +316,9 @@ node server/secrecy.mjs --rootfs /tmp/rootfs --inventory secrecy
 node --test 'server/test/*.test.mjs'
 ```
 
+The Compose contract test needs the Docker Compose CLI; `compose config` parses the topology
+without starting containers or requiring a running Docker daemon.
+
 The unit tests cover the token redaction, the startup-line match, the private-key rule, the
 first-start-only seed, the pnpm-store pin, the tarball verification, the third-party prune, and
 the secrecy gate: 17 negative probes (keys, tokens, a real-shaped fake private key, `/mnt/ai`,
@@ -336,9 +339,16 @@ Cloud workspace tokens (#909) are later deliveries. The single-container run abo
 to the same reviewed digest for both services, `AUTOMAGIK_GATE_ENABLED=1` and
 `AUTOMAGIK_GATE_ORIGIN` to the exact public origin (`https://{instance-host}` or
 `http://localhost:{port}`, with placeholders replaced locally), then use Docker Compose's
-`--profile gate`. This slice listens only on loopback, at port 3082 inside DSH's network
-namespace; no port is published. A reverse proxy would have to share that namespace. Do not
-publish DSH's listener or use host networking in this topology.
+`--profile gate`. The tunnel connector belongs in the `dsh` service's network namespace
+(`network_mode: service:dsh` for another Compose service) and targets `http://127.0.0.1:3082`,
+the gate's loopback listener. No port is published; keep this topology off host networking.
+
+The `dsh` service in `compose.gate.yml` receives no `AUTOMAGIK_PUBLIC_URL` or trusted-host
+setting. `AUTOMAGIK_PUBLIC_URL` is only for the single-container run without the gate above.
+DSH's API/connection routes therefore refuse public `Host` headers with `403`: a tunnel
+misrouted to DSH on port 3081 fails at that fence. The gate sends DSH its loopback Host for
+legitimate traffic. Point the tunnel at the gate on port 3082 and keep DSH's public Host
+untrusted.
 
 Only the network namespace is shared. The gate has its own `gate-data` volume at `/data`,
 never mounted into DSH; it reads `dsh-data` at `/dsh:ro` for the launch credential. It has no
