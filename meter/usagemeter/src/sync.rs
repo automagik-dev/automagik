@@ -489,6 +489,7 @@ impl Attributor {
             );
             out.push(record::ErrorRow {
                 ts_ms: e.ts_ms,
+                kind: e.kind,
                 // A failure has no model and no precision: it is not usage.
                 dim: Dim {
                     harness: e.harness.to_string(),

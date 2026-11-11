@@ -20,6 +20,8 @@ use crate::time::parse_rfc3339;
 struct Row {
     #[serde(rename = "type")]
     ty: Option<String>,
+    #[serde(rename = "isApiErrorMessage")]
+    is_api_error_message: Option<serde_json::Value>,
     message: Option<Message>,
     #[serde(rename = "requestId")]
     request_id: Option<String>,
@@ -167,7 +169,7 @@ pub fn parse_line(line: &[u8], ctx: &mut FileCtx, out: &mut Vec<UsageEvent>) -> 
         return Line::Bad;
     };
     let model = msg.model.as_deref().unwrap_or("unknown");
-    if model == "<synthetic>" {
+    if model == "<synthetic>" || row.is_api_error_message == Some(serde_json::Value::Bool(true)) {
         // Locally generated messages (errors, interrupts): no API call happened.
         return Line::Ignored;
     }
@@ -347,6 +349,7 @@ mod tests {
             r#"{"type":"api-request-shape","shape":{"usage":1,"assistant":2}}"#,
             r#"{"type":"user","message":{"role":"user","content":"no usage here"}}"#,
             r#"{"type":"assistant","message":{"id":"m","model":"<synthetic>","usage":{"input_tokens":0}},"requestId":"r","timestamp":"2026-01-01T00:00:00Z"}"#,
+            r#"{"type":"assistant","isApiErrorMessage":true,"message":{"id":"m","model":"model-a","usage":{"input_tokens":5,"output_tokens":10}},"requestId":"r","timestamp":"2026-01-01T00:00:00Z"}"#,
         ] {
             let (r, ev) = parse(l);
             assert_ne!(r, Line::Usage, "{l}");

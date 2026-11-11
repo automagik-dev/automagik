@@ -54,17 +54,25 @@ coverage  The store's bot-tag coverage (RFC 0026 (a)): text by default, or one J
           before_evidence, per repo (50 shown, the rest counted and summed) and per bot (50 shown,
           the rest summed), with the old definition's frozen-tag residue beside the headline. It
           opens the store read-only, as `status` does; only `sync` refreshes the store.
-outcomes  Recorded failures and time to pull request (issue 899), per window: text by default,
-          or one JSON record with --json. Local and read-only like coverage; not contract 1.
+outcomes  Recorded failures and time to pull request (issues 899 and 1026), per window: text by
+          default, or one JSON record with --json. Local and read-only like coverage; not
+          contract 1.
           Failures are raw counts per bot, kind, role, squad, harness, error kind and source,
           plus the unattributed by reason. They are counts of harness-flagged failures,
           including expected ones (a red test run while working test-first, a grep with no
-          match): not a quality verdict on their own, and no rate, label or score is printed.
+          match) and usage-limit stops (written after a harness's own retries, so a count of
+          model calls that failed for the session, not each retried attempt): not a quality verdict on their own, and no rate, label or score is printed.
             tool_error (harness_log)  a tool result the harness itself flagged as failed.
                 Claude Code: a tool_result block with is_error: true, once per tool_use_id.
                 Codex: an item_completed event whose item has status failed or a non-zero
                 exit_code, once per item id. omp, dsh-tui and Antigravity have no pinned
                 marker: they are listed as unsupported, never counted as 0.
+            api_error (harness_log)   a model call the harness itself flagged as failed after
+                its own retries (model calls that failed for the session, not each retried
+                attempt, including usage-limit stops). Claude Code: a type assistant line
+                with top-level isApiErrorMessage: true, once per line uuid. Codex, omp,
+                dsh-tui and Antigravity have no pinned marker: they are listed as
+                unsupported, never counted as 0.
             run_failed (hc_snapshot, workers_ledger)  a launch whose terminal ended on its
                 own with a non-zero exit status or on a signal: hc_snapshot when hc's list
                 of finished terminals says so, workers_ledger when an end row of Herdr's
@@ -77,11 +85,12 @@ outcomes  Recorded failures and time to pull request (issue 899), per window: te
           per branch, and as nearest-rank p50 and p90 per repo and per (bot, role); n_shared
           counts the samples of branches several (bot, role) pairs worked on. A branch with
           worker launches and no pull request is no_pr, in no percentile.
-          Unknown is never 0: a window is partial when it starts before errors_from or a
-          launch's end is unknown, not_recorded until a sync has prepared the store, and
-          no_data (counts and percentiles null) when nothing ran in it. The output holds no
-          tool name, argument, output, error text, session, folder or terminal. Lists are
-          capped (50 rows, 50 bots, 50 repos, 200 branches, 64 KiB), the rest counted.
+          Unknown is never 0: a window is partial when it starts before errors_from or
+          api_errors_from or a launch's end is unknown, not_recorded until a sync has
+          prepared the store, and no_data (counts and percentiles null) when nothing ran in
+          it. The output holds no tool name, argument, output, error text, session, folder
+          or terminal. Lists are capped (50 rows, 50 bots, 50 repos, 200 branches, 64 KiB),
+          the rest counted.
 
 The state lives in METER_STATE_DIR if set, else $AM_HOME/meter, else ~/.automagik/meter.
 The first sync moves the meter's files out of the pre-0.5.0 default directory.
