@@ -564,6 +564,9 @@ export function install(rt) {
       const startedAt = Date.now()
       const reply = await roomTurn(room, member, session.id, { text, files: prompt.files }, slot.note ?? 'your turn', signal, round, slot.by, said)
       round.speaking = null
+      for (const stop of rt.stopsIn?.(session.id, startedAt) ?? []) {
+        round.replies.push({ kind: 'permission-stop', botId: member.id, name: member.name, color: member.color, why: stop.why, count: stop.count, time: stop.last })
+      }
       const final = typeof reply === 'string' && !isPass(reply) ? reply : undefined
       if (reply?.failure !== undefined) {
         // Not a pass: the user sees why the member is silent, and the round goes on.

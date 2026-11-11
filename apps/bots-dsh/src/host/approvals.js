@@ -32,7 +32,10 @@ export function install(rt) {
     const sessionId = request.agent?.session?.id ?? request.agent?.id
     const owner = sessionId === undefined ? undefined : rt.groupOwners.get(sessionId)
     const task = sessionId === undefined ? undefined : runningTask(sessionId)
-    const botId = owner?.botId ?? (sessionId === undefined ? undefined : rt.chatOwners.get(sessionId)) ?? task?.from
+    const chat = sessionId === undefined ? undefined : rt.chatOwners.get(sessionId)
+    const run = owner === undefined && chat === undefined && task === undefined ? rt.teamOwnerOf?.(sessionId, request.agent) : undefined
+    const runOwner = run?.run === true && run.child !== true ? run : undefined
+    const botId = owner?.botId ?? chat ?? task?.from ?? runOwner?.botId
     if (botId === undefined) return next()
     const id = randomUUID()
     const entry = {
@@ -41,6 +44,7 @@ export function install(rt) {
       botId,
       ...(owner ? { roomId: owner.roomId } : {}),
       ...(owner === undefined && task !== undefined ? { taskId: sessionId, label: String(task.title ?? '').trim() } : {}),
+      ...(runOwner ? { taskId: sessionId, label: runOwner.label ?? '' } : {}),
       tool: String(request.toolName ?? ''),
       reason: String(request.reason ?? '').slice(0, 500),
       detail: rt.callDetail?.(sessionId, request.callId) ?? {},

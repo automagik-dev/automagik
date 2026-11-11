@@ -86,13 +86,14 @@ async function saveShot(ctx, value) {
  *   subscribeHolds?: (listener: (botId: string, hold: any) => void) => (() => void) | undefined,
  *   openSession?: typeof openBotBrowser,
  *   addressPolicy?: { check: Function },
+ *   onAddressRefused?: (exec: any, tool: string) => void,
  *   api?: object,
  * }} options
  */
 export function mountBrowserPlugin(ctx, {
   toolDefs, defineTool, keyOf, profileRoot, downloadRoot, downloadRoots, uploadRoots, headless,
   playwrightUrl, executablePath, actionTimeout, authorize, completeFor, connect, getHold, onHold,
-  subscribeHolds, openSession = openBotBrowser, addressPolicy, api,
+  subscribeHolds, openSession = openBotBrowser, addressPolicy, onAddressRefused, api,
 }) {
   const sessions = new Map()
   // Each Bot's saved tabs (tabs.js), read once and then kept as its sessions save them.
@@ -161,49 +162,54 @@ export function mountBrowserPlugin(ctx, {
       parameters: spec.parameters ?? {},
       output: browserOutput,
       async execute(args, exec) {
-        const botId = await keyOf(exec)
-        if (!botId) return 'Only Bots on the team have a browser.'
-        if (getHold?.(botId)?.by === 'user') throw new Error('The user has taken over this browser. Wait for them to give it back.')
-        let session = sessions.get(botId)
-        if (spec.needsBrowser && session === undefined) {
-          // Store the opening promise before resolving roots so concurrent calls share the launch.
-          const opening = Promise.resolve().then(async () => {
-            const roots = downloadRoots ? await downloadRoots(botId) : undefined
-            return openSession({
-              botId,
-              profileRoot,
-              downloadDir: roots === undefined
-                ? join(downloadRoot ?? join(profileRoot, 'browser-downloads'), botId)
-                : async () => (await downloadRoots(botId))[0],
-              headless,
-              playwrightUrl,
-              executablePath,
-              actionTimeout,
-              connect: connect ? id => connect(id, roots ?? []) : undefined,
-              getHold: () => getHold?.(botId),
-              onHold: hold => onHold?.(botId, hold),
-              uploadRoots: uploadRoots ? () => uploadRoots(botId) : undefined,
-              onTabs: tabs => savedTabs.set(botId, tabs),
-              addressPolicy,
+        try {
+          const botId = await keyOf(exec)
+          if (!botId) return 'Only Bots on the team have a browser.'
+          if (getHold?.(botId)?.by === 'user') throw new Error('The user has taken over this browser. Wait for them to give it back.')
+          let session = sessions.get(botId)
+          if (spec.needsBrowser && session === undefined) {
+            // Store the opening promise before resolving roots so concurrent calls share the launch.
+            const opening = Promise.resolve().then(async () => {
+              const roots = downloadRoots ? await downloadRoots(botId) : undefined
+              return openSession({
+                botId,
+                profileRoot,
+                downloadDir: roots === undefined
+                  ? join(downloadRoot ?? join(profileRoot, 'browser-downloads'), botId)
+                  : async () => (await downloadRoots(botId))[0],
+                headless,
+                playwrightUrl,
+                executablePath,
+                actionTimeout,
+                connect: connect ? id => connect(id, roots ?? []) : undefined,
+                getHold: () => getHold?.(botId),
+                onHold: hold => onHold?.(botId, hold),
+                uploadRoots: uploadRoots ? () => uploadRoots(botId) : undefined,
+                onTabs: tabs => savedTabs.set(botId, tabs),
+                addressPolicy,
+              })
             })
-          })
-          sessions.set(botId, opening)
-          const forget = () => {
-            if (sessions.get(botId) === opening) sessions.delete(botId)
+            sessions.set(botId, opening)
+            const forget = () => {
+              if (sessions.get(botId) === opening) sessions.delete(botId)
+            }
+            // A browser that went away is opened again at the Bot's next call.
+            opening.then(opened => opened.onClosed?.(forget), forget)
+            session = opening
           }
-          // A browser that went away is opened again at the Bot's next call.
-          opening.then(opened => opened.onClosed?.(forget), forget)
-          session = opening
+          session = await session
+          const gate = authorize ? action => authorize(exec, botId, action) : undefined
+          return await saveShot(ctx, await gateScope.run(gate, () => spec.execute(args ?? {}, {
+            botId,
+            profileDir: join(profileRoot, botId),
+            session,
+            complete: completeFor?.(exec),
+            origin: { ...(exec.callId !== undefined ? { callId: exec.callId } : {}), ...(exec.agent?.id !== undefined ? { sessionId: exec.agent.id } : {}) },
+          })))
+        } catch (error) {
+          if (error?.code === 'ADDRESS_REFUSED') onAddressRefused?.(exec, spec.name)
+          throw error
         }
-        session = await session
-        const gate = authorize ? action => authorize(exec, botId, action) : undefined
-        return saveShot(ctx, await gateScope.run(gate, () => spec.execute(args ?? {}, {
-          botId,
-          profileDir: join(profileRoot, botId),
-          session,
-          complete: completeFor?.(exec),
-          origin: { ...(exec.callId !== undefined ? { callId: exec.callId } : {}), ...(exec.agent?.id !== undefined ? { sessionId: exec.agent.id } : {}) },
-        })))
       },
     }))
   }

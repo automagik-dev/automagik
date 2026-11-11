@@ -516,6 +516,8 @@ test('the restart pass resumes registered and run Sessions once, telling their o
 
   const second = await start(home)
   const team = second.ctx.get('omniTeam')
+  // Omni's tests read rt.taskOwners as it is.
+  assert.deepEqual(team.taskOwners.get('run'), { botId: 'a' })
   const bound = []
   team.resumable.register({ id: 'threads', sessions: () => ['thread', 'run'], onResume: ({ sessionId }) => bound.push([sessionId, second.agentOf(sessionId).calls.length]) })
   const now = Date.now()

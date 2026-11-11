@@ -116,7 +116,7 @@ function team(t, { auto = true, bots = {}, room = {}, tasks, closed = [], preset
 }
 
 test('no tool runs on a Session that did not take a lowered level, until it does', async (t) => {
-  const { call, settle, failing, sets, tool, levelOf } = team(t, { room: { permission: FULL }, levels: { g1: FULL, g2: FULL } })
+  const { rt, call, settle, failing, sets, tool, levelOf } = team(t, { room: { permission: FULL }, levels: { g1: FULL, g2: FULL } })
   await call('state', {})
   failing.add('g2')
   await call('update-room', { id: 'r1', permission: WRITE })
@@ -124,6 +124,9 @@ test('no tool runs on a Session that did not take a lowered level, until it does
   assert.deepEqual([levelOf('g1'), levelOf('g2')], [WRITE, FULL])
   // The Session still at full access is refused, with the level it was to take.
   await assert.rejects(tool('g2'), refused(WRITE))
+  assert.equal(rt.stopsView().length, 1)
+  assert.equal(rt.stopsView()[0].why, 'level')
+  assert.equal(rt.stopsView()[0].count, 1)
   await assert.rejects(tool('g2', { name: 'read_file' }), refused(WRITE), 'every tool, a read-only one too')
   // The Session that took it, and any other, runs and is not looked at.
   const before = sets.length

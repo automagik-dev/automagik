@@ -132,7 +132,7 @@ function team(t, { acp = true, auto = true, bots = {}, room = {}, tasks, closed 
 const sentence = level => `The ${level} permission level could not be set on this conversation, so no tool runs here until it is. Tell the user: restarting DeepSeek Harness, or changing the permission level, tries again.`
 
 test('the team holds an agent\'s turns on a marked Session with the guard\'s own sentence, and ends its agent session when it marks it', async (t) => {
-  const { call, settle, failing, sets, gates, ended, turn, tool, levelOf } = team(t, { room: { permission: FULL }, levels: { g1: FULL, g2: FULL } })
+  const { rt, call, settle, failing, sets, gates, ended, turn, tool, levelOf } = team(t, { room: { permission: FULL }, levels: { g1: FULL, g2: FULL } })
   await call('state', {})
   assert.equal(gates.length, 1, 'one gate registered')
   // Nothing marked: the gate lets every Session go and asks DSH for nothing.
@@ -152,6 +152,7 @@ test('the team holds an agent\'s turns on a marked Session with the guard\'s own
   for (const entry of ended) assert.deepEqual(entry, ['g2', sentence(WRITE)])
   // And no turn starts there: the same sentence the tool guard refuses with.
   assert.equal(await turn('g2'), sentence(WRITE))
+  assert.deepEqual(rt.stopsView().map(entry => [entry.botId, entry.roomId, entry.why]), [['b2', 'r1', 'level']])
   await assert.rejects(tool('g2'), refused(WRITE))
   // The Session that took the level, and any other, is let go.
   assert.equal(await turn('g1'), undefined)
