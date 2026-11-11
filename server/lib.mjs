@@ -6,6 +6,7 @@ import {
   constants,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -128,12 +129,20 @@ export async function seedProfile({ dshHome, source, release = readVersion(sourc
   const target = profileDirOf(dshHome)
   if (existsSync(target)) return { target, seeded: false }
   mkdirSync(join(dshHome, 'profiles'), { recursive: true })
-  const fresh = `${target}.installing`
-  rmSync(fresh, { recursive: true, force: true })
-  await cp(source, fresh, { recursive: true, verbatimSymlinks: true })
-  markSeed(fresh, release)
-  renameSync(fresh, target)
-  return { target, seeded: true }
+  const fresh = mkdtempSync(`${target}.installing-`)
+  try {
+    await cp(source, fresh, { recursive: true, verbatimSymlinks: true })
+    markSeed(fresh, release)
+    if (existsSync(target)) return { target, seeded: false }
+    try { renameSync(fresh, target) }
+    catch (error) {
+      if (['EEXIST', 'ENOTEMPTY'].includes(error.code) && existsSync(target)) return { target, seeded: false }
+      throw error
+    }
+    return { target, seeded: true }
+  } finally {
+    rmSync(fresh, { recursive: true, force: true })
+  }
 }
 
 function readVersion(source) {

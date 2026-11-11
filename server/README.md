@@ -164,6 +164,13 @@ Extra fields, changed dependencies or other manifest edits opt out. Owner-manage
 left alone and identified in both startup logs and the report. Settings such as
 `cordis.patch.yml` survive an automatic update.
 
+Image preparation holds a kernel file lock on the DSH volume across recovery, first seeding
+and the complete update. Concurrent starts sharing that volume wait up to 180 seconds, then
+read the completed profile instead of repeating the install. Failure to acquire the lock stops
+startup. The private `.automagik-image-follow.lock` file stays in place; the operating system
+releases its lease when the holder exits, including after a crash. Do not delete the lock file
+while containers are using the volume.
+
 Before installing, the image saves the complete old profile, including its package manifest,
 lock and installed dependencies, under `/data/dsh/backups/<UTC>/automagik-web`. Installation runs
 in a separate staging profile through `dsh plugin install --offline --frozen-lockfile --prod

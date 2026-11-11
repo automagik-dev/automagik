@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import test from 'node:test'
@@ -11,6 +11,9 @@ import { compareRelease, FOLLOW_STATUS, installedPlugins, markSeed, ownership, p
 import { materializePlugins, packPlugin, PLUGINS } from '../plugin-payload.mjs'
 import { buildOfflineStore } from '../offline-store.mjs'
 import { healthReport } from '../healthcheck.mjs'
+import { spawn, spawnSync } from 'node:child_process'
+import { setTimeout as delay } from 'node:timers/promises'
+import { VOLUME_LOCK, withVolumeLock } from '../volume-lock.mjs'
 
 const original = JSON.parse(readFileSync(new URL('../profile/package.json', import.meta.url), 'utf8'))
 const write = (path, content) => { mkdirSync(join(path, '..'), { recursive: true }); writeFileSync(path, content) }
@@ -43,6 +46,121 @@ function fixture(t) {
 }
 const successful = source => ({ profile }) => cpSync(join(source, 'node_modules'), join(profile, 'node_modules'), { recursive: true })
 const prepare = async (f, img = f.old, install = successful(img.source)) => followImage({ dshHome: f.dshHome, ...img, install })
+
+// Each child imports the real implementation. File barriers hold the first mutation
+// open so the second process attempts the same volume while its peer is still active.
+const childProgram = `
+import fs from 'node:fs/promises';
+import { existsSync, writeFileSync, appendFileSync, cpSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+import { setTimeout as delay } from 'node:timers/promises';
+const c = JSON.parse(process.argv[1]);
+const wait = async () => { while (!existsSync(c.release)) await delay(10); };
+if (c.holdSeed) {
+  const cp = fs.cp;
+  fs.cp = async (source, target, options) => {
+    if (String(target).includes('.installing')) {
+      writeFileSync(c.entered, String(target));
+      await wait();
+    }
+    return cp(source, target, options);
+  };
+  syncBuiltinESMExports();
+}
+writeFileSync(c.called, 'called');
+let result;
+if (c.directSeed) {
+  const { seedProfile } = await import(c.lib);
+  result = await seedProfile(c.options);
+} else {
+  const { followImage } = await import(c.follow);
+  result = await followImage({ ...c.options, install: async ({ profile }) => {
+    appendFileSync(c.installs, 'install\\n');
+    writeFileSync(c.entered, 'installing');
+    await wait();
+    cpSync(c.options.source + '/node_modules', profile + '/node_modules', { recursive: true });
+  }});
+}
+console.log(JSON.stringify(result));
+`
+function startFollower(t, f, img, name, extra = {}) {
+  const c = { follow: new URL('../profile-follow.mjs', import.meta.url).href, lib: new URL('../lib.mjs', import.meta.url).href,
+    options: { dshHome: f.dshHome, ...img, release: img.build.automagik }, called: join(f.dir, `${name}-called`),
+    entered: join(f.dir, `${name}-entered`), release: join(f.dir, 'release'), installs: join(f.dir, 'installs'), ...extra }
+  const child = spawn(process.execPath, ['--input-type=module', '-e', childProgram, JSON.stringify(c)], { stdio: ['ignore', 'pipe', 'pipe'] })
+  let stdout = '', stderr = ''
+  child.stdout.on('data', bytes => { stdout += bytes }); child.stderr.on('data', bytes => { stderr += bytes })
+  const done = new Promise(resolve => child.once('close', (code, signal) => resolve({ code, signal, stdout, stderr })))
+  t.after(async () => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); await done })
+  return { ...c, child, done, result: async () => { const out = await done; assert.equal(out.code, 0, out.stderr); return JSON.parse(out.stdout) } }
+}
+async function waitFile(file) {
+  const deadline = Date.now() + 5000
+  while (!existsSync(file)) { assert.ok(Date.now() < deadline, `child did not reach ${file}`); await delay(10) }
+}
+const lockProbe = f => spawnSync('/usr/bin/flock', ['--nonblock', join(f.dshHome, VOLUME_LOCK), '/bin/true']).status
+
+// VOLUME_NO_LOCK: a second follower must wait and re-read the first follower's completed seed/update.
+for (const fresh of [true, false]) test(`two processes serialize ${fresh ? 'fresh seeding' : 'an existing-volume upgrade'} and reuse the winner`, { timeout: 15000 }, async t => {
+  const f = fixture(t)
+  if (!fresh) await prepare(f)
+  const first = startFollower(t, f, f.next, 'first', { holdSeed: fresh })
+  await waitFile(first.entered)
+  assert.equal(lockProbe(f), 1, 'the parent retains the kernel lease after its flock helper exits')
+  const second = startFollower(t, f, f.next, 'second')
+  await waitFile(second.called)
+  await delay(100)
+  assert.equal(second.child.exitCode, null, 'the competing follower waits for the entire mutation')
+  writeFileSync(first.release, '')
+  const a = await first.result(), b = await second.result()
+  assert.equal(a.result, fresh ? 'seeded' : 'updated'); assert.equal(b.result, 'matching-image')
+  assert.equal(a.seeded, fresh); assert.equal(b.seeded, false)
+  assert.equal(packageHash(f.target), JSON.parse(readFileSync(join(f.target, SEED_MARKER))).packageSha256)
+  assert.ok(Object.values(installedPlugins(f.target)).every(v => v === f.next.build.automagik))
+  assert.equal(lockProbe(f), 0)
+  if (!fresh) {
+    assert.equal(readFileSync(first.installs, 'utf8'), 'install\n', 'only one offline install runs')
+    assert.equal(readdirSync(join(f.dshHome, 'backups')).length, 1)
+  }
+})
+
+// SEED_SHARED_STAGE: independent seed callers may never delete each other's temporary copy.
+test('two independent seed processes use distinct stages and preserve a completed competing seed', { timeout: 15000 }, async t => {
+  const f = fixture(t)
+  const a = startFollower(t, f, f.next, 'a', { directSeed: true, holdSeed: true })
+  await waitFile(a.entered)
+  const b = startFollower(t, f, f.next, 'b', { directSeed: true, holdSeed: true })
+  await waitFile(b.entered)
+  assert.notEqual(readFileSync(a.entered, 'utf8'), readFileSync(b.entered, 'utf8'))
+  writeFileSync(a.release, '')
+  const results = await Promise.all([a.result(), b.result()])
+  assert.equal(results.filter(r => r.seeded).length, 1)
+  assert.equal(ownership(f.target, f.next.source).managed, true)
+  assert.ok(Object.values(installedPlugins(f.target)).every(v => v === f.next.build.automagik))
+  assert.deepEqual(readdirSync(join(f.dshHome, 'profiles')), ['automagik-web'])
+})
+
+test('a killed follower releases its kernel lease so another process can seed the volume', { timeout: 15000 }, async t => {
+  const f = fixture(t), first = startFollower(t, f, f.next, 'killed', { holdSeed: true })
+  await waitFile(first.entered); assert.equal(lockProbe(f), 1)
+  first.child.kill('SIGKILL'); assert.equal((await first.done).signal, 'SIGKILL')
+  assert.equal(lockProbe(f), 0)
+  const next = startFollower(t, f, f.next, 'survivor')
+  assert.equal((await next.result()).result, 'seeded')
+  assert.equal(ownership(f.target, f.next.source).managed, true)
+})
+
+test('a failed mutation releases the lease without replacing its private lock inode', async t => {
+  const f = fixture(t), file = join(f.dshHome, VOLUME_LOCK)
+  let inode
+  await assert.rejects(withVolumeLock(f.dshHome, () => {
+    const info = statSync(file); inode = info.ino
+    assert.equal(info.mode & 0o777, 0o600); assert.equal(lockProbe(f), 1)
+    throw new Error('failed mutation')
+  }), /failed mutation/)
+  assert.equal(lockProbe(f), 0)
+  await withVolumeLock(f.dshHome, () => assert.equal(statSync(file).ino, inode))
+})
 
 // FOLLOW_NO_BACKUP: starting installation without preserving the old package/lock loses recovery.
 test('fresh seed records its package hash; a newer image installs in staging after a full backup', async t => {

@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path'
 import { pinStore, profileDirOf, PROFILE, seedProfile } from './lib.mjs'
 import { FOLLOW_STATUS, installedPlugins, markSeed, ownership, packageHash, profileState, compareRelease, validBuild, writeJson } from './profile-state.mjs'
 import { materializePlugins, PLUGINS } from './plugin-payload.mjs'
+import { withVolumeLock } from './volume-lock.mjs'
 
 /** Copy cache files by rename: an existing store file may be hard-linked by the old profile. */
 async function overlayStore(source, target) {
@@ -51,15 +52,23 @@ function recoverSwap(target, source) {
   return false
 }
 
-export async function followImage({ dshHome, source, store, build, dshBin, install = installOffline, now = () => new Date() }) {
+export function followImage(options) {
+  return withVolumeLock(options.dshHome, () => followImageUnlocked(options))
+}
+
+async function followImageUnlocked({ dshHome, source, store, build, dshBin, install = installOffline, now = () => new Date() }) {
   const target = profileDirOf(dshHome)
   const recovered = recoverSwap(target, source)
   if (!existsSync(target)) {
     if (!validBuild(build)) throw new Error('Invalid image metadata for first seed')
     const seeded = await seedProfile({ dshHome, source, release: build.automagik })
-    pinStore(target, dshHome)
-    record(dshHome, target, build, 'seeded')
-    return { ...seeded, result: 'seeded', ...profileState({ profile: target, source, build, dshHome }) }
+    if (seeded.seeded) {
+      pinStore(target, dshHome)
+      record(dshHome, target, build, 'seeded')
+      return { ...seeded, result: 'seeded', ...profileState({ profile: target, source, build, dshHome }) }
+    }
+    // A competing first-start seed won. Re-read its ownership and versions below;
+    // this process must not stamp an existing profile as its own fresh seed.
   }
   let own = ownership(target, source)
   const done = result => {
