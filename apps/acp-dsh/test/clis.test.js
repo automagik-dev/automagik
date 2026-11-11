@@ -12,8 +12,11 @@ const CLAUDE = AGENTS['acp-claude']
 const CODEX = AGENTS['acp-codex']
 const PLATFORM = { platform: 'linux', arch: 'x64', musl: false }
 const scratch = t => {
-  const home = mkdtempSync(join(tmpdir(), 'automagik-cli-test-'))
-  t.after(() => rmSync(home, { recursive: true, force: true }))
+  const installation = mkdtempSync(join(tmpdir(), 'automagik-cli-test-'))
+  const home = join(installation, 'clis')
+  mkdirSync(home)
+  // CliStore's default vendor homes are siblings of its store, inside the installation.
+  t.after(() => rmSync(installation, { recursive: true, force: true }))
   return home
 }
 const executable = (path, version) => {
