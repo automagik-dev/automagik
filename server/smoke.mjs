@@ -148,10 +148,10 @@ async function main() {
   }
   check(gateHealthy, 'gate health never reached healthy 401')
   const gateConfig = JSON.parse((await docker(['inspect', gateName])).stdout)[0]
-  check(gateConfig.HostConfig.NetworkMode === `container:${name}`, 'gate does not share only the DSH network namespace')
+  const dshConfig = JSON.parse((await docker(['inspect', name])).stdout)[0]
+  check(gateConfig.HostConfig.NetworkMode === `container:${dshConfig.Id}`, 'gate does not share only the DSH network namespace')
   check(gateConfig.Mounts.some(m => m.Name === volume && m.Destination === '/dsh' && !m.RW), 'gate DSH mount is not read-only')
   check(gateConfig.Mounts.some(m => m.Name === gateVolume && m.Destination === '/data' && m.RW), 'gate has no separate writable store')
-  const dshConfig = JSON.parse((await docker(['inspect', name])).stdout)[0]
   check(!dshConfig.Mounts.some(m => m.Name === gateVolume), 'DSH mounts the gate store')
   await docker(['exec', gateName, '/nodejs/bin/node', '-e', 'const fs=require("fs");fs.accessSync("/dsh/dsh/launch-url");fs.writeFileSync("/data/gate-only", "private");try{fs.writeFileSync("/dsh/gate-write-probe", "bad");process.exit(1)}catch(e){if(e.code!=="EROFS")throw e}'])
   await docker(['exec', name, '/nodejs/bin/node', '-e', 'const fs=require("fs");try{fs.readFileSync("/data/gate-only");process.exit(1)}catch(e){if(e.code!=="ENOENT")throw e}'])
