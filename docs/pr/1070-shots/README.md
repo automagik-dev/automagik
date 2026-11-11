@@ -2,7 +2,11 @@
 
 These are the running app's light and dark themes, using the approved Remote Hermes wizard
 and its actual host endpoints. The earlier four captures are replaced by every setup step,
-returning one-click access, Settings, and the sign-in/SSH error variants.
+returning one-click access, Settings, and the sign-in/SSH error variants. The owner-review
+refinement gives each error matching guidance, names the route once beside its profile, and
+explains Remote Hermes permissions through remote approval handling. Dev's new Details
+permission selector changes the surrounding app in every prior frame, so all 34 were affected
+and refreshed on the merged tree.
 
 | State | Light | Dark |
 | --- | --- | --- |
@@ -35,11 +39,13 @@ The actual wizard exercised dashboard sign-in, profile refresh/pick/save, rememb
 connection, SSH test/cleanup, and actionable auth/host-key failures. Password fields were masked;
 the probe checked that one-use sign-in values were absent from all isolated app-home files.
 The installed client bundle matched the checkout byte for byte (SHA-256):
-`9bea29535bc85aeda626f31686011bb24bae99c98cc5190cb777eeaf9e240852`.
+`611ce0bf95a7bb7a526fa5b436d7b66d9b53a8bc36e0db1498789202e4731eb4`.
 
 Viewport: 1440 × 1000; locale: English; the app's own fonts and theme variables. Screenshots
 finish finite menu animations and keep the real app around the wizard. The boot and capture
-probe exited successfully; its owned process groups and fake SSH processes were stopped.
+probe exited successfully with no page exceptions; its owned process groups and fake SSH
+processes were stopped. These captures establish appearance and the asserted interactions;
+they do not establish a clean browser console.
 
 Keep this folder and `../1070-wizard-mock` for the orchestrator's review before the owner's
 real-app look. Remove both temporary folders only in the later pre-merge commit after review.
