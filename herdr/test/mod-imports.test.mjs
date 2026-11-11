@@ -3,14 +3,21 @@
 // surface fails the whole mod at load ("am-sidebar did not load: cannot load module node:url",
 // #624), so walk every shipped mod's import graph and hold every file to the runtime's names. A
 // dynamic `import()` is followed when it names one plain quoted literal (its target joins the
-// graph); a computed target is refused, because the module it names cannot be checked. It checks
+// graph; a comment after the literal is read past); a computed target is refused, because the
+// module it names cannot be checked. It checks
 // the small named surfaces too: `url` exports only URL and URLSearchParams, so changing the
 // specifier to `"url"` while importing fileURLToPath still fails. The runtime also hands a mod a
 // bare `import.meta.url` path with a `?v=1` cache buster, not a `file:` URL, so a top-level
 // `new URL(..., import.meta.url)` throws at load; only `guardDirOf` (workers.js) or a shared safe
-// helper may read it, and a bare top-level `import.meta` (an alias or `["url"]`) is refused. This
+// helper may read it, called bare (`helpers.guardDirOf(` is not it), and a bare top-level
+// `import.meta` (an alias or `["url"]`) is refused. This
 // is the #652 check, generalised from am-sidebar to every PACK_MODS folder; its entry comes from
 // that mod's mod.json, never from guessing main.js.
+//
+// A known blind spot (#694): the scan blanks template literals whole, so code inside a `${}`
+// substitution is not read. An `import()` whose target is a template with a substitution is
+// refused as computed, which is where it matters; an `import.meta` or an `import()` written inside
+// a substitution, and a URL or specifier a template builds, are not seen and not resolved.
 // Apache-2.0.
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -168,18 +175,47 @@ function isFunctionBrace(code, index) {
  * same rule catches a bare `import.meta`, so an alias (`const m = import.meta;`) or
  * `import.meta["url"]` cannot slip past a literal `.url` scan. The scan is lexical: it knows
  * blocks and function bodies, not a full syntax tree.
+ *
+ * A function body is a braced one (`function`, a method, `=> {`) or an expression-bodied arrow
+ * (`{ f: () => import.meta.url }`, #694). An expression body ends at the first `,` or `;` at its
+ * own bracket depth, at the bracket that closes around it, or at a line end there once the body
+ * has begun: a body continued on a next line outside brackets is read as ended, so the rule fails
+ * closed. The helper must be called bare: `helpers.guardDirOf(` is some other function.
  */
 function topLevelMetaUses(code) {
   const uses = [];
   const functions = [];
+  // Each open expression-bodied arrow: the bracket depth it began at, and whether its body began.
+  const arrows = [];
+  let depth = 0;
+  const endArrows = (ended) => { while (arrows.length && ended(arrows.at(-1))) arrows.pop(); };
   for (let i = 0; i < code.length; i++) {
-    if (code[i] === "{") { functions.push(isFunctionBrace(code, i)); continue; }
-    if (code[i] === "}") { functions.pop(); continue; }
+    const c = code[i];
+    if (c === "\n") { endArrows((a) => a.depth === depth && a.begun); continue; }
+    if (/\s/.test(c)) continue;
+    if (c === "," || c === ";") { endArrows((a) => a.depth === depth); continue; }
+    if (c === ")" || c === "]" || c === "}") {
+      if (c === "}") functions.pop();
+      depth--;
+      endArrows((a) => a.depth > depth);
+      continue;
+    }
+    for (const arrow of arrows) arrow.begun = true;
+    if (c === "(" || c === "[") { depth++; continue; }
+    if (c === "{") { functions.push(isFunctionBrace(code, i)); depth++; continue; }
+    if (c === "=" && code[i + 1] === ">") {
+      let j = i + 2;
+      while (j < code.length && /\s/.test(code[j])) j++;
+      if (code[j] !== "{") arrows.push({ depth, begun: false });
+      i++;
+      continue;
+    }
     if (!code.startsWith("import.meta", i)) continue;
-    if (!functions.some(Boolean)) {
+    if (!functions.some(Boolean) && arrows.length === 0) {
       const before = code.slice(Math.max(0, i - 64), i);
-      const helper = (before.match(/([A-Za-z_$][\w$]*)\s*\(\s*$/) || [])[1];
-      if (!helper || !SAFE_META_HELPERS.has(helper)) uses.push(i);
+      const call = before.match(/([A-Za-z_$][\w$]*)\s*\(\s*$/);
+      const bare = call && !before.slice(0, call.index).trimEnd().endsWith(".");
+      if (!bare || !SAFE_META_HELPERS.has(call[1])) uses.push(i);
     }
     i += "import.meta".length - 1;
   }
@@ -192,8 +228,10 @@ const lineOf = (text, index) => text.slice(0, index).split("\n").length;
  * The plain string a dynamic `import(` at `index` names, or null. Only one quoted literal, alone as
  * the target (a following `)` or the options comma) and with no escape or template substitution,
  * is read: a computed target, even one that starts with a literal, is refused, never guessed.
+ * What follows the literal is read in `code` (blankLiterals of `text`), so a comment between the
+ * literal and its `)` or comma is read past (#694), a block comment or a line comment.
  */
-function dynamicSpecifier(text, index) {
+function dynamicSpecifier(text, code, index) {
   let i = index;
   while (i < text.length && /\s/.test(text[i])) i++;
   const quote = text[i];
@@ -201,8 +239,8 @@ function dynamicSpecifier(text, index) {
   const end = text.indexOf(quote, i + 1);
   if (end === -1) return null;
   let after = end + 1;
-  while (/\s/.test(text[after] ?? "")) after++;
-  if (text[after] !== ")" && text[after] !== ",") return null;
+  while (/\s/.test(code[after] ?? "")) after++;
+  if (code[after] !== ")" && code[after] !== ",") return null;
   const value = text.slice(i + 1, end);
   if (value.includes("\\") || (quote === "`" && value.includes("${"))) return null;
   return value;
@@ -220,7 +258,7 @@ function walkGraph(entry, root, problems, seen) {
     const code = blankLiterals(text);
     for (const m of code.matchAll(/\bimport\s*\(/g)) {
       const where = `${relative(root, file)}:${lineOf(text, m.index)}`;
-      const spec = dynamicSpecifier(text, m.index + m[0].length);
+      const spec = dynamicSpecifier(text, code, m.index + m[0].length);
       if (spec === null) {
         problems.push(`${where}: dynamic import() without a plain string target`);
       } else if (spec.startsWith("./") || spec.startsWith("../")) {
@@ -387,6 +425,21 @@ test("a fixture handing import.meta to guardDirOf passes", () => {
   assert.deepEqual(problems, []);
 });
 
+test("a fixture handing import.meta to a member named guardDirOf fails: the helper is called bare", () => {
+  const { problems } = walkMods(join(FIXTURES, "meta-helper-member", "mods"));
+  assert.match(problems.join("\n"), /entry\.js:3: top-level import\.meta/);
+  assert.equal(problems.length, 1, problems.join("\n"));
+});
+
+test("a fixture's expression-bodied arrows may read import.meta; what follows one is still top level", () => {
+  const { problems } = walkMods(join(FIXTURES, "meta-arrow", "mods"));
+  // Lines 1 to 6 are arrow bodies, which run only when called. The rest runs at load: after the
+  // comma that ends an arrow (8), after the line that ends one (10) and after its bracket (11).
+  assert.deepEqual(problems.map((line) => line.replace(/: top-level import\.meta.*$/, "")), [
+    "mods/meta-arrow/entry.js:8", "mods/meta-arrow/entry.js:10", "mods/meta-arrow/entry.js:11",
+  ], problems.join("\n"));
+});
+
 test("a fixture mod whose entry is not main.js is still walked", () => {
   const { problems, seen } = walkMods(join(FIXTURES, "other-entry", "mods"));
   assert.ok(seen.has(join(FIXTURES, "other-entry", "mods/other-entry/boot.js")), "boot.js must be the walked entry");
@@ -410,6 +463,16 @@ test("a fixture's literal dynamic import() target is walked", () => {
   assert.match(problems.join("\n"), /target\.js:\d+: import "node:url": not a gpui-shell 0\.7\.1 module/);
 });
 
+test("a fixture's literal dynamic import() target followed by a comment is walked", () => {
+  const { problems, seen } = walkMods(join(FIXTURES, "dynamic-import-comment", "mods"));
+  const dir = join(FIXTURES, "dynamic-import-comment", "mods/dynamic-import-comment");
+  assert.ok(seen.has(join(dir, "target.js")), "a block comment after the literal is read past");
+  assert.ok(seen.has(join(dir, "other.js")), "a line comment after the literal is read past");
+  assert.deepEqual(problems.map((line) => line.replace(/^.*\/entry\.js/, "entry.js")), [
+    "entry.js:6: dynamic import() without a plain string target",
+  ], "a literal followed by more than a comment is still computed");
+});
+
 test("guardDirOf: the guard folder beside the module, from either runtime's meta URL", () => {
   const MOD = join(MODS, "am-sidebar");
   assert.equal(GUARD_DIR, join(MOD, "guard"), "Node's file: URL still gives the same path");
@@ -424,6 +487,12 @@ test("guardDirOf: the guard folder beside the module, from either runtime's meta
   assert.equal(guardDirOf("/tmp/a%20b/workers.js?v=1"), "/tmp/a%20b/guard", "a bare path is already a path");
   assert.equal(guardDirOf("C:/x/am-sidebar/workers.js?v=1"), "C:/x/am-sidebar/guard",
     "a drive-letter path is bare: new URL would read C: as a scheme and drop it");
+  assert.equal(guardDirOf("C:\\x\\am-sidebar\\workers.js?v=1"), "C:\\x\\am-sidebar\\guard",
+    "a backslash drive-letter path keeps its separator (#694)");
+  assert.equal(guardDirOf("C:\\x\\am-sidebar/workers.js?v=1"), "C:\\x\\am-sidebar\\guard",
+    "a drive-letter path with both separators comes back with one (#694)");
+  assert.equal(guardDirOf("/tmp/a\\b/workers.js?v=1"), "/tmp/a\\b/guard",
+    "off a drive letter a backslash is a file-name character and stays");
   assert.equal(guardDirOf("file:///tmp/a%/workers.js?v=1"), "/tmp/a%/guard",
     "a lone % keeps the undecoded pathname, never the raw file: string");
   assert.equal(guardDirOf("/tmp/a/workers.js?v=1/2"), "/tmp/a/guard",

@@ -53,6 +53,7 @@ import { REMOTE_TEXT_MAX, RemoteFileError, StaleSnapshot, readRemoteText, remove
 import { botHistory, historyLines } from "../inspect.js";
 import { chooseLogin } from "../logins.js";
 import { DocError, docGet } from "../docGet.mjs";
+import { isGuardFolder } from "../hcGuard.mjs";
 import { DSH_TUI, approvedDataRootProblem, doctorBotProxies, doctorDshTui, installDshTui,
   uninstallDshTui, workerProxyTransport } from "../dshTui.mjs";
 import { approveProject, approvedProxyEnabled, approvedProxyState, approvedSettingsDir, parseApprovedRecord,
@@ -207,14 +208,16 @@ function programPath(program) {
 }
 const onPath = (program) => programPath(program) !== null;
 
-/** This CLI's guard folder and bytes: a copy must be byte-equal to them (#643). */
-const SELF_GUARD_BYTES = (() => { try { return readFileSync(join(GUARD_DIR, "..", "hcGuard.mjs")); } catch { return null; } })();
-const SELF_GUARD_DIR = (() => { try { return realpathSync(GUARD_DIR); } catch { return null; } })();
 /**
- * A guard folder the CLI can vouch for (#643): this copy's own guard folder, or one whose
- * hcGuard.mjs is byte-equal to this copy's. A planted hcGuard.mjs no longer hides a folder
- * from realHcPath or gets a worker PATH word accepted. The `hc kill` shim's folder (#955,
- * `hc-kill`, beside the same hcGuard.mjs) is vouched for by the same byte rule.
+ * The real hc for the CLI's own trusted calls (system status, machine lists, remote file/exec,
+ * docs): the first PATH hc that isn't inside any guard folder. The guard is a guardrail for
+ * the bot's direct calls (#624; #628 scopes send/keys/attach), not for the pack's own commands.
+ * Skipping every guard folder (the pack's and am's) keeps `automagik-herdr worker` and the
+ * remote commands working in a guarded pane, and never treats one guard as the real hc.
+ * A guard folder is hcGuard.mjs's isGuardFolder (#643, #721): this copy's own guard folder, or
+ * one whose hcGuard.mjs is byte-equal to this copy's, so a planted hcGuard.mjs hides no folder.
+ * The `hc kill` shim's folder (#955, `hc-kill`, beside the same hcGuard.mjs) is vouched for by
+ * the same byte rule.
  *
  * Version skew (#955): a guard or shim folder of ANOTHER version (am and the pack installed at
  * different versions, or a pane started before an update that moved the folder) is not
@@ -225,28 +228,10 @@ const SELF_GUARD_DIR = (() => { try { return realpathSync(GUARD_DIR); } catch { 
  * The shim's own lookup (hcGuard.mjs hcPastGuards) skips loosely, so bots' other hc calls are
  * not affected. Bringing am and the pack to one version, then restarting the pane, clears it.
  */
-function isGuardDir(dir) {
-  if (typeof dir !== "string" || dir === "") return false;
-  let real;
-  try { real = realpathSync(dir); } catch { return false; }
-  if (SELF_GUARD_DIR && real === SELF_GUARD_DIR) return true;
-  let bytes;
-  try { bytes = readFileSync(join(dir, "..", "hcGuard.mjs")); } catch { return false; }
-  return SELF_GUARD_BYTES !== null && bytes.equals(SELF_GUARD_BYTES);
-}
-
-/**
- * The real hc for the CLI's own trusted calls (system status, machine lists, remote file/exec,
- * docs): the first PATH hc that isn't inside any guard folder. The guard is a guardrail for
- * the bot's direct calls (#624; #628 scopes send/keys/attach), not for the pack's own commands.
- * Skipping every guard folder (the pack's and am's) keeps `automagik-herdr worker` and the
- * remote commands working in a guarded pane, and never treats one guard as the real hc.
- * Only a folder isGuardDir vouches for is skipped: see its note on version skew (fails closed).
- */
 function realHcPath() {
   const dirs = [...(process.env.PATH ?? "").split(":"), `${home()}/.local/bin`, dirname(process.execPath)];
   for (const dir of dirs) {
-    if (!dir || isGuardDir(dir)) continue;
+    if (!dir || isGuardFolder(dir)) continue;
     const file = `${dir}/hc`;
     try {
       accessSync(file, constants.X_OK);
@@ -2319,9 +2304,11 @@ const report = (warnings) => { for (const w of warnings) process.stderr.write(`a
 
 /**
  * Appends one row to the workers ledger (workers.js) with a single O_APPEND write, the file the
- * owner's alone: made 0600, and set to 0600 again before every append (a file made under umask
- * 002 is 0664, and usagemeter refuses a group- or world-writable one; RFC 0021 (f) 6). Before
- * its first write in a run, an app home inside a git work tree (a project's) is kept out of git
+ * owner's alone: made 0600, and narrowed to its owner's bits again before every append (a file
+ * made under umask 002 is 0664, and usagemeter refuses a group- or world-writable one; RFC 0021
+ * (f) 6). The narrowing never widens a stricter mode, and the open never follows a symlink at
+ * the ledger's path (#883: tightenLedgers refuses one too; a Herdr ledger is a plain file).
+ * Before its first write in a run, an app home inside a git work tree (a project's) is kept out of git
  * (keepAppHomeOutOfGit): its rows hold session ids. The terminal runs already, so a failure only
  * comes back as a warning; null when written with nothing to say.
  */
@@ -2332,9 +2319,12 @@ export function appendLedger(row, appHomeDir = appHome()) {
     mkdirSync(path.slice(0, path.lastIndexOf("/")), { recursive: true });
     const outOfGit = keepAppHomeOutOfGit(appHomeDir);
     if (outOfGit) notes.push(outOfGit);
-    const fd = openSync(path, "a", LEDGER_MODE);
+    const fd = openSync(path, constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | (constants.O_NOFOLLOW ?? 0), LEDGER_MODE);
     try {
-      try { fchmodSync(fd, LEDGER_MODE); } catch (e) {
+      try {
+        const mode = fstatSync(fd).mode & 0o777;
+        if ((mode & ~LEDGER_MODE) !== 0) fchmodSync(fd, mode & LEDGER_MODE);
+      } catch (e) {
         notes.push(`${path} couldn't be made private (chmod 600: ${e?.message ?? e}); usagemeter won't read a ledger others can write`);
       }
       writeSync(fd, ledgerLine(row));

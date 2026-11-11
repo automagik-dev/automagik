@@ -801,7 +801,22 @@ test("doctor reports which briefing a project's hook runs: the pack's stable ent
   rmSync(join(m.app, "automagik-herdr", "briefing.mjs"));
   rmSync(join(m.mods, "am-sidebar", "briefing.mjs"));
   const neither = check();
+  assert.equal(neither.ok, true, "a note, as am self doctor says it (#815)");
   assert.match(neither.detail, /; neither the pack's entry \(.*\) nor am's entry \(.*\) is installed$/);
+  // #815: a malformed settings file is that project's state: named, and the doctor goes on.
+  writeFileSync(file, "{ not json");
+  const run = () => doctor(contextOf({ env: m.env, exec: noExec, log: () => {}, platform: "darwin", project }), P("herdr.pack"));
+  const bad = run().checks.find((c) => c.check === "briefing-hook");
+  assert.equal(bad.ok, true);
+  assert.match(bad.detail, /^not checked: .*settings\.local\.json is not valid JSON \(.*\), so this project's briefing hook could not be read$/);
+  assert.ok(run().checks.findIndex((c) => c.check === "briefing-hook") < run().checks.length - 1, "the checks after it still ran");
+  // An am entry under another am home than this host's is not this host's hook (#815).
+  const elsewhere = join(m.dir, "elsewhere", "parts", "automagik.am");
+  mkdirSync(join(elsewhere, "current", "bin"), { recursive: true });
+  writeFileSync(join(elsewhere, "current", "bin", "run.sh"), "#!/bin/sh\n");
+  writeFileSync(join(elsewhere, "current", "briefingEntry.mjs"), "// another am's entry\n");
+  settings(amPartHookCommand(m.app, elsewhere));
+  assert.match(check().detail, /^none: .*settings\.local\.json has no briefing hook/);
 });
 
 

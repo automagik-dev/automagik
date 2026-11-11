@@ -1191,6 +1191,10 @@ test("CLI-only host: the hook runs am's entry through am's runner; a pack there 
   assert.equal(scriptOf(command()), amPartEntryPath(store));
   assert.deepEqual(hookTargetOf(command(), { appHome: app }),
     { kind: "am-part", script: amPartEntryPath(store), store, runner: amPartRunnerPath(store) });
+  // #815: given this host's am store, an am entry under another am home is not this host's hook.
+  assert.deepEqual(hookTargetOf(command(), { appHome: app, amStore: `${store}/` }),
+    { kind: "am-part", script: amPartEntryPath(store), store, runner: amPartRunnerPath(store) });
+  assert.equal(hookTargetOf(command(), { appHome: app, amStore: join(root, "other", "parts", "automagik.am") }), null);
   assert.equal(isAmPartEntry(amPartEntryPath(store)), true);
   assert.equal(isAmPartEntry(join(app, "automagik-herdr", "briefing.mjs")), false);
   // A second run adds nothing: one hook, not two.
@@ -1225,6 +1229,17 @@ test("the CLI-only hook command: 0 and silent with its runner or entry missing, 
   const hook = () => spawnSync("/bin/sh", ["-c", command], { cwd: root, input: "{}", encoding: "utf8", env: { HOME: root, PATH: "/usr/bin:/bin", GIT_CEILING_DIRECTORIES: root } });
   const ran = hook();
   assert.deepEqual([ran.status, ran.stdout], [0, `ran ${amPartEntryPath(store)}\n`]);
+  // #815: a runner or entry this user cannot read is guarded too (sh would exit 2 and block the
+  // prompt). Root reads any file, so the rows hold for every other user.
+  if (process.getuid?.() !== 0) {
+    for (const file of [amPartRunnerPath(store), amPartEntryPath(store)]) {
+      chmodSync(file, 0o000);
+      try {
+        const unreadable = hook();
+        assert.deepEqual([unreadable.status, unreadable.stdout, unreadable.stderr], [0, "", ""], `${file} unreadable: exit 0 and nothing`);
+      } finally { chmodSync(file, 0o644); }
+    }
+  }
   rmSync(amPartEntryPath(store));
   const noEntry = hook();
   assert.deepEqual([noEntry.status, noEntry.stdout, noEntry.stderr], [0, "", ""], "no entry: exit 0 and nothing");
