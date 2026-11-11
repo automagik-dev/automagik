@@ -74,13 +74,15 @@ test('recursive Include globs use the SSH directory, quotes and equals syntax, s
   exactFields(result)
 })
 
-test('known_hosts alone supports markers, comma names and bracket ports, ignoring hashes and patterns', async t => {
+test('known_hosts skips every marked row while retaining regular and bracket hosts and ignoring hashes and patterns', async t => {
   const sshDir = await fixture(t, { known_hosts: [
     'known.example.invalid ssh-ed25519 sample-public-key',
     'KNOWN.EXAMPLE.INVALID ssh-rsa sample-other-key',
     '[192.0.2.44]:2202 ssh-ed25519 sample-key',
     '[2001:db8::8]:2203 ssh-ed25519 sample-key',
     '@cert-authority cert.example.invalid,alternate.example.invalid ssh-ed25519 sample-key',
+    '@revoked revoked.example.invalid ssh-ed25519 sample-key',
+    '@unknown-marker unknown.example.invalid ssh-ed25519 sample-key',
     '|1|sample-salt|sample-hash ssh-ed25519 sample-key',
     '*.example.invalid,!excluded.example.invalid,question?.example.invalid ssh-ed25519 sample-key',
     'malformed-line', '# comment',
@@ -90,8 +92,6 @@ test('known_hosts alone supports markers, comma names and bracket ports, ignorin
     { alias: 'known.example.invalid', hostname: 'known.example.invalid', user: '', port: '' },
     { alias: '192.0.2.44', hostname: '192.0.2.44', user: '', port: '2202' },
     { alias: '2001:db8::8', hostname: '2001:db8::8', user: '', port: '2203' },
-    { alias: 'cert.example.invalid', hostname: 'cert.example.invalid', user: '', port: '' },
-    { alias: 'alternate.example.invalid', hostname: 'alternate.example.invalid', user: '', port: '' },
   ] })
   exactFields(result)
 })

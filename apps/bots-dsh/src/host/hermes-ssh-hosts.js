@@ -153,9 +153,8 @@ function knownIn(text, aliases) {
   const seen = new Set(aliases.flatMap(host => [host.alias.toLowerCase(), host.hostname.toLowerCase()])), known = []
   for (const line of (text ?? '').split(/\r?\n/)) {
     const values = line.trim().split(/\s+/)
-    const marker = values[0]?.startsWith('@')
-    if (values.length < (marker ? 4 : 3)) continue
-    const names = marker ? values[1] : values[0]
+    if (values[0]?.startsWith('@') || values.length < 3) continue
+    const names = values[0]
     for (const name of (names ?? '').split(',')) {
       const bracket = /^\[([^\]]+)\]:(\d+)$/.exec(name)
       const hostname = bracket?.[1] ?? name, port = bracket ? portOf(bracket[2]) : ''
