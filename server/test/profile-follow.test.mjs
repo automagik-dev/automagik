@@ -98,7 +98,7 @@ async function waitFile(file) {
   const deadline = Date.now() + 5000
   while (!existsSync(file)) { assert.ok(Date.now() < deadline, `child did not reach ${file}`); await delay(10) }
 }
-const lockProbe = f => spawnSync('/usr/bin/flock', ['--nonblock', join(f.dshHome, VOLUME_LOCK), '/bin/true']).status
+const lockProbe = f => spawnSync('/usr/bin/flock', ['--nonblock', join(f.dshHome, VOLUME_LOCK), process.execPath, '-e', '']).status
 
 // VOLUME_NO_LOCK: a second follower must wait and re-read the first follower's completed seed/update.
 for (const fresh of [true, false]) test(`two processes serialize ${fresh ? 'fresh seeding' : 'an existing-volume upgrade'} and reuse the winner`, { timeout: 15000 }, async t => {
