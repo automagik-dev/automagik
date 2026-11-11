@@ -12,6 +12,9 @@ after the owner uploads the prepared small encode and its downloaded bytes are c
 | [automagik-launch-poster.webp](automagik-launch-poster.webp) | End-card frame at 54.5 seconds; 1920×1080 | `83d51fe6c685bfae6b199c0ec0989c5e16c1f414bfb2452de28a55d90e20ebfe` |
 | Owner's prepared GitHub encode (outside this repository) | Same cut, under 10,000,000 bytes; not an uploaded attachment | `9dc33828479d884d24faad18254b1b995c3a47fadad8611b8878c9f24ae7cbbb` |
 
+The owner's channel is [Automagik on YouTube](https://www.youtube.com/channel/UCLX2lP-PaCbjDU6ZzgdJbOg).
+The film has not been uploaded.
+
 [LICENSES.md](LICENSES.md) records the music's creator, source, download date, scope and saved
 CC0 deed. [CC0-1.0.txt](CC0-1.0.txt) saves the complete legal code.
 
@@ -57,4 +60,4 @@ from each scene are read visually. This does not substitute for the owner's watc
 3. Download that attachment, compare SHA-256 with the prepared-file digest above, then add
    the attachment URL and verified digest to the root README and RFC 0027's film table.
 4. Review the separate YouTube encode, frame-derived 1280×720 thumbnail, title and description;
-   the owner creates the channel and uploads. Nothing here publishes or triggers a release.
+   the owner approves and uploads to his channel. Nothing here publishes or triggers a release.
