@@ -1036,10 +1036,10 @@ function describe(project, bot, view, hcError, projects = null) {
   const seatAgy = bot.agent === "antigravity"
     ? agyPermissionPlan({ bot, scope: "seat", folder: project.key, realpath: realDir, homeDir: home() }) : null;
   const workerAgent = !worker ? resolveAgent(bot.agent) : worker.template ? null : resolveAgent(worker.agent ?? bot.agent);
-  // #884 M1: a review worker is read-only and is never auto-trusted, so its trusted folder is
-  // named as empty; a writer role's worktree is only known at launch, so its plan names it as such.
+  // #884 M1/#1046: a review worker is read-only, but it is trusted for its own worktree like any
+  // writer; the worktree is only known at launch, so its plan names it as such.
   const workerRoleOf = workerRole(bot).role;
-  const workerTrusted = workerRoleOf === "review" ? [] : ["<worktree>"];
+  const workerTrusted = ["<worktree>"];
   const workerAgy = workerAgent === "antigravity"
     ? agyPermissionPlan({ bot, scope: "worker", role: workerRoleOf, folder: null, realpath: realDir, homeDir: home() }) : null;
   const out = {
@@ -1447,12 +1447,12 @@ doesn't name runs unasked (inline code, scripts, sh, curl, ssh, a plain push, a 
 The lists are a guardrail against accidents; the boundary is the hc-proxy sandbox. A lead
 ends its own worker with \`worker kill <pane>\`: \`hc kill\` is denied to every worker and to
 every seat but a main bot's. The file
-also lists a writer launch's own folder in \`trustedWorkspaces\` -- the project folder for a
-seat, the worker's worktree for a worker, never a parent or the home folder -- so agy's
-first-run trust question is already answered. A read-only review launch (a review worker, a
-reviewer seat) is never auto-trusted: it has no trusted folder, so the file leaves
-\`trustedWorkspaces\` out instead of writing an empty list, and agy asks before it loads that
-checkout's project configuration. The pack never passes
+also lists the launch's own folder in \`trustedWorkspaces\` -- the project folder for a seat, the
+worker's worktree for a worker, the helper's folder for a helper, never a parent or the home
+folder -- so agy's first-run trust question is already answered on every role, a review worker
+(\`--role review\`) and a reviewer seat included. A launch at the home folder leaves
+\`trustedWorkspaces\` out instead of writing an empty list, so the person's saved trust list is
+never overwritten with []. The pack never passes
 --dangerously-skip-permissions and never writes agy's own saved settings, so the rest of its
 trust list and saved settings stay the person's. Its first prompt goes through -i, its resume
 through --conversation <id> (--fresh starts new).
@@ -6697,9 +6697,9 @@ export async function cmdDshTui(opts, [verb, ...rest], io = {}) {
       const workerAgy = workerAgent === "antigravity"
         ? agyPermissionPlan({ bot: agent, scope: "worker", role: workerRoleOf, folder: null, realpath: realDir,
           homeDir: home() }) : null;
-      // #884 M1: a review worker is read-only and is never auto-trusted (it stops at agy's trust
-      // question); a writer role's worktree is only known at launch, so the plan names it as such.
-      const workerTrusted = workerRoleOf === "review" ? [] : ["<worktree>"];
+      // #884 M1/#1046: a review worker is read-only, but its own worktree is trusted like any
+      // writer's; the worktree is only known at launch, so the plan names it as such.
+      const workerTrusted = ["<worktree>"];
       if (seatAgy) bot.agyPermissions = { allow: seatAgy.allow, deny: seatAgy.deny, trustedWorkspaces: seatAgy.trustedWorkspaces };
       if (workerAgy) bot.workerAgyPermissions = { allow: workerAgy.allow, deny: workerAgy.deny, trustedWorkspaces: workerTrusted };
       const perms = [

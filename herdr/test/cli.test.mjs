@@ -928,7 +928,7 @@ test("Antigravity #823: --agy-allow/--agy-deny add rules, clear with one empty v
   assert.equal(doctor.checks.filter((c) => c.check === "agy-sandbox").length, 1, "one host-level row, not one per bot");
 });
 
-test("Antigravity #884 M1: a reviewer seat and a review worker are never auto-trusted; writers list their folder", (t) => {
+test("Antigravity #1046: every launch, review included, trusts its own folder; review stays read-only", (t) => {
   const s = scene(t);
   const f = team();
   f.bots[0].agent = "antigravity";
@@ -940,11 +940,13 @@ test("Antigravity #884 M1: a reviewer seat and a review worker are never auto-tr
   s.seed(f);
   const doctor = s.cli(["dsh-tui", "doctor", "--json"]).json();
   const reviewer = doctor.checks.find((c) => c.check === `hc-proxy:${ID.main}`);
-  assert.deepEqual(reviewer.agyPermissions.trustedWorkspaces, [], "the reviewer seat trusts nothing");
-  assert.deepEqual(reviewer.workerAgyPermissions.trustedWorkspaces, [], "its review worker trusts nothing");
+  assert.deepEqual(reviewer.agyPermissions.trustedWorkspaces, [s.project], "the reviewer seat trusts its project");
+  assert.deepEqual(reviewer.workerAgyPermissions.trustedWorkspaces, ["<worktree>"], "its review worker trusts its worktree at launch");
+  assert.equal(reviewer.agyPermissions.allow.some((rule) => rule.startsWith("write_file(")), false, "the reviewer seat stays read-only");
+  assert.equal(reviewer.workerAgyPermissions.allow.some((rule) => rule.startsWith("write_file(")), false, "its review worker stays read-only");
   const text = s.cli(["dsh-tui", "doctor"]).out;
-  assert.match(text, /agy trusted -; agy allow /, "the reviewer seat prints no trusted folder");
-  assert.match(text, /worker agy trusted -; worker agy allow /, "the review worker prints none either");
+  assert.match(text, new RegExp(`agy trusted ${s.project}; agy allow `), "the reviewer seat prints its trusted folder");
+  assert.match(text, /worker agy trusted <worktree>; worker agy allow /, "the review worker prints its worktree");
   // A writer seat and its writer worker: the project, and (at launch) its worktree.
   const writer = doctor.checks.find((c) => c.check === `hc-proxy:${ID.cap}`);
   assert.deepEqual(writer.agyPermissions.trustedWorkspaces, [s.project]);
@@ -953,22 +955,22 @@ test("Antigravity #884 M1: a reviewer seat and a review worker are never auto-tr
   assert.match(text, /worker agy trusted <worktree>; worker agy allow /);
   // show carries the same effective rows as ls and doctor (botRow's JSON).
   const show = s.cli(["show", "Genie", "--json"]).json();
-  assert.deepEqual(show.agyPermissions.trustedWorkspaces, []);
-  assert.deepEqual(show.workerAgyPermissions.trustedWorkspaces, []);
-  assert.match(s.cli(["show", "Genie"]).out, /agy trusted  -/);
+  assert.deepEqual(show.agyPermissions.trustedWorkspaces, [s.project]);
+  assert.deepEqual(show.workerAgyPermissions.trustedWorkspaces, ["<worktree>"]);
+  assert.match(s.cli(["show", "Genie"]).out, new RegExp(`agy trusted  ${s.project}`));
   const cap = s.cli(["show", "Captain", "--json"]).json();
   assert.deepEqual(cap.agyPermissions.trustedWorkspaces, [s.project]);
   assert.deepEqual(cap.workerAgyPermissions.trustedWorkspaces, ["<worktree>"]);
-  // #884 Low B: plain show names the worker default's trusted folder too: "-" for a review
-  // worker, the worktree placeholder for a writer's.
-  assert.match(s.cli(["show", "Genie"]).out, /worker agy trusted  -/);
+  // #884 Low B: plain show names the worker default's trusted folder too: the worktree
+  // placeholder for every role, review included.
+  assert.match(s.cli(["show", "Genie"]).out, new RegExp(`worker agy trusted  <worktree>`));
   assert.match(s.cli(["show", "Captain"]).out, /worker agy trusted  <worktree>/);
-  // Follow-up: the reviewer seat's own start writes no trustedWorkspaces key at all, so the
-  // person's saved trust list is never overwritten with an empty one.
+  // #1046: the reviewer seat's own start writes trustedWorkspaces: [project], so agy's trust
+  // question is already answered, while its allow list stays read-only.
   const started = s.cli(["start", "Genie"]);
   assert.equal(started.code, 0, started.err);
   const seatFile = JSON.parse(readFileSync(agySettingsPath(s, ID.main), "utf8"));
-  assert.equal("trustedWorkspaces" in seatFile, false, "the reviewer seat's file leaves the key out");
+  assert.deepEqual(seatFile.trustedWorkspaces, [s.project], "the reviewer seat's file names the project");
   assert.equal(seatFile.permissions.allow.some((rule) => rule.startsWith("write_file(")), false, "and writes nothing");
 });
 
@@ -2767,7 +2769,7 @@ test("restart --agent swaps fresh without touching bots.json; --save writes the 
   const r = s.cli(["restart", "Genie", "--agent", "codex", "--json"]);
   assert.equal(r.code, 0, r.err);
   assert.deepEqual([r.json().mode, r.json().agent, r.json().saved], ["swap", "codex", false]);
-  assert.deepEqual(plain(agentWords(runCall(s.calls()))), ["codex", "--approve-for-me"]);
+  assert.deepEqual(plain(agentWords(runCall(s.calls()))), ["codex", "--approve-for-me", "--disable", "hooks"]);
   assert.equal(readFileSync(s.botsPath, "utf8"), before, "bots.json untouched");
   // Again from the claude pin, written down this time (t100 is mid-turn in the fake: --force).
   const f = team();
@@ -2790,7 +2792,7 @@ test("restart a codex bot resumes with codex resume --last; a bot not running is
   s.seed(f);
   const r = s.cli(["restart", "Captain", "--json"]);
   assert.equal(r.code, 0, r.err);
-  assert.deepEqual(plain(runCall(s.calls())).slice(-4), ["codex", "--approve-for-me", "resume", "--last"]);
+  assert.deepEqual(plain(runCall(s.calls())).slice(-6), ["codex", "--approve-for-me", "--disable", "hooks", "resume", "--last"]);
   assert.equal(r.json().replaced, "t6");
   // Genie isn't running: a plain start, nothing killed but t6.
   const started = s.cli(["restart", "Genie", "--json"]);
@@ -2856,7 +2858,7 @@ const runsOf = (s) => s.calls().filter((c) => c[0] === "run");
 const ownWords = (run) => plain(agentWords(run)).filter((w) => !w.includes("<herdr-bot>"));
 
 test("restart (#328): two bots on omp, then codex, in one folder: each resumes its own session id, from its label or the ledger", (t) => {
-  for (const [agent, words] of [["omp", (id) => [`--resume=${id}`]], ["codex", (id) => ["--approve-for-me", "resume", id]]]) {
+  for (const [agent, words] of [["omp", (id) => [`--resume=${id}`]], ["codex", (id) => ["--approve-for-me", "--disable", "hooks", "resume", id]]]) {
     const s = shareScene(t, agent, { labels: ["sess-tester", "sess-dev"] });
     const a = s.cli(["restart", "Genie", "--json"]);
     assert.equal(a.code, 0, a.err);
@@ -3122,7 +3124,7 @@ test("restart #413: codex can't resume a thread whose model provider is gone: on
   assert.equal(r.code, 0, r.err);
   const [first, second] = runs(s);
   assert.deepEqual(plain(agentWords(first)).slice(-2), ["resume", SID], "it tried the thread first");
-  assert.deepEqual(plain(agentWords(second)), ["codex", "--approve-for-me"], "then a new thread");
+  assert.deepEqual(plain(agentWords(second)), ["codex", "--approve-for-me", "--disable", "hooks"], "then a new thread");
   const j = r.json();
   assert.deepEqual([j.mode, j.terminal, j.replaced, j.session], ["fresh", "t101", "t6", null]);
   assert.equal(j.note, `codex can't resume its thread (***) (t100 said "${CODEX_GONE}"), so it starts on a new one`);
@@ -3239,8 +3241,8 @@ test("restart #597: a hand-started codex bot comes back from its source, not its
   const r = s.cli(["restart", "Captain", "--json"]);
   assert.equal(r.code, 0, r.err);
   const run = runCall(s.calls());
-  assert.deepEqual(plain(agentWords(run)), ["codex", "--approve-for-me", "resume", SID], "the source's command, resumed by its session");
-  assert.match(r.err, /Captain: its pane's command differs from its source now \(drops -m=\*\*\*, -c=\*\*\*; adds --approve-for-me\)/);
+  assert.deepEqual(plain(agentWords(run)), ["codex", "--approve-for-me", "--disable", "hooks", "resume", SID], "the source's command, resumed by its session");
+  assert.match(r.err, /Captain: its pane's command differs from its source now \(drops -m=\*\*\*, -c=\*\*\*; adds --approve-for-me, --disable=\*\*\*\)/);
   assert.equal(r.err.includes("gpt-a"), false, "the value is masked");
   assert.equal(r.json().session, "***"); // RFC 0021: masked
   assert.equal(run[run.indexOf("--cwd") + 1], s.project);
@@ -3267,7 +3269,7 @@ test("restart #213: the pane always gets the CLI's PATH, so a bare codex (#!/usr
   assert.deepEqual(parts.prefix, ["/usr/bin/env"]);
   assert.deepEqual(parts.env, [`PATH=${KILL_GUARD_DIR}:${path}`, `HERDR_APP_HOME=${s.app}`],
     "the hc kill shim (#955), then the CLI's PATH, and its app home: no env word lost or leaked (#650)");
-  assert.deepEqual(plain(parts.words), ["codex", "--approve-for-me", "resume", "--last"]);
+  assert.deepEqual(plain(parts.words), ["codex", "--approve-for-me", "--disable", "hooks", "resume", "--last"]);
 });
 
 /** Genie in t5 with two helpers that end with it (a worker on omp, a template on omp) and a member bot that outlives it. */
@@ -3857,7 +3859,7 @@ test("restart --cwd: a non-Claude resume into another folder is said; --cwd with
   assert.equal(r.code, 0, r.err);
   assert.match(r.err, new RegExp(`t100 runs in ${b}, not ${a}: codex finds its last conversation by folder, so it may not find it there\\.`));
   const run = runCall(s.calls());
-  assert.deepEqual([run[run.indexOf("--cwd") + 1], ...plain(agentWords(run))], [b, "codex", "--approve-for-me", "resume", "--last"]);
+  assert.deepEqual([run[run.indexOf("--cwd") + 1], ...plain(agentWords(run))], [b, "codex", "--approve-for-me", "--disable", "hooks", "resume", "--last"]);
   // --machine: refused before anything is read or started, whatever DIR is.
   const m = s.cli(["restart", "Captain", "--machine", "box", "--cwd", b]);
   assert.equal(m.code, 2);

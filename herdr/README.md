@@ -1255,11 +1255,16 @@ on this computer are labelled. The lead's pane is the one the attach ledger ties
   configured default. A bot that isn't running shows no model in its sidebar row
   ("not running · role"), while `automagik-herdr ls` and `show` print its pin, else that default.
 - `codexAuto` is optional and says whether a Codex seat and its Codex workers get Codex's auto
-  mode, `--approve-for-me`: approval requests go to Codex's own reviewer instead of a person,
-  and commands still run in Codex's workspace-write sandbox (it is not full access and does not
-  widen the sandbox). `true` (the default) passes it; `false` leaves Codex its default approvals
-  for that bot, so its panes can stop at a prompt only a person can answer. Set it in the bot's
-  entry in `.herdr/bots.json`; `create` and `edit` have no option for it, and either keeps the
+  mode, `--approve-for-me --disable hooks`: approval requests go to Codex's own reviewer instead
+  of a person, and commands still run in Codex's workspace-write sandbox (it is not full access
+  and does not widen the sandbox). `--disable hooks` (the same as `-c features.hooks=false`)
+  turns Codex's hooks off at launch, so its TUI never stops at the startup dialog "Hooks need
+  review" for a person to answer: herdr-core reads a Codex pane's state from the PTY and does
+  not need `hooks.json`, and the pack never passes `--dangerously-bypass-hook-trust` (that would
+  run an untrusted `.codex/hooks.json` command in a worktree outside the sandbox). `true` (the
+  default) passes both; `false` leaves Codex its default approvals for that bot, so its panes
+  can stop at a prompt or a hook review only a person can answer. Set it in the bot's entry in
+  `.herdr/bots.json`; `create` and `edit` have no option for it, and either keeps the
   field. It applies to a Codex seat, its Start and Restart, and its Codex workers; every other
   agent's launch line is unchanged, and a worker that runs an hc template keeps the template's
   command. Inside that sandbox (no network by default) `hc` can't connect to its socket and the
@@ -1272,9 +1277,10 @@ on this computer are labelled. The lead's pane is the one the attach ledger ties
   an Antigravity seat. Where agy can't run `auto` (see
   [Automatic mode](#automatic-mode)) it continues in manual mode, so a roster that names `auto`
   itself gets one warning at launch on such a host. The pack never writes
-  agy's own saved settings; each writer launch's own `--settings` file lists just that launch's
-  folder in `trustedWorkspaces` (see below), so the rest of the person's trust list and saved
-  settings stay theirs. A read-only review launch is not auto-trusted (see below).
+  agy's own saved settings; each launch's own `--settings` file lists just that launch's
+  folder in `trustedWorkspaces` (see below) -- the project folder for a seat, the worker's
+  worktree for a worker, the helper's folder for a helper, a review worker and a reviewer seat
+  included -- so the rest of the person's trust list and saved settings stay theirs.
   `create|edit --agy-mode` sets it (`--agy-mode auto` clears it back to the default); the form
   offers it for an Antigravity bot. Other edits, installs and updates keep it in the roster.
   `show`, `ls` and `dsh-tui doctor` print it.
@@ -1301,8 +1307,8 @@ on this computer are labelled. The lead's pane is the one the attach ledger ties
   and `effort`. `agyMode` is the Antigravity workers' `--mode` (auto when absent).
   `create|edit --worker-agent/--worker-model/--worker-effort/--worker-template/--worker-agy-mode` set them
   (an empty value clears one); the form keeps the field as it is. An invalid one is ignored
-  with a warning. A Codex worker passes `--approve-for-me` like its bot's seat, unless the bot's
-  `codexAuto` is false; a `template` owns the command and gets no flag.
+  with a warning. A Codex worker passes `--approve-for-me --disable hooks` like its bot's seat,
+  unless the bot's `codexAuto` is false; a `template` owns the command and gets no flag.
 - Ids are `b-` plus 10 lowercase base32 characters. A bot's terminal carries the hc label
   `bot=<id>`.
 
@@ -1318,7 +1324,7 @@ the pack adds nothing to either.
 | Agent | What its launch adds | What that does |
 | --- | --- | --- |
 | Claude Code (`claude`) | `--permission-mode auto` | Claude Code's auto mode: its classifier answers permission requests. |
-| Codex (`codex`) | `--approve-for-me` | Codex's auto mode: its reviewer answers approval requests, inside the workspace-write sandbox (#946). A bot's `codexAuto: false` turns it off. |
+| Codex (`codex`) | `--approve-for-me --disable hooks` | Codex's auto mode: its reviewer answers approval requests, inside the workspace-write sandbox (#946), and its hooks are off (#1045), so startup never stops at "Hooks need review" and never runs an untrusted `.codex/hooks.json` command in an unattended pane. A bot's `codexAuto: false` turns it off. |
 | Antigravity (`agy`) | `--dangerously-skip-permissions`, `--mode <agyMode>`, `--settings <file>` | No permission prompt and no classifier: everything the file's deny list does not name runs (see [what runs without a prompt](#antigravitys-permission-list)). The file's `trustedWorkspaces` answers the folder-trust question. |
 | dsh-TUI (`dsh-tui`) | nothing | Its DSH profile on the machine it runs on sets the approval policy; dsh-tui takes no such flag. |
 | Oh My Pi (`omp`) | nothing | omp 18.14.2 has only skip-all flags (`--auto-approve`, `--approval-mode=yolo`). |
@@ -1355,18 +1361,19 @@ see "What runs without a prompt" below for what that leaves open.
 The file is
 `{ "permissions": { "allow": [...], "deny": [...] }, "trustedWorkspaces": ["<folder>"] }`,
 both arrays in full every time (agy replaces its saved list field by field). `trustedWorkspaces`
-lists one folder for a writer launch: the project folder for a seat, the worker's worktree
-for a worker, the helper's folder for a helper. agy trusts folders by exact path, so without it
-a new writer worktree would stop at the first-run question, "Do you trust the contents of this
-project?" (`agy` 1.5.3 reads `TrustedWorkspaces []string json:"trustedWorkspaces,omitempty"` as a
-top-level key of `--settings`). Trusting a folder lets agy load that folder's project
+lists one folder for every launch with a valid one, whatever its role: the project folder for a
+seat, the worker's worktree for a worker (a review worker included), the helper's folder for a
+helper. agy trusts folders by exact path, so without it a new worktree would stop at the
+first-run question, "Do you trust the contents of this project?" (`agy` 1.5.3 reads
+`TrustedWorkspaces []string json:"trustedWorkspaces,omitempty"` as a top-level key of
+`--settings`). Trusting a folder lets agy load that folder's project
 customizations, such as its `.agents/` agents, rules, hooks and MCP servers, without asking. A
-read-only review launch (a worker with `role: "review"`, a seat with `rank: "reviewer"`) is
-therefore never auto-trusted: it has no trusted folder, so the file leaves `trustedWorkspaces`
-out entirely (a writer's saved list is never overwritten with an empty one), reviewing a
-contributor's or fork's tree never loads that tree's project configuration without asking, and
-agy stops at the trust question instead. Never a parent folder and never the home folder is listed,
-and the pack never writes agy's own `settings.json`, so its saved trust list stays the person's.
+review launch (a worker with `role: "review"`, a seat with `rank: "reviewer"`) is trusted the
+same way (#1046), so an unattended `--role review` worker never hangs at startup on the trust
+question; its read-only brief, never an empty trust list, is what bounds it. Never a parent
+folder and never the home folder is listed: a launch at the home folder leaves
+`trustedWorkspaces` out entirely (so the saved trust list is never overwritten with `[]`), and
+the pack never writes agy's own `settings.json`, so its saved trust list stays the person's.
 
 **What runs without a prompt.** Every launch carries `--dangerously-skip-permissions`, and
 under that flag agy asks nothing and runs no classifier: a command runs unless a
@@ -1388,10 +1395,10 @@ runs unasked, on a seat, a worker and a read-only review launch alike:
   call can still merge a pull request;
 - reading any file the user can read, and anything else no deny rule names.
 
-A read-only launch (a seat with `rank: "reviewer"`, a worker with `role: "review"`) is therefore
-read-only by its brief only: once a person answers its trust question, nothing in agy keeps it
-from writing. The real boundary is the hc-proxy sandbox (the per-pane hc proxy, `hcProxy`),
-never these lists.
+A review launch (a seat with `rank: "reviewer"`, a worker with `role: "review"`) is trusted for
+its own folder like any launch, but read-only by its brief only: nothing in agy keeps it from
+writing. The real boundary is the hc-proxy sandbox (the per-pane hc proxy, `hcProxy`), never
+these lists.
 
 The allow list is still written to the file, and it is what bounds a launch that runs without
 the flag (a `programs.json` run or an hc template that leaves it out): a dev bot's project (or a
@@ -1451,9 +1458,9 @@ plain warning. A linked machine's start writes the file under that machine's app
 `hc`; with no app home there the start is refused rather than launched without its list.
 
 `dsh-tui doctor` prints each Antigravity bot's effective trusted folder and allow and deny lists
-(its seat's and its worker defaults'; a writer worker's trusted folder is its worktree, named at
-launch, while a read-only review launch prints `-` because it trusts nothing), in JSON too, plus
-one host-level row saying whether agy's terminal sandbox, and so `--mode`, can
+(its seat's and its worker defaults'; a worker's trusted folder is its worktree, named at
+launch, a review worker's included), in JSON too, plus one host-level row saying whether agy's
+terminal sandbox, and so `--mode`, can
 work here: Linux's user namespace controls, or macOS's `/usr/bin/sandbox-exec`. Unreadable evidence
 is a note, not a false warning.
 
