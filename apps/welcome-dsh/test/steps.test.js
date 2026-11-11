@@ -389,7 +389,10 @@ test('every phase happens inside the box: outside it, the card stays the same', 
   const tiles = tree => findAll(tree, byClass('oai-destiny-tile')).filter(node => node.type === 'button')
   const titles = tree => tiles(tree).map(node => textOf(findAll(node, node => node.type === 'strong')[0]))
   // No machine from the host and no page address here: the neutral name for DSH's machine.
-  assert.deepEqual(titles(found), ['Use your Omni on DSH\'s computer', 'Connect omni.example.com', 'An Omni somewhere else'])
+  assert.deepEqual(titles(found), [
+    'Use your Omni on the computer this workspace runs on',
+    'Connect omni.example.com', 'An Omni somewhere else',
+  ])
   tiles(found)[1].props.onClick()
   assert.deepEqual(used, ['cli:work'])
   assert.match(textOf(found), /Not answering right now/)
@@ -398,7 +401,7 @@ test('every phase happens inside the box: outside it, the card stays the same', 
   let local = 0
   const none = card('none', { sandbox: null }, { local: () => { local += 1 } })
   assert.equal(textOf(findAll(none, byClass('oai-status'))[0]), 'Where should Omni live?')
-  assert.deepEqual(titles(none), ['Run Omni on DSH\'s computer', 'An Omni somewhere else'])
+  assert.deepEqual(titles(none), ['Install Omni here', 'An Omni somewhere else'])
   assert.equal(findAll(none, node => node.type === 'input').length, 0, 'no address until "somewhere else" is chosen')
   tiles(none)[0].props.onClick()
   assert.equal(local, 1)
@@ -526,7 +529,7 @@ test('Genie\'s box says where it stands, and lights its plugin and its place on 
   assert.deepEqual(plain(team.genieLightsOf('failed')), [['power', 'on'], ['plugins', 'warn'], ['team', 'off']])
 })
 
-test("'Run Omni on this computer' runs Omni's installer in the card and shows what it prints, until it is linked", async () => {
+test("'Install Omni here' shows the installer output in the card until linked", async () => {
   const calls = []
   const reads = [
     { state: 'running', step: 'download-bun', data: 'Downloading Bun…\r\n', next: 1 },
@@ -648,8 +651,9 @@ test('the machine DSH reports reaches the new-Omni tile, through the step and th
   const gated = []
   const paged = await load('team.js', { scope: { location: { hostname: 'localhost' }, navigator: { platform: 'MacIntel' } }, gated })
   const runTile = machine => textOf(findAll(render(paged.OmniCard({ power: { phase: 'none', detail: { omnis: [] }, busy: null, problem: null, use: () => {}, remote: () => {}, local: () => {}, cancelPairing: () => {}, machine }, onPower: () => {}, type: omniType, abilities: {}, onToggle: () => {}, live: null })), byClass('oai-destiny-sandbox'))[0])
-  assert.match(runTile({ os: 'linux' }), /^Run Omni on your Linux server/)
-  assert.match(runTile({ os: 'macos' }), /^Run Omni on this Mac/)
+  assert.equal(runTile({ os: 'linux' }),
+    'Install Omni hereOn the computer this workspace runs on')
+  assert.equal(runTile({ os: 'macos' }), 'Install Omni hereOn this Mac')
   // The step hands the gate state's machine to Omni's card.
   const machine = { os: 'linux', remoteHint: true }
   gated.push({ machine, preload: null })

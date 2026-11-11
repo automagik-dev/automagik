@@ -213,29 +213,38 @@ const around = (text, name, node) => {
 }
 // "Your Omni on this Mac" inside a sentence: "Use your Omni on this Mac".
 const titleIn = (omni, choice) => (omni.source === 'sandbox' ? choice.title.charAt(0).toLowerCase() + choice.title.slice(1) : choice.title)
-// Without a where (a caller that does not know), the machine reads as "this computer".
-const HERE = { at: 'here', os: 'other' }
+// Without a where, name the workspace's computer without assuming the viewer sits at it.
+const WORKSPACE = { at: 'unknown' }
 
 /**
- * The four sentences that name the machine DSH runs on, for a where from whereOf
+ * The sentences that name the machine DSH runs on, for a where from whereOf
  * (src/client/where.js): an Omni of its own on it, an Omni found on it, the line under a found
  * one, and the tile that sets a new one up. Whole sentences, so each language words them its own way.
  */
-export function placeOf(where = HERE) {
-  const os = where?.os
-  if (where?.at === 'remote') {
-    switch (os) {
-      case 'linux': return { sandbox: t('Your Omni on your Linux server'), local: t('Omni on your Linux server'), already: t('Already on your Linux server'), run: t('Run Omni on your Linux server') }
-      case 'macos': return { sandbox: t('Your Omni on your Mac'), local: t('Omni on your Mac'), already: t('Already on your Mac'), run: t('Run Omni on your Mac') }
-      case 'windows': return { sandbox: t('Your Omni on your Windows PC'), local: t('Omni on your Windows PC'), already: t('Already on your Windows PC'), run: t('Run Omni on your Windows PC') }
-      default: return { sandbox: t('Your Omni on your server'), local: t('Omni on your server'), already: t('Already on your server'), run: t('Run Omni on your server') }
+export function placeOf(where = WORKSPACE) {
+  const install = { run: t('Install Omni here') }
+  if (where?.at !== 'here') {
+    return {
+      ...install,
+      sandbox: t('Your Omni on the computer this workspace runs on'),
+      local: t('Omni on the computer this workspace runs on'),
+      already: t('Already on the computer this workspace runs on'),
+      on: t('On the computer this workspace runs on'),
     }
   }
-  if (where?.at === 'unknown') return { sandbox: t('Your Omni on DSH\'s computer'), local: t('Omni on DSH\'s computer'), already: t('Already on DSH\'s computer'), run: t('Run Omni on DSH\'s computer') }
-  switch (os) {
-    case 'macos': return { sandbox: t('Your Omni on this Mac'), local: t('Omni on this Mac'), already: t('Already on this Mac'), run: t('Run Omni on this Mac') }
-    case 'windows': return { sandbox: t('Your Omni on this PC'), local: t('Omni on this PC'), already: t('Already on this PC'), run: t('Run Omni on this PC') }
-    default: return { sandbox: t('Your Omni on this computer'), local: t('Omni on this computer'), already: t('Already on this computer'), run: t('Run Omni on this computer') }
+  switch (where.os) {
+    case 'macos': return {
+      ...install, sandbox: t('Your Omni on this Mac'), local: t('Omni on this Mac'),
+      already: t('Already on this Mac'), on: t('On this Mac'),
+    }
+    case 'windows': return {
+      ...install, sandbox: t('Your Omni on this PC'), local: t('Omni on this PC'),
+      already: t('Already on this PC'), on: t('On this PC'),
+    }
+    default: return {
+      ...install, sandbox: t('Your Omni on this computer'), local: t('Omni on this computer'),
+      already: t('Already on this computer'), on: t('On this computer'),
+    }
   }
 }
 const hostOf = (url) => {
@@ -258,7 +267,7 @@ const portOf = (url) => {
  * (this computer has its key), `connect` (approve this device from the phone) — or none,
  * with a note on what the Connect Omni step can do for it instead.
  */
-export function foundChoice(omni, { where = HERE } = {}) {
+export function foundChoice(omni, { where = WORKSPACE } = {}) {
   const place = placeOf(where)
   const title = omni.source === 'sandbox' ? place.sandbox : omni.local ? place.local : hostOf(omni.url)
   const port = omni.local ? portOf(omni.url) : ''
@@ -562,7 +571,7 @@ const Icon = ({ name }) => h('svg', { viewBox: '0 0 24 24', 'aria-hidden': true 
  * this computer, or one somewhere else (only that one asks for an address). Found Omnis that
  * cannot be used yet stay listed, with why.
  */
-export function destinyOf(omnis = [], { where = HERE, newOmni = true } = {}) {
+export function destinyOf(omnis = [], { where = WORKSPACE, newOmni = true } = {}) {
   const place = placeOf(where)
   const rows = omnis.map(omni => ({ omni, choice: foundChoice(omni, { where }) }))
   const tiles = rows.filter(row => row.choice.action).map(({ omni, choice }) => ({
@@ -570,7 +579,9 @@ export function destinyOf(omnis = [], { where = HERE, newOmni = true } = {}) {
     title: choice.action === 'use' ? t('Use {omni}', { omni: titleIn(omni, choice) }) : t('Connect {omni}', { omni: titleIn(omni, choice) }),
     sub: choice.sub || (omni.local ? place.already : t('Saved in your Omni CLI')),
   }))
-  if (newOmni && !rows.some(row => row.omni.source === 'sandbox')) tiles.push({ id: 'local', icon: 'sandbox', title: place.run, sub: t('A private Omni of its own, set up for you') })
+  if (newOmni && !rows.some(row => row.omni.source === 'sandbox')) {
+    tiles.push({ id: 'local', icon: 'sandbox', title: place.run, sub: place.on })
+  }
   tiles.push({ id: 'remote', icon: 'remote', title: t('An Omni somewhere else'), sub: t('On a server, or the link Omni sent you') })
   return { tiles, waiting: rows.filter(row => !row.choice.action).map(row => row.choice) }
 }
