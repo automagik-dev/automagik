@@ -11,7 +11,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ledgerPath } from "../mods/am-sidebar/workers.js";
 import { BRIEFED_DIR, OURS, commandFor, directHookCommand, hookCommand, legacyHookCommand, mergeHook, stableBriefingPath,
-  amPartEntryPath, amPartHookCommand, amPartRunnerPath, scriptOf } from "../mods/am-sidebar/briefingText.mjs";
+  amPartEntryPath, amPartHookCommand, amPartHookCommandV1, amPartRunnerPath, scriptOf } from "../mods/am-sidebar/briefingText.mjs";
 import {
   BACKUP_SUFFIX, HOOKS_JOURNAL, botPaneFolders, foldersOf, hooksNotice, knownProjects, ledgerFolders, migrateHooks, relink, retargetHooks, revertHooks, syncHooks,
   toStable, ownHook,
@@ -88,20 +88,45 @@ test("scriptOf refuses a hand-edited am-part command: every guard must line up w
   const app = "/h", store = "/am/parts/automagik.am";
   const runner = amPartRunnerPath(store), entry = amPartEntryPath(store);
   const amHome = store.replace(/\/parts\/automagik\.am$/, "");
-  const shape = ({ guardRunner = runner, guardEntry = entry, runRunner = runner, runEntry = entry, shell = "sh", env = "", tail = "" }) =>
-    `[ ! -f "${guardRunner}" ] || [ ! -f "${guardEntry}" ] || HERDR_APP_HOME="${app}" AM_HOME="${amHome}"${env ? ` ${env}` : ""} ${shell} "${runRunner}" "${runEntry}"${tail}`;
+  const shape = ({ guardRunner = runner, readRunner = guardRunner, guardEntry = entry, readEntry = guardEntry, runRunner = runner,
+    runEntry = entry, home = amHome, shell = "sh", env = "", tail = "" }) =>
+    `[ ! -f "${guardRunner}" ] || [ ! -r "${readRunner}" ] || [ ! -f "${guardEntry}" ] || [ ! -r "${readEntry}" ] || `
+    + `HERDR_APP_HOME="${app}" AM_HOME="${home}"${env ? ` ${env}` : ""} ${shell} "${runRunner}" "${runEntry}"${tail}`;
   assert.equal(shape({}), amPartHookCommand(app, store), "every row is an edit of the command installHook writes");
   assert.equal(scriptOf(shape({})), entry, "the command as written is read");
   const rows = [
-    ["a changed guard runner", { guardRunner: `${runner}.other` }],
+    ["a changed guard runner", { guardRunner: `${runner}.other`, readRunner: runner }],
+    ["a changed readable-guard runner", { readRunner: `${runner}.other` }],
     ["a changed run runner", { runRunner: `${runner}.other` }],
-    ["a changed guard entry", { guardEntry: `${entry}.other` }],
+    ["a changed guard entry", { guardEntry: `${entry}.other`, readEntry: entry }],
+    ["a changed readable-guard entry", { readEntry: `${entry}.other` }],
     ["a changed run entry", { runEntry: `${entry}.other` }],
     ["a trailing command after the entry", { tail: "; echo mine" }],
     ["another shell instead of sh", { shell: "bash" }],
     ["an extra env word", { env: "EXTRA=1" }],
+    // #815: edits that keep every guard in line with what runs, but whose runner or AM_HOME is
+    // not the entry's own store's.
+    ["the runner edited everywhere alike", { guardRunner: "/tmp/run.sh", runRunner: "/tmp/run.sh" }],
+    ["another store's runner everywhere", { guardRunner: amPartRunnerPath("/x/parts/automagik.am"), runRunner: amPartRunnerPath("/x/parts/automagik.am") }],
+    ["another AM_HOME", { home: "/x" }],
   ];
   for (const [what, edit] of rows) assert.equal(scriptOf(shape(edit)), null, what);
+});
+
+test("#815: the am part's earlier form (existence guards only) is still ours, held to its store, and replaced in place", () => {
+  const app = "/h", store = "/am/parts/automagik.am";
+  const runner = amPartRunnerPath(store), entry = amPartEntryPath(store);
+  const v1 = amPartHookCommandV1(app, store);
+  assert.equal(v1, `[ ! -f "${runner}" ] || [ ! -f "${entry}" ] || HERDR_APP_HOME="${app}" AM_HOME="/am" sh "${runner}" "${entry}"`);
+  assert.match(v1, OURS);
+  assert.equal(scriptOf(v1), entry);
+  assert.equal(scriptOf(v1.replaceAll(runner, "/tmp/run.sh")), null, "its runner edited everywhere alike");
+  assert.equal(scriptOf(v1.replace('AM_HOME="/am"', 'AM_HOME="/x"')), null, "another AM_HOME");
+  assert.equal(scriptOf(v1.replace(`[ ! -f "${runner}" ]`, `[ ! -f "${runner}.other" ]`)), null, "a guard out of line");
+  const text = JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: v1, timeout: 10 }] }] } });
+  assert.deepEqual(JSON.parse(mergeHook(text, amPartHookCommand(app, store)).text).hooks.UserPromptSubmit,
+    [{ hooks: [{ type: "command", command: amPartHookCommand(app, store), timeout: 10 }] }], "today's form, in place, never doubled");
+  assert.equal(toStable(app)(v1), hookCommand(app), "a pack install moves it to the stable entry");
 });
 
 test("retargetHooks: only the pack's command shape moves, every other byte stays; odd shapes and bad JSON are reported", () => {

@@ -17,11 +17,16 @@ const DRIVE_LETTER = /^[A-Za-z]:[\\/]/;
 /** A URL scheme (`file:`, `http:`), as opposed to a bare path. */
 const SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/;
 
-/** `path`'s folder plus `/<name>`; a bare path loses its query/hash first. */
+/**
+ * `path`'s folder plus `/<name>`; a bare path loses its query/hash first. A drive-letter path
+ * written with backslashes comes back with backslashes only, never a mix of both separators
+ * (#694); off a drive letter a backslash stays as it is.
+ */
 function guardDirUnder(path, name = "guard") {
   const file = path.replace(/[?#].*$/, "");
   const cut = Math.max(file.lastIndexOf("/"), file.lastIndexOf("\\"));
-  return `${cut === -1 ? "." : file.slice(0, cut)}/${name}`;
+  const dir = `${cut === -1 ? "." : file.slice(0, cut)}/${name}`;
+  return DRIVE_LETTER.test(file) && file.includes("\\") ? dir.split("/").join("\\") : dir;
 }
 
 /**

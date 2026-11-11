@@ -61,7 +61,8 @@ outcomes  Recorded failures and time to pull request (issues 899 and 1026), per 
           plus the unattributed by reason. They are counts of harness-flagged failures,
           including expected ones (a red test run while working test-first, a grep with no
           match) and usage-limit stops (written after a harness's own retries, so a count of
-          model calls that failed for the session, not each retried attempt): not a quality verdict on their own, and no rate, label or score is printed.
+          model calls that failed for the session, not each retried attempt):
+          not a quality verdict on their own, and no rate, label or score is printed.
             tool_error (harness_log)  a tool result the harness itself flagged as failed.
                 Claude Code: a tool_result block with is_error: true, once per tool_use_id.
                 Codex: an item_completed event whose item has status failed or a non-zero

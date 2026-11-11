@@ -11,7 +11,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { deflateSync } from "node:zlib";
 import {
-  fileText, hashTerm, LIST_FILE, loadList, pendingFolders, repoRoot, scan,
+  checkList, fileText, hashTerm, LIST_FILE, loadList, pendingFolders, repoRoot, scan,
 } from "../scripts/privacy-check.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -56,20 +56,30 @@ function runCheck(script, cwd) {
 }
 
 /**
- * A clean copy of the tracked tree (HEAD) in a temp folder, with the checker and its list
- * beside each other and its own git repository. It scans its own root, so a parallel test's
- * untracked scratch folder at the real repository root can never reach it.
+ * A clean copy of the tracked tree (HEAD) of the repository at `root` in a temp folder, with the
+ * checker and its list beside each other and its own git repository. It scans its own root, so a
+ * parallel test's untracked scratch folder at the repository root can never reach it.
+ *
+ * It is `git archive HEAD`: the committed tree. An edit that is not committed yet, staged or not,
+ * is not in it, so this copy cannot fail on one. The working tree is scanned by the checker
+ * itself, `node scripts/privacy-check.mjs`, which the gate and CI's `privacy` job run.
  */
-function cleanTree(t) {
-  const root = repoRoot();
+function cleanTree(t, root = repoRoot(), script = SCRIPT) {
   const copy = mkdtempSync(join(tmpdir(), "privacy-tree-"));
   t.after(() => rmSync(copy, { recursive: true, force: true }));
   const archive = execFileSync("git", ["archive", "--format=tar", "HEAD"], { cwd: root, maxBuffer: 1 << 29 });
   execFileSync("tar", ["-x", "-C", copy], { input: archive });
   execFileSync("git", ["init", "-q"], { cwd: copy });
   execFileSync("git", ["add", "-A", "--force"], { cwd: copy });
-  return { copy, script: join(copy, relative(root, SCRIPT)) };
+  return { copy, script: join(copy, relative(root, script)) };
 }
+
+/**
+ * The folders the list may still name as pending. The list only shrinks: when a folder is
+ * cleaned, take it out of the list and out of here. Never add one: a new folder with hits is
+ * cleaned, or its fixtures are allowed line by line, before it merges.
+ */
+const PENDING_CEILING = ["apps/bots-dsh", "apps/desktop"];
 
 test("absolute home paths are hits unless the user is a placeholder", () => {
   assert.deepEqual(rules("a.md", `see ${MAC}zorblax/work and ${LINUX}bob/x`),
@@ -130,6 +140,55 @@ test("an allowed text is cut out of the line; the rest of the line is still scan
   assert.deepEqual(rules("w.md", `\`wish/bots-q7\` in ${MAC}zorblax`, list), [`home-path:${MAC}zorblax`]);
   assert.deepEqual(rules("other.md", "`wish/bots-q7`", list), ["private-name:q7"]);
   assert.deepEqual(rules(LIST_FILE, '"text": "`wish/bots-q7`"', list), [], "the list may name what it allows");
+});
+
+test("an allowed path fragment is cut only where its user name ends: a longer path is still a hit (#819)", () => {
+  const brain = `${LINUX}brain`;
+  const list = { lines: [{ file: "t.kt", text: brain, why: "a fixture path" }] };
+  for (const after of ['"', "'", "`", "/src", " ", ",", ")", ""]) {
+    assert.deepEqual(rules("t.kt", `git("${brain}${after}`, list), [], `the fixture itself, then ${JSON.stringify(after)}`);
+  }
+  for (const more of ["storm", "2", ".old", "-x", "_y"]) {
+    assert.deepEqual(rules("t.kt", `at ${brain}${more}/notes`, list), [`home-path:${brain}${more}`], `${more} makes another user`);
+  }
+  assert.deepEqual(rules("t.kt", `${brain}/a and ${brain}storm/b and "${brain}"`, list), [`home-path:${brain}storm`],
+    "each place is judged on its own: the fixture is cut, the longer path between them is not");
+  // Every home-path form, and a text that goes on past the user name, which nothing can extend.
+  for (const home of [`${MAC}ana`, `${WIN}ana`]) {
+    const allow = { lines: [{ file: "t.kt", text: home, why: "a fixture path" }] };
+    assert.deepEqual(rules("t.kt", `x ${home} y`, allow), []);
+    assert.deepEqual(rules("t.kt", `x ${home}bel y`, allow), [`home-path:${home}bel`]);
+  }
+  const anchored = { lines: [{ file: "t.kt", text: `${brain}/`, why: "a fixture path" }] };
+  assert.deepEqual(rules("t.kt", `${brain}/src and ${brain}storm/src`, anchored), [`home-path:${brain}storm`]);
+  // A text that is no home path is cut wherever it is, as before.
+  const branch = { lines: [{ file: "t.kt", text: "wish/bots-q7", why: "a branch" }] };
+  assert.deepEqual(rules("t.kt", "wish/bots-q7x and `wish/bots-q7`", branch), []);
+});
+
+test("every home-path entry of the list: a longer path in its file is still a hit (#819)", () => {
+  const list = loadList();
+  const home = /(?:\/Users\/|\/home\/|[A-Za-z]:\\Users\\)[A-Za-z0-9._-]+/g;
+  let probed = 0;
+  list.lines.forEach((entry, i) => {
+    for (const m of entry.text.matchAll(home)) {
+      const end = m.index + m[0].length;
+      const longer = `${entry.text.slice(0, end)}zz${entry.text.slice(end)}`;
+      const hits = scan(entry.file, longer, list).filter((h) => h.rule === "home-path");
+      assert.equal(hits.length, 1, `lines[${i}] hides a longer path in ${entry.file}`);
+      probed += 1;
+    }
+  });
+  assert.ok(probed >= 20, `probed only ${probed} entries: the home-path entries were not found`);
+});
+
+test("the list holds one entry per file and text: a repeat is refused (#819)", () => {
+  const entry = { file: "a.md", text: "x", why: "a fixture" };
+  assert.throws(() => checkList({ lines: [entry, { ...entry, file: "b.md" }, { ...entry, why: "again" }] }),
+    { message: "privacy-list: lines[2] repeats lines[0]: one entry per file and text" });
+  assert.doesNotThrow(() => checkList({ lines: [entry, { ...entry, file: "b.md" }, { ...entry, text: "y" }] }));
+  const lines = loadList().lines;
+  assert.equal(new Set(lines.map((l) => JSON.stringify([l.file, l.text]))).size, lines.length);
 });
 
 test("the list is exempt at whatever path the chosen root gives it", () => {
@@ -253,6 +312,86 @@ test("the pending entries are one folder each, with their issue", () => {
     /duplicate/);
 });
 
+test("the pending list only shrinks: it names exactly the folders still waiting, never a new one", () => {
+  const folders = pendingFolders(loadList()).map((entry) => entry.folder).sort();
+  const added = folders.filter((folder) => !PENDING_CEILING.includes(folder));
+  assert.deepEqual(added, [], "a pending folder was added: clean it or allow its fixtures instead");
+  assert.deepEqual(folders, [...PENDING_CEILING].sort(),
+    "a pending folder was cleaned: take it out of PENDING_CEILING too, so it cannot come back");
+});
+
+test("in the standalone pack a pending folder is a path from the pack's root, never re-based", () => {
+  // The monorepo's entries name folders the pack does not have, so they skip nothing there; a
+  // monorepo path to one of the pack's own folders (herdr/docs) does not skip the pack's docs/.
+  const { root, script } = fixtureRepo({
+    at: "scripts",
+    list: { ...FAKE_LIST, pending: [{ folder: "apps/desktop", issue: "#795" }, { folder: "herdr/docs", issue: "#795" }] },
+    files: { "docs/note.md": `on ${FAKE}\n`, "mods/note.md": "nothing private\n" },
+  });
+  const run = runCheck(script, root);
+  assert.equal(run.status, 1, "the pack's own docs/ is still scanned");
+  assert.match(run.output, /^docs\/note\.md:1: private-name:/m);
+  assert.match(run.output, /2 folder\(s\) pending #795: apps\/desktop, herdr\/docs/, "the entries are still named");
+  rmSync(join(root, "docs"), { recursive: true });
+  mkdirSync(join(root, "apps", "desktop"), { recursive: true });
+  writeFileSync(join(root, "apps", "desktop", "note.md"), `on ${FAKE}\n`);
+  const skipped = runCheck(script, root);
+  assert.equal(skipped.status, 0, `a folder the root has at that same path is skipped: ${skipped.output}`);
+});
+
+test("the list's shape is checked: every key has its type, and an unknown key is refused", () => {
+  const sha256 = hashTerm(FAKE);
+  const good = {
+    deny: [{ sha256, kind: "machine" }, { sha256, kind: "machine", exact: true, lowercaseOnly: false }],
+    users: ["you"], emails: [mail("bob", "corp.com")],
+    lines: [{ file: "a.md", text: "x", why: "a fixture" }],
+    pending: [{ folder: "docs", issue: "#1" }],
+  };
+  assert.equal(checkList(good), good);
+  assert.equal(checkList({}).deny, undefined, "every key is optional");
+  assert.doesNotThrow(() => loadList(), "the list in the tree passes its own check");
+  const refused = (list, message) => assert.throws(() => checkList(list), { message });
+  for (const list of [null, [], "x", 3]) refused(list, "privacy-list: the list must be an object");
+  refused({ ...good, pendng: [] }, /^privacy-list: unknown key "pendng" \(known: deny, users, emails, lines, pending\)$/);
+  for (const key of ["deny", "users", "emails", "lines", "pending"]) {
+    refused({ ...good, [key]: {} }, `privacy-list: ${key} must be an array`);
+    refused({ ...good, [key]: "x" }, `privacy-list: ${key} must be an array`);
+  }
+  refused({ users: ["you", ""] }, "privacy-list: users[1] must be a non-empty string");
+  refused({ emails: [7] }, "privacy-list: emails[0] must be a non-empty string");
+  refused({ deny: ["x"] }, "privacy-list: deny[0] must be an object");
+  refused({ deny: [{ kind: "machine" }] }, "privacy-list: deny[0] has no sha256");
+  refused({ deny: [{ sha256 }] }, "privacy-list: deny[0] has no kind");
+  refused({ deny: [{ sha256: sha256.toUpperCase(), kind: "machine" }] }, "privacy-list: deny[0].sha256 must be a sha256 in lowercase hex");
+  refused({ deny: [{ sha256: sha256.slice(1), kind: "machine" }] }, "privacy-list: deny[0].sha256 must be a sha256 in lowercase hex");
+  refused({ deny: [{ sha256, kind: "" }] }, "privacy-list: deny[0].kind must be a non-empty string");
+  refused({ deny: [{ sha256, kind: "machine", exact: "true" }] }, "privacy-list: deny[0].exact must be true or false");
+  refused({ deny: [{ sha256, kind: "machine", lowercaseOnly: 1 }] }, "privacy-list: deny[0].lowercaseOnly must be true or false");
+  refused({ deny: [good.deny[0], { sha256, kind: "machine", name: "x" }] },
+    /^privacy-list: deny\[1\] has the unknown key "name" \(known: sha256, kind, exact, lowercaseOnly\)$/);
+  for (const key of ["file", "text", "why"]) {
+    const { [key]: _gone, ...rest } = good.lines[0];
+    refused({ lines: [rest] }, `privacy-list: lines[0] has no ${key}`);
+    refused({ lines: [{ ...good.lines[0], [key]: "" }] }, `privacy-list: lines[0].${key} must be a non-empty string`);
+    refused({ lines: [{ ...good.lines[0], [key]: ["x"] }] }, `privacy-list: lines[0].${key} must be a non-empty string`);
+  }
+  refused({ lines: [{ ...good.lines[0], line: 3 }] }, /^privacy-list: lines\[0\] has the unknown key "line" /);
+  refused({ pending: [{ folder: "docs" }] }, "privacy-list: pending[0] has no issue");
+  refused({ pending: [{ folder: 3, issue: "#1" }] }, "privacy-list: pending[0].folder must be a non-empty string");
+  refused({ pending: [{ folder: "docs", issue: "#1", owner: "x" }] }, /^privacy-list: pending\[0\] has the unknown key "owner" /);
+});
+
+test("the checker refuses a malformed list in one line, exit 2, and scans nothing", () => {
+  const { root, script } = fixtureRepo({
+    list: { ...FAKE_LIST, allow: [] },
+    files: { "docs/note.md": `on ${FAKE}\n` },
+  });
+  const run = runCheck(script, root);
+  assert.equal(run.status, 2, run.output);
+  assert.match(run.output, /^privacy-list: unknown key "allow" /);
+  assert.doesNotMatch(run.output, /note\.md|clean/);
+});
+
 test("a clean copy of the tracked tree is clean, the checker and this test included", (t) => {
   const { copy, script } = cleanTree(t);
   const run = runCheck(script, copy);
@@ -261,12 +400,21 @@ test("a clean copy of the tracked tree is clean, the checker and this test inclu
 });
 
 test("an untracked scratch folder at the repository root, as parallel tests leave, cannot fail it", (t) => {
-  const root = repoRoot();
+  // Planted in a repository made for this test, under the temp folder, never at this checkout's
+  // root: a run killed here leaves a temp folder behind, not a fake hit the real check then reports.
+  const { root, script } = fixtureRepo({ list: FAKE_LIST, files: { "docs/note.md": "nothing private\n" } });
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const git = (...args) => execFileSync("git",
+    ["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", ...args], { cwd: root });
+  git("add", "-A");
+  git("commit", "-q", "-m", "a clean tree");
   const scratch = mkdtempSync(join(root, "privacy-scratch-"));
-  t.after(() => rmSync(scratch, { recursive: true, force: true }));
   writeFileSync(join(scratch, "note.md"), `on ${MAC}scratchuser\n`);
-  const { copy, script } = cleanTree(t);
-  const run = runCheck(script, copy);
+  const dirty = runCheck(script, root);
+  assert.equal(dirty.status, 1, "the working-tree check does see the scratch folder");
+  assert.match(dirty.output, /^privacy-scratch-[^/]+\/note\.md:1: home-path:/m);
+  const { copy, script: copied } = cleanTree(t, root, script);
+  const run = runCheck(copied, copy);
   assert.equal(run.status, 0, run.output);
   assert.match(run.output, /privacy-check: clean/);
 });

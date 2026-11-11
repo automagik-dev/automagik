@@ -33,6 +33,11 @@ const ID = { main: "b-aaaaaaaaaa", cap: "b-bbbbbbbbbb", dev: "b-cccccccccc", str
 
 const git = (cwd, ...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, encoding: "utf8" });
 const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755); };
+/**
+ * The attach ledger a test writes by hand is the owner's alone, as attach writes it: set here, not
+ * left to the umask, or a umask-002 host makes it 0664 and the worker refuses it (#578).
+ */
+const LEDGER_MODE = 0o600;
 const bot = (id, kind, extra = {}) => ({ id, name: `Bot ${id.slice(2, 4)}`, kind, look: { character: "star", colour: "blue" }, role: "r", instructions: "i", agent: "claude", ...extra });
 const team = (extra = {}) => ({
   version: 1,
@@ -993,7 +998,7 @@ test("worker refuses outside a bot's pane: no HC_TERMINAL_ID, a pane with no bot
   assert.match(s.cli(["worker", "x", "--branch", "feat/x"], { from: "t3" }).err, /t3 isn't a bot's pane \(the attach ledger ties no bot to it\)/);
   const row = { v: 1, event: "attach", bot: ID.stray, project: s.project, terminal: "t3", core: "fakecore0000", created_ms: 1,
     machine: null, at: new Date().toISOString(), by: "attach" };
-  appendFileSync(join(s.app, "automagik-herdr/attach.jsonl"), `${JSON.stringify(row)}\n`);
+  appendFileSync(join(s.app, "automagik-herdr/attach.jsonl"), `${JSON.stringify(row)}\n`, { mode: LEDGER_MODE });
   const stray = s.cli(["worker", "x", "--branch", "feat/x"], { from: "t3" });
   assert.equal(stray.code, 1);
   assert.match(stray.err, /plays bot b-zzzzzzzzzz, which no project here defines \(looked in .*proj\)/);
@@ -1736,7 +1741,7 @@ function bindIn(s, terminal, botId, project) {
   mkdirSync(join(s.app, "automagik-herdr"), { recursive: true });
   const row = { v: 1, event: "attach", bot: botId, project, terminal, core: "fakecore0000", created_ms: 1,
     machine: null, at: new Date().toISOString(), by: "attach" };
-  appendFileSync(join(s.app, "automagik-herdr/attach.jsonl"), `${JSON.stringify(row)}\n`);
+  appendFileSync(join(s.app, "automagik-herdr/attach.jsonl"), `${JSON.stringify(row)}\n`, { mode: LEDGER_MODE });
 }
 const withoutDev = () => team({ bots: team().bots.filter((b) => b.id !== ID.dev) });
 const devOnly = () => team({ bots: team().bots.filter((b) => b.id === ID.dev) });
