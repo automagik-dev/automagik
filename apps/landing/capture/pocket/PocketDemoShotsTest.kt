@@ -23,7 +23,7 @@ import java.io.File
 /**
  * Landing capture only, never part of the app: copied into a scratch copy of apps/pocket by the steps in
  * apps/landing/assets/CAPTURES.md. Launches the real MainActivity, enters the app's own preview (the real
- * PocketViewModel.enterDemo, sample data) and saves what the real screens draw: Team and Home, light and dark.
+ * PocketViewModel.enterDemo, sample data) and saves what the real screens draw: Home, Code and the sample Bot chat, light and dark.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -78,10 +78,14 @@ class PocketDemoShotsTest {
         val vm = (compose.activity.application as PocketApplication).vm
         // What "Explore the interface" on the welcome screen calls.
         compose.runOnUiThread { vm.enterDemo() }
-        // enterDemo opens Nav.HOME, which is the Team tab.
-        shoot("pocket-team-$mode")
+        // enterDemo opens the Team tab; the pictures are of Home, Code and the Bot chat.
         compose.runOnUiThread { vm.navigate(Nav.HOME_TAB) }
         shoot("pocket-home-$mode")
+        compose.runOnUiThread { vm.navigate(Nav.CODE) }
+        shoot("pocket-code-$mode")
+        // The preview's one Bot chat (ChatDemo), as a tap on its bubble in Team opens it.
+        compose.runOnUiThread { vm.navigate(Nav.TEAM); vm.selectTerminal(ChatDemo.ref, chat = true) }
+        shoot("pocket-chat-$mode")
     }
 
     @Test @Config(qualifiers = "+notnight") fun light() = capture("light")

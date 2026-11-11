@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { cli, createFixture, createProcesses, declaredRuntime, here, openBrowser, pinnedSources, prepareHome, redact, root } from './fixture.mjs'
 
 const mode = process.argv[2]
@@ -89,17 +89,38 @@ async function private_(page, name) {
   check(!PRIVATE.test(shown), `${name}: no host path, token or address in the captured view`, PRIVATE.test(shown) ? { found: PRIVATE.exec(shown)[0] } : {})
 }
 
+// One asserted state, pictured twice: the app's light theme, then its dark one (it follows
+// the system setting), from the same page without a reload.
+async function both(page, name, options = {}) {
+  await private_(page, name)
+  await page.evaluate(() => document.fonts.ready)
+  const seen = {}
+  for (const [colorScheme, file] of [['light', `${name}.png`], ['dark', `${name}-dark.png`]]) {
+    await page.emulateMedia({ colorScheme, reducedMotion: 'reduce' })
+    await page.waitForTimeout(700)
+    seen[colorScheme] = await page.evaluate(() => getComputedStyle(document.body).backgroundColor)
+    await page.screenshot({ path: join(shots, file), ...options })
+    check(true, `Captured ${file}`, { background: seen[colorScheme] })
+  }
+  check(seen.light !== seen.dark, `${name}: the dark picture is the app's dark theme`, seen)
+  await page.emulateMedia({ colorScheme: 'light', reducedMotion: 'reduce' })
+  await page.waitForTimeout(300)
+}
+
 // The fictional person's first run, through the welcome's own steps, then the Northwind wish.
 async function scenario({ login, env, project }) {
   await mkdir(shots, { recursive: true })
   const app = await browse(fixture, 'desktop', login, env, { width: 1440, height: 900 })
   const { page, api } = app
-  const shoot = async (name, options = {}) => {
-    await private_(page, name)
-    await page.evaluate(() => document.fonts.ready)
-    await page.waitForTimeout(600)
-    await page.screenshot({ path: join(shots, `${name}.png`), ...options })
-    check(true, `Captured ${name}.png`)
+  const shoot = (name, options = {}) => both(page, name, options)
+  // The app asks once, in each Bot's chat, what that Bot may do on its own. The person keeps
+  // the Workspace level it offers and saves.
+  const keepWorkspace = async bot => {
+    const card = page.getByText(`What may ${bot} do on its own?`)
+    await card.waitFor()
+    await page.getByRole('button', { name: 'Save', exact: true }).click()
+    await card.waitFor({ state: 'hidden' })
+    check(true, `The person saved ${bot}'s Workspace permission level`)
   }
   // Your companion: a bunny named Pip.
   const name = page.getByRole('button', { name: 'Pip', exact: true })
@@ -133,6 +154,7 @@ async function scenario({ login, env, project }) {
   await page.keyboard.press('Enter')
   await page.getByText(/Genie granted it/).first().waitFor({ timeout: 90_000 })
   check(true, 'Pip passed the request to Genie and reported the wish running')
+  await keepWorkspace('Pip')
   // The wish ends: its branch is back in the project with one commit, and Genie reports.
   await procs.until('the wish branch in Northwind', () => {
     const branches = execFileSync('git', ['branch', '--list', 'wish/*', '--format=%(refname:short)'], { cwd: project, env, encoding: 'utf8' }).trim()
@@ -153,17 +175,38 @@ async function scenario({ login, env, project }) {
   await page.getByRole('button', { name: /^Genie/ }).first().click()
   await page.getByText(/is done\./).first().waitFor({ timeout: 120_000 })
   check(true, 'Genie reported the finished wish in its chat')
+  await keepWorkspace('Genie')
 
-  // Desktop screens, each after asserting what it shows.
+  // The screens, each after asserting what it shows. The window is 1100px wide, close to the
+  // size the site shows it at, so its text stays readable; each chat is then pictured again at
+  // phone width, from the same page.
+  const DESK = { width: 1100, height: 720 }
+  const PHONE = { width: 390, height: 844 }
+  // At phone width the chat's floating header buttons sit over the messages: start below them.
+  const PHONE_CHAT = { x: 0, y: 68, width: 390, height: 776 }
+  const resize = async (size, anchor, block = 'nearest') => {
+    await page.setViewportSize(size)
+    await anchor.evaluate((node, block) => node.scrollIntoView({ block }), block)
+  }
   await page.getByRole('button', { name: 'Pip, Orchestrator, Main Bot' }).click()
-  await page.getByText(/Genie granted it/).first().waitFor()
+  const granted = page.getByText(/running as its own thread on/).last()
+  await granted.waitFor()
   await page.getByText('Messaged').first().waitFor()
   await page.getByRole('button', { name: 'CSV export, Done' }).waitFor({ timeout: 30_000 })
   check(true, 'Sidebar lists the finished wish under Genie')
+  await resize(DESK, granted)
   await shoot('pip-delegates')
+  await resize(PHONE, granted)
+  await shoot('pip-delegates-phone', { clip: PHONE_CHAT })
+  await page.setViewportSize(DESK)
   await page.getByRole('button', { name: /^Genie/ }).first().click()
-  await page.getByText(/is done\./).first().waitFor()
+  const done = page.getByText(/Nothing was pushed or merged\. Look it over/).last()
+  await done.waitFor()
+  await resize(DESK, done)
   await shoot('genie-report')
+  await resize(PHONE, done)
+  await shoot('genie-report-phone', { clip: PHONE_CHAT })
+  await page.setViewportSize(DESK)
   await page.getByRole('button', { name: 'CSV export, Done' }).click()
   await page.getByRole('heading', { name: 'Report' }).waitFor()
   await shows(page.getByText('Edited 4 files'), 'The wish thread shows its report and the four edited files')
@@ -171,42 +214,27 @@ async function scenario({ login, env, project }) {
   const ran = page.getByRole('button', { name: /Ran commands/ })
   await ran.nth(2).click()
   await page.getByRole('button', { name: /Run the tests and the export/ }).click()
-  await page.getByText('ℹ pass 2').first().waitFor()
-  await page.getByText('ℹ pass 2').first().evaluate(node => node.scrollIntoView({ block: 'center' }))
+  const passed = page.getByText('ℹ pass 2').first()
+  await passed.waitFor()
   check((await bodyText(page)).includes('ℹ fail 0'), 'The thread\'s own test run shows 2 passing, 0 failing')
-  // The bottom status row carries the scripted model's timing; it is not part of the claim.
-  await shoot('wish-checks', { clip: { x: 0, y: 0, width: 1440, height: 860 } })
+  // The bottom status row carries the scripted model's timing; it is not part of the claim,
+  // so every picture of the wish thread stops above it.
+  await resize(DESK, passed, 'center')
+  await shoot('wish-checks', { clip: { x: 0, y: 0, width: 1100, height: 692 } })
+  await resize(PHONE, passed, 'center')
+  await shoot('wish-checks-phone', { clip: { x: 0, y: 0, width: 390, height: 816 } })
+  // The review pane beside the thread, in a wider window.
+  await page.setViewportSize({ width: 1280, height: 800 })
   await page.getByRole('button', { name: 'View changes to src/csv.js' }).click()
   await page.getByText('Created in this turn').waitFor()
   await procs.until('the new src/csv.js in the review pane', async () => (await bodyText(page)).includes('export function toCsv(orders) {'), 30_000)
   check(true, 'The review pane shows the new src/csv.js')
-  await page.getByRole('heading', { name: 'Report' }).scrollIntoViewIfNeeded()
-  await shoot('wish-diff', { clip: { x: 0, y: 0, width: 1440, height: 860 } })
+  // The report from its heading down, so the four edited files show under it.
+  await page.getByRole('heading', { name: 'Report' }).evaluate(node => node.scrollIntoView({ block: 'start' }))
+  await shows(page.getByText('Edited 4 files'), 'The report and its edited files sit beside the review pane')
+  await shoot('wish-diff', { clip: { x: 0, y: 0, width: 1280, height: 774 } })
+  check(app.blocked.length === 0, 'The browser asked for no origin outside the runtime', { blocked: app.blocked })
   await app.context.close()
-
-  // Phone width: a fresh browser at 390px on the same runtime. At this width the chat's
-  // floating header buttons sit over the messages, so the captures start below them.
-  const PHONE_CLIP = { x: 0, y: 68, width: 390, height: 776 }
-  const phone = await browse(fixture, 'phone', login, env, { width: 390, height: 844 })
-  const mobile = phone.page
-  await mobile.getByRole('button', { name: /^Genie/ }).first().click()
-  await mobile.getByText(/is done\./).first().waitFor()
-  await mobile.getByText(/is done\./).first().scrollIntoViewIfNeeded()
-  await private_(mobile, 'genie-report-phone')
-  await mobile.evaluate(() => document.fonts.ready)
-  await mobile.waitForTimeout(600)
-  await mobile.screenshot({ path: join(shots, 'genie-report-phone.png'), clip: PHONE_CLIP })
-  check(true, 'Captured genie-report-phone.png')
-  await mobile.getByRole('button', { name: 'Pip, Orchestrator, Main Bot' }).click()
-  await mobile.getByText(/Genie granted it/).first().waitFor()
-  await mobile.getByText(/Genie granted it/).first().scrollIntoViewIfNeeded()
-  await private_(mobile, 'pip-delegates-phone')
-  await mobile.waitForTimeout(600)
-  await mobile.screenshot({ path: join(shots, 'pip-delegates-phone.png'), clip: PHONE_CLIP })
-  check(true, 'Captured pip-delegates-phone.png')
-  const leaks = [...app.blocked, ...phone.blocked]
-  check(leaks.length === 0, 'The browser asked for no origin outside the runtime', { blocked: leaks })
-  await phone.context.close()
 }
 
 // What rendered the screens, beside them: the runtime, each plugin's pinned source, the
@@ -216,6 +244,8 @@ async function manifest(sources) {
   const images = {}
   for (const file of (await import('node:fs')).readdirSync(shots).filter(name => name.endsWith('.png')).sort()) images[file] = createHash('sha256').update(await readFile(join(shots, file))).digest('hex')
   const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
+  // The records of the captures other scripts made (the theme, Pocket, the pack's share image) stay.
+  const { additionalCaptures, themeCapture, pocketCapture } = JSON.parse(await readFile(join(shots, 'manifest.json'), 'utf8').catch(() => '{}'))
   await writeFile(join(shots, 'manifest.json'), `${JSON.stringify({
     capturedBy: 'node apps/landing/capture/capture.mjs --run',
     checkout: git('rev-parse', 'HEAD'),
@@ -223,7 +253,7 @@ async function manifest(sources) {
     runtime: { package: '@deepseek-ai/dsh', version: runtimeVersion },
     model: 'apps/landing/capture/scripted-model.mjs (scripted replies; no AI provider was called)',
     plugins: Object.fromEntries(Object.entries(sources).map(([name, source]) => [name, { version: source.version, repository: source.url, commit: source.commit, path: source.path, tree: source.tree }])),
-    images,
+    images, additionalCaptures, themeCapture, pocketCapture,
   }, null, 2)}\n`)
   check(Object.keys(images).length >= 7, 'Manifest records every capture', { images: Object.keys(images) })
 }
@@ -237,6 +267,8 @@ try {
   const modelPort = (await procs.outputMatch(model, /scripted model on http:\/\/127\.0\.0\.1:(\d+)\/v1/))[1]
 
   const { home, env } = await prepareHome(fixture, 'person')
+  // Node and the runtime's own tools, wherever this machine keeps them.
+  env.PATH = `${dirname(process.execPath)}:${join(root, 'apps/desktop/runtime/node_modules/.bin')}:${env.PATH}`
   const project = await northwind(env)
   const install = procs.start('plugin-link', [cli, 'plugin', '--profile', 'web', 'add', '--offline', '--ignore-scripts', ...Object.values(sources).map(source => `link:${source.dir}`)], home, env)
   await procs.finished(install, 120_000)

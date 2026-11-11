@@ -74,11 +74,17 @@ export async function pinnedSources(fixture, { includeGenie = true } = {}) {
   return sources
 }
 
+// Chrome on Linux binds a socket under its TMPDIR, and a socket path holds about a hundred
+// characters: the browser's temp folder is the short one at the top of the run's own folder.
+const browserTmp = fixture => resolve(fixture, '../../..', 'c')
+
 // Outside the checkout: a DSH session reads AGENTS.md from every folder above its own, and
 // the repository's must not reach the fictional person's Bots. The fence requires the
 // `.tools/advanced-fixture` segment.
 export async function createFixture() {
-  const base = await mkdtemp(join(realpathSync('/tmp'), 'automagik-landing-'))
+  // LANDING_FIXTURE_BASE: another scratch folder outside the checkout, where /tmp is small.
+  const base = await mkdtemp(join(realpathSync(process.env.LANDING_FIXTURE_BASE ?? '/tmp'), 'am-landing-'))
+  await mkdir(browserTmp(join(base, '.tools/advanced-fixture/run')))
   const parent = join(base, '.tools/advanced-fixture')
   await mkdir(parent, { recursive: true })
   const fixture = await mkdtemp(join(parent, 'run-'))
@@ -185,7 +191,7 @@ export async function openBrowser(fixture, name, login, env, viewport) {
   assert.equal(url.hostname, '127.0.0.1')
   assert.ok(!LIVE_PORTS.includes(url.port), 'Never access a live GUI port')
   const context = await chromium.launchPersistentContext(join(fixture, `${name}-chrome-profile`), {
-    executablePath: chrome, env, headless: true, viewport, deviceScaleFactor: 2,
+    executablePath: chrome, env: { ...env, TMPDIR: browserTmp(fixture) }, headless: true, viewport, deviceScaleFactor: 2,
     locale: 'en-US', timezoneId: 'UTC', colorScheme: 'light', reducedMotion: 'reduce',
     args: ['--disable-background-networking', '--disable-component-update', '--no-first-run', '--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1, EXCLUDE localhost'],
     serviceWorkers: 'block',
