@@ -12,7 +12,7 @@ const fail = () => {
 }
 
 const request = http.get(
-  { host: '127.0.0.1', port: PORT, path: '/', timeout: 4000, headers: { connection: 'close' } },
+  { host: '127.0.0.1', port: process.env.AUTOMAGIK_GATE_ENABLED === '1' ? Number(process.env.AUTOMAGIK_GATE_PORT || 3082) : PORT, path: '/', timeout: 4000, headers: { connection: 'close' } },
   (response) => {
     process.stdout.write(`${response.statusCode}\n`)
     response.resume()

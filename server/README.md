@@ -310,3 +310,71 @@ line and a `Proc-Type`/`DEK-Info` header are, that a private-key entry is allowe
 gnutls library, that the Node build account is excused only for the pinned binary hash, the exact
 allowlist, and that the image's own redaction regex is not mistaken for a token. The smoke is
 the real check of the image; the workflow runs the scan on the real rootfs before pushing.
+
+## Gate foundation (C2.1, #907)
+
+The image also carries `gate-entrypoint.mjs`, a separate plain Node process. It is disabled by
+default and offers no browser sign-in or session creation route yet. Claim/passkeys (#908) and
+Cloud workspace tokens (#909) are later deliveries. The single-container run above still works.
+
+`compose.gate.yml` describes the opt-in two-container topology. Set `AUTOMAGIK_SERVER_IMAGE`
+to the same reviewed digest for both services, `AUTOMAGIK_GATE_ENABLED=1` and
+`AUTOMAGIK_GATE_ORIGIN` to the exact public origin (`https://{instance-host}` or
+`http://localhost:{port}`, with placeholders replaced locally), then use Docker Compose's
+`--profile gate`. This slice listens only on loopback, at port 3082 inside DSH's network
+namespace; no port is published. A reverse proxy would have to share that namespace. Do not
+publish DSH's listener or use host networking in this topology.
+
+Only the network namespace is shared. The gate has its own `gate-data` volume at `/data`,
+never mounted into DSH; it reads `dsh-data` at `/dsh:ro` for the launch credential. It has no
+model key or Cloud configuration. It connects only to the fixed loopback DSH listener and never
+follows a launch file's destination or any upstream redirect. Tests use temporary stores and
+listeners; they do not touch a running installation.
+
+Every HTTP request and WebSocket upgrade first needs a gate session; otherwise it gets `401`,
+including static assets, `/connect`, unknown paths and gate management routes. The health probe
+still expects `401` (at the gate port when enabled). An exact Host, origin including port, and
+same-origin browser markers are checked. Mutations and WebSockets require an Origin. Forwarded
+headers cannot override that decision: TLS termination and the public origin are operator
+configuration, never browser assertions. `pinOrigin` allows HTTPS or HTTP localhost; passkey
+RP ID and enrolment validation belong to #908.
+
+The gate exchanges DSH's launch token server-side for its browser owner credential. That
+credential admits DSH's HTTP API and WebSocket owner peer too; it stays in gate memory and is
+never sent as a browser cookie. Browser credentials and identity headers are stripped on the
+upstream hop; DSH's `Set-Cookie` is stripped on the return. A DSH `401` clears and re-mints the
+cached credential from the launch file for the next request, including after a DSH restart.
+The failed request is returned as-is: bodies are never automatically replayed. A browser launch
+token URL and `/connect` cannot establish or replace a gate session.
+
+The local owner is `{version: 1, local_id, instance_id}` in `/data/owner.json` (`0600`). Both ids
+are random UUIDs, independent of the host. C2.2 will call the exclusive `createOwner` seam after
+proving the claim; startup does not create an owner. Missing, malformed and newer records never
+replace an existing owner; unsupported versions stop startup. Linked records also fail closed
+until linking is implemented. Sessions and rotated-secret hashes are atomic `0600` JSON in the
+gate store, survive restart, and are not written to DSH's volume. No raw session secret is saved.
+
+Sessions have a 12-hour sliding idle limit and `__Host-automagik-session` cookies: `Path=/`,
+`HttpOnly`, `Secure`, `SameSite=Lax`, no Domain. Secure stays set on HTTP localhost too, as the
+`__Host-` prefix requires. A future sign-in caller must renew before browser cookie expiry:
+`POST /_gate/session/renew` rotates the secret and refreshes its lifetime. Reusing an old secret
+revokes the entire family, including its open WebSockets. Idle expiry and sign out also close
+open WebSockets. `GET /_gate/sessions` lists session ids and times without secrets and includes
+this settings notice: **On loopback, another local service can receive your cookie. A local
+process holding it can replay it with any Origin; origin binding does not prevent this. Local
+processes are inside the host trust boundary.** `POST /_gate/sign-out-everywhere` revokes all
+families and clears the cookie. All three routes require a session; POST requires the pinned
+Origin. Passkey/recovery changes will use the same revoke-all seam in #908.
+
+The gate makes the four-field principal from the owner record, following
+[contracts v1](../docs/cloud/contracts-v1.md). Its upstream envelope is base64url JSON in
+`X-Automagik-Principal`, replaced rather than forwarded from the browser. This is gate-produced
+metadata on the loopback hop: DSH 0.2.2-rc.1 does not interpret that header as its caller
+principal. Its own routes continue to use DSH's owner peer. This is the single-human limit in
+RFC 0024 (b), (c), (f); a Bot that reads the launch credential can impersonate the owner on
+loopback. It is not the unforgeable channel or role filtering needed for other people to join.
+
+The gate tests cover unauthenticated HTTP/upgrade paths, exact origin and port, cookie flags,
+rotation/replay/idle/restart, the downgrade refusal, credential stripping, the principal
+upstream envelope, DSH restart recovery, and live-socket revocation. The container smoke also
+checks the two-volume topology and gate `401`; CI builds, smokes and scans the image as before.

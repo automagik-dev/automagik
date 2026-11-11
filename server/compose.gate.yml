@@ -1,0 +1,26 @@
+# Opt-in C2.1 topology. No port or host network: a future ingress must share this namespace.
+# Use the same digest-pinned AUTOMAGIK_SERVER_IMAGE for both services.
+services:
+  dsh:
+    image: ${AUTOMAGIK_SERVER_IMAGE:?set a server image digest}
+    volumes:
+      - dsh-data:/data
+  gate:
+    profiles: [gate]
+    image: ${AUTOMAGIK_SERVER_IMAGE:?set a server image digest}
+    entrypoint: [/nodejs/bin/node, /opt/automagik/gate-entrypoint.mjs]
+    depends_on: [dsh]
+    network_mode: service:dsh
+    environment:
+      AUTOMAGIK_GATE_ENABLED: ${AUTOMAGIK_GATE_ENABLED:-0}
+      AUTOMAGIK_GATE_ORIGIN: ${AUTOMAGIK_GATE_ORIGIN:?set the exact public origin}
+      AUTOMAGIK_GATE_PORT: '3082'
+    volumes:
+      - gate-data:/data
+      - dsh-data:/dsh:ro
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+volumes:
+  dsh-data:
+  gate-data:
