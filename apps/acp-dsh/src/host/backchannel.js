@@ -113,10 +113,34 @@ async function contentOf(content, attachments) {
 // may hand back any object as its error; only these two fields enter the log.
 function infoOf(info) {
   if (info === undefined || info === null) return undefined
-  return {
-    name: typeof info.name === 'string' && info.name !== '' ? info.name : 'Error',
-    ...(typeof info.code === 'string' ? { code: info.code } : {}),
+  // Reading a field of somebody else's object can throw (a getter, a proxy): it is then an
+  // error with no name and no code of its own.
+  try {
+    // Each field is read once: a getter may answer differently the next time.
+    const { name, code } = info
+    return {
+      name: typeof name === 'string' && name !== '' ? name : 'Error',
+      ...(typeof code === 'string' ? { code } : {}),
+    }
+  } catch {
+    return { name: 'Error' }
   }
+}
+
+// What a thrown value says, as text, whatever it is (#855). A tool body is somebody else's
+// code: it can throw a Symbol, an object with no prototype, or an object whose own fields
+// throw when read, and building a sentence from one must never throw in turn: the call would
+// be left with no result.
+function thrownText(cause) {
+  try {
+    const message = cause?.message
+    if (typeof message === 'string') return message
+  } catch {}
+  try {
+    const text = String(cause)
+    if (typeof text === 'string') return text
+  } catch {}
+  return 'a value that cannot be shown'
 }
 
 /** The agent's preset, as the preset registry records it; `standard` when no registry composes. */
@@ -682,7 +706,6 @@ export class Backchannel {
     }
     let answered = false
     const settle = async (content, isError, rawInfo) => {
-      answered = true
       // The row is plain JSON with string fields: a tool's own error object is not trusted to be.
       const info = infoOf(rawInfo)
       // A result is written only into its call's own step, while that step is open. Once the
@@ -703,16 +726,19 @@ export class Backchannel {
         }, { surfaceOp: 'append', sourceEventSeqs: [callSeq] })
         try {
           write(content, isError, info)
+          answered = true
         } catch (cause) {
           // A result the log refuses must not leave the call open: record a minimal row that
           // is always valid. (The write guard already replaces data that is not plain JSON;
-          // this covers a Session it does not guard and any other refusal.)
-          this.log(`bridge result row failed: ${cause?.message ?? cause}`)
+          // this covers a Session it does not guard and any other refusal.) What refused it
+          // may be anything a tool's result can throw when read, so nothing here depends on it.
+          try { this.log(`bridge result row failed: ${thrownText(cause)}`) } catch {}
           try {
             write([{ type: 'text', text: `The result of ${name} could not be recorded.` }], true, { name: 'BridgeRecordError', code: 'BRIDGE_RESULT_UNRECORDABLE' })
+            answered = true
           } catch (again) {
             // The write guard closes the call before its step ends.
-            this.log(`bridge fallback result row failed: ${again?.message ?? again}`)
+            try { this.log(`bridge fallback result row failed: ${thrownText(again)}`) } catch {}
           }
         }
       }
@@ -840,10 +866,11 @@ export class Backchannel {
           return await settle([{ type: 'text', text: `Auto review cannot finish ${name}: the permission level changed.` }], true, { name: 'AutoReviewUnavailableError', code: 'AUTO_REVIEW_LEVEL_CHANGED' })
         }
         if (own.signal.aborted) return await cancelled()
-        const text = `Error: ${cause?.message ?? cause}`
+        const text = `Error: ${thrownText(cause)}`
         // The info lands in the tool/result row, which must be plain JSON: an Error with no
         // string code (or a non-string name) would leave an undefined field, the row would be
-        // refused, and the call would stay unresolved in the session log.
+        // refused, and the call would stay unresolved in the session log. (A value whose own
+        // fields throw when read is settled by the catch at the end of this call.)
         const info = { name: typeof cause?.name === 'string' ? cause.name : 'Error' }
         if (typeof cause?.code === 'string') info.code = cause.code
         return await settle([{ type: 'text', text }], true, info)
@@ -868,9 +895,11 @@ export class Backchannel {
       return await settle(result.content ?? [], result.isError === true, info)
     } catch (cause) {
       // Nothing above is meant to throw; if it does, the call still gets its one result row.
-      this.log(`bridge call ${name} failed: ${cause?.message ?? cause}`)
-      if (answered) return error(`Error: ${cause?.message ?? cause}`)
-      return await settle([{ type: 'text', text: `Error: ${cause?.message ?? cause}` }], true, { name: 'BridgeCallError', code: 'BRIDGE_CALL_FAILED' })
+      // This is the call's last chance of a result: nothing here may throw on what was thrown.
+      const text = `Error: ${thrownText(cause)}`
+      try { this.log(`bridge call ${name} failed: ${thrownText(cause)}`) } catch {}
+      if (answered) return error(text)
+      return await settle([{ type: 'text', text }], true, { name: 'BridgeCallError', code: 'BRIDGE_CALL_FAILED' })
     } finally {
       clearTimeout(timer)
       unwatch?.()
