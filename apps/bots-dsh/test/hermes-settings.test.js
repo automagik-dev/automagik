@@ -25,7 +25,15 @@ runInNewContext(seeds.outputFiles[0].text, seedContext)
 const nativeRequire = name => seedContext.nativeSeeds[name] ?? require(name)
 const React = nativeRequire('react'), { createRoot } = nativeRequire('react-dom/client'), { flushSync } = nativeRequire('react-dom')
 const compiled = await build({ entryPoints: [new URL('../src/client/hermes-remote.js', import.meta.url).pathname], bundle: true, format: 'cjs', platform: 'browser', write: false, external: ['react', 'react-dom', '@deepseek-ai/dsh-client-ui-primitives'] })
-const tick = () => new Promise(resolve => setTimeout(resolve, 10))
+async function waitFor(predicate, description) {
+  const deadline = Date.now() + 5000
+  for (;;) {
+    const value = predicate()
+    if (value) return value
+    assert.ok(Date.now() < deadline, `Timed out waiting for ${description}`)
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+}
 
 async function renderSettings(t, call) {
   const dom = new JSDOM('<div id="root"></div>')
@@ -35,17 +43,17 @@ async function renderSettings(t, call) {
   const module = { exports: {} }
   runInNewContext(compiled.outputFiles[0].text, { module, exports: module.exports, require: nativeRequire, window: dom.window, document: dom.window.document, navigator: dom.window.navigator, console, setTimeout, clearTimeout, fetch: async (_url, init) => ({ ok: true, json: async () => ({ ok: true, value: await call(JSON.parse(init.body)) }) }) })
   const root = createRoot(dom.window.document.getElementById('root'))
+  t.after(() => {
+    flushSync(() => root.unmount()); dom.window.close()
+    keys.forEach((key, index) => saved[index] ? Object.defineProperty(globalThis, key, saved[index]) : delete globalThis[key])
+  })
   const failures = []
   flushSync(() => root.render(React.createElement(module.exports.HermesRemoteSettings, {
     run: promise => promise.catch(error => { failures.push(error); return false }),
     Section: ({ children, title }) => React.createElement('section', null, title ? React.createElement('h3', null, title) : null, children),
   })))
-  await tick()
-  t.after(() => {
-    flushSync(() => root.unmount()); dom.window.close()
-    keys.forEach((key, index) => saved[index] ? Object.defineProperty(globalThis, key, saved[index]) : delete globalThis[key])
-  })
-  const click = async label => { const button = [...dom.window.document.querySelectorAll('button')].find(node => node.textContent === label); assert.ok(button, label); flushSync(() => button.click()); await tick() }
+  await waitFor(() => dom.window.document.querySelector('input[aria-label="Address"]'), 'remote settings to render')
+  const click = async label => { const button = [...dom.window.document.querySelectorAll('button')].find(node => node.textContent === label); assert.ok(button, label); flushSync(() => button.click()) }
   return { document: dom.window.document, click, failures }
 }
 
@@ -63,6 +71,7 @@ test('saved remote keys are never echoed; Replace opens an empty password input 
   assert.equal(input.value, '')
   assert.equal(input.autocomplete, 'new-password')
   await click('Save')
+  await waitFor(() => document.querySelector('input[aria-label="Credential"]') === null, 'saved credentials to render')
   assert.equal(calls.at(-1).endpoint, 'hermes-remote-configure')
   assert.equal(calls.at(-1).payload.credential, '')
   assert.equal(document.querySelector('input[aria-label="Credential"]'), null)
@@ -99,7 +108,7 @@ test('Settings renders redacted role+text history returned by the real resume an
   install(rt, { transport: options => new HermesTransport({ ...options, fetch: async () => ({ ok: true, json: async () => ({ ticket }) }), socket: () => new Socket() }) })
   const { document, click, failures } = await renderSettings(t, ({ endpoint, payload }) => endpoints.get(endpoint)(payload))
   await click('Reconnect and reconcile')
-  const history = document.querySelector('pre')?.textContent
+  const history = await waitFor(() => document.querySelector('pre')?.textContent, 'reconciled history to render')
   assert.match(history, /assistant: Recovered answer/)
   assert.match(history, /assistant: Compatible history answer/)
   assert.match(history, /redacted/)
