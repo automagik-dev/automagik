@@ -432,7 +432,15 @@ the durable attachment and answers the agent's MCP call with ACP image content
 (`{ type: 'image', data, mimeType }`), beside the text it already carried; an inline image block
 passes through as the base64 it already is, never encoded twice, when it is `image/png`,
 `image/jpeg`, `image/gif` or `image/webp` and at most 5 MiB decoded; anything else becomes a
-one-line text placeholder saying why. The agent's own call that answers with an image keeps the
+one-line text placeholder saying why. So does an attachment the store has not read in time:
+the reads of one result have 10 seconds together (after a read of 9, the next has 1), the read
+still running then is aborted and the ones after it are not started. An image nested deeper
+than the result's content (inside a resource, say) is reported with the same placeholder and
+never sent; the search for those reads 16 levels and 20 000 values, plain fields only (never
+bytes, and no field computed on reading is followed), and a result
+it could not read to its end says so in one more line (so does a text-only result that large).
+For a nested image and for an attachment's reference, a placeholder repeats the media type
+only when it is a plain `type/subtype`. The agent's own call that answers with an image keeps the
 same picture in its mirror result, stored once in DSH's attachment store as
 `{ type: 'image', attachment }`, so the chat's card, the stored result and a later replay show it;
 with no attachment store mounted the call keeps its text result rather than writing inline base64
