@@ -93,3 +93,37 @@ not a real model's; the page's provenance note says so.
   of their own that these screens do not have.
 - **The market's one-click install.** No verified link exists, so the page's button is off
   and marked TODO.
+
+## RFC 0027 D3 additions, 2026-11-11
+
+`code-sidebar.png` (722×668) is a byte-for-byte copy of the pack's own share image,
+`herdr/mods/am-sidebar/preview.png`. Commit `6e116024aa760694bfc6af81111eb99c2fa1428a`
+introduced it at `herdr/mods/spaces-agents/preview.png`; the folder later moved to
+`am-sidebar`. That commit records a **herdr-app shot of a scratch demo project**, cropped to
+its bot tree. It also records that the overlay scrollbar was painted out of the original
+share image. D3 makes no further edits. RFC 0027 explicitly permits the pack's own captured
+share image. The page identifies the crop and the original retouch, rather than presenting
+it as a new full-window recording. It shows demo-shop, Main Bot Ada, build and quality
+categories and a planned Bot. It does not show an active coding run or the Work/Code switch.
+Its source and digest are recorded under `additionalCaptures` and `images` in the manifest.
+
+The Team and Genie pictures retain their original digests and provenance above. No Omni
+channel, phone, meter or Cloud screen is fabricated to illustrate the other blocks.
+
+### The film slot
+
+D2 has not supplied the committed encode or poster at D3's implementation. The single film
+figure reuses `pip-delegates.png` as a clearly labelled stand-in and says **The film comes in
+D2**. It is not a rendered film, play control or new capture. D2 replaces that one figure with
+the approved poster/player and records the film's provenance and music licence. There is no
+second film element and no off-site player.
+
+### Brand
+
+The draft's fonts, marks and existing app character art are copied selectively into
+`brand/`, with the font licences and `brand/LICENSES.md`. No private draft document is
+copied. The marks and octopus are brand accents. Every product image still comes from the
+recorded capture manifest.
+
+The earlier *market one-click install* note describes the old developer page. The new site
+links to this repository's desktop release; the developer commands are in the landing README.

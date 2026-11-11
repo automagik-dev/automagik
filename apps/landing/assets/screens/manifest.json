@@ -37,6 +37,15 @@
     "pip-delegates.png": "5621587264b57581d0604f2f7b2e7bd277a59052d1416f081c08aef8a4a29510",
     "team-step.png": "fe5dd8a9750845b2b8b9d5f484703177114d0bd135de5317ecaf9848508f1d1f",
     "wish-checks.png": "f70f49db400ff16df291cb1c1e48dd359def6b767eb471c3761f96180c5cbb06",
-    "wish-diff.png": "964eeee4ecb776574e0a41de574a67c1c2027993ca06969d1eff9e612be46c59"
+    "wish-diff.png": "964eeee4ecb776574e0a41de574a67c1c2027993ca06969d1eff9e612be46c59",
+    "code-sidebar.png": "b623f219e94013dcf8ca296e8b98cd1d627110b0527fec3cd9f98472399c2479"
+  },
+  "additionalCaptures": {
+    "code-sidebar.png": {
+      "source": "herdr/mods/am-sidebar/preview.png",
+      "introducedBy": "6e116024aa760694bfc6af81111eb99c2fa1428a",
+      "kind": "herdr-app share image",
+      "edits": "Cropped to the bot tree; overlay scrollbar painted out in the original share image. Copied without further changes."
+    }
   }
 }
