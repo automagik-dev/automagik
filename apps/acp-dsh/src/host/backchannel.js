@@ -16,7 +16,7 @@ import { createServer } from 'node:http'
 import { createAssistantMessage, createDeveloperMessage, createToolResultMessage } from '@deepseek-ai/dsh-llm'
 import { appendPluginRecord } from '@deepseek-ai/dsh-session'
 import { SYNTHETIC_KIND } from './names.js'
-import { contentImages } from './acp.js'
+import { bridgeImages, nestedPlaceholder, readMsOf, readStoredImage, refMediaType } from './bridge-image.js'
 import { levelOf, TOOL_NAME } from './tool.js'
 import { guardSession } from './write-guard.js'
 
@@ -74,7 +74,7 @@ async function mcpImage(block, attachments) {
   }
   if (block.attachment === undefined) return undefined
   try {
-    const stored = await attachments?.readImage?.(block.attachment)
+    const stored = await readStoredImage(attachments, block.attachment, readMsOf())
     const storedType = stored?.ref?.mediaType ?? mimeType
     if (stored === undefined || storedType === undefined) return undefined
     return { type: 'image', data: Buffer.from(stored.data).toString('base64'), mimeType: storedType }
@@ -86,7 +86,8 @@ async function mcpImage(block, attachments) {
 // The one-line text an image's place in the result becomes when its bytes cannot reach the
 // model: the media type it named, then why.
 function unavailableText(image) {
-  const type = image.mimeType ?? image.mediaType ?? 'unknown media type'
+  if (nestedPlaceholder(image) !== undefined) return nestedPlaceholder(image)
+  const type = image.mimeType ?? image.mediaType ?? refMediaType(image) ?? 'unknown media type'
   const reason = typeof image.data === 'string' && image.data !== ''
     ? inlineImageProblem(image)
     : 'the attachment could not be read'
@@ -99,7 +100,7 @@ function unavailableText(image) {
 async function contentOf(content, attachments) {
   const text = textOf(content)
   const clipped = text.length > OUTPUT_LIMIT ? `${text.slice(0, OUTPUT_LIMIT)}…` : text
-  const images = contentImages(content)
+  const images = bridgeImages(content)
   if (images.length === 0) return [{ type: 'text', text: clipped }]
   const blocks = text === '' ? [] : [{ type: 'text', text: clipped }]
   for (const image of images) {
