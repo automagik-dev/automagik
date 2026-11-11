@@ -32,7 +32,22 @@ export const cliConfirmText = cli => t(CLI_CONFIRM, cliWords(cli))
 export const presetName = (value, catalog, cli) => (cliAuto(value, cli) ? t('Auto') : LABELS[value] ? t(LABELS[value]) : catalog?.options?.find(option => option.value === value)?.name ?? value)
 
 // A saved Auto that runs as workspace-write where Auto cannot hold (`permissionFallback`).
-export const PermissionFallback = ({ fallback }) => (fallback ? h('div', { className: 'bt-note' }, t('Runs as Workspace here')) : null)
+// `owner.permissionNotOffered`: the saved level is one DeepSeek Harness no longer offers
+// (#1001). The level stays saved and is not among the choices, so these lines name it,
+// say what the Bot's conversation runs as now when the host knows (`permissionRuns`), and
+// how it is settled. They only tell: nothing here saves or changes a level.
+export function PermissionFallback({ fallback, owner, catalog }) {
+  if (owner?.permissionNotOffered === true && typeof owner.permission === 'string') {
+    const runs = typeof owner.permissionRuns === 'string' ? owner.permissionRuns : undefined
+    return h(Fragment, null,
+      h('div', { className: 'bt-note' }, t('Saved level: {level}. DeepSeek Harness no longer offers it.', { level: presetName(owner.permission, catalog) })),
+      h('div', { className: 'bt-note' }, runs === undefined
+        ? t('Each conversation keeps the level it has now, or a narrower one. Settings → Feedback lists them.')
+        : t('This conversation runs as {level} now.', { level: presetName(runs, catalog) })),
+      h('div', { className: 'bt-note' }, t('Pick a level to settle it. If DeepSeek Harness offers the saved level again, it is used again by itself.')))
+  }
+  return fallback ? h('div', { className: 'bt-note' }, t('Runs as Workspace here')) : null
+}
 
 // What each level really does, in plain words. DSH's `ask` does not ask before each action: a
 // confined call runs at once, and the person is asked only when the Bot wants one action with

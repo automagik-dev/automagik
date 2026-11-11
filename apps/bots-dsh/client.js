@@ -113,6 +113,10 @@ var ZH = {
   "Turn on {connection} in Settings → Claude Code and Codex before using this model.": "使用此模型前，请在设置 → Claude Code 和 Codex 中开启 {connection}。",
   "Wait for {connection} to finish installing, or retry it in Settings → Claude Code and Codex.": "等待 {connection} 安装完成，或在设置 → Claude Code 和 Codex 中重试。",
   "Sign in to {connection} before using this model.": "使用此模型前，请登录 {connection}。",
+  // A Bot Session adopt refused after it began (#877, host agents.js adoptBotSession).
+  "Session {session} cannot join {bot} because this window cannot change the Bot team now. {reason}": "会话 {session} 无法加入 {bot}，因为这个窗口现在不能修改 Bot 团队。{reason}",
+  '{bot} changed while Session {session} was joining it (another window or an edit). For the Bot team: Nothing was changed; try again. The native preset of Session {session} was set to "{preset}" before this refusal.': "{bot} 在会话 {session} 加入时发生了变化（另一个窗口或一次编辑）。Bot 团队没有任何改动，请重试。在这次拒绝之前，会话 {session} 的原生预设已被设为「{preset}」。",
+  '{bot} changed while Session {session} was being saved. For the Bot team: Nothing was changed; try again. The native preset of Session {session} was set to "{preset}" before this refusal.': "{bot} 在保存会话 {session} 时发生了变化。Bot 团队没有任何改动，请重试。在这次拒绝之前，会话 {session} 的原生预设已被设为「{preset}」。",
   "{name} could not switch to {model}. It stays on {kept}.": "{name} 无法切换到 {model}，仍使用 {kept}。",
   // A Bot's capability pills (capability-pills.js); 'Channels' is the Channels page's.
   "Computer": "电脑",
@@ -1342,6 +1346,16 @@ var ZH = {
   "No Bot conversation is open.": "没有打开的 Bot 对话。",
   "The permission level of a conversation shows here while it is open.": "对话打开时，它的权限级别会显示在这里。",
   "More conversations are open than fit here.": "打开的对话太多，这里显示不下。",
+  "Conversations with a level not applied that do not fit here: {count}.": "权限级别未能应用、这里显示不下的对话：{count} 个。",
+  "This window only views the team: the saved levels here are as of its last refresh.": "此窗口只能查看团队：这里的已保存级别以它上次刷新时为准。",
+  "Saved level: {level}. DeepSeek Harness no longer offers it.": "已保存的级别：{level}。DeepSeek Harness 已不再提供它。",
+  "This conversation runs as {level} now.": "这个对话现在按“{level}”运行。",
+  "Each conversation keeps the level it has now, or a narrower one. Settings → Feedback lists them.": "每个对话保持它现在的级别，或更窄的级别。设置 → 反馈 中列出了它们。",
+  "Pick a level to settle it. If DeepSeek Harness offers the saved level again, it is used again by itself.": "选择一个级别即可确定。如果 DeepSeek Harness 重新提供已保存的级别，会自动再次使用它。",
+  "The saved level is no longer offered: this conversation was lowered to the narrowest level that is.": "已保存的级别已不再提供：这个对话已降到仍提供的最窄级别。",
+  "The saved level is no longer offered: this conversation already ran no wider than the narrowest level that is, so it was left as it is.": "已保存的级别已不再提供：这个对话原本就不比仍提供的最窄级别更宽，因此保持不变。",
+  "The saved level is no longer offered, and the level this conversation has cannot be compared with those that are: it was left as it is.": "已保存的级别已不再提供，而这个对话现有的级别无法与仍提供的级别比较：因此保持不变。",
+  "The saved level is no longer offered, and the narrower level could not be set here.": "已保存的级别已不再提供，而更窄的级别未能在这里设置。",
   "Recent errors": "最近的错误",
   "Recent errors · {count}": "最近的错误 · {count}",
   "No errors recorded.": "没有错误记录。",
@@ -1848,8 +1862,14 @@ var HOST_TEMPLATES = [
   "Wait for {connection} to finish installing, or retry it in Settings → Claude Code and Codex.",
   "Sign in to {connection} before using this model.",
   "Confirm the account of {connection} before using this model.",
-  "{name} could not switch to {model}. It stays on {kept}."
-].map((template) => {
+  "{name} could not switch to {model}. It stays on {kept}.",
+  // A Bot Session adopt refused after it began (#877). `host`: a value that is itself a host
+  // message (the store's read-only reason) is worded in turn.
+  { template: "Session {session} cannot join {bot} because this window cannot change the Bot team now. {reason}", host: ["reason"] },
+  '{bot} changed while Session {session} was joining it (another window or an edit). For the Bot team: Nothing was changed; try again. The native preset of Session {session} was set to "{preset}" before this refusal.',
+  '{bot} changed while Session {session} was being saved. For the Bot team: Nothing was changed; try again. The native preset of Session {session} was set to "{preset}" before this refusal.'
+].map((entry) => {
+  const { template, host = [] } = typeof entry === "string" ? { template: entry } : entry;
   const names = [];
   const source = template.split(/(\{\w+\})/).map((part) => {
     const name = /^\{(\w+)\}$/.exec(part)?.[1];
@@ -1857,12 +1877,12 @@ var HOST_TEMPLATES = [
     names.push(name);
     return "(.+?)";
   }).join("");
-  return { template, names, pattern: new RegExp(`^${source}$`) };
+  return { template, names, host, pattern: new RegExp(`^${source}$`) };
 });
 function hostTemplate(message) {
-  for (const { template, names, pattern } of HOST_TEMPLATES) {
+  for (const { template, names, host, pattern } of HOST_TEMPLATES) {
     const found = pattern.exec(message);
-    if (found !== null) return t(template, Object.fromEntries(names.map((name, index) => [name, found[index + 1]])));
+    if (found !== null) return t(template, Object.fromEntries(names.map((name, index) => [name, host.includes(name) ? hostText(found[index + 1]) : found[index + 1]])));
   }
   return void 0;
 }
@@ -14329,7 +14349,19 @@ var cliWords = (cli) => ({ cli: cli.name, mode: cli.mode });
 var cliAuto = (value, cli) => cli !== void 0 && presetDanger(value);
 var cliConfirmText = (cli) => t(CLI_CONFIRM, cliWords(cli));
 var presetName = (value, catalog, cli) => cliAuto(value, cli) ? t("Auto") : LABELS[value] ? t(LABELS[value]) : catalog?.options?.find((option) => option.value === value)?.name ?? value;
-var PermissionFallback = ({ fallback }) => fallback ? (0, import_react33.createElement)("div", { className: "bt-note" }, t("Runs as Workspace here")) : null;
+function PermissionFallback({ fallback, owner, catalog }) {
+  if (owner?.permissionNotOffered === true && typeof owner.permission === "string") {
+    const runs = typeof owner.permissionRuns === "string" ? owner.permissionRuns : void 0;
+    return (0, import_react33.createElement)(
+      import_react33.Fragment,
+      null,
+      (0, import_react33.createElement)("div", { className: "bt-note" }, t("Saved level: {level}. DeepSeek Harness no longer offers it.", { level: presetName(owner.permission, catalog) })),
+      (0, import_react33.createElement)("div", { className: "bt-note" }, runs === void 0 ? t("Each conversation keeps the level it has now, or a narrower one. Settings → Feedback lists them.") : t("This conversation runs as {level} now.", { level: presetName(runs, catalog) })),
+      (0, import_react33.createElement)("div", { className: "bt-note" }, t("Pick a level to settle it. If DeepSeek Harness offers the saved level again, it is used again by itself."))
+    );
+  }
+  return fallback ? (0, import_react33.createElement)("div", { className: "bt-note" }, t("Runs as Workspace here")) : null;
+}
 var TEXTS = {
   "read-only": "It cannot change files unless you allow that one action. It can still run commands and use the network and its other tools.",
   "workspace-write": "Changes files inside its folder and a temporary folder without asking. For other files it asks you first. It can still run commands and use the network and its other tools.",
@@ -19530,7 +19562,7 @@ function RelayLimitRow({ room: room2, update }) {
   );
 }
 function GroupPermission({ room: room2, catalog, update }) {
-  if (!catalog?.options?.length) return null;
+  if (!catalog?.options?.length) return room2.permissionNotOffered === true ? (0, import_react55.createElement)(Card, { title: t("Permissions") }, (0, import_react55.createElement)(PermissionFallback, { owner: room2, catalog })) : null;
   const shared2 = room2.permission !== void 0;
   return (0, import_react55.createElement)(
     Card,
@@ -19545,7 +19577,7 @@ function GroupPermission({ room: room2, catalog, update }) {
       "div",
       { className: "bt-set-row bt-bs-row bt-bs-stack bt-gs-perm bt-veil" },
       (0, import_react55.createElement)(PermissionPicker, { catalog, saved: room2.permission, confirmFull: true, onPick: (permission) => update({ permission }) }),
-      (0, import_react55.createElement)(PermissionFallback, { fallback: room2.permissionFallback }),
+      (0, import_react55.createElement)(PermissionFallback, { fallback: room2.permissionFallback, owner: room2, catalog }),
       (0, import_react55.createElement)(PermissionExplanations, { catalog })
     ) : null
   );
@@ -21147,6 +21179,12 @@ var PERM_REVIEWS = {
   AUTO_REVIEW_TIMEOUT: "it took too long",
   AUTO_REVIEW_DENIED: "it stopped the action"
 };
+var PERM_GONE = {
+  narrowed: "The saved level is no longer offered: this conversation was lowered to the narrowest level that is.",
+  kept: "The saved level is no longer offered: this conversation already ran no wider than the narrowest level that is, so it was left as it is.",
+  unknown: "The saved level is no longer offered, and the level this conversation has cannot be compared with those that are: it was left as it is.",
+  held: "The saved level is no longer offered, and the narrower level could not be set here."
+};
 var permText = (value) => typeof value === "string" ? value : void 0;
 var permTime = (value) => typeof value === "number" && Number.isFinite(value) ? permWhen(value) : void 0;
 var PERM_LEVELS = /* @__PURE__ */ new Set(["read-only", "workspace-write", "danger-full-access", "auto"]);
@@ -21179,6 +21217,7 @@ function levelFacts(row, cli) {
     else if (effective !== void 0) out.push(t("Running as: {level}", { level: effective }));
     else out.push(t("Running as: not known now"));
   }
+  if (typeof row.notOffered === "string" && Object.hasOwn(PERM_GONE, row.notOffered)) out.push(t(PERM_GONE[row.notOffered]));
   if (row.fallback === true) out.push(t("Runs as Workspace here"));
   else if (row.differs === true && row.open === true) out.push(t("The level in force here is not the saved one."));
   const missed = levelName(row.unapplied?.level, cli);
@@ -21260,6 +21299,7 @@ function PermissionDiagnostics({ actions, roster, Section: Section2, Row: Row3 }
   const rows2 = permissionRows(report, roster);
   if (rows2 === null) return null;
   const partial = report.partial === true;
+  const moreMarked = Number.isInteger(report.moreMarked) && report.moreMarked > 0 ? report.moreMarked : 0;
   return (0, import_react59.createElement)(
     Section2,
     { title: t("Permissions") },
@@ -21274,7 +21314,9 @@ function PermissionDiagnostics({ actions, roster, Section: Section2, Row: Row3 }
         row.agent ? (0, import_react59.createElement)("span", { className: "bt-set-hint" }, row.agent) : null
       )
     )),
-    report.more === true ? (0, import_react59.createElement)(Row3, { label: t("More conversations are open than fit here.") }) : null,
+    moreMarked > 0 ? (0, import_react59.createElement)(Row3, { label: t("Conversations with a level not applied that do not fit here: {count}.", { count: moreMarked }) }) : report.more === true ? (0, import_react59.createElement)(Row3, { label: t("More conversations are open than fit here.") }) : null,
+    // This window only views the team: the host answered from what it last read.
+    report.viewOnly === true ? (0, import_react59.createElement)(Row3, { label: t("This window only views the team: the saved levels here are as of its last refresh.") }) : null,
     partial && rows2.length > 0 ? (0, import_react59.createElement)(Row3, { label: t("Some of this could not be read just now.") }) : null
   );
 }
@@ -21544,6 +21586,13 @@ function pluginRows({ app, Row: Row3 }) {
   }
   return rows2;
 }
+var PLUGINS_COMING = /* @__PURE__ */ new Set(["ready", "downloading"]);
+function opensIntoPlugins(bridge, state) {
+  if (!bridge || typeof bridge.check === "function") return false;
+  if (state == null) return true;
+  if (!splitsPlugins(state) || state.plugins.auto === false) return false;
+  return PLUGINS_COMING.has(state.plugins.phase) || state.kind === "plugins" && PLUGINS_COMING.has(state.phase);
+}
 var linkProps = (href) => ({ className: "bt-soft bt-soft-sm bt-about-link", href, target: "_blank", rel: "noopener noreferrer" });
 function AboutPage({ useUpdate, actions, run: run2, Section: Section2, Row: Row3 }) {
   const update = useUpdate((value) => value) ?? {};
@@ -21586,14 +21635,16 @@ function AboutPage({ useUpdate, actions, run: run2, Section: Section2, Row: Row3
   const appPill = updatePill(appState(app.state));
   const appBusy = ["checking", "downloading", "installing"].includes(appState(app.state)?.phase);
   const ours = inApp(update, app);
+  const held = opensIntoPlugins(app.bridge, app.state);
   const appCheck = () => {
+    if (held) return;
     void (typeof app.bridge.check === "function" ? app.bridge.check() : app.bridge.open()).catch(() => {
     });
   };
   const botControl = ours ? app.bridge && !updatesOff(versions) ? appPill?.primary ? (0, import_react61.createElement)("button", { type: "button", className: "bt-fb-primary", disabled: appBusy, onClick: () => {
     void app.bridge.open().catch(() => {
     });
-  } }, appPill.label) : (0, import_react61.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", disabled: appBusy, onClick: appCheck }, appBusy ? t("Checking…") : t("Check for updates")) : null : phase === "installed" || phase === "updated" ? null : update.available || phase === "installing" ? (0, import_react61.createElement)(
+  } }, appPill.label) : (0, import_react61.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", disabled: appBusy || held, onClick: appCheck }, appBusy ? t("Checking…") : t("Check for updates")) : null : phase === "installed" || phase === "updated" ? null : update.available || phase === "installing" ? (0, import_react61.createElement)(
     "button",
     { type: "button", className: "bt-fb-primary", disabled: phase === "installing", onClick: () => run2(actions.installUpdate()) },
     phase === "installing" ? t("Updating…") : phase === "failed" ? t("Try again") : t("Update")
@@ -22958,7 +23009,9 @@ var shortUrl = (url) => String(url ?? "").replace(/^https?:\/\//i, "").replace(/
 var EMPTY_TABS = { ids: [], active: null };
 function PermissionRow({ bot, roster, actions, run: run2 }) {
   const catalog = roster.permissions;
-  if (!catalog?.options?.length) return null;
+  if (!catalog?.options?.length) {
+    return bot.permissionNotOffered === true ? (0, import_react67.createElement)("div", { className: "bt-drawer-permission" }, (0, import_react67.createElement)("div", { className: "bt-section-title" }, t("Permissions")), (0, import_react67.createElement)(PermissionFallback, { owner: bot, catalog })) : null;
+  }
   return (0, import_react67.createElement)(
     "div",
     { className: "bt-drawer-permission" },
@@ -22966,7 +23019,7 @@ function PermissionRow({ bot, roster, actions, run: run2 }) {
     // A Bot without its own preset may run on another one set in DSH, so its first pick always applies.
     // Every level with what it does; a window that can only view the team gets no live rows.
     (0, import_react67.createElement)(PermissionList, { catalog, name: bot.name, saved: bot.permission ?? catalog.defaultPreset, repick: bot.permission === void 0, disabled: Boolean(roster.readOnly), cli: cliOfBot(bot), onPick: (permission) => run2(actions.updateBot(bot.id, { permission })) }),
-    (0, import_react67.createElement)(PermissionFallback, { fallback: bot.permissionFallback }),
+    (0, import_react67.createElement)(PermissionFallback, { fallback: bot.permissionFallback, owner: bot, catalog }),
     roster.readOnly ? null : (0, import_react67.createElement)("button", { type: "button", className: "bt-more", onClick: () => reopenPermissionChoice(bot.id) }, t("Choose in the chat"))
   );
 }
@@ -23143,7 +23196,7 @@ function GroupOverview({ room: room2, roster, actions, usage, useWork, openSetti
       (0, import_react67.createElement)("div", { className: "bt-section-title" }, t("Permissions")),
       (0, import_react67.createElement)("div", { className: "bt-kv" }, (0, import_react67.createElement)("span", { className: presetDanger(room2.permission) ? "bt-perm-danger" : void 0 }, presetName(room2.permission, roster.permissions))),
       presetText(room2.permission, roster.permissions) ? (0, import_react67.createElement)("div", { className: "bt-note" }, presetText(room2.permission, roster.permissions)) : null,
-      (0, import_react67.createElement)(PermissionFallback, { fallback: room2.permissionFallback })
+      (0, import_react67.createElement)(PermissionFallback, { fallback: room2.permissionFallback, owner: room2, catalog: roster.permissions })
     ) : null,
     roster.memory === false ? null : (0, import_react67.createElement)(MemoryRow, { key: "memory", owner: { id: room2.id, name: room2.name, group: true }, actions }),
     usage ? (0, import_react67.createElement)(

@@ -1,4 +1,4 @@
-//! `usagemeter outcomes`: recorded failures and time to pull request (issue 899).
+//! `usagemeter outcomes`: recorded failures and time to pull request (issues 899 and 1026).
 //!
 //! One local, read-only, fork-and-exit report on the query's read-only open, like `coverage`: it
 //! creates nothing, migrates nothing, writes no `meta`, takes no lock, calls no `hc` and opens no
@@ -6,14 +6,16 @@
 //! (the default) or one JSON record, per contract 1's `d1`, `d7` and `d30` windows:
 //!
 //! - **Failures, as raw counts**, per launch tag (bot, kind, role, squad), harness, kind and
-//!   source, and the unattributed by reason. Two kinds, both facts something else recorded:
-//!   `tool_error` (`harness_log`: a tool result the harness itself flagged as failed) and
-//!   `run_failed` (a launch whose terminal exited with a non-zero status or on a signal:
-//!   `hc_snapshot` when hc's list of finished terminals said so, `workers_ledger` when an `end`
-//!   row of Herdr's workers ledger copied it). The counts are of harness-flagged failures, including expected ones (a red test run
-//!   while working test-first, a grep with no match): they are not a quality verdict on their
-//!   own, and the report prints no rate, ratio, threshold, label or score. Behaviour scoring
-//!   stays in genie.
+//!   source, and the unattributed by reason. Three kinds, each a fact something else recorded:
+//!   `tool_error` (`harness_log`: a tool result the harness itself flagged as failed),
+//!   `api_error` (`harness_log`: a model call the harness itself flagged as failed after its own
+//!   retries, including usage-limit stops) and `run_failed` (a launch whose terminal exited with a
+//!   non-zero status or on a signal: `hc_snapshot` when hc's list of finished terminals said so,
+//!   `workers_ledger` when an `end` row of Herdr's workers ledger copied it). The counts are of
+//!   harness-flagged failures, including expected ones (a red test run while working test-first, a
+//!   grep with no match) and usage-limit stops: they are not a quality verdict on their own, and
+//!   the report prints no rate, ratio, threshold, label or score. Behaviour scoring stays in
+//!   genie.
 //! - **Time to pull request**, on two clocks: from the branch's first commit, and from its first
 //!   worker launch, to the pull request opened and merged, per branch, and as nearest-rank p50 and
 //!   p90 per repo and per (bot, role).
@@ -52,9 +54,13 @@ pub const OUTPUT_CAP: usize = 64 * 1024;
 
 /// What every count here is, printed with it (RFC 0018 (c)).
 pub const NOTE: &str = "raw counts of failures a harness or hc recorded, including expected ones \
-     (a red test run while working test-first, a grep with no match); not a quality verdict on \
-     their own";
+     (a red test run while working test-first, a grep with no match) and usage-limit stops \
+     (written after a harness's own retries, so a count of model calls that failed for the \
+     session, not each retried attempt); not a quality verdict on their own";
 const TOOL_ERROR_RULE: &str = "harness-flagged failures, including expected ones";
+const API_ERROR_RULE: &str = "harness-flagged model-call failures after the harness's own \
+     retries (model calls that failed for the session, not each retried attempt, including \
+     usage-limit stops; not a quality verdict on their own)";
 const RUN_FAILED_RULE: &str = "a launch whose terminal ended on its own with a non-zero exit \
      status or on a signal, as hc's list of finished terminals gave it (hc_snapshot) or as an end \
      row of the workers ledger copied it (workers_ledger); killed and stopped_by_restart are \
@@ -78,10 +84,33 @@ pub fn marker(s: Source) -> Option<&'static str> {
     }
 }
 
+/// The rule that makes a line of this harness's log a failed model call (`api_error`), when a
+/// fixture pins one (`tests/fixtures/tool-errors/`, [`tool_error`]). None is `unsupported`, never
+/// 0.
+pub fn api_error_marker(s: Source) -> Option<&'static str> {
+    match s {
+        Source::Claude => Some(
+            "a type \"assistant\" line with top-level isApiErrorMessage: true (written after \
+             Claude Code's own retries, including usage-limit stops), once per line uuid",
+        ),
+        Source::Codex | Source::Omp | Source::DshTui | Source::Agy => None,
+    }
+}
+
 fn unsupported_harnesses() -> Vec<&'static str> {
     let mut v: Vec<&'static str> = Source::ALL
         .into_iter()
         .filter(|s| !tool_error::pinned(*s))
+        .map(Source::harness)
+        .collect();
+    v.sort_unstable();
+    v
+}
+
+fn api_error_unsupported_harnesses() -> Vec<&'static str> {
+    let mut v: Vec<&'static str> = Source::ALL
+        .into_iter()
+        .filter(|s| !tool_error::api_error_pinned(*s))
         .map(Source::harness)
         .collect();
     v.sort_unstable();
@@ -221,6 +250,7 @@ struct RunFailedDef {
 #[derive(Serialize)]
 struct Kinds {
     tool_error: ToolErrorDef,
+    api_error: ToolErrorDef,
     run_failed: RunFailedDef,
 }
 
@@ -238,6 +268,8 @@ struct Record {
     recorded: bool,
     /// The start of the recorded tool failures.
     errors_from: Option<String>,
+    /// The start of the recorded model-call failures (`api_error`).
+    api_errors_from: Option<String>,
     complete: bool,
     stale: bool,
     note: &'static str,
@@ -281,8 +313,10 @@ struct UnattributedLine {
 #[derive(Serialize)]
 struct ErrorsOut {
     tool_error: KindCount,
+    api_error: KindCount,
     run_failed: KindCount,
     unsupported_harnesses: Vec<&'static str>,
+    api_error_unsupported_harnesses: Vec<&'static str>,
     rows: Vec<ErrorLine>,
     rows_omitted: usize,
     /// The failures the omitted rows hold.
@@ -876,6 +910,7 @@ struct ErrorAcc {
     rows: BTreeMap<Tag, i64>,
     unattributed: BTreeMap<NoTag, i64>,
     tool_errors: i64,
+    api_errors: i64,
     run_failed: i64,
     /// Where the failed runs' ends came from, and where every end read in the window did.
     failed_from: EndSources,
@@ -918,11 +953,12 @@ fn run_failed_source(acc: &ErrorAcc) -> &'static str {
         .unwrap_or(record::HC_SNAPSHOT)
 }
 
-/// The tool failures of one window, grouped as the store interned them.
+/// The harness-flagged failures (`tool_error` and `api_error`) of one window, grouped as the store
+/// interned them.
 fn tool_errors(
     c: &Connection,
     b: &query::Bounds,
-    named: &BTreeSet<&str>,
+    rd: &Read<'_>,
     acc: &mut ErrorAcc,
 ) -> rusqlite::Result<()> {
     let mut st = c.prepare_cached(
@@ -936,19 +972,28 @@ fn tool_errors(
     while let Some(r) = q.next()? {
         let kind: String = r.get(8)?;
         let source: String = r.get(9)?;
-        // A kind or source a newer meter wrote is not this report's to name.
-        if kind != record::TOOL_ERROR || source != record::HARNESS_LOG {
+        if source != record::HARNESS_LOG {
             continue;
         }
+        // A kind a newer meter wrote, or one whose start this store has not recorded, is not read.
+        let error_kind = match kind.as_str() {
+            record::TOOL_ERROR if rd.errors_from.is_some() => record::TOOL_ERROR,
+            record::API_ERROR if rd.api_errors_from.is_some() => record::API_ERROR,
+            _ => continue,
+        };
         let repo: Option<String> = r.get(1)?;
-        if !named.is_empty() && !repo.as_deref().is_some_and(|r| named.contains(r)) {
+        if !rd.named.is_empty() && !repo.as_deref().is_some_and(|r| rd.named.contains(r)) {
             continue;
         }
         let harness = Source::from_harness(&r.get::<_, String>(0)?).map(Source::harness);
         let state: String = r.get(2)?;
         let bot: Option<String> = r.get(4)?;
         let n: i64 = r.get(10)?;
-        acc.tool_errors += n;
+        if error_kind == record::TOOL_ERROR {
+            acc.tool_errors += n;
+        } else {
+            acc.api_errors += n;
+        }
         match bot.filter(|_| state == "attributed") {
             Some(bot) => {
                 *acc.rows
@@ -958,20 +1003,14 @@ fn tool_errors(
                         r.get(6)?,
                         r.get(7)?,
                         harness,
-                        record::TOOL_ERROR,
+                        error_kind,
                         record::HARNESS_LOG,
                     ))
                     .or_default() += n;
             }
             None => {
                 *acc.unattributed
-                    .entry((
-                        state,
-                        r.get(3)?,
-                        harness,
-                        record::TOOL_ERROR,
-                        record::HARNESS_LOG,
-                    ))
+                    .entry((state, r.get(3)?, harness, error_kind, record::HARNESS_LOG))
                     .or_default() += n;
             }
         }
@@ -1118,12 +1157,18 @@ fn not_recorded(window: Window, b: &query::Bounds, state: &'static str) -> Windo
                 source: record::HARNESS_LOG,
                 count: None,
             },
+            api_error: KindCount {
+                state,
+                source: record::HARNESS_LOG,
+                count: None,
+            },
             run_failed: KindCount {
                 state,
                 source: record::HC_SNAPSHOT,
                 count: None,
             },
             unsupported_harnesses: unsupported_harnesses(),
+            api_error_unsupported_harnesses: api_error_unsupported_harnesses(),
             rows: Vec::new(),
             rows_omitted: 0,
             omitted_count: 0,
@@ -1140,6 +1185,7 @@ struct Read<'a> {
     with_pr: &'a BTreeSet<(&'a str, &'a str)>,
     named: &'a BTreeSet<&'a str>,
     errors_from: Option<i64>,
+    api_errors_from: Option<i64>,
     complete: bool,
 }
 
@@ -1151,10 +1197,11 @@ fn window_out(
 ) -> rusqlite::Result<WindowOut> {
     let mut acc = ErrorAcc::default();
     let tool = tool_state(b, rd.errors_from, rd.complete);
+    let api = tool_state(b, rd.api_errors_from, rd.complete);
     // With no start recorded, the rows are not this store's window's to read (a reset by a meter
     // that does not know them left them behind: `record::COUNTED_META`).
-    if rd.errors_from.is_some() {
-        tool_errors(c, b, rd.named, &mut acc)?;
+    if rd.errors_from.is_some() || rd.api_errors_from.is_some() {
+        tool_errors(c, b, rd, &mut acc)?;
     }
     let ends = run_ends(b, rd.launches, rd.named, &mut acc);
     let ttp = time_to_pr(b, rd.branches, rd.launches, rd.with_pr, rd.named);
@@ -1162,7 +1209,11 @@ fn window_out(
         rd.named.is_empty() || l.repo.as_deref().is_some_and(|r| rd.named.contains(r))
     };
     let any_launch = rd.launches.iter().filter(wanted).any(|l| l.overlaps(b));
-    if acc.tool_errors == 0 && !any_launch && ttp.state == "no_data" && !has_usage(c, b, rd.named)?
+    if acc.tool_errors == 0
+        && acc.api_errors == 0
+        && !any_launch
+        && ttp.state == "no_data"
+        && !has_usage(c, b, rd.named)?
     {
         // Nothing ran, failed or opened here, as far as the store knows: no count is a 0.
         return Ok(not_recorded(window, b, "no_data"));
@@ -1205,7 +1256,7 @@ fn window_out(
             },
         )
         .collect();
-    let state = if tool != "full" || run_state != "full" {
+    let state = if tool != "full" || api != "full" || run_state != "full" {
         "partial"
     } else {
         "ok"
@@ -1225,12 +1276,18 @@ fn window_out(
                 // read later): they are facts, and the state says the count is a lower bound.
                 count: (tool != "not_recorded").then_some(acc.tool_errors),
             },
+            api_error: KindCount {
+                state: api,
+                source: record::HARNESS_LOG,
+                count: (api != "not_recorded").then_some(acc.api_errors),
+            },
             run_failed: KindCount {
                 state: run_state,
                 source: run_source,
                 count: Some(acc.run_failed),
             },
             unsupported_harnesses: unsupported_harnesses(),
+            api_error_unsupported_harnesses: api_error_unsupported_harnesses(),
             rows,
             rows_omitted: omitted.len(),
             omitted_count: omitted.iter().map(|r| r.count).sum(),
@@ -1283,6 +1340,8 @@ fn report(
     let same_window =
         record::same_window(counted_from, query::meta_i64(&meta, record::COUNTED_META));
     let errors_from = query::meta_i64(&meta, record::FROM_META).filter(|_| recorded && same_window);
+    let api_errors_from =
+        query::meta_i64(&meta, record::API_FROM_META).filter(|_| recorded && same_window);
     let bounds: Vec<(Window, query::Bounds)> = req
         .windows
         .iter()
@@ -1303,6 +1362,7 @@ fn report(
             with_pr: &with_pr,
             named: &named,
             errors_from,
+            api_errors_from,
             complete,
         };
         let mut out = Vec::with_capacity(bounds.len());
@@ -1324,9 +1384,13 @@ fn report(
             || w.time_to_pr.bots_omitted > 0
     });
     let mut markers = BTreeMap::new();
+    let mut api_markers = BTreeMap::new();
     for s in Source::ALL {
         if let Some(m) = marker(s) {
             markers.insert(s.harness(), m);
+        }
+        if let Some(m) = api_error_marker(s) {
+            api_markers.insert(s.harness(), m);
         }
     }
     Ok(Some(Record {
@@ -1342,6 +1406,7 @@ fn report(
         counted_from: format_rfc3339(counted_from),
         recorded,
         errors_from: errors_from.map(format_rfc3339),
+        api_errors_from: api_errors_from.map(format_rfc3339),
         complete,
         stale,
         note: NOTE,
@@ -1351,6 +1416,12 @@ fn report(
                 rule: TOOL_ERROR_RULE,
                 markers,
                 unsupported_harnesses: unsupported_harnesses(),
+            },
+            api_error: ToolErrorDef {
+                source: record::HARNESS_LOG,
+                rule: API_ERROR_RULE,
+                markers: api_markers,
+                unsupported_harnesses: api_error_unsupported_harnesses(),
             },
             run_failed: RunFailedDef {
                 source: BOTH_END_SOURCES,
@@ -1513,10 +1584,11 @@ fn text(r: &Record) -> String {
     );
     let _ = writeln!(
         o,
-        "generated {}; counted_from {}; errors_from {}",
+        "generated {}; counted_from {}; errors_from {}; api_errors_from {}",
         r.generated_at,
         r.counted_from,
-        or_null(&r.errors_from)
+        or_null(&r.errors_from),
+        or_null(&r.api_errors_from)
     );
     let _ = writeln!(
         o,
@@ -1535,6 +1607,16 @@ fn text(r: &Record) -> String {
         o,
         "  unsupported (no pinned marker; unknown, never 0): {}",
         t.unsupported_harnesses.join(", ")
+    );
+    let a = &r.error_kinds.api_error;
+    let _ = writeln!(o, "api_error ({}): {}", a.source, a.rule);
+    for (harness, m) in &a.markers {
+        let _ = writeln!(o, "  {harness}: {m}");
+    }
+    let _ = writeln!(
+        o,
+        "  unsupported (no pinned marker; unknown, never 0): {}",
+        a.unsupported_harnesses.join(", ")
     );
     let f = &r.error_kinds.run_failed;
     let _ = writeln!(o, "run_failed ({}): {}", f.source, f.rule);
@@ -1581,6 +1663,14 @@ fn text(r: &Record) -> String {
             num(e.tool_error.count),
             e.tool_error.state,
             e.unsupported_harnesses.join(", ")
+        );
+        let _ = writeln!(
+            o,
+            "  api_error ({}): {} [{}]; unsupported: {}",
+            e.api_error.source,
+            num(e.api_error.count),
+            e.api_error.state,
+            e.api_error_unsupported_harnesses.join(", ")
         );
         let _ = writeln!(
             o,
@@ -1714,8 +1804,18 @@ mod tests {
                 "{}",
                 s.harness()
             );
+            assert_eq!(
+                api_error_marker(s).is_some(),
+                tool_error::api_error_pinned(s),
+                "{}",
+                s.harness()
+            );
         }
         assert_eq!(unsupported_harnesses(), ["agy", "dsh-tui", "omp"]);
+        assert_eq!(
+            api_error_unsupported_harnesses(),
+            ["agy", "codex", "dsh-tui", "omp"]
+        );
     }
 
     fn launch(reason: Option<&str>, exit_code: Option<i64>, signal: Option<&str>) -> Launch {

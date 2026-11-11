@@ -88,6 +88,12 @@ export const INSPECT_TTL_MS = 3000
 // asks before its first call. A sign-in that ends meanwhile is caught by the agent itself: its
 // ACP `auth_required` is MODEL_ACCESS_REQUIRED (adapter.js) and drops this answer at once.
 export const SIGNED_IN_TTL_MS = 5 * 60 * 1000
+// What a status row's `signInCheck` can say: why a sign-in check that ran could not tell.
+const SIGN_IN_CHECKS = new Set(['timeout', 'unreadable'])
+// A connector that is missing because npm could not be reached is tried again after each of
+// these, then left to the timer that checks every few hours (#970): a laptop that started
+// before its network was up does not wait for that timer.
+export const CHECK_RETRY_MS = Object.freeze([1, 5, 15, 60].map(minutes => minutes * 60 * 1000))
 
 // A live field is a reference ({ get() }) in the running fiber; a plain value elsewhere (tests).
 export const flagOf = value => (typeof value?.get === 'function' ? value.get() : value)
@@ -112,12 +118,13 @@ export function nodeCommand() {
  * @param {{ store?: any, cliStore?: any, find?: typeof findCommand, signedIn?: typeof signedInOf, catalogHome?: string, loginSpawn?: typeof spawn, loginTimers?: any, imageSetup?: (launch: any) => Promise<any> }} [deps]
  *   catalogHome: where each agent's models and efforts are kept (beside the adapters by default).
  *   loginSpawn, loginTimers: tests only, a fake CLI process and clock for sign-in attempts.
+ *   checkTimers: tests only, the clock of the retries after a connector check that failed.
  *   imageSetup: tests only, the image run's lockdown check (image.js imageSetup).
  *   account: reads which account a signed-in CLI is on (account.js); consentFile: where the
  *   person's word for each account is kept (consent.js), beside the adapters of the app's own
  *   home by default. A store with another home and no file keeps no record and asks nothing.
  */
-export function apply(ctx, config = {}, { store = new AdapterStore({ log: message => info(ctx, message) }), cliStore = !config.fakeAgent && (process.env.AUTOMAGIK_APP_BROWSER === '1' || process.env.AUTOMAGIK_PNPM) ? new CliStore({ log: message => info(ctx, message) }) : undefined, find = name => findCommand(name), signedIn = signedInOf, catalogHome = store.home ? join(dirname(store.home), 'catalog') : undefined, loginSpawn, loginTimers, imageSetup, account = accountOf, consentFile = typeof store.home === 'string' && store.home === adaptersHome() ? join(dirname(store.home), CONSENT_FILE) : undefined } = {}) {
+export function apply(ctx, config = {}, { store = new AdapterStore({ log: message => info(ctx, message) }), cliStore = !config.fakeAgent && (process.env.AUTOMAGIK_APP_BROWSER === '1' || process.env.AUTOMAGIK_PNPM) ? new CliStore({ log: message => info(ctx, message) }) : undefined, find = name => findCommand(name), signedIn = signedInOf, catalogHome = store.home ? join(dirname(store.home), 'catalog') : undefined, loginSpawn, loginTimers, imageSetup, account = accountOf, consentFile = typeof store.home === 'string' && store.home === adaptersHome() ? join(dirname(store.home), CONSENT_FILE) : undefined, checkTimers = globalThis } = {}) {
   const agents = new Map()
   const log = message => info(ctx, message)
   if (config.fakeAgent) {
@@ -178,6 +185,8 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   const clis = new Map()
   const cliDetails = new Map()
   const signIns = new Map()
+  // Why an agent's last sign-in check could not tell, while its sign-in is unknown.
+  const signInChecks = new Map()
   // Consented sharing (#869, consent.js): a signed-in CLI is used for chats, images and the
   // welcome only once the person said so for that account. `consentStates` is what the last
   // read of each agent meant ('given', 'carried', 'needed'); `accountsSeen` who it was signed in
@@ -267,16 +276,64 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       // Said as a failed install, so the settings page shows why and offers Retry, which comes
       // back here and tries the record again. Only the write error's code, never a path.
       recordWaits.set(spec.adapter, { message: `the account record could not be saved (${consents.saveError ?? 'error'})` })
+      // Nothing can be installed until the record is saved: no retry waits meanwhile.
+      forgetCheckRetry(spec)
       return Promise.resolve()
     }
     recordWaits.delete(spec.adapter)
     return store.update(spec.adapter, spec.bin).then(
       // A connector that landed (or moved up) is announced, so the picker lists its model now.
-      () => { if (store.binOf(spec.adapter, spec.bin)?.version !== before && agents.has(idOf(spec))) publish() },
+      () => {
+        forgetCheckRetry(spec)
+        if (store.binOf(spec.adapter, spec.bin)?.version !== before && agents.has(idOf(spec))) publish()
+      },
       // The store's short message is already redacted and home-relative; the raw installer
       // error is not, so it never reaches the host log.
-      () => { if (!disposed) warn(ctx, `${spec.adapter} not installed: ${store.lastError?.(spec.adapter) ?? 'the install failed'}`) },
+      () => {
+        if (disposed) return
+        warn(ctx, `${spec.adapter} not installed: ${store.lastError?.(spec.adapter) ?? 'the install failed'}`)
+        retryCheckSoon(spec)
+      },
     )
+  }
+  // A connector that is not here because npm could not be reached (#970): the install is tried
+  // again by itself after CHECK_RETRY_MS[0], [1], ... One timer per connector, and only for
+  // that failure on a missing connector: an install that failed for another reason would only
+  // fail again, and a connector that is here goes on while the next check waits for its timer.
+  // One failed check is one step, however many callers waited on it (a turn, the person's
+  // Retry and the timer share the store's one install). Once every step is used the entry
+  // stays, so nothing starts the steps over until an install lands or fails another way.
+  const checkRetries = new Map()
+  const forgetCheckRetry = (spec) => {
+    const entry = checkRetries.get(spec.adapter)
+    if (entry === undefined) return
+    checkTimers.clearTimeout(entry.timer)
+    checkRetries.delete(spec.adapter)
+  }
+  // Whether a retry may install now: the plugin runs, the agent is on with its CLI found, and
+  // its connector is still missing. Read when a failure arrives and again when the timer fires.
+  const wantsConnector = spec => !disposed && enabled(spec) && agents.has(idOf(spec)) && clis.get(idOf(spec)) !== undefined && store.binOf(spec.adapter, spec.bin) === undefined
+  const retryCheckSoon = (spec) => {
+    if (store.lastFailure?.(spec.adapter)?.unreachable === undefined || !wantsConnector(spec)) return forgetCheckRetry(spec)
+    const entry = checkRetries.get(spec.adapter) ?? { tries: 0, timer: undefined }
+    checkRetries.set(spec.adapter, entry)
+    // One already waiting (another caller of the same failed install set it, or this failure
+    // came from a turn or the person's Retry meanwhile), or every step used: the timer that
+    // checks every few hours goes on.
+    if (entry.timer !== undefined || entry.tries >= CHECK_RETRY_MS.length) return
+    const delay = CHECK_RETRY_MS[entry.tries]
+    entry.tries += 1
+    entry.timer = checkTimers.setTimeout(() => {
+      entry.timer = undefined
+      // The CLIs are looked for again first, as the regular check does: one removed since is
+      // no reason to install its connector.
+      if (!disposed) reconcile({ kick: false })
+      // Stopped, turned off, its CLI gone or installed meanwhile: nothing to do, and a later
+      // failure starts from the first step.
+      if (!wantsConnector(spec)) { if (!disposed) checkRetries.delete(spec.adapter); return }
+      void install(spec)
+    }, delay)
+    entry.timer?.unref?.()
   }
   // How `spec` starts now (agents.js launchOf): the adapter installed at this moment, or the
   // CLI itself for a native agent.
@@ -343,7 +400,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       const detail = (spec.cliPackage === undefined ? undefined : cliStore?.find(spec, external)) ?? (external ? { path: external, managed: false } : undefined)
       const cli = detail?.path
       cliDetails.set(id, detail)
-      if (clis.get(id) !== cli) signIns.delete(id)
+      if (clis.get(id) !== cli) { signIns.delete(id); signInChecks.delete(id) }
       clis.set(id, cli)
       const want = enabled(spec) && cli !== undefined
       const have = agents.get(id)
@@ -370,11 +427,25 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     const spec = AGENTS[id]
     const cli = clis.get(id)
     const env = { ...process.env, ...cliEnvironment(spec, cliDetails.get(id)) }
-    const authenticated = cli === undefined ? undefined : isNative(spec) ? await nativeSignedIn(id, fresh) : await signedIn(spec, cli, { env }).catch(() => undefined)
+    // Why a check that ran could not tell (agents.js `signedInOf`): a timeout or an answer it
+    // could not read. Kept only while the sign-in is unknown, for the status row. It is this
+    // probe's own until an answer that is not "signed in" is written, and is written with it
+    // (`noteCheck`, under the same guard): a check of a CLI that was replaced meanwhile says
+    // nothing of the new one, and of two probes of one CLI the one that ends last is the one
+    // both maps hold. A "signed in" answer writes nothing here: the row shows a reason only
+    // while the sign-in is unknown (`statusOf`), so while that answer waits for its account to
+    // be read the row still says what it said, and after it the reason is not shown.
+    let unknown
+    const noteCheck = (answer) => {
+      if (answer === undefined && SIGN_IN_CHECKS.has(unknown)) signInChecks.set(id, unknown)
+      else signInChecks.delete(id)
+    }
+    const authenticated = cli === undefined ? undefined : isNative(spec) ? await nativeSignedIn(id, fresh) : await signedIn(spec, cli, { env, onUnknown: (why) => { unknown = why } }).catch(() => undefined)
     const epoch = nextEpoch(id)
     if (authenticated !== true || consents === undefined || isNative(spec)) {
       if (clis.get(id) === cli) {
         signIns.set(id, authenticated)
+        noteCheck(authenticated)
         noteAccount(id, authenticated, undefined)
       }
       return
@@ -552,6 +623,9 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
         ...(bin && connectorState?.rolledBack ? { rolledBack: connectorState.rolledBack } : {}),
       },
       ...(signIns.get(id) === undefined ? {} : { signedIn: signIns.get(id) }),
+      // No `signedIn`: the last check ran and could not tell, and this is why. Absent when no
+      // check has run yet (or there was nothing to check), so the two are told apart (#971).
+      ...(signIns.get(id) === undefined && signInChecks.get(id) !== undefined ? { signInCheck: signInChecks.get(id) } : {}),
       // Only the state of the person's word for the signed-in account; who it is never rides here.
       ...(signIns.get(id) === true && consentStates.get(id) !== undefined ? { consent: consentStates.get(id) } : {}),
       model: { provider: id, id: DEFAULT_MODEL, name: spec.defaultName, listed },
@@ -673,12 +747,22 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   // is, so the Bot team can apply the model the person chose (`acp-dsh/login-ready`). The
   // number at work is announced too (`acp-dsh/login-active`): the welcome adds it to the busy
   // file, so the app's own restarts wait for an attempt to end.
+  const attemptVersions = new Map()
   const logins = new CliLogins({
+    // Why an attempt failed, for the host log (#970): a fixed class, where the attempt stood,
+    // the CLI's exit and its version. Never what the CLI printed, a link, a code or an account.
+    onFail({ id, cause, phase, exit }) {
+      // The version of the CLI the attempt started, as it was read then (`resolve` below).
+      const version = attemptVersions.get(id)
+      const cli = typeof version === 'string' && /^\d+\.\d+\.\d+[\w.+-]{0,32}$/.test(version) ? `CLI ${version}` : 'CLI version unknown'
+      warn(ctx, `sign-in to ${AGENTS[id]?.defaultName ?? id} failed: ${cause} (${phase}${exit === undefined ? '' : `, ${exit}`}; ${cli})`)
+    },
     ...(loginSpawn ? { spawn: loginSpawn } : {}),
     ...(loginTimers ? { timers: loginTimers, now: () => loginTimers.now() } : {}),
     signedIn,
     resolve(id) {
       reconcile({ kick: false })
+      attemptVersions.set(id, cliDetails.get(id)?.version)
       return { cli: clis.get(id), env: { ...process.env, ...cliEnvironment(AGENTS[id], cliDetails.get(id)) } }
     },
     // `existing`: the CLI was signed in before the attempt, so nobody signed in through it. A
@@ -799,7 +883,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       return await drawImage({ spawn: () => agents.get(IMAGE_AGENT).spawn(), prompt, size, quality, background, signal, ...(timeoutMs === undefined ? {} : { timeoutMs }), name: AGENTS[IMAGE_AGENT].defaultName, log: line => warn(ctx, line) })
     } catch (error) {
       // A run refused as signed out says the CLI's sign-in ended: the next check asks again.
-      if (error?.code === SIGNED_OUT) signIns.delete(IMAGE_AGENT)
+      if (error?.code === SIGNED_OUT) { signIns.delete(IMAGE_AGENT); signInChecks.delete(IMAGE_AGENT) }
       throw error
     }
   }
@@ -1006,6 +1090,8 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     pressure.dispose()
     clearTimeout(first)
     clearInterval(daily)
+    for (const entry of checkRetries.values()) checkTimers.clearTimeout(entry.timer)
+    checkRetries.clear()
     clearInterval(cliChecks)
     logins.dispose()
     // A running adapter install would otherwise outlive DSH and keep writing into its home.

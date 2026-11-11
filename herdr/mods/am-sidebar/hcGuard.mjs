@@ -222,11 +222,12 @@ const realOrNull = (path) => { try { return realpathSync(path); } catch { return
 const SELF_BYTES = (() => { try { return readFileSync(SELF_MODULE); } catch { return null; } })();
 const SELF_GUARD_DIR = realOrNull(GUARD_DIR);
 /**
- * A guard folder this guard can vouch for (#643): its real path is this guard's own folder, or
- * the hcGuard.mjs beside its `hc` entry is byte-equal to this module (the installed am copy).
- * A planted hcGuard.mjs no longer makes a folder a guard.
+ * A guard folder this copy can vouch for (#643): its real path is this module's own guard
+ * folder, or the hcGuard.mjs beside its `hc` entry is byte-equal to this module (the installed
+ * am copy). A planted hcGuard.mjs no longer makes a folder a guard. The one byte-equal rule
+ * (#721): the guard uses it here, and the CLI imports it for realHcPath, so the two cannot drift.
  */
-function isGuardFolder(dir) {
+export function isGuardFolder(dir) {
   if (typeof dir !== "string" || dir === "") return false;
   const real = realOrNull(dir);
   if (!real) return false;

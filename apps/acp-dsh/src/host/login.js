@@ -53,6 +53,39 @@ const deviceStartMessage = 'Codex could not start device sign-in. Check your con
 const expiredMessage = 'Sign-in expired. Try again.'
 const cancelledMessage = 'Sign-in cancelled.'
 
+// Why an attempt failed, as a class for the host log (#970): every failure reads much the same
+// to the person, and what the CLI printed is never kept. The class comes from the fixed message
+// the attempt ends with. The general message covers several ends this cannot tell apart: it is
+// "the CLI exited" when the CLI had, and "unknown" otherwise.
+const FAILURE_CAUSES = new Map([
+  [unavailableMessage, 'no CLI found'],
+  ['The CLI did not start sign-in. Try again.', 'no sign-in link in time'],
+  ['The CLI could not start sign-in. Try again.', 'the CLI could not be started'],
+  ['The CLI returned an unsupported sign-in link. Update it and try again.', 'unsupported sign-in link'],
+  ['The CLI did not confirm sign-in. Try again.', 'the CLI did not confirm the sign-in'],
+  [deviceAccessMessage, 'device-code login is not enabled'],
+  [deviceStartMessage, 'device sign-in did not start'],
+])
+
+/**
+ * What `onFail` is told of an attempt that ends as failed: { id, cause, phase, exit? }. `phase`
+ * is where it stood (`starting`, `waiting` for the person, or `answering` once a code was
+ * given); `exit` is how the CLI ended when it had (`exit 1`, `SIGTERM`). Fixed words and a
+ * number only.
+ */
+function failureOf(flow, message) {
+  const exited = flow.exit
+  const code = Number.isInteger(exited?.code) ? `exit ${exited.code}` : undefined
+  const signal = typeof exited?.signal === 'string' && /^SIG[A-Z0-9]{2,12}$/.test(exited.signal) ? exited.signal : undefined
+  const exit = code ?? signal
+  return {
+    id: flow.id,
+    cause: FAILURE_CAUSES.get(message) ?? (exited === undefined ? 'unknown' : 'the CLI exited'),
+    phase: flow.answering ? 'answering' : flow.status === 'waiting' ? 'waiting' : 'starting',
+    ...(exit === undefined ? {} : { exit }),
+  }
+}
+
 /**
  * Only the official OAuth entry points, never an arbitrary URL printed by a process. A Claude
  * link must ask for the manual code (`code=true`, H5): without it the page sends the code to a
@@ -110,13 +143,15 @@ function blockBrowser() {
  * onChange() is told whenever the number of attempts at work changes (the busy signal).
  * onReady(id, selected, { existing }) is told a confirmed sign-in; `existing` says the CLI was
  * already signed in when the attempt started (no one signed in through it).
+ * onFail({ id, cause, phase, exit? }) is told an attempt that failed, as a class for the log.
  */
 export class CliLogins {
-  constructor({ resolve, signedIn = signedInOf, onReady = () => {}, onChange = () => {}, spawn = spawnProcess, now = Date.now, linkTtlMs = LINK_TTL_MS, startupMs = STARTUP_MS, answerMs = ANSWER_TIMEOUT_MS, retainMs = RETAIN_MS, stateTtlMs = STATE_TTL_MS, timers = globalThis } = {}) {
+  constructor({ resolve, signedIn = signedInOf, onReady = () => {}, onChange = () => {}, onFail = () => {}, spawn = spawnProcess, now = Date.now, linkTtlMs = LINK_TTL_MS, startupMs = STARTUP_MS, answerMs = ANSWER_TIMEOUT_MS, retainMs = RETAIN_MS, stateTtlMs = STATE_TTL_MS, timers = globalThis } = {}) {
     this.resolve = resolve
     this.signedIn = signedIn
     this.onReady = onReady
     this.onChange = onChange
+    this.onFail = onFail
     this.spawn = spawn
     this.now = now
     this.linkTtlMs = linkTtlMs
@@ -314,6 +349,8 @@ export class CliLogins {
     // Only fixed argument vectors are allowed. Even the manual authorization code goes
     // directly to stdin; it can never become a shell argument or an agent prompt.
     flow.child = this.spawn(...batchSafe(selected.cli, args, { env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }))
+    // First of its `close` listeners, so the failure it may end with knows how the CLI ended.
+    flow.child.once('close', (code, signal) => { flow.exit = { code, signal } })
     flow.child.stdin.on('error', () => this.finish(flow, 'failed', failedMessage))
     flow.child.on('error', () => this.finish(flow, 'failed', 'The CLI could not start sign-in. Try again.'))
     flow.child.on('close', code => {
@@ -459,6 +496,8 @@ export class CliLogins {
   // the state go now (H22). Its view stays readable by id for RETAIN_MS.
   finish(flow, status, message) {
     if (!this.active(flow)) return
+    // Read before the attempt's state is cleared below; told after it.
+    const failed = status === 'failed' ? failureOf(flow, message) : undefined
     flow.status = status
     flow.message = message
     flow.url = undefined
@@ -482,6 +521,7 @@ export class CliLogins {
     flow.cancelProtocol = undefined
     flow.retained = this.timer(() => { if (this.flows.get(flow.id) === flow) this.flows.delete(flow.id) }, this.retainMs)
     this.changed()
+    if (failed !== undefined) try { this.onFail(failed) } catch {}
   }
 
   // The plugin stops (a DSH restart or an app quit): the CLI cannot outlive it. The busy signal

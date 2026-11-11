@@ -5,7 +5,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -79,11 +79,41 @@ test("am self doctor says none, and says plainly when neither the pack's entry n
   mkdirSync(dirname(s.settings), { recursive: true });
   writeFileSync(s.settings, `${JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: "echo mine" }] }] } }, null, 2)}\n`);
   const none = s.doctorLine();
-  assert.equal(none.ok, false, "neither is installed: the doctor fails and says why");
+  assert.equal(none.ok, true, "neither is installed: a note that says why, as the pack's doctor says it (#815)");
   assert.match(none.detail, /none: .*settings\.local\.json has no briefing hook; neither the pack's entry \(.*\) nor am's entry \(.*\) is installed$/);
   assert.equal(existsSync(join(s.project, ".claude", "settings.local.json")), true, "doctor wrote nothing");
   s.installAmPart();
   const installed = s.doctorLine();
   assert.equal(installed.ok, true, installed.detail);
   assert.match(installed.detail, /none: .*has no briefing hook$/, "a project with no hook is a note once something is installed");
+});
+
+test("#815: am self doctor reports a malformed or unreadable settings file and goes on; another am home's entry is not this host's", async (t) => {
+  const s = scratch(t);
+  s.installAmPart();
+  mkdirSync(dirname(s.settings), { recursive: true });
+  writeFileSync(s.settings, "{ not json");
+  const bad = doctorSelf({ env: s.env, project: s.project });
+  const badLine = bad.lines.find((l) => l.check === "briefing hook");
+  assert.equal(badLine.ok, true, badLine.detail);
+  assert.match(badLine.detail, /^not checked: .*settings\.local\.json is not valid JSON \(.*\), so this project's briefing hook could not be read$/);
+  assert.ok(bad.lines.indexOf(badLine) < bad.lines.length - 1, "the lines after it are still there");
+  if (process.getuid?.() !== 0) {
+    writeFileSync(s.settings, "{}\n");
+    chmodSync(s.settings, 0o000);
+    try {
+      assert.match(s.doctorLine().detail, /^not checked: .*settings\.local\.json is unreadable \(.*\)/);
+      assert.equal(s.doctorLine().ok, true);
+    } finally { chmodSync(s.settings, 0o644); }
+  }
+  // A hook naming am's entry under another am home: not this host's, so none.
+  const other = join(s.root, "other", ".automagik", "parts", "automagik.am");
+  writeFileSync(s.settings, `${JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: amPartHookCommand(s.app, other) }] }] } }, null, 2)}\n`);
+  assert.match(s.doctorLine().detail, /^none: .*settings\.local\.json has no briefing hook$/);
+  // This host's own am-part hook, with its runner gone: a failure, repaired by am self install.
+  writeFileSync(s.settings, `${JSON.stringify({ hooks: { UserPromptSubmit: [{ hooks: [{ type: "command", command: amPartHookCommand(s.app, s.store) }] }] } }, null, 2)}\n`);
+  rmSync(join(s.current, "bin", "run.sh"));
+  const missing = s.doctorLine();
+  assert.equal(missing.ok, false);
+  assert.equal(missing.fix, "am self install");
 });

@@ -50,6 +50,14 @@ const PERM_REVIEWS = {
   AUTO_REVIEW_DENIED: 'it stopped the action',
 }
 
+// What became of a conversation whose saved level is no longer offered (host: applyGone).
+const PERM_GONE = {
+  narrowed: 'The saved level is no longer offered: this conversation was lowered to the narrowest level that is.',
+  kept: 'The saved level is no longer offered: this conversation already ran no wider than the narrowest level that is, so it was left as it is.',
+  unknown: 'The saved level is no longer offered, and the level this conversation has cannot be compared with those that are: it was left as it is.',
+  held: 'The saved level is no longer offered, and the narrower level could not be set here.',
+}
+
 const permText = value => (typeof value === 'string' ? value : undefined)
 const permTime = value => (typeof value === 'number' && Number.isFinite(value) ? permWhen(value) : undefined)
 
@@ -96,6 +104,7 @@ function levelFacts(row, cli) {
     else if (effective !== undefined) out.push(t('Running as: {level}', { level: effective }))
     else out.push(t('Running as: not known now'))
   }
+  if (typeof row.notOffered === 'string' && Object.hasOwn(PERM_GONE, row.notOffered)) out.push(t(PERM_GONE[row.notOffered]))
   if (row.fallback === true) out.push(t('Runs as Workspace here'))
   // The host compared the two levels by their own keys: two custom ones may differ.
   else if (row.differs === true && row.open === true) out.push(t('The level in force here is not the saved one.'))
@@ -187,6 +196,8 @@ export function PermissionDiagnostics({ actions, roster, Section, Row }) {
   const rows = permissionRows(report, roster)
   if (rows === null) return null
   const partial = report.partial === true
+  // How many conversations with a level not applied the host left out, when it says so.
+  const moreMarked = Number.isInteger(report.moreMarked) && report.moreMarked > 0 ? report.moreMarked : 0
   return h(Section, { title: t('Permissions') },
     rows.length === 0
       ? partial
@@ -197,6 +208,10 @@ export function PermissionDiagnostics({ actions, roster, Section, Row }) {
             h('span', null, row.label),
             h('span', { className: 'bt-set-hint' }, row.level),
             row.agent ? h('span', { className: 'bt-set-hint' }, row.agent) : null))),
-    report.more === true ? h(Row, { label: t('More conversations are open than fit here.') }) : null,
+    moreMarked > 0
+      ? h(Row, { label: t('Conversations with a level not applied that do not fit here: {count}.', { count: moreMarked }) })
+      : report.more === true ? h(Row, { label: t('More conversations are open than fit here.') }) : null,
+    // This window only views the team: the host answered from what it last read.
+    report.viewOnly === true ? h(Row, { label: t('This window only views the team: the saved levels here are as of its last refresh.') }) : null,
     partial && rows.length > 0 ? h(Row, { label: t('Some of this could not be read just now.') }) : null)
 }

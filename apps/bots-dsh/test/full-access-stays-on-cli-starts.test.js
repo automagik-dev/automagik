@@ -341,9 +341,14 @@ test('the same new Bot at Workspace, or with its CLI selected at Full access, gr
 
 // A fresh part (parts.js moveOn), asked for as the person does from the Bot's chat. The fresh
 // Session is not the Bot's until the move ends, so its level is its Bot's, not the default's.
-const freshPart = async ({ rt, archived }) => {
+// The Bot's chat moves to the fresh part before the handoff is sent there (a few awaits
+// later), so the case waits for the whole move (the switch's `done`), not for the chat to move.
+const freshPart = async ({ rt }) => {
   await rt.startFresh('m1')
-  return waitFor(() => (rt.chatOf('m1') !== 'm1' || archived.length > 0 ? rt.chatOf('m1') : undefined))
+  const job = [...rt.switchJobs()].find(entry => entry.botId === 'm1' && entry.roomId === undefined)
+  assert.ok(job, 'the move started')
+  await Promise.race([job.done, new Promise((_, reject) => setTimeout(() => reject(new Error('the move did not end')), 10_000).unref())])
+  return rt.chatOf('m1')
 }
 
 test('a fresh part of a Workspace Bot is kept though the profile default is Full access', async (t) => {
@@ -355,7 +360,8 @@ test('a fresh part of a Workspace Bot is kept though the profile default is Full
   assert.equal(h.archived.includes(current), false, 'the fresh part is not archived')
   assert.deepEqual(h.presets(current), [WRITE])
   assert.ok(h.selected.some(([sessionId, ref]) => sessionId === current && ref === 'deepseek/deepseek-v4-flash'))
-  assert.equal(h.sent.some(entry => entry.sessionId === current), true, 'and it was handed the conversation')
+  // The handoff is sent after the Bot's chat moves to the fresh part: wait for it, bounded.
+  assert.equal(await waitFor(() => (h.sent.some(entry => entry.sessionId === current) ? true : undefined)), true, 'and it was handed the conversation')
 })
 
 test('a fresh part of a Full access Bot whose coding CLI is gone is not kept though the default is Workspace', async (t) => {

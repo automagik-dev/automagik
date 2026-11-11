@@ -13,6 +13,7 @@ import { AgentRun, isStopped, isUnanswered, valuesOf, waited } from './acp.js'
 import { recordDrift } from './backchannel.js'
 import { DEFAULT_MODEL } from './catalog.js'
 import { BRIDGE_NAME, CREDENTIAL_ENV, isAuthRequired, MODEL_ACCESS_REQUIRED, SYNTHETIC_KIND, URL_ENV } from './names.js'
+import { shownText } from './shown-text.js'
 import { agentRoute, answered, boundaryNotice, isHandoff, lastProviderOf, missedBy, replayBlocks, turnStart } from './switch.js'
 import { ImageLinks, savedPathsOf } from './agent-image.js'
 import { callArguments, entered, levelOf, mirrorTool, TOOL_NAME } from './tool.js'
@@ -60,7 +61,11 @@ function settle(tool, ms) {
 }
 
 const failure = (message, code = 'ACP_AGENT') => ({ message, code })
-const finish = (kind, message, code) => ({ type: 'finish', reason: message === undefined ? { kind } : { kind, failure: failure(message, code) } })
+// What a turn that fails says is shown in the chat, and much of it is somebody else's words:
+// the end of an agent's stderr, an error of its protocol, a model id it advertised. Every
+// message goes out through `shownText` (credential shapes masked, the home folder as `~`), here,
+// in the one place a step's end is built, whatever built the sentence (#970).
+const finish = (kind, message, code) => ({ type: 'finish', reason: message === undefined ? { kind } : { kind, failure: failure(typeof message === 'string' ? shownText(message) : message, code) } })
 const FINISH = { end_turn: 'stop', max_tokens: 'max-tokens', max_turn_requests: 'stop', refusal: 'stop' }
 // An agent whose CLI is not signed in says so with ACP's `auth_required`, at the start of its
 // session or of a prompt. The turn fails with its own code, never ACP_AGENT: a sign-in answers
@@ -855,15 +860,39 @@ export class AcpAdapter extends LlmAdapter {
     }
     live = this.live.get(sessionId)
     const last = options.messages.at(-1)
-    const continuing = last?.role === 'tool' && live?.provider === options.provider && live.calls.has(last.toolCallId) && live.open
+    // The step after a mirror call's result continues the agent's turn. The bridge writes result
+    // rows of its own (a DSH tool call's result, or the row that closes a call still open when
+    // its step ended, #957), and one of those can come after the mirror call's result: the
+    // mirror result is looked for among all the tool messages the transcript ends with.
+    const mirrorAnswered = (() => {
+      for (let i = options.messages.length - 1; i >= 0 && options.messages[i]?.role === 'tool'; i--) {
+        if (live?.calls.has(options.messages[i].toolCallId)) return true
+      }
+      return false
+    })()
+    const continuing = mirrorAnswered && live?.provider === options.provider && live.open
     if (continuing) started()
     if (!continuing) {
       if (last?.role === 'tool') {
+        // The agent may still be on the prompt this step belonged to. Nobody is reading it any
+        // more, so it is asked to stop now, and its session is ended if it has not stopped in
+        // the time a cancel gets (`reap`, which also answers whatever it was still asking),
+        // instead of going on unseen until the person's next message (#969).
+        if (live?.run?.busy === true) {
+          void live.run.cancel()
+          this.reap(sessionId, live)
+        }
         yield* blocks.add('text', `${agent.name} was interrupted before it finished, so it is not answering this turn any more.`)
         yield* blocks.close()
         return yield finish('stop')
       }
-      if (live !== undefined && (live.provider !== options.provider || !live.run.alive)) {
+      // A bridge that closed (its process ended and said so) is not coming back: the agent on
+      // that session has lost DSH's tools for good, and would answer this turn without them.
+      // Its session ends here and the turn starts a new one, which the replay carries the chat
+      // to, as for an agent that is no longer alive (#969).
+      const bridgeGone = live?.bridge?.closed === true && this.bridgeOn(agent)
+      if (bridgeGone) this.warn(`${live.name} lost its ${BRIDGE_NAME} bridge: its session was ended and a new one starts`)
+      if (live !== undefined && (live.provider !== options.provider || !live.run.alive || bridgeGone)) {
         this.end(sessionId, live)
         live = undefined
       }
@@ -1090,6 +1119,9 @@ export class AcpAdapter extends LlmAdapter {
         return yield* stopped(live.held)
       }
       if (event.type === 'end' || event.type === 'error') live.open = false
+      // The prompt is over (finished, failed or stopped): nobody waits for a DSH tool call the
+      // bridge still has in flight, so each is stopped; the bridge itself stays for the next turn.
+      if (event.type === 'end' || event.type === 'error' || event.type === 'aborted') this.backchannel?.cancel?.(live.bridge, event.type === 'aborted' ? 'the turn was stopped' : 'the turn ended')
       // Inbound text is logged as the agent said it: DSH does not redact at ingest, and neither
       // does this plugin. The redactor runs at each provider crossing instead — the replay out
       // (`replayBlocks`) and the transcript handed back to a native provider (`crossed`).

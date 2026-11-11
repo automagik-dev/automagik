@@ -283,16 +283,18 @@ hour before `evidence_from`. Retention (RFC 0018, proposed): evidence for 90 day
 whichever comes first, oldest whole day first (`evidence_from` moves past it); closed launches and
 links for 400 days. The rollups stay as they are.
 
-**Recorded failures and pull requests (still schema 3, issue 899).** For
+**Recorded failures and pull requests (still schema 3, issues 899 and 1026).** For
 [`usagemeter outcomes`](#outcomes), `sync` adds in place, the first time it runs: `ev_error`, one
-row per tool failure a harness flagged (its time, kind, source, the harness, repo and branch as
-logged, its launch tag, the folders, and its session and its own id as keyed hashes: no tool
-name, argument, output or error text), kept and pruned with the evidence; `pr`, one row per pull
+row per tool failure (`tool_error`) or model-call failure (`api_error`) a harness flagged (its
+time, kind, source, the harness, repo and branch as logged, its launch tag, the folders, and its
+session and its own id as keyed hashes: no tool name, argument, output, error status or error
+text), kept and pruned with the evidence; `pr`, one row per pull
 request Herdr recorded (project, branch, number, repo, state and its times; no title, author or
 address), kept 400 days; and on `launch` how its terminal ended (`end_reason`, `exit_code`,
 `signal`, `end_source`, `ended_ms`). An older meter reads and writes such a store as before. It
-does not record failures, so every sync stamps how far they go (`errors_through_ms` and the log
-offsets, in `meta`): when another sync ran in between, `errors_from_ms` moves to now. It stamps
+does not record failures, so every sync stamps how far they go (`errors_through_ms`,
+`api_errors_through_ms` and the log offsets, in `meta`): when another sync ran in between,
+`errors_from_ms` or `api_errors_from_ms` moves to now. It stamps
 the store's window too (`errors_counted_from_ms`): a reset by an older meter changes that window
 and empties the tables the failures point into, so the next sync drops the failures kept.
 
@@ -460,38 +462,43 @@ usagemeter outcomes --repo example.com/acme/widgets   # only that repo (repeatab
 usagemeter outcomes --json                            # one record (`v: 1`)
 ```
 
-Recorded failures and time to pull request (issue 899), per window. Like `coverage` it is local
-and read-only, and it is not contract 1: nothing here is in the query envelope.
+Recorded failures and time to pull request (issues 899 and 1026), per window. Like `coverage` it
+is local and read-only, and it is not contract 1: nothing here is in the query envelope.
 
 **Failures are raw counts of facts something else recorded.** They are counts of harness-flagged
 failures, including expected ones (a red test run while working test-first, a grep with no
-match): they are not a quality verdict on their own. The report prints integers per bot, kind,
-role, squad, harness, error kind and source, plus the unattributed by reason. It prints no rate,
-ratio, threshold, label or score; scoring behaviour stays in genie (RFC 0018 (c)).
+match) and usage-limit stops (written after a harness's own retries, so a count of model calls
+that failed for the session, not each retried attempt): they are not a quality verdict on their
+own. The report prints integers per bot, kind, role, squad, harness, error kind and source, plus
+the unattributed by reason. It prints no rate, ratio, threshold, label or score; scoring
+behaviour stays in genie (RFC 0018 (c)).
 
 | `error_kind` | `source` | What counts |
 |---|---|---|
 | `tool_error` | `harness_log` | A tool result the harness itself flagged as failed. **Claude Code:** a `tool_result` block with `is_error: true`, once per `tool_use_id`. **Codex:** an `event_msg` whose payload is `item_completed` and whose item has `status: "failed"` or an `exit_code` that is a non-zero integer, once per item `id` in its thread. |
+| `api_error` | `harness_log` | A model call the harness itself flagged as failed after its own retries (model calls that failed for the session, not each retried attempt, including usage-limit stops). **Claude Code:** a `type: "assistant"` line with top-level `isApiErrorMessage: true` (the JSON boolean), once per top-level line `uuid` (a `<synthetic>` line, which usage already ignores; never counted as a `tool_error`). **Codex:** `unsupported` (rollout JSONL records no model-call failure marker). |
 | `run_failed` | `hc_snapshot` or `workers_ledger` | A launch whose terminal ended on its own with a non-zero exit status or on a signal: `hc_snapshot` from hc's list of finished terminals, `workers_ledger` from an `end` row that copied them once hc no longer lists the terminal. A window's total names the sources its failed runs came from (`hc_snapshot,workers_ledger` for both); with no failed run, the sources of the ends it read. `killed` and `stopped_by_restart` are counted as ends (`run_ends`), never as errors. |
 
-Both markers are pinned by fixtures in `tests/fixtures/tool-errors/` (with the expected ids in
-`expected.json`), and neither is reinterpreted. A tool failure resolves to its launch through the
-same session, label and worktree links as a call, and moves with it when a later ledger row
-links its session.
+The markers are pinned by fixtures in `tests/fixtures/tool-errors/` (with the expected ids in
+`expected.json`), and none is reinterpreted. A harness-flagged failure resolves to its launch
+through the same session, label and worktree links as a call, and moves with it when a later
+ledger row links its session.
 
 **Unknown is never 0.**
 
-- A harness with no pinned marker (omp, dsh-tui, Antigravity) is listed in
-  `unsupported_harnesses`: its tool failures are unknown, and no row gives it a count.
-- `errors_from` is where the recorded tool failures start: the first sync of a meter with this
-  verb (logs read before it had their failures skipped), or the start of the window on a new
-  store. A window that starts before it is `partial`, its count a lower bound. A sync by an
-  older meter (after a rollback) reads logs without recording failures, so the next sync moves
-  `errors_from` to its own time: the gap is unknown.
+- A harness with no pinned marker for a failure kind (omp, dsh-tui, Antigravity for `tool_error`;
+  Codex, omp, dsh-tui, Antigravity for `api_error`) is listed as `unsupported`: its failures of
+  that kind are unknown, and no row gives it a count.
+- `errors_from` and `api_errors_from` are where the recorded `tool_error` and `api_error` counts
+  start: the first sync of a meter that records each kind (logs read before it had those failures
+  skipped), or the start of the window on a new store. A window that starts before a kind's start
+  is `partial` for that kind, its count a lower bound. A sync by an older meter (after a
+  rollback) reads logs without recording that kind, so the next sync moves its start to its own
+  time: the gap is unknown.
 - A reset by that older meter (a wider `--days`, `--backfill`) empties the tables a failure's
   bot, harness and repo are read from and leaves the failures. They are never read against
-  those tables again: `tool_error` is `not_recorded` until the next sync, which drops them and
-  starts `errors_from` at its own time.
+  those tables again: `tool_error` and `api_error` are `not_recorded` until the next sync, which
+  drops them and starts `errors_from` and `api_errors_from` at its own time.
 - A launch whose end hc no longer listed when a sync next looked is `unknown` in `run_ends`, and
   `run_failed` is then `partial`.
 - A store no sync of this meter has prepared is `not_recorded` (the report creates nothing), and

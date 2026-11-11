@@ -4,6 +4,7 @@
 // set one working folder. A level is DSH's preset name; DSH's Auto review is one while
 // its layer is loaded (../shared/permission-levels.js).
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { createHash } from 'node:crypto'
 import { AUTO, AUTO_FALLBACK } from '../shared/permission-levels.js'
 import { refusal } from './refusal.js'
 import { narrowerLevel, narrowestOffered, rankOf } from './permission-rank.js'
@@ -32,9 +33,45 @@ export function install(rt) {
     if (on) fellBack.add(key)
     else fellBack.delete(key)
   }
-  const permissionKey = () => `${presets()?.catalog().options.map(option => option.value).join(',') ?? ''}:${[...fellBack].sort().join(',')}`
+  // What each offered level allows goes in too (its rank), and what became of each Session
+  // whose saved level is no longer offered: a preset that keeps its name and changes what
+  // it allows, or a Session lowered meanwhile, reaches the windows as a catalog change does.
+  const permissionKey = () => {
+    const service = presets()
+    const options = service?.catalog().options.map(option => `${option.value}=${rankOf(service, option.value) ?? '?'}`).join(',') ?? ''
+    // And what each Bot whose saved level is gone is told to run as (permissionFallbackOf):
+    // a level DSH itself changed on its chat reaches the windows too: its rank, whether it
+    // is offered, and a digest of its name, never what it allows. The digest is there to
+    // tell one name from another, so two levels of the same rank still change the key; it
+    // hides nothing, since the view already carries the name (`permissionRuns`).
+    const runs = Object.values(rt.state?.bots ?? {}).filter(bot => typeof bot.permission === 'string' && bot.permission !== AUTO && service !== undefined && !offers(bot.permission)).map((bot) => {
+      const level = levelRead(rt.chatOf(bot.id))
+      return `${bot.id}~${level === undefined ? '-' : `${rankOf(service, level) ?? '?'}${offers(level) ? 'o' : 'x'}${digest(level)}`}`
+    })
+    return `${options}:${[...fellBack].sort().join(',')}:${[...goneOf].map(([id, outcome]) => `${id}=${outcome}`).sort().join(',')}:${runs.sort().join(',')}`
+  }
+  const digest = text => createHash('sha256').update(text).digest('hex').slice(0, 16)
+  // The level DSH reports for a Session it has loaded, or undefined: nothing is opened.
+  function levelRead(sessionId) {
+    try {
+      const session = (ctx.sessions?.list?.() ?? []).find(loaded => loaded?.id === sessionId)
+      const level = session === undefined ? undefined : presets().current(session)
+      return typeof level === 'string' && level !== '' ? level : undefined
+    } catch {
+      return undefined
+    }
+  }
   // `{ permissionFallback }` for a Bot's or group's view when its Auto runs as workspace-write.
+  // `{ permissionNotOffered }` when its saved level is one DSH no longer offers (#1001):
+  // the level stays saved, and the view tells it, with the level the Bot's own chat reads
+  // now when DSH has that Session loaded (`permissionRuns`). A group's members each keep
+  // their own, so a group names none.
   function permissionFallbackOf(kind, owner) {
+    if (typeof owner.permission === 'string' && owner.permission !== AUTO) {
+      if (presets() === undefined || offers(owner.permission)) return {}
+      const runs = kind === 'bot' ? levelRead(rt.chatOf(owner.id)) : undefined
+      return { permissionNotOffered: true, ...(runs === undefined ? {} : { permissionRuns: runs }) }
+    }
     if (owner.permission !== AUTO) return {}
     const service = presets()
     const fallback = service === undefined || !autoOffered(service) || fellBack.has(`${kind}:${owner.id}`)
@@ -115,33 +152,99 @@ export function install(rt) {
       return true
     }
   }
+  // What became of a Session whose saved level DSH no longer offers, at its last apply
+  // (#1001): `narrowed` to the narrowest level offered, `kept` (it already ran no wider),
+  // `unknown` (its level could not be compared, so it was left as it was) or `held` (the
+  // narrower level could not be set, so no tool runs there). In memory, as the marks are.
+  const goneOf = new Map()
+  // A saved level DSH no longer offers cannot be set, and is not rewritten: the person
+  // chose it. A Session that already runs goes to the narrowest level DSH still offers,
+  // and only when that is proven to narrow it: DSH reports a level for the Session that
+  // can be ranked, and the narrowest allows less. One that already runs no wider is left
+  // as it is. One whose level cannot be read or ranked (a preset DSH no longer resolves)
+  // is never set to anything: nothing proves the narrowest offered allows no more than
+  // what it has, so it keeps the level it had, as before. Resolves whether the Session
+  // was settled here; false leaves the apply to fail as it always did.
+  async function applyGone(sessionId, session) {
+    const service = presets()
+    const target = session ?? (await rt.resolveAgent(sessionId)).session
+    const narrowest = narrowestOffered(service)
+    let has
+    try { has = service.current(target) } catch {}
+    const [to, from] = [narrowest === undefined ? undefined : rankOf(service, narrowest), typeof has === 'string' ? rankOf(service, has) : undefined]
+    if (to === undefined || from === undefined) {
+      // Not comparable now. A Session held for a set that failed stays held: it was wider.
+      if (goneOf.get(sessionId) !== 'held') goneOf.set(sessionId, 'unknown')
+      return false
+    }
+    if (to >= from) {
+      goneOf.set(sessionId, 'kept')
+      return false
+    }
+    try {
+      // Auto as the narrowest is DSH's own while it holds, else workspace-write (applyLevel).
+      await applyLevel(sessionId, narrowest, target)
+    } catch (error) {
+      goneOf.set(sessionId, 'held')
+      mark(sessionId, narrowest)
+      throw error
+    }
+    goneOf.set(sessionId, 'narrowed')
+    unapplied.delete(sessionId)
+    return true
+  }
   // One apply of `level` on a Session, inside its serial job. A Session DSH will not open
-  // while Auto review is off is not marked: nothing runs there (autoClosed). Nor is one
-  // whose saved level DSH no longer offers: no try could ever set it, so the Session is
-  // left as it always was, warned about, until the person picks a level again.
-  async function applyMarked(sessionId, level, session) {
+  // while Auto review is off is not marked: nothing runs there (autoClosed). One whose saved
+  // level DSH no longer offers is lowered where that is proven to narrow it (applyGone);
+  // otherwise no try could ever set the level, so the Session is left as it always was,
+  // warned about. `start`: a Session about to start work is never lowered in its place:
+  // its start is refused (startRefusal), as before.
+  async function applyMarked(sessionId, level, session, { start = false } = {}) {
+    const gone = !offers(level)
+    if (!gone) goneOf.delete(sessionId)
+    else if (!start && !starting.has(sessionId)) {
+      const settled = await applyGone(sessionId, session)
+      if (settled) return false
+      // Held for a narrower level that could not be set: still held, and still refused.
+      if (goneOf.get(sessionId) === 'held' && unapplied.has(sessionId)) throw refusal(notSet(unapplied.get(sessionId).level))
+    }
     try {
       const held = await applyLevel(sessionId, level, session)
       unapplied.delete(sessionId)
       return held
     } catch (error) {
       if (error?.autoClosed !== true && offers(level)) mark(sessionId, level)
-      else if (error?.autoClosed !== true) unapplied.delete(sessionId)
+      // A Session held because the narrower level could not be set stays held: a start
+      // refused on it (a greeting tried again) must not let its tools go.
+      else if (error?.autoClosed !== true && goneOf.get(sessionId) !== 'held') unapplied.delete(sessionId)
       throw error
     }
+  }
+  // Sessions about to take their first turn (startTask): the re-apply DSH's announce asks
+  // for must not lower one in place of the refusal its start gets.
+  const starting = new Set()
+  function startingSession(sessionId) {
+    starting.add(sessionId)
+    return () => starting.delete(sessionId)
+  }
+  // Before a Session is made for work that starts by itself: a saved level DSH no longer
+  // offers refuses it there, so no Session is opened for it.
+  function assertLevelOffered(name) {
+    if (presets() === undefined || !name || offers(name)) return
+    throw startRefusal(name)
   }
 
   // Sets the level on one of the Bot's Sessions: its group's there, else its own; a Bot
   // without one keeps DSH's default. `room` is for a group Session not indexed yet. The
   // level is read when the apply runs, not when it is queued. `start`: the Session is
   // about to start work, so a level that does not hold refuses it (startPermission).
-  async function applyPermission(bot, sessionId, room = roomOfSession(sessionId), session, { start = false } = {}) {
+  async function applyPermission(bot, sessionId, room = roomOfSession(sessionId), session, { start = false, starts = false } = {}) {
     if (start) return startPermission(bot, sessionId, room, session)
     if (presets() === undefined) return
     return serial(sessionId, async () => {
       const name = room?.permission ?? bot.permission
       if (!name) return
-      const held = await applyMarked(sessionId, name, session)
+      const held = await applyMarked(sessionId, name, session, { start: starts })
       markFallback(room?.permission ? `room:${room.id}` : `bot:${bot.id}`, !held)
     })
   }
@@ -360,7 +463,7 @@ export function install(rt) {
   // Sets a task Session's level, read when the apply runs, not when it is queued, so a
   // lower level picked meanwhile lands last. The fallback mark stays the Bot's and the
   // group's own: a task does not mark them. Resolves whether the Session is a task.
-  async function applyTaskPermission(sessionId, session, { start = false } = {}) {
+  async function applyTaskPermission(sessionId, session, { start = false, starts = false } = {}) {
     if (start) return startTaskPermission(sessionId, session)
     if (taskOf(sessionId) === undefined) return false
     const service = presets()
@@ -373,7 +476,7 @@ export function install(rt) {
         mark(sessionId, level ?? narrowestOffered(service) ?? AUTO_FALLBACK)
         throw refusal(UNPROVEN)
       }
-      if (level) await applyMarked(sessionId, level, session)
+      if (level) await applyMarked(sessionId, level, session, { start: starts })
       // Compared with its parent and found no wider: nothing to set, and nothing holds it.
       else if (task?.from === undefined && task?.levelTaskId !== undefined) unapplied.delete(sessionId)
       // No level could be ranked: the task keeps its own, not a default that may be wider.
@@ -403,7 +506,7 @@ export function install(rt) {
   // refusal when its level does not hold.
   async function startPermission(bot, sessionId, room, session) {
     try {
-      await applyPermission(bot, sessionId, room, session)
+      await applyPermission(bot, sessionId, room, session, { starts: true })
     } catch (error) {
       rt.warn('ds-bot: permission for %s not applied on %s: %s', bot.name, sessionId, error)
       throw startRefusal(room?.permission ?? bot.permission, error)
@@ -412,7 +515,7 @@ export function install(rt) {
   // applyTaskPermission with `start`, for a task about to take its first turn, the same way.
   async function startTaskPermission(sessionId, session) {
     try {
-      return await applyTaskPermission(sessionId, session)
+      return await applyTaskPermission(sessionId, session, { starts: true })
     } catch (error) {
       rt.warn('ds-bot: permission for the task %s not applied: %s', sessionId, error)
       const task = taskOf(sessionId)
@@ -774,6 +877,9 @@ export function install(rt) {
         out.saved = room?.permission ?? bot?.permission
         out.source = room?.permission ? 'group' : bot?.permission ? 'bot' : 'none'
       }
+      // The saved level is one DSH no longer offers: what became of this Session (applyGone),
+      // or `unknown` while no apply has said.
+      if (service !== undefined && typeof out.saved === 'string' && !offers(out.saved)) out.gone = goneOf.get(sessionId) ?? 'unknown'
       if (service !== undefined && session !== undefined) {
         try { out.effective = service.current(session) } catch {}
       }
@@ -821,5 +927,5 @@ export function install(rt) {
   // The Sessions that carry the mark now, as a fresh list.
   const unappliedSessions = () => [...unapplied.keys()]
 
-  Object.assign(rt, { sessionWide, permissionFactsOf, unappliedSessions, permissionCatalog, permissionFallbackOf, permissionKey, autoClosed, applyPermission, applyTaskPermission, levelHolds, reapplyTasks, capTasks, taskOfRoom, inToolCall, callerGroup, callerTask, assertTaskDepth, taskForebears, taskLevelOf, forgetTaskPermission, checkPreset, setPermission, inheritedPermission, cleanRoomPermission, setRoomPermission })
+  Object.assign(rt, { sessionWide, permissionFactsOf, unappliedSessions, permissionCatalog, permissionFallbackOf, permissionKey, autoClosed, applyPermission, applyTaskPermission, levelHolds, reapplyTasks, capTasks, taskOfRoom, inToolCall, callerGroup, callerTask, assertTaskDepth, taskForebears, taskLevelOf, forgetTaskPermission, checkPreset, startingSession, assertLevelOffered, setPermission, inheritedPermission, cleanRoomPermission, setRoomPermission })
 }

@@ -1645,6 +1645,16 @@
   "No Bot conversation is open.": "Nenhuma conversa de Bot está aberta.",
   "The permission level of a conversation shows here while it is open.": "O nível de permissão de uma conversa aparece aqui enquanto a conversa está aberta.",
   "More conversations are open than fit here.": "Há mais conversas abertas do que cabem aqui.",
+  "Conversations with a level not applied that do not fit here: {count}.": "Conversas com um nível não aplicado que não cabem aqui: {count}.",
+  "This window only views the team: the saved levels here are as of its last refresh.": "Esta janela só visualiza a equipe: os níveis salvos aqui são os da última atualização desta janela.",
+  "Saved level: {level}. DeepSeek Harness no longer offers it.": "Nível salvo: {level}. O DeepSeek Harness não o oferece mais.",
+  "This conversation runs as {level} now.": "Esta conversa roda como {level} agora.",
+  "Each conversation keeps the level it has now, or a narrower one. Settings → Feedback lists them.": "Cada conversa mantém o nível que tem agora, ou um mais restrito. Configurações → Feedback lista cada uma.",
+  "Pick a level to settle it. If DeepSeek Harness offers the saved level again, it is used again by itself.": "Escolha um nível para resolver. Se o DeepSeek Harness voltar a oferecer o nível salvo, o nível salvo volta a valer sozinho.",
+  "The saved level is no longer offered: this conversation was lowered to the narrowest level that is.": "O nível salvo não é mais oferecido: esta conversa foi reduzida ao nível mais restrito ainda oferecido.",
+  "The saved level is no longer offered: this conversation already ran no wider than the narrowest level that is, so it was left as it is.": "O nível salvo não é mais oferecido: esta conversa já não rodava com mais acesso que o nível mais restrito ainda oferecido, então ficou como está.",
+  "The saved level is no longer offered, and the level this conversation has cannot be compared with those that are: it was left as it is.": "O nível salvo não é mais oferecido, e o nível que esta conversa tem não pode ser comparado com os oferecidos: ficou como está.",
+  "The saved level is no longer offered, and the narrower level could not be set here.": "O nível salvo não é mais oferecido, e não foi possível definir aqui o nível mais restrito.",
   "A custom level": "Um nível personalizado",
   "Not applied: {level} could not be set on this conversation ({time}). Tools may be held back here until it is.": "Não aplicado: não foi possível definir {level} nesta conversa ({time}). As ferramentas podem ficar retidas aqui até que isso aconteça.",
   "The level in force here is not the saved one.": "O nível em vigor aqui não é o nível salvo.",
@@ -1657,5 +1667,8 @@
   "The agent": "O agente",
   "{cli} is in its mode \"{mode}\" here, not its no-ask mode.": "O {cli} está no modo \"{mode}\" aqui, e não no modo sem perguntas.",
   "This Bot has Auto (full access) on its coding CLI, which is not available now, so nothing was started on another model. Fix the CLI or sign in to it, or pick another model for the Bot yourself.": "Este Bot tem Automático (acesso total) na CLI de programação que usa, que não está disponível agora, então nada foi iniciado em outro modelo. Corrija a CLI ou faça login na CLI, ou escolha você outro modelo para o Bot.",
-  "The model failed and no other model answered in its place: this Bot has Auto (full access) on its coding CLI and stays there. Fix the CLI or sign in to it, or pick another model for the Bot yourself.": "O modelo falhou e nenhum outro modelo respondeu no lugar: este Bot tem Automático (acesso total) na CLI de programação que usa e continua nessa CLI. Corrija a CLI ou faça login na CLI, ou escolha você outro modelo para o Bot."
+  "The model failed and no other model answered in its place: this Bot has Auto (full access) on its coding CLI and stays there. Fix the CLI or sign in to it, or pick another model for the Bot yourself.": "O modelo falhou e nenhum outro modelo respondeu no lugar: este Bot tem Automático (acesso total) na CLI de programação que usa e continua nessa CLI. Corrija a CLI ou faça login na CLI, ou escolha você outro modelo para o Bot.",
+  "Session {session} cannot join {bot} because this window cannot change the Bot team now. {reason}": "A Sessão {session} não pode entrar em {bot} porque esta janela não pode alterar a equipe de Bots agora. {reason}",
+  "{bot} changed while Session {session} was joining it (another window or an edit). For the Bot team: Nothing was changed; try again. The native preset of Session {session} was set to \"{preset}\" before this refusal.": "{bot} mudou enquanto a Sessão {session} entrava na equipe (outra janela ou uma edição). Na equipe de Bots: nada foi alterado; tente de novo. A predefinição nativa da Sessão {session} foi definida como \"{preset}\" antes desta recusa.",
+  "{bot} changed while Session {session} was being saved. For the Bot team: Nothing was changed; try again. The native preset of Session {session} was set to \"{preset}\" before this refusal.": "{bot} mudou enquanto a Sessão {session} era salva. Na equipe de Bots: nada foi alterado; tente de novo. A predefinição nativa da Sessão {session} foi definida como \"{preset}\" antes desta recusa."
 }

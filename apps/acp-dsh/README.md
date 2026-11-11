@@ -56,7 +56,16 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   before the body runs. A denial is `AUTO_REVIEW_DENIED`, a failed reviewer refuses with
   `AUTO_REVIEW_FAILED`, a review past its deadline is `AUTO_REVIEW_TIMEOUT`, and the call never
   runs. A Manual or Full call with no open step is `BRIDGE_NO_STEP`; one whose advertisement or
-  call row cannot be written is `BRIDGE_RECORD_FAILED`, and the call does not run. The reviewer
+  call row cannot be written is `BRIDGE_RECORD_FAILED`, and the call does not run. **A call that
+  outlives its step (#957).** The agent runs its calls in parallel, and the bridge puts no
+  deadline on one (a long wait, a slow command and an open approval dialog are legitimate), so
+  DSH can end the step a call was recorded in while it still runs. The write guard below then
+  closes it before the `step/end` row and drops its late result; the agent still gets the real
+  answer. Each call has its own abort controller: Stop, the end of its turn and a caller that
+  went away (an MCP `notifications/cancelled`, a closed request) stop that call as
+  `BRIDGE_CANCELLED` and keep the bridge. A call whose `tool/call` row cannot be written is
+  answered with DSH's own not-started row, and a bridge revoked with a call in flight keeps
+  the guard until that call is over. The reviewer
   goes to the same non-agent side model as a Session title. Manual asks (one dialog), Full
   access does not. A Session that moves between providers carries its transcript
   redacted at each crossing — the replay out to an agent, and the transcript handed back to a
@@ -231,11 +240,11 @@ A settings page reads the agents through this host service; the plugin stays hos
 
 | Method | Does |
 |---|---|
-| `status()` | Each agent: `{ id, key, name, on, cli: { found, installUrl, signInHint?, state, managed, version?, error?, diagnostic?, logPath?, updating? }, connector: { state, native?, version?, error?, diagnostic?, logPath?, updating?, previous?, rolledBack? }, signedIn?, consent?, model: { provider, id, name, listed }, restartNeeded }`. CLI state is `missing`, `installing`, `failed` or `ready`; connector state is `off`, `no-cli`, `installing`, `failed` or `ready`. `connector.previous` is the release a failed start goes back to, while it is on disk; `connector.rolledBack` is `{ from, to, at, reason }` while a release that failed to start is held back. A failed connector install carries `error`, and with them `diagnostic` (the end of the installer's output) and `logPath` (the file it was written to, shown from the home folder), as a failed CLI install does. Errors are redacted. Spawns nothing. |
+| `status()` | Each agent: `{ id, key, name, on, cli: { found, installUrl, signInHint?, state, managed, version?, error?, diagnostic?, logPath?, updating? }, connector: { state, native?, version?, error?, diagnostic?, logPath?, updating?, previous?, rolledBack? }, signedIn?, signInCheck?, consent?, model: { provider, id, name, listed }, restartNeeded }`. CLI state is `missing`, `installing`, `failed` or `ready`; connector state is `off`, `no-cli`, `installing`, `failed` or `ready`. `connector.previous` is the release a failed start goes back to, while it is on disk; `connector.rolledBack` is `{ from, to, at, reason }` while a release that failed to start is held back. A failed connector install carries `error`, and with them `diagnostic` (the end of the installer's output) and `logPath` (the file it was written to, shown from the home folder), as a failed CLI install does. `signedIn` is absent while the sign-in is unknown; `signInCheck` then says why the last check of the CLI's status command could not tell: `timeout` (the CLI was ended after 8 seconds) or `unreadable` (it could not be run, or answered something this does not read). Neither field: nothing is known of a check (none has run yet, or the agent has no status command: a native agent's sign-in comes from its own ACP session). Errors are redacted. Spawns nothing. |
 | `inspect(id)` | One agent's `status()` row with a fresh sign-in check, for a Bot about to be put on it. Asks that CLI's sign-in status only; installs, enables and starts nothing. Simultaneous checks share one probe. An answer stands for 3 seconds, and a confirmed sign-in for 5 minutes, since the check starts the whole CLI; `refresh()` clears it, and so does the agent itself saying it is signed out (ACP `auth_required`). Undefined for an id that is no agent here. |
 | `refresh()` | Looks for the CLIs again (one installed after DSH started is offered now), then asks each CLI whether it is signed in (`claude auth status --json`, of which only `loggedIn` is read; `codex login status`, by its exit code). No agent turn. |
 | `retry(id)` | Retries the required CLI and its connector, and answers at once. Does not turn its model switch on. |
-| `loginStart(id, { label? })` | Starts the CLI's own sign-in (`src/host/login.js`), or answers the attempt already at work for that agent. Codex: a device code through `codex app-server`; Claude Code: `claude auth login --claudeai`, whose link must ask for the manual code (`code=true`). Only the official authorization pages are relayed. `label` names the view that opened it (a Bot id), for a cancel confirmation; it is not an access check. |
+| `loginStart(id, { label? })` | Starts the CLI's own sign-in (`src/host/login.js`), or answers the attempt already at work for that agent. Codex: a device code through `codex app-server`; Claude Code: `claude auth login --claudeai`, whose link must ask for the manual code (`code=true`). Only the official authorization pages are relayed. `label` names the view that opened it (a Bot id), for a cancel confirmation; it is not an access check. An attempt that fails writes one line to the host log: a fixed class (no CLI found, no sign-in link in time, unsupported sign-in link, the CLI exited, the CLI could not be started, the CLI did not confirm the sign-in, device-code login is not enabled, device sign-in did not start, or unknown), where the attempt stood, how the CLI ended, and the version the CLI had when the attempt started. Never what the CLI printed. |
 | `loginCurrent(id)` | The attempt at work for that agent, from any view, or undefined. Never starts or cancels one. |
 | `loginStatus(id, attemptId)` / `loginAnswer(id, attemptId, value)` / `loginCancel(id, attemptId)` | Reads an attempt (an ended one stays readable for 60 seconds), sends Claude's pasted `code#state` to the CLI (which then has 90 seconds to confirm), or ends it. |
 | `loginTextMatches(text)` | Whether a text carries a Claude sign-in state shown in the last 24 hours. Only a boolean: the states are kept as keyed hashes in memory. |
@@ -423,7 +432,15 @@ the durable attachment and answers the agent's MCP call with ACP image content
 (`{ type: 'image', data, mimeType }`), beside the text it already carried; an inline image block
 passes through as the base64 it already is, never encoded twice, when it is `image/png`,
 `image/jpeg`, `image/gif` or `image/webp` and at most 5 MiB decoded; anything else becomes a
-one-line text placeholder saying why. The agent's own call that answers with an image keeps the
+one-line text placeholder saying why. So does an attachment the store has not read in time:
+the reads of one result have 10 seconds together (after a read of 9, the next has 1), the read
+still running then is aborted and the ones after it are not started. An image nested deeper
+than the result's content (inside a resource, say) is reported with the same placeholder and
+never sent; the search for those reads 16 levels and 20 000 values, plain fields only (never
+bytes, and no field computed on reading is followed), and a result
+it could not read to its end says so in one more line (so does a text-only result that large).
+For a nested image and for an attachment's reference, a placeholder repeats the media type
+only when it is a plain `type/subtype`. The agent's own call that answers with an image keeps the
 same picture in its mirror result, stored once in DSH's attachment store as
 `{ type: 'image', attachment }`, so the chat's card, the stored result and a later replay show it;
 with no attachment store mounted the call keeps its text result rather than writing inline base64
@@ -504,6 +521,16 @@ An install still running when DSH quits is killed with everything it started and
 removed; one a killed DSH left behind is removed at the next start.
 Until the first install lands, the agent lists no model; a Session already on it says the
 adapter is being installed, with the last install error.
+
+**No network at the first start (#970).** The check for the newest release is a request to
+npm. When it gets no answer (a name that does not resolve, a refused or dropped connection,
+the check's own 15-second deadline: a closed list of connection failures) and the connector
+is not installed yet, the install is tried again by itself after 1, 5, 15 and 60 minutes, then
+by the regular check. One failed check is one step, whoever waited on it; a retry installs
+only while the agent is on, its CLI found and its connector still missing. An answer npm did
+give (any status), any other install failure and a connector that is installed are not retried
+sooner. What `status()` and a turn say of the failure is unchanged (the installer's own
+words); a plain sentence for it belongs to the settings page and its translations.
 
 ## Check it
 
