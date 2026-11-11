@@ -295,6 +295,8 @@ export const PT_BR = {
   'Signed in to {name}.': 'Login feito no {name}.',
   'Not signed in to {name}. Sign in from a Bot\'s chat.': 'Sem login no {name}. Entre pelo chat de um Bot.',
   'Or run {command} in a terminal, then check again.': 'Ou rode {command} em um terminal e verifique de novo.',
+  'Not signed in to {name}. Run {command} in a terminal, then check again.': 'Sem login no {name}. Rode {command} em um terminal e verifique de novo.',
+  'Turning it on lets Automagik use the sign-in {name} already has on this computer.': 'Ao ligar, o Automagik passa a usar o login que o {name} já tem neste computador.',
   'The sign-in to {name} has not been checked yet.': 'O login no {name} ainda não foi verificado.',
   'Sign in': 'Entrar',
   'No Bot chat to sign in from here. Run {command} in a terminal instead.': 'Não há chat de Bot para entrar por aqui. Rode {command} em um terminal.',

@@ -216,7 +216,11 @@ export function loginPathOf(text, marker) {
 }
 
 /**
- * Run as `sh -c AGENT_PATH_SH sh <agent> <login PATH or nothing> [<folders first>]`. The PATH a
+ * Run as `sh -c AGENT_PATH_SH sh <agent> <login PATH or nothing> [<folders first>]`. On macOS
+ * (`uname -s` = Darwin), checks `security show-keychain-info` first (`command -v security`, else
+ * `/usr/bin/security`) and exits 4 with its first error line when it exits non-zero (#1033: an
+ * SSH-born herdr-core has no login keychain access).
+ * The PATH a
  * pane there gets: the folders first (a project's pane-env PATH_PREPEND, #582; none: nothing), then the login shell's, then what hc's own PATH adds (nothing that works today is lost), or the
  * other way round when hc's own PATH finds the agent as a file, so a machine that works keeps
  * the same agent and interpreter (#436); then the user bin folders that exist (a profile that
@@ -224,7 +228,13 @@ export function loginPathOf(text, marker) {
  * real file (npm's <prefix>/bin holds its node). Prints that PATH, the agent's absolute file and
  * its first line; exit 3 when no such file. The words are data here: none is ever evaluated.
  */
-export const AGENT_PATH_SH = `agent=$1 path= first=$2 rest=$PATH pre=$3
+export const AGENT_PATH_SH = `if [ "$(uname -s 2>/dev/null)" = Darwin ]; then
+  sec=$(command -v security 2>/dev/null); [ -x "$sec" ] || sec=/usr/bin/security
+  if [ -x "$sec" ]; then
+    err=$("$sec" show-keychain-info 2>&1) || { printf '%s\\n' "$err" | head -n 1; exit 4; }
+  fi
+fi
+agent=$1 path= first=$2 rest=$PATH pre=$3
 case $(command -v "$agent" 2>/dev/null) in /*) first=$PATH rest=$2 ;; esac
 add() {
   case $1 in /*) ;; *) return ;; esac
@@ -247,7 +257,8 @@ printf '%s\\n%s\\n%s\\n' "$path" "$file" "$(head -c 256 "$real" 2>/dev/null | he
  * folders put first, paneEnvOf's; null: none): `exec(command, args, { timeout })`
  * runs one program there (hc exec) and resolves { code, stdout, stderr }, code -1 for no answer.
  * Resolves { state: "found", path, file, login } (path: the PATH to start it with; login: whether
- * the login shell answered, "timed out" when it was too slow), { state: "missing", login },
+ * the login shell answered, "timed out" when it was too slow), { state: "no-keychain", detail, login }
+ * (macOS `security show-keychain-info` failed, #1033), { state: "missing", login },
  * { state: "no-interpreter", file, interpreter, login } (its #!/usr/bin/env program isn't on that
  * PATH, so env would fail in the pane) or { state: "away", why }. A login shell that is slow, broken
  * or silent is not a failure: the rest still answers. A machine that doesn't answer is.
@@ -262,6 +273,7 @@ export async function agentOnMachine(exec, program, { wait = 10, prepend = null 
   const login = path !== null ? true : timedOut ? "timed out" : false;
   const seen = await exec("sh", ["-c", AGENT_PATH_SH, "sh", program, path ?? "", ...(prepend ? [prepend] : [])], { timeout: wait });
   if (seen.code === -1) return { state: "away", why: seen.stderr };
+  if (seen.code === 4) return { state: "no-keychain", detail: seen.stdout.trim(), login };
   if (seen.code !== 0) return { state: "missing", login };
   const [runPath, file, first] = seen.stdout.split("\n");
   const interpreter = envInterpreter(first);

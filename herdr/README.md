@@ -615,7 +615,11 @@ automagik-herdr dsh-tui install | update | uninstall | doctor
   is refused by name, even when the login shell's PATH holds a working copy: remove or fix that
   copy. A login shell
   that is slow or prints no PATH leaves a warning, not a refusal; profile output is only ever read as
-  text. A session id the pane carries is resumed by id
+  text. On a linked macOS machine (`uname -s` is `Darwin`), the check also runs `security show-keychain-info`
+  there before writing any files, starting a pane or ending an old one, and refuses when `herdr-core`
+  has no access to the login keychain (for example when an incoming SSH connection started it outside
+  the desktop GUI session, which leaves new terminals without Claude Code or `gh` login;
+  see [macOS desktop session and login keychain](#macos-desktop-session-and-login-keychain-for-herdr-core)). A session id the pane carries is resumed by id
   (`--resume`); with none, `restart` refuses unless `--force`, as the agent's own "latest" may be a
   conversation started there by hand. A pane that reports
   no status to hc (Hermes) can't say whether it is waiting for an approval, so `restart` refuses
@@ -1539,6 +1543,55 @@ already running may need a restart to load the hook: `automagik-herdr restart <b
   install.sh needs Node. The sidebar works without either, but its update check needs Node.
 - herdr-core's typed notes left on (`~/.config/herdr-core/config.toml` must not say
   `notes = false`).
+
+### macOS desktop session and login keychain for herdr-core
+
+On macOS, `herdr-core serve` and the `herdr-core hold` processes that hold terminal PTYs must be
+started from a desktop GUI (`Aqua`) terminal so they inherit access to the logged-in user's macOS
+login keychain (`security show-keychain-info` exits `0`). (`launchctl managername` is not the check
+for an already-running holder: daemonized holders report `Background` even when started from the
+desktop and still holding login keychain access.) When `herdr-core` is not running and the first
+client to reach it arrives over SSH (such as a linked machine's `hc … --on <mac>`, which runs
+`ssh … herdr-core connect`), `herdr-core serve` and any new `herdr-core hold` start inside the SSH
+session without login keychain access (`security show-keychain-info` exits `36` with
+`SecKeychainCopySettings <NULL>: User interaction is not allowed.`), so Claude Code reports it is
+not logged in and `gh` cannot read its keychain token. Terminals started earlier under a desktop-born
+holder keep their keychain access and keep working.
+
+Before `automagik-herdr start --machine` or `restart --machine` (and `am start --machine` /
+`restart --machine`) writes any file, starts a pane or ends an old pane on a macOS machine, it
+runs `security show-keychain-info` there (#1033). When that exits non-zero, the command refuses with
+a clear hint instead of starting a keychainless terminal.
+
+**Moving `herdr-core` back to a desktop terminal without touching live terminals.** Live terminals
+are held by `herdr-core hold --socket …` processes, which survive a `herdr-core serve` restart.
+Killing an older desktop-born holder ends the live terminals it holds, while leaving an SSH-born
+`herdr-core hold` (or its socket) in place lets the new server reconnect to that keychainless holder.
+Linked machines also reconnect over SSH every few seconds (`herdr-core connect` auto-starts a server
+if none is listening), so stopping the SSH-born server and starting the desktop-born server must
+happen in **one command pipeline** from a desktop terminal on that Mac (Terminal.app, iTerm2, or an
+existing working Herdr pane — never over SSH):
+
+```bash
+# 1. In a desktop terminal on the Mac, verify login keychain access:
+security show-keychain-info && claude auth status
+
+# 2. Inspect herdr-core serve and each herdr-core hold --socket ... process:
+pgrep -fl 'herdr-core (serve|hold)'
+
+# 3. In one pipeline from that desktop terminal, stop the SSH-born herdr-core serve and
+#    any SSH-born herdr-core hold (never older holders that hold live working terminals),
+#    remove the SSH-born holder socket, and immediately start the core from the desktop:
+security show-keychain-info && \
+  kill -TERM <serve-pid> <ssh-hold-pid> && \
+  rm -f ~/.local/state/herdr-core/default.holder.<id>.sock && \
+  hc server status && \
+  hc exec -- security show-keychain-info
+```
+
+If no terminal was started under the SSH-born server yet, there is no SSH-born `herdr-core hold` or
+holder socket to remove: pass only `<serve-pid>` to `kill -TERM` and run `hc server status` in the
+same pipeline.
 
 ### Manual install
 
