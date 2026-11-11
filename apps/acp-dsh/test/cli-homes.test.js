@@ -93,6 +93,25 @@ test('a damaged login record cannot be ignored during account recovery', t => {
   assert.equal(existsSync(join(directory, 'interrupted')), true)
 })
 
+test('abandoned Windows ownership needs Reset even with an old nonce', t => {
+  const { homes } = place(t)
+  const previous = new CliHomes(homes.root)
+  const old = previous.environment('claude')
+  const record = recordLogin(old)
+  const directory = '.login-job-invented'
+  mkdirSync(join(old.HOME, directory))
+  writeFileSync(join(old.HOME, directory, 'done'), 'invented-proof')
+  record.update({ kind: 'windows', supervisor: 2, directory, nonce: 'invented-proof' })
+  previous.dispose()
+  assert.throws(() => homes.begin('claude'), /previous Bot sign-in stopped/)
+  assert.equal(homes.recovery('claude'), true)
+  const fresh = homes.reset('claude')
+  assert.notEqual(fresh, old.HOME)
+  homes.collect('claude')
+  assert.equal(existsSync(old.HOME), true, 'Windows crash evidence is never auto-cleared')
+  assert.equal(readFileSync(join(old.HOME, directory, 'done'), 'utf8'), 'invented-proof')
+})
+
 test('legacy dead sessions without login ownership evidence cannot be reclaimed', t => {
   const { homes } = place(t)
   const pid = Number(spawnSync(process.execPath, ['-p', 'process.pid'], {

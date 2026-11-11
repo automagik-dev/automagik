@@ -10,7 +10,7 @@ export const LOGIN_OWNER_ENV = 'AUTOMAGIK_BOT_CLI_OWNER'
 export const LOGIN_RECORD_VERSION = 'login-trees-v1'
 const blocked = () => Object.assign(new Error(
   'Cannot verify that a previous Bot sign-in stopped. Account changes remain blocked. '
-  + 'Close the previous sign-in and try again; contact support if this persists.',
+  + 'Use Reset Bot sign-in in Bot settings to start fresh.',
 ), { code: 'acp-account/unverified-login' })
 
 export function recordLogin(env) {
@@ -48,15 +48,11 @@ export function verifyLoginRecords(home, owner) {
       try { process.kill(-record.group, 0) } catch (error) {
         proved = error.code === 'ESRCH'
       }
-    } else if (record.kind === 'windows' && process.platform === 'win32'
-      && /^\.login-job-[a-zA-Z0-9]+$/.test(record.directory)
-      && typeof record.nonce === 'string' && record.nonce.length > 0) {
-      try {
-        proved = readFileSync(join(home, record.directory, 'done'), 'utf8') === record.nonce
-      } catch {}
     }
+    // A Windows stop nonce is used only by its live in-memory controller. After app death,
+    // the durable record stays blocked even with a stale nonce: owner Reset selects a fresh
+    // home without trusting or deleting this one. Automatic crash recovery is Unix-only.
     if (!proved) throw blocked()
-    // A Job's nonce proof means zero active processes, even if its supervisor is exiting.
     // A Unix PID/group that has been reused blocks recovery; never signal an uncertain PID.
     rmSync(file, { force: true })
   }

@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { CliHomes } from '../src/host/cli-homes.js'
+import { recordLogin } from '../src/host/login-ownership.js'
 import { launchWindowsLogin, windowsLoginCommand } from '../src/host/windows-login.js'
 
 function scratch(t) {
@@ -24,14 +27,14 @@ function fake(t, extra = {}, env = {}) {
   let supervisorEnv
   const kills = []
   const owner = launchWindowsLogin('C:\\tools\\codex.cmd', ['app-server'], {
-    cwd: root, detached: false,
+    cwd: root, detached: true,
     env: { SystemRoot: 'C:\\Windows', ComSpec: 'C:\\Windows\\cmd.exe', ...env },
   }, {
     spawn(command, args, options) {
       assert.match(command, /powershell\.exe$/)
       assert.ok(args.includes('-NoProfile'))
       assert.equal(options.shell, false)
-      assert.equal(options.detached, true, 'supervisor must survive the app Job closing')
+      assert.equal(options.detached, false, 'caller cannot detach the supervisor from the app')
       request = JSON.parse(options.env.AUTOMAGIK_LOGIN_JOB)
       supervisorEnv = options.env
       return child
@@ -72,29 +75,22 @@ test('Windows stop waits for full-job proof, then removes its private markers', 
   await stopped
   await h.owner.done
   assert.equal(readFileSync(h.request.done, 'utf8'), h.request.nonce,
-    'recovery proof survives until the persisted ownership record is cleared')
+    'stop proof survives until the persisted ownership record is cleared')
   h.owner.dispose()
   assert.equal(existsSync(h.request.done), false)
   assert.deepEqual(h.kills, [])
   await h.owner.stop()
 })
 
-test('Windows launch binds a private liveness challenge and exposes durable recovery identity',
+test('Windows launch exposes durable ownership without an automatic app-death handshake',
   async t => {
     const h = fake(t)
-    assert.equal(h.request.parent, process.pid)
+    for (const key of ['parent', 'challenge', 'acknowledge']) {
+      assert.equal(Object.hasOwn(h.request, key), false)
+    }
     assert.deepEqual(h.owner.identity, { kind: 'windows', supervisor: h.child.pid,
       directory: h.request.done.split(/[\\/]/).at(-2), nonce: h.request.nonce })
     assert.match(h.owner.identity.directory, /^\.login-job-[A-Za-z0-9]+$/)
-    writeFileSync(h.request.challenge, 'other-instance')
-    await new Promise(resolve => setTimeout(resolve, 30))
-    assert.equal(existsSync(h.request.acknowledge), false)
-    writeFileSync(h.request.challenge, h.request.nonce)
-    const deadline = Date.now() + 1000
-    while (!existsSync(h.request.acknowledge) && Date.now() < deadline) {
-      await new Promise(resolve => setTimeout(resolve, 10))
-    }
-    assert.equal(readFileSync(h.request.acknowledge, 'utf8'), h.request.nonce)
     h.acknowledge()
     await h.owner.done
     h.owner.dispose()
@@ -180,7 +176,7 @@ test('a .cmd wrapper cannot leave a delayed credential writer after login stop',
 
 for (const duringStartup of [true, false]) {
   const phase = duringStartup ? 'during startup' : 'during login'
-  test(`Windows parent death ${phase} drains the Job`, {
+  test(`Windows app death ${phase} requires an owner Reset to a fresh home`, {
     skip: process.platform !== 'win32' && 'requires Windows Job Objects and PowerShell',
     timeout: 25_000,
   }, async t => {
@@ -194,7 +190,7 @@ for (const duringStartup of [true, false]) {
     const homesModule = new URL('../src/host/cli-homes.js', import.meta.url).href
     const recordsModule = new URL('../src/host/login-ownership.js', import.meta.url).href
     const recovered = new CliHomes(root)
-    let app, identity
+    let app, identity, freshOwner
     const errors = []
     const diagnostic = () => {
       let supervisor = ''
@@ -204,8 +200,10 @@ for (const duringStartup of [true, false]) {
     t.after(async () => {
       if (app?.exitCode === null && app.signalCode === null) app.kill('SIGKILL')
       if (identity) {
-        try { writeFileSync(join(root, 'claude', identity.directory, 'stop'), '') } catch {}
+        try { writeFileSync(join(identity.home, identity.directory, 'stop'), '') } catch {}
       }
+      await freshOwner?.stop().catch(() => {})
+      freshOwner?.dispose()
       await new Promise(resolve => setTimeout(resolve, 100))
       recovered.end('claude')
       recovered.dispose()
@@ -234,7 +232,8 @@ for (const duringStartup of [true, false]) {
       owned.child.on('error',error=>console.error('Supervisor spawn error:',error.code));
       owned.done.then(()=>{record.clear();owned.dispose()})
         .catch(()=>console.error('Supervisor exited without full-job proof'));
-      writeFileSync(${JSON.stringify(identityFile)},JSON.stringify(owned.identity));
+      writeFileSync(${JSON.stringify(identityFile)},JSON.stringify({
+        ...owned.identity,app:process.pid,home:env.HOME}));
       ${duringStartup ? 'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0);' : ''}
       setInterval(()=>{},1000);`)
     app = spawn(process.execPath, [appFile], { stdio: ['ignore', 'pipe', 'pipe'],
@@ -248,40 +247,61 @@ for (const duringStartup of [true, false]) {
     }
     assert.ok(existsSync(identityFile), diagnostic())
     identity = JSON.parse(readFileSync(identityFile, 'utf8'))
+    assert.equal(identity.app, app.pid, 'the recorded app is the process being killed')
     if (!duringStartup) {
       assert.ok(existsSync(ready), diagnostic())
       assert.equal(readFileSync(ready, 'utf8'), 'ready')
     }
     assert.throws(() => recovered.begin('claude'), { code: 'acp-account/unverified-login' })
-    // This kills the app only. Its independently running PowerShell supervisor must notice.
-    const exited = new Promise(resolve => app.once('exit', resolve))
-    app.kill('SIGKILL')
-    await exited
-    const done = join(root, 'claude', identity.directory, 'done')
-    let proof
-    let recoveredAccount = false
-    while (Date.now() < deadline) {
-      try { proof = readFileSync(done, 'utf8') } catch {}
-      if (proof === identity.nonce) break
-      try {
-        recovered.begin('claude')
-        recoveredAccount = true
-        proof = readFileSync(done, 'utf8')
-        assert.equal(proof, identity.nonce, 'no account change before full-job proof')
-        break
-      } catch (error) {
-        assert.ok(['acp-account/busy', 'acp-account/unverified-login'].includes(error.code))
-      }
+    const records = join(identity.home, 'login-trees')
+    const record = join(records, readdirSync(records)[0])
+    const original = readFileSync(record, 'utf8')
+    // Kill only the app. Windows orphan ownership never permits automatic recovery.
+    const exited = new Promise(resolve => app.once('exit', (code, signal) => (
+      resolve({ code, signal })
+    )))
+    assert.equal(app.kill('SIGKILL'), true)
+    const exit = await exited
+    assert.ok(exit.code !== null || exit.signal !== null, 'app termination was observed')
+    t.diagnostic(`app exit: ${JSON.stringify(exit)}`)
+    assert.throws(() => recovered.begin('claude'), { code: 'acp-account/unverified-login' })
+    const markers = join(identity.home, identity.directory)
+    mkdirSync(markers, { recursive: true })
+    writeFileSync(join(markers, 'done'), identity.nonce)
+    assert.throws(() => recovered.begin('claude'), { code: 'acp-account/unverified-login' })
+
+    const freshHome = recovered.reset('claude')
+    assert.notEqual(freshHome, identity.home)
+    assert.equal(readFileSync(record, 'utf8'), original, 'Reset retains orphan evidence')
+    assert.equal(existsSync(identity.home), true, 'Reset retains the old physical path')
+    recovered.begin('claude')
+    const env = recovered.environment('claude')
+    assert.equal(env.HOME, freshHome)
+    const freshWrote = join(env.CLAUDE_CONFIG_DIR, 'invented-credentials')
+    const freshReady = join(freshHome, 'ready')
+    const freshWriter = "const fs=require('node:fs');"
+      + "fs.writeFileSync(process.argv[1],'new-login');"
+      + "fs.writeFileSync(process.argv[2],'ready');setInterval(()=>{},1000)"
+    const freshRecord = recordLogin(env)
+    freshOwner = launchWindowsLogin(process.execPath, ['-e', freshWriter,
+      freshWrote, freshReady], { cwd: freshHome, env, stdio: ['pipe', 'pipe', 'pipe'] },
+    { stopMs: 10_000 })
+    freshRecord.update(freshOwner.identity)
+    freshOwner.child.stdout.resume()
+    freshOwner.child.stderr.on('data', chunk => errors.push(String(chunk)))
+    const freshDeadline = Date.now() + 10_000
+    while (!existsSync(freshReady) && Date.now() < freshDeadline) {
       await new Promise(resolve => setTimeout(resolve, 20))
     }
-    assert.equal(proof, identity.nonce,
-      `job-empty proof precedes any recovery: ${diagnostic()}`)
-    if (duringStartup) assert.equal(existsSync(ready), false, 'dead app starts no vendor')
-    assert.equal(existsSync(wrote), false)
-    // A recovered app may write new credentials only after the old job is proved empty.
-    if (!recoveredAccount) recovered.begin('claude')
-    writeFileSync(wrote, 'new-login')
-    await new Promise(resolve => setTimeout(resolve, 2200))
-    assert.equal(readFileSync(wrote, 'utf8'), 'new-login')
+    assert.ok(existsSync(freshReady), diagnostic())
+    await freshOwner.stop()
+    await freshOwner.done
+    assert.equal(readFileSync(join(freshHome, freshOwner.identity.directory, 'done'), 'utf8'),
+      freshOwner.identity.nonce, 'the current app still requires complete normal-stop proof')
+    freshRecord.clear()
+    freshOwner.dispose()
+    writeFileSync(wrote, 'late-old-login')
+    assert.equal(readFileSync(freshWrote, 'utf8'), 'new-login')
+    assert.equal(readFileSync(record, 'utf8'), original)
   })
 }

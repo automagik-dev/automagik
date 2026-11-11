@@ -81,10 +81,6 @@ public static class AutomagikLoginJob {
   static extern IntPtr GetStdHandle(int kind);
   [DllImport("kernel32.dll", SetLastError = true)]
   static extern bool SetHandleInformation(IntPtr handle, uint mask, uint flags);
-  [DllImport("kernel32.dll", SetLastError = true)]
-  static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
-  [DllImport("kernel32.dll", SetLastError = true)]
-  static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
 
   static void Check(bool ok) {
     if (!ok) throw new Win32Exception(Marshal.GetLastWin32Error());
@@ -97,44 +93,14 @@ public static class AutomagikLoginJob {
     Check(SetHandleInformation(handle, 1, 1));
     return handle;
   }
-  static bool ParentGone(IntPtr parent) {
-    uint state = WaitForSingleObject(parent, 0);
-    if (state == 0) return true;
-    if (state == 0x102) return false; // WAIT_TIMEOUT: original parent is still running.
-    throw new Win32Exception(Marshal.GetLastWin32Error());
-  }
   public static int Run(string executable, string command, string directory,
-    string stop, string done, string nonce, uint parentPid,
-    string challenge, string acknowledge) {
+    string stop, string done, string nonce) {
     IntPtr job = IntPtr.Zero;
-    IntPtr parent = IntPtr.Zero;
     ProcessInfo process = new ProcessInfo();
     bool assigned = false;
     try {
       // A cancellation during PowerShell startup must never start a vendor process.
       if (File.Exists(stop)) { File.WriteAllText(done, nonce); return 130; }
-      // Keep the original process handle, never re-open its PID during polling. No access or
-      // no process means no safe parent lifetime to follow, so no vendor is started.
-      parent = OpenProcess(0x00100000, false, parentPid); // SYNCHRONIZE
-      if (parent == IntPtr.Zero || ParentGone(parent)) {
-        File.WriteAllText(done, nonce);
-        return 130;
-      }
-      // Bind the acquired handle to this app instance, not a reused PID. A dead app cannot
-      // acknowledge the supervisor's fresh challenge even if its PID has been recycled.
-      File.WriteAllText(challenge, nonce);
-      DateTime deadline = DateTime.UtcNow.AddSeconds(10);
-      while (!File.Exists(acknowledge) || File.ReadAllText(acknowledge) != nonce) {
-        if (ParentGone(parent) || File.Exists(stop) || DateTime.UtcNow >= deadline) {
-          File.WriteAllText(done, nonce);
-          return 130;
-        }
-        Thread.Sleep(20);
-      }
-      if (ParentGone(parent) || File.Exists(stop)) {
-        File.WriteAllText(done, nonce);
-        return 130;
-      }
       job = CreateJobObject(IntPtr.Zero, null);
       Check(job != IntPtr.Zero);
       ExtendedLimits limits = new ExtendedLimits();
@@ -153,12 +119,12 @@ public static class AutomagikLoginJob {
       Check(AssignProcessToJobObject(job, process.process));
       assigned = true;
       bool ending = false;
-      if (ParentGone(parent) || File.Exists(stop)) {
+      if (File.Exists(stop)) {
         Check(TerminateJobObject(job, 130));
         ending = true;
       } else Check(ResumeThread(process.thread) != UInt32.MaxValue);
       while (true) {
-        if (!ending && (ParentGone(parent) || File.Exists(stop))) {
+        if (!ending && File.Exists(stop)) {
           Check(TerminateJobObject(job, 130));
           ending = true;
         }
@@ -179,7 +145,6 @@ public static class AutomagikLoginJob {
       if (process.thread != IntPtr.Zero) CloseHandle(process.thread);
       if (process.process != IntPtr.Zero) CloseHandle(process.process);
       if (job != IntPtr.Zero) CloseHandle(job);
-      if (parent != IntPtr.Zero) CloseHandle(parent);
     }
   }
 }
@@ -187,8 +152,7 @@ public static class AutomagikLoginJob {
   [Environment]::SetEnvironmentVariable('PSModulePath', $request.modulePath, 'Process')
   $phase = 'own-login-job'
   $code = [AutomagikLoginJob]::Run($request.executable, $request.line, $request.cwd,
-    $request.stop, $request.done, $request.nonce, $request.parent,
-    $request.challenge, $request.acknowledge)
+    $request.stop, $request.done, $request.nonce)
   exit $code
 } catch {
   # Never expose paths, command output or vendor account information as diagnostics.

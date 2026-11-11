@@ -698,10 +698,14 @@ work paused until an explicit retry. Installation locks serialize authentication
 another app instance has registered the same vendor home, close it before changing accounts.
 Launches capture an account generation so delayed work cannot start under a later account.
 
-**Crash recovery and owner Reset.** Ordinary lock recovery still requires the old login tree's
-exit proof. A short installation-level mutex uses unique process claims, so a claimant's own
-crash does not permanently hold recovery. The lock owner and tree evidence are revalidated
-under that mutex before stale ownership is removed.
+**Crash recovery and owner Reset.** Automatic app-crash recovery is Unix-only and requires the
+recorded login group's exit proof. Windows app death leaves its login record blocked, even if
+an old Job nonce exists: Windows crash recovery is by owner Reset followed by fresh sign-in.
+Automatic Windows recovery is deferred to
+[follow-up #1076](https://github.com/automagik-si/automagik/issues/1076).
+The normal Windows sign-in and stop path still waits for its live supervisor's empty-Job proof.
+A short installation-level mutex uses unique process claims, so a claimant's own crash does not
+permanently hold recovery. Lock owner and applicable evidence are revalidated under that mutex.
 
 Pending-before-spawn, damaged and legacy evidence cannot supply that proof. Cold owner settings
 show recovery per vendor and offer an explicitly confirmed Reset Bot sign-in. Reset pauses
@@ -711,7 +715,8 @@ does not log out or copy the old account. Bot CLI user settings also start empty
 settings still load from the workspace. The previous physical folder and its unproved records
 remain at their original path: it is never renamed and reused. A surviving vendor process can
 write only to the abandoned generation. Cleanup removes it later only when exit is proven;
-unproved generations stay retained. Both serialization and app registrations sit outside the
+unproved generations, including Windows crash records, stay retained. Both serialization and
+app registrations sit outside the
 replaceable home. Captured launches check the installation's current-generation pointer as well
 as local version markers; delayed account reads and image tickets are invalidated by Reset.
 

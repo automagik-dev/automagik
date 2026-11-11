@@ -3,7 +3,7 @@
 // remains the vendor's protocol. No process exit authorizes an auth change without job proof.
 import { execFile, spawn as spawnProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join, win32 } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -38,9 +38,7 @@ export function launchWindowsLogin(file, args, options = {}, {
   const nonce = randomUUID()
   const env = options.env ?? process.env
   const request = { ...windowsLoginCommand(file, args, env), cwd: options.cwd,
-    stop: stopFile, done: doneFile, nonce, parent: process.pid,
-    modulePath: read(env, 'PSModulePath') ?? null,
-    challenge: join(directory, 'challenge'), acknowledge: join(directory, 'acknowledge') }
+    stop: stopFile, done: doneFile, nonce, modulePath: read(env, 'PSModulePath') ?? null }
   const system = read(env, 'SystemRoot') ?? 'C:\\Windows'
   const powershell = win32.join(system, 'System32', 'WindowsPowerShell', 'v1.0',
     'powershell.exe')
@@ -55,9 +53,8 @@ export function launchWindowsLogin(file, args, options = {}, {
   try {
     child = spawn(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive',
       '-ExecutionPolicy', 'Bypass', '-File', SUPERVISOR], {
-      // libuv kills non-detached Windows children with the app's own Job. The supervisor
-      // must survive that exit long enough to drain its vendor Job and write full-job proof.
-      ...options, detached: true, shell: false, windowsHide: true,
+      // Keep libuv's app-lifetime Job: a crash leaves ownership blocked until an owner Reset.
+      ...options, detached: false, shell: false, windowsHide: true,
       env: { ...supervisorEnv, AUTOMAGIK_LOGIN_JOB: JSON.stringify(request) },
     })
   } catch (error) {
@@ -68,20 +65,7 @@ export function launchWindowsLogin(file, args, options = {}, {
   let closed = false
   let spawnFailed = false
   let stopping
-  // A handle opened from a PID could otherwise belong to a process that reused it during
-  // PowerShell startup. Only this live app knows to answer its fresh private challenge.
-  const parentWatch = setInterval(() => {
-    try {
-      if (readFileSync(request.challenge, 'utf8') !== nonce) return
-      const staged = `${request.acknowledge}.tmp`
-      writeFileSync(staged, nonce, { mode: 0o600 })
-      renameSync(staged, request.acknowledge)
-      clearInterval(parentWatch)
-    } catch {}
-  }, 20)
-  parentWatch.unref?.()
   const dispose = () => {
-    clearInterval(parentWatch)
     if (verified) try { rmSync(directory, { recursive: true, force: true }) } catch {}
   }
   const done = new Promise((resolve, reject) => {
@@ -96,7 +80,6 @@ export function launchWindowsLogin(file, args, options = {}, {
       reject(failed())
     })
     child.once('close', () => {
-      clearInterval(parentWatch)
       closed = true
       if (spawnFailed) return
       try { verified = readFileSync(doneFile, 'utf8') === nonce } catch {}
