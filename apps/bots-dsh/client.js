@@ -43,7 +43,11 @@ module.exports = __toCommonJS(index_exports);
 // src/client/i18n.js
 var NAMESPACE = "omni-ui";
 var ZH = {
-  "A previous Bot sign-in may still be running. Close it and retry; if blocked, contact support.": "无法确认上次 Bot 登录已结束。请关闭该登录后重试；若仍受阻，请联系支持。",
+  "Bot sign-in recovery is needed. Reset Bot sign-in to start fresh.": "需要恢复 Bot 登录。重置 Bot 登录以重新开始。",
+  "Reset Bot sign-in": "重置 Bot 登录",
+  "Reset starts a fresh Bot sign-in. Sign in again in the app.": "重置会建立全新的 Bot 登录。请在应用内重新登录。",
+  "Previous Bot sign-in files stay separate and are never reused.": "上次 Bot 登录的文件保持独立，永不重复使用。",
+  "No credentials are copied. Your terminal login stays unchanged.": "不会复制任何凭据。终端的登录保持不变。",
   "Account not shown by the CLI": "CLI 未显示账号",
   "Account change failed. Close other app windows and try again.": "无法更改账号。请关闭其他应用窗口后重试。",
   "Bot accounts": "Bot 账号",
@@ -11206,6 +11210,7 @@ function teamActions({ call: call2, after, partFor, roster, ui: ui2, live, cards
     cliLoginConfirm: (botId, provider, ref, model) => call2("cli-login-confirm", loginPayload(botId, provider, { ...ref === void 0 ? {} : { ref }, ...model === void 0 ? {} : { model } })),
     cliLoginAccounts: () => call2("cli-login-accounts", {}),
     cliLoginSwitch: (botId, provider) => call2("cli-login-switch", loginPayload(botId, provider)),
+    cliLoginReset: (botId, provider) => call2("cli-login-reset", loginPayload(botId, provider)),
     cliLoginSignOut: (botId, provider) => call2(
       "cli-login-signout",
       loginPayload(botId, provider)
@@ -17228,7 +17233,7 @@ function MemoryDialog({ owner, actions, leaving = false }) {
 
 // src/shared/cli-account.js
 var ACCOUNT_RECOVERY_CODE = "bot/account-recovery";
-var ACCOUNT_RECOVERY_HINT = "A previous Bot sign-in may still be running. Close it and retry; if blocked, contact support.";
+var ACCOUNT_RECOVERY_HINT = "Bot sign-in recovery is needed. Reset Bot sign-in to start fresh.";
 
 // src/client/cli-accounts.js
 var import_react43 = require("react");
@@ -17270,13 +17275,22 @@ function CliAccounts({ bot, actions }) {
     try {
       const { provider, action } = pending;
       if (action === "switch") await actions.cliLoginSwitch(bot.id, provider);
+      else if (action === "reset") await actions.cliLoginReset(bot.id, provider);
       else await actions.cliLoginSignOut(bot.id, provider);
       await actions.refreshModels?.();
       await refresh();
       setPending(null);
-      if (action === "switch") actions.openCliLogin(bot.id, provider);
+      if (action === "switch" || action === "reset") actions.openCliLogin(bot.id, provider);
     } catch (error2) {
-      setError(error2?.code === ACCOUNT_RECOVERY_CODE ? t(ACCOUNT_RECOVERY_HINT) : t("Account change failed. Close other app windows and try again."));
+      if (error2?.code === ACCOUNT_RECOVERY_CODE) {
+        const provider = pending.provider;
+        setAccounts((current) => ({ ...current, [provider]: {
+          ...current[provider],
+          signedIn: false,
+          recoveryRequired: true
+        } }));
+        setPending(null);
+      } else setError(t("Account change failed. Close other app windows and try again."));
     } finally {
       setBusy(false);
     }
@@ -17306,10 +17320,22 @@ function CliAccounts({ bot, actions }) {
       (0, import_react43.createElement)("span", { className: "bt-set-hint" }, t("Terminal: {account}", {
         account: entry.terminal ? botAccountName(entry.terminal) : t("Account not shown by the CLI")
       })),
+      entry.recoveryRequired ? (0, import_react43.createElement)("p", { role: "alert" }, t(ACCOUNT_RECOVERY_HINT)) : null,
       pending?.provider === provider ? (0, import_react43.createElement)(
         "div",
         null,
         (0, import_react43.createElement)("p", null, t("This stops running Bot work for this account. Continue?")),
+        pending.action === "reset" ? (0, import_react43.createElement)(
+          "div",
+          null,
+          (0, import_react43.createElement)("p", null, t("Reset starts a fresh Bot sign-in. Sign in again in the app.")),
+          (0, import_react43.createElement)("p", null, t("Previous Bot sign-in files stay separate and are never reused.")),
+          (0, import_react43.createElement)(
+            "p",
+            null,
+            t("No credentials are copied. Your terminal login stays unchanged.")
+          )
+        ) : null,
         (0, import_react43.createElement)("button", {
           type: "button",
           className: "bt-soft bt-soft-sm",
@@ -17326,28 +17352,36 @@ function CliAccounts({ bot, actions }) {
       ) : (0, import_react43.createElement)(
         "div",
         null,
-        !entry.signedIn ? (0, import_react43.createElement)("button", {
+        entry.recoveryRequired ? (0, import_react43.createElement)("button", {
           type: "button",
           className: "bt-soft bt-soft-sm",
-          onClick: () => actions.openCliLogin(bot.id, provider)
-        }, t("Sign in")) : null,
-        (0, import_react43.createElement)(
-          "button",
-          {
+          onClick: () => setPending({ provider, action: "reset" })
+        }, t("Reset Bot sign-in")) : (0, import_react43.createElement)(
+          "div",
+          null,
+          !entry.signedIn ? (0, import_react43.createElement)("button", {
             type: "button",
             className: "bt-soft bt-soft-sm",
-            onClick: () => setPending({ provider, action: "switch" })
-          },
-          t("Switch account")
-        ),
-        (0, import_react43.createElement)(
-          "button",
-          {
-            type: "button",
-            className: "bt-soft bt-soft-sm",
-            onClick: () => setPending({ provider, action: "signout" })
-          },
-          t("Sign out")
+            onClick: () => actions.openCliLogin(bot.id, provider)
+          }, t("Sign in")) : null,
+          (0, import_react43.createElement)(
+            "button",
+            {
+              type: "button",
+              className: "bt-soft bt-soft-sm",
+              onClick: () => setPending({ provider, action: "switch" })
+            },
+            t("Switch account")
+          ),
+          (0, import_react43.createElement)(
+            "button",
+            {
+              type: "button",
+              className: "bt-soft bt-soft-sm",
+              onClick: () => setPending({ provider, action: "signout" })
+            },
+            t("Sign out")
+          )
         )
       )
     )))

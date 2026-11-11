@@ -2,9 +2,14 @@
 # Job children cannot break away. An abnormal supervisor exit closes the kill-on-close job.
 # Normal stop proves ActiveProcesses=0 before acknowledging it to the parent.
 $ErrorActionPreference = 'Stop'
+$phase = 'load-system-commands'
 try {
+  # These commands must not depend on a terminal's PSModulePath or user-installed modules.
+  Import-Module "$PSHOME\Modules\Microsoft.PowerShell.Utility\Microsoft.PowerShell.Utility.psd1"
+  $phase = 'read-request'
   $request = $env:AUTOMAGIK_LOGIN_JOB | ConvertFrom-Json
   [Environment]::SetEnvironmentVariable('AUTOMAGIK_LOGIN_JOB', $null, 'Process')
+  $phase = 'compile-supervisor'
   Add-Type -TypeDefinition @'
 using System;
 using System.ComponentModel;
@@ -179,12 +184,18 @@ public static class AutomagikLoginJob {
   }
 }
 '@
+  [Environment]::SetEnvironmentVariable('PSModulePath', $request.modulePath, 'Process')
+  $phase = 'own-login-job'
   $code = [AutomagikLoginJob]::Run($request.executable, $request.line, $request.cwd,
     $request.stop, $request.done, $request.nonce, $request.parent,
     $request.challenge, $request.acknowledge)
   exit $code
 } catch {
   # Never expose paths, command output or vendor account information as diagnostics.
-  [Console]::Error.WriteLine('The login process could not start safely.')
+  $exception = $_.Exception
+  while ($null -ne $exception.InnerException) { $exception = $exception.InnerException }
+  $failure = '{0}: {1} (HRESULT {2})' -f $phase, $exception.GetType().FullName,
+    $exception.HResult
+  [Console]::Error.WriteLine("The login process could not start safely. $failure")
   exit 125
 }

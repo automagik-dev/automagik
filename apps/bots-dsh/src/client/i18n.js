@@ -5,8 +5,15 @@
 export const NAMESPACE = 'omni-ui'
 
 const ZH = {
-  "A previous Bot sign-in may still be running. Close it and retry; if blocked, contact support.":
-    "无法确认上次 Bot 登录已结束。请关闭该登录后重试；若仍受阻，请联系支持。",
+  "Bot sign-in recovery is needed. Reset Bot sign-in to start fresh.":
+    "需要恢复 Bot 登录。重置 Bot 登录以重新开始。",
+  "Reset Bot sign-in": "重置 Bot 登录",
+  "Reset starts a fresh Bot sign-in. Sign in again in the app.":
+    "重置会建立全新的 Bot 登录。请在应用内重新登录。",
+  "Previous Bot sign-in files stay separate and are never reused.":
+    "上次 Bot 登录的文件保持独立，永不重复使用。",
+  "No credentials are copied. Your terminal login stays unchanged.":
+    "不会复制任何凭据。终端的登录保持不变。",
   "Account not shown by the CLI": "CLI 未显示账号",
   "Account change failed. Close other app windows and try again.": "无法更改账号。请关闭其他应用窗口后重试。",
   "Bot accounts": "Bot 账号",

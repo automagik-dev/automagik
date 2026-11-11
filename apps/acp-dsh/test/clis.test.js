@@ -84,6 +84,29 @@ test('version execution keeps isolated cwd and env without restoring inherited c
     assert.deepEqual(seen.args, ['--version'])
   })
 
+test('version probes select the current home generation after owner reset', async t => {
+  const root = scratch(t)
+  const homes = new CliHomes(join(root, 'private-homes'))
+  const seen = []
+  let latest = '2.0.0'
+  const store = storeOf(join(root, 'managed'), {
+    latest: async () => latest,
+    versionEnv: spec => homes.environment(spec.key),
+    versionOf: async (path, { env }) => { seen.push(env); return fakeVersion(path) },
+  })
+  t.after(() => { store.dispose(); homes.dispose() })
+  const external = executable(join(root, 'external'), '1.0.0')
+  await store.ensure(CODEX, external)
+  const previous = seen[0].HOME
+  const fresh = homes.reset('codex')
+  seen.length = 0
+  latest = '3.0.0'
+  await store.ensure(CODEX, external, { force: true })
+  assert.equal(seen.length, 2, 'external and installed versions both get the selected home')
+  assert.notEqual(fresh, previous)
+  for (const env of seen) assert.equal(env.HOME, fresh)
+})
+
 test('native layout covers supported desktop platforms, musl, and Rosetta without shell commands', () => {
   for (const platform of ['linux', 'darwin', 'win32']) for (const arch of ['x64', 'arm64']) {
     const host = cliPlatform({ platform, arch, musl: false, translated: false })

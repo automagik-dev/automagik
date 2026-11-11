@@ -158,6 +158,7 @@ export function cliAccountView(value) {
 }
 
 const ACTIONS = {
+  reset: ['botId', 'provider'],
   switch: ['botId', 'provider'],
   signout: ['botId', 'provider'],
   confirm: ['botId', 'provider', 'ref', 'model'],
@@ -346,10 +347,18 @@ export function install(rt) {
     if (typeof service?.account !== 'function' || typeof service.status !== 'function') return { accounts: out }
     if (service.authScope === 'isolated') {
       for (const id of PROVIDERS) {
-        const seen = await service.account(id, { fresh: true })
-        const terminal = await service.terminalAccount?.(id)
+        let seen, terminal, recoveryRequired = false
+        try {
+          recoveryRequired = (await service.accountRecovery?.(id))?.required === true
+          if (!recoveryRequired) seen = await service.account(id, { fresh: true })
+        } catch (error) {
+          recoveryRequired = error?.code === 'acp-account/unverified-login'
+        }
+        // An unreadable vendor never hides the other vendor or leaks its diagnostics.
+        try { terminal = await service.terminalAccount?.(id) } catch {}
         out[id] = {
           authScope: 'isolated', signedIn: seen?.signedIn === true,
+          ...(recoveryRequired ? { recoveryRequired: true } : {}),
           ...(seen?.signedIn === true ? { account: cliAccountView(seen) } : {}),
           ...(terminal?.account ? { terminal: cliAccountView(terminal) } : {}),
         }
@@ -452,12 +461,13 @@ export function install(rt) {
   }
 
   const actions = {
-    ...Object.fromEntries(['switch', 'signout'].map(action => [
+    ...Object.fromEntries(['switch', 'signout', 'reset'].map(action => [
       `cli-login-${action}`, async payload => {
       const body = fields(payload, action)
       if (!rt.botOf(body.botId)) throw failed('This Bot is no longer available.', 'bot/not-found')
       const service = acp()
-      const method = action === 'switch' ? 'accountSwitch' : 'accountSignOut'
+      const method = { switch: 'accountSwitch', signout: 'accountSignOut',
+        reset: 'accountReset' }[action]
       if (service?.authScope !== 'isolated' || typeof service[method] !== 'function') {
         throw failed('Bot account controls are unavailable. Update Automagik and try again.')
       }

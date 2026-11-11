@@ -37,14 +37,20 @@ export function CliAccounts({ bot, actions }) {
     try {
       const { provider, action } = pending
       if (action === 'switch') await actions.cliLoginSwitch(bot.id, provider)
+      else if (action === 'reset') await actions.cliLoginReset(bot.id, provider)
       else await actions.cliLoginSignOut(bot.id, provider)
       await actions.refreshModels?.()
       await refresh()
       setPending(null)
-      if (action === 'switch') actions.openCliLogin(bot.id, provider)
+      if (action === 'switch' || action === 'reset') actions.openCliLogin(bot.id, provider)
     } catch (error) {
-      setError(error?.code === ACCOUNT_RECOVERY_CODE ? t(ACCOUNT_RECOVERY_HINT)
-        : t('Account change failed. Close other app windows and try again.'))
+      if (error?.code === ACCOUNT_RECOVERY_CODE) {
+        const provider = pending.provider
+        setAccounts(current => ({ ...current, [provider]: {
+          ...current[provider], signedIn: false, recoveryRequired: true,
+        } }))
+        setPending(null)
+      } else setError(t('Account change failed. Close other app windows and try again.'))
     } finally { setBusy(false) }
   }
   const entries = Object.entries(accounts).filter(([id, entry]) => (
@@ -67,13 +73,23 @@ export function CliAccounts({ bot, actions }) {
     h('span', { className: 'bt-set-hint' }, t('Terminal: {account}', {
       account: entry.terminal ? botAccountName(entry.terminal) : t('Account not shown by the CLI'),
     })),
+    entry.recoveryRequired ? h('p', { role: 'alert' }, t(ACCOUNT_RECOVERY_HINT)) : null,
     pending?.provider === provider ? h('div', null,
       h('p', null, t('This stops running Bot work for this account. Continue?')),
+      pending.action === 'reset' ? h('div', null,
+        h('p', null, t('Reset starts a fresh Bot sign-in. Sign in again in the app.')),
+        h('p', null, t('Previous Bot sign-in files stay separate and are never reused.')),
+        h('p', null,
+          t('No credentials are copied. Your terminal login stays unchanged.'))) : null,
       h('button', { type: 'button', className: 'bt-soft bt-soft-sm', disabled: busy,
         onClick: () => void change() }, t('Continue')),
       h('button', { type: 'button', className: 'bt-soft bt-soft-sm', disabled: busy,
         onClick: () => setPending(null) }, t('Cancel')),
       error ? h('p', { role: 'alert' }, error) : null) : h('div', null,
+      entry.recoveryRequired ? h('button', {
+        type: 'button', className: 'bt-soft bt-soft-sm',
+        onClick: () => setPending({ provider, action: 'reset' }),
+      }, t('Reset Bot sign-in')) : h('div', null,
       !entry.signedIn ? h('button', {
         type: 'button', className: 'bt-soft bt-soft-sm',
         onClick: () => actions.openCliLogin(bot.id, provider),
@@ -83,5 +99,5 @@ export function CliAccounts({ bot, actions }) {
         t('Switch account')),
       h('button', { type: 'button', className: 'bt-soft bt-soft-sm',
         onClick: () => setPending({ provider, action: 'signout' }) },
-        t('Sign out')))))))
+        t('Sign out'))))))))
 }

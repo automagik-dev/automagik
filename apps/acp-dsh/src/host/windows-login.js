@@ -39,16 +39,24 @@ export function launchWindowsLogin(file, args, options = {}, {
   const env = options.env ?? process.env
   const request = { ...windowsLoginCommand(file, args, env), cwd: options.cwd,
     stop: stopFile, done: doneFile, nonce, parent: process.pid,
+    modulePath: read(env, 'PSModulePath') ?? null,
     challenge: join(directory, 'challenge'), acknowledge: join(directory, 'acknowledge') }
   const system = read(env, 'SystemRoot') ?? 'C:\\Windows'
   const powershell = win32.join(system, 'System32', 'WindowsPowerShell', 'v1.0',
     'powershell.exe')
+  // The isolated Bot env masks PSModulePath. Pin the supervisor's built-in commands to
+  // Windows' own modules, without copying any terminal profile or restoring its credentials.
+  // The script restores the vendor's original value after loading its supervisor code.
+  const supervisorEnv = Object.fromEntries(Object.entries(env).filter(([name]) => (
+    name.toLowerCase() !== 'psmodulepath'
+  )))
+  supervisorEnv.PSModulePath = win32.join(win32.dirname(powershell), 'Modules')
   let child
   try {
     child = spawn(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive',
       '-ExecutionPolicy', 'Bypass', '-File', SUPERVISOR], {
       ...options, shell: false, windowsHide: true,
-      env: { ...env, AUTOMAGIK_LOGIN_JOB: JSON.stringify(request) },
+      env: { ...supervisorEnv, AUTOMAGIK_LOGIN_JOB: JSON.stringify(request) },
     })
   } catch (error) {
     rmSync(directory, { recursive: true, force: true })

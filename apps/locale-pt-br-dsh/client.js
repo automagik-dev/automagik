@@ -70,7 +70,11 @@ const createPack = function createPack(dictionaries) {
 }
 const pack = createPack({
   "omni-ui": {
-    "A previous Bot sign-in may still be running. Close it and retry; if blocked, contact support.": "Saída do login do Bot incerta. Feche-o e tente de novo; se persistir, contate o suporte.",
+    "Bot sign-in recovery is needed. Reset Bot sign-in to start fresh.": "É preciso recuperar o login do Bot. Redefina o login do Bot para recomeçar.",
+    "Reset Bot sign-in": "Redefinir login do Bot",
+    "Reset starts a fresh Bot sign-in. Sign in again in the app.": "A redefinição inicia um novo login do Bot. Entre de novo no app.",
+    "Previous Bot sign-in files stay separate and are never reused.": "Os arquivos do login anterior ficam separados e nunca são reutilizados.",
+    "No credentials are copied. Your terminal login stays unchanged.": "Nenhuma credencial é copiada. O login do terminal permanece intacto.",
     "Account not shown by the CLI": "A CLI não informou a conta",
     "Account change failed. Close other app windows and try again.": "Não foi possível mudar a conta. Feche as outras janelas do app e tente de novo.",
     "Bot accounts": "Contas dos Bots",

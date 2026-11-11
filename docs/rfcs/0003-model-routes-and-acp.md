@@ -698,6 +698,22 @@ work paused until an explicit retry. Installation locks serialize authentication
 another app instance has registered the same vendor home, close it before changing accounts.
 Launches capture an account generation so delayed work cannot start under a later account.
 
+**Crash recovery and owner Reset.** Ordinary lock recovery still requires the old login tree's
+exit proof. A short installation-level mutex uses unique process claims, so a claimant's own
+crash does not permanently hold recovery. The lock owner and tree evidence are revalidated
+under that mutex before stale ownership is removed.
+
+Pending-before-spawn, damaged and legacy evidence cannot supply that proof. Cold owner settings
+show recovery per vendor and offer an explicitly confirmed Reset Bot sign-in. Reset pauses
+admission and stops known work before selecting a fresh empty home generation and forgetting
+old account consent. It requires fresh in-app sign-in, preserves Bot models and history, and
+does not log out or copy the old account. The previous physical folder and its unproved records
+remain at their original path: it is never renamed and reused. A surviving vendor process can
+write only to the abandoned generation. Cleanup removes it later only when exit is proven;
+unproved generations stay retained. Both serialization and app registrations sit outside the
+replaceable home. Captured launches check the installation's current-generation pointer as well
+as local version markers; delayed account reads and image tickets are invalidated by Reset.
+
 **Storage assumptions and unfinished live validation.** This design relies on Claude's
 config-directory-namespaced macOS Keychain entry and Codex's `CODEX_HOME`-namespaced OS-keyring
 key. Current vendor documentation/source supports those assumptions; fake stores and process

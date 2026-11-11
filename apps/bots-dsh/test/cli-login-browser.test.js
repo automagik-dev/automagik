@@ -83,7 +83,7 @@ test('account settings distinguish terminal and Bot identities and confirm switc
     assert.deepEqual(await page.evaluate(() => window.accountCalls),
       ['switch', 'open', 'signout'])
   })
-test('blocked account recovery shows the support action and no private process diagnostic',
+test('blocked account recovery shows the reset action and no private process diagnostic',
   async t => {
     const page = await fixture(t)
     if (!page) return
@@ -91,11 +91,44 @@ test('blocked account recovery shows the support action and no private process d
     await page.getByRole('button', { name: 'Sign out', exact: true }).click()
     await page.getByRole('button', { name: 'Continue', exact: true }).click()
     const text = await page.getByRole('alert').innerText()
-    assert.match(text, /Close it and retry; if blocked, contact support/)
+    assert.match(text, /Reset Bot sign-in to start fresh/)
     assert.doesNotMatch(text, /private-process-diagnostic/)
     assert.deepEqual(await page.evaluate(() => window.accountCalls), [])
-    await page.getByText('Bots: bot@example.test', { exact: true }).waitFor()
+    await page.getByRole('button', { name: 'Reset Bot sign-in', exact: true }).waitFor()
   })
+
+for (const evidence of ['pending', 'damaged']) {
+  test(`cold settings offer an explicit reset for ${evidence}`, async t => {
+    const page = await fixture(t)
+    if (!page) return
+    await page.evaluate(evidence => window.showRecoveryAccounts(evidence), evidence)
+    await page.getByRole('button', { name: 'Reset Bot sign-in', exact: true }).waitFor()
+    await page.getByText('Bots: healthy@example.test', { exact: true }).waitFor()
+    assert.deepEqual(await page.evaluate(() => window.accountCalls), [], 'cold load never resets')
+    assert.equal(await page.evaluate(() => window.accountReads), 1)
+    assert.match(await page.getByRole('alert').innerText(), /Reset Bot sign-in to start fresh/)
+    await page.getByRole('button', { name: 'Reset Bot sign-in', exact: true }).click()
+    await page.getByText('This stops running Bot work for this account. Continue?', {
+      exact: true,
+    }).waitFor()
+    await page.getByText('Previous Bot sign-in files stay separate and are never reused.', {
+      exact: true,
+    }).waitFor()
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+    assert.deepEqual(await page.evaluate(() => window.accountCalls), [])
+    await page.getByRole('button', { name: 'Reset Bot sign-in', exact: true }).click()
+    await page.getByRole('button', { name: 'Continue', exact: true }).click()
+    await page.getByRole('button', { name: 'Sign in', exact: true }).waitFor()
+    assert.deepEqual(await page.evaluate(() => window.accountCalls), ['reset', 'open'])
+    await page.getByText('Bots: healthy@example.test', { exact: true }).waitFor()
+    assert.equal(await page.getByText('Terminal: terminal@example.test', {
+      exact: true,
+    }).count(), 2)
+    assert.equal(await page.getByRole('button', {
+      name: 'Reset Bot sign-in', exact: true,
+    }).count(), 0)
+  })
+}
 
 const field = page => page.locator('[data-cli-login-field] input')
 const editorOf = (page, id = 'alpha') => page.locator(`[data-conversation-session="${id}"] [data-composer-input]`)

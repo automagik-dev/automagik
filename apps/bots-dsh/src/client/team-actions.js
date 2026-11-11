@@ -138,6 +138,7 @@ export function teamActions({ call, after, partFor, roster, ui, live, cards, hel
     cliLoginConfirm: (botId, provider, ref, model) => call('cli-login-confirm', loginPayload(botId, provider, { ...(ref === undefined ? {} : { ref }), ...(model === undefined ? {} : { model }) })),
     cliLoginAccounts: () => call('cli-login-accounts', {}),
     cliLoginSwitch: (botId, provider) => call('cli-login-switch', loginPayload(botId, provider)),
+    cliLoginReset: (botId, provider) => call('cli-login-reset', loginPayload(botId, provider)),
     cliLoginSignOut: (botId, provider) => call('cli-login-signout',
       loginPayload(botId, provider)),
     cliLoginNoticed: provider => call('cli-login-noticed', { provider }),

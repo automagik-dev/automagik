@@ -14,28 +14,31 @@ function scratch(t) {
   return root
 }
 
-function fake(t, extra = {}) {
+function fake(t, extra = {}, env = {}) {
   const root = scratch(t)
   const child = new EventEmitter()
   child.pid = 8123
   child.exitCode = null
   child.signalCode = null
   let request
+  let supervisorEnv
   const kills = []
   const owner = launchWindowsLogin('C:\\tools\\codex.cmd', ['app-server'], {
-    cwd: root, env: { SystemRoot: 'C:\\Windows', ComSpec: 'C:\\Windows\\cmd.exe' },
+    cwd: root,
+    env: { SystemRoot: 'C:\\Windows', ComSpec: 'C:\\Windows\\cmd.exe', ...env },
   }, {
     spawn(command, args, options) {
       assert.match(command, /powershell\.exe$/)
       assert.ok(args.includes('-NoProfile'))
       assert.equal(options.shell, false)
       request = JSON.parse(options.env.AUTOMAGIK_LOGIN_JOB)
+      supervisorEnv = options.env
       return child
     },
     taskkill(command, args, options, done) { kills.push({ command, args }); done() },
     ...extra,
   })
-  return { root, child, request, owner, kills,
+  return { root, child, request, owner, kills, supervisorEnv,
     acknowledge() {
       writeFileSync(request.done, request.nonce)
       child.exitCode = 0
@@ -94,6 +97,20 @@ test('Windows launch binds a private liveness challenge and exposes durable reco
     h.acknowledge()
     await h.owner.done
     h.owner.dispose()
+  })
+
+test('Windows supervisor pins system modules while preserving the vendor module-path mask',
+  async t => {
+    for (const modulePath of [undefined, 'terminal-user-modules']) {
+      const h = fake(t, {}, { PSMODULEPATH: modulePath })
+      assert.equal(h.supervisorEnv.PSModulePath,
+        'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\Modules')
+      assert.equal(Object.hasOwn(h.supervisorEnv, 'PSMODULEPATH'), false)
+      assert.equal(h.request.modulePath, modulePath ?? null)
+      h.acknowledge()
+      await h.owner.done
+      h.owner.dispose()
+    }
   })
 
 test('a raw Windows wrapper close without job proof cannot authorize an auth change', async t => {
@@ -169,6 +186,7 @@ for (const duringStartup of [true, false]) {
     const root = mkdtempSync(join(tmpdir(), 'windows-login-parent-test-'))
     const appFile = join(root, 'app.mjs')
     const identityFile = join(root, 'identity')
+    const errorsFile = join(root, 'supervisor-errors')
     const ready = join(root, 'ready')
     const wrote = join(root, 'claude', '.claude', 'invented-credentials')
     const module = new URL('../src/host/windows-login.js', import.meta.url).href
@@ -176,6 +194,12 @@ for (const duringStartup of [true, false]) {
     const recordsModule = new URL('../src/host/login-ownership.js', import.meta.url).href
     const recovered = new CliHomes(root)
     let app, identity
+    const errors = []
+    const diagnostic = () => {
+      let supervisor = ''
+      try { supervisor = readFileSync(errorsFile, 'utf8') } catch {}
+      return [...errors, supervisor].join('') || 'no supervisor diagnostics'
+    }
     t.after(async () => {
       if (app?.exitCode === null && app.signalCode === null) app.kill('SIGKILL')
       if (identity) {
@@ -184,38 +208,49 @@ for (const duringStartup of [true, false]) {
       await new Promise(resolve => setTimeout(resolve, 100))
       recovered.end('claude')
       recovered.dispose()
+      t.diagnostic(diagnostic())
       rmSync(root, { recursive: true, force: true })
     })
-    const writer = "const fs=require('node:fs');fs.writeFileSync(process.argv[1],'ready');"
+    const writer = "const fs=require('node:fs');"
+      + "if(process.env.PSModulePath)throw new Error('Supervisor module path leaked');"
+      + "fs.writeFileSync(process.argv[1],'ready');"
       + "setTimeout(()=>fs.writeFileSync(process.argv[2],'old-login'),2000);"
       + 'setInterval(()=>{},1000)'
-    writeFileSync(appFile, `import {writeFileSync} from 'node:fs';
+    writeFileSync(appFile, `import {closeSync,openSync,writeFileSync} from 'node:fs';
       import {launchWindowsLogin} from ${JSON.stringify(module)};
       import {CliHomes} from ${JSON.stringify(homesModule)};
       import {recordLogin} from ${JSON.stringify(recordsModule)};
       const homes=new CliHomes(${JSON.stringify(root)});
       const env=homes.environment('claude');homes.begin('claude');
       const record=recordLogin(env);
+      const errors=openSync(${JSON.stringify(errorsFile)},'a');
       const owned=launchWindowsLogin(process.execPath,
         ['-e',${JSON.stringify(writer)},${JSON.stringify(ready)},${JSON.stringify(wrote)}],
-        {cwd:env.HOME,env,stdio:['pipe','pipe','pipe']});
+        {cwd:env.HOME,env,stdio:['pipe','pipe',errors]});
+      closeSync(errors);
       record.update(owned.identity);
-      owned.child.stdout.resume();owned.child.stderr.resume();
-      owned.done.then(()=>{record.clear();owned.dispose()}).catch(()=>{});
+      owned.child.stdout.resume();
+      owned.child.on('error',error=>console.error('Supervisor spawn error:',error.code));
+      owned.done.then(()=>{record.clear();owned.dispose()})
+        .catch(()=>console.error('Supervisor exited without full-job proof'));
       writeFileSync(${JSON.stringify(identityFile)},JSON.stringify(owned.identity));
       ${duringStartup ? 'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0);' : ''}
       setInterval(()=>{},1000);`)
     app = spawn(process.execPath, [appFile], { stdio: ['ignore', 'pipe', 'pipe'],
       env: process.env, windowsHide: true })
     app.stdout.resume()
-    app.stderr.resume()
+    app.stderr.on('data', chunk => errors.push(String(chunk)))
     const deadline = Date.now() + 15_000
     while ((!existsSync(identityFile) || (!duringStartup && !existsSync(ready)))
       && Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 10))
     }
+    assert.ok(existsSync(identityFile), diagnostic())
     identity = JSON.parse(readFileSync(identityFile, 'utf8'))
-    if (!duringStartup) assert.equal(readFileSync(ready, 'utf8'), 'ready')
+    if (!duringStartup) {
+      assert.ok(existsSync(ready), diagnostic())
+      assert.equal(readFileSync(ready, 'utf8'), 'ready')
+    }
     assert.throws(() => recovered.begin('claude'), { code: 'acp-account/unverified-login' })
     // This kills the app only. Its independently running PowerShell supervisor must notice.
     const exited = new Promise(resolve => app.once('exit', resolve))
@@ -238,7 +273,8 @@ for (const duringStartup of [true, false]) {
       }
       await new Promise(resolve => setTimeout(resolve, 20))
     }
-    assert.equal(proof, identity.nonce, 'job-empty proof precedes any recovery')
+    assert.equal(proof, identity.nonce,
+      `job-empty proof precedes any recovery: ${diagnostic()}`)
     if (duringStartup) assert.equal(existsSync(ready), false, 'dead app starts no vendor')
     assert.equal(existsSync(wrote), false)
     // A recovered app may write new credentials only after the old job is proved empty.

@@ -7,7 +7,8 @@ import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { test } from 'node:test'
 import { apply, SERVICE } from '../index.js'
-import { HOME_ENV, trackRun } from '../src/host/cli-homes.js'
+import { CliHomes, HOME_ENV, trackRun } from '../src/host/cli-homes.js'
+import { recordLogin } from '../src/host/login-ownership.js'
 import { MODEL_ACCESS_REQUIRED } from '../src/host/names.js'
 
 const tick = () => new Promise(resolve => setImmediate(resolve))
@@ -231,3 +232,69 @@ test('a generation-zero image ticket is refused after switching to another Bot a
     await assert.rejects(h.service.generateImage({ prompt: 'a fox',
       accountGeneration: before.accountGeneration }), { code: 'acp/image-signed-out' })
   })
+
+test('owner reset clears a blocked account with fresh home and account consent', async t => {
+  const h = fixture(t)
+  await h.login('acp-codex')
+  const previous = h.adapter.agents.get('acp-codex').spawn().env
+  const ticket = (await h.service.imageAccess()).accountGeneration
+  const crashed = new CliHomes(join(h.root, 'cli-homes'))
+  const env = crashed.environment('codex')
+  recordLogin(env)
+  crashed.dispose()
+  assert.equal(h.service.accountRecovery('acp-codex').required, true)
+  const before = h.calls.filter(call => call.kind === 'logout').length
+  await h.service.accountReset('acp-codex')
+  assert.equal(h.calls.filter(call => call.kind === 'logout').length, before,
+    'reset never logs out or changes the old credential store')
+  assert.equal(h.service.accountRecovery('acp-codex').required, false)
+  assert.equal((await h.service.inspect('acp-codex')).signedIn, false)
+  assert.equal((await h.service.imageAccess()).ready, false)
+  const fresh = h.adapter.agents.get('acp-codex').spawn().env
+  assert.notEqual(fresh[HOME_ENV], previous[HOME_ENV])
+  assert.equal(h.auth.has(fresh.CODEX_HOME), false, 'credentials were not copied')
+  assert.equal(h.auth.get(previous.CODEX_HOME), 'personal@example.test')
+  await assert.rejects(h.service.generateImage({ prompt: 'a fox',
+    accountGeneration: ticket }), { code: 'acp/image-signed-out' })
+  h.next('fresh@example.test')
+  await h.login('acp-codex')
+  assert.equal((await h.service.account('acp-codex', { fresh: true })).account.email,
+    'fresh@example.test')
+  assert.equal(h.adapter.agents.get('acp-codex').catalog.spec.spawn().env[HOME_ENV],
+    fresh[HOME_ENV])
+  assert.equal(readFileSync(h.terminal, 'utf8'), 'terminal-work@example.test')
+  assert.throws(() => trackRun({ spec: { env: previous } }), /account changed/)
+})
+
+test('reset waits for running work and invalidates image readiness across the home change',
+  async t => {
+    const h = fixture(t)
+    await h.login('acp-codex')
+    const env = h.adapter.agents.get('acp-codex').spawn().env
+    let release, started
+    const stopping = new Promise(resolve => { started = resolve })
+    trackRun({ spec: { env }, stop: () => new Promise(resolve => {
+      release = resolve; started()
+    }) })
+    const reset = h.service.accountReset('acp-codex')
+    await stopping
+    assert.equal(h.adapter.agents.get('acp-codex').spawn().env[HOME_ENV], env[HOME_ENV])
+    await assert.rejects(h.service.accountReset('acp-codex'), { code: 'acp-account/busy' })
+    assert.equal((await h.service.imageAccess()).ready, false)
+    release()
+    await reset
+    assert.notEqual(h.adapter.agents.get('acp-codex').spawn().env[HOME_ENV], env[HOME_ENV])
+  })
+
+test('image setup delayed across reset cannot authorize an old or new account', async t => {
+  const h = fixture(t)
+  await h.login('acp-codex')
+  let release, began
+  const started = new Promise(resolve => { began = resolve })
+  h.imageCheck(() => new Promise(resolve => { release = resolve; began() }))
+  const access = h.service.imageAccess()
+  await started
+  await h.service.accountReset('acp-codex')
+  release({ ok: true })
+  assert.equal((await access).ready, false)
+})

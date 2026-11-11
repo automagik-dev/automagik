@@ -286,10 +286,20 @@ Generation checks prevent work delayed across a switch from starting on the next
 the old drawing request. A missing/reloading ACP service never authorizes legacy image billing.
 A failed logout stays paused until the owner retries. Authentication changes hold an installation
 lock; close other app instances registered on that vendor home before changing accounts.
-After an app crash, recovery also requires proof that its recorded login group or Windows Job
-has ended. Windows stops that Job when the owning app exits. While an old Unix login is still
-running, close it and retry. Missing or damaged exit evidence keeps account changes and new
-vendor work blocked with a support action; a dead app PID alone never clears the ownership.
+After an app crash, ordinary recovery requires proof that its recorded login group or Windows
+Job has ended. Windows stops that Job when the owning app exits. A dead app PID alone never
+clears ownership. Dead recovery claimants can be reclaimed under installation-level
+serialization after the lock owner and tree proof have been revalidated.
+`accountRecovery(id)` reports `{ required }` per vendor without running its CLI. Cold Bot settings
+keep a recovery row for a blocked vendor while the other vendor remains usable.
+The owner-confirmed `accountReset(id)` pauses admission and stops known work, then selects a
+fresh, empty, uniquely named vendor home and requires fresh in-app sign-in. It never logs out,
+copies credentials from, renames or reuses the previous physical folder. Pending, damaged and
+legacy ownership evidence stays there: even a surviving old process writes only to that old
+generation. Abandoned folders are removed on later starts only after exit evidence is verified;
+unproved folders remain retained. Mutexes and app registrations live outside replaceable homes.
+Launches also check the installation's selected generation, so changing an old folder's local
+version or pause marker cannot revive a captured launch. Bot models and DSH history stay intact.
 Account details stay on owner-only routes, never in state, transcripts, model calls or logs.
 
 **Credential-store assumptions and missing live checks.** Claude's documented macOS Keychain

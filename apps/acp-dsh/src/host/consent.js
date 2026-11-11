@@ -225,6 +225,15 @@ export class ConsentStore {
     this.save()
   }
 
+  /** A fresh home generation has no inherited word for the previous Bot account. */
+  forget(id) {
+    if (!this.ids.includes(id)) return
+    this.sync()
+    delete this.vendors[id]
+    this.dirty.add(id)
+    this.save()
+  }
+
   /** Whether a carried vendor's one-time notice is still to be shown. */
   noticePending(id) {
     const record = this.vendors[id]

@@ -81,11 +81,12 @@ test('isolated account controls use owner actions, sanitize identities and valid
     const changed = []
     h.acp.accountSignOut = async (...args) => changed.push(['signout', ...args])
     h.acp.accountSwitch = async (...args) => changed.push(['switch', ...args])
+    h.acp.accountReset = async (...args) => changed.push(['reset', ...args])
     const accounts = await h.actions['cli-login-accounts']({})
     assert.equal(accounts.accounts['acp-codex'].account.email, 'bot@example.test')
     assert.equal(accounts.accounts['acp-codex'].terminal.email, 'terminal@example.test')
     assert.doesNotMatch(JSON.stringify(accounts), /never-forward|token/)
-    for (const action of ['signout', 'switch']) {
+    for (const action of ['signout', 'switch', 'reset']) {
       await h.actions[`cli-login-${action}`]({ botId: 'a', provider: 'acp-codex' })
       await assert.rejects(h.actions[`cli-login-${action}`]({
         botId: 'a', provider: 'acp-codex', home: '/untrusted',
@@ -96,6 +97,7 @@ test('isolated account controls use owner actions, sanitize identities and valid
     }
     assert.deepEqual(changed, [
       ['signout', 'acp-codex', { label: 'a' }], ['switch', 'acp-codex', { label: 'a' }],
+      ['reset', 'acp-codex', { label: 'a' }],
     ])
     assert.deepEqual(h.updates, [])
   })

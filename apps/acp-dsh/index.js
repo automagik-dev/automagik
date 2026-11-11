@@ -23,7 +23,7 @@ import { Backchannel } from './src/host/backchannel.js'
 import { batchSafe } from './src/host/batch-spawn.js'
 import { Catalog, cliStamp, DEFAULT_MODEL } from './src/host/catalog.js'
 import { CliStore, CLI_CHECK_EVERY_MS } from './src/host/clis.js'
-import { CliHomes, stopRuns } from './src/host/cli-homes.js'
+import { CliHomes, HOME_ENV, stopRuns } from './src/host/cli-homes.js'
 import { CONSENT_FILE, ConsentStore } from './src/host/consent.js'
 import { adaptersHome, AdapterStore, CHECK_TICK_MS } from './src/host/install.js'
 import { handshake } from './src/host/handshake.js'
@@ -142,6 +142,9 @@ export function apply(ctx, config = {}, {
   logoutRun = execFile, checkTimers = globalThis,
 } = {}) {
   const homes = cliHome === undefined ? undefined : new CliHomes(cliHome)
+  if (homes) for (const vendor of ['claude', 'codex']) {
+    try { homes.collect(vendor) } catch {} // Unproved abandoned homes remain untouched.
+  }
   if (cliStore === undefined && !config.fakeAgent
     && (process.env.AUTOMAGIK_APP_BROWSER === '1' || process.env.AUTOMAGIK_PNPM)) {
     cliStore = new CliStore({ log: message => info(ctx, message),
@@ -823,7 +826,9 @@ export function apply(ctx, config = {}, {
     async onReady(id, selected, { existing = false } = {}) {
       if (disposed || accountChanges.has(id)) return
       const version = authVersions.get(id)
-      const same = clis.get(id) === selected.cli
+      const same = clis.get(id) === selected.cli && (!homes
+        || selected.env[HOME_ENV] === homes.home(AGENTS[id].key))
+      if (!same) return
       if (same) signIns.set(id, true)
       inspections.delete(id)
       nextEpoch(id)
@@ -956,6 +961,43 @@ export function apply(ctx, config = {}, {
     }
   }
 
+  async function resetAccount(id) {
+    if (!homes || !consentIds.includes(id) || disposed) {
+      throw accountFailure('unavailable', 'The Bot account cannot be changed here.')
+    }
+    if (accountChanges.has(id)) throw accountFailure('busy', 'The Bot account is changing.')
+    const spec = AGENTS[id]
+    // Reserve outside the replaceable home before pausing/awaiting work. Other app instances
+    // cannot reset or admit a launch while the pointer transition is in progress.
+    const reset = homes.reserveReset(spec.key)
+    accountChanges.add(id)
+    authVersions.set(id, (authVersions.get(id) ?? 0) + 1)
+    signedOut(id)
+    try {
+      adapter.endProvider(id, 'The Bot sign-in was reset. Sign in again in the app.')
+      agents.get(id)?.catalog?.dispose()
+      await Promise.all([
+        reset.home === undefined ? undefined : stopRuns(reset.home),
+        // A failed login drain cannot prevent this explicitly proof-free fresh-home escape.
+        // Its durable record and absolute old path remain intact, isolated from the new home.
+        logins.stop(id).catch(() => {}),
+      ])
+      loginLocks.delete(id)
+      reset.complete()
+      consents?.forget(id)
+      if (consents?.saveError) {
+        throw accountFailure('unavailable', 'Bot sign-in was reset. Retry sign-in in the app.')
+      }
+      return { id, signedIn: false, authScope: 'isolated' }
+    } finally {
+      signedOut(id)
+      accountChanges.delete(id)
+      reset.release()
+      if (!disposed && agents.has(id)) agents.set(id, agentOf(spec, clis.get(id)))
+      publish()
+    }
+  }
+
   async function startLogin(id, label, alreadySignedOut = false) {
     if (!homes || !consentIds.includes(id)) return logins.start(id, { label })
     if (accountChanges.has(id)) throw accountFailure('busy', 'The Bot account is changing.')
@@ -1060,6 +1102,9 @@ export function apply(ctx, config = {}, {
     loginStart: (id, { label } = {}) => homes && consentIds.includes(id)
       ? startLogin(id, label) : logins.start(id, { label }),
     accountSignOut: id => signOutAccount(id),
+    accountReset: id => resetAccount(id),
+    accountRecovery: id => ({ required: !!(homes && consentIds.includes(id)
+      && homes.recovery(AGENTS[id].key)) }),
     accountSwitch: async (id, { label } = {}) => {
       await signOutAccount(id)
       return startLogin(id, label, true)

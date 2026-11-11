@@ -113,6 +113,58 @@ test('legacy dead sessions without login ownership evidence cannot be reclaimed'
   assert.equal(existsSync(lock), true)
 })
 
+for (const evidence of ['pending', 'damaged', 'legacy']) {
+  test(`owner reset abandons ${evidence} evidence without deleting or reusing its home`, t => {
+    const { homes } = place(t)
+    const previous = new CliHomes(homes.root)
+    const oldEnv = previous.environment('codex')
+    if (evidence === 'pending') recordLogin(oldEnv)
+    if (evidence === 'damaged') {
+      mkdirSync(join(oldEnv.HOME, 'login-trees'))
+      writeFileSync(join(oldEnv.HOME, 'login-trees', 'unknown'), '{')
+    }
+    previous.dispose()
+    if (evidence === 'legacy') {
+      const pid = Number(spawnSync(process.execPath, ['-p', 'process.pid'], {
+        encoding: 'utf8',
+      }).stdout.trim())
+      writeFileSync(join(oldEnv.HOME, 'instances', `${pid}-old`), '')
+    }
+    assert.equal(homes.recovery('codex'), true)
+    const home = homes.reset('codex')
+    assert.notEqual(home, oldEnv.HOME)
+    const fresh = homes.environment('codex')
+    assert.equal(fresh.HOME, home)
+    assert.equal(homes.paused('codex'), true)
+    assert.equal(homes.recovery('codex'), false)
+    assert.equal(existsSync(oldEnv.HOME), true)
+    writeFileSync(join(oldEnv.CODEX_HOME, 'invented-auth'), 'old-late-write')
+    assert.equal(existsSync(join(fresh.CODEX_HOME, 'invented-auth')), false)
+    assert.throws(() => trackRun({ spec: { env: oldEnv } }), /account changed/)
+    homes.collect('codex')
+    assert.equal(existsSync(oldEnv.HOME), true, 'unproved old evidence remains retained')
+    const restarted = new CliHomes(homes.root)
+    t.after(() => restarted.dispose())
+    assert.equal(restarted.home('codex'), home)
+  })
+}
+
+test('reset keeps captured work invalid even if old generation files change', t => {
+  const { homes } = place(t)
+  const old = homes.environment('claude')
+  const reset = homes.reserveReset('claude')
+  assert.throws(() => trackRun({ spec: { env: old } }), /account is changing|account changed/)
+  const other = new CliHomes(homes.root)
+  t.after(() => other.dispose())
+  assert.throws(() => other.environment('claude'), /Close other Automagik sessions/)
+  const fresh = reset.complete()
+  reset.release()
+  // A late vendor can remove its old pause/version files; installation-level selection wins.
+  rmSync(join(old.HOME, 'paused'))
+  assert.throws(() => trackRun({ spec: { env: old } }), /account changed/)
+  assert.notEqual(fresh, old.HOME)
+})
+
 test('a failed stop can be verified again after its process finally exits', async t => {
   const { homes } = place(t)
   const env = homes.environment('claude')
