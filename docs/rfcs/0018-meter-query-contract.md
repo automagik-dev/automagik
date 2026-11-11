@@ -464,8 +464,8 @@ source and window, plus the unattributed by reason:
   retries (so it counts model calls that failed for the session, not each retried attempt,
   including usage-limit stops), pinned in the same fixture folder:
   - Claude Code: a top-level `type: "assistant"` line whose top-level `isApiErrorMessage` is the
-    JSON boolean `true`, counted once per top-level line `uuid` (adds 0 tokens to usage and is
-    never counted as a `tool_error`).
+    JSON boolean `true`, counted once per top-level line `uuid`, and adds 0 tokens to usage
+    (a `<synthetic>` line, which `claude.rs` already ignores; never counted as a `tool_error`).
   - Codex: `unsupported` until a rollout JSONL marker is pinned (rollouts currently persist no
     error-type `event_msg`).
 - `run_failed` (source `hc_snapshot` or `workers_ledger`): a launch whose terminal ended on its

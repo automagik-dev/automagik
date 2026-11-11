@@ -814,6 +814,7 @@ mod tests {
         assert_eq!(prune(&tx, NOW).unwrap(), 1);
         tx.commit().unwrap();
         assert_eq!(from(&s), Some(NOW - 12 * 3_600_000));
+        assert_eq!(api_from(&s), Some(NOW - 12 * 3_600_000));
         let left: i64 = s
             .conn
             .query_row("SELECT count(*) FROM ev_error", [], |r| r.get(0))

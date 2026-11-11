@@ -402,7 +402,8 @@ mod tests {
         assert_eq!(e.session_cwd.as_deref(), Some("/work/app"));
         assert_eq!(e.branch.as_deref(), Some("feat/x"));
         assert_eq!(e.ts_ms, parse_rfc3339("2026-01-15T10:00:10Z").unwrap());
-        // Never counted as a tool_error, and adds 0 tokens to usage.
+        // Adds 0 tokens to usage (a `<synthetic>` line, which `claude.rs` already ignores)
+        // and is never counted as a `tool_error`.
         assert_eq!(
             distinct(&all, TOOL_ERROR, "err|claude|"),
             expected("claude.jsonl")
