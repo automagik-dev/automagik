@@ -113,6 +113,10 @@ var ZH = {
   "Turn on {connection} in Settings → Claude Code and Codex before using this model.": "使用此模型前，请在设置 → Claude Code 和 Codex 中开启 {connection}。",
   "Wait for {connection} to finish installing, or retry it in Settings → Claude Code and Codex.": "等待 {connection} 安装完成，或在设置 → Claude Code 和 Codex 中重试。",
   "Sign in to {connection} before using this model.": "使用此模型前，请登录 {connection}。",
+  // A Bot Session adopt refused after it began (#877, host agents.js adoptBotSession).
+  "Session {session} cannot join {bot} because this window cannot change the Bot team now. {reason}": "会话 {session} 无法加入 {bot}，因为这个窗口现在不能修改 Bot 团队。{reason}",
+  '{bot} changed while Session {session} was joining it (another window or an edit). For the Bot team: Nothing was changed; try again. The native preset of Session {session} was set to "{preset}" before this refusal.': "{bot} 在会话 {session} 加入时发生了变化（另一个窗口或一次编辑）。Bot 团队没有任何改动，请重试。在这次拒绝之前，会话 {session} 的原生预设已被设为「{preset}」。",
+  '{bot} changed while Session {session} was being saved. For the Bot team: Nothing was changed; try again. The native preset of Session {session} was set to "{preset}" before this refusal.': "{bot} 在保存会话 {session} 时发生了变化。Bot 团队没有任何改动，请重试。在这次拒绝之前，会话 {session} 的原生预设已被设为「{preset}」。",
   "{name} could not switch to {model}. It stays on {kept}.": "{name} 无法切换到 {model}，仍使用 {kept}。",
   // A Bot's capability pills (capability-pills.js); 'Channels' is the Channels page's.
   "Computer": "电脑",
@@ -1811,8 +1815,14 @@ var HOST_TEMPLATES = [
   "Wait for {connection} to finish installing, or retry it in Settings → Claude Code and Codex.",
   "Sign in to {connection} before using this model.",
   "Confirm the account of {connection} before using this model.",
-  "{name} could not switch to {model}. It stays on {kept}."
-].map((template) => {
+  "{name} could not switch to {model}. It stays on {kept}.",
+  // A Bot Session adopt refused after it began (#877). `host`: a value that is itself a host
+  // message (the store's read-only reason) is worded in turn.
+  { template: "Session {session} cannot join {bot} because this window cannot change the Bot team now. {reason}", host: ["reason"] },
+  '{bot} changed while Session {session} was joining it (another window or an edit). For the Bot team: Nothing was changed; try again. The native preset of Session {session} was set to "{preset}" before this refusal.',
+  '{bot} changed while Session {session} was being saved. For the Bot team: Nothing was changed; try again. The native preset of Session {session} was set to "{preset}" before this refusal.'
+].map((entry) => {
+  const { template, host = [] } = typeof entry === "string" ? { template: entry } : entry;
   const names = [];
   const source = template.split(/(\{\w+\})/).map((part) => {
     const name = /^\{(\w+)\}$/.exec(part)?.[1];
@@ -1820,12 +1830,12 @@ var HOST_TEMPLATES = [
     names.push(name);
     return "(.+?)";
   }).join("");
-  return { template, names, pattern: new RegExp(`^${source}$`) };
+  return { template, names, host, pattern: new RegExp(`^${source}$`) };
 });
 function hostTemplate(message) {
-  for (const { template, names, pattern } of HOST_TEMPLATES) {
+  for (const { template, names, host, pattern } of HOST_TEMPLATES) {
     const found = pattern.exec(message);
-    if (found !== null) return t(template, Object.fromEntries(names.map((name, index) => [name, found[index + 1]])));
+    if (found !== null) return t(template, Object.fromEntries(names.map((name, index) => [name, host.includes(name) ? hostText(found[index + 1]) : found[index + 1]])));
   }
   return void 0;
 }

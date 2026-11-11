@@ -581,7 +581,6 @@ export function install(rt) {
   const associations = new Set()
   const associationTargets = new Set()
   async function adoptBotSession(botId, sessionId, sourceSessionId) {
-    writeCheck()
     const bot = rt.own(state.bots, botId)
     const original = rt.own(state.agents, bot?.dshAgentId)
     // Every refusal names the Bot and the Session in the message the person sees, and its
@@ -608,6 +607,14 @@ export function install(rt) {
       })
       throw refusal(message, { code, cause })
     }
+    // A read-only host is the first refusal, under its own code like the others (#877): the
+    // store's reason names who holds the team and what to do. The endpoint refuses a host that
+    // already was read-only; this one became so since (another dsh took the team).
+    const writable = () => {
+      const readOnly = rt.readOnly()
+      if (readOnly !== undefined) refuse('bot/adopt-read-only', `${sessionLabel} cannot join ${botLabel} because this window cannot change the Bot team now. ${readOnly}`)
+    }
+    writable()
     if (bot?.kind !== DSH_BOT || original?.kind !== DSH_BOT || original.adoptedBotId !== botId) {
       refuse('bot/adopt-unknown', `${botLabel} is not an adopted DSH Bot, so ${sessionLabel} cannot join it. Open the Bot from the team list and try again.`)
     }
@@ -620,12 +627,21 @@ export function install(rt) {
     }
     const before = JSON.stringify(bot)
     const registration = JSON.stringify(original)
+    // The native preset this adopt selected on the picked Session, once it has. A later refusal
+    // leaves it there, so "Nothing was changed" is said of the team and the selection is named
+    // (#877), unless the Session reads the preset it had before.
+    let selected
+    const untouched = () => {
+      const now = selected === undefined ? undefined : ctx.get('agentPresets')?.presetForSession?.(selected.session)
+      if (selected === undefined || (selected.from !== undefined && now === selected.from)) return 'Nothing was changed; try again.'
+      return `For the Bot team: Nothing was changed; try again. The native preset of ${sessionLabel} was set to "${selected.to}" before this refusal.`
+    }
     const validate = () => {
-      writeCheck()
+      writable()
       if (state.bots[botId] !== bot || state.agents[bot.dshAgentId] !== original
         || JSON.stringify(bot) !== before || JSON.stringify(original) !== registration
         || rt.chatOf(botId) !== sourceSessionId) {
-        refuse('bot/adopt-changed', `${botLabel} changed while ${sessionLabel} was joining it (another window or an edit). Nothing was changed; try again.`)
+        refuse('bot/adopt-changed', `${botLabel} changed while ${sessionLabel} was joining it (another window or an edit). ${untouched()}`)
       }
       if (rt.selfOf(sessionId) !== undefined || rt.botOf(sessionId) !== undefined
         || rt.roomOf(sessionId) !== undefined || agentOf(sessionId) !== undefined
@@ -670,7 +686,9 @@ export function install(rt) {
         if (typeof presets?.select !== 'function') {
           refuse('bot/adopt-preset-unavailable', `${botLabel} needs the native preset "${preset}" for ${sessionLabel}, but native preset selection is unavailable in this DSH. Update DSH or pick a Session already on that preset.`)
         }
+        const from = presets.presetForSession?.(session)
         await presets.select(live, preset)
+        selected = { session, from, to: preset }
         await ctx.sessions.flush(session)
       }
       validate()
@@ -686,7 +704,7 @@ export function install(rt) {
         await rt.save({ required: true })
         if (state.bots[botId] !== bot || bot.sessionId !== sessionId || state.agents[bot.dshAgentId] !== original
           || JSON.stringify(original) !== registration) {
-          refuse('bot/adopt-changed-persisting', `${botLabel} changed while ${sessionLabel} was being saved. Nothing was changed; try again.`)
+          refuse('bot/adopt-changed-persisting', `${botLabel} changed while ${sessionLabel} was being saved. ${untouched()}`)
         }
       } catch (error) {
         // Undo only this operation's tentative ownership; do not erase a successor.
@@ -698,6 +716,10 @@ export function install(rt) {
           rt.indexSessions()
           await rt.save({ required: true }).catch(() => {})
         }
+        // A save that failed because this host lost the team meanwhile (refused before the
+        // write, or the store's ELOCKLOST during it) is the read-only refusal, not an unnamed
+        // error; this adopt's own refusals and any other failed save stay as they were.
+        if (!String(error?.code ?? '').startsWith('bot/')) writable()
         throw error
       }
       return sessionId
