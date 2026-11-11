@@ -517,6 +517,15 @@ the Cloud service rolls releases one workspace first. The Cloud service itself l
 private repository in the owner's organisation (Decided 17); only its contracts stay public here
 (Decided 25).
 
+**Interim sign-in for the first Cloud workspace.** Until delivery C2.3 (#909) provides
+workspace tokens, an explicitly configured gate may verify Cloudflare Access application JWTs
+and exchange them for its normal owner session. The operator first puts an Access policy for
+the owner's exact e-mail on the public name, then adds the tunnel route to the gate. This is
+owner-only access, with the existing gate session and DSH owner limitations, not Cloud roles or
+membership. It is off without its team domain, audience and exact e-mail allowlist. Workspace
+tokens supersede this interim mode; the private values remain on the host. See
+[the server settings](../../server/README.md#interim-cloudflare-access-sign-in).
+
 **The identity service and the first test workspace VMs** run in a restricted Incus project on
 Arca's own hosting, operated by Arca; no host name is written in this repository.
 

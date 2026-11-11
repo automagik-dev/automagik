@@ -393,3 +393,33 @@ The gate tests cover unauthenticated HTTP/upgrade paths, exact origin and port, 
 rotation/replay/idle/restart, the downgrade refusal, credential stripping, the principal
 upstream envelope, DSH restart recovery, and live-socket revocation. The container smoke also
 checks the two-volume topology and gate `401`; CI builds, smokes and scans the image as before.
+
+## Interim Cloudflare Access sign-in
+
+This optional mode gives the first owner a browser sign-in before workspace tokens (#909).
+Configure the Access application and a policy allowing **only the owner's exact e-mail** on the
+public name **before adding a tunnel route**. Point that route at the gate, never DSH, in its
+shared network namespace. Keep the DSH listener off public ingress. The existing
+`AUTOMAGIK_GATE_ENABLED=1` and exact HTTPS `AUTOMAGIK_GATE_ORIGIN` still apply.
+
+Set these non-secret values on the gate container, using your own values on the host:
+
+| Setting | Value |
+|---|---|
+| `AUTOMAGIK_GATE_ACCESS_TEAM_DOMAIN` | `{team}.cloudflareaccess.com`, host only, without a scheme, port or path |
+| `AUTOMAGIK_GATE_ACCESS_AUD` | `{application-audience-tag}` |
+| `AUTOMAGIK_GATE_ACCESS_EMAILS` | `{owner-email}`, or comma-separated exact addresses; trimmed and case-insensitive |
+
+All three unset preserves the gate foundation's behaviour and opens no Access connection.
+Partial configuration refuses startup and names the missing settings. Every allowlisted address
+gets the same local owner principal and full owner privileges: this is not a member/guest mode.
+The first verified sign-in creates the random local owner record if absent; existing, malformed
+or newer owner records are never overwritten. Workspace tokens will replace this interim mode.
+
+The gate verifies only `Cf-Access-Jwt-Assertion`, never an e-mail header on its own, and exchanges
+a valid assertion for the normal gate cookie. DSH credentials remain server-side. The verifier
+uses the configured team's HTTPS certs endpoint and RS256, exact issuer, application audience,
+timestamps and the exact e-mail allowlist. It never takes a key location from the token.
+[Cloudflare's validation contract](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/)
+describes the assertion header and certs endpoint. Tokens belong only in the assertion header,
+never in a URL or log. Authentication failures log only a status and a generated request id.
