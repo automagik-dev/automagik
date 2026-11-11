@@ -665,7 +665,7 @@ three CLIs before their switches default to on.
 
 ## Amendment: remote Hermes first delivery (2026-11-11, #1070)
 
-Felipe's GO adds **Hermes remote** as a fourth route, after Native, ACP and Herdr. This
+The owner's GO adds **Hermes remote** as a fourth route, after Native, ACP and Herdr. This
 amends the three-route selector approved in #1016. Local Hermes remains `acp-hermes`;
 remote Hermes is `hermes-remote`, a native `hermes serve` JSON-RPC/WebSocket adapter,
 never an ACP SDK transport. Crossing to or from it starts a new conversation with the
