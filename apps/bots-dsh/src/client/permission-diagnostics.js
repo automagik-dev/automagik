@@ -64,11 +64,10 @@ const permTime = value => (typeof value === 'number' && Number.isFinite(value) ?
 // A level by the name the app shows for it. The host names only the stock levels; a preset of
 // the person's own arrives as `custom`, with neither its key nor its label.
 const PERM_LEVELS = new Set(['read-only', 'workspace-write', 'danger-full-access', 'auto'])
-// `cli`: the coding CLI the row's Bot runs on (cliOfBot), where Full access reads "Auto".
-function levelName(level, cli) {
+function levelName(level) {
   const value = permText(level?.value)
   if (value === undefined) return undefined
-  return PERM_LEVELS.has(value) ? presetName(value, undefined, cli) : t('A custom level')
+  return PERM_LEVELS.has(value) ? presetName(value) : t('A custom level')
 }
 
 // The CLIs' own no-ask modes, the first one asked of them at Full access (acp-dsh modeFor).
@@ -94,12 +93,12 @@ export function noAskMissed(acp) {
 function levelFacts(row, cli) {
   const out = []
   if (row.presets === false) out.push(t('Permissions are not available in this DeepSeek Harness'))
-  const saved = levelName(row.saved, cli)
+  const saved = levelName(row.saved)
   if (saved !== undefined && PERM_SAVED[row.source]) out.push(t(PERM_SAVED[row.source], { level: saved }))
   else if (row.source === 'unknown') out.push(t('Saved level: not known now'))
   else if (row.presets !== false) out.push(t('No saved level: it uses the default of DeepSeek Harness'))
   if (row.presets !== false) {
-    const effective = levelName(row.effective, cli)
+    const effective = levelName(row.effective)
     if (row.open !== true) out.push(t('Not open now'))
     else if (effective !== undefined) out.push(t('Running as: {level}', { level: effective }))
     else out.push(t('Running as: not known now'))
@@ -108,7 +107,7 @@ function levelFacts(row, cli) {
   if (row.fallback === true) out.push(t('Runs as Workspace here'))
   // The host compared the two levels by their own keys: two custom ones may differ.
   else if (row.differs === true && row.open === true) out.push(t('The level in force here is not the saved one.'))
-  const missed = levelName(row.unapplied?.level, cli)
+  const missed = levelName(row.unapplied?.level)
   if (row.unapplied && typeof row.unapplied === 'object') {
     // No promise either way: whether the gate holds tools back depends on more than the mark.
     out.push(t('Not applied: {level} could not be set on this conversation ({time}). Tools may be held back here until it is.', { level: missed ?? t('the saved level'), time: permTime(row.unapplied.at) ?? '?' }))
