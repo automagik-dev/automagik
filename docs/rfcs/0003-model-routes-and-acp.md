@@ -219,7 +219,11 @@ means the per-agent default (Contracts).
   review of ours. A bad or hijacked publish runs as the person, with what the agent CLI can
   already reach (their files, their sign-ins). What still holds: the exact package names, npm's
   integrity check of every tarball, no install scripts, no optional dependencies, nothing fetched
-  at spawn, and an install that fails leaves the previous adapter in place. The exact names cover
+  at spawn, and an install that fails leaves the previous adapter in place. Since #958 the same
+  holds for a release that installs and then does not start: it is asked `initialize` before it
+  replaces the one in use and is kept out for three days when it fails, and one that fails its
+  first session start goes back to the release before it (`apps/acp-dsh/src/host/install.js`).
+  That covers a release that cannot start, not one that starts and misbehaves. The exact names cover
   only the two adapters: their dependency tree (the agent SDKs, JSON-RPC and process helpers) is
   resolved fresh at each install, with no lockfile. Also new: the adapter
   carries its own copy of the agent's SDK (`claude-agent-acp` pins `@anthropic-ai/claude-agent-sdk`)
