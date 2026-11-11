@@ -182,6 +182,8 @@ export function mirrorTool(host) {
       for (;;) {
         if (exec.signal?.aborted) {
           tool.permission?.answer({ outcome: { outcome: 'cancelled' } })
+          // The agent may ignore the cancel: the host gives its prompt a bounded time to end.
+          host.cancelled?.(exec.agent?.session?.id, live)
           await live.run.cancel()
           break
         }

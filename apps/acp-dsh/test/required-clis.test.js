@@ -9,7 +9,9 @@ import { apply, SERVICE } from '../index.js'
 import { AGENTS } from '../src/host/agents.js'
 import { CliStore, CLI_CHECK_EVERY_MS, cliLayout } from '../src/host/clis.js'
 
-const specs = Object.values(AGENTS)
+// The CLIs Automagik installs itself; a native agent's CLI (no `cliPackage`) is never one.
+const specs = Object.values(AGENTS).filter(spec => spec.cliPackage !== undefined)
+const managedRows = status => status.agents.filter(agent => specs.some(spec => spec.key === agent.key))
 const platform = { platform: 'linux', arch: 'x64', musl: false }
 const unixOnly = { skip: process.platform === 'win32' ? 'the fake native executables use a POSIX shebang' : false }
 const write = (path, text, mode = 0o600) => {
@@ -151,8 +153,8 @@ test('first desktop activation installs both required CLIs and offers their exis
   assert.deepEqual([...f.checked].sort(), specs.map(spec => spec.cliPackage).sort())
   assert.deepEqual([...f.routes].sort(), ['acp-claude', 'acp-codex'])
   const status = await service.status()
-  assert.ok(status.agents.every(agent => agent.cli.found && agent.cli.managed && agent.cli.version === '2.0.0'))
-  assert.ok(status.agents.every(agent => agent.connector.state === 'ready'))
+  assert.ok(managedRows(status).every(agent => agent.cli.found && agent.cli.managed && agent.cli.version === '2.0.0'))
+  assert.ok(managedRows(status).every(agent => agent.connector.state === 'ready'))
   f.assertPreserved()
 })
 
@@ -172,7 +174,7 @@ test('activation after an update fills a missing CLI with both models off and no
   const codex = status.agents.find(agent => agent.id === 'acp-codex')
   assert.equal(claude.cli.managed, false)
   assert.equal(codex.cli.managed, true)
-  assert.ok(status.agents.every(agent => agent.cli.found && agent.on === false && agent.connector.state === 'off'))
+  assert.ok(managedRows(status).every(agent => agent.cli.found && agent.on === false && agent.connector.state === 'off'))
   f.assertPreserved()
 })
 
@@ -196,7 +198,7 @@ test('every app startup checks both releases and upgrades installed managed CLIs
   t.mock.timers.tick(5000)
   await f.settle()
   let status = await service.status()
-  assert.ok(status.agents.every(agent => agent.cli.version === '2.0.0' && agent.cli.managed))
+  assert.ok(managedRows(status).every(agent => agent.cli.version === '2.0.0' && agent.cli.managed))
   assert.equal(f.checked.length, 4, 'both registries checked at the second startup')
   assert.equal(f.installed.length, 4, 'both installed tools upgraded')
   for (const old of previous) assert.equal(existsSync(old.path), true, 'running sessions retain their executable')
@@ -210,7 +212,7 @@ test('every app startup checks both releases and upgrades installed managed CLIs
   t.mock.timers.tick(5000)
   await f.settle()
   status = await service.status()
-  assert.ok(status.agents.every(agent => agent.cli.version === '2.0.0'))
+  assert.ok(managedRows(status).every(agent => agent.cli.version === '2.0.0'))
   assert.equal(f.checked.length, 6)
   assert.equal(f.installed.length, 4, 'current versions are not downloaded again')
   f.assertPreserved()
@@ -233,7 +235,7 @@ test('a live plugin update checks and upgrades both CLIs immediately even with b
   let status = await service.status()
   assert.equal(f.checked.length, 4)
   assert.equal(f.installed.length, 4)
-  assert.ok(status.agents.every(agent => agent.cli.version === '2.0.0' && agent.on === false))
+  assert.ok(managedRows(status).every(agent => agent.cli.version === '2.0.0' && agent.on === false))
   assert.deepEqual(f.routes, [])
   assert.deepEqual(f.adapterInstalls, [])
 
@@ -243,7 +245,7 @@ test('a live plugin update checks and upgrades both CLIs immediately even with b
   status = await service.status()
   assert.equal(f.checked.length, 6)
   assert.equal(f.installed.length, 4)
-  assert.ok(status.agents.every(agent => agent.cli.version === '2.0.0'))
+  assert.ok(managedRows(status).every(agent => agent.cli.version === '2.0.0'))
   for (const reason of ['remove', 'plugin', 'bundle']) f.emit('plugin-manager/changed', { reason })
   await f.settle()
   assert.equal(f.checked.length, 6, 'settings and removal events are not package updates')
@@ -275,7 +277,7 @@ test('a plugin update arriving during downloads queues a fresh check after the a
   const status = await service.status()
   assert.equal(f.checked.length, 4, 'one queued latest check per tool follows the busy period')
   assert.equal(f.installed.length, 4)
-  assert.ok(status.agents.every(agent => agent.cli.version === '2.0.0' && agent.cli.managed))
+  assert.ok(managedRows(status).every(agent => agent.cli.version === '2.0.0' && agent.cli.managed))
   assert.deepEqual(f.routes, [])
   f.assertPreserved()
 })
@@ -287,7 +289,7 @@ test('older user CLIs receive verified managed upgrades while their binaries and
   t.mock.timers.tick(5000)
   await f.settle()
   const status = await service.status()
-  assert.ok(status.agents.every(agent => agent.cli.managed && agent.cli.version === '2.0.0'))
+  assert.ok(managedRows(status).every(agent => agent.cli.managed && agent.cli.version === '2.0.0'))
   assert.deepEqual([...f.installed].sort(), ['claude', 'codex'])
   f.assertPreserved()
 })
@@ -335,7 +337,7 @@ test('offline startup chooses the newer local CLI in either direction without to
   assert.equal(codex.cli.managed, false)
   assert.equal(f.installed.length, 2, 'offline check downloads neither replacement')
   assert.equal(f.checked.length, 4, 'the unavailable registry was still checked for both tools')
-  assert.ok(status.agents.every(agent => agent.cli.found && agent.cli.state === 'ready'))
+  assert.ok(managedRows(status).every(agent => agent.cli.found && agent.cli.state === 'ready'))
   f.assertPreserved()
 })
 
@@ -355,7 +357,7 @@ test('one failed download does not block the other CLI, and the next scheduled c
   t.mock.timers.tick(CLI_CHECK_EVERY_MS)
   await f.settle()
   status = await service.status()
-  assert.ok(status.agents.every(agent => agent.cli.found && agent.cli.state === 'ready'))
+  assert.ok(managedRows(status).every(agent => agent.cli.found && agent.cli.state === 'ready'))
   assert.deepEqual([...f.routes].sort(), ['acp-claude', 'acp-codex'])
   assert.equal(f.installed.filter(name => name === 'claude').length, 1)
   assert.equal(f.installed.filter(name => name === 'codex').length, 2)

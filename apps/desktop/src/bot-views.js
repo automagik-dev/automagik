@@ -321,6 +321,23 @@ export class BotViews {
     return this.#views.get(tabId)
   }
 
+  /**
+   * Where the Bot tab that has the keyboard sits in dsh's page: the centre of its panel, in the
+   * page's CSS pixels (the rectangle the panel reported). Null when no shown, placed Bot tab is
+   * focused. Cmd+W uses it to close the pane the person is in (pane-close.js).
+   */
+  focusedPoint() {
+    const entry = this.shown().find((value) => {
+      try {
+        return value.rect !== null && !value.contents.isDestroyed() && value.contents.isFocused()
+      } catch {
+        return false
+      }
+    })
+    if (!entry) return null
+    return { x: entry.rect.x + entry.rect.width / 2, y: entry.rect.y + entry.rect.height / 2 }
+  }
+
   /** The view's state changed (a Bot attached or left). */
   changed(entry) {
     this.#publish(entry)

@@ -12,9 +12,9 @@ import { dirname, join } from "node:path";
 import { createHash } from "node:crypto";
 
 import { applyBotEdit, checkBots, parseBots, swapProblem } from "../mods/am-sidebar/model.js";
-import { AGY_FIXED_DENY, AGY_SHELL_READ, agySettingsDir, agySettingsFile, effortArgs, promptArgs } from "../mods/am-sidebar/models.js";
+import { AGENTS, AGY_FIXED_DENY, AGY_SHELL_READ, agySettingsDir, agySettingsFile, effortArgs, promptArgs } from "../mods/am-sidebar/models.js";
 import { ENV, GUARD_DIR, WORKER_OF_LABEL, stableGuardDir, stableHelper, stableRunner, baseCandidates, hcProxyEnabled, branchNamesTask, branchSlug, parseWorktrees, readLedger, reapCandidates, runsTemplate, workLeft, sessionChange, startRow, swapArm, swapByte, templateAgent,
-  workerArgs, workerBranch, workerPlan, workerRole, workerTaskId, writesWorktree } from "../mods/am-sidebar/workers.js";
+  KILL_GUARD_DIR, workerArgs, workerBranch, workerPlan, workerRole, workerTaskId, writesWorktree } from "../mods/am-sidebar/workers.js";
 import { approveProject, recordFileOf } from "../mods/am-sidebar/approved.js";
 import { stableRunnerText } from "../mods/am-sidebar/dshTui.mjs";
 import { startProxy } from "../mods/am-sidebar/hcProxy.mjs";
@@ -284,11 +284,72 @@ test("worker: the bot's worker defaults are used, and per-task --agent/--model/-
   assert.equal(r.code, 0, r.err);
   const out = r.json();
   assert.deepEqual([out.agent, out.model, out.effort], ["codex", "gpt-5.5", "medium"]);
-  assert.deepEqual(after(s.runs()[0]), ["codex", "--model", "gpt-5.5", "-c", "model_reasoning_effort=medium", "fix the login form"]);
+  assert.deepEqual(after(s.runs()[0]), ["codex", "--approve-for-me", "--model", "gpt-5.5", "-c", "model_reasoning_effort=medium", "fix the login form"]);
   const o = s.cli(["worker", "review it", "--branch", "feat/review", "--agent", "claude", "--model", "opus", "--effort", "max", "--json"]);
   assert.equal(o.code, 0, o.err);
   assert.deepEqual([o.json().agent, o.json().model, o.json().effort], ["claude", "opus", "max"]);
-  assert.deepEqual(freshClaude(after(s.runs()[1])), ["claude", "--model", "opus", "--effort", "max", "review it"]);
+  assert.deepEqual(freshClaude(after(s.runs()[1])), ["claude", "--permission-mode", "auto", "--model", "opus", "--effort", "max", "review it"]);
+});
+
+test("worker #946: a bot's codexAuto false leaves its Codex workers on Codex's default approvals", (t) => {
+  const file = team();
+  file.bots[2].codexAuto = false;
+  const s = scene(t, { file });
+  const r = s.cli(["worker", "fix the login form", "--branch", "feat/login", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(after(s.runs()[0]), ["codex", "--model", "gpt-5.5", "-c", "model_reasoning_effort=medium", "fix the login form"]);
+  const o = s.cli(["worker", "tune it", "--branch", "feat/tune", "--agent", "codex", "--json"]);
+  assert.equal(o.code, 0, o.err);
+  assert.equal(s.runs()[1].includes("--approve-for-me"), false, "a per-task --agent codex keeps the opt-out");
+});
+
+test("worker kill (#955): a bot ends a worker it started and nothing else: a seat, another bot's worker, its own pane and a plain pane are refused", (t) => {
+  const s = scene(t);
+  const started = s.cli(["worker", "fix the login form", "--branch", "feat/login", "--json"]);
+  assert.equal(started.code, 0, started.err);
+  const mine = started.json().terminal;
+  const kills = () => s.calls().filter((c) => c[0] === "kill");
+  // Another bot (Captain, t4) may not end Dev's worker; neither a bot's seat, a plain pane nor the caller's own pane is ended.
+  for (const [args, from, why] of [[["worker", "kill", mine], "t4", /is another bot's worker; worker kill ends only a worker you started\. Nothing was ended\./],
+    [["worker", "kill", "t4"], "t1", /t4 is a bot's pane, not a worker/], [["worker", "kill", "t2"], "t1", /t2 isn't a worker/],
+    [["worker", "kill", "t1"], "t1", /t1 is your own pane/], [["worker", "kill", "t999"], "t1", /t999 isn't a terminal hc knows/],
+    [["worker", "kill", "vm/t9"], "t1", /on this computer only/]]) {
+    const r = s.cli(args, { from });
+    assert.equal(r.code, 1, `${args.join(" ")} from ${from}: ${r.err}`);
+    assert.match(r.err, why);
+  }
+  assert.deepEqual(kills(), [], "no refused call reached hc kill");
+  assert.equal(s.cli(["worker", "kill"]).code, 2, "it takes one terminal");
+  assert.equal(s.cli(["worker", "kill", mine, "t4"]).code, 2);
+  // A pane that isn't a bot's can't call it at all.
+  assert.equal(s.cli(["worker", "kill", mine], { from: "t2" }).code, 1);
+  assert.deepEqual(kills(), []);
+  // Mid-turn, even its own bot doesn't end it; once the turn is over it does.
+  const setStatus = (state) => {
+    const st = s.hcState();
+    st.terminals.find((x) => x.address === mine).status = { state };
+    writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  };
+  setStatus("working");
+  const busy = s.cli(["worker", "kill", mine]);
+  assert.equal(busy.code, 1);
+  assert.match(busy.err, /is still working; worker kill ends a worker that has finished its turn/);
+  assert.deepEqual(kills(), []);
+  setStatus("idle");
+  // Its own bot ends it: exactly one hc kill, of that terminal.
+  const r = s.cli(["worker", "kill", mine, "--json"]);
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual([r.json().terminal, r.json().ended, r.json().branch], [mine, true, "feat/login"]);
+  assert.deepEqual(kills().map((c) => c.slice(0, 2)), [["kill", mine]]);
+  // Ended already: said, and no second kill.
+  const again = s.cli(["worker", "kill", mine]);
+  assert.equal(again.code, 0, again.err);
+  assert.match(again.out, /has already ended/);
+  assert.equal(kills().length, 1);
+  // A task whose text starts with "kill" is still a task: it names --branch.
+  const task = s.cli(["worker", "kill", "the", "flaky", "test", "--branch", "feat/kill-flaky", "--json"]);
+  assert.equal(task.code, 0, task.err);
+  assert.equal(kills().length, 1);
 });
 
 test("worker: a bot with no worker field runs its own agent, with that agent's default model and effort", (t) => {
@@ -299,7 +360,7 @@ test("worker: a bot with no worker field runs its own agent, with that agent's d
   assert.equal(r.code, 0, r.err);
   assert.deepEqual([r.json().agent, r.json().model, r.json().effort], ["claude", null, null]);
   const run = s.runs()[0];
-  assert.deepEqual(freshClaude(after(run)), ["claude", "write the parser"]);
+  assert.deepEqual(freshClaude(after(run)), ["claude", "--permission-mode", "auto", "write the parser"]);
   assert.equal(labelsOf(run).some((l) => l.startsWith("worker.model=") || l.startsWith("worker.effort=")), false);
 });
 
@@ -309,7 +370,7 @@ test("worker: a codex captain starts a Claude reviewer with --agent claude-code;
   assert.equal(r.code, 0, r.err);
   const out = r.json();
   assert.deepEqual([out.agent, out.model, out.effort], ["claude", null, "high"]);
-  assert.deepEqual(freshClaude(after(s.runs()[0])), ["claude", "--effort", "high", "review PR 12"]);
+  assert.deepEqual(freshClaude(after(s.runs()[0])), ["claude", "--permission-mode", "auto", "--effort", "high", "review PR 12"]);
   assert.match(r.err, /worker model gpt-5\.5 is for codex; claude runs its own default/);
   assert.ok(labelsOf(s.runs()[0]).includes(`worker.of=${ID.cap}`));
 });
@@ -479,7 +540,7 @@ test("worker: hc run --bg as a child of the bot's pane, in the worktree, with th
     "worker.effort=medium"]);
   // The agent gets the calling pane's PATH (herdr-core's lacks ~/.bun/bin, where omp lives),
   // as argv words, never a shell string.
-  assert.deepEqual(runArgv(run).slice(0, 3), ["/usr/bin/env", `PATH=${s.path}`, "codex"]);
+  assert.deepEqual(runArgv(run).slice(0, 3), ["/usr/bin/env", `PATH=${KILL_GUARD_DIR}:${s.path}`, "codex"]);
   const made = s.hcState().terminals.find((x) => x.address === "t100");
   assert.equal(made.parent, "t1");
   assert.equal(made.cwd, wt);
@@ -507,7 +568,7 @@ test("worker Antigravity: --mode auto by default, the chosen worker.agyMode when
   const r = s.cli(["worker", "fix the login form", "--branch", "feat/agy", "--json"]);
   assert.equal(r.code, 0, r.err);
   const cwdOf = (run) => run[run.indexOf("--cwd") + 1];
-  assert.deepEqual(after(s.runs()[0]), ["agy", "--mode", "auto", "--settings",
+  assert.deepEqual(after(s.runs()[0]), ["agy", "--dangerously-skip-permissions", "--mode", "auto", "--settings",
     agySettingsFile(agySettingsDir(s.app), ID.dev, "worker", "dev", cwdOf(s.runs()[0])), "-i", "fix the login form"]);
   assert.equal(r.json().agyMode, "auto");
   assert.equal(labelsOf(s.runs()[0]).some((l) => l.startsWith("worker.agyMode=")), false, "the default isn't a label");
@@ -517,7 +578,7 @@ test("worker Antigravity: --mode auto by default, the chosen worker.agyMode when
   const s2 = scene(t, { file: chosen });
   const r2 = s2.cli(["worker", "fix the login form", "--branch", "feat/agy", "--json"]);
   assert.equal(r2.code, 0, r2.err);
-  assert.deepEqual(after(s2.runs()[0]), ["agy", "--mode", "plan", "--settings",
+  assert.deepEqual(after(s2.runs()[0]), ["agy", "--dangerously-skip-permissions", "--mode", "plan", "--settings",
     agySettingsFile(agySettingsDir(s2.app), ID.dev, "worker", "dev", cwdOf(s2.runs()[0])), "-i", "fix the login form"]);
   assert.equal(r2.json().agyMode, "plan");
   assert.ok(labelsOf(s2.runs()[0]).includes("worker.agyMode=plan"));
@@ -530,6 +591,80 @@ test("worker Antigravity: --mode auto by default, the chosen worker.agyMode when
   assert.match(r3.err, /Dev's workers: Antigravity mode "yolo" isn't one of accept-edits, auto, plan\./);
   assert.match(r3.err, /--worker-agy-mode <accept-edits\|auto\|plan>/);
   assert.equal(s3.runs().length, 0, "nothing started");
+});
+
+test("worker #1032: a Kimi worker starts bare and gets its task as its first message, after hc says it is ready", (t) => {
+  const TASK = "You are a read-only reviewer of the login form";
+  const kimi = team();
+  kimi.bots[2].worker = { agent: "kimi" };
+  const s = scene(t, { file: kimi });
+  exe(join(s.root, "bin", "kimi"), "#!/bin/sh\nexit 0\n");
+  const r = s.cli(["worker", TASK, "--branch", "feat/kimi", "--json"]);
+  assert.equal(r.code, 0, r.err);
+  const out = r.json();
+  // kimi 2.5.0 reads a bare word as a command name and exits 1: its argv is the program alone.
+  assert.deepEqual(after(s.runs()[0]), ["kimi"]);
+  assert.equal(s.runs()[0].includes(TASK), false, "the task is no word of hc run");
+  assert.equal(s.runs()[0].includes("-p"), false, "never kimi's one-shot print mode");
+  assert.deepEqual(out.argv.slice(-1), ["kimi"]);
+  // The task goes in once, as a message to the new pane; hc wait comes first (a send to a
+  // booting agent can be dropped), both after hc run.
+  assert.deepEqual(s.hcState().sent, [{ to: out.terminal, text: TASK }]);
+  const order = s.calls().filter((c) => ["run", "wait", "send"].includes(c[0])).map((c) => c[0]);
+  assert.deepEqual(order, ["run", "wait", "send"]);
+  assert.deepEqual(s.calls().find((c) => c[0] === "wait").slice(0, 2), ["wait", out.terminal]);
+  assert.deepEqual(s.calls().find((c) => c[0] === "send"), ["send", out.terminal, TASK]);
+  assert.deepEqual(out.warnings, [], r.err);
+
+  // A send hc refuses (the pane waits for a sign-in or a trust answer, or has ended): the worker
+  // is kept and the call succeeds, with one plain line naming the pane and what to do.
+  const s2 = scene(t, { file: kimi });
+  exe(join(s2.root, "bin", "kimi"), "#!/bin/sh\nexit 0\n");
+  const st = s2.hcState();
+  writeFileSync(join(s2.root, "hc.json"), JSON.stringify({ ...st, failSend: ["t100"] }));
+  const r2 = s2.cli(["worker", TASK, "--branch", "feat/kimi", "--json"]);
+  assert.equal(r2.code, 0, r2.err);
+  assert.equal(r2.json().terminal, "t100");
+  assert.equal(s2.hcState().sent, undefined, "nothing went in");
+  assert.equal(r2.json().warnings.length, 1, JSON.stringify(r2.json().warnings));
+  assert.match(r2.json().warnings[0], /^t100 started without its task \(hc send: t100 is blocked\): .*hc read t100.*hc send t100 "<task>"\.$/);
+  assert.match(r2.err, /t100 started without its task/, "on stderr too");
+  assert.equal(s2.ledger().filter((row) => row.terminal === "t100").length, 1, "its start row is written all the same");
+});
+
+test("worker #1032: every other agent's task stays a word of hc run, and no message is sent", (t) => {
+  for (const [agent, program, words] of [["codex", "codex", ["fix the login form"]], ["claude", "claude", ["fix the login form"]],
+    ["antigravity", "agy", ["-i", "fix the login form"]]]) {
+    const file = team();
+    file.bots[2].worker = { agent };
+    const s = scene(t, { file });
+    const r = s.cli(["worker", "fix the login form", "--branch", "feat/other", "--json"]);
+    assert.equal(r.code, 0, `${agent}: ${r.err}`);
+    const argv = freshClaude(after(s.runs()[0]));
+    assert.equal(argv[0], program, agent);
+    assert.deepEqual(argv.slice(-words.length), words, agent);
+    assert.equal(s.calls().some((c) => c[0] === "send" || c[0] === "wait"), false, `${agent}: no first message, no wait`);
+    assert.equal(s.hcState().sent, undefined, agent);
+  }
+});
+
+test("workerArgs #1032: kimi's hc run ends at its program, with no task word; the same call for another agent ends in the task", () => {
+  const base = { botId: ID.dev, branch: "feat/a", name: "feat-a", cwd: "/p/wt", parent: "t1", task: "fix the build", path: "/x/bin" };
+  const head = ["run", "--bg", "--json", "--name", "feat-a", "--cwd", "/p/wt", "--label", `worker.of=${ID.dev}`, "--label", "branch=feat/a",
+    "--parent", "t1", "--", "/usr/bin/env", `PATH=${KILL_GUARD_DIR}:/x/bin`];
+  const kimi = workerPlan({ name: "K", agent: "claude", worker: { agent: "kimi" } });
+  assert.deepEqual(kimi.argv, ["kimi"]);
+  assert.deepEqual(workerArgs({ ...base, agent: kimi.agent, argv: kimi.argv }), [...head, "kimi"]);
+  assert.equal(workerArgs({ ...base, agent: kimi.agent, argv: kimi.argv }).includes("fix the build"), false);
+  // Its own options stay where they were, and none of them is followed by the task.
+  assert.deepEqual(runArgv(workerArgs({ ...base, agent: "kimi", argv: ["kimi", "--auto"] })).slice(2), ["kimi", "--auto"]);
+  // Unchanged: every other agent Herdr knows ends in its task (agy behind -i, dsh-tui after --).
+  const own = { antigravity: ["-i", "fix the build"], "dsh-tui": ["--", "fix the build"] };
+  for (const key of Object.keys(AGENTS).filter((k) => k !== "kimi")) {
+    const words = own[key] ?? ["fix the build"];
+    assert.deepEqual(runArgv(workerArgs({ ...base, agent: key, argv: ["prog"] })).slice(-words.length - 1), ["prog", ...words], key);
+  }
+  assert.deepEqual(runArgv(workerArgs({ ...base, argv: ["omp"] })), ["/usr/bin/env", "PATH=/x/bin", "omp", "fix the build"], "no agent named");
 });
 
 test("worker #823: an Antigravity worker writes its 0600 permission file (its worktree, the roster's rules), a review worker a read-only one", (t) => {
@@ -610,7 +745,7 @@ test("worker #879: a fake agy reads --settings and trusts only its session cwd, 
   const run = s.runs()[0];
   const cwd = run[run.indexOf("--cwd") + 1];
   const words = after(run);
-  assert.deepEqual(words.slice(0, 2), ["agy", "--mode"], JSON.stringify(words));
+  assert.deepEqual(words.slice(0, 3), ["agy", "--dangerously-skip-permissions", "--mode"], JSON.stringify(words));
   const at = words.indexOf("--settings");
   assert.ok(at > 0, "the launch names its settings file");
   // A stand-in agy like the one a worker runs: it reads the file the launch names, from the
@@ -814,7 +949,7 @@ test("worker: a bots.json template default is used; a per-task --agent sets it a
   // The captain picks Claude for a reviewer: the template default steps aside.
   const o = s.cli(["worker", "review it", "--branch", "review/x", "--agent", "claude", "--json"], { from: "t4" });
   assert.equal(o.code, 0, o.err);
-  assert.deepEqual(freshClaude(after(s.runs()[1])), ["claude", "review it"]);
+  assert.deepEqual(freshClaude(after(s.runs()[1])), ["claude", "--permission-mode", "auto", "review it"]);
   assert.deepEqual([o.json().template, o.json().agent], [null, "claude"]);
   assert.equal(labelsOf(s.runs()[1]).some((l) => l.startsWith("worker.template=")), false);
   assert.deepEqual(s.ledger().map((row) => row.template), ["dev-sol", null]);
@@ -826,7 +961,7 @@ test("worker: a bots.json template default is used; a per-task --agent sets it a
   // --model alone is a per-task pick too: the default template steps aside for the default agent.
   const m = s.cli(["worker", "tune it", "--branch", "feat/tune", "--model", "gpt-6", "--json"]);
   assert.equal(m.code, 0, m.err);
-  assert.deepEqual(after(s.runs()[3]), ["codex", "--model", "gpt-6", "-c", "model_reasoning_effort=medium", "tune it"]);
+  assert.deepEqual(after(s.runs()[3]), ["codex", "--approve-for-me", "--model", "gpt-6", "-c", "model_reasoning_effort=medium", "tune it"]);
 });
 
 test("worker --template: an agent the command doesn't name skips the hook with a warning; no template list refuses", (t) => {
@@ -967,21 +1102,21 @@ test("effortArgs: claude/antigravity --effort, codex -c model_reasoning_effort, 
   assert.deepEqual(plan.argv, ["grok"]);
   assert.match(plan.warnings[0], /Grok has no effort flag; effort high left out/);
   const agy = workerPlan({ name: "A", agent: "antigravity", worker: { model: "gemini-4-argon-high", effort: "max" } });
-  assert.deepEqual(agy.argv, ["agy", "--mode", "auto", "--model", "gemini-4-argon-high", "--effort", "max"]);
+  assert.deepEqual(agy.argv, ["agy", "--dangerously-skip-permissions", "--mode", "auto", "--model", "gemini-4-argon-high", "--effort", "max"]);
   assert.equal(agy.agyMode, "auto", "the default mode is always passed");
   assert.deepEqual(agy.warnings, []);
   const chosen = workerPlan({ id: ID.dev, name: "A", agent: "antigravity", worker: { agyMode: "plan" } });
-  assert.deepEqual([chosen.agyMode, chosen.argv], ["plan", ["agy", "--mode", "plan"]]);
+  assert.deepEqual([chosen.agyMode, chosen.argv], ["plan", ["agy", "--dangerously-skip-permissions", "--mode", "plan"]]);
   const unknown = workerPlan({ id: ID.dev, name: "A", agent: "antigravity", worker: { agyMode: "yolo" } });
   assert.equal(unknown.error, 'A\'s workers: Antigravity mode "yolo" isn\'t one of accept-edits, auto, plan. '
     + `Fix it with automagik-herdr edit ${ID.dev} --worker-agy-mode <accept-edits|auto|plan>.`);
   assert.equal(unknown.error.includes("\n"), false, "one clear line");
   // Another agent's worker defaults never add mode words: its argv stays as it was.
   const claude = workerPlan({ id: ID.dev, name: "A", agent: "claude", worker: { agyMode: "plan" } });
-  assert.deepEqual([claude.agyMode, claude.argv], [null, ["claude"]]);
+  assert.deepEqual([claude.agyMode, claude.argv], [null, ["claude", "--permission-mode", "auto"]]);
   const legacy = workerPlan({ name: "L", agent: "claude" }, { agent: "gemini", effort: "low" });
   assert.equal(legacy.agent, "antigravity", "a typed gemini runs antigravity");
-  assert.deepEqual(legacy.argv, ["agy", "--mode", "auto", "--effort", "low"]);
+  assert.deepEqual(legacy.argv, ["agy", "--dangerously-skip-permissions", "--mode", "auto", "--effort", "low"]);
   assert.match(workerPlan({ name: "G", agent: "claude" }, { agent: "nope" }).error, /isn't a coding agent/);
   assert.match(workerPlan({ name: "G", agent: "claude" }, { effort: "$(x)" }).error, /isn't an effort level/);
 });
@@ -1056,13 +1191,14 @@ test("workers.js: hc run arguments, slugs, worktree list, base order, ledger row
     "--label", "worker.template=dev-sol", "--parent", "t1", "dev-sol", "do it"]);
   assert.deepEqual(runArgv(workerArgs({ botId: ID.dev, branch: "b", cwd: "/w", parent: "t1", argv: ["omp"], task: "t", path: "/a:/b" })),
     ["/usr/bin/env", "PATH=/a:/b", "omp", "t"]);
-  // agy takes its first prompt only through -i; a bare trailing task is an error to it.
+  // agy takes its first prompt only through -i; a bare trailing task is an error to it. With no permission
+  // file named, the launch carries no skip-permissions flag (#955).
   const agyPlan = workerPlan({ name: "A", agent: "antigravity", worker: { model: "gemini-4-argon-high", effort: "high" } });
   assert.deepEqual(workerArgs({ botId: ID.dev, branch: "feat/a", name: "feat-a", cwd: "/p/wt", parent: "t1", agent: agyPlan.agent,
     model: agyPlan.model, effort: agyPlan.effort, agyMode: agyPlan.agyMode, argv: agyPlan.argv, task: "fix the build", path: "/x/bin" }),
   ["run", "--bg", "--json", "--name", "feat-a", "--cwd", "/p/wt", "--label", `worker.of=${ID.dev}`, "--label", "branch=feat/a",
     "--label", "worker.model=gemini-4-argon-high", "--label", "worker.effort=high", "--parent", "t1", "--",
-    "/usr/bin/env", "PATH=/x/bin", "agy", "--mode", "auto", "--model", "gemini-4-argon-high", "--effort", "high", "-i", "fix the build"]);
+    "/usr/bin/env", `PATH=${KILL_GUARD_DIR}:/x/bin`, "agy", "--mode", "auto", "--model", "gemini-4-argon-high", "--effort", "high", "-i", "fix the build"]);
   // A chosen mode is kept in the label, so Restart --tree runs the worker with the same --mode.
   const plan = workerPlan({ name: "A", agent: "antigravity", worker: { agyMode: "plan" } });
   assert.ok(labelsOf(workerArgs({ botId: ID.dev, branch: "feat/a", cwd: "/p/wt", parent: "t1", agent: plan.agent,
@@ -1091,13 +1227,14 @@ test("workers.js: hc run arguments, slugs, worktree list, base order, ledger row
   assert.equal(sessionChange(null, JSON.stringify({ session_id: "s2" })), null);
 });
 
-test("the bot briefing says a bot doesn't code: one worker per task, checked, ended with hc kill once merged", async () => {
+test("the bot briefing says a bot doesn't code: one worker per task, checked, ended with worker kill once merged", async () => {
   const { briefingText, WORKER_LINE, BRIEFING_LIMIT } = await import("../mods/am-sidebar/briefingText.mjs");
   const file = parseBots(JSON.stringify(team())).file;
   const text = briefingText({ self: { ...file.bots[2], instructions: "x".repeat(4000) }, file });
   assert.ok(text.includes(WORKER_LINE));
   assert.match(WORKER_LINE, /automagik-herdr worker/);
-  assert.match(WORKER_LINE, /hc kill/);
+  assert.match(WORKER_LINE, /end it with `automagik-herdr worker kill <terminal>` once the task merges/);
+  assert.doesNotMatch(WORKER_LINE, /hc kill/, "hc kill is the main bot's only (#955)");
   assert.ok(text.length <= BRIEFING_LIMIT);
 });
 
@@ -1243,7 +1380,7 @@ test("worker: a model starting with a dash is refused, from --model, --worker-mo
   assert.match(parseBots(JSON.stringify(file)).warnings.join("\n"), /worker model starts with a dash/);
   const r = s.cli(["worker", "x", "--branch", "feat/x", "--json"]);
   assert.equal(r.code, 0, r.err);
-  assert.deepEqual(freshClaude(after(s.runs()[0])), ["claude", "x"]);
+  assert.deepEqual(freshClaude(after(s.runs()[0])), ["claude", "--permission-mode", "auto", "x"]);
 });
 
 test("worker: task worktrees are excluded from the main checkout; master is the last base; colliding folders are named", (t) => {
@@ -1716,7 +1853,7 @@ test("worker #225: the calling bot's bots.json warnings go to stderr at once, re
   assert.match(r.err, mine);
   assert.doesNotMatch(r.err, /b-bbbbbbbbbb/, "only the calling bot's warnings");
   assert.ok(r.json().warnings.includes(said), r.out);
-  assert.deepEqual(freshClaude(after(s.runs()[0])), ["claude", "x"], "the defaults are dropped, as before");
+  assert.deepEqual(freshClaude(after(s.runs()[0])), ["claude", "--permission-mode", "auto", "x"], "the defaults are dropped, as before");
   // Printed once, and before a refusal too.
   assert.equal(r.err.split("worker model starts with a dash").length, 2);
   // Refused once the bot is known (the main checkout is no task worktree): the warning comes first.
@@ -2224,8 +2361,8 @@ test("worker #567 F4: a worker call's sweep skips a kept worktree whose reason i
 });
 
 // Refs #631: the real PATH guard plus a fake hc that forwards only run to the fixture proxy.
-async function proxyWorkerCli(t) {
-  const s = scene(t);
+async function proxyWorkerCli(t, { file } = {}) {
+  const s = scene(t, file ? { file } : {});
   const shortDir = shortSocketDir(t, "hw-");
   const runtime = join(shortDir, "r"), paneTmp = join(s.root, "pane-tmp");
   const stableRoot = join(s.env.XDG_DATA_HOME, "automagik-herdr", "dsh-sandbox");
@@ -2315,6 +2452,33 @@ async function runProxiedWorkerUnapprovedRefusal(t) {
 
 test("proxied worker CLI skips the guard only for the actual proxy transport", async (t) => {
   await runProxiedWorkerSuccess(t);
+});
+
+test("proxied worker CLI #1032: an approved Kimi worker starts bare through the proxy, and its task is sent past the pane's guard", async (t) => {
+  const TASK = "review the login form";
+  const file = team();
+  file.bots[2].worker = { agent: "kimi" };
+  const { s, env, fake, proxy, closeAll } = await proxyWorkerCli(t, { file });
+  try {
+    exe(join(s.root, "bin", "kimi"), "#!/bin/sh\nexit 0\n");
+    // The fixture core names the new pane t200; the file-backed hc knows it as a plain live
+    // pane with no labels, which the pane's guard would refuse a send to.
+    const state = s.hcState();
+    state.terminals.push({ address: "t200", name: "t200", cwd: s.project, state: "live", parent: "t1", labels: {} });
+    writeFileSync(join(s.root, "hc.json"), JSON.stringify(state));
+    const r = await s.cliAsync(["worker", TASK, "--branch", "feat/proxied-kimi", "--json"], { env: { ...env, HC_SOCKET: proxy.socket } });
+    assert.equal(r.code, 0, r.err);
+    const out = JSON.parse(r.out);
+    assert.equal(out.terminal, "t200");
+    const argv = fake.calls("terminal.run")[0].params.argv;
+    assert.equal(argv.at(-1), "kimi", `the proxy approved an argv with no task word: ${JSON.stringify(argv)}`);
+    assert.equal(argv.includes(TASK), false);
+    assert.deepEqual(s.hcState().sent, [{ to: "t200", text: TASK }], r.err);
+    assert.deepEqual(s.calls().filter((c) => ["wait", "send"].includes(c[0])).map((c) => c.slice(0, 2)), [["wait", "t200"], ["send", "t200"]]);
+    assert.deepEqual(out.warnings, [], r.err);
+  } finally {
+    await closeAll();
+  }
 });
 
 test("proxied worker CLI gets an unapproved agent refusal from the proxy", async (t) => {
@@ -2436,7 +2600,7 @@ test("worker: a new Claude worker's --session-id is its label and its start row'
   assert.ok(labelsOf(run).includes(`agent.session=${sid}`));
   const row = s.ledger().find((x) => x.event === "start" && x.terminal === r.json().terminal);
   assert.equal(row.session, sid);
-  assert.deepEqual(r.json().argv, ["claude", "--session-id", "***"]);
+  assert.deepEqual(r.json().argv, ["claude", "--permission-mode", "auto", "--session-id", "***"]);
   assert.equal(`${r.out}${r.err}`.includes(sid), false, "never printed");
   // A codex worker: no session id, none in its row.
   const text = s.cli(["worker", "review it", "--branch", "feat/other", "--agent", "codex"]);

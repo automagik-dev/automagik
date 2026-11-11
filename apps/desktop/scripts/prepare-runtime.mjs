@@ -31,6 +31,7 @@ import { devClientBundles } from './client-bundles.mjs'
 import { batchSafe } from './batch-spawn.mjs'
 import { compareVersions } from '../src/update.js'
 import { DSH_TUI_FILES, DSH_TUI_PACKAGE, dshTuiSourceDir } from '../src/dsh-tui.js'
+import { PAGE_CLOSE_SOURCE, pageCloseMismatch } from '../src/pane-close.js'
 
 const APP = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = resolve(APP, '..', '..')
@@ -140,6 +141,10 @@ if (!process.argv.includes('--skip-runtime') || !existsSync(join(runtimeDir, 'no
 }
 // Until DSH has these changes itself; pinned to the exact files, so another dsh fails here.
 for (const { name, state } of patchRuntime(join(runtimeDir, 'node_modules'), join(APP, 'runtime', 'patches'))) say(`runtime patch: ${name} ${state}`)
+// Cmd+W reaches the client's `page.close` command by its key (src/pane-close.js). A DSH that
+// renames or rebinds it fails here, when it is pinned, instead of shipping a Cmd+W that does nothing.
+const closeMismatch = pageCloseMismatch(readFileSync(join(runtimeDir, 'node_modules', ...PAGE_CLOSE_SOURCE.package.split('/'), PAGE_CLOSE_SOURCE.file), 'utf8'))
+if (closeMismatch.length > 0) throw new Error(`${PAGE_CLOSE_SOURCE.package} no longer shows the page.close contract Cmd+W sends (src/pane-close.js): ${closeMismatch.join('; ')}`)
 
 // DSH's own packages keep their typings and READMEs: its plugin-development skill reads them.
 const ownDocs = name => name.startsWith('@deepseek-ai/')

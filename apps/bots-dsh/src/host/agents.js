@@ -789,15 +789,19 @@ export function install(rt) {
   // A task thinks with the model of the Bot that asked, as that Bot's own chat does, not
   // with DSH's default: the default may be a route this machine has no key for. Before the
   // first message, so the first turn already runs on it.
+  // It answers false when the Bot's model was to be selected and was not: the task is still
+  // on the model DSH made its Session with.
   async function askersModel(sessionId, bot) {
-    if (bot === undefined) return
+    if (bot === undefined) return true
     try {
-      const ref = await rt.desiredModel(bot)
-      if (ref === undefined) return
+      const ref = await rt.desiredModel(bot, { sessionId })
+      if (ref === undefined) return true
       const effort = await rt.desiredEffort(bot, ref)
       await rt.selectSessionModel(sessionId, { ...splitRef(ref), ...(effort === undefined ? {} : { reasoningEffort: effort }) })
+      return true
     } catch (error) {
       rt.warn('ds-bot: the task keeps the default model, %s\'s was not applied: %s', bot.name, error?.message ?? error)
+      return false
     }
   }
 
@@ -806,10 +810,15 @@ export function install(rt) {
   const endOf = task => task.endedAt ?? task.at ?? 0
   // `roomId`: the group whose Session asked for the task. Its result goes back to that
   // group, where the user saw the request, not to the Bot's own chat.
+  // Without one, a task started inside a group Session's tool call keeps that group as
+  // `levelRoomId`, which can only narrow its level (permissions.js); the report still goes
+  // to the Bot's own chat.
   async function startTask({ title, text, from, cwd, agentPreset, roomId }) {
+    // Read before the first await: the tool call this runs in may return before the rest.
+    const levelRoomId = roomId || from === undefined ? undefined : rt.callerGroup?.()
     const caller = state.bots?.[from]
     const sessionId = await createTaskSession(title, { cwd: cwd ?? caller?.workDir, agentPreset: agentPreset ?? caller?.profile })
-    tasks()[sessionId] = { title: String(title).slice(0, AGENT_SESSION_TITLE_MAX), from, at: Date.now(), status: 'working', ...(roomId ? { roomId } : {}) }
+    tasks()[sessionId] = { title: String(title).slice(0, AGENT_SESSION_TITLE_MAX), from, at: Date.now(), status: 'working', ...(roomId ? { roomId } : {}), ...(levelRoomId ? { levelRoomId } : {}) }
     // Only TASKS_KEPT ended tasks are remembered for their reports. The ended ones go first,
     // the one that ended longest ago first: a long task that just ended is fresh news.
     // A working record is never evicted, whatever its age or whether DSH still holds its
@@ -840,12 +849,25 @@ export function install(rt) {
       await rt.forgetTaskPermission(id, ranAt)
         .catch(error => rt.warn('ds-bot: the old task %s keeps its permission, the default was not applied: %s', id, error?.message ?? error))
     }
-    await askersModel(sessionId, state.bots?.[from])
+    const selected = await askersModel(sessionId, state.bots?.[from])
     const live = await rt.resolveAgent(sessionId)
     // And at its Bot's permission level: DSH announced the Session before it was a task,
     // so its session/created listener could not. Before the first turn, as the model is.
-    await rt.applyTaskPermission(sessionId, live.session)
-      .catch(error => rt.warn('ds-bot: the task keeps the default permission, %s\'s was not applied: %s', caller?.name ?? from, error?.message ?? error))
+    // A task whose level did not hold takes no turn: the default it would run at may be
+    // wider. It ends as failed, so nothing resumes it, and its Session is archived, so
+    // nothing is typed into it at that default either.
+    try {
+      await rt.applyTaskPermission(sessionId, live.session, { start: true })
+      // At Full access with its Bot's coding CLI not served, or not selected just above: not
+      // started on another model.
+      await rt.assertNotOffCli(state.bots?.[from], sessionId, live.session, { unselected: !selected })
+    } catch (error) {
+      Object.assign(tasks()[sessionId] ?? {}, { status: 'failed', endedAt: Date.now(), summary: String(error?.message ?? error).slice(0, TASK_SUMMARY_MAX) })
+      await rt.save().catch(failure => rt.warn('ds-bot: saving a task failed: %s', failure))
+      await ctx.workspaceRegistry.archiveSession(sessionId, { stopActivity: true })
+        .catch(failure => rt.warn('ds-bot: the task %s that did not start was not archived: %s', sessionId, failure))
+      throw error
+    }
     // The Session existed before this task record did, so the tool deny list could not be
     // resolved then (a task is a task only once it is written down). Apply it now, before
     // the first turn, to the same agent the turn will use.

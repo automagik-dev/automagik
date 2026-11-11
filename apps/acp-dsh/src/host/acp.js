@@ -2,13 +2,24 @@
 // session inside it, prompted once per DSH turn. What the agent streams lands in a queue the
 // adapter drains step by step; its tool calls are kept by id so the mirror tool (tool.js) can
 // wait on each one and answer its permission request through DSH.
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { Readable, Writable } from 'node:stream'
-import { ClientSideConnection, PROTOCOL_VERSION, ndJsonStream } from '@agentclientprotocol/sdk'
+// The `/unstable` entry: stable ACP v1 plus `session/fork` (how acp-codex's tool set follows a
+// preset change) and the session updates newer adapters send (a stable-only parser refuses an
+// update it does not know, and the whole notification with it).
+import { PROTOCOL_VERSION, client, methods, ndJsonStream } from '@agentclientprotocol/sdk/unstable'
+import { batchSafe } from './batch-spawn.js'
 import { isBridgeName } from './names.js'
 
 const STDERR_KEEP = 4000
+// How long a closed connection waits for the agent's exit, which says why (start()).
+const EXIT_GRACE_MS = 500
 const TERMINAL = new Set(['completed', 'failed'])
+// SDK 2.x refuses an incoming message over 32 MiB by default and closes the connection on it.
+// An image call carries its picture twice (content and rawOutput), base64: one a little over the
+// 12 MiB this plugin keeps (image.js) would end the turn as a dead agent instead of the "too
+// large" answer. The cap stays, four times wider.
+const MAX_MESSAGE_BYTES = 128 * 1024 * 1024
 
 /**
  * The structured tool name a call carries, when the adapter sends one: Claude Code puts it at
@@ -44,12 +55,45 @@ export function contentImages(content) {
   return content.type === 'image' ? [content] : []
 }
 
+// How long the agent has to answer. A CLI that waits on a first-run question, a keychain dialog
+// or an update starts and then never answers, and the chat must not wait with it: the whole
+// start (initialize, session/new, the bridge's first list) has START_MS, and every request sent
+// after it and before a prompt (a model, an effort, a mode, a fork, a close) has REQUEST_MS.
+export const START_MS = 60_000
+export const REQUEST_MS = 15_000
+// How long the agent's processes have to end once asked to (SIGTERM) before they are killed.
+export const KILL_AFTER_MS = 3000
+const UNANSWERED = 'acp_unanswered'
+const STOPPED = 'acp_stopped'
+
+/** A wait as the person reads it: whole seconds (under one second, as a test sets it, in ms). */
+export const waited = ms => (ms >= 1000 ? `${Math.round(ms / 1000)} s` : `${ms} ms`)
+/** The agent did not answer a request before its deadline (`error.ms`). */
+export const isUnanswered = error => error?.code === UNANSWERED
+/** The turn's Stop ended the wait for a request. */
+export const isStopped = error => error?.code === STOPPED
+
+function unanswered(what, ms) {
+  const error = new Error(`it did not answer${what ? ` while ${what}` : ''} (${waited(ms)})`)
+  return Object.assign(error, { code: UNANSWERED, ms })
+}
+
+function stopped(what) {
+  const error = new Error(`it was stopped${what ? ` while ${what}` : ''}`)
+  return Object.assign(error, { code: STOPPED })
+}
+
 export class AgentRun {
   /**
-   * @param {{ command: string, args?: string[], env?: Record<string, string>, cwd: string, name: string }} spec
+   * @param {{ command: string, args?: string[], env?: Record<string, string>, cwd: string, name: string, startMs?: number, requestMs?: number, timers?: { setTimeout: typeof setTimeout, clearTimeout: typeof clearTimeout } }} spec
+   *   startMs, requestMs: the deadlines, START_MS and REQUEST_MS unless a test sets shorter ones.
+   *   timers: the clock the deadlines run on, for a test that moves it by hand.
    */
   constructor(spec) {
     this.spec = spec
+    this.startMs = spec.startMs ?? START_MS
+    this.requestMs = spec.requestMs ?? REQUEST_MS
+    this.timers = spec.timers ?? globalThis
     this.queue = []
     this.waiters = []
     this.tools = new Map()
@@ -58,10 +102,20 @@ export class AgentRun {
     this.exited = undefined
   }
 
-  async start() {
+  /**
+   * Spawn the agent and open its session. It ends early, with the process disposed, when the
+   * agent exits, when `signal` aborts (the person's Stop) or after `startMs` with no session.
+   * @param {{ signal?: AbortSignal }} [options]
+   */
+  async start({ signal } = {}) {
     const { command, args = [], env, cwd, mcpServers = [], sessionMeta } = this.spec
-    const child = spawn(command, args, { cwd, env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'] })
+    // Its own process group, where the platform has them: what the agent starts (the CLI behind
+    // an adapter, the command behind a tool call) is ended with it, as one group (`endTree`).
+    // Through batchSafe: a native agent's CLI can be a Windows batch file (hermes.cmd), which
+    // Node refuses to spawn without a shell.
+    const child = spawn(...batchSafe(command, args, { cwd, env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' }))
     this.child = child
+    this.grouped = process.platform !== 'win32'
     // An idle agent never keeps DSH running: only a prompt in flight holds the event loop.
     child.unref()
     for (const pipe of [child.stdin, child.stdout, child.stderr]) pipe.unref?.()
@@ -72,19 +126,29 @@ export class AgentRun {
       child.once('error', error => fail(error))
       child.once('exit', (code, signal) => {
         this.exited = { code, signal }
+        // Whatever it left running goes too, however it ended: nothing reports to it any more.
+        this.endTree()
         fail(new Error(`${this.spec.name} exited (${signal ?? code})${this.stderr ? `: ${this.stderr.trim().split('\n').slice(-3).join(' ')}` : ''}`))
       })
     })
     gone.catch(() => {})
     this.gone = gone
     child.stdin.on('error', () => {})
-    const stream = ndJsonStream(Writable.toWeb(child.stdin), Readable.toWeb(child.stdout))
-    this.conn = new ClientSideConnection(() => ({
-      sessionUpdate: params => this.onUpdate(params.update),
-      requestPermission: params => this.onPermission(params),
-    }), stream)
+    const stream = ndJsonStream(Writable.toWeb(child.stdin), Readable.toWeb(child.stdout), { maxMessageBytes: MAX_MESSAGE_BYTES })
+    this.conn = connect(this, stream)
     const ready = (async () => {
       this.init = await this.conn.initialize({ protocolVersion: PROTOCOL_VERSION, clientCapabilities: {} })
+      // The agent answers the version it will speak: the one asked for, or its own latest when
+      // it does not support that one. Going on over another version would read its messages
+      // with the wrong shapes, so the session stops here with what to do about it.
+      const answered = this.init?.protocolVersion
+      if (answered !== PROTOCOL_VERSION) {
+        const error = new Error(answered > PROTOCOL_VERSION
+          ? `its connector speaks a newer ACP protocol (version ${answered}) than this app (version ${PROTOCOL_VERSION}): update Automagik`
+          : `its connector speaks ACP protocol version ${answered ?? 'unknown'}, and this app speaks version ${PROTOCOL_VERSION}: update the connector`)
+        error.code = 'acp_protocol_mismatch'
+        throw error
+      }
       const session = await this.conn.newSession({
         cwd,
         mcpServers,
@@ -92,18 +156,32 @@ export class AgentRun {
       })
       this.sessionId = session.sessionId
       this.modes = session.modes
-      this.options = session.configOptions ?? []
+      this.options = withModels(session.configOptions ?? [], session.models)
       // The model the agent started on: DSH's `default` model goes back to it.
       this.startModel = optionOf(this.options, 'model')?.currentValue
       // The session exists (the spike's ordering rule for the bridge's first announcement) and
       // a bridge that never listed its tools fails the turn here, before the prompt.
       await this.spec.onReady?.(this)
     })()
+    ready.catch(() => {})
     try {
-      await Promise.race([ready, gone])
+      await this.held(() => ready, { ms: this.startMs, signal, what: 'starting' })
     } catch (error) {
+      // The request nobody answered, for the log: the person is told only that it did not start.
+      if (isUnanswered(error)) error.step = this.init === undefined ? 'initialize' : this.sessionId === undefined ? 'session/new' : 'its DSH tools'
+      // An agent that dies at its start closes its output a moment before its exit is
+      // reported, and the closed connection says nothing of why. Its exit does (the code and
+      // what it wrote), so that is the failure when it follows at once. A deadline or a Stop
+      // is its own reason and waits for nothing.
+      let reason = error
+      if (!isUnanswered(error) && !isStopped(error) && this.exited === undefined && (child.stdout.readableEnded || child.stdout.destroyed)) {
+        let timer
+        const exit = await Promise.race([gone.catch(left => left), new Promise((resolve) => { timer = setTimeout(resolve, EXIT_GRACE_MS) })])
+        clearTimeout(timer)
+        if (exit !== undefined) reason = exit
+      }
       this.dispose()
-      throw error
+      throw reason
     } finally {
       this.letGo()
     }
@@ -114,26 +192,25 @@ export class AgentRun {
    * Replace this ACP session with a fork that carries the same conversation and the new server
    * set, then close the source session: `acp-codex` ignores `tools/list_changed` and a new server
    * list on resume, so this is how its tool set follows a preset or level change. Both bridges
-   * are the plugin's to end; the source's credential is revoked by the caller.
+   * are the plugin's to end; the source's credential is revoked by the caller. Each request
+   * has its deadline, and a close nobody answers is left like one that fails. The turn's Stop
+   * comes from the caller, which holds the whole fork (`held` with the signal and no deadline).
    * @param {{ cwd: string, mcpServers: any[] }} options
    * @returns {Promise<string>} the forked session id
    */
   async fork({ cwd, mcpServers }) {
-    if (typeof this.conn.unstable_forkSession !== 'function') throw new Error('it cannot fork its session')
+    if (typeof this.conn.forkSession !== 'function') throw new Error('it cannot fork its session')
     const source = this.sessionId
-    const answer = await this.held(() => Promise.race([
-      this.conn.unstable_forkSession({ sessionId: source, cwd, mcpServers }),
-      this.gone,
-    ]))
+    const answer = await this.held(() => this.conn.forkSession({ sessionId: source, cwd, mcpServers }))
     this.sessionId = answer.sessionId
     if (answer.modes !== undefined && answer.modes !== null) this.modes = answer.modes
-    if (Array.isArray(answer.configOptions)) this.options = answer.configOptions
+    if (Array.isArray(answer.configOptions)) this.options = withModels(answer.configOptions, answer.models ?? modelStateOf(this.options))
     this.tools.clear()
     // The fork's source is closed by us: the spike did not show the fork closing it, and a
     // Session must never hold two bridges.
     try {
       if (typeof this.conn.closeSession === 'function') {
-        await this.held(() => Promise.race([this.conn.closeSession({ sessionId: source }), this.gone]))
+        await this.held(() => this.conn.closeSession({ sessionId: source }))
       }
     } catch {
       // A source session that will not close still ends with this process, which is disposed
@@ -154,16 +231,47 @@ export class AgentRun {
     clearInterval(this.hold)
     this.hold = undefined
   }
-  async held(work) {
+  /**
+   * One request to the agent, or a few of them as one piece of work. It is never waited for
+   * longer than the agent's process lives (`gone`), than the turn it is for (`signal`, the
+   * person's Stop) or than its deadline (`ms`, REQUEST_MS unless said; 0 for work whose own
+   * requests each have one). The wait that ends first is the error: `isUnanswered`, `isStopped`
+   * or the exit. A request cannot be taken back and the agent may still act on it, so a caller
+   * that gets one of the first two ends the run (`dispose`) rather than ask it anything else.
+   * @param {() => Promise<any>} work
+   * @param {{ ms?: number, signal?: AbortSignal, what?: string }} [options]
+   */
+  async held(work, { ms = this.requestMs, signal, what } = {}) {
     this.holdOn()
+    let timer
+    let onAbort
     try {
-      return await work()
+      if (signal?.aborted) throw stopped(what)
+      const waits = [work()]
+      if (this.gone !== undefined) waits.push(this.gone)
+      if (ms > 0) {
+        waits.push(new Promise((_, fail) => {
+          // The hold above keeps the event loop for it; a run disposed meanwhile does not.
+          timer = this.timers.setTimeout(() => fail(unanswered(what, ms)), ms)
+          timer.unref?.()
+        }))
+      }
+      if (signal !== undefined) {
+        waits.push(new Promise((_, fail) => {
+          onAbort = () => fail(stopped(what))
+          signal.addEventListener('abort', onAbort, { once: true })
+        }))
+      }
+      return await Promise.race(waits)
     } finally {
+      this.timers.clearTimeout(timer)
+      if (onAbort !== undefined) signal.removeEventListener('abort', onAbort)
       this.letGo()
     }
   }
 
-  get alive() { return this.child !== undefined && this.exited === undefined }
+  // A disposed run is over at once, though its process may take a moment to exit.
+  get alive() { return this.child !== undefined && this.exited === undefined && this.disposed !== true }
   get busy() { return this.prompting !== undefined }
 
   push(event) {
@@ -219,15 +327,17 @@ export class AgentRun {
    * them, not even the strict one, the turn fails rather than run in whatever mode the agent
    * started in (the person's own default, which may let calls through unasked).
    * @param {string | string[] | undefined} modeIds
+   * @param {{ signal?: AbortSignal }} [options] the turn's Stop
    */
-  async setMode(modeIds) {
+  async setMode(modeIds, { signal } = {}) {
     if (modeIds === undefined) return
     const wanted = [modeIds].flat()
     const offered = new Set((this.modes?.availableModes ?? []).map(mode => mode.id))
     const modeId = wanted.find(id => offered.has(id))
+    try { this.spec.onMode?.({ wanted, offered: [...offered], chosen: modeId }) } catch {}
     if (modeId === undefined) throw new Error(`it offers none of the modes ${wanted.join(', ')} (it offers ${[...offered].join(', ') || 'no modes'})`)
     if (this.modes?.currentModeId === modeId) return
-    await this.held(() => Promise.race([this.conn.setSessionMode({ sessionId: this.sessionId, modeId }), this.gone]))
+    await this.held(() => this.conn.setSessionMode({ sessionId: this.sessionId, modeId }), { signal, what: 'taking its permission mode' })
     this.modes = { ...this.modes, currentModeId: modeId }
   }
 
@@ -242,16 +352,34 @@ export class AgentRun {
    * or effort than the person chose.
    * @param {string} category
    * @param {string} value
+   * @param {{ signal?: AbortSignal }} [options] the turn's Stop
    */
-  async setOption(category, value) {
+  async setOption(category, value, { signal } = {}) {
     const option = this.option(category)
     if (option === undefined) throw new Error(`it has no ${category} setting`)
     const values = valuesOf(option)
     if (!values.some(choice => choice.value === value)) throw new Error(`it offers no ${category} ${value} (it offers ${values.map(choice => choice.value).join(', ') || 'none'})`)
     if (option.currentValue === value) return
-    const answer = await this.held(() => Promise.race([this.conn.setSessionConfigOption({ sessionId: this.sessionId, configId: option.id, value }), this.gone]))
+    if (option.id === MODEL_STATE) {
+      // The session's own model list (`session/set_model`), for an agent with no model option.
+      const params = { sessionId: this.sessionId, modelId: value }
+      try {
+        await this.held(() => this.conn.setSessionModel(params), { signal, what: `taking its ${category}` })
+      } catch (error) {
+        // A request nobody answered, or one the turn's Stop ended, goes up as it is: the turn
+        // ends the session on it (adapter.js `abandoned`), which a wrapped error would hide.
+        if (isUnanswered(error) || isStopped(error)) throw error
+        // An agent can list a model it then cannot resolve (seen with Hermes: "Internal error",
+        // the reason only in the error's data). Say which model and, when it is a plain word, why.
+        const details = typeof error?.data?.details === 'string' && /^[\w .:-]{1,80}$/.test(error.data.details) ? ` (${error.data.details})` : ''
+        throw new Error(`it could not switch to ${value}: ${error?.message ?? error}${details}`, { cause: error })
+      }
+      this.options = this.options.map(other => (other.id === MODEL_STATE ? { ...other, currentValue: value } : other))
+      return
+    }
+    const answer = await this.held(() => this.conn.setSessionConfigOption({ sessionId: this.sessionId, configId: option.id, value }), { signal, what: `taking its ${category}` })
     // The answer is the whole set: a new model may bring other efforts.
-    this.options = answer?.configOptions ?? this.options.map(other => (other.id === option.id ? { ...other, currentValue: value } : other))
+    this.options = answer?.configOptions ? withModels(answer.configOptions, modelStateOf(this.options)) : this.options.map(other => (other.id === option.id ? { ...other, currentValue: value } : other))
   }
 
   async cancel() {
@@ -260,16 +388,66 @@ export class AgentRun {
   }
 
   dispose() {
+    if (this.disposed === true) return
+    this.disposed = true
     this.letGo(true)
     for (const tool of this.tools.values()) tool.permission?.answer({ outcome: { outcome: 'cancelled' } })
     try { this.child?.stdin.end() } catch {}
     const child = this.child
-    if (child && child.exitCode === null && child.signalCode === null) {
-      child.kill('SIGTERM')
-      const timer = setTimeout(() => { try { child.kill('SIGKILL') } catch {} }, 3000)
-      timer.unref?.()
-      child.once('exit', () => clearTimeout(timer))
+    if (child && child.exitCode === null && child.signalCode === null) this.endTree()
+  }
+
+  /**
+   * End the agent and everything it started. A session that is over must leave nothing
+   * running: an agent that ignored a cancel is usually stuck in a tool command, and that
+   * command is its child or its child's child, which a signal to the agent alone would leave
+   * working in the person's folder beside the next session. The whole process group is asked
+   * to end, and what is left of it after KILL_AFTER_MS is killed; the agent's own exit does not
+   * end that wait while any of the group is alive. Windows has no groups: the process tree is
+   * killed there, at once. A process the agent put in a group of its own is not reached.
+   */
+  endTree() {
+    if (this.ending === true) return
+    this.ending = true
+    const child = this.child
+    const running = child?.exitCode === null && child?.signalCode === null
+    // No process id (it never started), or one that must never be negated into a group.
+    if (!Number.isInteger(child?.pid) || child.pid <= 1) {
+      try { child?.kill?.('SIGTERM') } catch {}
+      return
     }
+    if (!this.grouped) {
+      // taskkill walks the tree from the agent by parent id, so it runs only while the agent
+      // is still there: Windows gives an ended process's id to the next one.
+      if (!running) return
+      try {
+        execFile('taskkill', ['/T', '/F', '/PID', String(child.pid)], { windowsHide: true }, (error) => {
+          if (error) try { child.kill('SIGKILL') } catch {}
+        }).unref?.()
+      } catch {
+        try { child.kill('SIGKILL') } catch {}
+      }
+      return
+    }
+    // False once nobody is left in the group (the signal finds no process).
+    const signal = (name) => {
+      try {
+        process.kill(-child.pid, name)
+        return true
+      } catch {
+        return false
+      }
+    }
+    if (!signal('SIGTERM')) {
+      // No group to signal while the agent runs: it is ended alone rather than not at all.
+      if (running) try { child.kill('SIGTERM') } catch {}
+      return
+    }
+    const timer = this.timers.setTimeout(() => signal('SIGKILL'), KILL_AFTER_MS)
+    timer.unref?.()
+    // The agent gone with all of its group: nothing is left to kill, and the id is free again.
+    const settled = () => { if (!signal(0)) this.timers.clearTimeout(timer) }
+    if (running) child.once('exit', settled)
   }
 
   // --- the agent's side of the conversation ---------------------------------------------
@@ -295,7 +473,7 @@ export class AgentRun {
         break
       }
       case 'config_option_update':
-        if (Array.isArray(update.configOptions)) this.options = update.configOptions
+        if (Array.isArray(update.configOptions)) this.options = withModels(update.configOptions, modelStateOf(this.options))
         break
       case 'current_mode_update':
         if (this.modes) this.modes = { ...this.modes, currentModeId: update.currentModeId }
@@ -363,7 +541,11 @@ export class AgentRun {
     permission?.answer(refusal(tool.refused, permission.options))
   }
 
-  onPermission(params) {
+  /**
+   * @param {any} params the agent's `session/request_permission`
+   * @param {AbortSignal} [signal] aborts when the agent withdraws the request (`$/cancel_request`)
+   */
+  onPermission(params, signal) {
     const known = this.tools.get(params.toolCall?.toolCallId)
     const tool = known ?? this.seeTool({ status: 'pending', ...params.toolCall })
     // The question's own title ("Run command?") names the question, not the call the card shows.
@@ -398,8 +580,42 @@ export class AgentRun {
       }
       permission.title = title
       tool.permission = permission
+      // The agent took its question back (it cancelled the request, or the connection closed):
+      // nothing waits for an answer any more, so the dialog must not stay up for it.
+      const withdraw = () => permission.answer({ outcome: { outcome: 'cancelled' } })
+      if (signal?.aborted) return withdraw()
+      signal?.addEventListener('abort', withdraw, { once: true })
       for (const listener of tool.listeners) listener()
     })
+  }
+}
+
+/**
+ * This plugin's side of one ACP connection (SDK 2.x: an app with typed handlers, and the peer
+ * context for what it asks the agent). The returned object keeps one named method per request
+ * the plugin makes, so a caller never spells a wire method name.
+ * @param {AgentRun} run
+ * @param {import('@agentclientprotocol/sdk/unstable').Stream} stream
+ */
+function connect(run, stream) {
+  const connection = client({ name: 'automagik-acp-dsh' })
+    .onNotification(methods.client.session.update, ({ params }) => run.onUpdate(params.update))
+    .onRequest(methods.client.session.requestPermission, ({ params, signal }) => run.onPermission(params, signal))
+    .connect(stream)
+  const agent = connection.agent
+  const { session } = methods.agent
+  return {
+    connection,
+    initialize: params => agent.request(methods.agent.initialize, params),
+    newSession: params => agent.request(session.new, params),
+    forkSession: params => agent.request(session.fork, params),
+    closeSession: params => agent.request(session.close, params),
+    setSessionMode: params => agent.request(session.setMode, params),
+    setSessionConfigOption: params => agent.request(session.setConfigOption, params),
+    // The SDK names no method for a session's own model list (Hermes): sent by its wire name.
+    setSessionModel: params => agent.request('session/set_model', params),
+    prompt: params => agent.request(session.prompt, params),
+    cancel: params => agent.notify(session.cancel, params),
   }
 }
 
@@ -410,6 +626,36 @@ function refusal(kind, options) {
     ? options.find(option => option.kind === 'reject_once') ?? options.find(option => option.kind === 'reject_always')
     : undefined
   return chosen ? { outcome: { outcome: 'selected', optionId: chosen.optionId } } : { outcome: { outcome: 'cancelled' } }
+}
+
+// The id of the model option made from a session's own model list (`models` in the answer to
+// `session/new`: `availableModels` and `currentModelId`, switched with `session/set_model`).
+// Hermes offers its models only there. No agent's own option can carry this id by accident.
+export const MODEL_STATE = '\u0000session-models'
+
+/**
+ * An agent's config options, with its session model list as the `model` option when it offers
+ * no model option of its own (an agent that offers both, as Antigravity does, keeps its own).
+ */
+export function withModels(options, models) {
+  if (optionOf(options, 'model') !== undefined) return options
+  const offered = (Array.isArray(models?.availableModels) ? models.availableModels : []).filter(model => typeof model?.modelId === 'string' && model.modelId !== '')
+  if (offered.length === 0) return options
+  return [...options, {
+    id: MODEL_STATE,
+    name: 'Model',
+    category: 'model',
+    type: 'select',
+    currentValue: typeof models.currentModelId === 'string' ? models.currentModelId : undefined,
+    options: offered.map(model => ({ value: model.modelId, name: typeof model.name === 'string' && model.name !== '' ? model.name : model.modelId, ...(typeof model.description === 'string' && model.description !== '' ? { description: model.description } : {}) })),
+  }]
+}
+
+// The session model list an option set was made from, to carry it over an answer that names
+// only the agent's own options.
+const modelStateOf = (options) => {
+  const made = (options ?? []).find(option => option?.id === MODEL_STATE)
+  return made === undefined ? undefined : { currentModelId: made.currentValue, availableModels: made.options.map(({ value, name, description }) => ({ modelId: value, name, description })) }
 }
 
 /** The option of `category` among an agent's session config options. */

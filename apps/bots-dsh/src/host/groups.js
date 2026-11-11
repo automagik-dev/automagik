@@ -204,6 +204,15 @@ export function install(rt) {
       return { id: known, brief: undefined }
     }
     const id = await rt.createSession(`${member.name} · ${room.name}`, { dir: rt.workDirOf({ botId: member.id, roomId: room.id }), ...(member.kind === 'dsh' ? { profile: member.profile ?? null } : {}) })
+    // Its level first, before the Session is the member's: one whose level did not hold is
+    // not kept, so the member takes no turn on it and its next turn here makes another.
+    try {
+      await rt.applyPermission(member, id, room, undefined, { start: true })
+    } catch (error) {
+      void ctx.workspaceRegistry.archiveSession(id, { stopActivity: true })
+        .catch(failure => rt.warn('ds-bot: unused group Session of %s in %s not archived: %s', member.name, room.name, failure))
+      throw error
+    }
     // While the Session was made the member may have left or been deleted, the group been
     // deleted, or another turn made the member's Session first: the new one is not kept.
     // Undefined means the member is gone from the group.
@@ -215,18 +224,43 @@ export function install(rt) {
     }
     room.sessions[member.id] = id
     rt.groupOwners.set(id, { botId: member.id, roomId: room.id })
+    // Once more now that a change of level reaches it: one picked while the first apply
+    // ran went only to the Sessions the group had then.
+    try {
+      await rt.applyPermission(member, id, room, undefined, { start: true })
+      // At Full access with the member's coding CLI not served: not started on another model.
+      await rt.assertNotOffCli(member, id)
+    } catch (error) {
+      if (room.sessions[member.id] === id) delete room.sessions[member.id]
+      rt.groupOwners.delete(id)
+      void ctx.workspaceRegistry.archiveSession(id, { stopActivity: true })
+        .catch(failure => rt.warn('ds-bot: unused group Session of %s in %s not archived: %s', member.name, room.name, failure))
+      throw error
+    }
     // The Session is mapped to its member now, so its Bot is known: the deny list lands
     // before the first turn here, not on the next resolve.
     await rt.applyToolDeny(member, [id])
       .catch(error => rt.warn('ds-bot: tool deny for %s in %s not applied: %s', member.name, room.name, error?.message ?? error))
     delete room.seen[member.id]
-    const ref = await rt.desiredModel(member)
+    const ref = await rt.desiredModel(member, { sessionId: id })
     if (ref !== undefined) {
-      await rt.selectSessionModel(id, splitRef(ref))
-        .catch(error => rt.warn('ds-bot: model for %s in %s not applied: %s', member.name, room.name, error))
+      try {
+        await rt.selectSessionModel(id, splitRef(ref))
+      } catch (error) {
+        rt.warn('ds-bot: model for %s in %s not applied: %s', member.name, room.name, error)
+        // The Session is still on the model DSH made it with. At Full access with the member
+        // on a coding CLI it is not kept, as one whose level did not hold is not (above).
+        try {
+          await rt.assertNotOffCli(member, id, undefined, { unselected: true })
+        } catch (refused) {
+          if (room.sessions[member.id] === id) delete room.sessions[member.id]
+          rt.groupOwners.delete(id)
+          void ctx.workspaceRegistry.archiveSession(id, { stopActivity: true })
+            .catch(failure => rt.warn('ds-bot: unused group Session of %s in %s not archived: %s', member.name, room.name, failure))
+          throw refused
+        }
+      }
     }
-    await rt.applyPermission(member, id, room)
-      .catch(error => rt.warn('ds-bot: permission for %s in %s not applied: %s', member.name, room.name, error))
     await rt.save()
     await rt.ensureCapabilities(id)
     return { id, brief: await rt.ownChatBrief(member) }
@@ -511,7 +545,7 @@ export function install(rt) {
         round.speaking = null
         slot.status = 'failed'
         round.failed.push(member.name)
-        round.replies.push({ kind: 'failed', botId: member.id, name: member.name, color: member.color, code: 'SESSION', text: String(error?.message ?? error).slice(0, 300), time: Date.now() })
+        round.replies.push({ kind: 'failed', botId: member.id, name: member.name, color: member.color, code: error?.levelNotSet === true ? 'PERMISSION' : 'SESSION', text: String(error?.message ?? error).slice(0, 300), time: Date.now() })
         continue
       }
       if (session === undefined) {

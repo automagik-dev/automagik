@@ -12,7 +12,7 @@ import { OLD_PACK_NAME, PACK_NAME } from "./release.js";
 /** How a bot works (bot workers): it writes no code; one worker per task does. */
 export const WORKER_LINE = "You write no code yourself: for each task start one worker with "
   + "`automagik-herdr worker \"<task>\" --branch <branch>` (it runs in the task's worktree, under your pane), "
-  + "check its result, and end it with `hc kill <terminal>` once the task merges.";
+  + "check its result, and end it with `automagik-herdr worker kill <terminal>` once the task merges.";
 
 // The caller checks git; an omitted flag keeps the existing pure-text default.
 const workerLines = (self, isGit) => (isGit && self.code !== false ? [WORKER_LINE] : []);

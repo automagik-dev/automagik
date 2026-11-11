@@ -1354,7 +1354,7 @@ export function install(rt) {
     try {
       return await oneShot(first, system, text, tag)
     } catch (error) {
-      const mine = await rt.desiredModel(bot)
+      const mine = await rt.desiredModel(bot, { aside: true })
       const fallback = rt.answersAside(mine) ? splitRef(mine) : undefined
       if (fallback === undefined || (fallback.provider === first.provider && fallback.model === first.model)) throw modelFailure(error)
       try {

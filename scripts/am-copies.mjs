@@ -34,6 +34,7 @@ export const EXTRA = [
   [`${SOURCE}/hcPane.mjs`, `${TARGET}/hcPane.mjs`],
   [`${SOURCE}/hcProxy.mjs`, `${TARGET}/hcProxy.mjs`],
   [`${SOURCE}/guard/hc`, `${TARGET}/guard/hc`],
+  [`${SOURCE}/hc-kill/hc`, `${TARGET}/hc-kill/hc`],
   [`${SOURCE}/hcGuard.mjs`, `${TARGET}/hcGuard.mjs`],
   [`${SOURCE}/pack-keys.json`, `${TARGET}/pack-keys.json`],
   [`${SOURCE}/meter-keys.json`, `${TARGET}/meter-keys.json`],

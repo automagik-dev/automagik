@@ -5,7 +5,7 @@
 // usagemeter reads. Pure: no `herdr`, `gpui-*` or `fs`, so `node --test`, the CLI and the
 // briefing hook share it. Apache-2.0.
 
-import { AGENTS, AGY_MODE_DEFAULT, agyModeArgs, agyModeOf, agyModeProblem, agySettingsArgs, effortArgs, hasEffortFlag, modelArgs, modelRefusal,
+import { AGENTS, AGY_MODE_DEFAULT, agyModeArgs, agyModeOf, agyModeProblem, agyGuarded, agySettingsArgs, effortArgs, hasEffortFlag, launchRun, modelArgs, modelRefusal,
   promptArgs, resolveAgent } from "./models.js";
 import { TEMPLATE_SHAPE } from "./model.js";
 import { envWords } from "./logins.js";
@@ -18,14 +18,14 @@ const DRIVE_LETTER = /^[A-Za-z]:[\\/]/;
 const SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:/;
 
 /**
- * `path`'s folder plus `/guard`; a bare path loses its query/hash first. A drive-letter path
+ * `path`'s folder plus `/<name>`; a bare path loses its query/hash first. A drive-letter path
  * written with backslashes comes back with backslashes only, never a mix of both separators
  * (#694); off a drive letter a backslash stays as it is.
  */
-function guardDirUnder(path) {
+function guardDirUnder(path, name = "guard") {
   const file = path.replace(/[?#].*$/, "");
   const cut = Math.max(file.lastIndexOf("/"), file.lastIndexOf("\\"));
-  const dir = `${cut === -1 ? "." : file.slice(0, cut)}/guard`;
+  const dir = `${cut === -1 ? "." : file.slice(0, cut)}/${name}`;
   return DRIVE_LETTER.test(file) && file.includes("\\") ? dir.split("/").join("\\") : dir;
 }
 
@@ -35,17 +35,17 @@ function guardDirUnder(path) {
  * base. A Windows drive-letter path is bare too: `new URL` would read `C:` as a scheme and drop
  * the drive. A file: pathname that does not decode (a lone `%`) falls back to the undecoded
  * pathname, never the raw `file:` string. A bare path is stripped of its query/hash, then its
- * folder gets `/guard`; never throws.
+ * folder gets `/guard`; never throws. `name`: another folder beside the mod file (`hc-kill`).
  */
-export function guardDirOf(metaUrl) {
+export function guardDirOf(metaUrl, name = "guard") {
   const raw = String(metaUrl);
-  if (DRIVE_LETTER.test(raw) || !SCHEME.test(raw)) return guardDirUnder(raw);
+  if (DRIVE_LETTER.test(raw) || !SCHEME.test(raw)) return guardDirUnder(raw, name);
   let pathname;
   try {
-    pathname = new URL("./guard/", raw).pathname;
+    pathname = new URL(`./${name}/`, raw).pathname;
   } catch {
     // Not a URL this Node can read (say a relative path): the bare-path rule is all that is left.
-    return guardDirUnder(raw);
+    return guardDirUnder(raw, name);
   }
   try {
     pathname = decodeURIComponent(pathname);
@@ -62,13 +62,42 @@ export function guardDirOf(metaUrl) {
  */
 export const GUARD_DIR = guardDirOf(import.meta.url);
 
+/** The kill shim's folder name, beside the mod's files as `guard` is. */
+export const KILL_GUARD_NAME = "hc-kill";
+/**
+ * The `hc kill` shim's folder (#955, `hc-kill/hc`, hcGuard.mjs runKillGuard): put first on the
+ * PATH of every pane the pack starts for an agent other than dsh-tui (which keeps the full
+ * guard). It refuses `hc kill` to every worker and to every seat that is not its project's
+ * main bot, and passes every other hc call to the real hc untouched. A guardrail, never a
+ * boundary: an absolute hc path, a raw socket or `hc connect` skips it.
+ */
+export const KILL_GUARD_DIR = guardDirOf(import.meta.url, KILL_GUARD_NAME);
+/** The pack folder a pane of `agent` gets first on its PATH: the full guard, the kill shim, or none (no agent named). */
+export const paneGuardOf = (agent) => (agent === "dsh-tui" ? GUARD_DIR : agent ? KILL_GUARD_DIR : null);
+/** Whether a PATH word is a kill shim's folder, by its name (the full guard's is `guard`). */
+export const isKillGuardWord = (dir) => typeof dir === "string" && /(^|\/)hc-kill\/*$/.test(dir);
+
 /**
  * `path` with `guard` first; a guard folder already on the PATH is moved to the front, never
- * repeated. A null guard leaves the path exactly as it is.
+ * repeated. A null guard leaves the path exactly as it is. A pane has one of the pack's two
+ * folders, and the stricter one wins:
+ * - the kill shim onto a PATH that already holds the full guard beside it (a Claude or Codex
+ *   worker started from a dsh-tui bot's pane inherits that pane's PATH): the PATH is left as
+ *   it is. The worker keeps the full guard it had before the shim existed, which limits its
+ *   send, label and run calls to the team and holds the same kill rule;
+ * - the full guard onto a PATH that holds the shim (a dsh-tui worker of a Claude bot): the
+ *   shim is taken out.
  */
 export function guardPathWith(path, guard) {
   if (!guard || !path) return path;
-  return [guard, ...String(path).split(":").filter((dir) => dir !== guard)].join(":");
+  const words = String(path).split(":");
+  if (isKillGuardWord(guard)) {
+    const full = guard.replace(/hc-kill\/*$/, "guard");
+    if (words.includes(full) || (guard === KILL_GUARD_DIR && words.includes(GUARD_DIR))) return path;
+    return [guard, ...words.filter((dir) => dir !== guard)].join(":");
+  }
+  const drop = guard === GUARD_DIR ? [GUARD_DIR, KILL_GUARD_DIR] : [guard, guard.replace(/guard\/*$/, KILL_GUARD_NAME)];
+  return [guard, ...words.filter((dir) => !drop.includes(dir))].join(":");
 }
 
 /**
@@ -94,6 +123,8 @@ export const dataRootOf = (env = process.env) => {
 };
 export const stableRootOf = (env = process.env) => `${dataRootOf(env)}/dsh-sandbox`;
 export const stableGuardDir = (root) => `${root}/guard`;
+/** The kill shim in the stable folder: what a sandboxed bot's worker of another agent gets (the proxy matches it). */
+export const stableKillDir = (root) => `${root}/${KILL_GUARD_NAME}`;
 export const stableHelper = (root) => `${root}/hcPane.mjs`;
 export const stableRunner = (root) => `${root}/bin/run.sh`;
 /** The saved per-bot opt-in. Environment variables never enable another bot's proxy. */
@@ -306,15 +337,40 @@ export function workerPlan(bot, pick = {}, agents = AGENTS) {
     warnings.push(`${agents[agent].name} has no effort flag; effort ${effort} left out.`);
     effort = null;
   }
-  const argv = [...agents[agent].run, ...agyModeArgs(agent, agyMode), ...modelArgs(agent, model), ...effortArgs(agent, effort)];
+  const argv = [...launchRun(agent, agents[agent].run, bot), ...agyModeArgs(agent, agyMode), ...modelArgs(agent, model), ...effortArgs(agent, effort)];
   return { template: null, agent, model, effort, agyMode, argv, warnings };
+}
+
+/**
+ * Why the bot `botId`, calling from its own pane `self`, may not end the terminal `target`
+ * (its `hc get`), or null when it may (#955: `hc kill` is denied to an Antigravity launch, so
+ * `worker kill` is how a lead ends a worker it started). Only a worker of the caller's own bot:
+ * its `worker.of` label names that bot, it is no bot's seat (`bound`: the attach ledger ties it
+ * to a bot; a `bot` label counts too), it is never the caller's own pane, and it is not mid-turn
+ * (hc's status says `working`): a finished turn only. One line.
+ */
+export function workerKillRefusal({ target, botId, self = null, bound = false }) {
+  const address = target?.address ?? null;
+  if (!target || !address) return "that isn't a terminal hc knows";
+  if (self && address === self) return `${address} is your own pane; worker kill ends only a worker you started`;
+  const labels = target.labels ?? {};
+  if (bound || labels.bot) return `${address} is a bot's pane, not a worker; worker kill ends only a worker you started`;
+  const owner = labels[WORKER_OF_LABEL] ?? null;
+  if (!owner) return `${address} isn't a worker (it has no ${WORKER_OF_LABEL} label); worker kill ends only a worker you started`;
+  if (!botId || owner !== botId) return `${address} is another bot's worker; worker kill ends only a worker you started`;
+  // A worker mid-turn is not ended from here: its work would be lost. The project's main bot can.
+  if (target.state !== "finished" && target.status?.state === "working") {
+    return `${address} is still working; worker kill ends a worker that has finished its turn (hc wait ${address}), and only the project's main bot ends one mid-turn`;
+  }
+  return null;
 }
 
 /**
  * `hc run` arguments for a worker: in the background, a child of the bot's pane, in the
  * task worktree, with the usage labels and no `bot` label (a worker is never a bot, so the
  * sidebar folds it under its bot as a helper). The task text is the agent's last argument
- * (behind `-i` for agy: models.js promptArgs, by `agent`), after `--`, never part of a shell string. An agent runs as `/usr/bin/env PATH=<path> <argv>`
+ * (behind `-i` for agy: models.js promptArgs, by `agent`; none at all for kimi, whose task the
+ * CLI sends as its first message, #1032), after `--`, never part of a shell string. An agent runs as `/usr/bin/env PATH=<path> <argv>`
  * (env by its full path, so nothing hangs on core's PATH), so it gets the calling pane's PATH,
  * not herdr-core's (a bun script like omp needs ~/.bun/bin). A
  * `template` runs in hc's documented template form, `<template> <task>` after the options,
@@ -331,11 +387,13 @@ export function workerPlan(bot, pick = {}, agents = AGENTS) {
  * boundary (#624, #628, #631). `sandbox`: a dsh-tui worker runs behind the per-pane hc proxy
  * (hcPane.mjs) before DSH starts; `project` is the main checkout the proxy snapshots (omitted:
  * the helper finds the project above the worktree). `session`: the Claude session id the worker's
- * argv starts it on (`--session-id`), set as its agent.session label too.
+ * argv starts it on (`--session-id`), set as its agent.session label too. Any other agent gets
+ * the `hc kill` shim's folder first instead (KILL_GUARD_DIR, #955); `killGuard` names another
+ * copy of it (the stable folder's, for a worker the hc proxy approves), null for none.
  */
 export function workerArgs({ botId, branch, role, name, cwd, parent, agent, model, effort, agyMode, argv, task, template, path,
   taskId, project, lead, space, login = [], templateArgv = null, sandbox = false, stableRoot = null, session = null,
-  agySettingsPath = null }) {
+  agySettingsPath = null, killGuard = undefined }) {
   const args = ["run", "--bg", "--json"];
   if (name) args.push("--name", name);
   args.push("--cwd", cwd, "--label", `${WORKER_OF_LABEL}=${botId}`);
@@ -357,10 +415,12 @@ export function workerArgs({ botId, branch, role, name, cwd, parent, agent, mode
   if (effort) args.push("--label", `${WORKER_EFFORT_LABEL}=${effort}`);
   if (agyMode && agyMode !== AGY_MODE_DEFAULT) args.push("--label", `${WORKER_AGY_MODE_LABEL}=${agyMode}`);
   const sandboxRoot = sandbox === true && agent === "dsh-tui" ? (stableRoot ?? stableRootOf()) : null;
-  const guard = sandboxRoot ? stableGuardDir(sandboxRoot) : agent === "dsh-tui" ? GUARD_DIR : null;
+  const guard = sandboxRoot ? stableGuardDir(sandboxRoot)
+    : agent === "dsh-tui" ? GUARD_DIR : agent ? (killGuard === undefined ? KILL_GUARD_DIR : killGuard) : null;
   const vars = envWords(path ? [`PATH=${guardPathWith(path, guard)}`] : [], login);
   const env = vars.length ? [ENV, ...vars] : [];
-  const taskArgv = [...argv, ...agySettingsArgs(agent, agySettingsPath), ...promptArgs(agent, task)];
+  // #955: an Antigravity worker with no permission file never runs on skip-permissions.
+  const taskArgv = [...agyGuarded(agent, [...argv, ...agySettingsArgs(agent, agySettingsPath)]), ...promptArgs(agent, task)];
   const launchArgv = sandboxRoot ? paneArgs(taskArgv, { botId, project: project ?? null, worker: true, stableRoot: sandboxRoot }) : taskArgv;
   return [...args, "--parent", parent, "--", ...env, ...launchArgv];
 }
