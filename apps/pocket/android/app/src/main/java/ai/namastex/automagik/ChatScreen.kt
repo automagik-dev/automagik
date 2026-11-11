@@ -258,7 +258,8 @@ fun chatAnnotated(spans: List<ChatText.Span>, open: (String) -> Unit): Annotated
 }
 
 /** The composer at the mock's size: a 56 dp pill with a 17 px field, the mic and Send (attach comes later). */
-@Composable private fun ChatComposer(draft: String, onDraft: (String) -> Unit, onSend: () -> Unit, enabled: Boolean, name: String) {
+@Composable internal fun ChatComposer(draft: String, onDraft: (String) -> Unit, onSend: () -> Unit, enabled: Boolean, name: String,
+                                      engine: DictateEngine? = rememberPhoneEngine()) {
     Surface(color = Surface, shape = RoundedCornerShape(ChatStyle.COMPOSER_RADIUS), border = BorderStroke(1.dp, Border),
         modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 8.dp).heightIn(min = ChatStyle.COMPOSER_HEIGHT)) {
         Row(Modifier.fillMaxWidth().padding(start = 18.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -273,7 +274,7 @@ fun chatAnnotated(spans: List<ChatText.Span>, open: (String) -> Unit): Annotated
                         field()
                     }
                 })
-            Dictate { heard -> onDraft(dictated(draft, heard)) }
+            Dictate(engine = engine) { heard -> onDraft(dictated(draft, heard)) }
             IconButton(onClick = onSend, enabled = enabled, modifier = Modifier.size(48.dp)) {
                 Icon(Icons.AutoMirrored.Outlined.Send, "Send message", tint = if (enabled) Accent else Muted)
             }

@@ -1,6 +1,7 @@
 package ai.namastex.automagik
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
@@ -21,31 +22,22 @@ import androidx.core.content.ContextCompat
 /** What the mic says when the person has not allowed the microphone. */
 const val DICTATE_PERMISSION = "Microphone permission is needed to dictate. Allow it in Settings."
 
-/**
- * The mic shared by the side-button panel and both composers: Android's speech recognizer fills the message box, plain
- * speech to text. The button is always shown; a first tap asks for the microphone permission (already declared in the
- * manifest), and a denial or a failed listen says why with a toast, so the button never fails silently. The same system
- * recognizer and destination serve every place; nothing is sent to a new place.
- */
-@Composable fun Dictate(onHeard: (String) -> Unit) {
-    val context = LocalContext.current
-    val heard by rememberUpdatedState(onHeard)
-    var listening by remember { mutableStateOf(false) }
-    val recognizer = remember(context) {
-        if (SpeechRecognizer.isRecognitionAvailable(context)) runCatching { SpeechRecognizer.createSpeechRecognizer(context) }.getOrNull() else null
-    }
-    DisposableEffect(recognizer) { onDispose { recognizer?.destroy() } }
+/** The speech engine behind the mic: Android's recognizer in the app, a fake in a test. */
+internal interface DictateEngine {
+    /** Starts listening; [onResult] gets the first word sequence, [onError] the recognizer's error. */
+    fun start(onResult: (String) -> Unit, onError: (Int) -> Unit)
+    fun stop()
+    fun destroy()
+}
 
-    fun say(message: String) { Toast.makeText(context, message, Toast.LENGTH_LONG).show() }
-
-    fun start() {
-        val r = recognizer ?: run { say("Speech recognition is not available on this phone."); return }
-        r.setRecognitionListener(object : RecognitionListener {
+/** Android's own recognizer: the same system `SpeechRecognizer` the side-button panel always used. */
+private class PhoneDictateEngine(private val recognizer: SpeechRecognizer) : DictateEngine {
+    override fun start(onResult: (String) -> Unit, onError: (Int) -> Unit) {
+        recognizer.setRecognitionListener(object : RecognitionListener {
             override fun onResults(results: Bundle?) {
-                listening = false
-                results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.takeIf { it.isNotBlank() }?.let(heard)
+                results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.takeIf { it.isNotBlank() }?.let(onResult)
             }
-            override fun onError(error: Int) { listening = false; say(dictateError(error)) }
+            override fun onError(error: Int) { onError(error) }
             override fun onReadyForSpeech(params: Bundle?) {}
             override fun onBeginningOfSpeech() {}
             override fun onRmsChanged(rmsdB: Float) {}
@@ -54,8 +46,41 @@ const val DICTATE_PERMISSION = "Microphone permission is needed to dictate. Allo
             override fun onPartialResults(partialResults: Bundle?) {}
             override fun onEvent(eventType: Int, params: Bundle?) {}
         })
+        recognizer.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM))
+    }
+
+    override fun stop() = recognizer.stopListening()
+    override fun destroy() = recognizer.destroy()
+}
+
+/** The phone's recognizer, or null when the phone has none; a test passes its own [DictateEngine]. */
+@Composable internal fun rememberPhoneEngine(): DictateEngine? {
+    val context = LocalContext.current
+    return remember(context) {
+        if (!SpeechRecognizer.isRecognitionAvailable(context)) null else
+            runCatching { SpeechRecognizer.createSpeechRecognizer(context) }.getOrNull()?.let(::PhoneDictateEngine)
+    }
+}
+
+/**
+ * The mic shared by the side-button panel and both composers: Android's speech recognizer fills the message box, plain
+ * speech to text. The button is always shown; a first tap asks for the microphone permission (already declared in the
+ * manifest), and a denial or a failed listen says why with a toast, so the button never fails silently. The words go to
+ * the latest [onHeard] (not the one from the tap), so a draft sent or typed while listening is respected. The same
+ * system recognizer and destination serve every place; nothing is sent to a new place.
+ */
+@Composable internal fun Dictate(engine: DictateEngine? = rememberPhoneEngine(), onHeard: (String) -> Unit) {
+    val context = LocalContext.current
+    val heard by rememberUpdatedState(onHeard)
+    var listening by remember { mutableStateOf(false) }
+    DisposableEffect(engine) { onDispose { engine?.destroy() } }
+
+    fun say(message: String) { Toast.makeText(context, message, Toast.LENGTH_LONG).show() }
+
+    fun start() {
+        val e = engine ?: run { say("Speech recognition is not available on this phone."); return }
         runCatching {
-            r.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM))
+            e.start({ words -> listening = false; heard(words) }, { error -> listening = false; say(dictateError(error)) })
         }.onSuccess { listening = true }.onFailure { say("Speech recognition could not start. Try again.") }
     }
 
@@ -65,7 +90,7 @@ const val DICTATE_PERMISSION = "Microphone permission is needed to dictate. Allo
 
     IconButton(onClick = {
         when {
-            listening -> recognizer?.stopListening()
+            listening -> engine?.stop()
             ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED -> start()
             else -> permission.launch(Manifest.permission.RECORD_AUDIO)
         }
