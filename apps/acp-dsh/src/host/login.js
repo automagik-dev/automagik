@@ -20,6 +20,8 @@
 /* eslint-disable no-control-regex -- Reject control characters in input and strip terminal decoration. */
 import { spawn as spawnProcess } from 'node:child_process'
 import { createHmac, randomBytes, randomUUID } from 'node:crypto'
+import { LoginProcess } from './login-process.js'
+import { launchWindowsLogin } from './windows-login.js'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
@@ -331,6 +333,10 @@ export class CliLogins {
   }
 
   async begin(flow) {
+    // An earlier wrapper may have exited while its credential-writing child is still alive.
+    // Even a new login must wait for the previous whole group/tree, not only its parent.
+    await this.drain(flow.id)
+    if (!this.active(flow)) return
     const selected = await this.resolve(flow.id)
     if (!this.active(flow)) return
     if (typeof selected?.cli !== 'string' || selected.cli === '') { this.finish(flow, 'failed', unavailableMessage); return }
@@ -348,15 +354,23 @@ export class CliLogins {
     }
     // Only fixed argument vectors are allowed. Even the manual authorization code goes
     // directly to stdin; it can never become a shell argument or an agent prompt.
-    flow.child = this.spawn(...batchSafe(selected.cli, args, {
+    const options = {
       env, cwd: env.AUTOMAGIK_BOT_CLI_HOME,
       stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
-    }))
+      detached: process.platform !== 'win32',
+    }
+    const owned = process.platform === 'win32' && this.spawn === spawnProcess
+      ? launchWindowsLogin(selected.cli, args, options)
+      : new LoginProcess(this.spawn(...batchSafe(selected.cli, args, options)), {
+        grouped: process.platform !== 'win32' && this.spawn === spawnProcess,
+        timers: this.timers,
+      })
+    flow.process = owned
+    flow.child = owned.child
     this.children ??= new Map()
     if (!this.children.has(flow.id)) this.children.set(flow.id, new Set())
-    this.children.get(flow.id).add(flow.child)
-    const child = flow.child
-    child.once('close', () => this.children.get(flow.id)?.delete(child))
+    this.children.get(flow.id).add(owned)
+    owned.done.then(() => this.children.get(flow.id)?.delete(owned)).catch(() => {})
     // First of its `close` listeners, so the failure it may end with knows how the CLI ended.
     flow.child.once('close', (code, signal) => { flow.exit = { code, signal } })
     flow.child.stdin.on('error', () => this.finish(flow, 'failed', failedMessage))
@@ -516,16 +530,18 @@ export class CliLogins {
     this.timers.clearTimeout(flow.timeout)
     if (flow.child) {
       try { flow.cancelProtocol?.() } catch {}
-      try { flow.child.stdin.end() } catch {}
-      try { flow.child.kill('SIGTERM') } catch {}
       const child = flow.child
-      const kill = this.timer(() => { try { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL') } catch {} }, 1000)
-      child.once('close', () => this.timers.clearTimeout(kill))
+      // The Windows supervisor needs its pipes open until it proves the job empty. Unix
+      // ownership likewise survives an exited wrapper, so never discard it on raw close.
+      void flow.process.stop().then(() => {
+        try { child.stdin.end() } catch {}
+      }).catch(() => {})
     }
     flow.selected = undefined
     try { flow.browserBlock?.dispose() } catch {}
     flow.browserBlock = undefined
     flow.child = undefined
+    flow.process = undefined
     flow.cancelProtocol = undefined
     flow.retained = this.timer(() => { if (this.flows.get(flow.id) === flow) this.flows.delete(flow.id) }, this.retainMs)
     this.changed()
@@ -535,14 +551,11 @@ export class CliLogins {
   async stop(id) {
     const flow = this.flows.get(id)
     if (flow) this.finish(flow, 'cancelled', cancelledMessage)
-    const children = [...(this.children?.get(id) ?? [])]
-    await Promise.all(children.map(child => new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('The sign-in has not stopped.')), 3000)
-      child.once('close', () => { clearTimeout(timer); resolve() })
-      try { child.kill('SIGTERM') } catch {}
-      const hard = setTimeout(() => { try { child.kill('SIGKILL') } catch {} }, 1000)
-      child.once('close', () => clearTimeout(hard))
-    })))
+    await this.drain(id)
+  }
+
+  async drain(id) {
+    await Promise.all([...(this.children?.get(id) ?? [])].map(owned => owned.stop()))
   }
 
   // The plugin stops (a DSH restart or an app quit): the CLI cannot outlive it. The busy signal

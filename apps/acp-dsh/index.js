@@ -131,9 +131,7 @@ export function nodeCommand() {
  */
 export function apply(ctx, config = {}, {
   store = new AdapterStore({ log: message => info(ctx, message) }),
-  cliStore = !config.fakeAgent && (process.env.AUTOMAGIK_APP_BROWSER === '1'
-    || process.env.AUTOMAGIK_PNPM)
-    ? new CliStore({ log: message => info(ctx, message) }) : undefined,
+  cliStore,
   find = name => findCommand(name), signedIn = signedInOf,
   catalogHome = store.home ? join(dirname(store.home), 'catalog') : undefined,
   loginSpawn, loginTimers, imageSetup, account = accountOf,
@@ -144,6 +142,12 @@ export function apply(ctx, config = {}, {
   logoutRun = execFile, checkTimers = globalThis,
 } = {}) {
   const homes = cliHome === undefined ? undefined : new CliHomes(cliHome)
+  if (cliStore === undefined && !config.fakeAgent
+    && (process.env.AUTOMAGIK_APP_BROWSER === '1' || process.env.AUTOMAGIK_PNPM)) {
+    cliStore = new CliStore({ log: message => info(ctx, message),
+      ...(homes ? { versionEnv: spec => homes.environment(spec.key) } : {}),
+    })
+  }
   const accountChanges = new Set()
   const loginLocks = new Set()
   const authVersions = new Map()

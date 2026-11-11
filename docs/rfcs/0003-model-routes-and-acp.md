@@ -686,16 +686,27 @@ The DSH tool bridge, approvals and transcript replay contracts stay as described
 not carried into the new home. The person signs in once more inside the app; affected work waits
 with a sign-in action. A signed-out isolated Bot never restores a legacy plan route or uses an
 old ChatGPT image grant to keep working. Explicitly configured image API keys retain their own
-path. The terminal login remains intact.
+path. Terminal-login preservation relies on the vendor credential-store assumptions below.
 
 **Owner account controls.** Bot settings show the Bot identity and a read-only terminal identity
 when the vendor reports it, clearly labelled as separate. Account data stays on owner-only
 endpoints, never in team state, model calls, transcripts or logs. Switch and Sign out block new
 work, end starting/live chats, images, model probes and login attempts, and wait for process
-termination before the CLI changes only its Bot credentials. A failed or unverified logout leaves
+termination before the CLI changes credentials in the Bot environment. A failed or unverified
+logout leaves
 work paused until an explicit retry. Installation locks serialize authentication changes; when
 another app instance has registered the same vendor home, close it before changing accounts.
 Launches capture an account generation so delayed work cannot start under a later account.
+
+**Storage assumptions and unfinished live validation.** This design relies on Claude's
+config-directory-namespaced macOS Keychain entry and Codex's `CODEX_HOME`-namespaced OS-keyring
+key. Current vendor documentation/source supports those assumptions; fake stores and process
+tests do not prove the installed CLIs' live credential behavior. #869 remains open for both:
+
+1. A real two-account macOS sign-in/switch/sign-out sequence for Claude and Codex, verifying the
+   terminal login stays intact at every step.
+2. The Codex OS-keyring-backed path with distinct Bot and terminal homes through those actions,
+   in addition to the file-backed `auth.json` path.
 
 Vendor storage contracts:
 [Claude authentication](https://code.claude.com/docs/en/authentication),

@@ -265,17 +265,21 @@ that same environment for sign-in, status, account reads, adapters, model probes
 `HOME`, Windows profile/app-data directories, XDG directories, `CLAUDE_CONFIG_DIR` and
 `CODEX_HOME` point there. Inherited authentication, provider and config overrides are masked.
 No credential file is read, copied or linked by Automagik; each CLI owns its Bot credentials.
+CLI `--version` probes use this vendor environment too; package installation keeps its separate
+package-manager environment.
 
 An upgrade retains Bot models and DSH history, but requires a fresh in-app sign-in. Old shared
 consent is not carried. Signed-out or paused Bot work refuses with `MODEL_ACCESS_REQUIRED`,
 without a fallback model. Codex images do not use a legacy ChatGPT grant while signed out.
 Bot settings label Bot and terminal accounts separately; the terminal comparison is a read-only
-CLI account query, never a login, logout or refresh. Missing identity is shown as unknown.
+CLI account query; Automagik requests no login, logout or token refresh for that comparison.
+Missing identity is shown as unknown.
 
 `authScope: 'isolated'` identifies the service and Claude/Codex status rows. `accountSignOut(id)`
-and `accountSwitch(id, { label? })` operate only on Bot credentials. They block admission, stop
+and `accountSwitch(id, { label? })` use the Bot environment. They block admission, stop
 starting/live chat, model-probe, image and login processes, wait for termination, then ask the
-CLI to log out and verify it is signed out. Switch starts a new isolated login afterward.
+CLI to log out and verify it is signed out. Credential-store separation relies on the vendor
+assumptions below. Switch starts a new isolated login afterward.
 Generation checks prevent work delayed across a switch from starting on the next account.
 `imageAccess()` includes `accountGeneration` when ready; callers pass that ticket to
 `generateImage({ accountGeneration, ... })` so even a switch between those two calls refuses
@@ -283,6 +287,21 @@ the old drawing request. A missing/reloading ACP service never authorizes legacy
 A failed logout stays paused until the owner retries. Authentication changes hold an installation
 lock; close other app instances registered on that vendor home before changing accounts.
 Account details stay on owner-only routes, never in state, transcripts, model calls or logs.
+
+**Credential-store assumptions and missing live checks.** Claude's documented macOS Keychain
+entry is namespaced by `CLAUDE_CONFIG_DIR`; Codex's current OS-keyring implementation derives
+its key from `CODEX_HOME`. Separate directories rely on those namespaces remaining distinct in
+the installed vendor versions. Fake-store/process tests do not prove the live credential paths.
+Two checks remain open on #869:
+
+- Real macOS, two accounts: sign in, switch and sign out inside the app for both vendors, and
+  verify the terminal login remains intact throughout.
+- Codex's OS-keyring-backed auth path, with separate Bot and terminal homes, through the same
+  sign-in/switch/sign-out sequence (not only the `auth.json` file path).
+
+See [Claude authentication](https://code.claude.com/docs/en/authentication) and
+[Codex auth storage](https://github.com/openai/codex/blob/main/codex-rs/login/src/auth/storage.rs)
+for those upstream namespace contracts.
 
 **Settings migration:** terminal user settings, hooks, MCP servers, skills and CLI sessions are
 not automatically imported. Project settings still load in chat work; account/status/login
