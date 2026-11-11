@@ -539,7 +539,8 @@ fun statusLabel(word: String, kind: String) = stateName(word).let { if (word == 
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(t.agent, color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false)); Spacer(Modifier.weight(1f))
+                Text(t.agent, color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                Spacer(Modifier.width(8.dp))
                 Dot(color, 6); Spacer(Modifier.width(6.dp)); Text(statusLabel(status, t.kind), color = color, fontSize = 12.sp, fontWeight = FontWeight.Medium)
             }
             Spacer(Modifier.height(6.dp)); Text(t.title, fontWeight = FontWeight.Medium, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -548,7 +549,7 @@ fun statusLabel(word: String, kind: String) = stateName(word).let { if (word == 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Outlined.FolderOpen, null, Modifier.size(12.dp), tint = Muted); Spacer(Modifier.width(5.dp))
                 Text(location, color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                Text(address, color = Muted.copy(alpha = .6f), fontSize = 11.sp, fontFamily = FontFamily.Monospace, maxLines = 1)
+                Text(address, color = Muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace, maxLines = 1)
                 Spacer(Modifier.width(5.dp)); Icon(Icons.Outlined.ChevronRight, null, Modifier.size(14.dp), tint = Muted)
             }
         }

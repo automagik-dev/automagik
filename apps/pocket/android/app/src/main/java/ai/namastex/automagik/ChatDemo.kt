@@ -12,15 +12,22 @@ object ChatDemo {
     const val BOT = "b-demo-captain"
     /** The `dsh:` terminal a Bot chat is addressed by. */
     const val TERMINAL = Chat.DSH_PREFIX + BOT
+    /** A second sample Bot whose bridge takes no phone writes (bots-dsh's default): its question is answered on the computer. */
+    const val READ_ONLY_BOT = "b-demo-reader"
+    const val READ_ONLY_TERMINAL = Chat.DSH_PREFIX + READ_ONLY_BOT
     /** What a tap on the sample chat's controls says: nothing is sent from the preview. */
     const val SAMPLE_ONLY = "Sample chat: nothing is sent from the preview."
     private const val ASK = "Run the Android unit tests"
 
     val ref = TerminalRef(HOST, TERMINAL)
+    val readOnlyRef = TerminalRef(HOST, READ_ONLY_TERMINAL)
 
-    /** The chat.list row a real bridge would serve for [BOT], so Team's bubble opens the chat like a live main bot's. */
-    fun listing(): List<Chat.Terminal> = listOf(Chat.Terminal(TERMINAL, "", "dsh", "Captain", "blocked", "sample",
-        registryId = BOT, kind = "approval", msg = "Needs your approval: $ASK", turn = 7))
+    /** The chat.list rows a real bridge would serve: Captain's chat, and a read-only Bot's. */
+    fun listing(): List<Chat.Terminal> = listOf(
+        Chat.Terminal(TERMINAL, "", "dsh", "Captain", "blocked", "sample",
+            registryId = BOT, kind = "approval", msg = "Needs your approval: $ASK", turn = 7),
+        Chat.Terminal(READ_ONLY_TERMINAL, "", "dsh", "Reader", "blocked", "sample",
+            registryId = READ_ONLY_BOT, kind = "question", msg = Chat.ANSWER_ON_COMPUTER, turn = 2))
 
     private val CHATS = mapOf(HOST to listing())
 
@@ -70,4 +77,24 @@ object ChatDemo {
             outcome = "allow", at = now - 3 * 60_000L)),
         done = listOf("sample-receipt"),
         connected = true, dshWrite = true, more = false, synced = true)
+
+    /**
+     * The chat a real read-only Bot would be in: bots-dsh's default, so its question row has no `open` field and the
+     * phone shows the card with "Answer on the computer" instead of the composer.
+     */
+    fun readOnlyState(terminal: String = READ_ONLY_TERMINAL) = Chat.State(
+        terminal = terminal,
+        rows = listOf(Chat.Row("sample-read-1", "text", role = "assistant",
+            text = "The build is ready; I need your call before I continue.")),
+        status = Chat.Status("blocked", "question", Chat.ANSWER_ON_COMPUTER),
+        question = Chat.Row("sample-read-question", "question", source = "claude-code", turn = 2,
+            prompt = Chat.ANSWER_ON_COMPUTER, open = false, answerable = false),
+        connected = true, dshWrite = false, more = false, synced = true)
+
+    /** The preview's chat for [ref], or null when that terminal has no sample chat. */
+    fun stateFor(ref: TerminalRef): Chat.State? = when (ref) {
+        this.ref -> state(ref.address)
+        readOnlyRef -> readOnlyState(ref.address)
+        else -> null
+    }
 }
