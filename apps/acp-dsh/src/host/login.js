@@ -348,7 +348,15 @@ export class CliLogins {
     }
     // Only fixed argument vectors are allowed. Even the manual authorization code goes
     // directly to stdin; it can never become a shell argument or an agent prompt.
-    flow.child = this.spawn(...batchSafe(selected.cli, args, { env, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true }))
+    flow.child = this.spawn(...batchSafe(selected.cli, args, {
+      env, cwd: env.AUTOMAGIK_BOT_CLI_HOME,
+      stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
+    }))
+    this.children ??= new Map()
+    if (!this.children.has(flow.id)) this.children.set(flow.id, new Set())
+    this.children.get(flow.id).add(flow.child)
+    const child = flow.child
+    child.once('close', () => this.children.get(flow.id)?.delete(child))
     // First of its `close` listeners, so the failure it may end with knows how the CLI ended.
     flow.child.once('close', (code, signal) => { flow.exit = { code, signal } })
     flow.child.stdin.on('error', () => this.finish(flow, 'failed', failedMessage))
@@ -522,6 +530,19 @@ export class CliLogins {
     flow.retained = this.timer(() => { if (this.flows.get(flow.id) === flow) this.flows.delete(flow.id) }, this.retainMs)
     this.changed()
     if (failed !== undefined) try { this.onFail(failed) } catch {}
+  }
+
+  async stop(id) {
+    const flow = this.flows.get(id)
+    if (flow) this.finish(flow, 'cancelled', cancelledMessage)
+    const children = [...(this.children?.get(id) ?? [])]
+    await Promise.all(children.map(child => new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('The sign-in has not stopped.')), 3000)
+      child.once('close', () => { clearTimeout(timer); resolve() })
+      try { child.kill('SIGTERM') } catch {}
+      const hard = setTimeout(() => { try { child.kill('SIGKILL') } catch {} }, 1000)
+      child.once('close', () => clearTimeout(hard))
+    })))
   }
 
   // The plugin stops (a DSH restart or an app quit): the CLI cannot outlive it. The busy signal

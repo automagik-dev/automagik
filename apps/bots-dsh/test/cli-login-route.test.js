@@ -11,7 +11,10 @@ import { HostConnectionService } from '@deepseek-ai/dsh-client-connection'
 import { apply } from '../index.js'
 import { fakeContext } from './fake-ctx.js'
 
-const ENDPOINTS = ['cli-login-start', 'cli-login-current', 'cli-login-status', 'cli-login-answer', 'cli-login-cancel', 'cli-login-connections']
+const ENDPOINTS = [
+  'cli-login-start', 'cli-login-current', 'cli-login-status', 'cli-login-answer',
+  'cli-login-cancel', 'cli-login-connections', 'cli-login-switch', 'cli-login-signout',
+]
 const STATE = 'expected_state_0123456789'
 
 async function fixture(t) {
@@ -69,7 +72,8 @@ test('a first Bot can start a sign-in before it has a model, with no login tool 
 test('a reading host cannot start, answer or cancel, but can read the attempt and the connections', async (t) => {
   const h = await fixture(t)
   h.rt.readOnly = () => 'The team is open in another host.'
-  for (const endpoint of ['cli-login-start', 'cli-login-answer', 'cli-login-cancel']) {
+  for (const endpoint of ['cli-login-start', 'cli-login-answer', 'cli-login-cancel',
+    'cli-login-switch', 'cli-login-signout']) {
     const { response, result } = await h.call(endpoint, { ...h.payload, attemptId: h.attemptId, value: 'code#state' })
     assert.equal(result.error.code, 'bot/read-only')
     assert.equal(response.headers.get('cache-control'), 'no-store')

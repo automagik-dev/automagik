@@ -259,60 +259,42 @@ A settings page reads the agents through this host service; the plugin stays hos
 | `endSession(sessionId, why?)` | Ends one Session's agent session now, a turn under way included: the agent's process is stopped, its bridge credential revoked, and the step answers `why`. The DSH Session and its transcript stay; the next turn starts a fresh agent session, which takes its permission mode again. Answers whether one was live. |
 | `bridge()` | `{ on, probesPass }`: whether `dshTools` is on, and whether a real probe on this machine passes — the per-session bridge gets a fresh credential, answers MCP `initialize` and `tools/list`, and lists at least one tool. A success is cached per installed adapter version; a failure is retried after ten minutes or the next app start. A missing adapter or a failed probe says no. The Bot team reads it before its one-time move of Claude Bots onto `acp-claude`, so no Bot moves onto a route whose bridge cannot work. |
 
-**One sign-in per OS user, used only with the person's word (#869).** A CLI's sign-in belongs to
-the OS user: the plugin sets neither `CLAUDE_CONFIG_DIR` nor `CODEX_HOME`, so Bots, the image
-run, the welcome and the person's terminal share one account per vendor. The app uses that
-account only after the person said so, once per vendor and per account (`src/host/consent.js`):
+**Separate Bot CLI homes (#869).** Claude Code and Codex each use a private home under the
+installation's ACP data, shared by its teams and image runs. Managed and discovered CLIs use
+that same environment for sign-in, status, account reads, adapters, model probes and images.
+`HOME`, Windows profile/app-data directories, XDG directories, `CLAUDE_CONFIG_DIR` and
+`CODEX_HOME` point there. Inherited authentication, provider and config overrides are masked.
+No credential file is read, copied or linked by Automagik; each CLI owns its Bot credentials.
 
-- A row of `status()` and `inspect()` carries `consent` for a signed-in agent: `given` (the
-  person confirmed the account, or signed in to it from the app), `carried` (an install made by
-  an earlier version already offered the vendor, and it is signed in; a notice says so once) or
-  `needed`. Signed out or not known, there is no `consent`. A vendor an earlier version offered
-  stays marked to be carried until its CLI is first read signed in: a check that says "signed
-  out" may be a read that failed (a CLI that cannot load its config exits as signed out, a
-  locked keychain), and a Bot that worked before the upgrade never goes silent for it.
-- While it is `needed`, a turn about to open on that agent ends as `MODEL_ACCESS_REQUIRED` before
-  any process starts (never answered by another model), `imageAccess()` is `{ ready: false,
-  signedIn: true, reason: 'account' }`, `generateImage` refuses, and a `loginStart` that finds
-  the CLI already signed in announces nothing. A call that continues a turn is never checked.
-  The turn's text is the Bot team's own (`Confirm the account of <agent> before using this
-  model.`), so its row is translated.
-- The account is read with the sign-in check. The first read of a process, of a CLI or after a
-  sign-out, and every read of an agent that waits for the person, is waited for. For an agent
-  that already has the person's word the answer stands and the account is read behind it, so no
-  status, picker or turn waits on the CLI; `refresh()`, `account()` and `accountConfirm()` wait
-  for it. Known bound: a terminal that moves to another account while the app runs is noticed
-  at the next sign-in check (`SIGNED_IN_TTL_MS`), and the turn that triggers that check still
-  runs; the next one is refused.
-- Who it is comes from the CLI's own status (`src/host/account.js`): Claude Code's
-  `auth status --json` (`email`, `orgId`, `orgName`, `subscriptionType`, or the source of a key)
-  and Codex's app-server `account/read` (`email`, `planType`, or an API key). No token, key or
-  credential file is read. An account the CLI does not show can still be confirmed. A
-  subscription token in the environment (`authMethod: oauth_token`) is shown as a sign-in whose
-  account the CLI does not say, never as an API key. Known limit: a key or a token is told
-  apart only by where it comes from, so another key in the same variable reads as the same
-  account.
-- The record is `accounts.json` beside the adapters, owner-only: per vendor the consent, when,
-  and HMAC-SHA256 digests of what names the account (kind, email, organisation id, key source),
-  under a key made for this install. No email,
-  organisation or plan is stored. It is written before this version installs a connector, so a
-  connector found with no record means an earlier version, and that vendor is carried. While
-  the record cannot be written, no new connector is installed (one already installed is still
-  updated). Several DSH processes may share the home: the file is read again before each read
-  and each write, and a process writes only the vendors it changed.
-- A read that fails changes nothing: an unknown sign-in is the agent's own answer to give, as
-  before, and an account that cannot be read never turns a consented vendor into `needed`. Only
-  another account, read for certain, asks again (a field both reads have differs; a CLI release
-  that starts or stops printing a field is not another account); the first account coming back
-  needs nothing.
-- Not in this version: a separate sign-in for Bots (an isolated CLI home), sign-out and switch
-  account. A sign-in started from the app still replaces the terminal's.
+An upgrade retains Bot models and DSH history, but requires a fresh in-app sign-in. Old shared
+consent is not carried. Signed-out or paused Bot work refuses with `MODEL_ACCESS_REQUIRED`,
+without a fallback model. Codex images do not use a legacy ChatGPT grant while signed out.
+Bot settings label Bot and terminal accounts separately; the terminal comparison is a read-only
+CLI account query, never a login, logout or refresh. Missing identity is shown as unknown.
+
+`authScope: 'isolated'` identifies the service and Claude/Codex status rows. `accountSignOut(id)`
+and `accountSwitch(id, { label? })` operate only on Bot credentials. They block admission, stop
+starting/live chat, model-probe, image and login processes, wait for termination, then ask the
+CLI to log out and verify it is signed out. Switch starts a new isolated login afterward.
+Generation checks prevent work delayed across a switch from starting on the next account.
+`imageAccess()` includes `accountGeneration` when ready; callers pass that ticket to
+`generateImage({ accountGeneration, ... })` so even a switch between those two calls refuses
+the old drawing request. A missing/reloading ACP service never authorizes legacy image billing.
+A failed logout stays paused until the owner retries. Authentication changes hold an installation
+lock; close other app instances registered on that vendor home before changing accounts.
+Account details stay on owner-only routes, never in state, transcripts, model calls or logs.
+
+**Settings migration:** terminal user settings, hooks, MCP servers, skills and CLI sessions are
+not automatically imported. Project settings still load in chat work; account/status/login
+commands and catalog probes run in the private home. Configure Bot user settings separately.
+RFC 0003's isolation amendment explicitly supersedes its earlier global-settings promise.
+Native-ACP agents keep their existing opt-in terminal-sharing contract.
 
 **Images through Codex.** `generateImage` is a one-off codex-acp session that asks Codex's
 built-in image tool for one picture (owner decision D-g): an empty scratch folder as its working
-directory (removed afterwards), the `read-only` mode, no MCP servers and no bridge. The person's
-`config.toml` is never written and `CODEX_HOME` is never set: everything below is set for that
-process only, through codex-acp's `CODEX_CONFIG` override.
+directory (removed afterwards), the `read-only` mode, no MCP servers and no bridge.
+The terminal's `config.toml` is never written. `CODEX_HOME` is the Bot's isolated config;
+everything below is set for that process only, through codex-acp's `CODEX_CONFIG` override.
 
 Codex has no allow-list of tools, and its `read-only` mode can read the disk. So the run rests
 on what can be checked, and does not start when a check does not hold (#870):

@@ -4,6 +4,7 @@
 import { createElement as h, useSyncExternalStore } from 'react'
 import { CLI_LOGIN_CSS, CliLoginConversation, installKnownStateGuard } from '../../src/client/cli-login.js'
 import { createCliLogin } from '../../src/client/cli-login-state.js'
+import { CliAccounts } from '../../src/client/cli-accounts.js'
 import { createSource, indexRoster } from '../../src/client/sources.js'
 import { teamActions } from '../../src/client/team-actions.js'
 import { SHELL_CSS, CONVERSATION_CSS } from '../../src/client/styles.js'
@@ -207,6 +208,19 @@ slots.register({ name: 'root', children: {
 slots.register({ name: 'conversation.composer.bar', inject: id => runtimes.get(id)?.inputProps ?? {} }, native.InputBar)
 slots.register({ name: 'conversation.input.dock', id: 'bot-cli-login', inject: face }, CliLoginConversation)
 const root = createRoot(document.getElementById('root'))
+window.showAccounts = () => {
+  window.accountCalls = []
+  const entry = { authScope: 'isolated', signedIn: true,
+    account: { email: 'bot@example.test' }, terminal: { email: 'terminal@example.test' } }
+  const actions = {
+    cliLoginAccounts: async () => ({ accounts: { 'acp-codex': { ...entry } } }),
+    cliLoginSignOut: async () => { window.accountCalls.push('signout'); entry.signedIn = false },
+    cliLoginSwitch: async () => { window.accountCalls.push('switch') },
+    refreshModels: async () => {},
+    openCliLogin: () => window.accountCalls.push('open'),
+  }
+  root.render(h(CliAccounts, { bot: { id: 'alpha' }, actions }))
+}
 root.render(slots.renderSlot('root', {}))
 
 window.setBots = (bots, { blank = false, shown } = {}) => {

@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process'
 import { Readable, Writable } from 'node:stream'
 import { PROTOCOL_VERSION, client, methods, ndJsonStream } from '@agentclientprotocol/sdk/unstable'
 import { redactText } from './redact.js'
+import { HOME_ENV } from './cli-homes.js'
 
 export const HANDSHAKE_TIMEOUT_MS = 20_000
 const STDERR_KEEP = 2000
@@ -21,7 +22,11 @@ export function handshake({ command, args = [], env, cwd }, { timeoutMs = HANDSH
     if (signal?.aborted) return reject(new Error('the start check was stopped'))
     let child
     try {
-      child = spawn(command, args, { cwd, env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true })
+      child = spawn(command, args, {
+        cwd: env?.[HOME_ENV] ?? cwd,
+        env: env?.[HOME_ENV] ? env : { ...process.env, ...env },
+        stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
+      })
     } catch (error) {
       return reject(error)
     }

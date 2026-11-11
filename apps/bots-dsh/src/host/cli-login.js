@@ -23,17 +23,17 @@
 // step drops such a message before it reaches a model or a transcript row (`dropLoginCodes`, from
 // parts.js's pre-step).
 //
-// The account (#869): a CLI's sign-in is one per OS user, shared with the person's terminal. A
-// CLI that is already signed in is used by Bots only after the person said so (acp-dsh keeps
-// that record). So `cli-login-start` asks acp-dsh first, before any sign-in starts: an agent
+// The account (#869): Claude and Codex have an isolated Bot home per installation. Account
+// controls show Bot and terminal identities separately; switch/sign-out stop work before
+// changing only Bot credentials. The earlier confirm protocol remains compatible: an account
+// already in the Bot home is used only after the person said so. An agent
 // signed in to an account that waits for the person answers `{ status: 'confirm', account }`
 // (who it is, read by acp-dsh from the CLI: an email, an organisation, a plan, or that it is an
 // API key), and `cli-login-confirm` is their "Use this account". acp-dsh then announces the
 // agent ready, so the model chosen with the entry is applied exactly as after a sign-in. The
 // account is shown on these owner-only endpoints and nowhere else: not in team state, a
 // message, a tool, a model call or a log. `cli-login-accounts` and `cli-login-noticed` serve
-// the one-time notice of a vendor carried through an upgrade. With an acp-dsh that keeps no
-// such record, every answer is as it was.
+// the one-time notice for older ACP hosts. New isolated homes never carry terminal consent.
 //
 // Residual risk (RFC 0003's amendment, RFC 0023 section 3): a send from DSH's own composer is
 // admitted by DSH's session controller, which records it (`agent/inbox/spliced`) before any
@@ -141,6 +141,7 @@ export function cliAccountView(value) {
   const org = shown(account?.org, 120)
   const plan = shown(account?.plan, 40)
   return {
+    ...(value?.authScope === 'isolated' ? { authScope: 'isolated' } : {}),
     ref: typeof value?.ref === 'string' && ACCOUNT_REF.test(value.ref) ? value.ref : 'unknown',
     ...(account !== null && typeof account === 'object' ? { kind: account.kind === 'key' ? 'key' : 'account' } : {}),
     ...(email ? { email } : {}),
@@ -150,6 +151,8 @@ export function cliAccountView(value) {
 }
 
 const ACTIONS = {
+  switch: ['botId', 'provider'],
+  signout: ['botId', 'provider'],
   confirm: ['botId', 'provider', 'ref', 'model'],
   start: ['botId', 'provider', 'model'],
   current: ['botId', 'provider'],
@@ -300,7 +303,8 @@ export function install(rt) {
         if (row?.signedIn !== true || row.consent !== 'needed') return undefined
       }
       const seen = await service.account(provider)
-      return seen?.id === provider && seen.signedIn === true && seen.consent === 'needed' ? cliAccountView(seen) : undefined
+      return seen?.id === provider && seen.signedIn === true && seen.consent === 'needed'
+        ? cliAccountView(seen) : undefined
     } catch {
       return undefined
     }
@@ -333,6 +337,18 @@ export function install(rt) {
     const out = {}
     const service = acp()
     if (typeof service?.account !== 'function' || typeof service.status !== 'function') return { accounts: out }
+    if (service.authScope === 'isolated') {
+      for (const id of PROVIDERS) {
+        const seen = await service.account(id, { fresh: true })
+        const terminal = await service.terminalAccount?.(id)
+        out[id] = {
+          authScope: 'isolated', signedIn: seen?.signedIn === true,
+          ...(seen?.signedIn === true ? { account: cliAccountView(seen) } : {}),
+          ...(terminal?.account ? { terminal: cliAccountView(terminal) } : {}),
+        }
+      }
+      return { accounts: out }
+    }
     let rows
     try { rows = (await service.status())?.agents } catch {}
     for (const id of PROVIDERS) {
@@ -429,6 +445,22 @@ export function install(rt) {
   }
 
   const actions = {
+    ...Object.fromEntries(['switch', 'signout'].map(action => [
+      `cli-login-${action}`, async payload => {
+      const body = fields(payload, action)
+      if (!rt.botOf(body.botId)) throw failed('This Bot is no longer available.', 'bot/not-found')
+      const service = acp()
+      const method = action === 'switch' ? 'accountSwitch' : 'accountSignOut'
+      if (service?.authScope !== 'isolated' || typeof service[method] !== 'function') {
+        throw failed('Bot account controls are unavailable. Update Automagik and try again.')
+      }
+      try {
+        await service[method](body.provider, { label: body.botId })
+        return { id: body.provider, signedIn: false }
+      } catch {
+        throw failed('Account change failed. Close other app windows and try again.')
+      }
+    }])),
     'cli-login-connections': connections,
     'cli-login-confirm': confirm,
     'cli-login-accounts': accounts,

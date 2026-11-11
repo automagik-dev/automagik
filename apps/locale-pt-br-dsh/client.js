@@ -70,6 +70,19 @@ const createPack = function createPack(dictionaries) {
 }
 const pack = createPack({
   "omni-ui": {
+    "Account not shown by the CLI": "A CLI não informou a conta",
+    "Account change failed. Close other app windows and try again.": "Não foi possível mudar a conta. Feche as outras janelas do app e tente de novo.",
+    "Bot accounts": "Contas dos Bots",
+    "Bots in this installation share these accounts.": "Os Bots desta instalação compartilham estas contas.",
+    "Your terminal login is separate and stays unchanged.": "O login do terminal é separado e permanece intacto.",
+    "Bots: {account}": "Bots: {account}",
+    "Sign in again in the app to resume Bots": "Entre de novo no app para retomar os Bots",
+    "Terminal: {account}": "Terminal: {account}",
+    "This stops running Bot work for this account. Continue?": "Isso interrompe o trabalho dos Bots nesta conta. Continuar?",
+    "Switch account": "Trocar de conta",
+    "Sign out": "Sair",
+    "This sign-in is for Bots only. Your terminal login stays unchanged.": "Este login é só dos Bots. O login do terminal permanece intacto.",
+    "Bots will use and bill this account. Your terminal login is separate.": "Os Bots usarão e cobrarão desta conta. O login do terminal é separado.",
     "Channels": "Canais",
     "connected": "conectados",
     "Chat": "Chat",

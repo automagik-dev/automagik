@@ -176,7 +176,10 @@ function codexCli(launch, args, { run = execFile, timeoutMs = MCP_LIST_TIMEOUT_M
     }
     const onAbort = () => { kill(); end(reject, stoppedCheck()) }
     try {
-      const env = { ...process.env, ...launch.env, NO_COLOR: '1', DISABLE_UPDATES: '1' }
+      const env = {
+        ...(launch.env?.AUTOMAGIK_BOT_CLI_HOME ? launch.env : { ...process.env, ...launch.env }),
+        NO_COLOR: '1', DISABLE_UPDATES: '1',
+      }
       signal?.addEventListener('abort', onAbort, { once: true })
       timer = setTimeout(() => { kill(); end(reject, checkError('unreadable', `${what} could not be read in time`, { passing: true })) }, timeoutMs)
       child = run(...batchSafe(launch.command, [...(launch.args ?? []), 'cli', ...args], { env, cwd, maxBuffer: 8 << 20, windowsHide: true, detached: process.platform !== 'win32' }), (error, stdout, stderr) => {

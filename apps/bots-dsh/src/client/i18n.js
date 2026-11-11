@@ -5,6 +5,20 @@
 export const NAMESPACE = 'omni-ui'
 
 const ZH = {
+  "Account not shown by the CLI": "CLI 未显示账号",
+  "Account change failed. Close other app windows and try again.": "无法更改账号。请关闭其他应用窗口后重试。",
+  "Bot accounts": "Bot 账号",
+  "Bots in this installation share these accounts.": "此安装中的 Bot 共用这些账号。",
+  "Your terminal login is separate and stays unchanged.": "终端的登录独立，保持不变。",
+  "Bots: {account}": "Bot：{account}",
+  "Sign in again in the app to resume Bots": "在应用内重新登录以恢复 Bot",
+  "Terminal: {account}": "终端：{account}",
+  "This stops running Bot work for this account. Continue?": "这将停止此账号正在运行的 Bot 工作。继续吗？",
+  "Switch account": "切换账号",
+  "Sign out": "退出登录",
+  "This sign-in is for Bots only. Your terminal login stays unchanged.": "此登录仅用于 Bot。终端的登录保持不变。",
+  "Bots will use and bill this account. Your terminal login is separate.":
+    "Bot 将使用此账号并向其计费。终端的登录独立。",
   // The sign-in row in a Bot's chat (cli-login.js), and the host's sign-in messages (host/cli-login.js).
   "Authorization code": "授权码",
   "Copy link": "复制链接",

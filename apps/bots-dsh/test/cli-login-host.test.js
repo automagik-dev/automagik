@@ -69,6 +69,37 @@ function fixture() {
   return { rt, acp, bots, calls, updates, warnings, listeners, emit, actions, matches, ready: async (id) => { emit('acp-dsh/login-ready', { id }); await settle() } }
 }
 
+test('isolated account controls use owner actions, sanitize identities and validate mutations',
+  async () => {
+    const h = fixture()
+    h.acp.authScope = 'isolated'
+    h.acp.status = async () => ({ agents: [] })
+    h.acp.account = async () => ({ signedIn: true,
+      account: { email: 'bot@example.test', token: 'never-forward' } })
+    h.acp.terminalAccount = async () => ({
+      account: { email: 'terminal@example.test', token: 'never-forward' } })
+    const changed = []
+    h.acp.accountSignOut = async (...args) => changed.push(['signout', ...args])
+    h.acp.accountSwitch = async (...args) => changed.push(['switch', ...args])
+    const accounts = await h.actions['cli-login-accounts']({})
+    assert.equal(accounts.accounts['acp-codex'].account.email, 'bot@example.test')
+    assert.equal(accounts.accounts['acp-codex'].terminal.email, 'terminal@example.test')
+    assert.doesNotMatch(JSON.stringify(accounts), /never-forward|token/)
+    for (const action of ['signout', 'switch']) {
+      await h.actions[`cli-login-${action}`]({ botId: 'a', provider: 'acp-codex' })
+      await assert.rejects(h.actions[`cli-login-${action}`]({
+        botId: 'a', provider: 'acp-codex', home: '/untrusted',
+      }), { code: 'bot/invalid' })
+      await assert.rejects(h.actions[`cli-login-${action}`]({
+        botId: 'a', provider: 'acp-hermes',
+      }), { code: 'bot/invalid' })
+    }
+    assert.deepEqual(changed, [
+      ['signout', 'acp-codex', { label: 'a' }], ['switch', 'acp-codex', { label: 'a' }],
+    ])
+    assert.deepEqual(h.updates, [])
+  })
+
 test('any Bot view gets the live attempt back; the opener is only its label, and no owner capability exists', async () => {
   const h = fixture()
   const first = await h.actions['cli-login-start']({ botId: 'a', provider: 'acp-codex' })

@@ -642,6 +642,45 @@ This amends "The person's own CLI, the newest adapter" for these rows only.
 Open, tracked on #958: the sequence fuzz test and the daily handshake run should cover these
 three CLIs before their switches default to on.
 
+## Amendment: separate Bot CLI accounts (#869)
+
+Owner decision (2026-11-11): **isolate**, option 1 of
+[the design note](https://github.com/automagik-si/automagik/issues/869#issuecomment-6797000812).
+Claude Code and Codex each get their own CLI home per Automagik installation, shared by that
+installation's teams and image runs. A discovered CLI and a managed CLI use the same Bot home.
+Sign-in, status, account reads, adapters, model probes and images use the same environment.
+Neither credentials nor authentication settings are copied from the terminal. CLI updates and
+the public provider ids keep their existing contracts. Native-ACP agents keep their explicit
+opt-in terminal-sharing contract above; this decision covers Claude Code and Codex only.
+
+**Settings amendment.** This supersedes the user-global settings promise in Design and Decided
+for these two agents: terminal user settings, hooks, MCP servers, skills, sessions and environment
+overrides are not automatically imported. A separate home is necessary because authentication
+can also come from helpers, environment variables and stores outside the CLI's main config file.
+Project settings still load for chat work in the Bot's working folder. The person can configure
+the Bot's own user settings separately; Automagik does not copy or link credential-bearing files.
+The DSH tool bridge, approvals and transcript replay contracts stay as described above.
+
+**Upgrade.** Existing Bot models, histories and Sessions stay. Old terminal-account consent is
+not carried into the new home. The person signs in once more inside the app; affected work waits
+with a sign-in action. A signed-out isolated Bot never restores a legacy plan route or uses an
+old ChatGPT image grant to keep working. Explicitly configured image API keys retain their own
+path. The terminal login remains intact.
+
+**Owner account controls.** Bot settings show the Bot identity and a read-only terminal identity
+when the vendor reports it, clearly labelled as separate. Account data stays on owner-only
+endpoints, never in team state, model calls, transcripts or logs. Switch and Sign out block new
+work, end starting/live chats, images, model probes and login attempts, and wait for process
+termination before the CLI changes only its Bot credentials. A failed or unverified logout leaves
+work paused until an explicit retry. Installation locks serialize authentication changes; when
+another app instance has registered the same vendor home, close it before changing accounts.
+Launches capture an account generation so delayed work cannot start under a later account.
+
+Vendor storage contracts:
+[Claude authentication](https://code.claude.com/docs/en/authentication),
+[Codex auth storage](https://github.com/openai/codex/blob/main/codex-rs/login/src/auth/storage.rs)
+(the CLI owns these stores).
+
 ## Tracking
 
 Ledger pass (2026-11-10): the board links this RFC from its file.
