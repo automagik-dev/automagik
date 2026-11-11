@@ -7,13 +7,52 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
-import { CliHomes, trackRun } from '../src/host/cli-homes.js'
+import { CliHomes, releaseRun, trackRun } from '../src/host/cli-homes.js'
+import { assertGeneration } from '../src/host/cli-generations.js'
 import { recordLogin } from '../src/host/login-ownership.js'
 
 const module = new URL('../src/host/cli-homes.js', import.meta.url).href
 const run = program => spawnSync(process.execPath, ['--input-type=module', '-e', program], {
   encoding: 'utf8', timeout: 10_000,
 })
+
+test('a second-process Reset before registration cannot bind an old home to a new marker',
+  async t => {
+    const root = mkdtempSync(join(tmpdir(), 'bot-environment-snapshot-'))
+    const homes = new CliHomes(root)
+    t.after(() => { homes.dispose(); rmSync(root, { recursive: true, force: true }) })
+    const old = homes.home('codex')
+    const register = homes.generations.register.bind(homes.generations)
+    let fresh, interleaved = false
+    homes.generations.register = vendor => {
+      if (!interleaved) {
+        interleaved = true
+        const reset = run(`import {CliHomes} from ${JSON.stringify(module)};
+          import {rmSync,writeFileSync} from 'node:fs';
+          import {join} from 'node:path';
+          const homes=new CliHomes(${JSON.stringify(root)});
+          homes.reset('codex');const env=homes.environment('codex');
+          homes.resume('codex');homes.dispose();
+          rmSync(join(${JSON.stringify(old)},'paused'),{force:true});
+          writeFileSync(join(env.CODEX_HOME,'invented-auth'),'new-account');
+          console.log(JSON.stringify(env.HOME));`)
+        assert.equal(reset.status, 0, reset.stderr)
+        fresh = JSON.parse(reset.stdout)
+      }
+      register(vendor)
+    }
+    const env = homes.environment('codex')
+    assert.equal(interleaved, true)
+    assert.notEqual(env.HOME, old)
+    assert.equal(env.HOME, fresh)
+    assert.equal(readFileSync(join(env.CODEX_HOME, 'invented-auth'), 'utf8'), 'new-account')
+    assertGeneration(env)
+    const work = { spec: { env }, stop: async () => {} }
+    trackRun(work)
+    await releaseRun(work)
+    assert.throws(() => assertGeneration({ ...env, HOME: old, CODEX_HOME: join(old, '.codex'),
+      AUTOMAGIK_BOT_CLI_HOME: old }), /account changed/)
+  })
 
 test('a crash during recovery cannot leave a permanently held recovery claim', t => {
   const root = mkdtempSync(join(tmpdir(), 'bot-home-recovery-'))

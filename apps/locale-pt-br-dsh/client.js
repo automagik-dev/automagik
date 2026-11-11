@@ -72,7 +72,9 @@ const pack = createPack({
   "omni-ui": {
     "Bot sign-in recovery is needed. Reset Bot sign-in to start fresh.": "É preciso recuperar o login do Bot. Redefina o login do Bot para recomeçar.",
     "Reset Bot sign-in": "Redefinir login do Bot",
-    "Reset starts a fresh Bot sign-in. Sign in again in the app.": "A redefinição inicia um novo login do Bot. Entre de novo no app.",
+    "This signs {vendor} out for Bots. Sign in again in the app.": "Isso desconecta {vendor} dos Bots. Entre de novo no app.",
+    "Bot models and history stay.": "Os modelos e o histórico dos Bots são mantidos.",
+    "Bot CLI user settings start empty.": "As configurações de usuário da CLI dos Bots começam vazias.",
     "Previous Bot sign-in files stay separate and are never reused.": "Os arquivos do login anterior ficam separados e nunca são reutilizados.",
     "No credentials are copied. Your terminal login stays unchanged.": "Nenhuma credencial é copiada. O login do terminal permanece intacto.",
     "Account not shown by the CLI": "A CLI não informou a conta",

@@ -40,16 +40,20 @@ export class CliHomes {
   }
 
   environment(vendor, source = process.env) {
-    const home = this.home(vendor)
-    mkdirSync(home, { recursive: true, mode: 0o700 })
-    const instances = join(home, 'instances')
-    mkdirSync(instances, { recursive: true, mode: 0o700 })
+    if (!vendors.has(vendor)) throw new Error('No isolated home for this agent.')
     const registered = this.generations.registered.has(vendor)
     this.generations.register(vendor)
     try { this.generations.check(vendor) } catch (error) {
       if (!registered) this.generations.unregister(vendor)
       throw error
     }
+    // Registration fences Reset before selecting any path. Capture the physical home and
+    // marker from one generation, rather than reading the selection again at return time.
+    const generation = this.generations.current(vendor)
+    const home = this.generations.folder(vendor, generation)
+    mkdirSync(home, { recursive: true, mode: 0o700 })
+    const instances = join(home, 'instances')
+    mkdirSync(instances, { recursive: true, mode: 0o700 })
     // Register before checking the mutation lock: either a concurrent changer sees us and
     // refuses, or we see its lock and refuse. Other app processes can never change live auth.
     if (this.registered.get(vendor) !== home) {
@@ -69,7 +73,7 @@ export class CliHomes {
     for (const dir of [config, 'config', 'data', 'cache', 'state', 'roaming', 'local']) {
       mkdirSync(dir === config ? dir : join(home, dir), { recursive: true, mode: 0o700 })
     }
-    return {
+    const selected = {
       ...env,
       HOME: home,
       USERPROFILE: home,
@@ -87,10 +91,13 @@ export class CliHomes {
       [HOME_ENV]: home,
       [LOGIN_OWNER_ENV]: this.instance,
       [POINTER_ENV]: this.generations.pointer(vendor),
-      [GENERATION_ENV]: this.generations.current(vendor),
+      [GENERATION_ENV]: generation,
       [VERSION_ENV]: existsSync(join(home, 'version'))
         ? readFileSync(join(home, 'version'), 'utf8') : '',
     }
+    this.generations.check(vendor)
+    assertGeneration(selected)
+    return selected
   }
 
   changing(vendor) { return existsSync(join(this.home(vendor), 'changing')) }

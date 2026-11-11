@@ -77,7 +77,11 @@ export function CliAccounts({ bot, actions }) {
     pending?.provider === provider ? h('div', null,
       h('p', null, t('This stops running Bot work for this account. Continue?')),
       pending.action === 'reset' ? h('div', null,
-        h('p', null, t('Reset starts a fresh Bot sign-in. Sign in again in the app.')),
+        h('p', null, t('This signs {vendor} out for Bots. Sign in again in the app.', {
+          vendor: CLI_NAMES[provider],
+        })),
+        h('p', null, t('Bot models and history stay.')),
+        h('p', null, t('Bot CLI user settings start empty.')),
         h('p', null, t('Previous Bot sign-in files stay separate and are never reused.')),
         h('p', null,
           t('No credentials are copied. Your terminal login stays unchanged.'))) : null,

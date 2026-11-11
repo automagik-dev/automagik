@@ -38,7 +38,15 @@ export function generationAt(pointer) {
 
 export function assertGeneration(env) {
   if (env[POINTER_ENV] === undefined) return
-  if (generationAt(env[POINTER_ENV]) !== env[GENERATION_ENV]) {
+  const pointer = env[POINTER_ENV]
+  const generation = generationAt(pointer)
+  const root = dirname(dirname(pointer))
+  const vendor = basename(pointer)
+  const home = generation === 'legacy' ? join(root, vendor)
+    : join(root, 'homes', vendor, generation)
+  if (generation !== env[GENERATION_ENV] || env.AUTOMAGIK_BOT_CLI_HOME !== home
+    || env.HOME !== home || env.CODEX_HOME !== join(home, '.codex')
+    || env.CLAUDE_CONFIG_DIR !== join(home, '.claude')) {
     throw Object.assign(new Error(
       'The Bot account changed. Start this work again after signing in.',
     ), { code: 'acp-account/busy' })

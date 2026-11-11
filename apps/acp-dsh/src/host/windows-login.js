@@ -55,7 +55,9 @@ export function launchWindowsLogin(file, args, options = {}, {
   try {
     child = spawn(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive',
       '-ExecutionPolicy', 'Bypass', '-File', SUPERVISOR], {
-      ...options, shell: false, windowsHide: true,
+      // libuv kills non-detached Windows children with the app's own Job. The supervisor
+      // must survive that exit long enough to drain its vendor Job and write full-job proof.
+      ...options, detached: true, shell: false, windowsHide: true,
       env: { ...supervisorEnv, AUTOMAGIK_LOGIN_JOB: JSON.stringify(request) },
     })
   } catch (error) {

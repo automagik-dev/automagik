@@ -24,13 +24,14 @@ function fake(t, extra = {}, env = {}) {
   let supervisorEnv
   const kills = []
   const owner = launchWindowsLogin('C:\\tools\\codex.cmd', ['app-server'], {
-    cwd: root,
+    cwd: root, detached: false,
     env: { SystemRoot: 'C:\\Windows', ComSpec: 'C:\\Windows\\cmd.exe', ...env },
   }, {
     spawn(command, args, options) {
       assert.match(command, /powershell\.exe$/)
       assert.ok(args.includes('-NoProfile'))
       assert.equal(options.shell, false)
+      assert.equal(options.detached, true, 'supervisor must survive the app Job closing')
       request = JSON.parse(options.env.AUTOMAGIK_LOGIN_JOB)
       supervisorEnv = options.env
       return child

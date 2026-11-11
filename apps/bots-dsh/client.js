@@ -45,7 +45,9 @@ var NAMESPACE = "omni-ui";
 var ZH = {
   "Bot sign-in recovery is needed. Reset Bot sign-in to start fresh.": "需要恢复 Bot 登录。重置 Bot 登录以重新开始。",
   "Reset Bot sign-in": "重置 Bot 登录",
-  "Reset starts a fresh Bot sign-in. Sign in again in the app.": "重置会建立全新的 Bot 登录。请在应用内重新登录。",
+  "This signs {vendor} out for Bots. Sign in again in the app.": "这会使 Bot 退出 {vendor}。请在应用内重新登录。",
+  "Bot models and history stay.": "Bot 的模型和历史记录会保留。",
+  "Bot CLI user settings start empty.": "Bot CLI 的用户设置会从空白开始。",
   "Previous Bot sign-in files stay separate and are never reused.": "上次 Bot 登录的文件保持独立，永不重复使用。",
   "No credentials are copied. Your terminal login stays unchanged.": "不会复制任何凭据。终端的登录保持不变。",
   "Account not shown by the CLI": "CLI 未显示账号",
@@ -17328,7 +17330,11 @@ function CliAccounts({ bot, actions }) {
         pending.action === "reset" ? (0, import_react43.createElement)(
           "div",
           null,
-          (0, import_react43.createElement)("p", null, t("Reset starts a fresh Bot sign-in. Sign in again in the app.")),
+          (0, import_react43.createElement)("p", null, t("This signs {vendor} out for Bots. Sign in again in the app.", {
+            vendor: CLI_NAMES[provider]
+          })),
+          (0, import_react43.createElement)("p", null, t("Bot models and history stay.")),
+          (0, import_react43.createElement)("p", null, t("Bot CLI user settings start empty.")),
           (0, import_react43.createElement)("p", null, t("Previous Bot sign-in files stay separate and are never reused.")),
           (0, import_react43.createElement)(
             "p",

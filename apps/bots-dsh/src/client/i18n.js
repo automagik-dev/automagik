@@ -8,8 +8,10 @@ const ZH = {
   "Bot sign-in recovery is needed. Reset Bot sign-in to start fresh.":
     "需要恢复 Bot 登录。重置 Bot 登录以重新开始。",
   "Reset Bot sign-in": "重置 Bot 登录",
-  "Reset starts a fresh Bot sign-in. Sign in again in the app.":
-    "重置会建立全新的 Bot 登录。请在应用内重新登录。",
+  "This signs {vendor} out for Bots. Sign in again in the app.":
+    "这会使 Bot 退出 {vendor}。请在应用内重新登录。",
+  "Bot models and history stay.": "Bot 的模型和历史记录会保留。",
+  "Bot CLI user settings start empty.": "Bot CLI 的用户设置会从空白开始。",
   "Previous Bot sign-in files stay separate and are never reused.":
     "上次 Bot 登录的文件保持独立，永不重复使用。",
   "No credentials are copied. Your terminal login stays unchanged.":

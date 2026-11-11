@@ -111,6 +111,11 @@ for (const evidence of ['pending', 'damaged']) {
     await page.getByText('This stops running Bot work for this account. Continue?', {
       exact: true,
     }).waitFor()
+    await page.getByText('This signs Codex out for Bots. Sign in again in the app.', {
+      exact: true,
+    }).waitFor()
+    await page.getByText('Bot models and history stay.', { exact: true }).waitFor()
+    await page.getByText('Bot CLI user settings start empty.', { exact: true }).waitFor()
     await page.getByText('Previous Bot sign-in files stay separate and are never reused.', {
       exact: true,
     }).waitFor()
