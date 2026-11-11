@@ -1,5 +1,5 @@
 // The places a new Session of a Bot starts work by itself (a task, a member's first turn in a
-// group, a new Bot's greeting, a fresh part), for a Bot at Full access ("Auto") whose coding
+// group, a new Bot's greeting, a fresh part), for a Bot at Full access whose coding
 // CLI is not served now, or is served and could not be selected on that Session: the Session
 // would start on DSH's default model at that level, so the start is refused and nothing runs.
 // Any other level starts as before, on the default model. The team harness is the one of
@@ -163,7 +163,7 @@ const waitFor = async (check) => {
 const roomTurn = (sent, ...earlier) => waitFor(() => sent.find(entry => !earlier.includes(entry) && entry.message.source?.role === 'room'))
 
 
-const STAYS = 'This Bot has Auto (full access) on its coding CLI, which is not available now, so nothing was started on another model. Fix the CLI or sign in to it, or pick another model for the Bot yourself.'
+const STAYS = 'This Bot has Full access on its coding CLI, which is not available now, so nothing was started on another model. Fix the CLI or sign in to it, or pick another model for the Bot yourself.'
 const ON_CODEX = { model: 'acp-codex/default' }
 
 test('a task of a Bot at Full access whose coding CLI is gone takes no first turn on the default model', async (t) => {

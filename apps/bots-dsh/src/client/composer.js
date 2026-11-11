@@ -123,7 +123,7 @@ export function ComposerPermission({ sessionId, useRoster, actions }) {
   if (!bot || !catalog?.options?.length || roster.readOnly || currentPart(bot) !== sessionId) return null
   const saved = bot.permission ?? catalog.defaultPreset
   const cli = cliOfBot(bot)
-  const name = presetName(saved, catalog, cli)
+  const name = presetName(saved, catalog)
   const toggle = () => { if (isOpen) close(); else open() }
   const pick = value => Promise.resolve(actions.updateBot(bot.id, { permission: value })).then(
     () => { close(); return true },
