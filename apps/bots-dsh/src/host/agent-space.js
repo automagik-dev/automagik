@@ -50,6 +50,10 @@ export function createSpaceReads(rt) {
       lastActivity: last.get(id) ?? work?.since ?? room?.log?.at(-1)?.time ?? null }
   }
   const botOf = bot => ({ ...botConfig(bot, rt.state.mainBotIds),
+    role: bot.role ?? '', instructions: bot.instructions ?? '',
+    model: bot.model ?? rt.cachedDefault() ?? null, effort: bot.effort ?? null,
+    permission: bot.permission ?? rt.state.prefs.permission
+      ?? rt.permissionCatalog?.()?.defaultPreset ?? null,
     folder: bot.workDir ?? rt.teamFolder?.() ?? null, ...statusOf(bot.id) })
   const groupOf = room => ({ ...roomConfig(room), ...statusOf(room.id) })
   const conversations = () => [
@@ -115,3 +119,5 @@ export function createSpaceReads(rt) {
   }
   return { read }
 }
+
+export function install(rt) { rt.spaceReads = createSpaceReads(rt) }

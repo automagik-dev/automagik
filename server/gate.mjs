@@ -100,6 +100,8 @@ export function createGate({ origin: value, sessions, credentials, access, selfH
         const proxy = http.request({ hostname: DSH_HOST, port: credentials.port,
           method: req.method, path: '/api/omni-mcp',
           headers: agentMcpHeaders(req, credentials, cookie), timeout: 10000 }, upstream => {
+          // Refresh for the next call after a DSH restart; never replay this body.
+          if (upstream.statusCode === 401) credentials.cookie(true).catch(() => {})
           res.writeHead(upstream.statusCode, responseHeaders(upstream.headers))
           upstream.pipe(res)
           upstream.on('error', () => res.destroy())

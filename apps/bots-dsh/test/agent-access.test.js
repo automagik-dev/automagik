@@ -5,6 +5,7 @@ import { once } from 'node:events'
 import { Readable } from 'node:stream'
 import { createGate } from '../../../server/gate.mjs'
 import { SessionStore } from '../../../server/gate-store.mjs'
+import { HostConnectionService } from '@deepseek-ai/dsh-client-connection'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { createHash } from 'node:crypto'
@@ -410,6 +411,25 @@ test('official Streamable HTTP client initializes, lists, reads and writes the s
   assert.equal(first.nextOffset, 1)
   assert.equal(typeof first.items[0].status, 'string')
   assert.equal(Object.hasOwn(first.items[0], 'folder'), true)
+  const secret = ['quoted"', String.fromCharCode(92), 'private-key-1091'].join('\n')
+  await rt.secretEndpoint('secret-set', { name: 'ESCAPED_SECRET', value: secret, scope: 'all' })
+  rt.chatPage = async () => ({ items: [{ kind: 'user', text: `Content ${secret}`, time: 1 }],
+    cursor: null })
+  const messages = await client.callTool({ name: 'read_messages', arguments: { id: 'a' } })
+  const text = JSON.parse(messages.content[0].text).items[0].text
+  assert.equal(text.includes(secret), false)
+  assert.equal(text.includes('[secret:ESCAPED_SECRET]'), true)
+  for (const [name, value] of [['BOOL_WORD', 'false'], ['SCHEMA_WORD', 'text']]) {
+    await rt.secretEndpoint('secret-set', { name, value, scope: 'all' })
+  }
+  rt.chatPage = async () => ({ items: [{ kind: 'user', text: 'false text', time: 1 }],
+    cursor: null })
+  await client.listTools()
+  const short = await client.callTool({ name: 'read_messages', arguments: { id: 'a' } })
+  assert.equal(short.isError, false)
+  const shortText = JSON.parse(short.content[0].text).items[0].text
+  assert.equal(shortText.includes('false'), false)
+  assert.equal(shortText.includes('text'), false)
   const written = await client.callTool({ name: 'update_bot', arguments: {
     id: 'a', instructions: 'Configured by the SDK',
   } })
@@ -566,4 +586,23 @@ test('Origin admission requires an explicit exact origin in a list', async t => 
   })).status, 403)
   rt.config.agentAccessOrigins = 'https://allowed.invalid'
   assert.equal((await rpc('tools/list', {}, token, headers)).status, 403)
+})
+
+
+test('pinned DSH admits the MCP hop with a cookie and no Origin', () => {
+  const service = Object.create(HostConnectionService.prototype)
+  service.trustedHosts = []
+  service.owner = { get: () => ({ host: '127.0.0.1', protocol: 'http:' }) }
+  service.browserPeer = { fixture: true }
+  service.browserAuth = {
+    isAuthenticated: request => request.headers.cookie === 'dsh-fixture=value',
+    authenticateApi: () => undefined,
+  }
+  service.peers = new Map()
+  const headers = { host: '127.0.0.1:12345', cookie: 'dsh-fixture=value' }
+  assert.equal(service.admit({ headers }).peer, service.browserPeer)
+  assert.equal(service.admit({ headers: { ...headers,
+    origin: 'https://space.invalid',
+  } }).rejection, 403)
+  assert.equal(service.admit({ headers: { host: headers.host } }).rejection, 401)
 })

@@ -503,6 +503,7 @@ Missing, wrong or revoked agent tokens cannot use the path, even with a valid br
 Queries, aliases, WebSocket upgrades and all other routes keep the ordinary session gate.
 Gate Host/origin/cross-site rejections happen before MCP and use the gate's existing audit.
 Every request reaching MCP, including token refusals, appears in the owner's Agent activity.
+Web-gate clients must omit Origin; DSH accepts the internal cookie-authenticated hop that way.
 No separate public MCP listener or web session is needed. This path also supports future hosted
 spaces without changing the token protocol.
 

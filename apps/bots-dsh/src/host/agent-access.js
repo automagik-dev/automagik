@@ -1,4 +1,4 @@
-// Instance-local administration over stateless MCP Streamable HTTP. No browser cookies.
+// Space reads and administration over stateless MCP Streamable HTTP. No browser cookies.
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import ipaddr from 'ipaddr.js'
 import { createServer } from 'node:http'
@@ -140,11 +140,15 @@ export function createAgentAccess(rt, handle, { now = Date.now, transaction = fn
       records = []
     }
   }
+  const safeText = text => rt.redactSecretsAnywhere(text)
+    .replace(/am_agent_[a-f0-9]{64}/g, '[agent token]')
   const clean = value => {
-    const text = JSON.stringify(value)
-    // Redact keys too, and token-shaped strings even if copied into instructions or names.
-    return JSON.parse(rt.redactSecretsAnywhere(text).replace(/am_agent_[a-f0-9]{64}/g,
-      '[agent token]'))
+    if (typeof value === 'string') return safeText(value)
+    if (Array.isArray(value)) return value.map(clean)
+    if (value !== null && typeof value === 'object') {
+      return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, clean(item)]))
+    }
+    return value
   }
   const audit = entry => {
     const job = auditQueue.then(async () => {
@@ -179,7 +183,7 @@ export function createAgentAccess(rt, handle, { now = Date.now, transaction = fn
       throw error
     }
   }
-  const snapshot = () => clean({
+  const snapshot = () => structuredClone({
     bots: Object.values(rt.state.bots).map(bot => botConfig(bot, rt.state.mainBotIds)),
     groups: Object.values(rt.state.rooms).map(roomConfig), mainBotIds: [...rt.state.mainBotIds],
   })
@@ -197,7 +201,7 @@ export function createAgentAccess(rt, handle, { now = Date.now, transaction = fn
             fields[key] = { before: was[key] ?? null, after: next[key] ?? null }
           }
         }
-        if (Object.keys(fields).length) (diff[kind] ??= {})[id] = fields
+        if (Object.keys(fields).length) (diff[kind] ??= {})[safeText(id)] = fields
       }
     }
     if (JSON.stringify(before.mainBotIds) !== JSON.stringify(after.mainBotIds)) {
@@ -205,7 +209,7 @@ export function createAgentAccess(rt, handle, { now = Date.now, transaction = fn
     }
     return diff
   }
-  const json = (status, value) => new Response(JSON.stringify(clean(value)), {
+  const json = (status, value) => new Response(JSON.stringify(value), {
     status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store',
       ...(status === 405 ? { allow: 'POST' } : {}) },
   })
@@ -278,10 +282,11 @@ export function createAgentAccess(rt, handle, { now = Date.now, transaction = fn
     const knownMethods = ['initialize', 'ping', 'tools/list', 'tools/call',
       'notifications/initialized', 'notifications/cancelled']
     entry.action = knownMethods.includes(body.method) ? body.method : 'unknown-method'
-    const reply = result => json(200, { jsonrpc: '2.0', id: body.id, result })
+    const replyId = typeof body.id === 'string' ? safeText(body.id) : body.id
+    const reply = result => json(200, { jsonrpc: '2.0', id: replyId, result })
     const error = async (code, message) => {
       await audit({ ...entry, outcome: 'refused', reason: message })
-      return json(200, { jsonrpc: '2.0', id: body.id ?? null, error: { code, message } })
+      return json(200, { jsonrpc: '2.0', id: replyId ?? null, error: { code, message } })
     }
     if (body.method.startsWith('notifications/') && body.id === undefined) {
       if (!knownMethods.includes(body.method)) return refuse(400, 'Unknown notification')
@@ -314,7 +319,8 @@ export function createAgentAccess(rt, handle, { now = Date.now, transaction = fn
       if (!current || current.revokedAt !== undefined) return refuse(401, 'Invalid agent token')
       const result = await handle(definition.endpoint, clean(args), request.signal)
       await audit({ ...entry, outcome: result.ok ? 'allowed' : 'refused' })
-      const value = result.ok ? result.value : { error: 'Read refused', code: result.error.code }
+      const value = clean(result.ok ? result.value
+        : { error: 'Read refused', code: result.error.code })
       return reply({ isError: !result.ok, content: [
         { type: 'text', text: JSON.stringify(value) },
       ] })
@@ -337,12 +343,12 @@ export function createAgentAccess(rt, handle, { now = Date.now, transaction = fn
       }
       await audit({ ...entry, outcome: result.ok ? 'allowed' : 'refused', changes: delta })
       // Mutation handlers may answer a full UI view. Never send that view over MCP.
-      const value = result.ok ? definition.endpoint === 'list-bots' ? after.bots
-        : definition.endpoint === 'list-rooms' ? after.groups
-          : definition.endpoint.endsWith('bot') || definition.endpoint === 'set-main'
-            ? after.bots.find(bot => bot.id === (args.id ?? entry.target)) ?? null
-            : after.groups.find(group => group.id === (args.id ?? entry.target)) ?? null
-        : { error: 'Action refused', code: result.error.code }
+      const target = args.id ?? entry.target
+      const value = clean(result.ok
+        ? definition.endpoint.endsWith('bot') || definition.endpoint === 'set-main'
+          ? after.bots.find(bot => bot.id === target) ?? null
+          : after.groups.find(group => group.id === target) ?? null
+        : { error: 'Action refused', code: result.error.code })
       return reply({ isError: !result.ok, content: [
         { type: 'text', text: JSON.stringify(value) },
       ] })

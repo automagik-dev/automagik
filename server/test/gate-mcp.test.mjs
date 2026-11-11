@@ -14,13 +14,15 @@ async function fixture(t) {
   const sessions = new SessionStore(home)
   const token = `am_agent_${randomBytes(32).toString('hex')}`
   let revoked = false
+  let generation = 1
+  let cachedGeneration = 1
   const seen = []
   const upstream = http.createServer((req, res) => {
     seen.push({ path: req.url, headers: req.headers })
     req.resume()
     const allowed = !revoked && req.url === '/api/omni-mcp'
       && req.headers.authorization === `Bearer ${token}`
-      && req.headers.cookie === 'dsh-fixture=value'
+      && req.headers.cookie === `dsh-fixture=${generation}`
     res.writeHead(allowed ? 200 : 401, { 'content-type': 'application/json',
       'set-cookie': 'upstream=hidden' }).end(JSON.stringify({ ok: allowed }))
   })
@@ -28,7 +30,10 @@ async function fixture(t) {
   await once(upstream, 'listening')
   const port = upstream.address().port
   const credentials = { port, authority: `127.0.0.1:${port}`,
-    cookie: async () => 'dsh-fixture=value' }
+    cookie: async refresh => {
+      if (refresh) cachedGeneration = generation
+      return `dsh-fixture=${cachedGeneration}`
+    } }
   const gate = createGate({ origin: 'https://space.invalid', sessions, credentials,
     auditAccess: () => {} })
   gate.listen(0, '127.0.0.1')
@@ -48,7 +53,8 @@ async function fixture(t) {
     await new Promise(resolve => upstream.close(resolve))
     await rm(home, { recursive: true, force: true })
   })
-  return { request, token, seen, sessions, revoke: () => { revoked = true } }
+  return { request, token, seen, sessions, restart: () => { generation += 1 },
+    revoke: () => { revoked = true } }
 }
 
 test('only the exact MCP path reaches agent auth; browser and identity headers stay isolated',
@@ -60,7 +66,7 @@ test('only the exact MCP path reaches agent auth; browser and identity headers s
       accept: 'application/json, text/event-stream' })
     assert.equal(allowed.status, 200)
     assert.equal(allowed.headers['set-cookie'], undefined)
-    assert.equal(seen.at(-1).headers.cookie, 'dsh-fixture=value')
+    assert.equal(seen.at(-1).headers.cookie, 'dsh-fixture=1')
     assert.equal(seen.at(-1).headers['x-automagik-principal'], undefined)
     assert.equal(seen.at(-1).headers['x-forwarded-host'], undefined)
     assert.equal(seen.at(-1).headers['mcp-protocol-version'], '2025-11-25')
@@ -89,4 +95,16 @@ test('MCP origin, pinned Host and cross-site refusals do not reach DSH', async t
     })).status, 403)
   }
   assert.equal(seen.length, 0)
+})
+
+
+test('a DSH restart refreshes the credential for the next MCP call without replay', async t => {
+  const { request, token, restart, seen } = await fixture(t)
+  const headers = { authorization: `Bearer ${token}` }
+  assert.equal((await request('/api/omni-mcp', headers)).status, 200)
+  restart()
+  assert.equal((await request('/api/omni-mcp', headers)).status, 401)
+  assert.equal(seen.length, 2, 'the uncertain request was never replayed')
+  assert.equal((await request('/api/omni-mcp', headers)).status, 200)
+  assert.equal(seen.length, 3)
 })
