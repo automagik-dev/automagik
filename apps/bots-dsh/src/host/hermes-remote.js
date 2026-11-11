@@ -102,14 +102,20 @@ export function install(rt, { transport = options => new HermesTransport(options
     const config = record()
     const key = value => JSON.stringify([value.mode ?? 'remote', value.address, value.authMode ?? 'token', value.credentialRef])
     if (key(draft) !== key(config) || !config.credentialRef) throw fail('Enter the session token for this Hermes.', 'auth')
-    const value = rt.secretValue(config.credentialRef), secret = savedSecret(config), owner = generation, expected = key(config)
+    const reference = config.credentialRef, value = rt.secretValue(reference), secret = savedSecret(config), owner = generation, expected = key(config)
     if (secret.kind !== 'token') throw fail('Enter the session token for this Hermes.', 'auth')
-    const check = () => {
-      if (generation !== owner || key(record()) !== expected || rt.secretValue(config.credentialRef) !== value) {
+    // Saving advances our configuration generation. The borrowed credential must
+    // remain independently valid across that advance and every awaited save stage.
+    const checkCredential = (source = record()) => {
+      if (key(source) !== expected || rt.secretValue(reference) !== value) {
         throw fail('The saved connection changed. Test it again before using its token.', 'auth')
       }
     }
-    return { secret, check }
+    const check = () => {
+      if (generation !== owner) throw fail('The saved connection changed. Test it again before using its token.', 'auth')
+      checkCredential()
+    }
+    return { secret, check, checkCredential, reuseReference: config.setupVersion ? reference : undefined }
   }
   async function acquire(config, signal, until) {
     if (!config.setupVersion) return undefined // Preserve the installed legacy transport contract.
@@ -280,7 +286,7 @@ export function install(rt, { transport = options => new HermesTransport(options
         onProgress: stage => { if (pendingTest === pending && owner === testGeneration && !controller.signal.aborted) pending.stage = stage },
       })
       if (disposed || owner !== testGeneration || controller.signal.aborted) { await connection.close(); throw fail('Connection setup was cancelled.') }
-      const entry = { id: randomUUID(), lease: lease(connection, true), controller, expires: now() + testLifetime, requestId: pending.requestId, checkSource: source?.check, fetch: checkedFetch }
+      const entry = { id: randomUUID(), lease: lease(connection, true), controller, expires: now() + testLifetime, requestId: pending.requestId, checkSource: source?.check, checkSavedSource: source?.checkCredential, reuseReference: source?.reuseReference, fetch: checkedFetch }
       try {
         entry.checkSource?.()
         await probe(entry.lease, connection.profiles[0].id, controller.signal, startup.until)
@@ -359,35 +365,42 @@ export function install(rt, { transport = options => new HermesTransport(options
     await entry.lease.close()
     if (tested !== entry || disposed || signal?.aborted) throw fail('Connection setup was cancelled.')
     entry.checkSource?.()
-    const name = entry.lease.connection.secret ? `HERMES_REMOTE_${randomUUID().replaceAll('-', '').toUpperCase()}` : undefined
+    const name = entry.reuseReference ?? (entry.lease.connection.secret ? `HERMES_REMOTE_${randomUUID().replaceAll('-', '').toUpperCase()}` : undefined)
+    const writesSecret = Boolean(name && !entry.reuseReference)
     let installed, installedSessions, saveGeneration
     try {
-      if (name) await rt.secretEndpoint('secret-set', { name, value: JSON.stringify(entry.lease.connection.secret), purpose: 'Remote Hermes authenticated connection', scope: [] })
+      if (writesSecret) await rt.secretEndpoint('secret-set', { name, value: JSON.stringify(entry.lease.connection.secret), purpose: 'Remote Hermes authenticated connection', scope: [] })
       if (tested !== entry || disposed || signal?.aborted) throw fail('Connection setup was cancelled.')
       entry.checkSource?.()
       disconnecting = true; saveGeneration = ++generation
       await stopLive()
       if (tested !== entry || disposed || signal?.aborted || generation !== saveGeneration) throw fail('Connection setup was cancelled.')
+      entry.checkSavedSource?.()
       state.prefs ??= {}
       installed = { ...next, models, ...(name ? { credentialRef: name } : {}) }
       state.prefs.hermesRemote = installed
       if (changed) state.hermesSessions = installedSessions = {}
       await saveState()
       if (tested !== entry || disposed || signal?.aborted || record() !== installed || generation !== saveGeneration) throw fail('The saved connection changed. Test it again before saving.')
+      entry.checkSavedSource?.(old)
     } catch (error) {
       // Roll back only our own installed state. An awaited write may have let a
       // different configuration finish before this stale save rejects.
+      let rollbackError
       if (installed && record() === installed && generation === saveGeneration) {
         state.prefs.hermesRemote = old
         if (installedSessions && state.hermesSessions === installedSessions) state.hermesSessions = oldSessions
+        try { await saveState() }
+        catch { rollbackError = fail('The saved connection could not be restored on disk. Check its settings before connecting again.') }
       }
-      if (name && record().credentialRef !== name) await rt.secretEndpoint('secret-delete', { name }).catch(() => {})
-      throw error
+      // A failed durable rollback may still reference our new secret on disk.
+      if (writesSecret && !rollbackError && record().credentialRef !== name) await rt.secretEndpoint('secret-delete', { name }).catch(() => {})
+      throw rollbackError ?? error
     } finally { if (generation === saveGeneration) disconnecting = false }
     tested = undefined; clearTimeout(entry.timer)
-    entry.lease.held = false
-    if (!entry.lease.users) await entry.lease.close()
-    if (old.credentialRef && old.credentialRef !== name) await rt.secretEndpoint('secret-delete', { name: old.credentialRef }).catch(() => {})
+    // Reused token sources are never rewritten or deleted. Legacy raw tokens
+    // need a descriptor copy, but retaining their source avoids a delete race.
+    if (!entry.checkSavedSource && old.credentialRef && old.credentialRef !== name) await rt.secretEndpoint('secret-delete', { name: old.credentialRef }).catch(() => {})
     publish()
     return view()
   }

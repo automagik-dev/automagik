@@ -326,6 +326,8 @@ test('saved-token-retest-without-secret: a matching saved token re-tests profile
   assert.deepEqual(refreshed.profiles, tested.profiles)
   const view = await h.endpoints.get('hermes-remote-save')({ testId: tested.testId, profile: 'another-profile' })
   assert.equal(view.profile, 'another-profile')
+  assert.equal(view.credentialRef, draft.credentialRef, 'a saved token keeps its existing secret reference')
+  assert.equal(h.secretCalls.length, 0, 'reusing a saved token never rewrites or deletes the source secret')
   for (const value of [tested, refreshed, view, h.rt.state]) assert.ok(!JSON.stringify(value).includes(f.credential))
   assert.ok(h.wires.every(wire => !wire.sent.some(frame => frame.method === 'prompt.submit')))
 })
@@ -453,13 +455,20 @@ test('a matching legacy saved raw token can be re-tested without entering or ret
   assert.ok(result.testId)
   assert.ok(f.calls.every(call => call.headers['X-Hermes-Session-Token'] === f.credential))
   assert.ok(!JSON.stringify(result).includes(f.credential))
+  const view = await h.rt.hermesRemote.save({ testId: result.testId, profile: 'sample-profile' })
+  assert.notEqual(view.credentialRef, credentialRef, 'upgrading a raw token stores a descriptor under a new reference')
+  const descriptor = JSON.parse(h.secrets.get(view.credentialRef))
+  assert.equal(descriptor.kind, 'token')
+  assert.ok(descriptor.credential === f.credential, 'the descriptor retains the validated token')
+  assert.ok(h.secrets.get(credentialRef) === f.credential, 'the legacy source remains unchanged')
+  for (const value of [view, h.rt.state]) assert.ok(!JSON.stringify(value).includes(f.credential))
 })
 
 
-test('stale-save-overwrites-replacement: configuring a replacement during awaited secret storage survives rejected saved-token save', async t => {
+test('stale-save-overwrites-replacement: configuring a replacement during awaited secret storage survives rejected fresh-token save', async t => {
   const f = dashboard(), h = runtime(t, f), draft = savedToken(h, f)
   h.rt.state.hermesSessions = { old: { storedSessionId: randomUUID() } }
-  const tested = await h.endpoints.get('hermes-remote-test')(draft)
+  const tested = await h.endpoints.get('hermes-remote-test')({ ...draft, credential: f.credential })
   const originalSet = h.rt.secretEndpoint
   let reached, resume, temporaryRef
   const writing = new Promise(resolve => { reached = resolve }), held = new Promise(resolve => { resume = resolve })
@@ -487,8 +496,10 @@ test('a failed save rolls back its own installed configuration and session reset
   h.rt.state.prefs.hermesRemote.profile = 'previous-profile'
   h.rt.state.hermesSessions = { old: { storedSessionId: randomUUID() } }
   const originalRecord = h.rt.state.prefs.hermesRemote, originalSessions = h.rt.state.hermesSessions
-  const tested = await h.rt.hermesRemote.test(draft)
-  h.rt.save = async () => { throw Error('Fixture persistence failed') }
+  const tested = await h.rt.hermesRemote.test({ ...draft, credential: f.credential })
+  const originalSave = h.rt.save
+  let first = true
+  h.rt.save = async () => { if (first) { first = false; throw Error('Fixture persistence failed') }; await originalSave() }
   await assert.rejects(h.rt.hermesRemote.save({ testId: tested.testId, profile: 'sample-profile' }), /Fixture persistence failed/)
   assert.equal(h.rt.state.prefs.hermesRemote, originalRecord)
   assert.equal(h.rt.state.hermesSessions, originalSessions)
@@ -511,4 +522,61 @@ test('a replacement configuration stays owned when an earlier installed save fai
   resume(); await rejected
   assert.equal(h.rt.state.prefs.hermesRemote, replacementRecord)
   assert.equal(h.rt.state.hermesSessions, replacementSessions)
+})
+
+
+for (const boundary of ['stopLive', 'persistence']) {
+  test(`saved-token-source-changed-during-save: replacement during ${boundary} rejects and preserves the source credential durably`, async t => {
+    const f = dashboard(), h = runtime(t, f), draft = savedToken(h, f)
+    h.rt.state.prefs.hermesRemote.profile = 'previous-profile'
+    h.rt.state.hermesSessions = { old: { storedSessionId: randomUUID() } }
+    const originalRecord = h.rt.state.prefs.hermesRemote, originalSessions = h.rt.state.hermesSessions
+    await h.rt.save()
+    const tested = await h.endpoints.get('hermes-remote-test')(draft)
+    let reached, resume, first = true
+    const blocked = new Promise(resolve => { reached = resolve }), held = new Promise(resolve => { resume = resolve })
+    if (boundary === 'stopLive') {
+      h.rt.hermesRemote.adapter.live.set('sample-live', { run: { stop: async () => { reached(); await held } } })
+    } else {
+      const originalSave = h.rt.save
+      h.rt.save = async () => {
+        await originalSave()
+        if (first) { first = false; reached(); await held }
+      }
+    }
+    const pending = h.endpoints.get('hermes-remote-save')({ testId: tested.testId, profile: 'sample-profile' })
+    const rejected = assert.rejects(pending, error => error.code === 'bot/hermes-auth')
+    await blocked
+    const replacement = JSON.stringify({ kind: 'token', credential: randomUUID() })
+    await h.rt.secretEndpoint('secret-set', { name: draft.credentialRef, value: replacement, purpose: 'Fixture replacement credential', scope: [] })
+    resume(); await rejected
+    assert.equal(h.rt.state.prefs.hermesRemote, originalRecord)
+    assert.equal(h.rt.state.hermesSessions, originalSessions)
+    assert.ok(h.secrets.get(draft.credentialRef) === replacement, 'the newer source credential remains intact')
+    assert.equal(h.secrets.size, 1, 'a rejected save leaves no stale copied credential')
+    assert.deepEqual(JSON.parse(h.snapshots.at(-1)).prefs.hermesRemote, originalRecord, 'the last persisted configuration matches the rollback in memory')
+    assert.deepEqual(JSON.parse(h.snapshots.at(-1)).hermesSessions, originalSessions, 'the restored session map is persisted too')
+  })
+}
+
+
+test('a failed durable rollback keeps the new credential referenced by the persisted candidate and reports uncertainty', async t => {
+  const f = dashboard(), h = runtime(t, f), draft = savedToken(h, f)
+  const originalRecord = h.rt.state.prefs.hermesRemote
+  const tested = await h.rt.hermesRemote.test({ ...draft, credential: f.credential }), originalSave = h.rt.save
+  let first = true
+  h.rt.save = async () => {
+    if (first) { first = false; await originalSave(); throw Error('Fixture write completion failed') }
+    throw Error('Fixture rollback write failed')
+  }
+  await assert.rejects(h.rt.hermesRemote.save({ testId: tested.testId, profile: 'sample-profile' }), error => {
+    assert.equal(error.code, 'bot/hermes-connection')
+    assert.match(error.message, /could not be restored on disk/)
+    assert.ok(!error.message.includes(f.credential) && !error.message.includes('Fixture'))
+    return true
+  })
+  assert.equal(h.rt.state.prefs.hermesRemote, originalRecord)
+  const persistedReference = JSON.parse(h.snapshots.at(-1)).prefs.hermesRemote.credentialRef
+  assert.ok(h.secrets.has(persistedReference), 'the last persisted record still has a usable credential reference')
+  assert.ok(h.secrets.has(draft.credentialRef), 'the previous configuration retains its source credential')
 })
