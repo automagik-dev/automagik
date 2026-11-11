@@ -85,6 +85,8 @@ android {
         jniLibs.useLegacyPackaging = true }
     testOptions {
         unitTests.isReturnDefaultValues = true
+        // The Compose UI test launches the app's test activity, so Robolectric needs the merged resources and manifest.
+        unitTests.isIncludeAndroidResources = true
         // Robolectric takes a lock at <user.home>/.robolectric-download-lock and reads its android-all
         // jar from <user.home>/.m2/repository. A sandboxed pane has a read-only home, so the lock fails
         // ("Couldn't create lock file"). Only then give the test JVMs a writable home under build/ (the
@@ -157,4 +159,7 @@ dependencies {
     testImplementation("org.robolectric:robolectric:4.14.1")
     testImplementation("androidx.test:core:1.6.1")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
+    // Compose UI tests on the JVM (Robolectric): the composers' mic, without a device.
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
