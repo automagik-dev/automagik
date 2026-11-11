@@ -445,15 +445,46 @@ dev/check.sh                             # all checks (see below)
 
 ### Remote Hermes (first delivery, #1070)
 
-**Remote Hermes** is its own route after Native, ACP and Herdr. It connects to an operator's
-already running `hermes serve`; Automagik never starts that service. Local Hermes continues to
-use ACP. The new route is off by default. In **Bot settings → Remote Hermes**, enter
-an HTTPS origin, optional profile and provisioned session credential, save and enable, then
-**Discover models**. The credential is stored only in the existing mode-0600 Bot secret store,
-with no Bot scope; the connection holds its reference. The transport mints a one-use ticket at
-`POST /api/auth/ws-ticket`, then offers `hermes-gateway-ticket.<ticket>` beside the stable
-`hermes-gateway-v1` WebSocket subprotocol. Neither standing credentials nor tickets enter URLs,
-arguments, prompts or diagnostics. Authentication failures never echo response bodies.
+**Remote Hermes** is its own route after Native, ACP and Herdr, identified by the original
+Hermes girl mark (upstream MIT notice in `NOTICE`). Local Hermes continues to use ACP.
+The route is off by default. Clicking it without a saved connection opens the setup wizard;
+a saved working connection opens its remembered profile in one click. Crossing harnesses still
+uses the conversation/handoff confirmation. **Bot settings → Remote Hermes** can reopen setup.
+
+The wizard follows **Connection → Details → Test → Profile → Ready**:
+
+- **Remote address** connects to an existing `hermes serve` over HTTPS, including a reverse-proxy
+  path prefix. Use its session token, or sign in through the instance's dashboard with a user
+  and password when that sign-in is available. The password is used for that sign-in only and
+  is never saved. Authentication failures show fixed guidance, never a response body.
+- **Through SSH** uses the system SSH client and the user's SSH config/agent. Enter a host or
+  config alias; user, port, identity-file path and Hermes executable path are optional overrides.
+  A blank Hermes path enables remote auto-detection. Key authentication must already work;
+  SSH passwords and interactive key passphrases are not accepted. An unknown or changed host
+  key stops setup and asks the user to connect once in a terminal. Host-key checks are never
+  weakened, and private keys are never uploaded, copied or stored by the plugin.
+- **Test** checks the connection with visible progress and actionable sign-in/SSH errors.
+  **Profile** lists profiles available from that instance; choose one before saving.
+  **Ready** remembers that connection and profile for later clicks. Cancel closes pending test
+  resources. Editing a draft does not silently disconnect an unrelated active chat.
+
+SSH requires an existing supported Hermes installation, its working runtime and provider setup,
+an SSH server, a POSIX shell and Python 3 on the remote computer, and a usable local SSH client.
+The connection launches an isolated `hermes serve` on remote loopback and forwards it to an
+OS-assigned local loopback port. It supervises the owned remote process and tunnel and stops
+both when the connection ends or the plugin/app quits, with the same bounded deadlines as the
+chat. This does not prove unrelated remote children were killed. Missing Hermes is an error;
+setup never installs software on the remote computer.
+
+The connection record stores mode, address or SSH overrides, chosen profile, discovered models,
+and a credential reference. Tokens and authenticated session credentials live only in the
+existing mode-0600 Bot secret store, with no Bot scope; saved values are never echoed. An SSH
+identity path is a reference to the user's file, not a copy of its contents. Passwords and key
+bytes are never persisted. Test credentials stay in a bounded transient draft until save/cancel.
+The transport mints a one-use ticket at `POST /api/auth/ws-ticket`, then offers
+`hermes-gateway-ticket.<ticket>` beside the stable `hermes-gateway-v1` WebSocket subprotocol.
+Standing credentials and tickets never enter URLs, command arguments, prompts or diagnostics.
+The SSH-generated session credential travels over the encrypted channel, not SSH's argv.
 
 Only **standalone Desktop contract 8 with server-request approvals** is accepted. Canonical
 authority is refused. The remote profile must already use manual approvals: DSH never changes

@@ -671,8 +671,8 @@ remote Hermes is `hermes-remote`, a native `hermes serve` JSON-RPC/WebSocket ada
 never an ACP SDK transport. Crossing to or from it starts a new conversation with the
 existing handoff flow (#1007); changing only its model keeps that conversation.
 
-One connection, off by default, holds an HTTPS origin, profile, Bot-secret reference and
-discovered models. The standing credential is in the mode-0600 Bot secret store with no
+One connection, off by default, holds a remote HTTPS address (path prefixes allowed) or SSH
+connection settings, a profile, Bot-secret reference and discovered models. The standing credential is in the mode-0600 Bot secret store with no
 Bot scope. A one-use ticket is minted over HTTPS and offered as a WebSocket subprotocol;
 neither credential is put in a URL, CLI argument or prompt. Wire failures are fixed
 sentences; transient tickets and saved credentials are removed from visible rows too.
@@ -696,8 +696,35 @@ its acknowledgment does not prove remote children stopped. Start/control deadlin
 
 The menu and setup name the absent DSH team tools: `message_bot`, `list_bots`, `create_bot`,
 `request_secret`, memory and schedules. Hermes keeps its own remote tools. An authenticated
-team-tool bridge, canonical authority, additional connections and credential sign-in flows
-are later deliveries. Selector approval remains in the real app, with sample-data screenshots.
+team-tool bridge, canonical authority and additional connections remain later deliveries.
+Selector approval remains in the real app, with sample-data screenshots.
+
+### Approved connection wizard build
+
+The Remote Hermes route uses the original upstream girl mark, with its MIT notice retained.
+With nothing configured, its click opens **Connection → Details → Test → Profile → Ready**.
+Remote address accepts a session token or the instance's own dashboard user/password sign-in;
+the password is used once and never saved. Test reports progress, success and actionable errors;
+Profile lists that instance's available profiles and saves the chosen identity with the connection.
+Later route clicks connect to that remembered profile in one click. Settings retains its dedicated
+Remote Hermes page for editing and reconciliation.
+
+Through SSH accepts a host/config alias and optional user, port, identity-file reference and
+Hermes path. It uses the system client's existing config/agent and key authentication only.
+Unknown or changed host keys stop with terminal-connection guidance; no accept-new or disabled
+host-key checks are permitted. Private key material and passwords are never copied or stored.
+The remote needs SSH, a POSIX shell, Python 3 and an already installed compatible Hermes/runtime
+with provider setup. Blank executable path means auto-detect; setup never installs Hermes.
+It launches an owned isolated server on remote loopback, forwards to an OS-assigned local
+loopback port, and supervises teardown of that server and tunnel on connection end/app shutdown.
+The start/control/cancel limits stay 60/15/5 seconds, and cleanup does not claim all remote
+children were killed. Tokens are sent through the encrypted channel, never in SSH arguments.
+
+Only references to saved token/session credentials enter the connection record; secret values
+remain in the existing Bot store. Transient tests expire and are closed on cancel/replacement.
+Saving is explicit and remains off until the tested profile is accepted. This wizard changes
+setup and connection ownership; it preserves the standalone contract pin, approval levels,
+replay/epoch fencing, durable submit identities and uncertainty handling above.
 
 ## Tracking
 
