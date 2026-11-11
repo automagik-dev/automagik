@@ -133,6 +133,22 @@ test('reconnect resumes stored ID, refreshes runtime ID and replaces a replay ga
   assert.ok(!f.sent.some(frame => frame.method === 'prompt.submit'))
 })
 
+test('a normal turn resets the watermark when an owned SSH backend starts a new replay epoch', async t => {
+  const f = fixture(t, { ready: { replay_epoch: 'epoch-b' } })
+  Object.assign(f.identity, { storedSessionId: f.snapshot.stored_session_id, runtimeSessionId: f.snapshot.session_id, lastSeq: 100, epoch: 'epoch-a', pendingSubmit: false })
+  await f.wire.connect()
+  await f.run.submit('Next ordinary turn')
+  assert.equal(f.identity.epoch, 'epoch-b')
+  assert.equal(f.identity.lastSeq, 0)
+  f.socket().event('message.delta', { text: 'New epoch answer' }, 1)
+  f.socket().event('message.complete', { text: 'New epoch answer', status: 'complete' }, 2)
+  assert.deepEqual(await f.run.next(), { kind: 'text', text: 'New epoch answer' })
+  assert.deepEqual(await f.run.next(), { kind: 'done' })
+  assert.equal(f.identity.pendingSubmit, false)
+  assert.equal(f.identity.lastSeq, 2)
+  assert.equal(f.sent.filter(frame => frame.method === 'prompt.submit').length, 1)
+})
+
 test('ignored Stop stays unknown; an interrupt acknowledgment does not prove remote children ended', async t => {
   const f = fixture(t)
   await f.wire.connect(); await f.run.submit('Sample')

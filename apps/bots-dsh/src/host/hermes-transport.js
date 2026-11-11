@@ -509,6 +509,12 @@ export class RemoteChat {
   async submit(text, model) {
     if (this.identity.pendingSubmit || this.identity.uncertain) throw failure('Reconcile the existing remote session before sending again; its outcome is unknown.')
     await this.prepare(model)
+    // A completed turn may resume on a newly owned SSH backend. Its sequence numbers
+    // start again; only uncertain turns take the reconciliation path above.
+    if (this.identity.epoch !== this.transport.epoch) {
+      this.resetStream()
+      this.identity.lastSeq = 0
+    }
     this.identity.epoch = this.transport.epoch
     this.identity.pendingSubmit = true
     await this.save() // Durable before any submit bytes leave.
