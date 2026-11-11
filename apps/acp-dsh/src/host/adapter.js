@@ -1142,7 +1142,16 @@ export class AcpAdapter extends LlmAdapter {
         const skip = tool.drift === true || tool.bridge === true
           || tool.structuredName === 'ToolSearch'
           || (agent.refresh === 'fork' && tool.mcp === true)
-        if (this.bridgeOn(agent) && skip) continue
+        if (this.bridgeOn(agent) && skip) {
+          if (tool.drift === true) {
+            // Drift can be discovered after the nameless event was queued. No card will ask
+            // its question: the built-in call already started and is being cancelled. A
+            // mirror would wrongly invite approval. Withdraw stored and later questions here.
+            tool.unanswerable = true
+            tool.permission?.answer({ outcome: { outcome: 'cancelled' } })
+          }
+          continue
+        }
         yield* shown()
         await settle(tool, DETAIL_WAIT_MS)
         const id = `acp_${randomUUID()}`

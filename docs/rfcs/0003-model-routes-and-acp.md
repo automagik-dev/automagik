@@ -260,8 +260,9 @@ means the per-agent default (Contracts).
    where that route lists its model (adapter installed) and a live per-adapter-version bridge
    probe (a fresh credential, MCP `initialize` and `tools/list`) passes.
    Rollback: revert; the Bot is chat-only on ACP.
-5. **Gemini.** The newest adapter, the person's own CLI. Lane: desktop. Check: one session runs a tool call after
-   approval. Rollback: the next release drops it.
+5. **Gemini.** Native ACP through the person's own Gemini CLI, with no connector adapter.
+   Lane: desktop. Check: one session runs a tool call after approval. Rollback: the next
+   release drops it.
 6. **DSH's tools over the bridge** (amended, 2026-11-06). One stdio MCP bridge per ACP session,
    built from the Session's preset (`standard`, or `cordis` in creator mode) and filtered by the
    Session's level; every DSH tool call is approved by DSH; the agent's built-in tools are off
