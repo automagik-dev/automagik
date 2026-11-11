@@ -249,3 +249,61 @@ test('concurrent saved SSH users share a lease, tests-only cancellation preserve
   waiting[0](); await first; assert.equal(closed, 1)
   waiting[1](); await second; assert.equal(closed, 2)
 })
+test('a lost completed test response can be cancelled by its preassigned request ID before the client knows a test ID', async t => {
+  const f = dashboard(), requestId = randomUUID(), controller = new AbortController(); let closed = 0
+  const h = runtime(t, { ...f, fetch: sshFetch }, {
+    startSsh: async () => ({ address: 'http://127.0.0.1:12345', credential: f.credential, close: async () => { closed++ } }),
+  })
+  // The handler completed, but its result/testId was dropped before client delivery.
+  await h.endpoints.get('hermes-remote-test')({ mode: 'ssh', ssh: { host: 'example.invalid' }, requestId }, controller.signal).then(() => undefined)
+  assert.equal(closed, 0)
+  controller.abort()
+  await h.rt.hermesRemote.disconnect({ testsOnly: true, requestId })
+  assert.equal(closed, 1)
+  assert.deepEqual(h.endpoints.get('hermes-remote-test-status')({ requestId }), { stage: 'reach' })
+  assert.equal(h.rt.hermesRemote.view().enabled, false)
+})
+test('request-scoped cancellation aborts the matching pending test and ignores a wrong or older request', async t => {
+  let requestSignal, started
+  const began = new Promise(resolve => { started = resolve })
+  const f = dashboard({ handle: (_path, init) => { requestSignal = init.signal; started(); return new Promise(() => {}) } })
+  const h = runtime(t, f), requestId = randomUUID()
+  const pending = h.rt.hermesRemote.test({ ...f.token, requestId }), rejected = assert.rejects(pending)
+  await began
+  await h.rt.hermesRemote.disconnect({ testsOnly: true, requestId: randomUUID() })
+  assert.equal(requestSignal.aborted, false)
+  await h.rt.hermesRemote.disconnect({ testsOnly: true, requestId })
+  await rejected
+  assert.equal(requestSignal.aborted, true)
+})
+test('stale request IDs and conflicting test IDs cannot cancel a newer completed SSH test', async t => {
+  const f = dashboard(), oldRequest = randomUUID(), currentRequest = randomUUID(); let closed = 0
+  const h = runtime(t, { ...f, fetch: sshFetch }, {
+    startSsh: async () => ({ address: 'http://127.0.0.1:12345', credential: f.credential, close: async () => { closed++ } }),
+  })
+  await h.rt.hermesRemote.test({ mode: 'ssh', ssh: { host: 'example.invalid' }, requestId: oldRequest })
+  const current = await h.rt.hermesRemote.test({ mode: 'ssh', ssh: { host: 'example.invalid' }, requestId: currentRequest })
+  assert.equal(closed, 1)
+  await h.rt.hermesRemote.disconnect({ testsOnly: true, requestId: oldRequest })
+  await h.rt.hermesRemote.disconnect({ testsOnly: true, requestId: currentRequest, testId: randomUUID() })
+  assert.equal(closed, 1)
+  assert.deepEqual(h.endpoints.get('hermes-remote-test-status')({ requestId: currentRequest }), { stage: 'connected' })
+  await h.rt.hermesRemote.disconnect({ testsOnly: true, requestId: currentRequest, testId: current.testId })
+  assert.equal(closed, 2)
+})
+test('a request cancelled while the previous test is cleaning up never starts its own SSH process afterward', async t => {
+  const f = dashboard(); let started = 0, closeStarted, releaseClose
+  const closing = new Promise(resolve => { closeStarted = resolve })
+  const h = runtime(t, { ...f, fetch: sshFetch }, {
+    startSsh: async () => { started++; return { address: 'http://127.0.0.1:12345', credential: f.credential, close: () => {
+      closeStarted(); return new Promise(resolve => { releaseClose = resolve })
+    } } },
+  })
+  await h.rt.hermesRemote.test({ mode: 'ssh', ssh: { host: 'example.invalid' }, requestId: randomUUID() })
+  const requestId = randomUUID(), pending = h.rt.hermesRemote.test({ mode: 'ssh', ssh: { host: 'example.invalid' }, requestId }), rejected = assert.rejects(pending)
+  await closing
+  const cancelled = h.rt.hermesRemote.disconnect({ testsOnly: true, requestId })
+  releaseClose()
+  await cancelled; await rejected
+  assert.equal(started, 1)
+})

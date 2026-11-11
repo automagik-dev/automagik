@@ -201,11 +201,18 @@ export function install(rt, { transport = options => new HermesTransport(options
     for (const owned of leases) if (owned !== tested?.lease) await owned.close().catch(() => {})
     await drain()
   }
-  async function cancelTests(testId) {
-    if (testId && tested?.id !== testId) return
-    testGeneration++
-    const pending = pendingTest, previous = tested
-    pendingTest = tested = undefined
+  async function cancelTests({ testId, requestId } = {}) {
+    const scoped = testId !== undefined || requestId !== undefined
+    if ((testId !== undefined && (typeof testId !== 'string' || !testId))
+      || (requestId !== undefined && (typeof requestId !== 'string' || !requestId))) return
+    const matches = entry => entry && (testId === undefined || entry.id === testId)
+      && (requestId === undefined || entry.requestId === requestId)
+    const pending = matches(pendingTest) ? pendingTest : undefined
+    const previous = matches(tested) ? tested : undefined
+    if (scoped && !pending && !previous) return
+    if (!scoped || pending) testGeneration++
+    if (pending) pendingTest = undefined
+    if (previous) tested = undefined
     pending?.controller.abort()
     previous?.controller.abort()
     clearTimeout(previous?.timer)
@@ -215,12 +222,12 @@ export function install(rt, { transport = options => new HermesTransport(options
   async function testDraft(draft, signal) {
     if (disposed) throw fail('Connection setup is no longer available.')
     const cancelling = cancelTests(), owner = testGeneration
-    await cancelling
-    if (owner !== testGeneration) throw fail('Connection setup was cancelled.')
     const startup = budget(signal), controller = startup.controller
     const pending = { controller, requestId: typeof draft?.requestId === 'string' && draft.requestId.length <= 100 ? draft.requestId : undefined, stage: 'reach' }
     pendingTest = pending
     pending.task = (async () => {
+      await cancelling
+      if (owner !== testGeneration || controller.signal.aborted) throw fail('Connection setup was cancelled.')
       const connection = await prepareHermesConnection(draft, { fetch: fetcher, startSsh, signal: controller.signal, deadlines: remaining(startup.until),
         onProgress: stage => { if (pendingTest === pending && owner === testGeneration && !controller.signal.aborted) pending.stage = stage },
       })
@@ -366,7 +373,7 @@ export function install(rt, { transport = options => new HermesTransport(options
     return discover(signal)
   }
   async function disconnect(body = {}) {
-    await cancelTests(body?.testId)
+    await cancelTests(body?.testsOnly ? { testId: body.testId, requestId: body.requestId } : undefined)
     if (body?.testsOnly) return view()
     disconnecting = true; generation++
     try { await stopLive() } finally { disconnecting = false }
