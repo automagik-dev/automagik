@@ -41,11 +41,11 @@ export function readOwner(dir) {
   return record
 }
 
-// Host-side seam for C2.2's atomic claim, never an HTTP endpoint. The caller must first
+// Exclusive owner creation for authenticated sign-in. The caller must first
 // prove the claim. Exclusive creation ensures an existing or newer record is not replaced.
-export function createOwner(dir) {
+export function createOwner(dir, { auth } = {}) {
   mkdirSync(dir, { recursive: true, mode: 0o700 })
-  const owner = { version: 1, local_id: randomUUID(), instance_id: randomUUID() }
+  const owner = { version: 1, local_id: randomUUID(), instance_id: randomUUID(), ...(auth === undefined ? {} : { auth }) }
   writeFileSync(join(dir, 'owner.json'), `${JSON.stringify(owner)}\n`, { flag: 'wx', mode: 0o600 })
   return owner
 }
@@ -74,7 +74,7 @@ export class SessionStore extends EventEmitter {
     this.families = stored?.families ?? []
   }
   save() { write(this.file, { version: 1, families: this.families }) }
-  // C2.2/C2.3 call this only after authentication. No HTTP route mints a session yet.
+  // Sign-in calls this only after authentication.
   issue(origin, principal) {
     if (!localPrincipal(principal)) throw new Error('Only a local owner can establish a C2.1 session')
     const value = secret()

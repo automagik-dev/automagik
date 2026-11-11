@@ -75,6 +75,15 @@ RUN set -eux; \
     chmod 0700 /out/data/secrets; \
     chown -R 1000:1000 /out/data
 
+# Exact WebAuthn library and transitive lock, installed with the repository's Bun version.
+# Bun is a builder only; the gate and its dependencies run on the image's Node 24.
+FROM oven/bun:1.4.4-debian@sha256:93d5032fe06d163427822dc1598f420363759bb18155c9cc90eb1be05a64a19e AS gate-deps
+WORKDIR /gate
+COPY server/package.json server/bun.lock ./
+RUN bun install --frozen-lockfile --production --ignore-scripts --linker hoisted
+COPY apps/desktop/scripts/prune-runtime.mjs /gate/prune-runtime.mjs
+RUN bun --eval 'import { pruneNodeModules } from "./prune-runtime.mjs"; pruneNodeModules("./node_modules")'
+
 FROM scratch AS runtime
 
 # The image's content version (the release whose plugin tarballs it installs, which may not be
@@ -104,6 +113,7 @@ COPY --from=tools /out/git-core-share /usr/share/git-core
 COPY --from=tools /out/certs /etc/ssl/certs
 COPY --from=tools --chown=1000:1000 /out/data /data
 
+COPY --from=gate-deps /gate/node_modules /opt/automagik/node_modules
 COPY --from=builder /build/out/runtime /opt/automagik/runtime
 COPY --from=builder /build/out/profile /opt/automagik/profile
 COPY --from=builder /build/out/versions.json /opt/automagik/versions.json
@@ -113,7 +123,8 @@ COPY server/entrypoint.mjs server/healthcheck.mjs server/lib.mjs server/gate*.mj
 COPY server/passwd /etc/passwd
 COPY --chmod=0755 server/bin/dsh server/bin/pnpm /usr/local/bin/
 
-ENV HOME=/data \
+ENV AUTOMAGIK_GATE_IMAGE=1 \
+    HOME=/data \
     DSH_HOME=/data/dsh \
     AUTOMAGIK_BOTS_HOME=/data/bots \
     AUTOMAGIK_HOME=/data \

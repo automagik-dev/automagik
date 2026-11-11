@@ -60,7 +60,7 @@ function refuseSocket(socket, status = 401) {
   socket.end(`HTTP/1.1 ${status} Refused\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`, destroy)
 }
 
-export function createGate({ origin: value, sessions, credentials, access, auditAccess = record => process.stderr.write(`${JSON.stringify(record)}\n`) }) {
+export function createGate({ origin: value, sessions, credentials, access, selfHosted, auditAccess = record => process.stderr.write(`${JSON.stringify(record)}\n`) }) {
   const origin = pinOrigin(value)
   const sockets = new Map()
   async function authorize(req, upgrade = false) {
@@ -87,6 +87,7 @@ export function createGate({ origin: value, sessions, credentials, access, audit
     if (reservedPathAlias(req.url, origin)) { answer(res, 400, { error: 'Non-canonical gate path' }); return }
     const authorization = await authorize(req)
     const family = authorization?.family
+    if (selfHosted && await selfHosted.handle(req, res, family)) return
     if (!family) { answer(res, 401, { error: 'Session required' }); return }
     if (authorization.cookie) res.setHeader('set-cookie', authorization.cookie)
     try {
@@ -174,7 +175,30 @@ export function createGate({ origin: value, sessions, credentials, access, audit
   const revoke = id => { for (const record of sockets.values()) if (record.family.id === id) record.socket.destroy() }
   sessions.on('revoke', revoke)
   const timer = setInterval(() => { for (const record of sockets.values()) if (!sessions.active(record.family)) record.socket.destroy() }, 1000).unref()
-  server.on('close', () => { clearInterval(timer); sessions.off('revoke', revoke) })
+  let rebinding = false
+  server.on('close', () => { if (!rebinding) { clearInterval(timer); sessions.off('revoke', revoke) } })
+  let binding = Promise.resolve()
+  server.rebind = (port, target, drop = false) => {
+    if (drop) { for (const record of sockets.values()) record.socket.destroy(); server.closeAllConnections() }
+    const task = binding.then(async () => {
+      const host = typeof target === 'function' ? target() : target
+      if (server.address()?.address === host) return
+      rebinding = true
+      await new Promise((resolve, reject) => {
+        server.close(error => error ? reject(error) : resolve())
+        // Stop accepting first, then drop connections accepted while this rebind was queued.
+        if (drop) server.closeAllConnections()
+      })
+      await new Promise((resolve, reject) => {
+        const failed = error => reject(error)
+        server.once('error', failed)
+        server.listen(port, host, () => { server.off('error', failed); resolve() })
+      })
+      rebinding = false
+    })
+    binding = task.catch(() => {})
+    return task
+  }
   server.closeGate = () => { for (const record of sockets.values()) record.socket.destroy(); server.closeAllConnections(); return new Promise(resolve => server.close(resolve)) }
   return server
 }

@@ -156,7 +156,17 @@ async function main() {
   await docker(['exec', gateName, '/nodejs/bin/node', '-e', 'const fs=require("fs");fs.accessSync("/dsh/dsh/launch-url");fs.writeFileSync("/data/gate-only", "private");try{fs.writeFileSync("/dsh/gate-write-probe", "bad");process.exit(1)}catch(e){if(e.code!=="EROFS")throw e}'])
   await docker(['exec', name, '/nodejs/bin/node', '-e', 'const fs=require("fs");try{fs.readFileSync("/data/gate-only");process.exit(1)}catch(e){if(e.code!=="ENOENT")throw e}'])
   await docker(['exec', gateName, '/nodejs/bin/node', '/opt/automagik/healthcheck.mjs'])
+  const claimCode = (await docker(['exec', gateName, '/nodejs/bin/node', '-e', 'const fs=require("fs");for(const p of ["/data/claim-code","/data/claim-state.json","/data/control.sock"]){if((fs.statSync(p).mode&0o777)!==0o600)process.exit(1)}process.stdout.write(fs.readFileSync("/data/claim-code","utf8").trim())'])).stdout.trim()
+  check(/^[a-f0-9]{32}$/.test(claimCode), 'image claim code is not 128 bits')
+  const gateLogs = await docker(['logs', gateName])
+  check(!`${gateLogs.stdout}${gateLogs.stderr}`.includes(claimCode), 'image claim code reached the application log')
+  await docker(['exec', gateName, '/nodejs/bin/node', '-e', 'const http=require("http"),fs=require("fs");const code=fs.readFileSync("/data/claim-code","utf8").trim();http.get({host:"127.0.0.1",port:3082,path:"/_gate/claim",headers:{host:"localhost:3082"}},r=>{let text="";r.on("data",c=>text+=c);r.on("end",()=>{if(r.statusCode!==200||text.includes(code)||!text.includes("Claim with a passkey"))process.exit(1)})}).on("error",()=>process.exit(1))'])
+  await docker(['exec', gateName, '/nodejs/bin/node', '/opt/automagik/gate-control.mjs', 'reset'])
+  const resetCode = (await docker(['exec', gateName, '/nodejs/bin/node', '-e', 'process.stdout.write(require("fs").readFileSync("/data/claim-code","utf8").trim())'])).stdout.trim()
+  check(resetCode !== claimCode && /^[a-f0-9]{32}$/.test(resetCode), 'host reset did not rotate the private image claim code')
+  await docker(['exec', gateName, '/nodejs/bin/node', '/opt/automagik/healthcheck.mjs'])
   say('gate: 401 healthy, separate store invisible to DSH, DSH mount read-only')
+  say('claim: private 0600 files/socket, no code in logs or HTTP, local reset works in the image')
   await docker(['rm', '--force', gateName])
 
   // The key file: 0400 is taken, anything group- or other-readable stops the start.
