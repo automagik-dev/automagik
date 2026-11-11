@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { AsyncLocalStorage } from 'node:async_hooks'
+import { readFile } from 'node:fs/promises'
 import { HermesTransport, RemoteChat, remoteAddress, HERMES_DEADLINES } from './hermes-transport.js'
 import { prepareHermesConnection, refreshHermesProfiles } from './hermes-connection.js'
 import { MISSING_TOOLS, RemoteChatAdapter } from './remote-chat-adapter.js'
@@ -41,17 +43,86 @@ export function install(rt, { transport = options => new HermesTransport(options
   const sessions = () => state.hermesSessions ??= {}
   const enabled = () => record().enabled === true
   const identity = id => sessions()[id] ??= { createKey: randomUUID() }
-  const saveState = () => rt.save()
+  // Identity-only persistence must not queue behind a Stop already awaited by
+  // a connection mutation. The store serializes required writes itself.
+  const saveState = () => rt.save({ required: true })
+  const mutationScope = new AsyncLocalStorage(), intents = new Set()
+  let mutationTail = Promise.resolve(), activeMutation
+  const mutate = (work, internal = false) => {
+    const owner = mutationScope.getStore()
+    if (internal && owner && owner === activeMutation) return Promise.resolve().then(work)
+    const next = mutationTail.then(() => {
+      const token = {}
+      return mutationScope.run(token, async () => {
+        activeMutation = token
+        try { return await work() } finally { if (activeMutation === token) activeMutation = undefined }
+      })
+    })
+    mutationTail = next.catch(() => {})
+    return next
+  }
+  const testMatches = (entry, body = {}) => entry
+    && (body.testId === undefined || entry.id === body.testId || entry.testId === body.testId)
+    && (body.requestId === undefined || entry.requestId === body.requestId)
+  function interruptTests(body = {}) {
+    if ((body.testId !== undefined && (typeof body.testId !== 'string' || !body.testId))
+      || (body.requestId !== undefined && (typeof body.requestId !== 'string' || !body.requestId))) return
+    let matched = false
+    for (const intent of intents) if (intent.test && testMatches(intent, body) && (!intent.testId || tested?.id === intent.testId)) { matched = true; intent.controller.abort() }
+    if (testMatches(tested, body)) { matched = true; tested.controller.abort() }
+    if (testMatches(pendingTest, body)) { matched = true; pendingTest.controller.abort() }
+    return matched
+  }
+  function waiting(task, startup, finish = true) {
+    let abort
+    const cancelled = new Promise((_, reject) => {
+      abort = () => reject(fail('Connection setup was cancelled or timed out.', 'timeout'))
+      startup.signal.addEventListener('abort', abort, { once: true })
+      if (startup.signal.aborted) abort()
+    })
+    return Promise.race([task, cancelled]).finally(() => {
+      startup.signal.removeEventListener('abort', abort)
+      if (finish) startup.finish()
+    })
+  }
+  function action(work, signal, fields = {}, limit = deadlines.start) {
+    const startup = budget(signal, limit), intent = { ...fields, controller: startup.controller }
+    intents.add(intent)
+    const task = mutate(async () => {
+      if (startup.signal.aborted) throw fail('Connection setup was cancelled or timed out.', 'timeout')
+      return work(startup)
+    })
+    return waiting(task, startup).finally(() => { intents.delete(intent) })
+  }
+  async function deleteUnreferenced(name) {
+    if (!name || !rt.statePath || typeof rt.deleteSecretIfUnchanged !== 'function' || disposed || rt.readOnly?.() || ctx.fiber?.state === 2 || ctx.root?.fiber?.state === 2
+      || !activeMutation || mutationScope.getStore() !== activeMutation) return
+    const expected = rt.secretValue(name)
+    if (!expected || record().credentialRef === name) return
+    try {
+      const text = await readFile(rt.statePath, 'utf8')
+      if (text.length > 16 * 1024 * 1024) return
+      const disk = JSON.parse(text), saved = disk?.prefs?.hermesRemote
+      const object = value => value !== null && typeof value === 'object' && !Array.isArray(value)
+      if (!object(disk) || !object(disk.prefs) || !object(saved) || typeof saved.enabled !== 'boolean'
+        || (saved.credentialRef !== undefined && typeof saved.credentialRef !== 'string')
+        || (saved.credentialRef === undefined && saved.mode !== 'ssh')
+        || saved.credentialRef === name || JSON.stringify(saved) !== JSON.stringify(record())
+        || text.includes(JSON.stringify(name))) return
+      if (disposed || rt.readOnly?.() || record().credentialRef === name || rt.secretValue(name) !== expected) return
+      await rt.deleteSecretIfUnchanged(name, expected)
+    } catch { /* Missing, unreadable or uncertain durable state keeps the orphan. */ }
+  }
   const active = new Set(), leases = new Set(), closing = new Set()
   let registration, adapter, tested, pendingTest, currentLease, pendingConnection, cleanupFailure
   let generation = 0, testGeneration = 0, disposed = false, disconnecting = false
 
-  function budget(signal) {
-    const controller = new AbortController(), until = Date.now() + deadlines.start
+  function budget(signal, limit = deadlines.start) {
+    const controller = new AbortController(), until = Date.now() + limit
     const abort = () => controller.abort()
     signal?.addEventListener('abort', abort, { once: true })
     if (signal?.aborted) abort()
-    const timer = setTimeout(abort, deadlines.start)
+    const timer = setTimeout(abort, limit)
     return { controller, signal: controller.signal, until, finish: () => { clearTimeout(timer); signal?.removeEventListener('abort', abort) } }
   }
   const remaining = until => ({ ...deadlines, start: Math.max(1, until - Date.now()) })
@@ -127,10 +198,10 @@ export function install(rt, { transport = options => new HermesTransport(options
       pendingConnection = pending
       pending.task = prepareHermesConnection({ mode: config.mode, address: config.address, authMode: config.authMode, ssh: config.ssh }, {
         fetch: fetcher, startSsh, signal: controller.signal, deadlines: remaining(until), secret, discover: false,
-        onAuthUpdate: async updated => {
+        onAuthUpdate: updated => mutate(async () => {
           if (disposed || owner !== generation || record().credentialRef !== config.credentialRef) throw fail('Connection setup was cancelled.')
           await rt.secretEndpoint('secret-set', { name: config.credentialRef, value: JSON.stringify(updated), purpose: 'Remote Hermes authenticated connection', scope: [] })
-        },
+        }, true),
       }).then(async connection => {
         if (disposed || disconnecting || owner !== generation || controller.signal.aborted) {
           await connection.close()
@@ -161,6 +232,7 @@ export function install(rt, { transport = options => new HermesTransport(options
   }
   async function open(options = {}) {
     const startup = options.startup ?? budget(options.signal)
+    const ownsStartup = !options.startup || options.finishOnPrepare === true
     try {
       await rt.load(); await rt.loadSecrets()
       const config = record(), owner = generation
@@ -197,14 +269,14 @@ export function install(rt, { transport = options => new HermesTransport(options
         active.delete(wire)
         close()
         owned?.release()
-        if (!options.startup) startup.finish()
+        if (ownsStartup) startup.finish()
       }
       startup.signal.addEventListener('abort', abort, { once: true })
       try {
         await wire.connect()
         if (startup.signal.aborted) throw fail('Connection setup was cancelled or timed out.')
         const run = new RemoteChat(wire, options)
-        if (!options.startup) {
+        if (ownsStartup) {
           const prepare = run.prepare.bind(run)
           run.prepare = async (...args) => {
             try { return await prepare(...args) }
@@ -217,7 +289,7 @@ export function install(rt, { transport = options => new HermesTransport(options
         throw connectionFailure(error, true)
       }
     } catch (error) {
-      if (!options.startup) startup.finish()
+      if (ownsStartup) startup.finish()
       throw error?.code === 'bot/refused' && error.cleanupUnknown !== true ? error : connectionFailure(error)
     }
   }
@@ -227,7 +299,7 @@ export function install(rt, { transport = options => new HermesTransport(options
     credentialRef: record().credentialRef ?? '', credentialSet: record().mode === 'ssh' ? Boolean(record().enabled) : Boolean(rt.secretValue?.(record().credentialRef)),
     models: record().models ?? [], limitations: MISSING_TOOLS,
     modelRef: record().models?.[0] ? `${HERMES_PROVIDER}/${record().models[0].id}` : undefined,
-    sessions: Object.entries(sessions()).map(([sessionId, info]) => ({ sessionId, ...info })),
+    sessions: Object.entries(state.hermesSessions ?? {}).map(([sessionId, info]) => ({ sessionId, ...info })),
   })
   const publish = () => {
     if (disposed) return
@@ -264,10 +336,10 @@ export function install(rt, { transport = options => new HermesTransport(options
     if (previous) await previous.lease.close()
     if (pending) await Promise.allSettled([pending.task])
   }
-  async function testDraft(draft, signal) {
+  async function testDraft(draft, signal, startup = budget(signal)) {
     if (disposed) throw fail('Connection setup is no longer available.')
     const cancelling = cancelTests(), owner = testGeneration
-    const startup = budget(signal), controller = startup.controller
+    const controller = startup.controller
     const pending = { controller, requestId: typeof draft?.requestId === 'string' && draft.requestId.length <= 100 ? draft.requestId : undefined, stage: 'reach' }
     pendingTest = pending
     pending.task = (async () => {
@@ -295,7 +367,7 @@ export function install(rt, { transport = options => new HermesTransport(options
       } catch (error) { await entry.lease.close(); throw error }
       // Keep only connection references and ephemeral session material, never the submitted password/user.
       entry.config = { mode: connection.mode, authMode: connection.authMode, address: connection.mode === 'remote' ? connection.address : '', ...(connection.mode === 'ssh' ? { ssh: sshFields(connection.ssh) } : {}) }
-      entry.timer = setTimeout(() => { if (tested === entry) { tested = undefined; entry.controller.abort(); void entry.lease.close().catch(() => {}) } }, testLifetime)
+      entry.timer = setTimeout(() => { entry.controller.abort(); void mutate(async () => { if (tested === entry) { tested = undefined; await entry.lease.close() } }).catch(() => {}) }, testLifetime)
       entry.timer.unref?.()
       tested = entry
       pending.stage = 'connected'
@@ -340,17 +412,17 @@ export function install(rt, { transport = options => new HermesTransport(options
       if (run) run.dispose(); else wire.close()
     }
   }
-  async function saveTest(body, signal) {
-    const startup = budget(signal)
+  async function saveTest(body, signal, startup = budget(signal)) {
     try { return await saveTestWithin(body, startup) }
     catch (error) { throw error?.cleanupUnknown === true ? connectionFailure(error) : error }
     finally { startup.finish() }
   }
   async function saveTestWithin(body, startup) {
-    const signal = startup.signal
     await rt.load(); await rt.loadSecrets()
     const entry = tested
     if (!entry || entry.id !== body?.testId || entry.expires <= now() || entry.lease.closed) throw fail('This connection test expired. Test it again before saving.', 'expired')
+    const signal = AbortSignal.any([startup.signal, entry.controller.signal])
+    if (signal.aborted) throw fail('Connection setup was cancelled.')
     entry.checkSource?.()
     const profile = entry.lease.connection.profiles.find(profile => profile.id === body.profile)?.id
     if (!profile) throw fail('Choose a profile returned by this Hermes.', 'profiles')
@@ -394,18 +466,19 @@ export function install(rt, { transport = options => new HermesTransport(options
         catch { rollbackError = fail('The saved connection could not be restored on disk. Check its settings before connecting again.') }
       }
       // A failed durable rollback may still reference our new secret on disk.
-      if (writesSecret && !rollbackError && record().credentialRef !== name) await rt.secretEndpoint('secret-delete', { name }).catch(() => {})
+      if (writesSecret && !rollbackError) await deleteUnreferenced(name)
       throw rollbackError ?? error
     } finally { if (generation === saveGeneration) disconnecting = false }
     tested = undefined; clearTimeout(entry.timer)
     // Reused token sources are never rewritten or deleted. Legacy raw tokens
     // need a descriptor copy, but retaining their source avoids a delete race.
-    if (!entry.checkSavedSource && old.credentialRef && old.credentialRef !== name) await rt.secretEndpoint('secret-delete', { name: old.credentialRef }).catch(() => {})
+    if (!entry.checkSavedSource && old.credentialRef !== name) await deleteUnreferenced(old.credentialRef)
     publish()
     return view()
   }
-  async function configure(body) {
+  async function configure(body, signal) {
     await rt.load(); await rt.loadSecrets()
+    if (signal?.aborted) throw fail('Connection setup was cancelled or timed out.', 'timeout')
     if (typeof body.enabled !== 'boolean') throw refusal('Choose whether Remote Hermes is on.')
     const address = body.address ? remoteAddress(body.address) : record().address
     const profile = typeof body.profile === 'string' ? body.profile.trim() : record().profile ?? ''
@@ -416,10 +489,12 @@ export function install(rt, { transport = options => new HermesTransport(options
     const changed = connectionKey(next) !== connectionKey(record())
     if (body.credential !== undefined && body.credential !== '') await rt.secretEndpoint('secret-set', { name: CREDENTIAL_REF, value: body.credential, purpose: 'Remote Hermes connection credential', scope: [] })
     if (body.enabled && !rt.secretValue(CREDENTIAL_REF)) throw refusal('Save a credential before turning Remote Hermes on.')
+    if (signal?.aborted) throw fail('Connection setup was cancelled or timed out.', 'timeout')
     await cancelTests()
     disconnecting = true; generation++
     try {
       await stopLive()
+      if (signal?.aborted) throw fail('Connection setup was cancelled or timed out.', 'timeout')
       state.prefs ??= {}
       state.prefs.hermesRemote = { ...next, models: changed ? [] : record().models ?? [] }
       if (changed) state.hermesSessions = {}
@@ -428,8 +503,7 @@ export function install(rt, { transport = options => new HermesTransport(options
     publish()
     return view()
   }
-  async function discover(signal) {
-    const startup = budget(signal)
+  async function discover(signal, startup = budget(signal)) {
     let run
     try {
       run = await open({ signal: startup.signal, startup })
@@ -444,10 +518,10 @@ export function install(rt, { transport = options => new HermesTransport(options
       await drain()
     }
   }
-  async function connect(signal) {
+  async function connect(signal, startup) {
     await rt.load(); await rt.loadSecrets()
     if (!enabled()) throw fail('Set up Remote Hermes before connecting.')
-    return discover(signal)
+    return discover(signal, startup)
   }
   async function disconnect(body = {}) {
     await cancelTests(body?.testsOnly ? { testId: body.testId, requestId: body.requestId } : undefined)
@@ -456,45 +530,86 @@ export function install(rt, { transport = options => new HermesTransport(options
     try { await stopLive() } finally { disconnecting = false }
     return view()
   }
-  async function refreshProfiles(body, signal) {
+  async function refreshProfiles(body, signal, startup) {
     const entry = tested
     if (!entry || entry.id !== body?.testId || entry.expires <= now() || entry.lease.closed) throw fail('This connection test expired. Test it again.', 'expired')
     entry.checkSource?.()
     const combined = signal ? AbortSignal.any([signal, entry.controller.signal]) : entry.controller.signal
-    const profiles = await refreshHermesProfiles(entry.lease.connection, { fetch: entry.fetch, signal: combined, deadlines })
+    const profiles = await refreshHermesProfiles(entry.lease.connection, { fetch: entry.fetch, signal: combined, deadlines: startup ? remaining(startup.until) : deadlines })
     entry.checkSource?.()
     if (tested !== entry || entry.expires <= now() || combined.aborted) throw fail('This connection test expired or was cancelled.', 'expired')
     entry.lease.connection.profiles = profiles
     return { profiles }
   }
 
-  adapter = new RemoteChatAdapter(rt, { open, models: () => record().models ?? [], identity, save: saveState, enabled })
+  const api = {
+    view,
+    test: (draft, signal) => {
+      interruptTests()
+      return action(startup => testDraft(draft, startup.signal, startup), signal, { test: true, requestId: draft?.requestId })
+    },
+    save: (body, signal) => action(startup => saveTest(body, startup.signal, startup), signal, { test: true, testId: body?.testId, requestId: tested?.id === body?.testId ? tested.requestId : undefined }),
+    configure: (body, signal) => {
+      interruptTests()
+      return action(startup => configure(body, startup.signal), signal, {}, deadlines.control)
+    },
+    discover: signal => action(startup => discover(startup.signal, startup), signal),
+    connect: signal => action(startup => connect(startup.signal, startup), signal),
+    refreshProfiles: (body, signal) => action(startup => refreshProfiles(body, startup.signal, startup), signal, { test: true, testId: body?.testId }),
+    disconnect: body => {
+      const filter = body?.testsOnly ? body : {}
+      const matched = interruptTests(filter)
+      if (body?.testsOnly && !matched) return Promise.resolve(view())
+      if (!body?.testsOnly) {
+        for (const intent of intents) intent.controller.abort()
+        pendingConnection?.controller.abort()
+      }
+      const startup = budget(undefined, deadlines.cancel)
+      return waiting(mutate(() => disconnect(body)), startup)
+    },
+  }
+  const openChat = options => {
+    const startup = budget(options?.signal)
+    const task = mutate(async () => {
+      if (startup.signal.aborted) throw fail('Connection setup was cancelled or timed out.', 'timeout')
+      return open({ ...options, startup, finishOnPrepare: true })
+    })
+    return waiting(task, startup, false).catch(error => { startup.finish(); throw error })
+  }
+  adapter = new RemoteChatAdapter(rt, { open: openChat, models: () => record().models ?? [], identity, save: saveState, enabled })
+  api.adapter = adapter
   rt.hooks.endpoint('hermes-remote', async () => { await rt.load(); await rt.loadSecrets(); return view() }, { read: true })
-  rt.hooks.endpoint('hermes-remote-test', (body, signal) => testDraft(body, signal))
+  rt.hooks.endpoint('hermes-remote-test', (body, signal) => api.test(body, signal))
   rt.hooks.endpoint('hermes-remote-test-status', body => ({ stage: pendingTest?.requestId && pendingTest.requestId === body?.requestId
     ? pendingTest.stage : tested?.requestId && tested.requestId === body?.requestId ? 'connected' : 'reach' }), { read: true })
-  rt.hooks.endpoint('hermes-remote-test-profiles', (body, signal) => refreshProfiles(body, signal))
-  rt.hooks.endpoint('hermes-remote-save', (body, signal) => saveTest(body, signal))
-  rt.hooks.endpoint('hermes-remote-connect', (_body, signal) => connect(signal))
-  rt.hooks.endpoint('hermes-remote-disconnect', disconnect)
-  rt.hooks.endpoint('hermes-remote-configure', configure)
-  rt.hooks.endpoint('hermes-remote-discover', (_body, signal) => discover(signal))
-  rt.hooks.endpoint('hermes-remote-reconcile', async (body, signal) => {
+  rt.hooks.endpoint('hermes-remote-test-profiles', (body, signal) => api.refreshProfiles(body, signal))
+  rt.hooks.endpoint('hermes-remote-save', (body, signal) => api.save(body, signal))
+  rt.hooks.endpoint('hermes-remote-connect', (_body, signal) => api.connect(signal))
+  rt.hooks.endpoint('hermes-remote-disconnect', api.disconnect)
+  rt.hooks.endpoint('hermes-remote-configure', api.configure)
+  rt.hooks.endpoint('hermes-remote-discover', (_body, signal) => api.discover(signal))
+  rt.hooks.endpoint('hermes-remote-reconcile', (body, signal) => action(async startup => {
+    signal = startup.signal
     const info = sessions()[body.sessionId]
     if (!info?.storedSessionId) throw refusal('There is no saved remote session to reconcile.')
-    const run = await open({ identity: info, save: saveState, signal })
+    const run = await open({ identity: info, save: saveState, signal, startup })
     try {
       const result = await run.reconcile()
       return { ...view(), reconciliation: { unknown: result.unknown, gap: result.gap, messages: result.snapshot.messages, inflight: result.snapshot.inflight } }
     } finally { run.dispose(); await drain() }
-  })
+  }, signal))
   ctx.effect(() => {
-    void rt.load().then(publish).catch(() => {})
+    void rt.load().then(() => mutate(publish)).catch(() => {})
     return async () => {
-      disposed = true
-      registration?.(); registration = undefined
-      await disconnect()
+      interruptTests()
+      for (const intent of intents) intent.controller.abort()
+      pendingConnection?.controller.abort()
+      await mutate(async () => {
+        disposed = true
+        registration?.(); registration = undefined
+        await disconnect()
+      })
     }
   }, 'ds-bot: remote Hermes')
-  Object.assign(rt, { hermesRemote: { view, configure, discover, adapter, test: testDraft, save: saveTest, connect, disconnect, refreshProfiles } })
+  Object.assign(rt, { hermesRemote: api })
 }

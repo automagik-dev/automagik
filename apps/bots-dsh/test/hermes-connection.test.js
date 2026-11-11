@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
+import { mkdtemp, writeFile, readFile, rm, unlink } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { prepareHermesConnection, refreshHermesProfiles } from '../src/host/hermes-connection.js'
 import { install } from '../src/host/hermes-remote.js'
-import { HermesTransport } from '../src/host/hermes-transport.js'
+import { HermesTransport, RemoteChat } from '../src/host/hermes-transport.js'
 import { fakeContext } from './fake-ctx.js'
 
 const deadlines = { start: 300, control: 100, cancel: 10 }
@@ -34,6 +37,13 @@ function runtime(t, fixture, overrides = {}) {
     load: async () => {}, loadSecrets: async () => {}, secretValue: name => secrets.get(name),
     save: async () => { snapshots.push(JSON.stringify(rt.state)) },
     secretEndpoint: async (name, body) => { secretCalls.push({ endpoint: name, ...body }); if (name === 'secret-set') secrets.set(body.name, body.value); else secrets.delete(body.name) },
+    deleteSecretIfUnchanged: async (name, expected) => {
+      await rt.loadSecrets()
+      if (secrets.get(name) !== expected) return false
+      secretCalls.push({ endpoint: 'secret-delete', name })
+      secrets.delete(name)
+      return true
+    },
   }
   class Wire {
     constructor(options) { this.options = options; this.listeners = new Set(); this.secrets = new Set(options.redactionSecrets); this.sent = []; wires.push(this) }
@@ -42,6 +52,7 @@ function runtime(t, fixture, overrides = {}) {
         const timer = setTimeout(resolve, overrides.gatewayDelay)
         this.cancelConnect = () => { clearTimeout(timer); reject(Error('Fixture gateway closed')) }
       })
+      await overrides.onConnect?.(this)
       return this
     }
     async session() { await overrides.beforeSession?.(this); return { session_id: randomUUID(), stored_session_id: randomUUID(), info: { desktop_contract: 8, approval_mode: 'manual', yolo: false } } }
@@ -232,23 +243,26 @@ test('one action budget covers delayed auth plus gateway startup and closes the 
   assert.equal(h.wires[0].closed, true)
   assert.equal(h.rt.hermesRemote.view().enabled, false)
 })
-test('concurrent saved SSH users share a lease, tests-only cancellation preserves it, and the last user closes it', async t => {
-  const f = dashboard(), waiting = []; let started = 0, closed = 0
+test('saved SSH connects serialize and tests-only cancellation preserves the active owned lease', async t => {
+  const f = dashboard(), gates = [barrier(), barrier()]; let started = 0, closed = 0, models = 0
   const h = runtime(t, { ...f, fetch: sshFetch }, {
+    deadlines: { start: 1000, control: 500, cancel: 300 },
     startSsh: async () => { started++; return { address: 'http://127.0.0.1:12345', credential: f.credential, close: async () => { closed++ } } },
-    beforeModels: () => h.rt.hermesRemote.view().enabled ? new Promise(resolve => waiting.push(resolve)) : undefined,
+    beforeModels: async () => { if (h.rt.hermesRemote.view().enabled) { const gate = gates[models++]; gate.reach(); await gate.held } },
   })
   const tested = await h.rt.hermesRemote.test({ mode: 'ssh', ssh: { host: 'example.invalid' } })
   await h.rt.hermesRemote.save({ testId: tested.testId, profile: 'sample-profile' })
   assert.equal(closed, 1)
-  const first = h.rt.hermesRemote.connect(), second = h.rt.hermesRemote.connect()
-  const until = Date.now() + 1000
-  while (waiting.length !== 2 && Date.now() < until) await new Promise(resolve => setImmediate(resolve))
-  assert.equal(waiting.length, 2); assert.equal(started, 2)
-  await h.rt.hermesRemote.disconnect({ testsOnly: true })
-  assert.equal(closed, 1)
-  waiting[0](); await first; assert.equal(closed, 1)
-  waiting[1](); await second; assert.equal(closed, 2)
+  const first = h.rt.hermesRemote.connect()
+  await gates[0].entered
+  const second = h.rt.hermesRemote.connect(), cancel = h.rt.hermesRemote.disconnect({ testsOnly: true })
+  await eventTurn()
+  assert.equal(models, 1); assert.equal(started, 2); assert.equal(closed, 1)
+  gates[0].release(); await first
+  await gates[1].entered
+  assert.equal(closed, 2); assert.equal(started, 3)
+  gates[1].release(); await second; await cancel
+  assert.equal(closed, 3)
 })
 test('a lost completed test response can be cancelled by its preassigned request ID before the client knows a test ID', async t => {
   const f = dashboard(), requestId = randomUUID(), controller = new AbortController(); let closed = 0
@@ -466,8 +480,9 @@ test('a matching legacy saved raw token can be re-tested without entering or ret
 
 
 test('stale-save-overwrites-replacement: configuring a replacement during awaited secret storage survives rejected fresh-token save', async t => {
-  const f = dashboard(), h = runtime(t, f), draft = savedToken(h, f)
+  const f = dashboard(), h = await durableRuntime(t, f), draft = savedToken(h, f)
   h.rt.state.hermesSessions = { old: { storedSessionId: randomUUID() } }
+  await h.rt.save()
   const tested = await h.endpoints.get('hermes-remote-test')({ ...draft, credential: f.credential })
   const originalSet = h.rt.secretEndpoint
   let reached, resume, temporaryRef
@@ -478,10 +493,11 @@ test('stale-save-overwrites-replacement: configuring a replacement during awaite
   }
   const pending = h.endpoints.get('hermes-remote-save')({ testId: tested.testId, profile: 'sample-profile' }), rejected = assert.rejects(pending)
   await writing
-  const replacement = await h.endpoints.get('hermes-remote-configure')({ enabled: true, address: 'https://replacement.invalid/new', profile: 'replacement-profile', credential: randomUUID() })
+  const configuring = h.endpoints.get('hermes-remote-configure')({ enabled: true, address: 'https://replacement.invalid/new', profile: 'replacement-profile', credential: randomUUID() })
+  resume(); await rejected
+  const replacement = await configuring
   const replacementRecord = h.rt.state.prefs.hermesRemote, replacementSessions = h.rt.state.hermesSessions
   assert.equal(replacement.address, 'https://replacement.invalid/new')
-  resume(); await rejected
   assert.equal(h.rt.state.prefs.hermesRemote, replacementRecord)
   assert.equal(h.rt.state.hermesSessions, replacementSessions)
   assert.equal(h.rt.hermesRemote.view().address, replacement.address)
@@ -492,10 +508,11 @@ test('stale-save-overwrites-replacement: configuring a replacement during awaite
 })
 
 test('a failed save rolls back its own installed configuration and session reset and deletes its temporary secret', async t => {
-  const f = dashboard(), h = runtime(t, f), draft = savedToken(h, f)
+  const f = dashboard(), h = await durableRuntime(t, f), draft = savedToken(h, f)
   h.rt.state.prefs.hermesRemote.profile = 'previous-profile'
   h.rt.state.hermesSessions = { old: { storedSessionId: randomUUID() } }
   const originalRecord = h.rt.state.prefs.hermesRemote, originalSessions = h.rt.state.hermesSessions
+  await h.rt.save()
   const tested = await h.rt.hermesRemote.test({ ...draft, credential: f.credential })
   const originalSave = h.rt.save
   let first = true
@@ -517,9 +534,9 @@ test('a replacement configuration stays owned when an earlier installed save fai
   }
   const pending = h.rt.hermesRemote.save({ testId: tested.testId, profile: 'sample-profile' }), rejected = assert.rejects(pending)
   await writing
-  await h.endpoints.get('hermes-remote-configure')({ enabled: true, address: 'https://replacement.invalid/new', profile: 'replacement-profile', credential: randomUUID() })
+  const configuring = h.endpoints.get('hermes-remote-configure')({ enabled: true, address: 'https://replacement.invalid/new', profile: 'replacement-profile', credential: randomUUID() })
+  resume(); await rejected; await configuring
   const replacementRecord = h.rt.state.prefs.hermesRemote, replacementSessions = h.rt.state.hermesSessions
-  resume(); await rejected
   assert.equal(h.rt.state.prefs.hermesRemote, replacementRecord)
   assert.equal(h.rt.state.hermesSessions, replacementSessions)
 })
@@ -580,3 +597,210 @@ test('a failed durable rollback keeps the new credential referenced by the persi
   assert.ok(h.secrets.has(persistedReference), 'the last persisted record still has a usable credential reference')
   assert.ok(h.secrets.has(draft.credentialRef), 'the previous configuration retains its source credential')
 })
+
+
+const barrier = () => {
+  let reach, release
+  return { entered: new Promise(resolve => { reach = resolve }), held: new Promise(resolve => { release = resolve }), reach: () => reach(), release: () => release() }
+}
+const eventTurn = () => new Promise(resolve => setImmediate(resolve))
+async function durableRuntime(t, fixture, overrides) {
+  const h = runtime(t, fixture, overrides), home = await mkdtemp(join(tmpdir(), 'hermes-mutation-'))
+  h.rt.statePath = join(home, 'state.json')
+  const originalSave = h.rt.save
+  h.rt.save = async options => { await originalSave(options); await writeFile(h.rt.statePath, JSON.stringify(h.rt.state)) }
+  t.after(() => rm(home, { recursive: true, force: true }))
+  return h
+}
+
+for (const rollback of [false, true]) {
+  test(`hermes-mutation-lock-dropped: ${rollback ? 'rollback' : 'fresh save'} credential cleanup serializes a newer configure`, async t => {
+    const f = dashboard(), h = await durableRuntime(t, f), gate = barrier()
+    await h.rt.hermesRemote.configure({ enabled: true, address: f.address, profile: 'sample-profile', credential: f.credential })
+    const tested = await h.rt.hermesRemote.test(f.token), secretEndpoint = h.rt.secretEndpoint, compare = h.rt.deleteSecretIfUnchanged
+    let deletedReference, newerWrite = false
+    h.rt.deleteSecretIfUnchanged = async (name, expected) => { deletedReference = name; gate.reach(); await gate.held; return compare(name, expected) }
+    h.rt.secretEndpoint = async (name, body) => {
+      if (deletedReference && name === 'secret-set' && body.name === 'HERMES_REMOTE_CREDENTIAL') newerWrite = true
+      return secretEndpoint(name, body)
+    }
+    if (rollback) {
+      const save = h.rt.save
+      let first = true
+      h.rt.save = async options => { await save(options); if (first) { first = false; throw Error('Fixture candidate write failed') } }
+    }
+    const saving = h.rt.hermesRemote.save({ testId: tested.testId, profile: 'sample-profile' })
+    const saveDone = rollback ? assert.rejects(saving) : saving
+    await gate.entered
+    const nextToken = randomUUID(), configuring = h.endpoints.get('hermes-remote-configure')({ enabled: true, address: f.address, profile: 'replacement-profile', credential: nextToken })
+    await eventTurn()
+    const queued = !newerWrite
+    gate.release()
+    await saveDone
+    const view = await configuring
+    assert.ok(queued, 'a newer configure cannot write a credential while the earlier cleanup owns the mutation lock')
+    assert.ok(deletedReference)
+    assert.ok(h.secrets.get(view.credentialRef) === nextToken, 'the durable replacement reference retains its newer token')
+    const disk = JSON.parse(await readFile(h.rt.statePath, 'utf8'))
+    assert.equal(disk.prefs.hermesRemote.credentialRef, view.credentialRef)
+    assert.equal(disk.prefs.hermesRemote.profile, 'replacement-profile')
+  })
+}
+
+test('hermes-mutation-lock-dropped: simultaneous saves serialize and the second cannot reuse the consumed test', async t => {
+  const f = dashboard(), gate = barrier()
+  let probes = 0
+  const h = await durableRuntime(t, f, { beforeModels: async () => { probes++; if (probes === 2) { gate.reach(); await gate.held } } })
+  const tested = await h.rt.hermesRemote.test(f.token)
+  const first = h.endpoints.get('hermes-remote-save')({ testId: tested.testId, profile: 'sample-profile' })
+  void first.catch(() => {})
+  await gate.entered
+  const second = h.rt.hermesRemote.save({ testId: tested.testId, profile: 'sample-profile' })
+  void second.catch(() => {})
+  await eventTurn()
+  const probesWhileHeld = probes
+  gate.release()
+  const results = await Promise.allSettled([first, second])
+  assert.equal(probesWhileHeld, 2, 'the second save cannot probe while the first owns the queue')
+  assert.equal(results[0].status, 'fulfilled')
+  assert.equal(results[1].status, 'rejected')
+  assert.equal(results[1].reason.code, 'bot/hermes-expired')
+  assert.ok(h.secrets.has(results[0].value.credentialRef))
+})
+
+
+test('uncertain durable state or writer ownership keeps unreferenced credentials instead of deleting them', async t => {
+  for (const kind of ['missing', 'malformed', 'referenced', 'other-writer', 'no-path', 'no-compare-helper', 'unknown-compare-helper']) {
+    const f = dashboard(), h = await durableRuntime(t, f)
+    await h.rt.hermesRemote.configure({ enabled: true, address: f.address, profile: 'sample-profile', credential: f.credential })
+    const oldReference = h.rt.hermesRemote.view().credentialRef, tested = await h.rt.hermesRemote.test(f.token), save = h.rt.save, statePath = h.rt.statePath
+    h.rt.save = async options => {
+      assert.equal(options.required, true)
+      await save(options)
+      if (kind === 'missing') await unlink(statePath)
+      if (kind === 'malformed') await writeFile(statePath, '{invalid')
+      if (kind === 'referenced') { const disk = structuredClone(h.rt.state); disk.prefs.hermesRemote.credentialRef = oldReference; await writeFile(statePath, JSON.stringify(disk)) }
+      if (kind === 'other-writer') h.rt.readOnly = () => 'Fixture another writer'
+      if (kind === 'no-path') h.rt.statePath = undefined
+      if (kind === 'no-compare-helper') h.rt.deleteSecretIfUnchanged = undefined
+      if (kind === 'unknown-compare-helper') h.rt.deleteSecretIfUnchanged = async () => undefined
+    }
+    const view = await h.rt.hermesRemote.save({ testId: tested.testId, profile: 'sample-profile' })
+    assert.ok(h.secrets.has(oldReference), `${kind}: uncertain cleanup retains the old credential`)
+    assert.ok(h.secrets.has(view.credentialRef), 'the active reference remains usable')
+    assert.ok(!h.secretCalls.some(call => call.endpoint === 'secret-delete'))
+  }
+})
+
+test('mutation queues release after errors and are independent for separate Bot runtimes', { timeout: 1000 }, async t => {
+  const gate = barrier(), f = dashboard({ handle: async path => { if (path === '/api/status') { gate.reach(); await gate.held } } }), first = runtime(t, f)
+  const other = dashboard(), second = runtime(t, other)
+  const pending = first.rt.hermesRemote.test(f.token)
+  await gate.entered
+  const view = await second.rt.hermesRemote.configure({ enabled: true, address: other.address, profile: 'sample-profile', credential: other.credential })
+  assert.equal(view.address, other.address)
+  gate.release(); await pending
+  await assert.rejects(second.rt.hermesRemote.configure({ enabled: 'invalid' }))
+  assert.equal((await second.rt.hermesRemote.configure({ enabled: false })).enabled, false)
+})
+
+test('a cancelled queued test never starts or cancels a newer request', { timeout: 1000 }, async t => {
+  const f = dashboard(), h = runtime(t, f, { deadlines: { start: 500, control: 500, cancel: 100 } }), gate = barrier(), set = h.rt.secretEndpoint
+  let first = true
+  h.rt.secretEndpoint = async (name, body) => { if (name === 'secret-set' && first) { first = false; gate.reach(); await gate.held }; return set(name, body) }
+  const configuring = h.rt.hermesRemote.configure({ enabled: true, address: f.address, profile: 'sample-profile', credential: f.credential })
+  await gate.entered
+  const oldRequest = randomUUID(), newerRequest = randomUUID()
+  const stale = h.rt.hermesRemote.test({ ...f.token, requestId: oldRequest }), rejected = assert.rejects(stale)
+  const cancelling = h.rt.hermesRemote.disconnect({ testsOnly: true, requestId: oldRequest })
+  await rejected
+  const newer = h.rt.hermesRemote.test({ ...f.token, requestId: newerRequest })
+  gate.release(); await configuring; await cancelling
+  assert.ok((await newer).testId)
+  assert.equal(f.calls.length, 2, 'only the newer request performed authenticated discovery')
+  assert.deepEqual(h.endpoints.get('hermes-remote-test-status')({ requestId: newerRequest }), { stage: 'connected' })
+})
+
+test('the startup deadline includes queue waiting and an expired queued test performs no work', { timeout: 1000 }, async t => {
+  const f = dashboard(), h = runtime(t, f, { deadlines: { start: 30, control: 500, cancel: 100 } }), gate = barrier(), set = h.rt.secretEndpoint
+  let first = true
+  h.rt.secretEndpoint = async (name, body) => { if (name === 'secret-set' && first) { first = false; gate.reach(); await gate.held }; return set(name, body) }
+  const configuring = h.rt.hermesRemote.configure({ enabled: true, address: f.address, profile: 'sample-profile', credential: f.credential })
+  await gate.entered
+  try { await assert.rejects(h.rt.hermesRemote.test(f.token), { code: 'bot/hermes-timeout' }); assert.equal(f.calls.length, 0) }
+  finally { gate.release() }
+  await configuring
+  assert.ok((await h.rt.hermesRemote.test(f.token)).testId)
+})
+
+test('an already-running real RemoteChat Stop can finish while locked teardown awaits it', { timeout: 1000 }, async t => {
+  const f = dashboard(), h = runtime(t, f, { deadlines: { start: 500, control: 500, cancel: 500 } }), gate = barrier()
+  const identity = { pendingSubmit: true, runtimeSessionId: randomUUID() }
+  let writes = 0, closed = false
+  const transport = { listeners: new Set(), deadlines: { cancel: 500 }, bounded: promise => promise,
+    request: async method => { assert.equal(method, 'session.interrupt'); gate.reach(); await gate.held; identity.pendingSubmit = false },
+    close: () => { closed = true },
+  }
+  const run = new RemoteChat(transport, { identity, save: async () => { writes++; await h.rt.save({ required: true }) } })
+  h.rt.hermesRemote.adapter.live.set('sample-live', { run })
+  const stopping = run.stop()
+  await gate.entered
+  const disconnecting = h.rt.hermesRemote.disconnect()
+  gate.release(); await stopping; await disconnecting
+  assert.ok(writes >= 2)
+  assert.equal(closed, true)
+})
+
+
+test('cookie rotation during a locked native connect persists inline without reentrant deadlock', { timeout: 1000 }, async t => {
+  const rotated = randomUUID(), f = dashboard({ handle: path => path === '/api/auth/ws-ticket' ? response({ ticket: 'sample-ticket' }, 200, [`hermes_session_at=${rotated}; HttpOnly`]) : undefined })
+  const h = runtime(t, f, { onConnect: async wire => { if (h.rt.hermesRemote.view().enabled) await wire.options.fetch(`${f.address}/api/auth/ws-ticket`, { headers: wire.options.authHeaders }) } })
+  const tested = await h.rt.hermesRemote.test(f.login)
+  const saved = await h.rt.hermesRemote.save({ testId: tested.testId, profile: 'sample-profile' })
+  assert.ok((await h.rt.hermesRemote.connect()).modelRef)
+  assert.ok(h.secrets.get(saved.credentialRef).includes(rotated), 'the rotated session is durably stored before connect finishes')
+})
+
+
+test('a public configure inheriting the active async context still queues instead of forking the owner', { timeout: 1000 }, async t => {
+  const f = dashboard(), gate = barrier()
+  let configuring, writesDuringOwner
+  const h = runtime(t, f, { deadlines: { start: 500, control: 500, cancel: 500 }, onConnect: async () => {
+    configuring = h.rt.hermesRemote.configure({ enabled: true, address: f.address, profile: 'replacement-profile', credential: randomUUID() })
+    await eventTurn()
+    writesDuringOwner = h.secretCalls.length
+    gate.reach(); await gate.held
+  } })
+  const testing = h.rt.hermesRemote.test(f.token), rejected = assert.rejects(testing)
+  await gate.entered
+  gate.release(); await rejected; await configuring
+  assert.equal(writesDuringOwner, 0, 'a public call cannot inherit trusted internal reentrancy')
+  assert.equal(h.rt.hermesRemote.view().profile, 'replacement-profile')
+})
+
+
+for (const rollback of [false, true]) {
+  test(`a direct secret replacement in the ${rollback ? 'rollback' : 'fresh save'} cleanup await gap is preserved atomically`, async t => {
+    const f = dashboard(), h = await durableRuntime(t, f), gate = barrier()
+    await h.rt.hermesRemote.configure({ enabled: true, address: f.address, profile: 'sample-profile', credential: f.credential })
+    const tested = await h.rt.hermesRemote.test(f.token), endpoint = h.rt.secretEndpoint, compare = h.rt.deleteSecretIfUnchanged
+    let pendingReference
+    h.rt.secretEndpoint = async (name, body) => {
+      if (name === 'secret-delete') { pendingReference = body.name; gate.reach(); await gate.held }
+      return endpoint(name, body)
+    }
+    h.rt.deleteSecretIfUnchanged = async (name, expected) => { pendingReference = name; gate.reach(); await gate.held; return compare(name, expected) }
+    if (rollback) {
+      const save = h.rt.save
+      let first = true
+      h.rt.save = async options => { await save(options); if (first) { first = false; throw Error('Fixture candidate write failed') } }
+    }
+    const saving = h.rt.hermesRemote.save({ testId: tested.testId, profile: 'sample-profile' }), finished = rollback ? assert.rejects(saving) : saving
+    await gate.entered
+    const replacement = randomUUID()
+    await h.rt.secretEndpoint('secret-set', { name: pendingReference, value: replacement, scope: [] })
+    gate.release(); await finished
+    assert.ok(h.secrets.get(pendingReference) === replacement, 'a changed value survives the compare-delete boundary')
+    assert.ok(h.secrets.has(h.rt.hermesRemote.view().credentialRef), 'the configured credential remains usable')
+  })
+}

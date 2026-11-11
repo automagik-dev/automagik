@@ -113,6 +113,7 @@ export function install(rt) {
   let redact = text => text
   let redactAnywhere = text => text
   let refreshEnv = () => {}
+  let stopped = false
 
   const changed = () => {
     const entries = [...secrets.values()]
@@ -440,6 +441,19 @@ export function install(rt) {
     return endpoints[endpoint](body ?? {})
   }
 
+  // Internal cleanup only: the comparison and existing endpoint's map.delete run
+  // in one synchronous segment after loading, so a newer value cannot be deleted
+  // across secretEndpoint's load await. The existing commit owns durable writes.
+  async function deleteSecretIfUnchanged(name, expectedValue) {
+    if (stopped || typeof name !== 'string' || !SECRET_NAME.test(name) || typeof expectedValue !== 'string') return false
+    try {
+      await loadSecrets()
+      if (stopped || blocked !== undefined || loadedReadOnly || rt.readOnly() !== undefined) return false
+    } catch { return false }
+    if (secrets.get(name)?.value !== expectedValue) return false
+    return endpoints['secret-delete']({ name })
+  }
+
   // A deleted Bot leaves every list it was on, and its cards go with it.
   async function forgetBotSecrets(botId) {
     await loadSecrets()
@@ -639,7 +653,7 @@ export function install(rt) {
 
   ctx.effect(() => {
     void loadSecrets()
-    return () => { if (usedTimer !== null) clearTimeout(usedTimer) }
+    return () => { stopped = true; if (usedTimer !== null) clearTimeout(usedTimer) }
   }, 'ds-bot: load secrets')
 
   Object.assign(rt, {
@@ -648,6 +662,7 @@ export function install(rt) {
     canUseSecret: (name, botId) => !held(secrets.get(name)) && canUse(secrets.get(name), botId),
     secretHeldReason: name => (held(secrets.get(name)) ? heldReason(name) : undefined),
     secretEndpoint,
+    deleteSecretIfUnchanged,
     forgetBotSecrets,
     loadSecrets,
     redactSecrets: text => redact(text),
