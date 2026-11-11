@@ -1609,6 +1609,8 @@
   "No Bot conversation is open.": "Nenhuma conversa de Bot está aberta.",
   "The permission level of a conversation shows here while it is open.": "O nível de permissão de uma conversa aparece aqui enquanto a conversa está aberta.",
   "More conversations are open than fit here.": "Há mais conversas abertas do que cabem aqui.",
+  "Conversations with a level not applied that do not fit here: {count}.": "Conversas com um nível não aplicado que não cabem aqui: {count}.",
+  "This window only views the team: the saved levels here are as of its last refresh.": "Esta janela só visualiza a equipe: os níveis salvos aqui são os da última atualização desta janela.",
   "A custom level": "Um nível personalizado",
   "Not applied: {level} could not be set on this conversation ({time}). Tools may be held back here until it is.": "Não aplicado: não foi possível definir {level} nesta conversa ({time}). As ferramentas podem ficar retidas aqui até que isso aconteça.",
   "The level in force here is not the saved one.": "O nível em vigor aqui não é o nível salvo.",

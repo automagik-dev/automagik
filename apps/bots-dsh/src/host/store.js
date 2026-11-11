@@ -31,6 +31,8 @@ export function install(rt) {
   /** @type {{version:1, workspaceId?:string, mainBotIds:string[], bots:Record<string,any>, rooms:Record<string,any>, agents:Record<string,any>, capabilities:{items:Record<string,any>}, exchanges:any[], exchangeTurns:Record<string,number[]>, revision:number}} */
   const state = { version: STATE_VERSION, mainBotIds: [], bots: {}, rooms: {}, agents: {}, capabilities: { items: {} }, exchanges: [], exchangeTurns: {}, works: {}, requests: {}, questions: {}, views: {}, prefs: {}, switching: {}, revision: 0 }
   let loaded = null
+  // Whether `state` is the team as its file has it (teamLoaded).
+  let teamRead = false
   let writing = Promise.resolve()
   const { warn } = rt
 
@@ -170,6 +172,10 @@ export function install(rt) {
   // Fill `state` from the saved file and bring an older team up to date. Returns the
   // groups whose Session titles still need the new name.
   const adopt = (parsed) => {
+    // Until the end of this: a file that could not be read, or was set aside as corrupt,
+    // leaves an empty team in memory that is not the saved one.
+    teamRead = false
+    const valid = parsed !== null && parsed !== undefined ? true : stuck === undefined && !aside
     const hadCapabilities = parsed !== null && parsed !== undefined && Object.hasOwn(parsed, 'capabilities')
     for (const key of Object.keys(state)) delete state[key]
     Object.assign(state, JSON.parse(EMPTY), parsed ?? {})
@@ -339,6 +345,7 @@ export function install(rt) {
     const stale = Object.values(state.rooms).filter(room => !room.named && room.name !== rt.autoRoomName(room.members))
     for (const room of stale) room.name = rt.autoRoomName(room.members)
     indexSessions()
+    teamRead = valid
     return { migrated: migrated || stale.length > 0, stale }
   }
 
@@ -438,6 +445,8 @@ export function install(rt) {
         ensureLock()
         await replaceFile(temp, statePath, ensureLock)
         seen = stamp()
+        // The file now holds this team, a fresh one after a corrupt file included.
+        if (stuck === undefined) teamRead = true
         rt.capabilitiesStateSaved?.()
         rt.stateSaved?.()
       } catch (error) {
@@ -545,8 +554,13 @@ export function install(rt) {
   }
   const isAdminOf = (room, id) => id !== undefined && room.admin === id
 
+  // Whether the team in memory was read from its file, or is a new team no file held yet,
+  // or was saved since: false before the first load, and after a file that could not be
+  // read or was set aside as corrupt. It reads memory only.
+  const teamLoaded = () => teamRead
+
   Object.assign(rt, {
-    state, load, save, refresh, readOnly, own,
+    state, load, save, refresh, readOnly, teamLoaded, own,
     botOf, roomOf, isMain, chatOf, selfOf, isBotSession,
     chatOwners, groupOwners, pastOwners, taskOwners, indexSessions,
     groupSessionsOf, dropGroupSession, retireGroupSession, findBot, findRooms, isAdminOf,

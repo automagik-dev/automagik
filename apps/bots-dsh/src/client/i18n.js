@@ -1266,6 +1266,8 @@ const ZH = {
   "No Bot conversation is open.": "没有打开的 Bot 对话。",
   "The permission level of a conversation shows here while it is open.": "对话打开时，它的权限级别会显示在这里。",
   "More conversations are open than fit here.": "打开的对话太多，这里显示不下。",
+  "Conversations with a level not applied that do not fit here: {count}.": "权限级别未能应用、这里显示不下的对话：{count} 个。",
+  "This window only views the team: the saved levels here are as of its last refresh.": "此窗口只能查看团队：这里的已保存级别以它上次刷新时为准。",
   'Recent errors': '最近的错误',
   'Recent errors · {count}': '最近的错误 · {count}',
   'No errors recorded.': '没有错误记录。',
