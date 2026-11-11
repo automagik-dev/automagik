@@ -1,0 +1,137 @@
+import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import test from 'node:test'
+import { fileURLToPath } from 'node:url'
+import { publicUrlArgs } from '../lib.mjs'
+
+const ENTRY = fileURLToPath(new URL('../entrypoint.mjs', import.meta.url))
+const LIB = new URL('../lib.mjs', import.meta.url).href
+const BASE = ['--profile', 'automagik-web', '--no-open', '--host', '127.0.0.1', '--port', '3081']
+
+// Run the real entrypoint, replacing only data preparation and the DSH process. No service
+// or live data is touched; validation, argument wiring, logging and launch-file writes run.
+const harness = `
+  import { registerHooks } from 'node:module'
+  const lib = await import(${JSON.stringify(`${LIB}?test-original`)})
+  globalThis.serverTestLib = {
+    ...lib,
+    ensureDataDirs() {}, prepareWorkspace() {}, pinStore() {},
+    async seedProfile() { return { seeded: false, target: 'test-profile' } },
+  }
+  registerHooks({
+    load(url, context, nextLoad) {
+      if (url === ${JSON.stringify(LIB)}) return {
+        format: 'module', shortCircuit: true,
+        source: Object.keys(lib).map(key => 'export const ' + key + ' = globalThis.serverTestLib.' + key).join(';'),
+      }
+      if (url === 'node:child_process') return {
+        format: 'module', shortCircuit: true,
+        source: \`
+          import { EventEmitter } from 'node:events'
+          import { PassThrough } from 'node:stream'
+          export function spawn(command, args, options) {
+            console.log('SPAWN ' + JSON.stringify({ command, args, shell: options.shell ?? false }))
+            const child = new EventEmitter()
+            child.stdout = new PassThrough()
+            child.stderr = new PassThrough()
+            setImmediate(() => {
+              const at = args.indexOf('--public-url')
+              const url = new URL(at < 0 ? 'http://127.0.0.1:3081/' : args[at + 1])
+              if (!url.pathname.endsWith('/')) url.pathname += '/'
+              url.searchParams.set('token', 'test-launch-value')
+              child.stdout.end('dsh web: ' + url.href + '\\\\n')
+              child.stderr.end()
+            })
+            return child
+          }
+        \`,
+      }
+      return nextLoad(url, context)
+    },
+  })
+  await import(${JSON.stringify(new URL('../entrypoint.mjs', import.meta.url).href)})
+`
+
+function run(value, dir) {
+  const env = { ...process.env, DSH_HOME: dir, AUTOMAGIK_WORKSPACE: dir, DEEPSEEK_API_KEY: 'test-only' }
+  delete env.AUTOMAGIK_PUBLIC_URL
+  if (value !== undefined) env.AUTOMAGIK_PUBLIC_URL = value
+  const result = spawnSync(process.execPath, ['--input-type=module', '--eval', harness], {
+    env, encoding: 'utf8', timeout: 30_000,
+  })
+  assert.ifError(result.error)
+  return result
+}
+
+for (const value of [undefined, 'https://example.invalid/', 'https://example.invalid:8443/ui']) {
+  test(`entrypoint public URL: ${value ?? 'unset'}`, (t) => {
+    const dir = mkdtempSync(join(tmpdir(), 'automagik-public-url-'))
+    t.after(() => rmSync(dir, { recursive: true, force: true }))
+    const result = run(value, dir)
+    assert.equal(result.status, 0, result.stderr)
+    const call = JSON.parse(result.stdout.split('\n').find(line => line.startsWith('SPAWN ')).slice(6))
+    assert.equal(call.command, process.execPath)
+    assert.equal(call.shell, false)
+    const extra = value === undefined ? [] : ['--public-url', value, '--trusted-host', new URL(value).host]
+    assert.deepEqual(call.args.slice(1), [...BASE, ...extra])
+    assert.match(call.args[0], /\/dsh\/lib\/bin\.js$/)
+    const launchFile = join(dir, 'launch-url')
+    const launch = new URL(value ?? 'http://127.0.0.1:3081/')
+    if (!launch.pathname.endsWith('/')) launch.pathname += '/'
+    launch.searchParams.set('token', 'test-launch-value')
+    assert.equal(readFileSync(launchFile, 'utf8'), `${launch.href}\n`)
+    assert.equal(statSync(launchFile).mode & 0o777, 0o600)
+    assert.doesNotMatch(result.stdout, /token=test-launch-value/)
+    assert.match(result.stdout, /token=<redacted>/)
+  })
+}
+
+for (const value of [
+  '', ' ', 'not a URL', 'http://example.invalid/', '//example.invalid/', 'https:example.invalid',
+  'https:///example.invalid', 'https://', 'https://example.invalid:99999/',
+  'https://user:password@example.invalid/', 'https://@example.invalid/',
+  'https://example.invalid/?x=1', 'https://example.invalid/#', 'https://example.invalid?',
+  ' https://example.invalid/', 'https://example.invalid/\n', 'https://example.invalid/with space',
+  'https://example.invalid\\other', 'https://*.example.invalid/',
+]) {
+  test(`invalid public URL is rejected: ${JSON.stringify(value)}`, () => {
+    assert.throws(() => publicUrlArgs(value), /AUTOMAGIK_PUBLIC_URL must be an absolute https:\/\/ URL/)
+  })
+}
+
+test('invalid configuration stops the real entrypoint before DSH or data preparation', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'automagik-public-url-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const result = spawnSync(process.execPath, [ENTRY], {
+    env: { ...process.env, AUTOMAGIK_PUBLIC_URL: 'http://example.invalid/', AUTOMAGIK_WORKSPACE: join(dir, 'unused') },
+    encoding: 'utf8', timeout: 30_000,
+  })
+  assert.ifError(result.error)
+  assert.equal(result.status, 1)
+  assert.equal(result.stdout, '')
+  assert.match(result.stderr, /^automagik-web: AUTOMAGIK_PUBLIC_URL must be an absolute https:\/\/ URL[^\n]*\n$/)
+  assert.equal(existsSync(join(dir, 'unused')), false)
+})
+
+test('shell metacharacters remain one URL argument and execute no commands', (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'automagik-public-url-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const marker = join(dir, 'injected')
+  const value = 'https://example.invalid/;$(touch${IFS}' + marker + ');`touch${IFS}' + marker + '`'
+  const result = run(value, dir)
+  assert.equal(result.status, 0, result.stderr)
+  const call = JSON.parse(result.stdout.split('\n').find(line => line.startsWith('SPAWN ')).slice(6))
+  assert.equal(call.shell, false)
+  assert.deepEqual(call.args.slice(1), [...BASE, '--public-url', value, '--trusted-host', 'example.invalid'])
+  // Exercise the same argv with a real process as well as the entrypoint's captured spawn.
+  const echo = spawnSync(process.execPath, ['-e', 'console.log(JSON.stringify(process.argv.slice(1)))', '--', ...call.args.slice(1)], {
+    encoding: 'utf8', timeout: 30_000,
+  })
+  assert.ifError(echo.error)
+  assert.equal(echo.status, 0, echo.stderr)
+  assert.deepEqual(JSON.parse(echo.stdout), call.args.slice(1))
+  assert.equal(existsSync(marker), false)
+})
