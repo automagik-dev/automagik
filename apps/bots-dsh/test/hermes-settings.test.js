@@ -271,10 +271,11 @@ test('Cancel aborts a pending test and discards only test resources', async t =>
   await render.click('Cancel')
   assert.equal(signal.aborted, true)
   assert.equal(render.closed.length, 1)
-  const close = await waitFor(() => render.calls.find(call => call.endpoint === 'hermes-remote-disconnect'), 'test resources to close')
-  assert.equal(close.payload.testsOnly, true)
-  pending.resolve(testView())
-  await new Promise(resolve => setImmediate(resolve))
+  assert.ok(!render.calls.some(call => call.endpoint === 'hermes-remote-disconnect'), 'a pending request is aborted, never a global disconnect')
+  const answer = testView()
+  pending.resolve(answer)
+  const close = await waitFor(() => render.calls.find(call => call.endpoint === 'hermes-remote-disconnect'), 'late test resources to close')
+  assert.deepEqual(close.payload, { testsOnly: true, testId: answer.testId })
   assert.ok(!render.calls.some(call => call.endpoint === 'hermes-remote-save'))
 })
 
@@ -282,7 +283,7 @@ test('the model route opens first-use setup and saved route changes retain the h
   for (const existing of [false, true]) await t.test(existing ? 'saved route' : 'first use', async sub => {
     const picked = [], calls = []
     const bot = { id: 'sample-profile', name: 'Sample', ...(existing ? { model: 'native/sample-model' } : {}) }
-    const roster = { models: [{ ref: 'native/sample-model', provider: 'native', name: 'Sample model' }] }
+    const roster = { models: [{ ref: 'native/sample-model', provider: 'native', name: 'Sample model' }], prefs: { hermesRemote: { enabled: existing, profile: existing ? 'sample-profile' : '' } } }
     const actions = { refreshModels: async () => {}, updateBot: (...args) => { picked.push(args); return Promise.resolve() }, switchRoute: (...args) => { picked.push(args); return Promise.resolve() } }
     const render = await renderSettings(sub, async request => {
       calls.push(request)
@@ -292,6 +293,7 @@ test('the model route opens first-use setup and saved route changes retain the h
     await waitFor(() => render.document.querySelector('.bt-model-menu [data-route="hermes-remote"]'), 'remote route row')
     const route = render.document.querySelector('.bt-model-menu [data-route="hermes-remote"]')
     assert.ok(route.querySelector('.bt-hermes-mark img'))
+    assert.equal(route.querySelector('.bt-menu-hint').textContent, existing ? 'sample-profile' : 'Set up')
     flushSync(() => route.click())
     if (!existing) {
       await waitFor(() => render.document.querySelector('[data-step=connection]'), 'first-use wizard')
@@ -340,4 +342,133 @@ test('missing remote Hermes gets a path and installation action instead of raw S
   await waitFor(() => render.document.querySelector('[data-status=error]'), 'missing Hermes error')
   assert.match(render.document.body.textContent, /Install or update Hermes on the other computer/)
   assert.match(render.document.body.textContent, /enter its executable path/)
+})
+
+test('parent navigation releases the completed unsaved SSH test by its own ID', async t => {
+  const answer = testView()
+  const render = await startWizard(t, { 'hermes-remote-test': () => answer })
+  await render.click('Through SSH'); await render.click('Continue')
+  await render.fill('SSH host or config name', 'example.invalid')
+  await render.click('Test SSH connection')
+  await waitFor(() => render.document.querySelector('[data-status=connected]'), 'completed SSH test')
+  flushSync(() => render.root.render(null))
+  const released = await waitFor(() => render.calls.find(call => call.endpoint === 'hermes-remote-disconnect'), 'unmounted test lease to close')
+  assert.deepEqual(released.payload, { testsOnly: true, testId: answer.testId })
+  assert.ok(!render.calls.some(call => call.endpoint === 'hermes-remote-disconnect' && call.payload?.testsOnly !== true))
+})
+
+test('profile save locks navigation and selection until the tested connection commit settles', async t => {
+  const pending = deferred()
+  const render = await startWizard(t, { 'hermes-remote-save': () => pending.promise })
+  try {
+    await enterToken(render); await render.click('Test connection')
+    await waitFor(() => render.document.querySelector('[data-status=connected]'), 'connection to choose')
+    await render.click('Choose a profile'); await render.click('Use this profile')
+    await waitFor(() => render.calls.some(call => call.endpoint === 'hermes-remote-save'), 'save request to start')
+    const buttons = [...render.document.querySelectorAll('button')]
+    assert.equal(buttons.find(node => node.textContent.trim() === 'Back').disabled, true)
+    assert.equal(render.document.querySelector('[role=radio]').disabled, true)
+    assert.equal(render.document.querySelector('[aria-label="Close connection setup"]').disabled, true)
+    await render.click('Back')
+    render.document.defaultView.dispatchEvent(new render.document.defaultView.KeyboardEvent('keydown', { key: 'Escape' }))
+    assert.ok(render.document.querySelector('[data-step=profile][data-status=saving]'))
+    assert.equal(render.closed.length, 0)
+    assert.ok(!render.calls.some(call => call.endpoint === 'hermes-remote-disconnect'))
+    pending.resolve(connectedView())
+    await waitFor(() => render.document.querySelector('[data-step=ready]'), 'saved connection to render')
+    assert.match(render.document.querySelector('.bt-hw-summary').textContent, /example.invalid/)
+  } finally { pending.resolve(connectedView()) }
+})
+
+test('Escape fences a saved-route completion while the model catalog refresh is pending', async t => {
+  const refresh = deferred(), waiting = deferred(), picked = []
+  let refreshes = 0
+  const bot = { id: 'sample-profile', name: 'Sample' }
+  const roster = { models: [{ ref: 'native/sample-model', provider: 'native', name: 'Sample model' }] }
+  const actions = {
+    refreshModels: () => { if (++refreshes === 1) return Promise.resolve(); waiting.resolve(); return refresh.promise },
+    updateBot: (...args) => { picked.push(args); return Promise.resolve() },
+    switchRoute: (...args) => { picked.push(args); return Promise.resolve() },
+  }
+  const render = await renderSettings(t, async () => connectedView(), { component: 'ModelMenu', menu: true, props: { bot, roster, actions } })
+  flushSync(() => render.document.querySelector('.bt-model-trigger').click())
+  const route = await waitFor(() => render.document.querySelector('.bt-model-menu [data-route="hermes-remote"]'), 'saved route')
+  flushSync(() => route.click())
+  await waiting.promise
+  await waitFor(() => render.document.querySelector('.bt-hermes-wizard'), 'pending connection dialog')
+  render.document.defaultView.dispatchEvent(new render.document.defaultView.KeyboardEvent('keydown', { key: 'Escape' }))
+  await waitFor(() => !render.document.querySelector('.bt-hermes-wizard'), 'cancelled connection dialog')
+  refresh.resolve()
+  await refresh.promise
+  await new Promise(resolve => setImmediate(resolve))
+  flushSync(() => {})
+  assert.equal(render.document.querySelector('.bt-model-confirm'), null)
+  assert.equal(picked.length, 0)
+})
+
+test('navigation aborts a pending wizard test and releases a late test lease without touching saved connections', async t => {
+  const pending = deferred(); let signal
+  const render = await startWizard(t, { 'hermes-remote-test': (_payload, nextSignal) => { signal = nextSignal; return pending.promise } })
+  await enterToken(render); await render.click('Test connection')
+  await waitFor(() => signal, 'test request to start')
+  flushSync(() => render.root.render(null))
+  assert.equal(signal.aborted, true)
+  const answer = testView()
+  pending.resolve(answer)
+  const released = await waitFor(() => render.calls.find(call => call.endpoint === 'hermes-remote-disconnect'), 'late unmounted lease to close')
+  assert.deepEqual(released.payload, { testsOnly: true, testId: answer.testId })
+})
+
+test('Ready navigation does not discard a test already consumed by the saved connection', async t => {
+  const render = await startWizard(t)
+  await enterToken(render); await render.click('Test connection')
+  await waitFor(() => render.document.querySelector('[data-status=connected]'), 'connection result')
+  await render.click('Choose a profile'); await render.click('Use this profile')
+  await waitFor(() => render.document.querySelector('[data-step=ready]'), 'saved Ready state')
+  flushSync(() => render.root.render(null))
+  await new Promise(resolve => setImmediate(resolve))
+  assert.ok(!render.calls.some(call => call.endpoint === 'hermes-remote-disconnect'))
+})
+
+test('parent picker unmount fences a saved-route completion after a deferred catalog refresh', async t => {
+  const refresh = deferred(), waiting = deferred(), picked = []
+  let refreshes = 0
+  const bot = { id: 'sample-profile', name: 'Sample' }
+  const actions = {
+    refreshModels: () => { if (++refreshes === 1) return Promise.resolve(); waiting.resolve(); return refresh.promise },
+    updateBot: (...args) => { picked.push(args); return Promise.resolve() },
+  }
+  const render = await renderSettings(t, async () => connectedView(), { component: 'ModelMenu', menu: true, props: { bot, roster: { models: [] }, actions } })
+  flushSync(() => render.document.querySelector('.bt-model-trigger').click())
+  const route = await waitFor(() => render.document.querySelector('.bt-model-menu [data-route="hermes-remote"]'), 'saved route')
+  flushSync(() => route.click())
+  await waiting.promise
+  flushSync(() => render.root.render(null))
+  refresh.resolve()
+  await refresh.promise
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(picked.length, 0)
+})
+
+test('the current Remote Hermes picker row names its remembered profile without repeating the route', async t => {
+  const bot = { id: 'sample-profile', name: 'Sample', model: 'hermes-remote/sample-model' }
+  const roster = { models: [{ ref: bot.model, provider: 'hermes-remote', providerName: 'Remote Hermes', name: 'Sample model' }], prefs: { hermesRemote: { enabled: true, profile: 'sample-profile' } } }
+  const render = await renderSettings(t, async () => connectedView(), { component: 'ModelMenu', menu: true, props: { bot, roster, actions: { refreshModels: async () => {} } } })
+  flushSync(() => render.document.querySelector('.bt-model-trigger').click())
+  const route = await waitFor(() => render.document.querySelector('.bt-model-menu [data-route="hermes-remote"]'), 'current remote route')
+  assert.equal(route.querySelector('.bt-menu-hint').textContent, 'sample-profile')
+  assert.equal((route.textContent.match(/Remote Hermes/g) ?? []).length, 1)
+})
+
+test('an SSH contract refusal keeps version guidance instead of reporting an SSH key failure', async t => {
+  const render = await startWizard(t, { 'hermes-remote-test': () => { throw Object.assign(Error('Fake refusal'), { code: 'bot/hermes' }) } })
+  await render.click('Through SSH'); await render.click('Continue')
+  await render.fill('SSH host or config name', 'example.invalid')
+  await render.click('Test SSH connection')
+  await waitFor(() => render.document.querySelector('[data-status=error]'), 'SSH contract refusal')
+  assert.match(render.document.body.textContent, /Check this Hermes version and profile/)
+  assert.ok([...render.document.querySelectorAll('button')].some(button => button.textContent.includes('Edit SSH details')))
+  assert.match(render.document.body.textContent, /Use a supported Hermes version/)
+  assert.doesNotMatch(render.document.body.textContent, /Check your SSH details/)
+  assert.doesNotMatch(render.document.body.textContent, /unlock it in your SSH agent/)
 })

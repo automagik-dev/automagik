@@ -406,7 +406,7 @@ test('a model that cannot run is marked in the route, the agent, the model row a
     // Step 1: the four routes in order, the Bot's own marked; its agent opens the next step.
     const first = nodes(steps.type(steps.props), node => node.props.role === 'menuitem' && ['menu', 'dialog'].includes(node.props['aria-haspopup']))
     assert.deepEqual(first.map(row => [label(row), hint(row) ?? null]), [
-      ['Native', 'DSH harness'], ['ACP', 'Claude Code'], ['Herdr', 'Not available yet'], ['Remote Hermes', 'hermes serve'],
+      ['Native', 'DSH harness'], ['ACP', 'Claude Code'], ['Herdr', 'Not available yet'], ['Remote Hermes', 'Set up'],
     ])
     assert.equal(first[1].props['aria-label'], 'ACP, current model Claude Code')
     assert.equal(first[1].props.title, 'Agent Client Protocol')
@@ -505,7 +505,7 @@ test('step 1 lists the four routes in order, marks the one the Bot is on, and en
   const tree = step()
   const rows = nodes(tree, node => node.type === 'button')
   assert.deepEqual(rows.map(row => [labelOf(row), hintOf(row)]), [
-    ['Native', 'DSH harness'], ['ACP', 'Codex · High'], ['Herdr', 'Not available yet'], ['Remote Hermes', 'hermes serve'], ['Models and providers…', null],
+    ['Native', 'DSH harness'], ['ACP', 'Codex · High'], ['Herdr', 'Not available yet'], ['Remote Hermes', 'Set up'], ['Models and providers…', null],
   ])
   assert.deepEqual(rows.slice(0, 3).map(row => [row.props.role, row.props['aria-haspopup'], row.props['data-current'] ?? null]),
     [['menuitem', 'menu', null], ['menuitem', 'menu', ''], ['menuitem', 'menu', null]])

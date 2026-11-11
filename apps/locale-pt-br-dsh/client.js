@@ -1886,7 +1886,8 @@ const pack = createPack({
     "Set up connection": "Configurar conexão",
     "Test": "Teste",
     "Your sign-in was accepted": "Seu login foi aceito",
-    "1 profile available": "1 perfil disponível"
+    "1 profile available": "1 perfil disponível",
+    "Set up": "Configurar"
   }
 })
 return Object.defineProperty({ ...pack }, Symbol.toStringTag, { value: 'Module' })

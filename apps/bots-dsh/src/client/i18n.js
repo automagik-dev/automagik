@@ -5,6 +5,7 @@
 export const NAMESPACE = 'omni-ui'
 
 const ZH = {
+  "Set up": "设置",
   "1 profile available": "1 个可用配置",
   "Your sign-in was accepted": "登录已接受",
   "SSH couldn’t sign in": "SSH 无法登录",

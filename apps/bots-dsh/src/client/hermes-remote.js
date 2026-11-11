@@ -25,12 +25,12 @@ const Pair = ({ label, value }) => h('div', { className: 'bt-hw-pair' }, h('span
 function errorFor(error, draft) {
   const code = error?.code ?? ''
   if (code.includes('host-key')) return { heading: t('SSH couldn’t sign in'), title: t('Confirm this computer’s SSH host key'), text: t('Connect to this host once in a terminal and check its host key. Then test again. A changed key must be checked before continuing.'), ssh: true }
-  if (draft.mode === 'ssh' && (code.includes('missing') || code.includes('unsupported'))) return { heading: t('SSH couldn’t open Hermes'), title: t('Check the Hermes installation'), text: t('Install or update Hermes on the other computer, or enter its executable path. Then test again.'), ssh: true }
-  if (draft.mode === 'ssh') return { heading: t('SSH couldn’t sign in'), title: t('Check your SSH details'), text: t('Check the host and user. If your key is locked, unlock it in your SSH agent, or choose another key.'), ssh: true }
-  if (code === 'bot/hermes-auth') return { heading: t('We couldn’t sign in'), title: draft.authMode === 'password' ? t('The sign-in wasn’t accepted') : t('The token wasn’t accepted'), text: draft.authMode === 'password' ? t('Check your user and password, then sign in again.') : t('Check the token, or choose user and password if this Hermes asks you to sign in.') }
+  if (draft.mode === 'ssh' && code === 'bot/hermes-ssh-missing') return { heading: t('SSH couldn’t open Hermes'), title: t('Check the Hermes installation'), text: t('Install or update Hermes on the other computer, or enter its executable path. Then test again.'), ssh: true }
   if (code === 'bot/hermes-expired') return { heading: t('Test this connection again'), title: t('The connection test expired'), text: t('Test again before choosing and saving a profile.') }
   if (code === 'bot/hermes-profiles') return { heading: t('We couldn’t list the profiles'), title: t('Check this Hermes profile list'), text: t('Refresh the list, or check that the profile is available on this Hermes.') }
   if (code === 'bot/hermes' || code === 'bot/hermes-unsupported') return { heading: t('This Hermes can’t connect yet'), title: t('Check this Hermes version and profile'), text: t('Use a supported Hermes version and a profile that asks before running tools. Then test again.') }
+  if (draft.mode === 'ssh') return { heading: t('SSH couldn’t sign in'), title: t('Check your SSH details'), text: t('Check the host and user. If your key is locked, unlock it in your SSH agent, or choose another key.'), ssh: true }
+  if (code === 'bot/hermes-auth') return { heading: t('We couldn’t sign in'), title: draft.authMode === 'password' ? t('The sign-in wasn’t accepted') : t('The token wasn’t accepted'), text: draft.authMode === 'password' ? t('Check your user and password, then sign in again.') : t('Check the token, or choose user and password if this Hermes asks you to sign in.') }
   return { heading: t('We couldn’t connect'), title: t('Check the remote address'), text: t('Check the address and that Hermes is running, then test again.') }
 }
 
@@ -48,6 +48,8 @@ export function HermesRemoteConnect({ onClose, onConnected, edit = false, initia
   const [saved, setSaved] = useState(null)
   const [choosingKey, setChoosingKey] = useState(false)
   const request = useRef(null)
+  const testLease = useRef(null)
+  const saving = useRef(false)
   const progress = useRef(null)
   const stopProgress = () => {
     if (!progress.current) return
@@ -60,12 +62,23 @@ export function HermesRemoteConnect({ onClose, onConnected, edit = false, initia
   const dialog = useRef(null)
   const callbacks = useRef({ onConnected, onSaved })
   callbacks.current = { onConnected, onSaved }
-  const close = () => {
+  const discardTest = testId => {
+    if (!testId) return
+    if (testLease.current === testId) testLease.current = null
+    void api('hermes-remote-disconnect', { testsOnly: true, testId }).catch(() => {})
+  }
+  const disposeDraft = () => {
     epoch.current++
     request.current?.abort()
     stopProgress()
+    discardTest(testLease.current)
+  }
+  const close = () => {
+    // A save may already be committing on the host. Keep its tested identity and wait
+    // for the result rather than suggesting that closing the dialog cancels that commit.
+    if (saving.current) return
+    disposeDraft()
     setDraft(freshSecrets)
-    void api('hermes-remote-disconnect', { testsOnly: true, ...(test?.testId ? { testId: test.testId } : {}) }).catch(() => {})
     onClose()
   }
   useEscape(close)
@@ -93,12 +106,14 @@ export function HermesRemoteConnect({ onClose, onConnected, edit = false, initia
       if (!live.current || generation !== epoch.current || failure?.name === 'AbortError') return
       setStep('test'); setStatus('error'); setError(errorFor(failure, loadedDraft))
     })
-    return () => { live.current = false; epoch.current++; request.current?.abort(); stopProgress() }
+    return () => { live.current = false; disposeDraft() }
   }, [])
   useEffect(() => { dialog.current?.querySelector('input,button:not(:disabled)')?.focus() }, [step, status])
-  const change = (key, value) => { setDraft(current => ({ ...current, [key]: value })); setTest(null); setError(null) }
-  const ssh = (key, value) => setDraft(current => ({ ...current, ssh: { ...current.ssh, [key]: value } }))
+  const change = (key, value) => { if (saving.current) return; discardTest(testLease.current); setDraft(current => ({ ...current, [key]: value })); setTest(null); setError(null) }
+  const ssh = (key, value) => { if (saving.current) return; discardTest(testLease.current); setTest(null); setDraft(current => ({ ...current, ssh: { ...current.ssh, [key]: value } })) }
   const testConnection = async () => {
+    if (saving.current) return
+    discardTest(testLease.current)
     const generation = ++epoch.current
     const requestId = globalThis.crypto.randomUUID()
     const payload = { ...draft, ssh: { ...draft.ssh, port: draft.ssh.port === '' ? undefined : Number(draft.ssh.port) }, requestId }
@@ -116,7 +131,8 @@ export function HermesRemoteConnect({ onClose, onConnected, edit = false, initia
     polling.timer = setTimeout(poll, 200)
     try {
       const answer = await run('hermes-remote-test', payload)
-      if (!live.current || generation !== epoch.current) return
+      if (!live.current || generation !== epoch.current) { discardTest(answer.testId); return }
+      testLease.current = answer.testId
       setTest(answer); setProfile(answer.profiles?.[0]?.id ?? ''); setStatus('connected')
     } catch (failure) {
       if (!live.current || generation !== epoch.current || failure?.name === 'AbortError') return
@@ -127,18 +143,22 @@ export function HermesRemoteConnect({ onClose, onConnected, edit = false, initia
     }
   }
   const save = async () => {
+    if (saving.current) return
+    saving.current = true
     const generation = ++epoch.current
     setStatus('saving'); setError(null)
     try {
       const next = await run('hermes-remote-save', { testId: test.testId, profile })
       if (!live.current || generation !== epoch.current) return
+      testLease.current = null // The host consumed this test into the saved connection.
       setSaved(next); setView(next); setStep('ready'); setStatus('idle'); callbacks.current.onSaved?.(next)
     } catch (failure) {
       if (!live.current || generation !== epoch.current || failure?.name === 'AbortError') return
       setError(errorFor(failure, draft)); setStep('test'); setStatus('error')
-    }
+    } finally { saving.current = false }
   }
   const refreshProfiles = async () => {
+    if (saving.current) return
     const generation = ++epoch.current
     const testId = test.testId
     setStatus('refreshing')
@@ -186,7 +206,7 @@ export function HermesRemoteConnect({ onClose, onConnected, edit = false, initia
     if (status === 'error') {
       heading = error?.heading ?? t('We couldn’t connect')
       content = h(Fragment, null, h('div', { className: 'bt-hw-result bt-hw-failed', role: 'alert' }, h('span', { className: 'bt-hw-result-icon' }, '!'), h('h3', null, error?.title), h('p', null, error?.text)), h(Note, { error: true }, draft.mode === 'ssh' ? t('Hermes must already be installed on the other computer.') : t('Your connection details are still here. Edit them and test again.')))
-      footer = h(Fragment, null, h(Button, { onClick: testConnection, disabled: !validDetails }, t('Test again')), h(Button, { primary: true, onClick: () => setStep('details') }, error?.ssh ? t('Edit SSH details') : t('Edit sign-in'), ' ←'))
+      footer = h(Fragment, null, h(Button, { onClick: testConnection, disabled: !validDetails }, t('Test again')), h(Button, { primary: true, onClick: () => setStep('details') }, draft.mode === 'ssh' ? t('Edit SSH details') : t('Edit sign-in'), ' ←'))
     } else if (status === 'connected') {
       heading = t('Hermes is ready')
       content = h(Fragment, null, h('div', { className: 'bt-hw-result bt-hw-success', role: 'status' }, h('span', { className: 'bt-hw-result-icon' }, h(CheckIcon)), h('h3', null, t('Connection works')), h('p', null, t('Now choose a profile from this Hermes.'))), summary, h('p', { className: 'bt-hw-quiet' }, t('Nothing has been sent to a chat.')))
@@ -206,11 +226,11 @@ export function HermesRemoteConnect({ onClose, onConnected, edit = false, initia
     heading = t('Which profile would you like?')
     const profiles = test?.profiles ?? []
     content = h(Fragment, null, h('p', { className: 'bt-hw-lead' }, t('Profiles available from {address}.', { address: connectionLabel(draft) })),
-      h('div', { className: 'bt-hw-profiles', role: 'radiogroup', 'aria-label': t('Profile') }, profiles.map(item => h('button', { key: item.id, type: 'button', className: 'bt-hw-profile', role: 'radio', 'aria-checked': profile === item.id, onClick: () => setProfile(item.id) }, h('span', { className: 'bt-hw-radio' }), h('span', null, h('strong', null, item.name), h('small', null, t('Available on this Hermes'))), profile === item.id ? h('span', { className: 'bt-hw-tag' }, t('Selected')) : null))),
+      h('div', { className: 'bt-hw-profiles', role: 'radiogroup', 'aria-label': t('Profile') }, profiles.map(item => h('button', { key: item.id, type: 'button', className: 'bt-hw-profile', role: 'radio', 'aria-checked': profile === item.id, disabled: status === 'saving', onClick: () => { if (!saving.current) setProfile(item.id) } }, h('span', { className: 'bt-hw-radio' }), h('span', null, h('strong', null, item.name), h('small', null, t('Available on this Hermes'))), profile === item.id ? h('span', { className: 'bt-hw-tag' }, t('Selected')) : null))),
       h('div', { className: 'bt-hw-profile-tools' }, h('span', null, profiles.length === 1 ? t('1 profile available') : t('{count} profiles available', { count: profiles.length })), h('button', { type: 'button', disabled: status === 'refreshing' || status === 'saving', onClick: refreshProfiles }, t('Refresh list'))),
       profiles.length === 0 ? h('p', { role: 'alert', className: 'bt-hw-quiet' }, t('No profiles are available. Check the connection and test again.')) : null,
       h(Note, null, t('This profile’s tools run on the other computer under its own rules.')))
-    footer = h(Fragment, null, h(Button, { onClick: () => { setStatus('connected'); setStep('test') } }, t('Back')), h(Button, { primary: true, disabled: !profile || status === 'saving' || status === 'refreshing', onClick: save }, status === 'saving' ? t('Saving…') : t('Use this profile'), ' →'))
+    footer = h(Fragment, null, h(Button, { disabled: status === 'saving', onClick: () => { if (!saving.current) { setStatus('connected'); setStep('test') } } }, t('Back')), h(Button, { primary: true, disabled: !profile || status === 'saving' || status === 'refreshing', onClick: save }, status === 'saving' ? t('Saving…') : t('Use this profile'), ' →'))
   } else {
     heading = t('You’re connected')
     content = h(Fragment, null, h('div', { className: 'bt-hw-result bt-hw-success bt-hw-compact', role: 'status' }, h('span', { className: 'bt-hw-result-icon' }, h(CheckIcon)), h('h3', null, t('Ready to chat')), h('p', null, t('Next time, choose Remote Hermes to connect in one click.'))),
@@ -222,13 +242,14 @@ export function HermesRemoteConnect({ onClose, onConnected, edit = false, initia
   const trap = event => {
     if (event.key !== 'Tab') return
     const controls = [...dialog.current.querySelectorAll('button:not(:disabled),input:not(:disabled)')]
+    if (controls.length === 0) { event.preventDefault(); dialog.current.focus(); return }
     const first = controls[0], last = controls.at(-1)
     if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
   }
   return createPortal(h('div', { className: 'bt-hermes-layer' }, h('style', null, HERMES_REMOTE_CSS), h('div', { className: 'bt-scrim', onMouseDown: close }),
-    h('div', { ref: dialog, role: 'dialog', 'aria-modal': true, 'aria-label': t('Connect Remote Hermes'), className: 'bt-hermes-wizard', 'data-step': step, 'data-status': status, onKeyDown: trap },
-      h('header', { className: 'bt-hw-head' }, h('div', { className: 'bt-hw-identity' }, h(HermesMark, { size: 36 }), h('div', null, h('strong', null, t('Connect Remote Hermes')), h('small', null, t('A connection to another computer'))), h('button', { type: 'button', className: 'bt-hw-close', 'aria-label': t('Close connection setup'), onClick: close }, h(CloseIcon))),
+    h('div', { ref: dialog, role: 'dialog', 'aria-modal': true, 'aria-label': t('Connect Remote Hermes'), 'aria-busy': status === 'saving' || undefined, tabIndex: -1, className: 'bt-hermes-wizard', 'data-step': step, 'data-status': status, onKeyDown: trap },
+      h('header', { className: 'bt-hw-head' }, h('div', { className: 'bt-hw-identity' }, h(HermesMark, { size: 36 }), h('div', null, h('strong', null, t('Connect Remote Hermes')), h('small', null, t('A connection to another computer'))), h('button', { type: 'button', className: 'bt-hw-close', 'aria-label': t('Close connection setup'), disabled: status === 'saving', onClick: close }, h(CloseIcon))),
         h('ol', { className: 'bt-hw-steps' }, steps.map((label, index) => h('li', { key: label, 'aria-current': current === index ? 'step' : undefined, 'data-complete': index < current || undefined }, h('span', null, index < current ? h(CheckIcon) : index + 1), t(label))))),
       h('main', { className: 'bt-hw-content' }, h('h2', null, heading), content), h('footer', { className: 'bt-hw-foot' }, footer))), document.body)
 }

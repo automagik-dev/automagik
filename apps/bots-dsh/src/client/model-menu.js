@@ -420,7 +420,11 @@ export function ModelSteps({ roster, bot, view, current, picked, levelName, go, 
     routes.length === 0 ? h('div', { className: 'bt-model-none' }, t('No route is available for this Bot.')) : null,
     routes.map((route) => {
       const here = route === currentRoute && current !== undefined
-      const now = here
+      const remembered = roster.prefs?.hermesRemote
+      const rememberedProfile = remembered?.enabled ? remembered.profile : undefined
+      const now = route === 'hermes-remote' && onRemote
+        ? rememberedProfile || t('Set up')
+        : here
         ? [modelRoute(roster, current).connection, levelName].filter(Boolean).join(' · ')
         : route === 'herdr' ? t('Not available yet') : undefined
       return h('button', {
@@ -541,6 +545,13 @@ export function RouteConfirm({ bot, roster, current, target, onCancel, onConfirm
 function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, chat = false, bar = false, onPick, onPickEffort, saved = onPick === undefined }) {
   const [view, setView] = useState(MENU_ROOT)
   const [hermes, setHermes] = useState(false)
+  const remote = useRef({ generation: 0, active: false, mounted: true })
+  const owner = useRef(bot.id)
+  owner.current = bot.id
+  useEffect(() => {
+    remote.current.mounted = true
+    return () => { remote.current.mounted = false; remote.current.active = false; remote.current.generation++ }
+  }, [])
   // A route change waits for the person's word here, because it starts a new conversation.
   const [confirm, setConfirm] = useState(undefined)
   // The provider's key, for a model that needs one, is asked for inside the menu when the
@@ -719,9 +730,26 @@ function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, c
     bot, roster, current, target: confirm, onCancel: () => setConfirm(undefined),
     onConfirm: () => { const next = confirm; setConfirm(undefined); finish(); void Promise.resolve(pickModel(next.ref, next.effort, { routeChange: true })).catch(() => {}) },
   })
-  const remoteConnected = async next => {
-    if (typeof next?.modelRef !== 'string') return
+  const openRemote = () => {
+    const generation = ++remote.current.generation
+    remote.current.active = true
+    close()
+    setHermes(generation)
+  }
+  const closeRemote = generation => {
+    if (remote.current.generation !== generation) return
+    remote.current.active = false
+    remote.current.generation++
+    setHermes(false)
+    button.current?.focus()
+  }
+  const remoteConnected = async (next, generation) => {
+    const current = () => remote.current.mounted && remote.current.active && remote.current.generation === generation && owner.current === bot.id
+    if (!current() || typeof next?.modelRef !== 'string') return
     await Promise.resolve(actions.refreshModels?.()).catch(() => {})
+    if (!current()) return
+    remote.current.active = false
+    remote.current.generation++
     setHermes(false)
     if (crossing(next.modelRef)) {
       keys.current = true
@@ -734,7 +762,7 @@ function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, c
     }
   }
   return h(Fragment, null,
-    hermes ? h(HermesRemoteConnect, { onClose: () => { setHermes(false); button.current?.focus() }, onConnected: remoteConnected }) : null,
+    hermes ? h(HermesRemoteConnect, { key: hermes, onClose: () => closeRemote(hermes), onConnected: next => remoteConnected(next, hermes) }) : null,
     link ? h('button', {
       ref: button, type: 'button', className: 'bt-model-change', 'aria-haspopup': 'menu', 'aria-expanded': isOpen,
       'aria-label': t('Change the model of {name}', { name: bot.name }), onClick: toggle,
@@ -756,7 +784,7 @@ function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, c
     shownPlace ? createPortal(h('div', { ref: menu, className: `bt-menu bt-model-menu${shownPlace.bottom !== undefined ? ' bt-menu-up' : ''}`, role: 'menu', 'aria-label': t('Model for {name}', { name: bot.name }), style: shownPlace, 'data-leaving': leaving || undefined, onKeyDown },
       confirmView ?? h(ModelSteps, {
         roster, bot, view, current, picked, levelName: effortLabel, go, onModel, onLevel,
-        onRemote: () => { close(); setHermes(true) },
+        onRemote: openRemote,
         onManage: manage ? () => { finish(); manage() } : undefined,
       }),
       keyFor === undefined ? null : h(ModelKeyCard, { model: keyFor, actions: keyActions })), document.body) : null)

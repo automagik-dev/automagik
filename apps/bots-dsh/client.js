@@ -43,6 +43,7 @@ module.exports = __toCommonJS(index_exports);
 // src/client/i18n.js
 var NAMESPACE = "omni-ui";
 var ZH = {
+  "Set up": "设置",
   "1 profile available": "1 个可用配置",
   "Your sign-in was accepted": "登录已接受",
   "SSH couldn’t sign in": "SSH 无法登录",
@@ -4797,12 +4798,12 @@ var Pair = ({ label, value }) => (0, import_react14.createElement)("div", { clas
 function errorFor(error, draft) {
   const code = error?.code ?? "";
   if (code.includes("host-key")) return { heading: t("SSH couldn’t sign in"), title: t("Confirm this computer’s SSH host key"), text: t("Connect to this host once in a terminal and check its host key. Then test again. A changed key must be checked before continuing."), ssh: true };
-  if (draft.mode === "ssh" && (code.includes("missing") || code.includes("unsupported"))) return { heading: t("SSH couldn’t open Hermes"), title: t("Check the Hermes installation"), text: t("Install or update Hermes on the other computer, or enter its executable path. Then test again."), ssh: true };
-  if (draft.mode === "ssh") return { heading: t("SSH couldn’t sign in"), title: t("Check your SSH details"), text: t("Check the host and user. If your key is locked, unlock it in your SSH agent, or choose another key."), ssh: true };
-  if (code === "bot/hermes-auth") return { heading: t("We couldn’t sign in"), title: draft.authMode === "password" ? t("The sign-in wasn’t accepted") : t("The token wasn’t accepted"), text: draft.authMode === "password" ? t("Check your user and password, then sign in again.") : t("Check the token, or choose user and password if this Hermes asks you to sign in.") };
+  if (draft.mode === "ssh" && code === "bot/hermes-ssh-missing") return { heading: t("SSH couldn’t open Hermes"), title: t("Check the Hermes installation"), text: t("Install or update Hermes on the other computer, or enter its executable path. Then test again."), ssh: true };
   if (code === "bot/hermes-expired") return { heading: t("Test this connection again"), title: t("The connection test expired"), text: t("Test again before choosing and saving a profile.") };
   if (code === "bot/hermes-profiles") return { heading: t("We couldn’t list the profiles"), title: t("Check this Hermes profile list"), text: t("Refresh the list, or check that the profile is available on this Hermes.") };
   if (code === "bot/hermes" || code === "bot/hermes-unsupported") return { heading: t("This Hermes can’t connect yet"), title: t("Check this Hermes version and profile"), text: t("Use a supported Hermes version and a profile that asks before running tools. Then test again.") };
+  if (draft.mode === "ssh") return { heading: t("SSH couldn’t sign in"), title: t("Check your SSH details"), text: t("Check the host and user. If your key is locked, unlock it in your SSH agent, or choose another key."), ssh: true };
+  if (code === "bot/hermes-auth") return { heading: t("We couldn’t sign in"), title: draft.authMode === "password" ? t("The sign-in wasn’t accepted") : t("The token wasn’t accepted"), text: draft.authMode === "password" ? t("Check your user and password, then sign in again.") : t("Check the token, or choose user and password if this Hermes asks you to sign in.") };
   return { heading: t("We couldn’t connect"), title: t("Check the remote address"), text: t("Check the address and that Hermes is running, then test again.") };
 }
 function HermesRemoteConnect({ onClose, onConnected, edit = false, initialView, onSaved }) {
@@ -4817,6 +4818,8 @@ function HermesRemoteConnect({ onClose, onConnected, edit = false, initialView, 
   const [saved, setSaved] = (0, import_react14.useState)(null);
   const [choosingKey, setChoosingKey] = (0, import_react14.useState)(false);
   const request = (0, import_react14.useRef)(null);
+  const testLease = (0, import_react14.useRef)(null);
+  const saving = (0, import_react14.useRef)(false);
   const progress = (0, import_react14.useRef)(null);
   const stopProgress = () => {
     if (!progress.current) return;
@@ -4829,13 +4832,22 @@ function HermesRemoteConnect({ onClose, onConnected, edit = false, initialView, 
   const dialog = (0, import_react14.useRef)(null);
   const callbacks = (0, import_react14.useRef)({ onConnected, onSaved });
   callbacks.current = { onConnected, onSaved };
-  const close = () => {
+  const discardTest = (testId) => {
+    if (!testId) return;
+    if (testLease.current === testId) testLease.current = null;
+    void call("hermes-remote-disconnect", { testsOnly: true, testId }).catch(() => {
+    });
+  };
+  const disposeDraft = () => {
     epoch.current++;
     request.current?.abort();
     stopProgress();
+    discardTest(testLease.current);
+  };
+  const close = () => {
+    if (saving.current) return;
+    disposeDraft();
     setDraft(freshSecrets);
-    void call("hermes-remote-disconnect", { testsOnly: true, ...test?.testId ? { testId: test.testId } : {} }).catch(() => {
-    });
     onClose();
   };
   useEscape(close);
@@ -4869,21 +4881,28 @@ function HermesRemoteConnect({ onClose, onConnected, edit = false, initialView, 
     });
     return () => {
       live.current = false;
-      epoch.current++;
-      request.current?.abort();
-      stopProgress();
+      disposeDraft();
     };
   }, []);
   (0, import_react14.useEffect)(() => {
     dialog.current?.querySelector("input,button:not(:disabled)")?.focus();
   }, [step2, status]);
   const change = (key, value) => {
+    if (saving.current) return;
+    discardTest(testLease.current);
     setDraft((current2) => ({ ...current2, [key]: value }));
     setTest(null);
     setError(null);
   };
-  const ssh = (key, value) => setDraft((current2) => ({ ...current2, ssh: { ...current2.ssh, [key]: value } }));
+  const ssh = (key, value) => {
+    if (saving.current) return;
+    discardTest(testLease.current);
+    setTest(null);
+    setDraft((current2) => ({ ...current2, ssh: { ...current2.ssh, [key]: value } }));
+  };
   const testConnection = async () => {
+    if (saving.current) return;
+    discardTest(testLease.current);
     const generation = ++epoch.current;
     const requestId = globalThis.crypto.randomUUID();
     const payload = { ...draft, ssh: { ...draft.ssh, port: draft.ssh.port === "" ? void 0 : Number(draft.ssh.port) }, requestId };
@@ -4906,7 +4925,11 @@ function HermesRemoteConnect({ onClose, onConnected, edit = false, initialView, 
     polling.timer = setTimeout(poll, 200);
     try {
       const answer = await run2("hermes-remote-test", payload);
-      if (!live.current || generation !== epoch.current) return;
+      if (!live.current || generation !== epoch.current) {
+        discardTest(answer.testId);
+        return;
+      }
+      testLease.current = answer.testId;
       setTest(answer);
       setProfile(answer.profiles?.[0]?.id ?? "");
       setStatus("connected");
@@ -4920,12 +4943,15 @@ function HermesRemoteConnect({ onClose, onConnected, edit = false, initialView, 
     }
   };
   const save = async () => {
+    if (saving.current) return;
+    saving.current = true;
     const generation = ++epoch.current;
     setStatus("saving");
     setError(null);
     try {
       const next = await run2("hermes-remote-save", { testId: test.testId, profile });
       if (!live.current || generation !== epoch.current) return;
+      testLease.current = null;
       setSaved(next);
       setView(next);
       setStep("ready");
@@ -4936,9 +4962,12 @@ function HermesRemoteConnect({ onClose, onConnected, edit = false, initialView, 
       setError(errorFor(failure, draft));
       setStep("test");
       setStatus("error");
+    } finally {
+      saving.current = false;
     }
   };
   const refreshProfiles = async () => {
+    if (saving.current) return;
     const generation = ++epoch.current;
     const testId = test.testId;
     setStatus("refreshing");
@@ -5005,7 +5034,7 @@ function HermesRemoteConnect({ onClose, onConnected, edit = false, initialView, 
     if (status === "error") {
       heading = error?.heading ?? t("We couldn’t connect");
       content = (0, import_react14.createElement)(import_react14.Fragment, null, (0, import_react14.createElement)("div", { className: "bt-hw-result bt-hw-failed", role: "alert" }, (0, import_react14.createElement)("span", { className: "bt-hw-result-icon" }, "!"), (0, import_react14.createElement)("h3", null, error?.title), (0, import_react14.createElement)("p", null, error?.text)), (0, import_react14.createElement)(Note, { error: true }, draft.mode === "ssh" ? t("Hermes must already be installed on the other computer.") : t("Your connection details are still here. Edit them and test again.")));
-      footer = (0, import_react14.createElement)(import_react14.Fragment, null, (0, import_react14.createElement)(Button, { onClick: testConnection, disabled: !validDetails }, t("Test again")), (0, import_react14.createElement)(Button, { primary: true, onClick: () => setStep("details") }, error?.ssh ? t("Edit SSH details") : t("Edit sign-in"), " ←"));
+      footer = (0, import_react14.createElement)(import_react14.Fragment, null, (0, import_react14.createElement)(Button, { onClick: testConnection, disabled: !validDetails }, t("Test again")), (0, import_react14.createElement)(Button, { primary: true, onClick: () => setStep("details") }, draft.mode === "ssh" ? t("Edit SSH details") : t("Edit sign-in"), " ←"));
     } else if (status === "connected") {
       heading = t("Hermes is ready");
       content = (0, import_react14.createElement)(import_react14.Fragment, null, (0, import_react14.createElement)("div", { className: "bt-hw-result bt-hw-success", role: "status" }, (0, import_react14.createElement)("span", { className: "bt-hw-result-icon" }, (0, import_react14.createElement)(CheckIcon)), (0, import_react14.createElement)("h3", null, t("Connection works")), (0, import_react14.createElement)("p", null, t("Now choose a profile from this Hermes."))), summary, (0, import_react14.createElement)("p", { className: "bt-hw-quiet" }, t("Nothing has been sent to a chat.")));
@@ -5031,14 +5060,18 @@ function HermesRemoteConnect({ onClose, onConnected, edit = false, initialView, 
       import_react14.Fragment,
       null,
       (0, import_react14.createElement)("p", { className: "bt-hw-lead" }, t("Profiles available from {address}.", { address: connectionLabel(draft) })),
-      (0, import_react14.createElement)("div", { className: "bt-hw-profiles", role: "radiogroup", "aria-label": t("Profile") }, profiles.map((item) => (0, import_react14.createElement)("button", { key: item.id, type: "button", className: "bt-hw-profile", role: "radio", "aria-checked": profile === item.id, onClick: () => setProfile(item.id) }, (0, import_react14.createElement)("span", { className: "bt-hw-radio" }), (0, import_react14.createElement)("span", null, (0, import_react14.createElement)("strong", null, item.name), (0, import_react14.createElement)("small", null, t("Available on this Hermes"))), profile === item.id ? (0, import_react14.createElement)("span", { className: "bt-hw-tag" }, t("Selected")) : null))),
+      (0, import_react14.createElement)("div", { className: "bt-hw-profiles", role: "radiogroup", "aria-label": t("Profile") }, profiles.map((item) => (0, import_react14.createElement)("button", { key: item.id, type: "button", className: "bt-hw-profile", role: "radio", "aria-checked": profile === item.id, disabled: status === "saving", onClick: () => {
+        if (!saving.current) setProfile(item.id);
+      } }, (0, import_react14.createElement)("span", { className: "bt-hw-radio" }), (0, import_react14.createElement)("span", null, (0, import_react14.createElement)("strong", null, item.name), (0, import_react14.createElement)("small", null, t("Available on this Hermes"))), profile === item.id ? (0, import_react14.createElement)("span", { className: "bt-hw-tag" }, t("Selected")) : null))),
       (0, import_react14.createElement)("div", { className: "bt-hw-profile-tools" }, (0, import_react14.createElement)("span", null, profiles.length === 1 ? t("1 profile available") : t("{count} profiles available", { count: profiles.length })), (0, import_react14.createElement)("button", { type: "button", disabled: status === "refreshing" || status === "saving", onClick: refreshProfiles }, t("Refresh list"))),
       profiles.length === 0 ? (0, import_react14.createElement)("p", { role: "alert", className: "bt-hw-quiet" }, t("No profiles are available. Check the connection and test again.")) : null,
       (0, import_react14.createElement)(Note, null, t("This profile’s tools run on the other computer under its own rules."))
     );
-    footer = (0, import_react14.createElement)(import_react14.Fragment, null, (0, import_react14.createElement)(Button, { onClick: () => {
-      setStatus("connected");
-      setStep("test");
+    footer = (0, import_react14.createElement)(import_react14.Fragment, null, (0, import_react14.createElement)(Button, { disabled: status === "saving", onClick: () => {
+      if (!saving.current) {
+        setStatus("connected");
+        setStep("test");
+      }
     } }, t("Back")), (0, import_react14.createElement)(Button, { primary: true, disabled: !profile || status === "saving" || status === "refreshing", onClick: save }, status === "saving" ? t("Saving…") : t("Use this profile"), " →"));
   } else {
     heading = t("You’re connected");
@@ -5058,6 +5091,11 @@ function HermesRemoteConnect({ onClose, onConnected, edit = false, initialView, 
   const trap = (event) => {
     if (event.key !== "Tab") return;
     const controls = [...dialog.current.querySelectorAll("button:not(:disabled),input:not(:disabled)")];
+    if (controls.length === 0) {
+      event.preventDefault();
+      dialog.current.focus();
+      return;
+    }
     const first = controls[0], last = controls.at(-1);
     if (event.shiftKey && document.activeElement === first) {
       event.preventDefault();
@@ -5074,11 +5112,11 @@ function HermesRemoteConnect({ onClose, onConnected, edit = false, initialView, 
     (0, import_react14.createElement)("div", { className: "bt-scrim", onMouseDown: close }),
     (0, import_react14.createElement)(
       "div",
-      { ref: dialog, role: "dialog", "aria-modal": true, "aria-label": t("Connect Remote Hermes"), className: "bt-hermes-wizard", "data-step": step2, "data-status": status, onKeyDown: trap },
+      { ref: dialog, role: "dialog", "aria-modal": true, "aria-label": t("Connect Remote Hermes"), "aria-busy": status === "saving" || void 0, tabIndex: -1, className: "bt-hermes-wizard", "data-step": step2, "data-status": status, onKeyDown: trap },
       (0, import_react14.createElement)(
         "header",
         { className: "bt-hw-head" },
-        (0, import_react14.createElement)("div", { className: "bt-hw-identity" }, (0, import_react14.createElement)(HermesMark, { size: 36 }), (0, import_react14.createElement)("div", null, (0, import_react14.createElement)("strong", null, t("Connect Remote Hermes")), (0, import_react14.createElement)("small", null, t("A connection to another computer"))), (0, import_react14.createElement)("button", { type: "button", className: "bt-hw-close", "aria-label": t("Close connection setup"), onClick: close }, (0, import_react14.createElement)(CloseIcon))),
+        (0, import_react14.createElement)("div", { className: "bt-hw-identity" }, (0, import_react14.createElement)(HermesMark, { size: 36 }), (0, import_react14.createElement)("div", null, (0, import_react14.createElement)("strong", null, t("Connect Remote Hermes")), (0, import_react14.createElement)("small", null, t("A connection to another computer"))), (0, import_react14.createElement)("button", { type: "button", className: "bt-hw-close", "aria-label": t("Close connection setup"), disabled: status === "saving", onClick: close }, (0, import_react14.createElement)(CloseIcon))),
         (0, import_react14.createElement)("ol", { className: "bt-hw-steps" }, steps.map((label, index) => (0, import_react14.createElement)("li", { key: label, "aria-current": current === index ? "step" : void 0, "data-complete": index < current || void 0 }, (0, import_react14.createElement)("span", null, index < current ? (0, import_react14.createElement)(CheckIcon) : index + 1), t(label))))
       ),
       (0, import_react14.createElement)("main", { className: "bt-hw-content" }, (0, import_react14.createElement)("h2", null, heading), content),
@@ -5496,7 +5534,9 @@ function ModelSteps({ roster, bot, view, current, picked, levelName: levelName2,
     routes.length === 0 ? (0, import_react15.createElement)("div", { className: "bt-model-none" }, t("No route is available for this Bot.")) : null,
     routes.map((route) => {
       const here = route === currentRoute && current !== void 0;
-      const now = here ? [modelRoute(roster, current).connection, levelName2].filter(Boolean).join(" · ") : route === "herdr" ? t("Not available yet") : void 0;
+      const remembered = roster.prefs?.hermesRemote;
+      const rememberedProfile = remembered?.enabled ? remembered.profile : void 0;
+      const now = route === "hermes-remote" && onRemote ? rememberedProfile || t("Set up") : here ? [modelRoute(roster, current).connection, levelName2].filter(Boolean).join(" · ") : route === "herdr" ? t("Not available yet") : void 0;
       return (0, import_react15.createElement)(
         "button",
         {
@@ -5605,6 +5645,17 @@ function RouteConfirm({ bot, roster, current, target, onCancel, onConfirm }) {
 function DshModelMenu({ bot, roster, actions, run: run2, wide = false, link = false, chat = false, bar = false, onPick, onPickEffort, saved = onPick === void 0 }) {
   const [view, setView] = (0, import_react15.useState)(MENU_ROOT);
   const [hermes, setHermes] = (0, import_react15.useState)(false);
+  const remote = (0, import_react15.useRef)({ generation: 0, active: false, mounted: true });
+  const owner = (0, import_react15.useRef)(bot.id);
+  owner.current = bot.id;
+  (0, import_react15.useEffect)(() => {
+    remote.current.mounted = true;
+    return () => {
+      remote.current.mounted = false;
+      remote.current.active = false;
+      remote.current.generation++;
+    };
+  }, []);
   const [confirm, setConfirm] = (0, import_react15.useState)(void 0);
   const [keyFor, setKeyFor] = (0, import_react15.useState)(void 0);
   const [, setAsked] = (0, import_react15.useState)(0);
@@ -5796,10 +5847,27 @@ function DshModelMenu({ bot, roster, actions, run: run2, wide = false, link = fa
       });
     }
   });
-  const remoteConnected = async (next) => {
-    if (typeof next?.modelRef !== "string") return;
+  const openRemote = () => {
+    const generation = ++remote.current.generation;
+    remote.current.active = true;
+    close();
+    setHermes(generation);
+  };
+  const closeRemote = (generation) => {
+    if (remote.current.generation !== generation) return;
+    remote.current.active = false;
+    remote.current.generation++;
+    setHermes(false);
+    button.current?.focus();
+  };
+  const remoteConnected = async (next, generation) => {
+    const current2 = () => remote.current.mounted && remote.current.active && remote.current.generation === generation && owner.current === bot.id;
+    if (!current2() || typeof next?.modelRef !== "string") return;
     await Promise.resolve(actions.refreshModels?.()).catch(() => {
     });
+    if (!current2()) return;
+    remote.current.active = false;
+    remote.current.generation++;
     setHermes(false);
     if (crossing(next.modelRef)) {
       keys.current = true;
@@ -5815,10 +5883,7 @@ function DshModelMenu({ bot, roster, actions, run: run2, wide = false, link = fa
   return (0, import_react15.createElement)(
     import_react15.Fragment,
     null,
-    hermes ? (0, import_react15.createElement)(HermesRemoteConnect, { onClose: () => {
-      setHermes(false);
-      button.current?.focus();
-    }, onConnected: remoteConnected }) : null,
+    hermes ? (0, import_react15.createElement)(HermesRemoteConnect, { key: hermes, onClose: () => closeRemote(hermes), onConnected: (next) => remoteConnected(next, hermes) }) : null,
     link ? (0, import_react15.createElement)("button", {
       ref: button,
       type: "button",
@@ -5869,10 +5934,7 @@ function DshModelMenu({ bot, roster, actions, run: run2, wide = false, link = fa
         go,
         onModel,
         onLevel,
-        onRemote: () => {
-          close();
-          setHermes(true);
-        },
+        onRemote: openRemote,
         onManage: manage ? () => {
           finish();
           manage();
