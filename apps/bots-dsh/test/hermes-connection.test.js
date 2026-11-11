@@ -8,6 +8,7 @@ import { prepareHermesConnection, refreshHermesProfiles } from '../src/host/herm
 import { install } from '../src/host/hermes-remote.js'
 import { HermesTransport, RemoteChat } from '../src/host/hermes-transport.js'
 import { fakeContext } from './fake-ctx.js'
+import { markAgentLoopRequest } from '@deepseek-ai/dsh-llm'
 
 const deadlines = { start: 300, control: 100, cancel: 10 }
 const response = (value, status = 200, cookies = []) => ({ ok: status >= 200 && status < 300, status, json: async () => value, headers: { getSetCookie: () => cookies } })
@@ -57,7 +58,7 @@ function runtime(t, fixture, overrides = {}) {
     }
     async session() { await overrides.beforeSession?.(this); return { session_id: randomUUID(), stored_session_id: randomUUID(), info: { desktop_contract: 8, approval_mode: 'manual', yolo: false } } }
     async models() { await overrides.beforeModels?.(this); return overrides.models ?? [{ id: 'sample:model', model: 'model', provider: 'sample', name: 'Sample model' }] }
-    async request(method, params) { this.sent.push({ method, params }); return {} }
+    async request(method, params) { this.sent.push({ method, params }); await overrides.onRequest?.(method, params, this); return {} }
     close() { if (this.closed) return; this.closed = true; this.cancelConnect?.(); for (const listener of this.listeners) listener({ kind: 'lost' }) }
   }
   install(rt, { transport: options => new Wire(options), fetch: fixture.fetch, deadlines, ...overrides })
@@ -231,7 +232,7 @@ test('replacing the remote target refuses uncertain sessions and preserves their
   h.rt.state.prefs.hermesRemote = { enabled: true, address: 'https://example.invalid/other', profile: 'sample-profile', models: [] }
   h.rt.state.hermesSessions = { chat: { storedSessionId: 'saved', runtimeSessionId: 'runtime', pendingSubmit: true, uncertain: true } }
   const before = JSON.stringify(h.rt.state), tested = await h.rt.hermesRemote.test(f.token)
-  await assert.rejects(h.rt.hermesRemote.save({ testId: tested.testId, profile: 'sample-profile' }), /Reconcile uncertain/)
+  await assert.rejects(h.rt.hermesRemote.save({ testId: tested.testId, profile: 'sample-profile' }), { code: 'bot/hermes-busy' })
   assert.equal(JSON.stringify(h.rt.state), before)
 })
 test('one action budget covers delayed auth plus gateway startup and closes the remaining probe', async t => {
@@ -802,5 +803,151 @@ for (const rollback of [false, true]) {
     gate.release(); await finished
     assert.ok(h.secrets.get(pendingReference) === replacement, 'a changed value survives the compare-delete boundary')
     assert.ok(h.secrets.has(h.rt.hermesRemote.view().credentialRef), 'the configured credential remains usable')
+  })
+}
+
+
+function chatWire(wire) {
+  wire.epoch = 'sample-epoch'; wire.redact = value => value
+  wire.deadlines = { cancel: 10 }
+  wire.bounded = async (promise, milliseconds) => {
+    let timer
+    try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(Error('Fixture ignored interrupt')), milliseconds) })]) }
+    finally { clearTimeout(timer) }
+  }
+}
+
+test('hermes-chat-admission-fence-dropped: a real run cannot submit after replacement owns the connection FIFO', { timeout: 2000 }, async t => {
+  const f = dashboard(), h = await durableRuntime(t, f, { deadlines: { start: 1000, control: 1000, cancel: 50 }, onConnect: chatWire }), gate = barrier()
+  await h.rt.hermesRemote.configure({ enabled: true, address: f.address, profile: 'old-profile', credential: f.credential })
+  const adapter = h.rt.hermesRemote.adapter, identity = adapter.identity('sample-chat'), run = await adapter.open({ identity, save: () => h.rt.save({ required: true }) })
+  await run.prepare(); adapter.live.set('sample-chat', { run })
+  const set = h.rt.secretEndpoint
+  h.rt.secretEndpoint = async (name, body) => { if (name === 'secret-set') { gate.reach(); await gate.held }; return set(name, body) }
+  const configuring = h.rt.hermesRemote.configure({ enabled: true, address: f.address, profile: 'new-profile', credential: randomUUID() })
+  await gate.entered
+  const queuedIdentity = adapter.identity('queued-old-chat')
+  const submitting = run.submit('Sample prompt'), opening = adapter.open({ identity: queuedIdentity, save: () => h.rt.save({ required: true }) })
+  const settled = Promise.allSettled([submitting, opening])
+  const agent = { session: { id: 'queued-stream' }, ctx: { tools: { register: () => () => {} } } }, get = h.rt.ctx.get
+  h.rt.ctx.get = name => name === 'agents' ? { get: () => agent, list: () => [agent] } : get(name)
+  const stream = adapter.stream(markAgentLoopRequest({ provider: 'hermes-remote', model: 'sample:model', sessionId: agent.session.id, messages: [{ role: 'user', content: 'Sample queued prompt' }] }))
+  const queuedRow = stream.next()
+  await eventTurn()
+  const admittedWhileOwned = run.transport.sent.some(frame => frame.method === 'prompt.submit')
+  gate.release(); await configuring
+  const [submission, queuedOpen] = await settled
+  assert.equal(queuedOpen.status, 'rejected', 'an old queued open cannot bind itself to the replacement profile')
+  assert.equal(queuedOpen.reason.code, 'bot/hermes-busy')
+  const row = await queuedRow
+  assert.equal(row.value.reason.failure.message, 'A chat is still running on this connection; stop it or wait.')
+  await stream.return()
+  assert.equal(admittedWhileOwned, false, 'no prompt bytes leave while connection replacement owns the FIFO')
+  assert.equal(submission.status, 'rejected')
+  assert.equal(submission.reason.code, 'bot/hermes-busy')
+  assert.ok(!run.transport.sent.some(frame => frame.method === 'prompt.submit'))
+})
+
+test('a real adapter stream admitted first keeps its uncertain identity and blocks profile or credential replacement', { timeout: 2000 }, async t => {
+  const session = barrier(), admission = barrier(), f = dashboard()
+  const h = await durableRuntime(t, f, { deadlines: { start: 1000, control: 1000, cancel: 50 }, beforeSession: async () => { session.reach(); await session.held }, onConnect: chatWire, onRequest: method => { if (method === 'prompt.submit') admission.reach() } })
+  await h.rt.hermesRemote.configure({ enabled: true, address: f.address, profile: 'old-profile', credential: f.credential })
+  h.rt.state.prefs.hermesRemote.models = [{ id: 'sample:model', name: 'Sample', model: 'model', provider: 'sample' }]
+  await h.rt.save()
+  const agent = { session: { id: 'sample-stream' }, ctx: { tools: { register: () => () => {} } } }, get = h.rt.ctx.get
+  h.rt.ctx.get = name => name === 'agents' ? { get: () => agent, list: () => [agent] } : get(name)
+  const stream = h.rt.hermesRemote.adapter.stream(markAgentLoopRequest({ provider: 'hermes-remote', model: 'sample:model', sessionId: agent.session.id, messages: [{ role: 'user', content: 'Sample prompt' }] }))
+  const row = stream.next()
+  await session.entered
+  const identity = h.rt.state.hermesSessions[agent.session.id], run = h.rt.hermesRemote.adapter.live.get(agent.session.id).run
+  const oldRecord = h.rt.state.prefs.hermesRemote, oldSecret = h.secrets.get(oldRecord.credentialRef)
+  const configuring = h.rt.hermesRemote.configure({ enabled: true, address: f.address, profile: 'new-profile', credential: randomUUID() }), result = Promise.allSettled([configuring])
+  await eventTurn(); session.release(); await admission.entered
+  const [replacement] = await result
+  try {
+    assert.equal(replacement.status, 'rejected')
+    assert.equal(replacement.reason.code, 'bot/hermes-busy')
+    assert.equal(h.rt.state.prefs.hermesRemote, oldRecord)
+    assert.equal(h.rt.state.hermesSessions[agent.session.id], identity)
+    assert.ok(identity.pendingSubmit || identity.uncertain)
+    assert.ok(h.secrets.get(oldRecord.credentialRef) === oldSecret, 'busy refusal preserves the old key')
+    assert.ok(JSON.parse(await readFile(h.rt.statePath, 'utf8')).hermesSessions[agent.session.id].storedSessionId)
+  } finally { run.push({ kind: 'error', text: 'Fixture turn ended' }); await row; await stream.return() }
+})
+
+for (const save of [false, true]) {
+  test(`hermes-replaceability-recheck-dropped: ${save ? 'test-save' : 'configure'} refuses uncertainty discovered by real ignored Stop before changing keys`, { timeout: 2000 }, async t => {
+    const f = dashboard(), h = await durableRuntime(t, f, { deadlines: { start: 1000, control: 1000, cancel: 50 } })
+    await h.rt.hermesRemote.configure({ enabled: true, address: f.address, profile: 'old-profile', credential: f.credential })
+    const tested = save ? await h.rt.hermesRemote.test(f.token) : undefined
+    const identity = h.rt.hermesRemote.adapter.identity('sample-stop')
+    Object.assign(identity, { runtimeSessionId: randomUUID(), storedSessionId: randomUUID() })
+    const transport = { listeners: new Set(), sent: [], close() {}, request: async method => { transport.sent.push(method); return {} } }
+    chatWire(transport)
+    const run = new RemoteChat(transport, { identity, save: () => h.rt.save({ required: true }) }), stop = run.stop.bind(run)
+    run.stop = () => { identity.pendingSubmit = true; return stop() }
+    h.rt.hermesRemote.adapter.live.set('sample-stop', { run })
+    const oldRecord = h.rt.state.prefs.hermesRemote, oldSecret = h.secrets.get(oldRecord.credentialRef), writes = h.secretCalls.length
+    await h.rt.save()
+    const replacing = save ? h.rt.hermesRemote.save({ testId: tested.testId, profile: 'sample-profile' }) : h.rt.hermesRemote.configure({ enabled: true, address: f.address, profile: 'new-profile', credential: randomUUID() })
+    await assert.rejects(replacing, { code: 'bot/hermes-busy', message: 'A chat is still running on this connection; stop it or wait.' })
+    assert.equal(h.rt.state.prefs.hermesRemote, oldRecord)
+    assert.equal(h.rt.state.hermesSessions['sample-stop'], identity)
+    assert.equal(identity.uncertain, true)
+    assert.ok(h.secrets.get(oldRecord.credentialRef) === oldSecret)
+    assert.equal(h.secretCalls.length, writes, 'no credential is written or removed before the post-Stop guard')
+    assert.equal(JSON.parse(await readFile(h.rt.statePath, 'utf8')).hermesSessions['sample-stop'].storedSessionId, identity.storedSessionId)
+  })
+}
+
+
+test('an admitted turn also blocks same-profile credential replacement through configure and test-save', async t => {
+  for (const save of [false, true]) {
+    const f = dashboard(), h = await durableRuntime(t, f)
+    await h.rt.hermesRemote.configure({ enabled: true, address: f.address, profile: 'sample-profile', credential: f.credential })
+    const tested = save ? await h.rt.hermesRemote.test(f.token) : undefined
+    const identity = h.rt.hermesRemote.adapter.identity('same-profile-chat')
+    Object.assign(identity, { pendingSubmit: true, runtimeSessionId: randomUUID(), storedSessionId: randomUUID() })
+    const record = h.rt.state.prefs.hermesRemote, secret = h.secrets.get(record.credentialRef), writes = h.secretCalls.length
+    const changing = save ? h.rt.hermesRemote.save({ testId: tested.testId, profile: 'sample-profile' }) : h.rt.hermesRemote.configure({ enabled: true, address: f.address, profile: 'sample-profile', credential: randomUUID() })
+    await assert.rejects(changing, { code: 'bot/hermes-busy' })
+    assert.equal(h.rt.state.prefs.hermesRemote, record)
+    assert.equal(h.rt.state.hermesSessions['same-profile-chat'], identity)
+    assert.ok(h.secrets.get(record.credentialRef) === secret)
+    assert.equal(h.secretCalls.length, writes)
+  }
+})
+
+
+for (const cancel of [true, false]) {
+  test(`hermes-chat-admission-cancel-wait-dropped: real adapter ${cancel ? 'Stop' : 'startup deadline'} settles queued admission while settings persistence remains blocked`, { timeout: 2000 }, async t => {
+    const opened = barrier(), loaded = barrier(), writing = barrier(), controller = new AbortController(), f = dashboard()
+    const limits = { start: cancel ? 1000 : 40, control: 1000, cancel: 10 }
+    const h = await durableRuntime(t, f, { deadlines: limits, onConnect: async wire => { chatWire(wire); opened.reach(); await opened.held } })
+    await h.rt.hermesRemote.configure({ enabled: true, address: f.address, profile: 'old-profile', credential: f.credential })
+    h.rt.state.prefs.hermesRemote.models = [{ id: 'sample:model', name: 'Sample', model: 'model', provider: 'sample' }]
+    await h.rt.save()
+    const agent = { session: { id: 'queued-admission' }, ctx: { tools: { register: () => () => {} } } }, get = h.rt.ctx.get
+    h.rt.ctx.get = name => name === 'agents' ? { get: () => agent, list: () => [agent] } : get(name)
+    const stream = h.rt.hermesRemote.adapter.stream(markAgentLoopRequest({ provider: 'hermes-remote', model: 'sample:model', sessionId: agent.session.id, signal: controller.signal, messages: [{ role: 'user', content: 'Sample prompt' }] }))
+    const row = stream.next()
+    await opened.entered
+    const load = h.rt.load, set = h.rt.secretEndpoint
+    h.rt.load = async () => { loaded.reach(); await loaded.held; return load() }
+    h.rt.secretEndpoint = async (name, body) => { if (name === 'secret-set') { writing.reach(); await writing.held }; return set(name, body) }
+    const configuring = h.rt.hermesRemote.configure({ enabled: true, address: f.address, profile: 'new-profile', credential: randomUUID() })
+    opened.release(); await loaded.entered; await eventTurn()
+    assert.ok(h.rt.hermesRemote.adapter.live.has(agent.session.id), 'the old run reached adapter admission before teardown')
+    loaded.release(); await writing.entered
+    if (cancel) controller.abort()
+    let timer, returned
+    try {
+      returned = await Promise.race([row.then(() => true), new Promise(resolve => { timer = setTimeout(() => resolve(false), cancel ? limits.cancel * 4 : limits.start * 3) })])
+    } finally {
+      clearTimeout(timer); writing.release(); await configuring; await row; await stream.return()
+    }
+    await eventTurn()
+    assert.equal(returned, true, 'queued admission must settle before the settings owner releases its lock')
+    assert.ok(h.wires.every(wire => !wire.sent.some(frame => frame.method === 'prompt.submit')), 'cancelled or expired queued work never submits later')
   })
 }

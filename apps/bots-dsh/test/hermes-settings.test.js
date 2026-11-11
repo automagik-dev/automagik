@@ -234,6 +234,21 @@ test('an expired saved token from the real transport and host endpoint asks for 
   assert.doesNotMatch(render.document.body.textContent, /Check the remote address/)
 })
 
+test('a real host busy refusal tells the wizard to stop or wait without address advice', async t => {
+  const ctx = fakeContext(), endpoints = new Map(), credential = randomUUID()
+  ctx.llm.registerAdapter = () => () => {}
+  t.after(() => ctx.dispose())
+  const rt = { ctx, state: { prefs: { hermesRemote: { ...connectedView(), credentialRef: 'SAMPLE' } }, hermesSessions: { sample: { pendingSubmit: true, uncertain: true, storedSessionId: randomUUID() } } }, load: async () => {}, save: async () => {}, loadSecrets: async () => {}, secretValue: () => credential, hooks: { endpoint: (name, fn) => endpoints.set(name, fn) } }
+  install(rt)
+  const render = await startWizard(t, { 'hermes-remote-test': () => endpoints.get('hermes-remote-configure')({ enabled: true, address: 'https://example.invalid', profile: 'another-profile' }) })
+  await enterToken(render); await render.click('Test connection')
+  await waitFor(() => render.document.querySelector('[data-status=error]'), 'busy chat refusal')
+  assert.match(render.document.body.textContent, /A chat is still running on this connection; stop it or wait\./)
+  assert.match(render.document.body.textContent, /Your connection settings were not changed\./)
+  assert.equal(render.document.querySelector('.bt-hw-error-note').textContent, 'Stop the chat or wait')
+  assert.doesNotMatch(render.document.body.textContent, /Check the remote address|Check the SSH user and key/)
+})
+
 test('the wizard follows the approved remote token frames with honest progress, profile save and Ready', async t => {
   const pending = deferred()
   const render = await startWizard(t, { 'hermes-remote-test': () => pending.promise })

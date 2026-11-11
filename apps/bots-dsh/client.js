@@ -43,6 +43,9 @@ module.exports = __toCommonJS(index_exports);
 // src/client/i18n.js
 var NAMESPACE = "omni-ui";
 var ZH = {
+  "A chat is still running on this connection; stop it or wait.": "此连接上仍有聊天正在运行；请停止聊天或等待。",
+  "Your connection settings were not changed.": "你的连接设置没有更改。",
+  "Stop the chat or wait": "停止聊天或等待",
   "Connection cleanup is unconfirmed": "无法确认连接已清理",
   "Check the other computer before reconnecting": "重新连接前请检查另一台电脑",
   "Automagik could not confirm that the owned Hermes process group stopped. Remote work may continue.": "Automagik 无法确认其管理的 Hermes 进程组已停止。远程任务可能仍在继续。",
@@ -4858,6 +4861,7 @@ var Note = ({ children, error = false }) => (0, import_react14.createElement)("d
 var Pair = ({ label, value }) => (0, import_react14.createElement)("div", { className: "bt-hw-pair" }, (0, import_react14.createElement)("span", null, label), (0, import_react14.createElement)("strong", null, value));
 function errorFor(error, draft) {
   const code = error?.code ?? "";
+  if (code === "bot/hermes-busy") return { heading: t("Remote Hermes"), title: t("A chat is still running on this connection; stop it or wait."), text: t("Your connection settings were not changed."), hint: t("Stop the chat or wait") };
   if (code === "bot/hermes-ssh-cleanup") return { heading: t("Connection cleanup is unconfirmed"), title: t("Check the other computer before reconnecting"), text: t("Automagik could not confirm that the owned Hermes process group stopped. Remote work may continue."), hint: t("Check the remote Hermes process before testing or connecting again."), ssh: true };
   if (code === "bot/hermes-ssh-update") return { heading: t("Hermes needs an update"), title: t("Update Hermes on the other computer"), text: t("This Hermes installation lacks the server ownership options needed for an SSH connection."), hint: t("Update Hermes, then test the SSH connection again."), ssh: true };
   if (code === "bot/hermes-ssh-platform") return { heading: t("This computer cannot run the SSH connection yet"), title: t("Check the remote system and Python"), text: t("The remote computer needs Linux or macOS, Python 3, and a supported Hermes installation."), hint: t("Check Python and the supported system on the other computer, then test again."), ssh: true };

@@ -153,7 +153,7 @@ export class RemoteChatAdapter extends LlmAdapter {
         if (row.kind === 'done') { complete = true; return yield finish('stop') }
       }
     } catch (error) {
-      yield finish('error', error?.code === 'bot/hermes' ? error.message : 'Remote Hermes could not complete this turn. Reconcile the remote session before sending again.')
+      yield finish('error', error?.code === 'bot/hermes-busy' ? 'A chat is still running on this connection; stop it or wait.' : error?.code === 'bot/hermes' ? error.message : 'Remote Hermes could not complete this turn. Reconcile the remote session before sending again.')
     } finally {
       options.signal?.removeEventListener('abort', stop)
       if (entry && !yieldedTool) {

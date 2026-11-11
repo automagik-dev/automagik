@@ -1888,5 +1888,8 @@
   "The SSH connection could not start": "Não foi possível iniciar a conexão SSH",
   "Check the SSH connection details": "Verifique os dados da conexão SSH",
   "Check the SSH connection and remote Hermes, then test again.": "Verifique a conexão SSH e o Hermes remoto, depois teste novamente.",
-  "Check the connection details without changing host-key protection.": "Verifique os dados da conexão sem alterar a proteção da chave do host."
+  "Check the connection details without changing host-key protection.": "Verifique os dados da conexão sem alterar a proteção da chave do host.",
+  "A chat is still running on this connection; stop it or wait.": "Ainda há um chat em execução nesta conexão; interrompa ou aguarde.",
+  "Your connection settings were not changed.": "As configurações da conexão não foram alteradas.",
+  "Stop the chat or wait": "Interrompa o chat ou aguarde"
 }
