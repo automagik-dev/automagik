@@ -442,3 +442,52 @@ dev/check.sh                             # all checks (see below)
 ## License
 
 [Apache-2.0](LICENSE)
+
+### Remote Hermes (first delivery, #1070)
+
+**Hermes remote** is its own route after Native, ACP and Herdr. It connects to an operator's
+already running `hermes serve`; Automagik never starts that service. Local Hermes continues to
+use ACP. The new route is off by default. In **Models and providers → Hermes remote**, enter
+an HTTPS origin, optional profile and provisioned session credential, save and enable, then
+**Discover models**. The credential is stored only in the existing mode-0600 Bot secret store,
+with no Bot scope; the connection holds its reference. The transport mints a one-use ticket at
+`POST /api/auth/ws-ticket`, then offers `hermes-gateway-ticket.<ticket>` beside the stable
+`hermes-gateway-v1` WebSocket subprotocol. Neither standing credentials nor tickets enter URLs,
+arguments, prompts or diagnostics. Authentication failures never echo response bodies.
+
+Only **standalone Desktop contract 8 with server-request approvals** is accepted. Canonical
+authority is refused. The remote profile must already use manual approvals: DSH never changes
+its global setting. Full access answers each approval `once`; a restrictive no-ask level refuses;
+Manual uses DSH's approval service. DSH's local sandbox does not constrain the remote machine.
+Other server requests (including secret/sudo/clarification) receive an unsupported-method error
+in this delivery. Hermes's own allow rules can still run actions without asking DSH.
+
+Text, remote tool cards, Stop and resume share the DSH chat. Stored/runtime session IDs and any
+returned admission ID are saved. An ambiguous submit is never sent again automatically, and
+never falls back to another model. **Connection lost; remote outcome unknown** requires
+**Reconnect and reconcile** in setup. That action only reads: it never answers a pending
+approval. It shows an authoritative snapshot when replay has a gap. Returning to the chat can
+resume the existing remote turn and its DSH approvals; that message is explicitly not submitted
+as a new prompt. Review the recovered result before sending a new turn. Stop requests interrupt,
+waits up to five seconds for terminal confirmation, then detaches; background remote children
+may continue. Startup and control waits are 60 and 15 seconds.
+
+There is no DSH team-tool bridge: `message_bot`, `list_bots`, `create_bot`, `request_secret`,
+DSH memory and schedules are unavailable remotely. Crossing routes uses the existing new
+conversation and handoff confirmation. Model changes within this route use `--session` and do
+not carry history across harnesses. A handoff note needs a configured native background model.
+
+**Every Hermes release needs a contract review before updating this adapter.** The tested source
+is [the generated OpenRPC contract at the pinned upstream commit](https://github.com/NousResearch/hermes-agent/blob/3bcd071226d3d605a2bb3b4f3933e7d583e189d6/apps/shared/src/gateway-contract.openrpc.json).
+`src/host/hermes-contract.json` pins its full normalized digest and the transitive schemas of
+all methods, events and server requests this delivery consumes. Download that generated file
+for the proposed release into scratch, review its upstream diff, and run:
+
+```sh
+node scripts/hermes-contract.mjs <downloaded-generated-contract>
+```
+
+Any change exits nonzero and names the changed surfaces. Do not update the pin solely to make
+the check pass: rerun the disposable fixtures against the reviewed shapes and keep the runtime
+version/dialect gate closed to every untested contract. The checker is offline and never
+contacts a Hermes instance. No live-server validation was used for this delivery.

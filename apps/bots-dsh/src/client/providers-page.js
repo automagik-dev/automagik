@@ -6,6 +6,7 @@ import { CheckIcon, TrashIcon } from './icons.js'
 import { KeyIcon, MaskedInput } from './secret-card.js'
 import { Segmented, SPRING_SHAPE } from './motion.js'
 import { hostText, t } from './i18n.js'
+import { HermesRemoteSettings } from './hermes-remote.js'
 
 const PROTOCOL_NAMES = { 'openai-completions': 'OpenAI Chat Completions', 'openai-responses': 'OpenAI Responses', 'anthropic-messages': 'Anthropic Messages' }
 // Anthropic's SDK appends /v1/messages itself; the OpenAI ones take the /v1 root.
@@ -23,8 +24,9 @@ export function ProvidersPage({ actions, run, Section }) {
   const apply = promise => run(translated(promise).then((next) => { if (next?.providers) setView(next) }))
   useEffect(() => { void apply(actions.providers()) }, [])
   if (view === null) return null
-  if (!view.available) return h('p', { className: 'bt-set-hint' }, t('This DSH cannot set up model providers.'))
+  if (!view.available) return h(HermesRemoteSettings, { run, Section })
   return [
+    h(HermesRemoteSettings, { key: 'hermes-remote', run, Section }),
     h(Section, { key: 'list', title: t('Model providers · {count}', { count: view.providers.length }) },
       view.providers.map(provider => h(ProviderRow, {
         key: provider.id, provider, apply, actions,

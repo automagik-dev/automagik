@@ -663,6 +663,42 @@ This amends "The person's own CLI, the newest adapter" for these rows only.
 Open, tracked on #958: the sequence fuzz test and the daily handshake run should cover these
 three CLIs before their switches default to on.
 
+## Amendment: remote Hermes first delivery (2026-11-11, #1070)
+
+Felipe's GO adds **Hermes remote** as a fourth route, after Native, ACP and Herdr. This
+amends the three-route selector approved in #1016. Local Hermes remains `acp-hermes`;
+remote Hermes is `hermes-remote`, a native `hermes serve` JSON-RPC/WebSocket adapter,
+never an ACP SDK transport. Crossing to or from it starts a new conversation with the
+existing handoff flow (#1007); changing only its model keeps that conversation.
+
+One connection, off by default, holds an HTTPS origin, profile, Bot-secret reference and
+discovered models. The standing credential is in the mode-0600 Bot secret store with no
+Bot scope. A one-use ticket is minted over HTTPS and offered as a WebSocket subprotocol;
+neither credential is put in a URL, CLI argument or prompt. Wire failures are fixed
+sentences; transient tickets and saved credentials are removed from visible rows too.
+
+This delivery accepts standalone Desktop contract **8**, with server-request approvals.
+After `gateway.ready`, `client.capabilities` advertises `server_requests: true` before
+session calls. Canonical authority and other versions are refused before a prompt. The
+generated OpenRPC pin and the release-diff command are documented in bots-dsh's README.
+Each permission question goes through DSH's level: Full access answers `once`, restrictive
+no-ask answers `deny`, and Manual asks DSH. The remote profile must already use manual
+approvals; Automagik never changes its global approval setting. DSH's local sandbox does
+not constrain remote tools.
+
+The chat shows text and remote tool cards. It records stored/runtime session IDs and any
+admission ID, persists submit intent before sending, and never retries an uncertain submit.
+A disconnect says **Connection lost; remote outcome unknown**. Reconnect resumes the stored
+session and reads an authoritative snapshot and replay watermark; a replay gap replaces
+deltas with the snapshot. Stop requests interruption and gives it five seconds to settle;
+its acknowledgment does not prove remote children stopped. Start/control deadlines are
+60/15 seconds, matching #1006.
+
+The menu and setup name the absent DSH team tools: `message_bot`, `list_bots`, `create_bot`,
+`request_secret`, memory and schedules. Hermes keeps its own remote tools. An authenticated
+team-tool bridge, canonical authority, additional connections and credential sign-in flows
+are later deliveries. Selector approval remains in the real app, with sample-data screenshots.
+
 ## Tracking
 
 Ledger pass (2026-11-10): the board links this RFC from its file.

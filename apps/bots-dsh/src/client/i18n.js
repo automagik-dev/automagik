@@ -5,6 +5,22 @@
 export const NAMESPACE = 'omni-ui'
 
 const ZH = {
+  'Hermes remote': '远程 Hermes',
+  'Remote Hermes · hermes serve': '远程 Hermes · hermes serve',
+  'No DSH team tools: message_bot, list_bots, create_bot, request_secret, memory or schedules.': '不提供 DSH 团队工具：message_bot、list_bots、create_bot、request_secret、记忆或计划任务。',
+  'Off by default. Set up Hermes remote in Models and providers.': '默认关闭。请在模型与提供方中设置远程 Hermes。',
+  'Off by default. Connect to standalone Desktop contract 8 through hermes serve.': '默认关闭。通过 hermes serve 连接独立 Desktop 合约 8。',
+  'Remote tools use the remote profile’s rules. DSH’s local sandbox does not protect the remote machine.': '远程工具遵循远程配置的规则。DSH 的本地沙箱不保护远程机器。',
+  'Credential': '凭据',
+  'Credential saved in the Bot secret store.': '凭据已保存到 Bot 密钥库。',
+  'Save a credential to connect.': '请先保存连接凭据。',
+  'Enable Hermes remote': '启用远程 Hermes',
+  'Discover models': '发现模型',
+  'Connection lost; remote outcome unknown': '连接已断开；远程结果未知',
+  'Reconnect and reconcile': '重新连接并核对状态',
+  'Remote session reconciled. Review the remote transcript before sending again.': '远程会话状态已核对。再次发送前请查看远程记录。',
+  'Replay gap: showing a fresh remote snapshot.': '重放存在缺口：显示新的远程快照。',
+  'Full access: each remote approval is answered once. Remote profile rules still apply.': '完全访问：每项远程审批仅允许一次。远程配置规则仍然有效。',
   // The sign-in row in a Bot's chat (cli-login.js), and the host's sign-in messages (host/cli-login.js).
   "Authorization code": "授权码",
   "Copy link": "复制链接",

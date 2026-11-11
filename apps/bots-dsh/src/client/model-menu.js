@@ -186,14 +186,15 @@ const Tick = ({ on }) => h('span', { className: 'bt-model-tick', 'aria-hidden': 
 // The selector's three routes, in the order they are offered (issue #1016). Native is DSH's
 // own loop; ACP is every agent acp-dsh serves; Herdr is the agent's own terminal on
 // herdr-core, which #1007 wires. The names are UI words; their details say what each means.
-export const ROUTE_ORDER = Object.freeze(['native', 'acp', 'herdr'])
-const ROUTE_NAME = Object.freeze({ native: 'Native', acp: 'ACP', herdr: 'Herdr' })
-const ROUTE_ICON = Object.freeze({ native: DshMarkIcon, acp: ConnectorIcon, herdr: HerdrMarkIcon })
+export const ROUTE_ORDER = Object.freeze(['native', 'acp', 'herdr', 'hermes-remote'])
+const ROUTE_NAME = Object.freeze({ native: 'Native', acp: 'ACP', herdr: 'Herdr', 'hermes-remote': 'Hermes remote' })
+const ROUTE_ICON = Object.freeze({ native: DshMarkIcon, acp: ConnectorIcon, herdr: HerdrMarkIcon, 'hermes-remote': ConnectorIcon })
 const routeName = route => t(ROUTE_NAME[route] ?? route)
 const routeDetail = (route) => {
   switch (route) {
     case 'acp': return t('Agent Client Protocol')
     case 'herdr': return t('herdr-core terminal')
+    case 'hermes-remote': return t('Remote Hermes · hermes serve')
     default: return t('DSH harness')
   }
 }
@@ -349,13 +350,17 @@ export function ModelSteps({ roster, bot, view, current, picked, levelName, go, 
     const route = view.route ?? routeOfProvider(view.provider)
     const agent = route === 'acp' ? acpAgents(models).find(entry => entry.provider === view.provider) : undefined
     const list = route === 'native' ? nativeModels(models, current)
+      : route === 'hermes-remote' ? models.filter(model => providerOf(model) === 'hermes-remote')
       : route === 'acp' ? (agent?.models ?? [])
         : herdrAgents().find(entry => entry.id === view.agent)?.models ?? []
-    const back = route === 'native' ? { label: t('Back to routes'), view: MENU_ROOT } : { label: t('Back to agents'), view: { step: 'agents', route } }
-    const backLabel = route === 'native' ? back.label : t('Back to {agent}', { agent: agent?.name ?? routeName(route) })
+    const direct = route === 'native' || route === 'hermes-remote'
+    const back = direct ? { label: t('Back to routes'), view: MENU_ROOT } : { label: t('Back to agents'), view: { step: 'agents', route } }
+    const backLabel = direct ? back.label : t('Back to {agent}', { agent: agent?.name ?? routeName(route) })
     const groups = route === 'native' ? groupModels(list) : list.length === 0 ? [] : [[agent?.name ?? routeName(route), list]]
     return h('div', { key: `models:${route}:${view.provider ?? view.agent ?? ''}`, className: 'bt-model-step', role: 'group', 'aria-label': t('Models') },
       stepBack(backLabel, () => go(back.view)),
+      route === 'hermes-remote' ? h('div', { className: 'bt-model-none' }, t('No DSH team tools: message_bot, list_bots, create_bot, request_secret, memory or schedules.')) : null,
+      route === 'hermes-remote' && list.length === 0 ? h('div', { className: 'bt-model-none' }, t('Off by default. Set up Hermes remote in Models and providers.')) : null,
       h('div', { className: 'bt-menu-sep', role: 'separator' }),
       groups.length === 0 ? h('div', { className: 'bt-model-none' }, t('No models are set up for this route yet.')) : null,
       groups.map(([label, entries]) => h(Fragment, { key: label },
@@ -422,7 +427,7 @@ export function ModelSteps({ roster, bot, view, current, picked, levelName, go, 
         title: route === 'acp' ? t('Agent Client Protocol') : route === 'herdr' ? t('Not available yet') : undefined,
         'aria-label': here ? t('{route}, current model {model}', { route: routeName(route), model: now ?? '' })
           : now ? `${routeName(route)} · ${now}` : `${routeName(route)} · ${routeDetail(route)}`,
-        onClick: () => go(route === 'native' ? { step: 'models', route } : { step: 'agents', route }),
+        onClick: () => go(route === 'native' || route === 'hermes-remote' ? { step: 'models', route } : { step: 'agents', route }),
       },
       h(RouteMark, { route }),
       h('span', { className: 'bt-menu-label' }, routeName(route)),
@@ -514,6 +519,7 @@ export function RouteConfirm({ bot, roster, current, target, onCancel, onConfirm
   const fullAccess = bot.permission === 'danger-full-access'
   const fullAccessLine = !fullAccess ? undefined
     : to.route === 'native' ? t("Full access: DSH's own tools run without asking.")
+      : to.route === 'hermes-remote' ? t('Full access: each remote approval is answered once. Remote profile rules still apply.')
       : to.provider === 'acp-claude' || to.provider === 'acp-codex' ? t("Full access: the CLI's own no-ask mode.")
         : t("Full access: the agent's actions run without asking.")
   return h('div', { className: 'bt-model-step bt-model-confirm', role: 'group', 'aria-label': t('Start a new conversation?') },

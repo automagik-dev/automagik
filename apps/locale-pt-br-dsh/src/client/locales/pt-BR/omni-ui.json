@@ -1670,5 +1670,21 @@
   "The model failed and no other model answered in its place: this Bot has Auto (full access) on its coding CLI and stays there. Fix the CLI or sign in to it, or pick another model for the Bot yourself.": "O modelo falhou e nenhum outro modelo respondeu no lugar: este Bot tem Automático (acesso total) na CLI de programação que usa e continua nessa CLI. Corrija a CLI ou faça login na CLI, ou escolha você outro modelo para o Bot.",
   "Session {session} cannot join {bot} because this window cannot change the Bot team now. {reason}": "A Sessão {session} não pode entrar em {bot} porque esta janela não pode alterar a equipe de Bots agora. {reason}",
   "{bot} changed while Session {session} was joining it (another window or an edit). For the Bot team: Nothing was changed; try again. The native preset of Session {session} was set to \"{preset}\" before this refusal.": "{bot} mudou enquanto a Sessão {session} entrava na equipe (outra janela ou uma edição). Na equipe de Bots: nada foi alterado; tente de novo. A predefinição nativa da Sessão {session} foi definida como \"{preset}\" antes desta recusa.",
-  "{bot} changed while Session {session} was being saved. For the Bot team: Nothing was changed; try again. The native preset of Session {session} was set to \"{preset}\" before this refusal.": "{bot} mudou enquanto a Sessão {session} era salva. Na equipe de Bots: nada foi alterado; tente de novo. A predefinição nativa da Sessão {session} foi definida como \"{preset}\" antes desta recusa."
+  "{bot} changed while Session {session} was being saved. For the Bot team: Nothing was changed; try again. The native preset of Session {session} was set to \"{preset}\" before this refusal.": "{bot} mudou enquanto a Sessão {session} era salva. Na equipe de Bots: nada foi alterado; tente de novo. A predefinição nativa da Sessão {session} foi definida como \"{preset}\" antes desta recusa.",
+  "Hermes remote": "Hermes remoto",
+  "Remote Hermes · hermes serve": "Hermes remoto · hermes serve",
+  "No DSH team tools: message_bot, list_bots, create_bot, request_secret, memory or schedules.": "Sem ferramentas da equipe DSH: message_bot, list_bots, create_bot, request_secret, memória ou agendamentos.",
+  "Off by default. Set up Hermes remote in Models and providers.": "Desativado por padrão. Configure o Hermes remoto em Modelos e provedores.",
+  "Off by default. Connect to standalone Desktop contract 8 through hermes serve.": "Desativado por padrão. Conecte ao contrato Desktop 8 autônomo por hermes serve.",
+  "Remote tools use the remote profile’s rules. DSH’s local sandbox does not protect the remote machine.": "As ferramentas remotas seguem as regras do perfil remoto. O ambiente isolado local do DSH não protege a máquina remota.",
+  "Credential": "Credencial",
+  "Credential saved in the Bot secret store.": "Credencial salva no cofre de segredos dos Bots.",
+  "Save a credential to connect.": "Salve uma credencial para conectar.",
+  "Enable Hermes remote": "Ativar Hermes remoto",
+  "Discover models": "Descobrir modelos",
+  "Connection lost; remote outcome unknown": "Conexão perdida; resultado remoto desconhecido",
+  "Reconnect and reconcile": "Reconectar e reconciliar",
+  "Remote session reconciled. Review the remote transcript before sending again.": "Sessão remota reconciliada. Revise a conversa remota antes de enviar novamente.",
+  "Replay gap: showing a fresh remote snapshot.": "Lacuna na reprodução: mostrando uma nova cópia do estado remoto.",
+  "Full access: each remote approval is answered once. Remote profile rules still apply.": "Acesso total: cada aprovação remota é respondida uma vez. As regras do perfil remoto continuam valendo."
 }
