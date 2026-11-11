@@ -67,6 +67,19 @@
       },
       "versions": [
         {
+          "version": "3.126.2",
+          "publishTimestamp": 1794368824,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-si/automagik",
+            "commit": "a52cdbe682bd6171822ddf10a9cbb8e6d093ac81",
+            "path": "apps/bots-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.2-rc.1 <0.3.0-0"
+          }
+        },
+        {
           "version": "3.126.0",
           "publishTimestamp": 1794367327,
           "source": {
@@ -3435,6 +3448,19 @@
         ]
       },
       "versions": [
+        {
+          "version": "3.126.2",
+          "publishTimestamp": 1794368824,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-si/automagik",
+            "commit": "a52cdbe682bd6171822ddf10a9cbb8e6d093ac81",
+            "path": "apps/welcome-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.2-rc.1 <0.3.0-0"
+          }
+        },
         {
           "version": "3.126.0",
           "publishTimestamp": 1794367327,
@@ -6914,6 +6940,19 @@
       },
       "versions": [
         {
+          "version": "3.126.2",
+          "publishTimestamp": 1794368824,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "a52cdbe682bd6171822ddf10a9cbb8e6d093ac81",
+            "path": "apps/locale-pt-br-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.2-rc.1 <0.3.0-0"
+          }
+        },
+        {
           "version": "3.126.0",
           "publishTimestamp": 1794367327,
           "source": {
@@ -9684,6 +9723,19 @@
         ]
       },
       "versions": [
+        {
+          "version": "3.126.2",
+          "publishTimestamp": 1794368824,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/automagik-dev/automagik",
+            "commit": "a52cdbe682bd6171822ddf10a9cbb8e6d093ac81",
+            "path": "apps/acp-dsh"
+          },
+          "engines": {
+            "dsh": ">=0.2.2-rc.1 <0.3.0-0"
+          }
+        },
         {
           "version": "3.126.0",
           "publishTimestamp": 1794367327,
