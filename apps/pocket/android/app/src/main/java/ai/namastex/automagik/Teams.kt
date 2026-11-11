@@ -392,8 +392,11 @@ object Teams {
      * Whether the phone can answer this card: a terminal can always be opened; a Bot chat only when its bridge
      * takes phone writes and the chat does not say to answer on the computer.
      */
-    fun deckAnswerable(c: DeckCard, writes: Map<String, Boolean>): Boolean = c.chat == null ||
-        (writes[c.ref.hostId] == true && c.message != Chat.ANSWER_ON_COMPUTER && c.message != Cockpit.READ_ONLY)
+    fun deckAnswerable(c: DeckCard): Boolean = c.chat == null
+
+    /** The word a Home row shows for a request the deck cannot answer in place. */
+    fun chatWaitLabel(t: CoreTerminal): String =
+        if (t.message == Chat.ANSWER_ON_COMPUTER || t.message == Cockpit.READ_ONLY) "On computer" else "In chat"
 
     /**
      * The deck's open state and "opened from the deck" flag after a selection: Back from a card opened from the deck

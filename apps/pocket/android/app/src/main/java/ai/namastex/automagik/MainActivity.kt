@@ -274,7 +274,7 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
             }
         },
         // The terminal has the whole screen; the keyboard has the bar's place while it is up.
-        bottomBar = { if (Nav.barShown(Nav.Place(state.screen, state.project, state.space, selected)) && !keyboard) PocketTabs(state.screen, pulse.needsYou, teams.sumOf { it.needsYou }) { vm.navigate(it) } }
+        bottomBar = { if (Nav.barShown(Nav.Place(state.screen, state.project, state.space, selected)) && !keyboard) PocketTabs(state.screen, pulse.answerableNeedsYou, teams.sumOf { it.needsYou }) { vm.navigate(it) } }
     ) { padding ->
         CompositionLocalProvider(LocalIconsVersion provides state.iconsVersion) { Box(Modifier.fillMaxSize().padding(padding)) {
             when {
@@ -309,7 +309,7 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
         }
         // A disconnected machine keeps its terminals in the reading; its cards move to the offline end, not the deck.
         // A chat the phone cannot write to is not a deck card: it could never be answered or cleared.
-        val cards = all.filter { state.machines[it.ref.hostId]?.connected == true && Teams.deckAnswerable(it, writes) }
+        val cards = all.filter { state.machines[it.ref.hostId]?.connected == true && Teams.deckAnswerable(it) }
         val offline = all.filter { state.machines[it.ref.hostId]?.connected != true }
         DeckScreen(cards, offline, vm, anyConnected, deckMemory, state.message, onClose = { deckOpen = false },
             onOpen = { ref -> deckReturn = true; openFromDeck(ref) },
@@ -432,6 +432,7 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
         }
         // Today: the counts and nothing else above the agents; spent today joins them once a usage meter reports.
         if (space == null) item(key = "today") {
+            val needsYou = pulse.answerableNeedsYou
             val fontScale = LocalDensity.current.fontScale
             val tile = TodayTiles.heightDp(fontScale)
             val spend = rememberSpend(state).takeIf { !it.coverage.none }
@@ -439,8 +440,8 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
                 // At a large font the four counts become two rows, so every label keeps the same 12sp size.
                 Column(verticalArrangement = Arrangement.spacedBy(TodayTiles.GAP_DP.dp)) {
                     Row(Modifier.fillMaxWidth().height(tile), horizontalArrangement = Arrangement.spacedBy(TodayTiles.GAP_DP.dp)) {
-                        CountCard(pulse.needsYou, if (pulse.needsYou == 1) "needs you" else "need you", Blocked, Modifier.weight(1f).fillMaxHeight(),
-                            onClick = if (pulse.needsYou > 0) onReviewNeedsYou else null)
+                        CountCard(needsYou, if (needsYou == 1) "needs you" else "need you", Blocked, Modifier.weight(1f).fillMaxHeight(),
+                            onClick = if (needsYou > 0) onReviewNeedsYou else null)
                         CountCard(pulse.working, "working", Working, Modifier.weight(1f).fillMaxHeight())
                     }
                     Row(Modifier.fillMaxWidth().height(tile), horizontalArrangement = Arrangement.spacedBy(TodayTiles.GAP_DP.dp)) {
@@ -450,8 +451,8 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
                 }
             } else {
                 Row(Modifier.fillMaxWidth().height(tile), horizontalArrangement = Arrangement.spacedBy(TodayTiles.GAP_DP.dp)) {
-                    CountCard(pulse.needsYou, if (pulse.needsYou == 1) "needs you" else "need you", Blocked, Modifier.weight(1f).fillMaxHeight(),
-                        onClick = if (pulse.needsYou > 0) onReviewNeedsYou else null)
+                    CountCard(needsYou, if (needsYou == 1) "needs you" else "need you", Blocked, Modifier.weight(1f).fillMaxHeight(),
+                        onClick = if (needsYou > 0) onReviewNeedsYou else null)
                     CountCard(pulse.working, "working", Working, Modifier.weight(1f).fillMaxHeight())
                     CountCard(pulse.machines, "connected", Ink, Modifier.weight(1f).fillMaxHeight())
                     spend?.let { SpendCount(it, Modifier.weight(1f).fillMaxHeight()) }
@@ -464,13 +465,13 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
                 trailingIcon = { if (search.isNotEmpty()) IconButton(onClick = { search = "" }) { Icon(Icons.Outlined.Close, "Clear search", Modifier.size(18.dp)) } },
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search), keyboardActions = KeyboardActions(onSearch = { focus.clearFocus() }),
                 colors = OutlinedTextFieldDefaults.colors(unfocusedBorderColor = Border, focusedBorderColor = Accent, unfocusedContainerColor = Surface))
-            if (pulse.needsYou > 0) {
+            if (needsYou > 0) {
                 Spacer(Modifier.height(10.dp))
                 val request = amber()
                 Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(request.copy(alpha = .14f))
                     .clickable(onClick = onReviewNeedsYou).padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Dot(request, 8); Spacer(Modifier.width(10.dp))
-                    Text(if (pulse.needsYou == 1) "1 needs you" else "${pulse.needsYou} need you", fontWeight = FontWeight.SemiBold,
+                    Text(if (needsYou == 1) "1 needs you" else "$needsYou need you", fontWeight = FontWeight.SemiBold,
                         fontSize = 14.sp, modifier = Modifier.weight(1f))
                     Text("Review", color = Ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
                 }
@@ -508,8 +509,10 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
                 item(key = "section:$rank") { SectionHeader(section.title, section.entries.size) }
                 section.entries.forEach { e ->
                     item(key = "c:${e.ref.hostId}:${e.ref.address}") {
+                        val chatWait = if (e.rank == Cockpit.BLOCKED && (Chat.isDsh(e.ref.address) || e.ref in pulse.fromChat))
+                            Teams.chatWaitLabel(e.terminal) else null
                         TerminalCard(e.terminal, location(e.ref), Cockpit.addressLabel(e.ref), status = Cockpit.status(e.terminal, pulse.seenKey(e.ref, e.terminal) in state.seen).let { word ->
-                            if (e.rank == Cockpit.BLOCKED && word != "blocked") "blocked" else word }) { open(e.ref) }
+                            if (e.rank == Cockpit.BLOCKED && word != "blocked") "blocked" else word }, waiting = chatWait) { open(e.ref) }
                     }
                     items(e.kids, key = { "k:${it.first.hostId}:${it.first.address}" }) { (ref, kid) -> KidRow(kid, ref.address) { vm.selectTerminal(ref) } }
                 }
@@ -591,9 +594,12 @@ fun statusLabel(word: String, kind: String) = stateName(word).let { if (word == 
 
 /** A count in a small card, as Today's header and a project's show them. [onClick] makes it open Home's deck. */
 @Composable fun CountCard(number: Int, text: String, color: Color, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
+    val numberBox = with(LocalDensity.current) { 24.sp.toDp() }
     Column(modifier.clip(RoundedCornerShape(12.dp)).background(Surface).border(1.dp, Border, RoundedCornerShape(12.dp))
         .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier).padding(TodayTiles.PAD_DP.dp, 10.dp)) {
-        Text(number.toString(), color = color, fontSize = 22.sp, lineHeight = 24.sp, fontWeight = FontWeight.SemiBold)
+        Box(Modifier.height(numberBox), contentAlignment = Alignment.CenterStart) {
+            Text(number.toString(), color = color, fontSize = 22.sp, lineHeight = 24.sp, fontWeight = FontWeight.SemiBold)
+        }
         TileLabel(text)
     }
 }
@@ -605,7 +611,8 @@ fun statusLabel(word: String, kind: String) = stateName(word).let { if (word == 
     }
 }
 
-@Composable fun TerminalCard(t: CoreTerminal, location: String, address: String, status: String = t.status, onClick: () -> Unit) {
+@Composable fun TerminalCard(t: CoreTerminal, location: String, address: String, status: String = t.status,
+                             waiting: String? = null, onClick: () -> Unit) {
     val color = stateColor(status)
     Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Surface).border(1.dp, if (status == "blocked" || status == "error") Blocked.copy(alpha = .32f) else Border, RoundedCornerShape(12.dp))
         .clickable(onClick = onClick).padding(16.dp), verticalAlignment = Alignment.Top) {
@@ -617,7 +624,7 @@ fun statusLabel(word: String, kind: String) = stateName(word).let { if (word == 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(t.agent, color = Muted, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                 Spacer(Modifier.width(8.dp))
-                Dot(color, 6); Spacer(Modifier.width(6.dp)); Text(stateName(status), color = color, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                Dot(color, 6); Spacer(Modifier.width(6.dp)); Text(waiting ?: stateName(status), color = color, fontSize = 12.sp, fontWeight = FontWeight.Medium)
             }
             Spacer(Modifier.height(6.dp)); Text(t.title, fontWeight = FontWeight.Medium, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (t.message.isNotBlank()) { Spacer(Modifier.height(6.dp)); Text(t.message, color = Muted, fontSize = 13.sp, lineHeight = 19.sp, maxLines = 2, overflow = TextOverflow.Ellipsis) }

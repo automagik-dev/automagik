@@ -40,11 +40,11 @@ Team.
 - **Home** lists the agents that need you first, then the ones that finished, across every
   connected machine; **Everything else** shows the working and idle ones. The counts at the top are
   needs you, working, machines connected and, once a usage meter reports, spent today. Its tab
-  shows how many agents need you. Tap the needs-you count or the **Review** bar to open
-  the swipe deck: one card per waiting agent; swipe right for Yes, left for No, up to open its chat
-  or terminal. A Bot chat with no terminal opens its chat. Opening a card and coming Back returns
-  to the deck. After the last answer, **All clear** says how many requests you answered, and
-  **Back to Home** closes the deck.
+  shows how many agents the deck can answer. Tap the needs-you count or the **Review** bar to open
+  the swipe deck: one card per waiting agent; swipe right for Yes, left for No, up to open its
+  terminal. A request waiting in a Bot chat stays in the list, says "In chat" or "On computer", and
+  does not count as a deck card. Opening a card and coming Back returns to the deck. After the last
+  answer, **All clear** says how many requests you answered, and **Back to Home** closes the deck.
 - **Team** shows each project's bots with their pets. Its tab shows how many bots need you.
 - **Code → By repository** has one card per git repository. Spaces in the same repository, like a
   squad's worktrees, share one card. A folder that isn't a repository is a project of its own. Tap

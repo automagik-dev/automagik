@@ -560,17 +560,36 @@ class TeamsTest {
         assertEquals(Teams.DeckView.Clear, Teams.deckView(emptyList(), emptySet(), anyConnected = true, waiting = 0, offline = 0))
     }
 
-    @Test fun aReadOnlyChatCardIsSkippedAndDoesNotBlockTheDeck() {
+    @Test fun everyChatCardIsSkippedAndItsHomeRowSaysWhereToAnswer() {
         val chat = Teams.DeckCard(TerminalRef("h", "dsh:reader"), "Reader", "herdr", "Automagik Bot",
             Chat.ANSWER_ON_COMPUTER, "question", 1, 2, TerminalRef("h", "dsh:reader"))
-        val writable = chat.copy(message = "")
+        val writable = chat.copy(message = "Which branch?")
         val terminal = chat.copy(ref = TerminalRef("h", "t1"), chat = null, message = "Run?")
-        val writes = mapOf("h" to true)
-        assertTrue(!Teams.deckAnswerable(chat, writes))
-        assertTrue(Teams.deckAnswerable(writable, writes))
-        assertTrue(!Teams.deckAnswerable(writable, emptyMap()))
-        assertTrue(Teams.deckAnswerable(terminal, emptyMap()))
-        assertEquals(listOf(terminal, writable), listOf(chat, terminal, writable).filter { Teams.deckAnswerable(it, writes) })
+        assertTrue(!Teams.deckAnswerable(chat))
+        assertTrue(!Teams.deckAnswerable(writable))
+        assertTrue(Teams.deckAnswerable(terminal))
+        assertEquals(listOf(terminal), listOf(chat, writable, terminal).filter(Teams::deckAnswerable))
+        assertEquals("On computer", Teams.chatWaitLabel(deckEntry("dsh:reader", kind = "question").terminal.copy(message = Chat.ANSWER_ON_COMPUTER)))
+        assertEquals("In chat", Teams.chatWaitLabel(deckEntry("dsh:reader", kind = "question").terminal.copy(message = "Which branch?")))
+    }
+
+    @Test fun theMergedSampleDeckWalksFromFirstCardToAllClear() {
+        fun chat(id: String, message: String) = Teams.DeckCard(TerminalRef("h", "dsh:$id"), id, "herdr", "Automagik Bot",
+            message, "question", 1, 2, TerminalRef("h", "dsh:$id"))
+        fun terminal(address: String) = Teams.DeckCard(TerminalRef("h", address), address, "herdr", "Claude Code",
+            "Run?", "permission", 3, 1, null)
+        val sample = listOf(chat("reader", Chat.ANSWER_ON_COMPUTER), chat("captain", "Which branch?"),
+            terminal("t1"), terminal("t8"), terminal("t9"))
+        val deck = sample.filter(Teams::deckAnswerable)
+        assertEquals(listOf("t1", "t8", "t9"), deck.map { it.ref.address })
+        var answered = emptySet<String>()
+        while (true) {
+            val view = Teams.deckView(deck, answered, anyConnected = true, waiting = deck.size - answered.size)
+            if (view is Teams.DeckView.Clear) break
+            val card = (view as Teams.DeckView.Cards).cards.first()
+            answered = answered + Teams.deckKey(card)
+        }
+        assertEquals(3, answered.size)
     }
 
     @Test fun aLeavingCardKeepsItsMenuAndTheDeckAdvancesWithoutAnAnimation() {
