@@ -6,6 +6,77 @@ export const CANONICAL = 'Canonical-authority Hermes is not supported. Use a sta
 const failure = message => Object.assign(new Error(message), { code: 'bot/hermes' })
 const safeModel = value => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._:/[\]@-]{0,200}$/.test(value)
 
+export const INVALID_FRAME = 'Remote Hermes returned an invalid protocol frame. Reconnect and reconcile the remote session.'
+const FRAME_BYTES = 8 * 1024 * 1024
+const object = value => value !== null && typeof value === 'object' && !Array.isArray(value)
+const string = value => typeof value === 'string'
+const id = value => string(value) || Number.isSafeInteger(value)
+const optional = (value, type) => value === undefined || value === null || type(value)
+const fields = (value, names, type) => names.every(name => optional(value[name], type))
+const infoShape = value => object(value) && fields(value, ['approval_mode', 'stored_session_id', 'model', 'provider'], string)
+  && fields(value, ['yolo', 'running', 'lazy'], value => typeof value === 'boolean')
+const requestShape = value => object(value) && id(value.id) && string(value.method) && object(value.params)
+  && (value.method !== 'approval' || (string(value.params.session_id) && string(value.params.request_id)
+    && fields(value.params, ['command', 'description'], string)))
+function eventShape(value) {
+  if (!object(value) || !string(value.type) || !object(value.payload) || !optional(value.session_id, string)
+    || !optional(value.seq, value => Number.isSafeInteger(value) && value >= 0)) return false
+  const p = value.payload
+  if (['session.info', 'message.delta', 'message.interim', 'message.complete', 'tool.start', 'tool.complete'].includes(value.type) && (!string(value.session_id) || !value.session_id)) return false
+  if (value.type === 'gateway.ready') return string(p.replay_epoch) && optional(p.session_authority, value => typeof value === 'boolean')
+  if (value.type === 'session.info') return infoShape(p)
+  if (['message.delta', 'message.interim'].includes(value.type)) return string(p.text)
+    && optional(p.offset, value => Number.isSafeInteger(value) && value >= 0) && optional(p.already_streamed, value => typeof value === 'boolean')
+  if (value.type === 'message.complete') return fields(p, ['text', 'status', 'error', 'failure_reason'], string)
+    && optional(p.response_reused, value => typeof value === 'boolean')
+  if (['tool.start', 'tool.complete'].includes(value.type)) return string(p.tool_id)
+    && (value.type !== 'tool.start' || string(p.name)) && fields(p, ['name', 'result_text', 'summary'], string)
+    && optional(p.args, object)
+  return true // Unknown events are ignored by the chat boundary.
+}
+function snapshotShape(value) {
+  return object(value) && string(value.session_id) && infoShape(value.info)
+    && fields(value, ['stored_session_id', 'session_key', 'status', 'admission_id'], string)
+    && fields(value, ['running', 'hydrating'], value => typeof value === 'boolean')
+    && optional(value.inflight, value => object(value) && fields(value, ['assistant', 'user'], string) && optional(value.streaming, value => typeof value === 'boolean'))
+    && optional(value.open_requests, value => Array.isArray(value) && value.every(requestShape))
+    && Array.isArray(value.messages) && value.messages.every(message => object(message) && string(message.role)
+      && optional(message.text, string))
+}
+function resultShape(method, value) {
+  if (!object(value)) return false
+  if (['session.create', 'session.resume', 'session.activate'].includes(method)) return snapshotShape(value)
+  if (method === 'client.capabilities') return Array.isArray(value.server_requests) && value.server_requests.every(string)
+  if (method === 'session.events.since') return string(value.epoch) && Number.isSafeInteger(value.latest_seq) && value.latest_seq >= 0
+    && typeof value.truncated === 'boolean' && Array.isArray(value.events) && value.events.every(eventShape)
+    && Array.isArray(value.open_requests) && value.open_requests.every(requestShape)
+  if (method === 'model.options') return Array.isArray(value.providers) && value.providers.every(provider => object(provider)
+    && string(provider.slug) && optional(provider.models, value => Array.isArray(value) && value.every(string))
+    && optional(provider.unavailable_models, value => Array.isArray(value) && value.every(string))
+    && optional(provider.authenticated, value => typeof value === 'boolean'))
+  if (method === 'config.set') return fields(value, ['scope'], string)
+    && fields(value, ['confirm_required', 'deferred'], value => typeof value === 'boolean')
+  if (method === 'prompt.submit') return fields(value, ['admission_id', 'status'], string)
+  return true
+}
+function frameShape(value) {
+  if (!object(value) || value.jsonrpc !== '2.0') return false
+  if (value.method !== undefined) return string(value.method) && !Object.hasOwn(value, 'result') && !Object.hasOwn(value, 'error') && (value.method === 'event'
+    ? value.id === undefined && eventShape(value.params) : requestShape(value))
+  return id(value.id) && (Object.hasOwn(value, 'result') !== Object.hasOwn(value, 'error'))
+    && (!Object.hasOwn(value, 'error') || (object(value.error) && Number.isInteger(value.error.code) && string(value.error.message)))
+}
+// Bound structure before recursive redaction; JSON.parse itself does not recurse through user callbacks.
+function boundedStructure(value) {
+  const stack = [[value, 0]]
+  while (stack.length) {
+    const [item, depth] = stack.pop()
+    if (depth > 32) return false
+    if (item && typeof item === 'object') for (const nested of Object.values(item)) stack.push([nested, depth + 1])
+  }
+  return true
+}
+
 export function remoteAddress(input) {
   let url
   try { url = new URL(input) } catch { throw failure('Enter an HTTPS address for Hermes.') }
@@ -31,6 +102,7 @@ export class HermesTransport {
     this.listeners = new Set()
     this.secrets = new Set([credential])
     this.serial = 0
+    this.sessionInfos = new Map()
   }
 
   redact(value) {
@@ -105,13 +177,17 @@ export class HermesTransport {
     url.protocol = 'wss:'
     this.ws = this.socket(url.href, ['hermes-gateway-v1', `hermes-gateway-ticket.${ticket}`])
     this.ws.addEventListener('message', event => {
-      let frame
-      try { frame = JSON.parse(event.data) } catch { this.lost(); return }
-      if (frame.method === 'event' && frame.params?.type === 'gateway.ready') {
-        if (frame.params.payload?.session_authority === true) { readyReject(failure(CANONICAL)); return }
-        this.epoch = frame.params.payload?.replay_epoch
-        readyResolve()
-      } else this.receive(frame)
+      if (this.closed || this.lostNotified) return
+      try {
+        if (!string(event.data) || Buffer.byteLength(event.data, 'utf8') > FRAME_BYTES) throw failure(INVALID_FRAME)
+        const frame = JSON.parse(event.data)
+        if (!boundedStructure(frame) || !frameShape(frame)) throw failure(INVALID_FRAME)
+        if (frame.method === 'event' && frame.params.type === 'gateway.ready') {
+          if (frame.params.payload.session_authority === true) { readyReject(failure(CANONICAL)); return }
+          this.epoch = frame.params.payload.replay_epoch
+          readyResolve()
+        } else this.receive(frame)
+      } catch { this.lost(INVALID_FRAME); this.close() }
     })
     this.ws.addEventListener('close', () => this.lost())
     this.ws.addEventListener('error', () => this.lost())
@@ -125,16 +201,18 @@ export class HermesTransport {
 
   receive(frame) {
     if (frame.method && frame.id !== undefined) {
-      for (const listener of this.listeners) listener({ kind: 'question', id: frame.id, method: frame.method, params: this.redact(frame.params) })
+      for (const listener of this.listeners) listener({ kind: 'question', id: frame.id, method: frame.method, params: this.redact(frame.params), epoch: this.epoch })
       return
     }
     if (frame.method === 'event') {
       const params = this.redact(frame.params)
-      for (const listener of this.listeners) listener({ kind: 'event', ...params })
+      if (params.type === 'session.info') this.sessionInfos.set(params.session_id, params.payload)
+      for (const listener of this.listeners) listener({ kind: 'event', ...params, epoch: this.epoch })
       return
     }
     const pending = this.pending.get(frame.id)
     if (!pending) return
+    if (!frame.error && !resultShape(pending.method, frame.result)) throw failure(INVALID_FRAME)
     this.pending.delete(frame.id)
     clearTimeout(pending.timer)
     if (frame.error) pending.reject(failure('Remote Hermes refused a control request. Check the remote session.'))
@@ -142,30 +220,33 @@ export class HermesTransport {
   }
 
   request(method, params = {}, ms = this.deadlines.control) {
+    if (this.closed || this.lostNotified) return Promise.reject(failure(LOST))
     const id = ++this.serial
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id)
         reject(failure(method === 'prompt.submit' ? LOST : 'Remote Hermes did not answer a control request within 15 seconds.'))
       }, ms)
-      this.pending.set(id, { resolve, reject, timer })
+      this.pending.set(id, { resolve, reject, timer, method })
       try { this.ws.send(JSON.stringify({ jsonrpc: '2.0', id, method, params: { ...params, ...(this.profile ? { profile: this.profile } : {}) } })) }
       catch { this.lost() }
     })
   }
 
   answer(id, result, unsupported = false) {
+    if (this.closed || this.lostNotified) return
     try { this.ws.send(JSON.stringify({ jsonrpc: '2.0', id, ...(unsupported ? { error: { code: -32601, message: 'This client does not support this request.' } } : { result }) })) }
     catch { this.lost() }
   }
 
-  lost() {
-    if (this.closed) return
+  lost(message = LOST) {
+    if (this.closed || this.lostNotified) return
+    this.lostNotified = true
     this.connected = false
-    this.readyReject?.(failure(LOST))
-    for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(failure(LOST)) }
+    this.readyReject?.(failure(message))
+    for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(failure(message)) }
     this.pending.clear()
-    for (const listener of this.listeners) listener({ kind: 'lost' })
+    for (const listener of this.listeners) listener({ kind: 'lost', text: message })
   }
 
   close() {
@@ -175,13 +256,36 @@ export class HermesTransport {
     try { this.ws?.close() } catch {}
   }
 
-  check(snapshot) {
+  check(snapshot, approvals = true) {
+    // Create uses stored_session_id; live resume/activate use session_key (plus info's copy).
+    const stored = [snapshot?.stored_session_id, snapshot?.session_key, snapshot?.info?.stored_session_id].filter(Boolean)
+    if (new Set(stored).size > 1) throw failure('Remote Hermes returned conflicting stored session IDs.')
+    snapshot = { ...snapshot, stored_session_id: stored[0] }
     if (snapshot?.session_authority || snapshot?.protocol === 'hermes-gateway-v1') throw failure(CANONICAL)
     if (snapshot?.info?.desktop_contract !== 8) throw failure(CONTRACT)
     if (!snapshot.session_id || !snapshot.stored_session_id) throw failure('Remote Hermes did not return both stored and runtime session IDs.')
     // A remote profile that auto-approves cannot honour a restrictive DSH level. Never alter it.
-    if (snapshot.info.yolo === true || snapshot.info.approval_mode !== 'manual') throw failure('Set this remote profile to manual approvals in Hermes before connecting. DSH does not change its global approval setting.')
+    if (approvals && (snapshot.info.yolo !== false || snapshot.info.approval_mode !== 'manual')) throw failure('Set this remote profile to manual approvals in Hermes before connecting. DSH does not change its global approval setting.')
     return snapshot
+  }
+
+  async approvalSnapshot(snapshot) {
+    snapshot = this.check(snapshot, false)
+    const complete = info => info && typeof info.yolo === 'boolean' && typeof info.approval_mode === 'string'
+    if (complete(snapshot.info)) return this.check(snapshot)
+    let listener
+    try {
+      const info = await this.bounded(new Promise((resolve, reject) => {
+        listener = event => {
+          if (event.kind === 'lost') reject(failure(event.text ?? LOST))
+          if (event.kind === 'event' && event.type === 'session.info' && event.session_id === snapshot.session_id && complete(event.payload)) resolve(event.payload)
+        }
+        this.listeners.add(listener)
+        const cached = this.sessionInfos.get(snapshot.session_id)
+        if (complete(cached)) resolve(cached)
+      }), Math.max(1, this.startUntil - Date.now()), 'Remote Hermes did not provide approval metadata within 60 seconds.')
+      return this.check({ ...snapshot, info })
+    } finally { this.listeners.delete(listener) }
   }
 
   async session(identity, model) {
@@ -190,7 +294,7 @@ export class HermesTransport {
       if (ms <= 0) throw failure('Remote Hermes did not start within 60 seconds.')
       return Math.min(ms, this.deadlines.control)
     }
-    const snapshot = this.check(await this.request(identity?.storedSessionId ? 'session.resume' : 'session.create', identity?.storedSessionId
+    const snapshot = await this.approvalSnapshot(await this.request(identity?.storedSessionId ? 'session.resume' : 'session.create', identity?.storedSessionId
       ? { session_id: identity.storedSessionId, inline_images: false, close_on_disconnect: false }
       : { model: model?.model, provider: model?.provider, idempotency_key: identity?.createKey, close_on_disconnect: false, source: 'automagik' }, remaining()))
     if (identity?.storedSessionId && model && (snapshot.info.model !== model.model || snapshot.info.provider !== model.provider)) {
@@ -236,9 +340,11 @@ export class RemoteChat {
       this.identity.uncertain = true
       for (const tool of this.tools.values()) { tool.status = 'unknown'; tool.done?.() }
       void this.save().catch(() => {})
-      this.push({ kind: 'error', text: LOST })
+      this.push({ kind: 'error', text: event.text ?? LOST })
       return
     }
+    if (this.reconciling) { this.reconciling.push(event); return }
+    if (event.epoch && this.identity.epoch && event.epoch !== this.identity.epoch) return
     const sid = event.kind === 'question' ? event.params?.session_id : event.session_id
     if (sid !== this.identity.runtimeSessionId && sid !== this.identity.storedSessionId) return
     if (event.kind === 'question') { if (this.question) void this.control(event); return }
@@ -288,7 +394,8 @@ export class RemoteChat {
       const terminal = payload.status === 'error' || payload.error || payload.failure_reason
         ? { kind: 'error', text: 'Remote Hermes reported a failed turn. Review the remote session.' }
         : payload.status === 'interrupted' ? { kind: 'aborted', text: 'The remote turn was interrupted. Background remote work may continue.' } : { kind: 'done' }
-      void this.save().then(() => this.push(terminal), () => this.push({ kind: 'error', text: 'Remote session identity could not be saved.' }))
+      const generation = this.generation
+      void this.save().then(() => { if (generation === this.generation) this.push(terminal) }, () => { if (generation === this.generation) this.push({ kind: 'error', text: 'Remote session identity could not be saved.' }) })
     }
     if (event.type === 'error') {
       this.identity.uncertain = true
@@ -298,14 +405,19 @@ export class RemoteChat {
   }
 
   async control(event) {
+    const epoch = event.epoch ?? this.transport.epoch
+    if (this.reconciling || epoch !== this.transport.epoch || (epoch && this.identity.epoch && epoch !== this.identity.epoch)) return
     if (event.method === 'approval' && !this.question) return
     if (this.questions.has(event.id)) return
     this.questions.set(event.id, true)
+    const generation = this.generation
     if (event.method !== 'approval') { this.transport.answer(event.id, undefined, true); return }
     let choice = 'deny'
     try {
       choice = await this.transport.bounded(Promise.resolve(this.question(event.params)), this.transport.deadlines.control, 'Approval deadline expired.')
     } catch {}
+    if (this.reconciling || generation !== this.generation || epoch !== this.transport.epoch
+      || (epoch && this.identity.epoch && epoch !== this.identity.epoch)) return
     this.transport.answer(event.id, { choice: choice === 'once' ? 'once' : 'deny' })
   }
 
@@ -318,31 +430,51 @@ export class RemoteChat {
     return snapshot
   }
 
+  resetStream() {
+    this.generation = (this.generation ?? 0) + 1
+    this.queue.length = 0
+    for (const tool of this.tools.values()) { tool.status = 'unknown'; tool.done?.() }
+    this.tools.clear()
+    this.questions.clear()
+    this.streamed = ''
+    this.transport.textCarry = ''
+  }
+
   async reconcile({ answerQuestions = false } = {}) {
-    await this.prepare()
-    const replay = await this.transport.request('session.events.since', {
-      session_id: this.identity.runtimeSessionId, last_seen: this.identity.lastSeq ?? 0, replay_epoch: this.identity.epoch,
-    })
-    const gap = replay.truncated || (this.identity.epoch && replay.epoch !== this.identity.epoch)
-    // Snapshot AFTER replay: a completion between resume and replay must not be lost when
-    // advancing the replay watermark. Live events for the resumed runtime now reach receive.
-    let snapshot
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const before = this.terminalCounter ?? 0
-      snapshot = this.transport.check(await this.transport.request('session.activate', { session_id: this.identity.runtimeSessionId }))
-      if ((this.terminalCounter ?? 0) === before) break
-      if (attempt === 2) throw failure('Remote session changed while reconciling. Reconnect and reconcile again before sending.')
-    }
-    Object.assign(this.identity, { runtimeSessionId: snapshot.session_id, storedSessionId: snapshot.stored_session_id })
-    this.identity.epoch = replay.epoch
-    this.identity.lastSeq = Math.max(this.identity.lastSeq ?? 0, replay.latest_seq)
-    this.identity.uncertain = snapshot.running === true || snapshot.info?.running === true || snapshot.hydrating === true || snapshot.inflight?.streaming === true
-      || ['starting', 'waiting', 'working', 'streaming', 'resuming'].includes(snapshot.status) || (snapshot.open_requests?.length ?? 0) > 0 || Boolean(snapshot.auto_continue)
-    if (!this.identity.uncertain) this.identity.pendingSubmit = false
-    await this.save()
-    if (answerQuestions) for (const request of snapshot.open_requests ?? replay.open_requests ?? []) void this.control({ ...request, kind: 'question' })
-    // Always use a fresh authoritative snapshot: a replay gap must never append guessed deltas.
-    return { snapshot, gap, unknown: this.identity.uncertain }
+    // Fence outstanding answers before resume, replay or persistence can yield. A restarted
+    // server can reuse request IDs while an old DSH approval is still awaiting a choice.
+    this.generation = (this.generation ?? 0) + 1
+    this.reconciling = []
+    try {
+      await this.prepare()
+      const replay = await this.transport.request('session.events.since', {
+        session_id: this.identity.runtimeSessionId, last_seen: this.identity.lastSeq ?? 0, replay_epoch: this.identity.epoch,
+      })
+      const changedEpoch = this.identity.epoch !== replay.epoch
+      const gap = replay.truncated || Boolean(this.identity.epoch && changedEpoch)
+      this.resetStream()
+      this.identity.epoch = replay.epoch
+      this.transport.epoch = replay.epoch
+      this.identity.lastSeq = changedEpoch ? replay.latest_seq : Math.max(this.identity.lastSeq ?? 0, replay.latest_seq)
+      // Buffer live events while fetching an authoritative snapshot. A terminal received
+      // during the fetch requires a newer snapshot; no old queued delta can cross epochs.
+      let snapshot
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const before = this.reconciling.filter(event => event.type === 'message.complete').length
+        snapshot = await this.transport.approvalSnapshot(await this.transport.request('session.activate', { session_id: this.identity.runtimeSessionId }))
+        if (this.reconciling.filter(event => event.type === 'message.complete').length === before) break
+        if (attempt === 2) throw failure('Remote session changed while reconciling. Reconnect and reconcile again before sending.')
+      }
+      Object.assign(this.identity, { runtimeSessionId: snapshot.session_id, storedSessionId: snapshot.stored_session_id })
+      for (const event of this.reconciling) if (event.epoch === replay.epoch && Number.isSafeInteger(event.seq)) this.identity.lastSeq = Math.max(this.identity.lastSeq, event.seq)
+      this.identity.uncertain = snapshot.running === true || snapshot.info?.running === true || snapshot.hydrating === true || snapshot.inflight?.streaming === true
+        || ['starting', 'waiting', 'working', 'streaming', 'resuming'].includes(snapshot.status) || (snapshot.open_requests?.length ?? 0) > 0 || Boolean(snapshot.auto_continue)
+      if (!this.identity.uncertain) this.identity.pendingSubmit = false
+      this.reconciling = undefined
+      await this.save()
+      if (answerQuestions) for (const request of snapshot.open_requests ?? []) void this.control({ ...request, kind: 'question', epoch: replay.epoch })
+      return { snapshot, gap, unknown: this.identity.uncertain }
+    } finally { this.reconciling = undefined }
   }
 
   async submit(text, model) {

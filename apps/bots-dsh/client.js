@@ -5583,6 +5583,7 @@ var MODEL_CSS = `
 .bt-route-icon{flex:none;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;color:var(--bt-ink-2)}
 .bt-route-icon svg{width:16px;height:16px}
 .bt-model-step>[data-route=acp] .bt-route-icon{color:var(--bt-accent)}
+.bt-model-step>[data-route=hermes-remote] .bt-menu-label{flex:none}
 .bt-agent-mark{flex:none;display:block;border-radius:4px;object-fit:contain}
 .bt-agent-initial{flex:none;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;background:var(--bt-tag-bg);color:var(--bt-ink-2);font-weight:600;line-height:1}
 .bt-model-menu .bt-model-step .bt-menu-label{font-size:13px;line-height:18px;font-weight:500;color:var(--bt-ink)}
@@ -5592,6 +5593,7 @@ var MODEL_CSS = `
 .bt-model-step>[data-unavailable] .bt-menu-label{color:var(--bt-ink-2);font-weight:500}
 .bt-model-step>[data-unavailable] :is(.bt-route-icon,.bt-agent-mark,.bt-agent-initial){opacity:.6}
 .bt-model-step .bt-menu-hint[data-route-detail]{max-width:64%;overflow:visible;text-align:right;white-space:normal;line-height:14px;font-style:italic}
+.bt-model-step>[data-route=hermes-remote] .bt-menu-hint{flex:1;max-width:none}
 .bt-model-confirm{padding:10px 10px 8px;gap:8px}
 .bt-model-confirm-title{font-size:13px;line-height:18px;font-weight:600;color:var(--bt-ink)}
 .bt-model-confirm-move{font-size:11px;line-height:15px;color:var(--bt-ink-3);overflow-wrap:anywhere}
@@ -21775,21 +21777,33 @@ function HermesRemoteSettings({ run: run2, Section: Section2 }) {
   return (0, import_react62.createElement)(
     Section2,
     { title: t("Hermes remote") },
-    (0, import_react62.createElement)("p", { className: "bt-set-hint" }, t("Off by default. Connect to standalone Desktop contract 8 through hermes serve.")),
-    (0, import_react62.createElement)("p", { className: "bt-set-hint" }, t("No DSH team tools: message_bot, list_bots, create_bot, request_secret, memory or schedules.")),
-    (0, import_react62.createElement)("p", { className: "bt-set-hint" }, t("Remote tools use the remote profile’s rules. DSH’s local sandbox does not protect the remote machine.")),
-    (0, import_react62.createElement)("label", { className: "bt-q-field" }, t("Address"), (0, import_react62.createElement)("input", { value: address, autoComplete: "off", onChange: (event) => setAddress(event.target.value) })),
-    (0, import_react62.createElement)("label", { className: "bt-q-field" }, t("Profile"), (0, import_react62.createElement)("input", { value: profile, autoComplete: "off", onChange: (event) => setProfile(event.target.value) })),
-    (0, import_react62.createElement)("label", { className: "bt-q-field" }, t("Credential"), (0, import_react62.createElement)(MaskedInput, { value: credential, onChange: setCredential, label: t("Credential") })),
-    (0, import_react62.createElement)("p", { className: "bt-set-hint" }, view.credentialSet ? t("Credential saved in the Bot secret store.") : t("Save a credential to connect.")),
-    (0, import_react62.createElement)("label", { className: "bt-q-field" }, (0, import_react62.createElement)("input", { type: "checkbox", checked: enabled, onChange: (event) => setEnabled(event.target.checked) }), t("Enable Hermes remote")),
+    (0, import_react62.createElement)("div", { className: "bt-set-row" }, (0, import_react62.createElement)(
+      "div",
+      { className: "bt-set-copy" },
+      (0, import_react62.createElement)("span", { className: "bt-set-hint" }, t("Off by default. Connect to standalone Desktop contract 8 through hermes serve.")),
+      (0, import_react62.createElement)("span", { className: "bt-set-hint" }, t("No DSH team tools: message_bot, list_bots, create_bot, request_secret, memory or schedules.")),
+      (0, import_react62.createElement)("span", { className: "bt-set-hint" }, t("Remote tools use the remote profile’s rules. DSH’s local sandbox does not protect the remote machine."))
+    )),
+    (0, import_react62.createElement)(Row, { label: t("Address"), stack: true }, (0, import_react62.createElement)("input", { className: "bt-input", "aria-label": t("Address"), value: address, autoComplete: "off", onChange: (event) => setAddress(event.target.value) })),
+    (0, import_react62.createElement)(Row, { label: t("Profile"), stack: true }, (0, import_react62.createElement)("input", { className: "bt-input", "aria-label": t("Profile"), value: profile, autoComplete: "off", onChange: (event) => setProfile(event.target.value) })),
+    (0, import_react62.createElement)(
+      Row,
+      { label: t("Credential"), stack: true, hint: view.credentialSet ? t("Credential saved in the Bot secret store.") : t("Save a credential to connect.") },
+      (0, import_react62.createElement)("span", { className: "bt-q-field bt-secret-field" }, (0, import_react62.createElement)(MaskedInput, { value: credential, onChange: setCredential, label: t("Credential") }))
+    ),
     (0, import_react62.createElement)(
       "div",
-      { className: "bt-actions" },
-      (0, import_react62.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: save }, t("Save")),
-      (0, import_react62.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", disabled: !view.enabled, onClick: () => run2(call("hermes-remote-discover").then(update)) }, t("Discover models"))
+      { className: "bt-set-row" },
+      (0, import_react62.createElement)("span", { className: "bt-set-copy" }, t("Enable Hermes remote")),
+      (0, import_react62.createElement)(Switch, { on: enabled, label: t("Enable Hermes remote"), onChange: setEnabled })
     ),
-    (0, import_react62.createElement)("p", { className: "bt-set-hint" }, t("{count} models", { count: view.models.length })),
+    (0, import_react62.createElement)(
+      "div",
+      { className: "bt-set-row" },
+      (0, import_react62.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: save }, t("Save")),
+      (0, import_react62.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", disabled: !view.enabled, onClick: () => run2(call("hermes-remote-discover").then(update)) }, t("Discover models")),
+      (0, import_react62.createElement)("span", { className: "bt-set-hint" }, t("{count} models", { count: view.models.length }))
+    ),
     view.sessions.filter((session) => session.uncertain || session.pendingSubmit).map((session) => (0, import_react62.createElement)(
       "div",
       { key: session.sessionId },

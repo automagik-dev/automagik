@@ -5,7 +5,7 @@ import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { markAgentLoopRequest } from '@deepseek-ai/dsh-llm'
-import { HermesTransport, RemoteChat, LOST, HERMES_DEADLINES } from '../src/host/hermes-transport.js'
+import { HermesTransport, RemoteChat, LOST, HERMES_DEADLINES, INVALID_FRAME } from '../src/host/hermes-transport.js'
 import { remoteApproval, RemoteChatAdapter } from '../src/host/remote-chat-adapter.js'
 import { install } from '../src/host/hermes-remote.js'
 import { fallbackFor } from '../src/host/fallback.js'
@@ -13,13 +13,15 @@ import { routeOf, selectorRouteOf, crossesHarness } from '../src/shared/routes.j
 import { contractPin, differences, USED_METHODS } from '../scripts/hermes-contract.mjs'
 import { createRuntime } from '../index.js'
 import { fakeContext } from './fake-ctx.js'
+import { desktop8Session } from './fixtures/hermes-desktop8.mjs'
 
 // All addresses and secrets are generated per test. No network or Hermes process is used.
 function fixture(t, overrides = {}) {
   const credential = randomUUID(), ticket = randomUUID()
   const address = `https://${randomUUID()}.invalid`
   const sent = [], headers = [], identities = []
-  const snapshot = { session_id: randomUUID(), stored_session_id: randomUUID(), running: false, messages: [], info: { desktop_contract: 8, approval_mode: 'manual', yolo: false } }
+  const source = desktop8Session(randomUUID(), randomUUID())
+  const snapshot = source.create
   class Socket extends EventTarget {
     constructor() { super(); queueMicrotask(() => this.event('gateway.ready', { replay_epoch: 'epoch-a', ...overrides.ready })) }
     frame(frame) { this.dispatchEvent(new MessageEvent('message', { data: JSON.stringify(frame) })) }
@@ -30,11 +32,18 @@ function fixture(t, overrides = {}) {
       if (!frame.method) return
       if (overrides.handle?.(frame, this) === true) return
       const result = frame.method === 'client.capabilities' ? { server_requests: ['approval'] }
-        : ['session.create', 'session.resume', 'session.activate'].includes(frame.method) ? { ...snapshot, ...overrides.snapshot }
-          : frame.method === 'session.events.since' ? { events: [], latest_seq: 9, epoch: 'epoch-a', truncated: false, open_requests: [], ...overrides.replay }
+        : ['session.create', 'session.resume', 'session.activate'].includes(frame.method) ? { ...(frame.method === 'session.create' ? snapshot : source.live), ...overrides.snapshot }
+          : frame.method === 'session.events.since' ? { events: [], latest_seq: 9, epoch: 'epoch-a', truncated: false, count: 0, open_requests: [], ...overrides.replay }
             : frame.method === 'model.options' ? { providers: [{ slug: 'sample', name: 'Sample', authenticated: true, models: ['sample-model'] }] }
               : { status: 'streaming', ...overrides.result }
-      queueMicrotask(() => this.reply(frame, result))
+      if (frame.method === 'session.events.since' && Array.isArray(result.events)) {
+        result.events = result.events.map((event, index) => ({ session_id: snapshot.session_id, seq: index + 1, ...event }))
+        result.count = result.events.length
+      }
+      queueMicrotask(() => {
+        this.reply(frame, result)
+        if (frame.method === 'session.create' && overrides.metadata !== false) queueMicrotask(() => this.event('session.info', { ...source.info, ...overrides.metadata }))
+      })
     }
     close() { this.dispatchEvent(new Event('close')) }
   }
@@ -46,7 +55,7 @@ function fixture(t, overrides = {}) {
   const identity = { createKey: randomUUID() }
   const run = new RemoteChat(wire, { identity, save: async () => identities.push(structuredClone(identity)), question: overrides.question })
   t.after(() => run.dispose())
-  return { wire, run, identity, identities, sent, headers, snapshot, credential, ticket, socket: () => socket }
+  return { wire, run, identity, identities, sent, headers, snapshot, live: source.live, info: source.info, credential, ticket, socket: () => socket }
 }
 
 test('ticket handshake negotiates server requests first, persists IDs before submit and shows text/tool', async t => {
@@ -163,7 +172,7 @@ test('an unanswered server approval is denied within control deadline and duplic
 test('redaction covers ticket/token echoes, nested headers, URL and JSON forms, RPC failures', async t => {
   const f = fixture(t, { handle: (frame, socket) => {
     if (frame.method !== 'sample') return false
-    queueMicrotask(() => socket.frame({ id: frame.id, error: { message: `${f.credential} ${f.ticket}`, data: { Authorization: f.credential } } }))
+    queueMicrotask(() => socket.frame({ jsonrpc: '2.0', id: frame.id, error: { code: -32000, message: `${f.credential} ${f.ticket}`, data: { Authorization: f.credential } } }))
     return true
   } })
   await f.wire.connect()
@@ -190,7 +199,7 @@ test('DSH adapter produces a real mirror tool card then continues the same remot
   assert.equal(call.type, 'tool-call')
   assert.equal(chunks.at(-1).reason.kind, 'tool-calls')
   const execution = registered[0].execute({ id: 'sample-tool', title: 'Sample tool' }, { agent })
-  f.socket().event('tool.complete', { tool_id: 'sample-tool', result_text: 'Sample result' })
+  f.socket().event('tool.complete', { tool_id: 'sample-tool', name: 'sample', result_text: 'Sample result' })
   assert.equal((await execution).text, 'Sample result')
   f.socket().event('message.delta', { text: 'After tool' })
   f.socket().event('message.complete', { text: 'After tool' })
@@ -246,7 +255,7 @@ test('final-only text is visible and terminal failure and interruption never bec
 })
 
 test('Settings reconciliation observes pending approvals without answering them', async t => {
-  const f = fixture(t, { snapshot: { running: true, open_requests: [{ id: 'srq-pending', method: 'approval', params: { request_id: 'pending' } }] } })
+  const f = fixture(t, { snapshot: { running: true, open_requests: [{ id: 'srq-pending', method: 'approval', params: { session_id: 'sample-runtime', request_id: 'pending' } }] } })
   f.identity.storedSessionId = f.snapshot.stored_session_id
   await f.wire.connect()
   const result = await f.run.reconcile()
@@ -283,10 +292,10 @@ test('resumed model changes explicitly opt out of profile persistence', async t 
   const f = fixture(t, { result: { scope: 'session' } })
   f.identity.storedSessionId = f.snapshot.stored_session_id
   await f.wire.connect()
-  await f.run.prepare({ model: 'sample-model', provider: 'sample' })
+  await f.run.prepare({ model: 'other-model', provider: 'sample' })
   const change = f.sent.find(frame => frame.method === 'config.set')
   assert.equal(change.params.key, 'model')
-  assert.equal(change.params.value, 'sample-model --provider sample --session')
+  assert.equal(change.params.value, 'other-model --provider sample --session')
 })
 
 test('streaming redaction carries credential and one-use ticket prefixes across frames', async t => {
@@ -318,14 +327,14 @@ test('observational reconciliation never answers a live approval delivered durin
 test('completion between resume and replay is reconciled through a fresh authoritative snapshot', async t => {
   const f = fixture(t, { snapshot: { running: true }, replay: { events: [{ seq: 2, type: 'message.complete', payload: { text: 'Finished', status: 'complete' } }], latest_seq: 2 }, handle: (frame, socket) => {
     if (frame.method !== 'session.activate') return false
-    queueMicrotask(() => socket.reply(frame, { ...f.snapshot, running: false, messages: [{ role: 'assistant', content: 'Finished' }] }))
+    queueMicrotask(() => socket.reply(frame, { ...f.live, running: false, messages: [{ role: 'assistant', text: 'Finished' }] }))
     return true
   } })
   Object.assign(f.identity, { storedSessionId: f.snapshot.stored_session_id, runtimeSessionId: 'old', pendingSubmit: true, uncertain: true })
   await f.wire.connect()
   const result = await f.run.reconcile()
   assert.equal(result.unknown, false)
-  assert.equal(result.snapshot.messages.at(-1).content, 'Finished')
+  assert.equal(result.snapshot.messages.at(-1).text, 'Finished')
   assert.equal(f.identity.pendingSubmit, false)
   assert.equal(f.identity.lastSeq, 2)
 })
@@ -341,4 +350,220 @@ test('an earlier completion never overrides a fresh snapshot of a newly active r
   assert.equal(result.unknown, true)
   assert.equal(f.identity.uncertain, true)
   await assert.rejects(f.run.submit('Do not submit'), /Reconcile/)
+})
+
+test('fresh lazy create waits for authoritative approval metadata before any submit', async t => {
+  const f = fixture(t, { metadata: false })
+  await f.wire.connect()
+  const submitting = f.run.submit('After metadata only')
+  while (!f.sent.some(frame => frame.method === 'session.create')) await new Promise(resolve => setImmediate(resolve))
+  await new Promise(resolve => setTimeout(resolve, 10))
+  assert.equal(Object.hasOwn(f.snapshot.info, 'approval_mode'), false)
+  assert.equal(Object.hasOwn(f.snapshot.info, 'yolo'), false)
+  assert.ok(!f.sent.some(frame => frame.method === 'prompt.submit'))
+  f.socket().frame({ jsonrpc: '2.0', method: 'event', params: { type: 'session.info', session_id: randomUUID(), payload: f.info } })
+  assert.ok(!f.sent.some(frame => frame.method === 'prompt.submit'))
+  f.socket().event('session.info', f.info)
+  await submitting
+  assert.equal(f.sent.filter(frame => frame.method === 'prompt.submit').length, 1)
+  assert.equal(f.identity.storedSessionId, f.snapshot.stored_session_id)
+})
+
+test('approval metadata can precede the create reply without being missed', async t => {
+  const f = fixture(t, { metadata: false, handle: (frame, socket) => {
+    if (frame.method !== 'session.create') return false
+    socket.event('session.info', f.info)
+    queueMicrotask(() => socket.reply(frame, f.snapshot))
+    return true
+  } })
+  await f.wire.connect(); await f.run.submit('Sample')
+  assert.equal(f.sent.filter(frame => frame.method === 'prompt.submit').length, 1)
+})
+
+test('missing or unsafe authoritative approval metadata never submits or changes global approval mode', async t => {
+  for (const metadata of [false, { approval_mode: 'off', yolo: true }, { approval_mode: 'manual', yolo: true }, { approval_mode: 'smart', yolo: false }]) {
+    const f = fixture(t, { metadata })
+    f.wire.startUntil = Date.now() + 35
+    await f.wire.connect()
+    await assert.rejects(f.run.submit('Never sent'), /approval metadata|manual approvals/)
+    assert.ok(!f.sent.some(frame => ['prompt.submit', 'config.set'].includes(frame.method)))
+    assert.equal(f.wire.listeners.size, 1)
+  }
+})
+
+test('resume and activate normalize session_key and nested stored identity before saving', async t => {
+  const f = fixture(t, { snapshot: { messages: [{ role: 'user', text: 'Sample' }, { role: 'assistant', text: 'Sample reply' }] } })
+  assert.equal(Object.hasOwn(f.live, 'stored_session_id'), false)
+  Object.assign(f.identity, { storedSessionId: f.snapshot.stored_session_id, runtimeSessionId: randomUUID(), uncertain: true })
+  await f.wire.connect()
+  const result = await f.run.reconcile()
+  assert.equal(result.snapshot.stored_session_id, f.live.session_key)
+  assert.equal(f.identity.runtimeSessionId, f.live.session_id)
+  assert.equal(f.identity.storedSessionId, f.live.info.stored_session_id)
+  assert.ok(f.identities.every(identity => !identity.storedSessionId || identity.storedSessionId === f.live.session_key))
+  assert.ok(f.sent.some(frame => frame.method === 'session.resume'))
+  assert.ok(f.sent.some(frame => frame.method === 'session.activate'))
+  await f.run.submit('Next turn')
+  assert.ok(!f.sent.some(frame => frame.method === 'session.create'))
+})
+
+test('conflicting remote stored identities are refused before submit', async t => {
+  const f = fixture(t, { snapshot: { session_key: randomUUID() } })
+  await f.wire.connect()
+  await assert.rejects(f.run.submit('Never sent'), /conflicting stored session IDs/)
+  assert.ok(!f.sent.some(frame => frame.method === 'prompt.submit'))
+})
+
+test('epoch restart resets watermark and old stream state, then accepts new deltas and completion', async t => {
+  let resolveQuestion
+  const f = fixture(t, { ready: { replay_epoch: 'epoch-b' }, replay: { epoch: 'epoch-b', latest_seq: 1 },
+    snapshot: { running: true, status: 'working', inflight: { streaming: true } }, question: () => new Promise(resolve => { resolveQuestion = resolve }) })
+  Object.assign(f.identity, { storedSessionId: f.snapshot.stored_session_id, runtimeSessionId: f.snapshot.session_id, epoch: 'epoch-a', lastSeq: 100, pendingSubmit: true, uncertain: true })
+  f.run.queue.push({ kind: 'text', text: 'Old epoch text' })
+  let toolReleased = false
+  f.run.tools.set('old-tool', { status: 'running', done: () => { toolReleased = true } })
+  f.run.streamed = 'Old epoch text'
+  f.wire.textCarry = 'Old prefix'
+  const question = f.run.control({ id: 'old-question', method: 'approval', params: { session_id: f.snapshot.session_id, request_id: 'old' } })
+  await f.wire.connect()
+  const result = await f.run.reconcile()
+  assert.equal(result.gap, true)
+  assert.equal(result.unknown, true)
+  assert.equal(f.identity.lastSeq, 1)
+  assert.equal(f.identity.epoch, 'epoch-b')
+  assert.equal(f.run.queue.length, 0)
+  assert.equal(f.run.tools.size, 0)
+  assert.equal(f.run.questions.size, 0)
+  assert.equal(f.run.streamed, '')
+  assert.equal(f.wire.textCarry, '')
+  assert.equal(toolReleased, true)
+  resolveQuestion('once'); await question
+  assert.ok(!f.sent.some(frame => frame.id === 'old-question'))
+  f.socket().event('message.delta', { text: 'New epoch text' }, 2)
+  f.socket().event('message.complete', { text: 'New epoch text', status: 'complete' }, 3)
+  assert.deepEqual(await f.run.next(), { kind: 'text', text: 'New epoch text' })
+  assert.equal((await f.run.next()).kind, 'done')
+  assert.equal(f.identity.lastSeq, 3)
+  assert.equal(f.identity.pendingSubmit, false)
+  assert.equal(f.identity.uncertain, false)
+})
+
+test('completion during activate causes a newer snapshot before reconciliation settles', async t => {
+  let activates = 0
+  const f = fixture(t, { handle: (frame, socket) => {
+    if (frame.method !== 'session.activate') return false
+    activates++
+    if (activates === 1) socket.event('message.complete', { text: 'Finished', status: 'complete' }, 10)
+    queueMicrotask(() => socket.reply(frame, { ...f.live, running: activates === 1, status: activates === 1 ? 'working' : 'idle' }))
+    return true
+  } })
+  Object.assign(f.identity, { storedSessionId: f.snapshot.stored_session_id, epoch: 'epoch-a', pendingSubmit: true, uncertain: true })
+  await f.wire.connect()
+  const result = await f.run.reconcile()
+  assert.equal(activates, 2)
+  assert.equal(result.unknown, false)
+  assert.equal(f.identity.pendingSubmit, false)
+})
+
+test('malformed JSON-RPC frames fail closed without uncaught callbacks or leaked remote data', async t => {
+  const malformed = [
+    () => null, () => [], () => 1,
+    () => ({ method: 'event', params: {} }),
+    () => ({ jsonrpc: '2.0', method: 'event', params: null }),
+    () => ({ jsonrpc: '2.0', method: 'event', params: { type: 'message.delta', payload: { text: {} } } }),
+    () => ({ jsonrpc: '2.0', method: 'event', params: { type: 'session.info', payload: { yolo: 'false' } } }),
+    () => ({ jsonrpc: '2.0', id: 1, method: 'approval', params: null }),
+    () => ({ jsonrpc: '2.0', id: 1, method: 'approval', params: { session_id: 'sample', request_id: 'sample', command: {} } }),
+    () => ({ jsonrpc: '2.0', id: 99, result: {}, error: { code: -1, message: 'sample' } }),
+    () => ({ jsonrpc: '2.0', id: 99, error: null }),
+  ]
+  for (const make of malformed) {
+    const f = fixture(t, { handle: frame => frame.method === 'sample' })
+    await f.wire.connect()
+    const pending = assert.rejects(f.wire.request('sample'), { message: INVALID_FRAME })
+    assert.doesNotThrow(() => f.socket().frame(make()))
+    await pending
+    assert.equal(f.wire.pending.size, 0)
+    assert.equal(f.wire.connected, false)
+    assert.equal(f.wire.closed, true)
+    assert.equal((await f.run.next()).text, INVALID_FRAME)
+  }
+})
+
+test('malformed RPC results consumed by the client close and clean up pending requests', async t => {
+  for (const [method, result] of [
+    ['client.capabilities', { server_requests: {} }], ['model.options', { providers: [null] }],
+    ['model.options', { providers: [{ slug: 'sample', models: 'sample' }] }],
+    ['session.resume', { session_id: 'sample', info: null, messages: [] }],
+    ['session.activate', { session_id: 'sample', info: {}, messages: {} }],
+    ['session.events.since', { events: [], epoch: 'epoch-a', latest_seq: {}, truncated: false, open_requests: [] }],
+    ['config.set', { scope: {} }], ['prompt.submit', { admission_id: {} }],
+  ]) {
+    const f = fixture(t, { handle: (frame, socket) => {
+      if (frame.method !== method || (method === 'client.capabilities' && !f.wire.connected)) return false
+      queueMicrotask(() => socket.reply(frame, result)); return true
+    } })
+    await f.wire.connect()
+    await assert.rejects(f.wire.request(method), { message: INVALID_FRAME })
+    assert.equal(f.wire.pending.size, 0)
+    assert.equal(f.wire.closed, true)
+  }
+})
+
+test('invalid startup frames and bounded byte/depth violations close without throwing', async t => {
+  const startup = fixture(t, { handle: (frame, socket) => {
+    if (frame.method !== 'client.capabilities') return false
+    socket.frame(null); return true
+  } })
+  await assert.rejects(startup.wire.connect(), { message: INVALID_FRAME })
+  assert.equal(startup.wire.closed, true)
+  const envelope = payload => ({ jsonrpc: '2.0', method: 'event', params: { type: 'ignored', payload } })
+  let nested = {}
+  for (let depth = 0; depth < 40; depth++) nested = { nested }
+  for (const data of ['{', JSON.stringify(envelope({ text: 'x'.repeat(8 * 1024 * 1024) })), JSON.stringify(envelope(nested))]) {
+    const f = fixture(t)
+    await f.wire.connect()
+    assert.doesNotThrow(() => f.socket().dispatchEvent(new MessageEvent('message', { data })))
+    assert.equal(f.wire.closed, true)
+    assert.equal((await f.run.next()).text, INVALID_FRAME)
+  }
+})
+
+test('reconcile fences old approval before awaiting resume and can answer a reused current request ID afterward', async t => {
+  let resumeFrame, resolveOldQuestion
+  const currentRequest = { id: 'srq-reused', method: 'approval', params: { session_id: randomUUID(), request_id: 'current', command: 'Current command' } }
+  let asked = 0
+  const f = fixture(t, { replay: { epoch: 'epoch-b', latest_seq: 1 }, snapshot: { open_requests: [currentRequest] },
+    question: () => ++asked === 1 ? new Promise(resolve => { resolveOldQuestion = resolve }) : 'once',
+    handle: frame => { if (frame.method !== 'session.resume') return false; resumeFrame = frame; return true },
+  })
+  Object.assign(f.identity, { storedSessionId: f.snapshot.stored_session_id, runtimeSessionId: f.snapshot.session_id, epoch: 'epoch-a', uncertain: true })
+  currentRequest.params.session_id = f.snapshot.session_id
+  await f.wire.connect()
+  const oldQuestion = f.run.control({ id: currentRequest.id, method: 'approval', epoch: 'epoch-a', params: { session_id: f.snapshot.session_id, request_id: 'old', command: 'Old command' } })
+  f.wire.epoch = 'epoch-b'
+  const reconciling = f.run.reconcile({ answerQuestions: true })
+  while (!resumeFrame) await new Promise(resolve => setImmediate(resolve))
+  resolveOldQuestion('once')
+  await oldQuestion
+  assert.ok(!f.sent.some(frame => frame.id === currentRequest.id))
+  f.socket().reply(resumeFrame, f.live)
+  await reconciling
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(asked, 2)
+  assert.deepEqual(f.sent.filter(frame => frame.id === currentRequest.id), [{ jsonrpc: '2.0', id: currentRequest.id, result: { choice: 'once' } }])
+  await f.run.control({ id: 'stale-epoch', method: 'approval', epoch: 'epoch-a', params: currentRequest.params })
+  assert.equal(asked, 2)
+  assert.ok(!f.sent.some(frame => frame.id === 'stale-epoch'))
+})
+
+test('reconcile answers only requests still present in the authoritative activate snapshot', async t => {
+  let asked = 0
+  const f = fixture(t, { question: () => { asked++; return 'once' }, replay: { open_requests: [{ id: 'srq-finished', method: 'approval', params: { session_id: 'sample', request_id: 'finished' } }] } })
+  f.identity.storedSessionId = f.snapshot.stored_session_id
+  await f.wire.connect()
+  await f.run.reconcile({ answerQuestions: true })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(asked, 0)
+  assert.ok(!f.sent.some(frame => frame.id === 'srq-finished'))
 })

@@ -999,6 +999,7 @@ export const MODEL_CSS = `
 .bt-route-icon{flex:none;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;color:var(--bt-ink-2)}
 .bt-route-icon svg{width:16px;height:16px}
 .bt-model-step>[data-route=acp] .bt-route-icon{color:var(--bt-accent)}
+.bt-model-step>[data-route=hermes-remote] .bt-menu-label{flex:none}
 .bt-agent-mark{flex:none;display:block;border-radius:4px;object-fit:contain}
 .bt-agent-initial{flex:none;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;background:var(--bt-tag-bg);color:var(--bt-ink-2);font-weight:600;line-height:1}
 .bt-model-menu .bt-model-step .bt-menu-label{font-size:13px;line-height:18px;font-weight:500;color:var(--bt-ink)}
@@ -1008,6 +1009,7 @@ export const MODEL_CSS = `
 .bt-model-step>[data-unavailable] .bt-menu-label{color:var(--bt-ink-2);font-weight:500}
 .bt-model-step>[data-unavailable] :is(.bt-route-icon,.bt-agent-mark,.bt-agent-initial){opacity:.6}
 .bt-model-step .bt-menu-hint[data-route-detail]{max-width:64%;overflow:visible;text-align:right;white-space:normal;line-height:14px;font-style:italic}
+.bt-model-step>[data-route=hermes-remote] .bt-menu-hint{flex:1;max-width:none}
 .bt-model-confirm{padding:10px 10px 8px;gap:8px}
 .bt-model-confirm-title{font-size:13px;line-height:18px;font-weight:600;color:var(--bt-ink)}
 .bt-model-confirm-move{font-size:11px;line-height:15px;color:var(--bt-ink-3);overflow-wrap:anywhere}
