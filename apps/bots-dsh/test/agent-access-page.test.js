@@ -250,6 +250,17 @@ test('revoking asks first: Keep leaves the key, Revoke takes it at once', async 
   assert.equal(page.button('Revoke Claude Code'), undefined)
 })
 
+test('a key with no row in a full log says No recent use, never Not used yet', async () => {
+  const state = withKeys()
+  // 200 records, all from before the key in use was made: its own rows may have dropped out.
+  state.audit = Array.from({ length: 200 }, (_, index) => call(index, 'Old laptop', 'list_bots', -40 * HOUR + index))
+  const full = await open(state)
+  assert.match(textOf(full.find(classed('bt-aa-key'))[0]), /^Claude CodeCreated Nov 10 · No recent useRevoke$/)
+  state.audit.pop()
+  const partial = await open(state)
+  assert.match(textOf(partial.find(classed('bt-aa-key'))[0]), /^Claude CodeCreated Nov 10 · Not used yetRevoke$/)
+})
+
 test('older revoked keys fold away behind one row', async () => {
   const state = withKeys()
   for (let index = 0; index < 5; index += 1) state.tokens.push({ id: `gone-${index}`, name: `Gone ${index}`, createdAt: NOON - 40 * 24 * HOUR, revokedAt: NOON - (30 + index) * 24 * HOUR })
@@ -330,10 +341,22 @@ test('the pieces the page is built from', async () => {
   assert.equal(api.reachOf(null), null)
   const row = { name: 'A', createdAt: 100 }
   const at = (time, tokenName = 'A') => ({ tokenName, time })
-  // A log that reaches back past the key's first day can say "not used yet"; a later window cannot.
+  // "Not used yet" needs the whole log: no row of the key's, and a window that has not filled.
   assert.equal(api.useOf(row, []).unused, true)
   assert.equal(api.useOf(row, [at(50, 'B')]).unused, true)
-  assert.equal(api.useOf(row, [at(150, 'B')]).unused, false)
+  assert.equal(api.useOf(row, [at(150, 'B')]).unused, true)
+  const others = count => Array.from({ length: count }, (_, index) => at(150 + index, 'B'))
+  assert.equal(api.useOf(row, others(199)).unused, true)
+  // A full window may have lost the key's rows: by count (200 records)...
+  assert.equal(api.useOf(row, others(200)).unused, false)
+  assert.equal(api.logMayHaveRolled(others(200)), true)
+  // ...or by size, where the host cuts at 256 KiB before it counts. Bytes, not letters.
+  const heavy = (text, count) => Array.from({ length: count }, () => ({ ...at(150, 'B'), changes: { bots: { b: { instructions: { before: text, after: text } } } } }))
+  assert.equal(api.useOf(row, heavy('a'.repeat(16000), 3)).unused, true)
+  assert.equal(api.useOf(row, heavy('a'.repeat(16000), 5)).unused, false)
+  assert.equal(api.useOf(row, heavy('说'.repeat(16000), 2)).unused, false)
+  // A row of the key's own wins over either.
+  assert.equal(api.useOf(row, [...others(200), at(900)]).last, 900)
   assert.equal(api.useOf(row, [at(150), at(180), at(170, 'B')]).last, 180)
   // Another key of the same name: calls from before this one was made, or after it was revoked, are not its.
   assert.equal(api.useOf({ ...row, revokedAt: 160 }, [at(50), at(150), at(180)]).last, 150)

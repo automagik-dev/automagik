@@ -1777,7 +1777,7 @@ const pack = createPack({
     "Created {date}": "Criada em {date}",
     "Last used {time}": "Último uso em {time}",
     "Not used yet": "Ainda não usada",
-    "Not used lately": "Sem uso recente",
+    "No recent use": "Sem uso recente",
     "Revoked {date}": "Revogada em {date}",
     "Revoked": "Revogada",
     "Revoke": "Revogar",

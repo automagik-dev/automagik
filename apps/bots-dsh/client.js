@@ -60,7 +60,7 @@ var ZH = {
   "Created {date}": "创建于 {date}",
   "Last used {time}": "上次使用 {time}",
   "Not used yet": "还没用过",
-  "Not used lately": "近期没有使用",
+  "No recent use": "近期没有使用",
   "Revoked {date}": "撤销于 {date}",
   "Revoked": "已撤销",
   "Revoke": "撤销",
@@ -18256,6 +18256,25 @@ function webAddressOf(view, place = globalThis.location) {
 var exampleOf = (address) => JSON.stringify({
   mcpServers: { automagik: { type: "http", url: address, headers: { Authorization: `Bearer ${PLACEHOLDER_KEY}` } } }
 }, null, 2);
+var LOG_ROWS = 200;
+var LOG_BYTES = 256 * 1024;
+var utf8Length = (text2) => {
+  let bytes = 0;
+  for (const letter of text2) {
+    const code = letter.codePointAt(0);
+    bytes += code < 128 ? 1 : code < 2048 ? 2 : code < 65536 ? 3 : 4;
+  }
+  return bytes;
+};
+function logMayHaveRolled(audit) {
+  if (audit.length >= LOG_ROWS) return true;
+  let bytes = 0;
+  for (const entry of audit) {
+    bytes += utf8Length(JSON.stringify(entry)) + 1;
+    if (bytes >= LOG_BYTES / 2) return true;
+  }
+  return false;
+}
 function useOf(row, audit) {
   let last;
   for (const entry of audit) {
@@ -18264,7 +18283,7 @@ function useOf(row, audit) {
     if (last === void 0 || entry.time > last) last = entry.time;
   }
   if (last !== void 0) return { last };
-  return { unused: audit.length === 0 || audit[0].time <= row.createdAt };
+  return { unused: !logMayHaveRolled(audit) };
 }
 function keyRows(view) {
   const live = view.tokens.filter((row) => row.revokedAt === void 0).sort((a, b) => b.createdAt - a.createdAt);
@@ -18479,7 +18498,7 @@ function CreateKey({ busy, onCreate }) {
 function KeyRow({ row, audit, busy, confirming, onAsk, onKeep, onRevoke }) {
   const revoked = row.revokedAt !== void 0;
   const use = useOf(row, audit);
-  const used = use.last !== void 0 ? t("Last used {time}", { time: moment(use.last) }) : use.unused ? t("Not used yet") : t("Not used lately");
+  const used = use.last !== void 0 ? t("Last used {time}", { time: moment(use.last) }) : use.unused ? t("Not used yet") : t("No recent use");
   const meta = revoked ? [t("Created {date}", { date: day(row.createdAt) }), t("Revoked {date}", { date: day(row.revokedAt) })] : [t("Created {date}", { date: day(row.createdAt) }), used];
   return (0, import_react47.createElement)(
     "div",

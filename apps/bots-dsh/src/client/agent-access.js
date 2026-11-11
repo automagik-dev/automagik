@@ -39,8 +39,34 @@ export const exampleOf = address => JSON.stringify({
   mcpServers: { automagik: { type: 'http', url: address, headers: { Authorization: `Bearer ${PLACEHOLDER_KEY}` } } },
 }, null, 2)
 
-// A key's last call, from the log the page holds. The log is a window, so a key with no call
-// in it was `unused` only when the window reaches back past the key's first day.
+// The log the page holds is a window: the host hands over the latest 200 records out of the
+// last 256 KiB of its file (src/host/agent-access.js `history`).
+const LOG_ROWS = 200
+const LOG_BYTES = 256 * 1024
+const utf8Length = (text) => {
+  let bytes = 0
+  for (const letter of text) {
+    const code = letter.codePointAt(0)
+    bytes += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4
+  }
+  return bytes
+}
+// Whether older records may have dropped out of the window. By count: the window is full.
+// By size: the host drops the record its cut lands in, so the rows weigh less than the
+// window; a record is far smaller than half of it, and past that half the window may be cut.
+export function logMayHaveRolled(audit) {
+  if (audit.length >= LOG_ROWS) return true
+  let bytes = 0
+  for (const entry of audit) {
+    bytes += utf8Length(JSON.stringify(entry)) + 1
+    if (bytes >= LOG_BYTES / 2) return true
+  }
+  return false
+}
+
+// A key's last call, from that window. A key with no row in it is `unused` only while the
+// window still holds the whole log: once records may have dropped out, nothing here can say
+// the key was never used.
 export function useOf(row, audit) {
   let last
   for (const entry of audit) {
@@ -49,7 +75,7 @@ export function useOf(row, audit) {
     if (last === undefined || entry.time > last) last = entry.time
   }
   if (last !== undefined) return { last }
-  return { unused: audit.length === 0 || audit[0].time <= row.createdAt }
+  return { unused: !logMayHaveRolled(audit) }
 }
 
 // Keys in use first, newest on top; then the revoked ones, latest revoked on top.
@@ -220,7 +246,7 @@ function KeyRow({ row, audit, busy, confirming, onAsk, onKeep, onRevoke }) {
   const revoked = row.revokedAt !== undefined
   const use = useOf(row, audit)
   const used = use.last !== undefined ? t('Last used {time}', { time: moment(use.last) })
-    : use.unused ? t('Not used yet') : t('Not used lately')
+    : use.unused ? t('Not used yet') : t('No recent use')
   const meta = revoked
     ? [t('Created {date}', { date: day(row.createdAt) }), t('Revoked {date}', { date: day(row.revokedAt) })]
     : [t('Created {date}', { date: day(row.createdAt) }), used]

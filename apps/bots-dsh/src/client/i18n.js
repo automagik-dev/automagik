@@ -22,7 +22,7 @@ const ZH = {
   "Created {date}": "创建于 {date}",
   "Last used {time}": "上次使用 {time}",
   "Not used yet": "还没用过",
-  "Not used lately": "近期没有使用",
+  "No recent use": "近期没有使用",
   "Revoked {date}": "撤销于 {date}",
   "Revoked": "已撤销",
   "Revoke": "撤销",
