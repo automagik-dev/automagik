@@ -151,7 +151,14 @@ export function install(rt) {
     if (typeof off === 'function') sub.effect(() => off, 'ds-bot: own mode on agents')
   }
   Object.assign(rt, { movePermissionRev, autoWhy, autoOffer, autoViewOf, autoFactsOf, endAuto, clearAuto, sweepAuto, setBotAuto, autoOpener, markInherited,
-    autoKey: () => Object.values(state.bots).filter(bot => bot.permissionAuto || autoOffer(bot).offered).map(bot => `${bot.id}:${autoOffer(bot).offered}${autoFactsOf(rt.chatOf(bot.id), sessionOf(rt.chatOf(bot.id)))?.counts === true}`).sort().join(',') })
+    autoKey: () => Object.values(state.bots).filter(bot => bot.permissionAuto || autoOffer(bot).offered).map(bot => {
+      let counts = false
+      try {
+        const id = rt.chatOf(bot.id)
+        counts = autoFactsOf(id, sessionOf(id))?.counts === true
+      } catch {}
+      return `${bot.id}:${autoOffer(bot).offered}${counts}`
+    }).sort().join(',') })
   if (typeof ctx.inject === 'function') ctx.inject(['acpAgents'], register)
   else if (acp() !== undefined) register({ acpAgents: acp(), effect: (execute, label) => ctx.effect(execute, label) })
 }

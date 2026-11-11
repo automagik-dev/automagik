@@ -1146,6 +1146,7 @@ export class AcpAdapter extends LlmAdapter {
         own = await this.ownAnswer(sessionId, dshAgent, options.provider)
         if (live.held !== undefined) return yield* stopped(live.held)
         if (own === 'yes') {
+          live.ownSent = true
           try { await live.run.setMode([agent.ownMode], { signal: options.signal }) } catch (error) {
             if (live.held !== undefined) return yield* stopped(live.held)
             const left = this.abandoned(sessionId, live, agent, error, 'taking DSH\'s permission level')
@@ -1156,14 +1157,16 @@ export class AcpAdapter extends LlmAdapter {
         }
       }
       try {
-        if (possible && own !== 'yes') await live.run.setMode([strict], { signal: options.signal, force: true })
-        else if (!possible) await live.run.setMode(modes, { signal: options.signal })
+        if (possible && own !== 'yes') {
+          if (live.ownSent === true) await live.run.setMode([strict], { signal: options.signal, force: true })
+          else await live.run.setMode(modes, { signal: options.signal })
+        } else if (!possible) await live.run.setMode(modes, { signal: options.signal })
         if (live.held !== undefined) return yield* stopped(live.held)
       } catch (error) {
         if (live.held !== undefined) return yield* stopped(live.held)
         const left = this.abandoned(sessionId, live, agent, error, 'taking DSH\'s permission level')
         if (left !== undefined) return yield left
-        if (possible) this.end(sessionId, live)
+        if (live.ownSent === true) this.end(sessionId, live)
         return yield finish('error', `${agent.name} would not take DSH's permission level: ${error?.message ?? error}`)
       }
       // Asked again right before the prompt: a Session held since the first ask (while consent,
@@ -1217,8 +1220,8 @@ export class AcpAdapter extends LlmAdapter {
       live.drifted = false
       live.open = true
       live.own = own === 'yes'
-      // Record only a prompt where the own mode was in question; any other clears an older record.
-      this.diagnostics?.own(sessionId, live, possible ? { answer: own, taken: live.own } : undefined)
+      // Ordinary strict sessions have no Auto record until an own-mode attempt or a late answer.
+      this.diagnostics?.own(sessionId, live, live.ownSent === true || ['yes', 'late', 'changed', 'refused'].includes(own) ? { answer: own, taken: live.own } : undefined)
       live.run.prompt(prompt).catch(() => {})
     }
     // The turn stays open until its end is drained here: the agent may finish it before DSH

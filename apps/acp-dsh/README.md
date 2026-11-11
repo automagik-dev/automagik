@@ -120,9 +120,11 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   call through, as it does DSH's own tools. An agent that does not offer the strict mode fails
   the turn instead of running in its own default.
   A Workspace Session on unbridged Codex can instead take `agent` when the Bot team's
-  `ownMode` answerer returns exactly `true` twice, before the prompt. Every other Codex
-  Workspace prompt re-sends and confirms strict `workspace-write`, even if cached; refusal
-  ends the agent session and fails the turn. Auto never requests `bypassPermissions` or
+  `ownMode` answerer returns exactly `true` twice, before the prompt. After that agent session
+  has attempted the own mode, any Workspace prompt that does not take it re-sends and confirms
+  strict `workspace-write`, even if cached; refusal ends the agent session and fails the turn.
+  Sessions that never attempt the own mode keep the usual mode cache and failure handling.
+  Auto never requests `bypassPermissions` or
   `agent-full-access`. Codex's own reviewer decides those steps, based on the
   [Codex 0.167.0 capture](test/fixtures/permission-payloads/README.md); later versions may
   decide differently. Any approval Codex still requests goes to the person.

@@ -15039,7 +15039,7 @@ function ComposerPermission({ sessionId, useRoster, actions }) {
       "aria-label": t("Permissions"),
       style: shownPlace,
       "data-leaving": leaving || void 0
-    }, (0, import_react34.createElement)(PermissionList, { catalog, saved, onPick: pick2, name: bot.name, cli, askedOf: () => ({ id: bot.id, rev: bot.permissionRev ?? 0 }), replaced: presetName(bot.permission ?? catalog.defaultPreset, catalog) }), (0, import_react34.createElement)(PermissionFallback, { fallback: bot.permissionFallback, owner: bot, catalog })), document.body) : null
+    }, (0, import_react34.createElement)(PermissionList, { catalog, saved, onPick: pick2, name: bot.name, cli, askedOf: () => ({ id: bot.id, rev: bot.permissionRev ?? 0 }), replaced: presetName(bot.permission ?? catalog.defaultPreset, catalog) }), bot.permissionAuto ? (0, import_react34.createElement)(PermissionFallback, { fallback: bot.permissionFallback, owner: bot, catalog }) : null), document.body) : null
   );
 }
 function ComposerPlus({ sessionId, inputActions, useRoster, actions }) {
@@ -24068,7 +24068,7 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
       setPicked(value);
     }, disabled: busy, cli }),
     errorLine,
-    (0, import_react68.createElement)(PermissionFallback, { fallback: bot.permissionFallback, owner: bot, catalog }),
+    bot.permissionAuto ? (0, import_react68.createElement)(PermissionFallback, { fallback: bot.permissionFallback, owner: bot, catalog }) : null,
     note,
     (0, import_react68.createElement)(
       "div",

@@ -177,6 +177,7 @@ const MODES = ['workspace-write', 'read-only', 'agent', 'agent-full-access']
 for (const [name, answer, expected] of [
   ['two exact true answers', () => true, 'agent'],
   ['no answerer', undefined, WRITE],
+  ['false', () => false, WRITE],
   ['string true', () => 'true', WRITE],
   ['number one', () => 1, WRITE],
   ['object', () => ({}), WRITE],
@@ -190,11 +191,13 @@ for (const [name, answer, expected] of [
   assert.ok(w.trace().length > 0, JSON.stringify(chunks))
   const trace = w.trace().filter(row => ['set-mode', 'prompt'].includes(row.event))
   assert.ok(trace.length > 0, JSON.stringify({ chunks, trace: w.trace() }))
-  assert.equal(trace[0].event, 'set-mode')
-  assert.equal(trace[0].modeId, expected)
-  assert.equal(trace[1].event, 'prompt')
+  assert.deepEqual(trace.map(row => [row.event, row.modeId]), expected === 'agent'
+    ? [['set-mode', 'agent'], ['prompt', undefined]]
+    : [['prompt', undefined]])
   assert.equal(w.adapter.diagnostics.read('chat').version, 2)
-  assert.equal(w.adapter.diagnostics.read('chat').ownMode.taken, expected === 'agent')
+  const record = w.adapter.diagnostics.read('chat').ownMode
+  if (expected === 'agent' || name === 'late') assert.equal(record.taken, expected === 'agent')
+  else assert.equal(record, undefined)
 })
 test('own mode: a changed answer forces strict before the prompt', async t => {
   let asks = 0
@@ -242,12 +245,12 @@ for (const verdict of ['allowed-once', 'rejected', 'unavailable', 'throw', 'stop
   else assert.equal(outcome?.outcome, 'cancelled')
 })
 
-test('own mode: bridged Workspace never asks and confirms strict mode', async t => {
+test('own mode: bridged Workspace never asks and keeps cached strict mode', async t => {
   let asks = 0
   const w = await world(t, { level: WRITE, modes: MODES, bridge: true, modeFor: AGENTS['acp-codex'].modeFor, spec: { ownMode: 'agent' }, ownMode: () => { asks++; return true } })
   const c = w.chat('bridge'); c.say('hi'); await c.step()
   assert.equal(asks, 0)
-  assert.deepEqual(w.events('set-mode').map(row => row.modeId), [WRITE])
+  assert.deepEqual(w.events('set-mode'), [])
 })
 for (const [level, mode] of [['read-only', 'read-only'], [FULL, 'agent-full-access'], ['auto', 'agent']]) test(`own mode: ${level} keeps its existing mode`, async t => {
   let asks = 0
@@ -256,12 +259,69 @@ for (const [level, mode] of [['read-only', 'read-only'], [FULL, 'agent-full-acce
   assert.equal(asks, 0)
   assert.deepEqual(w.events('set-mode').map(row => row.modeId), [mode])
 })
-test('own mode: refused strict mode ends the session without prompting', async t => {
-  const w = await world(t, { level: WRITE, modes: MODES, modeFor: AGENTS['acp-codex'].modeFor, spec: { ownMode: 'agent' }, env: { FAKE_ACP_REFUSE_MODES: WRITE } })
+test('own mode: refused strict mode without an own-mode attempt keeps the session without prompting', async t => {
+  const w = await world(t, { level: WRITE, modes: ['read-only', ...MODES.filter(mode => mode !== 'read-only')], modeFor: AGENTS['acp-codex'].modeFor, spec: { ownMode: 'agent' }, env: { FAKE_ACP_REFUSE_MODES: WRITE } })
   const c = w.chat('refused'); c.say('hi'); const chunks = await c.step()
   assert.equal(w.events('prompt').length, 0)
-  assert.equal(w.adapter.live.has(c.id), false)
+  assert.equal(w.adapter.live.has(c.id), true)
+  assert.notEqual(w.adapter.live.get(c.id).ownSent, true)
   assert.equal(chunks.at(-1).reason.kind, 'error')
+  assert.match(JSON.stringify(chunks.at(-1)), /Refused mode: workspace-write/)
+})
+
+for (const [name, answer] of [['no answerer', undefined], ['false', () => false]]) test(`own mode: ${name} never re-sends cached Workspace, even if the agent would refuse it`, async t => {
+  const w = await world(t, { level: WRITE, modes: MODES, modeFor: AGENTS['acp-codex'].modeFor, spec: { ownMode: 'agent' }, ownMode: answer, env: { FAKE_ACP_REFUSE_MODES: WRITE } })
+  const c = w.chat('cached')
+  for (let turn = 1; turn <= 2; turn++) {
+    c.say('plain'); const chunks = await c.step()
+    assert.notEqual(chunks.at(-1).reason.kind, 'error')
+    assert.equal(w.events('prompt').length, turn)
+    assert.deepEqual(w.events('set-mode'), [])
+    assert.equal(w.adapter.diagnostics.read(c.id).ownMode, undefined)
+  }
+})
+
+for (const refuses of [false, true]) test(`own mode: after an own-mode prompt, cached strict is awaited${refuses ? ' and refusal ends the session' : ''}`, async t => {
+  let asks = 0
+  const w = await world(t, { level: WRITE, modes: MODES, modeFor: AGENTS['acp-codex'].modeFor, spec: { ownMode: 'agent' }, ownMode: () => ++asks <= 2, env: refuses ? { FAKE_ACP_REFUSE_MODES: WRITE } : {} })
+  const c = w.chat('changed'); c.say('plain'); await c.step()
+  const live = w.adapter.live.get(c.id)
+  assert.equal(live.ownSent, true)
+  assert.equal(asks, 2)
+  assert.deepEqual(w.events('set-mode').map(row => row.modeId), ['agent'])
+  // The cache says strict already, but an earlier own-mode send requires confirmation.
+  live.run.modes.currentModeId = WRITE
+  let release
+  const waiting = new Promise(resolve => { release = resolve })
+  t.after(() => release())
+  let sent = false
+  const setMode = live.run.conn.setSessionMode.bind(live.run.conn)
+  t.mock.method(live.run.conn, 'setSessionMode', async params => {
+    assert.equal(params.modeId, WRITE)
+    sent = true
+    await waiting
+    return setMode(params)
+  })
+  c.say('plain again')
+  const next = c.step()
+  await waitFor(() => sent)
+  assert.equal(w.events('prompt').length, 1, 'the next prompt waits for strict confirmation')
+  release()
+  const chunks = await next
+  assert.equal(asks, 3)
+  if (refuses) {
+    assert.equal(w.adapter.live.has(c.id), false)
+    assert.equal(chunks.at(-1).reason.kind, 'error')
+    assert.match(JSON.stringify(chunks.at(-1)), /Refused mode: workspace-write/)
+    assert.equal(w.events('prompt').length, 1)
+  } else {
+    assert.deepEqual(w.trace().filter(row => ['set-mode', 'prompt'].includes(row.event)).map(row => [row.event, row.modeId]), [
+      ['set-mode', 'agent'], ['prompt', undefined], ['set-mode', WRITE], ['prompt', undefined],
+    ])
+    assert.equal(w.adapter.live.get(c.id), live)
+    assert.equal(live.ownSent, true)
+    assert.equal(w.adapter.diagnostics.read(c.id).ownMode.answer, 'no')
+  }
 })
 for (const event of ['agent/status', 'agent/disposed']) test(`own mode: ${event} ends a busy own-mode session`, async t => {
   const w = await world(t, { level: WRITE, modes: MODES, modeFor: AGENTS['acp-codex'].modeFor, spec: { ownMode: 'agent' }, ownMode: () => true, env: { FAKE_ACP_IGNORE_CANCEL: '1' } })
@@ -329,8 +389,7 @@ function harness({ clis = {}, signedIn = {}, bins = {}, busy = {}, errors = {}, 
   }
 }
 
-// The own-mode record is written only for a prompt where the own mode was in question: a
-// Workspace prompt of an agent that has one. Any other prompt leaves none.
+// A session that never attempts the own mode leaves no record for ordinary strict prompts.
 test('own mode: no record for an agent without its own mode', async t => {
   const w = await world(t, { level: WRITE, modes: ['default', 'auto', 'bypassPermissions'], modeFor: AGENTS['acp-claude'].modeFor })
   const c = w.chat('claude'); c.say('plain'); await c.step()
@@ -341,10 +400,10 @@ for (const level of ['read-only', FULL, 'auto']) test(`own mode: no record at ${
   const c = w.chat('other'); c.say('hi'); await c.step()
   assert.equal(w.adapter.diagnostics.read(c.id).ownMode, undefined)
 })
-test('own mode: a bridged Workspace prompt keeps its strict record', async t => {
+test('own mode: a bridged Workspace prompt has no own-mode record', async t => {
   const w = await world(t, { level: WRITE, modes: MODES, bridge: true, modeFor: AGENTS['acp-codex'].modeFor, spec: { ownMode: 'agent' }, ownMode: () => true })
   const c = w.chat('kept'); c.say('plain'); await c.step()
-  assert.deepEqual({ ...w.adapter.diagnostics.read(c.id).ownMode, at: 0 }, { answer: 'none', taken: false, at: 0 })
+  assert.equal(w.adapter.diagnostics.read(c.id).ownMode, undefined)
 })
 for (const [name, options] of [['no answerer', {}], ['bridged', { bridge: true, ownMode: () => true }]]) test(`own mode: a busy strict prompt is not in its own mode (${name})`, async t => {
   const w = await world(t, { level: WRITE, modes: MODES, modeFor: AGENTS['acp-codex'].modeFor, spec: { ownMode: 'agent' }, ...options })

@@ -248,6 +248,15 @@ test('Auto offer and fallback follow bridge availability and change the permissi
   assert.notEqual(w.rt.autoKey(), key)
 })
 
+test('Auto key counts a Bot as false when the session list throws', async t => {
+  const w = await enabled(t)
+  const key = w.rt.autoKey()
+  t.mock.method(w.ctx.sessions, 'list', () => { throw new Error('session list unavailable') })
+  assert.doesNotThrow(() => w.rt.autoKey())
+  assert.notEqual(w.rt.autoKey(), key)
+  assert.ok(w.rt.autoKey().split(',').includes('m1:truefalse'))
+})
+
 test('Auto waiters settle a rejected enable: clear continues and the second enable is stale', async t => {
   const w = team(t, { bots: { m1: codex } }); await w.rt.load()
   let reject

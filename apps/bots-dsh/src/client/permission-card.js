@@ -100,7 +100,7 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
       h('button', { type: 'button', className: 'bt-q-x', 'aria-label': t('Dismiss'), title: t('Dismiss'), onClick: onClose, disabled: busy }, h(CloseIcon))),
     h(PermissionOptions, { catalog, current: draft, onPick: (value) => { setError(''); setPicked(value) }, disabled: busy, cli }),
     errorLine,
-    h(PermissionFallback, { fallback: bot.permissionFallback, owner: bot, catalog }),
+    bot.permissionAuto ? h(PermissionFallback, { fallback: bot.permissionFallback, owner: bot, catalog }) : null,
     note,
     h('div', { className: 'bt-q-foot' },
       h('button', { type: 'button', className: 'bt-q-btn', onClick: onClose, disabled: busy }, t('Not now')),
