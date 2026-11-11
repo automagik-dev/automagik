@@ -374,8 +374,9 @@ export function install(rt) {
   const ownSessions = bot => [rt.chatOf?.(bot.id), ...(rt.groupSessionsOf?.(bot.id) ?? [])]
   async function desiredModel(bot, { aside = false, sessionId, session } = {}) {
     if (!bot.model || !onDsh(bot)) return undefined
-    // A Bot's own chat is moving to a fresh part: its old part must not be selected, but the
-    // fresh part asks with its own Session (freshRoute) and may.
+    // A Bot's own chat is moving to a new route: its old part must not be selected, but the
+    // fresh part asks with its own Session (freshRoute) and may. A plain fresh-part switch
+    // has no target and keeps the old behavior.
     if (sessionId === undefined && rt.switchingChat?.(bot.id)) return undefined
     const ref = await plainModel(bot)
     if (aside || !offCli(bot, ref)) return ref
@@ -466,8 +467,9 @@ export function install(rt) {
   // `force` re-selects even when the record says it is applied: the composer's own
   // model picker can move the Session without telling this plugin.
   async function applyModel(bot, { force = false } = {}) {
-    // The Bot's own part is in a switch: selecting the new model there would move the old
-    // conversation, and restore() would then leave that Session on the target route.
+    // The Bot's own part is in a route switch: selecting the new model there would move the
+    // old conversation, and restore() would then leave that Session on the target route. A
+    // plain fresh part has no target and keeps taking the pick on the old part.
     if (rt.switchingChat?.(bot.id)) return undefined
     const ref = await desiredModel(bot, { aside: true })
     if (ref === undefined) return ref

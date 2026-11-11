@@ -229,7 +229,7 @@ test('a Bot model applies its thinking level, and only re-selects on a change', 
   assert.equal(bot.appliedEffort, undefined)
 })
 
-test('a Bot whose own part is switching is not selected on the old part', async () => {
+test('a Bot whose own part is in a route switch is not selected on the old part', async () => {
   const { rt, selected } = bench()
   rt.switchingChat = id => id === 'b1'
   const bot = { id: 'b1', model: 'deepseek/v4-flash' }
