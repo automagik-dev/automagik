@@ -963,7 +963,8 @@ export class AcpAdapter extends LlmAdapter {
             this.diagnostics?.started(sessionId, this, agent, state)
             const run = new AgentRun({
               ...spec,
-              cwd: dshAgent?.session?.header?.cwd ?? homedir(),
+              cwd: dshAgent?.session?.header?.cwd
+                ?? spec.env?.AUTOMAGIK_BOT_CLI_HOME ?? homedir(),
               name: agent.name,
               mcpServers: state.bridge === undefined ? [] : [this.bridgeServer(state.bridge)],
               ...(this.bridgeOn(agent) && agent.disableBuiltInTools === true

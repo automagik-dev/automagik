@@ -13,6 +13,7 @@ import { structuredNameOf } from '../src/host/acp.js'
 import { AcpAdapter, aside, choose, NOTICE_KIND, promptOf, SIDE_MODEL } from '../src/host/adapter.js'
 import { AGENTS } from '../src/host/agents.js'
 import { Backchannel, offeredTools, presetOf } from '../src/host/backchannel.js'
+import { CliHomes } from '../src/host/cli-homes.js'
 import { isAuthRequired, SYNTHETIC_KIND } from '../src/host/names.js'
 import { credentialShapes } from '../src/host/redact.js'
 import { BOUNDARY_KIND, crossed } from '../src/host/switch.js'
@@ -140,6 +141,24 @@ async function step(adapter, messages, { signal, onChunk, model = 'default', eff
   }
   return chunks
 }
+
+test('isolated chat without a working folder uses its Bot home; explicit project cwd stays',
+  async t => {
+    for (const explicit of [false, true]) {
+      const h = host()
+      t.after(h.close)
+      const project = h.agent.session.header.cwd
+      const homes = new CliHomes(join(project, 'private'))
+      t.after(() => homes.dispose())
+      const env = homes.environment('claude')
+      const agent = h.adapter.agents.get('acp-fake')
+      const original = agent.spawn
+      agent.spawn = () => ({ ...original(), env })
+      if (!explicit) delete h.agent.session.header.cwd
+      await step(h.adapter, [{ role: 'user', content: 'hello' }])
+      assert.equal(h.adapter.live.get('s1').run.spec.cwd, explicit ? project : env.HOME)
+    }
+  })
 
 // One DSH turn: steps until the model stops, tool calls run between them like DSH runs them.
 async function turn(h, messages, text, choice = {}) {
