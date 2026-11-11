@@ -65,7 +65,84 @@ export const AGENTS = Object.freeze({
     // arrives by fork (session/fork with the new servers, then session/close on the source).
     refresh: 'fork',
   }),
+  // Agents whose CLI is itself an ACP server (#959): `launch` is how it starts (kind `native`,
+  // the CLI with these arguments), and there is no adapter package, so nothing is installed for
+  // them. With no `cliPackage`, Automagik never installs these CLIs either: one that is not on
+  // this computer is shown with its install page. Their sign-in is the CLI's own, made in a
+  // terminal (`signInHint`, the command a signed-out turn names); whether it holds is what the
+  // agent's own ACP session says (catalog.js `signedIn`), since none of the three has a status
+  // command that names one sign-in. They are off until the person turns one on, which is their
+  // word that Automagik may use the sign-in that CLI has on this computer (index.js).
+  //
+  // Each is put in its own `default` mode, the one that asks, whatever DSH's level: what it asks
+  // is answered by DSH's approval under the Session's level. Its own permission settings still
+  // decide what it asks about. No bridge: DSH's tools reach none of them, even with `dshTools`
+  // on, until that agent's tool naming is proven as Claude Code's was (adapter.js bridgeOn).
+  'acp-hermes': Object.freeze({
+    key: 'hermes',
+    name: 'Hermes (ACP)',
+    defaultName: 'Hermes',
+    // Hermes names its models `provider:model`, from the providers the person set up: only its
+    // own setting can stand in.
+    fallback: Object.freeze([Object.freeze({ id: 'default', name: 'Hermes' })]),
+    cli: 'hermes',
+    installUrl: 'https://hermes-agent.nousresearch.com/docs/getting-started/installation',
+    // `hermes acp` (its help: "Run Hermes Agent as an ACP (Agent Client Protocol) server").
+    launch: Object.freeze({ kind: 'native', args: Object.freeze(['acp']) }),
+    // Its ACP `authMethods` names this terminal step (`hermes-setup`, args `--setup`).
+    signInHint: 'hermes acp --setup',
+    modeFor: () => ['default'],
+  }),
+  'acp-antigravity': Object.freeze({
+    key: 'antigravity',
+    name: 'Antigravity (ACP)',
+    defaultName: 'Antigravity',
+    fallback: Object.freeze([Object.freeze({ id: 'default', name: 'Antigravity', reasoning: efforts('low', 'medium', 'high') })]),
+    cli: 'agy',
+    installUrl: 'https://antigravity.google/docs',
+    // `agy acp` (its help: "Start the Agent Client Protocol (ACP) stdio server").
+    launch: Object.freeze({ kind: 'native', args: Object.freeze(['acp']) }),
+    // `agy acp --login`: "Log in with Google interactively, then exit (ACP terminal auth)".
+    signInHint: 'agy acp --login',
+    modeFor: () => ['default'],
+  }),
+  'acp-omp': Object.freeze({
+    key: 'omp',
+    name: 'omp (ACP)',
+    defaultName: 'omp',
+    fallback: Object.freeze([Object.freeze({ id: 'default', name: 'omp' })]),
+    cli: 'omp',
+    installUrl: 'https://github.com/can1357/oh-my-pi',
+    // `omp acp` (its help: "Run omp as an ACP (Agent Client Protocol) server over stdio").
+    launch: Object.freeze({ kind: 'native', args: Object.freeze(['acp']) }),
+    // `omp login`: "Log in to a model provider (terminal counterpart of /login)".
+    signInHint: 'omp login',
+    modeFor: () => ['default'],
+  }),
 })
+
+/** Whether `spec`'s CLI is itself the ACP server: no adapter package, nothing to install. */
+export const isNative = spec => spec?.launch?.kind === 'native'
+
+/**
+ * How an agent is started, of either kind: { command, args, env, ready, version?, key }.
+ * `ready` is false while an adapter is not installed (a native agent is ready as soon as its
+ * CLI is found); `key` names what would run, for the model catalog. The adapter kind runs
+ * `node` on the installed adapter with the CLI in its environment; the native kind runs the CLI
+ * itself, its own folder leading PATH so a CLI that is a script finds the runtime it was
+ * installed with. A Windows batch file is handled where it is spawned (acp.js, batchSafe).
+ * @param {object} spec an entry of AGENTS
+ * @param {string} cli
+ * @param {{ store?: any, node?: { command: string, env: object }, cliEnv?: object, env?: NodeJS.ProcessEnv, stamp?: (cli: string) => string }} [options]
+ */
+export function launchOf(spec, cli, { store, node = { command: process.execPath, env: {} }, cliEnv = {}, env = process.env, stamp = value => value } = {}) {
+  if (isNative(spec)) {
+    return { command: cli, args: [...spec.launch.args], env: { ...cliEnv, PATH: [dirname(cli), env.PATH].filter(Boolean).join(delimiter) }, ready: true, key: `native ${stamp(cli)}` }
+  }
+  const bin = store?.binOf(spec.adapter, spec.bin)
+  if (bin === undefined) return { ready: false }
+  return { command: node.command, args: [bin.path], env: { ...node.env, ...cliEnv, ...spec.env(cli) }, ready: true, version: bin.version, key: `${bin.path} ${stamp(cli)}` }
+}
 
 // Where the CLIs' own installers put them, for a DSH started from the desktop with a short PATH.
 export function searchPath(env = process.env, home = homedir()) {
