@@ -5,6 +5,31 @@
 export const NAMESPACE = 'omni-ui'
 
 const ZH = {
+  "Bot sign-in recovery is needed. Reset Bot sign-in to start fresh.":
+    "需要恢复 Bot 登录。重置 Bot 登录以重新开始。",
+  "Reset Bot sign-in": "重置 Bot 登录",
+  "This signs {vendor} out for Bots. Sign in again in the app.":
+    "这会使 Bot 退出 {vendor}。请在应用内重新登录。",
+  "Bot models and history stay.": "Bot 的模型和历史记录会保留。",
+  "Bot CLI user settings start empty.": "Bot CLI 的用户设置会从空白开始。",
+  "Previous Bot sign-in files stay separate and are never reused.":
+    "上次 Bot 登录的文件保持独立，永不重复使用。",
+  "No credentials are copied. Your terminal login stays unchanged.":
+    "不会复制任何凭据。终端的登录保持不变。",
+  "Account not shown by the CLI": "CLI 未显示账号",
+  "Account change failed. Close other app windows and try again.": "无法更改账号。请关闭其他应用窗口后重试。",
+  "Bot accounts": "Bot 账号",
+  "Bots in this installation share these accounts.": "此安装中的 Bot 共用这些账号。",
+  "Your terminal login is separate and stays unchanged.": "终端的登录独立，保持不变。",
+  "Bots: {account}": "Bot：{account}",
+  "Sign in again in the app to resume Bots": "在应用内重新登录以恢复 Bot",
+  "Terminal: {account}": "终端：{account}",
+  "This stops running Bot work for this account. Continue?": "这将停止此账号正在运行的 Bot 工作。继续吗？",
+  "Switch account": "切换账号",
+  "Sign out": "退出登录",
+  "This sign-in is for Bots only. Your terminal login stays unchanged.": "此登录仅用于 Bot。终端的登录保持不变。",
+  "Bots will use and bill this account. Your terminal login is separate.":
+    "Bot 将使用此账号并向其计费。终端的登录独立。",
   // The sign-in row in a Bot's chat (cli-login.js), and the host's sign-in messages (host/cli-login.js).
   "Authorization code": "授权码",
   "Copy link": "复制链接",

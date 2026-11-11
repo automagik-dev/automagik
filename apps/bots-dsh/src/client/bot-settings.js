@@ -16,6 +16,7 @@ import { useMemoryCount } from './memory-panel.js'
 import { SPRING_SHAPE, SPRING_TAP, spring } from './motion.js'
 import { t } from './i18n.js'
 import { cliProviderOf } from './cli-login-model.js'
+import { CliAccounts } from './cli-accounts.js'
 import { AdvancedSettings, ADVANCED_SETTINGS_CSS } from './advanced-settings.js'
 
 const capitalize = word => word[0].toUpperCase() + word.slice(1)
@@ -179,6 +180,7 @@ export function BotSettingsForm({ bot, roster, actions, run }) {
       account && actions.openCliLogin ? h('div', { className: 'bt-set-row bt-bs-row' },
         h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-set-hint' }, t('This model needs you to confirm the account of its coding agent.'))),
         h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: () => { actions.openCliLogin(bot.id, cliProviderOf(account), account); setAccount(null) } }, t('Confirm account'))) : null),
+    h(CliAccounts, { bot, actions }),
     h(Card, { title: t('Working folder') },
       h('div', { className: 'bt-set-row bt-bs-row' },
         h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, t('Folder'))),

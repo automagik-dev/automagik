@@ -9,6 +9,7 @@ import { Readable, Writable } from 'node:stream'
 // update it does not know, and the whole notification with it).
 import { PROTOCOL_VERSION, client, methods, ndJsonStream } from '@agentclientprotocol/sdk/unstable'
 import { batchSafe } from './batch-spawn.js'
+import { HOME_ENV, releaseRun, trackRun } from './cli-homes.js'
 import { isBridgeName } from './names.js'
 
 const STDERR_KEEP = 4000
@@ -110,12 +111,17 @@ export class AgentRun {
    * @param {{ signal?: AbortSignal }} [options]
    */
   async start({ signal } = {}) {
+    trackRun(this)
     const { command, args = [], env, cwd, mcpServers = [], sessionMeta } = this.spec
     // Its own process group, where the platform has them: what the agent starts (the CLI behind
     // an adapter, the command behind a tool call) is ended with it, as one group (`endTree`).
     // Through batchSafe: a native agent's CLI can be a Windows batch file (hermes.cmd), which
     // Node refuses to spawn without a shell.
-    const child = spawn(...batchSafe(command, args, { cwd, env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, detached: process.platform !== 'win32' }))
+    const child = spawn(...batchSafe(command, args, {
+      cwd, env: env?.[HOME_ENV] ? env : { ...process.env, ...env },
+      stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
+      detached: process.platform !== 'win32',
+    }))
     this.child = child
     this.grouped = process.platform !== 'win32'
     // An idle agent never keeps DSH running: only a prompt in flight holds the event loop.
@@ -407,6 +413,28 @@ export class AgentRun {
     try { this.child?.stdin.end() } catch {}
     const child = this.child
     if (child && child.exitCode === null && child.signalCode === null) this.endTree()
+    void releaseRun(this)
+  }
+
+  // Account changes wait for the entire process group, including children left behind by an
+  // adapter. Sending SIGTERM alone is not proof that the old account stopped doing work.
+  async stop() {
+    this.dispose()
+    const child = this.child
+    if (!Number.isInteger(child?.pid) || child.pid <= 1) return
+    const until = Date.now() + 5000
+    while (true) {
+      let running = child.exitCode === null && child.signalCode === null
+      if (this.grouped) {
+        try { process.kill(-child.pid, 0); running = true } catch (error) {
+          if (error.code !== 'ESRCH') throw new Error('The Bot process could not be stopped.')
+          running = false
+        }
+      }
+      if (!running) return
+      if (Date.now() >= until) throw new Error('The Bot process has not stopped. Try again.')
+      await new Promise(resolve => setTimeout(resolve, 25))
+    }
   }
 
   /**

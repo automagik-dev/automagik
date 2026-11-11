@@ -264,7 +264,9 @@ function CliLoginRow({ bot, row, roster, manager, secretPending, seat, fieldRef 
           h('button', { type: 'button', className: 'bt-soft bt-soft-sm', disabled: row.busy, onClick: () => manager.dismiss(bot.id) }, t('Not now'))))
       case 'account': return h(Fragment, null,
         h('p', null, accountLine(name, row.account)),
-        h('p', null, t('Bots will use and bill this account. It is the same sign-in your terminal uses.')),
+        h('p', null, row.account?.authScope === 'isolated'
+          ? t('Bots will use and bill this account. Your terminal login is separate.')
+          : t('Bots will use and bill this account. It is the same sign-in your terminal uses.')),
         row.error ? h('p', { className: 'bt-cli-error', role: 'alert' }, hostText(row.error)) : null,
         h('div', { className: 'bt-cli-actions' },
           h('button', { type: 'button', className: 'bt-q-submit', disabled: row.busy, onClick: () => void manager.confirm(bot.id) }, t('Use this account')),
