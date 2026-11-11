@@ -37,7 +37,7 @@ export async function declaredRuntime() {
 }
 
 // The plugin sources, each at the commit the market index pins for it.
-export async function pinnedSources(fixture) {
+export async function pinnedSources(fixture, { includeGenie = true } = {}) {
   const market = await json(join(root, 'marketplace/automagik.json'))
   const latest = name => {
     const entry = market.plugins.find(plugin => plugin.name === name)
@@ -57,6 +57,7 @@ export async function pinnedSources(fixture) {
     assert.equal(git(root, 'status', '--porcelain', '--', ...shipped), '', `${pin.path} has uncommitted changes in shipped files`)
     sources[name] = { dir, ...pin, tree: git(root, 'rev-parse', `${pin.commit}:${pin.path}`) }
   }
+  if (!includeGenie) return sources
   // Genie's plugin lives in the genie repository: exported from a local clone at exactly the
   // pinned commit (GENIE_REPO, default the sibling checkout), never from its working tree.
   const genie = latest('@automagik/genie-dsh')

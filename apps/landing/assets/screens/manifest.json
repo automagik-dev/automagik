@@ -38,7 +38,11 @@
     "team-step.png": "fe5dd8a9750845b2b8b9d5f484703177114d0bd135de5317ecaf9848508f1d1f",
     "wish-checks.png": "f70f49db400ff16df291cb1c1e48dd359def6b767eb471c3761f96180c5cbb06",
     "wish-diff.png": "964eeee4ecb776574e0a41de574a67c1c2027993ca06969d1eff9e612be46c59",
-    "code-sidebar.png": "b623f219e94013dcf8ca296e8b98cd1d627110b0527fec3cd9f98472399c2479"
+    "code-sidebar.png": "b623f219e94013dcf8ca296e8b98cd1d627110b0527fec3cd9f98472399c2479",
+    "app-stage-light-1440.png": "b61f6dd2112c09d0dee41df04c2d3e7d7cd575cc39b2b2f2b5180d7876c64b09",
+    "app-stage-light-390.png": "8528443ecf2f453ae7c96e7faecbcfbb1235c7e394644ac39e8d54b7b3549b6f",
+    "app-stage-dark-1440.png": "323a3e2846cad29ac9dcfe089b8509616b761d569cda119e253790c2a81591ab",
+    "app-stage-dark-390.png": "9008aec909bbf9d82d6b04b8cd5368d3e8b7aab5a5cc3b6d798055ca773714a4"
   },
   "additionalCaptures": {
     "code-sidebar.png": {
@@ -47,5 +51,64 @@
       "kind": "herdr-app share image",
       "edits": "Cropped to the bot tree; overlay scrollbar painted out in the original share image. Copied without further changes."
     }
+  },
+  "themeCapture": {
+    "capturedBy": "node apps/landing/capture/theme.mjs --run",
+    "runtime": {
+      "package": "@deepseek-ai/dsh",
+      "version": "0.2.2-rc.1"
+    },
+    "plugin": {
+      "version": "3.127.14",
+      "repository": "https://github.com/automagik-si/automagik",
+      "commit": "c57acbed50e96593dda4197cd6e2af37e2cc5778",
+      "path": "apps/bots-dsh",
+      "tree": "11e8aacb41c98c2fc10a5def2f4aea729a26e6ec"
+    },
+    "scenario": "Fictional Pip, Rowan and Sage created through the real Bot API. No AI model, channel, messages or work result is simulated. The real app shows its model connection prompt.",
+    "themeSource": "apps/bots-dsh/src/client/stage.js",
+    "reports": [
+      {
+        "name": "app-stage-light-1440.png",
+        "colorScheme": "light",
+        "width": 1440,
+        "background": "#f6eee2",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        }
+      },
+      {
+        "name": "app-stage-light-390.png",
+        "colorScheme": "light",
+        "width": 390,
+        "background": "#f6eee2",
+        "viewport": {
+          "width": 390,
+          "height": 900
+        }
+      },
+      {
+        "name": "app-stage-dark-1440.png",
+        "colorScheme": "dark",
+        "width": 1440,
+        "background": "#1e1923",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        }
+      },
+      {
+        "name": "app-stage-dark-390.png",
+        "colorScheme": "dark",
+        "width": 390,
+        "background": "#1e1923",
+        "viewport": {
+          "width": 390,
+          "height": 900
+        }
+      }
+    ],
+    "captureScriptSha256": "4b2fcad7eaa7b2dfd7e6bcb9223fb9f8e19d0291335ad851f8deab1403ee8f47"
   }
 }

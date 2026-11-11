@@ -1,63 +1,71 @@
 # automagik.si preview
 
-RFC 0027 D3: a static page, served directly from this directory. No build step or client
-JavaScript. It starts from the Genie's draft, carries the shared seven-block story, and uses
-recorded product captures. `assets/CAPTURES.md` records the screens and film slot;
-`assets/brand/LICENSES.md` records the copied brand assets and font licences.
+RFC 0027, revised by the owner on 2026-11-11: the umbrella home plus Desktop, Mobile,
+Omni, Genie, Cloud, Arca and Mykes pages. The app's current default Stage theme supplies
+the colours, type and component treatment. Every product screen is a provenance-backed
+capture; brand/font licences are in `assets/brand/LICENSES.md`.
 
-Download links follow this repository's release aliases. Code mode needs Herdr and the
-Automagik pack separately. Cloud is not live; the secondary card leaves room for D3b, with
-no form or data collection in D3. D2 replaces the single labelled film placeholder with its
-approved poster and committed encode, without adding a second film element.
+The committed HTML needs no Pages build step and contains no client JavaScript. The home
+has one labelled D2 film slot. Cloud is coming soon and carries intent, consent and removal
+forms, with email or inbound-first WhatsApp confirmation. No launch or marketing email.
+The meter is not a product or page. Herdr and DSH are Desktop installation channels.
 
-## Check
+## Source and checks
 
-From the repository root:
+Edit public page copy in `scripts/build-pages.mjs`; shared Cloud form/response copy in
+`waitlist/lib/ui.js`; layout/components in `styles.css`. `theme.css` derives directly from
+`apps/bots-dsh/src/client/stage.js`. Regenerate and commit the HTML and CSS:
 
 ```sh
+node apps/landing/scripts/sync-theme.mjs
+node apps/landing/scripts/build-pages.mjs
 bun install --frozen-lockfile --ignore-scripts
-node --test apps/landing/landing.test.mjs
+node --test apps/landing/landing.test.mjs apps/landing/waitlist.test.mjs
 LANDING_CHROME=/path/to/chrome node apps/landing/verify-browser.mjs
 node herdr/scripts/privacy-check.mjs
 ```
 
-`playwright-core` is a root dev dependency. Chrome must already be installed; on Linux/CI,
-set `LANDING_CHROME` to its executable. The browser verifier starts and stops its own
-loopback server, blocks remote requests, and checks overflow, decoded images, local fonts,
-links, the film slot and reduced motion at 1440, 1024, 390 and 320 px in light and dark.
-It writes full-page screenshots and a JSON report under ignored `.cache/landing-evidence/`.
-Set `LANDING_EVIDENCE` to an absolute directory to choose another report destination.
-A D2 player is checked for its local poster, `video/mp4` response and playable media.
+The browser gate checks all pages at 1440, 1024, 390 and 320 px, light and dark. It checks
+images/fonts, overflow, failed/external loads and native form 503/200 responses against an
+isolated SQLite fixture. It writes full-page images and a JSON report to ignored
+`.cache/landing-evidence/`; set `LANDING_EVIDENCE` to another absolute report directory.
+At 1440 and 390 it also renders equal-width side-by-side site/app comparisons in each theme.
+The `landing` CI job runs the same gates and retains the images/report as an artifact.
+No real confirmation is sent by a test. Resend is mocked; WhatsApp rendering/callbacks
+make no third-party request. The live account integration is an owner check.
 
-The `landing` CI job runs both checks on every PR and retains the browser evidence.
+`assets/screens/manifest.json` and `assets/CAPTURES.md` record each capture. New Stage
+reference shots come from `capture/theme.mjs --run`, a fresh isolated DSH profile without
+an AI model or live chat. Set `LANDING_CHROME` to an installed matching Chrome/headless-shell
+binary; install the declared Bot harness/dependencies and the desktop runtime's pinned
+pnpm first. The original Northwind capture pipeline remains under `capture/`.
 
-## Cloudflare Pages preview
+## Downloads and hosting
 
-The owner connects the existing repository in his Cloudflare account:
+Desktop uses the repository's release aliases. Mobile links directly to the APK named by
+Pocket's rolling release manifest. Its verified URL/digest/date are in `assets/releases.json`;
+refresh from that manifest before publishing. Windows and iPhone are soon text without links.
 
-- Framework preset: None.
-- Repository root directory: `apps/landing`.
-- Build command: empty.
-- Build output directory: `.` (this directory).
-- Select this PR's branch for a preview. Do not attach the production domain in D3.
+Owner's Cloudflare Pages settings: root `apps/landing`, no build, output `.`. The root must
+include `functions/` for the confirmation routes to compile. Preview is unlisted and noindex
+through meta and `X-Robots-Tag`; account-level access control is the owner's. No preview URL,
+account ID, zone ID, database ID or key belongs in the repository. D4 removes indexing
+restrictions and attaches the production domain after the owner's OK. No agent changes DNS.
 
-The preview is unlisted. Both the page's robots meta tag and `_headers` say `noindex,
-nofollow`; the latter supplies `X-Robots-Tag` on Pages. These discourage indexing; they do
-not provide access control. The owner restricts preview access in his account before
-sharing. No account, zone or database identifier is needed in this repository. The preview
-URL stays in the private delivery report, never in a committed file. D4 removes the preview
-indexing restrictions after the owner's OK. No DNS or production deployment is part of D3.
+See [waitlist setup](waitlist/README.md) for the exact binding, secrets, plain variables,
+schema, EU jurisdiction, Resend sender and final Omni event-envelope contract. Missing
+configuration fails closed with 503. Preview and production databases/credentials are separate.
 
 ## Developer entry points
 
-These commands moved off the old developer landing page:
+The old developer landing commands live here:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/automagik-si/genie/main/install.sh | bash
 genie desktop
 ```
 
-The Genie CLI supports Linux x64/arm64 and Macs with Apple silicon. `genie desktop` needs
-Linux x64 or a Mac with Apple silicon; there is no Linux arm64 desktop build. It downloads
-the matching Automagik release and checks its SHA256SUMS. On a Mac, drag the app from the
-disk image into Applications. Bring an AI account or API key; provider terms apply.
+The Genie CLI supports Linux x64/arm64 and Apple silicon Macs. `genie desktop` needs Linux
+x64 or an Apple silicon Mac; there is no Linux arm64 desktop build. It downloads the matching
+Automagik release and checks SHA256SUMS. On Mac, drag the app into Applications. Bring an AI
+account or API key; provider terms apply. Code mode needs Herdr and the Automagik pack separately.
