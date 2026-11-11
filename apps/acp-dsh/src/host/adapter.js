@@ -855,7 +855,17 @@ export class AcpAdapter extends LlmAdapter {
     }
     live = this.live.get(sessionId)
     const last = options.messages.at(-1)
-    const continuing = last?.role === 'tool' && live?.provider === options.provider && live.calls.has(last.toolCallId) && live.open
+    // The step after a mirror call's result continues the agent's turn. The bridge writes result
+    // rows of its own (a DSH tool call's result, or the row that closes a call still open when
+    // its step ended, #957), and one of those can come after the mirror call's result: the
+    // mirror result is looked for among all the tool messages the transcript ends with.
+    const mirrorAnswered = (() => {
+      for (let i = options.messages.length - 1; i >= 0 && options.messages[i]?.role === 'tool'; i--) {
+        if (live?.calls.has(options.messages[i].toolCallId)) return true
+      }
+      return false
+    })()
+    const continuing = mirrorAnswered && live?.provider === options.provider && live.open
     if (continuing) started()
     if (!continuing) {
       if (last?.role === 'tool') {
@@ -1090,6 +1100,9 @@ export class AcpAdapter extends LlmAdapter {
         return yield* stopped(live.held)
       }
       if (event.type === 'end' || event.type === 'error') live.open = false
+      // The prompt is over (finished, failed or stopped): nobody waits for a DSH tool call the
+      // bridge still has in flight, so each is stopped; the bridge itself stays for the next turn.
+      if (event.type === 'end' || event.type === 'error' || event.type === 'aborted') this.backchannel?.cancel?.(live.bridge, event.type === 'aborted' ? 'the turn was stopped' : 'the turn ended')
       // Inbound text is logged as the agent said it: DSH does not redact at ingest, and neither
       // does this plugin. The redactor runs at each provider crossing instead — the replay out
       // (`replayBlocks`) and the transcript handed back to a native provider (`crossed`).

@@ -56,7 +56,16 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   before the body runs. A denial is `AUTO_REVIEW_DENIED`, a failed reviewer refuses with
   `AUTO_REVIEW_FAILED`, a review past its deadline is `AUTO_REVIEW_TIMEOUT`, and the call never
   runs. A Manual or Full call with no open step is `BRIDGE_NO_STEP`; one whose advertisement or
-  call row cannot be written is `BRIDGE_RECORD_FAILED`, and the call does not run. The reviewer
+  call row cannot be written is `BRIDGE_RECORD_FAILED`, and the call does not run. **A call that
+  outlives its step (#957).** The agent runs its calls in parallel, and the bridge puts no
+  deadline on one (a long wait, a slow command and an open approval dialog are legitimate), so
+  DSH can end the step a call was recorded in while it still runs. The write guard below then
+  closes it before the `step/end` row and drops its late result; the agent still gets the real
+  answer. Each call has its own abort controller: Stop, the end of its turn and a caller that
+  went away (an MCP `notifications/cancelled`, a closed request) stop that call as
+  `BRIDGE_CANCELLED` and keep the bridge. A call whose `tool/call` row cannot be written is
+  answered with DSH's own not-started row, and a bridge revoked with a call in flight keeps
+  the guard until that call is over. The reviewer
   goes to the same non-agent side model as a Session title. Manual asks (one dialog), Full
   access does not. A Session that moves between providers carries its transcript
   redacted at each crossing — the replay out to an agent, and the transcript handed back to a
