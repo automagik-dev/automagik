@@ -303,9 +303,12 @@ https.get = denied; https.request = denied; globalThis.fetch = denied;
 `)
   const reservation = http.createServer()
   const port = await listen(reservation)
+  const bootstrapReservation = http.createServer()
+  const bootstrapPort = await listen(bootstrapReservation)
   await new Promise(resolve => reservation.close(resolve))
+  await new Promise(resolve => bootstrapReservation.close(resolve))
   const child = spawn(process.execPath, ['--import', pathToFileURL(guard).href, 'server/gate-entrypoint.mjs'], {
-    env: { PATH: process.env.PATH, TMPDIR: tmpdir(), AUTOMAGIK_GATE_ENABLED: '1', AUTOMAGIK_GATE_ORIGIN: ORIGIN, AUTOMAGIK_GATE_PORT: String(port), AUTOMAGIK_GATE_HOME: join(f.dir, 'entry-home') },
+    env: { PATH: process.env.PATH, TMPDIR: tmpdir(), AUTOMAGIK_GATE_ENABLED: '1', AUTOMAGIK_GATE_ORIGIN: ORIGIN, AUTOMAGIK_GATE_PORT: String(port), AUTOMAGIK_GATE_BOOTSTRAP_PORT: String(bootstrapPort), AUTOMAGIK_GATE_HOME: join(f.dir, 'entry-home') },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   let stderr = ''
@@ -324,9 +327,11 @@ https.get = denied; https.request = denied; globalThis.fetch = denied;
     assert.equal(existsSync(marker), false, 'unset Access mode must never attempt outbound HTTPS or fetch')
     assert.equal(stderr, '')
   } finally {
-    const exited = once(child, 'exit')
-    child.kill('SIGTERM')
-    await exited
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = once(child, 'exit')
+      child.kill('SIGTERM')
+      await exited
+    }
   }
 })
 

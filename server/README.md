@@ -57,12 +57,13 @@ release that has `plugins.json`. The dispatch runs on `dev` or on a `v<version>`
 
 ## The image
 
-Three stages, every base digest-pinned:
+Four preparation/runtime stages, every base digest-pinned (plus the distroless base input):
 
 | Stage | What it does |
 |---|---|
 | `builder` | `node:24.22.2-trixie-slim`: installs the pinned harness and pnpm, fetches and verifies the release tarballs, installs the profile with dsh's own `plugin … install`, prunes what the profile does not compose, writes `versions.json` |
 | `tools` | `debian:bookworm-slim`: `bash`, `dash` as `/bin/sh`, git core, `ripgrep`, their `ldd` closure, and the empty `/data` tree owned by uid 1000. No perl: git's perl subcommands are not shipped |
+| `gate-deps` | Bun 1.4.4 installs the exact WebAuthn dependency and `server/bun.lock`, with lifecycle scripts disabled, then prunes development files. Bun stays in this stage |
 | `runtime` | `scratch` holding the distroless nodejs24 rootfs (node and glibc), cleaned in the `tools` stage (man pages and changelogs stripped there with coreutils), plus the tools above, the code, nothing else — no apt, npm, curl or build toolchain |
 
 The distroless tag ships Node 24.14.0 (above dsh's 24.9 floor); the builder is 24.22.2. The
@@ -313,6 +314,7 @@ node server/secrecy.mjs --rootfs /tmp/rootfs --inventory secrecy
 ## Tests
 
 ```sh
+bun install --cwd server --frozen-lockfile --ignore-scripts --linker hoisted
 node --test 'server/test/*.test.mjs'
 ```
 
@@ -332,8 +334,8 @@ the real check of the image; the workflow runs the scan on the real rootfs befor
 ## Gate foundation (C2.1, #907)
 
 The image also carries `gate-entrypoint.mjs`, a separate plain Node process. It is disabled by
-default. Without the optional Access mode below, it offers no browser sign-in or session creation route. Claim/passkeys (#908) and
-Cloud workspace tokens (#909) are later deliveries. The single-container run above still works.
+default. When enabled, it uses the self-hosted claim and passkeys below, or the optional Access
+mode. Cloud workspace tokens (#909) are a later delivery. The single-container run above still works.
 
 `compose.gate.yml` describes the opt-in two-container topology. Set `AUTOMAGIK_SERVER_IMAGE`
 to the same reviewed digest for both services, `AUTOMAGIK_GATE_ENABLED=1` and
@@ -356,13 +358,14 @@ model key. With Access unset it connects only to the fixed loopback DSH listener
 follows a launch file's destination or any upstream redirect. Tests use temporary stores and
 listeners; they do not touch a running installation.
 
-Every HTTP request and WebSocket upgrade first needs a gate session; otherwise it gets `401`,
-including static assets, `/connect`, unknown paths and gate management routes. The health probe
+Workspace HTTP requests and every WebSocket upgrade need a gate session; otherwise they get
+`401`, including static assets, `/connect` and unknown paths. Only the sign-in ceremonies below
+can create a session. The health probe
 still expects `401` (at the gate port when enabled). An exact Host, origin including port, and
 same-origin browser markers are checked. Mutations and WebSockets require an Origin. Forwarded
 headers cannot override that decision: TLS termination and the public origin are operator
-configuration, never browser assertions. `pinOrigin` allows HTTPS or HTTP localhost; passkey
-RP ID and enrolment validation belong to #908.
+configuration, never browser assertions. Self-hosted passkeys require HTTPS or HTTP localhost,
+with the RP ID and exact origin pinned in the owner's authentication record.
 
 The gate exchanges DSH's launch token server-side for its browser owner credential. That
 credential admits DSH's HTTP API and WebSocket owner peer too; it stays in gate memory and is
@@ -372,16 +375,16 @@ cached credential from the launch file for the next request, including after a D
 The failed request is returned as-is: bodies are never automatically replayed. A browser launch
 token URL and `/connect` cannot establish or replace a gate session.
 
-The local owner is `{version: 1, local_id, instance_id}` in `/data/owner.json` (`0600`). Both ids
-are random UUIDs, independent of the host. C2.2 will call the exclusive `createOwner` seam after
-proving the claim; startup does not create an owner. Missing, malformed and newer records never
+The local owner has `{version: 1, local_id, instance_id}` and, for passkeys, an `auth` record in
+`/data/owner.json` (`0600`). Both ids are random UUIDs, independent of the host. The first valid
+claim creates the owner exclusively; startup does not create one. Missing, malformed and newer records never
 replace an existing owner; unsupported versions stop startup. Linked records also fail closed
 until linking is implemented. Sessions and rotated-secret hashes are atomic `0600` JSON in the
 gate store, survive restart, and are not written to DSH's volume. No raw session secret is saved.
 
 Sessions have a 12-hour sliding idle limit and `__Host-automagik-session` cookies: `Path=/`,
 `HttpOnly`, `Secure`, `SameSite=Lax`, no Domain. Secure stays set on HTTP localhost too, as the
-`__Host-` prefix requires. A future sign-in caller must renew before browser cookie expiry:
+`__Host-` prefix requires. A browser must renew before cookie expiry:
 `POST /_gate/session/renew` rotates the secret and refreshes its lifetime. Reusing an old secret
 revokes the entire family, including its open WebSockets. Idle expiry and sign out also close
 open WebSockets. `GET /_gate/sessions` lists session ids and times without secrets and includes
@@ -389,7 +392,7 @@ this settings notice: **On loopback, another local service can receive your cook
 process holding it can replay it with any Origin; origin binding does not prevent this. Local
 processes are inside the host trust boundary.** `POST /_gate/sign-out-everywhere` revokes all
 families and clears the cookie. All three routes require a session; POST requires the pinned
-Origin. Passkey/recovery changes will use the same revoke-all seam in #908.
+Origin. Every passkey or recovery change revokes all families through that same seam.
 
 The gate makes the four-field principal from the owner record, following
 [contracts v1](../docs/cloud/contracts-v1.md). Its upstream envelope is base64url JSON in
@@ -403,6 +406,112 @@ The gate tests cover unauthenticated HTTP/upgrade paths, exact origin and port, 
 rotation/replay/idle/restart, the downgrade refusal, credential stripping, the principal
 upstream envelope, DSH restart recovery, and live-socket revocation. The container smoke also
 checks the two-volume topology and gate `401`; CI builds, smokes and scans the image as before.
+
+## Self-hosted claim, passkeys and recovery (#908)
+
+Leave all three `AUTOMAGIK_GATE_ACCESS_*` settings unset to use this mode. It makes no outside
+authentication connection. The verifier is the maintained, MIT-licensed
+[`@simplewebauthn/server` 14.1.0](https://github.com/MasterKale/SimpleWebAuthn/releases/tag/v14.1.0),
+pinned exactly with its transitive Bun lock. It supports the image's Node 24 runtime. Registrations
+use ES256, user verification and no attestation; there is no metadata-service or certificate fetch.
+
+Set `AUTOMAGIK_GATE_ORIGIN` before enrolling: either `http://localhost:{port}` or a stable
+`https://{instance-host}` origin, with an optional explicit non-default port. Use placeholders
+only in examples; replace them on your host. IP origins are refused with an explanation: use
+localhost through an SSH tunnel, or a stable HTTPS name. Host and Origin must match exactly,
+including the port; forwarded headers cannot change them.
+
+Choose `AUTOMAGIK_GATE_CLAIM=local` (the default) or `remote` before starting the Compose topology.
+A loopback bind alone does not keep a same-namespace tunnel connector from forwarding remote
+browsers. These modes therefore control which listener serves the claim:
+
+| Mode | Claim boundary |
+|---|---|
+| `local` | Claim page/API only on the separate `127.0.0.1:3083` bootstrap listener. `AUTOMAGIK_GATE_BOOTSTRAP_PORT` can change it, but it must differ from DSH and the main gate port. Main port 3082 returns `404` for claims, including requests with the correct code. **Never forward the bootstrap listener through a public or tailnet connector.** Reach it only from the operator's host or private SSH tunnel |
+| `remote` | Claim page/API on main port 3082. The 128-bit code, delivered to the owner out of band, is the claim barrier. Choose this only when that delivery is trusted. Up to 64 wrong attempts can wait 250 ms outside the state queue; excess wrong attempts get `429` immediately without a timer. Disconnecting cancels the delay and releases its slot. The code is checked first, so a correct code always bypasses this limit and delay. Logs contain a failure count, never the code |
+
+Until claimed, the main listener still binds only `127.0.0.1`, even with
+`AUTOMAGIK_GATE_HOST=0.0.0.0`. After claiming, the default remains loopback, which is correct for
+a tunnel connector sharing DSH's network namespace and forwarding **only main port 3082**. A host
+deployment can use the wildcard setting after claiming; keep DSH on loopback and TLS in front
+of the gate. The local bootstrap listener always stays on loopback and supports the owner's
+authenticated follow-up steps, including adding the offered second passkey.
+
+On the host, retrieve the code through the private gate container, outside captured logs:
+
+```sh
+docker compose -f server/compose.gate.yml --profile gate exec gate \
+  /nodejs/bin/node -e 'process.stdout.write(require("fs").readFileSync("/data/claim-code","utf8"))'
+```
+
+This explicit host read is the only image bootstrap output. The image itself never prints the
+code, even with a terminal attached. It writes `/data/claim-code` as `0600`; `/data/claim-state.json`
+holds only its hash and expiry. Outside the image, an interactive gate writes to its host console
+instead of making that plaintext file. The code is 128 random bits, works once for 15 minutes,
+and is compared in constant time. HTTP never returns it; paste it only into the claim form,
+never a URL. Local claims and recovery allow five operations per minute, with a bounded
+challenge store. Remote claims use the per-attempt delay above instead of a drainable bucket.
+
+In local mode, reach `/_gate/claim` at the configured browser origin while routing your private
+host connection to bootstrap port 3083. For localhost, an operator-only SSH tunnel maps the
+configured browser port to that bootstrap port inside the gate's namespace. For a stable HTTPS
+name, use a host-local TLS proxy targeting the bootstrap listener and local name resolution;
+the public/tailnet connector must continue targeting only main port 3082, never bootstrap.
+In remote mode, the owner's browser reaches `/_gate/claim` through the normal main-port connector.
+In both modes the browser must see the exact configured origin, including its port, that will
+be used afterwards. Claim with a passkey, save the eight recovery codes shown
+once, and use the immediate offer to add a second passkey. Two simultaneous claims cannot replace
+the winner. Claim-code files are removed on success. DSH's launch URL never signs a browser into
+the gate, including after the claim.
+
+Every unauthenticated claim, sign-in or recovery ceremony also belongs to the browser that
+started it. Options create a server-side pre-authentication session with a five-minute
+`__Host-automagik-preauth` cookie (`HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/`, no Domain).
+Verification requires that same browser cookie as well as the one-time, expiring challenge.
+Copying a ceremony id or response to another browser cannot complete it. Pre-authentication
+credentials are never forwarded to DSH; a completed sign-in issues the ordinary gate session.
+
+Afterwards use `/_gate/sign-in` and manage passkeys at `/_gate/settings`. Adding or removing a
+passkey or replacing recovery codes ends **every** session, including open WebSockets; sign in
+again with a registered passkey. At least one passkey must remain. Each recovery code is stored
+only as an independently salted scrypt hash (`N=16384`, `r=8`, `p=1`). `/_gate/recovery` consumes
+one code, logs only that recovery happened and a generated request id, revokes all sessions, and
+authorizes only registering a new passkey. Sign in normally afterwards. No email reset exists.
+
+An expired claim code can be replaced only by restarting an unclaimed gate or by this host command:
+
+```sh
+docker compose -f server/compose.gate.yml --profile gate exec gate \
+  /nodejs/bin/node /opt/automagik/gate-control.mjs renew-claim
+```
+
+For a lost passkey and no recovery codes, the host operator can start a fresh claim:
+
+```sh
+docker compose -f server/compose.gate.yml --profile gate exec gate \
+  /nodejs/bin/node /opt/automagik/gate-control.mjs reset
+```
+
+Both commands use `/data/control.sock` (`0600`) inside the gate container, never HTTP. Reset
+removes all passkeys, recovery hashes and sessions, closes connections and returns the listener
+to loopback before reporting success. It preserves the instance and local owner ids. Read the
+new private code and claim again in the configured mode: local claims return only on the private
+bootstrap listener; remote claims return on the main listener with the code barrier and delay.
+A changed origin also stays on loopback: enrol the new origin
+through recovery, which replaces the old origin's keys, or use host reset. It never silently
+reopens the first claim. Unsupported newer authentication records stop startup without rewriting
+them. An Access-created owner without passkeys needs an explicit host reset before switching to
+self-hosted enrolment.
+
+The gate protects against the network, not the instance's own Bots. Keep its store and host
+control out of DSH's container, as Compose does. Bots can still reach DSH's own launch credential
+on loopback. Settings also state the local-cookie limit: another localhost service can receive
+and replay a cookie regardless of its port; local processes belong to the host trust boundary.
+
+The tests use fresh keys in a software authenticator against the real WebAuthn verifier. They
+cover wrong RP/origin/port/challenge/signature, verification flags, replay, expiry, concurrent
+claims, recovery, revocation, the private reset socket and actual listener addresses. The image
+smoke checks private claim output and host control in the built runtime.
 
 ## Interim Cloudflare Access sign-in
 
@@ -420,7 +529,9 @@ Set these non-secret values on the gate container, using your own values on the 
 | `AUTOMAGIK_GATE_ACCESS_AUD` | `{application-audience-tag}` |
 | `AUTOMAGIK_GATE_ACCESS_EMAILS` | `{owner-email}`, or comma-separated exact addresses; trimmed and case-insensitive |
 
-All three unset preserves the gate foundation's session behaviour and opens no Access connection.
+All three unset selects the self-hosted claim/passkey mode and opens no Access connection.
+All three configured selects Access exclusively: no claim secret, passkey routes or host reset
+socket is created. Existing passkeys remain stored but are not an alternate sign-in in Access mode.
 Partial configuration refuses startup and names the missing settings. Every allowlisted address
 gets the same local owner principal and full owner privileges: this is not a member/guest mode.
 The first verified sign-in creates the random local owner record if absent; existing, malformed
