@@ -124,6 +124,7 @@ import kotlin.math.roundToInt
             if (keys) TerminalKeys(vm, state)
             if (showComposer) Row(Modifier.fillMaxWidth().background(Chrome).padding(10.dp, 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(message, { message = it }, placeholder = { Text("Message this agent…", fontSize = 12.sp) }, modifier = Modifier.weight(1f).focusRequester(composerFocus), maxLines = 4, shape = RoundedCornerShape(12.dp))
+                Dictate { heard -> message = dictated(message, heard) }
                 IconButton(onClick = { val draft = message; vm.sendMessage(draft) { if (message == draft) message = "" } }, enabled = message.isNotBlank() && !state.demo && !state.sending && state.terminalStatus.startsWith("Live")) {
                     if (state.sending) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Icon(Icons.Outlined.Send, "Send message", tint = Accent)
                 }
