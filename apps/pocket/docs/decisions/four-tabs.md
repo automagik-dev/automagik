@@ -45,18 +45,18 @@ placement and the progress strip do not.
   (`TABS`, `HOME = TEAM`, `back`, `barShown`, `badge`). Tested in `NavTest`.
 - The bar: `PocketTabs`, `android/app/src/main/java/ai/namastex/automagik/MainActivity.kt:277`.
   Home carries the agents that need you (Today's badge), Team the bots that need you.
-- Home is `OverviewScreen` with no space (`MainActivity.kt:402`), the spend tile `SpendCount`
-  (`MainActivity.kt:447`). `ProjectsTest.homeShowsTodaysCountsAndCarriesItsBadge` checks its counts.
+- Home is `OverviewScreen` with no space (`MainActivity.kt:403`), the spend tile `SpendCount`
+  (`MainActivity.kt:448`). `ProjectsTest.homeShowsTodaysCountsAndCarriesItsBadge` checks its counts.
 - Home's needs-you deck (`DeckScreen.kt:76`): one card per entry of Home's own Needs you list, the
   list its count tile, badge and cards use (`Teams.deckCards`, `Teams.kt:355`). Right is Yes, left is
   No, up opens the chat or terminal; the same three buttons sit under the card, with the YES/NO
   stamps as the card leans. The header counts the cards left. A row with a Bot chat and no terminal
   opens the chat instead of sending keys. `Teams.deckView` (`Teams.kt:376`) and `Teams.swipe`
-  (`Teams.kt:403`) hold the end state and the gesture rule; `Teams.deckAfterSelection`
-  (`Teams.kt:395`) keeps the deck through a card's Back and closes it for any other selection.
+  (`Teams.kt:410`) hold the end state and the gesture rule; `Teams.deckAfterSelection`
+  (`Teams.kt:402`) keeps the deck through a card's Back and closes it for any other selection.
   `PocketApp` owns the open state
   (`MainActivity.kt:128`), and Home's needs-you count tile and **Review** bar open it
-  (`MainActivity.kt:441`, `:470`), so a later "Answer all" button opens the same screen. A card's
+  (`MainActivity.kt:442`, `:471`), so a later "Answer all" button opens the same screen. A card's
   terminal or chat keeps the deck's answers on the way Back, and a disconnected machine's requests
   show the offline end. The last answer shows All clear ("You answered N requests. Your bots are
   back to work."), the bot hops once, and **Back to Home** closes the deck.

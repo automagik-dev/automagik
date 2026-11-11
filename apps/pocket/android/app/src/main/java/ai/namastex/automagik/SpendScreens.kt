@@ -54,7 +54,7 @@ object TodayTiles {
 @Composable fun SpendCount(view: Spend.View, modifier: Modifier = Modifier) {
     Column(modifier.clip(RoundedCornerShape(12.dp)).background(Surface).border(1.dp, Border, RoundedCornerShape(12.dp)).padding(TodayTiles.PAD_DP.dp, 10.dp)) {
         // One word that never wraps, shrinking to fit the tile; the theme's fixed line height (as CountCard's) keeps the row level.
-        BasicText(Spend.compact(view.today()), style = LocalTextStyle.current.copy(color = Ink, fontSize = TodayTiles.MAX_SP.sp, fontWeight = FontWeight.SemiBold),
+        BasicText(Spend.compact(view.today()), style = LocalTextStyle.current.copy(color = Ink, fontSize = TodayTiles.MAX_SP.sp, lineHeight = 24.sp, fontWeight = FontWeight.SemiBold),
             maxLines = 1, softWrap = false, autoSize = TextAutoSize.StepBased(TodayTiles.MIN_SP.sp, TodayTiles.MAX_SP.sp, 1.sp))
         TileLabel("spent today")
     }

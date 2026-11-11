@@ -36,7 +36,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -86,10 +86,6 @@ class DeckMemory {
     LaunchedEffect(view is Teams.DeckView.Clear) { memory.complete = view is Teams.DeckView.Clear }
     // The card being answered stays composed through its exit, even if Home has already dropped it.
     var leaving by remember { mutableStateOf<Teams.DeckCard?>(null) }
-    // The animation may never report (software rendering or animations off); advance on the clock instead.
-    LaunchedEffect(leaving) {
-        if (leaving != null) { delay(Teams.DECK_EXIT_MS); leaving = null }
-    }
     val showing = leaving ?: (view as? Teams.DeckView.Cards)?.cards?.firstOrNull()
     // Read the cards behind the top one before they arrive, so a swipe does not show a terminal-only frame.
     val menuCache = remember { mutableStateMapOf<String, MenuRead>() }
@@ -129,13 +125,16 @@ class DeckMemory {
                 key(key) {
                     DeckCard(vm, card, next = next, behind = behind,
                         initialMenu = cached?.menu, initialMenuDone = cached?.done == true, modifier = Modifier.weight(1f),
+                        onSending = { leaving = card },
                         onAnswered = {
-                            // Count the answer now, and hold the card composed for its exit animation.
                             memory.answered = memory.answered + key
                             memory.gone = memory.gone + key
-                            leaving = card
                         },
-                        onGone = { if (leaving?.let(Teams::deckKey) == key) leaving = null },
+                        onGone = { sent ->
+                            if (leaving?.let(Teams::deckKey) == key) leaving = null
+                            // The "You chose" strip leaves with the card it answers.
+                            if (sent) vm.dismissMessage()
+                        },
                         onOpen = { onOpen(card.ref) })
                 }
             } else when (view) {
@@ -184,7 +183,8 @@ class DeckMemory {
  */
 @Composable private fun DeckCard(vm: PocketViewModel, card: Teams.DeckCard, next: Teams.DeckCard?, behind: Int,
                                  initialMenu: Prompt.Menu?, initialMenuDone: Boolean, modifier: Modifier,
-                                 onAnswered: () -> Unit, onGone: () -> Unit, onOpen: () -> Unit) {
+                                 onSending: () -> Unit, onAnswered: () -> Unit, onGone: (sent: Boolean) -> Unit,
+                                 onOpen: () -> Unit) {
     val scope = rememberCoroutineScope()
     val view = LocalView.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -214,25 +214,23 @@ class DeckMemory {
         val m = menu ?: return
         if (choice == null || sending) return
         sending = true
+        onSending()
         view.performHapticFeedback(if (Build.VERSION.SDK_INT >= 30) HapticFeedbackConstants.CONFIRM else HapticFeedbackConstants.VIRTUAL_KEY)
-        // The card moves to the swipe edge at once and only completes the exit when the answer reaches the agent;
-        // a rejected answer returns it, so the deck is never empty on a failed try.
-        val edge = direction * maxOf(kotlin.math.abs(dx.value), threshold * 1.15f)
-        scope.launch { launch { dx.animateTo(edge, tween(100)) }; dy.animateTo(0f, tween(100)) }
-        val short = if (choice.index == yes?.index) "Yes" else if (choice.index == no?.index) "No" else choice.button
-        vm.answer(card.ref, card.message, m.dialog, m.options, choice, short = short) { sent ->
-            if (sent) {
-                // Count before the exit so the All clear sentence is right even if Home drops the card first.
+        // The card travels off while the agent confirms, so it never parks at the edge; a rejected answer returns it.
+        val result = CompletableDeferred<Boolean>()
+        scope.launch {
+            withTimeoutOrNull(Teams.DECK_EXIT_MS) { dx.animateTo(direction * 1400f, tween(500)) }
+            if (result.await()) {
                 onAnswered()
-                scope.launch {
-                    withTimeoutOrNull(Teams.DECK_EXIT_MS) { dx.animateTo(direction * 1400f, tween(180)) }
-                    onGone()
-                }
+                onGone(true)
             } else {
                 sending = false
-                scope.launch { launch { dx.animateTo(0f, tween(180)) }; dy.animateTo(0f, tween(180)) }
+                launch { dx.animateTo(0f, tween(180)) }; dy.animateTo(0f, tween(180))
+                onGone(false)
             }
         }
+        val short = if (choice.index == yes?.index) "Yes" else if (choice.index == no?.index) "No" else choice.button
+        vm.answer(card.ref, card.message, m.dialog, m.options, choice, short = short) { sent -> result.complete(sent) }
     }
     Column(modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         Box(Modifier.weight(1f).fillMaxWidth().padding(vertical = 10.dp), contentAlignment = Alignment.Center) {

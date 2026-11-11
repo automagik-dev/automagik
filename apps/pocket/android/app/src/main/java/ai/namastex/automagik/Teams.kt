@@ -381,12 +381,19 @@ object Teams {
     }
 
     /** The deck's exit window: after this the deck advances even if the exit animation never reported back. */
-    const val DECK_EXIT_MS = 250L
+    const val DECK_EXIT_MS = 700L
     fun deckExitDone(elapsedMs: Long) = elapsedMs >= DECK_EXIT_MS
 
     /** A leaving card keeps its last menu; a new read lands only while the card is not leaving. */
     fun deckMenu(current: Prompt.Menu?, incoming: Prompt.Menu?, sending: Boolean): Prompt.Menu? =
         if (sending) current else incoming
+
+    /**
+     * Whether the phone can answer this card: a terminal can always be opened; a Bot chat only when its bridge
+     * takes phone writes and the chat does not say to answer on the computer.
+     */
+    fun deckAnswerable(c: DeckCard, writes: Map<String, Boolean>): Boolean = c.chat == null ||
+        (writes[c.ref.hostId] == true && c.message != Chat.ANSWER_ON_COMPUTER && c.message != Cockpit.READ_ONLY)
 
     /**
      * The deck's open state and "opened from the deck" flag after a selection: Back from a card opened from the deck

@@ -560,6 +560,19 @@ class TeamsTest {
         assertEquals(Teams.DeckView.Clear, Teams.deckView(emptyList(), emptySet(), anyConnected = true, waiting = 0, offline = 0))
     }
 
+    @Test fun aReadOnlyChatCardIsSkippedAndDoesNotBlockTheDeck() {
+        val chat = Teams.DeckCard(TerminalRef("h", "dsh:reader"), "Reader", "herdr", "Automagik Bot",
+            Chat.ANSWER_ON_COMPUTER, "question", 1, 2, TerminalRef("h", "dsh:reader"))
+        val writable = chat.copy(message = "")
+        val terminal = chat.copy(ref = TerminalRef("h", "t1"), chat = null, message = "Run?")
+        val writes = mapOf("h" to true)
+        assertTrue(!Teams.deckAnswerable(chat, writes))
+        assertTrue(Teams.deckAnswerable(writable, writes))
+        assertTrue(!Teams.deckAnswerable(writable, emptyMap()))
+        assertTrue(Teams.deckAnswerable(terminal, emptyMap()))
+        assertEquals(listOf(terminal, writable), listOf(chat, terminal, writable).filter { Teams.deckAnswerable(it, writes) })
+    }
+
     @Test fun aLeavingCardKeepsItsMenuAndTheDeckAdvancesWithoutAnAnimation() {
         val menu = Prompt.Menu(listOf("1. Yes", "2. No"), 0, "Run?")
         val next = menu.copy(cursor = 1)
@@ -567,8 +580,8 @@ class TeamsTest {
         assertSame(menu, Teams.deckMenu(menu, next, sending = true))
         assertSame(next, Teams.deckMenu(menu, next, sending = false))
         assertFalse(Teams.deckExitDone(0))
-        assertFalse(Teams.deckExitDone(249))
-        assertTrue(Teams.deckExitDone(250))
+        assertFalse(Teams.deckExitDone(699))
+        assertTrue(Teams.deckExitDone(700))
     }
 
     @Test fun eachPreviewRequestShowsItsOwnCommand() {

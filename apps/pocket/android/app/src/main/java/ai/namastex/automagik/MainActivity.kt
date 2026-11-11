@@ -308,7 +308,8 @@ fun stateName(word: String) = when (word) { "blocked" -> "Needs you"; "working" 
             state.machines[ref.hostId]?.spaces?.find { ref.address in it.addresses }?.name ?: vm.hostName(ref.hostId)
         }
         // A disconnected machine keeps its terminals in the reading; its cards move to the offline end, not the deck.
-        val cards = all.filter { state.machines[it.ref.hostId]?.connected == true }
+        // A chat the phone cannot write to is not a deck card: it could never be answered or cleared.
+        val cards = all.filter { state.machines[it.ref.hostId]?.connected == true && Teams.deckAnswerable(it, writes) }
         val offline = all.filter { state.machines[it.ref.hostId]?.connected != true }
         DeckScreen(cards, offline, vm, anyConnected, deckMemory, state.message, onClose = { deckOpen = false },
             onOpen = { ref -> deckReturn = true; openFromDeck(ref) },
@@ -592,7 +593,7 @@ fun statusLabel(word: String, kind: String) = stateName(word).let { if (word == 
 @Composable fun CountCard(number: Int, text: String, color: Color, modifier: Modifier = Modifier, onClick: (() -> Unit)? = null) {
     Column(modifier.clip(RoundedCornerShape(12.dp)).background(Surface).border(1.dp, Border, RoundedCornerShape(12.dp))
         .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier).padding(TodayTiles.PAD_DP.dp, 10.dp)) {
-        Text(number.toString(), color = color, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+        Text(number.toString(), color = color, fontSize = 22.sp, lineHeight = 24.sp, fontWeight = FontWeight.SemiBold)
         TileLabel(text)
     }
 }
