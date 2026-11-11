@@ -153,3 +153,27 @@ test('anything a person or another Bot said calls for a note; the team kickoff a
   assert.equal(saidSomething([]), false)
   assert.equal(saidSomething(undefined), false)
 })
+
+test('the switch trigger is true for a route change and false for a plain new conversation', async () => {
+  const route = bench()
+  let releaseRoute
+  const heldRoute = new Promise(resolve => { releaseRoute = resolve })
+  route.agent.whenIdle = async () => { await heldRoute }
+  await route.rt.switchRoute('b1', 'acp-claude/default')
+  // The old part is still current while the fresh part waits: the target switch is visible.
+  assert.equal(route.rt.switchingChat('b1'), true)
+  releaseRoute()
+  await waitFor(() => route.bot.sessionId === 's2' && route.calls.archived.length > 0)
+  assert.equal(route.rt.switchingChat('b1'), false)
+
+  const fresh = bench()
+  let releaseFresh
+  const heldFresh = new Promise(resolve => { releaseFresh = resolve })
+  fresh.agent.whenIdle = async () => { await heldFresh }
+  await fresh.rt.startFresh('b1')
+  // A plain New conversation has no target route: it is never a route-switch window.
+  assert.equal(fresh.rt.switchingChat('b1'), false)
+  releaseFresh()
+  await waitFor(() => fresh.bot.sessionId === 's2')
+  assert.equal(fresh.rt.switchingChat('b1'), false)
+})
