@@ -214,6 +214,9 @@ export function install(rt) {
   const choices = new Map()
   const latest = new Map()
   const outcomes = new Map()
+  // Choices being applied now: taken from `choices`, their outcome not known yet. The view
+  // still reads them as pending, so it never shows no choice between the two.
+  const applying = new Map()
   let sequence = 0
   const keyOf = (botId, provider) => `${botId}\u0000${provider}`
 
@@ -243,6 +246,7 @@ export function install(rt) {
       if (bot === undefined || latest.get(bot.id) !== choice.seq || (bot.model ?? null) !== choice.baseline) continue
       if (bot.model === choice.ref) continue
       const kept = bot.model ?? null
+      applying.set(key, choice)
       try {
         await rt.updateBot(bot.id, { model: choice.ref })
         outcomes.set(key, { ref: choice.ref, ok: true, at: Date.now() })
@@ -252,6 +256,8 @@ export function install(rt) {
         const message = typeof error?.code === 'string' && error.code.startsWith('bot/') && typeof error.message === 'string' ? error.message.slice(0, 300) : 'The model could not be selected.'
         outcomes.set(key, { ref: choice.ref, ok: false, message, kept, at: Date.now() })
         rt.warn('ds-bot: %s signed in, but %s was not put on %s: %s', provider, bot.name, choice.ref, error?.code ?? 'error')
+      } finally {
+        if (applying.get(key) === choice) applying.delete(key)
       }
     }
   }
@@ -269,6 +275,8 @@ export function install(rt) {
     const key = keyOf(botId, provider)
     const choice = choices.get(key)
     if (choice !== undefined && latest.get(botId) === choice.seq) return { ref: choice.ref, state: 'pending' }
+    const inFlight = applying.get(key)
+    if (inFlight !== undefined && latest.get(botId) === inFlight.seq) return { ref: inFlight.ref, state: 'pending' }
     const outcome = outcomes.get(key)
     if (outcome === undefined) return undefined
     if (Date.now() - outcome.at > OUTCOME_TTL_MS) {
