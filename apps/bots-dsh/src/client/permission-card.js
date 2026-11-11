@@ -39,7 +39,7 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
   const busyRef = useRef(false)
   const titleId = useId()
   const draft = picked ?? saved
-  // A Bot on a coding CLI reads Full access as "Auto", in that CLI's words.
+  // A Bot on a coding CLI explains Full access in that CLI's words.
   const cli = cliOfBot(bot)
   const auto = cliAuto(draft, cli)
   const offered = catalog.options.some(option => option.value === draft)
@@ -65,11 +65,11 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
   const errorLine = error ? h('div', { className: 'bt-error', role: 'alert', style: { padding: 0 } }, error) : null
   // The question holds for the level it was asked about, and only while DSH still offers it.
   if (confirming !== false && confirming === draft && offered) {
-    const name = presetName(draft, catalog, cli)
+    const name = presetName(draft, catalog)
     return h('form', { className: 'bt-q', role: 'alert', 'aria-labelledby': titleId, 'aria-busy': busy || undefined, 'data-permission-confirm': draft, onSubmit: event => event.preventDefault() },
       h('div', { className: 'bt-q-head' },
         h('div', { className: 'bt-q-text' },
-          h('p', { className: 'bt-q-title', id: titleId }, draft === AUTO ? name : auto ? t('Use Auto for {name}?', { name: bot.name }) : t('Give {name} full access?', { name: bot.name })),
+          h('p', { className: 'bt-q-title', id: titleId }, draft === AUTO ? name : t('Give {name} full access?', { name: bot.name })),
           draft === AUTO
             ? h('div', { className: 'bt-q-detail' }, t('Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.'))
             : h('div', { className: 'bt-q-detail' },
@@ -80,7 +80,7 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
         // Focus goes to Cancel, never to the button that gives the access.
         h('button', { type: 'button', className: 'bt-q-btn', autoFocus: true, disabled: busy, onClick: () => setConfirming(false) }, t('Cancel')),
         // Never the second press of a double click on Save, which sat in this place.
-        h('button', { type: 'button', className: 'bt-q-submit', disabled: busy, onClick: (event) => { if (!(event.detail > 1)) send() } }, draft === AUTO ? t('Use Auto review') : auto ? t('Use Auto') : t('Give full access'))))
+        h('button', { type: 'button', className: 'bt-q-submit', disabled: busy, onClick: (event) => { if (!(event.detail > 1)) send() } }, draft === AUTO ? t('Use Auto review') : t('Give full access'))))
   }
   return h('form', {
     className: 'bt-q', 'aria-labelledby': titleId, 'aria-busy': busy || undefined, 'data-permission-card': bot.id,

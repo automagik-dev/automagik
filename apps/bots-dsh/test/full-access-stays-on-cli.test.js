@@ -1,4 +1,4 @@
-// A Bot at Full access ("Auto") on a coding CLI (Claude Code, Codex) is never moved to another
+// A Bot at Full access on a coding CLI (Claude Code, Codex) is never moved to another
 // provider on its own: there the CLI itself runs without asking, and another model would run
 // DSH's own tools unasked at that level. Each automatic move is refused for such a Session and
 // goes on as before for every other level and every other route. A model the person picks is
@@ -74,10 +74,10 @@ test('a failed turn at Full access on a coding CLI is not moved: the turn fails 
 })
 
 test('the line is one fixed sentence, worded in Chinese and pt-BR too, as the start refusal is', () => {
-  assert.equal(STAYS_ON_CLI, 'The model failed and no other model answered in its place: this Bot has Auto (full access) on its coding CLI and stays there. Fix the CLI or sign in to it, or pick another model for the Bot yourself.')
+  assert.equal(STAYS_ON_CLI, 'The model failed and no other model answered in its place: this Bot has Full access on its coding CLI and stays there. Fix the CLI or sign in to it, or pick another model for the Bot yourself.')
   assert.equal(stayNotice(CODEX).content[0].text, STAYS_ON_CLI)
   const ptBR = JSON.parse(readFileSync(new URL('../../locale-pt-br-dsh/src/client/locales/pt-BR/omni-ui.json', import.meta.url), 'utf8'))
-  const refusal = 'This Bot has Auto (full access) on its coding CLI, which is not available now, so nothing was started on another model. Fix the CLI or sign in to it, or pick another model for the Bot yourself.'
+  const refusal = 'This Bot has Full access on its coding CLI, which is not available now, so nothing was started on another model. Fix the CLI or sign in to it, or pick another model for the Bot yourself.'
   for (const sentence of [STAYS_ON_CLI, refusal]) {
     for (const [language, table] of [['Chinese', DICTIONARY.zh], ['pt-BR', ptBR]]) {
       assert.equal(typeof table[sentence], 'string', `${language}: ${sentence}`)
@@ -267,7 +267,7 @@ function models({ providers, selection, wide, groups = [], open = [] } = {}) {
 const NATIVE_ONLY = { deepseek: [{ id: 'deepseek-v4-pro' }] }
 const WITH_CODEX = { deepseek: [{ id: 'deepseek-v4-pro' }], 'acp-codex': [{ id: 'default' }, { id: 'gpt-5' }] }
 const BOT = { id: 'b1', name: 'Ada', model: 'acp-codex/default' }
-const STAYS = 'This Bot has Auto (full access) on its coding CLI, which is not available now, so nothing was started on another model. Fix the CLI or sign in to it, or pick another model for the Bot yourself.'
+const STAYS = 'This Bot has Full access on its coding CLI, which is not available now, so nothing was started on another model. Fix the CLI or sign in to it, or pick another model for the Bot yourself.'
 
 test('a Session at Full access whose Bot\'s coding CLI model is not served is not given another model', async () => {
   const rt = models({ providers: NATIVE_ONLY, wide: ['s1', 'chat-b1'] })
