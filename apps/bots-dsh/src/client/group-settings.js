@@ -51,7 +51,8 @@ function RelayLimitRow({ room, update }) {
 // One preset for every member in the group, or each member's own. Turning it on starts
 // from DSH's default preset.
 function GroupPermission({ room, catalog, update }) {
-  if (!catalog?.options?.length) return null
+  // With no level to choose from, a saved level that is no longer offered is still told.
+  if (!catalog?.options?.length) return room.permissionNotOffered === true ? h(Card, { title: t('Permissions') }, h(PermissionFallback, { owner: room, catalog })) : null
   const shared = room.permission !== undefined
   return h(Card, { title: t('Permissions') },
     h(SwitchRow, {
@@ -60,7 +61,7 @@ function GroupPermission({ room, catalog, update }) {
     }),
     shared ? h('div', { className: 'bt-set-row bt-bs-row bt-bs-stack bt-gs-perm bt-veil' },
       h(PermissionPicker, { catalog, saved: room.permission, confirmFull: true, onPick: permission => update({ permission }) }),
-      h(PermissionFallback, { fallback: room.permissionFallback }),
+      h(PermissionFallback, { fallback: room.permissionFallback, owner: room, catalog }),
       h(PermissionExplanations, { catalog })) : null)
 }
 

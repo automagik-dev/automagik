@@ -838,7 +838,17 @@ export function install(rt) {
   // Started from inside a task Session's tool call, it keeps that task as `levelTaskId` and
   // never runs wider than it (permissions.js, #1030), with a `roomId` too; without one it
   // also takes the group that task takes its level from.
-  async function startTask({ title, text, from, cwd, agentPreset, roomId }) {
+  // The task's Session is flagged as starting from the moment it is a task until this
+  // returns or throws, whatever fails on the way (permissions.js startingSession).
+  async function startTask(args) {
+    let started
+    try {
+      return await startFlagged(args, (sessionId) => { started = rt.startingSession?.(sessionId) })
+    } finally {
+      started?.()
+    }
+  }
+  async function startFlagged({ title, text, from, cwd, agentPreset, roomId }, starting) {
     // Read before the first await: the tool call this runs in may return before the rest.
     const levelTaskId = rt.callerTask?.()
     const parent = levelTaskId === undefined ? undefined : state.tasks?.[levelTaskId]
@@ -846,6 +856,9 @@ export function install(rt) {
     const levelRoomId = roomId || from === undefined ? undefined : rt.callerGroup?.() ?? parent?.levelRoomId ?? parent?.roomId
     const caller = state.bots?.[from]
     const sessionId = await createTaskSession(title, { cwd: cwd ?? caller?.workDir, agentPreset: agentPreset ?? caller?.profile })
+    // Until its start is decided: a re-apply DSH asks for meanwhile must not lower the task
+    // in place of the refusal a saved level that is no longer offered gets (permissions.js).
+    starting(sessionId)
     tasks()[sessionId] = { title: String(title).slice(0, AGENT_SESSION_TITLE_MAX), from, at: Date.now(), status: 'working', ...(roomId ? { roomId } : {}), ...(levelRoomId ? { levelRoomId } : {}), ...(levelTaskId ? { levelTaskId } : {}) }
     // Only TASKS_KEPT ended tasks are remembered for their reports. The ended ones go first,
     // the one that ended longest ago first: a long task that just ended is fresh news.
