@@ -1,4 +1,5 @@
 import http from 'node:http'
+import { Transform } from 'node:stream'
 import { cookieSecret, LOCAL_TRUST_NOTICE, sessionCookie } from './gate-store.mjs'
 import { DSH_HOST, responseHeaders, upstreamHeaders } from './gate-upstream.mjs'
 
@@ -98,8 +99,15 @@ export function createGate({ origin: value, sessions, credentials }) {
         if (upstreamHead.length) socket.write(upstreamHead)
         upstream.on('error', () => socket.destroy())
         upstream.on('close', () => socket.destroy())
-        socket.on('data', () => { if (!sessions.touch(family)) socket.destroy() })
-        socket.pipe(upstream).pipe(socket)
+        const admitted = new Transform({
+          transform(chunk, encoding, callback) {
+            if (!sessions.touch(family)) { callback(new Error('Session expired')); return }
+            callback(null, chunk)
+          },
+        })
+        admitted.on('error', () => { socket.destroy(); upstream.destroy() })
+        socket.on('close', () => admitted.destroy())
+        socket.pipe(admitted).pipe(upstream).pipe(socket)
       })
       proxy.end()
     } catch { refuseSocket(socket, 502) }

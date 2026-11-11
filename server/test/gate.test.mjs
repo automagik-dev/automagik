@@ -69,12 +69,13 @@ async function fixture(t) {
     req.on('end', () => res.writeHead(200, { 'set-cookie': 'dsh-hidden=secret', 'content-type': 'text/plain' }).end(body || 'DSH'))
   })
   upstream.on('upgrade', (req, socket) => {
-    seen.push({ url: req.url, headers: req.headers, upgrade: true })
+    const entry = { url: req.url, headers: req.headers, upgrade: true, chunks: [], closed: once(socket, 'close') }
+    seen.push(entry)
     socket.on('error', () => {})
     socket.on('end', () => socket.end())
     if (req.headers.cookie !== `dsh-credential=${generation}`) { socket.end('HTTP/1.1 401 Refused\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'); return }
     socket.write('HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSet-Cookie: dsh-hidden=secret\r\n\r\n')
-    socket.on('data', data => socket.write(data))
+    socket.on('data', data => { entry.chunks.push(data.toString()); socket.write(data) })
   })
   const port = await listen(upstream)
   const credentials = new DshCredentials({ launchFile, port })
@@ -242,8 +243,10 @@ test('authenticated upgrades carry the principal and close on logout, replay and
     socket.resume()
     if (reason === 'logout') f.sessions.revokeAll()
     if (reason === 'replay') { f.sessions.renew(f.issued.family); f.sessions.authenticate(f.issued.secret, ORIGIN) }
-    if (reason === 'idle') f.advance(IDLE_MS)
+    if (reason === 'idle') { f.advance(IDLE_MS); socket.write('must-not-reach-dsh') }
     await closed
+    await seen.closed
+    assert.deepEqual(seen.chunks, ['echo'], 'no post-expiry frame reaches DSH')
   })
 })
 
