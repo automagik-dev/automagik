@@ -1,7 +1,8 @@
 // Client channel: the team view the browser renders, and the POST /api/bot endpoints.
 import { randomUUID } from 'node:crypto'
+import { createSpaceReads } from './agent-space.js'
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { AGENT_TOOLS, botConfig, roomConfig, createAgentAccess } from './agent-access.js'
+import { MCP_PATH, AGENT_TOOLS, botConfig, roomConfig, createAgentAccess } from './agent-access.js'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -313,6 +314,7 @@ export function install(rt) {
   const adminActions = new Set([...AGENT_TOOLS.map(tool => tool.endpoint),
     'state', 'switch-route', 'duplicate-bot', 'add-agent', 'remove-agent', 'set-flags',
     'agent-adopt', 'bot-session-adopt', 'agent-bot-adopt', 'agent-bot-rollback'])
+  const spaceReads = createSpaceReads(rt)
   const handle = async (endpoint, payload, signal) => {
     try {
       const body = payload ?? {}
@@ -324,9 +326,13 @@ export function install(rt) {
       const readOnly = rt.readOnly()
       // An endpoint another Omni plugin serves (extend.js) says itself whether it only reads.
       const added = rt.extended.endpointOf(endpoint)
-      if (readOnly !== undefined && !READS.has(endpoint) && added?.read !== true) return fail(readOnly, 'bot/read-only')
+      if (readOnly !== undefined && !READS.has(endpoint) && !AGENT_TOOLS.some(tool => tool.read
+        && tool.endpoint === endpoint) && added?.read !== true) {
+        return fail(readOnly, 'bot/read-only')
+      }
       if (CODE_GUARDED.has(endpoint) && textsOf(body).some(text => rt.loginTextMatches?.(text) === true)) return fail(CODE_REFUSED, 'bot/refused')
       if (CLI_LOGIN.has(endpoint)) return ok(await rt.cliLoginActions[endpoint](body))
+      if (endpoint.startsWith('space-')) return ok(await spaceReads.read(endpoint, body, handle))
       switch (endpoint) {
         case 'agent-access':
           return ok(await agentAccess.owner('view'))
@@ -888,6 +894,13 @@ export function install(rt) {
       }
     },
   }), 'ds-bot: pet to Codex route')
+
+  ctx.effect(() => ctx.connection.fetch.register({
+    path: MCP_PATH,
+    methods: ['POST', 'GET', 'DELETE', 'OPTIONS'],
+    requestBody: 'streaming',
+    fetch: request => agentAccess.fetch(request),
+  }), 'ds-bot: MCP route')
 
   // An exact Fetch route on the shared /api channel; the browser authenticates with its session cookie.
   ctx.effect(() => ctx.connection.fetch.register({

@@ -59,3 +59,14 @@ export function responseHeaders(headers) {
   const excluded = new Set(['set-cookie', 'connection', 'transfer-encoding', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'upgrade', ...(headers.connection ?? '').toLowerCase().split(',').map(v => v.trim())])
   return Object.fromEntries(Object.entries(headers).filter(([name]) => !excluded.has(name)))
 }
+
+// The sole non-browser route. Its plugin authenticates the bearer on every call.
+// No browser cookie, principal, forwarding assertion or general /api path crosses here.
+export function agentMcpHeaders(req, credentials, cookie) {
+  const headers = { host: credentials.authority, cookie }
+  for (const name of ['authorization', 'accept', 'content-type', 'content-length',
+    'mcp-protocol-version', 'mcp-session-id', 'origin']) {
+    if (req.headers[name] !== undefined) headers[name] = req.headers[name]
+  }
+  return headers
+}

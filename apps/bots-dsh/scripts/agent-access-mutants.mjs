@@ -10,6 +10,8 @@ const mutants = [
     name: 'accept a revoked token',
     from: " || identity.revokedAt !== undefined",
     to: '',
+    alsoFrom: 'current.revokedAt !== undefined',
+    alsoTo: 'false',
     test: 'token create stores only hash; revoke immediately refuses the token',
   },
   {
@@ -29,7 +31,9 @@ const mutants = [
 try {
   for (const mutant of mutants) {
     assert.ok(original.includes(mutant.from), `${mutant.name}: mutation site missing`)
-    writeFileSync(source, original.replace(mutant.from, mutant.to))
+    let changed = original.replace(mutant.from, mutant.to)
+    if (mutant.alsoFrom) changed = changed.replaceAll(mutant.alsoFrom, mutant.alsoTo)
+    writeFileSync(source, changed)
     const result = spawnSync(process.execPath, ['--import', './test/harness-resolve.mjs',
       '--test', '--test-reporter=tap', `--test-name-pattern=${mutant.test}`,
       'test/agent-access.test.js'], { cwd: new URL('..', import.meta.url), encoding: 'utf8',

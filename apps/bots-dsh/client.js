@@ -44,8 +44,9 @@ module.exports = __toCommonJS(index_exports);
 var NAMESPACE = "omni-ui";
 var ZH = {
   "Agent access": "智能体访问",
-  "Allow an outside agent to configure your Bots": "允许外部智能体配置你的 Bot",
-  "Tokens allow Bot and group administration with your rights. Keep them private.": "令牌允许智能体以你的权限管理 Bot 和群聊。请妥善保密。",
+  "Allow an outside agent to read and configure your space": "允许外部智能体读取和配置你的空间",
+  "Tokens can read chats and manage Bots with your rights. Keep them private.": "令牌允许智能体以你的权限读取对话和管理 Bot。请妥善保密。",
+  "Web instance path": "网页实例路径",
   "MCP address": "MCP 地址",
   "Create a token to start access.": "创建令牌以启用访问。",
   "Token name": "令牌名称",
@@ -21849,10 +21850,16 @@ function AgentAccessPage({ actions, run: run2, Section: Section2, Row: Row3 }) {
       Section2,
       { title: t("Agent access") },
       (0, import_react62.createElement)(Row3, {
-        label: t("Allow an outside agent to configure your Bots"),
-        hint: t("Tokens allow Bot and group administration with your rights. Keep them private.")
+        label: t("Allow an outside agent to read and configure your space"),
+        hint: t(
+          "Tokens can read chats and manage Bots with your rights. Keep them private."
+        )
       }),
-      (0, import_react62.createElement)(Row3, { label: t("MCP address"), hint: view?.url ?? t("Create a token to start access.") }),
+      (0, import_react62.createElement)(Row3, {
+        label: t("MCP address"),
+        hint: view?.url ?? t("Create a token to start access.")
+      }),
+      (0, import_react62.createElement)(Row3, { label: t("Web instance path"), hint: view?.webPath ?? "/api/omni-mcp" }),
       (0, import_react62.createElement)(
         Row3,
         { label: t("Token name") },

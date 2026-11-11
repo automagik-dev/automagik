@@ -14,10 +14,13 @@ export function AgentAccessPage({ actions, run, Section, Row }) {
   }
   return h('div', null,
     h(Section, { title: t('Agent access') },
-      h(Row, { label: t('Allow an outside agent to configure your Bots'),
-        hint: t('Tokens allow Bot and group administration with your rights. Keep them private.'),
+      h(Row, { label: t('Allow an outside agent to read and configure your space'),
+        hint: t(
+          'Tokens can read chats and manage Bots with your rights. Keep them private.'),
       }),
-      h(Row, { label: t('MCP address'), hint: view?.url ?? t('Create a token to start access.') }),
+      h(Row, { label: t('MCP address'),
+        hint: view?.url ?? t('Create a token to start access.') }),
+      h(Row, { label: t('Web instance path'), hint: view?.webPath ?? '/api/omni-mcp' }),
       h(Row, { label: t('Token name') },
         h('input', { className: 'bt-input', value: name, maxLength: 60,
           'aria-label': t('Token name'), placeholder: t('My agent'),

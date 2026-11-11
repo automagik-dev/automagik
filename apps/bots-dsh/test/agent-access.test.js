@@ -1,12 +1,18 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { request as httpRequest } from 'node:http'
+import { createServer, request as httpRequest } from 'node:http'
+import { once } from 'node:events'
+import { Readable } from 'node:stream'
+import { createGate } from '../../../server/gate.mjs'
+import { SessionStore } from '../../../server/gate-store.mjs'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm, stat, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createRuntime } from '../index.js'
-import { createAgentAccess, AGENT_TOOLS } from '../src/host/agent-access.js'
+import { createAgentAccess, agentBindAddress, AGENT_TOOLS } from '../src/host/agent-access.js'
 import { fakeContext } from './fake-ctx.js'
 
 async function fixture(t) {
@@ -34,8 +40,10 @@ async function fixture(t) {
   ctx.sessions = { flush: async () => {} }
   ctx.sessionTitle = { rename: async () => {} }
   let route
+  let mcpRoute
   ctx.connection.fetch.register = options => {
     if (options.path === '/api/omni-ui') route = options
+    if (options.path === '/api/omni-mcp') mcpRoute = options
     return () => {}
   }
   const rt = createRuntime(ctx, { home, memory: false, browser: false, updateCheck: false })
@@ -68,7 +76,7 @@ async function fixture(t) {
     return { ...result.result, value: JSON.parse(result.result.content[0].text) }
   }
   t.after(async () => { await ctx.dispose(); await rm(home, { recursive: true, force: true }) })
-  return { rt, ctx, home, token, id, call, view, request, rpc, tool }
+  return { rt, ctx, home, token, id, call, view, request, rpc, tool, mcpRoute }
 }
 
 test('token create stores only hash; revoke immediately refuses the token', async t => {
@@ -129,7 +137,7 @@ test('every tool uses the channel handler and edits appear in the ordinary team 
   const { rt, tool, call, view, rpc } = await fixture(t)
   const listed = await (await rpc('tools/list')).json()
   assert.deepEqual(listed.result.tools.map(item => item.name), AGENT_TOOLS.map(item => item.name))
-  assert.equal((await tool('list_bots')).value.length, 3)
+  assert.equal((await tool('list_bots')).value.items.length, 3)
   assert.equal((await tool('get_bot', { id: 'a' })).value.name, 'Alpha')
   const seen = []
   for (const key of ['createBot', 'updateBot', 'deleteBot', 'setMain',
@@ -159,16 +167,16 @@ test('every tool uses the channel handler and edits appear in the ordinary team 
   assert.equal((await call('state')).value.mainBotIds.includes(bot.id), true)
   assert.equal((await tool('get_bot', { id: bot.id })).value.main, true)
   const group = (await tool('create_group', { name: 'Writers', members: ['a', bot.id] })).value
-  assert.equal((await tool('list_groups')).value.length, 1)
+  assert.equal((await tool('list_groups')).value.items.length, 1)
   assert.equal((await tool('get_group', { id: group.id })).value.name, 'Writers')
   assert.equal((await tool('update_group', { id: group.id, add: ['b'], notice: 'Plan' })).isError,
     false)
   assert.deepEqual((await call('get-room', { id: group.id })).value.members, ['a', bot.id, 'b'])
   assert.equal((await tool('delete_group', { id: group.id })).isError, false)
-  assert.equal((await tool('list_groups')).value.length, 0)
+  assert.equal((await tool('list_groups')).value.items.length, 0)
   assert.equal((await tool('set_main', { id: bot.id, main: false })).isError, false)
   assert.equal((await tool('delete_bot', { id: bot.id })).isError, false)
-  assert.equal((await tool('list_bots')).value.some(row => row.id === bot.id), false)
+  assert.equal((await tool('list_bots')).value.items.some(row => row.id === bot.id), false)
   assert.deepEqual(seen, ['createBot', 'updateBot', 'setMain', 'createRoom', 'updateRoom',
     'deleteRoom', 'setMain', 'deleteBot'])
   const audit = (await view()).audit
@@ -383,4 +391,179 @@ test('queued MCP and owner edits complete after a refused MCP action', async t =
   assert.deepEqual(changes[0].changes.bots, {
     a: { instructions: { before: 'Help', after: 'Next edit' } },
   })
+})
+
+
+test('official Streamable HTTP client initializes, lists, reads and writes the space', async t => {
+  const { token, view, rt } = await fixture(t)
+  const client = new Client({ name: 'fixture-agent', version: '1' })
+  const transport = new StreamableHTTPClientTransport(new URL((await view()).url), {
+    requestInit: { headers: { Authorization: `Bearer ${token}` } },
+  })
+  t.after(() => client.close())
+  await client.connect(transport)
+  const listed = await client.listTools()
+  assert.equal(listed.tools.some(tool => tool.name === 'read_messages'), true)
+  const read = await client.callTool({ name: 'list_bots', arguments: { limit: 1 } })
+  const first = JSON.parse(read.content[0].text)
+  assert.equal(first.items.length, 1)
+  assert.equal(first.nextOffset, 1)
+  assert.equal(typeof first.items[0].status, 'string')
+  assert.equal(Object.hasOwn(first.items[0], 'folder'), true)
+  const written = await client.callTool({ name: 'update_bot', arguments: {
+    id: 'a', instructions: 'Configured by the SDK',
+  } })
+  assert.equal(written.isError, false)
+  assert.equal(rt.state.bots.a.instructions, 'Configured by the SDK')
+  const audit = (await view()).audit
+  for (const action of ['initialize', 'tools/list', 'list_bots', 'update_bot']) {
+    assert.equal(audit.some(row => row.action === action && row.outcome === 'allowed'), true)
+  }
+})
+
+test('space reads page messages/settings/activity/audit without secrets or audit message bodies',
+  async t => {
+    const { rt, tool, home } = await fixture(t)
+    await rt.secretEndpoint('secret-set', { name: 'PRIVATE_KEY', value: 'planted-secret-1091',
+      scope: 'all' })
+    rt.state.rooms.room = { id: 'room', name: 'Plans', members: ['a', 'b'], admin: 'a',
+      log: [{ text: 'Message body planted-secret-1091', who: 'User', time: 1 },
+        { text: 'Second message', who: 'Alpha', time: 2 }] }
+    rt.chatPage = async () => ({ items: [
+      { kind: 'user', text: 'Bot message planted-secret-1091', time: 3 },
+      { kind: 'bot', text: 'Reply body', time: 4 },
+    ], cursor: null })
+    const all = []
+    for (const name of ['list_bots', 'list_groups', 'list_conversations', 'read_settings',
+      'recent_activity', 'read_audit']) all.push(await tool(name, { limit: 1 }))
+    all.push(await tool('get_bot', { id: 'a' }))
+    all.push(await tool('get_group', { id: 'room' }))
+    all.push(await tool('get_conversation', { id: 'room' }))
+    const first = await tool('read_messages', { id: 'room', limit: 1 })
+    all.push(first)
+    assert.equal(first.value.items.length, 1)
+    assert.equal(typeof first.value.nextCursor, 'string')
+    const second = await tool('read_messages', { id: 'room', cursor: first.value.nextCursor,
+      limit: 1 })
+    all.push(second, await tool('read_messages', { id: 'a', limit: 1 }))
+    assert.equal(second.value.nextCursor, null)
+    assert.equal(JSON.stringify(all).includes('planted-secret-1091'), false)
+    assert.equal((await tool('read_messages', { id: 'outside-session' })).isError, true)
+    const audit = await readFile(join(home, 'agent-audit.jsonl'), 'utf8')
+    assert.equal(audit.includes('Message body'), false)
+    assert.equal(audit.includes('Reply body'), false)
+    assert.equal(audit.includes('planted-secret-1091'), false)
+  })
+
+test('binding accepts local/private interfaces and rejects public or wildcard listeners', () => {
+  assert.equal(agentBindAddress(), '127.0.0.1')
+  assert.equal(agentBindAddress('10.0.0.1'), '10.0.0.1')
+  assert.equal(agentBindAddress('fd00::1'), 'fd00::1')
+  for (const value of ['0.0.0.0', '::', '203.0.113.1', 'example.invalid']) {
+    assert.throws(() => agentBindAddress(value))
+  }
+})
+
+test('incomplete unauthenticated bodies cannot block owner edits or token revocation', async t => {
+  const { token, id, view, call } = await fixture(t)
+  const url = (await view()).url
+  const connections = []
+  t.after(() => connections.forEach(req => req.destroy()))
+  for (const auth of [null, token]) {
+    const req = httpRequest(url, { method: 'POST', headers: {
+      ...(auth ? { authorization: `Bearer ${auth}` } : {}),
+      accept: 'application/json, text/event-stream', 'content-type': 'application/json',
+      'content-length': '1000',
+    } }, res => res.resume())
+    req.on('error', () => {})
+    connections.push(req)
+    req.flushHeaders()
+    req.write('{')
+  }
+  const owner = call('update-bot', { id: 'b', role: 'Still available' })
+  const revoke = call('agent-token-revoke', { id })
+  let timer
+  try {
+    const result = await Promise.race([Promise.all([owner, revoke]),
+      new Promise((resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('Owner access blocked by slow body')), 1000)
+      })])
+    assert.equal(result.every(row => row.ok), true)
+  } finally { clearTimeout(timer); connections.forEach(req => req.destroy()) }
+})
+
+
+test('SDK sessions through the exact web gate route require the agent token', async t => {
+  const { mcpRoute, token, id, call, home } = await fixture(t)
+  const upstream = createServer(async (req, res) => {
+    if (req.headers.cookie !== 'dsh-fixture=value' || req.url !== '/api/omni-mcp') {
+      res.writeHead(401).end()
+      return
+    }
+    const response = await mcpRoute.fetch(new Request(`http://localhost${req.url}`, {
+      method: req.method, headers: req.headers,
+      ...(['GET', 'HEAD'].includes(req.method) ? {} : {
+        body: Readable.toWeb(req), duplex: 'half',
+      }),
+    }))
+    res.writeHead(response.status, Object.fromEntries(response.headers))
+    res.end(Buffer.from(await response.arrayBuffer()))
+  })
+  upstream.listen(0, '127.0.0.1')
+  await once(upstream, 'listening')
+  const port = upstream.address().port
+  const sessions = new SessionStore(join(home, 'gate'))
+  const reservation = createServer()
+  reservation.listen(0, '127.0.0.1')
+  await once(reservation, 'listening')
+  const gatePort = reservation.address().port
+  await new Promise(resolve => reservation.close(resolve))
+  const gateOrigin = `http://localhost:${gatePort}`
+  const gate = createGate({ origin: gateOrigin, sessions, credentials: {
+    port, authority: `127.0.0.1:${port}`, cookie: async () => 'dsh-fixture=value',
+  }, auditAccess: () => {} })
+  gate.listen(gatePort, '127.0.0.1')
+  await once(gate, 'listening')
+  t.after(async () => {
+    await gate.closeGate()
+    upstream.closeAllConnections()
+    await new Promise(resolve => upstream.close(resolve))
+  })
+  const url = new URL(`${gateOrigin}/api/omni-mcp`)
+  const client = new Client({ name: 'fixture-gate-client', version: '1' })
+  t.after(() => client.close())
+  await client.connect(new StreamableHTTPClientTransport(url, {
+    requestInit: { headers: { Authorization: `Bearer ${token}` } },
+  }))
+  assert.equal((await client.listTools()).tools.some(tool => tool.name === 'list_bots'), true)
+  const read = await client.callTool({ name: 'list_bots', arguments: { limit: 1 } })
+  assert.equal(JSON.parse(read.content[0].text).items.length, 1)
+  assert.equal((await client.callTool({ name: 'update_bot', arguments: {
+    id: 'a', role: 'Edited through gate',
+  } })).isError, false)
+  assert.equal(sessions.list().length, 0)
+  await call('agent-token-revoke', { id })
+  const refused = await fetch(url, { method: 'POST', headers: {
+    Authorization: `Bearer ${token}`,
+    accept: 'application/json, text/event-stream', 'content-type': 'application/json',
+  }, body: JSON.stringify({ jsonrpc: '2.0', id: 99, method: 'tools/list' }) })
+  assert.equal(refused.status, 401)
+  const without = await fetch(url, { method: 'POST', headers: {
+    cookie: 'browser-only=does-not-admit',
+  } })
+  assert.equal(without.status, 401)
+})
+
+
+test('Origin admission requires an explicit exact origin in a list', async t => {
+  const { rt, rpc, token } = await fixture(t)
+  const headers = { origin: 'https://allowed.invalid' }
+  assert.equal((await rpc('tools/list', {}, token, headers)).status, 403)
+  rt.config.agentAccessOrigins = ['https://allowed.invalid']
+  assert.equal((await rpc('tools/list', {}, token, headers)).status, 200)
+  assert.equal((await rpc('tools/list', {}, token, {
+    origin: 'https://allowed.invalid.attacker.invalid',
+  })).status, 403)
+  rt.config.agentAccessOrigins = 'https://allowed.invalid'
+  assert.equal((await rpc('tools/list', {}, token, headers)).status, 403)
 })

@@ -1,12 +1,14 @@
 // Instance-local administration over stateless MCP Streamable HTTP. No browser cookies.
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
+import ipaddr from 'ipaddr.js'
 import { createServer } from 'node:http'
 import { appendFile, mkdir, open, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { replaceFile } from './files.js'
 
-const VERSION = '2025-06-18'
-const VERSIONS = new Set([VERSION, '2025-03-26', '2025-11-25'])
+export const MCP_PATH = '/api/omni-mcp'
+const VERSION = '2025-11-25'
+const VERSIONS = new Set([VERSION, '2025-03-26', '2025-06-18'])
 const LIMIT = 65536
 const BOT_FIELDS = ['id', 'name', 'role', 'color', 'instructions', 'model', 'effort', 'permission']
 const ROOM_FIELDS = ['id', 'name', 'notice', 'members', 'admin', 'permission', 'mode']
@@ -17,17 +19,19 @@ export const botConfig = (bot, mainBotIds = []) => bot == null ? null
 export const roomConfig = room => pick(room, ROOM_FIELDS)
 const string = { type: 'string', maxLength: 16000 }
 const nullable = { anyOf: [string, { type: 'null' }] }
+const pageProps = { offset: { type: 'integer', minimum: 0 },
+  limit: { type: 'integer', minimum: 1, maximum: 100 } }
 const members = { type: 'array', items: string, maxItems: 100 }
 const botProps = Object.fromEntries(BOT_FIELDS.filter(key => key !== 'id').map(key => [key,
   ['model', 'effort'].includes(key) ? nullable : string]))
 const roomProps = { name: string, notice: string, members, admin: string, permission: string }
 const tool = (name, endpoint, description, properties = {}, required = []) => ({
-  name, endpoint, description,
+  name, endpoint, description, read: endpoint.startsWith('space-'),
   inputSchema: { type: 'object', properties, required, additionalProperties: false },
 })
 export const AGENT_TOOLS = [
-  tool('list_bots', 'list-bots', 'List Bot configuration; no chats or credentials.'),
-  tool('get_bot', 'get-bot', 'Get Bot configuration.', { id: string }, ['id']),
+  tool('list_bots', 'space-bots', 'Page Bot configuration, folders and status.', pageProps),
+  tool('get_bot', 'space-bot', 'Get Bot configuration.', { id: string }, ['id']),
   tool('create_bot', 'create-bot', 'Create a Bot.',
     Object.fromEntries(Object.entries(botProps).filter(([key]) => key !== 'permission')), ['name']),
   tool('update_bot', 'update-bot', 'Edit instructions, model, effort or permissions.',
@@ -36,13 +40,22 @@ export const AGENT_TOOLS = [
   tool('set_main', 'set-main', 'Set or remove the Main Bot role.',
     { id: string, main: { type: 'boolean' }, primary: { type: 'boolean' }, replace: string },
     ['id']),
-  tool('list_groups', 'list-rooms', 'List group configuration; no messages.'),
-  tool('get_group', 'get-room', 'Get group configuration.', { id: string }, ['id']),
+  tool('list_groups', 'space-groups', 'Page groups and membership.', pageProps),
+  tool('get_group', 'space-group', 'Get group configuration.', { id: string }, ['id']),
   tool('create_group', 'create-room', 'Create a group with its members.',
     { name: string, members, admin: string }, ['name', 'members']),
   tool('update_group', 'update-room', 'Edit a group and its membership.',
     { id: string, ...roomProps, add: members, remove: members }, ['id']),
   tool('delete_group', 'delete-room', 'Delete a group.', { id: string }, ['id']),
+  tool('list_conversations', 'space-conversations', 'Page Bot and group conversations.', pageProps),
+  tool('get_conversation', 'space-conversation', 'Get conversation state.', { id: string }, ['id']),
+  tool('read_messages', 'space-messages', 'Read a page of text messages; no files or attachments.',
+    { id: string, cursor: { type: 'string', maxLength: 512 }, limit: pageProps.limit }, ['id']),
+  tool('read_settings', 'space-settings', 'Read safe preferences and a page of available models.',
+    pageProps),
+  tool('recent_activity', 'space-activity', 'Page recent event metadata, without message bodies.',
+    pageProps),
+  tool('read_audit', 'space-audit', 'Page the recent audit window, newest first.', pageProps),
 ]
 const digest = value => createHash('sha256').update(value).digest()
 const invalid = () => Object.assign(new Error('Invalid agent access request'), {
@@ -50,6 +63,8 @@ const invalid = () => Object.assign(new Error('Invalid agent access request'), {
 })
 const matches = (value, schema) => {
   if (schema.anyOf) return schema.anyOf.some(option => matches(value, option))
+  if (schema.type === 'integer') return Number.isSafeInteger(value)
+    && value >= (schema.minimum ?? 0) && value <= (schema.maximum ?? Number.MAX_SAFE_INTEGER)
   if (schema.type === 'null') return value === null
   if (schema.type === 'array') return Array.isArray(value) && value.length <= schema.maxItems
     && value.every(item => matches(item, schema.items))
@@ -61,6 +76,43 @@ const validArgs = (args, schema) => args !== null && typeof args === 'object'
   && Object.entries(args).every(([key, value]) => Object.hasOwn(schema.properties, key)
     && matches(value, schema.properties[key]))
 
+const readBody = async request => {
+  if (!request.body?.getReader) return request.arrayBuffer()
+  const reader = request.body.getReader()
+  const chunks = []
+  let size = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      size += value.byteLength
+      if (size > LIMIT) {
+        void reader.cancel().catch(() => {})
+        throw Object.assign(new Error('Request too large'), { code: 'agent/oversize' })
+      }
+      chunks.push(Buffer.from(value))
+    }
+    return Buffer.concat(chunks)
+  } finally { reader.releaseLock() }
+}
+const originAllowed = (origin, config) => {
+  if (origin === null) return true
+  if (!Array.isArray(config.agentAccessOrigins)) return false
+  return config.agentAccessOrigins.some(value => {
+    try { return value === origin && new URL(value).origin === value && /^https?:/.test(value) }
+    catch { return false }
+  })
+}
+
+export function agentBindAddress(value = '127.0.0.1') {
+  try {
+    const parsed = ipaddr.process(value)
+    if (!['loopback', 'private', 'carrierGradeNat', 'uniqueLocal', 'linkLocal']
+      .includes(parsed.range())) throw invalid()
+    return parsed.toString()
+  } catch { throw invalid() }
+}
+
 export function createAgentAccess(rt, handle, { now = Date.now, transaction = fn => fn() } = {}) {
   const tokenPath = () => join(rt.home, 'agent-tokens.json')
   const auditPath = () => join(rt.home, 'agent-audit.jsonl')
@@ -71,6 +123,7 @@ export function createAgentAccess(rt, handle, { now = Date.now, transaction = fn
   let stopped = false
   let failures = 0
   let resetAt = 0
+  let auditQueue = Promise.resolve()
   const serial = fn => {
     const job = queue.then(fn)
     queue = job.catch(() => {})
@@ -93,10 +146,14 @@ export function createAgentAccess(rt, handle, { now = Date.now, transaction = fn
     return JSON.parse(rt.redactSecretsAnywhere(text).replace(/am_agent_[a-f0-9]{64}/g,
       '[agent token]'))
   }
-  const audit = async entry => {
-    await mkdir(rt.home, { recursive: true })
-    await appendFile(auditPath(), JSON.stringify(clean({ time: now(), ...entry })) + '\n',
-      { mode: 0o600 })
+  const audit = entry => {
+    const job = auditQueue.then(async () => {
+      await mkdir(rt.home, { recursive: true })
+      await appendFile(auditPath(), JSON.stringify(clean({ time: now(), ...entry })) + '\n',
+        { mode: 0o600 })
+    })
+    auditQueue = job.catch(() => {})
+    return job
   }
   const persist = async next => {
     const temp = `${tokenPath()}.${randomUUID()}.tmp`
@@ -152,25 +209,54 @@ export function createAgentAccess(rt, handle, { now = Date.now, transaction = fn
     status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store',
       ...(status === 405 ? { allow: 'POST' } : {}) },
   })
-  const processRequest = async request => {
+  const authenticate = candidate => serial(async () => {
     await load()
-    await rt.refresh()
-    await rt.loadSecrets()
-    const supplied = request.headers.get('authorization') ?? ''
-    const candidate = supplied.startsWith('Bearer ') ? supplied.slice(7) : ''
     const hash = digest(candidate)
-    // Hash lengths are fixed; compare all records, including tombstones for attribution.
     let identity
     for (const row of records) {
       if (timingSafeEqual(hash, Buffer.from(row.hash, 'hex'))) identity = row
     }
+    return identity
+  })
+  const processRequest = async (request, context) => {
+    await rt.loadSecrets()
+    const supplied = request.headers.get('authorization') ?? ''
+    const candidate = supplied.startsWith('Bearer ') ? supplied.slice(7) : ''
+    const identity = await authenticate(candidate)
     const tokenName = identity?.name ?? 'Unknown token'
     const callId = randomUUID()
     const entry = { callId, tokenName, action: 'http', target: null }
+    context.entry = entry
+    const refuse = async (status, reason) => {
+      await audit({ ...entry, outcome: 'refused', reason })
+      return json(status, { error: reason })
+    }
+    if (!identity || identity.revokedAt !== undefined || candidate === '') {
+      if (now() >= resetAt) { failures = 0; resetAt = now() + 60000 }
+      failures += 1
+      return refuse(failures > 10 ? 429 : 401,
+        failures > 10 ? 'Too many failed attempts' : 'Invalid agent token')
+    }
+    let url
+    try { url = new URL(request.url) } catch { return refuse(400, 'Invalid MCP URL') }
+    if (!['/mcp', MCP_PATH].includes(url.pathname) || url.search
+      || !originAllowed(request.headers.get('origin'), rt.config)) {
+      return refuse(403, 'Invalid MCP origin or URL')
+    }
+    if (request.method !== 'POST') return refuse(405, 'Use POST')
+    const version = request.headers.get('mcp-protocol-version')
+    if (version && !VERSIONS.has(version)) return refuse(400, 'Unsupported protocol version')
+    const accept = request.headers.get('accept') ?? ''
+    if (!accept.includes('application/json') || !accept.includes('text/event-stream')) {
+      return refuse(406, 'Accept JSON and event streams')
+    }
+    if (!request.headers.get('content-type')?.startsWith('application/json')) {
+      return refuse(415, 'Use application/json')
+    }
     let body
     let bodyError
     try {
-      const bytes = await request.arrayBuffer()
+      const bytes = await readBody(request)
       if (bytes.byteLength > LIMIT) bodyError = 'Request too large'
       else body = JSON.parse(Buffer.from(bytes).toString('utf8'))
     } catch (error) {
@@ -184,31 +270,6 @@ export function createAgentAccess(rt, handle, { now = Date.now, transaction = fn
       const target = body.params?.arguments?.id
       entry.target = typeof target === 'string' ? target : null
     } else if (['initialize', 'ping', 'tools/list'].includes(method)) entry.action = method
-    const refuse = async (status, reason) => {
-      await audit({ ...entry, outcome: 'refused', reason })
-      return json(status, { error: reason })
-    }
-    if (!identity || identity.revokedAt !== undefined || candidate === '') {
-      if (now() >= resetAt) { failures = 0; resetAt = now() + 60000 }
-      failures += 1
-      return refuse(failures > 10 ? 429 : 401,
-        failures > 10 ? 'Too many failed attempts' : 'Invalid agent token')
-    }
-    let url
-    try { url = new URL(request.url) } catch { return refuse(400, 'Invalid MCP URL') }
-    if (url.pathname !== '/mcp' || url.search || request.headers.has('origin')) {
-      return refuse(403, 'Invalid MCP origin or URL')
-    }
-    if (request.method !== 'POST') return refuse(405, 'Use POST')
-    const version = request.headers.get('mcp-protocol-version')
-    if (version && !VERSIONS.has(version)) return refuse(400, 'Unsupported protocol version')
-    const accept = request.headers.get('accept') ?? ''
-    if (!accept.includes('application/json') || !accept.includes('text/event-stream')) {
-      return refuse(406, 'Accept JSON and event streams')
-    }
-    if (!request.headers.get('content-type')?.startsWith('application/json')) {
-      return refuse(415, 'Use application/json')
-    }
     if (bodyError) return refuse(bodyError === 'Request too large' ? 413 : 400, bodyError)
     if (!body || body.jsonrpc !== '2.0' || typeof body.method !== 'string'
       || (body.id !== undefined && typeof body.id !== 'string' && typeof body.id !== 'number')) {
@@ -237,7 +298,7 @@ export function createAgentAccess(rt, handle, { now = Date.now, transaction = fn
       }
       else if (body.method === 'ping') result = {}
       else if (body.method === 'tools/list') result = {
-        tools: AGENT_TOOLS.map(({ endpoint, ...item }) => item),
+        tools: AGENT_TOOLS.map(({ endpoint, read, ...item }) => item),
       }
       else return error(-32601, 'Unknown method')
       await audit({ ...entry, outcome: 'allowed' })
@@ -248,40 +309,65 @@ export function createAgentAccess(rt, handle, { now = Date.now, transaction = fn
     const args = body.params?.arguments ?? {}
     entry.target = typeof args?.id === 'string' ? args.id : null
     if (!validArgs(args, definition.inputSchema)) return error(-32602, 'Invalid tool arguments')
-    const before = snapshot()
-    // An intent persists before side effects. Audit failure therefore fails closed.
-    await audit({ ...entry, outcome: 'started' })
-    const result = await handle(definition.endpoint, clean(args), request.signal)
-    const after = snapshot()
-    const delta = changes(before, after)
-    if (args.id === undefined && definition.endpoint === 'create-bot') {
-      entry.target = result.ok ? result.value.id : null
+    if (definition.read) {
+      const current = await authenticate(candidate)
+      if (!current || current.revokedAt !== undefined) return refuse(401, 'Invalid agent token')
+      const result = await handle(definition.endpoint, clean(args), request.signal)
+      await audit({ ...entry, outcome: result.ok ? 'allowed' : 'refused' })
+      const value = result.ok ? result.value : { error: 'Read refused', code: result.error.code }
+      return reply({ isError: !result.ok, content: [
+        { type: 'text', text: JSON.stringify(value) },
+      ] })
     }
-    if (args.id === undefined && definition.endpoint === 'create-room') {
-      entry.target = result.ok ? result.value.id : null
-    }
-    await audit({ ...entry, outcome: result.ok ? 'allowed' : 'refused', changes: delta })
-    // Mutation handlers may answer a full UI view. Never send that view over MCP.
-    const value = result.ok ? definition.endpoint === 'list-bots' ? after.bots
-      : definition.endpoint === 'list-rooms' ? after.groups
-        : definition.endpoint.endsWith('bot') || definition.endpoint === 'set-main'
-          ? after.bots.find(bot => bot.id === (args.id ?? entry.target)) ?? null
-          : after.groups.find(group => group.id === (args.id ?? entry.target)) ?? null
-      : { error: 'Action refused', code: result.error.code }
-    return reply({ isError: !result.ok, content: [{ type: 'text', text: JSON.stringify(value) }] })
+    return transaction(async () => {
+      const current = await authenticate(candidate)
+      if (!current || current.revokedAt !== undefined) return refuse(401, 'Invalid agent token')
+      await rt.refresh()
+      const before = snapshot()
+      // An intent persists before side effects. Audit failure therefore fails closed.
+      await audit({ ...entry, outcome: 'started' })
+      const result = await handle(definition.endpoint, clean(args), request.signal)
+      const after = snapshot()
+      const delta = changes(before, after)
+      if (args.id === undefined && definition.endpoint === 'create-bot') {
+        entry.target = result.ok ? result.value.id : null
+      }
+      if (args.id === undefined && definition.endpoint === 'create-room') {
+        entry.target = result.ok ? result.value.id : null
+      }
+      await audit({ ...entry, outcome: result.ok ? 'allowed' : 'refused', changes: delta })
+      // Mutation handlers may answer a full UI view. Never send that view over MCP.
+      const value = result.ok ? definition.endpoint === 'list-bots' ? after.bots
+        : definition.endpoint === 'list-rooms' ? after.groups
+          : definition.endpoint.endsWith('bot') || definition.endpoint === 'set-main'
+            ? after.bots.find(bot => bot.id === (args.id ?? entry.target)) ?? null
+            : after.groups.find(group => group.id === (args.id ?? entry.target)) ?? null
+        : { error: 'Action refused', code: result.error.code }
+      return reply({ isError: !result.ok, content: [
+        { type: 'text', text: JSON.stringify(value) },
+      ] })
+    })
   }
-  const fetch = request => serial(async () => {
-    try { return await transaction(() => processRequest(request)) }
-    catch { return json(503, { error: 'Agent access unavailable' }) }
-  })
+  const fetch = async request => {
+    const context = {}
+    try { return await processRequest(request, context) }
+    catch {
+      try {
+        await audit({ tokenName: 'Unknown token', action: 'http', target: null,
+          ...context.entry, outcome: 'refused', reason: 'Agent access unavailable' })
+      } catch { /* An unavailable audit always refuses the request. */ }
+      return json(503, { error: 'Agent access unavailable' })
+    }
+  }
   const start = async () => {
     if (server || stopped) return
+    const host = agentBindAddress(rt.config.agentAccessHost)
     const port = rt.config.agentAccessPort ?? 0
     if (!Number.isInteger(port) || port < 0 || port > 65535) throw invalid()
     server = createServer(async (req, res) => {
       try {
         const response = await fetch({
-          url: `http://127.0.0.1:${address.port}${req.url}`,
+          url: `http://${host.includes(':') ? `[${host}]` : host}:${address.port}${req.url}`,
           method: req.method, headers: new Headers(req.headers),
           arrayBuffer: async () => {
             let size = 0
@@ -306,7 +392,7 @@ export function createAgentAccess(rt, handle, { now = Date.now, transaction = fn
     try {
       await new Promise((resolve, reject) => {
         server.once('error', reject)
-        server.listen(port, '127.0.0.1', resolve)
+        server.listen(port, host, resolve)
       })
       address = server.address()
       server.unref()
@@ -317,7 +403,9 @@ export function createAgentAccess(rt, handle, { now = Date.now, transaction = fn
     if (rt.readOnly() !== undefined) throw invalid()
     await rt.loadSecrets()
     if (action === 'view') return clean({
-      url: address ? `http://127.0.0.1:${address.port}/mcp` : null,
+      url: address ? `http://${address.family === 'IPv6'
+        ? `[${address.address}]` : address.address}:${address.port}/mcp` : null,
+      webPath: MCP_PATH,
       tokens: records.map(({ hash, ...row }) => row), audit: await history(),
     })
     if (action === 'create') {
@@ -347,10 +435,11 @@ export function createAgentAccess(rt, handle, { now = Date.now, transaction = fn
   const close = async () => {
     stopped = true
     await queue
+    await auditQueue
     if (server) await new Promise(resolve => {
       server.close(resolve)
       server.closeAllConnections()
     })
   }
-  return { owner, fetch, resume, close }
+  return { owner, fetch, resume, close, history }
 }
