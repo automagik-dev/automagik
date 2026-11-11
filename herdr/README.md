@@ -967,8 +967,38 @@ automagik-herdr worker "Fix the login redirect loop" --task gl-231 --worktree ..
   When a template runs, `agent`, `model` and `effort` are null: the template sets them. The
   briefing hook appends `{ event: "session", terminal, session, transcript, at }` and sets the terminal's `agent.session` label when a Claude session
   changes. A session row can repeat when the label write fails, so consumers dedupe session
-  rows on (terminal, session). There is no end row: a worker's end comes from hc or from its
-  session. The rows outlive the terminals, so usage can be tied to bots and tasks afterwards.
+  rows on (terminal, session). The rows outlive the terminals, so usage can be tied to bots
+  and tasks afterwards.
+  - **End rows:** `{ event: "end", kind, terminal, core, created_ms, reason: "replaced" |
+    "finished", at }`, one per launch: when the CLI replaced its terminal, or when the cleanup
+    found it finished. A `finished` row also copies how hc says the terminal ended (#899):
+    `hc_reason` (hc's own word: `exited`, `killed`, `stopped_by_restart` and its others), and
+    with it `exit_code` and `signal` when hc gave them. The three keys are left out when hc said nothing, and a status
+    or a signal is never written without its reason: usagemeter counts a status with no reason
+    as a failed run, and a kill or a restart is not one.
+  - **Pull requests (#899):** the cleanup's sweep also asks `gh pr list --head <branch>` for
+    the ledger's worker branches and appends `{ event: "pr", project, branch, task, pr, state:
+    "open" | "merged" | "closed", first_commit_at, opened_at, merged_at, closed_at, core, at }`
+    when it first sees a pull request and each time its state or one of its times changes; the
+    newest row of a (project, branch, pr) is the one that counts. usagemeter's time to a pull
+    request reads them (`usagemeter outcomes`). The times are gh's own, so a late sweep loses
+    nothing. A row never holds a title, an author, a text, a commit or an address.
+    - `first_commit_at` is the author date of the branch's first commit, read from git: the
+      oldest commit on the branch that is neither in the start row's `base` nor on the branch
+      the pull request targets, as `origin` has it (a rebase on it brings its commits in). It
+      is null when git can't tell and no earlier row recorded it, and when it is later than
+      the pull request's opening (the branch name was used again).
+    - A branch is followed until its pull requests have all merged or closed with no worker
+      started on it since, or for 30 days after its last worker start or `pr` row. One with an
+      open pull request, or pushed with none recorded yet, is asked about a quarter of its
+      idle time after the last ask (10 minutes at least, 6 hours at most); a branch git shows
+      no push of, an hour after its last worker start, then daily, for 3 days.
+    - A `worker` call asks gh for at most 3 branches, the longest due first, inside the
+      sweep's 20 s; `automagik-herdr reap` asks for every branch that is due, and for every
+      one with an open pull request, or pushed with none recorded yet, whether due or not.
+      What gh told the cleanup about a worktree's branch is used as it is. When each branch
+      was last asked is kept in `<app home>/automagik-herdr/pr-checks.json`. gh missing or
+      failing writes nothing.
 
 ## The hc guard (a guardrail, not a boundary)
 

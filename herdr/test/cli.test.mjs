@@ -4579,6 +4579,52 @@ test("RFC 0021: one end row per launch: restart --tree and the worktree sweep bo
   assert.deepEqual(ends("t5"), ["replaced"]);
 });
 
+test("reap #899: a finished launch's end row and its branch's pr rows reach workers.jsonl, with no worktree left to remove", (t) => {
+  const ended = Date.now() - 20 * 60_000;
+  const s = scene(t, { terminals: [{ ...term("t7", { state: "finished", created: 5 }), finished_ms: ended, reason: "exited", exit_code: 2, signal: null }] });
+  // A stand-in gh: what it was asked, and gh.json as its answer. The real one is never run.
+  const ghLog = join(s.root, "gh.log"), ghJson = join(s.root, "gh.json");
+  exe(join(s.root, "bin", "gh"), `#!/bin/sh\nprintf '%s\\n' "$*" >> "${ghLog}"\ncat "${ghJson}"\n`);
+  const pr = (state, extra = {}) => [{ number: 12, state, createdAt: "2026-02-03T05:00:00Z", mergedAt: null, closedAt: null, baseRefName: "main",
+    title: "TITLE-MARK", author: { login: "AUTHOR-MARK" }, url: "https://example.invalid/URL-MARK", headRefOid: "SHA-MARK", ...extra }];
+  writeFileSync(ghJson, JSON.stringify(pr("OPEN")));
+  // The worker's branch: one commit on top of where its worktree started. The worktree itself is gone already.
+  const base = git(s.project, "rev-parse", "HEAD").trim();
+  git(s.project, "branch", "-q", "fix/213");
+  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit-tree", "-m", "work", "-p", base, `${base}^{tree}`],
+    { cwd: s.project, encoding: "utf8", env: { ...process.env, GIT_AUTHOR_DATE: "2026-02-03T04:05:06Z", GIT_COMMITTER_DATE: "2026-02-03T04:05:06Z" } })
+    .trim().split("\n").forEach((sha) => git(s.project, "update-ref", "refs/heads/fix/213", sha));
+  mkdirSync(join(s.app, "automagik-herdr"), { recursive: true });
+  const start = { event: "start", kind: "worker", terminal: "t7", pid: 1, botId: ID.main, task: "gh-213", branch: "fix/213", project: s.project, lead: ID.main,
+    worktree: join(s.root, "wt-gone"), base, created: true, core: "fakecore0000", created_ms: 5, at: new Date(Date.now() - 2 * 3600_000).toISOString() };
+  writeFileSync(ledgerPath(s.app), `${JSON.stringify(start)}\n`, { mode: 0o600 });
+  const first = s.cli(["reap"]);
+  assert.equal(first.code, 0, first.err);
+  assert.equal(first.out.trim(), "No finished worker's worktree to remove.");
+  const open = { event: "pr", project: s.project, branch: "fix/213", task: "gh-213", pr: 12, state: "open", first_commit_at: "2026-02-03T04:05:06.000Z",
+    opened_at: "2026-02-03T05:00:00.000Z", merged_at: null, closed_at: null, core: "fakecore0000" };
+  const at = (rows) => rows.map(({ at: _at, ...row }) => row);
+  assert.deepEqual(ledgerOf(s).slice(1).map(({ at: when, ...row }) => (row.event === "end" ? { ...row, at: when } : row)), [
+    { event: "end", kind: "worker", terminal: "t7", core: "fakecore0000", created_ms: 5, reason: "finished", hc_reason: "exited", exit_code: 2, at: new Date(ended).toISOString() },
+    open,
+  ]);
+  // The pull request merges: one more row, and then it is asked for no more.
+  writeFileSync(ghJson, JSON.stringify(pr("MERGED", { mergedAt: "2026-02-04T00:00:00Z", closedAt: "2026-02-04T00:00:00Z" })));
+  for (let i = 0; i < 3; i += 1) assert.equal(s.cli(["reap"]).code, 0);
+  assert.deepEqual(at(ledgerOf(s).filter((x) => x.event === "pr")), [open,
+    { ...open, state: "merged", merged_at: "2026-02-04T00:00:00.000Z", closed_at: "2026-02-04T00:00:00.000Z" }]);
+  assert.equal(ledgerOf(s).filter((x) => x.event === "end").length, 1);
+  assert.deepEqual(readFileSync(ghLog, "utf8").trim().split("\n"),
+    Array(2).fill("pr list --head fix/213 --state all --json number,state,createdAt,mergedAt,closedAt,baseRefName --limit 20"));
+  const text = readFileSync(ledgerPath(s.app), "utf8");
+  assert.doesNotMatch(text, /MARK/, "no title, author, address or commit of the pull request");
+  assert.equal(statSync(ledgerPath(s.app)).mode & 0o777, 0o600);
+  // Every row is one usagemeter's reader takes (ledger.rs parse_pr): its keys, and no other.
+  for (const row of ledgerOf(s).filter((x) => x.event === "pr")) {
+    assert.deepEqual(Object.keys(row), ["event", "project", "branch", "task", "pr", "state", "first_commit_at", "opened_at", "merged_at", "closed_at", "core", "at"]);
+  }
+});
+
 /** Every session id the scene's ledger and hc labels hold. */
 const heldSessions = (s) => new Set([...ledgerOf(s).map((x) => x.session),
   ...s.hcState().terminals.flatMap((x) => [x.labels?.["agent.session"], x.labels?.["revive.session"]])].filter((x) => typeof x === "string" && x.length >= 6));
