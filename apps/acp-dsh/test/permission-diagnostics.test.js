@@ -169,7 +169,8 @@ test('the static lists: every mode, failure code and route this codebase names, 
   }
   assert.deepEqual([...MODES].sort(), ['acceptEdits', 'agent', 'agent-full-access', 'auto', 'bypassPermissions', 'default', 'dontAsk', 'plan', 'read-only', 'workspace-write'])
   for (const code of ['AUTH', 'RATE_LIMIT', 'TIMEOUT', 'TRANSPORT', 'SERVER', 'MISSING_CREDENTIAL', 'INVALID_CREDENTIAL', 'NO_ADAPTER', 'EMPTY_RESPONSE', 'UNSUPPORTED', 'ABORTED', 'MODEL_ACCESS_REQUIRED']) assert.ok(FAILURE_CODES.has(code), code)
-  assert.deepEqual([...ROUTES.keys()].sort(), ['acp-claude', 'acp-codex', 'deepseek-official'])
+  // The agent table's routes, the native-ACP agents (#959) included, and the reviewer's own.
+  assert.deepEqual([...ROUTES.keys()].sort(), ['acp-antigravity', 'acp-claude', 'acp-codex', 'acp-hermes', 'acp-omp', 'deepseek-official'])
   assert.deepEqual([...ROUTES.get('deepseek-official')], ['deepseek-flash'])
   assert.deepEqual([...ROUTES.get('acp-claude')], AGENTS['acp-claude'].fallback.map(model => model.id))
   // The module holds no way to ask anything outside itself.
