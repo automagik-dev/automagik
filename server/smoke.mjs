@@ -160,10 +160,12 @@ async function main() {
   check(/^[a-f0-9]{32}$/.test(claimCode), 'image claim code is not 128 bits')
   const gateLogs = await docker(['logs', gateName])
   check(!`${gateLogs.stdout}${gateLogs.stderr}`.includes(claimCode), 'image claim code reached the application log')
-  await docker(['exec', gateName, '/nodejs/bin/node', '-e', 'const http=require("http"),fs=require("fs");const code=fs.readFileSync("/data/claim-code","utf8").trim();http.get({host:"127.0.0.1",port:3082,path:"/_gate/claim",headers:{host:"localhost:3082"}},r=>{let text="";r.on("data",c=>text+=c);r.on("end",()=>{if(r.statusCode!==200||text.includes(code)||!text.includes("Claim with a passkey"))process.exit(1)})}).on("error",()=>process.exit(1))'])
+  const claimBoundary = 'const http=require("http"),fs=require("fs");const code=fs.readFileSync("/data/claim-code","utf8").trim();for(const port of [3082,3083])http.get({host:"127.0.0.1",port,path:"/_gate/claim",headers:{host:"localhost:3082"}},r=>{let text="";r.on("data",c=>text+=c);r.on("end",()=>{if(r.statusCode!==(port===3083?200:404)||text.includes(code)||(port===3083&&!text.includes("Claim with a passkey")))process.exit(1)})}).on("error",()=>process.exit(1))'
+  await docker(['exec', gateName, '/nodejs/bin/node', '-e', claimBoundary])
   await docker(['exec', gateName, '/nodejs/bin/node', '/opt/automagik/gate-control.mjs', 'reset'])
   const resetCode = (await docker(['exec', gateName, '/nodejs/bin/node', '-e', 'process.stdout.write(require("fs").readFileSync("/data/claim-code","utf8").trim())'])).stdout.trim()
   check(resetCode !== claimCode && /^[a-f0-9]{32}$/.test(resetCode), 'host reset did not rotate the private image claim code')
+  await docker(['exec', gateName, '/nodejs/bin/node', '-e', claimBoundary])
   await docker(['exec', gateName, '/nodejs/bin/node', '/opt/automagik/healthcheck.mjs'])
   say('gate: 401 healthy, separate store invisible to DSH, DSH mount read-only')
   say('claim: private 0600 files/socket, no code in logs or HTTP, local reset works in the image')

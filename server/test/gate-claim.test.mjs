@@ -30,12 +30,12 @@ test('every generated sign-in page contains browser-parseable JavaScript', () =>
     assert.doesNotThrow(() => new Script(script))
   }
 })
-async function fixture(t, { origin = ORIGIN, interactive = false, published = DSH_HOST } = {}) {
+async function fixture(t, { origin = ORIGIN, interactive = false, published = DSH_HOST, claimMode = 'local' } = {}) {
   let now = Date.now(), closed = false
   const dir = mkdtempSync(join(tmpdir(), 'automagik-claim-'))
   const sessions = new SessionStore(dir, { now: () => now })
   const logs = [], shown = [], seen = []
-  const claim = new SelfHostedClaim({ dir, origin, sessions, now: () => now, audit: record => logs.push(record) })
+  const claim = new SelfHostedClaim({ dir, origin, sessions, claimMode, now: () => now, audit: record => logs.push(record) })
   const control = await controlServer(claim)
   await claim.start({ interactive, show: value => shown.push(value) })
   const upstream = http.createServer((req, res) => { seen.push(req.url); res.end('workspace') })
@@ -43,21 +43,37 @@ async function fixture(t, { origin = ORIGIN, interactive = false, published = DS
   const gate = createGate({ origin, sessions, credentials: { authority: `${DSH_HOST}:${upstreamPort}`, port: upstreamPort, cookie: async () => 'dsh=server-held' }, selfHosted: claim })
   const port = await listen(gate)
   claim.bindingChange = (claimed, drop) => gate.rebind(port, () => claim.claimed ? published : DSH_HOST, drop)
-  const request = (path, { data, cookie, headers = {}, method = data === undefined ? 'GET' : 'POST' } = {}) => new Promise((resolve, reject) => {
+  const bootstrap = claimMode === 'local' ? createGate({ origin, sessions, selfHosted: claim, bootstrap: true }) : undefined
+  const bootstrapPort = bootstrap ? await listen(bootstrap) : undefined
+  const browser = (target = 'auto') => {
+    let preauth = ''
+    return async (path, options = {}) => {
+      const claimPath = ['/_gate/claim', '/_gate/claim/options', '/_gate/claim/verify'].includes(path)
+      const selected = typeof target === 'number' ? target : target === 'bootstrap' || (target === 'auto' && claimMode === 'local' && claimPath) ? bootstrapPort : port
+      const result = await requestAt(selected, origin, path, { ...options, cookie: [options.cookie, preauth].filter(Boolean).join('; ') })
+      const fresh = result.headers['set-cookie']?.find(value => value.startsWith('__Host-automagik-preauth='))
+      if (fresh) preauth = fresh.split(';')[0]
+      return result
+    }
+  }
+  const request = browser()
+  const code = () => interactive ? shown.at(-1) : readFileSync(join(dir, 'claim-code'), 'utf8').trim()
+  const close = async () => { if (closed) return; closed = true; await gate.closeGate(); if (bootstrap) await bootstrap.closeGate(); await new Promise(resolve => control.close(resolve)); upstream.closeAllConnections(); await new Promise(resolve => upstream.close(resolve)) }
+  t.after(async () => { await close(); rmSync(dir, { recursive: true, force: true }) })
+  return { dir, sessions, claim, gate, bootstrap, port, bootstrapPort, browser, request, logs, shown, seen, code, origin, advance: ms => { now += ms }, close }
+}
+function requestAt(port, origin, path, { data, cookie, headers = {}, method = data === undefined ? 'GET' : 'POST' } = {}) {
+  return new Promise((resolve, reject) => {
     const req = http.request({ hostname: DSH_HOST, port, path, method, headers: { host: new URL(origin).host,
       connection: 'close', ...(data === undefined ? {} : { origin, 'content-type': 'application/json' }), ...(cookie ? { cookie } : {}), ...headers } }, res => {
-      let text = ''; res.setEncoding('utf8'); res.on('data', value => { text += value });
+      let text = ''; res.setEncoding('utf8'); res.on('data', value => { text += value })
       res.on('end', () => { let body; try { body = JSON.parse(text) } catch { body = text } resolve({ status: res.statusCode, headers: res.headers, text, body }) })
     })
     req.on('error', reject); req.setTimeout(8000, () => req.destroy(new Error('Test request timeout')))
     req.end(data === undefined ? undefined : JSON.stringify(data))
   })
-  const code = () => interactive ? shown.at(-1) : readFileSync(join(dir, 'claim-code'), 'utf8').trim()
-  const close = async () => { if (closed) return; closed = true; await gate.closeGate(); await new Promise(resolve => control.close(resolve)); upstream.closeAllConnections(); await new Promise(resolve => upstream.close(resolve)) }
-  t.after(async () => { await close(); rmSync(dir, { recursive: true, force: true }) })
-  return { dir, sessions, claim, gate, request, logs, shown, seen, code, origin, advance: ms => { now += ms }, close }
 }
-const cookieOf = response => response.headers['set-cookie']?.[0].split(';')[0]
+const cookieOf = response => response.headers['set-cookie']?.find(value => value.startsWith('__Host-automagik-session='))?.split(';')[0]
 async function enroll(f, device = new SoftwareAuthenticator()) {
   const code = f.code()
   const options = await f.request('/_gate/claim/options', { data: { code } })
@@ -162,8 +178,9 @@ test('claim hashes are compared with timingSafeEqual for both good and bad secre
 test('two concurrent passkey claims leave exactly one owner and one winning session', async t => {
   const f = await fixture(t), code = f.code()
   const devices = [new SoftwareAuthenticator(), new SoftwareAuthenticator()]
-  const options = await Promise.all(devices.map(() => f.request('/_gate/claim/options', { data: { code } })))
-  const results = await Promise.all(options.map((o, i) => f.request('/_gate/claim/verify', { data: { code, id: o.body.id, credential: devices[i].register(o.body.options, f.origin) } })))
+  const browsers = devices.map(() => f.browser())
+  const options = await Promise.all(browsers.map(request => request('/_gate/claim/options', { data: { code } })))
+  const results = await Promise.all(options.map((o, i) => browsers[i]('/_gate/claim/verify', { data: { code, id: o.body.id, credential: devices[i].register(o.body.options, f.origin) } })))
   assert.deepEqual(results.map(r => r.status).sort(), [200, 401])
   const owner = readOwner(f.dir)
   assert.equal(owner.auth.credentials.length, 1)
@@ -204,6 +221,7 @@ test('real registration and sign-in reject wrong origin/port, RP, challenge, mis
 
 test('HTTP origin and IP checks explain the refusal and all reserved aliases fail before claims', async t => {
   const f = await fixture(t)
+  for (const claimMode of ['', 'LOCAL', 'other']) assert.throws(() => new SelfHostedClaim({ dir: f.dir, origin: f.origin, sessions: f.sessions, claimMode }), /AUTOMAGIK_GATE_CLAIM/)
   for (const headers of [{ host: 'localhost:4382' }, { origin: 'http://localhost:4382' }, { 'x-forwarded-host': 'localhost:4381', host: 'other.invalid' }]) {
     assert.equal((await f.request('/_gate/claim/options', { data: { code: f.code() }, headers })).status, 403)
   }
@@ -214,6 +232,7 @@ test('HTTP origin and IP checks explain the refusal and all reserved aliases fai
   assert.equal(passkeyOrigin('https://instance.invalid:8443').hostname, 'instance.invalid')
   for (const path of ['/x/..//_gate/claim', '/_gate/%63laim', '/%5fgate/claim/options', '/_gate/./recovery/options']) {
     assert.equal((await f.request(path, { data: { code: f.code() } })).status, 400)
+    assert.equal((await f.browser('bootstrap')(path, { data: { code: f.code() } })).status, 400)
   }
   assert.equal(readOwner(f.dir), undefined)
 })
@@ -332,9 +351,10 @@ test('a changed origin requires recovery to pin the new RP/origin; it never reop
   assert.equal(replacement.claimable, false); assert.equal(replacement.claimed, false)
   assert.equal(existsSync(join(f.dir, 'claim-code')), false)
   assert.throws(() => replacement.newCode())
-  const o = await replacement.action('recovery/options', { code: enrolled.recovery[0] })
+  const record = { id: 'fixture-browser', expires: Date.now() + CHALLENGE_MS }, browser = { start: () => record, existing: () => record }
+  const o = await replacement.action('recovery/options', { code: enrolled.recovery[0] }, undefined, browser)
   const device = new SoftwareAuthenticator()
-  await replacement.action('recovery/verify', { id: o.id, credential: device.register(o.options, origin) })
+  await replacement.action('recovery/verify', { id: o.id, credential: device.register(o.options, origin) }, undefined, browser)
   assert.equal(replacement.claimed, true)
   const changed = readOwner(f.dir)
   assert.equal(changed.instance_id, owner.instance_id)
@@ -345,10 +365,12 @@ test('a changed origin requires recovery to pin the new RP/origin; it never reop
 async function entry(t, extra = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'automagik-claim-entry-'))
   const reserve = http.createServer(), port = await listen(reserve)
+  const bootstrapReserve = http.createServer(), bootstrapPort = await listen(bootstrapReserve)
   await new Promise(resolve => reserve.close(resolve))
+  await new Promise(resolve => bootstrapReserve.close(resolve))
   const child = spawn(process.execPath, ['server/gate-entrypoint.mjs'], {
     env: { PATH: process.env.PATH, TMPDIR: tmpdir(), AUTOMAGIK_GATE_ENABLED: '1', AUTOMAGIK_GATE_IMAGE: '1',
-      AUTOMAGIK_GATE_HOME: dir, AUTOMAGIK_GATE_ORIGIN: ORIGIN, AUTOMAGIK_GATE_PORT: String(port), ...extra },
+      AUTOMAGIK_GATE_HOME: dir, AUTOMAGIK_GATE_ORIGIN: ORIGIN, AUTOMAGIK_GATE_PORT: String(port), AUTOMAGIK_GATE_BOOTSTRAP_PORT: String(bootstrapPort), ...extra },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   let stdout = '', stderr = ''
@@ -361,12 +383,8 @@ async function entry(t, extra = {}) {
   })
   t.after(async () => { if (child.exitCode === null) { const closed = once(child, 'exit'); child.kill('SIGTERM'); await closed } rmSync(dir, { recursive: true, force: true }) })
   await startup
-  const get = path => new Promise((resolve, reject) => {
-    const req = http.get({ hostname: DSH_HOST, port, path, headers: { host: new URL(ORIGIN).host, connection: 'close' } }, res => {
-      let text = ''; res.on('data', chunk => { text += chunk }); res.on('end', () => resolve({ status: res.statusCode, text }))
-    }); req.on('error', reject)
-  })
-  return { dir, get, output: () => ({ stdout, stderr }) }
+  const get = (path, bootstrap = false) => requestAt(bootstrap ? bootstrapPort : port, ORIGIN, path)
+  return { dir, get, port, bootstrapPort, output: () => ({ stdout, stderr }) }
 }
 
 // Mutant IMAGE_CLAIM_STDOUT prints the generated claim secret in the image's application log.
@@ -375,7 +393,8 @@ test('the real image-mode entry writes a 0600 code file, never stdout/stderr or 
   const secret = readFileSync(join(f.dir, 'claim-code'), 'utf8').trim()
   assert.equal(statSync(join(f.dir, 'claim-code')).mode & 0o777, 0o600)
   assert.match(secret, /^[a-f0-9]{32}$/)
-  const claim = await f.get('/_gate/claim')
+  assert.equal((await f.get('/_gate/claim')).status, 404)
+  const claim = await f.get('/_gate/claim', true)
   assert.equal(claim.status, 200)
   assert.ok(!claim.text.includes(secret))
   const ordinary = await f.get('/')
@@ -391,6 +410,12 @@ test('Access mode never opens claim pages, writes claim secrets or starts host-r
   assert.equal(existsSync(join(f.dir, 'control.sock')), false)
 })
 
+test('remote entry configuration exposes claims only on main and opens no bootstrap listener', async t => {
+  const f = await entry(t, { AUTOMAGIK_GATE_CLAIM: 'remote' })
+  assert.equal((await f.get('/_gate/claim')).status, 200)
+  await assert.rejects(f.get('/_gate/claim', true), { code: 'ECONNREFUSED' })
+})
+
 test('self-hosted ceremonies open no external connection and expired sign-in challenges fail', async t => {
   let fetches = 0
   t.mock.method(globalThis, 'fetch', () => { fetches++; throw new Error('Unexpected external connection') })
@@ -399,4 +424,109 @@ test('self-hosted ceremonies open no external connection and expired sign-in cha
   f.advance(CHALLENGE_MS)
   assert.equal((await f.request('/_gate/signin/verify', { data: { id: o.body.id, credential: enrolled.device.authenticate(o.body.options, f.origin) } })).status, 401)
   assert.equal(fetches, 0)
+})
+
+// Mutants LOCAL_MAIN_CLAIM and REMOTE_CLAIM_BUCKET break the connector boundary or owner admission.
+for (const claimMode of ['local', 'remote']) test(`same-namespace forwarder respects ${claimMode} claim mode before and after host reset`, async t => {
+  const f = await fixture(t, { claimMode, published: '0.0.0.0' })
+  const proxy = http.createServer((req, res) => {
+    const hop = http.request({ hostname: DSH_HOST, port: f.port, path: req.url, method: req.method, headers: req.headers }, upstream => {
+      res.writeHead(upstream.statusCode, upstream.headers); upstream.pipe(res)
+    })
+    hop.on('error', () => { res.writeHead(502); res.end() }); req.pipe(hop)
+  })
+  const proxyPort = await listen(proxy)
+  t.after(async () => { proxy.closeAllConnections(); await new Promise(resolve => proxy.close(resolve)) })
+  const visitor = f.browser(proxyPort)
+  for (const phase of ['before reset', 'after reset']) {
+    const code = f.code(), page = await visitor('/_gate/claim')
+    assert.equal(page.status, claimMode === 'local' ? 404 : 200, phase)
+    if (claimMode === 'local') {
+      const flood = await Promise.all(Array.from({ length: 12 }, () => visitor('/_gate/claim/options', { data: { code: 'wrong' } })))
+      assert.ok(flood.every(r => r.status === 404))
+      assert.equal((await visitor('/_gate/claim/options', { data: { code } })).status, 404)
+      const options = await f.request('/_gate/claim/options', { data: { code } }), device = new SoftwareAuthenticator()
+      assert.equal(options.status, 200, 'main-port traffic must not drain the host claim bucket')
+      const credential = device.register(options.body.options, f.origin)
+      const preauth = options.headers['set-cookie'].find(c => c.startsWith('__Host-automagik-preauth=')).split(';')[0]
+      const blocked = await visitor('/_gate/claim/verify', { data: { code, id: options.body.id, credential }, cookie: preauth })
+      assert.equal(blocked.status, 404); assert.equal(readOwner(f.dir)?.auth?.status === 'claimed', false)
+      assert.equal((await f.request('/_gate/claim/verify', { data: { code, id: options.body.id, credential } })).status, 200)
+      assert.equal((await f.browser('bootstrap')('/_gate/reset', { data: {} })).status, 401)
+    } else {
+      const started = Date.now()
+      const flood = Promise.all(Array.from({ length: 12 }, () => visitor('/_gate/claim/options', { data: { code: 'wrong' } })))
+      const options = await visitor('/_gate/claim/options', { data: { code } })
+      assert.equal(options.status, 200, 'wrong-code requests must not lock out the owner')
+      const failed = await flood
+      assert.ok(failed.every(r => r.status === 401))
+      assert.ok(Date.now() - started >= 200, 'wrong attempts must incur a per-attempt delay')
+      const device = new SoftwareAuthenticator()
+      assert.equal((await visitor('/_gate/claim/verify', { data: { code, id: options.body.id, credential: device.register(options.body.options, f.origin) } })).status, 200)
+      assert.ok(f.logs.some(record => record.claim_failures >= 12))
+      assert.ok(!JSON.stringify(f.logs).includes(code))
+    }
+    assert.equal((await visitor('/_gate/reset', { data: {} })).status, 401)
+    await hostCommand(f.dir, 'reset')
+    assert.equal(f.gate.address()?.address, DSH_HOST)
+    assert.equal(f.sessions.list().length, 0)
+    assert.equal(f.claim.claimMode, claimMode)
+    f.advance(60_001)
+  }
+})
+
+// Mutant CLAIM_PREAUTH_TRANSFER removes browser binding from a first-claim ceremony.
+test('claim verification requires the initiating browser preauth cookie with secure attributes', async t => {
+  const f = await fixture(t), a = f.browser(), b = f.browser(), code = f.code(), device = new SoftwareAuthenticator()
+  const o = await a('/_gate/claim/options', { data: { code } })
+  const set = o.headers['set-cookie'].find(c => c.startsWith('__Host-automagik-preauth='))
+  assert.match(set, /HttpOnly/); assert.match(set, /Secure/); assert.match(set, /Path=\//)
+  assert.match(set, /SameSite=(Strict|Lax)/); assert.match(set, /Max-Age=300/); assert.ok(!/Domain=/i.test(set))
+  assert.ok(!o.text.includes(set.split(';')[0].split('=')[1]))
+  await b('/_gate/claim/options', { data: { code } })
+  const data = { code, id: o.body.id, credential: device.register(o.body.options, f.origin) }
+  const other = await b('/_gate/claim/verify', { data })
+  assert.equal(other.status, 401); assert.equal(cookieOf(other), undefined); assert.equal(readOwner(f.dir), undefined)
+  assert.equal((await requestAt(f.bootstrapPort, f.origin, '/_gate/claim/verify', { data })).status, 401)
+  f.advance(60_001)
+  assert.equal((await a('/_gate/claim/verify', { data })).status, 200)
+  assert.notEqual((await a('/_gate/claim/verify', { data })).status, 200)
+})
+
+// Mutant SIGNIN_PREAUTH_TRANSFER permits a second browser to turn another ceremony into its cookie.
+test('sign-in verification rejects another browser, missing or duplicate preauth and expired preauth', async t => {
+  const f = await fixture(t), enrolled = await enroll(f), a = f.browser(), b = f.browser()
+  const o = await a('/_gate/signin/options', { data: {} })
+  await b('/_gate/signin/options', { data: {} })
+  const data = { id: o.body.id, credential: enrolled.device.authenticate(o.body.options, f.origin) }
+  const stolen = await b('/_gate/signin/verify', { data })
+  assert.equal(stolen.status, 401); assert.equal(cookieOf(stolen), undefined)
+  for (const cookie of [undefined, '__Host-automagik-preauth=invalid', '__Host-automagik-preauth=bad; __Host-automagik-preauth=other']) {
+    assert.equal((await requestAt(f.port, f.origin, '/_gate/signin/verify', { data, cookie })).status, 401)
+  }
+  const original = await a('/_gate/signin/verify', { data })
+  assert.equal(original.status, 200); assert.ok(cookieOf(original))
+  assert.equal((await a('/_gate/signin/verify', { data })).status, 401)
+  f.advance(CHALLENGE_MS - 1000)
+  const expired = await a('/_gate/signin/options', { data: {} })
+  f.advance(1000) // The new challenge is live; the reused browser session itself has expired.
+  const denied = await a('/_gate/signin/verify', { data: { id: expired.body.id, credential: enrolled.device.authenticate(expired.body.options, f.origin) } })
+  assert.equal(denied.status, 401); assert.equal(cookieOf(denied), undefined)
+})
+
+// Mutant RECOVERY_PREAUTH_TRANSFER allows another browser to install a recovery passkey.
+test('recovery verification is bound to its initiating browser and remains single use', async t => {
+  const f = await fixture(t), enrolled = await enroll(f), a = f.browser(), b = f.browser()
+  const o = await a('/_gate/recovery/options', { data: { code: enrolled.recovery[0] } }), device = new SoftwareAuthenticator()
+  await b('/_gate/signin/options', { data: {} })
+  const data = { id: o.body.id, credential: device.register(o.body.options, f.origin) }
+  const before = readFileSync(join(f.dir, 'owner.json'), 'utf8')
+  const other = await b('/_gate/recovery/verify', { data })
+  assert.equal(other.status, 401); assert.equal(cookieOf(other), undefined)
+  assert.equal(readFileSync(join(f.dir, 'owner.json'), 'utf8'), before)
+  assert.equal((await requestAt(f.port, f.origin, '/_gate/recovery/verify', { data })).status, 401)
+  const completed = await a('/_gate/recovery/verify', { data })
+  assert.equal(completed.status, 200); assert.equal(cookieOf(completed), undefined)
+  assert.equal(readOwner(f.dir).auth.credentials.length, 2)
+  assert.equal((await a('/_gate/recovery/verify', { data })).status, 401)
 })

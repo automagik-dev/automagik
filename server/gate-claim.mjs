@@ -12,6 +12,7 @@ import { claimPage } from './gate-claim-ui.mjs'
 
 export const CLAIM_MS = 15 * 60 * 1000
 export const CHALLENGE_MS = 5 * 60 * 1000
+export const PREAUTH_COOKIE = '__Host-automagik-preauth'
 const scrypt = promisify(derive)
 const hash = value => createHash('sha256').update(String(value ?? '')).digest()
 const opaque = () => randomBytes(32).toString('base64url')
@@ -66,13 +67,15 @@ function validateAuth(auth) {
 }
 
 export class SelfHostedClaim extends EventEmitter {
-  constructor({ dir, origin, sessions, now = Date.now, audit = record => process.stderr.write(`${JSON.stringify(record)}\n`) }) {
+  constructor({ dir, origin, sessions, claimMode = 'local', now = Date.now, audit = record => process.stderr.write(`${JSON.stringify(record)}\n`) }) {
     super()
+    if (!['local', 'remote'].includes(claimMode)) throw new ClaimConfigurationError('AUTOMAGIK_GATE_CLAIM must be local or remote')
+    this.claimMode = claimMode
     this.dir = dir; this.origin = passkeyOrigin(origin); this.sessions = sessions; this.now = now; this.audit = audit
     mkdirSync(dir, { recursive: true, mode: 0o700 })
     this.owner = readOwner(dir)
     if (this.owner?.auth !== undefined) validateAuth(this.owner.auth)
-    this.pending = new Map(); this.rates = new Map(); this.queue = Promise.resolve()
+    this.pending = new Map(); this.rates = new Map(); this.preauth = new Map(); this.claimFailures = 0; this.queue = Promise.resolve()
     this.claimFile = join(dir, 'claim-state.json'); this.codeFile = join(dir, 'claim-code')
   }
   get claimed() { return this.owner?.auth?.status === 'claimed' && this.owner.auth.origin === this.origin.origin && this.owner.auth.rpID === this.origin.hostname }
@@ -91,6 +94,7 @@ export class SelfHostedClaim extends EventEmitter {
     if (interactive) show(value)
     else { writeFileSync(this.codeFile, `${value}\n`, { mode: 0o600 }); chmodSync(this.codeFile, 0o600) }
     this.pending.clear()
+    this.preauth.clear()
   }
   rate(bucket) {
     const entry = this.rates.get(bucket)
@@ -104,10 +108,39 @@ export class SelfHostedClaim extends EventEmitter {
       this.now() >= stored.expires || !timingSafeEqual(Buffer.from(stored.hash, 'hex'), hash(code))) throw fail()
     return stored
   }
+  browser(req, res) {
+    const values = (req.headers.cookie ?? '').split(';').map(part => part.trim()).filter(part => part.startsWith(`${PREAUTH_COOKIE}=`))
+    const token = values.length === 1 ? values[0].slice(PREAUTH_COOKIE.length + 1) : undefined
+    let current
+    const existing = () => {
+      for (const [id, session] of this.preauth) if (session.expires <= this.now()) this.preauth.delete(id)
+      const id = current?.id ?? (typeof token === 'string' && /^[A-Za-z0-9_-]{43}$/.test(token) ? hash(token).toString('hex') : undefined)
+      return id ? this.preauth.get(id) : undefined
+    }
+    return {
+      existing,
+      start: () => {
+        const found = existing()
+        if (found) return found
+        // Unauthenticated callers cannot allocate sessions before the options route's proof.
+        // Expire/evict unused records, retaining browsers with an active ceremony.
+        if (this.preauth.size >= 128) {
+          const protectedIDs = new Set([...this.pending.values()].filter(p => p.expires > this.now()).map(p => p.browser))
+          for (const id of this.preauth.keys()) if (!protectedIDs.has(id)) { this.preauth.delete(id); break }
+        }
+        if (this.preauth.size >= 128) throw fail(429, 'Too many pending ceremonies')
+        const secret = opaque(), id = hash(secret).toString('hex')
+        current = { id, expires: this.now() + CHALLENGE_MS }
+        this.preauth.set(id, current)
+        res.setHeader('set-cookie', `${PREAUTH_COOKIE}=${secret}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${CHALLENGE_MS / 1000}`)
+        return current
+      },
+    }
+  }
   generation() { return this.owner?.auth?.generation ?? this.claim?.generation }
   requireFamily(family) { if (!family || !this.claimed || !this.sessions.active(family)) throw fail() }
   save(auth, { revoke = true } = {}) {
-    if (revoke) { this.sessions.revokeAll(); this.pending.clear(); auth.generation = opaque() }
+    if (revoke) { this.sessions.revokeAll(); this.pending.clear(); this.preauth.clear(); auth.generation = opaque() }
     const owner = { ...this.owner, auth }
     write(join(this.dir, 'owner.json'), owner)
     this.owner = owner
@@ -119,15 +152,16 @@ export class SelfHostedClaim extends EventEmitter {
     this.pending.set(id, { purpose, challenge: options.challenge, expires: this.now() + CHALLENGE_MS, generation: this.generation(), ...extra })
     return { id, options }
   }
-  take(id, purpose, family) {
+  take(id, purpose, family, browser) {
     const p = this.pending.get(id)
-    this.pending.delete(id)
     if (!p || p.purpose !== purpose || p.expires <= this.now() || p.generation !== this.generation() ||
-      (p.family && p.family !== family?.id)) throw fail()
+      (p.family && p.family !== family?.id) || (purpose !== 'add' && (!p.browser || p.browser !== browser?.id || browser.expires <= this.now()))) throw fail()
+    // A different browser cannot burn the legitimate browser's challenge.
+    this.pending.delete(id)
     return p
   }
-  current(p) { if (p.expires <= this.now() || p.generation !== this.generation()) throw fail() }
-  async registration(purpose, family) {
+  current(p) { if (p.expires <= this.now() || p.generation !== this.generation() || (p.browser && p.browserExpires <= this.now())) throw fail() }
+  async registration(purpose, family, browser) {
     const userID = this.owner?.auth?.userID ?? opaque()
     const options = await generateRegistrationOptions({
       rpName: 'Automagik', rpID: this.origin.hostname, userName: 'owner', userID: Buffer.from(userID, 'base64url'),
@@ -135,7 +169,7 @@ export class SelfHostedClaim extends EventEmitter {
       authenticatorSelection: { residentKey: 'preferred', userVerification: 'required' },
       excludeCredentials: (this.owner?.auth?.credentials ?? []).map(c => ({ id: c.id })),
     })
-    return this.remember(purpose, options, { userID, family: family?.id })
+    return this.remember(purpose, options, { userID, family: family?.id, browser: browser?.id, browserExpires: browser?.expires })
   }
   async verifyRegistration(p, response) {
     // No attestation PKI, metadata service, certificate fetch or untrusted certificate URL.
@@ -160,7 +194,7 @@ export class SelfHostedClaim extends EventEmitter {
   }
   async reset() {
     return this.exclusive(async () => {
-      this.sessions.revokeAll(); this.pending.clear(); this.rates.clear()
+      this.sessions.revokeAll(); this.pending.clear(); this.preauth.clear(); this.rates.clear(); this.claimFailures = 0
       if (this.owner) this.save({ version: 1, status: 'unclaimed', generation: opaque(), origin: this.origin.origin,
         rpID: this.origin.hostname, userID: opaque(), credentials: [], recovery: [] })
       await this.bindingChange?.(false, true)
@@ -169,12 +203,30 @@ export class SelfHostedClaim extends EventEmitter {
     })
   }
   async renewCode() { return this.exclusive(async () => { this.newCode(); return { renewed: true } }) }
-  async action(route, data, family) {
+  async action(route, data, family, browser) {
+    if (this.claimMode === 'remote' && (route === 'claim/options' || route === 'claim/verify')) {
+      try { this.checkCode(data.code) }
+      catch (error) {
+        this.claimFailures = Math.min(Number.MAX_SAFE_INTEGER, this.claimFailures + 1)
+        this.audit({ status: 401, claim_failures: this.claimFailures, request_id: randomUUID() })
+        // Delay each wrong attempt outside the state queue. Invalid traffic must never
+        // spend a shared allowance or make a correct code wait behind the penalty.
+        await new Promise(resolve => setTimeout(resolve, 250))
+        throw error
+      }
+    }
     return this.exclusive(async () => {
-      if (route === 'claim/options') { this.rate('claim'); this.checkCode(data.code); return this.registration('claim') }
+      if (route === 'claim/options') {
+        if (this.claimMode === 'local') this.rate('claim')
+        this.checkCode(data.code)
+        const preauth = browser?.start()
+        if (!preauth) throw fail()
+        return this.registration('claim', undefined, preauth)
+      }
       if (route === 'claim/verify') {
-        this.rate('claim'); this.checkCode(data.code)
-        const p = this.take(data.id, 'claim')
+        if (this.claimMode === 'local') this.rate('claim')
+        this.checkCode(data.code)
+        const p = this.take(data.id, 'claim', undefined, browser?.existing())
         const credential = await this.verifyRegistration(p, data.credential)
         const recovery = await this.recoveryCodes()
         this.current(p); this.checkCode(data.code)
@@ -195,11 +247,13 @@ export class SelfHostedClaim extends EventEmitter {
         if (!this.claimed) throw fail(409, 'Use recovery or a host reset to enrol this origin')
         const options = await generateAuthenticationOptions({ rpID: this.origin.hostname, userVerification: 'required',
           allowCredentials: this.owner.auth.credentials.map(c => ({ id: c.id, transports: c.transports })) })
-        return this.remember('signin', options)
+        const preauth = browser?.start()
+        if (!preauth) throw fail()
+        return this.remember('signin', options, { browser: preauth.id, browserExpires: preauth.expires })
       }
       if (route === 'signin/verify') {
         this.rate('signin')
-        const p = this.take(data.id, 'signin')
+        const p = this.take(data.id, 'signin', undefined, browser?.existing())
         if (!this.claimed) throw fail()
         const stored = this.owner.auth.credentials.find(c => c.id === data.credential?.id)
         if (data.credential?.response?.userHandle && data.credential.response.userHandle !== this.owner.auth.userID) throw fail()
@@ -250,11 +304,13 @@ export class SelfHostedClaim extends EventEmitter {
         const recovery = this.owner.auth.recovery.filter((c, i) => i !== found)
         this.save({ ...this.owner.auth, recovery })
         this.audit({ status: 'recovery-used', request_id: randomUUID() })
-        return this.registration('recovery')
+        const preauth = browser?.start()
+        if (!preauth) throw fail()
+        return this.registration('recovery', undefined, preauth)
       }
       if (route === 'recovery/verify') {
         this.rate('recovery')
-        const p = this.take(data.id, 'recovery'); const credential = await this.verifyRegistration(p, data.credential)
+        const p = this.take(data.id, 'recovery', undefined, browser?.existing()); const credential = await this.verifyRegistration(p, data.credential)
         this.current(p)
         if (this.owner.auth.origin === this.origin.origin && this.owner.auth.credentials.some(c => c.id === credential.id)) throw fail(409, 'Passkey already registered')
         const credentials = this.owner.auth.origin === this.origin.origin ? [...this.owner.auth.credentials, credential] : [credential]
@@ -265,7 +321,7 @@ export class SelfHostedClaim extends EventEmitter {
       throw fail(404, 'Unknown passkey route')
     })
   }
-  async handle(req, res, family) {
+  async handle(req, res, family, { bootstrap = false } = {}) {
     const path = new URL(req.url, this.origin).pathname
     const root = '/_gate/'
     const pages = new Map([['claim', this.claimable], ['sign-in', !this.claimable], ['recovery', !this.claimable], ['settings', Boolean(family)]])
@@ -273,6 +329,10 @@ export class SelfHostedClaim extends EventEmitter {
       'passkeys/remove', 'recovery/options', 'recovery/verify', 'recovery/codes'])
     if (!path.startsWith(root)) return false
     const route = path.slice(root.length)
+    const claimRoute = route === 'claim' || route.startsWith('claim/')
+    if (claimRoute && bootstrap !== (this.claimMode === 'local')) {
+      reply(res, 404, { error: 'Unknown gate route' }); return true
+    }
     if (!pages.has(route) && !actions.has(route) && route !== 'passkeys') return false
     try {
       let incoming
@@ -290,7 +350,7 @@ export class SelfHostedClaim extends EventEmitter {
       }
       if (req.method === 'GET' && route === 'settings') throw fail()
       if (req.method !== 'POST' || !actions.has(route)) throw fail()
-      const result = await this.action(route, await body(req), family)
+      const result = await this.action(route, await body(req), family, this.browser(req, res))
       if (result.cookie) { res.setHeader('set-cookie', result.cookie); delete result.cookie }
       reply(res, 200, result)
     } catch (error) {

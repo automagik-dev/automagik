@@ -421,11 +421,21 @@ only in examples; replace them on your host. IP origins are refused with an expl
 localhost through an SSH tunnel, or a stable HTTPS name. Host and Origin must match exactly,
 including the port; forwarded headers cannot change them.
 
-Start the Compose topology above. Until claimed, the gate binds only `127.0.0.1:3082`, even if
-`AUTOMAGIK_GATE_HOST=0.0.0.0` is configured. The default stays loopback after claiming too,
-which is correct for a tunnel connector sharing DSH's network namespace. If a host deployment
-needs a wildcard listener after claiming, that setting enables it only while claimed; keep DSH
-on loopback and put TLS in front of the gate.
+Choose `AUTOMAGIK_GATE_CLAIM=local` (the default) or `remote` before starting the Compose topology.
+A loopback bind alone does not keep a same-namespace tunnel connector from forwarding remote
+browsers. These modes therefore control which listener serves the claim:
+
+| Mode | Claim boundary |
+|---|---|
+| `local` | Claim page/API only on the separate `127.0.0.1:3083` bootstrap listener. `AUTOMAGIK_GATE_BOOTSTRAP_PORT` can change it, but it must differ from DSH and the main gate port. Main port 3082 returns `404` for claims, including requests with the correct code. **Never forward the bootstrap listener through a public or tailnet connector.** Reach it only from the operator's host or private SSH tunnel |
+| `remote` | Claim page/API on main port 3082. The 128-bit code, delivered to the owner out of band, is the claim barrier. Choose this only when that delivery is trusted. Each wrong code waits 250 ms outside the state queue; wrong attempts cannot spend a shared allowance that blocks a correct code. Logs contain a failure count, never the code |
+
+Until claimed, the main listener still binds only `127.0.0.1`, even with
+`AUTOMAGIK_GATE_HOST=0.0.0.0`. After claiming, the default remains loopback, which is correct for
+a tunnel connector sharing DSH's network namespace and forwarding **only main port 3082**. A host
+deployment can use the wildcard setting after claiming; keep DSH on loopback and TLS in front
+of the gate. The local bootstrap listener always stays on loopback and supports the owner's
+authenticated follow-up steps, including adding the offered second passkey.
 
 On the host, retrieve the code through the private gate container, outside captured logs:
 
@@ -439,16 +449,27 @@ code, even with a terminal attached. It writes `/data/claim-code` as `0600`; `/d
 holds only its hash and expiry. Outside the image, an interactive gate writes to its host console
 instead of making that plaintext file. The code is 128 random bits, works once for 15 minutes,
 and is compared in constant time. HTTP never returns it; paste it only into the claim form,
-never a URL. Five claim/recovery operations per minute are allowed, with a bounded challenge store.
+never a URL. Local claims and recovery allow five operations per minute, with a bounded
+challenge store. Remote claims use the per-attempt delay above instead of a drainable bucket.
 
-Reach `/_gate/claim` on the configured origin from the host or through an SSH tunnel. For
-localhost, forward the configured port to the gate's loopback namespace. For a stable HTTPS
-name, use a host-local TLS proxy reaching that namespace and resolve the name locally during
-enrolment; keep public ingress disabled until the claim finishes. The browser must see the exact
-origin that will be used afterwards. Claim with a passkey, save the eight recovery codes shown
+In local mode, reach `/_gate/claim` at the configured browser origin while routing your private
+host connection to bootstrap port 3083. For localhost, an operator-only SSH tunnel maps the
+configured browser port to that bootstrap port inside the gate's namespace. For a stable HTTPS
+name, use a host-local TLS proxy targeting the bootstrap listener and local name resolution;
+the public/tailnet connector must continue targeting only main port 3082, never bootstrap.
+In remote mode, the owner's browser reaches `/_gate/claim` through the normal main-port connector.
+In both modes the browser must see the exact configured origin, including its port, that will
+be used afterwards. Claim with a passkey, save the eight recovery codes shown
 once, and use the immediate offer to add a second passkey. Two simultaneous claims cannot replace
 the winner. Claim-code files are removed on success. DSH's launch URL never signs a browser into
 the gate, including after the claim.
+
+Every unauthenticated claim, sign-in or recovery ceremony also belongs to the browser that
+started it. Options create a server-side pre-authentication session with a five-minute
+`__Host-automagik-preauth` cookie (`HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/`, no Domain).
+Verification requires that same browser cookie as well as the one-time, expiring challenge.
+Copying a ceremony id or response to another browser cannot complete it. Pre-authentication
+credentials are never forwarded to DSH; a completed sign-in issues the ordinary gate session.
 
 Afterwards use `/_gate/sign-in` and manage passkeys at `/_gate/settings`. Adding or removing a
 passkey or replacing recovery codes ends **every** session, including open WebSockets; sign in
@@ -474,7 +495,9 @@ docker compose -f server/compose.gate.yml --profile gate exec gate \
 Both commands use `/data/control.sock` (`0600`) inside the gate container, never HTTP. Reset
 removes all passkeys, recovery hashes and sessions, closes connections and returns the listener
 to loopback before reporting success. It preserves the instance and local owner ids. Read the
-new private code and claim again. A changed origin also stays on loopback: enrol the new origin
+new private code and claim again in the configured mode: local claims return only on the private
+bootstrap listener; remote claims return on the main listener with the code barrier and delay.
+A changed origin also stays on loopback: enrol the new origin
 through recovery, which replaces the old origin's keys, or use host reset. It never silently
 reopens the first claim. Unsupported newer authentication records stop startup without rewriting
 them. An Access-created owner without passkeys needs an explicit host reset before switching to

@@ -60,7 +60,7 @@ function refuseSocket(socket, status = 401) {
   socket.end(`HTTP/1.1 ${status} Refused\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`, destroy)
 }
 
-export function createGate({ origin: value, sessions, credentials, access, selfHosted, auditAccess = record => process.stderr.write(`${JSON.stringify(record)}\n`) }) {
+export function createGate({ origin: value, sessions, credentials, access, selfHosted, bootstrap = false, auditAccess = record => process.stderr.write(`${JSON.stringify(record)}\n`) }) {
   const origin = pinOrigin(value)
   const sockets = new Map()
   async function authorize(req, upgrade = false) {
@@ -87,7 +87,7 @@ export function createGate({ origin: value, sessions, credentials, access, selfH
     if (reservedPathAlias(req.url, origin)) { answer(res, 400, { error: 'Non-canonical gate path' }); return }
     const authorization = await authorize(req)
     const family = authorization?.family
-    if (selfHosted && await selfHosted.handle(req, res, family)) return
+    if (selfHosted && await selfHosted.handle(req, res, family, { bootstrap })) return
     if (!family) { answer(res, 401, { error: 'Session required' }); return }
     if (authorization.cookie) res.setHeader('set-cookie', authorization.cookie)
     try {
