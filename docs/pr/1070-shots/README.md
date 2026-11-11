@@ -1,14 +1,14 @@
 # Temporary PR 1075 real-app wizard captures
 
-These are the running app's light and dark themes, using the approved Remote Hermes wizard
-and its actual host endpoints. This wording-only round refreshes 23 affected frames: every dark
-frame, plus light 06b, 07 and 04d–04g, where the updated permission text or control is visible.
-The other 11 light frames keep the unchanged images from the prior reviewed capture.
+These are the running app's own light and dark themes with sample data. This round refreshes
+only the 12 Through SSH frames: 02, 03b, and 04d–04g in each theme. The other 22 images retain
+their previously reviewed contents and provenance. Light 02 was recaptured with identical bytes,
+so Git shows 11 changed PNG files for the 12 refreshed frames.
 
-Read only and Workspace both ask before each Hermes approval. Their difference applies only to
-this computer's own files. Full access answers yes once; Auto review does not review Hermes
-questions. The shared remote caveat appears once below each permission surface, and the
-underlined “Choose in the chat” control was exercised through dismiss and reopen in the app.
+The SSH details frame shows searchable configured aliases and the collapsed “Other hosts you
+have connected to” list. Choosing an alias fills the host, user and port; the alias remains the
+connection target. The probe also exercised search, opening the secondary list, choosing a
+previous host, and typing a new host before restoring the shown sample alias.
 
 | State | Light | Dark |
 | --- | --- | --- |
@@ -30,30 +30,38 @@ underlined “Choose in the chat” control was exercised through dismiss and re
 | Later one-click connection | [Light](light-06b-one-click-chat.png) | [Dark](dark-06b-one-click-chat.png) |
 | Bot settings: Remote Hermes | [Light](light-07-settings.png) | [Dark](dark-07-settings.png) |
 
-The approved probe ran `node scripts/boot-check.mjs --keep <scratch>/boot` outside the
-repository, with DSH bound only to loopback and separate empty app homes. Package installation
-used offline caches. Runtime egress was blocked. A disposable in-memory gateway supplied
-source-shaped REST/WebSocket replies, and a fake `ssh` executable supplied the supervisor and
-tunnel states. The reserved example address was never contacted. No real Hermes, SSH client,
-provider account, private reference image or key material was used.
+The approved probe ran `node scripts/boot-check.mjs --keep <scratch>/boot` in isolated scratch
+under `/mnt/ai`, with DSH bound only to loopback and separate app homes. Package installation
+used offline caches; runtime and browser egress were blocked. The real host discovery endpoint
+read fixture SSH files and called a fake `ssh -G`; later connection tests used a fake SSH
+supervisor/tunnel and an in-memory Hermes gateway. No real SSH client, Hermes, account, key
+file or private reference screenshot was used. Sample onboarding was marked complete through
+the existing host API before initial navigation, so the capture needed no page reloads.
 
-The actual wizard exercised dashboard sign-in, profile refresh/pick/save, remembered one-click
-connection, SSH test/cleanup, and actionable auth/host-key failures. Password fields were masked;
-the probe checked that one-use sign-in values were absent from all isolated app-home files.
-The installed client bundle matched the checkout byte for byte (SHA-256):
-`081657b272f95862e7f3aee590232e8b5673f23118e25f18b074626be90e007c`.
+Fixture size: 14 aliases and 170 known-host records, including 6 hashed records which were
+ignored. The endpoint returned 14 aliases and 164 previous names, with exactly alias, hostname,
+user and port. The probe verified the alias target in the fake SSH argv and checked that
+unselected discovery data and public-key columns were absent from the app's persisted files.
 
-The retained light frames are byte-identical to commit
-`1852fbd855f458b132e79c3676c7adb5abdbffc7`, captured from source
-`7727147d06fc722e68a73bbd31044cc55fa50fe0` with bundle SHA-256
-`611ce0bf95a7bb7a526fa5b436d7b66d9b53a8bc36e0db1498789202e4731eb4`.
-Their native, unconfigured background and wizard content are unchanged by this round.
+The 12 refreshed images were captured from source commit
+`9ab8bda316a06d6e705e3fc6fadb70d5b1824bda`. The installed client matched that checkout byte for
+byte (SHA-256): `ec861ac659d10545bc3dec4abb673c163cc0051102669536dd5dafcb01c3590a`.
+The final boot and capture completed successfully, with no recorded console errors, page
+exceptions or HTTP failures. The owned boot/app process groups and fake SSH processes were
+verified gone afterward. Earlier probe attempts and their diagnostics are retained in scratch.
 
-Viewport: 1440 × 1000; locale: English; the app's own fonts and theme variables. Screenshots
-finish finite menu animations and keep the real app around the wizard. The final boot and capture
-probe exited successfully with no recorded console errors or page exceptions; its owned process
-groups and fake SSH processes were stopped. The retained images keep their earlier provenance
-and are unchanged by this wording round.
+The 22 retained images are byte-identical to commit
+`18c5780538fb661913680699ef68501cad35bb4d`. Their provenance is unchanged:
 
-Keep this folder and `../1070-wizard-mock` for the orchestrator's review before the owner's
-real-app look. Remove both temporary folders only in the later pre-merge commit after review.
+- All 11 non-SSH dark frames, plus light 06b and 07, came from source
+  `3431387d437acd218bcdeb36a179785c171fbb3e`, bundle SHA-256
+  `081657b272f95862e7f3aee590232e8b5673f23118e25f18b074626be90e007c`, recorded in
+  `716241f0f05d4923e1d1137793a10122a53e1ced`.
+- The remaining 9 non-SSH light frames came from source
+  `7727147d06fc722e68a73bbd31044cc55fa50fe0`, bundle SHA-256
+  `611ce0bf95a7bb7a526fa5b436d7b66d9b53a8bc36e0db1498789202e4731eb4`, retained in
+  `1852fbd855f458b132e79c3676c7adb5abdbffc7`.
+
+Viewport: 1440 × 1000; locale: English; native app fonts and theme variables. These temporary
+images and `../1070-wizard-mock` stay for the orchestrator's review before the owner's look.
+Remove both folders only in the later pre-merge commit after that review. The PR remains draft.
