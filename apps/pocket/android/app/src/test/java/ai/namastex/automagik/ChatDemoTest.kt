@@ -1,6 +1,8 @@
 package ai.namastex.automagik
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -29,7 +31,9 @@ class ChatDemoTest {
     }
 
     @Test fun theListingIsTheSampleMainBot() {
-        val row = ChatDemo.listing().single()
+        val rows = ChatDemo.listing()
+        assertEquals(2, rows.size)
+        val row = rows.first { it.terminal == ChatDemo.TERMINAL }
         assertEquals(ChatDemo.TERMINAL, row.terminal)
         assertTrue(row.dsh && row.shown)
         assertEquals("blocked", row.status)
@@ -38,6 +42,23 @@ class ChatDemoTest {
         assertTrue(main.main)
         assertEquals(Teams.GENIE, main.pet)
         assertEquals(main.name, row.title)
+    }
+
+    @Test fun theReadOnlySampleChatShowsTheComputerQuestion() {
+        val s = ChatDemo.readOnlyState()
+        assertTrue(s.readOnly)
+        assertFalse(s.dshWrite)
+        assertTrue(s.rows.any { it.kind == "text" })
+        val question = requireNotNull(s.question)
+        assertEquals("question", question.kind)
+        assertFalse(question.open)
+        assertFalse(question.answerable)
+        assertTrue(question.options.isEmpty())
+        assertEquals(Chat.ANSWER_ON_COMPUTER, question.prompt)
+        assertEquals(Chat.ANSWER_ON_COMPUTER, ChatActions.pendingNote(s, question))
+        assertEquals(ChatDemo.READ_ONLY_TERMINAL, ChatDemo.stateFor(ChatDemo.readOnlyRef)?.terminal)
+        assertEquals(ChatDemo.TERMINAL, ChatDemo.stateFor(ChatDemo.ref)?.terminal)
+        assertNull(ChatDemo.stateFor(TerminalRef(ChatDemo.HOST, "t6")))
     }
 
     @Test fun theTeamScreenServesTheSampleChatOnlyInTheDemo() {

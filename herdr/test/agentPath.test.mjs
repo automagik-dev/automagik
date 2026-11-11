@@ -27,9 +27,11 @@ function scratch(t) {
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const empty = join(root, "empty");
   mkdirSync(empty);
+  const sys = join(root, "sys");
+  exe(join(sys, "uname"), "#!/bin/sh\necho Linux\n");
   // No nvm, no Homebrew, no ~/.bun unless a test makes one: the host's runtimes can't answer.
   const env = { HOME: join(root, "home"), NVM_DIR: join(root, "nvm"), AUTOMAGIK_HERDR_RUNTIME_DIRS: "" };
-  return { root, empty, env };
+  return { root, empty, sys, env };
 }
 
 /** npm's global layout: <prefix>/bin/codex -> ../lib/node_modules/@openai/codex/bin/codex.js, node beside. */
@@ -323,7 +325,7 @@ test("restart CLI (#56): restarting a codex bot whose node is only in nvm runs u
 const LOGIN = new URL("./fake-login-shell", import.meta.url).pathname;
 /** agentOnMachine's exec, as hc exec runs a program there: a service's PATH (login.hc comes first on it), the machine's HOME. */
 const service = (s, login = {}) => async (command, args) => {
-  const r = spawnSync(command, args, { encoding: "utf8", env: { HOME: s.env.HOME, PATH: `${login.hc ? `${login.hc}:` : ""}/usr/bin:/bin`, SHELL: LOGIN,
+  const r = spawnSync(command, args, { encoding: "utf8", env: { HOME: s.env.HOME, PATH: `${login.hc ? `${login.hc}:` : ""}${s.sys}:/usr/bin:/bin`, SHELL: LOGIN,
     FAKE_LOGIN_PATH: login.path ?? "", FAKE_LOGIN_NOISE: login.noise ?? "", FAKE_LOGIN_EXIT: login.exit ?? "" } });
   return { code: r.status ?? -1, stdout: r.stdout, stderr: r.stderr };
 };
@@ -353,7 +355,7 @@ test("agentOnMachine: an agent hc's PATH doesn't find gets the login shell's PAT
   exe(join(tools, "codex"), "#!/bin/sh\n");
   mkdirSync(join(s.env.HOME, ".local/bin"), { recursive: true });
   const got = await agentOnMachine(service(s, { path: tools + ":/usr/bin:/bin" }), "codex");
-  assert.deepEqual(got, { state: "found", path: [tools, "/usr/bin", "/bin", join(s.env.HOME, ".local/bin")].join(":"), file: join(tools, "codex"), login: true });
+  assert.deepEqual(got, { state: "found", path: [tools, "/usr/bin", "/bin", s.sys, join(s.env.HOME, ".local/bin")].join(":"), file: join(tools, "codex"), login: true });
 });
 
 /** Which fakenode a PATH runs an agent under: what really runs, not what the check says. */
@@ -365,7 +367,7 @@ test("agentOnMachine: hc's PATH finds the agent and the login shell's shadows it
   exe(join(hc, "codex"), "#!/bin/sh\necho hc copy\n");
   exe(join(login, "codex"), "#!/usr/bin/env no-such-runtime\n");
   const got = await agentOnMachine(service(s, { hc, path: login + ":/usr/bin:/bin" }), "codex");
-  assert.deepEqual(got, { state: "found", path: [hc, "/usr/bin", "/bin", login].join(":"), file: join(hc, "codex"), login: true });
+  assert.deepEqual(got, { state: "found", path: [hc, s.sys, "/usr/bin", "/bin", login].join(":"), file: join(hc, "codex"), login: true });
   assert.equal(runs(got.path, "codex").stdout, "hc copy\n");
 });
 
@@ -388,7 +390,7 @@ test("agentOnMachine: an agent only the login shell finds stays login-first, so 
   exe(join(login, "codex"), "#!/usr/bin/env fakenode\n");
   exe(join(login, "fakenode"), "#!/bin/sh\necho login interpreter\n");
   const got = await agentOnMachine(service(s, { hc, path: login + ":/usr/bin:/bin" }), "codex");
-  assert.deepEqual(got, { state: "found", path: [login, "/usr/bin", "/bin", hc].join(":"), file: join(login, "codex"), login: true });
+  assert.deepEqual(got, { state: "found", path: [login, "/usr/bin", "/bin", hc, s.sys].join(":"), file: join(login, "codex"), login: true });
   assert.equal(runs(got.path, "codex").stdout, "login interpreter\n");
 });
 
@@ -400,7 +402,7 @@ test("agentOnMachine: an absolute agent hc can run keeps hc's PATH first; a logi
   exe(join(s.root, "own/codex"), "#!/bin/sh\n");
   const got = await agentOnMachine(service(s, { hc, path: odd + ":/usr/bin:/bin" }), join(s.root, "own/codex"));
   assert.equal(got.state, "found");
-  assert.deepEqual(got.path.split(":").slice(0, 4), [hc, "/usr/bin", "/bin", odd]);
+  assert.deepEqual(got.path.split(":").slice(0, 5), [hc, s.sys, "/usr/bin", "/bin", odd]);
   assert.equal(existsSync(canary), false);
 });
 
@@ -517,4 +519,30 @@ test("AGENT_PATH_SH: PATH_PREPEND folders with spaces, $, backticks and quotes a
   assert.equal(got.path.split(":")[0], odd, "the folder as it is, first");
   assert.equal(runs(got.path, "claude").stdout, "odd node\n");
   assert.equal(existsSync(canary), false, "nothing in it ran");
+});
+
+test("agentOnMachine (#1033): on Darwin, failing security show-keychain-info returns no-keychain; exit 0 returns found", async (t) => {
+  const s = scratch(t);
+  const hc = join(s.root, "hc-bin");
+  const denied = "security: SecKeychainCopySettings <NULL>: User interaction is not allowed.";
+  exe(join(hc, "codex"), "#!/bin/sh\n");
+  exe(join(hc, "uname"), "#!/bin/sh\necho Darwin\n");
+  exe(join(hc, "security"), `#!/bin/sh\nif [ "$1" = show-keychain-info ]; then\n  echo "${denied}" >&2\n  exit 36\nfi\nexit 2\n`);
+  assert.deepEqual(await agentOnMachine(service(s, { hc }), "codex"), {
+    state: "no-keychain",
+    detail: denied,
+    login: true,
+  });
+  assert.deepEqual(await agentOnMachine(service(s, { hc, exit: "1" }), "codex"), {
+    state: "no-keychain",
+    detail: denied,
+    login: false,
+  });
+  exe(join(hc, "security"), '#!/bin/sh\n[ "$1" = show-keychain-info ] && exit 0\nexit 2\n');
+  assert.deepEqual(await agentOnMachine(service(s, { hc }), "codex"), {
+    state: "found",
+    path: [hc, s.sys, "/usr/bin", "/bin"].join(":"),
+    file: join(hc, "codex"),
+    login: true,
+  });
 });

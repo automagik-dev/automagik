@@ -129,14 +129,54 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
 |---|---|---|---|
 | `acp-claude` | Claude Code | managed or existing `claude` (`CLAUDE_CODE_EXECUTABLE`) | `@agentclientprotocol/claude-agent-acp` |
 | `acp-codex` | Codex | managed or existing `codex` (`CODEX_PATH`) | `@agentclientprotocol/codex-acp` |
+| `acp-hermes` | Hermes | existing `hermes`, started as `hermes acp` | none: the CLI is the ACP server |
+| `acp-antigravity` | Antigravity | existing `agy`, started as `agy acp` | none: the CLI is the ACP server |
+| `acp-omp` | omp | existing `omp`, started as `omp acp` | none: the CLI is the ACP server |
 | `acp-fake` | `dev/fake-agent.mjs`, set as `fakeAgent` | Node | none; tests only |
 
 An agent is offered when its managed CLI is ready, or an existing CLI is on PATH or where its
-installer puts it (`~/.local/bin`, `/opt/homebrew/bin`, …). The settings `claude: false` or `codex: false` take one away. They are
+installer puts it (`~/.local/bin`, `/opt/homebrew/bin`, …). The settings `claude: false` or `codex: false` take one away;
+`hermes`, `antigravity` and `omp` are off until set to `true` (below). They are
 live settings: switching one (from the welcome's Connect AI, its Settings page *Claude Code and
 Codex*, or the plugin's own settings form) offers or withdraws the agent at once, with no
 restart, and a connector that lands puts its model in the picker the same way
 (`llm/adapters-updated`).
+
+### Native-ACP agents: Hermes, Antigravity, omp
+
+These three speak ACP themselves, so there is no adapter package and nothing is installed for
+them: the plugin starts the CLI it finds with `acp` (`src/host/agents.js`, `launch`). What
+differs from Claude Code and Codex:
+
+- **Off until turned on.** `hermes`, `antigravity` and `omp` are live settings that default to
+  `false`. Turning one on is the person's word that Automagik may use the sign-in that CLI
+  already has on this computer, shared with their terminal. No account is read for them (none
+  of the three has a command that names one), so the account record and its confirm step
+  (below) stay Claude Code's and Codex's.
+- **Never installed by Automagik.** A CLI that is not here is listed as missing with its
+  install page (`cli.state: 'missing'`, `connector.state: 'no-cli'`), never hidden and never
+  "installing". Once found, the connector reads `ready` with `native: true`.
+- **Sign-in in a terminal.** There is no sign-in from a Bot's chat: `loginStart` refuses with
+  `acp-login/terminal` and the command (`hermes acp --setup`, `agy acp --login`, `omp login`),
+  and a signed-out turn fails as `MODEL_ACCESS_REQUIRED` naming the same command. Whether the
+  agent is signed in is what its own ACP session said: `true` when the session the model read
+  opens, `false` on ACP's `auth_required`. That read runs when the CLI changes and once a day,
+  and again when the person asks (`refresh()`) while it is not signed in; no other check opens
+  a session, because each of these agents keeps every session it opens in its own history.
+  A session that opens does not prove a provider key works: a turn that then answers
+  `auth_required` reads as signed out at once.
+- **Models.** Antigravity offers its models and efforts as config options, as the adapters do.
+  Hermes offers them only as the session's own list (`models` in the `session/new` answer,
+  switched with `session/set_model`); the plugin reads that list when the agent has no model
+  option. omp offers no model list over ACP: it is one model, `default`, its own setting.
+- **The level.** Each is put in its own `default` mode before every prompt, whatever the
+  Session's level, and what it asks is answered by DSH's approval under that level. Its own
+  permission settings still decide what it asks about. One that does not offer `default`
+  fails the turn. A table agent with no mode for DSH's level would say so once in the chat.
+- **No DSH tool bridge.** DSH's tools do not reach them, even with `dshTools: true`: their
+  tool naming over ACP is not proven the way Claude Code's was, and an unrecognised bridge
+  call would draw two cards and ask twice. They keep their own tools; the transcript replay on
+  a model switch reaches them like any agent.
 
 `dshTools` (live, no schema default) is the bridge, its DSH approval, the drift detector and live
 switching above. Absent means the per-agent default: `acp-claude` bridges because its adapter can
@@ -191,7 +231,7 @@ A settings page reads the agents through this host service; the plugin stays hos
 
 | Method | Does |
 |---|---|
-| `status()` | Each agent: `{ id, key, name, on, cli: { found, installUrl, state, managed, version?, error?, diagnostic?, logPath?, updating? }, connector: { state, version?, error?, updating?, previous?, rolledBack? }, signedIn?, consent?, model: { provider, id, name, listed }, restartNeeded }`. CLI state is `missing`, `installing`, `failed` or `ready`; connector state is `off`, `no-cli`, `installing`, `failed` or `ready`. `connector.previous` is the release a failed start goes back to, while it is on disk; `connector.rolledBack` is `{ from, to, at, reason }` while a release that failed to start is held back. Errors are redacted. Spawns nothing. |
+| `status()` | Each agent: `{ id, key, name, on, cli: { found, installUrl, signInHint?, state, managed, version?, error?, diagnostic?, logPath?, updating? }, connector: { state, native?, version?, error?, updating?, previous?, rolledBack? }, signedIn?, consent?, model: { provider, id, name, listed }, restartNeeded }`. CLI state is `missing`, `installing`, `failed` or `ready`; connector state is `off`, `no-cli`, `installing`, `failed` or `ready`. `connector.previous` is the release a failed start goes back to, while it is on disk; `connector.rolledBack` is `{ from, to, at, reason }` while a release that failed to start is held back. Errors are redacted. Spawns nothing. |
 | `inspect(id)` | One agent's `status()` row with a fresh sign-in check, for a Bot about to be put on it. Asks that CLI's sign-in status only; installs, enables and starts nothing. Simultaneous checks share one probe, and an answer stands for 3 seconds (`refresh()` clears it). Undefined for an id that is no agent here. |
 | `refresh()` | Looks for the CLIs again (one installed after DSH started is offered now), then asks each CLI whether it is signed in (`claude auth status --json`, of which only `loggedIn` is read; `codex login status`, by its exit code). No agent turn. |
 | `retry(id)` | Retries the required CLI and its connector, and answers at once. Does not turn its model switch on. |

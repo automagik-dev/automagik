@@ -2644,6 +2644,20 @@ function noInterpreterThere(name, seen, machine, quiet) {
 }
 
 /**
+ * #1033: on macOS, a herdr-core started over SSH runs outside the desktop GUI session, so
+ * `security show-keychain-info` fails and every terminal it starts lacks the login keychain.
+ */
+function noKeychainThere(machine, detail) {
+  const said = detail ? ` (${detail})` : "";
+  return new CliError(`herdr-core on ${machine} has no access to the macOS login keychain: "security show-keychain-info" failed${said}, `
+    + `typically because an incoming SSH connection started herdr-core outside the desktop GUI (Aqua) session, so any new terminal `
+    + `started there would have no Claude Code or gh login. Nothing was started. From a desktop (Aqua) terminal on ${machine} `
+    + `(where "security show-keychain-info" exits 0), stop the SSH-born "herdr-core serve" and any SSH-born "herdr-core hold" `
+    + `(leave older desktop holders running so existing live terminals stay untouched), remove the SSH-born holder socket, and `
+    + `immediately run "hc server status" in the same command line so an incoming SSH reconnect does not start it over SSH again.`);
+}
+
+/**
  * #612: `{ run: shipped, tail }` when `command` starts with the table's run (`run`: this
  * computer's programs.json override) whose first word differs from Herdr's shipped run for the
  * same agent key, `tail` the command's words after the override (its model and resume words);
@@ -2661,7 +2675,8 @@ function shippedRunFor(agentKey, run, command) {
  * (agentOnMachine: the login shell's, asked once, plus hc's, hc's first when it finds the agent,
  * and the user bin folders; `prepend`'s folders first, a project's pane-env PATH_PREPEND), so a
  * check that passes is a launch that finds it: refused when it
- * isn't there, when the interpreter its #! line names isn't, or when the machine doesn't answer.
+ * isn't there, when the interpreter its #! line names isn't, when a macOS core lacks access to
+ * the login keychain (#1033), or when the machine doesn't answer.
  * `shipped` (#612, shippedRunFor): when the table's override isn't there but the shipped run is,
  * that run and `tail` replace the command, with one warning naming the agent and the skipped
  * override's first word; when neither is there the refusal names both. Resolves
@@ -2672,10 +2687,12 @@ async function agentThere(machine, argv, name, prepend = null, shipped = null) {
   const seen = await agentOnMachine(exec, argv[0], { wait: AGENT_WAIT_S, prepend });
   const quiet = quietOn(machine, seen);
   if (seen.state === "away") throw unreachable(machine, seen);
+  if (seen.state === "no-keychain") throw noKeychainThere(machine, seen.detail);
   if (seen.state === "missing" && shipped) {
     const alt = await agentOnMachine(exec, shipped.run[0], { wait: AGENT_WAIT_S, prepend });
     const altQuiet = quietOn(machine, alt);
     if (alt.state === "away") throw unreachable(machine, alt);
+    if (alt.state === "no-keychain") throw noKeychainThere(machine, alt.detail);
     if (alt.state === "found") {
       return { path: alt.path, argv: [...shipped.run, ...shipped.tail],
         warnings: [`${name} starts on ${machine} from its shipped run (${shipped.run[0]}), skipping the `
@@ -2927,6 +2944,8 @@ async function seatOnMachine(project, bot, over = {}) {
   const paneEnv = await paneEnvOn(machine, key);
   // #823: agy reads its permission list from a file on its own machine, under that machine's
   // app home; with none there the start is refused rather than launched without its list.
+  // #1033: plan the path first so `command` and `agentThere` run before `ownFileOn` writes the
+  // file on `machine` (a refused non-GUI Mac or missing agent writes nothing there).
   let agySettings = null;
   if (agentKey === "antigravity") {
     const agyHome = await launchHomeOn(machine, bot, paneEnv, "its Antigravity permission list");
@@ -2936,11 +2955,6 @@ async function seatOnMachine(project, bot, over = {}) {
     const remoteHome = agyHome.dir.endsWith("/.config/herdr-app") ? agyHome.dir.slice(0, -"/.config/herdr-app".length) : null;
     agySettings = agySettingsPlan({ bot, scope: "seat", folder: over.cwd ?? key, settingsDir: agySettingsDir(agyHome.dir),
       homeDir: remoteHome });
-    try { await ownFileOn(machine, agySettings.path, agySettings.text); }
-    catch (e) {
-      throw new CliError(`${bot.name} wasn't started on ${machine}: its Antigravity permission list couldn't be written `
-        + `(${agySettings.path}: ${e?.message ?? e}).`);
-    }
   }
   // Herdr's table as this computer has it (programs.json applied): the Mac builds the command.
   // A Start's command runs on a new session whose id Herdr chooses (Claude), as a local start's
@@ -2953,6 +2967,13 @@ async function seatOnMachine(project, bot, over = {}) {
   // #612: a local absolute override that isn't there falls back to the shipped run when that is.
   const there = await agentThere(machine, command, agent.name ?? agentKey, paneEnv.prepend,
     shippedRunFor(agentKey, agent.run, command));
+  if (agySettings) {
+    try { await ownFileOn(machine, agySettings.path, agySettings.text); }
+    catch (e) {
+      throw new CliError(`${bot.name} wasn't started on ${machine}: its Antigravity permission list couldn't be written `
+        + `(${agySettings.path}: ${e?.message ?? e}).`);
+    }
+  }
   // A remote dsh-tui seat gets the guard its own machine has, resolved there (#624); with none,
   // no guard on PATH and no briefing paragraph claiming one, and one warning says what the
   // probe found: no guard, a failed probe, or a folder a PATH word cannot carry (#643).

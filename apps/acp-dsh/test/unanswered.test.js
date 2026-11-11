@@ -135,11 +135,11 @@ async function within(promise, what, ms = 20_000) {
   }
 }
 
-async function step(h, messages, { signal, onChunk } = {}) {
+async function step(h, messages, { signal, onChunk, model = 'default' } = {}) {
   const chunks = []
   const said = messages.at(-1).content[0].text
   await within((async () => {
-    for await (const chunk of h.adapter.stream(markAgentLoopRequest({ provider: ROUTE, model: 'default', sessionId: 's1', messages, signal }))) {
+    for await (const chunk of h.adapter.stream(markAgentLoopRequest({ provider: ROUTE, model, sessionId: 's1', messages, signal }))) {
       chunks.push(chunk)
       onChunk?.(chunks)
     }
@@ -354,6 +354,69 @@ for (const [method, { doing, ready }] of Object.entries(BEFORE_PROMPT)) {
     }
   })
 }
+
+// An agent whose models are its session's own list (a native agent, as Hermes: #959) is switched
+// with `session/set_model`. That request has the same deadline and the same Stop as the others:
+// its error must reach the turn as it is, not wrapped as "it could not switch to <model>".
+const HAS_GROUPS = process.platform !== 'win32'
+function ownModels(t) {
+  const h = fixture(t, { deaf: 'session/set_model' })
+  h.env.FAKE_ACP_SESSION_MODELS = '1'
+  if (HAS_GROUPS) h.env.FAKE_ACP_CHILD = 'stubborn'
+  return h
+}
+const reachedSetModel = h => until(() => h.unheard().includes('session/set_model') && (!HAS_GROUPS || h.children().length === 1), 'session/set_model to reach the agent, with its child running')
+
+test('an agent that never answers session/set_model fails the turn at the request deadline and ends its session and what it started', async (t) => {
+  const h = ownModels(t)
+  try {
+    const going = step(h, [user('plain')], { model: 'fake-small' })
+    await reachedSetModel(h)
+    const run = h.live().run
+    const [child] = h.children()
+    h.tick(REQUEST_MS - 1)
+    assert.ok(await pending(going), 'the turn still waits one millisecond before the deadline')
+    h.tick(1)
+    const reason = (await going).at(-1).reason
+    assert.equal(reason.kind, 'error')
+    assert.equal(reason.failure.message, unansweredText('Fake agent', 'taking fake-small', REQUEST_MS))
+    assert.equal(reason.failure.message, 'Fake agent did not answer while taking fake-small (15 s), so its session was ended. Send again to start a new one.')
+    assert.equal(h.adapter.live.size, 0)
+    assert.equal(run.hold, undefined)
+    assert.deepEqual(h.warnings.filter(message => /did not answer/.test(message)), ['acp-dsh: Fake agent did not answer while taking fake-small within 15 s: its session was ended'])
+    await gone(run)
+    if (HAS_GROUPS) {
+      h.tick(KILL_AFTER_MS - 1)
+      assert.ok(running(child), 'the child that ignores SIGTERM has the agent\'s time to end')
+      h.tick(1)
+      await ended(child, 'the child that ignored SIGTERM')
+    }
+    assert.deepEqual(h.prompts(), [], 'no prompt reached an agent that did not take the model')
+  } finally {
+    h.close()
+  }
+})
+
+test('Stop while the agent does not answer session/set_model ends the turn as stopped, its session and what it started', async (t) => {
+  const h = ownModels(t)
+  try {
+    const controller = new AbortController()
+    const going = step(h, [user('plain')], { signal: controller.signal, model: 'fake-small' })
+    await reachedSetModel(h)
+    const run = h.live().run
+    const [child] = h.children()
+    controller.abort()
+    assert.deepEqual((await going).at(-1).reason, STOPPED)
+    assert.equal(h.adapter.live.size, 0)
+    await gone(run)
+    if (HAS_GROUPS) {
+      h.tick(KILL_AFTER_MS)
+      await ended(child, 'the child that ignored SIGTERM')
+    }
+  } finally {
+    h.close()
+  }
+})
 
 // A changed tool set on an agent that refreshes by fork (acp-codex): the fork is the request.
 async function forking(h) {
