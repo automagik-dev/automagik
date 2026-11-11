@@ -44,6 +44,14 @@ const mutants = [
     file: 'test/agent-paging.test.js',
     test: 'Bot subpages retain their sequence window when a new message arrives',
   },
+  {
+    name: 'drop the URL-password rule',
+    source: '../src/host/agent-redaction.js',
+    from: 'const password = urlPassword(value)',
+    to: 'const password = undefined',
+    file: 'test/agent-redaction.test.js',
+    test: 'environment AUTOMAGIK_REVIEW_ENDPOINT is redacted across SDK reads, arguments and audit',
+  },
 ]
 for (const mutant of mutants) {
   const source = new URL(mutant.source ?? accessSource.href, import.meta.url)

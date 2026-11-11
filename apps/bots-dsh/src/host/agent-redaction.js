@@ -1,6 +1,12 @@
 import { encodeUrlComponent, redactor } from './secrets.js'
 
-const secretEnv = /(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH)(?:_|$)/i
+const secretEnv = new RegExp('(?:^|_)(?:KEYS?|TOKENS?|SECRETS?|PASS(?:WD|WORD)?|PWD|'
+  + 'CREDENTIALS?|PRIVATE|AUTH)(?:_|$)', 'i')
+const pathEnv = new Set(['PATH', 'HOME', 'PWD', 'OLDPWD'])
+const urlPassword = value => {
+  try { return new URL(value).password || undefined }
+  catch { return undefined }
+}
 const reference = /^[A-Za-z_][A-Za-z0-9_]*$/
 // Public field names are protocol vocabulary, not user-supplied dictionary keys.
 const fields = new Set(('id name role color instructions model effort permission main '
@@ -29,7 +35,16 @@ export function createAgentRedactor(rt) {
     for (const secret of rt.secretsView?.() ?? []) remember(rt.secretValue?.(secret.name))
     const refs = new Set(rt.keyRefs?.().values() ?? [])
     for (const [name, value] of Object.entries(process.env)) {
-      if (secretEnv.test(name)) { refs.add(name); remember(value) }
+      const password = urlPassword(value)
+      if (password !== undefined || (!pathEnv.has(name) && secretEnv.test(name))) {
+        refs.add(name)
+        remember(value)
+      }
+      // A connection password is sensitive under every name, including path names.
+      if (password !== undefined) {
+        remember(password)
+        try { remember(decodeURIComponent(password)) } catch { /* Keep the encoded password. */ }
+      }
     }
     for (const entry of rt.ctx.llm?.listConfigurableProviders?.() ?? []) {
       for (const name of entry.nativeAuth?.env ?? []) refs.add(name)

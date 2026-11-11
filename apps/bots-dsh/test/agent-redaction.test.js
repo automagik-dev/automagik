@@ -69,6 +69,17 @@ const absent = (value, secrets) => {
     'a planted credential crossed the MCP/audit boundary')
 }
 
+const plantEnv = (t, entries) => {
+  const previous = new Map(Object.keys(entries).map(name => [name, process.env[name]]))
+  for (const [name, value] of Object.entries(entries)) process.env[name] = value
+  t.after(() => {
+    for (const [name, value] of previous) {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
+  })
+}
+
 test('provider credentials in chat, configuration, arguments and audit are redacted', async t => {
   const { rt, home, keys, tool } = await fixture(t)
   const credential = keys.get('FIXTURE_PROVIDER_KEY')
@@ -165,3 +176,75 @@ test('short provider credentials containing regex metacharacters cannot throw or
     assert.equal(redaction.text('Unrelated text'), 'Unrelated text')
   }
 })
+
+const environmentCases = [
+  ['AUTOMAGIK_REVIEW_DB_PASS', 'fixture-database-pass-1093'],
+  ['AUTOMAGIK_REVIEW_DATABASE_URL',
+    'postgres://fixture:fixture-database-password-1093@database.invalid:5432/fixture'],
+  ['AUTOMAGIK_REVIEW_CREDENTIALS', 'fixture-plural-credentials-1093'],
+  ['AUTOMAGIK_REVIEW_ENDPOINT',
+    'postgres://fixture:fixture-neutral-password-1093@database.invalid:5432/fixture'],
+]
+
+for (const [name, credential] of environmentCases) {
+  test(`environment ${name} is redacted across SDK reads, arguments and audit`, async t => {
+    const { rt, home, tool } = await fixture(t)
+    plantEnv(t, { [name]: credential })
+    rt.chatPage = async () => ({ items: [{ kind: 'user', seq: 1,
+      text: `Pasted ${credential}`, time: 1 }], cursor: null })
+    absent(await tool('read_messages', { id: 'a' }), [credential])
+    rt.state.bots.a.instructions = `Before ${credential}`
+    rt.state.prefs.theme = credential
+    absent(await tool('get_bot', { id: 'a' }), [credential])
+    absent(await tool('list_bots'), [credential])
+    absent(await tool('read_settings'), [credential])
+    absent(await tool('update_bot', { id: 'a', instructions: `After ${credential}` }),
+      [credential])
+    absent(rt.state.bots.a.instructions, [credential])
+    const audit = await readFile(join(home, 'agent-audit.jsonl'), 'utf8')
+    absent(audit, [credential])
+    const change = audit.trim().split('\n').map(JSON.parse)
+      .findLast(row => row.changes?.bots?.a?.instructions).changes.bots.a.instructions
+    assert.equal(change.before, 'Before [secret:credential]')
+    assert.equal(change.after, 'After [secret:credential]')
+    absent(await tool('read_audit'), [credential])
+  })
+}
+
+test('password name parts and password URLs refresh without masking harmless environment',
+  async t => {
+    const { rt } = await fixture(t)
+    const redaction = createAgentRedactor(rt)
+    await redaction.refresh()
+    const secretNames = ['PASS', 'PASSWD', 'PASSWORD', 'PWD', 'CREDENTIAL', 'CREDENTIALS',
+      'SECRET', 'SECRETS', 'TOKEN', 'TOKENS', 'KEY', 'KEYS', 'PRIVATE']
+    const secretEntries = Object.fromEntries(secretNames.map(name => [
+      `AUTOMAGIK_REVIEW_${name}_VALUE`, `fixture-env-${name.toLowerCase()}-value-1093`,
+    ]))
+    const harmless = {
+      AUTOMAGIK_REVIEW_PATH: '/fixture/harmless/bin',
+      AUTOMAGIK_REVIEW_HOME: '/fixture/harmless/home',
+      AUTOMAGIK_REVIEW_PORT: '54321',
+      AUTOMAGIK_REVIEW_ENABLED: 'true',
+      AUTOMAGIK_REVIEW_DISABLED: 'false',
+      AUTOMAGIK_REVIEW_COMPASS: 'fixture-harmless-compass-1093',
+      AUTOMAGIK_REVIEW_MONKEY: 'fixture-harmless-monkey-1093',
+      AUTOMAGIK_REVIEW_KEYBOARD: 'fixture-harmless-keyboard-1093',
+      AUTOMAGIK_REVIEW_URL: 'postgres://fixture@database.invalid:5432/fixture',
+    }
+    plantEnv(t, { ...secretEntries, ...harmless,
+      AUTOMAGIK_REVIEW_ADDRESS:
+        'postgres://fixture:fixture%21escaped%3Apassword@database.invalid:5432/fixture',
+    })
+    await redaction.refresh()
+    for (const credential of Object.values(secretEntries)) {
+      assert.equal(redaction.text(credential), '[secret:credential]')
+    }
+    for (const value of Object.values(harmless)) assert.equal(redaction.text(value), value)
+    for (const name of ['PATH', 'HOME', 'PWD', 'OLDPWD']) {
+      const value = process.env[name]
+      if (value !== undefined) assert.equal(redaction.text(value), value)
+    }
+    assert.equal(redaction.text('fixture%21escaped%3Apassword'), '[secret:credential]')
+    assert.equal(redaction.text('fixture!escaped:password'), '[secret:credential]')
+  })
