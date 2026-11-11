@@ -542,6 +542,14 @@ export function restoreLayout({ modsDir, body, log = () => {} }) {
   return placed;
 }
 
+/**
+ * After a rollback to a set kept with no layout (before v0.9; #503): the pack's own automagik.json
+ * (`live`) stays as the rolled-out pack placed it, and its blocks name `gone`, the mods that left.
+ */
+export const staleLayoutLine = (live, gone) => `left automagik.json (${live}) as the rolled-out pack placed it: the pack rolled back to kept no layout `
+  + `to put back (a set kept before v0.9), and its blocks name ${gone.join(", ")}, which left mods/ in this rollback. `
+  + "Herdr drops a layout whose mod is gone (plain Herdr instead): if Herdr shows it, switch layouts (ctrl-shift-l)";
+
 export const writeMarker = (modsDir, record) => {
   const path = markerOf(modsDir);
   writeFileSync(`${path}.tmp`, formatMarker(record));
@@ -1001,6 +1009,13 @@ function rollbackLocked({ modsDir, rename = renameSync, log = () => {}, binDir =
     recordSkip();
     for (const [from, to] of carries) carryPrivate(from, to);
   };
+  // That gap, said (#503): with no layout kept, the pack's own unedited automagik.json (which the
+  // guard above leaves out) stays as the rolled-out pack placed it. Read here, before the swap.
+  let staleLayout = false;
+  try {
+    staleLayout = !keptLayout && isFile(packLayout) && !linkedLayout(packLayout) && isFile(layoutRefOf(modsDir))
+      && readFileSync(packLayout).equals(readFileSync(layoutRefOf(modsDir)));
+  } catch {}
   try {
     const r = swapAll(modsDir, moves, rename, { needed: "refuse", unknown: "warn", then: "roll back", exclude, prepare, log });
     if (r.refused) throw new Error(`nothing rolled back: ${r.refused}`);
@@ -1055,6 +1070,14 @@ function rollbackLocked({ modsDir, rename = renameSync, log = () => {}, binDir =
   const reverted = revertRefs({ modsDir, log, warnings, left: (mod) => left.has(mod) && !set.mods.includes(mod) });
   const migration = migrateRefs({ modsDir, log, warnings });
   const hooks = moveHooks({ modsDir, log, warnings, binDir, window });
+  // #503: the layout no kept set replaced still names the mods this rollback took out of mods/.
+  if (staleLayout) {
+    try {
+      const gone = [...layoutNeeds(JSON.parse(readFileSync(packLayout, "utf8"))).blocks]
+        .filter((m) => left.has(m) && !set.mods.includes(m) && !exists(join(modsDir, m))).sort();
+      if (gone.length) log(staleLayoutLine(packLayout, gone));
+    } catch {}
+  }
   return { pack: modsDir, prev, mods: set.mods, version: set.version, from: record.version ?? null, layout, reverted: reverted.restored, migration, hooks, warnings };
 }
 

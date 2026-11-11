@@ -64,6 +64,8 @@ export const REQUEST_MS = 15_000
 // How long the agent's processes have to end once asked to (SIGTERM) before they are killed.
 export const KILL_AFTER_MS = 3000
 const UNANSWERED = 'acp_unanswered'
+// The answer to a permission question that is withdrawn, or that nobody is left to answer.
+const CANCELLED = Object.freeze({ outcome: Object.freeze({ outcome: 'cancelled' }) })
 const STOPPED = 'acp_stopped'
 
 /** A wait as the person reads it: whole seconds (under one second, as a test sets it, in ms). */
@@ -301,6 +303,14 @@ export class AgentRun {
   prompt(prompt) {
     if (this.busy) throw new Error(`${this.spec.name} is still answering`)
     this.queue = []
+    this.promptEnded = false
+    // The calls of the prompts before this one are over for DSH too: their cards ran in turns
+    // that have ended, and a call already known never gets a second card. A question for one
+    // has nobody left to answer it (onPermission); one still stored is withdrawn here.
+    for (const tool of this.tools.values()) {
+      tool.unanswerable = true
+      tool.permission?.answer(CANCELLED)
+    }
     this.holdOn()
     const run = this.conn.prompt({ sessionId: this.sessionId, prompt })
     this.prompting = Promise.race([run, this.gone]).then(
@@ -312,6 +322,8 @@ export class AgentRun {
 
   endPrompt(event) {
     this.prompting = undefined
+    // From here to the next prompt, a call seen for the first time gets no card (seeTool).
+    this.promptEnded = true
     this.letGo()
     // A call the agent never closed is over with its turn; a question it never got an answer to is withdrawn.
     for (const tool of this.tools.values()) {
@@ -490,7 +502,14 @@ export class AgentRun {
       return known
     }
     const tool = { id: update.toolCallId, title: update.title ?? 'Tool', kind: update.kind ?? 'other', status: update.status ?? 'pending', content: update.content ?? [], locations: update.locations ?? [], rawInput: update.rawInput, rawOutput: update.rawOutput, listeners: new Set() }
+    // First seen after its prompt ended: its event lands behind the prompt's end, where no step
+    // reads it, and the next prompt drops it. No card will ever ask its question.
+    if (this.promptEnded === true) tool.unanswerable = true
     this.markCall(tool, update)
+    // Drift known at first sight, before its event is queued: the adapter reads the same mark
+    // when it takes the event and makes no card for it. A call found to be drift only later
+    // may already have its card, whose body still asks, so that one is not marked.
+    if (tool.drift === true) tool.unanswerable = true
     this.tools.set(tool.id, tool)
     this.push({ type: 'tool', id: tool.id })
     return tool
@@ -562,6 +581,12 @@ export class AgentRun {
     // DSH already refused this call before the mirror's body could ask (refuse): no body is
     // left to answer the agent, so the refusal is its answer.
     if (tool.refused !== undefined) return Promise.resolve(refusal(tool.refused, params.options ?? []))
+    // A question nobody will answer is answered here, at once, and only ever as cancelled: the
+    // agent would otherwise wait on it until the next turn's end. That is a call that gets no
+    // card (first seen after its prompt ended, left from an earlier prompt, or drift at its
+    // first sight) and one whose card's body is over (tool.js). Any other question waits for
+    // its card, as it always did: a call found to be drift after its card was made included.
+    if (tool.unanswerable === true || tool.mirrored === true) return Promise.resolve(CANCELLED)
     // A second question for the call while the first was not asked yet: the first is withdrawn,
     // or nothing would ever answer it. One already in its dialog keeps the dialog's answer.
     const earlier = tool.permission

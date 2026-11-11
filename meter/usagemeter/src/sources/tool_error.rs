@@ -1,22 +1,29 @@
-//! Tool failures as each harness itself records them (issue 899, RFC 0018 (c)): one fact per
-//! failed tool result, for `usagemeter outcomes`. A harness-flagged failure, never a judgment: it
-//! includes the expected ones (a red test run while working test-first, a grep with no match).
+//! Harness-flagged tool and model-call failures as each harness itself records them (issues 899
+//! and 1026, RFC 0018 (c)): one fact per failed tool result (`tool_error`) or failed model call
+//! (`api_error`), for `usagemeter outcomes`. A harness-flagged failure, never a judgment: it
+//! includes the expected ones (a red test run while working test-first, a grep with no match) and
+//! usage-limit stops written after a harness's own retries.
 //!
-//! One marker per harness, each pinned by a fixture in `tests/fixtures/tool-errors/`, and never
-//! reinterpreted:
+//! One marker per harness and failure kind, each pinned by a fixture in
+//! `tests/fixtures/tool-errors/`, and never reinterpreted:
 //!
-//! - **Claude Code**: a `type: "user"` line whose `message.content` holds a `tool_result` block
-//!   with `is_error: true`. Its identity is the block's `tool_use_id`.
-//! - **Codex**: an `event_msg` line whose payload is `item_completed` and whose item has
-//!   `status: "failed"` or an `exit_code` that is a non-zero integer. Its identity is the item's
-//!   `id` within the thread, so an item that holds both counts once. (Codex records no exit
-//!   status on `function_call_output`.)
+//! - **Claude Code (`tool_error`)**: a `type: "user"` line whose `message.content` holds a
+//!   `tool_result` block with `is_error: true`. Its identity is the block's `tool_use_id`.
+//! - **Claude Code (`api_error`)**: a `type: "assistant"` line whose top-level
+//!   `isApiErrorMessage` is the JSON boolean `true` (written after Claude Code's own retries, so
+//!   it counts model calls that failed for the session, not each retried attempt). Its identity is
+//!   the line's top-level `uuid`.
+//! - **Codex (`tool_error`)**: an `event_msg` line whose payload is `item_completed` and whose
+//!   item has `status: "failed"` or an `exit_code` that is a non-zero integer. Its identity is the
+//!   item's `id` within the thread, so an item that holds both counts once. (Codex records no exit
+//!   status on `function_call_output`, and no `api_error` marker in rollout JSONL.)
 //!
-//! A harness with no pinned marker (omp, dsh-tui, Antigravity) has none here, and the report says
+//! A harness with no pinned marker for a failure kind has none here, and the report says
 //! `unsupported` for it, never 0.
 //!
-//! Nothing but the identity, the time and what the line says of its session is kept: no tool
-//! name, no arguments, no output and no error text. The store keeps the identity as a keyed hash.
+//! Nothing but the kind, the identity, the time and what the line says of its session is kept: no
+//! tool name, no arguments, no output, no error status and no error text. The store keeps the
+//! identity as a keyed hash.
 
 use memchr::memmem;
 use serde::Deserialize;
@@ -24,17 +31,30 @@ use serde::Deserialize;
 use super::{FileCtx, Source, clip, from_line};
 use crate::time::parse_rfc3339;
 
-/// The harnesses whose marker a fixture pins.
+pub const TOOL_ERROR: &str = "tool_error";
+pub const API_ERROR: &str = "api_error";
+
+/// The harnesses whose `tool_error` marker a fixture pins.
 pub const PINNED: [Source; 2] = [Source::Claude, Source::Codex];
+
+/// The harnesses whose `api_error` marker a fixture pins.
+pub const API_ERROR_PINNED: [Source; 1] = [Source::Claude];
 
 /// Whether the meter can tell a tool failure in this harness's log.
 pub fn pinned(s: Source) -> bool {
     PINNED.contains(&s)
 }
 
-/// One tool result its harness flagged as failed.
+/// Whether the meter can tell a failed model call (`api_error`) in this harness's log.
+pub fn api_error_pinned(s: Source) -> bool {
+    API_ERROR_PINNED.contains(&s)
+}
+
+/// One tool result (`tool_error`) or model call (`api_error`) its harness flagged as failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolError {
+    /// [`TOOL_ERROR`] or [`API_ERROR`].
+    pub kind: &'static str,
     /// Stable per failure, across copies of the line in other files: the dedupe key.
     pub ident: String,
     pub ts_ms: i64,
@@ -49,8 +69,8 @@ pub struct ToolError {
     pub repo: Option<String>,
 }
 
-/// Pushes the tool failures `line` records, if its harness has a pinned marker. `ctx` is the
-/// file's context after the usage parser saw the line.
+/// Pushes the harness-flagged failures `line` records, if its harness has a pinned marker. `ctx`
+/// is the file's context after the usage parser saw the line.
 pub fn scan_line(source: Source, line: &[u8], ctx: &FileCtx, out: &mut Vec<ToolError>) {
     match source {
         Source::Claude => claude(line, ctx, out),
@@ -63,6 +83,9 @@ pub fn scan_line(source: Source, line: &[u8], ctx: &FileCtx, out: &mut Vec<ToolE
 struct ClaudeRow {
     #[serde(rename = "type")]
     ty: Option<String>,
+    uuid: Option<serde_json::Value>,
+    #[serde(rename = "isApiErrorMessage")]
+    is_api_error_message: Option<serde_json::Value>,
     message: Option<ClaudeMessage>,
     timestamp: Option<String>,
     #[serde(rename = "sessionId")]
@@ -99,18 +122,13 @@ enum ClaudeBlock {
 }
 
 fn claude(line: &[u8], ctx: &FileCtx, out: &mut Vec<ToolError>) {
-    if memmem::find(line, b"\"tool_result\"").is_none()
-        || memmem::find(line, b"\"is_error\"").is_none()
-    {
+    let has_tool_err = memmem::find(line, b"\"tool_result\"").is_some()
+        && memmem::find(line, b"\"is_error\"").is_some();
+    let has_api_err = memmem::find(line, b"\"isApiErrorMessage\"").is_some();
+    if !has_tool_err && !has_api_err {
         return;
     }
     let Some(row) = from_line::<ClaudeRow>(line) else {
-        return;
-    };
-    if row.ty.as_deref() != Some("user") {
-        return;
-    }
-    let Some(ClaudeContent::Blocks(blocks)) = row.message.and_then(|m| m.content) else {
         return;
     };
     let Some(ts_ms) = row.timestamp.as_deref().and_then(parse_rfc3339) else {
@@ -136,7 +154,7 @@ fn claude(line: &[u8], ctx: &FileCtx, out: &mut Vec<ToolError>) {
     let session_cwd = if ctx.parent_session.is_some() {
         ctx.parent_cwd.clone()
     } else {
-        // A result before the session's first usage line: its own cwd is the first recorded.
+        // A failure before the session's first usage line: its own cwd is the first recorded.
         ctx.cwd.clone().or_else(|| cwd.clone())
     };
     let branch = row
@@ -144,6 +162,40 @@ fn claude(line: &[u8], ctx: &FileCtx, out: &mut Vec<ToolError>) {
         .as_deref()
         .filter(|b| !b.is_empty())
         .map(|b| clip(b, 256));
+    if row.ty.as_deref() == Some("assistant") {
+        // The flag as Claude Code writes it after its own retries: the JSON boolean true on a
+        // top-level assistant line, counted once per top-level uuid.
+        if row.is_api_error_message != Some(serde_json::Value::Bool(true)) {
+            return;
+        }
+        let Some(id) = row
+            .uuid
+            .as_ref()
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+        else {
+            return;
+        };
+        out.push(ToolError {
+            kind: API_ERROR,
+            ident: format!("api_err|claude|{}", clip(id, 128)),
+            ts_ms,
+            harness: "claude-code",
+            session,
+            parent_session: ctx.parent_session.clone(),
+            cwd,
+            session_cwd,
+            branch,
+            repo: None,
+        });
+        return;
+    }
+    if row.ty.as_deref() != Some("user") {
+        return;
+    }
+    let Some(ClaudeContent::Blocks(blocks)) = row.message.and_then(|m| m.content) else {
+        return;
+    };
     for b in blocks {
         let ClaudeBlock::Known {
             ty,
@@ -165,6 +217,7 @@ fn claude(line: &[u8], ctx: &FileCtx, out: &mut Vec<ToolError>) {
             continue;
         };
         out.push(ToolError {
+            kind: TOOL_ERROR,
             ident: format!("err|claude|{}", clip(id, 128)),
             ts_ms,
             harness: "claude-code",
@@ -245,6 +298,7 @@ fn codex(line: &[u8], ctx: &FileCtx, out: &mut Vec<ToolError>) {
         return;
     };
     out.push(ToolError {
+        kind: TOOL_ERROR,
         ident: format!("err|codex|{}|{}", clip(&c.thread, 128), clip(id, 128)),
         ts_ms,
         harness: "codex",
@@ -280,6 +334,13 @@ mod tests {
             .collect()
     }
 
+    fn expected_api_errors(name: &str) -> Option<Vec<String>> {
+        let v: serde_json::Value = serde_json::from_str(&fixture("expected.json")).unwrap();
+        v[name]["api_errors"]
+            .as_array()
+            .map(|a| a.iter().map(|s| s.as_str().unwrap().to_string()).collect())
+    }
+
     fn scan(source: Source, name: &str, ctx: &FileCtx) -> Vec<ToolError> {
         let mut out = Vec::new();
         for line in fixture(name).lines() {
@@ -288,10 +349,10 @@ mod tests {
         out
     }
 
-    /// The distinct identities, in first-seen order: what the store's dedupe keeps.
-    fn distinct(found: &[ToolError], prefix: &str) -> Vec<String> {
+    /// The distinct identities of `kind`, in first-seen order: what the store's dedupe keeps.
+    fn distinct(found: &[ToolError], kind: &str, prefix: &str) -> Vec<String> {
         let mut ids: Vec<String> = Vec::new();
-        for e in found {
+        for e in found.iter().filter(|e| e.kind == kind) {
             let id = e.ident.strip_prefix(prefix).unwrap().to_string();
             if !ids.contains(&id) {
                 ids.push(id);
@@ -302,10 +363,16 @@ mod tests {
 
     #[test]
     fn claude_counts_a_tool_result_flagged_is_error_true_once_per_tool_use_id() {
-        let found = scan(Source::Claude, "claude.jsonl", &FileCtx::default());
+        let found: Vec<ToolError> = scan(Source::Claude, "claude.jsonl", &FileCtx::default())
+            .into_iter()
+            .filter(|e| e.kind == TOOL_ERROR)
+            .collect();
         // The fixture repeats one failed result (a resumed session's copy): two lines, one id.
         assert_eq!(found.len(), expected("claude.jsonl").len() + 1);
-        assert_eq!(distinct(&found, "err|claude|"), expected("claude.jsonl"));
+        assert_eq!(
+            distinct(&found, TOOL_ERROR, "err|claude|"),
+            expected("claude.jsonl")
+        );
         let e = &found[0];
         assert_eq!(e.harness, "claude-code");
         assert_eq!(e.session.as_deref(), Some("sess-fixture-1"));
@@ -313,6 +380,48 @@ mod tests {
         assert_eq!(e.session_cwd.as_deref(), Some("/work/app"));
         assert_eq!(e.branch.as_deref(), Some("feat/x"));
         assert_eq!(e.ts_ms, parse_rfc3339("2026-01-15T10:00:05Z").unwrap());
+    }
+
+    #[test]
+    fn claude_counts_an_assistant_is_api_error_message_true_once_per_uuid_and_adds_zero_tokens() {
+        let all = scan(Source::Claude, "claude.jsonl", &FileCtx::default());
+        let api: Vec<ToolError> = all
+            .iter()
+            .filter(|e| e.kind == API_ERROR)
+            .cloned()
+            .collect();
+        let want = expected_api_errors("claude.jsonl").unwrap();
+        // The fixture repeats the api_error uuid once, and includes false, "true" and a user
+        // prompt quoting "isApiErrorMessage": true: two positive lines, one distinct uuid.
+        assert_eq!(api.len(), want.len() + 1);
+        assert_eq!(distinct(&api, API_ERROR, "api_err|claude|"), want);
+        let e = &api[0];
+        assert_eq!(e.harness, "claude-code");
+        assert_eq!(e.session.as_deref(), Some("sess-fixture-1"));
+        assert_eq!(e.cwd.as_deref(), Some("/work/app"));
+        assert_eq!(e.session_cwd.as_deref(), Some("/work/app"));
+        assert_eq!(e.branch.as_deref(), Some("feat/x"));
+        assert_eq!(e.ts_ms, parse_rfc3339("2026-01-15T10:00:10Z").unwrap());
+        // Never counted as a tool_error, and adds 0 tokens to usage.
+        assert_eq!(
+            distinct(&all, TOOL_ERROR, "err|claude|"),
+            expected("claude.jsonl")
+        );
+        let mut ctx = FileCtx::default();
+        let mut usage = Vec::new();
+        for line in fixture("claude.jsonl").lines() {
+            crate::sources::claude::parse_line(line.as_bytes(), &mut ctx, &mut usage);
+        }
+        assert_eq!(
+            usage.len(),
+            2,
+            "only the two real assistant calls emit usage"
+        );
+        assert!(usage.iter().all(|u| u.model == "claude-opus-5-5"));
+        // Codex has no pinned api_error marker: expected.json records null.
+        assert_eq!(expected_api_errors("codex.jsonl"), None);
+        assert!(!api_error_pinned(Source::Codex));
+        assert!(api_error_pinned(Source::Claude));
     }
 
     #[test]
@@ -324,9 +433,11 @@ mod tests {
             ..FileCtx::default()
         };
         let found = scan(Source::Claude, "claude.jsonl", &ctx);
-        assert_eq!(found[0].session.as_deref(), Some("agent-fixture"));
-        assert_eq!(found[0].parent_session.as_deref(), Some("sess-fixture-1"));
-        assert_eq!(found[0].session_cwd.as_deref(), Some("/work/app"));
+        for e in &found {
+            assert_eq!(e.session.as_deref(), Some("agent-fixture"));
+            assert_eq!(e.parent_session.as_deref(), Some("sess-fixture-1"));
+            assert_eq!(e.session_cwd.as_deref(), Some("/work/app"));
+        }
     }
 
     #[test]
@@ -363,9 +474,11 @@ mod tests {
     fn a_harness_with_no_pinned_marker_yields_nothing() {
         for s in [Source::Omp, Source::DshTui, Source::Agy] {
             assert!(!pinned(s));
+            assert!(!api_error_pinned(s));
             assert!(scan(s, "claude.jsonl", &FileCtx::default()).is_empty());
         }
         assert!(pinned(Source::Claude) && pinned(Source::Codex));
+        assert!(api_error_pinned(Source::Claude) && !api_error_pinned(Source::Codex));
     }
 
     #[test]
@@ -375,6 +488,9 @@ mod tests {
         for leak in [
             "FAKE-TOOL-OUTPUT",
             "FAKE-ERROR-TEXT",
+            "FAKE-API-ERROR-TEXT",
+            "rate_limit",
+            "429",
             "Bash",
             "FAKE-COMMAND",
         ] {

@@ -2,7 +2,8 @@
 // automatic mode by default, from the definition (models.js AUTO_MODE), on a start, a restart, a
 // worker and a restart --tree helper. Antigravity runs on --dangerously-skip-permissions only
 // beside a --settings file, whose fixed deny list is the same for seats and workers and whose
-// trustedWorkspaces names a writer's own folder. A stand-in agy (this file writes it) checks the
+// trustedWorkspaces names every launch's own folder, a review launch's included (#1046). A
+// stand-in agy (this file writes it) checks the
 // file a launch really writes: a compound command returns its output, a denied one is refused.
 // With AUTOMAGIK_HERDR_REAL_AGY=1 the same two commands go to the real agy (it spends a little
 // of the signed-in account's quota, so it is never on by default). No real hc, home or window.
@@ -14,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
-  AGENTS, AGY_FIXED_DENY, AGY_SKIP_PERMISSIONS, AUTO_MODE, AUTO_MODE_NONE,
+  AGENTS, AGY_FIXED_DENY, AGY_READ_ALLOW, AGY_SKIP_PERMISSIONS, AUTO_MODE, AUTO_MODE_NONE,
   AGY_KILL_DENY, agyGuarded, agyModeWarning, agySettingsDir, agySettingsPlan, autoModeArgs, launchRun, mayHcKill,
 } from "../mods/am-sidebar/models.js";
 import { helperPlan, restartPlan } from "../mods/am-sidebar/restart.js";
@@ -29,7 +30,7 @@ const SKIP_ALL = ["--dangerously-skip-permissions", "--dangerously-bypass-approv
 // What each kind's launch adds, written out here so a change to the table is a change to this list.
 const EXPECTED = {
   claude: ["--permission-mode", "auto"],
-  codex: ["--approve-for-me"],
+  codex: ["--approve-for-me", "--disable", "hooks"],
   antigravity: ["--dangerously-skip-permissions"],
 };
 
@@ -144,16 +145,17 @@ test("hc kill is for a main bot's seat only (#955): Antigravity's file denies it
   assert.deepEqual([mayHcKill(main, "seat"), mayHcKill(main, "worker"), mayHcKill(lead, "seat"), mayHcKill(null, "seat")], [true, false, false, false]);
 });
 
-test("Antigravity #953: a dev, test or fix worker's file trusts its own worktree; a review launch lists nothing", () => {
-  for (const role of ["dev", "test", "fix"]) {
+test("Antigravity #953/#1046: every worker role's file trusts its own worktree, review included", () => {
+  for (const role of ["dev", "test", "fix", "review"]) {
     const plan = agySettingsPlan({ bot: AGY_BOT, scope: "worker", role, folder: "/work/wt/", settingsDir: agySettingsDir(APP),
       realpath: (p) => p, homeDir: "/home/u" });
     assert.deepEqual(JSON.parse(plan.text).trustedWorkspaces, ["/work/wt"], `${role} trusts its worktree`);
+    assert.deepEqual(plan.deny.slice(0, AGY_FIXED_DENY.length), [...AGY_FIXED_DENY], `${role}'s deny list is still whole`);
   }
   const review = agySettingsPlan({ bot: AGY_BOT, scope: "worker", role: "review", folder: "/work/wt", settingsDir: agySettingsDir(APP),
     realpath: (p) => p, homeDir: "/home/u" });
-  assert.equal("trustedWorkspaces" in JSON.parse(review.text), false, "a read-only review launch is never trusted for the person");
-  assert.deepEqual(review.deny.slice(0, AGY_FIXED_DENY.length), [...AGY_FIXED_DENY], "its deny list is still whole");
+  assert.equal(review.allow.some((rule) => rule.startsWith("write_file(")), false, "review stays read-only");
+  assert.deepEqual([...review.allow], [...AGY_READ_ALLOW], "its allow list is the read-only one");
 });
 
 test("Antigravity: a worker, a restart and a tree helper run on skip-permissions with their --settings file, never without it", () => {
@@ -247,8 +249,9 @@ function launchFiles(t, role = "dev") {
   chmodSync(fake, 0o755);
   // The launch words of a worker, with the stand-in as the program and a print-mode command.
   const words = (line, argv = workerPlan(AGY_BOT, {}).argv) => agyGuarded("antigravity", [...argv, "--settings", plan.path]).slice(1).concat(["-p", line]);
-  const run = (line, argv) => spawnSync(process.execPath, [fake, ...words(line, argv)], { cwd: worktree, encoding: "utf8" });
-  return { root, worktree, plan, run, words };
+  const runAt = (cwd, line, argv) => spawnSync(process.execPath, [fake, ...words(line, argv)], { cwd, encoding: "utf8" });
+  const run = (line, argv) => runAt(worktree, line, argv);
+  return { root, worktree, plan, run, runAt, words };
 }
 
 test("a worker's launch words and file: a compound command returns its output, a denied command is refused (stand-in agy)", (t) => {
@@ -280,10 +283,15 @@ test("a worker's launch words and file: a compound command returns its output, a
   assert.equal(asked.status, 3, "without skip-permissions agy asks");
 });
 
-test("#953: the stand-in opens a dev worker's worktree with no trust question, and stops a review launch at it", (t) => {
-  assert.equal(launchFiles(t, "dev").run("echo in").status, 0);
-  const review = launchFiles(t, "review").run("echo in");
-  assert.deepEqual([review.status, review.stdout], [4, "Do you trust the contents of this project?\n"]);
+test("#953/#1046: the stand-in opens every worker's worktree, review included, with no trust question; an untrusted folder still stops at it", (t) => {
+  for (const role of ["dev", "review"]) {
+    const s = launchFiles(t, role);
+    const ok = s.run("echo in");
+    assert.deepEqual([ok.status, ok.stdout], [0, "in\n"], `${role} worker: no trust question`);
+    // A folder outside the launch's own worktree is still untrusted.
+    const no = s.runAt(s.root, "echo in");
+    assert.deepEqual([no.status, no.stdout], [4, "Do you trust the contents of this project?\n"], `${role} worker outside its worktree`);
+  }
 });
 
 test("the real agy: a compound command returns its output and a denied command is refused (AUTOMAGIK_HERDR_REAL_AGY=1)",

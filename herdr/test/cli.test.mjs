@@ -928,7 +928,7 @@ test("Antigravity #823: --agy-allow/--agy-deny add rules, clear with one empty v
   assert.equal(doctor.checks.filter((c) => c.check === "agy-sandbox").length, 1, "one host-level row, not one per bot");
 });
 
-test("Antigravity #884 M1: a reviewer seat and a review worker are never auto-trusted; writers list their folder", (t) => {
+test("Antigravity #1046: every launch, review included, trusts its own folder; review stays read-only", (t) => {
   const s = scene(t);
   const f = team();
   f.bots[0].agent = "antigravity";
@@ -940,11 +940,13 @@ test("Antigravity #884 M1: a reviewer seat and a review worker are never auto-tr
   s.seed(f);
   const doctor = s.cli(["dsh-tui", "doctor", "--json"]).json();
   const reviewer = doctor.checks.find((c) => c.check === `hc-proxy:${ID.main}`);
-  assert.deepEqual(reviewer.agyPermissions.trustedWorkspaces, [], "the reviewer seat trusts nothing");
-  assert.deepEqual(reviewer.workerAgyPermissions.trustedWorkspaces, [], "its review worker trusts nothing");
+  assert.deepEqual(reviewer.agyPermissions.trustedWorkspaces, [s.project], "the reviewer seat trusts its project");
+  assert.deepEqual(reviewer.workerAgyPermissions.trustedWorkspaces, ["<worktree>"], "its review worker trusts its worktree at launch");
+  assert.equal(reviewer.agyPermissions.allow.some((rule) => rule.startsWith("write_file(")), false, "the reviewer seat stays read-only");
+  assert.equal(reviewer.workerAgyPermissions.allow.some((rule) => rule.startsWith("write_file(")), false, "its review worker stays read-only");
   const text = s.cli(["dsh-tui", "doctor"]).out;
-  assert.match(text, /agy trusted -; agy allow /, "the reviewer seat prints no trusted folder");
-  assert.match(text, /worker agy trusted -; worker agy allow /, "the review worker prints none either");
+  assert.match(text, new RegExp(`agy trusted ${s.project}; agy allow `), "the reviewer seat prints its trusted folder");
+  assert.match(text, /worker agy trusted <worktree>; worker agy allow /, "the review worker prints its worktree");
   // A writer seat and its writer worker: the project, and (at launch) its worktree.
   const writer = doctor.checks.find((c) => c.check === `hc-proxy:${ID.cap}`);
   assert.deepEqual(writer.agyPermissions.trustedWorkspaces, [s.project]);
@@ -953,22 +955,22 @@ test("Antigravity #884 M1: a reviewer seat and a review worker are never auto-tr
   assert.match(text, /worker agy trusted <worktree>; worker agy allow /);
   // show carries the same effective rows as ls and doctor (botRow's JSON).
   const show = s.cli(["show", "Genie", "--json"]).json();
-  assert.deepEqual(show.agyPermissions.trustedWorkspaces, []);
-  assert.deepEqual(show.workerAgyPermissions.trustedWorkspaces, []);
-  assert.match(s.cli(["show", "Genie"]).out, /agy trusted  -/);
+  assert.deepEqual(show.agyPermissions.trustedWorkspaces, [s.project]);
+  assert.deepEqual(show.workerAgyPermissions.trustedWorkspaces, ["<worktree>"]);
+  assert.match(s.cli(["show", "Genie"]).out, new RegExp(`agy trusted  ${s.project}`));
   const cap = s.cli(["show", "Captain", "--json"]).json();
   assert.deepEqual(cap.agyPermissions.trustedWorkspaces, [s.project]);
   assert.deepEqual(cap.workerAgyPermissions.trustedWorkspaces, ["<worktree>"]);
-  // #884 Low B: plain show names the worker default's trusted folder too: "-" for a review
-  // worker, the worktree placeholder for a writer's.
-  assert.match(s.cli(["show", "Genie"]).out, /worker agy trusted  -/);
+  // #884 Low B: plain show names the worker default's trusted folder too: the worktree
+  // placeholder for every role, review included.
+  assert.match(s.cli(["show", "Genie"]).out, new RegExp(`worker agy trusted  <worktree>`));
   assert.match(s.cli(["show", "Captain"]).out, /worker agy trusted  <worktree>/);
-  // Follow-up: the reviewer seat's own start writes no trustedWorkspaces key at all, so the
-  // person's saved trust list is never overwritten with an empty one.
+  // #1046: the reviewer seat's own start writes trustedWorkspaces: [project], so agy's trust
+  // question is already answered, while its allow list stays read-only.
   const started = s.cli(["start", "Genie"]);
   assert.equal(started.code, 0, started.err);
   const seatFile = JSON.parse(readFileSync(agySettingsPath(s, ID.main), "utf8"));
-  assert.equal("trustedWorkspaces" in seatFile, false, "the reviewer seat's file leaves the key out");
+  assert.deepEqual(seatFile.trustedWorkspaces, [s.project], "the reviewer seat's file names the project");
   assert.equal(seatFile.permissions.allow.some((rule) => rule.startsWith("write_file(")), false, "and writes nothing");
 });
 
@@ -2767,7 +2769,7 @@ test("restart --agent swaps fresh without touching bots.json; --save writes the 
   const r = s.cli(["restart", "Genie", "--agent", "codex", "--json"]);
   assert.equal(r.code, 0, r.err);
   assert.deepEqual([r.json().mode, r.json().agent, r.json().saved], ["swap", "codex", false]);
-  assert.deepEqual(plain(agentWords(runCall(s.calls()))), ["codex", "--approve-for-me"]);
+  assert.deepEqual(plain(agentWords(runCall(s.calls()))), ["codex", "--approve-for-me", "--disable", "hooks"]);
   assert.equal(readFileSync(s.botsPath, "utf8"), before, "bots.json untouched");
   // Again from the claude pin, written down this time (t100 is mid-turn in the fake: --force).
   const f = team();
@@ -2790,7 +2792,7 @@ test("restart a codex bot resumes with codex resume --last; a bot not running is
   s.seed(f);
   const r = s.cli(["restart", "Captain", "--json"]);
   assert.equal(r.code, 0, r.err);
-  assert.deepEqual(plain(runCall(s.calls())).slice(-4), ["codex", "--approve-for-me", "resume", "--last"]);
+  assert.deepEqual(plain(runCall(s.calls())).slice(-6), ["codex", "--approve-for-me", "--disable", "hooks", "resume", "--last"]);
   assert.equal(r.json().replaced, "t6");
   // Genie isn't running: a plain start, nothing killed but t6.
   const started = s.cli(["restart", "Genie", "--json"]);
@@ -2856,7 +2858,7 @@ const runsOf = (s) => s.calls().filter((c) => c[0] === "run");
 const ownWords = (run) => plain(agentWords(run)).filter((w) => !w.includes("<herdr-bot>"));
 
 test("restart (#328): two bots on omp, then codex, in one folder: each resumes its own session id, from its label or the ledger", (t) => {
-  for (const [agent, words] of [["omp", (id) => [`--resume=${id}`]], ["codex", (id) => ["--approve-for-me", "resume", id]]]) {
+  for (const [agent, words] of [["omp", (id) => [`--resume=${id}`]], ["codex", (id) => ["--approve-for-me", "--disable", "hooks", "resume", id]]]) {
     const s = shareScene(t, agent, { labels: ["sess-tester", "sess-dev"] });
     const a = s.cli(["restart", "Genie", "--json"]);
     assert.equal(a.code, 0, a.err);
@@ -3122,7 +3124,7 @@ test("restart #413: codex can't resume a thread whose model provider is gone: on
   assert.equal(r.code, 0, r.err);
   const [first, second] = runs(s);
   assert.deepEqual(plain(agentWords(first)).slice(-2), ["resume", SID], "it tried the thread first");
-  assert.deepEqual(plain(agentWords(second)), ["codex", "--approve-for-me"], "then a new thread");
+  assert.deepEqual(plain(agentWords(second)), ["codex", "--approve-for-me", "--disable", "hooks"], "then a new thread");
   const j = r.json();
   assert.deepEqual([j.mode, j.terminal, j.replaced, j.session], ["fresh", "t101", "t6", null]);
   assert.equal(j.note, `codex can't resume its thread (***) (t100 said "${CODEX_GONE}"), so it starts on a new one`);
@@ -3239,8 +3241,8 @@ test("restart #597: a hand-started codex bot comes back from its source, not its
   const r = s.cli(["restart", "Captain", "--json"]);
   assert.equal(r.code, 0, r.err);
   const run = runCall(s.calls());
-  assert.deepEqual(plain(agentWords(run)), ["codex", "--approve-for-me", "resume", SID], "the source's command, resumed by its session");
-  assert.match(r.err, /Captain: its pane's command differs from its source now \(drops -m=\*\*\*, -c=\*\*\*; adds --approve-for-me\)/);
+  assert.deepEqual(plain(agentWords(run)), ["codex", "--approve-for-me", "--disable", "hooks", "resume", SID], "the source's command, resumed by its session");
+  assert.match(r.err, /Captain: its pane's command differs from its source now \(drops -m=\*\*\*, -c=\*\*\*; adds --approve-for-me, --disable=\*\*\*\)/);
   assert.equal(r.err.includes("gpt-a"), false, "the value is masked");
   assert.equal(r.json().session, "***"); // RFC 0021: masked
   assert.equal(run[run.indexOf("--cwd") + 1], s.project);
@@ -3267,7 +3269,7 @@ test("restart #213: the pane always gets the CLI's PATH, so a bare codex (#!/usr
   assert.deepEqual(parts.prefix, ["/usr/bin/env"]);
   assert.deepEqual(parts.env, [`PATH=${KILL_GUARD_DIR}:${path}`, `HERDR_APP_HOME=${s.app}`],
     "the hc kill shim (#955), then the CLI's PATH, and its app home: no env word lost or leaked (#650)");
-  assert.deepEqual(plain(parts.words), ["codex", "--approve-for-me", "resume", "--last"]);
+  assert.deepEqual(plain(parts.words), ["codex", "--approve-for-me", "--disable", "hooks", "resume", "--last"]);
 });
 
 /** Genie in t5 with two helpers that end with it (a worker on omp, a template on omp) and a member bot that outlives it. */
@@ -3857,7 +3859,7 @@ test("restart --cwd: a non-Claude resume into another folder is said; --cwd with
   assert.equal(r.code, 0, r.err);
   assert.match(r.err, new RegExp(`t100 runs in ${b}, not ${a}: codex finds its last conversation by folder, so it may not find it there\\.`));
   const run = runCall(s.calls());
-  assert.deepEqual([run[run.indexOf("--cwd") + 1], ...plain(agentWords(run))], [b, "codex", "--approve-for-me", "resume", "--last"]);
+  assert.deepEqual([run[run.indexOf("--cwd") + 1], ...plain(agentWords(run))], [b, "codex", "--approve-for-me", "--disable", "hooks", "resume", "--last"]);
   // --machine: refused before anything is read or started, whatever DIR is.
   const m = s.cli(["restart", "Captain", "--machine", "box", "--cwd", b]);
   assert.equal(m.code, 2);
@@ -4575,6 +4577,52 @@ test("RFC 0021: one end row per launch: restart --tree and the worktree sweep bo
   assert.deepEqual(ends("t7"), ["replaced"], "the sweep adds none for a launch --tree ended");
   assert.deepEqual(ends("t101"), ["finished"], "the replacement's own, once, though the sweep ran twice");
   assert.deepEqual(ends("t5"), ["replaced"]);
+});
+
+test("reap #899: a finished launch's end row and its branch's pr rows reach workers.jsonl, with no worktree left to remove", (t) => {
+  const ended = Date.now() - 20 * 60_000;
+  const s = scene(t, { terminals: [{ ...term("t7", { state: "finished", created: 5 }), finished_ms: ended, reason: "exited", exit_code: 2, signal: null }] });
+  // A stand-in gh: what it was asked, and gh.json as its answer. The real one is never run.
+  const ghLog = join(s.root, "gh.log"), ghJson = join(s.root, "gh.json");
+  exe(join(s.root, "bin", "gh"), `#!/bin/sh\nprintf '%s\\n' "$*" >> "${ghLog}"\ncat "${ghJson}"\n`);
+  const pr = (state, extra = {}) => [{ number: 12, state, createdAt: "2026-02-03T05:00:00Z", mergedAt: null, closedAt: null, baseRefName: "main",
+    title: "TITLE-MARK", author: { login: "AUTHOR-MARK" }, url: "https://example.invalid/URL-MARK", headRefOid: "SHA-MARK", ...extra }];
+  writeFileSync(ghJson, JSON.stringify(pr("OPEN")));
+  // The worker's branch: one commit on top of where its worktree started. The worktree itself is gone already.
+  const base = git(s.project, "rev-parse", "HEAD").trim();
+  git(s.project, "branch", "-q", "fix/213");
+  execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit-tree", "-m", "work", "-p", base, `${base}^{tree}`],
+    { cwd: s.project, encoding: "utf8", env: { ...process.env, GIT_AUTHOR_DATE: "2026-02-03T04:05:06Z", GIT_COMMITTER_DATE: "2026-02-03T04:05:06Z" } })
+    .trim().split("\n").forEach((sha) => git(s.project, "update-ref", "refs/heads/fix/213", sha));
+  mkdirSync(join(s.app, "automagik-herdr"), { recursive: true });
+  const start = { event: "start", kind: "worker", terminal: "t7", pid: 1, botId: ID.main, task: "gh-213", branch: "fix/213", project: s.project, lead: ID.main,
+    worktree: join(s.root, "wt-gone"), base, created: true, core: "fakecore0000", created_ms: 5, at: new Date(Date.now() - 2 * 3600_000).toISOString() };
+  writeFileSync(ledgerPath(s.app), `${JSON.stringify(start)}\n`, { mode: 0o600 });
+  const first = s.cli(["reap"]);
+  assert.equal(first.code, 0, first.err);
+  assert.equal(first.out.trim(), "No finished worker's worktree to remove.");
+  const open = { event: "pr", project: s.project, branch: "fix/213", task: "gh-213", pr: 12, state: "open", first_commit_at: "2026-02-03T04:05:06.000Z",
+    opened_at: "2026-02-03T05:00:00.000Z", merged_at: null, closed_at: null, core: "fakecore0000" };
+  const at = (rows) => rows.map(({ at: _at, ...row }) => row);
+  assert.deepEqual(ledgerOf(s).slice(1).map(({ at: when, ...row }) => (row.event === "end" ? { ...row, at: when } : row)), [
+    { event: "end", kind: "worker", terminal: "t7", core: "fakecore0000", created_ms: 5, reason: "finished", hc_reason: "exited", exit_code: 2, at: new Date(ended).toISOString() },
+    open,
+  ]);
+  // The pull request merges: one more row, and then it is asked for no more.
+  writeFileSync(ghJson, JSON.stringify(pr("MERGED", { mergedAt: "2026-02-04T00:00:00Z", closedAt: "2026-02-04T00:00:00Z" })));
+  for (let i = 0; i < 3; i += 1) assert.equal(s.cli(["reap"]).code, 0);
+  assert.deepEqual(at(ledgerOf(s).filter((x) => x.event === "pr")), [open,
+    { ...open, state: "merged", merged_at: "2026-02-04T00:00:00.000Z", closed_at: "2026-02-04T00:00:00.000Z" }]);
+  assert.equal(ledgerOf(s).filter((x) => x.event === "end").length, 1);
+  assert.deepEqual(readFileSync(ghLog, "utf8").trim().split("\n"),
+    Array(2).fill("pr list --head fix/213 --state all --json number,state,createdAt,mergedAt,closedAt,baseRefName --limit 20"));
+  const text = readFileSync(ledgerPath(s.app), "utf8");
+  assert.doesNotMatch(text, /MARK/, "no title, author, address or commit of the pull request");
+  assert.equal(statSync(ledgerPath(s.app)).mode & 0o777, 0o600);
+  // Every row is one usagemeter's reader takes (ledger.rs parse_pr): its keys, and no other.
+  for (const row of ledgerOf(s).filter((x) => x.event === "pr")) {
+    assert.deepEqual(Object.keys(row), ["event", "project", "branch", "task", "pr", "state", "first_commit_at", "opened_at", "merged_at", "closed_at", "core", "at"]);
+  }
 });
 
 /** Every session id the scene's ledger and hc labels hold. */
