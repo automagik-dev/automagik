@@ -74,7 +74,7 @@ const pack = createPack({
     "Reset Bot sign-in": "Redefinir login do Bot",
     "This signs {vendor} out for Bots. Sign in again in the app.": "Isso desconecta {vendor} dos Bots. Entre de novo no app.",
     "Bot models and history stay.": "Os modelos e o histórico dos Bots são mantidos.",
-    "Bot CLI user settings start empty.": "As configurações de usuário da CLI dos Bots começam vazias.",
+    "Bot CLI user settings start empty.": "As configurações pessoais da CLI dos Bots começam vazias.",
     "Previous Bot sign-in files stay separate and are never reused.": "Os arquivos do login anterior ficam separados e nunca são reutilizados.",
     "No credentials are copied. Your terminal login stays unchanged.": "Nenhuma credencial é copiada. O login do terminal permanece intacto.",
     "Account not shown by the CLI": "A CLI não informou a conta",

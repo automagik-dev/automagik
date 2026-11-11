@@ -6,7 +6,7 @@
     "Isso desconecta {vendor} dos Bots. Entre de novo no app.",
   "Bot models and history stay.": "Os modelos e o histórico dos Bots são mantidos.",
   "Bot CLI user settings start empty.":
-    "As configurações de usuário da CLI dos Bots começam vazias.",
+    "As configurações pessoais da CLI dos Bots começam vazias.",
   "Previous Bot sign-in files stay separate and are never reused.":
     "Os arquivos do login anterior ficam separados e nunca são reutilizados.",
   "No credentials are copied. Your terminal login stays unchanged.":
