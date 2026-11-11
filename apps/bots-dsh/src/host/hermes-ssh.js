@@ -14,7 +14,7 @@ const messages = Object.freeze({
   unreachable: 'SSH could not reach the remote computer. Check the SSH alias, network, port, and installed SSH client.',
   unknown: 'SSH could not start the remote Hermes connection. Check the connection details and try again.',
 })
-const publicCodes = { 'host-key-changed': 'bot/hermes-ssh-host-key', 'auth-failed': 'bot/hermes-ssh-auth', 'hermes-not-found': 'bot/hermes-ssh-missing' }
+const publicCodes = { 'host-key-changed': 'bot/hermes-ssh-host-key', 'auth-failed': 'bot/hermes-ssh-auth', 'hermes-not-found': 'bot/hermes-ssh-missing', 'interactive-auth': 'bot/hermes-ssh-interactive', 'update-required': 'bot/hermes-ssh-update', 'unsupported-platform': 'bot/hermes-ssh-platform', timeout: 'bot/hermes-ssh-timeout', unreachable: 'bot/hermes-ssh-unreachable', cleanup: 'bot/hermes-ssh-cleanup' }
 const cleanupMessage = 'Remote Hermes cleanup could not be confirmed. Check the remote computer before connecting again; background remote work may continue.'
 const failure = (kind, text = messages[kind] ?? messages.unknown) => Object.assign(new Error(text), { code: publicCodes[kind] ?? 'bot/hermes-ssh', sshError: kind })
 const deferred = () => {
@@ -66,7 +66,8 @@ nonce = ""
 clean = True
 last_ping = time.monotonic()
 control = 15.0
-grace = 3.0
+grace = 2.0
+cancel = 3.5
 
 def emit(kind, **values):
     try:
@@ -84,6 +85,22 @@ def check_input():
         if not data or b"close" in data: raise Stop()
         last_ping = time.monotonic()
     if time.monotonic() - last_ping > control: raise Stop()
+
+def child_exited():
+    # Observe without reaping: the owned leader, even a zombie, pins this group ID
+    # until the last signal. Never signal a numeric group after releasing that pin.
+    if all(hasattr(os, name) for name in ("waitid", "WNOWAIT", "P_PID", "WEXITED", "WNOHANG")):
+        return os.waitid(os.P_PID, child.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT) is not None
+    # Older macOS Python lacks WNOWAIT: retain the unreaped leader until
+    # private control EOF/close or the heartbeat deadline instead of polling it.
+    return False
+
+def group_exists(pid):
+    try:
+        os.killpg(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
 
 def probe(argv):
     check_input()
@@ -107,7 +124,8 @@ try:
     token = options["credential"]
     if not re.fullmatch(r"[0-9a-f]{16}", nonce) or not re.fullmatch(r"[0-9a-f]{64}", token): raise Fault("unknown")
     control = max(0.05, float(options["controlMs"]) / 1000)
-    grace = max(0.05, float(options["cancelMs"]) / 1000 * 0.6)
+    grace = max(0.01, float(options["cancelMs"]) / 1000 * 0.4)
+    cancel = max(0.05, float(options["cancelMs"]) / 1000 * 0.7)
     until = time.monotonic() + float(options["startMs"]) / 1000
     if sys.platform not in ("linux", "darwin"): raise Fault("unsupported-platform")
     explicit = options.get("hermesPath", "")
@@ -133,7 +151,7 @@ try:
     output = b""
     ready = False
     output_open = True
-    while child.poll() is None:
+    while not child_exited():
         check_input()
         if not ready and time.monotonic() >= until: raise Fault("timeout")
         readable, _, _ = select.select([sys.stdin] + ([child.stdout] if output_open else []), [], [], min(control / 4, 0.25))
@@ -158,14 +176,27 @@ except Exception:
     emit("error", code="unknown")
 finally:
     for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT): signal.signal(sig, signal.SIG_IGN)
-    if child is not None and child.poll() is None:
+    if child is not None:
+        stop_until = time.monotonic() + cancel
         try:
+            # The unreaped leader stays owned even when it exited before close or
+            # on TERM. Descendants can outlive it and still need the group KILL.
             os.killpg(child.pid, signal.SIGTERM)
-            try: child.wait(timeout=grace)
-            except subprocess.TimeoutExpired:
-                os.killpg(child.pid, signal.SIGKILL)
-                child.wait(timeout=max(0.05, grace / 4))
-        except (OSError, subprocess.TimeoutExpired): clean = child.poll() is not None
+            term_until = min(stop_until, time.monotonic() + grace)
+            while time.monotonic() < term_until:
+                time.sleep(min(0.01, max(0, term_until - time.monotonic())))
+            os.killpg(child.pid, signal.SIGKILL)
+        except OSError:
+            clean = False
+        try:
+            child.wait(timeout=max(0.001, stop_until - time.monotonic()))
+            # The ownership pin has now been released. Only observe from here:
+            # another process may reuse this numeric ID; never signal it again.
+            while group_exists(child.pid) and time.monotonic() < stop_until:
+                time.sleep(min(0.01, max(0, stop_until - time.monotonic())))
+            clean = clean and not group_exists(child.pid)
+        except (OSError, subprocess.TimeoutExpired):
+            clean = False
     if folder:
         try: shutil.rmtree(folder)
         except OSError: clean = False
@@ -218,7 +249,7 @@ export async function startHermesSsh(ssh, {
     const ended = deferred()
     const entry = { child, ended: ended.promise, stderr: '', commandSent: false }
     children.push(entry)
-    child.on('error', () => { noRemote ||= child === remote && !child.pid; ended.resolve(); fail(failure('unreachable')) })
+    child.on('error', () => { noRemote ||= child === remote && !child.pid; if (!child.pid) ended.resolve(); fail(failure('unreachable')) })
     child.on('close', code => {
       ended.resolve()
       if (!stopping) {
@@ -261,7 +292,7 @@ export async function startHermesSsh(ssh, {
         for (const entry of children) { try { entry.child.kill('SIGKILL') } catch {} }
         try { await bounded(ended, stopUntil - Date.now(), false); stopped = true } catch {}
       }
-      if (!stopped || (inputSent && !clean && !noRemote)) throw Object.assign(failure('unknown', cleanupMessage), { cleanupUnknown: true })
+      if (!stopped || (inputSent && !clean && !noRemote)) throw Object.assign(failure('cleanup', cleanupMessage), { cleanupUnknown: true, localClosed: ended })
     })()
     return closing
   }
@@ -304,10 +335,10 @@ export async function startHermesSsh(ssh, {
     if (stopping || remote.exitCode !== null || tunnel.exitCode !== null) throw failure('unknown')
     return { address: `http://127.0.0.1:${localPort}`, credential, close }
   } catch (error) {
-    let cleanupUnknown = false
-    try { await close() } catch { cleanupUnknown = true }
+    let cleanupError
+    try { await close() } catch (failure) { cleanupError = failure }
     const safe = error?.code?.startsWith('bot/hermes-ssh') ? error : failure('unknown')
-    if (cleanupUnknown) { safe.message += ` ${cleanupMessage}`; safe.cleanupUnknown = true }
+    if (cleanupError) { safe.message += ` ${cleanupMessage}`; safe.cleanupUnknown = true; safe.localClosed = cleanupError.localClosed }
     throw safe
   }
 }

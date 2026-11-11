@@ -3,7 +3,12 @@ export const HERMES_DEADLINES = Object.freeze({ start: 60_000, control: 15_000, 
 export const LOST = 'Connection lost; remote outcome unknown'
 export const CONTRACT = 'Remote Hermes requires standalone Desktop contract 8 with server-request approvals.'
 export const CANONICAL = 'Canonical-authority Hermes is not supported. Use a standalone Desktop contract 8 backend.'
-const failure = message => Object.assign(new Error(message), { code: 'bot/hermes' })
+const localFailures = new WeakSet()
+const failure = (message, code = 'bot/hermes') => {
+  const error = Object.assign(new Error(message), { code })
+  localFailures.add(error)
+  return error
+}
 const safeModel = value => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._:/[\]@-]{0,200}$/.test(value)
 
 export const INVALID_FRAME = 'Remote Hermes returned an invalid protocol frame. Reconnect and reconcile the remote session.'
@@ -153,9 +158,9 @@ export class HermesTransport {
     return output
   }
 
-  async bounded(promise, ms, message) {
+  async bounded(promise, ms, message, code = 'bot/hermes-timeout') {
     let timer
-    try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(failure(message)), ms) })]) }
+    try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(failure(message, code)), ms) })]) }
     finally { clearTimeout(timer) }
   }
 
@@ -165,8 +170,8 @@ export class HermesTransport {
       return this
     } catch (error) {
       this.close()
-      if (error?.code === 'bot/hermes') throw error
-      throw failure('Remote Hermes could not connect. Check the saved credential and address.')
+      if (localFailures.has(error)) throw error
+      throw failure('Remote Hermes could not connect. Check the saved credential and address.', 'bot/hermes-connection')
     }
   }
 
@@ -179,11 +184,17 @@ export class HermesTransport {
         method: 'POST', headers: this.authHeaders,
         redirect: 'error', signal: controller.signal,
       })
-    } catch { throw failure('Remote Hermes authentication failed. Check the saved credential.') }
-    if (!response.ok) throw failure('Remote Hermes authentication expired or was refused. Replace the saved credential.')
+    } catch (error) {
+      if (error?.code === 'bot/hermes-auth') throw failure('Remote Hermes authentication expired or was refused. Replace the saved credential.', 'bot/hermes-auth')
+      if (error?.code === 'bot/hermes-timeout') throw failure('Remote Hermes did not answer within the connection deadline. Test the connection again.', 'bot/hermes-timeout')
+      throw failure('Remote Hermes could not connect. Check the saved address and that Hermes is running.', 'bot/hermes-connection')
+    }
+    if (!response.ok) throw response.status === 401 || response.status === 403
+      ? failure('Remote Hermes authentication expired or was refused. Replace the saved credential.', 'bot/hermes-auth')
+      : failure('Remote Hermes could not complete the connection request. Check that Hermes is running.', 'bot/hermes-connection')
     let ticket
-    try { ticket = (await response.json()).ticket } catch { throw failure('Remote Hermes returned an invalid authentication ticket.') }
-    if (typeof ticket !== 'string' || !/^[A-Za-z0-9._~-]+$/.test(ticket)) throw failure('Remote Hermes returned an invalid authentication ticket.')
+    try { ticket = (await response.json()).ticket } catch { throw failure('Remote Hermes returned an invalid authentication ticket.', 'bot/hermes-protocol') }
+    if (typeof ticket !== 'string' || !/^[A-Za-z0-9._~-]+$/.test(ticket)) throw failure('Remote Hermes returned an invalid authentication ticket.', 'bot/hermes-protocol')
     this.secrets.add(ticket)
     if (this.closed || controller.signal.aborted) throw failure('Remote Hermes startup was cancelled.')
     let readyResolve, readyReject
@@ -195,11 +206,11 @@ export class HermesTransport {
     this.ws.addEventListener('message', event => {
       if (this.closed || this.lostNotified) return
       try {
-        if (!string(event.data) || Buffer.byteLength(event.data, 'utf8') > FRAME_BYTES) throw failure(INVALID_FRAME)
+        if (!string(event.data) || Buffer.byteLength(event.data, 'utf8') > FRAME_BYTES) throw failure(INVALID_FRAME, 'bot/hermes-protocol')
         const frame = JSON.parse(event.data)
-        if (!boundedStructure(frame) || !frameShape(frame)) throw failure(INVALID_FRAME)
+        if (!boundedStructure(frame) || !frameShape(frame)) throw failure(INVALID_FRAME, 'bot/hermes-protocol')
         if (frame.method === 'event' && frame.params.type === 'gateway.ready') {
-          if (frame.params.payload.session_authority === true) { readyReject(failure(CANONICAL)); return }
+          if (frame.params.payload.session_authority === true) { readyReject(failure(CANONICAL, 'bot/hermes-unsupported')); return }
           this.epoch = frame.params.payload.replay_epoch
           readyResolve()
         } else this.receive(frame)
@@ -211,7 +222,7 @@ export class HermesTransport {
     if (this.closed || controller.signal.aborted) throw failure('Remote Hermes startup was cancelled.')
     this.readyReject = undefined
     const capabilities = await this.request('client.capabilities', { server_requests: true })
-    if (!capabilities.server_requests?.includes('approval')) throw failure(CONTRACT)
+    if (!capabilities.server_requests?.includes('approval')) throw failure(CONTRACT, 'bot/hermes-unsupported')
     this.connected = true
   }
 
@@ -228,7 +239,7 @@ export class HermesTransport {
     }
     const pending = this.pending.get(frame.id)
     if (!pending) return
-    if (!frame.error && !resultShape(pending.method, frame.result)) throw failure(INVALID_FRAME)
+    if (!frame.error && !resultShape(pending.method, frame.result)) throw failure(INVALID_FRAME, 'bot/hermes-protocol')
     this.pending.delete(frame.id)
     clearTimeout(pending.timer)
     if (frame.error) pending.reject(failure('Remote Hermes refused a control request. Check the remote session.'))
@@ -241,7 +252,7 @@ export class HermesTransport {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id)
-        reject(failure(method === 'prompt.submit' ? LOST : 'Remote Hermes did not answer a control request within 15 seconds.'))
+        reject(failure(method === 'prompt.submit' ? LOST : 'Remote Hermes did not answer a control request within 15 seconds.', method === 'prompt.submit' ? 'bot/hermes' : 'bot/hermes-timeout'))
       }, ms)
       this.pending.set(id, { resolve, reject, timer, method })
       try { this.ws.send(JSON.stringify({ jsonrpc: '2.0', id, method, params: { ...params, ...(this.profile ? { profile: this.profile } : {}) } })) }
@@ -277,11 +288,11 @@ export class HermesTransport {
     const stored = [snapshot?.stored_session_id, snapshot?.session_key, snapshot?.info?.stored_session_id].filter(Boolean)
     if (new Set(stored).size > 1) throw failure('Remote Hermes returned conflicting stored session IDs.')
     snapshot = { ...snapshot, stored_session_id: stored[0] }
-    if (snapshot?.session_authority || snapshot?.protocol === 'hermes-gateway-v1') throw failure(CANONICAL)
-    if (snapshot?.info?.desktop_contract !== 8) throw failure(CONTRACT)
+    if (snapshot?.session_authority || snapshot?.protocol === 'hermes-gateway-v1') throw failure(CANONICAL, 'bot/hermes-unsupported')
+    if (snapshot?.info?.desktop_contract !== 8) throw failure(CONTRACT, 'bot/hermes-unsupported')
     if (!snapshot.session_id || !snapshot.stored_session_id) throw failure('Remote Hermes did not return both stored and runtime session IDs.')
     // A remote profile that auto-approves cannot honour a restrictive DSH level. Never alter it.
-    if (approvals && (snapshot.info.yolo !== false || snapshot.info.approval_mode !== 'manual')) throw failure('Set this remote profile to manual approvals in Hermes before connecting. Automagik does not change its global approval setting.')
+    if (approvals && (snapshot.info.yolo !== false || snapshot.info.approval_mode !== 'manual')) throw failure('Set this remote profile to manual approvals in Hermes before connecting. Automagik does not change its global approval setting.', 'bot/hermes-approvals')
     return snapshot
   }
 
@@ -307,7 +318,7 @@ export class HermesTransport {
   async session(identity, model) {
     const remaining = () => {
       const ms = this.startUntil - Date.now()
-      if (ms <= 0) throw failure('Remote Hermes did not start within 60 seconds.')
+      if (ms <= 0) throw failure('Remote Hermes did not start within 60 seconds.', 'bot/hermes-timeout')
       return Math.min(ms, this.deadlines.control)
     }
     const snapshot = await this.approvalSnapshot(await this.request(identity?.storedSessionId ? 'session.resume' : 'session.create', identity?.storedSessionId

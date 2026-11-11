@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import { prepareHermesConnection, refreshHermesProfiles } from '../src/host/hermes-connection.js'
 import { install } from '../src/host/hermes-remote.js'
+import { HermesTransport } from '../src/host/hermes-transport.js'
 import { fakeContext } from './fake-ctx.js'
 
 const deadlines = { start: 300, control: 100, cancel: 10 }
@@ -306,4 +307,208 @@ test('a request cancelled while the previous test is cleaning up never starts it
   releaseClose()
   await cancelled; await rejected
   assert.equal(started, 1)
+})
+
+
+function savedToken(h, f, { authMode = 'token', secret = { kind: 'token', credential: f.credential } } = {}) {
+  const credentialRef = `HERMES_REMOTE_${randomUUID().replaceAll('-', '').toUpperCase()}`
+  h.secrets.set(credentialRef, JSON.stringify(secret))
+  h.rt.state.prefs.hermesRemote = { enabled: true, mode: 'remote', authMode, address: f.address, profile: 'sample-profile', setupVersion: 1, credentialRef, models: [] }
+  return { mode: 'remote', authMode, address: f.address, credentialRef, credential: '' }
+}
+
+test('saved-token-retest-without-secret: a matching saved token re-tests profiles without revealing or re-entering it', async t => {
+  const f = dashboard({ status: { gateway_shared_with: ['sample-profile', 'another-profile'] }, inventory: { profiles: [{ name: 'sample-profile', display_name: 'Sample profile' }, { name: 'another-profile', display_name: 'Another profile' }] } }), h = runtime(t, f), draft = savedToken(h, f)
+  const tested = await h.endpoints.get('hermes-remote-test')({ ...draft, profile: 'another-profile' })
+  assert.deepEqual(tested.profiles, [{ id: 'sample-profile', name: 'Sample profile' }, { id: 'another-profile', name: 'Another profile' }])
+  assert.ok(f.calls.length > 0 && f.calls.every(call => call.headers['X-Hermes-Session-Token'] === f.credential))
+  const refreshed = await h.endpoints.get('hermes-remote-test-profiles')({ testId: tested.testId })
+  assert.deepEqual(refreshed.profiles, tested.profiles)
+  const view = await h.endpoints.get('hermes-remote-save')({ testId: tested.testId, profile: 'another-profile' })
+  assert.equal(view.profile, 'another-profile')
+  for (const value of [tested, refreshed, view, h.rt.state]) assert.ok(!JSON.stringify(value).includes(f.credential))
+  assert.ok(h.wires.every(wire => !wire.sent.some(frame => frame.method === 'prompt.submit')))
+})
+
+test('saved token reuse refuses changed address, mode, auth mode or credential reference, and fresh credentials override it', async t => {
+  const f = dashboard(), h = runtime(t, f, { startSsh: async () => { throw Object.assign(Error('Fixture unavailable'), { code: 'bot/hermes-ssh' }) } }), draft = savedToken(h, f)
+  for (const change of [{ address: f.address + '/other' }, { authMode: 'password' }, { credentialRef: 'HERMES_REMOTE_OTHER' }, { credentialRef: undefined }, { mode: 'ssh', ssh: { host: 'example.invalid' } }]) {
+    f.calls.length = 0
+    await assert.rejects(h.rt.hermesRemote.test({ ...draft, ...change }))
+    assert.ok(f.calls.every(call => call.headers['X-Hermes-Session-Token'] !== f.credential))
+  }
+  const replacement = randomUUID()
+  await h.rt.hermesRemote.test({ ...draft, credential: replacement })
+  assert.ok(f.calls.length > 0 && f.calls.every(call => call.headers['X-Hermes-Session-Token'] === replacement))
+})
+
+test('saved token re-test fails closed when its source reference, value or connection changes while REST is pending', async t => {
+  for (const change of ['reference', 'secret', 'address']) {
+    let reached, resume
+    const reachedRequest = new Promise(resolve => { reached = resolve })
+    const waiting = new Promise(resolve => { resume = resolve })
+    const f = dashboard({ handle: async path => { if (path === '/api/status') { reached(); await waiting } } }), h = runtime(t, f), draft = savedToken(h, f)
+    const pending = h.rt.hermesRemote.test(draft), rejected = assert.rejects(pending, error => error.code.startsWith('bot/hermes-') && !error.message.includes(f.credential))
+    await reachedRequest
+    if (change === 'reference') h.rt.state.prefs.hermesRemote.credentialRef = 'HERMES_REMOTE_OTHER'
+    if (change === 'secret') h.secrets.set(draft.credentialRef, JSON.stringify({ kind: 'token', credential: randomUUID() }))
+    if (change === 'address') h.rt.state.prefs.hermesRemote.address += '/other'
+    resume(); await rejected
+    assert.equal(h.wires.length, 0)
+  }
+})
+
+test('saved token re-test cannot refresh or save after its source credential changes', async t => {
+  const f = dashboard(), h = runtime(t, f), draft = savedToken(h, f)
+  const tested = await h.rt.hermesRemote.test(draft)
+  h.rt.state.prefs.hermesRemote.credentialRef = 'HERMES_REMOTE_OTHER'
+  await assert.rejects(h.rt.hermesRemote.refreshProfiles({ testId: tested.testId }))
+  await assert.rejects(h.rt.hermesRemote.save({ testId: tested.testId, profile: 'sample-profile' }))
+  assert.equal(h.rt.state.prefs.hermesRemote.credentialRef, 'HERMES_REMOTE_OTHER')
+})
+
+test('safe-errors-collapsed: an expired saved token or session reaches the UI endpoint as a fixed typed auth failure', async t => {
+  for (const authMode of ['token', 'password']) {
+    const f = dashboard({ handle: path => path === '/api/auth/ws-ticket' ? response({ message: 'private fixture detail' }, 401) : undefined })
+    const h = runtime(t, f, { transport: options => new HermesTransport(options) })
+    savedToken(h, f, { authMode, secret: authMode === 'token' ? { kind: 'token', credential: f.credential } : { kind: 'session', cookie: `hermes_session_at=${f.access}` } })
+    await assert.rejects(h.endpoints.get('hermes-remote-connect')({}), error => {
+      assert.equal(error.code, 'bot/hermes-auth')
+      for (const secret of [f.credential, f.access, 'private fixture detail']) assert.ok(!error.message.includes(secret))
+      return true
+    })
+    assert.equal(f.calls.length, 1)
+    assert.ok(f.calls[0].url.endsWith('/api/auth/ws-ticket'))
+    assert.equal(authMode === 'token' ? f.calls[0].headers['X-Hermes-Session-Token'] : f.calls[0].headers.Cookie, authMode === 'token' ? f.credential : `hermes_session_at=${f.access}`)
+  }
+})
+
+test('saved sign-in restoration preserves only allowlisted typed codes and exposes fixed messages without remote detail', async t => {
+  for (const code of ['bot/hermes-auth', 'bot/hermes-ssh-auth', 'bot/hermes-ssh-host-key', 'bot/hermes-ssh-missing', 'bot/hermes-unknown']) {
+    const detail = randomUUID(), f = dashboard(), h = runtime(t, f, { transport: () => ({ connect: async () => { throw Object.assign(Error(detail), { code }) }, close() {} }) })
+    savedToken(h, f)
+    await assert.rejects(h.endpoints.get('hermes-remote-connect')({}), error => {
+      assert.equal(error.code, code === 'bot/hermes-unknown' ? 'bot/refused' : code)
+      assert.ok(!error.message.includes(detail))
+      return true
+    })
+  }
+})
+
+
+test('saved-token re-test rejects expired authentication through the real REST helper with a typed redacted error', async t => {
+  const f = dashboard({ handle: path => path === '/api/status' ? response({ error: 'private fixture detail' }, 401) : undefined }), h = runtime(t, f), draft = savedToken(h, f)
+  await assert.rejects(h.endpoints.get('hermes-remote-test')(draft), error => {
+    assert.equal(error.code, 'bot/hermes-auth')
+    assert.ok(!error.message.includes(f.credential) && !error.message.includes('private fixture detail'))
+    return true
+  })
+  assert.equal(f.calls[0].headers['X-Hermes-Session-Token'], f.credential)
+  assert.equal(h.wires.length, 0)
+})
+
+test('saved-token source binding is rechecked after wire probing before a test ID can be returned', async t => {
+  const f = dashboard(); let reached, resume
+  const started = new Promise(resolve => { reached = resolve })
+  const h = runtime(t, f, { beforeModels: async () => { reached(); await new Promise(resolve => { resume = resolve }) } }), draft = savedToken(h, f)
+  const pending = h.rt.hermesRemote.test(draft), rejected = assert.rejects(pending, { code: 'bot/hermes-auth' })
+  await started
+  h.secrets.set(draft.credentialRef, JSON.stringify({ kind: 'token', credential: randomUUID() }))
+  resume(); await rejected
+  assert.ok(h.wires.every(wire => wire.closed))
+})
+
+test('saved SSH restoration sanitizes allowlisted and unknown factory errors before the UI endpoint', async t => {
+  for (const code of ['bot/hermes-ssh-auth', 'bot/hermes-ssh-unknown', 'bot/hermes']) {
+    const f = dashboard(), detail = randomUUID(), h = runtime(t, f, { startSsh: async () => { throw Object.assign(Error(detail), { code }) } })
+    h.rt.state.prefs.hermesRemote = { enabled: true, setupVersion: 1, mode: 'ssh', authMode: 'token', ssh: { host: 'example.invalid' }, profile: 'sample-profile', models: [] }
+    await assert.rejects(h.endpoints.get('hermes-remote-connect')({}), error => {
+      assert.equal(error.code, code === 'bot/hermes-ssh-auth' ? code : 'bot/refused')
+      assert.ok(!error.message.includes(detail))
+      return true
+    })
+  }
+})
+
+
+test('unconfirmed SSH cleanup takes priority over its startup error without exposing diagnostics or process identities', async t => {
+  const f = dashboard(), detail = randomUUID(), h = runtime(t, f, { startSsh: async () => { throw Object.assign(Error(detail), { code: 'bot/hermes-ssh-auth', cleanupUnknown: true, localClosed: false, pid: 4321 }) } })
+  h.rt.state.prefs.hermesRemote = { enabled: true, setupVersion: 1, mode: 'ssh', authMode: 'token', ssh: { host: 'example.invalid' }, profile: 'sample-profile', models: [] }
+  await assert.rejects(h.endpoints.get('hermes-remote-connect')({}), error => {
+    assert.equal(error.code, 'bot/hermes-ssh-cleanup')
+    assert.ok(!error.message.includes(detail) && !error.message.includes('4321'))
+    assert.equal(error.cleanupUnknown, undefined)
+    assert.equal(error.localClosed, undefined)
+    assert.equal(error.pid, undefined)
+    return true
+  })
+})
+
+
+test('a matching legacy saved raw token can be re-tested without entering or returning its value', async t => {
+  const f = dashboard(), h = runtime(t, f), credentialRef = 'HERMES_REMOTE_CREDENTIAL'
+  h.secrets.set(credentialRef, f.credential)
+  h.rt.state.prefs.hermesRemote = { enabled: true, address: f.address, profile: 'sample-profile', credentialRef, models: [] }
+  const result = await h.rt.hermesRemote.test({ mode: 'remote', address: f.address, authMode: 'token', credentialRef, credential: '' })
+  assert.ok(result.testId)
+  assert.ok(f.calls.every(call => call.headers['X-Hermes-Session-Token'] === f.credential))
+  assert.ok(!JSON.stringify(result).includes(f.credential))
+})
+
+
+test('stale-save-overwrites-replacement: configuring a replacement during awaited secret storage survives rejected saved-token save', async t => {
+  const f = dashboard(), h = runtime(t, f), draft = savedToken(h, f)
+  h.rt.state.hermesSessions = { old: { storedSessionId: randomUUID() } }
+  const tested = await h.endpoints.get('hermes-remote-test')(draft)
+  const originalSet = h.rt.secretEndpoint
+  let reached, resume, temporaryRef
+  const writing = new Promise(resolve => { reached = resolve }), held = new Promise(resolve => { resume = resolve })
+  h.rt.secretEndpoint = async (name, body) => {
+    await originalSet(name, body)
+    if (name === 'secret-set' && !temporaryRef) { temporaryRef = body.name; reached(); await held }
+  }
+  const pending = h.endpoints.get('hermes-remote-save')({ testId: tested.testId, profile: 'sample-profile' }), rejected = assert.rejects(pending)
+  await writing
+  const replacement = await h.endpoints.get('hermes-remote-configure')({ enabled: true, address: 'https://replacement.invalid/new', profile: 'replacement-profile', credential: randomUUID() })
+  const replacementRecord = h.rt.state.prefs.hermesRemote, replacementSessions = h.rt.state.hermesSessions
+  assert.equal(replacement.address, 'https://replacement.invalid/new')
+  resume(); await rejected
+  assert.equal(h.rt.state.prefs.hermesRemote, replacementRecord)
+  assert.equal(h.rt.state.hermesSessions, replacementSessions)
+  assert.equal(h.rt.hermesRemote.view().address, replacement.address)
+  assert.equal(h.rt.hermesRemote.view().profile, replacement.profile)
+  assert.equal(h.rt.hermesRemote.view().credentialRef, replacement.credentialRef)
+  assert.equal(h.secrets.has(temporaryRef), false)
+  assert.equal(h.secrets.has(replacement.credentialRef), true)
+})
+
+test('a failed save rolls back its own installed configuration and session reset and deletes its temporary secret', async t => {
+  const f = dashboard(), h = runtime(t, f), draft = savedToken(h, f)
+  h.rt.state.prefs.hermesRemote.profile = 'previous-profile'
+  h.rt.state.hermesSessions = { old: { storedSessionId: randomUUID() } }
+  const originalRecord = h.rt.state.prefs.hermesRemote, originalSessions = h.rt.state.hermesSessions
+  const tested = await h.rt.hermesRemote.test(draft)
+  h.rt.save = async () => { throw Error('Fixture persistence failed') }
+  await assert.rejects(h.rt.hermesRemote.save({ testId: tested.testId, profile: 'sample-profile' }), /Fixture persistence failed/)
+  assert.equal(h.rt.state.prefs.hermesRemote, originalRecord)
+  assert.equal(h.rt.state.hermesSessions, originalSessions)
+  assert.deepEqual([...h.secrets.keys()], [draft.credentialRef])
+})
+
+test('a replacement configuration stays owned when an earlier installed save fails after awaiting persistence', async t => {
+  const f = dashboard(), h = runtime(t, f), draft = savedToken(h, f)
+  const tested = await h.rt.hermesRemote.test(draft), originalSave = h.rt.save
+  let reached, resume, held = false
+  const writing = new Promise(resolve => { reached = resolve }), wait = new Promise(resolve => { resume = resolve })
+  h.rt.save = async () => {
+    if (!held) { held = true; reached(); await wait; throw Error('Fixture persistence failed') }
+    await originalSave()
+  }
+  const pending = h.rt.hermesRemote.save({ testId: tested.testId, profile: 'sample-profile' }), rejected = assert.rejects(pending)
+  await writing
+  await h.endpoints.get('hermes-remote-configure')({ enabled: true, address: 'https://replacement.invalid/new', profile: 'replacement-profile', credential: randomUUID() })
+  const replacementRecord = h.rt.state.prefs.hermesRemote, replacementSessions = h.rt.state.hermesSessions
+  resume(); await rejected
+  assert.equal(h.rt.state.prefs.hermesRemote, replacementRecord)
+  assert.equal(h.rt.state.hermesSessions, replacementSessions)
 })

@@ -20,8 +20,8 @@ const finish = () => {
   process.exit(0)
 }
 process.on('SIGTERM', finish)
-if (['host-key', 'changed-key', 'auth', 'auth-delayed', 'interactive', 'unreachable'].includes(scenario)) {
-  process.stderr.write({ 'host-key': 'No host key is known and you have requested strict checking. Host key verification failed.', 'changed-key': 'REMOTE HOST IDENTIFICATION HAS CHANGED!', auth: 'Permission denied (publickey).', 'auth-delayed': 'Permission denied (publickey).', interactive: 'interactive verification required', unreachable: 'Could not resolve hostname' }[scenario])
+if (['host-key', 'changed-key', 'auth', 'auth-delayed', 'interactive', 'unreachable', 'python-missing'].includes(scenario)) {
+  process.stderr.write({ 'host-key': 'No host key is known and you have requested strict checking. Host key verification failed.', 'changed-key': 'REMOTE HOST IDENTIFICATION HAS CHANGED!', auth: 'Permission denied (publickey).', 'auth-delayed': 'Permission denied (publickey).', interactive: 'interactive verification required', unreachable: 'Could not resolve hostname', 'python-missing': 'python3: not found' }[scenario])
   if (scenario === 'auth-delayed') { process.stdin.destroy(); setTimeout(() => process.exit(255), 50) }
   else process.exit(255)
 }
@@ -33,7 +33,8 @@ if (role === 'tunnel') {
 } else if (scenario.startsWith('runtime-')) {
   // Execute only Automagik's supervisor against an explicit disposable fake Hermes.
   // No upstream code, real SSH client or network listener is involved.
-  runtime = spawn('/bin/sh', ['-c', args.at(-1)], { env: process.env, stdio: ['pipe', 'pipe', 'pipe'] })
+  const command = scenario.includes('no-waitid') ? args.at(-1).replace('class Stop(Exception)', 'del os.waitid\nclass Stop(Exception)') : scenario === 'runtime-unsupported-platform' ? args.at(-1).replace('class Stop(Exception)', 'sys.platform = "unsupported"\nclass Stop(Exception)') : args.at(-1)
+  runtime = spawn('/bin/sh', ['-c', command], { env: process.env, stdio: ['pipe', 'pipe', 'pipe'] })
   process.stdin.pipe(runtime.stdin)
   runtime.stdout.pipe(process.stdout)
   runtime.stderr.pipe(process.stderr)

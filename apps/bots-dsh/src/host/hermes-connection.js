@@ -78,7 +78,7 @@ export async function prepareHermesConnection(draft, {
     await onAuthUpdate?.(persisted)
   }
   const remaining = () => {
-    if (controller.signal.aborted || Date.now() >= until) throw fail('Connection setup was cancelled or timed out. Test the connection again.')
+    if (controller.signal.aborted || Date.now() >= until) throw fail('Connection setup was cancelled or timed out. Test the connection again.', 'timeout')
     return Math.max(1, Math.min(deadlines.control, until - Date.now()))
   }
   async function request(path, { method = 'GET', body, headers = authHeaders } = {}) {
@@ -86,7 +86,7 @@ export async function prepareHermesConnection(draft, {
     const stop = () => requestController.abort()
     controller.signal.addEventListener('abort', stop, { once: true })
     let timer, rejectAbort
-    const aborted = new Promise((_, reject) => { rejectAbort = () => reject(fail('Hermes did not answer. Check the connection and try again.')); requestController.signal.addEventListener('abort', rejectAbort, { once: true }) })
+    const aborted = new Promise((_, reject) => { rejectAbort = () => reject(fail('Hermes did not answer. Check the connection and try again.', 'timeout')); requestController.signal.addEventListener('abort', rejectAbort, { once: true }) })
     try {
       timer = setTimeout(stop, remaining())
       if (controller.signal.aborted) stop()

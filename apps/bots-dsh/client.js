@@ -43,6 +43,42 @@ module.exports = __toCommonJS(index_exports);
 // src/client/i18n.js
 var NAMESPACE = "omni-ui";
 var ZH = {
+  "Connection cleanup is unconfirmed": "无法确认连接已清理",
+  "Check the other computer before reconnecting": "重新连接前请检查另一台电脑",
+  "Automagik could not confirm that the owned Hermes process group stopped. Remote work may continue.": "Automagik 无法确认其管理的 Hermes 进程组已停止。远程任务可能仍在继续。",
+  "Check the remote Hermes process before testing or connecting again.": "再次测试或连接前，请检查远程 Hermes 进程。",
+  "Hermes needs an update": "Hermes 需要更新",
+  "Update Hermes on the other computer": "更新另一台电脑上的 Hermes",
+  "This Hermes installation lacks the server ownership options needed for an SSH connection.": "此 Hermes 安装缺少通过 SSH 连接所需的服务器进程归属选项。",
+  "Update Hermes, then test the SSH connection again.": "更新 Hermes 后，请重新测试 SSH 连接。",
+  "This computer cannot run the SSH connection yet": "这台电脑暂时无法运行此 SSH 连接",
+  "Check the remote system and Python": "检查远程系统和 Python",
+  "The remote computer needs Linux or macOS, Python 3, and a supported Hermes installation.": "远程电脑需要 Linux 或 macOS、Python 3，以及受支持的 Hermes 安装。",
+  "Check Python and the supported system on the other computer, then test again.": "检查另一台电脑上的 Python 和受支持的系统，然后重试。",
+  "The connection timed out": "连接超时",
+  "The other computer did not become ready in time": "另一台电脑未能及时准备就绪",
+  "Check that the other computer is reachable and Hermes can start, then test again.": "检查能否连接另一台电脑，以及 Hermes 是否可以启动，然后重试。",
+  "Check the connection and remote Hermes startup before trying again.": "再次尝试前，请检查连接和远程 Hermes 的启动情况。",
+  "We could not reach the other computer": "无法连接另一台电脑",
+  "Check the SSH address and connection": "检查 SSH 地址和连接",
+  "Check the host or config name, network, and SSH access to the other computer.": "检查主机名或配置名、网络，以及对另一台电脑的 SSH 访问。",
+  "Confirm that SSH can reach this computer, then test again.": "确认 SSH 能连接这台电脑，然后重试。",
+  "SSH needs a check in a terminal": "SSH 需要在终端中完成检查",
+  "Complete the SSH check once": "先完成一次 SSH 检查",
+  "Connect once in a terminal and complete the required check. Then test this connection again.": "先在终端中连接一次并完成所需检查，然后重新测试此连接。",
+  "Complete the terminal check without changing SSH host-key protection.": "完成终端检查时，请勿更改 SSH 主机密钥保护。",
+  "Check the remote approval setting": "检查远程审批设置",
+  "Choose a profile that asks before running tools": "选择运行工具前会询问的配置",
+  "Set this profile to manual approvals in Hermes. Automagik does not change its global approval setting.": "请在 Hermes 中将此配置设为手动审批。Automagik 不会更改其全局审批设置。",
+  "Check this Hermes profile’s approval rules, then test again.": "检查此 Hermes 配置的审批规则，然后重试。",
+  "Hermes returned an unsupported response": "Hermes 返回了不受支持的响应",
+  "Check the Hermes version": "检查 Hermes 版本",
+  "This connection needs the tested standalone Hermes contract.": "此连接需要经过测试的独立版 Hermes 协议。",
+  "Check the Hermes version and test the connection again.": "检查 Hermes 版本，然后重新测试连接。",
+  "The SSH connection could not start": "无法启动 SSH 连接",
+  "Check the SSH connection details": "检查 SSH 连接信息",
+  "Check the SSH connection and remote Hermes, then test again.": "检查 SSH 连接和远程 Hermes，然后重试。",
+  "Check the connection details without changing host-key protection.": "检查连接信息时，请勿更改主机密钥保护。",
   "Remote Hermes has no Automagik team tools: message_bot, list_bots, create_bot, request_secret, or Automagik memory and schedules. Its tools run remotely under the remote profile’s rules.": "Remote Hermes 没有 Automagik 团队工具：message_bot、list_bots、create_bot、request_secret，以及 Automagik 记忆和计划任务。其工具在远端按照远程配置的规则运行。",
   "Displays a remote Hermes tool and waits for its result. Does not run an Automagik tool.": "显示远程 Hermes 工具并等待其结果。不会运行 Automagik 工具。",
   "Remote Hermes needs a live Automagik chat to show its tools and approvals.": "Remote Hermes 需要一个正在运行的 Automagik 聊天来显示工具和审批请求。",
@@ -4803,7 +4839,7 @@ function usePaneLeft() {
 var import_react14 = require("react");
 var import_react_dom2 = require("react-dom");
 var EMPTY_SSH = { host: "", user: "", port: "", identityFile: "", hermesPath: "" };
-var draftOf = (view) => ({ mode: view?.mode === "ssh" ? "ssh" : "remote", address: view?.address ?? "", authMode: view?.authMode === "password" ? "password" : "token", credential: "", username: view?.username ?? "", password: "", ssh: { ...EMPTY_SSH, ...view?.ssh } });
+var draftOf = (view) => ({ mode: view?.mode === "ssh" ? "ssh" : "remote", address: view?.address ?? "", authMode: view?.authMode === "password" ? "password" : "token", credentialRef: view?.credentialRef ?? "", credential: "", username: view?.username ?? "", password: "", ssh: { ...EMPTY_SSH, ...view?.ssh } });
 var configured = (view) => view?.enabled === true && Boolean(view?.profile);
 var freshSecrets = (draft) => ({ ...draft, credential: "", password: "" });
 var connectionLabel = (draft) => draft.mode === "ssh" ? draft.ssh.host : draft.address.replace(/^https?:\/\//, "").replace(/\/$/, "");
@@ -4822,12 +4858,21 @@ var Note = ({ children, error = false }) => (0, import_react14.createElement)("d
 var Pair = ({ label, value }) => (0, import_react14.createElement)("div", { className: "bt-hw-pair" }, (0, import_react14.createElement)("span", null, label), (0, import_react14.createElement)("strong", null, value));
 function errorFor(error, draft) {
   const code = error?.code ?? "";
+  if (code === "bot/hermes-ssh-cleanup") return { heading: t("Connection cleanup is unconfirmed"), title: t("Check the other computer before reconnecting"), text: t("Automagik could not confirm that the owned Hermes process group stopped. Remote work may continue."), hint: t("Check the remote Hermes process before testing or connecting again."), ssh: true };
+  if (code === "bot/hermes-ssh-update") return { heading: t("Hermes needs an update"), title: t("Update Hermes on the other computer"), text: t("This Hermes installation lacks the server ownership options needed for an SSH connection."), hint: t("Update Hermes, then test the SSH connection again."), ssh: true };
+  if (code === "bot/hermes-ssh-platform") return { heading: t("This computer cannot run the SSH connection yet"), title: t("Check the remote system and Python"), text: t("The remote computer needs Linux or macOS, Python 3, and a supported Hermes installation."), hint: t("Check Python and the supported system on the other computer, then test again."), ssh: true };
+  if (code === "bot/hermes-ssh-timeout" || code === "bot/hermes-timeout") return { heading: t("The connection timed out"), title: t("The other computer did not become ready in time"), text: t("Check that the other computer is reachable and Hermes can start, then test again."), hint: t("Check the connection and remote Hermes startup before trying again."), ssh: draft.mode === "ssh" };
+  if (code === "bot/hermes-ssh-unreachable") return { heading: t("We could not reach the other computer"), title: t("Check the SSH address and connection"), text: t("Check the host or config name, network, and SSH access to the other computer."), hint: t("Confirm that SSH can reach this computer, then test again."), ssh: true };
+  if (code === "bot/hermes-ssh-interactive") return { heading: t("SSH needs a check in a terminal"), title: t("Complete the SSH check once"), text: t("Connect once in a terminal and complete the required check. Then test this connection again."), hint: t("Complete the terminal check without changing SSH host-key protection."), ssh: true };
+  if (code === "bot/hermes-approvals") return { heading: t("Check the remote approval setting"), title: t("Choose a profile that asks before running tools"), text: t("Set this profile to manual approvals in Hermes. Automagik does not change its global approval setting."), hint: t("Check this Hermes profile’s approval rules, then test again.") };
+  if (code === "bot/hermes-protocol") return { heading: t("Hermes returned an unsupported response"), title: t("Check the Hermes version"), text: t("This connection needs the tested standalone Hermes contract."), hint: t("Check the Hermes version and test the connection again.") };
   if (code.includes("host-key")) return { heading: t("SSH couldn’t sign in"), title: t("Confirm this computer’s SSH host key"), text: t("Connect to this host once in a terminal and check its host key. Then test again. A changed key must be checked before continuing."), hint: t("Connect once in a terminal to verify the SSH host key, then test again."), ssh: true };
   if (draft.mode === "ssh" && code === "bot/hermes-ssh-missing") return { heading: t("SSH couldn’t open Hermes"), title: t("Check the Hermes installation"), text: t("Install or update Hermes on the other computer, or enter its executable path. Then test again."), hint: t("Hermes must already be installed on the other computer."), ssh: true };
   if (code === "bot/hermes-expired") return { heading: t("Test this connection again"), title: t("The connection test expired"), text: t("Test again before choosing and saving a profile."), hint: t("Run a new connection test before choosing or saving a profile.") };
   if (code === "bot/hermes-profiles") return { heading: t("We couldn’t list the profiles"), title: t("Check this Hermes profile list"), text: t("Refresh the list, or check that the profile is available on this Hermes."), hint: t("Check the profile on the other computer, then test again.") };
   if (code === "bot/hermes" || code === "bot/hermes-unsupported") return { heading: t("This Hermes can’t connect yet"), title: t("Check this Hermes version and profile"), text: t("Use a supported Hermes version and a profile that asks before running tools. Then test again."), hint: t("Check the Hermes version and this profile’s approval settings, then test again.") };
-  if (draft.mode === "ssh") return { heading: t("SSH couldn’t sign in"), title: t("Check your SSH details"), text: t("Check the host and user. If your key is locked, unlock it in your SSH agent, or choose another key."), hint: code === "bot/hermes-ssh-auth" ? t("Check the SSH user and key, then test again.") : t("Check that SSH can reach the other computer and use your key."), ssh: true };
+  if (code === "bot/hermes-ssh-auth") return { heading: t("SSH couldn’t sign in"), title: t("Check your SSH details"), text: t("Check the host and user. If your key is locked, unlock it in your SSH agent, or choose another key."), hint: t("Check the SSH user and key, then test again."), ssh: true };
+  if (draft.mode === "ssh") return { heading: t("The SSH connection could not start"), title: t("Check the SSH connection details"), text: t("Check the SSH connection and remote Hermes, then test again."), hint: t("Check the connection details without changing host-key protection."), ssh: true };
   if (code === "bot/hermes-auth") return { heading: t("We couldn’t sign in"), title: draft.authMode === "password" ? t("The sign-in wasn’t accepted") : t("The token wasn’t accepted"), text: draft.authMode === "password" ? t("Check your user and password, then sign in again.") : t("Check the token, or choose user and password if this Hermes asks you to sign in."), hint: draft.authMode === "password" ? t("Enter your dashboard user and password again, then sign in.") : t("Enter a valid session token and test the connection again.") };
   return { heading: t("We couldn’t connect"), title: t("Check the remote address"), text: t("Check the address and that Hermes is running, then test again."), hint: t("Check that Hermes is running at this address and try again.") };
 }

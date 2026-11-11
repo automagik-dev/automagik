@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { readFileSync, readdirSync } from 'node:fs'
+import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { createRequire } from 'node:module'
-import { join } from 'node:path'
+import { join, delimiter } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import { test } from 'node:test'
 import { build } from 'esbuild'
 import { HermesTransport } from '../src/host/hermes-transport.js'
 import { install } from '../src/host/hermes-remote.js'
+import { startHermesSsh } from '../src/host/hermes-ssh.js'
 import { fakeContext } from './fake-ctx.js'
 import { desktop8Session } from './fixtures/hermes-desktop8.mjs'
 
@@ -172,6 +175,64 @@ async function enterToken(render, credential = randomUUID()) {
   await render.fill('Session token', credential)
   return credential
 }
+
+test('editing a saved token sends only its reference and keeps the replacement blank', async t => {
+  const view = { ...connectedView(), credentialRef: randomUUID() }
+  const calls = []
+  const edit = await renderSettings(t, async call => { calls.push(call); return testView() }, { component: 'HermesRemoteConnect', props: { edit: true, initialView: view } })
+  assert.equal(edit.document.querySelector('input[aria-label="Session token"]').value, '')
+  await edit.click('Test connection')
+  await waitFor(() => edit.document.querySelector('[data-status=connected]'), 'saved connection test')
+  const draft = calls.find(call => call.endpoint === 'hermes-remote-test').payload
+  assert.equal(draft.credential, '')
+  assert.equal(draft.credentialRef, view.credentialRef)
+  assert.equal(draft.authMode, 'token')
+  assert.equal(edit.failures.length, 0)
+})
+
+test('real SSH adapter failures reach wizard actions for update, platform, timeout and host key', async t => {
+  const home = await mkdtemp(join(tmpdir(), 'hermes-wizard-ssh-'))
+  t.after(() => rm(home, { recursive: true, force: true }))
+  await writeFile(join(home, 'ssh'), `#!${process.execPath}\n${readFileSync(new URL('./fixtures/hermes-fake-ssh.mjs', import.meta.url), 'utf8')}`, { mode: 0o700 })
+  for (const [scenario, expected, advice] of [
+    ['old-contract', 'Hermes needs an update', 'Update Hermes on the other computer'],
+    ['python-missing', 'This computer cannot run the SSH connection yet', 'Check the remote system and Python'],
+    ['timeout', 'The connection timed out', 'The other computer did not become ready in time'],
+    ['host-key', 'SSH couldn’t sign in', 'Confirm this computer’s SSH host key'],
+  ]) {
+    await t.test(scenario, async child => {
+      let actual
+      const render = await startWizard(child, { 'hermes-remote-test': async () => {
+        try {
+          await startHermesSsh({ host: 'example.invalid' }, { env: { ...process.env, PATH: `${home}${delimiter}${process.env.PATH}`, HERMES_SSH_SCENARIO: scenario, HERMES_SSH_RECORD: join(home, 'record.jsonl') }, allocatePort: async () => 1024, deadlines: { start: scenario === 'timeout' ? 300 : 3000, control: 1000, cancel: 500 } })
+          assert.fail('fake SSH must fail')
+        } catch (error) { actual = error; await error.localClosed; throw error }
+      } })
+      await render.click('Through SSH'); await render.click('Continue')
+      await render.fill('SSH host or config name', 'example.invalid')
+      await render.click('Test SSH connection')
+      await waitFor(() => render.document.querySelector('[data-status=error]'), 'typed SSH error')
+      assert.ok(actual?.code.startsWith('bot/hermes-ssh-'))
+      assert.ok(render.document.body.textContent.includes(expected))
+      assert.ok(render.document.body.textContent.includes(advice))
+      if (scenario !== 'host-key') assert.ok(!render.document.body.textContent.includes('Check the SSH user and key'))
+    })
+  }
+})
+
+test('an expired saved token from the real transport and host endpoint asks for sign-in', async t => {
+  const ctx = fakeContext(), endpoints = new Map(), credential = randomUUID()
+  ctx.llm.registerAdapter = () => () => {}
+  t.after(() => ctx.dispose())
+  const rt = { ctx, state: { prefs: { hermesRemote: { ...connectedView(), credentialRef: 'SAMPLE' } }, hermesSessions: {} }, load: async () => {}, save: async () => {}, loadSecrets: async () => {}, secretValue: () => credential, hooks: { endpoint: (name, fn) => endpoints.set(name, fn) } }
+  install(rt, { fetch: async () => ({ ok: true, json: async () => ({ profiles: [] }) }), transport: options => new HermesTransport({ ...options, fetch: async () => ({ ok: false, status: 401 }) }) })
+  const render = await renderSettings(t, ({ endpoint, payload }) => endpoints.get(endpoint)(payload), { component: 'HermesRemoteConnect' })
+  await waitFor(() => render.document.querySelector('[data-status=error]'), 'saved sign-in failure')
+  assert.match(render.document.body.textContent, /The token wasn’t accepted/)
+  assert.match(render.document.body.textContent, /Enter a valid session token/)
+  assert.ok(!render.document.body.textContent.includes(credential))
+  assert.doesNotMatch(render.document.body.textContent, /Check the remote address/)
+})
 
 test('the wizard follows the approved remote token frames with honest progress, profile save and Ready', async t => {
   const pending = deferred()
@@ -548,7 +609,7 @@ test('wizard error strips give the action for the actual failure, not another er
     ['ssh', 'token', 'bot/hermes-ssh-host-key', 'Connect once in a terminal to verify the SSH host key, then test again.'],
     ['ssh', 'token', 'bot/hermes-ssh-missing', 'Hermes must already be installed on the other computer.'],
     ['ssh', 'token', 'bot/hermes-ssh-auth', 'Check the SSH user and key, then test again.'],
-    ['ssh', 'token', 'bot/hermes-ssh', 'Check that SSH can reach the other computer and use your key.'],
+    ['ssh', 'token', 'bot/hermes-ssh', 'Check the connection details without changing host-key protection.'],
     ['remote', 'token', 'bot/hermes', 'Check the Hermes version and this profile’s approval settings, then test again.'],
     ['ssh', 'token', 'bot/hermes-unsupported', 'Check the Hermes version and this profile’s approval settings, then test again.'],
     ['remote', 'token', 'bot/hermes-profiles', 'Check the profile on the other computer, then test again.'],

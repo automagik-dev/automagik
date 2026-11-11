@@ -49,7 +49,7 @@ function fixture(t, overrides = {}) {
   }
   let socket
   const wire = new HermesTransport({ address, credential, profile: 'sample', deadlines: { start: 200, control: 100, cancel: 30 },
-    fetch: async (url, init) => { headers.push({ url, init }); if (overrides.authError) throw Error(`${credential} ${ticket}`); return { ok: !overrides.expired, json: async () => ({ ticket }) } },
+    fetch: async (url, init) => { headers.push({ url, init }); if (overrides.authError) throw Object.assign(Error(`${credential} ${ticket}`), { code: overrides.errorCode }); const status = overrides.status ?? (overrides.expired ? 401 : 200); return { ok: status === 200, status, json: async () => ({ ticket }) } },
     socket: (url, protocols) => { headers.push({ url, protocols }); socket = new Socket(); return socket },
   })
   const identity = { createKey: randomUUID() }
@@ -83,10 +83,23 @@ test('ticket handshake negotiates server requests first, persists IDs before sub
   assert.equal(f.identity.pendingSubmit, false)
 })
 
-test('expired authentication and thrown authentication errors never echo headers or bodies', async t => {
+test('ticket HTTP failures distinguish expired sign-in from server failure and discard forged errors', async t => {
+  for (const status of [401, 403, 500, 503]) {
+    const f = fixture(t, { status })
+    await assert.rejects(f.wire.connect(), error => error.code === ([401, 403].includes(status) ? 'bot/hermes-auth' : 'bot/hermes-connection') && !error.stack.includes(f.credential) && !error.stack.includes(f.ticket))
+    assert.equal(f.sent.length, 0)
+  }
+  for (const errorCode of ['bot/hermes', 'bot/hermes-auth', 'bot/hermes-timeout']) {
+    const f = fixture(t, { authError: true, errorCode })
+    await assert.rejects(f.wire.connect(), error => !error.stack.includes(f.credential) && !error.stack.includes(f.ticket))
+    assert.equal(f.sent.length, 0)
+  }
+})
+
+test('expired authentication and connection exceptions have distinct safe errors', async t => {
   for (const options of [{ expired: true }, { authError: true }]) {
     const f = fixture(t, options)
-    await assert.rejects(f.wire.connect(), error => /credential|authentication/.test(error.message) && !error.stack.includes(f.credential) && !error.stack.includes(f.ticket))
+    await assert.rejects(f.wire.connect(), error => error.code === (options.expired ? 'bot/hermes-auth' : 'bot/hermes-connection') && (options.expired ? /credential|authentication/ : /could not connect/).test(error.message) && !error.stack.includes(f.credential) && !error.stack.includes(f.ticket))
     assert.equal(f.sent.length, 0)
   }
 })
