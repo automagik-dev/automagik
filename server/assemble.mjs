@@ -20,13 +20,15 @@ import { fetchPlugins, DEFAULT_PACKAGES } from './fetch-plugins.mjs'
 import { profileDirOf, PROFILE, pinStore } from './lib.mjs'
 import { pruneNodeModules } from '../apps/desktop/scripts/prune-runtime.mjs'
 import { patchRuntime } from '../apps/desktop/scripts/runtime-patches.mjs'
+import { buildOfflineStore } from './offline-store.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO = resolve(HERE, '..')
 /** Third-party test, example and documentation folders the runtime never reads. */
 export const PRUNE_EXTRA_DIR = /^(?:test|tests|__tests__|examples|example|docs|\.yarn)$/
 /** A package's test/spec file, wherever it sits (zod's src/v4/classic/tests, node-gyp's *_test.py). */
-export const PRUNE_EXTRA_FILE = /(?:^|[._-])(?:test|spec)\.[^.]+$/i
+// A hyphenated "spec" can be runtime code (DSH's install-spec.js), not a test.
+export const PRUNE_EXTRA_FILE = /(?:^|[._])(?:test|spec)\.[^.]+$/i
 const RUNTIME_SOURCE = join(REPO, 'apps', 'desktop', 'runtime')
 const PATCHES_SOURCE = join(RUNTIME_SOURCE, 'patches')
 const PROFILE_SOURCE = join(HERE, 'profile')
@@ -131,7 +133,7 @@ export function applyRuntimePatches(runtimeDir, patchesDir = PATCHES_SOURCE) {
   return results
 }
 
-export async function assemble({ out, version = '3.90.1', dsh = '0.2.2-rc.1', repository = 'https://github.com/automagik-dev/automagik' }) {
+export async function assemble({ out, version = '3.90.1', dsh = '0.2.2-rc.1', revision = 'unknown', repository = 'https://github.com/automagik-dev/automagik' }) {
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error(`not a release version: ${version}`)
   const runtimeDir = join(out, 'runtime')
   const dshHome = join(out, 'dsh-home')
@@ -162,6 +164,7 @@ export async function assemble({ out, version = '3.90.1', dsh = '0.2.2-rc.1', re
   for (const name of DEFAULT_PACKAGES) profile.dependencies[name] = `file:vendor/${fetched.plugins[name].file}`
   writeFileSync(join(installDir, 'package.json'), `${JSON.stringify(profile, null, 2)}\n`)
   for (const file of ['cordis.patch.yml', 'pnpm-workspace.yaml']) cpSync(join(PROFILE_SOURCE, file), join(installDir, file))
+  pinStore(installDir, dshHome)
 
   say('installing the profile with dsh plugin')
   const path = [join(runtimeDir, 'node_modules', '.bin'), ENV.PATH].filter(Boolean).join(':')
@@ -229,6 +232,9 @@ export async function assemble({ out, version = '3.90.1', dsh = '0.2.2-rc.1', re
   const profileExtras = pruneExtras(join(installDir, 'node_modules'))
   say(`runtime: left out ${runtimeExtras.files} test/example files, ${mib(runtimeExtras.bytes)}`)
   say(`profile: left out ${profileExtras.files} test/example files, ${mib(profileExtras.bytes)}`)
+  const offline = buildOfflineStore({ store: join(dshHome, 'pnpm-store'), profile: installDir,
+    out: join(out, 'offline-store'), excludeNames: DEFAULT_PACKAGES })
+  say(`offline store: ${offline.packages} inspected dependency packages; plugin inputs materialize from scanned profile files`)
   // The tarballs were verified and installed; the image does not carry them (or an archive the
   // secrecy scan would have to excuse). The profile's node_modules is the installed result.
   rmSync(join(installDir, 'vendor'), { recursive: true, force: true })
@@ -237,6 +243,7 @@ export async function assemble({ out, version = '3.90.1', dsh = '0.2.2-rc.1', re
   rmSync(dshHome, { recursive: true, force: true })
   writeFileSync(join(out, 'versions.json'), `${JSON.stringify({
     automagik: version,
+    revision,
     dsh: installedDsh,
     profile: PROFILE,
     plugins: Object.fromEntries(DEFAULT_PACKAGES.map((name) => [name, version])),
@@ -248,7 +255,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   try {
     const args = argsOf(process.argv.slice(2))
     if (!args.out) throw new Error('usage: node assemble.mjs --out <dir> [--version 3.90.1] [--dsh 0.2.2-rc.1] [--repository <url>]')
-    const result = await assemble({ out: resolve(args.out), version: args.version, dsh: args.dsh, repository: args.repository })
+    const result = await assemble({ out: resolve(args.out), version: args.version, dsh: args.dsh, revision: args.revision, repository: args.repository })
     console.log(`[assemble] ready: dsh ${result.dsh}, automagik ${result.version}`)
   } catch (error) {
     console.error(`assemble: ${error?.stack ?? error}`)
