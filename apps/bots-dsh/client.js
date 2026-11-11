@@ -712,6 +712,9 @@ var ZH = {
   "{route}, current model {model}": "{route}，当前模型 {model}",
   "Start a new conversation?": "开始新对话？",
   "Changing the route starts a new conversation. {name} writes a handoff note first.": "更改路线会开始新对话。{name} 会先写一份交接说明。",
+  "Full access: DSH's own tools run without asking.": "完全访问：DSH 自己的工具无需询问即可运行。",
+  "Full access: the CLI's own no-ask mode.": "完全访问：CLI 自身的免询问模式。",
+  "Full access: the agent's own no-ask mode.": "完全访问：代理自身的免询问模式。",
   "Changing the agent starts a new conversation. {name} writes a handoff note first.": "更改代理会开始新对话。{name} 会先写一份交接说明。",
   "Keep this conversation": "保留当前对话",
   "Change route": "更改路线",
@@ -4995,6 +4998,8 @@ function RouteConfirm({ bot, roster, current, target, onCancel, onConfirm }) {
   const from = current === void 0 ? void 0 : modelRoute(roster, current);
   const to = modelRoute(roster, target.ref);
   const routeChanged = from?.route !== to.route;
+  const fullAccess = bot.permission === "danger-full-access";
+  const fullAccessLine = !fullAccess ? void 0 : to.route === "native" ? t("Full access: DSH's own tools run without asking.") : to.provider === "acp-claude" || to.provider === "acp-codex" ? t("Full access: the CLI's own no-ask mode.") : t("Full access: the agent's own no-ask mode.");
   return (0, import_react12.createElement)(
     "div",
     { className: "bt-model-step bt-model-confirm", role: "group", "aria-label": t("Start a new conversation?") },
@@ -5006,6 +5011,7 @@ function RouteConfirm({ bot, roster, current, target, onCancel, onConfirm }) {
       `${routeName(to.route)} · ${to.connection}`
     ),
     (0, import_react12.createElement)("div", { className: "bt-model-confirm-text" }, routeChanged ? t("Changing the route starts a new conversation. {name} writes a handoff note first.", { name: bot.name }) : t("Changing the agent starts a new conversation. {name} writes a handoff note first.", { name: bot.name })),
+    fullAccessLine === void 0 ? null : (0, import_react12.createElement)("div", { className: "bt-model-confirm-access", role: "note" }, fullAccessLine),
     (0, import_react12.createElement)(
       "div",
       { className: "bt-model-confirm-actions" },
@@ -5014,7 +5020,7 @@ function RouteConfirm({ bot, roster, current, target, onCancel, onConfirm }) {
     )
   );
 }
-function DshModelMenu({ bot, roster, actions, run: run2, wide = false, link = false, chat = false, bar = false, onPick, onPickEffort }) {
+function DshModelMenu({ bot, roster, actions, run: run2, wide = false, link = false, chat = false, bar = false, onPick, onPickEffort, saved = onPick === void 0 }) {
   const [view, setView] = (0, import_react12.useState)(MENU_ROOT);
   const [confirm, setConfirm] = (0, import_react12.useState)(void 0);
   const [keyFor, setKeyFor] = (0, import_react12.useState)(void 0);
@@ -5086,8 +5092,9 @@ function DshModelMenu({ bot, roster, actions, run: run2, wide = false, link = fa
     if (focused) button.current?.focus();
   };
   const same = (ref) => !onPick && ref === current && Boolean(bot.model);
-  const crossing = (ref) => Boolean(current) && !onPick && ref !== current && crossesHarness(current, ref);
+  const crossing = (ref) => Boolean(current) && saved && ref !== current && crossesHarness(current, ref);
   const pickModel = (ref, effort, { routeChange = false, level = false } = {}) => {
+    if (routeChange && typeof onPick === "function") return onPick(ref, { routeChange: true, effort });
     if (onPick) {
       const pickedIt = Promise.resolve(onPick(ref));
       if (onPickEffort === void 0 && effort === void 0) return pickedIt;
@@ -5548,6 +5555,7 @@ var MODEL_CSS = `
 .bt-model-confirm-title{font-size:13px;line-height:18px;font-weight:600;color:var(--bt-ink)}
 .bt-model-confirm-move{font-size:11px;line-height:15px;color:var(--bt-ink-3);overflow-wrap:anywhere}
 .bt-model-confirm-text{padding:2px 0 6px;font-size:12px;line-height:17px;color:var(--bt-ink-2)}
+.bt-model-confirm-access{padding:0 0 6px;font-size:12px;line-height:17px;color:var(--bt-danger)}
 .bt-model-confirm-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
 .bt-menu .bt-model-confirm-actions .bt-model-confirm-cancel,.bt-menu .bt-model-confirm-actions .bt-model-confirm-go{width:auto;min-height:30px;padding:5px 12px;border-radius:999px;font:inherit;font-size:12px;line-height:18px;cursor:pointer}
 .bt-menu .bt-model-confirm-actions .bt-model-confirm-cancel{border:.5px solid var(--bt-line-2);background:var(--bt-main);color:var(--bt-ink-2)}
@@ -12385,7 +12393,7 @@ body:not([data-bt-advanced]) [data-composer-dock]:not(:has(.bt-btw)){display:non
 .bt-mic:hover{background:color-mix(in srgb,var(--bt-ink) 10%,transparent);color:var(--bt-ink)}
 .bt-mic[aria-pressed=true]{background:#ff3e51;color:#fff;animation:bt-mic-pulse 1.4s ease-in-out infinite}
 @keyframes bt-mic-pulse{0%,100%{box-shadow:0 0 0 0 rgba(255,62,81,.35)}50%{box-shadow:0 0 0 5px rgba(255,62,81,0)}}
-[data-composer-card] .bt-voice{width:32px;height:32px}
+[data-composer-card] .bt-voice{width:28px;height:28px}
 .bt-voice{display:none;background:var(--bt-accent);color:var(--bt-accent-ink,#fff);animation:bt-icon-swap ${SPRING_POP.duration}ms ${SPRING_POP.easing}}
 .bt-voice:hover{opacity:.9}
 .bt-mic:active,.bt-voice:active{scale:.9}
@@ -17497,11 +17505,14 @@ function BotSettingsForm({ bot, roster, actions, run: run2 }) {
   (0, import_react44.useEffect)(() => {
     setAccount(null);
   }, [bot.id, bot.model]);
-  const pickModel = (ref) => run2(actions.updateBot(bot.id, { model: ref }).catch((error) => {
+  const pickFailure = (ref) => (error) => {
     if (error?.code === "bot/sign-in-required" && cliProviderOf(ref)) setSignIn(ref);
     if (error?.code === "bot/account-confirm-required" && cliProviderOf(ref)) setAccount(ref);
     throw error;
-  }));
+  };
+  const pickModel = (ref) => run2(actions.updateBot(bot.id, { model: ref }).catch(pickFailure(ref)));
+  const pickRoute = (ref, patch = {}) => run2(actions.switchRoute(bot.id, ref, patch).catch(pickFailure(ref)));
+  const pick2 = (ref, { routeChange = false, effort } = {}) => routeChange ? pickRoute(ref, effort === void 0 ? {} : { effort }) : ref !== (bot.model ?? bot.appliedModel) || !bot.model ? pickModel(ref) : void 0;
   const modelState = (0, import_react44.useSyncExternalStore)(actions.subscribeWork ?? noSubscribe2, () => actions.modelStateOf?.(bot.id));
   const extraCards = useEntries(botSettings);
   const duplicate = () => run2(actions.duplicateBot(bot.id).then((copy2) => actions.openSession(copy2.id)));
@@ -17549,7 +17560,7 @@ function BotSettingsForm({ bot, roster, actions, run: run2 }) {
         "div",
         { className: "bt-set-row bt-bs-row" },
         (0, import_react44.createElement)("span", { className: "bt-set-copy" }, (0, import_react44.createElement)("span", { className: "bt-bs-label" }, t("Model")), (0, import_react44.createElement)("span", { className: "bt-set-hint", role: modelState?.lastFailure?.kept ? "status" : void 0 }, modelHint(bot, roster, modelState))),
-        (0, import_react44.createElement)(ModelMenu, { bot, roster, actions, run: run2, onPick: (ref) => ref !== (bot.model ?? bot.appliedModel) || !bot.model ? pickModel(ref) : void 0 })
+        (0, import_react44.createElement)(ModelMenu, { bot, roster, actions, run: run2, saved: true, onPick: pick2 })
       ),
       signIn && actions.openCliLogin ? (0, import_react44.createElement)(
         "div",

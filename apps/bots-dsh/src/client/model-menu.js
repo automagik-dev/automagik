@@ -510,6 +510,12 @@ export function RouteConfirm({ bot, roster, current, target, onCancel, onConfirm
   const from = current === undefined ? undefined : modelRoute(roster, current)
   const to = modelRoute(roster, target.ref)
   const routeChanged = from?.route !== to.route
+  // Full access means a different thing on each harness; say which one the Bot is moving to.
+  const fullAccess = bot.permission === 'danger-full-access'
+  const fullAccessLine = !fullAccess ? undefined
+    : to.route === 'native' ? t("Full access: DSH's own tools run without asking.")
+      : to.provider === 'acp-claude' || to.provider === 'acp-codex' ? t("Full access: the CLI's own no-ask mode.")
+        : t("Full access: the agent's own no-ask mode.")
   return h('div', { className: 'bt-model-step bt-model-confirm', role: 'group', 'aria-label': t('Start a new conversation?') },
     h('div', { className: 'bt-model-confirm-title' }, t('Start a new conversation?')),
     h('div', { className: 'bt-model-confirm-move' },
@@ -518,12 +524,13 @@ export function RouteConfirm({ bot, roster, current, target, onCancel, onConfirm
     h('div', { className: 'bt-model-confirm-text' }, routeChanged
       ? t('Changing the route starts a new conversation. {name} writes a handoff note first.', { name: bot.name })
       : t('Changing the agent starts a new conversation. {name} writes a handoff note first.', { name: bot.name })),
+    fullAccessLine === undefined ? null : h('div', { className: 'bt-model-confirm-access', role: 'note' }, fullAccessLine),
     h('div', { className: 'bt-model-confirm-actions' },
       h('button', { type: 'button', className: 'bt-model-confirm-cancel', onClick: onCancel }, t('Keep this conversation')),
       h('button', { type: 'button', className: 'bt-model-confirm-go', onClick: onConfirm }, routeChanged ? t('Change route') : t('Change agent'))))
 }
 
-function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, chat = false, bar = false, onPick, onPickEffort }) {
+function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, chat = false, bar = false, onPick, onPickEffort, saved = onPick === undefined }) {
   const [view, setView] = useState(MENU_ROOT)
   // A route change waits for the person's word here, because it starts a new conversation.
   const [confirm, setConfirm] = useState(undefined)
@@ -606,8 +613,13 @@ function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, c
   const same = ref => !onPick && ref === current && Boolean(bot.model)
   // A harness crossing: another route, or another ACP agent (RFC 0030, Decided 6 and 10). A
   // first pick, and a model change inside one route, keep the conversation.
-  const crossing = ref => Boolean(current) && !onPick && ref !== current && crossesHarness(current, ref)
+  // A Bot already saved (settings, details, the chat bar) crosses; a Bot being created does
+  // not: `onPick` alone says nothing about whether the conversation exists yet.
+  const crossing = ref => Boolean(current) && saved && ref !== current && crossesHarness(current, ref)
   const pickModel = (ref, effort, { routeChange = false, level = false } = {}) => {
+    // A crossing started from a saved Bot's settings still goes through the picker's own
+    // action: the settings wrapper needs to keep its sign-in/account handling.
+    if (routeChange && typeof onPick === 'function') return onPick(ref, { routeChange: true, effort })
     if (onPick) {
       const pickedIt = Promise.resolve(onPick(ref))
       if (onPickEffort === undefined && effort === undefined) return pickedIt
@@ -994,6 +1006,7 @@ export const MODEL_CSS = `
 .bt-model-confirm-title{font-size:13px;line-height:18px;font-weight:600;color:var(--bt-ink)}
 .bt-model-confirm-move{font-size:11px;line-height:15px;color:var(--bt-ink-3);overflow-wrap:anywhere}
 .bt-model-confirm-text{padding:2px 0 6px;font-size:12px;line-height:17px;color:var(--bt-ink-2)}
+.bt-model-confirm-access{padding:0 0 6px;font-size:12px;line-height:17px;color:var(--bt-danger)}
 .bt-model-confirm-actions{display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap}
 .bt-menu .bt-model-confirm-actions .bt-model-confirm-cancel,.bt-menu .bt-model-confirm-actions .bt-model-confirm-go{width:auto;min-height:30px;padding:5px 12px;border-radius:999px;font:inherit;font-size:12px;line-height:18px;cursor:pointer}
 .bt-menu .bt-model-confirm-actions .bt-model-confirm-cancel{border:.5px solid var(--bt-line-2);background:var(--bt-main);color:var(--bt-ink-2)}

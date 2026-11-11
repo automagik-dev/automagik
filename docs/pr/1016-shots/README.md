@@ -13,7 +13,7 @@ theme (`prefers-color-scheme` through DSH's theme preference), not a recolored m
 | `native-models-{light,dark}.png` | Native's models, one list under their provider; the Bot's model is ticked. |
 | `acp-agents-{light,dark}.png` | ACP's second level: Claude Code and Codex with their own marks, then Hermes, Antigravity and omp dimmed and `Not available yet` until #973 serves them. |
 | `acp-models-{light,dark}.png` | One ACP agent's models, reached after the agent. |
-| `route-confirm-{light,dark}.png` | The crossing, after a model on another route is picked and before anything is applied. |
+| `route-confirm-{light,dark}.png` | The crossing, after a model on another route is picked and before anything is applied. For a Full access Bot, the last line says what Full access means on the route it is moving to; this shot is ACP Claude Code → Native, so it names DSH's own tools. |
 | `herdr-{light,dark}.png` | Herdr's interim state: its agents shown with their marks, dimmed and `Not available yet`, with no chevrons, until #1007/RFC 0030 wires the terminal. |
 
 The small route mark before the model name is the open point proposed for the owner: it is in

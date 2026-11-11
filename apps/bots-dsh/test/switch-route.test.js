@@ -3,7 +3,7 @@
 // model record moves only with it. This runs the installed parts module on fakes.
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { install } from '../src/host/parts.js'
+import { install, saidSomething } from '../src/host/parts.js'
 import { fakeContext } from './fake-ctx.js'
 
 const NOTE = [
@@ -70,7 +70,8 @@ function bench() {
     isFolder: async () => false,
     workDirOf: () => undefined,
     desiredModel: async () => bot.model,
-    desiredEffort: async () => undefined,
+    desiredEffort: async () => bot.effort,
+    resolveEffort: async (ref, effort) => effort,
     selectSessionModel: async (id, selection) => { calls.selected.push([id, selection]) },
     applyPermission: async () => {},
     applyToolDeny: async () => {},
@@ -104,6 +105,7 @@ test('a route change writes the note first and moves the Bot to a fresh part', a
   assert.deepEqual(b.calls.created, ['s2'])
   assert.deepEqual(b.calls.archived, ['s1'])
   assert.equal(b.bot.model, 'acp-claude/default')
+  assert.equal(b.bot.appliedModel, 'acp-claude/default')
   // The note is asked of the old route, from the old Session's own prefix.
   assert.equal(b.calls.notesAsked[0].provider, 'deepseek')
   assert.equal(b.calls.notesAsked[0].model, 'v4')
@@ -125,4 +127,29 @@ test('a pinned conversation cannot move its route', async () => {
   b.bot.sessionPinned = true
   await assert.rejects(b.rt.switchRoute('b1', 'acp-claude/default'), { code: 'bot/refused' })
   assert.equal(b.bot.model, 'deepseek/v4')
+})
+
+test('a thinking level picked with the crossing reaches the fresh part', async () => {
+  const b = bench()
+  const started = await b.rt.switchRoute('b1', 'acp-claude/default', 'high')
+  assert.equal(started.effort, 'high')
+  await waitFor(() => b.bot.sessionId === 's2' && b.calls.archived.length > 0)
+  assert.equal(b.bot.model, 'acp-claude/default')
+  assert.equal(b.bot.effort, 'high')
+  assert.equal(b.bot.appliedModel, 'acp-claude/default')
+  assert.equal(b.bot.appliedEffort, 'high')
+  assert.deepEqual(b.calls.selected, [['s2', { provider: 'acp-claude', model: 'default', reasoningEffort: 'high' }]])
+})
+
+test('anything a person or another Bot said calls for a note; the team kickoff and context do not', () => {
+  const user = source => ({ role: 'user', source })
+  assert.equal(saidSomething([user({ kind: 'user' })]), true)
+  assert.equal(saidSomething([user({ kind: 'user-question-reply' })]), true)
+  assert.equal(saidSomething([user({ kind: 'schedule' })]), true)
+  assert.equal(saidSomething([user({ kind: 'bot', role: 'post' })]), true)
+  assert.equal(saidSomething([user({ kind: 'bot', role: 'kickoff' })]), false)
+  assert.equal(saidSomething([user({ kind: 'runtime-context' })]), false)
+  assert.equal(saidSomething([{ role: 'user', source: { kind: 'user', handoff: true } }]), false)
+  assert.equal(saidSomething([]), false)
+  assert.equal(saidSomething(undefined), false)
 })

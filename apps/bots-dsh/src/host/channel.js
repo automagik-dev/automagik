@@ -397,7 +397,7 @@ export function install(rt) {
         // A model on another route (parts.js): a new conversation with a handoff note.
         case 'switch-route':
           await rt.load()
-          return ok(await rt.switchRoute(String(body?.id ?? ''), String(body?.model ?? '')))
+          return ok(await rt.switchRoute(String(body?.id ?? ''), String(body?.model ?? ''), body?.effort))
         // The avatar library: photos the user imported once, kept beside the team.
         case 'avatar-library':
           await rt.load()

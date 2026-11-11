@@ -35,7 +35,7 @@ runInNewContext(bundle.outputFiles[0].text, {
     return platform[name]
   },
 })
-const { groupModels, greetingOnly, ModelChoiceDock, ModelLine, ModelLineTail, ModelMenu, effortRows, offeredModels } = module.exports
+const { groupModels, greetingOnly, ModelChoiceDock, ModelLine, ModelLineTail, ModelMenu, RouteConfirm, effortRows, offeredModels } = module.exports
 
 // ModelMenu picks the menu a Bot gets (DSH's models, or its plugin's): draw the one it picked.
 const drawMenu = (props) => {
@@ -666,4 +666,15 @@ test('a Bot kept on a plan route until its CLI can take it says so, not that its
   assert.equal(modelHint(bot, waiting('checking'), undefined), 'This Bot stays on 5.6 Sol until Codex is ready.')
   // Another route's wait says nothing about this Bot.
   assert.equal(modelHint(bot, { ...roster, subscriptionWaiting: { anthropic: { to: 'acp-claude', cli: 'Claude Code', reason: 'sign-in' } } }, undefined), 'This model is not available now. Pick another one.')
+})
+
+test('the crossing says what Full access means on the route it moves to, only for a Full access Bot', () => {
+  const roster = { ready: true, models: cascade, defaultModel: 'deepseek/flash' }
+  const line = (bot, current, target) => nodes(RouteConfirm({
+    bot, roster, current, target: { ref: target }, onCancel: () => {}, onConfirm: () => {},
+  }), node => node.props.className === 'bt-model-confirm-access')[0]?.children[0]
+  assert.equal(line({ name: 'Ops', permission: 'danger-full-access' }, 'acp-codex/default', 'deepseek/flash'), "Full access: DSH's own tools run without asking.")
+  assert.equal(line({ name: 'Ops', permission: 'danger-full-access' }, 'deepseek/flash', 'acp-codex/default'), "Full access: the CLI's own no-ask mode.")
+  assert.equal(line({ name: 'Ops', permission: 'workspace-write' }, 'deepseek/flash', 'acp-codex/default'), undefined)
+  assert.equal(line({ name: 'Ops' }, 'deepseek/flash', 'acp-codex/default'), undefined)
 })

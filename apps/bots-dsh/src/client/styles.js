@@ -1113,7 +1113,7 @@ body:not([data-bt-advanced]) [data-composer-dock]:not(:has(.bt-btw)){display:non
 .bt-mic:hover{background:color-mix(in srgb,var(--bt-ink) 10%,transparent);color:var(--bt-ink)}
 .bt-mic[aria-pressed=true]{background:#ff3e51;color:#fff;animation:bt-mic-pulse 1.4s ease-in-out infinite}
 @keyframes bt-mic-pulse{0%,100%{box-shadow:0 0 0 0 rgba(255,62,81,.35)}50%{box-shadow:0 0 0 5px rgba(255,62,81,0)}}
-[data-composer-card] .bt-voice{width:32px;height:32px}
+[data-composer-card] .bt-voice{width:28px;height:28px}
 .bt-voice{display:none;background:var(--bt-accent);color:var(--bt-accent-ink,#fff);animation:bt-icon-swap ${SPRING_POP.duration}ms ${SPRING_POP.easing}}
 .bt-voice:hover{opacity:.9}
 .bt-mic:active,.bt-voice:active{scale:.9}

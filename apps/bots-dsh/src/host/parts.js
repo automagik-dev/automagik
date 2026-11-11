@@ -28,6 +28,18 @@ import { crossesHarness } from '../shared/routes.js'
 import { clip, createClock, escapeRegExp, estimateTokens, splitRef, textOf } from './text.js'
 import { checkShownView, inputsSummary, normalizeView, validateViewAnswer, viewSummary } from '../shared/views.js'
 
+// Whether a Bot's part has something a handoff note must carry. The team's own setup kickoff
+// is not a conversation; anything else a person or another Bot put in the part is: a typed
+// message, a question-card or view reply, a bot-to-bot message, a schedule. DSH's own context
+// (runtime context, a working-directory notice) and an earlier handoff package are not.
+export function saidSomething(messages) {
+  return (messages ?? []).some(message => message?.role === 'user'
+    && message.source?.handoff !== true
+    && message.source?.role !== 'kickoff'
+    && message.source?.kind !== 'runtime-context'
+    && message.source?.kind !== 'working-directory')
+}
+
 // An ask_user card as the user saw it. The user's reply is often just an option label,
 // which means nothing without the card. Arguments the tool would refuse (no question,
 // options that are not { label } objects) showed no card, so they give no text.
@@ -1072,10 +1084,13 @@ export function install(rt) {
   // part carries the latest messages that fit, and the old part is archived only once the
   // fresh part's first answer comes from its route.
   function startSwitch(agent, { resume = false, carry = [], info, joined, overflow = false, failed, bare = false, folder = false, fresh = false, noNote, target, threshold, hard = overflow || folder || fresh } = {}) {
-    const place = placeOf(agent.id)
-    if (place === undefined || switches.has(agent.id) || checkpoints.has(agent.id) || readOnly() || pinned(agent.id)) return false
+    // DSH agents carry `id`; a host agent (a test double, an adopted session) may only carry
+    // the Session it runs. The Session id is the key either way.
+    const agentId = agent.id ?? agent.session?.id
+    const place = placeOf(agentId)
+    if (place === undefined || switches.has(agentId) || checkpoints.has(agentId) || readOnly() || pinned(agentId)) return false
     const job = { ...place, carry: [...carry], info, joined, resume, overflow, failed, bare: bare || fresh, folder, fresh, hard, noNote, target, threshold, since: Date.now() }
-    switches.set(agent.id, job)
+    switches.set(agentId, job)
     const running = runSwitch(agent, job)
     // Settles once the move is over, either way: a fresh part's first answer or failure
     // that comes while it runs waits for it.
@@ -1086,7 +1101,7 @@ export function install(rt) {
         rt.warn('ds-bot: %s did not move on to a fresh part: %s', rt.botOf(job.botId)?.name ?? agent.id, error)
       })
       .finally(async () => {
-        switches.delete(agent.id)
+        switches.delete(agentId)
         if (job.moved) {
           // A move that had to put input back keeps the part marked for the restart pass.
           if (job.kept !== true) {
@@ -1337,9 +1352,15 @@ export function install(rt) {
     const route = session?.requestHeader()?.config
     return route?.provider && route?.model ? { ref: `${route.provider}/${route.model}`, effort: route.reasoningEffort } : undefined
   }
-  // It answers whether the route was selected.
+  // It answers whether the route was selected, and records what the fresh part then runs on.
   const selectRoute = (bot, sessionId, { ref, effort }) => rt.selectSessionModel(sessionId, { ...splitRef(ref), ...(effort === undefined ? {} : { reasoningEffort: effort }) })
-    .then(() => true, (error) => {
+    .then(async () => {
+      bot.appliedModel = ref
+      if (effort === undefined) delete bot.appliedEffort
+      else bot.appliedEffort = effort
+      await rt.save()
+      return true
+    }, (error) => {
       rt.warn('ds-bot: model for the fresh part of %s not applied: %s', bot.name, error)
       return false
     })
@@ -1960,9 +1981,10 @@ export function install(rt) {
   }
 
   // A route change is a harness change (RFC 0030, Decided 6 and 10): the old harness writes
-  // a handoff note while idle, a fresh part opens with it, and only then does the Bot's model
-  // record name the new route. A conversation with nothing said yet is simply taken over.
-  async function switchRoute(botId, model) {
+  // a handoff note while idle and a fresh part opens with it. `bot.model` is the person's new
+  // choice; `appliedModel` follows the moment that part takes the route. A conversation with
+  // nothing worth carrying is simply taken over.
+  async function switchRoute(botId, model, effort) {
     const bot = rt.botOf(botId)
     if (bot === undefined) throw Object.assign(new Error('Unknown Bot'), { code: 'bot/not-found' })
     if (readOnly()) throw Object.assign(new Error(rt.readOnly()), { code: 'bot/read-only' })
@@ -1970,45 +1992,53 @@ export function install(rt) {
     const current = bot.model ?? bot.appliedModel
     if (typeof current !== 'string' || !crossesHarness(current, model)) throw refused('refused', `${bot.name} is already on that route.`)
     const target = await rt.resolveModel(model, { checkAccess: true, keep: bot.model })
+    // A level picked with the crossing belongs to the fresh part. Without one, the Bot's
+    // current level travels with it; desiredEffort drops it if the new model lacks it.
+    const effortId = effort === undefined ? bot.effort
+      : effort === null || effort === '' ? null
+      : await rt.resolveEffort(target, effort)
     const agent = await rt.resolveAgent(rt.chatOf(botId))
-    const previous = { model: bot.model, effort: bot.effort }
+    const previous = { model: bot.model, effort: bot.effort, appliedModel: bot.appliedModel, appliedEffort: bot.appliedEffort }
+    const restore = () => {
+      for (const key of ['model', 'effort', 'appliedModel', 'appliedEffort']) {
+        if (previous[key] === undefined) delete bot[key]
+        else bot[key] = previous[key]
+      }
+    }
+    const putRoute = () => {
+      bot.model = target
+      if (effortId === null) delete bot.effort
+      else if (effortId !== undefined) bot.effort = effortId
+    }
     let said = true
     // The team's own kickoff is not a conversation yet: a Bot still on its greeting simply
-    // takes the new route, with no note to write.
-    try { said = agent.session.deriveMessages().some(message => message.role === 'user' && message.source?.kind === 'user') } catch {}
+    // takes the new route, with no note to write. Everything a person or another Bot said is.
+    try { said = saidSomething(agent.session.deriveMessages()) } catch {}
     if (!said) {
       rt.noteModelChoice?.(bot, target)
-      bot.model = target
-      delete bot.effort
+      putRoute()
       try {
         await rt.applyModel(bot, { force: true })
       } catch (error) {
-        if (previous.model === undefined) delete bot.model
-        else bot.model = previous.model
-        if (previous.effort === undefined) delete bot.effort
-        else bot.effort = previous.effort
+        restore()
         throw error
       }
       await rt.save()
-      return { id: botId, model: target, status: 'switched' }
+      return { id: botId, model: target, ...(effortId === null ? {} : { effort: effortId }), status: 'switched' }
     }
     const job = startSwitch(agent, { hard: true, target })
     if (!job) throw refused('busy', `${bot.name} is already moving to a new conversation.`)
     rt.noteModelChoice?.(bot, target)
-    bot.model = target
-    delete bot.effort
+    putRoute()
     await rt.save()
     // The fresh part may fail before its first answer: the record goes back with it, so the
     // Bot never reads as moved to a route that did not take it.
     void job.done.then(async () => {
       if (job.moved || bot.model !== target) return
-      if (previous.model === undefined) delete bot.model
-      else bot.model = previous.model
-      if (previous.effort === undefined) delete bot.effort
-      else bot.effort = previous.effort
+      restore()
       await rt.save()
     }).catch(() => {})
-    return { id: botId, model: target, status: 'switching' }
+    return { id: botId, model: target, ...(effortId === null ? {} : { effort: effortId }), status: 'switching' }
   }
 
   // The user's "New conversation" for a Bot's own chat: once the Bot is idle, it goes on in
