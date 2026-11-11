@@ -874,11 +874,25 @@ export class AcpAdapter extends LlmAdapter {
     if (continuing) started()
     if (!continuing) {
       if (last?.role === 'tool') {
+        // The agent may still be on the prompt this step belonged to. Nobody is reading it any
+        // more, so it is asked to stop now, and its session is ended if it has not stopped in
+        // the time a cancel gets (`reap`, which also answers whatever it was still asking),
+        // instead of going on unseen until the person's next message (#969).
+        if (live?.run?.busy === true) {
+          void live.run.cancel()
+          this.reap(sessionId, live)
+        }
         yield* blocks.add('text', `${agent.name} was interrupted before it finished, so it is not answering this turn any more.`)
         yield* blocks.close()
         return yield finish('stop')
       }
-      if (live !== undefined && (live.provider !== options.provider || !live.run.alive)) {
+      // A bridge that closed (its process ended and said so) is not coming back: the agent on
+      // that session has lost DSH's tools for good, and would answer this turn without them.
+      // Its session ends here and the turn starts a new one, which the replay carries the chat
+      // to, as for an agent that is no longer alive (#969).
+      const bridgeGone = live?.bridge?.closed === true && this.bridgeOn(agent)
+      if (bridgeGone) this.warn(`${live.name} lost its ${BRIDGE_NAME} bridge: its session was ended and a new one starts`)
+      if (live !== undefined && (live.provider !== options.provider || !live.run.alive || bridgeGone)) {
         this.end(sessionId, live)
         live = undefined
       }
