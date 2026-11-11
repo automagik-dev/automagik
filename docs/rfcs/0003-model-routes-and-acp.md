@@ -587,6 +587,26 @@ before; without one, the Codex CLI on its own ChatGPT sign-in (acp-dsh `generate
 read-only session using Codex's image tool). A ChatGPT grant stored by an earlier version's DSH
 sign-in is read last. CLI auto-updates stay on (D-h).
 
+**Accepted image security risk (owner decision, 2026-11-11; #870).** Codex drawing stays
+enabled. codex-acp's `read-only` mode can read the whole disk wherever the OS user has read
+access, so an injected drawing request could read a local file into the returned picture.
+The image tool itself accepts local image files; its ACP report does not expose the input
+arguments. In codex-acp 2.6.0, the image session's selected `read-only` mode sends a full-disk
+`readOnly` policy on every turn; `CODEX_CONFIG` cannot narrow it. Existing feature and offered
+tool checks remain in place, but do not establish read isolation. Post-call refusals cannot
+undo a read, and prompt wording is not a control.
+
+An OpenAI API key avoids `generate_image`'s one-off Codex fallback by using the Images API;
+the API still receives the prompt. A Bot running on Codex can still invoke its own image
+tool despite that key. Use a different Bot model or turn Codex off to avoid that route.
+Callers should avoid routing untrusted outside text into Codex drawings. This is risk
+acceptance, not a fix: [#870] remains open for an enforceable narrow read policy that also
+covers the image tool's file inputs on the actual per-turn adapter path. See the
+[user warning and security notes][codex-image-security].
+
+[#870]: https://github.com/automagik-si/automagik/issues/870
+[codex-image-security]: ../../apps/acp-dsh/README.md#images-through-codex
+
 ## Amendment: required desktop CLIs (2026-11-08)
 
 Claude Code and Codex are required desktop components. On every activation and after any plugin

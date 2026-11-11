@@ -308,14 +308,33 @@ account only after the person said so, once per vendor and per account (`src/hos
 - Not in this version: a separate sign-in for Bots (an isolated CLI home), sign-out and switch
   account. A sign-in started from the app still replaces the terminal's.
 
+<a id="images-through-codex"></a>
+
 **Images through Codex.** `generateImage` is a one-off codex-acp session that asks Codex's
 built-in image tool for one picture (owner decision D-g): an empty scratch folder as its working
 directory (removed afterwards), the `read-only` mode, no MCP servers and no bridge. The person's
 `config.toml` is never written and `CODEX_HOME` is never set: everything below is set for that
 process only, through codex-acp's `CODEX_CONFIG` override.
 
-Codex has no allow-list of tools, and its `read-only` mode can read the disk. So the run rests
-on what can be checked, and does not start when a check does not hold (#870):
+**Security warning (#870): Codex drawing remains enabled with an accepted file disclosure
+risk.** codex-acp's `read-only` mode can read the whole disk wherever the OS user has read
+access. An injected drawing request could read a local file into the returned picture;
+Codex's image tool can use local image files as input. Anyone who sees the picture could see
+that content. An empty working folder, tool checks and permission refusals do not prevent
+this. A passing `imageAccess()` check means drawing is available, not that local reads are
+isolated.
+
+To avoid `generate_image`'s one-off Codex fallback, configure an OpenAI API key for the Images
+API, or turn Codex off in the agent settings. The API receives the prompt without starting a
+local Codex session; keep secrets out of that prompt. A Bot running on Codex can still invoke
+its own image tool even with an API key configured. Use a different Bot model or turn Codex
+off to avoid that route. Avoid forwarding untrusted channel messages or other outside text
+into Codex drawing requests. Reviewing a prompt can reduce exposure, but it cannot enforce a
+file boundary. Narrow sandbox reads remain open in
+[#870](https://github.com/automagik-si/automagik/issues/870); see the security notes below.
+
+Codex has no allow-list of tools. The following checks limit its other tools and refuse a run
+when a check does not hold; they do not close the image tool's local-file input:
 
 - **The checks, before anything starts.** The Codex the run would start is asked, through
   codex-acp's `cli` passthrough and with the run's own overrides: its MCP servers
@@ -334,13 +353,14 @@ on what can be checked, and does not start when a check does not hold (#870):
     does not know stops the draw. So does a tool `exec` reaches that is not written as Codex
     0.167 writes it (one `declare const tools: { name(…) }` block per tool, one tool per block,
     under a heading of its name), and an `exec` that names none.
-  - The safety of the run rests on this offered-tools check, not on feature names: Codex takes
-    a `features.<name>` it does not know without a word, and several names change nothing in the
-    tools a current Codex offers.
+  - The offered-tools check supplements the feature checks: Codex takes a `features.<name>` it
+    does not know without a word, and several names change nothing in the tools a current
+    Codex offers. Neither check establishes read isolation.
 - **What is turned off.** The two features above; the other tool sources the installed Codex
   lists (`IMAGE_FEATURES_ALSO_OFF`: a name it does not list, or lists as removed, is never
   sent); web search; each of the person's own MCP servers by name; Codex's bundled skills and
-  the person's own by name, so nothing invites the agent to open a file.
+  the person's own by name. This reduces tool sources; it does not restrict the image tool's
+  file inputs.
 - **One object.** The session's `CODEX_CONFIG` and the checks' `-c` arguments are built from
   the same overrides (`imageOverrides`, `configArgs`).
 - **During the turn.** Every permission the agent asks is cancelled (codex-acp asks none for
@@ -363,19 +383,20 @@ it does not hold (`reason`: `unsupported`, with `unsupported: true`; `config`; `
 the Bot team goes on to its next image source, or says which it was. Only a check that ran out
 of time leaves Codex ready. A draw always makes its own check.
 
-Residual risk, and what holds it:
+**Security notes: accepted residual risk (#870).**
 
-- **The image tool's own input (open).** Codex's image tool does not only draw: it can take
-  an existing image file as the picture to edit. codex-acp reports the call without its
-  arguments, so the run cannot see whether a call was a fresh drawing, and no feature switch
-  turns that input off. A prompt that asks for it can therefore bring back a picture made from
-  an image file the person can read. Nothing in this run stops that: the wording of the prompt
-  is not a control. What would is a Codex permission profile that limits what the session can
-  read, and codex-acp 2.6 cannot apply one from the run's own config (each turn carries the
-  `read-only` sandbox, and a profile is offered as a mode only when the person's own config
-  defines it). Until that exists, callers should treat a Codex drawing as able to show the
-  person's image files to whoever reads the result; whether Codex draws at all for prompts
-  that come from outside is an owner decision.
+- **The image tool's own input (open; risk accepted).** A prompt injection can ask Codex to
+  use a readable local image file as input and return its contents in a picture shown in chat.
+  codex-acp reports the image call without its arguments, so the run cannot tell a fresh
+  drawing from an edit of a local file. No feature switch disables that input. With
+  codex-acp 2.6.0, selecting `read-only` sends a full-disk `readOnly` sandbox policy on every
+  turn. The session's `CODEX_CONFIG` cannot narrow that policy; custom permission profiles
+  are offered as modes only when defined in the person's own Codex config. The image run
+  selects `read-only`, not one of those profiles. Prompt wording and an `onTool` refusal
+  after a call cannot enforce a read boundary. The owner chose to keep Codex drawing enabled
+  with this risk accepted; #870 remains open. Closing the gap requires an enforceable narrow
+  read policy for the image session, including the image tool's own file inputs, verified
+  on the actual per-turn adapter path before returning any image.
 - **A tool that is offered and not reported.** Codex 0.167 keeps some tools on whatever the
   switches say: its `exec` JavaScript isolate, `wait`, its questions to the person, sub-agents,
   patches (which ask first, and are cancelled) and MCP resource listing (no server is on). Not
@@ -408,8 +429,9 @@ asking Codex for a switch for `exec`.
 `test/image-codex.test.js` runs these checks against a real Codex and codex-acp in a throwaway
 home (never signed in, no model request). It is skipped unless `AUTOMAGIK_TEST_CODEX_ACP`
 (codex-acp's `dist/index.js`) and `AUTOMAGIK_TEST_CODEX` (a Codex executable) are set; CI
-installs neither, so run it by hand when the Codex or codex-acp the app installs changes. A
-Codex it has not been run against fails closed in the app: the draw is refused, not weakened.
+installs neither, so run it by hand when the Codex or codex-acp the app installs changes. At
+runtime, an unknown required feature or an unrecognised offered tool refuses the draw.
+Passing those checks does not prove that an image cannot contain locally read content.
 
 **Images an agent makes in a chat.** A chat on an agent can ask it for a picture, and Codex then
 uses its own image tool (an `other` call titled "Image generation"). The mirror call carries
