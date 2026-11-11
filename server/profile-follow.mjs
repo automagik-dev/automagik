@@ -67,7 +67,7 @@ export async function followImage({ dshHome, source, store, build, dshBin, insta
     return { target, seeded: false, result, ...profileState({ profile: target, source, build, dshHome }) }
   }
   if (own.reason === 'legacy-image-seed') {
-    try { markSeed(target, own.release); own = ownership(target, source) }
+    try { markSeed(target, own.release, own.packageSha256); own = ownership(target, source) }
     catch { return done('update-rolled-back') }
   }
   if (recovered) return done('update-rolled-back')
@@ -99,6 +99,7 @@ export async function followImage({ dshHome, source, store, build, dshBin, insta
     pinStore(profile, dshHome)
     await install({ dshBin, profile, dshHome: staging })
     if (!PLUGINS.every(name => installedPlugins(profile)[name] === build.plugins[name])) throw new Error('Image plugin install did not converge')
+    if (packageHash(target) !== own.packageSha256) return done('owner-managed')
     const manifest = JSON.parse(readFileSync(join(source, 'package.json'), 'utf8'))
     for (const name of PLUGINS) rmSync(join(profile, manifest.dependencies[name].slice(5)), { force: true })
     try { rmdirSync(join(profile, 'vendor')) } catch (error) { if (error.code !== 'ENOTEMPTY') throw error }

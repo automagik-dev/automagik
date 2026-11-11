@@ -40,9 +40,10 @@ export function compareRelease(left, right) {
   }
   return 0
 }
-export function markSeed(profile, release) {
+export function markSeed(profile, release, observedHash = packageHash(profile)) {
   if (!releaseVersion(release)) throw new Error('Invalid seed release')
-  writeJson(join(profile, SEED_MARKER), { version: 1, release, packageSha256: packageHash(profile) })
+  if (!/^[a-f0-9]{64}$/.test(observedHash)) throw new Error('Invalid seed hash')
+  writeJson(join(profile, SEED_MARKER), { version: 1, release, packageSha256: observedHash })
 }
 
 /** Legacy adoption is deliberately stricter than a subset or dependency-name check. */
@@ -59,7 +60,7 @@ export function ownership(profile, source) {
       return { managed: false, ownerManaged: false, reason: 'unsupported-seed-marker' }
     }
     if (packageHash(profile) !== marker.packageSha256) return { managed: false, ownerManaged: true, reason: 'owner-managed' }
-    return { managed: true, ownerManaged: false, reason: 'image-seed', release: marker.release }
+    return { managed: true, ownerManaged: false, reason: 'image-seed', release: marker.release, packageSha256: marker.packageSha256 }
   }
   const expected = readJson(join(source, 'package.json'))
   const versions = PLUGINS.map(name => {
@@ -69,7 +70,7 @@ export function ownership(profile, source) {
   if (expected && versions.every(v => releaseVersion(v) && v === versions[0])) {
     expected.dependencies = { ...expected.dependencies }
     for (const name of PLUGINS) expected.dependencies[name] = `file:vendor/automagik-${name.split('/')[1]}-${versions[0]}.tgz`
-    if (`${JSON.stringify(expected, null, 2)}\n` === raw) return { managed: true, ownerManaged: false, reason: 'legacy-image-seed', release: versions[0] }
+    if (`${JSON.stringify(expected, null, 2)}\n` === raw) return { managed: true, ownerManaged: false, reason: 'legacy-image-seed', release: versions[0], packageSha256: createHash('sha256').update(raw).digest('hex') }
   }
   return { managed: false, ownerManaged: true, reason: 'owner-managed' }
 }

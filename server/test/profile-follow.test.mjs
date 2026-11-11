@@ -104,6 +104,20 @@ test('an owner-edited package remains byte-for-byte unchanged and is reported as
   assert.equal(installedPlugins(f.target)[PLUGINS[0]], '3.90.1')
 })
 
+// FOLLOW_OWNER_CHANGED_DURING_INSTALL: a late owner edit must still win over the staged image.
+test('an owner package edit during staging cancels cutover and preserves the live profile', async t => {
+  const f = fixture(t); await prepare(f)
+  const pkg = JSON.parse(readFileSync(join(f.target, 'package.json'), 'utf8')); pkg.description = 'owner edit during update'
+  const raw = `${JSON.stringify(pkg, null, 2)}\n`
+  const result = await prepare(f, f.next, args => {
+    successful(f.next.source)(args)
+    write(join(f.target, 'package.json'), raw)
+  })
+  assert.equal(result.ownerManaged, true); assert.equal(result.result, 'owner-managed')
+  assert.equal(readFileSync(join(f.target, 'package.json'), 'utf8'), raw)
+  assert.ok(Object.values(installedPlugins(f.target)).every(v => v === '3.90.1'))
+})
+
 // FOLLOW_INSTALL_LIVE: directing a partial install at the live profile corrupts rollback.
 test('a partial install failure preserves the old package, lock and all installed plugins and reports rollback', async t => {
   const f = fixture(t); await prepare(f)

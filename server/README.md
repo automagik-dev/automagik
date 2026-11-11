@@ -145,7 +145,7 @@ profile aside for a normal update.
 
 ```sh
 docker compose -f server/compose.gate.yml --profile gate up -d
-docker compose -f server/compose.gate.yml --profile gate exec dsh \
+docker compose -f server/compose.gate.yml --profile gate exec gate \
   /nodejs/bin/node /opt/automagik/healthcheck.mjs --json
 ```
 

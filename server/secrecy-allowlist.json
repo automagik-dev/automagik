@@ -239,5 +239,12 @@
     "match": "/home/iojs",
     "fileSha256": "e237a2839d0cbdc9a9a2adda1a184afc0f5b20306ffbe923af5686550472d8a8",
     "reason": "the Node project's build account in the pinned distroless node binary, not a host account"
+  },
+  {
+    "file": "opt/automagik/offline-store/v10/files/3a/b0b312eddc7fe813b0c0ecdac2d2fdd1ee73ba0bd321f1e876109d5b859ffe3b79dff17bc0d6e9db50ae0a21b7eddb7303ed9ccad46e6d8270f0377ce8d6ac",
+    "rule": "home-path",
+    "sha256": "370118d8db6a2ad441cdff94bda2f53caff97d5fcb6ba9a5632d0bce5e78c50f",
+    "fileSha256": "6be5c2ea035554e9b184b1dbc7aa5e7f1fb428dd1b5c202022858dcfae9bee27",
+    "reason": "Byte-identical offline cache of the already-reviewed playwright-core/lib/coreBundle.js container-user example; both the content-addressed cache path and module digest are pinned."
   }
 ]
