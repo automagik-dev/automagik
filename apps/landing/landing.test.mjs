@@ -52,7 +52,6 @@ test('approved umbrella map, one h1 per page, generated sources current, no clie
   assert.equal((home.match(/class="product-card"/g) ?? []).length, 7)
   assert.equal([...generated.values()].join('').match(/data-film=/g).length, 1)
   assert.match(home, /data-film="placeholder"/)
-  assert.match(home, /The film comes in D2/)
 })
 
 test('distribution order, real release links, no links for Windows or iPhone soon', () => {
@@ -188,4 +187,21 @@ test('approved WhatsApp support privacy is verbatim in English with its Portugue
   const html = htmlAt('/cloud/')
   assert.ok(html.includes(markup))
   assert.match(html, /180 days after code expiry/)
+})
+
+
+test('every public page forbids internal delivery and product-team jargon, including attributes', async () => {
+  const forbidden = /\b(?:D[1-9]|GTM|rail|release\s+lane|lane)\b/i
+  function inspect(directory = '') {
+    for (const entry of readdirSync(resolve(root, directory), { withFileTypes: true })) {
+      const path = directory ? `${directory}/${entry.name}` : entry.name
+      if (entry.isDirectory()) inspect(path)
+      else if (path.endsWith('.html')) assert.doesNotMatch(read(path), forbidden, path)
+    }
+  }
+  inspect()
+  // The shared dynamic form/confirmation pages expose the same privacy copy.
+  const { onRequest } = await import('./functions/api/waitlist.js')
+  const response = await onRequest({ request: new Request('https://automagik.si/api/waitlist'), env: {} })
+  assert.doesNotMatch(await response.text(), forbidden, '/api/waitlist')
 })

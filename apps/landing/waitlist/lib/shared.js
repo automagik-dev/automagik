@@ -34,9 +34,9 @@ export async function boundedBody(request, max = 8192) {
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length }
   return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes)
 }
-export async function cleanup(db, time) {
+export async function cleanup(db, time, processingMs = Date.now()) {
   await db.batch([
-    db.prepare("DELETE FROM waitlist WHERE confirmed_at IS NULL AND ((channel='email' AND expires_at<=?) OR (channel='whatsapp' AND expires_at<?))").bind(time, time - WHATSAPP_BACKLOG_SECONDS),
+    db.prepare("DELETE FROM waitlist WHERE confirmed_at IS NULL AND ((channel='email' AND expires_at<=?) OR (channel='whatsapp' AND (expires_at+?)*1000<?))").bind(time, WHATSAPP_BACKLOG_SECONDS, processingMs),
     db.prepare('DELETE FROM waitlist_quota WHERE expires_at<=?').bind(time),
     db.prepare('DELETE FROM waitlist_cooldown WHERE sent_at<=?').bind(time - 86400),
   ])

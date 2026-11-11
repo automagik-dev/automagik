@@ -112,7 +112,7 @@ product claims. The site's developer commands live in `apps/landing/README.md`.
 One cut, one film element on the home page. The site's committed paths remain
 `assets/film/automagik-launch.mp4` and `automagik-launch-poster.webp`, with `LICENSES.md`.
 The film shows the launch team at work, not an invented product dashboard. Until D2 supplies
-the approved files, the single poster slot says “The film comes in D2” and reuses a labelled
+the approved files, the single poster slot says “A short film is coming” and reuses a labelled
 recorded capture. It has no false play control. Other pages contain no film element.
 
 The README plays a GitHub attachment of the same cut, no more than 10 MB, since GitHub's CSP
@@ -357,3 +357,18 @@ no data is sold or used for advertising/marketing, and people may download/reset
 conversation through the assistant or privacy address. A waitlist code is recorded as confirmed
 without the waitlist retaining the message text. Public copies of the approved text and
 translation live under `apps/landing/waitlist/privacy-support.*.md`.
+
+
+### Review repairs: public copy, precise cutoff and headline bounds
+
+Public pages use visitor language: the launch team, an upcoming short film, GitHub downloads
+and opening workspaces. The page contract forbids internal delivery labels and team jargon
+in text and attributes. The placeholder remains one honest film slot until the cut is ready.
+
+Both receive-time and processing-time backlog guards use millisecond comparisons in
+JavaScript and SQL. The exact 180-day deadline is accepted; deadline plus one millisecond
+is 404 for first use and replay. Pending-row cleanup observes the same precise cutoff.
+Stored second-based timestamps and counter buckets retain their established units.
+
+The responsive gate checks each hero headline's element box and text rectangles against
+its card's padded content area, including 390px, instead of relying only on document width.

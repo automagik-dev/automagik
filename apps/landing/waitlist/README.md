@@ -107,7 +107,8 @@ original top-level `timestamp` in Unix milliseconds. No body/name/text is logged
 The authenticated timestamp is required, finite, and at most 120 seconds ahead of processing
 time (otherwise 400). The message must have arrived at or before `expires_at` (inclusive),
 and processing must be no later than `expires_at + 180 days` (inclusive); otherwise 404.
-The SQL single-use update enforces both bounds too. Receipt identity/code/sender must still
+The JavaScript checks and SQL single-use update compare both bounds in milliseconds.
+The exact deadline is accepted; one millisecond beyond it is 404, including receipt replays. Receipt identity/code/sender must still
 match for an idempotent reply. A new message for a used code remains 409. After the backlog
 window even the old receipt is 404. Email token/cooldown timing is unchanged.
 

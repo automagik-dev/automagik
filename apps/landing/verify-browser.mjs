@@ -71,7 +71,21 @@ try {
         reducedMotion: [...document.getAnimations()].every(animation => animation.playState !== 'running'),
         background: getComputedStyle(document.body).backgroundColor,
       }))
+      const headingBounds = await page.evaluate(() => [...document.querySelectorAll('.hero-heading h1')].map(heading => {
+        const card = heading.closest('.hero-heading'), box = card.getBoundingClientRect(), style = getComputedStyle(card)
+        const range = document.createRange(); range.selectNodeContents(heading)
+        const horizontal = rect => ({ left: rect.left, right: rect.right })
+        return {
+          card: horizontal(box),
+          content: { left: box.left + parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft), right: box.right - parseFloat(style.borderRightWidth) - parseFloat(style.paddingRight) },
+          heading: horizontal(heading.getBoundingClientRect()),
+          text: [...range.getClientRects()].filter(rect => rect.width > 0).map(horizontal),
+        }
+      }))
       const label = `${route} ${colorScheme} ${width}px`
+      for (const bounds of headingBounds) {
+        assert.ok([bounds.heading, ...bounds.text].every(box => box.left >= bounds.content.left - 0.5 && box.right <= bounds.content.right + 0.5), `Heading stays inside card padding: ${label} ${JSON.stringify(bounds)}`)
+      }
       assert.equal(report.scroll, report.viewport, `Horizontal overflow: ${label}`)
       // The homepage's brand accent hides on narrow screens by design; shown product images
       // still must decode, and every image request must return 200.
@@ -110,7 +124,7 @@ try {
         await comparison.screenshot({ path: join(evidence, `comparison-${slug}-${colorScheme}-${width}.png`) })
         await comparison.close()
       }
-      reports.push({ route, colorScheme, width, ...report, responses, screenshot })
+      reports.push({ route, colorScheme, width, ...report, headingBounds, responses, screenshot })
       console.log(`PASS ${label}: no overflow; images and fonts loaded; local requests`)
     } finally { await context.close() }
   }

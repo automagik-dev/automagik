@@ -23,15 +23,16 @@ export async function onRequest({ request, env }) {
   const messageId = payload.externalId
   const sender = senderIdentity(payload.from)
   const processingMs = Date.now()
-  const time = Math.floor(processingMs / 1000)
+  // Existing stored times and quota buckets use seconds; expiry guards use milliseconds.
+  const processingSeconds = Math.floor(processingMs / 1000)
   const receivedAt = body.timestamp
   if (typeof receivedAt !== 'number' || !Number.isFinite(receivedAt) || receivedAt < 0 || receivedAt > processingMs + 120000) return empty(400)
-  const expired = row => receivedAt > row.expires_at * 1000 || time > row.expires_at + WHATSAPP_BACKLOG_SECONDS
+  const expired = row => receivedAt > row.expires_at * 1000 || processingMs > (row.expires_at + WHATSAPP_BACKLOG_SECONDS) * 1000
   const digest = await hash(code)
   try {
     const db = env.WAITLIST_DB
     if (!db || env.WAITLIST_DATA_JURISDICTION !== 'eu') return empty(503)
-    if (!await quota(db, `wa-callback:${Math.floor(time / 60)}`, 60, time + 120)) return empty(429)
+    if (!await quota(db, `wa-callback:${Math.floor(processingSeconds / 60)}`, 60, processingSeconds + 120)) return empty(429)
     const previous = await db.prepare('SELECT confirmation_reply,whatsapp_sender,confirmation_hash,expires_at FROM waitlist WHERE message_id=? AND confirmed_at IS NOT NULL').bind(messageId).first()
     if (previous && expired(previous)) return json({ status: 'unknown_or_expired' }, 404)
     if (previous) return previous.whatsapp_sender === sender.sender && previous.confirmation_hash === digest ? json({ reply: previous.confirmation_reply }) : json({ status: 'already_confirmed' }, 409)
@@ -40,7 +41,7 @@ export async function onRequest({ request, env }) {
     if (row.confirmed_at !== null) return json({ status: 'already_confirmed' }, 409)
     const text = reply(row.language)
     // This conditional write is the single-use boundary across concurrent callbacks.
-    const changed = await db.prepare('UPDATE waitlist SET confirmed_at=?,whatsapp_number=?,whatsapp_sender=?,message_id=?,confirmation_reply=?,received_at=? WHERE id=? AND confirmed_at IS NULL AND expires_at>=? AND expires_at>=? RETURNING id').bind(time, sender.number, sender.sender, messageId, text, receivedAt, row.id, receivedAt / 1000, time - WHATSAPP_BACKLOG_SECONDS).first()
+    const changed = await db.prepare('UPDATE waitlist SET confirmed_at=?,whatsapp_number=?,whatsapp_sender=?,message_id=?,confirmation_reply=?,received_at=? WHERE id=? AND confirmed_at IS NULL AND expires_at*1000>=? AND (expires_at+?)*1000>=? RETURNING id').bind(processingSeconds, sender.number, sender.sender, messageId, text, receivedAt, row.id, receivedAt, WHATSAPP_BACKLOG_SECONDS, processingMs).first()
     if (changed) return json({ reply: text })
     const retried = await db.prepare('SELECT confirmation_reply,whatsapp_sender,confirmation_hash,expires_at FROM waitlist WHERE message_id=? AND confirmed_at IS NOT NULL').bind(messageId).first()
     if (retried && expired(retried)) return json({ status: 'unknown_or_expired' }, 404)

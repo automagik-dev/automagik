@@ -244,3 +244,48 @@ test('WhatsApp backlog: processing after 180 days past expiry is refused', async
   await post(f.env, { action: 'remove', contact: 'absent@example.com' })
   assert.equal(f.sqlite.prepare('SELECT count(*) AS n FROM waitlist').get().n, 0)
 })
+
+
+test('WhatsApp backlog cutoff: first use allows the exact boundary and refuses one millisecond later', async t => {
+  const start = Date.now(); let clock = start
+  t.mock.method(Date, 'now', () => clock)
+  t.mock.method(globalThis, 'fetch', () => assert.fail('No callback outbound request'))
+  for (const delta of [0, 1]) {
+    clock = start
+    const f = fixture()
+    try {
+      const code = await whatsapp(f.env)
+      const row = f.sqlite.prepare('SELECT * FROM waitlist').get()
+      const body = { ...event(code), timestamp: row.expires_at * 1000 }
+      clock = (row.expires_at + WHATSAPP_BACKLOG_SECONDS) * 1000 + delta
+      const response = await callback(f.env, body)
+      assert.equal(response.status, delta === 0 ? 200 : 404, `first use at cutoff + ${delta}ms`)
+      assert.equal(f.sqlite.prepare('SELECT confirmed_at FROM waitlist').get().confirmed_at !== null, delta === 0)
+      if (delta === 1) {
+        await post(f.env, { action: 'remove', contact: 'absent@example.com' })
+        assert.equal(f.sqlite.prepare('SELECT count(*) AS n FROM waitlist').get().n, 0, 'Cleanup uses the same millisecond cutoff')
+      }
+    } finally { f.close() }
+  }
+})
+
+test('WhatsApp backlog cutoff: replay allows the exact boundary and refuses one millisecond later', async t => {
+  let clock = Date.now()
+  t.mock.method(Date, 'now', () => clock)
+  t.mock.method(globalThis, 'fetch', () => assert.fail('No callback outbound request'))
+  const f = fixture(); t.after(f.close)
+  const code = await whatsapp(f.env)
+  const row = f.sqlite.prepare('SELECT * FROM waitlist').get()
+  const body = event(code)
+  const original = await callback(f.env, body)
+  assert.equal(original.status, 200)
+  const reply = await original.json()
+  clock = (row.expires_at + WHATSAPP_BACKLOG_SECONDS) * 1000
+  const atBoundary = await callback(f.env, body)
+  assert.equal(atBoundary.status, 200)
+  assert.deepEqual(await atBoundary.json(), reply)
+  clock++
+  const pastBoundary = await callback(f.env, body)
+  assert.equal(pastBoundary.status, 404, 'replay at cutoff + 1ms')
+  assert.deepEqual(await pastBoundary.json(), { status: 'unknown_or_expired' })
+})

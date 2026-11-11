@@ -6,7 +6,7 @@ the colours, type and component treatment. Every product screen is a provenance-
 capture; brand/font licences are in `assets/brand/LICENSES.md`.
 
 The committed HTML needs no Pages build step and contains no client JavaScript. The home
-has one labelled D2 film slot. Cloud is coming soon and carries intent, consent and removal
+has one film slot with a plain-language coming-film message. Cloud is coming soon and carries intent, consent and removal
 forms, with email or inbound-first WhatsApp confirmation. No launch or marketing email.
 The meter is not a product or page. Herdr and DSH are Desktop installation channels.
 Pages serves no `/arca` content; Arca owns `/arca` and `/arca/*` in its own Worker.
@@ -100,3 +100,11 @@ use, message-ID idempotency and every no-text/no-logging rule remain in force.
 
 The owner-approved Support on WhatsApp section is included verbatim in English, with the
 same meaning in Portuguese. Its approved source and translation are in `waitlist/privacy-support.*.md`.
+
+
+The public-copy contract rejects internal delivery labels and product-team jargon in all
+HTML, including image alt text. Browser evidence records each hero headline's box and text
+rectangles against its card's padded content bounds, in addition to document overflow.
+WhatsApp backlog expiry compares processing and receive times in milliseconds in both the
+JavaScript guards and the SQL single-use update. The exact deadline is accepted; deadline
+plus one millisecond is rejected on first use and replay.
