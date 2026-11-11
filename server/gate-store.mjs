@@ -1,6 +1,6 @@
 // Gate-only state. Never mount this directory into DSH or a Bot's container.
 import { EventEmitter } from 'node:events'
-import { createHash, randomBytes, randomUUID } from 'node:crypto'
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -86,10 +86,22 @@ export class SessionStore extends EventEmitter {
   active(family) { return this.families.includes(family) && this.now() - family.touched < IDLE_MS }
   authenticate(value, origin) {
     if (!value) return undefined
-    const hash = digest(value)
-    const family = this.families.find(f => f.current === hash || f.used.includes(hash))
+    const hash = Buffer.from(digest(value), 'hex')
+    let current = false
+    const family = this.families.find(f => {
+      const matchesCurrent = timingSafeEqual(Buffer.from(f.current, 'hex'), hash)
+      let matchesUsed = false
+      // Compare every historical hash, including when the current one already matched.
+      for (const used of f.used) {
+        const matches = timingSafeEqual(Buffer.from(used, 'hex'), hash)
+        matchesUsed = matches || matchesUsed
+      }
+      if (!matchesCurrent && !matchesUsed) return false
+      current = matchesCurrent
+      return true
+    })
     if (!family || family.origin !== origin) return undefined
-    if (!this.active(family) || family.current !== hash) { this.revoke(family); return undefined }
+    if (!this.active(family) || !current) { this.revoke(family); return undefined }
     this.touch(family)
     return family
   }

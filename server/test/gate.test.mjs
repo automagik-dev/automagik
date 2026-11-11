@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
-import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+import crypto, { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import http from 'node:http'
+import net from 'node:net'
+import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { once } from 'node:events'
@@ -82,7 +84,7 @@ async function fixture(t) {
   const gate = createGate({ origin: ORIGIN, sessions: state.sessions, credentials })
   const gatePort = await listen(gate)
   t.after(async () => { await gate.closeGate(); upstream.closeAllConnections(); await new Promise(resolve => upstream.close(resolve)) })
-  return { ...state, owner, principal, issued, credentials, gatePort, seen, headers: { cookie: `${COOKIE}=${issued.secret}`, origin: ORIGIN }, advance: ms => { now += ms }, restart: () => { generation++; launch() }, exchanges: () => exchanges }
+  return { ...state, owner, principal, issued, credentials, gate, gatePort, seen, headers: { cookie: `${COOKIE}=${issued.secret}`, origin: ORIGIN }, advance: ms => { now += ms }, restart: () => { generation++; launch() }, exchanges: () => exchanges }
 }
 
 test('all paths and methods and upgrades refuse without a session before any DSH connection', async t => {
@@ -312,4 +314,82 @@ test('malformed and newer session stores fail startup, never become empty valid 
     assert.equal(readFileSync(join(f.dir, 'sessions.json'), 'utf8'), bytes)
   }
   assert.throws(() => f.sessions.issue(ORIGIN, { issuer: 'local:placeholder', subject: 'placeholder', roles: ['admin'], workspace: 'placeholder' }))
+})
+
+// Mutant REFUSE_FIN_ONLY restores end(response) without descriptor destruction or deadline.
+test('refused half-open WebSocket and CONNECT clients release server descriptors', async t => {
+  const f = await fixture(t)
+  const clients = []
+  try {
+    for (const kind of ['upgrade', 'connect']) {
+      const probes = Array.from({ length: 5 }, async () => {
+        const socket = net.connect({ host: DSH_HOST, port: f.gatePort, allowHalfOpen: true })
+        clients.push(socket)
+        socket.on('error', () => {})
+        await once(socket, 'connect')
+        let response = ''
+        socket.setEncoding('utf8')
+        socket.on('data', chunk => { response += chunk })
+        const ended = once(socket, 'end')
+        socket.write(kind === 'upgrade'
+          ? `GET /api/remote.mux HTTP/1.1\r\nHost: ${HOST}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n`
+          : `CONNECT ${HOST} HTTP/1.1\r\nHost: ${HOST}\r\n\r\n`)
+        await ended
+        assert.match(response, /^HTTP\/1\.1 401 Refused/)
+        assert.equal(socket.writableEnded, false, 'the client deliberately keeps its writable half open')
+      })
+      await Promise.all(probes)
+    }
+    const deadline = Date.now() + 1500
+    let connections
+    do {
+      connections = await new Promise((resolve, reject) => f.gate.getConnections((error, count) => error ? reject(error) : resolve(count)))
+      if (connections === 0) break
+      await new Promise(resolve => setTimeout(resolve, 10))
+    } while (Date.now() < deadline)
+    assert.equal(connections, 0, 'refused half-open sockets must release all gate descriptors')
+    assert.equal(f.exchanges(), 0)
+  } finally {
+    for (const client of clients) client.destroy()
+  }
+})
+
+function observeConstantTime(t) {
+  const comparisons = []
+  const real = crypto.timingSafeEqual
+  t.mock.method(crypto, 'timingSafeEqual', (left, right) => {
+    assert.ok(Buffer.isBuffer(left) && Buffer.isBuffer(right))
+    assert.equal(left.length, 32)
+    assert.equal(right.length, 32)
+    comparisons.push(left.toString('hex'))
+    return real(left, right)
+  })
+  syncBuiltinESMExports()
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports() })
+  return comparisons
+}
+
+// Mutant CURRENT_HASH_STRING_EQUALITY replaces only the current timingSafeEqual call.
+test('current session hashes use fixed-length timingSafeEqual', t => {
+  const comparisons = observeConstantTime(t)
+  const f = store(t)
+  const issued = f.sessions.issue(ORIGIN, principalOf(createOwner(f.dir)))
+  assert.equal(f.sessions.authenticate(issued.secret, ORIGIN), issued.family)
+  assert.deepEqual(comparisons, [issued.family.current], 'current hash must use timingSafeEqual')
+})
+
+// Mutant ROTATED_HASH_STRING_EQUALITY replaces historical comparisons with string matching.
+test('every rotated hash uses timingSafeEqual even when the current hash matched', t => {
+  const comparisons = observeConstantTime(t)
+  const f = store(t)
+  const issued = f.sessions.issue(ORIGIN, principalOf(createOwner(f.dir)))
+  f.sessions.renew(issued.family)
+  const latest = f.sessions.renew(issued.family)
+  const expected = [issued.family.current, ...issued.family.used]
+  assert.equal(f.sessions.authenticate(latest, ORIGIN), issued.family)
+  assert.deepEqual(comparisons, expected, 'current match must still compare all rotated hashes with timingSafeEqual')
+  comparisons.length = 0
+  assert.equal(f.sessions.authenticate(issued.secret, ORIGIN), undefined)
+  assert.deepEqual(comparisons, expected, 'replay must compare every rotated hash with timingSafeEqual')
+  assert.equal(f.sessions.list().length, 0)
 })

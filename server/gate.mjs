@@ -20,7 +20,15 @@ function answer(res, status, value) {
   res.writeHead(status, { 'cache-control': 'no-store', 'content-type': 'application/json' })
   res.end(JSON.stringify(value))
 }
-const refuseSocket = (socket, status = 401) => socket.end(`HTTP/1.1 ${status} Refused\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`)
+function refuseSocket(socket, status = 401) {
+  const destroy = () => socket.destroy()
+  const timer = setTimeout(destroy, 1000).unref()
+  socket.once('error', destroy)
+  socket.once('close', () => clearTimeout(timer))
+  // An upgraded/CONNECT socket can stay half-open forever after FIN. Close its descriptor
+  // once the rejection has flushed, with a deadline even if the peer does not read it.
+  socket.end(`HTTP/1.1 ${status} Refused\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`, destroy)
+}
 
 export function createGate({ origin: value, sessions, credentials }) {
   const origin = pinOrigin(value)
