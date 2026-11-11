@@ -413,11 +413,15 @@ export function agyModeArgs(agentKey, mode = null) {
 // (launchRun), never from an old pane's command. herdr/README.md has the same table.
 
 // Codex's auto mode (codex-cli 0.167.0 `--approve-for-me`): an approval request goes to Codex's
-// own reviewer instead of a person, and the workspace-write sandbox stays. The pack puts it on
-// every Codex launch it makes, so an unattended bot or worker never stops at an approval prompt
-// only a person can answer (#946). A bot's `codexAuto: false` opts out, and an hc template owns
-// a worker's command: the flag never reaches one.
-export const CODEX_AUTO_ARGS = Object.freeze(["--approve-for-me"]);
+// own reviewer instead of a person, and the workspace-write sandbox stays. `--disable hooks`
+// (the same as `-c features.hooks=false`) turns its hooks off at launch (#1045): a hook in
+// ~/.codex/hooks.json or the worktree's .codex/hooks.json that is new or changed would otherwise
+// stop TUI startup at "Hooks need review" for a person to answer, and the pack never passes
+// --dangerously-bypass-hook-trust (it would run an untrusted hook's commands in a worktree).
+// The pack puts both on every Codex launch it makes, so an unattended bot or worker never stops
+// at an approval prompt or a hook review only a person can answer (#946). A bot's
+// `codexAuto: false` opts out, and an hc template owns a worker's command: neither flag reaches one.
+export const CODEX_AUTO_ARGS = Object.freeze(["--approve-for-me", "--disable", "hooks"]);
 
 /** Whether a launch of `agentKey` for `bot` passes Codex's auto mode: a Codex seat or worker, unless its bot opted out. */
 export const codexAutoOn = (agentKey, bot) => agentKey === "codex" && bot?.codexAuto !== false;
@@ -444,7 +448,7 @@ export const AUTO_MODE = Object.freeze({
     what: "Claude Code's auto mode: its classifier answers permission requests" }),
   codex: Object.freeze({ args: CODEX_AUTO_ARGS,
     own: Object.freeze(["--approve-for-me", "-a", "--ask-for-approval", "--yolo", "--dangerously-bypass-approvals-and-sandbox"]),
-    what: "Codex's auto mode: its reviewer answers approval requests, inside the workspace-write sandbox" }),
+    what: "Codex's auto mode: its reviewer answers approval requests, inside the workspace-write sandbox, with hooks off" }),
   antigravity: Object.freeze({ args: Object.freeze([AGY_SKIP_PERMISSIONS]),
     own: Object.freeze([AGY_SKIP_PERMISSIONS]),
     what: "no permission prompts; the launch's deny list still refuses what it names" }),
@@ -751,16 +755,19 @@ function agyCanonicalPath(path, realpath) {
 }
 
 /**
- * The folders a launch's `--settings` file lists in `trustedWorkspaces` (#879). agy trusts a
- * folder by exact path, so a new writer worktree would stop at its first-run question, "Do you
- * trust the contents of this project?". `realpath` (optional): a `(path) => string` callback
- * that resolves the folder to its canonical path, so a symlinked folder is trusted by the
- * folder it really is; null, or a callback that throws, keeps it as given. `homeDir` (optional):
- * the person's home folder, normalized and resolved the same way; a folder that resolves to it
- * lists nothing, so the home folder is never trusted. Only `folder` itself is listed, never a
- * parent folder; anything but a trimmed absolute path (the root included, a line-broken one, a
- * non-string) lists nothing. A read-only review launch never calls this (agyPermissionPlan gives
- * it no trusted folder). The pack never writes agy's saved settings.
+ * The folders a launch's `--settings` file lists in `trustedWorkspaces` (#879, #1046). agy trusts
+ * a folder by exact path, so a launch would stop at its first-run question, "Do you trust the
+ * contents of this project?". Every launch with a valid folder lists that launch's own folder,
+ * whatever its scope or role: the project folder for a seat, the worker's worktree for a worker
+ * (a review worker included) and the helper's folder for a helper. `realpath` (optional): a
+ * `(path) => string` callback that resolves the folder to its canonical path, so a symlinked
+ * folder is trusted by the folder it really is; null, or a callback that throws, keeps it as
+ * given. `homeDir` (optional): the person's home folder, normalized and resolved the same way; a
+ * folder that resolves to it lists nothing, so the home folder is never trusted, and a launch at
+ * the home folder omits `trustedWorkspaces` instead of writing an empty list. Only `folder`
+ * itself is listed, never a parent folder; anything but a trimmed absolute path (the root
+ * included, a line-broken one, a non-string) lists nothing. The pack never writes agy's saved
+ * settings.
  */
 export function agyTrustedWorkspaces(folder, realpath = null, homeDir = null) {
   if (typeof folder !== "string") return [];
@@ -778,22 +785,24 @@ export function agyTrustedWorkspaces(folder, realpath = null, homeDir = null) {
  * need, plus the roster's own additions (a bot's `agyPermissions` reaches its workers too).
  * `scope`: "seat" (a bot) or "worker"; `role`: a worker's role (models.js callers pass
  * workers.js's ROLES: only "review" is read-only); `folder`: the project or worktree that
- * `write_file` opens to a writer and that a writer launch's settings file trusts (#879);
+ * `write_file` opens to a writer and that every launch's settings file trusts (#879, #1046);
  * `realpath` (optional): a `(path) => string` callback that resolves `folder` to its canonical
  * path for both the `write_file` rule and `trustedWorkspaces`, so a symlinked folder is named
  * by the folder it really is. `homeDir` (optional): the person's home folder; a folder that
  * resolves to it lists nothing (agyTrustedWorkspaces). A read-only launch (a review worker, a
- * reviewer seat) is never auto-trusted (#884 M1): `trustedWorkspaces` is `[]`, so agy stops at
- * its trust question rather than loading a contributor's or fork's review tree's project
- * configuration. The fixed deny rules are always there; nothing drops them. `hc kill` is denied
- * (AGY_KILL_DENY) to every worker and to every seat but a main bot's (`bot.kind === "main"`). These lists are a
- * guardrail against accidents, not a security boundary: a rule matches word prefixes only, and
- * allowing `node`, `bun` or `git` with any arguments lets a determined agent do anything.
+ * reviewer seat) keeps the read-only `allow` list: no `write_file`, no writer shell tools. It is
+ * still trusted for its own folder (#1046), so an unattended `--role review` worker never stops
+ * at agy's trust question; its read-only brief, not the allow list, is what bounds it, and the
+ * hc-proxy sandbox is the real boundary. The fixed deny rules are always there; nothing drops
+ * them. `hc kill` is denied (AGY_KILL_DENY) to every worker and to every seat but a main bot's
+ * (`bot.kind === "main"`). These lists are a guardrail against accidents, not a security
+ * boundary: a rule matches word prefixes only, and allowing `node`, `bun` or `git` with any
+ * arguments lets a determined agent do anything.
  * Returns { allow, deny, trustedWorkspaces, warnings }.
  */
 export function agyPermissionPlan({ bot, scope = "seat", role = null, folder = null, realpath = null, homeDir = null }) {
   const readOnly = scope === "worker" ? role === "review" : bot?.rank === "reviewer";
-  const trustedWorkspaces = readOnly ? [] : agyTrustedWorkspaces(folder, realpath, homeDir);
+  const trustedWorkspaces = agyTrustedWorkspaces(folder, realpath, homeDir);
   const allow = [...(readOnly ? AGY_READ_ALLOW : AGY_WRITE_ALLOW)];
   const warnings = [];
   if (!readOnly && typeof folder === "string" && folder) {
@@ -847,11 +856,11 @@ export function agySettingsFile(dir, botId, scope = "seat", role = null, folder 
  * approved worker). `realpath` and `homeDir` (optional) are agyPermissionPlan's: the folder's
  * canonical path, and the home folder that is never trusted. `text` is the JSON agy reads from
  * `--settings`: permissions.allow and permissions.deny, both arrays in full (agy replaces its
- * saved lists field by field), and, only when there is one, trustedWorkspaces, the writer
- * launch's own folder (agy trusts folders by exact path, #879), so agy asks no first-run trust
- * question. A read-only review launch (and any launch with no trusted folder) omits the key
- * entirely (#884 M1): agy then asks, and a contributor's or fork's review tree is never loaded
- * as trusted project configuration, nor is a person's saved trust list overwritten with [].
+ * saved lists field by field), and, only when there is one, trustedWorkspaces, the launch's own
+ * folder (agy trusts folders by exact path, #879). Every launch with a valid folder lists it, a
+ * review launch included (#1046), so agy asks no first-run trust question. A launch at the home
+ * folder, or with no valid folder at all, omits the key entirely, so a person's saved trust list
+ * is never overwritten with [].
  */
 export function agySettingsPlan({ bot, scope = "seat", role = null, folder = null, settingsDir, realpath = null, homeDir = null }) {
   if (!bot?.id || !settingsDir) return null;

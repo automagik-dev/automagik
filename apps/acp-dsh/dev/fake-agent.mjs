@@ -24,6 +24,11 @@
 // out, as Codex's does. FAKE_ACP_AUTH=session (or prompt) refuses `session/new` (or every
 // prompt) with ACP's auth_required, as an adapter whose CLI is signed out does.
 //
+// As a native agent's CLI (a command started with `acp`, #959): FAKE_ACP_SESSION_MODELS=1 offers
+// its models only as the session's own list (`models` in the `session/new` answer, switched
+// with `session/set_model`) and no config options, as Hermes does. The trace's `start` entry
+// keeps the arguments it was started with.
+//
 // FAKE_ACP_CHILD=1 starts a process of its own before it serves, as an agent's tool command is
 // (a shell, a build), and traces its id (`child`) once it runs; FAKE_ACP_CHILD=stubborn starts
 // one that ignores SIGTERM. Either ends by itself after a minute, so a failed test leaves none.
@@ -49,14 +54,23 @@ const OFFERS = process.env.FAKE_ACP_NO_OPTIONS !== '1'
 const DEFAULT_ROW = process.env.FAKE_ACP_NO_DEFAULT_EFFORT === '1' ? [] : [{ value: 'default', name: 'Default' }]
 const SKIP_MCP = process.env.FAKE_ACP_SKIP_MCP === '1'
 const AUTH = process.env.FAKE_ACP_AUTH
-const MODES = (process.env.FAKE_ACP_MODES ?? '').split(',').filter(Boolean)
-const modesOf = session => (MODES.length === 0 ? {} : { modes: { currentModeId: session.mode, availableModes: MODES.map(id => ({ id, name: id })) } })
 // A test can read what the client asked for (its servers, a fork, a close) from this file.
 const TRACE = process.env.FAKE_ACP_TRACE
 const trace = (entry) => {
   if (TRACE === undefined) return
   try { appendFileSync(TRACE, `${JSON.stringify({ pid: process.pid, ...entry })}\n`) } catch {}
 }
+const MODES = (process.env.FAKE_ACP_MODES ?? '').split(',').filter(Boolean)
+const SESSION_MODELS = process.env.FAKE_ACP_SESSION_MODELS === '1'
+trace({ event: 'start', args: process.argv.slice(2) })
+const modesOf = session => (MODES.length === 0 ? {} : { modes: { currentModeId: session.mode, availableModes: MODES.map(id => ({ id, name: id })) } })
+// What a `session/new` answer says of models and modes, in either shape.
+const offersOf = session => ({
+  ...(SESSION_MODELS
+    ? { models: { currentModelId: session.model, availableModels: MODELS.map(({ value, name, description }) => ({ modelId: value, name, ...(description ? { description } : {}) })) } }
+    : OFFERS ? { configOptions: configOptions(session) } : {}),
+  ...modesOf(session),
+})
 
 function configOptions(session) {
   const model = MODELS.find(entry => entry.value === session.model)
@@ -175,7 +189,19 @@ const implementation = {
     const session = newSession(sessionId, params.cwd)
     await attach(session, params.mcpServers, sessionId)
     trace({ event: 'new-answer', sessionId, at: Date.now() })
-    return { sessionId, ...(OFFERS ? { configOptions: configOptions(session) } : {}), ...modesOf(session) }
+    return { sessionId, ...offersOf(session) }
+  },
+  // The session's own model list: registered by its wire name (serve-agent.mjs).
+  async setSessionModel(params) {
+    const session = sessions.get(params?.sessionId)
+    if (!SESSION_MODELS || !session) throw RequestError.methodNotFound('session/set_model')
+    if (!MODELS.some(entry => entry.value === params.modelId)) throw RequestError.invalidParams(undefined, `Unknown model: ${params.modelId}`)
+    // A model the agent lists and then cannot resolve, as Hermes answers for one.
+    if (process.env.FAKE_ACP_SET_MODEL_FAIL === params.modelId) throw RequestError.internalError({ details: 'model_resolution_failed' })
+    session.model = params.modelId
+    session.effort = undefined
+    trace({ event: 'set-model', sessionId: params.sessionId, modelId: params.modelId })
+    return {}
   },
   async forkSession(params) {
     if (process.env.FAKE_ACP_FORK_FAIL === '1') throw RequestError.invalidParams(undefined, 'fork refused')
@@ -199,7 +225,7 @@ const implementation = {
     const delay = Number(process.env.FAKE_ACP_FORK_DELAY_MS ?? 0)
     if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay))
     trace({ event: 'fork-answer', sessionId, from: params.sessionId, at: Date.now() })
-    return { sessionId, ...(OFFERS ? { configOptions: configOptions(session) } : {}), ...modesOf(session) }
+    return { sessionId, ...offersOf(session) }
   },
   async closeSession({ sessionId }) {
     trace({ event: 'close', sessionId })
@@ -245,7 +271,7 @@ const implementation = {
     // What the client actually sent this turn (a replayed transcript, for a crossing).
     trace({ event: 'prompt', sessionId, turns: session.turns, text: said })
     const update = u => conn.sessionUpdate({ sessionId, update: u })
-    if (OFFERS) await update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: `On ${session.model} at ${session.effort ?? 'no'} effort. ` } })
+    if (OFFERS || SESSION_MODELS) await update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: `On ${session.model} at ${session.effort ?? 'no'} effort. ` } })
     await update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'Thinking it over.' } })
     await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `Fake agent, turn ${session.turns}: ` } })
     await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `you said "${said}".` } })

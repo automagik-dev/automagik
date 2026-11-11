@@ -12,8 +12,9 @@
 //   step/end, turn/end   every call still open gets its result first, in its own step: a
 //                        started call is closed as superseded (cancelled at a turn's end), one
 //                        that never started gets DSH's exact not-started repair; the marked
-//                        advertisements still on the surface are hidden; a `turn/end` over an
-//                        open step ends the step first
+//                        advertisements still on the surface are hidden, one an earlier turn
+//                        left (the app stopped in the middle of its call) included; a
+//                        `turn/end` over an open step ends the step first
 //   tool/result          one for a call that is not open, or stamped with another step than
 //                        the open one, is not written; data that is not plain JSON becomes a
 //                        minimal error row
@@ -91,7 +92,8 @@ class WriteGuard {
     this.recovery = new ToolCallRecovery()
     this.turn = undefined
     this.step = undefined
-    // callId -> name, for the report; seq -> { turn } for each marked advertisement on the surface.
+    // callId -> name, for the report. seq -> { turn, open } for each marked advertisement on the
+    // surface: its turn, and the ids of its calls that have no result yet.
     this.names = new Map()
     this.adverts = new Map()
     for (const event of this.session.snapshotEvents?.() ?? []) this.observe(event)
@@ -124,8 +126,12 @@ class WriteGuard {
       case 'tool/call':
         if (typeof data?.callId === 'string') this.names.set(data.callId, data.name)
         break
+      case 'tool/result':
+        // The call of an advertisement has its result: nothing runs behind that block any more.
+        for (const advert of this.adverts.values()) advert.open.delete(data?.message?.toolCallId)
+        break
       case 'assistant/message':
-        if (isSynthetic(data) && event.surfaceOp === 'append') this.adverts.set(event.seq, { turn: data.turn })
+        if (isSynthetic(data) && event.surfaceOp === 'append') this.adverts.set(event.seq, { turn: data.turn, open: new Set(toolCallsOf(data).map(block => block.id)) })
         break
       default:
         break
@@ -293,14 +299,23 @@ class WriteGuard {
     }
     // An advertisement must not outlive its step: the bridge hides it after its call's result,
     // and an await sits between the two, so the step can end first.
+    // One of an earlier turn is hidden here too (#971). Its bridge call never got to hide it:
+    // the app stopped in the middle of the call, and what closed that turn afterwards (DSH's own
+    // closers at the next start) does not know the block. The hide carries the open step's
+    // stamp, as every row written now must, and is reported, since it repairs what another run
+    // left.
     for (const [seq, advert] of this.adverts) {
-      if (advert.turn !== open.turn) continue
+      const stale = advert.turn !== open.turn
+      // Never one whose call has no result in the log: that call may still be running. (DSH's
+      // tracker forgets a call at its turn's end, so the guard keeps this count itself.)
+      if (stale && advert.open.size > 0) continue
       try {
         this.commit('developer/message', {
           turn: open.turn,
           step: open.step,
           message: createDeveloperMessage({ content: [], source: { kind: SYNTHETIC_KIND } }),
         }, [{ surfaceOp: { op: 'replace', startSeq: seq, endSeq: seq }, sourceEventSeqs: [seq] }])
+        if (stale) this.report('advertisement-hidden', { seq, from: advert.turn, turn: open.turn, step: open.step, before: type })
       } catch (cause) {
         this.adverts.delete(seq)
         try {
