@@ -78,21 +78,22 @@ function boundedStructure(value) {
   return true
 }
 
-export function remoteAddress(input) {
+export function remoteAddress(input, { allowLoopback = false } = {}) {
   let url
   try { url = new URL(input) } catch { throw failure('Enter an HTTPS address for Hermes.') }
-  if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || url.pathname !== '/') {
-    throw failure('Use an HTTPS origin without credentials, a path, query or fragment.')
+  const tunnel = allowLoopback && url.protocol === 'http:' && ['127.0.0.1', '[::1]'].includes(url.hostname)
+  if ((!tunnel && url.protocol !== 'https:') || url.username || url.password || url.search || url.hash || url.href.length > 2048) {
+    throw failure('Use an HTTPS address without credentials, a query or fragment.')
   }
-  return url.origin
+  return url.origin + url.pathname.replace(/\/+$/, '')
 }
 
 // Errors are fixed sentences. Never forward a fetch/socket/RPC error, headers or response body
 // to the caller: those surfaces can echo credentials, tickets and private remote configuration.
 // Known transient values are also removed from model names, rows, and approval descriptions.
 export class HermesTransport {
-  constructor({ address, profile, credential, fetch: fetcher = globalThis.fetch, socket = (url, protocols) => new WebSocket(url, protocols), deadlines = HERMES_DEADLINES }) {
-    this.address = remoteAddress(address)
+  constructor({ address, profile, credential, authHeaders, allowLoopback = false, redactionSecrets = [], fetch: fetcher = globalThis.fetch, socket = (url, protocols) => new WebSocket(url, protocols), deadlines = HERMES_DEADLINES }) {
+    this.address = remoteAddress(address, { allowLoopback })
     this.profile = profile
     this.credential = credential
     this.fetcher = fetcher
@@ -101,7 +102,17 @@ export class HermesTransport {
     this.startUntil = Date.now() + deadlines.start
     this.pending = new Map()
     this.listeners = new Set()
-    this.secrets = new Set([credential])
+    this.authHeaders = authHeaders ?? { Authorization: `Bearer ${credential}` }
+    this.secrets = new Set([credential, ...redactionSecrets].filter(value => typeof value === 'string' && value))
+    for (const [name, value] of Object.entries(this.authHeaders)) {
+      if (typeof value !== 'string' || !value) continue
+      this.secrets.add(value)
+      if (/^authorization$/i.test(name)) this.secrets.add(value.replace(/^\S+\s+/, ''))
+      if (/^cookie$/i.test(name)) for (const pair of value.split(';')) {
+        const separator = pair.indexOf('=')
+        if (separator >= 0 && pair.slice(separator + 1).trim()) this.secrets.add(pair.slice(separator + 1).trim())
+      }
+    }
     this.serial = 0
     this.sessionInfos = new Map()
   }
@@ -161,7 +172,7 @@ export class HermesTransport {
     let response
     try {
       response = await this.fetcher(`${this.address}/api/auth/ws-ticket`, {
-        method: 'POST', headers: { Authorization: `Bearer ${this.credential}` },
+        method: 'POST', headers: this.authHeaders,
         redirect: 'error', signal: controller.signal,
       })
     } catch { throw failure('Remote Hermes authentication failed. Check the saved credential.') }
@@ -174,8 +185,8 @@ export class HermesTransport {
     let readyResolve, readyReject
     const ready = new Promise((resolve, reject) => { readyResolve = resolve; readyReject = reject })
     this.readyReject = readyReject
-    const url = new URL('/api/ws', this.address)
-    url.protocol = 'wss:'
+    const url = new URL(`${this.address}/api/ws`)
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
     this.ws = this.socket(url.href, ['hermes-gateway-v1', `hermes-gateway-ticket.${ticket}`])
     this.ws.addEventListener('message', event => {
       if (this.closed || this.lostNotified) return
