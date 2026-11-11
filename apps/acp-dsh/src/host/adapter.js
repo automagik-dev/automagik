@@ -13,6 +13,7 @@ import { AgentRun, isStopped, isUnanswered, valuesOf, waited } from './acp.js'
 import { recordDrift } from './backchannel.js'
 import { DEFAULT_MODEL } from './catalog.js'
 import { BRIDGE_NAME, CREDENTIAL_ENV, isAuthRequired, MODEL_ACCESS_REQUIRED, SYNTHETIC_KIND, URL_ENV } from './names.js'
+import { shownText } from './shown-text.js'
 import { agentRoute, answered, boundaryNotice, isHandoff, lastProviderOf, missedBy, replayBlocks, turnStart } from './switch.js'
 import { ImageLinks, savedPathsOf } from './agent-image.js'
 import { callArguments, entered, levelOf, mirrorTool, TOOL_NAME } from './tool.js'
@@ -60,7 +61,11 @@ function settle(tool, ms) {
 }
 
 const failure = (message, code = 'ACP_AGENT') => ({ message, code })
-const finish = (kind, message, code) => ({ type: 'finish', reason: message === undefined ? { kind } : { kind, failure: failure(message, code) } })
+// What a turn that fails says is shown in the chat, and much of it is somebody else's words:
+// the end of an agent's stderr, an error of its protocol, a model id it advertised. Every
+// message goes out through `shownText` (credential shapes masked, the home folder as `~`), here,
+// in the one place a step's end is built, whatever built the sentence (#970).
+const finish = (kind, message, code) => ({ type: 'finish', reason: message === undefined ? { kind } : { kind, failure: failure(typeof message === 'string' ? shownText(message) : message, code) } })
 const FINISH = { end_turn: 'stop', max_tokens: 'max-tokens', max_turn_requests: 'stop', refusal: 'stop' }
 // An agent whose CLI is not signed in says so with ACP's `auth_required`, at the start of its
 // session or of a prompt. The turn fails with its own code, never ACP_AGENT: a sign-in answers
