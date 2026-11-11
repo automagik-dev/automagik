@@ -74,6 +74,9 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
+/** The terminal composer's Send is live whenever there is a draft; a preview or a reconnect must not gray it out. */
+fun terminalSendEnabled(draft: String, sending: Boolean): Boolean = draft.isNotBlank() && !sending
+
 /**
  * Code's main view: the agent's terminal, or its Chat tab. [strip] is the agents of its space in the drawer's order (from
  * [Sidebar.spaceAgents]); a sideways swipe on the chat or on the terminal's bars goes to the next or previous one
@@ -125,7 +128,7 @@ import kotlin.math.roundToInt
             if (showComposer) Row(Modifier.fillMaxWidth().background(Chrome).padding(10.dp, 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(message, { message = it }, placeholder = { Text("Message this agent…", fontSize = 12.sp) }, modifier = Modifier.weight(1f).focusRequester(composerFocus), maxLines = 4, shape = RoundedCornerShape(12.dp))
                 Dictate { heard -> message = dictated(message, heard) }
-                IconButton(onClick = { val draft = message; vm.sendMessage(draft) { if (message == draft) message = "" } }, enabled = message.isNotBlank() && !state.demo && !state.sending && state.terminalStatus.startsWith("Live")) {
+                IconButton(onClick = { val draft = message; vm.sendMessage(draft) { if (message == draft) message = "" } }, enabled = terminalSendEnabled(message, state.sending)) {
                     if (state.sending) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Icon(Icons.Outlined.Send, "Send message", tint = Accent)
                 }
                 IconButton(onClick = { showComposer = false; keyboard?.hide() }) { Icon(Icons.Outlined.Close, "Close composer", tint = Muted) }

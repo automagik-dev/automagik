@@ -942,8 +942,14 @@ class PocketViewModel(application: Application, private val initDispatcher: Coro
     }
     fun sendMessage(text: String, confirmed: () -> Unit = {}) {
         val ref = state.value.selected ?: return
-        val c = clients[ref.hostId] ?: return
         if (text.isBlank() || state.value.sending) return
+        val c = clients[ref.hostId]
+        if (c == null) {
+            // The preview has no link and a disconnected machine none either: say so instead of a dead Send.
+            _state.update { it.copy(message = if (state.value.demo) "Preview • this sample terminal does not send. Connect a machine to message the agent."
+                else "Connect this machine to send a message.") }
+            return
+        }
         _state.update { it.copy(sending = true) }
         viewModelScope.launch(Dispatchers.IO) {
             runCatching { c.call("terminal.send", JSONObject().put("terminal", ref.address).put("text", text)) }
