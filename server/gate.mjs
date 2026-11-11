@@ -1,6 +1,7 @@
 import http from 'node:http'
+import { randomUUID } from 'node:crypto'
 import { Transform } from 'node:stream'
-import { cookieSecret, LOCAL_TRUST_NOTICE, sessionCookie } from './gate-store.mjs'
+import { COOKIE, cookieSecret, LOCAL_TRUST_NOTICE, sessionCookie } from './gate-store.mjs'
 import { DSH_HOST, responseHeaders, upstreamHeaders } from './gate-upstream.mjs'
 
 export function pinOrigin(value) {
@@ -10,12 +11,35 @@ export function pinOrigin(value) {
   }
   return url
 }
-function trustedRequest(req, origin, upgrade) {
+function trustedRequest(req, origin, upgrade, allowNavigation = false) {
   if (req.headers.host !== origin.host) return false
   if (req.headers.origin !== undefined && req.headers.origin !== origin.origin) return false
-  if (req.headers['sec-fetch-site'] === 'cross-site') return false
+  if (req.headers['sec-fetch-site'] === 'cross-site' && !(allowNavigation && !upgrade && ['GET', 'HEAD'].includes(req.method) && req.headers['sec-fetch-mode'] === 'navigate')) return false
   return !(upgrade || !['GET', 'HEAD'].includes(req.method)) || req.headers.origin === origin.origin
 }
+// Gate management has one spelling. Do this before authentication so an alias cannot
+// become a second sign-in/management entry, or pass raw to a differently decoding upstream.
+function reservedPathAlias(rawUrl, origin) {
+  const raw = rawUrl.split('?', 1)[0]
+  const reserved = path => path === '/_gate' || path.startsWith('/_gate/')
+  let candidate = raw
+  for (let depth = 0; depth < 8; depth++) {
+    let normalized
+    try { normalized = new URL(candidate, origin).pathname }
+    catch { return true }
+    const collapsed = candidate.replace(/\\/g, '/').replace(/\/{2,}/g, '/')
+    if ([candidate, normalized, collapsed].some(reserved) &&
+      (!raw.startsWith('/_gate/') || candidate !== raw || normalized !== raw || collapsed !== raw || raw.includes('%'))) return true
+    let decoded
+    try { decoded = decodeURIComponent(candidate) }
+    catch { return reserved(candidate) }
+    if (decoded === candidate) return false
+    candidate = decoded
+  }
+  // Excessive nested encoding is not a supported alternate route spelling.
+  return true
+}
+
 function answer(res, status, value) {
   res.writeHead(status, { 'cache-control': 'no-store', 'content-type': 'application/json' })
   res.end(JSON.stringify(value))
@@ -30,16 +54,34 @@ function refuseSocket(socket, status = 401) {
   socket.end(`HTTP/1.1 ${status} Refused\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`, destroy)
 }
 
-export function createGate({ origin: value, sessions, credentials }) {
+export function createGate({ origin: value, sessions, credentials, access, auditAccess = record => process.stderr.write(`${JSON.stringify(record)}\n`) }) {
   const origin = pinOrigin(value)
   const sockets = new Map()
-  function authorize(req, upgrade = false) {
-    if (!trustedRequest(req, origin, upgrade)) return undefined
-    return sessions.authenticate(cookieSecret(req.headers.cookie), origin.origin)
+  async function authorize(req, upgrade = false) {
+    if (trustedRequest(req, origin, upgrade)) {
+      const family = sessions.authenticate(cookieSecret(req.headers.cookie), origin.origin)
+      if (family) return { family }
+    }
+    if (!access) return undefined
+    try {
+      if (!trustedRequest(req, origin, upgrade, true)) throw new Error('Refused')
+      // Invalid or replayed gate cookies never silently turn into a fresh Access session.
+      if (req.headers.cookie?.split(';').some(part => part.trim().startsWith(`${COOKIE}=`))) throw new Error('Refused')
+      if (!req.url.startsWith('/') || req.url.startsWith('//') || new URL(req.url, origin).searchParams.has('token')) throw new Error('Refused')
+      const principal = await access.signIn(req.headers['cf-access-jwt-assertion'])
+      const issued = sessions.issue(origin.origin, principal)
+      return { family: issued.family, cookie: sessionCookie(issued.secret) }
+    } catch {
+      auditAccess({ status: 401, request_id: randomUUID() })
+      return undefined
+    }
   }
   const server = http.createServer(async (req, res) => {
-    const family = authorize(req)
+    if (reservedPathAlias(req.url, origin)) { answer(res, 400, { error: 'Non-canonical gate path' }); return }
+    const authorization = await authorize(req)
+    const family = authorization?.family
     if (!family) { answer(res, 401, { error: 'Session required' }); return }
+    if (authorization.cookie) res.setHeader('set-cookie', authorization.cookie)
     try {
       // No absolute-form URLs, launch-token exchanges or token-bearing browser URLs.
       if (!req.url.startsWith('/') || req.url.startsWith('//')) { answer(res, 400, { error: 'Invalid path' }); return }
@@ -79,7 +121,9 @@ export function createGate({ origin: value, sessions, credentials }) {
   server.on('connect', (req, socket) => refuseSocket(socket))
   server.on('upgrade', async (req, socket, head) => {
     socket.on('error', () => {})
-    const family = authorize(req, true)
+    if (reservedPathAlias(req.url, origin)) { refuseSocket(socket, 400); return }
+    const authorization = await authorize(req, true)
+    const family = authorization?.family
     if (!family) { refuseSocket(socket); return }
     try {
       if (!req.url.startsWith('/') || req.url.startsWith('//') || new URL(req.url, origin).searchParams.has('token') || req.headers.upgrade?.toLowerCase() !== 'websocket') { refuseSocket(socket); return }
@@ -102,6 +146,7 @@ export function createGate({ origin: value, sessions, credentials }) {
         if (!sessions.active(family) || socket.destroyed) { upstream.destroy(); socket.destroy(); return }
         proxy.setTimeout(0)
         const headers = { ...responseHeaders(response.headers), connection: 'Upgrade', upgrade: 'websocket' }
+        if (authorization.cookie) headers['set-cookie'] = authorization.cookie
         socket.write(`HTTP/1.1 101 Switching Protocols\r\n${Object.entries(headers).map(([k, v]) => `${k}: ${v}\r\n`).join('')}\r\n`)
         if (head.length) upstream.write(head)
         if (upstreamHead.length) socket.write(upstreamHead)

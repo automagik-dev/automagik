@@ -329,7 +329,7 @@ the real check of the image; the workflow runs the scan on the real rootfs befor
 ## Gate foundation (C2.1, #907)
 
 The image also carries `gate-entrypoint.mjs`, a separate plain Node process. It is disabled by
-default and offers no browser sign-in or session creation route yet. Claim/passkeys (#908) and
+default. Without the optional Access mode below, it offers no browser sign-in or session creation route. Claim/passkeys (#908) and
 Cloud workspace tokens (#909) are later deliveries. The single-container run above still works.
 
 `compose.gate.yml` describes the opt-in two-container topology. Set `AUTOMAGIK_SERVER_IMAGE`
@@ -342,7 +342,7 @@ publish DSH's listener or use host networking in this topology.
 
 Only the network namespace is shared. The gate has its own `gate-data` volume at `/data`,
 never mounted into DSH; it reads `dsh-data` at `/dsh:ro` for the launch credential. It has no
-model key or Cloud configuration. It connects only to the fixed loopback DSH listener and never
+model key. With Access unset it connects only to the fixed loopback DSH listener and never
 follows a launch file's destination or any upstream redirect. Tests use temporary stores and
 listeners; they do not touch a running installation.
 
@@ -410,7 +410,7 @@ Set these non-secret values on the gate container, using your own values on the 
 | `AUTOMAGIK_GATE_ACCESS_AUD` | `{application-audience-tag}` |
 | `AUTOMAGIK_GATE_ACCESS_EMAILS` | `{owner-email}`, or comma-separated exact addresses; trimmed and case-insensitive |
 
-All three unset preserves the gate foundation's behaviour and opens no Access connection.
+All three unset preserves the gate foundation's session behaviour and opens no Access connection.
 Partial configuration refuses startup and names the missing settings. Every allowlisted address
 gets the same local owner principal and full owner privileges: this is not a member/guest mode.
 The first verified sign-in creates the random local owner record if absent; existing, malformed
@@ -423,3 +423,24 @@ timestamps and the exact e-mail allowlist. It never takes a key location from th
 [Cloudflare's validation contract](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/)
 describes the assertion header and certs endpoint. Tokens belong only in the assertion header,
 never in a URL or log. Authentication failures log only a status and a generated request id.
+
+Certs are fetched on demand, cached for at most five minutes, and refreshed on an unknown key
+id at most once every 30 seconds. A fetch has a five-second deadline and a bounded response
+size. A failed required refresh clears the cache and denies sign-in; stale keys are never used
+as an outage fallback. The verifier permits 30 seconds of clock skew and checks time again
+after the key fetch. A valid cached key remains usable until its bounded cache expiry.
+
+Access sign-in sets the existing `__Host-automagik-session` cookie and uses the same idle,
+rotation and replay rules. A stale or replayed gate cookie is refused even when Access supplies
+an assertion; it never silently replaces a revoked family. Signing out ends gate sessions;
+Access can still authenticate a new session after that cookie is cleared. End the Access
+session too when signing out of the identity provider. Gate sessions retain the normal 12-hour
+idle limit; Access policy enforcement at public ingress remains the operator's responsibility
+until #909 supplies workspace-token revocation.
+
+The exact Host and Origin checks still apply. The signed assertion may establish the first
+session on a safe top-level GET/HEAD navigation back from Access; cross-site mutations and
+WebSockets stay refused. Gate management paths use the literal `/_gate/` prefix. Alternate
+encoded, backslash, duplicate-slash or dot-segment spellings that enter that namespace get
+`400` before sign-in in both modes, including WebSocket upgrades. Ordinary upstream paths
+retain their raw spelling.
