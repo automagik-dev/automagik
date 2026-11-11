@@ -1046,6 +1046,73 @@ test('every drift turn records and cancels on its own trace, with no card on eit
   }
 })
 
+test('a queued call found to be drift cancels its cardless questions', async (t) => {
+  const cancelled = { outcome: { outcome: 'cancelled' } }
+  const answered = async (question) => {
+    let answer
+    question.then(value => { answer = value })
+    await waitFor(() => answer !== undefined, 500)
+    return answer
+  }
+  for (const when of ['before', 'after']) {
+    await t.test(`question ${when} the drift update`, async (t) => {
+      const h = dshHost({ spec: { drift: true } })
+      let end
+      let streaming
+      try {
+        const messages = text => [{
+          role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text }],
+        }]
+        const warmup = await step(h.adapter, messages('plain'))
+        assert.equal(warmup.at(-1).reason.kind, 'stop')
+        const { run } = h.adapter.live.get('s1')
+        const ask = () => run.onPermission({
+          toolCall: { toolCallId: 'queued-drift', title: 'Run?' },
+          options: [{ optionId: 'yes', kind: 'allow_once' }],
+        })
+        // Keep the prompt open: its end must not mask a question the skip left unanswered.
+        // The real drift detector still records and cancels; only its process reply is held.
+        t.mock.method(run, 'cancel', async () => {})
+        let question
+        t.mock.method(run.conn, 'prompt', () => new Promise((resolve) => {
+          end = resolve
+          run.onUpdate({ sessionUpdate: 'tool_call', toolCallId: 'queued-drift' })
+          if (when === 'before') question = ask()
+          run.onUpdate({
+            sessionUpdate: 'tool_call_update', toolCallId: 'queued-drift', name: 'Bash',
+          })
+          if (when === 'after') question = ask()
+        }))
+        // Both updates and the question arrive before the adapter consumes the queued call.
+        streaming = step(h.adapter, messages('queued drift'))
+        await waitFor(() => question !== undefined)
+        assert.deepEqual(await answered(question), cancelled)
+        const tool = run.tools.get('queued-drift')
+        assert.equal(tool.drift, true)
+        assert.equal(tool.unanswerable, true)
+        assert.equal(tool.permission, undefined)
+        assert.deepEqual(await answered(ask()), cancelled, 'a question after the skip too')
+        // The built-in call already started and is being cancelled. A mirror would invite
+        // approval for that call, so drift keeps its existing policy of making no card.
+        end({ stopReason: 'cancelled' })
+        const chunks = await streaming
+        assert.equal(chunks.at(-1).reason.kind, 'aborted')
+        assert.equal(chunks.some(chunk =>
+          chunk.type === 'block-end' && chunk.block.type === 'tool-call'), false)
+        assert.equal(h.asked.length, 0)
+        const records = h.session.snapshotEvents()
+          .filter(event => event.type === 'plugin:acp-dsh/toolset-drift')
+        assert.equal(records.length, 1)
+        assert.equal(pluginRecordOf(records[0]).data.name, 'Bash')
+      } finally {
+        end?.({ stopReason: 'cancelled' })
+        await streaming
+        h.close()
+      }
+    })
+  }
+})
+
 test('probe (delivery 6): a fork continues the same conversation, closes the source, and leaves one bridge', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'acp-dsh-fork-'))
   const trace = join(dir, 'trace.ndjson')

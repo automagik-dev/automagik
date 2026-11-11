@@ -507,8 +507,8 @@ export class AgentRun {
     if (this.promptEnded === true) tool.unanswerable = true
     this.markCall(tool, update)
     // Drift known at first sight, before its event is queued: the adapter reads the same mark
-    // when it takes the event and makes no card for it. A call found to be drift only later
-    // may already have its card, whose body still asks, so that one is not marked.
+    // when it takes the event and makes no card for it. Drift found later is marked there
+    // if the event is still queued; an existing card keeps its question for its body to ask.
     if (tool.drift === true) tool.unanswerable = true
     this.tools.set(tool.id, tool)
     this.push({ type: 'tool', id: tool.id })
@@ -583,9 +583,9 @@ export class AgentRun {
     if (tool.refused !== undefined) return Promise.resolve(refusal(tool.refused, params.options ?? []))
     // A question nobody will answer is answered here, at once, and only ever as cancelled: the
     // agent would otherwise wait on it until the next turn's end. That is a call that gets no
-    // card (first seen after its prompt ended, left from an earlier prompt, or drift at its
-    // first sight) and one whose card's body is over (tool.js). Any other question waits for
-    // its card, as it always did: a call found to be drift after its card was made included.
+    // card (first seen after its prompt ended, left from an earlier prompt, or drift known at
+    // first sight or when the adapter skips its event) and one whose card's body is over
+    // (tool.js). Any other question waits for its card, including drift found after its card.
     if (tool.unanswerable === true || tool.mirrored === true) return Promise.resolve(CANCELLED)
     // A second question for the call while the first was not asked yet: the first is withdrawn,
     // or nothing would ever answer it. One already in its dialog keeps the dialog's answer.

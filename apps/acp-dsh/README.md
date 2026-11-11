@@ -240,7 +240,7 @@ A settings page reads the agents through this host service; the plugin stays hos
 
 | Method | Does |
 |---|---|
-| `status()` | Each agent: `{ id, key, name, on, cli: { found, installUrl, signInHint?, state, managed, version?, error?, diagnostic?, logPath?, updating? }, connector: { state, native?, version?, error?, diagnostic?, logPath?, updating?, previous?, rolledBack? }, signedIn?, signInCheck?, consent?, model: { provider, id, name, listed }, restartNeeded }`. CLI state is `missing`, `installing`, `failed` or `ready`; connector state is `off`, `no-cli`, `installing`, `failed` or `ready`. `connector.previous` is the release a failed start goes back to, while it is on disk; `connector.rolledBack` is `{ from, to, at, reason }` while a release that failed to start is held back. A failed connector install carries `error`, and with them `diagnostic` (the end of the installer's output) and `logPath` (the file it was written to, shown from the home folder), as a failed CLI install does. `signedIn` is absent while the sign-in is unknown; `signInCheck` then says why the last check of the CLI's status command could not tell: `timeout` (the CLI was ended after 8 seconds) or `unreadable` (it could not be run, or answered something this does not read). Neither field: nothing is known of a check (none has run yet, or the agent has no status command: a native agent's sign-in comes from its own ACP session). Errors are redacted. Spawns nothing. |
+| `status()` | Each agent: `{ id, key, name, on, cli: { found, installUrl, signInHint?, state, managed, version?, error?, diagnostic?, logPath?, updating? }, connector: { state, native?, version?, error?, diagnostic?, logPath?, updating?, previous?, rolledBack? }, signedIn?, signInCheck?, consent?, model: { provider, id, name, listed }, restartNeeded }`. CLI state is `missing`, `installing`, `failed` or `ready`; connector state is `off`, `no-cli`, `installing`, `failed` or `ready`. `connector.previous` is the release a failed start goes back to, while it is on disk; `connector.rolledBack` is `{ from, to, at, reason }` while a release that failed to start is held back. A failed connector install always carries `error`; `diagnostic` (the end of the installer's output) and `logPath` (the file it was written to, shown from the home folder) are optional, as for a failed CLI install. `signedIn` is absent while the sign-in is unknown; `signInCheck` then says why the last check of the CLI's status command could not tell: `timeout` (the CLI was ended after 8 seconds) or `unreadable` (it could not be run, or answered something this does not read). Neither field: nothing is known of a check (none has run yet, or the agent has no status command: a native agent's sign-in comes from its own ACP session). Errors are redacted. Spawns nothing. |
 | `inspect(id)` | One agent's `status()` row with a fresh sign-in check, for a Bot about to be put on it. Asks that CLI's sign-in status only; installs, enables and starts nothing. Simultaneous checks share one probe. An answer stands for 3 seconds, and a confirmed sign-in for 5 minutes, since the check starts the whole CLI; `refresh()` clears it, and so does the agent itself saying it is signed out (ACP `auth_required`). Undefined for an id that is no agent here. |
 | `refresh()` | Looks for the CLIs again (one installed after DSH started is offered now), then asks each CLI whether it is signed in (`claude auth status --json`, of which only `loggedIn` is read; `codex login status`, by its exit code). No agent turn. |
 | `retry(id)` | Retries the required CLI and its connector, and answers at once. Does not turn its model switch on. |
@@ -297,9 +297,10 @@ account only after the person said so, once per vendor and per account (`src/hos
   under a key made for this install. No email,
   organisation or plan is stored. It is written before this version installs a connector, so a
   connector found with no record means an earlier version, and that vendor is carried. While
-  the record cannot be written, no new connector is installed (one already installed is still
-  updated). Several DSH processes may share the home: the file is read again before each read
-  and each write, and a process writes only the vendors it changed.
+  the record cannot be written, a new connector waits in `failed` state with the reason and
+  Retry available (one already installed is still updated). Several DSH processes may share
+  the home: the file is read again before each read and each write, and a process writes only
+  the vendors it changed.
 - A read that fails changes nothing: an unknown sign-in is the agent's own answer to give, as
   before, and an account that cannot be read never turns a consented vendor into `needed`. Only
   another account, read for certain, asks again (a field both reads have differs; a CLI release
@@ -521,9 +522,9 @@ with the desktop app's own pnpm (`AUTOMAGIK_PNPM`, never the person's) or else n
 `$AUTOMAGIK_HOME/acp/adapters/<package>/<version>`. An install goes to a fresh folder renamed into
 place when complete, without install scripts or optional dependencies (the CLIs the adapters
 bundle); an install that pulls in a bundled CLI's platform package anyway is refused. The
-version an install replaces stays on disk, for a Session still on it, until the next check
-that finds nothing newer (about a day); while the new one is unproven it stays longer, as the
-way back (below). Nothing is downloaded when a Session starts.
+version an install replaces stays on disk, for a Session still on it, until the next successful
+check (about a day), whether or not it finds something newer; while it is still the way back
+for an unproven release it stays longer (below). Nothing is downloaded when a Session starts.
 
 npm is asked for a newer release once the last check is 20 hours old, by a timer that runs
 every 4 hours: at least once a day. A new release must start before it replaces the one in
@@ -584,6 +585,8 @@ books as the reader. A `step/end` or `turn/end` over a call with no result close
 first (as superseded, or cancelled at a turn's end; DSH's own not-started repair for a call
 that never started) and hides its advertisement; a result for a call that is not open, or
 stamped with a step that has ended, is not written; a call with no advertisement is refused.
+At a step or turn's end the guard also hides an advertisement left by an earlier turn once
+all its calls have results, recording the repair as `advertisement-hidden`.
 Each repair leaves a log line and a `plugin:acp-dsh/write-guard` record in the Session.
 
 `test/sequence-fuzz.test.js` drives random interleavings of calls, results, cancellations,
