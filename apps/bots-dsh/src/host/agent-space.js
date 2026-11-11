@@ -15,7 +15,8 @@ const cursorOf = raw => {
   try { value = JSON.parse(Buffer.from(raw, 'base64url').toString('utf8')) }
   catch { throw invalid() }
   if (value === null || typeof value !== 'object' || Array.isArray(value)
-    || Object.entries(value).some(([key, item]) => !['part', 'beforeSeq', 'offset'].includes(key)
+    || Object.entries(value).some(([key, item]) => !['part', 'beforeSeq', 'afterSeq', 'offset']
+      .includes(key)
       || !Number.isSafeInteger(item) || item < 0)) throw invalid()
   return value
 }
@@ -73,10 +74,14 @@ export function createSpaceReads(rt) {
     const offset = cursor.offset ?? 0
     const room = rt.own(rt.state.rooms, id)
     if (room) {
-      const entries = [...(room.log ?? [])].reverse().filter(row => typeof row.text === 'string')
-      const page = pageOf(entries, { offset, limit })
-      return { items: page.items.map(row => pick(row, ['id', 'seq', 'who', 'text', 'time'])),
-        nextCursor: cursorText(page.nextOffset === null ? null : { offset: page.nextOffset }) }
+      // Legacy logs receive these same sequence numbers when groups.js first opens them.
+      const entries = (room.log ?? []).map((row, index) => ({ ...row, seq: row.seq ?? index + 1 }))
+        .reverse().filter(row => typeof row.text === 'string'
+          && (cursor.beforeSeq === undefined || row.seq < cursor.beforeSeq))
+      const items = entries.slice(0, limit).map(row => pick(row,
+        ['id', 'seq', 'who', 'text', 'time']))
+      const next = entries.length > limit ? { beforeSeq: items.at(-1).seq } : null
+      return { items, nextCursor: cursorText(next) }
     }
     if (!rt.own(rt.state.bots, id)) throw invalid()
     const underlying = pick(cursor, ['part', 'beforeSeq'])
@@ -86,11 +91,21 @@ export function createSpaceReads(rt) {
     })
     // The existing chat endpoint pages across current/earlier parts. Return text messages only;
     // image attachments and interactive/view payloads do not become a file-reading surface.
-    const text = reply.value.items.filter(item => typeof item.text === 'string')
+    const text = reply.value.items.filter(item => typeof item.text === 'string'
+      && (cursor.afterSeq === undefined || item.seq >= cursor.afterSeq))
     const items = text.slice(offset, offset + limit).map(item => pick(item,
       ['kind', 'text', 'time', 'seq', 'turn', 'who']))
-    const next = offset + limit < text.length ? { ...underlying, offset: offset + limit }
-      : reply.value.cursor
+    let next = reply.value.cursor
+    if (offset + limit < text.length) {
+      // Pin the original part and event window: the live page can move or become an
+      // earlier part between requests. A sequence may hold several text blocks;
+      // offset counts only blocks within that sequence, never a moving live page.
+      const window = reply.value.window ?? underlying
+      const seq = items.at(-1)?.seq
+      next = Number.isSafeInteger(seq) ? { ...window, afterSeq: seq,
+        offset: text.slice(0, offset + limit).filter(item => item.seq === seq).length }
+        : { ...window, offset: offset + limit }
+    }
     return { items, nextCursor: cursorText(next) }
   }
   const read = async (endpoint, body, handle) => {

@@ -5,6 +5,7 @@ import { createServer } from 'node:http'
 import { appendFile, mkdir, open, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { replaceFile } from './files.js'
+import { createAgentRedactor } from './agent-redaction.js'
 
 export const MCP_PATH = '/api/omni-mcp'
 const VERSION = '2025-11-25'
@@ -140,18 +141,12 @@ export function createAgentAccess(rt, handle, { now = Date.now, transaction = fn
       records = []
     }
   }
-  const safeText = text => rt.redactSecretsAnywhere(text)
-    .replace(/am_agent_[a-f0-9]{64}/g, '[agent token]')
-  const clean = value => {
-    if (typeof value === 'string') return safeText(value)
-    if (Array.isArray(value)) return value.map(clean)
-    if (value !== null && typeof value === 'object') {
-      return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, clean(item)]))
-    }
-    return value
-  }
+  const redaction = createAgentRedactor(rt)
+  const safeText = redaction.text
+  const clean = redaction.clean
   const audit = entry => {
     const job = auditQueue.then(async () => {
+      await redaction.refresh()
       await mkdir(rt.home, { recursive: true })
       await appendFile(auditPath(), JSON.stringify(clean({ time: now(), ...entry })) + '\n',
         { mode: 0o600 })
@@ -167,6 +162,7 @@ export function createAgentAccess(rt, handle, { now = Date.now, transaction = fn
     records = next
   }
   const history = async () => {
+    await redaction.refresh()
     try {
       const file = await open(auditPath(), 'r')
       try {
@@ -223,7 +219,7 @@ export function createAgentAccess(rt, handle, { now = Date.now, transaction = fn
     return identity
   })
   const processRequest = async (request, context) => {
-    await rt.loadSecrets()
+    await redaction.refresh()
     const supplied = request.headers.get('authorization') ?? ''
     const candidate = supplied.startsWith('Bearer ') ? supplied.slice(7) : ''
     const identity = await authenticate(candidate)
@@ -282,11 +278,20 @@ export function createAgentAccess(rt, handle, { now = Date.now, transaction = fn
     const knownMethods = ['initialize', 'ping', 'tools/list', 'tools/call',
       'notifications/initialized', 'notifications/cancelled']
     entry.action = knownMethods.includes(body.method) ? body.method : 'unknown-method'
-    const replyId = typeof body.id === 'string' ? safeText(body.id) : body.id
-    const reply = result => json(200, { jsonrpc: '2.0', id: replyId, result })
+    const replyId = () => typeof body.id === 'string' ? safeText(body.id) : body.id
+    const reply = async result => {
+      await redaction.refresh()
+      // Keep protocol/schema literals intact, even when a short secret is "text".
+      // Tool content is JSON data inside a text envelope; clean before encoding it.
+      if (result.content) result = { ...result, content: result.content.map(item => ({
+        ...item, text: JSON.stringify(clean(JSON.parse(item.text))),
+      })) }
+      return json(200, { jsonrpc: '2.0', id: replyId(), result })
+    }
     const error = async (code, message) => {
       await audit({ ...entry, outcome: 'refused', reason: message })
-      return json(200, { jsonrpc: '2.0', id: replyId ?? null, error: { code, message } })
+      return json(200, { jsonrpc: '2.0', id: replyId() ?? null,
+        error: { code, message: safeText(message) } })
     }
     if (body.method.startsWith('notifications/') && body.id === undefined) {
       if (!knownMethods.includes(body.method)) return refuse(400, 'Unknown notification')
@@ -407,7 +412,7 @@ export function createAgentAccess(rt, handle, { now = Date.now, transaction = fn
   const owner = (action, payload = {}) => serial(async () => {
     await load()
     if (rt.readOnly() !== undefined) throw invalid()
-    await rt.loadSecrets()
+    await redaction.refresh()
     if (action === 'view') return clean({
       url: address ? `http://${address.family === 'IPv6'
         ? `[${address.address}]` : address.address}:${address.port}/mcp` : null,

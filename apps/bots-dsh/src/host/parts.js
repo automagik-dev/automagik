@@ -1859,7 +1859,11 @@ export function install(rt) {
     const more = page.hasMore && events.length > 0
     // The line above a part's first message marks where it began.
     if (!more && index > 0) items.unshift({ kind: 'divider', time: part.startedAt })
-    return { items, cursor: more ? { part: index, beforeSeq: events[0].seq } : index > 0 ? { part: index - 1 } : null }
+    return { items,
+      // The MCP text subpages need the event boundary, including hidden trailing events.
+      window: { part: index, beforeSeq: (events.at(-1)?.seq ?? -1) + 1 },
+      cursor: more ? { part: index, beforeSeq: events[0].seq }
+        : index > 0 ? { part: index - 1 } : null }
   }
 
   function assertCheckpoint(job) {
