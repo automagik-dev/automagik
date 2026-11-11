@@ -202,6 +202,7 @@ export function install(rt) {
   }
 
   async function buildBot(cleanName, { role = '', instructions = '', color, brief = '', createdBy, main = false, avatar, model, effort, workDir, copyOf, pickModel = false, kind, existingSessionId, denyTools: denyToolsInput }) {
+    const opener = createdBy === undefined ? undefined : { level: rt.callerLevel?.(), roomId: rt.callerGroup?.() }
     const cleanAvatarValue = cleanAvatar(avatar)
     const roleText = cleanRole(role)
     // Checked before the Session exists, so a bad list creates no Bot and leaves no orphan.
@@ -222,8 +223,10 @@ export function install(rt) {
     // A Bot made by another Bot takes its creator's level, before its Session is made; else
     // the team default. A Session adopted from a host keeps its own.
     const creator = rt.botOf(createdBy)
+    const carried = Array.isArray(creator?.denyTools) ? creator.denyTools : []
+    const denied = carried.length === 0 ? denyTools : cleanDenyTools([...new Set([...carried, ...(denyTools ?? [])])])
     const permission = existingSessionId !== undefined ? undefined
-      : creator !== undefined ? rt.inheritedPermission(creator) ?? state.prefs.permission
+      : creator !== undefined ? rt.inheritedPermission(creator, opener) ?? state.prefs.permission
         : state.prefs.permission
     // A host adapter may already own a configured root Session. Adopt it without creating
     // another Session or moving its workspace; this option is internal, not a user payload.
@@ -254,7 +257,7 @@ export function install(rt) {
         // What a team member brought in by its own plugin is for (omni: Omni's channels).
         ...(BOT_KINDS.includes(kind) ? { kind } : {}),
         // The tools this Bot never gets, enforced on every Session it speaks from.
-        ...(denyTools ? { denyTools } : {}),
+        ...(denied ? { denyTools: denied } : {}),
         instructions: String(instructions).trim(),
         createdAt: Date.now(),
         createdBy: createdBy ?? null,
@@ -294,7 +297,7 @@ export function install(rt) {
       } else {
         await rt.applyPermission(bot, id, undefined, undefined, { start: true })
       }
-      if (denyTools) {
+      if (denied) {
         await rt.applyToolDeny(bot)
           .catch(error => rt.warn('ds-bot: the denied tools of %s not applied: %s', cleanName, error))
       }
