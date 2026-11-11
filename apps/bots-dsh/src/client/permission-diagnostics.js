@@ -187,6 +187,8 @@ export function PermissionDiagnostics({ actions, roster, Section, Row }) {
   const rows = permissionRows(report, roster)
   if (rows === null) return null
   const partial = report.partial === true
+  // How many conversations with a level not applied the host left out, when it says so.
+  const moreMarked = Number.isInteger(report.moreMarked) && report.moreMarked > 0 ? report.moreMarked : 0
   return h(Section, { title: t('Permissions') },
     rows.length === 0
       ? partial
@@ -197,6 +199,10 @@ export function PermissionDiagnostics({ actions, roster, Section, Row }) {
             h('span', null, row.label),
             h('span', { className: 'bt-set-hint' }, row.level),
             row.agent ? h('span', { className: 'bt-set-hint' }, row.agent) : null))),
-    report.more === true ? h(Row, { label: t('More conversations are open than fit here.') }) : null,
+    moreMarked > 0
+      ? h(Row, { label: t('Conversations with a level not applied that do not fit here: {count}.', { count: moreMarked }) })
+      : report.more === true ? h(Row, { label: t('More conversations are open than fit here.') }) : null,
+    // This window only views the team: the host answered from what it last read.
+    report.viewOnly === true ? h(Row, { label: t('This window only views the team: the saved levels here are as of its last refresh.') }) : null,
     partial && rows.length > 0 ? h(Row, { label: t('Some of this could not be read just now.') }) : null)
 }

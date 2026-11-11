@@ -1310,6 +1310,8 @@ var ZH = {
   "No Bot conversation is open.": "没有打开的 Bot 对话。",
   "The permission level of a conversation shows here while it is open.": "对话打开时，它的权限级别会显示在这里。",
   "More conversations are open than fit here.": "打开的对话太多，这里显示不下。",
+  "Conversations with a level not applied that do not fit here: {count}.": "权限级别未能应用、这里显示不下的对话：{count} 个。",
+  "This window only views the team: the saved levels here are as of its last refresh.": "此窗口只能查看团队：这里的已保存级别以它上次刷新时为准。",
   "Recent errors": "最近的错误",
   "Recent errors · {count}": "最近的错误 · {count}",
   "No errors recorded.": "没有错误记录。",
@@ -20747,6 +20749,7 @@ function PermissionDiagnostics({ actions, roster, Section: Section2, Row: Row3 }
   const rows2 = permissionRows(report, roster);
   if (rows2 === null) return null;
   const partial = report.partial === true;
+  const moreMarked = Number.isInteger(report.moreMarked) && report.moreMarked > 0 ? report.moreMarked : 0;
   return (0, import_react58.createElement)(
     Section2,
     { title: t("Permissions") },
@@ -20761,7 +20764,9 @@ function PermissionDiagnostics({ actions, roster, Section: Section2, Row: Row3 }
         row.agent ? (0, import_react58.createElement)("span", { className: "bt-set-hint" }, row.agent) : null
       )
     )),
-    report.more === true ? (0, import_react58.createElement)(Row3, { label: t("More conversations are open than fit here.") }) : null,
+    moreMarked > 0 ? (0, import_react58.createElement)(Row3, { label: t("Conversations with a level not applied that do not fit here: {count}.", { count: moreMarked }) }) : report.more === true ? (0, import_react58.createElement)(Row3, { label: t("More conversations are open than fit here.") }) : null,
+    // This window only views the team: the host answered from what it last read.
+    report.viewOnly === true ? (0, import_react58.createElement)(Row3, { label: t("This window only views the team: the saved levels here are as of its last refresh.") }) : null,
     partial && rows2.length > 0 ? (0, import_react58.createElement)(Row3, { label: t("Some of this could not be read just now.") }) : null
   );
 }

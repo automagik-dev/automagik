@@ -21,7 +21,11 @@ import { AUTO, AUTO_FALLBACK } from '../shared/permission-levels.js'
 export const VERSION = 1
 /** The ACP record version this code reads. */
 export const ACP_VERSION = 1
-/** How many Sessions are listed; the marked ones come first, so the cap never hides one. */
+/**
+ * How many Sessions are listed, at most: the answer never grows past it. The marked ones
+ * come first, so no other row takes the place of one; when the marked ones alone are more
+ * than this, the answer says how many are left out (`moreMarked`).
+ */
 export const MAX_ROWS = 40
 const MAX_MODES = 16
 const OTHER = 'other'
@@ -133,8 +137,10 @@ export function install(rt) {
   }
 
   function read() {
-    // Not loaded here yet: nothing is loaded to answer.
-    if (Object.keys(rt.state?.bots ?? {}).length === 0) return { version: VERSION, unavailable: true }
+    // Not loaded here yet, or the saved team could not be read: nothing to answer from.
+    // The store says so itself; a host without that reader is judged by its Bots, as before.
+    const loadedTeam = typeof rt.teamLoaded === 'function' ? rt.teamLoaded() === true : Object.keys(rt.state?.bots ?? {}).length > 0
+    if (!loadedTeam) return { version: VERSION, unavailable: true }
     // A part that cannot be read is said (`partial`), never passed off as nothing to show.
     let partial = false
     let loaded = []
@@ -186,7 +192,24 @@ export function install(rt) {
     }
     const first = row => (row.unapplied === undefined ? 1 : 0)
     rows.sort((a, b) => first(a) - first(b) || ORDER[a.kind] - ORDER[b.kind])
-    return { version: VERSION, sessions: rows.slice(0, MAX_ROWS), ...(rows.length > MAX_ROWS ? { more: true } : {}), ...(partial ? { partial: true } : {}) }
+    // Marked rows the cap leaves out are counted, so none goes unsaid.
+    const hidden = rows.slice(MAX_ROWS).filter(row => row.unapplied !== undefined).length
+    // A window that only views the team (another DSH holds it) answers from its last
+    // refresh: said, since this read does not refresh. Only the fact leaves, as a flag.
+    let viewOnly = false
+    try {
+      viewOnly = rt.readOnly() !== undefined
+    } catch {
+      partial = true
+    }
+    return {
+      version: VERSION,
+      sessions: rows.slice(0, MAX_ROWS),
+      ...(rows.length > MAX_ROWS ? { more: true } : {}),
+      ...(hidden > 0 ? { moreMarked: hidden } : {}),
+      ...(viewOnly ? { viewOnly: true } : {}),
+      ...(partial ? { partial: true } : {}),
+    }
   }
 
   Object.assign(rt, { permissionDiagnostics })
