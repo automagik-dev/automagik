@@ -30,6 +30,7 @@ import { QuestionCard, QuestionDock } from './questions.js'
 import { DesktopUpdate, DESKTOP_UPDATE_CSS } from './desktop-update.js'
 import { WORK_CODE_SWITCH_CSS } from './work-code-switch.js'
 import { PRIVACY_CSS } from './privacy.js'
+import { AGENT_ACCESS_CSS } from './agent-access.js'
 import { PET_CSS } from './pet.js'
 import { CHARACTER_SELECT_CSS } from './character-select.js'
 import { VOICE_SETTINGS_CSS } from './voice-settings.js'
@@ -943,6 +944,7 @@ export function apply(ctx) {
     () => installCompiledStyles(DESKTOP_UPDATE_CSS, 'desktop-update'),
     () => installCompiledStyles(WORK_CODE_SWITCH_CSS, 'work-code-switch'),
     () => installCompiledStyles(PRIVACY_CSS, 'privacy'),
+    () => installCompiledStyles(AGENT_ACCESS_CSS, 'agent-access'),
     () => installCompiledStyles(PET_CSS, 'pet'),
     () => installCompiledStyles(CHARACTER_SELECT_CSS, 'character-select'),
     () => installCompiledStyles(VOICE_SETTINGS_CSS, 'voice-settings'),

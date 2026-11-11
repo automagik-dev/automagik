@@ -350,9 +350,7 @@ export function SettingsDialog({ page, id, roster, actions, useUpdate, leaving =
           shown === 'browser' ? h(BrowserPage, { roster, actions, run, Section: SetSection, Row: SetRow }) : null,
           shown === 'schedules' ? h(SchedulesPage, { roster, actions, start: id ?? undefined }) : null,
           shown === 'secrets' ? h(SecretsPage, { roster, actions, run, Section: SetSection }) : null,
-          shown === 'agent-access' ? h(AgentAccessPage, {
-            actions, run, Section: SetSection, Row: SetRow,
-          }) : null,
+          shown === 'agent-access' ? h(AgentAccessPage, { roster, actions, run, Section: SetSection }) : null,
           shown === 'privacy' ? h(PrivacyPage, { actions, run, Section: SetSection, Row: SetRow }) : null,
           shown === 'feedback' ? h(FeedbackPage, { actions, run, roster, Section: SetSection, Row: SetRow }) : null,
           shown === 'about' ? h(AboutPage, { useUpdate, actions, run, Section: SetSection, Row: SetRow }) : null,

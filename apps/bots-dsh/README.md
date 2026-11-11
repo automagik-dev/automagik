@@ -457,12 +457,15 @@ dev/check.sh                             # all checks (see below)
 
 ## Agent access (MCP)
 
-In **Settings → Agent access**, enter a name and choose **Create token**. Copy the token
+In **Settings → Agent access**, name the agent and choose **Create key**. Copy the key
 immediately; it is shown once. Keep it private: it grants the instance owner's space reads and
-Bot/group administration rights, including conversation text. **Revoke** stops new calls at
-once, including existing MCP clients. An action already admitted may finish. The page lists
-recent allowed and refused calls, their agent names, targets, times, and configuration changes.
-**Refresh** loads new activity. Normal team views show the edits too.
+Bot/group administration rights, including conversation text. **Revoke** asks first, then stops
+new calls at once, including existing MCP clients. An action already admitted may finish. The
+page lists each key with the day it was created and its last use, shows the address with an
+example setup under **Connect an agent**, and keeps an **Access log** of recent allowed and
+refused calls: the key's name, what it did, the target, the time, and configuration changes as
+before and after lines. The log filters by key; **Refresh** loads new activity. Normal team
+views show the edits too. In the protocol and in the files below, a key is an agent token.
 
 Each space serves MCP over Streamable HTTP, using JSON responses rather than an SSE subscription.
 The standalone listener starts when the first token is created and resumes on restart while an
@@ -502,7 +505,7 @@ hop, injects its own DSH credential, and drops browser cookies and identity/forw
 Missing, wrong or revoked agent tokens cannot use the path, even with a valid browser session.
 Queries, aliases, WebSocket upgrades and all other routes keep the ordinary session gate.
 Gate Host/origin/cross-site rejections happen before MCP and use the gate's existing audit.
-Every request reaching MCP, including token refusals, appears in the owner's Agent activity.
+Every request reaching MCP, including token refusals, appears in the owner's Access log.
 Web-gate clients must omit Origin; DSH accepts the internal cookie-authenticated hop that way.
 No separate public MCP listener or web session is needed. This path also supports future hosted
 spaces without changing the token protocol.
