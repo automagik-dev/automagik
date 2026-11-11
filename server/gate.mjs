@@ -68,7 +68,8 @@ export function createGate({ origin: value, sessions, credentials, access, audit
       const family = sessions.authenticate(cookieSecret(req.headers.cookie), origin.origin)
       if (family) return { family }
     }
-    if (!access) return undefined
+    // Access exchanges happen only on HTTP; an upgrade must already hold a gate session.
+    if (!access || upgrade) return undefined
     try {
       if (!trustedRequest(req, origin, upgrade, true)) throw new Error('Refused')
       // Invalid or replayed gate cookies never silently turn into a fresh Access session.
@@ -152,7 +153,6 @@ export function createGate({ origin: value, sessions, credentials, access, audit
         if (!sessions.active(family) || socket.destroyed) { upstream.destroy(); socket.destroy(); return }
         proxy.setTimeout(0)
         const headers = { ...responseHeaders(response.headers), connection: 'Upgrade', upgrade: 'websocket' }
-        if (authorization.cookie) headers['set-cookie'] = authorization.cookie
         socket.write(`HTTP/1.1 101 Switching Protocols\r\n${Object.entries(headers).map(([k, v]) => `${k}: ${v}\r\n`).join('')}\r\n`)
         if (head.length) upstream.write(head)
         if (upstreamHead.length) socket.write(upstreamHead)

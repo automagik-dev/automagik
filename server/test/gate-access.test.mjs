@@ -369,15 +369,35 @@ test('invalid URL syntax is rejected before the reserved-path guard can throw', 
   assert.equal(f.fetched.length, 0)
 })
 
-test('Access can establish a WebSocket session and sends only its own cookie to the browser', async t => {
+// Mutant ACCESS_JWT_ONLY_UPGRADE removes the HTTP-only Access sign-in guard.
+test('WebSocket upgrades require an existing gate cookie after HTTP Access sign-in', async t => {
   const f = await fixture(t)
-  const response = await request(f.gatePort, { path: '/api/remote.mux', headers: { ...assertion(f.token()), connection: 'Upgrade', upgrade: 'websocket', origin: ORIGIN } })
+  const jwt = f.token()
+  const jwtOnly = await request(f.gatePort, { path: '/api/remote.mux', headers: { ...assertion(jwt), connection: 'Upgrade', upgrade: 'websocket', origin: ORIGIN } })
+  try {
+    assert.equal(jwtOnly.status, 401, 'JWT-only upgrade must not establish a gate session')
+    assert.equal(jwtOnly.headers['set-cookie'], undefined)
+    assert.equal(f.fetched.length, 0, 'upgrades must not verify Access assertions or fetch certs')
+    assert.equal(f.sessions.list().length, 0, 'upgrades must not mint a session')
+    assert.equal(existsSync(join(f.dir, 'owner.json')), false)
+    assert.equal(f.proxied.length, 0, 'JWT-only upgrade must never reach DSH')
+  } finally { jwtOnly.socket?.destroy() }
+
+  const entered = await request(f.gatePort, { headers: assertion(jwt) })
+  assert.equal(entered.status, 200)
+  const cookie = entered.headers['set-cookie'][0].split(';')[0]
+  assert.match(cookie, /^__Host-automagik-session=/)
+  assert.equal(f.fetched.length, 1)
+  assert.equal(f.sessions.list().length, 1)
+
+  const response = await request(f.gatePort, { path: '/api/remote.mux', headers: { cookie, connection: 'Upgrade', upgrade: 'websocket', origin: ORIGIN } })
   assert.equal(response.status, 101)
   try {
-    assert.equal(response.headers['set-cookie'].length, 1)
-    assert.match(response.headers['set-cookie'][0], /^__Host-automagik-session=/)
-    assert.equal(f.proxied[0]['cf-access-jwt-assertion'], undefined)
-    assert.equal(f.proxied[0].cookie, 'dsh-credential=server-held')
+    assert.equal(response.headers['set-cookie'], undefined, 'upgrade must not mint or refresh a browser cookie')
+    assert.equal(f.sessions.list().length, 1)
+    assert.equal(f.fetched.length, 1)
+    assert.equal(f.proxied.at(-1)['cf-access-jwt-assertion'], undefined)
+    assert.equal(f.proxied.at(-1).cookie, 'dsh-credential=server-held')
     const echoed = once(response.socket, 'data')
     response.socket.write('owner')
     assert.equal((await echoed)[0].toString(), 'owner')

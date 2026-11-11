@@ -438,6 +438,10 @@ session too when signing out of the identity provider. Gate sessions retain the 
 idle limit; Access policy enforcement at public ingress remains the operator's responsibility
 until #909 supplies workspace-token revocation.
 
+Access assertions are exchanged only on HTTP requests. WebSocket upgrades require an existing
+gate session cookie and never create an owner, session or browser cookie. Complete HTTP sign-in
+before opening a WebSocket.
+
 The exact Host and Origin checks still apply. The signed assertion may establish the first
 session on a safe top-level GET/HEAD navigation back from Access; cross-site mutations and
 WebSockets stay refused. Gate management paths use the literal `/_gate/` prefix. Alternate
