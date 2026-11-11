@@ -41,8 +41,12 @@ export function createSpaceReads(rt) {
     const bot = rt.own(rt.state.bots, id)
     const sessionId = bot ? rt.chatOf(id) : id
     const work = room ? rt.roomWorkView()[id] : rt.workView()[id]
-    const waiting = rt.own(rt.state.questions, sessionId) !== undefined
-      || rt.approvalsView().some(entry => entry.botId === id || entry.roomId === id)
+    const sessions = room ? [id, ...Object.values(room.sessions ?? {})] : [sessionId]
+    const waiting = (bot?.kickoff !== undefined && work === undefined)
+      || sessions.some(session => rt.own(rt.state.questions, session) !== undefined
+        || rt.own(rt.state.views, session) !== undefined)
+      || rt.approvalsView().some(entry => entry.botId === id || entry.roomId === id
+        || sessions.includes(entry.sessionId))
       || rt.waitingView?.()[id] !== undefined
     const activity = rt.activityView()[id]
     return { status: waiting || ['waiting', 'alert'].includes(activity) ? 'waiting'

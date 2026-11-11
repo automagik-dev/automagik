@@ -606,3 +606,22 @@ test('pinned DSH admits the MCP hop with a cookie and no Origin', () => {
   } }).rejection, 403)
   assert.equal(service.admit({ headers: { host: headers.host } }).rejection, 401)
 })
+
+
+test('conversation state distinguishes running, waiting and idle without exposing questions',
+  async t => {
+    const { rt, tool } = await fixture(t)
+    rt.workView = () => ({ a: { since: 10 } })
+    assert.equal((await tool('get_conversation', { id: 'a' })).value.status, 'running')
+    rt.state.questions[rt.chatOf('a')] = { text: 'Private question body' }
+    const waiting = await tool('get_conversation', { id: 'a' })
+    assert.equal(waiting.value.status, 'waiting')
+    assert.equal(JSON.stringify(waiting).includes('Private question body'), false)
+    delete rt.state.questions[rt.chatOf('a')]
+    rt.workView = () => ({})
+    assert.equal((await tool('get_conversation', { id: 'a' })).value.status, 'idle')
+    rt.state.rooms.r = { id: 'r', name: 'Group', members: ['a', 'b'],
+      sessions: { a: 'group-member-session' } }
+    rt.state.questions['group-member-session'] = { text: 'Private group question' }
+    assert.equal((await tool('get_conversation', { id: 'r' })).value.status, 'waiting')
+  })
