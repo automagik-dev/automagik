@@ -6,6 +6,7 @@ import {
   constants,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -15,6 +16,7 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 import { cp } from 'node:fs/promises'
+import { markSeed } from './profile-state.mjs'
 
 export const PROFILE = 'automagik-web'
 export const PORT = 3081
@@ -123,16 +125,24 @@ export const profileDirOf = (dshHome) => join(dshHome, 'profiles', PROFILE)
  * The copy lands beside its place and is renamed in whole, so an interrupted first start never
  * leaves a profile that looks installed. An existing profile is the user's and is never touched.
  */
-export async function seedProfile({ dshHome, source, marker = 'automagik-server-profile' }) {
+export async function seedProfile({ dshHome, source, release = readVersion(source) }) {
   const target = profileDirOf(dshHome)
   if (existsSync(target)) return { target, seeded: false }
   mkdirSync(join(dshHome, 'profiles'), { recursive: true })
-  const fresh = `${target}.installing`
-  rmSync(fresh, { recursive: true, force: true })
-  await cp(source, fresh, { recursive: true, verbatimSymlinks: true })
-  writeFileSync(join(fresh, marker), `${readVersion(source)}\n`)
-  renameSync(fresh, target)
-  return { target, seeded: true }
+  const fresh = mkdtempSync(`${target}.installing-`)
+  try {
+    await cp(source, fresh, { recursive: true, verbatimSymlinks: true })
+    markSeed(fresh, release)
+    if (existsSync(target)) return { target, seeded: false }
+    try { renameSync(fresh, target) }
+    catch (error) {
+      if (['EEXIST', 'ENOTEMPTY'].includes(error.code) && existsSync(target)) return { target, seeded: false }
+      throw error
+    }
+    return { target, seeded: true }
+  } finally {
+    rmSync(fresh, { recursive: true, force: true })
+  }
 }
 
 function readVersion(source) {

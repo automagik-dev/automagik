@@ -9,6 +9,7 @@ import { publicUrlArgs } from '../lib.mjs'
 
 const ENTRY = fileURLToPath(new URL('../entrypoint.mjs', import.meta.url))
 const LIB = new URL('../lib.mjs', import.meta.url).href
+const FOLLOW = new URL('../profile-follow.mjs', import.meta.url).href
 const BASE = ['--profile', 'automagik-web', '--no-open', '--host', '127.0.0.1', '--port', '3081']
 
 // Run the real entrypoint, replacing only data preparation and the DSH process. No service
@@ -23,6 +24,9 @@ const harness = `
   }
   registerHooks({
     load(url, context, nextLoad) {
+      if (url === ${JSON.stringify(FOLLOW)}) return { format: 'module', shortCircuit: true,
+        source: 'export async function followImage() { const result=process.env.TEST_FOLLOW_RESULT || "owner-managed"; return { seeded: false, target: "test-profile", result, reason: result } }',
+      }
       if (url === ${JSON.stringify(LIB)}) return {
         format: 'module', shortCircuit: true,
         source: Object.keys(lib).map(key => 'export const ' + key + ' = globalThis.serverTestLib.' + key).join(';'),
@@ -55,8 +59,8 @@ const harness = `
   await import(${JSON.stringify(new URL('../entrypoint.mjs', import.meta.url).href)})
 `
 
-function run(value, dir) {
-  const env = { ...process.env, DSH_HOME: dir, AUTOMAGIK_WORKSPACE: dir, DEEPSEEK_API_KEY: 'test-only' }
+function run(value, dir, followResult = 'owner-managed') {
+  const env = { ...process.env, DSH_HOME: dir, AUTOMAGIK_WORKSPACE: dir, DEEPSEEK_API_KEY: 'test-only', TEST_FOLLOW_RESULT: followResult }
   delete env.AUTOMAGIK_PUBLIC_URL
   if (value !== undefined) env.AUTOMAGIK_PUBLIC_URL = value
   const result = spawnSync(process.execPath, ['--input-type=module', '--eval', harness], {
@@ -65,6 +69,17 @@ function run(value, dir) {
   assert.ifError(result.error)
   return result
 }
+
+// ENTRY_ABORT_ROLLBACK: a failed update must not prevent starting the coherent old profile.
+test('the real entrypoint still starts DSH after the updater reports rollback', t => {
+  const dir = mkdtempSync(join(tmpdir(), 'automagik-follow-entry-'))
+  t.after(() => rmSync(dir, { recursive: true, force: true }))
+  const result = run(undefined, dir, 'update-rolled-back')
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /image follow: update-rolled-back/)
+  assert.match(result.stdout, /SPAWN /)
+  assert.equal(existsSync(join(dir, 'launch-url')), true)
+})
 
 for (const value of [undefined, 'https://example.invalid/', 'https://example.invalid:8443/ui']) {
   test(`entrypoint public URL: ${value ?? 'unset'}`, (t) => {

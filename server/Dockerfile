@@ -20,6 +20,7 @@ FROM node:24.22.2-trixie-slim@sha256:54f84b4cf8432b21aaffd5d3ce8d41e12cea0d10d33
 
 ARG AUTOMAGIK_VERSION=3.90.1
 ARG DSH_VERSION=0.2.2-rc.1
+ARG IMAGE_REVISION=unknown
 ARG AUTOMAGIK_REPOSITORY=https://github.com/automagik-dev/automagik
 
 ENV DO_NOT_TRACK=1 \
@@ -40,6 +41,7 @@ RUN node /build/server/assemble.mjs \
       --out /build/out \
       --version "$AUTOMAGIK_VERSION" \
       --dsh "$DSH_VERSION" \
+      --revision "$IMAGE_REVISION" \
       --repository "$AUTOMAGIK_REPOSITORY"
 
 # The shell tools Bots need, prepared for the distroless base: the binaries, the shared-library
@@ -56,10 +58,10 @@ COPY --from=base / /out/rootfs
 RUN set -eux; \
     rm -rf /out/rootfs/usr/share/doc /out/rootfs/usr/share/man /out/rootfs/usr/share/info /out/rootfs/usr/share/lintian; \
     apt-get update; \
-    apt-get install -y --no-install-recommends bash dash git ripgrep ca-certificates; \
+    apt-get install -y --no-install-recommends bash dash git ripgrep ca-certificates util-linux; \
     rm -rf /var/lib/apt/lists/*; \
     mkdir -p /out/bin /out/lib /out/data/dsh /out/data/bots /out/data/workspace /out/data/secrets; \
-    for f in /bin/bash /bin/dash /usr/bin/git /usr/bin/rg /usr/lib/git-core/*; do ldd "$f" 2>/dev/null || true; done \
+    for f in /bin/bash /bin/dash /usr/bin/git /usr/bin/rg /usr/bin/flock /usr/lib/git-core/*; do ldd "$f" 2>/dev/null || true; done \
       | awk '/=>/ {print $3}' | sort -u > /tmp/libs; \
     while read -r lib; do \
       case "$lib" in \
@@ -67,7 +69,7 @@ RUN set -eux; \
       esac; \
       cp -L "$lib" /out/lib/; \
     done < /tmp/libs; \
-    cp /bin/bash /bin/dash /usr/bin/git /usr/bin/rg /out/bin/; \
+    cp /bin/bash /bin/dash /usr/bin/git /usr/bin/rg /usr/bin/flock /out/bin/; \
     ln -s /bin/dash /out/bin/sh; \
     cp -a /usr/lib/git-core /out/git-core; \
     cp -a /usr/share/git-core /out/git-core-share; \
@@ -108,6 +110,7 @@ COPY --from=tools /out/bin/dash /bin/dash
 COPY --from=tools /out/bin/sh /bin/sh
 COPY --from=tools /out/bin/git /usr/bin/git
 COPY --from=tools /out/bin/rg /usr/bin/rg
+COPY --from=tools /out/bin/flock /usr/bin/flock
 COPY --from=tools /out/git-core /usr/lib/git-core
 COPY --from=tools /out/git-core-share /usr/share/git-core
 COPY --from=tools /out/certs /etc/ssl/certs
@@ -117,7 +120,8 @@ COPY --from=gate-deps /gate/node_modules /opt/automagik/node_modules
 COPY --from=builder /build/out/runtime /opt/automagik/runtime
 COPY --from=builder /build/out/profile /opt/automagik/profile
 COPY --from=builder /build/out/versions.json /opt/automagik/versions.json
-COPY server/entrypoint.mjs server/healthcheck.mjs server/lib.mjs server/gate*.mjs /opt/automagik/
+COPY --from=builder /build/out/offline-store /opt/automagik/offline-store
+COPY server/entrypoint.mjs server/healthcheck.mjs server/lib.mjs server/gate*.mjs server/profile-*.mjs server/plugin-payload.mjs server/volume-lock.mjs /opt/automagik/
 # No /home/<user> in the image's account record: the distroless nonroot home is replaced with
 # the uid the image actually runs as. The scanner's home check then has nothing to excuse.
 COPY server/passwd /etc/passwd

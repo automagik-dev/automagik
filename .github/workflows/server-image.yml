@@ -289,6 +289,12 @@ jobs:
           TAG: ${{ steps.gate.outputs.tag }}
         run: node server/smoke.mjs "automagik-server:${TAG}"
 
+      - name: Plugins follow a newer image on an older release volume (offline)
+        if: steps.gate.outputs.build == 'true'
+        env:
+          TAG: ${{ steps.gate.outputs.tag }}
+        run: node server/follow-smoke.mjs "automagik-server:${TAG}"
+
       # Before this workflow has logged in anywhere: export the image's rootfs, inventory every
       # file, and fail on a secret, a home path, a credential or any baked state. The inventory
       # is the proof of what was checked.

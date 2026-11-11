@@ -59,7 +59,10 @@ test('the first start seeds the profile; a second start never replaces it', asyn
   assert.equal(first.seeded, true)
   assert.equal(first.target, profileDirOf(dshHome))
   assert.equal(readFileSync(join(first.target, 'cordis.patch.yml'), 'utf8'), '[]\n')
-  assert.equal(readFileSync(join(first.target, 'automagik-server-profile'), 'utf8'), '3.90.1\n')
+  const marker = JSON.parse(readFileSync(join(first.target, 'automagik-server-profile'), 'utf8'))
+  assert.equal(marker.version, 1)
+  assert.equal(marker.release, '3.90.1')
+  assert.equal(marker.packageSha256, createHash('sha256').update(readFileSync(join(first.target, 'package.json'))).digest('hex'))
 
   writeFileSync(join(first.target, 'cordis.patch.yml'), 'user edit\n')
   const second = await seedProfile({ dshHome, source })
