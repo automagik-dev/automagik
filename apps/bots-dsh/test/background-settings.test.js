@@ -5,9 +5,19 @@ import { build } from 'esbuild'
 
 const compiled = await build({ entryPoints: [new URL('../src/client/settings.js', import.meta.url).pathname], bundle: true, format: 'cjs', platform: 'node', write: false, external: ['react', 'react-dom', '@deepseek-ai/dsh-client-ui-primitives'] })
 const module = { exports: {} }
-const react = { createElement: () => null, Fragment: 'Fragment', useState: v => [v, () => {}], useEffect: () => {}, useLayoutEffect: () => {}, useRef: v => ({ current: v }), useCallback: f => f, useMemo: f => f(), useSyncExternalStore: (_s, snap) => snap() }
+const react = { createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity) }), Fragment: 'Fragment', useState: v => [v, () => {}], useEffect: () => {}, useLayoutEffect: () => {}, useRef: v => ({ current: v }), useCallback: f => f, useMemo: f => f(), useSyncExternalStore: (_s, snap) => snap() }
 runInNewContext(compiled.outputFiles[0].text, { module, exports: module.exports, document: { body: {} }, window: { innerWidth: 1280, innerHeight: 800, matchMedia: () => ({ matches: false, addEventListener() {} }) }, require: name => (name === 'react-dom' ? { createPortal: n => n } : react) })
 const { backgroundChoices } = module.exports
+
+test('remote Hermes setup remains reachable when DSH owns the provider settings', () => {
+  const tree = module.exports.SettingsDialog({ page: 'hermes-remote', roster: { byId: {}, roomsById: {} }, actions: { closeSettings() {}, openSettings() {}, openHarnessSettings() {} } })
+  const nodes = (node) => !node || typeof node !== 'object' ? [] : [node, ...(node.children ?? []).flatMap(nodes)]
+  const all = nodes(tree)
+  const pages = all.filter(node => node.type === 'button' && node.props.className === 'bt-settings-item')
+  assert.ok(pages.some(node => node.children.includes('Hermes remote')))
+  assert.ok(!pages.some(node => node.children.includes('Models')))
+  assert.ok(all.some(node => node.type?.name === 'HermesRemoteSettings'))
+})
 
 // Settings → Background jobs offers only a model that answers beside the chats and can run.
 test('the background model choices leave out ACP agents, models without their key, and older Claude', () => {

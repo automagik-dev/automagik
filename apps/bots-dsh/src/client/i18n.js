@@ -8,7 +8,7 @@ const ZH = {
   'Hermes remote': '远程 Hermes',
   'Remote Hermes · hermes serve': '远程 Hermes · hermes serve',
   'No DSH team tools: message_bot, list_bots, create_bot, request_secret, memory or schedules.': '不提供 DSH 团队工具：message_bot、list_bots、create_bot、request_secret、记忆或计划任务。',
-  'Off by default. Set up Hermes remote in Models and providers.': '默认关闭。请在模型与提供方中设置远程 Hermes。',
+  'Off by default. Set up Hermes remote in Bot settings.': '默认关闭。请在 Bot 设置中设置远程 Hermes。',
   'Off by default. Connect to standalone Desktop contract 8 through hermes serve.': '默认关闭。通过 hermes serve 连接独立 Desktop 合约 8。',
   'Remote tools use the remote profile’s rules. DSH’s local sandbox does not protect the remote machine.': '远程工具遵循远程配置的规则。DSH 的本地沙箱不保护远程机器。',
   'Credential': '凭据',

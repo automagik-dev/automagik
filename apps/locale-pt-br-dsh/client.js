@@ -1743,7 +1743,6 @@ const pack = createPack({
     "Hermes remote": "Hermes remoto",
     "Remote Hermes · hermes serve": "Hermes remoto · hermes serve",
     "No DSH team tools: message_bot, list_bots, create_bot, request_secret, memory or schedules.": "Sem ferramentas da equipe DSH: message_bot, list_bots, create_bot, request_secret, memória ou agendamentos.",
-    "Off by default. Set up Hermes remote in Models and providers.": "Desativado por padrão. Configure o Hermes remoto em Modelos e provedores.",
     "Off by default. Connect to standalone Desktop contract 8 through hermes serve.": "Desativado por padrão. Conecte ao contrato Desktop 8 autônomo por hermes serve.",
     "Remote tools use the remote profile’s rules. DSH’s local sandbox does not protect the remote machine.": "As ferramentas remotas seguem as regras do perfil remoto. O ambiente isolado local do DSH não protege a máquina remota.",
     "Credential": "Credencial",
@@ -1755,7 +1754,8 @@ const pack = createPack({
     "Reconnect and reconcile": "Reconectar e reconciliar",
     "Remote session reconciled. Review the remote transcript before sending again.": "Sessão remota reconciliada. Revise a conversa remota antes de enviar novamente.",
     "Replay gap: showing a fresh remote snapshot.": "Lacuna na reprodução: mostrando uma nova cópia do estado remoto.",
-    "Full access: each remote approval is answered once. Remote profile rules still apply.": "Acesso total: cada aprovação remota é respondida uma vez. As regras do perfil remoto continuam valendo."
+    "Full access: each remote approval is answered once. Remote profile rules still apply.": "Acesso total: cada aprovação remota é respondida uma vez. As regras do perfil remoto continuam valendo.",
+    "Off by default. Set up Hermes remote in Bot settings.": "Desativado por padrão. Configure o Hermes remoto nas configurações dos Bots."
   }
 })
 return Object.defineProperty({ ...pack }, Symbol.toStringTag, { value: 'Module' })

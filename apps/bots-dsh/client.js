@@ -46,7 +46,7 @@ var ZH = {
   "Hermes remote": "远程 Hermes",
   "Remote Hermes · hermes serve": "远程 Hermes · hermes serve",
   "No DSH team tools: message_bot, list_bots, create_bot, request_secret, memory or schedules.": "不提供 DSH 团队工具：message_bot、list_bots、create_bot、request_secret、记忆或计划任务。",
-  "Off by default. Set up Hermes remote in Models and providers.": "默认关闭。请在模型与提供方中设置远程 Hermes。",
+  "Off by default. Set up Hermes remote in Bot settings.": "默认关闭。请在 Bot 设置中设置远程 Hermes。",
   "Off by default. Connect to standalone Desktop contract 8 through hermes serve.": "默认关闭。通过 hermes serve 连接独立 Desktop 合约 8。",
   "Remote tools use the remote profile’s rules. DSH’s local sandbox does not protect the remote machine.": "远程工具遵循远程配置的规则。DSH 的本地沙箱不保护远程机器。",
   "Credential": "凭据",
@@ -4875,7 +4875,7 @@ function ModelSteps({ roster, bot, view, current, picked, levelName: levelName2,
       { key: `models:${route}:${view.provider ?? view.agent ?? ""}`, className: "bt-model-step", role: "group", "aria-label": t("Models") },
       stepBack(backLabel, () => go(back.view)),
       route === "hermes-remote" ? (0, import_react12.createElement)("div", { className: "bt-model-none" }, t("No DSH team tools: message_bot, list_bots, create_bot, request_secret, memory or schedules.")) : null,
-      route === "hermes-remote" && list.length === 0 ? (0, import_react12.createElement)("div", { className: "bt-model-none" }, t("Off by default. Set up Hermes remote in Models and providers.")) : null,
+      route === "hermes-remote" && list.length === 0 ? (0, import_react12.createElement)("div", { className: "bt-model-none" }, t("Off by default. Set up Hermes remote in Bot settings.")) : null,
       (0, import_react12.createElement)("div", { className: "bt-menu-sep", role: "separator" }),
       groups.length === 0 ? (0, import_react12.createElement)("div", { className: "bt-model-none" }, t("No models are set up for this route yet.")) : null,
       groups.map(([label, entries2]) => (0, import_react12.createElement)(
@@ -22091,8 +22091,8 @@ var PROVIDERS_CSS = `
 // src/client/settings.js
 var import_react64 = require("react");
 var capitalize3 = (word) => word[0].toUpperCase() + word.slice(1);
-var SETTINGS_PAGES = [["general", "General"], ["models", "Models"], ["bots", "Bots"], ["groups", "Group chats"], ["connectors", "Connectors"], ["capabilities", "Capabilities"], ["browser", "Browser"], ["schedules", "Scheduled tasks"], ["usage", "Usage"], ["secrets", "Secrets"], ["privacy", "Privacy"], ["feedback", "Feedback"], ["about", "About Automagik"]];
-var PAGE_ICONS = { ...SETTINGS_ICONS, models: SlidersIcon, connectors: ConnectorIcon, capabilities: PlugIcon, browser: ConnectorIcon, schedules: ClockIcon, secrets: KeyIcon, privacy: ShieldIcon, feedback: FeedbackIcon, about: InfoIcon };
+var SETTINGS_PAGES = [["general", "General"], ["models", "Models"], ["hermes-remote", "Hermes remote"], ["bots", "Bots"], ["groups", "Group chats"], ["connectors", "Connectors"], ["capabilities", "Capabilities"], ["browser", "Browser"], ["schedules", "Scheduled tasks"], ["usage", "Usage"], ["secrets", "Secrets"], ["privacy", "Privacy"], ["feedback", "Feedback"], ["about", "About Automagik"]];
+var PAGE_ICONS = { ...SETTINGS_ICONS, models: SlidersIcon, "hermes-remote": ConnectorIcon, connectors: ConnectorIcon, capabilities: PlugIcon, browser: ConnectorIcon, schedules: ClockIcon, secrets: KeyIcon, privacy: ShieldIcon, feedback: FeedbackIcon, about: InfoIcon };
 function SetSection({ title, className = "", children }) {
   return (0, import_react64.createElement)("section", { className: `bt-set-section ${className}`.trim() }, (0, import_react64.createElement)("h3", null, title), (0, import_react64.createElement)("div", { className: "bt-set-card" }, children));
 }
@@ -22497,6 +22497,7 @@ function SettingsDialog({ page, id, roster, actions, useUpdate, leaving = false 
           errorLine,
           shown === "general" ? (0, import_react64.createElement)(GeneralPage, { roster, actions, run: run2 }) : null,
           shown === "models" ? (0, import_react64.createElement)(ProvidersPage, { actions, run: run2, Section: SetSection }) : null,
+          shown === "hermes-remote" ? (0, import_react64.createElement)(HermesRemoteSettings, { run: run2, Section: SetSection }) : null,
           bot ? (0, import_react64.createElement)("div", { className: "bt-settings-form" }, (0, import_react64.createElement)(BotSettingsForm, { key: bot.id, bot, roster, actions, run: run2 })) : null,
           shown === "bots" && !bot ? (0, import_react64.createElement)(BotsPage, { roster, actions, run: run2 }) : null,
           room2 ? (0, import_react64.createElement)("div", { className: "bt-settings-form" }, (0, import_react64.createElement)(GroupSettingsForm, { key: room2.id, room: room2, roster, actions, run: run2 })) : null,

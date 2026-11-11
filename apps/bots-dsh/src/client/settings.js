@@ -21,6 +21,7 @@ import { VoiceSection } from './voice-settings.js'
 import { ImagesSection } from './image-cell.js'
 import { AboutPage } from './about.js'
 import { ProvidersPage } from './providers-page.js'
+import { HermesRemoteSettings } from './hermes-remote.js'
 import { FolderMenu } from './folder-menu.js'
 import { PermissionExplanations, PermissionFallback, PermissionPicker } from './permission-picker.js'
 import { AUTO, AUTO_FALLBACK } from '../shared/permission-levels.js'
@@ -32,8 +33,8 @@ const capitalize = word => word[0].toUpperCase() + word.slice(1)
 // Settings dialog: a 198px page list beside the page. Bots and group chats each list
 // their members, and one opens on its own settings form. Usage widens the dialog.
 // Models is there only in a window without DSH's own settings, which carry the providers.
-const SETTINGS_PAGES = [['general', 'General'], ['models', 'Models'], ['bots', 'Bots'], ['groups', 'Group chats'], ['connectors', 'Connectors'], ['capabilities', 'Capabilities'], ['browser', 'Browser'], ['schedules', 'Scheduled tasks'], ['usage', 'Usage'], ['secrets', 'Secrets'], ['privacy', 'Privacy'], ['feedback', 'Feedback'], ['about', 'About Automagik']]
-const PAGE_ICONS = { ...SETTINGS_ICONS, models: SlidersIcon, connectors: ConnectorIcon, capabilities: PlugIcon, browser: ConnectorIcon, schedules: ClockIcon, secrets: KeyIcon, privacy: ShieldIcon, feedback: FeedbackIcon, about: InfoIcon }
+const SETTINGS_PAGES = [['general', 'General'], ['models', 'Models'], ['hermes-remote', 'Hermes remote'], ['bots', 'Bots'], ['groups', 'Group chats'], ['connectors', 'Connectors'], ['capabilities', 'Capabilities'], ['browser', 'Browser'], ['schedules', 'Scheduled tasks'], ['usage', 'Usage'], ['secrets', 'Secrets'], ['privacy', 'Privacy'], ['feedback', 'Feedback'], ['about', 'About Automagik']]
+const PAGE_ICONS = { ...SETTINGS_ICONS, models: SlidersIcon, 'hermes-remote': ConnectorIcon, connectors: ConnectorIcon, capabilities: PlugIcon, browser: ConnectorIcon, schedules: ClockIcon, secrets: KeyIcon, privacy: ShieldIcon, feedback: FeedbackIcon, about: InfoIcon }
 
 function SetSection({ title, className = '', children }) {
   return h('section', { className: `bt-set-section ${className}`.trim() }, h('h3', null, title), h('div', { className: 'bt-set-card' }, children))
@@ -330,6 +331,7 @@ export function SettingsDialog({ page, id, roster, actions, useUpdate, leaving =
           errorLine,
           shown === 'general' ? h(GeneralPage, { roster, actions, run }) : null,
           shown === 'models' ? h(ProvidersPage, { actions, run, Section: SetSection }) : null,
+          shown === 'hermes-remote' ? h(HermesRemoteSettings, { run, Section: SetSection }) : null,
           bot ? h('div', { className: 'bt-settings-form' }, h(BotSettingsForm, { key: bot.id, bot, roster, actions, run })) : null,
           shown === 'bots' && !bot ? h(BotsPage, { roster, actions, run }) : null,
           room ? h('div', { className: 'bt-settings-form' }, h(GroupSettingsForm, { key: room.id, room, roster, actions, run })) : null,

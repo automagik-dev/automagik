@@ -447,7 +447,7 @@ dev/check.sh                             # all checks (see below)
 
 **Hermes remote** is its own route after Native, ACP and Herdr. It connects to an operator's
 already running `hermes serve`; Automagik never starts that service. Local Hermes continues to
-use ACP. The new route is off by default. In **Models and providers → Hermes remote**, enter
+use ACP. The new route is off by default. In **Bot settings → Hermes remote**, enter
 an HTTPS origin, optional profile and provisioned session credential, save and enable, then
 **Discover models**. The credential is stored only in the existing mode-0600 Bot secret store,
 with no Bot scope; the connection holds its reference. The transport mints a one-use ticket at
