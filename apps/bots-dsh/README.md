@@ -454,3 +454,60 @@ dev/check.sh                             # all checks (see below)
 ## License
 
 [Apache-2.0](LICENSE)
+
+## Agent access (MCP)
+
+In **Settings → Agent access**, enter a name and choose **Create token**. Copy the token
+immediately; it is shown once. Keep it private: it grants the instance owner's Bot and group
+administration rights. **Revoke** stops subsequent requests immediately, including existing MCP
+clients. The page lists recent allowed and refused calls, their agent names, targets, times, and
+configuration changes. **Refresh** loads new activity. Normal team views show the edits too.
+
+The instance starts a separate MCP Streamable HTTP listener on `127.0.0.1` when its first token
+is created. Settings shows its address. After a restart it resumes if active tokens exist. The
+port is chosen by the OS; optionally set `agentAccessPort` in the `omni-ui` plugin configuration
+to an unused local port for a stable address. It always binds loopback. No public port is opened,
+and no web session gate route is bypassed or changed.
+
+Claude Code can use this project `.mcp.json` configuration (replace the placeholders):
+
+```json
+{
+  "mcpServers": {
+    "automagik": {
+      "type": "http",
+      "url": "http://127.0.0.1:<LOCAL_PORT>/mcp",
+      "headers": {
+        "Authorization": "Bearer ${AUTOMAGIK_AGENT_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+Set `AUTOMAGIK_AGENT_TOKEN` in the agent's environment from your private token store. Keep the
+actual token out of checked-in configuration, URLs, command arguments and logs. The listener
+accepts bearer headers only, rejects URL queries and browser Origin headers, and rate limits
+failed authentication attempts. Tokens are kept only as hashes in `agent-tokens.json` beside
+the team, with private file permissions. `agent-audit.jsonl` keeps audit records there; Settings
+shows up to the latest 200 records within the last 256 KiB. A recorded `started` call without a
+completion means it was interrupted; check the current configuration before retrying it.
+
+For an agent on another machine, keep the web instance behind its existing session gate and
+forward the separate loopback MCP port through SSH:
+
+```sh
+ssh -N -L <LOCAL_PORT>:127.0.0.1:<INSTANCE_MCP_PORT> <SSH_USER>@<INSTANCE_SSH_HOST>
+```
+
+Use the forwarded local port in the config above and send the agent token as a bearer header.
+For a containerized instance, run the tunnel endpoint in the instance's network namespace;
+publishing the container's loopback MCP port is unnecessary. The SSH tunnel reaches MCP without
+changing the web gate, and MCP still requires its own token on every request.
+
+Tools list/get/create/update/delete Bots and groups, change instructions, model, effort and
+permission level, manage membership, and set the Main Bot role. Creation uses the team's default
+permission; `update_bot` sets an explicit level through the same permission validator as Settings.
+Only configuration fields are returned. Secret values, chat history, shell, files, plugin
+installation and token management are absent from the MCP tool surface. Known stored secret
+values and agent token strings are redacted from MCP responses and audit records.

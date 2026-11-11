@@ -1,5 +1,6 @@
 // Client channel: the team view the browser renders, and the POST /api/bot endpoints.
 import { randomUUID } from 'node:crypto'
+import { botConfig, roomConfig, createAgentAccess } from './agent-access.js'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -281,6 +282,20 @@ export function install(rt) {
       if (CODE_GUARDED.has(endpoint) && textsOf(body).some(text => rt.loginTextMatches?.(text) === true)) return fail(CODE_REFUSED, 'bot/refused')
       if (CLI_LOGIN.has(endpoint)) return ok(await rt.cliLoginActions[endpoint](body))
       switch (endpoint) {
+        case 'agent-access':
+          return ok(await agentAccess.owner('view'))
+        case 'agent-token-create':
+          return ok(await agentAccess.owner('create', body))
+        case 'agent-token-revoke':
+          return ok(await agentAccess.owner('revoke', body))
+        case 'list-bots':
+          return ok(Object.values(state.bots).map(botConfig))
+        case 'get-bot':
+          return ok(botConfig(rt.own(state.bots, body.id)))
+        case 'list-rooms':
+          return ok(Object.values(state.rooms).map(roomConfig))
+        case 'get-room':
+          return ok(roomConfig(rt.own(state.rooms, body.id)))
         case 'state':
           if (typeof body.locale === 'string' && /^[a-z]{2,3}(-[\w-]+)?$/i.test(body.locale)) uiLocale = body.locale
           if (typeof body.allowPlace === 'string') {
@@ -769,6 +784,13 @@ export function install(rt) {
     }
   }
 
+  const agentAccess = createAgentAccess(rt, handle)
+  rt.agentAccess = agentAccess
+  ctx.effect(() => {
+    void agentAccess.resume().catch(() => rt.warn('Agent access could not start'))
+    return () => agentAccess.close()
+  }, 'ds-bot: agent access')
+
   // A pet's sheet for the marks that wear it, and a character's baked sheet written into
   // Codex's own pets folder, as bytes rather than JSON. The write streams its body, which a
   // GET cannot have, so it has a route of its own. A failure says its kind only: the raw
@@ -830,7 +852,11 @@ export function install(rt) {
       let body
       try { body = await request.json() } catch { body = {} }
       const result = await handle(String(body?.endpoint ?? ''), body?.payload, request.signal)
-      return new Response(JSON.stringify(result), { status: 200, headers: { 'content-type': 'application/json', ...(CLI_LOGIN.has(body?.endpoint) ? { 'cache-control': 'no-store' } : {}) } })
+      const noStore = CLI_LOGIN.has(body?.endpoint)
+        || ['agent-access', 'agent-token-create', 'agent-token-revoke'].includes(body?.endpoint)
+      return new Response(JSON.stringify(result), { status: 200, headers: {
+        'content-type': 'application/json', ...(noStore ? { 'cache-control': 'no-store' } : {}),
+      } })
     },
   }), 'ds-bot: api route')
 
