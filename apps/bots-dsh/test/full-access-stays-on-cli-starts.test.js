@@ -360,7 +360,8 @@ test('a fresh part of a Workspace Bot is kept though the profile default is Full
   assert.equal(h.archived.includes(current), false, 'the fresh part is not archived')
   assert.deepEqual(h.presets(current), [WRITE])
   assert.ok(h.selected.some(([sessionId, ref]) => sessionId === current && ref === 'deepseek/deepseek-v4-flash'))
-  assert.equal(h.sent.some(entry => entry.sessionId === current), true, 'and it was handed the conversation')
+  // The handoff is sent after the Bot's chat moves to the fresh part: wait for it, bounded.
+  assert.equal(await waitFor(() => (h.sent.some(entry => entry.sessionId === current) ? true : undefined)), true, 'and it was handed the conversation')
 })
 
 test('a fresh part of a Full access Bot whose coding CLI is gone is not kept though the default is Workspace', async (t) => {
