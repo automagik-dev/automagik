@@ -474,9 +474,10 @@ number. Both are read-only; neither changes the store.
   `schema_version`, `evidence_from`, `counted_from`, `records_from`, the watermark and the
   completeness flags recorded beside it. The branch's binary is built under RFC 0017's build rule
   on the build host and run where the store is; nothing is built on the store's machine.
-- **The PR body carries aggregate numbers only**: the percentages and token totals per point, per
-  window, per class, with no machine, repo, branch, bot or path named. The issue gets the same
-  table; the raw records stay with the operator.
+- **The PR body carries aggregate shares and ratios only**: the class shares, ratios and
+  before/after multipliers per point, per window, per class, with no machine, repo, branch, bot,
+  path or absolute usage volume named. The issue gets the same table; the absolute token totals
+  and raw records stay with the operator.
 - **The windows move.** `d1`, `d7` and `d30` end at each point's watermark, so their bounds
   differ between points. Each row records the exact `window.start` and `window.end`; points are
   compared by class shares and `inspected`, never by adding two answers.
@@ -492,7 +493,8 @@ number. Both are read-only; neither changes the store.
 
 #### Measured P0–P3 on the operator's store (2026-11-10 to 2026-11-11)
 
-The operator supplied these aggregate measurements; raw records stay with the operator.
+The operator supplied these aggregate shares and ratios; absolute totals and raw records
+stay with the operator.
 All window bounds below are UTC in 2026, with `[start, end)` hour bounds.
 
 **Run metadata per point:**
@@ -504,22 +506,22 @@ All window bounds below are UTC in 2026, with `[start, end)` hour bounds.
 | **P2** (`dsh-tui` seat + 4d backfill, PR #1018) | `2026-11-10T19:50:34Z` | `3.125.2` | `3` | `2026-10-03T00:00:00Z` | `2026-11-07T17:03:05Z` | `2026-11-07T00:00:00Z` | `true` / `false` |
 | **P3** (sync + 90d backfill, #897) | `2026-11-11T02:56:32Z` | `3.125.19` | `3` | `2026-10-03T00:00:00Z` | `2026-11-07T17:03:05Z` | `2026-10-03T00:00:00Z` | `true` / `false` |
 
-**Aggregate window measurements (`d1`, `d7`, `d30`):**
+**Aggregate window shares and ratios (`d1`, `d7`, `d30`):**
 
-| Point | Window (`[start, end)`) | `evidence` | `bot_coverage` | `inspected` | `attributed` (`session` / `label` / `worktree`) | `claimants_differ` | `no_record` | `dsh_tui_seat` | `other_machine` | `before_evidence` (`tagged`) | `total` (counted) | `no_repo` |
-|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| **P0** | `d1` (`11-09T16..11-10T16Z`) | `partial` | `0.0417` (4.17%) | `0.8970` | `247,478,849` (`178,950,327` / `29,648,284` / `38,880,238`) | `0` (0.00%) | `2,700,438` (0.05%) | `25,730,303` (0.43%) | `0` | `5,652,391,203` (95.35%; `3,522,068,857`) | `5,928,300,793` | `44,086,936` |
-| **P0** | `d7` (`11-03T16..11-10T16Z`) | `partial` | `0.0164` (1.64%) | `0.8970` | `247,478,849` (`178,950,327` / `29,648,284` / `38,880,238`) | `0` (0.00%) | `2,700,438` (0.02%) | `25,730,303` (0.17%) | `0` | `14,813,634,856` (98.17%; `6,036,756,574`) | `15,089,544,446` | `370,584,997` |
-| **P0** | `d30` (`10-11T16..11-10T16Z`) | `partial` | `0.0103` (1.03%) | `0.8970` | `247,478,849` (`178,950,327` / `29,648,284` / `38,880,238`) | `0` (0.00%) | `2,700,438` (0.01%) | `25,730,303` (0.11%) | `0` | `23,728,980,670` (98.85%; `6,036,756,574`) | `24,004,890,260` | `536,152,231` |
-| **P1** | `d1` (`11-09T16..11-10T16Z`) | `partial` | `0.0417` (4.17%) | `0.8970` | `247,478,849` (`178,950,327` / `29,648,284` / `38,880,238`) | `0` (0.00%) | `2,700,438` (0.05%) | `25,730,303` (0.43%) | `0` | `5,652,391,203` (95.35%; `3,522,068,857`) | `5,928,300,793` | `44,086,936` |
-| **P1** | `d7` (`11-03T16..11-10T16Z`) | `partial` | `0.0164` (1.64%) | `0.8970` | `247,478,849` (`178,950,327` / `29,648,284` / `38,880,238`) | `0` (0.00%) | `2,700,438` (0.02%) | `25,730,303` (0.17%) | `0` | `14,813,634,856` (98.17%; `6,036,756,574`) | `15,089,544,446` | `370,584,997` |
-| **P1** | `d30` (`10-11T16..11-10T16Z`) | `partial` | `0.0103` (1.03%) | `0.8970` | `247,478,849` (`178,950,327` / `29,648,284` / `38,880,238`) | `0` (0.00%) | `2,700,438` (0.01%) | `25,730,303` (0.11%) | `0` | `23,728,980,670` (98.85%; `6,036,756,574`) | `24,004,890,260` | `536,152,231` |
-| **P2** | `d1` (`11-09T20..11-10T20Z`) | `full` | `0.4185` (41.85%) | `0.6537` | `2,144,146,061` (`1,379,600,312` / `221,639,647` / `542,906,102`) | `13,205,786` (0.26%) | `86,110,542` (1.68%) | `1,036,368,316` (20.23%) | `0` | `1,843,521,936` (35.98%; `1,254,322,380`) | `5,123,352,641` | `50,860,378` |
-| **P2** | `d7` (`11-03T20..11-10T20Z`) | `partial` | `0.2265` (22.65%) | `0.4447` | `3,619,494,595` (`1,614,991,301` / `221,639,647` / `1,782,863,647`) | `152,667,093` (0.96%) | `1,071,942,988` (6.71%) | `3,295,550,277` (20.63%) | `0` | `7,838,257,420` (49.06%; `2,627,864,697`) | `15,977,912,373` | `378,262,771` |
-| **P2** | `d30` (`10-11T20..11-10T20Z`) | `partial` | `0.1454` (14.54%) | `0.4447` | `3,619,494,595` (`1,614,991,301` / `221,639,647` / `1,782,863,647`) | `152,667,093` (0.61%) | `1,071,942,988` (4.31%) | `3,295,550,277` (13.24%) | `0` | `16,753,603,234` (67.30%; `2,627,864,697`) | `24,893,258,187` | `543,830,005` |
-| **P3** | `d1` (`11-10T03..11-11T03Z`) | `full` | `0.5699` (56.99%) | `0.7315` | `3,170,546,681` (`1,554,893,551` / `606,607,320` / `1,009,045,810`) | `13,205,786` (0.24%) | `69,372,343` (1.25%) | `1,080,909,339` (19.43%) | `0` | `1,229,254,720` (22.10%; `895,823,164`) | `5,563,288,869` | `51,669,751` |
-| **P3** | `d7` (`11-04T03..11-11T03Z`) | `full` | `0.2845` (28.45%) | `0.5113` | `5,026,541,406` (`2,143,050,830` / `606,607,320` / `2,276,883,256`) | `152,667,093` (0.86%) | `1,086,896,714` (6.15%) | `3,563,928,039` (20.17%) | `0` | `7,838,124,968` (44.36%; `2,627,864,697`) | `17,668,158,220` | `379,072,144` |
-| **P3** | `d30` (`10-12T03..11-11T03Z`) | `full` | `0.1891` (18.91%) | `0.5113` | `5,026,541,406` (`2,143,050,830` / `606,607,320` / `2,276,883,256`) | `152,667,093` (0.57%) | `1,086,896,714` (4.09%) | `3,563,928,039` (13.41%) | `0` | `16,753,470,782` (63.02%; `2,627,864,697`) | `26,583,504,034` | `544,639,378` |
+| Point | Window (`[start, end)`) | `evidence` | `bot_coverage` | `inspected` | `attributed` (`session` / `label` / `worktree` share of `attributed`) | `claimants_differ` | `no_record` | `dsh_tui_seat` | `other_machine` | `before_evidence` (`tagged` share of `before_evidence`) |
+|---|---|---|---:|---:|---|---:|---:|---:|---:|---|
+| **P0** | `d1` (`11-09T16..11-10T16Z`) | `partial` | `0.0417` (4.17%) | `0.8970` | `4.17%` (`72.31%` / `11.98%` / `15.71%`) | `0.0000` (0.00%) | `0.0005` (0.05%) | `0.0043` (0.43%) | `0.0000` | `0.9535` (95.35%; `62.31%` tagged) |
+| **P0** | `d7` (`11-03T16..11-10T16Z`) | `partial` | `0.0164` (1.64%) | `0.8970` | `1.64%` (`72.31%` / `11.98%` / `15.71%`) | `0.0000` (0.00%) | `0.0002` (0.02%) | `0.0017` (0.17%) | `0.0000` | `0.9817` (98.17%; `40.75%` tagged) |
+| **P0** | `d30` (`10-11T16..11-10T16Z`) | `partial` | `0.0103` (1.03%) | `0.8970` | `1.03%` (`72.31%` / `11.98%` / `15.71%`) | `0.0000` (0.00%) | `0.0001` (0.01%) | `0.0011` (0.11%) | `0.0000` | `0.9885` (98.85%; `25.44%` tagged) |
+| **P1** | `d1` (`11-09T16..11-10T16Z`) | `partial` | `0.0417` (4.17%) | `0.8970` | `4.17%` (`72.31%` / `11.98%` / `15.71%`) | `0.0000` (0.00%) | `0.0005` (0.05%) | `0.0043` (0.43%) | `0.0000` | `0.9535` (95.35%; `62.31%` tagged) |
+| **P1** | `d7` (`11-03T16..11-10T16Z`) | `partial` | `0.0164` (1.64%) | `0.8970` | `1.64%` (`72.31%` / `11.98%` / `15.71%`) | `0.0000` (0.00%) | `0.0002` (0.02%) | `0.0017` (0.17%) | `0.0000` | `0.9817` (98.17%; `40.75%` tagged) |
+| **P1** | `d30` (`10-11T16..11-10T16Z`) | `partial` | `0.0103` (1.03%) | `0.8970` | `1.03%` (`72.31%` / `11.98%` / `15.71%`) | `0.0000` (0.00%) | `0.0001` (0.01%) | `0.0011` (0.11%) | `0.0000` | `0.9885` (98.85%; `25.44%` tagged) |
+| **P2** | `d1` (`11-09T20..11-10T20Z`) | `full` | `0.4185` (41.85%) | `0.6537` | `41.85%` (`64.34%` / `10.34%` / `25.32%`) | `0.0026` (0.26%) | `0.0168` (1.68%) | `0.2023` (20.23%) | `0.0000` | `0.3598` (35.98%; `68.04%` tagged) |
+| **P2** | `d7` (`11-03T20..11-10T20Z`) | `partial` | `0.2265` (22.65%) | `0.4447` | `22.65%` (`44.62%` / `6.12%` / `49.26%`) | `0.0096` (0.96%) | `0.0671` (6.71%) | `0.2063` (20.63%) | `0.0000` | `0.4906` (49.06%; `33.53%` tagged) |
+| **P2** | `d30` (`10-11T20..11-10T20Z`) | `partial` | `0.1454` (14.54%) | `0.4447` | `14.54%` (`44.62%` / `6.12%` / `49.26%`) | `0.0061` (0.61%) | `0.0431` (4.31%) | `0.1324` (13.24%) | `0.0000` | `0.6730` (67.30%; `15.69%` tagged) |
+| **P3** | `d1` (`11-10T03..11-11T03Z`) | `full` | `0.5699` (56.99%) | `0.7315` | `56.99%` (`49.04%` / `19.13%` / `31.83%`) | `0.0024` (0.24%) | `0.0125` (1.25%) | `0.1943` (19.43%) | `0.0000` | `0.2210` (22.10%; `72.88%` tagged) |
+| **P3** | `d7` (`11-04T03..11-11T03Z`) | `full` | `0.2845` (28.45%) | `0.5113` | `28.45%` (`42.63%` / `12.07%` / `45.30%`) | `0.0086` (0.86%) | `0.0615` (6.15%) | `0.2017` (20.17%) | `0.0000` | `0.4436` (44.36%; `33.53%` tagged) |
+| **P3** | `d30` (`10-12T03..11-11T03Z`) | `full` | `0.1891` (18.91%) | `0.5113` | `18.91%` (`42.63%` / `12.07%` / `45.30%`) | `0.0057` (0.57%) | `0.0409` (4.09%) | `0.1341` (13.41%) | `0.0000` | `0.6302` (63.02%; `15.69%` tagged) |
 
 **Transitions and C4's closing floor:**
 
@@ -527,50 +529,48 @@ All window bounds below are UTC in 2026, with `[start, end)` hour bounds.
   exceeding the 2x floor; `d30` `bot_coverage` rose **18.36x** from P0 (`0.0103`) to P3 (`0.1891`),
   never falling; `d1` `bot_coverage` rose **13.67x** from P0 (`0.0417`) to P3 (`0.5699`).
 - **P0 -> P1 (delivery 3, worker & seat label claims):** On the static P0 snapshot (`54` minutes of
-  post-migration evidence), 1 unlogged seat in `no_repo` with `bot` + `agent.session` labels moved
-  `904,332` tokens from `no_record` (`4,990,325 -> 4,085,993`) to `attributed` at `label` basis
-  (`29,726,298 -> 30,630,630` across store rollups), while the counted repo windows had no unlogged
-  labelled workers in that 54-minute slice. Across subsequent live syncs (P1 -> P2 -> P3),
-  `label`-basis counted attribution rose from `29,648,284` to `221,639,647` (P2) and `606,607,320`
-  (P3).
+  post-migration evidence), an unlogged seat in `no_repo` with `bot` + `agent.session` labels moved
+  **18.12%** of `no_repo` `no_record` usage to `attributed` at `label` basis (**+3.04%** across
+  store-wide `label`-basis rollups), while the counted repo windows had no unlogged labelled workers
+  in that 54-minute slice. Across subsequent live syncs (P1 -> P2 -> P3), `label`-basis counted
+  attribution grew **7.48x** by P2 (`10.34%` of `d1` attributed) and **20.46x** by P3 (`19.13%` of
+  `d1` attributed).
 - **P1 -> P2 (delivery 4b, `dsh-tui` seat linking + 4-day backfill to `2026-11-07T00:00:00Z`):**
   `evidence_from` moved from `2026-11-10T15:00:00Z` to `2026-11-07T00:00:00Z`; `before_evidence`
   fell from `95.35% -> 35.98%` (`d1`), `98.17% -> 49.06%` (`d7`), and `98.85% -> 67.30%` (`d30`).
-  Counted `attributed` tokens rose from `247,478,849` to `2,144,146,061` (`d1`) and `3,619,494,595`
-  (`d7`/`d30`), with `session`-basis attribution rising from `178,950,327` to `1,614,991,301`
-  (`d7`/`d30`). Because the 4-day backfill also adopted 3.5 days of pre-4a `dsh-tui` project-root
-  seat logs (written without a terminal header or session record), `dsh_tui_seat` rose to
-  `3,295,550,277` (`d7`/`d30`), making `inspected` `0.6537` (`d1`) and `0.4447` (`d7`/`d30`) over
-  the 4-day evidence horizon instead of P0's 54-minute post-migration slice.
+  Counted `attributed` usage rose **8.66x** (`d1`, `bot_coverage: 0.0417 -> 0.4185`) and **14.63x**
+  (`d7`/`d30`, `bot_coverage: 0.0164 -> 0.2265` and `0.0103 -> 0.1454`), with `session`-basis
+  attribution rising **7.71x** (`d1`) and **9.02x** (`d7`/`d30`). Because the 4-day backfill also
+  adopted 3.5 days of pre-4a `dsh-tui` project-root seat logs (written without a terminal header or
+  session record), `dsh_tui_seat` rose from `0.17% -> 20.63%` (`d7`) and `0.11% -> 13.24%` (`d30`),
+  making `inspected` `0.6537` (`d1`) and `0.4447` (`d7`/`d30`) over the 4-day evidence horizon
+  instead of P0's 54-minute post-migration slice.
 - **P2 -> P3 (delivery 6, sync + 90-day backfill to `2026-10-03T00:00:00Z`):** Live worker and seat
-  attribution raised `bot_coverage` to `0.5699` (`d1`), `0.2845` (`d7`), and `0.1891` (`d30`), and
-  `inspected` to `0.7315` (`d1`) and `0.5113` (`d7`/`d30`). Running `usagemeter sync
-  --evidence-backfill --days 90` completed in 7 chunked passes, moving `evidence_from` from
-  `2026-11-07T00:00:00Z` back to `counted_from` (`2026-10-03T00:00:00Z`, so `evidence` is `full`
-  across `d1`, `d7`, and `d30`), adopting `900` additional pre-`2026-11-07` log calls (`evidence`
-  rows `68,332 -> 69,232`, moving `132,452` counted `dsh-tui` tokens out of `before_evidence` in
-  `d7`/`d30`), and keeping every window's `total` unchanged across the backfill (`5,563,288,869` in
-  `d1`, `17,668,158,220` in `d7`, `26,583,504,034` in `d30`).
-- **What remains in `before_evidence` at P3 (`16,753,470,782` tokens in `d30`):**
-  1. `10,519,127,491` tokens (`437` `claude-code` rows = `10,228,363,271` + `27` `codex` rows =
-     `290,764,220`, in `2026-10-19..2026-11-09T10:00:00Z`) were written in schema 2 under the
-     machine's fallback id (`meta.machine_fallback`) before `hc` first supplied its core id
-     (`meta.machine`); `evidence::adopt` matches `machine = meta.machine` and leaves
-     `machine_fallback` rollups frozen.
-  2. `5,931,774,745` tokens (`138` `claude-code` rows = `1,753,956,424` + `176` `dsh-tui` rows =
-     `4,177,818,321`, in `2026-11-09T10:00:00Z..2026-11-10T14:00:00Z`) are frozen schema 2 rollups
-     (`actor_state IS NULL`) whose logs were already rotated or whose rollup dimensions no longer
-     had un-adopted log lines on disk.
-  3. `302,568,546` tokens (`32` `codex` rows) are pre-evidence Codex thread rollups (Codex rollout
-     deltas carry no request identity for `adopt`, so `mark_unbacked` stamps them
-     `before_evidence`).
+  attribution plus the 90-day backfill raised `bot_coverage` to `0.5699` (`d1`), `0.2845` (`d7`),
+  and `0.1891` (`d30`), and `inspected` to `0.7315` (`d1`) and `0.5113` (`d7`/`d30`), while
+  `before_evidence` fell to `22.10%` (`d1`), `44.36%` (`d7`), and `63.02%` (`d30`). Running
+  `usagemeter sync --evidence-backfill --days 90` completed in 7 chunked passes, moving
+  `evidence_from` from `2026-11-07T00:00:00Z` back to `counted_from` (`2026-10-03T00:00:00Z`, so
+  `evidence` is `full` across `d1`, `d7`, and `d30`), expanding stored evidence rows by **+1.32%**,
+  and keeping every window's `total` invariant (`1.0000x`) across the backfill pass itself.
+- **What remains in `before_evidence` at P3 (`63.02%` of `d30`):**
+  1. **62.79%** of P3's `d30` `before_evidence` (`claude-code` and `codex` in
+     `2026-10-19..2026-11-09T10:00:00Z`) was written in schema 2 under the machine's fallback id
+     (`meta.machine_fallback`) before `hc` first supplied its core id (`meta.machine`);
+     `evidence::adopt` matches `machine = meta.machine` and leaves `machine_fallback` rollups
+     frozen.
+  2. **35.41%** (`claude-code` and `dsh-tui` in `2026-11-09T10:00:00Z..2026-11-10T14:00:00Z`)
+     consists of frozen schema 2 rollups (`actor_state IS NULL`) whose logs were already rotated or
+     whose rollup dimensions no longer had un-adopted log lines on disk.
+  3. **1.81%** (`codex`) consists of pre-evidence Codex thread rollups (Codex rollout deltas carry
+     no request identity for `adopt`, so `mark_unbacked` stamps them `before_evidence`).
 
 `evidence: full` describes the window's position relative to `evidence_from`; it does not
 mean that every counted rollup has evidence. Frozen rollups can remain in `before_evidence`
 even after the backfill reaches `counted_from`. P0 and P1 use the same watermark; later
 points include live syncs and moving windows, so their changes combine new usage, new
-claims and backfill. The unchanged totals above compare the immediate pre/post backfill
-at P3, rather than totals across P0–P3.
+claims and backfill. The invariant total ratio above compares the immediate pre/post
+backfill at P3, rather than totals across P0–P3.
 
 The C4 closing floor is met for `d7` and `d30`. The earlier expectation that `inspected`
 would rise at P1 and P2 did not hold: P1 is unchanged in the counted windows, and P2
