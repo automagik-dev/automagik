@@ -12865,6 +12865,12 @@ body[data-ds-dark-theme] .bt-theme-chip i{background:var(--da)}
 @media (max-width:640px) and (pointer:coarse){
   .bt-input,.bt-bs-input,.bt-browser-address input,.bt-folder-input,.bt-secret-input,.bt-q-input,.bt-to input,.bt-palette-head input,.bt-mem-input{font-size:16px}
 }
+/* Keep these last: they came from the conversation sheet, installed after this one; Details can open without that sheet installed. */
+.bt-permission-menu{min-width:min(380px,calc(100vw - 24px));max-height:min(460px,60vh);overflow-y:auto;padding:8px}
+.bt-permission-menu .bt-q-list{margin:0;gap:2px}
+.bt-permission-menu .bt-q-opt{padding:8px 10px;border-radius:8px}
+.bt-permission-menu .bt-q-desc{font-size:12px;line-height:16px;color:var(--bt-ink-3);white-space:normal}
+.bt-permission-menu .bt-perm-confirm{padding:4px 2px 2px}
 `;
 var CONVERSATION_CSS = `
 .bt-think{font-size:13px;line-height:18px;color:var(--bt-ink-2);margin:2px 0 4px;max-width:calc(var(--bt-msg-w) * 100%)}
@@ -13016,11 +13022,6 @@ body:not([data-bt-advanced]) [class*="_flowItem"][data-chat-flow-kind="turn-tail
 .bt-perm-chip svg{flex:none;width:14px;height:14px}
 .bt-perm-chip:hover{opacity:.82}
 .bt-perm-chip:focus-visible{outline:2px solid var(--bt-accent);outline-offset:2px;border-radius:6px}
-.bt-permission-menu{min-width:min(380px,calc(100vw - 24px));max-height:min(460px,60vh);overflow-y:auto;padding:8px}
-.bt-permission-menu .bt-q-list{margin:0;gap:2px}
-.bt-permission-menu .bt-q-opt{padding:8px 10px;border-radius:8px}
-.bt-permission-menu .bt-q-desc{font-size:12px;line-height:16px;color:var(--bt-ink-3);white-space:normal}
-.bt-permission-menu .bt-perm-confirm{padding:4px 2px 2px}
 [data-composer-card] [class*="_tools"]{gap:0!important}
 [data-composer-card] [class*="_modes"]:empty{display:none!important}
 [data-composer-card] [class*="_activity"]:not(:has([data-slot] > *)){display:none!important}
@@ -14968,6 +14969,7 @@ var AUTO_FALLBACK = "workspace-write";
 
 // src/client/permission-picker.js
 var import_react35 = require("react");
+var import_react_dom9 = require("react-dom");
 var LABELS = { "read-only": "Read only", "workspace-write": "Workspace", "danger-full-access": "Full access", [AUTO]: "Auto review" };
 var DANGER = /* @__PURE__ */ new Set(["danger-full-access"]);
 var presetDanger = (value) => DANGER.has(value);
@@ -15040,7 +15042,7 @@ function usePermissionPick({ saved, onPick, repick = false, confirmFull = false 
     }
     send(value);
   };
-  return { current, pick: pick2, confirming, cancel: () => setConfirming(false) };
+  return { current, pick: pick2, confirming, asks, cancel: () => setConfirming(false) };
 }
 function PermissionConfirm({ value, name, cli, onConfirm, onCancel }) {
   if (value === AUTO) {
@@ -15126,7 +15128,106 @@ function PermissionList({ catalog, saved, onPick, repick = false, disabled = fal
     import_react35.Fragment,
     null,
     (0, import_react35.createElement)(PermissionOptions, { catalog, current, onPick: (value) => pick2(value), disabled, cli }),
-    confirming && !disabled ? (0, import_react35.createElement)(PermissionConfirm, { value: confirming, name, cli, onConfirm: () => pick2(confirming, true), onCancel: cancel }) : null
+    confirming && !disabled ? (0, import_react35.createElement)(PermissionConfirm, { value: confirming, name, cli, onConfirm: (event) => {
+      if (event?.detail > 1) return;
+      pick2(confirming, true);
+    }, onCancel: cancel }) : null
+  );
+}
+function PermissionSelect({ catalog, saved, onPick, repick = false, disabled = false, name, cli }) {
+  const { current, pick: pick2, confirming, asks, cancel } = usePermissionPick({ saved, onPick, repick, confirmFull: true });
+  const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu({ minWidth: Math.min(380, window.innerWidth - 24) });
+  (0, import_react35.useEffect)(() => {
+    if (!isOpen && menu.current?.contains(document.activeElement)) button.current?.focus({ preventScroll: true });
+    if (confirming && (!isOpen || disabled)) cancel();
+  }, [isOpen, disabled, confirming]);
+  (0, import_react35.useEffect)(() => {
+    if (!isOpen) return;
+    const target = !repick && !disabled && menu.current?.querySelector('.bt-q-opt[aria-pressed="true"]:not(:disabled)') || menu.current;
+    target?.focus();
+  }, [isOpen]);
+  (0, import_react35.useEffect)(() => {
+    if (isOpen && disabled) menu.current?.focus();
+  }, [isOpen, disabled]);
+  const catalogValues = catalog.options.map((option) => option.value).join(",");
+  (0, import_react35.useEffect)(() => {
+    if (isOpen && document.activeElement === document.body) menu.current?.focus();
+  }, [isOpen, catalogValues]);
+  (0, import_react35.useEffect)(() => {
+    if (isOpen && confirming) menu.current?.querySelector(".bt-perm-confirm")?.scrollIntoView?.({ block: "nearest" });
+  }, [isOpen, confirming]);
+  const finish = () => {
+    close();
+    button.current?.focus({ preventScroll: true });
+  };
+  const choose = (value) => {
+    if (disabled) return;
+    if (value === current && !repick) {
+      finish();
+      return;
+    }
+    pick2(value);
+    if (!asks(value)) finish();
+  };
+  const onConfirm = (event) => {
+    if (event?.detail > 1) return;
+    pick2(confirming, true);
+    finish();
+  };
+  const onCancel = () => {
+    const row = menu.current?.querySelector(`.bt-q-opt[data-permission="${confirming}"]:not(:disabled)`);
+    cancel();
+    (row ?? menu.current)?.focus();
+  };
+  const onKeyDown = (event) => {
+    if (event.key !== "Tab") return;
+    const buttons = [...menu.current.querySelectorAll("button:not(:disabled)")];
+    const first = buttons[0];
+    const last = buttons.at(-1);
+    const active = document.activeElement;
+    if (!first || (event.shiftKey ? active === first || active === menu.current : active === last)) {
+      event.preventDefault();
+      (event.shiftKey ? last ?? menu.current : first ?? menu.current).focus();
+    }
+  };
+  const level = presetName(current, catalog);
+  const text2 = catalog.options.some((option) => option.value === current) ? presetText(current, catalog, cli) : "";
+  const danger = presetDanger(current);
+  return (0, import_react35.createElement)(
+    import_react35.Fragment,
+    null,
+    (0, import_react35.createElement)("button", {
+      ref: button,
+      className: "bt-model-trigger",
+      "data-wide": true,
+      type: "button",
+      "aria-haspopup": "dialog",
+      "aria-expanded": isOpen,
+      "aria-label": t("Permissions: {level}", { level }),
+      onClick: () => {
+        if (isOpen) finish();
+        else open();
+      }
+    }, (0, import_react35.createElement)("span", { className: "bt-model-copy" }, (0, import_react35.createElement)("span", { className: `bt-model-name${danger ? " bt-danger" : ""}` }, level)), (0, import_react35.createElement)(Caret)),
+    text2 ? (0, import_react35.createElement)("div", { className: "bt-note" }, danger ? (0, import_react35.createElement)("span", { className: "bt-danger" }, text2) : text2) : null,
+    shownPlace ? (0, import_react_dom9.createPortal)((0, import_react35.createElement)(
+      "div",
+      {
+        ref: menu,
+        className: `bt-menu bt-permission-menu${shownPlace.bottom !== void 0 ? " bt-menu-up" : ""}`,
+        role: "dialog",
+        "aria-label": t("Permissions"),
+        tabIndex: -1,
+        style: shownPlace,
+        "data-leaving": leaving || void 0,
+        onKeyDown,
+        onClickCapture: (event) => {
+          if (event.detail > 1 && event.target.closest(".bt-q-opt")) event.stopPropagation();
+        }
+      },
+      (0, import_react35.createElement)(PermissionOptions, { catalog, current, onPick: choose, disabled, cli }),
+      confirming && !disabled ? (0, import_react35.createElement)(PermissionConfirm, { value: confirming, name, cli, onConfirm, onCancel }) : null
+    ), document.body) : null
   );
 }
 function PermissionExplanations({ catalog }) {
@@ -15143,7 +15244,7 @@ function PermissionExplanations({ catalog }) {
 
 // src/client/composer.js
 var import_react36 = require("react");
-var import_react_dom9 = require("react-dom");
+var import_react_dom10 = require("react-dom");
 var speechApi = () => window.SpeechRecognition ?? window.webkitSpeechRecognition;
 var keepComposerFocus = (event) => event.preventDefault();
 var plusRow = (Icon, label, description, onClick, onMouseDown) => (0, import_react36.createElement)("button", {
@@ -15305,7 +15406,7 @@ function ComposerPermission({ sessionId, useRoster, actions }) {
       (0, import_react36.createElement)(ShieldIcon, { size: 14 }),
       (0, import_react36.createElement)("span", null, name)
     ),
-    shownPlace ? (0, import_react_dom9.createPortal)((0, import_react36.createElement)("div", {
+    shownPlace ? (0, import_react_dom10.createPortal)((0, import_react36.createElement)("div", {
       ref: menu,
       className: `bt-menu bt-menu-up bt-permission-menu${shownPlace.bottom !== void 0 ? " bt-menu-up" : ""}`,
       role: "menu",
@@ -15382,7 +15483,7 @@ function ComposerPlus({ sessionId, inputActions, useRoster, actions }) {
       onMouseDown: keepComposerFocus,
       onClick: toggle
     }, (0, import_react36.createElement)(PlusIcon)),
-    shown ? (0, import_react_dom9.createPortal)((0, import_react36.createElement)(
+    shown ? (0, import_react_dom10.createPortal)((0, import_react36.createElement)(
       "div",
       {
         ref: menu,
@@ -16262,7 +16363,7 @@ var AVATAR_LIBRARY_CSS = `
 
 // src/client/character-select.js
 var import_react40 = require("react");
-var import_react_dom10 = require("react-dom");
+var import_react_dom11 = require("react-dom");
 var SORTS = [["popular", "Most liked"], ["new", "Newest"], ["views", "Most viewed"], ["random", "Surprise me"]];
 var sourceLine = { builtin: "Automagik", team: "Kept by this team", codex: "From Codex" };
 var capitalize = (word) => word[0].toUpperCase() + word.slice(1);
@@ -16479,7 +16580,7 @@ function CharacterSelect({ bot, actions, run: run2, onClose, avatarImage: avatar
     entries2.length > 0 ? (0, import_react40.createElement)("div", { className: "bt-cs-grid" }, entries2.map(tile)) : null
   );
   const showsColor = item?.kind === "shape";
-  return (0, import_react_dom10.createPortal)((0, import_react40.createElement)(
+  return (0, import_react_dom11.createPortal)((0, import_react40.createElement)(
     "div",
     { className: "bt-cs-layer", onKeyDown },
     (0, import_react40.createElement)("div", { className: "bt-scrim", onMouseDown: onClose }),
@@ -16647,7 +16748,7 @@ function settingsModelPicker({ bot, roster, actions, run: run2, onFailure = () =
 
 // src/client/folder-menu.js
 var import_react41 = require("react");
-var import_react_dom11 = require("react-dom");
+var import_react_dom12 = require("react-dom");
 var folderName = (path) => String(path).replace(/[\\/]+$/, "").split(/[\\/]/).pop() || String(path);
 var Tick2 = ({ on }) => (0, import_react41.createElement)("span", { className: "bt-model-tick", "aria-hidden": true }, on ? (0, import_react41.createElement)(CheckIcon) : null);
 function FolderMenu({ value, group = false, team = false, actions, run: run2, onPick, wide = false, disabled = false }) {
@@ -16777,7 +16878,7 @@ function FolderMenu({ value, group = false, team = false, actions, run: run2, on
       ),
       (0, import_react41.createElement)(Caret)
     ),
-    shownPlace ? (0, import_react_dom11.createPortal)((0, import_react41.createElement)(
+    shownPlace ? (0, import_react_dom12.createPortal)((0, import_react41.createElement)(
       "div",
       { ref: menu, className: `bt-menu bt-model-menu bt-folder-menu${shownPlace.bottom !== void 0 ? " bt-menu-up" : ""}`, role: "menu", "aria-label": team ? t("Team workspace") : t("Working folder"), style: shownPlace, "data-leaving": leaving || void 0 },
       shownView,
@@ -19516,7 +19617,7 @@ function NewGenie({ roster, actions, onBack, onCreated }) {
 
 // src/client/dsh-bot-form.js
 var import_react54 = require("react");
-var import_react_dom12 = require("react-dom");
+var import_react_dom13 = require("react-dom");
 function PresetMenu({ value, options, onPick }) {
   const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu();
   const current = options.find((entry) => entry.id === value);
@@ -19547,7 +19648,7 @@ function PresetMenu({ value, options, onPick }) {
       (0, import_react54.createElement)("span", { className: "bt-model-copy" }, (0, import_react54.createElement)("span", { className: "bt-model-name" }, current?.name ?? (value || t("DSH default")))),
       (0, import_react54.createElement)(Caret)
     ),
-    shownPlace ? (0, import_react_dom12.createPortal)((0, import_react54.createElement)(
+    shownPlace ? (0, import_react_dom13.createPortal)((0, import_react54.createElement)(
       "div",
       { ref: menu, className: `bt-menu bt-model-menu bt-folder-menu${shownPlace.bottom !== void 0 ? " bt-menu-up" : ""}`, role: "menu", "aria-label": t("Preset"), style: shownPlace, "data-leaving": leaving || void 0 },
       (0, import_react54.createElement)(
@@ -23818,8 +23919,8 @@ function PermissionRow({ bot, roster, actions, run: run2 }) {
     { className: "bt-drawer-permission" },
     (0, import_react70.createElement)("div", { className: "bt-section-title" }, t("Permissions")),
     // A Bot without its own preset may run on another one set in DSH, so its first pick always applies.
-    // Every level with what it does; a window that can only view the team gets no live rows.
-    (0, import_react70.createElement)(PermissionList, { catalog, name: bot.name, saved: bot.permission ?? catalog.defaultPreset, repick: bot.permission === void 0, disabled: Boolean(roster.readOnly), cli: cliOfBot(bot), onPick: (permission) => run2(actions.updateBot(bot.id, { permission })) }),
+    // The select explains the current level; its menu lets even a view-only window read every level.
+    (0, import_react70.createElement)(PermissionSelect, { catalog, name: bot.name, saved: bot.permission ?? catalog.defaultPreset, repick: bot.permission === void 0, disabled: Boolean(roster.readOnly), cli: cliOfBot(bot), onPick: (permission) => run2(actions.updateBot(bot.id, { permission })) }),
     (0, import_react70.createElement)(PermissionFallback, { fallback: bot.permissionFallback, owner: bot, catalog }),
     roster.readOnly ? null : (0, import_react70.createElement)("button", { type: "button", className: "bt-more", onClick: () => reopenPermissionChoice(bot.id) }, t("Choose in the chat"))
   );
@@ -24183,7 +24284,7 @@ function rectsOverlap(a, b) {
 
 // src/client/browser-pane.js
 var import_react71 = require("react");
-var import_react_dom13 = require("react-dom");
+var import_react_dom14 = require("react-dom");
 var PANEL_LINGER_MS = 300;
 var WIDTH_KEY = STORAGE.browserWidth;
 var DEFAULT_WIDTH = 520;
@@ -25154,7 +25255,7 @@ function BotPanel({ pane, leaving, roster, actions, useSessions, useSessionStatu
     leaving || overlay ? null : (0, import_react71.createElement)("div", { className: "bt-panel-grip", role: "separator", "aria-orientation": "vertical", "aria-label": t("Resize panel"), onPointerDown: startResize }),
     // Over the whole window while dragging: the cursor stays a resize cursor and the
     // pages underneath (the chat, the guest) see no pointer.
-    dragging ? (0, import_react_dom13.createPortal)((0, import_react71.createElement)("div", { className: "bt-drag-shield", "aria-hidden": true }), document.body) : null,
+    dragging ? (0, import_react_dom14.createPortal)((0, import_react71.createElement)("div", { className: "bt-drag-shield", "aria-hidden": true }), document.body) : null,
     hasStrip ? (0, import_react71.createElement)(PanelStrip, { bot, subject: pane.id, view, ids: tabState.ids, active, sides: sideChats, side: pane.side, canBrowse, reading, onView: switchView, actions: panelActions, useBrowserPages }) : null,
     view === "browser" && bot ? (0, import_react71.createElement)(BrowserView, { key: `browser:${active}`, bot, tabId: active, leaving, landed: landed && !settling, actions, useBrowserPages, hold }) : view === "side" && sideChat ? (0, import_react71.createElement)("div", { key: `side:${sideChat.id}`, className: "bt-panel-view" }, (0, import_react71.createElement)(SideChatView, { subject: pane.id, chat: sideChat, actions: panelActions })) : (0, import_react71.createElement)(
       "div",
@@ -25301,7 +25402,7 @@ var BROWSER_CSS = `
 
 // src/client/overlays.js
 var import_react72 = require("react");
-var import_react_dom14 = require("react-dom");
+var import_react_dom15 = require("react-dom");
 var DIALOG_EXIT_MS = 160;
 var MENU_EXIT_MS3 = 120;
 function Overlays({ useRoster, useUi, useSessions, useSessionStatus, useActivity, useWork, useRegistry, useBrowserPages, useBrowserTabs, useBrowserHolds, useUpdate, actions }) {
@@ -25339,14 +25440,14 @@ function Overlays({ useRoster, useUi, useSessions, useSessionStatus, useActivity
   return (0, import_react72.createElement)(
     import_react72.Fragment,
     null,
-    pane ? (0, import_react_dom14.createPortal)((0, import_react72.createElement)(BotPanel, { pane, leaving: open === null, roster, actions, useSessions, useSessionStatus, useActivity, useWork, useBrowserTabs, useBrowserPages, useBrowserHolds }), document.body) : null,
-    ui2.newChat ? (0, import_react_dom14.createPortal)((0, import_react72.createElement)(NewChat, { key: ui2.newChat, mode: ui2.newChat, roster, actions }), document.body) : null,
-    ui2.palette ? (0, import_react_dom14.createPortal)((0, import_react72.createElement)(CommandPalette, { key: ui2.palette.token, start: ui2.palette.query, token: ui2.palette.token, roster, actions, useSessions }), document.body) : null,
-    ui2.exchange ? (0, import_react_dom14.createPortal)((0, import_react72.createElement)(ExchangeDialog, { pair: ui2.exchange, roster, actions }), document.body) : null,
-    ui2.voice ? (0, import_react_dom14.createPortal)((0, import_react72.createElement)(VoiceMode, { key: ui2.voice, sessionId: ui2.voice, roster, actions, useSessions, useSessionStatus }), document.body) : null,
-    menu ? (0, import_react_dom14.createPortal)((0, import_react72.createElement)(ContextMenu, { key: `${menu.kind ?? ""}:${menu.id}:${menu.x}:${menu.y}`, menu, roster, actions, leaving: menuLeaving }), document.body) : null,
-    settings ? (0, import_react_dom14.createPortal)((0, import_react72.createElement)(SettingsDialog, { page: settings.page, id: settings.id, roster, actions, useUpdate, leaving: settingsLeaving }), document.body) : null,
-    owner ? (0, import_react_dom14.createPortal)((0, import_react72.createElement)(MemoryDialog, { key: owner.id, owner, actions, leaving: memoryLeaving }), document.body) : null
+    pane ? (0, import_react_dom15.createPortal)((0, import_react72.createElement)(BotPanel, { pane, leaving: open === null, roster, actions, useSessions, useSessionStatus, useActivity, useWork, useBrowserTabs, useBrowserPages, useBrowserHolds }), document.body) : null,
+    ui2.newChat ? (0, import_react_dom15.createPortal)((0, import_react72.createElement)(NewChat, { key: ui2.newChat, mode: ui2.newChat, roster, actions }), document.body) : null,
+    ui2.palette ? (0, import_react_dom15.createPortal)((0, import_react72.createElement)(CommandPalette, { key: ui2.palette.token, start: ui2.palette.query, token: ui2.palette.token, roster, actions, useSessions }), document.body) : null,
+    ui2.exchange ? (0, import_react_dom15.createPortal)((0, import_react72.createElement)(ExchangeDialog, { pair: ui2.exchange, roster, actions }), document.body) : null,
+    ui2.voice ? (0, import_react_dom15.createPortal)((0, import_react72.createElement)(VoiceMode, { key: ui2.voice, sessionId: ui2.voice, roster, actions, useSessions, useSessionStatus }), document.body) : null,
+    menu ? (0, import_react_dom15.createPortal)((0, import_react72.createElement)(ContextMenu, { key: `${menu.kind ?? ""}:${menu.id}:${menu.x}:${menu.y}`, menu, roster, actions, leaving: menuLeaving }), document.body) : null,
+    settings ? (0, import_react_dom15.createPortal)((0, import_react72.createElement)(SettingsDialog, { page: settings.page, id: settings.id, roster, actions, useUpdate, leaving: settingsLeaving }), document.body) : null,
+    owner ? (0, import_react_dom15.createPortal)((0, import_react72.createElement)(MemoryDialog, { key: owner.id, owner, actions, leaving: memoryLeaving }), document.body) : null
   );
 }
 
@@ -26329,7 +26430,7 @@ function serveBrowserReads({ browsers, post, clientId = globalThis.crypto.random
 
 // src/client/cli-login.js
 var import_react73 = require("react");
-var import_react_dom15 = require("react-dom");
+var import_react_dom16 = require("react-dom");
 var CLI_LOGIN_BRIDGE = /* @__PURE__ */ Symbol.for("automagik.cli-login");
 var noSubscribe3 = () => () => {
 };
@@ -26772,7 +26873,7 @@ function CliLoginConversation({ sessionId, useRoster, useSession, inputActions, 
   return (0, import_react73.createElement)(
     "span",
     { ref: anchor, hidden: true, "data-cli-login-anchor": sessionId },
-    seat ? (0, import_react_dom15.createPortal)((0, import_react73.createElement)(CliLoginRow, { bot, row, roster, manager, secretPending, seat, fieldRef }), seat) : null
+    seat ? (0, import_react_dom16.createPortal)((0, import_react73.createElement)(CliLoginRow, { bot, row, roster, manager, secretPending, seat, fieldRef }), seat) : null
   );
 }
 var CLI_LOGIN_CSS = `

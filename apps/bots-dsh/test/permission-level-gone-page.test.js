@@ -134,8 +134,14 @@ test('Details shows the saved level though it is no choice, marks none, and save
   const render = roster => act(() => root.render(React.createElement(BotPanel, { pane: { id: 'omni', view: 'details' }, leaving: false, roster, actions, ...panelProps })))
   await render(teamOf(indexRoster))
   const section = document.querySelector('.bt-drawer-permission')
-  assert.deepEqual([...section.querySelectorAll('.bt-q-opt')].map(row => row.dataset.permission), ['read-only', 'workspace-write', 'danger-full-access'])
-  assert.deepEqual([...section.querySelectorAll('.bt-q-opt')].map(row => row.getAttribute('aria-pressed')), ['false', 'false', 'false'], 'no offered level is shown as the saved one')
+  const trigger = section.querySelector('.bt-model-trigger')
+  assert.equal(trigger.textContent, GONE)
+  assert.equal(section.querySelector('.bt-q-opt'), null)
+  await click(trigger)
+  const popup = document.querySelector('.bt-permission-menu')
+  assert.deepEqual([...popup.querySelectorAll('.bt-q-opt')].map(row => row.dataset.permission), ['read-only', 'workspace-write', 'danger-full-access'])
+  assert.deepEqual([...popup.querySelectorAll('.bt-q-opt')].map(row => row.getAttribute('aria-pressed')), ['false', 'false', 'false'], 'no offered level is shown as the saved one')
+  assert.equal(document.activeElement, popup, 'without a current row focus stays on the popup')
   assert.deepEqual(notes(section).filter(text => [SAVED, RUNS, SETTLE].includes(text)), [SAVED, RUNS, SETTLE])
   assert.deepEqual(writes(), [], 'opening Details saves nothing')
   // The catalog loses its levels, then the panel goes: still nothing saved.
@@ -144,16 +150,32 @@ test('Details shows the saved level though it is no choice, marks none, and save
   assert.ok(bare, 'with no level to choose from the section still shows')
   assert.equal(bare.querySelector('.bt-section-title').textContent, 'Permissions')
   assert.deepEqual(notes(bare), [SAVED, RUNS, SETTLE])
-  assert.equal(bare.querySelector('.bt-q-opt'), null)
+  assert.equal(document.querySelector('.bt-permission-menu'), null)
+  assert.equal(document.querySelector('.bt-q-opt'), null)
+  assert.equal(bare.querySelector('.bt-model-trigger'), null)
   await render(teamOf(indexRoster, { bot: { ...BOT, permissionNotOffered: undefined, permissionRuns: undefined }, catalog: NONE }))
   assert.equal(document.querySelector('.bt-drawer-permission'), null, 'and without the flag an empty catalog shows no section, as before')
   await act(() => root.render(null))
   assert.deepEqual(writes(), [])
   // Only a press picks a level.
   await render(teamOf(indexRoster))
+  await click(document.querySelector('.bt-drawer-permission .bt-model-trigger'))
   await click(document.querySelector('.bt-q-opt[data-permission="workspace-write"]'))
   await until(() => writes().length > 0, 'the press to be saved')
   assert.deepEqual(writes().map(([name, args]) => [name, args[0], args[1]]), [['updateBot', 'omni', { permission: 'workspace-write' }]])
+})
+
+test('Details names a gone stock level without claiming its former powers', async (t) => {
+  const { document, root, BotPanel, indexRoster } = mount(t)
+  const { actions, writes } = recorder()
+  const bot = { ...BOT, permission: 'danger-full-access' }
+  const catalog = { options: [READ, WORK], defaultPreset: 'read-only' }
+  await act(() => root.render(React.createElement(BotPanel, { pane: { id: 'omni', view: 'details' }, leaving: false, roster: teamOf(indexRoster, { bot, catalog }), actions, ...panelProps })))
+  const section = document.querySelector('.bt-drawer-permission')
+  assert.equal(section.querySelector('.bt-model-trigger').textContent, 'Full access')
+  assert.deepEqual(notes(section), ['Saved level: Full access. DeepSeek Harness no longer offers it.', RUNS, SETTLE])
+  assert.ok(notes(section).every(text => !text.includes('Runs commands and changes files anywhere without asking you.')))
+  assert.deepEqual(writes(), [])
 })
 
 test('the card in the chat does not come back for it, and nothing is saved on mount or dismiss', async (t) => {
