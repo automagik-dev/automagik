@@ -190,20 +190,38 @@ export const SIGN_IN_TIMEOUT_MS = 8000
  * Whether the person is signed in to `spec`'s CLI, as the CLI itself says: true, false, or
  * undefined when it cannot tell (an old CLI, a timeout). Runs no agent turn. The CLI's own
  * folder leads PATH, so a CLI that is a Node script finds the Node it was installed with.
+ * `onUnknown` is told why a check that ran could not tell (#971): `timeout` when Node ended the
+ * CLI at SIGN_IN_TIMEOUT_MS (however the CLI then exited), `unreadable` when it could not be
+ * run or its answer was not one this reads. It is not called when there was nothing to check
+ * (no CLI, no status command). The answer itself is what it always was.
  */
-export function signedInOf(spec, cli, { env = process.env, run = execFile } = {}) {
+export function signedInOf(spec, cli, { env = process.env, run = execFile, onUnknown } = {}) {
   if (spec.signIn === undefined || cli === undefined) return Promise.resolve(undefined)
-  return new Promise((done) => {
+  return new Promise((resolve) => {
+    const done = (answer, why) => {
+      if (answer === undefined) try { onUnknown?.(why) } catch {}
+      resolve(answer)
+    }
+    // The process as `run` hands it back: Node marks the one it ended (`killed`).
+    let child
     try {
       // A CLI npm installed on Windows is a batch file (codex.cmd): through cmd.exe (batch-spawn.js).
       // DISABLE_UPDATES, as for --version (clis.js): a status check never updates the CLI itself.
-      run(...batchSafe(cli, spec.signIn.args, { env: { ...env, PATH: [dirname(cli), env.PATH].filter(Boolean).join(delimiter), NO_COLOR: '1', DISABLE_UPDATES: '1' }, timeout: SIGN_IN_TIMEOUT_MS, maxBuffer: 1 << 20, windowsHide: true }), (error, stdout) => {
+      child = run(...batchSafe(cli, spec.signIn.args, { env: { ...env, PATH: [dirname(cli), env.PATH].filter(Boolean).join(delimiter), NO_COLOR: '1', DISABLE_UPDATES: '1' }, timeout: SIGN_IN_TIMEOUT_MS, maxBuffer: 1 << 20, windowsHide: true }), (error, stdout) => {
         const code = error ? (typeof error.code === 'number' ? error.code : undefined) : 0
-        if (error && code === undefined) return done(undefined)
-        try { done(spec.signIn.read({ code, stdout: String(stdout ?? '') })) } catch { done(undefined) }
+        // Node ends a CLI still running at the timeout and says so (`killed`): on the error
+        // when the CLI died of the signal or exited with a code of its own, and on the process
+        // alone when the CLI caught the signal and exited 0. It also ends one that wrote too
+        // much, which is not a timeout.
+        const ended = error ? error.killed === true && error.code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER' : child?.killed === true
+        const why = ended ? 'timeout' : 'unreadable'
+        if (error && code === undefined) return done(undefined, why)
+        let answer
+        try { answer = spec.signIn.read({ code, stdout: String(stdout ?? '') }) } catch {}
+        done(answer, why)
       })
     } catch {
-      done(undefined)
+      done(undefined, 'unreadable')
     }
   })
 }

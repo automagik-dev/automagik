@@ -88,6 +88,8 @@ export const INSPECT_TTL_MS = 3000
 // asks before its first call. A sign-in that ends meanwhile is caught by the agent itself: its
 // ACP `auth_required` is MODEL_ACCESS_REQUIRED (adapter.js) and drops this answer at once.
 export const SIGNED_IN_TTL_MS = 5 * 60 * 1000
+// What a status row's `signInCheck` can say: why a sign-in check that ran could not tell.
+const SIGN_IN_CHECKS = new Set(['timeout', 'unreadable'])
 
 // A live field is a reference ({ get() }) in the running fiber; a plain value elsewhere (tests).
 export const flagOf = value => (typeof value?.get === 'function' ? value.get() : value)
@@ -178,6 +180,8 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   const clis = new Map()
   const cliDetails = new Map()
   const signIns = new Map()
+  // Why an agent's last sign-in check could not tell, while its sign-in is unknown.
+  const signInChecks = new Map()
   // Consented sharing (#869, consent.js): a signed-in CLI is used for chats, images and the
   // welcome only once the person said so for that account. `consentStates` is what the last
   // read of each agent meant ('given', 'carried', 'needed'); `accountsSeen` who it was signed in
@@ -343,7 +347,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       const detail = (spec.cliPackage === undefined ? undefined : cliStore?.find(spec, external)) ?? (external ? { path: external, managed: false } : undefined)
       const cli = detail?.path
       cliDetails.set(id, detail)
-      if (clis.get(id) !== cli) signIns.delete(id)
+      if (clis.get(id) !== cli) { signIns.delete(id); signInChecks.delete(id) }
       clis.set(id, cli)
       const want = enabled(spec) && cli !== undefined
       const have = agents.get(id)
@@ -370,11 +374,25 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     const spec = AGENTS[id]
     const cli = clis.get(id)
     const env = { ...process.env, ...cliEnvironment(spec, cliDetails.get(id)) }
-    const authenticated = cli === undefined ? undefined : isNative(spec) ? await nativeSignedIn(id, fresh) : await signedIn(spec, cli, { env }).catch(() => undefined)
+    // Why a check that ran could not tell (agents.js `signedInOf`): a timeout or an answer it
+    // could not read. Kept only while the sign-in is unknown, for the status row. It is this
+    // probe's own until an answer that is not "signed in" is written, and is written with it
+    // (`noteCheck`, under the same guard): a check of a CLI that was replaced meanwhile says
+    // nothing of the new one, and of two probes of one CLI the one that ends last is the one
+    // both maps hold. A "signed in" answer writes nothing here: the row shows a reason only
+    // while the sign-in is unknown (`statusOf`), so while that answer waits for its account to
+    // be read the row still says what it said, and after it the reason is not shown.
+    let unknown
+    const noteCheck = (answer) => {
+      if (answer === undefined && SIGN_IN_CHECKS.has(unknown)) signInChecks.set(id, unknown)
+      else signInChecks.delete(id)
+    }
+    const authenticated = cli === undefined ? undefined : isNative(spec) ? await nativeSignedIn(id, fresh) : await signedIn(spec, cli, { env, onUnknown: (why) => { unknown = why } }).catch(() => undefined)
     const epoch = nextEpoch(id)
     if (authenticated !== true || consents === undefined || isNative(spec)) {
       if (clis.get(id) === cli) {
         signIns.set(id, authenticated)
+        noteCheck(authenticated)
         noteAccount(id, authenticated, undefined)
       }
       return
@@ -552,6 +570,9 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
         ...(bin && connectorState?.rolledBack ? { rolledBack: connectorState.rolledBack } : {}),
       },
       ...(signIns.get(id) === undefined ? {} : { signedIn: signIns.get(id) }),
+      // No `signedIn`: the last check ran and could not tell, and this is why. Absent when no
+      // check has run yet (or there was nothing to check), so the two are told apart (#971).
+      ...(signIns.get(id) === undefined && signInChecks.get(id) !== undefined ? { signInCheck: signInChecks.get(id) } : {}),
       // Only the state of the person's word for the signed-in account; who it is never rides here.
       ...(signIns.get(id) === true && consentStates.get(id) !== undefined ? { consent: consentStates.get(id) } : {}),
       model: { provider: id, id: DEFAULT_MODEL, name: spec.defaultName, listed },
@@ -799,7 +820,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       return await drawImage({ spawn: () => agents.get(IMAGE_AGENT).spawn(), prompt, size, quality, background, signal, ...(timeoutMs === undefined ? {} : { timeoutMs }), name: AGENTS[IMAGE_AGENT].defaultName, log: line => warn(ctx, line) })
     } catch (error) {
       // A run refused as signed out says the CLI's sign-in ended: the next check asks again.
-      if (error?.code === SIGNED_OUT) signIns.delete(IMAGE_AGENT)
+      if (error?.code === SIGNED_OUT) { signIns.delete(IMAGE_AGENT); signInChecks.delete(IMAGE_AGENT) }
       throw error
     }
   }
