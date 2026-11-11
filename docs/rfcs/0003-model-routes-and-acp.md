@@ -726,6 +726,11 @@ Saving is explicit and remains off until the tested profile is accepted. This wi
 setup and connection ownership; it preserves the standalone contract pin, approval levels,
 replay/epoch fencing, durable submit identities and uncertainty handling above.
 
+In this delivery, Read only and Workspace each ask before answering a Hermes approval question;
+their different local file settings do not enforce a remote workspace. Auto review also asks
+the person for Hermes questions rather than sending them through the model reviewer. Full access
+answers yes once. Distinct remote refusal/allow boundaries are tracked separately in #1084.
+
 ## Amendment: separate Bot CLI accounts (#869)
 
 Owner decision (2026-11-11): **isolate**, option 1 of

@@ -3,7 +3,7 @@ import { AUTO } from '../shared/permission-levels.js'
 import { CloseIcon } from './icons.js'
 import { t } from './i18n.js'
 import { needsModelPick } from './model-menu.js'
-import { autoConfirmText, remoteConfirmText, remoteOfBot, cliAuto, cliConfirmText, cliOfBot, PermissionOptions, presetDanger, presetName } from './permission-picker.js'
+import { autoConfirmText, remoteConfirmText, remoteOfBot, cliAuto, cliConfirmText, cliOfBot, PermissionOptions, RemotePermissionNote, presetDanger, presetName } from './permission-picker.js'
 import { setEntry, sharedMap } from './shared-map.js'
 import { createSource } from './sources.js'
 import { STORAGE } from './storage.js'
@@ -76,6 +76,7 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
             : h('div', { className: 'bt-q-detail' },
               h('span', { className: 'bt-danger' }, remote ? remoteConfirmText(remote) : auto ? cliConfirmText(cli) : t('{name} will run commands and change files anywhere without asking you first.', { name: bot.name })),
               ' ', t('Choose it only when you trust what you asked for.')))),
+      h(RemotePermissionNote, { remote }),
       note,
       h('div', { className: 'bt-q-foot' },
         // Focus goes to Cancel, never to the button that gives the access.

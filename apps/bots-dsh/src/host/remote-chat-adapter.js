@@ -5,7 +5,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import { LOST } from './hermes-transport.js'
 
 export const REMOTE_TOOL = 'remote_hermes_tool'
-export const MISSING_TOOLS = 'Remote Hermes has no DSH team tools: message_bot, list_bots, create_bot, request_secret, or DSH memory and schedules. Its tools run remotely under the remote profile’s rules.'
+export const MISSING_TOOLS = 'Remote Hermes has no Automagik team tools: message_bot, list_bots, create_bot, request_secret, or Automagik memory and schedules. Its tools run remotely under the remote profile’s rules.'
 const finish = (kind, message) => ({ type: 'finish', reason: { kind, ...(message ? { failure: { code: 'REMOTE_HERMES', message } } : {}) } })
 const service = (ctx, name) => { try { return ctx.get?.(name) } catch { return undefined } }
 
@@ -46,7 +46,7 @@ export class RemoteChatAdapter extends LlmAdapter {
     this.registrations = new Map()
     this.mirror = defineTool({
       name: REMOTE_TOOL,
-      description: 'Displays a remote Hermes tool and waits for its result. Does not run a DSH tool.',
+      description: 'Displays a remote Hermes tool and waits for its result. Does not run an Automagik tool.',
       parameters: { id: { type: 'string', required: true }, title: { type: 'string', required: true }, input: { type: 'json' } },
       output: {
         schema: { type: 'object', additionalProperties: false, properties: { title: { type: 'string', required: true }, kind: { type: 'string', required: true }, status: { type: 'string', required: true }, text: { type: 'string', required: true } } },
@@ -88,7 +88,7 @@ export class RemoteChatAdapter extends LlmAdapter {
   async *stream(options) {
     if (!this.enabled() || !options.sessionId || !isAgentLoopRequest(options)) return yield finish('error', 'Remote Hermes answers only enabled Bot chat sessions.')
     const agent = service(this.rt.ctx, 'agents')?.get?.(options.sessionId)
-    if (!agent) return yield finish('error', 'Remote Hermes needs a live DSH chat to show its tools and approvals.')
+    if (!agent) return yield finish('error', 'Remote Hermes needs a live Automagik chat to show its tools and approvals.')
     this.register(agent)
     let entry = this.live.get(options.sessionId)
     const continuing = options.messages.at(-1)?.role === 'tool' && entry?.calls.has(options.messages.at(-1)?.toolCallId)

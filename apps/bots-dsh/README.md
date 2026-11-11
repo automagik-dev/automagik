@@ -501,7 +501,11 @@ The SSH-generated session credential travels over the encrypted channel, not SSH
 Only **standalone Desktop contract 8 with server-request approvals** is accepted. Canonical
 authority is refused. The remote profile must already use manual approvals: DSH never changes
 its global setting. Full access answers each approval `once`; a restrictive no-ask level refuses;
-Manual uses DSH's approval service. DSH's local sandbox does not constrain the remote machine.
+Read only and Workspace both ask the person before answering each Hermes approval question.
+Their file-permission difference applies only to this computer, which a Remote Hermes chat does
+not use for its tools. Auto review also asks the person: its model reviewer does not cover Hermes
+approval questions. Automagik's local sandbox does not constrain the remote computer. Distinct
+remote approval boundaries are follow-up [#1084](https://github.com/automagik-si/automagik/issues/1084).
 Other server requests (including secret/sudo/clarification) receive an unsupported-method error
 in this delivery. Hermes's own allow rules can still run actions without asking DSH.
 

@@ -69,24 +69,31 @@ const TEXTS = {
   [AUTO]: 'A model reviews each action first. You are asked only about the ones it stops. The rest run with full access, and it can let a wrong one through.',
   'danger-full-access': 'Runs commands and changes files anywhere without asking you. Choose it only when you trust what you asked for.',
 }
-const REMOTE_TEXT = "Hermes’s tools run on the other computer under its own rules. DSH handles its approval questions at this level. This computer’s file sandbox does not protect that computer."
-const REMOTE_FULL = "DSH answers each Hermes approval question once without asking you. Hermes’s own rules still apply on the other computer; this computer’s sandbox does not protect it."
-const REMOTE_AUTO = "A model reviews Hermes’s approval questions. You decide on the ones it stops. Hermes’s own rules still apply on the other computer; this computer’s sandbox does not protect it."
-const REMOTE_AUTO_CONFIRM = "Auto review uses a model to review Hermes’s approval questions. You decide on the ones it stops. It is experimental and can allow or stop the wrong question. Hermes’s own rules still apply on the other computer."
-const REMOTE_CONFIRM = "DSH will answer each Hermes approval question once without asking you. Hermes’s own rules still apply on the other computer; this computer’s sandbox does not protect it."
-const MIXED_TEXT = "This chat is changing routes. DSH handles approval questions on the route still running. Hermes’s tools follow the other computer’s rules; this computer’s sandbox does not protect them."
-const MIXED_FULL = "While this chat changes routes, Full access answers Hermes approval questions once without asking you, or lets a local route run commands and change files without asking. Hermes’s own rules still apply on the other computer; this computer’s sandbox does not protect it."
-const MIXED_AUTO = "While this chat changes routes, a model reviews approval questions on the route that is running. You decide on the ones it stops. Hermes’s own rules still apply on the other computer; this computer’s sandbox does not protect it."
-const MIXED_EXPERIMENTAL = "It is experimental and can allow or stop the wrong question."
-export const remoteConfirmText = remote => t(remote === 'mixed' ? MIXED_FULL : REMOTE_CONFIRM)
+const REMOTE_ASK = 'Automagik asks you before answering each Hermes approval question.'
+const REMOTE_FULL = 'Automagik answers yes to each Hermes approval question once, without asking you.'
+const REMOTE_AUTO = 'Automagik asks you before answering each Hermes approval question. Auto review does not review Hermes approval questions.'
+const REMOTE_CUSTOM = 'Automagik handles Hermes approval questions according to this level.'
+const REMOTE_FILES = 'Read only and Workspace differ only for files on this computer. Remote chats do not use those files.'
+const MIXED_FILES = 'On Remote Hermes, these local file permissions do not apply.'
+const REMOTE_LIMITS = 'Hermes runs tools on the other computer under its own rules. This computer’s file sandbox does not protect that computer.'
+const MIXED_ASK = 'While this chat changes routes, Automagik asks you before answering each Hermes approval question. On a local route, this level’s file rules apply on this computer.'
+const MIXED_FULL = 'While this chat changes routes, Automagik answers yes to each Hermes approval question once without asking you, or lets a local route run commands and change files without asking.'
+const MIXED_AUTO = 'While this chat changes routes, Automagik asks you before answering each Hermes approval question. Auto review does not review Hermes approval questions. On a local route, a model reviews each action first, and you decide on the ones it stops.'
+const MIXED_CUSTOM = 'This chat is changing routes. Automagik handles approval questions according to this level on the route still running.'
+const MIXED_EXPERIMENTAL = 'On a local route, Auto review is experimental and can allow or stop the wrong action.'
+export const remoteConfirmText = remote => t(remote === 'mixed' ? MIXED_FULL : REMOTE_FULL)
 export const autoConfirmText = (remote = false) => remote === 'mixed'
   ? `${t(MIXED_AUTO)} ${t(MIXED_EXPERIMENTAL)}`
-  : t(remote ? REMOTE_AUTO_CONFIRM : 'Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.')
+  : t(remote ? REMOTE_AUTO : 'Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.')
 export const presetText = (value, catalog, cli, remote = false) => remote === 'mixed'
-  ? t(value === 'danger-full-access' ? MIXED_FULL : value === AUTO ? MIXED_AUTO : MIXED_TEXT)
+  ? t(value === 'danger-full-access' ? MIXED_FULL : value === AUTO ? MIXED_AUTO : ['read-only', 'workspace-write'].includes(value) ? MIXED_ASK : MIXED_CUSTOM)
   : remote
-  ? t(value === 'danger-full-access' ? REMOTE_FULL : value === AUTO ? REMOTE_AUTO : REMOTE_TEXT)
+  ? t(value === 'danger-full-access' ? REMOTE_FULL : value === AUTO ? REMOTE_AUTO : ['read-only', 'workspace-write'].includes(value) ? REMOTE_ASK : REMOTE_CUSTOM)
   : cliAuto(value, cli) ? t(CLI_TEXT, cliWords(cli)) : Object.hasOwn(TEXTS, value) ? t(TEXTS[value]) : String(catalog?.options?.find(option => option.value === value)?.description ?? '')
+
+export function RemotePermissionNote({ remote }) {
+  return remote ? h('div', { className: 'bt-note bt-remote-permission-note' }, `${t(remote === 'mixed' ? MIXED_FILES : REMOTE_FILES)} `, t(REMOTE_LIMITS)) : null
+}
 
 // A pick shows at once and holds until the saved value catches up, or falls back when
 // `onPick` resolves false. `repick` lets the shown preset be picked again. Auto review is
@@ -175,7 +182,7 @@ export function PermissionPicker({ catalog, saved, onPick, repick = false, confi
 // marked, Full access in the danger ink. No letter keys: a stray key never moves a level.
 // `cli`: the Bot's coding CLI (cliOfBot), when it runs on one.
 export function PermissionOptions({ catalog, current, onPick, disabled = false, cli, remote = false }) {
-  return h('div', { className: 'bt-q-list', role: 'group', 'aria-label': t('Permissions') },
+  return h(Fragment, null, h('div', { className: 'bt-q-list', role: 'group', 'aria-label': t('Permissions') },
     catalog.options.map((option) => {
       const danger = presetDanger(option.value) ? ' bt-danger' : ''
       const text = presetText(option.value, catalog, cli, remote)
@@ -188,7 +195,7 @@ export function PermissionOptions({ catalog, current, onPick, disabled = false, 
         h('span', { className: `bt-q-label${danger}` }, presetName(option.value, catalog), option.value === AUTO ? h('span', { className: 'bt-perm-exp' }, t('Experimental')) : null),
         text ? h('span', { className: `bt-q-desc${danger}` }, text) : null),
       option.value === current ? h('span', { className: 'bt-q-check', title: t('Selected') }, h(CheckIcon)) : null)
-    }))
+    })), h(RemotePermissionNote, { remote }))
 }
 
 // The explained list as the picker itself (Details): a click saves, as a segment did, through
@@ -257,6 +264,7 @@ export function PermissionSelect({ catalog, saved, onPick, repick = false, disab
       onClick: () => { if (isOpen) finish(); else open() },
     }, h('span', { className: 'bt-model-copy' }, h('span', { className: `bt-model-name${danger ? ' bt-danger' : ''}` }, level)), h(Caret)),
     text ? h('div', { className: 'bt-note' }, danger ? h('span', { className: 'bt-danger' }, text) : text) : null,
+    !shownPlace ? h(RemotePermissionNote, { remote }) : null,
     shownPlace ? createPortal(h('div', {
       ref: menu, className: `bt-menu bt-permission-menu${shownPlace.bottom !== undefined ? ' bt-menu-up' : ''}`,
       role: 'dialog', 'aria-label': t('Permissions'), tabIndex: -1, style: shownPlace, 'data-leaving': leaving || undefined, onKeyDown,

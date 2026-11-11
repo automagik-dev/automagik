@@ -53,7 +53,7 @@ function PermissionRow({ bot, roster, actions, run }) {
     // The select explains the current level; its menu lets even a view-only window read every level.
     h(PermissionSelect, { catalog, name: bot.name, saved: bot.permission ?? catalog.defaultPreset, repick: bot.permission === undefined, disabled: Boolean(roster.readOnly), cli: cliOfBot(bot), remote: remoteOfBot(bot), onPick: permission => run(actions.updateBot(bot.id, { permission })) }),
     h(PermissionFallback, { fallback: bot.permissionFallback, owner: bot, catalog }),
-    roster.readOnly ? null : h('button', { type: 'button', className: 'bt-more', onClick: () => reopenPermissionChoice(bot.id) }, t('Choose in the chat')))
+    roster.readOnly ? null : h('button', { type: 'button', className: 'bt-more', style: remoteOfBot(bot) ? { textDecoration: 'underline', textUnderlineOffset: '0.2em' } : undefined, onClick: () => reopenPermissionChoice(bot.id) }, t('Choose in the chat')))
 }
 
 // The current part's turns, speed, cache hits and context, for a window without DSH's

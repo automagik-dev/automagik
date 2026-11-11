@@ -43,10 +43,23 @@ module.exports = __toCommonJS(index_exports);
 // src/client/i18n.js
 var NAMESPACE = "omni-ui";
 var ZH = {
-  "This chat is changing routes. DSH handles approval questions on the route still running. Hermes’s tools follow the other computer’s rules; this computer’s sandbox does not protect them.": "此聊天正在切换路径。DSH 处理仍在运行的路径上的审批请求。Hermes 的工具遵循另一台电脑的规则；本机沙箱无法保护这些远程工具。",
-  "While this chat changes routes, Full access answers Hermes approval questions once without asking you, or lets a local route run commands and change files without asking. Hermes’s own rules still apply on the other computer; this computer’s sandbox does not protect it.": "此聊天切换路径期间，完全访问会一次性回答 Hermes 的审批请求而不再询问你，或允许本地路径不经询问运行命令和修改文件。Hermes 自身的规则仍适用于另一台电脑；本机沙箱无法保护那台电脑。",
-  "While this chat changes routes, a model reviews approval questions on the route that is running. You decide on the ones it stops. Hermes’s own rules still apply on the other computer; this computer’s sandbox does not protect it.": "此聊天切换路径期间，一个模型会审查仍在运行的路径上的审批请求。模型拦下的请求由你决定。Hermes 自身的规则仍适用于另一台电脑；本机沙箱无法保护那台电脑。",
-  "It is experimental and can allow or stop the wrong question.": "此功能处于实验阶段，可能错误地放行或拦截请求。",
+  "Remote Hermes has no Automagik team tools: message_bot, list_bots, create_bot, request_secret, or Automagik memory and schedules. Its tools run remotely under the remote profile’s rules.": "Remote Hermes 没有 Automagik 团队工具：message_bot、list_bots、create_bot、request_secret，以及 Automagik 记忆和计划任务。其工具在远端按照远程配置的规则运行。",
+  "Displays a remote Hermes tool and waits for its result. Does not run an Automagik tool.": "显示远程 Hermes 工具并等待其结果。不会运行 Automagik 工具。",
+  "Remote Hermes needs a live Automagik chat to show its tools and approvals.": "Remote Hermes 需要一个正在运行的 Automagik 聊天来显示工具和审批请求。",
+  "Set this remote profile to manual approvals in Hermes before connecting. Automagik does not change its global approval setting.": "连接前，请在 Hermes 中将此远程配置设为手动审批。Automagik 不会更改其全局审批设置。",
+  "On Remote Hermes, these local file permissions do not apply.": "使用 Remote Hermes 时，这些本地文件权限不适用。",
+  "Automagik asks you before answering each Hermes approval question.": "Automagik 会在回答每个 Hermes 审批请求前询问你。",
+  "Automagik answers yes to each Hermes approval question once, without asking you.": "Automagik 会对每个 Hermes 审批请求回答一次“是”，不再询问你。",
+  "Automagik asks you before answering each Hermes approval question. Auto review does not review Hermes approval questions.": "Automagik 会在回答每个 Hermes 审批请求前询问你。自动审查不会审查 Hermes 的审批请求。",
+  "Automagik handles Hermes approval questions according to this level.": "Automagik 会按照此级别处理 Hermes 的审批请求。",
+  "Read only and Workspace differ only for files on this computer. Remote chats do not use those files.": "只读与工作区级别的区别仅涉及本机文件。远程聊天不使用这些文件。",
+  "Hermes runs tools on the other computer under its own rules. This computer’s file sandbox does not protect that computer.": "Hermes 按照自身规则在另一台电脑上运行工具。本机的文件沙箱无法保护那台电脑。",
+  "While this chat changes routes, Automagik asks you before answering each Hermes approval question. On a local route, this level’s file rules apply on this computer.": "此聊天切换路径期间，Automagik 会在回答每个 Hermes 审批请求前询问你。使用本地路径时，此级别的文件规则适用于本机。",
+  "While this chat changes routes, Automagik answers yes to each Hermes approval question once without asking you, or lets a local route run commands and change files without asking.": "此聊天切换路径期间，Automagik 会对每个 Hermes 审批请求回答一次“是”而不再询问你，或允许本地路径不经询问运行命令和修改文件。",
+  "While this chat changes routes, Automagik asks you before answering each Hermes approval question. Auto review does not review Hermes approval questions. On a local route, a model reviews each action first, and you decide on the ones it stops.": "此聊天切换路径期间，Automagik 会在回答每个 Hermes 审批请求前询问你。自动审查不会审查 Hermes 的审批请求。使用本地路径时，模型先审查每项操作，被拦下的操作由你决定。",
+  "This chat is changing routes. Automagik handles approval questions according to this level on the route still running.": "此聊天正在切换路径。Automagik 会按照此级别处理仍在运行的路径上的审批请求。",
+  "On a local route, Auto review is experimental and can allow or stop the wrong action.": "在本地路径上，自动审查处于实验阶段，可能错误地放行或拦截操作。",
+  "Path on the computer running Automagik": "运行 Automagik 的电脑上的路径",
   "Connect once in a terminal to verify the SSH host key, then test again.": "先在终端中连接一次并核对 SSH 主机密钥，然后重试。",
   "Run a new connection test before choosing or saving a profile.": "选择或保存配置前，请重新测试连接。",
   "Check the profile on the other computer, then test again.": "检查另一台电脑上的配置，然后重试。",
@@ -56,11 +69,6 @@ var ZH = {
   "Enter your dashboard user and password again, then sign in.": "重新输入控制台用户名和密码，然后登录。",
   "Enter a valid session token and test the connection again.": "输入有效的会话令牌，并重新测试连接。",
   "Check that Hermes is running at this address and try again.": "检查 Hermes 是否在此地址运行，然后重试。",
-  "Hermes’s tools run on the other computer under its own rules. DSH handles its approval questions at this level. This computer’s file sandbox does not protect that computer.": "Hermes 的工具按自身规则在另一台电脑上运行。DSH 按照此权限等级处理审批请求。本机的文件沙箱无法保护那台电脑。",
-  "DSH answers each Hermes approval question once without asking you. Hermes’s own rules still apply on the other computer; this computer’s sandbox does not protect it.": "DSH 会一次性回答每项 Hermes 审批请求，不再询问你。Hermes 自身的规则仍适用于另一台电脑；本机沙箱无法保护那台电脑。",
-  "A model reviews Hermes’s approval questions. You decide on the ones it stops. Hermes’s own rules still apply on the other computer; this computer’s sandbox does not protect it.": "一个模型会审查 Hermes 的审批请求。模型拦下的请求由你决定。Hermes 自身的规则仍适用于另一台电脑；本机沙箱无法保护那台电脑。",
-  "Auto review uses a model to review Hermes’s approval questions. You decide on the ones it stops. It is experimental and can allow or stop the wrong question. Hermes’s own rules still apply on the other computer.": "自动审查使用模型检查 Hermes 的审批请求。模型拦下的请求由你决定。这是一项实验性功能，可能错误地放行或拦截请求。Hermes 自身的规则仍适用于另一台电脑。",
-  "DSH will answer each Hermes approval question once without asking you. Hermes’s own rules still apply on the other computer; this computer’s sandbox does not protect it.": "DSH 将一次性回答每项 Hermes 审批请求，不再询问你。Hermes 自身的规则仍适用于另一台电脑；本机沙箱无法保护那台电脑。",
   "Set up": "设置",
   "1 profile available": "1 个可用配置",
   "Your sign-in was accepted": "登录已接受",
@@ -110,7 +118,6 @@ var ZH = {
   "Choose file…": "选择文件…",
   "The key stays on this computer.": "密钥保留在此电脑上。",
   "Key file path": "密钥文件路径",
-  "Path on the computer running DSH": "运行 DSH 的电脑上的路径",
   "Enter a local path. The key is never uploaded or copied.": "输入本地路径。密钥绝不会上传或复制。",
   "Use this path": "使用此路径",
   "Hermes path (optional)": "Hermes 路径（可选）",
@@ -5034,7 +5041,7 @@ function HermesRemoteConnect({ onClose, onConnected, edit = false, initialView, 
         (0, import_react14.createElement)("p", { className: "bt-hw-lead" }, t("We’ll find Hermes on the other computer and start the connection.")),
         (0, import_react14.createElement)(Field, { label: t("SSH host or config name"), value: draft.ssh.host, onChange: (value) => ssh("host", value), hint: t("You can also use a name from your SSH config.") }),
         (0, import_react14.createElement)("div", { className: "bt-hw-two" }, (0, import_react14.createElement)(Field, { label: t("User (optional)"), value: draft.ssh.user, onChange: (value) => ssh("user", value), placeholder: t("From SSH config") }), (0, import_react14.createElement)(Field, { label: t("Port (optional)"), value: draft.ssh.port, onChange: (value) => ssh("port", value), placeholder: t("From SSH config"), type: "text" })),
-        (0, import_react14.createElement)("div", { className: "bt-hw-field" }, (0, import_react14.createElement)("span", null, t("SSH key (optional)")), (0, import_react14.createElement)("div", { className: "bt-hw-file-choice" }, (0, import_react14.createElement)("span", null, draft.ssh.identityFile || t("Use SSH agent or SSH config")), (0, import_react14.createElement)(Button, { onClick: () => setChoosingKey((on) => !on) }, t("Choose file…"))), (0, import_react14.createElement)("small", null, t("The key stays on this computer.")), choosingKey ? (0, import_react14.createElement)("div", { className: "bt-hw-key-path" }, (0, import_react14.createElement)(Field, { label: t("Key file path"), value: draft.ssh.identityFile, onChange: (value) => ssh("identityFile", value), placeholder: t("Path on the computer running DSH"), hint: t("Enter a local path. The key is never uploaded or copied.") }), (0, import_react14.createElement)(Button, { onClick: () => setChoosingKey(false) }, t("Use this path"))) : null),
+        (0, import_react14.createElement)("div", { className: "bt-hw-field" }, (0, import_react14.createElement)("span", null, t("SSH key (optional)")), (0, import_react14.createElement)("div", { className: "bt-hw-file-choice" }, (0, import_react14.createElement)("span", null, draft.ssh.identityFile || t("Use SSH agent or SSH config")), (0, import_react14.createElement)(Button, { onClick: () => setChoosingKey((on) => !on) }, t("Choose file…"))), (0, import_react14.createElement)("small", null, t("The key stays on this computer.")), choosingKey ? (0, import_react14.createElement)("div", { className: "bt-hw-key-path" }, (0, import_react14.createElement)(Field, { label: t("Key file path"), value: draft.ssh.identityFile, onChange: (value) => ssh("identityFile", value), placeholder: t("Path on the computer running Automagik"), hint: t("Enter a local path. The key is never uploaded or copied.") }), (0, import_react14.createElement)(Button, { onClick: () => setChoosingKey(false) }, t("Use this path"))) : null),
         (0, import_react14.createElement)(Field, { label: t("Hermes path (optional)"), value: draft.ssh.hermesPath, onChange: (value) => ssh("hermesPath", value), placeholder: t("Find Hermes automatically"), hint: t("Hermes must already be installed on the other computer.") })
       );
     } else {
@@ -15030,18 +15037,24 @@ var TEXTS = {
   [AUTO]: "A model reviews each action first. You are asked only about the ones it stops. The rest run with full access, and it can let a wrong one through.",
   "danger-full-access": "Runs commands and changes files anywhere without asking you. Choose it only when you trust what you asked for."
 };
-var REMOTE_TEXT = "Hermes’s tools run on the other computer under its own rules. DSH handles its approval questions at this level. This computer’s file sandbox does not protect that computer.";
-var REMOTE_FULL = "DSH answers each Hermes approval question once without asking you. Hermes’s own rules still apply on the other computer; this computer’s sandbox does not protect it.";
-var REMOTE_AUTO = "A model reviews Hermes’s approval questions. You decide on the ones it stops. Hermes’s own rules still apply on the other computer; this computer’s sandbox does not protect it.";
-var REMOTE_AUTO_CONFIRM = "Auto review uses a model to review Hermes’s approval questions. You decide on the ones it stops. It is experimental and can allow or stop the wrong question. Hermes’s own rules still apply on the other computer.";
-var REMOTE_CONFIRM = "DSH will answer each Hermes approval question once without asking you. Hermes’s own rules still apply on the other computer; this computer’s sandbox does not protect it.";
-var MIXED_TEXT = "This chat is changing routes. DSH handles approval questions on the route still running. Hermes’s tools follow the other computer’s rules; this computer’s sandbox does not protect them.";
-var MIXED_FULL = "While this chat changes routes, Full access answers Hermes approval questions once without asking you, or lets a local route run commands and change files without asking. Hermes’s own rules still apply on the other computer; this computer’s sandbox does not protect it.";
-var MIXED_AUTO = "While this chat changes routes, a model reviews approval questions on the route that is running. You decide on the ones it stops. Hermes’s own rules still apply on the other computer; this computer’s sandbox does not protect it.";
-var MIXED_EXPERIMENTAL = "It is experimental and can allow or stop the wrong question.";
-var remoteConfirmText = (remote) => t(remote === "mixed" ? MIXED_FULL : REMOTE_CONFIRM);
-var autoConfirmText = (remote = false) => remote === "mixed" ? `${t(MIXED_AUTO)} ${t(MIXED_EXPERIMENTAL)}` : t(remote ? REMOTE_AUTO_CONFIRM : "Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.");
-var presetText = (value, catalog, cli, remote = false) => remote === "mixed" ? t(value === "danger-full-access" ? MIXED_FULL : value === AUTO ? MIXED_AUTO : MIXED_TEXT) : remote ? t(value === "danger-full-access" ? REMOTE_FULL : value === AUTO ? REMOTE_AUTO : REMOTE_TEXT) : cliAuto(value, cli) ? t(CLI_TEXT, cliWords(cli)) : Object.hasOwn(TEXTS, value) ? t(TEXTS[value]) : String(catalog?.options?.find((option) => option.value === value)?.description ?? "");
+var REMOTE_ASK = "Automagik asks you before answering each Hermes approval question.";
+var REMOTE_FULL = "Automagik answers yes to each Hermes approval question once, without asking you.";
+var REMOTE_AUTO = "Automagik asks you before answering each Hermes approval question. Auto review does not review Hermes approval questions.";
+var REMOTE_CUSTOM = "Automagik handles Hermes approval questions according to this level.";
+var REMOTE_FILES = "Read only and Workspace differ only for files on this computer. Remote chats do not use those files.";
+var MIXED_FILES = "On Remote Hermes, these local file permissions do not apply.";
+var REMOTE_LIMITS = "Hermes runs tools on the other computer under its own rules. This computer’s file sandbox does not protect that computer.";
+var MIXED_ASK = "While this chat changes routes, Automagik asks you before answering each Hermes approval question. On a local route, this level’s file rules apply on this computer.";
+var MIXED_FULL = "While this chat changes routes, Automagik answers yes to each Hermes approval question once without asking you, or lets a local route run commands and change files without asking.";
+var MIXED_AUTO = "While this chat changes routes, Automagik asks you before answering each Hermes approval question. Auto review does not review Hermes approval questions. On a local route, a model reviews each action first, and you decide on the ones it stops.";
+var MIXED_CUSTOM = "This chat is changing routes. Automagik handles approval questions according to this level on the route still running.";
+var MIXED_EXPERIMENTAL = "On a local route, Auto review is experimental and can allow or stop the wrong action.";
+var remoteConfirmText = (remote) => t(remote === "mixed" ? MIXED_FULL : REMOTE_FULL);
+var autoConfirmText = (remote = false) => remote === "mixed" ? `${t(MIXED_AUTO)} ${t(MIXED_EXPERIMENTAL)}` : t(remote ? REMOTE_AUTO : "Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.");
+var presetText = (value, catalog, cli, remote = false) => remote === "mixed" ? t(value === "danger-full-access" ? MIXED_FULL : value === AUTO ? MIXED_AUTO : ["read-only", "workspace-write"].includes(value) ? MIXED_ASK : MIXED_CUSTOM) : remote ? t(value === "danger-full-access" ? REMOTE_FULL : value === AUTO ? REMOTE_AUTO : ["read-only", "workspace-write"].includes(value) ? REMOTE_ASK : REMOTE_CUSTOM) : cliAuto(value, cli) ? t(CLI_TEXT, cliWords(cli)) : Object.hasOwn(TEXTS, value) ? t(TEXTS[value]) : String(catalog?.options?.find((option) => option.value === value)?.description ?? "");
+function RemotePermissionNote({ remote }) {
+  return remote ? (0, import_react35.createElement)("div", { className: "bt-note bt-remote-permission-note" }, `${t(remote === "mixed" ? MIXED_FILES : REMOTE_FILES)} `, t(REMOTE_LIMITS)) : null;
+}
 function usePermissionPick({ saved, onPick, repick = false, confirmFull = false }) {
   const [pending, setPending] = (0, import_react35.useState)(null);
   const [confirming, setConfirming] = (0, import_react35.useState)(false);
@@ -15140,7 +15153,7 @@ function PermissionPicker({ catalog, saved, onPick, repick = false, confirmFull 
   );
 }
 function PermissionOptions({ catalog, current, onPick, disabled = false, cli, remote = false }) {
-  return (0, import_react35.createElement)(
+  return (0, import_react35.createElement)(import_react35.Fragment, null, (0, import_react35.createElement)(
     "div",
     { className: "bt-q-list", role: "group", "aria-label": t("Permissions") },
     catalog.options.map((option) => {
@@ -15166,7 +15179,7 @@ function PermissionOptions({ catalog, current, onPick, disabled = false, cli, re
         option.value === current ? (0, import_react35.createElement)("span", { className: "bt-q-check", title: t("Selected") }, (0, import_react35.createElement)(CheckIcon)) : null
       );
     })
-  );
+  ), (0, import_react35.createElement)(RemotePermissionNote, { remote }));
 }
 function PermissionList({ catalog, saved, onPick, repick = false, disabled = false, name, cli, remote = false }) {
   const { current, pick: pick2, confirming, cancel } = usePermissionPick({ saved, onPick, repick, confirmFull: true });
@@ -15256,6 +15269,7 @@ function PermissionSelect({ catalog, saved, onPick, repick = false, disabled = f
       }
     }, (0, import_react35.createElement)("span", { className: "bt-model-copy" }, (0, import_react35.createElement)("span", { className: `bt-model-name${danger ? " bt-danger" : ""}` }, level)), (0, import_react35.createElement)(Caret)),
     text2 ? (0, import_react35.createElement)("div", { className: "bt-note" }, danger ? (0, import_react35.createElement)("span", { className: "bt-danger" }, text2) : text2) : null,
+    !shownPlace ? (0, import_react35.createElement)(RemotePermissionNote, { remote }) : null,
     shownPlace ? (0, import_react_dom9.createPortal)((0, import_react35.createElement)(
       "div",
       {
@@ -23863,6 +23877,7 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
           )
         )
       ),
+      (0, import_react69.createElement)(RemotePermissionNote, { remote }),
       note,
       (0, import_react69.createElement)(
         "div",
@@ -23969,7 +23984,7 @@ function PermissionRow({ bot, roster, actions, run: run2 }) {
     // The select explains the current level; its menu lets even a view-only window read every level.
     (0, import_react70.createElement)(PermissionSelect, { catalog, name: bot.name, saved: bot.permission ?? catalog.defaultPreset, repick: bot.permission === void 0, disabled: Boolean(roster.readOnly), cli: cliOfBot(bot), remote: remoteOfBot(bot), onPick: (permission) => run2(actions.updateBot(bot.id, { permission })) }),
     (0, import_react70.createElement)(PermissionFallback, { fallback: bot.permissionFallback, owner: bot, catalog }),
-    roster.readOnly ? null : (0, import_react70.createElement)("button", { type: "button", className: "bt-more", onClick: () => reopenPermissionChoice(bot.id) }, t("Choose in the chat"))
+    roster.readOnly ? null : (0, import_react70.createElement)("button", { type: "button", className: "bt-more", style: remoteOfBot(bot) ? { textDecoration: "underline", textUnderlineOffset: "0.2em" } : void 0, onClick: () => reopenPermissionChoice(bot.id) }, t("Choose in the chat"))
   );
 }
 function RunStats({ bot, part, running: running2, actions }) {

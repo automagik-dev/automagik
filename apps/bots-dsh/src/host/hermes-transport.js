@@ -281,7 +281,7 @@ export class HermesTransport {
     if (snapshot?.info?.desktop_contract !== 8) throw failure(CONTRACT)
     if (!snapshot.session_id || !snapshot.stored_session_id) throw failure('Remote Hermes did not return both stored and runtime session IDs.')
     // A remote profile that auto-approves cannot honour a restrictive DSH level. Never alter it.
-    if (approvals && (snapshot.info.yolo !== false || snapshot.info.approval_mode !== 'manual')) throw failure('Set this remote profile to manual approvals in Hermes before connecting. DSH does not change its global approval setting.')
+    if (approvals && (snapshot.info.yolo !== false || snapshot.info.approval_mode !== 'manual')) throw failure('Set this remote profile to manual approvals in Hermes before connecting. Automagik does not change its global approval setting.')
     return snapshot
   }
 
