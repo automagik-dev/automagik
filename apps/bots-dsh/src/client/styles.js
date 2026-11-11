@@ -930,6 +930,12 @@ body[data-ds-dark-theme] .bt-theme-chip i{background:var(--da)}
 @media (max-width:640px) and (pointer:coarse){
   .bt-input,.bt-bs-input,.bt-browser-address input,.bt-folder-input,.bt-secret-input,.bt-q-input,.bt-to input,.bt-palette-head input,.bt-mem-input{font-size:16px}
 }
+/* Keep these last: they came from the conversation sheet, installed after this one; Details can open without that sheet installed. */
+.bt-permission-menu{min-width:min(380px,calc(100vw - 24px));max-height:min(460px,60vh);overflow-y:auto;padding:8px}
+.bt-permission-menu .bt-q-list{margin:0;gap:2px}
+.bt-permission-menu .bt-q-opt{padding:8px 10px;border-radius:8px}
+.bt-permission-menu .bt-q-desc{font-size:12px;line-height:16px;color:var(--bt-ink-3);white-space:normal}
+.bt-permission-menu .bt-perm-confirm{padding:4px 2px 2px}
 `
 
 export const CONVERSATION_CSS = `
@@ -1082,11 +1088,6 @@ body:not([data-bt-advanced]) [class*="_flowItem"][data-chat-flow-kind="turn-tail
 .bt-perm-chip svg{flex:none;width:14px;height:14px}
 .bt-perm-chip:hover{opacity:.82}
 .bt-perm-chip:focus-visible{outline:2px solid var(--bt-accent);outline-offset:2px;border-radius:6px}
-.bt-permission-menu{min-width:min(380px,calc(100vw - 24px));max-height:min(460px,60vh);overflow-y:auto;padding:8px}
-.bt-permission-menu .bt-q-list{margin:0;gap:2px}
-.bt-permission-menu .bt-q-opt{padding:8px 10px;border-radius:8px}
-.bt-permission-menu .bt-q-desc{font-size:12px;line-height:16px;color:var(--bt-ink-3);white-space:normal}
-.bt-permission-menu .bt-perm-confirm{padding:4px 2px 2px}
 [data-composer-card] [class*="_tools"]{gap:0!important}
 [data-composer-card] [class*="_modes"]:empty{display:none!important}
 [data-composer-card] [class*="_activity"]:not(:has([data-slot] > *)){display:none!important}
