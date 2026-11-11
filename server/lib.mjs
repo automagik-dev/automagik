@@ -21,6 +21,22 @@ export const PORT = 3081
 /** The store pnpm uses for its major version, as the desktop app records it (`v10` for pnpm 10). */
 export const STORE_LAYOUT = 'v10'
 
+/** The proxy's advertised HTTPS root and the exact authority dsh must accept. */
+export function publicUrlArgs(value) {
+  if (value === undefined) return []
+  const invalid = () => new Error('AUTOMAGIK_PUBLIC_URL must be an absolute https:// URL with a host and no credentials, query, fragment, whitespace or backslashes')
+  if (!/^https:\/\//i.test(value) || /[\u0000-\u0020\u007f\\?#]/u.test(value)) throw invalid()
+  let url
+  try {
+    url = new URL(value)
+  } catch {
+    throw invalid()
+  }
+  const authority = value.slice(value.indexOf('://') + 3).split('/')[0]
+  if (!authority || authority.includes('@') || !url.hostname || url.hostname.includes('*')) throw invalid()
+  return ['--public-url', value, '--trusted-host', url.host]
+}
+
 // The errors that mean "this directory is not ours to write", so the entrypoint leaves it and
 // the preflight refuses with the uid message. EBUSY is one: removing an empty workspace that is
 // itself a mount point fails that way.
@@ -94,7 +110,7 @@ export function prepareWorkspace(dir, { uid = process.getuid?.() ?? 1000 } = {})
 export const redactTokens = (text) => String(text).replace(/(?<![A-Za-z0-9_])token=[^\s&"'<>]+/g, 'token=<redacted>')
 
 /** The launch URL (with dsh's per-launch token) in a line of dsh's output, or null. */
-export const launchUrlOf = (text) => /dsh web: (http:\/\/127\.0\.0\.1:\d+\/\S*token=\S+)/.exec(String(text))?.[1] ?? null
+export const launchUrlOf = (text) => /dsh web: (https?:\/\/\S*token=\S+)/.exec(String(text))?.[1] ?? null
 
 /** A key file must be 0400 or 0600: owner-only and not executable. */
 export const privateMode = (mode) => mode === 0o400 || mode === 0o600

@@ -17,6 +17,7 @@ import {
   privateMode,
   profileDirOf,
   PROFILE,
+  publicUrlArgs,
   redactTokens,
   seedProfile,
 } from './lib.mjs'
@@ -87,6 +88,13 @@ function pipeRedacted(stream, into, onLine) {
 
 async function main() {
   const env = process.env
+  let publicArgs
+  try {
+    publicArgs = publicUrlArgs(env.AUTOMAGIK_PUBLIC_URL)
+  } catch (error) {
+    warn(error.message)
+    process.exit(1)
+  }
   const dshHome = env.DSH_HOME || '/data/dsh'
   const botsHome = env.AUTOMAGIK_BOTS_HOME || '/data/bots'
   const workspace = env.AUTOMAGIK_WORKSPACE || '/data/workspace'
@@ -123,7 +131,7 @@ async function main() {
     log(`model key from ${key.source}`)
   }
 
-  const child = spawn(process.execPath, [DSH_BIN, '--profile', PROFILE, '--no-open', '--host', '127.0.0.1', '--port', String(PORT)], {
+  const child = spawn(process.execPath, [DSH_BIN, '--profile', PROFILE, '--no-open', '--host', '127.0.0.1', '--port', String(PORT), ...publicArgs], {
     env,
     stdio: ['inherit', 'pipe', 'pipe'],
   })

@@ -137,6 +137,21 @@ redacted in the log:
 docker exec automagik cat /data/dsh/launch-url
 ```
 
+## Configuration
+
+`AUTOMAGIK_PUBLIC_URL` optionally names the public HTTPS URL served by your tunnel or reverse
+proxy, for example `https://example.invalid/`. Pass it with
+`--env AUTOMAGIK_PUBLIC_URL=https://example.invalid/` in the `docker run` command above.
+The entrypoint passes `--public-url <url>` and `--trusted-host <host[:port]>` to dsh, preserving
+an explicit non-default port. The proxy must reach the loopback listener and provide HTTPS;
+this setting keeps dsh bound to `127.0.0.1:3081` and keeps its authentication enabled.
+
+When unset, startup is unchanged. An empty or invalid value stops startup with a message
+naming `AUTOMAGIK_PUBLIC_URL`. Use an absolute HTTPS URL with a host, optionally a path prefix
+for a proxy that strips that prefix, and no credentials, query, fragment, whitespace or
+backslashes. The advertised launch URL, including its token, is still saved only in
+`/data/dsh/launch-url` and redacted in logs.
+
 ### Incus
 
 Incus creates a custom volume root-owned, and the image runs as uid 1000: the first start cannot
