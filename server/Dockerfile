@@ -20,6 +20,7 @@ FROM node:24.22.2-trixie-slim@sha256:54f84b4cf8432b21aaffd5d3ce8d41e12cea0d10d33
 
 ARG AUTOMAGIK_VERSION=3.90.1
 ARG DSH_VERSION=0.2.2-rc.1
+ARG IMAGE_REVISION=unknown
 ARG AUTOMAGIK_REPOSITORY=https://github.com/automagik-dev/automagik
 
 ENV DO_NOT_TRACK=1 \
@@ -40,6 +41,7 @@ RUN node /build/server/assemble.mjs \
       --out /build/out \
       --version "$AUTOMAGIK_VERSION" \
       --dsh "$DSH_VERSION" \
+      --revision "$IMAGE_REVISION" \
       --repository "$AUTOMAGIK_REPOSITORY"
 
 # The shell tools Bots need, prepared for the distroless base: the binaries, the shared-library
@@ -117,7 +119,8 @@ COPY --from=gate-deps /gate/node_modules /opt/automagik/node_modules
 COPY --from=builder /build/out/runtime /opt/automagik/runtime
 COPY --from=builder /build/out/profile /opt/automagik/profile
 COPY --from=builder /build/out/versions.json /opt/automagik/versions.json
-COPY server/entrypoint.mjs server/healthcheck.mjs server/lib.mjs server/gate*.mjs /opt/automagik/
+COPY --from=builder /build/out/offline-store /opt/automagik/offline-store
+COPY server/entrypoint.mjs server/healthcheck.mjs server/lib.mjs server/gate*.mjs server/profile-*.mjs server/plugin-payload.mjs /opt/automagik/
 # No /home/<user> in the image's account record: the distroless nonroot home is replaced with
 # the uid the image actually runs as. The scanner's home check then has nothing to excuse.
 COPY server/passwd /etc/passwd

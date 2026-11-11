@@ -61,7 +61,7 @@ Four preparation/runtime stages, every base digest-pinned (plus the distroless b
 
 | Stage | What it does |
 |---|---|
-| `builder` | `node:24.22.2-trixie-slim`: installs the pinned harness and pnpm, fetches and verifies the release tarballs, installs the profile with dsh's own `plugin … install`, prunes what the profile does not compose, writes `versions.json` |
+| `builder` | `node:24.22.2-trixie-slim`: installs the pinned harness and pnpm, verifies the release tarballs, installs/prunes the profile, prepares its inspected offline dependency store, writes version/revision metadata |
 | `tools` | `debian:bookworm-slim`: `bash`, `dash` as `/bin/sh`, git core, `ripgrep`, their `ldd` closure, and the empty `/data` tree owned by uid 1000. No perl: git's perl subcommands are not shipped |
 | `gate-deps` | Bun 1.4.4 installs the exact WebAuthn dependency and `server/bun.lock`, with lifecycle scripts disabled, then prunes development files. Bun stays in this stage |
 | `runtime` | `scratch` holding the distroless nodejs24 rootfs (node and glibc), cleaned in the `tools` stage (man pages and changelogs stripped there with coreutils), plus the tools above, the code, nothing else — no apt, npm, curl or build toolchain |
@@ -78,6 +78,7 @@ composes.
 node server/build.mjs --tag automagik-server:local --version 3.93.0 --image-version 3.93.0 \
   --revision "$(git rev-parse HEAD)"
 node server/smoke.mjs automagik-server:local
+node server/follow-smoke.mjs automagik-server:local
 ```
 
 `--version` is the release whose plugin tarballs are installed; `--image-version` is the content
@@ -92,6 +93,9 @@ three plugins are in `/data`, `launch-url` is `0600`, the process is uid 1000, D
 check turns healthy, the composed tree still has its 200 entries (bots, welcome, ACP, web app,
 office), no composed plugin failed to import, koffi and node-pty load and a PTY spawns, and a
 restart does not reseed. No coreutils are assumed: the checks use node and bash.
+The follow smoke builds a companion release, seeds a volume with the real older plugins, then
+starts the newer image on that same volume with networking disabled. It verifies all three
+versions moved, a backup exists, user settings survived, and a second restart keeps the update.
 
 ## Run
 
@@ -128,8 +132,52 @@ healthy `401` says the fence is up, not that a model is configured.
 | `/data/secrets/deepseek-api-key` | optional model key, `0400` |
 
 `/opt/automagik` is read-only code. The image bakes nothing into `/data`: the profile is seeded
-at the first start only, and an existing profile is the user's and is never replaced. To reseed
-from a newer image, move `/data/dsh/profiles/automagik-web` aside first.
+at first start. An image-managed seed follows newer image releases on subsequent starts, as
+described below; a profile whose `package.json` the owner changed stays owner-managed.
+
+## Update a workspace through its image
+
+Arca and host operators update by changing the pinned image digest and restarting on the **same
+volumes**. Take a host snapshot of the workspace volumes first. Replace the container using the
+new digest and the same mounts/environment from Run, or set `AUTOMAGIK_SERVER_IMAGE` to the new
+digest for both Compose services and recreate them. Do not remove the data volumes or move the
+profile aside for a normal update.
+
+```sh
+docker compose -f server/compose.gate.yml --profile gate up -d
+docker compose -f server/compose.gate.yml --profile gate exec dsh \
+  /nodejs/bin/node /opt/automagik/healthcheck.mjs --json
+```
+
+For the single-container form, read the same report with:
+
+```sh
+docker exec automagik /nodejs/bin/node /opt/automagik/healthcheck.mjs --json
+```
+
+At seeding, `automagik-server-profile` records the image release and a SHA-256 of the exact seeded
+`package.json`. A newer image updates the Bot team, welcome and ACP only while that hash still
+matches. Old volumes without the structured marker are adopted only when the entire canonical
+package manifest matches the known image seed shape. The manifest identifies that seed even
+when installed plugins are missing or mixed; corruption never becomes an owner-managed exception.
+Extra fields, changed dependencies or other manifest edits opt out. Owner-managed profiles are
+left alone and identified in both startup logs and the report. Settings such as
+`cordis.patch.yml` survive an automatic update.
+
+Before installing, the image saves the complete old profile, including its package manifest,
+lock and installed dependencies, under `/data/dsh/backups/<UTC>/automagik-web`. Installation runs
+in a separate staging profile through `dsh plugin install --offline --frozen-lockfile --prod
+--ignore-scripts`. Its local tarballs are materialized from the image's inspected, unpacked
+plugin files, and transitive dependencies come from its pruned offline store. No runtime release
+download or registry access is needed; the image still ships no archive that bypasses the
+secrecy scan. All three installed versions must verify before the staged profile replaces the
+old one. A failed attempt leaves the old profile running and reports `update-rolled-back` with
+an unhealthy result, so a keeper can distinguish rollback from a successful update.
+
+Equal or older releases never downgrade installed plugins. **Going back requires restoring the
+host snapshot**, including matching image/data state: plugin migrations are forward only.
+Changing to an older digest alone leaves newer plugins in place and reports `newer-than-image`.
+The profile backup is an install recovery copy, not a substitute for the host's data snapshot.
 
 The first launch URL, token included, is written to `/data/dsh/launch-url` (`0600`) and printed
 redacted in the log:
@@ -252,9 +300,24 @@ docker exec automagik /nodejs/bin/node /opt/automagik/healthcheck.mjs   # prints
 docker logs automagik | grep 'startup:'
 ```
 
-**Only `401` is healthy**: the auth fence is up. A `200` means the fence answered without a
-session, so it fails; no answer prints `000` and fails. The check is Node's `http`, not curl. The
-entrypoint logs `startup: http://127.0.0.1:3081/ (token in /data/dsh/launch-url)`.
+**Only `401` can be healthy**: a `200` or no answer fails. The compact form prints the status
+(`000` for no answer), and exits nonzero if the profile does not match the image and is not
+explicitly owner-managed. In gate mode, both DSH and the main gate must answer `401`; a gate
+that is up cannot conceal a stopped DSH. The check uses Node's `http`, not curl.
+
+`healthcheck.mjs --json` gives keepers a versioned report:
+
+| Field | Meaning |
+|---|---|
+| `schemaVersion` | Report format, currently `1` |
+| `image.version`, `image.revision` | The image's plugin release and build commit |
+| `plugins` | Actual installed version of each of the three plugins; `null` when unavailable |
+| `followsImage`, `ownerManaged`, `reason` | Whether the seed matches the image, whether the owner opted out, and a fixed reason such as `matching-image`, `owner-managed`, `update-rolled-back`, `newer-than-image` or `missing-plugins` |
+| `dsh`, `gate` | Listener availability and HTTP status; `gate.enabled` says whether it is required |
+| `fence`, `healthy` | Fence status and overall result; exit `0` only for healthy fences plus matching or owner-managed plugins |
+
+No launch URL, token, model key, raw installer diagnostics or home path is included. The startup
+log still names the redacted fence: `startup: http://127.0.0.1:3081/ (token in /data/dsh/launch-url)`.
 
 ## Secrecy gate
 
@@ -278,7 +341,9 @@ binary's `/home/iojs` is excused only when that binary's `sha256sum` matches the
 workflow lists the entries used and reports a stale entry.
 
 The image is shrunk before the scan: third-party test, example and docs folders, non-Linux
-prebuilds and the profile's `vendor/*.tgz` install inputs are pruned (`assemble.mjs`), and the
+prebuilds and the profile's `vendor/*.tgz` install inputs are pruned (`assemble.mjs`). The offline
+store contains only individually hashed files retained in the inspected profile; local plugin
+archives are generated in the writable staging profile at update time. The
 `tools` stage copies the distroless rootfs, strips `usr/share/doc`, `man`, `info` and `lintian`
 there with coreutils, and the final `scratch` copies that cleaned rootfs. There is no `rm` in
 the runtime image. The `archive` rule never allows an archive that is left.
@@ -304,12 +369,14 @@ node server/secrecy.mjs --rootfs /tmp/rootfs --inventory secrecy
 | `assemble.mjs` | builder stage: runtime, release tarballs, profile, prune |
 | `fetch-plugins.mjs` | downloads and verifies the pinned release's tarballs |
 | `entrypoint.mjs`, `lib.mjs` | seed `/data`, key file, pnpm store, dsh, redacted log |
-| `healthcheck.mjs` | the Docker health check |
+| `profile-follow.mjs`, `profile-state.mjs` | ownership, staged offline update, backup and live version state |
+| `plugin-payload.mjs`, `offline-store.mjs` | local install inputs from scanned files; build-only dependency-cache preparation |
+| `healthcheck.mjs` | compact Docker health check and keeper JSON report |
 | `secrecy.mjs`, `secrecy-allowlist.json` | pre-push scan: rootfs extraction, inventory, rules and the exact reviewed exceptions |
 | `passwd` | the image's account record (no `/home/<user>`; `automagik` is uid 1000) |
 | `bin/dsh`, `bin/pnpm` | the image's pinned commands for `docker exec` |
 | `profile/` | the seed profile: `package.json`, `cordis.patch.yml`, `pnpm-workspace.yaml` |
-| `build.mjs`, `smoke.mjs`, `test/` | build, end-to-end smoke, unit tests |
+| `build.mjs`, `smoke.mjs`, `follow-smoke.mjs`, `test/` | build, fresh/restart and older-volume smokes, unit tests |
 
 ## Tests
 

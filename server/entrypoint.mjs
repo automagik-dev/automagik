@@ -11,16 +11,14 @@ import { join } from 'node:path'
 import {
   ensureDataDirs,
   launchUrlOf,
-  pinStore,
   PORT,
   prepareWorkspace,
   privateMode,
-  profileDirOf,
   PROFILE,
   publicUrlArgs,
   redactTokens,
-  seedProfile,
 } from './lib.mjs'
+import { followImage } from './profile-follow.mjs'
 
 const ROOT = '/opt/automagik'
 const DSH_BIN = join(ROOT, 'runtime', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')
@@ -114,9 +112,9 @@ async function main() {
   const build = versions()
   log(`profile ${PROFILE}: automagik ${build.automagik ?? 'unknown'}, dsh ${build.dsh ?? 'unknown'}`)
 
-  const seeded = await seedProfile({ dshHome, source: SEED })
-  pinStore(profileDirOf(dshHome), dshHome)
+  const seeded = await followImage({ dshHome, source: SEED, store: join(ROOT, 'offline-store'), build, dshBin: DSH_BIN })
   log(seeded.seeded ? `seeded ${seeded.target}` : `profile present at ${seeded.target}`)
+  log(`image follow: ${seeded.result}; ${seeded.reason}`)
 
   let key
   try {
