@@ -6,6 +6,7 @@
 // DSH's and from other plugins'.
 import { cpSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { selectorRoutePolicy } from './src/shared/routes.js'
 import * as diagnostics from './src/host/diagnostics.js'
 import * as extend from './src/host/extend.js'
 import * as store from './src/host/store.js'
@@ -95,6 +96,7 @@ export function createRuntime(ctx, config = {}) {
   const rt = {
     ctx,
     config,
+    routePolicy: selectorRoutePolicy(config.routePolicy),
     dshHome,
     home,
     statePath: join(home, 'state.json'),

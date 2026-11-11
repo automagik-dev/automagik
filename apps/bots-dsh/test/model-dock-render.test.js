@@ -93,26 +93,21 @@ test('a Bot with no model renders its dock in React: the offered model, Start an
   assert.ok(dock, 'the no-model dock is on screen')
   assert.match(dock.querySelector('.bt-bubble').textContent, /Say when, and I'll start/)
   // The line names the model the Bot would start on: DSH's default.
-  assert.equal(dock.querySelector('.bt-model-line-text').textContent, 'Using DeepSeek Flash · DeepSeek')
+  assert.equal(dock.querySelector('.bt-model-line-text').textContent, 'Using DeepSeek Flash · Native · DeepSeek')
   const change = dock.querySelector('.bt-model-line .bt-model-change')
   assert.ok(change, 'the line has its "change" link')
-  // "change" opens the model menu on the connections, the offered one marked; its models are
+  // "change" opens the model menu on the routes, the offered one marked; Native's models are
   // the next step, and picking another gives the Bot that one.
   flushSync(() => change.click())
   await tick()
-  const connections = [...document.body.querySelectorAll('.bt-model-menu [role="menuitem"][aria-haspopup="menu"]')]
-  assert.deepEqual(connections.map(row => row.querySelector('.bt-menu-label').textContent), ['DeepSeek', 'Ollama'])
-  assert.deepEqual(connections.filter(row => row.hasAttribute('data-current')).map(row => row.querySelector('.bt-menu-hint').textContent), ['DeepSeek Flash'])
-  flushSync(() => connections[0].click())
+  const routes = [...document.body.querySelectorAll('.bt-model-menu [role="menuitem"][aria-haspopup="menu"]')]
+  assert.deepEqual(routes.map(row => row.querySelector('.bt-menu-label').textContent), ['Native', 'ACP', 'Herdr'])
+  assert.deepEqual(routes.filter(row => row.hasAttribute('data-current')).map(row => row.querySelector('.bt-menu-hint').textContent), ['DeepSeek'])
+  flushSync(() => routes[0].click())
   await tick()
   const own = [...document.body.querySelectorAll('.bt-model-menu [role="menuitemradio"]')]
   assert.deepEqual(own.filter(row => row.getAttribute('aria-checked') === 'true').map(row => row.title), ['deepseek-official/deepseek-flash'])
-  flushSync(() => document.body.querySelector('.bt-model-menu .bt-model-back').click())
-  await tick()
-  flushSync(() => [...document.body.querySelectorAll('.bt-model-menu [role="menuitem"]')].find(row => row.textContent.startsWith('Ollama')).click())
-  await tick()
-  const rows = [...document.body.querySelectorAll('.bt-model-menu [role="menuitemradio"]')]
-  flushSync(() => rows.find(row => row.title === 'local/flash').click())
+  flushSync(() => own.find(row => row.title === 'local/flash').click())
   await tick()
   // A closed menu lingers only for its exit (useLinger), marked as leaving.
   const gone = () => document.body.querySelector('.bt-model-menu:not([data-leaving])') === null
@@ -127,7 +122,7 @@ test('a Bot with no model renders its dock in React: the offered model, Start an
 test('the dock offers the first model that can run when DSH\'s default cannot', async (t) => {
   const { document, caught } = await renderDock(t, { models: [{ ...models[0], needsKey: true }, models[1]] })
   assert.deepEqual(caught.map(error => error.message), [])
-  assert.equal(document.querySelector('.bt-model-line-text').textContent, 'Using DeepSeek Flash · Ollama')
+  assert.equal(document.querySelector('.bt-model-line-text').textContent, 'Using DeepSeek Flash · Native · Ollama')
 })
 
 test('the model menu works from the keyboard: arrows move, Right opens a step, Escape goes back one', async (t) => {
@@ -136,14 +131,14 @@ test('the model menu works from the keyboard: arrows move, Right opens a step, E
   const window = document.defaultView
   const change = document.querySelector('.bt-model-line .bt-model-change')
   const key = (target, name) => flushSync(() => target.dispatchEvent(new window.KeyboardEvent('keydown', { key: name, bubbles: true, cancelable: true })))
-  // A click with no pointer (Enter on the link) puts the focus on the current connection.
+  // A click with no pointer (Enter on the link) puts the focus on the current route.
   flushSync(() => change.dispatchEvent(new window.MouseEvent('click', { bubbles: true, detail: 0 })))
   await tick()
   const menu = document.querySelector('.bt-model-menu')
   assert.equal(menu.getAttribute('role'), 'menu')
-  assert.equal(document.activeElement.querySelector('.bt-menu-label').textContent, 'DeepSeek')
+  assert.equal(document.activeElement.querySelector('.bt-menu-label').textContent, 'Native')
   key(document.activeElement, 'ArrowDown')
-  assert.equal(document.activeElement.querySelector('.bt-menu-label').textContent, 'Ollama')
+  assert.equal(document.activeElement.querySelector('.bt-menu-label').textContent, 'ACP')
   key(document.activeElement, 'ArrowUp')
   key(document.activeElement, 'ArrowRight')
   await tick()
@@ -157,10 +152,10 @@ test('the model menu works from the keyboard: arrows move, Right opens a step, E
   // Escape goes back one step at a time, then closes.
   key(document.activeElement, 'Escape')
   await tick()
-  assert.ok(document.querySelector('.bt-model-menu [title="local/flash"]') === null && document.querySelector('.bt-model-menu [title="deepseek-official/deepseek-flash"]'), 'back on DeepSeek\'s models')
+  assert.ok(document.querySelector('.bt-model-menu [title="local/flash"]') && document.querySelector('.bt-model-menu [title="deepseek-official/deepseek-flash"]'), 'back on Native\'s models')
   key(document.activeElement, 'Escape')
   await tick()
-  assert.ok(document.querySelector('.bt-model-menu [data-current]'), 'back on the connections')
+  assert.ok(document.querySelector('.bt-model-menu [data-current]'), 'back on the routes')
   key(document.activeElement, 'Escape')
   await tick()
   assert.equal(document.querySelector('.bt-model-menu:not([data-leaving])'), null)
@@ -176,7 +171,7 @@ for (const [label, effort] of [['High', 'high'], ['Default', undefined]]) {
     const { document, patches } = await renderDock(t, { models: [{ ...models[0], reasoning: levels }, models[1]] })
     flushSync(() => document.querySelector('.bt-model-line .bt-model-change').click())
     await tick()
-    flushSync(() => [...document.querySelectorAll('.bt-model-menu [role="menuitem"]')].find(row => row.textContent.startsWith('DeepSeek')).click())
+    flushSync(() => [...document.querySelectorAll('.bt-model-menu [role="menuitem"]')].find(row => row.textContent.startsWith('Native')).click())
     await tick()
     flushSync(() => document.querySelector('.bt-model-menu [title="deepseek-official/deepseek-flash"]').click())
     await tick()

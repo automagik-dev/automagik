@@ -121,6 +121,8 @@ export function install(rt) {
     memory: rt.memoryEnabled !== false,
     // Set while another dsh host holds the team (store.js): why this one cannot change it.
     readOnly: rt.readOnly() ?? null,
+    // Which selector routes each bot type may use (shared/routes.js); absent: all three.
+    ...(rt.routePolicy === undefined ? {} : { routePolicy: rt.routePolicy }),
   })
   // What changes without a new revision, sent with every state answer. `memoryNews`:
   // per Bot or group chat, its latest memory change; `memoryReviews`: memory reviews waiting or
@@ -392,6 +394,10 @@ export function install(rt) {
         case 'update-bot':
           await rt.load()
           return ok(await rt.updateBot(body.id, body))
+        // A model on another route (parts.js): a new conversation with a handoff note.
+        case 'switch-route':
+          await rt.load()
+          return ok(await rt.switchRoute(String(body?.id ?? ''), String(body?.model ?? ''), body?.effort))
         // The avatar library: photos the user imported once, kept beside the team.
         case 'avatar-library':
           await rt.load()

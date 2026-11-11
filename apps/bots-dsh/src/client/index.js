@@ -20,7 +20,7 @@ import { SHELL_CSS, CONVERSATION_CSS, installStyles, installCompiledStyles } fro
 import { BotMark, lookOf } from './mark.js'
 import { TeamSidebar, ChannelsMoved, YouAvatar, AccountLauncher, FooterAccount, BrandMark, BrandName, BotReturn, SIDEBAR_CSS, RETURN_CSS, holdShellShortcuts, openHarnessOnboarding, openHarnessSettings } from './sidebar.js'
 import { HeaderPill, NativeBotHeader, NativeControlsNote } from './header.js'
-import { ComposerPlus, ComposerVoice, menuIcons } from './composer.js'
+import { ComposerPermission, ComposerPlus, ComposerVoice, menuIcons } from './composer.js'
 import { CHATS_SOURCE, atSources } from './at-menu.js'
 import { BtwDock, BtwTurnTail } from './btw.js'
 import { SIDE_CSS, sideSource } from './side-chat.js'
@@ -1076,6 +1076,7 @@ export function apply(ctx) {
     () => simpleOnly(() => shadow('conversation.composer.dock', { id: 'usage', order: 1, priority: BOT_PRIORITY }, Nothing)),
     () => shadow('conversation.composer.dock', { id: 'btw', order: 2, priority: BOT_PRIORITY, inject: face }, BtwDock),
     () => shadow('conversation.input.left', { id: 'bot-plus', order: -100, inject: face }, ComposerPlus),
+    () => shadow('conversation.input.left', { id: 'bot-permission-chip', order: -99, inject: face }, ComposerPermission),
     () => shadow('conversation.input.right', { id: 'bot-voice', order: 100, inject: face }, ComposerVoice),
     () => shadow('conversation.composer', {
       priority: BOT_PRIORITY,
