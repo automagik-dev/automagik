@@ -103,6 +103,7 @@ test('legacy dead sessions without login ownership evidence cannot be reclaimed'
   const stale = join(home, 'instances', `${pid}-old-session`)
   writeFileSync(stale, '')
   assert.throws(() => homes.begin('codex'), /previous Bot sign-in stopped/)
+  assert.throws(() => homes.environment('codex'), /previous Bot sign-in stopped/)
   assert.equal(existsSync(stale), true)
   rmSync(stale)
   const lock = join(home, 'changing')

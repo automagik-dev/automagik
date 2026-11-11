@@ -50,7 +50,7 @@ export class CliHomes {
       }
       this.registered.add(vendor)
     }
-    verifyLoginRecords(home, this.instance)
+    this.verify(home)
     const env = Object.fromEntries(Object.keys(source).map(key => [
       key, inherited.test(key) ? source[key] : undefined,
     ]))
@@ -84,13 +84,25 @@ export class CliHomes {
   paused(vendor) { return existsSync(join(this.home(vendor), 'paused')) }
   resume(vendor) { rmSync(join(this.home(vendor), 'paused'), { force: true }) }
 
+  verify(home) {
+    verifyLoginRecords(home, this.instance)
+    const instances = join(home, 'instances')
+    if (!existsSync(instances)) return
+    for (const name of readdirSync(instances)) {
+      if (!alive(Number(name.split('-')[0]))
+        && readFileSync(join(instances, name), 'utf8') !== LOGIN_RECORD_VERSION) {
+        throw unverifiedLogin()
+      }
+    }
+  }
+
   // Deliberately fail closed after a crashed account operation: the app must not resume on
   // credentials whose logout could not be confirmed. A new attempt can explicitly recover
   // the lock only when its owning process AND every persisted login tree are gone.
   begin(vendor) {
     const home = this.home(vendor)
     mkdirSync(home, { recursive: true, mode: 0o700 })
-    verifyLoginRecords(home, this.instance)
+    this.verify(home)
     const lock = join(home, 'changing')
     if (existsSync(lock)) {
       let pid
@@ -112,7 +124,7 @@ export class CliHomes {
             || readFileSync(join(lock, 'owner'), 'utf8') !== owner) {
             throw unverifiedLogin()
           }
-          verifyLoginRecords(home, this.instance)
+          this.verify(home)
           rmSync(lock, { recursive: true, force: true })
         } catch (error) {
           if (existsSync(claim) && readFileSync(claim, 'utf8') === this.instance) {
@@ -135,9 +147,6 @@ export class CliHomes {
         if (name === this.instance) continue
         if (alive(Number(name.split('-')[0]))) {
           throw failure('Close other Automagik sessions before changing the Bot account.')
-        }
-        if (readFileSync(join(instances, name), 'utf8') !== LOGIN_RECORD_VERSION) {
-          throw unverifiedLogin()
         }
         rmSync(join(instances, name), { force: true })
       }
