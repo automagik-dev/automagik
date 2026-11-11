@@ -86,6 +86,8 @@ test('every href/action points locally or to an exact reviewed destination', () 
       }
     }
     for (const [, action] of html.matchAll(/action="([^"]+)"/g)) assert.equal(action, '/api/waitlist')
+    // The capture notes stay in the repository; the public footer does not link to them.
+    assert.ok(!html.slice(html.indexOf('<footer')).includes('CAPTURES.md'), route)
   }
 })
 
@@ -131,6 +133,17 @@ test('derived art: each file is one recorded rectangle of a hashed source, at 1x
     if (entry.source.startsWith('apps/landing/assets/screens/')) assert.equal(entry.sourceSha256, manifest.images[entry.source.split('/').pop()], file)
     else assert.ok(/^apps\/(?:desktop|bots-dsh|landing)\/(?:assets|src)\//.test(entry.source), entry.source)
     assert.equal(entry.rect.length, 4)
+    // An app capture never sits as a bright box on a dark page: each crop has a twin cut from
+    // the dark capture of the same view, with the same rectangle (the pack's share image is
+    // dark in both).
+    if (entry.source.startsWith('apps/landing/assets/screens/') && !entry.source.endsWith('/code-sidebar.png')) {
+      const other = art.files[/-dark(?:-2x)?\.webp$/.test(file) ? file.replace('-dark', '') : file.replace(/(-2x)?\.webp$/, '-dark$1.webp')]
+      assert.ok(other, `${file} needs its light or dark twin`)
+      assert.deepEqual(other.rect, entry.rect, file)
+      const view = source => source.replace(/-(?:light|dark)\.png$/, '.png')
+      assert.equal(view(other.source), view(entry.source), file)
+      assert.notEqual(other.source, entry.source, file)
+    }
     const twin = file.endsWith('-2x.webp') ? file.replace('-2x.webp', '.webp') : file.replace('.webp', '-2x.webp')
     assert.ok(Object.hasOwn(art.files, twin), `${file} needs its ${twin}`)
   }

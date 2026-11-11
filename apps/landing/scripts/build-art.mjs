@@ -15,6 +15,11 @@ const repo = resolve(landing, '../..')
 const out = join(landing, 'assets/art')
 const sha = buffer => createHash('sha256').update(buffer).digest('hex')
 
+// A capture's light and dark pictures: the same rectangle of screen.png and screen-dark.png.
+const twins = (name, screen, rect, width) => [
+  [name, `apps/landing/assets/screens/${screen}.png`, rect, width],
+  [`${name}-dark`, `apps/landing/assets/screens/${screen}-dark.png`, rect, width],
+]
 // [name, source (repo-relative), rectangle [x, y, w, h] in source pixels or 'trim', 1x width]
 export const ART = [
   ['mark', 'apps/desktop/assets/mark.png', 'trim', 300],
@@ -25,20 +30,23 @@ export const ART = [
   ['app-icon', 'apps/landing/assets/brand/app-icon.png', 'trim', 112],
   ['genie-faces', 'apps/bots-dsh/src/client/art/genie-expressions.webp', 'trim', 504],
   ['omni-faces', 'apps/bots-dsh/src/client/art/omni-expressions.webp', 'trim', 504],
-  // Captures: one rectangle each of the unchanged files in assets/screens.
-  ['team-chat', 'apps/landing/assets/screens/pip-delegates.png', [0, 0, 2880, 1800], 1040],
-  ['stage-light', 'apps/landing/assets/screens/app-stage-light-1440.png', [0, 0, 2880, 1800], 1040],
-  ['stage-dark', 'apps/landing/assets/screens/app-stage-dark-1440.png', [0, 0, 2880, 1800], 1040],
-  ['ask', 'apps/landing/assets/screens/pip-delegates.png', [944, 492, 1560, 640], 520],
-  ['checks', 'apps/landing/assets/screens/wish-checks.png', [936, 628, 1560, 640], 520],
-  ['report', 'apps/landing/assets/screens/genie-report.png', [944, 532, 1560, 640], 520],
-  ['team-step', 'apps/landing/assets/screens/team-step.png', [440, 0, 2000, 1560], 600],
-  ['omni-card', 'apps/landing/assets/screens/team-step.png', [500, 800, 940, 1000], 400],
+  // Captures: one rectangle each of the unchanged files in assets/screens. Each has a dark
+  // twin (name-dark) cut from the dark capture of the same view with the same rectangle.
+  ...twins('team-chat', 'pip-delegates', [0, 0, 2200, 1440], 1040),
+  ...twins('team-chat-phone', 'pip-delegates-phone', [0, 36, 780, 1516], 390),
+  ...twins('app-review', 'wish-diff', [0, 0, 2560, 1548], 1040),
+  ...twins('app-review-crop', 'wish-diff', [0, 0, 1900, 1440], 760),
+  ...twins('thread-phone', 'wish-checks-phone', [0, 0, 780, 1200], 390),
+  ...twins('ask', 'pip-delegates-phone', [0, 36, 780, 470], 390),
+  ...twins('checks', 'wish-checks-phone', [0, 536, 780, 624], 390),
+  ...twins('report', 'genie-report-phone', [0, 456, 780, 588], 390),
+  ...twins('team-step', 'team-step', [440, 0, 2000, 1560], 600),
+  ...twins('omni-card', 'team-step', [500, 838, 940, 962], 400),
   ['code-tree', 'apps/landing/assets/screens/code-sidebar.png', [0, 0, 722, 668], 361],
-  ['pocket-team-light', 'apps/landing/assets/screens/pocket-team-light.png', [0, 0, 1179, 2556], 300],
-  ['pocket-team-dark', 'apps/landing/assets/screens/pocket-team-dark.png', [0, 0, 1179, 2556], 300],
-  ['pocket-home-light', 'apps/landing/assets/screens/pocket-home-light.png', [0, 0, 1179, 2556], 300],
-  ['pocket-home-dark', 'apps/landing/assets/screens/pocket-home-dark.png', [0, 0, 1179, 2556], 300],
+  ...['home', 'chat', 'code'].flatMap(screen => [
+    [`pocket-${screen}`, `apps/landing/assets/screens/pocket-${screen}-light.png`, [0, 0, 1179, 2556], 300],
+    [`pocket-${screen}-dark`, `apps/landing/assets/screens/pocket-${screen}-dark.png`, [0, 0, 1179, 2556], 300],
+  ]),
 ]
 
 function probe(path) {

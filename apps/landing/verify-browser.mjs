@@ -84,6 +84,9 @@ try {
       }))
       // Layout checks for the redesign: no heading word split across lines at any width, every
       // image sized, the film's still never the biggest picture, and a visible keyboard focus.
+      // App pictures: a dark page shows the dark capture of each view and a light page the
+      // light one; the home's speech bubble stays off the app window; and the hero's capture is
+      // shown near its real size (a 1100px window, or the 390px one on phone-width screens).
       const layout = await page.evaluate(() => {
         const brokenWords = []
         for (const heading of document.querySelectorAll('h1, h2, h3')) {
@@ -101,7 +104,9 @@ try {
         const shown = [...document.images].filter(image => image.getClientRects().length && getComputedStyle(image).visibility !== 'hidden')
         const film = document.querySelector('[data-film] img')
         const unsized = [...document.images].filter(image => !image.getAttribute('width') || !image.getAttribute('height')).map(image => image.src)
-        return { brokenWords, unsized, film: film ? area(film) : 0, largest: Math.max(0, ...shown.filter(image => !image.closest('[data-film]')).map(area)) }
+        const themed = [...document.querySelectorAll('picture')].filter(picture => picture.querySelector('source[media*="prefers-color-scheme: dark"]')).map(picture => picture.querySelector('img').currentSrc.replace(location.origin, ''))
+        const box = selector => { const node = document.querySelector(selector); return node ? node.getBoundingClientRect().toJSON() : null }
+        return { brokenWords, unsized, film: film ? area(film) : 0, largest: Math.max(0, ...shown.filter(image => !image.closest('[data-film]')).map(area)), themed, bubble: box('.bubble'), heroWindow: box('.scene-window img') }
       })
       await page.keyboard.press('Tab')
       const focus = await page.evaluate(() => ({ skip: document.activeElement?.classList.contains('skip'), outline: getComputedStyle(document.activeElement).outlineStyle }))
@@ -110,6 +115,13 @@ try {
       const label = `${route} ${colorScheme} ${width}px`
       assert.deepEqual(layout.brokenWords, [], `A heading word breaks across lines: ${label}`)
       assert.deepEqual(layout.unsized, [], `Images without width/height: ${label}`)
+      assert.deepEqual(layout.themed.filter(source => /-dark(?:-2x)?\.webp$/.test(source) !== (colorScheme === 'dark')), [], `App pictures follow the theme: ${label}`)
+      if (route === '/') {
+        assert.ok(layout.themed.length >= 4, `The home's app pictures have dark captures: ${label}`)
+        assert.ok(layout.bubble.bottom <= layout.heroWindow.top && layout.bubble.left >= 0 && layout.bubble.right <= width, `The speech bubble stays off the app window: ${label} ${JSON.stringify([layout.bubble, layout.heroWindow])}`)
+        const real = width > 700 ? 1100 : 390
+        assert.ok(layout.heroWindow.width >= real * 0.7, `The hero shows the app near its real size: ${label} ${layout.heroWindow.width}px of ${real}px`)
+      }
       if (layout.film) assert.ok(layout.film < layout.largest, `The film still must not be the biggest picture: ${label} ${layout.film} vs ${layout.largest}`)
       assert.ok(focus.skip && focus.outline !== 'none' && nextFocus !== 'none', `Keyboard focus is visible: ${label}`)
       for (const bounds of headingBounds) {
