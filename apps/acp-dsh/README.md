@@ -231,8 +231,8 @@ A settings page reads the agents through this host service; the plugin stays hos
 
 | Method | Does |
 |---|---|
-| `status()` | Each agent: `{ id, key, name, on, cli: { found, installUrl, signInHint?, state, managed, version?, error?, diagnostic?, logPath?, updating? }, connector: { state, native?, version?, error?, updating?, previous?, rolledBack? }, signedIn?, consent?, model: { provider, id, name, listed }, restartNeeded }`. CLI state is `missing`, `installing`, `failed` or `ready`; connector state is `off`, `no-cli`, `installing`, `failed` or `ready`. `connector.previous` is the release a failed start goes back to, while it is on disk; `connector.rolledBack` is `{ from, to, at, reason }` while a release that failed to start is held back. Errors are redacted. Spawns nothing. |
-| `inspect(id)` | One agent's `status()` row with a fresh sign-in check, for a Bot about to be put on it. Asks that CLI's sign-in status only; installs, enables and starts nothing. Simultaneous checks share one probe, and an answer stands for 3 seconds (`refresh()` clears it). Undefined for an id that is no agent here. |
+| `status()` | Each agent: `{ id, key, name, on, cli: { found, installUrl, signInHint?, state, managed, version?, error?, diagnostic?, logPath?, updating? }, connector: { state, native?, version?, error?, diagnostic?, logPath?, updating?, previous?, rolledBack? }, signedIn?, consent?, model: { provider, id, name, listed }, restartNeeded }`. CLI state is `missing`, `installing`, `failed` or `ready`; connector state is `off`, `no-cli`, `installing`, `failed` or `ready`. `connector.previous` is the release a failed start goes back to, while it is on disk; `connector.rolledBack` is `{ from, to, at, reason }` while a release that failed to start is held back. A failed connector install carries `error`, and with them `diagnostic` (the end of the installer's output) and `logPath` (the file it was written to, shown from the home folder), as a failed CLI install does. Errors are redacted. Spawns nothing. |
+| `inspect(id)` | One agent's `status()` row with a fresh sign-in check, for a Bot about to be put on it. Asks that CLI's sign-in status only; installs, enables and starts nothing. Simultaneous checks share one probe. An answer stands for 3 seconds, and a confirmed sign-in for 5 minutes, since the check starts the whole CLI; `refresh()` clears it, and so does the agent itself saying it is signed out (ACP `auth_required`). Undefined for an id that is no agent here. |
 | `refresh()` | Looks for the CLIs again (one installed after DSH started is offered now), then asks each CLI whether it is signed in (`claude auth status --json`, of which only `loggedIn` is read; `codex login status`, by its exit code). No agent turn. |
 | `retry(id)` | Retries the required CLI and its connector, and answers at once. Does not turn its model switch on. |
 | `loginStart(id, { label? })` | Starts the CLI's own sign-in (`src/host/login.js`), or answers the attempt already at work for that agent. Codex: a device code through `codex app-server`; Claude Code: `claude auth login --claudeai`, whose link must ask for the manual code (`code=true`). Only the official authorization pages are relayed. `label` names the view that opened it (a Bot id), for a cancel confirmation; it is not an access check. |
@@ -482,7 +482,9 @@ with the desktop app's own pnpm (`AUTOMAGIK_PNPM`, never the person's) or else n
 `$AUTOMAGIK_HOME/acp/adapters/<package>/<version>`. An install goes to a fresh folder renamed into
 place when complete, without install scripts or optional dependencies (the CLIs the adapters
 bundle); an install that pulls in a bundled CLI's platform package anyway is refused. The
-previous version stays for a Session still on it. Nothing is downloaded when a Session starts.
+version an install replaces stays on disk, for a Session still on it, until the next check
+that finds nothing newer (about a day); while the new one is unproven it stays longer, as the
+way back (below). Nothing is downloaded when a Session starts.
 
 npm is asked for a newer release once the last check is 20 hours old, by a timer that runs
 every 4 hours: at least once a day. A new release must start before it replaces the one in

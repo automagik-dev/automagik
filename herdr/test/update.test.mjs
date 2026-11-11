@@ -11,7 +11,7 @@ import { gzipSync } from "node:zlib";
 import {
   POINTER_SIG_URL, POINTER_URL, applyUpdate, checkForUpdate, compareVersions, downloadUpdate, fetchPointer, installUpdate, noticeText, packKeys,
   packOfPointer, parseSums, verifyPointer,
-  checkMods, markerOf, moveHooks, offDirOf, packOut, pickUpdate, tightenLedgers, writeMarker, repairInstall, setupHome, toCheck, prevSetOf, readMarker, readVersion, relinkCli, rollback, stateDirOf, unsafeEntries, verifySha256,
+  checkMods, markerOf, moveHooks, offDirOf, packOut, pickUpdate, tightenLedgers, writeMarker, repairInstall, setupHome, toCheck, prevSetOf, readMarker, readVersion, relinkCli, rollback, staleLayoutLine, stateDirOf, unsafeEntries, verifySha256,
   autoFileOf, autoStatus, lockOf, managedPack, olderSequence, overtaken, readAuto, takeLock, writeAuto,
 } from "../mods/am-sidebar/update.mjs";
 import { CHECK_FILE, RESTORE_FILE, formatMarker, OFF_BY_DEFAULT, parseMarker } from "../mods/am-sidebar/release.js";
@@ -1008,6 +1008,46 @@ test("#488: a rollback refuses, changing nothing, while a file in layouts/ names
   } finally {
     rmSync(t.src, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("#503: a rollback to a set kept with no layout says automagik.json still names the mods that left; one kept with its layout says nothing", async () => {
+  const tree = (...mods) => `${JSON.stringify({ id: "root", children: mods.map((m, i) => ({ id: `b${i}`, content: { mod: m } })) })}\n`;
+  const L1 = tree("am-sidebar"), L2 = tree("am-sidebar", "am-tabs");
+  for (const keptLayout of [false, true]) {
+    const { home, mods } = appHome("0.1.0", ["am-sidebar"]);
+    const t = tarballWithLayout("0.2.0", L2, MODS);
+    const live = join(home, "layouts", "automagik.json");
+    try {
+      mkdirSync(join(home, "layouts"));
+      writeFileSync(live, L1);
+      writeFileSync(join(home, "automagik-herdr", "automagik.json"), L1);
+      const url = "https://dl.test/v0.2.0/automagik-herdr-pack-0.2.0.tgz";
+      const fetch = fakeFetch({ ...served("0.2.0", { url, body: t.buf }), [url]: t.buf });
+      assert.equal((await installUpdate({ keys, fetch, env: {}, modsDir: mods })).installed.version, "0.2.0");
+      // A set kept before v0.9 carries no layout.
+      if (!keptLayout) rmSync(join(prevSetOf(mods), ".layout.json"));
+      const lines = [];
+      const back = rollback({ modsDir: mods, log: (l) => lines.push(l) });
+      assert.equal(back.version, "0.1.0");
+      assert.ok(!existsSync(join(mods, "am-tabs")), "am-tabs left mods/");
+      const said = `left automagik.json (${live}) as the rolled-out pack placed it: the pack rolled back to kept no layout to put back `
+        + "(a set kept before v0.9), and its blocks name am-tabs, which left mods/ in this rollback. "
+        + "Herdr drops a layout whose mod is gone (plain Herdr instead): if Herdr shows it, switch layouts (ctrl-shift-l)";
+      assert.equal(staleLayoutLine(live, ["am-tabs"]), said);
+      if (keptLayout) {
+        assert.equal(back.layout, "restored");
+        assert.equal(readFileSync(live, "utf8"), L1);
+        assert.ok(!lines.some((l) => l.includes("as the rolled-out pack placed it")), lines.join("\n"));
+      } else {
+        assert.equal(back.layout, null);
+        assert.equal(readFileSync(live, "utf8"), L2, "the stale layout stays, byte for byte");
+        assert.deepEqual(lines.filter((l) => l.includes("automagik.json")), [said]);
+      }
+    } finally {
+      rmSync(t.src, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
   }
 });
 
