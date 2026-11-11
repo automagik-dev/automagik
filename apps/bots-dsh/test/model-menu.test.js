@@ -404,7 +404,7 @@ test('a model that cannot run is marked in the route, the agent, the model row a
     const hint = row => nodes(row, node => node.props.className === 'bt-menu-hint')[0]?.children[0]
     const label = row => nodes(row, node => node.props.className === 'bt-menu-label')[0].children[0]
     // Step 1: the four routes in order, the Bot's own marked; its agent opens the next step.
-    const first = nodes(steps.type(steps.props), node => node.props.role === 'menuitem' && node.props['aria-haspopup'] === 'menu')
+    const first = nodes(steps.type(steps.props), node => node.props.role === 'menuitem' && ['menu', 'dialog'].includes(node.props['aria-haspopup']))
     assert.deepEqual(first.map(row => [label(row), hint(row) ?? null]), [
       ['Native', 'DSH harness'], ['ACP', 'Claude Code'], ['Herdr', 'Not available yet'], ['Remote Hermes', 'hermes serve'],
     ])
@@ -639,7 +639,7 @@ test('a route crossing reaches the host switch, not the in-place model update', 
 
 test('Herdr is offered, named unavailable, and lists its agents and models until #1007 wires it', () => {
   const { steps, step, updates, switched } = openMenu()
-  const root = nodes(step(), node => node.props.role === 'menuitem' && node.props['aria-haspopup'] === 'menu')
+  const root = nodes(step(), node => node.props.role === 'menuitem' && ['menu', 'dialog'].includes(node.props['aria-haspopup']))
   assert.deepEqual(root.map(labelOf), ['Native', 'ACP', 'Herdr', 'Remote Hermes'])
   assert.equal(hintOf(root[2]), 'Not available yet')
   const agents = step({ step: 'agents', route: 'herdr' })

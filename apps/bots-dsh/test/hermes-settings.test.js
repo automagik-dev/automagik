@@ -18,13 +18,14 @@ const assets = join(process.env.DSH_HARNESS, 'node_modules/@deepseek-ai/dsh-web-
 const frontend = readFileSync(join(assets, readdirSync(assets).find(name => /^index-.*\.js$/.test(name))), 'utf8')
 const seed = /function (\w+)\(\)\{return\{react:[\s\S]*?\}\}/.exec(frontend)
 assert.ok(seed)
-const seeds = await build({ stdin: { contents: `${frontend.slice(0, seed.index + seed[0].length)}; globalThis.nativeSeeds = ${seed[1]}();`, resolveDir: assets }, bundle: true, format: 'iife', platform: 'browser', write: false })
+const seeds = await build({ stdin: { contents: `${frontend.slice(0, seed.index + seed[0].length)}; globalThis.nativeSeeds = ${seed[1]}();`, resolveDir: assets }, bundle: true, format: 'iife', platform: 'browser', write: false, logLevel: 'silent' })
 const seedDom = new JSDOM('<!doctype html><body></body>')
 const seedContext = { window: seedDom.window, document: seedDom.window.document, navigator: seedDom.window.navigator, MutationObserver: seedDom.window.MutationObserver, console, setTimeout, clearTimeout, performance, TextEncoder, TextDecoder }
 runInNewContext(seeds.outputFiles[0].text, seedContext)
 const nativeRequire = name => seedContext.nativeSeeds[name] ?? require(name)
 const React = nativeRequire('react'), { createRoot } = nativeRequire('react-dom/client'), { flushSync } = nativeRequire('react-dom')
 const compiled = await build({ entryPoints: [new URL('../src/client/hermes-remote.js', import.meta.url).pathname], bundle: true, format: 'cjs', platform: 'browser', write: false, external: ['react', 'react-dom', '@deepseek-ai/dsh-client-ui-primitives'] })
+const compiledMenu = await build({ entryPoints: [new URL('../src/client/model-menu.js', import.meta.url).pathname], bundle: true, format: 'cjs', platform: 'browser', write: false, external: ['react', 'react-dom', '@deepseek-ai/dsh-client-ui-primitives'] })
 async function waitFor(predicate, description) {
   const deadline = Date.now() + 5000
   for (;;) {
@@ -35,53 +36,68 @@ async function waitFor(predicate, description) {
   }
 }
 
-async function renderSettings(t, call) {
+async function renderSettings(t, call, { component = 'HermesRemoteSettings', props = {}, menu = false } = {}) {
   const dom = new JSDOM('<div id="root"></div>')
   const keys = ['window', 'document', 'navigator', 'Element', 'HTMLElement', 'MutationObserver']
   const saved = keys.map(key => Object.getOwnPropertyDescriptor(globalThis, key))
   keys.forEach(key => Object.defineProperty(globalThis, key, { configurable: true, value: dom.window[key] }))
+  dom.window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} })
   const module = { exports: {} }
-  runInNewContext(compiled.outputFiles[0].text, { module, exports: module.exports, require: nativeRequire, window: dom.window, document: dom.window.document, navigator: dom.window.navigator, console, setTimeout, clearTimeout, fetch: async (_url, init) => ({ ok: true, json: async () => ({ ok: true, value: await call(JSON.parse(init.body)) }) }) })
+  const source = menu ? compiledMenu : compiled
+  runInNewContext(source.outputFiles[0].text, { module, exports: module.exports, require: nativeRequire, window: dom.window, document: dom.window.document, navigator: dom.window.navigator, console, setTimeout, clearTimeout, AbortController, crypto: globalThis.crypto, getComputedStyle: dom.window.getComputedStyle.bind(dom.window), requestAnimationFrame: fn => setTimeout(fn, 0), cancelAnimationFrame: clearTimeout,
+    fetch: async (_url, init) => ({ ok: true, json: async () => {
+      try { return { ok: true, value: await call(JSON.parse(init.body), init.signal) } }
+      catch (error) { return { ok: false, error: { code: error.code, message: 'Sample connection refused.' } } }
+    } }),
+  })
   const root = createRoot(dom.window.document.getElementById('root'))
   t.after(() => {
     flushSync(() => root.unmount()); dom.window.close()
     keys.forEach((key, index) => saved[index] ? Object.defineProperty(globalThis, key, saved[index]) : delete globalThis[key])
   })
   const failures = []
-  flushSync(() => root.render(React.createElement(module.exports.HermesRemoteSettings, {
+  flushSync(() => root.render(React.createElement(module.exports[component], {
     run: promise => promise.catch(error => { failures.push(error); return false }),
     Section: ({ children, title }) => React.createElement('section', null, title ? React.createElement('h3', null, title) : null, children),
+    onClose() {}, ...props,
   })))
-  await waitFor(() => dom.window.document.querySelector('input[aria-label="Address"]'), 'remote settings to render')
-  const click = async label => { const button = [...dom.window.document.querySelectorAll('button')].find(node => node.textContent === label); assert.ok(button, label); flushSync(() => button.click()) }
-  return { document: dom.window.document, click, failures }
+  await waitFor(() => dom.window.document.querySelector(menu ? '.bt-model-trigger' : component === 'HermesRemoteConnect' ? '.bt-hermes-wizard:not([data-status=loading])' : 'section'), 'remote settings to render')
+  const click = async label => { const button = [...dom.window.document.querySelectorAll('button')].find(node => node.textContent.replace(/[→←]/g, '').trim() === label || node.getAttribute('aria-label') === label); assert.ok(button, label); flushSync(() => button.click()) }
+  const fill = async (label, value) => {
+    const input = [...dom.window.document.querySelectorAll('input')].find(node => node.getAttribute('aria-label') === label)
+    assert.ok(input, label)
+    flushSync(() => {
+      Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value').set.call(input, value)
+      input.dispatchEvent(new dom.window.Event('input', { bubbles: true }))
+      input.dispatchEvent(new dom.window.Event('change', { bubbles: true }))
+    })
+  }
+  return { document: dom.window.document, click, fill, failures, root }
 }
 
 const sampleView = () => ({ address: '', profile: 'Sample', enabled: false, credentialSet: true, models: [], sessions: [] })
 
-test('saved remote keys are never echoed; Replace opens an empty password input and Save hides it', async t => {
+test('Settings keeps saved keys hidden and opens an empty masked replacement in the wizard', async t => {
   const calls = []
   const { document, click, failures } = await renderSettings(t, async call => { calls.push(call); return sampleView() })
   assert.match(document.body.textContent, /Key saved/)
-  assert.equal(document.querySelector('input[aria-label="Credential"]'), null)
+  assert.equal(document.querySelector('input[type="password"]'), null)
   assert.equal(document.querySelector('h3'), null, 'the dialog owns the single page title')
   await click('Replace')
-  const input = document.querySelector('input[aria-label="Credential"]')
+  const input = await waitFor(() => document.querySelector('input[aria-label="Session token"]'), 'masked replacement')
   assert.equal(input.type, 'password')
   assert.equal(input.value, '')
   assert.equal(input.autocomplete, 'new-password')
-  await click('Save')
-  await waitFor(() => document.querySelector('input[aria-label="Credential"]') === null, 'saved credentials to render')
-  assert.equal(calls.at(-1).endpoint, 'hermes-remote-configure')
-  assert.equal(calls.at(-1).payload.credential, '')
-  assert.equal(document.querySelector('input[aria-label="Credential"]'), null)
-  assert.match(document.body.textContent, /Key saved/)
+  assert.ok(!calls.some(call => call.endpoint === 'hermes-remote-configure'), 'opening replacement writes no credentials')
   assert.deepEqual(failures, [])
 })
 
-test('new remote credentials use a real password input', async t => {
-  const { document } = await renderSettings(t, async () => ({ ...sampleView(), credentialSet: false }))
-  assert.equal(document.querySelector('input[aria-label="Credential"]').type, 'password')
+test('new remote setup opens the wizard with an empty password field', async t => {
+  const { document, click } = await renderSettings(t, async () => ({ ...sampleView(), credentialSet: false, profile: '' }))
+  await click('Set up connection')
+  const input = await waitFor(() => document.querySelector('input[aria-label="Session token"]'), 'new credential field')
+  assert.equal(input.type, 'password')
+  assert.equal(input.value, '')
   assert.doesNotMatch(document.body.textContent, /Key saved/)
 })
 
@@ -117,4 +133,211 @@ test('Settings renders redacted role+text history returned by the real resume an
   assert.ok(sent.some(frame => frame.method === 'session.activate'))
   assert.ok(!sent.some(frame => frame.method === 'prompt.submit'))
   assert.deepEqual(failures, [])
+})
+
+const connectedView = () => ({ ...sampleView(), enabled: true, address: 'https://example.invalid', profile: 'sample-profile', mode: 'remote', authMode: 'token', modelRef: 'hermes-remote/sample-model', models: [{ id: 'sample-model', name: 'Sample model' }] })
+const testView = () => ({ testId: randomUUID(), profiles: [{ id: 'sample-profile', name: 'sample-profile' }], status: 'connected' })
+const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
+
+async function startWizard(t, overrides = {}) {
+  const calls = [], opened = [], closed = []
+  const call = async (request, signal) => {
+    calls.push(request)
+    if (overrides[request.endpoint]) return overrides[request.endpoint](request.payload, signal)
+    if (request.endpoint === 'hermes-remote') return { ...sampleView(), enabled: false, profile: '', credentialSet: false }
+    if (request.endpoint === 'hermes-remote-test') return testView()
+    if (request.endpoint === 'hermes-remote-test-status') return { stage: 'open' }
+    if (request.endpoint === 'hermes-remote-test-profiles') return { profiles: testView().profiles }
+    if (request.endpoint === 'hermes-remote-save' || request.endpoint === 'hermes-remote-connect') return connectedView()
+    if (request.endpoint === 'hermes-remote-disconnect') return sampleView()
+    throw Error('Unexpected fake endpoint')
+  }
+  const render = await renderSettings(t, call, { component: 'HermesRemoteConnect', props: { onConnected: next => opened.push(next), onClose: () => closed.push(true) } })
+  return { ...render, calls, opened, closed }
+}
+
+async function enterToken(render, credential = randomUUID()) {
+  await render.click('Continue')
+  await render.fill('Remote address', 'https://example.invalid')
+  await render.fill('Session token', credential)
+  return credential
+}
+
+test('the wizard follows the approved remote token frames with honest progress, profile save and Ready', async t => {
+  const pending = deferred()
+  const render = await startWizard(t, { 'hermes-remote-test': () => pending.promise })
+  const { document, click, calls, opened } = render
+  assert.match(document.body.textContent, /How would you like to connect/)
+  assert.match(document.body.textContent, /Remote address/)
+  assert.match(document.body.textContent, /Through SSH/)
+  assert.equal(document.querySelectorAll('.bt-hw-steps li').length, 5)
+  const secret = await enterToken(render)
+  assert.equal(document.querySelector('input[aria-label="Session token"]').type, 'password')
+  await click('Test connection')
+  await waitFor(() => document.querySelector('[data-status=testing]'), 'testing frame')
+  assert.doesNotMatch(document.body.textContent, /Your sign-in was accepted/)
+  await waitFor(() => document.body.textContent.includes('Your sign-in was accepted'), 'confirmed progress stage')
+  assert.equal(document.querySelectorAll('.bt-hw-check-row .bt-hw-spinner').length, 1)
+  pending.resolve(testView())
+  await waitFor(() => document.querySelector('[data-status=connected]'), 'connected frame')
+  await click('Choose a profile')
+  assert.match(document.body.textContent, /Profiles available from example.invalid/)
+  assert.equal(document.querySelector('[role=radio]').getAttribute('aria-checked'), 'true')
+  await click('Refresh list')
+  await waitFor(() => calls.some(call => call.endpoint === 'hermes-remote-test-profiles'), 'profile refresh')
+  await waitFor(() => !document.querySelector('.bt-hw-foot button:last-child').disabled, 'profile refresh rendered')
+  await click('Use this profile')
+  await waitFor(() => document.querySelector('[data-step=ready]'), 'Ready frame')
+  assert.match(document.body.textContent, /Next time, choose Remote Hermes to connect in one click/)
+  assert.match(document.body.textContent, /Connection and profile remembered/)
+  const submission = calls.find(call => call.endpoint === 'hermes-remote-test')
+  assert.equal(submission.payload.credential, secret)
+  assert.match(submission.payload.requestId, /^[a-f\d-]{36}$/)
+  const saved = calls.find(call => call.endpoint === 'hermes-remote-save').payload
+  assert.deepEqual(Object.keys(saved).sort(), ['profile', 'testId'])
+  assert.ok(!JSON.stringify(saved).includes(secret))
+  await click('Open chat')
+  assert.equal(opened[0].modelRef, 'hermes-remote/sample-model')
+})
+
+test('dashboard sign-in is masked and a refused test clears the password before editing', async t => {
+  const secret = randomUUID()
+  const render = await startWizard(t, { 'hermes-remote-test': () => { throw Object.assign(Error('Fake refusal'), { code: 'bot/hermes-auth' }) } })
+  await render.click('Continue')
+  await render.fill('Remote address', 'https://example.invalid')
+  await render.click('User and password')
+  await render.fill('User', 'sample-profile')
+  await render.fill('Password', secret)
+  assert.equal(render.document.querySelector('input[aria-label=Password]').type, 'password')
+  await render.click('Sign in and test')
+  await waitFor(() => render.document.querySelector('[data-status=error]'), 'sign-in error frame')
+  assert.match(render.document.body.textContent, /The sign-in wasn’t accepted/)
+  assert.doesNotMatch(render.document.body.textContent, /Fake refusal/)
+  assert.equal(render.calls.find(call => call.endpoint === 'hermes-remote-test').payload.password, secret)
+  await render.click('Edit sign-in')
+  assert.equal(render.document.querySelector('input[aria-label=Password]').value, '')
+  assert.ok(!render.calls.some(call => call.endpoint === 'hermes-remote-save'))
+})
+
+test('SSH uses optional config defaults and a path reference, with clear strict host-key guidance', async t => {
+  const render = await startWizard(t, { 'hermes-remote-test': () => { throw Object.assign(Error('Fake refusal'), { code: 'bot/hermes-ssh-host-key' }) } })
+  await render.click('Through SSH')
+  await render.click('Continue')
+  assert.match(render.document.body.textContent, /Connect through SSH/)
+  await render.fill('SSH host or config name', 'example.invalid')
+  assert.equal(render.document.querySelector('input[aria-label="Port (optional)"]').value, '')
+  await render.click('Choose file…')
+  assert.equal(render.document.querySelector('input[aria-label="Key file path"]').type, 'text')
+  assert.equal(render.document.querySelector('input[type=file]'), null, 'a private key can never be uploaded')
+  await render.click('Use this path')
+  await render.click('Test SSH connection')
+  await waitFor(() => render.document.querySelector('[data-status=error]'), 'SSH host-key error frame')
+  assert.match(render.document.body.textContent, /Connect to this host once in a terminal/)
+  assert.match(render.document.body.textContent, /A changed key must be checked/)
+  const payload = render.calls.find(call => call.endpoint === 'hermes-remote-test').payload
+  assert.equal(payload.mode, 'ssh')
+  assert.equal(payload.ssh.host, 'example.invalid')
+  assert.equal(payload.ssh.port, undefined)
+  assert.equal(payload.ssh.identityFile, '')
+  await render.click('Edit SSH details')
+  assert.equal(render.document.querySelector('input[aria-label="SSH host or config name"]').value, 'example.invalid')
+})
+
+test('SSH authentication errors show the approved key and installation guidance', async t => {
+  const render = await startWizard(t, { 'hermes-remote-test': () => { throw Object.assign(Error('Fake refusal'), { code: 'bot/hermes-ssh-auth' }) } })
+  await render.click('Through SSH'); await render.click('Continue')
+  await render.fill('SSH host or config name', 'example.invalid')
+  await render.click('Test SSH connection')
+  await waitFor(() => render.document.querySelector('[data-status=error]'), 'SSH authentication frame')
+  assert.match(render.document.body.textContent, /Check your SSH details/)
+  assert.match(render.document.body.textContent, /unlock it in your SSH agent/)
+  assert.match(render.document.body.textContent, /Hermes must already be installed/)
+})
+
+test('saved Remote Hermes connects in one click without another setup or password prompt', async t => {
+  const render = await startWizard(t, { 'hermes-remote': connectedView })
+  await waitFor(() => render.opened.length === 1, 'one-click connection')
+  assert.equal(render.opened[0].modelRef, 'hermes-remote/sample-model')
+  assert.equal(render.calls.filter(call => call.endpoint === 'hermes-remote-connect').length, 1)
+  assert.ok(!render.calls.some(call => call.endpoint === 'hermes-remote-test' || call.endpoint === 'hermes-remote-save'))
+  assert.equal(render.document.querySelector('input[type=password]'), null)
+})
+
+test('Cancel aborts a pending test and discards only test resources', async t => {
+  const pending = deferred(); let signal
+  const render = await startWizard(t, { 'hermes-remote-test': (_payload, nextSignal) => { signal = nextSignal; return pending.promise } })
+  await enterToken(render); await render.click('Test connection')
+  await waitFor(() => signal, 'pending request to start')
+  await render.click('Cancel')
+  assert.equal(signal.aborted, true)
+  assert.equal(render.closed.length, 1)
+  const close = await waitFor(() => render.calls.find(call => call.endpoint === 'hermes-remote-disconnect'), 'test resources to close')
+  assert.equal(close.payload.testsOnly, true)
+  pending.resolve(testView())
+  await new Promise(resolve => setImmediate(resolve))
+  assert.ok(!render.calls.some(call => call.endpoint === 'hermes-remote-save'))
+})
+
+test('the model route opens first-use setup and saved route changes retain the handoff confirmation', async t => {
+  for (const existing of [false, true]) await t.test(existing ? 'saved route' : 'first use', async sub => {
+    const picked = [], calls = []
+    const bot = { id: 'sample-profile', name: 'Sample', ...(existing ? { model: 'native/sample-model' } : {}) }
+    const roster = { models: [{ ref: 'native/sample-model', provider: 'native', name: 'Sample model' }] }
+    const actions = { refreshModels: async () => {}, updateBot: (...args) => { picked.push(args); return Promise.resolve() }, switchRoute: (...args) => { picked.push(args); return Promise.resolve() } }
+    const render = await renderSettings(sub, async request => {
+      calls.push(request)
+      return request.endpoint === 'hermes-remote' ? existing ? connectedView() : { ...sampleView(), credentialSet: false, profile: '' } : connectedView()
+    }, { component: 'ModelMenu', menu: true, props: { bot, roster, actions } })
+    flushSync(() => render.document.querySelector('.bt-model-trigger').click())
+    await waitFor(() => render.document.querySelector('.bt-model-menu [data-route="hermes-remote"]'), 'remote route row')
+    const route = render.document.querySelector('.bt-model-menu [data-route="hermes-remote"]')
+    assert.ok(route.querySelector('.bt-hermes-mark img'))
+    flushSync(() => route.click())
+    if (!existing) {
+      await waitFor(() => render.document.querySelector('[data-step=connection]'), 'first-use wizard')
+      assert.match(render.document.body.textContent, /How would you like to connect/)
+    } else {
+      await waitFor(() => render.document.querySelector('.bt-model-confirm'), 'route handoff confirmation')
+      assert.equal(picked.length, 0)
+      assert.equal(calls.filter(call => call.endpoint === 'hermes-remote-connect').length, 1)
+      await render.click('Change route')
+      assert.equal(picked[0][1], 'hermes-remote/sample-model')
+    }
+  })
+})
+
+test('successful dashboard sign-in forgets the password and persists only the tested profile reference', async t => {
+  const render = await startWizard(t)
+  const secret = randomUUID()
+  await render.click('Continue'); await render.fill('Remote address', 'https://example.invalid')
+  await render.click('User and password'); await render.fill('User', 'sample-profile'); await render.fill('Password', secret)
+  await render.click('Sign in and test')
+  await waitFor(() => render.document.querySelector('[data-status=connected]'), 'accepted dashboard sign-in')
+  await render.click('Edit connection')
+  assert.equal(render.document.querySelector('input[aria-label=Password]').value, '')
+  assert.equal(render.document.querySelector('input[aria-label=User]').value, 'sample-profile')
+  assert.ok(!render.calls.some(call => call.endpoint === 'hermes-remote-save'))
+})
+
+test('refreshing profiles drops a removed selection before it can be saved', async t => {
+  const render = await startWizard(t, {
+    'hermes-remote-test': () => ({ ...testView(), profiles: [{ id: 'sample-profile', name: 'sample-profile' }] }),
+    'hermes-remote-test-profiles': () => ({ profiles: [] }),
+  })
+  await enterToken(render); await render.click('Test connection')
+  await waitFor(() => render.document.querySelector('[data-status=connected]'), 'connection result')
+  await render.click('Choose a profile'); await render.click('Refresh list')
+  await waitFor(() => render.document.body.textContent.includes('No profiles are available.'), 'removed profile refresh')
+  assert.equal(render.document.querySelectorAll('[role=radio]').length, 0)
+  assert.equal([...render.document.querySelectorAll('button')].find(node => node.textContent.includes('Use this profile')).disabled, true)
+  assert.ok(!render.calls.some(call => call.endpoint === 'hermes-remote-save'))
+})
+
+test('missing remote Hermes gets a path and installation action instead of raw SSH output', async t => {
+  const render = await startWizard(t, { 'hermes-remote-test': () => { throw Object.assign(Error('Fake refusal'), { code: 'bot/hermes-ssh-missing' }) } })
+  await render.click('Through SSH'); await render.click('Continue'); await render.fill('SSH host or config name', 'example.invalid')
+  await render.click('Test SSH connection')
+  await waitFor(() => render.document.querySelector('[data-status=error]'), 'missing Hermes error')
+  assert.match(render.document.body.textContent, /Install or update Hermes on the other computer/)
+  assert.match(render.document.body.textContent, /enter its executable path/)
 })

@@ -1,7 +1,7 @@
 import { createElement as h, Fragment, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { currentPart } from './text.js'
-import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, ConnectorIcon, ServerIcon, SlidersIcon } from './icons.js'
+import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, ConnectorIcon, SlidersIcon } from './icons.js'
 import { BotMark } from './mark.js'
 import { KeyIcon, MaskedInput } from './secret-card.js'
 import { SPRING_POP, SPRING_SHAPE, spring, useLinger, useViewport, viewBottom } from './motion.js'
@@ -9,6 +9,8 @@ import { hostText, t } from './i18n.js'
 import { HostModelMenu } from './host-model-menu.js'
 import { AgentMark, DshMarkIcon, HerdrMarkIcon } from './marks.js'
 import { crossesHarness, routeOf, selectorRouteOf } from '../shared/routes.js'
+import { HermesMark, HERMES_MARK_CSS } from './hermes-mark.js'
+import { HermesRemoteConnect } from './hermes-remote.js'
 
 const MENU_EXIT_MS = 120
 
@@ -188,7 +190,7 @@ const Tick = ({ on }) => h('span', { className: 'bt-model-tick', 'aria-hidden': 
 // herdr-core, which #1007 wires. The names are UI words; their details say what each means.
 export const ROUTE_ORDER = Object.freeze(['native', 'acp', 'herdr', 'hermes-remote'])
 const ROUTE_NAME = Object.freeze({ native: 'Native', acp: 'ACP', herdr: 'Herdr', 'hermes-remote': 'Remote Hermes' })
-const ROUTE_ICON = Object.freeze({ native: DshMarkIcon, acp: ConnectorIcon, herdr: HerdrMarkIcon, 'hermes-remote': ServerIcon })
+const ROUTE_ICON = Object.freeze({ native: DshMarkIcon, acp: ConnectorIcon, herdr: HerdrMarkIcon, 'hermes-remote': HermesMark })
 const routeName = route => t(ROUTE_NAME[route] ?? route)
 const routeDetail = (route) => {
   switch (route) {
@@ -326,7 +328,7 @@ const stepBack = (label, onClick) => h('button', { type: 'button', role: 'menuit
 // `current` is the Bot's model, `picked` its level when that model serves it, `levelName`
 // that level's name. `go(view)` opens another step; `onModel(model, route)` and
 // `onLevel(model, effort)` pick; the menu offers the provider's API key where it can.
-export function ModelSteps({ roster, bot, view, current, picked, levelName, go, onModel, onLevel, onManage }) {
+export function ModelSteps({ roster, bot, view, current, picked, levelName, go, onModel, onLevel, onManage, onRemote }) {
   const models = roster.models ?? []
   const currentRoute = current === undefined ? undefined : modelRoute(roster, current).route
   const levelModel = view.step === 'levels' ? models.find(entry => entry.ref === view.ref) : undefined
@@ -401,7 +403,7 @@ export function ModelSteps({ roster, bot, view, current, picked, levelName, go, 
         const why = herdr || pending ? t('Not available yet') : signedOut ? t('Needs a sign-in') : undefined
         const now = here ? modelLabel(agent.models.find(entry => entry.ref === current) ?? {}) ?? agent.name : undefined
         return h('button', {
-          key: agent.provider ?? agent.id, type: 'button', role: 'menuitem', 'aria-haspopup': 'menu', 'data-current': here ? '' : undefined,
+          key: agent.provider ?? agent.id, type: 'button', role: 'menuitem', 'aria-haspopup': route === 'hermes-remote' && onRemote ? 'dialog' : 'menu', 'data-current': here ? '' : undefined,
           'data-unavailable': why ? '' : undefined,
           'aria-label': here ? t('{agent}, current model {model}', { agent: agent.name, model: now ?? '' }) : why ? `${agent.name} · ${why}` : agent.name,
           onClick: () => go({ step: 'models', route, ...(agent.provider ? { provider: agent.provider } : { agent: agent.id }) }),
@@ -422,12 +424,12 @@ export function ModelSteps({ roster, bot, view, current, picked, levelName, go, 
         ? [modelRoute(roster, current).connection, levelName].filter(Boolean).join(' · ')
         : route === 'herdr' ? t('Not available yet') : undefined
       return h('button', {
-        key: route, type: 'button', role: 'menuitem', 'aria-haspopup': 'menu', 'data-current': here ? '' : undefined,
+        key: route, type: 'button', role: 'menuitem', 'aria-haspopup': route === 'hermes-remote' && onRemote ? 'dialog' : 'menu', 'data-current': here ? '' : undefined,
         'data-route': route, 'data-unavailable': route === 'herdr' ? '' : undefined,
         title: route === 'acp' ? t('Agent Client Protocol') : route === 'herdr' ? t('Not available yet') : undefined,
         'aria-label': here ? t('{route}, current model {model}', { route: routeName(route), model: now ?? '' })
           : now ? `${routeName(route)} · ${now}` : `${routeName(route)} · ${routeDetail(route)}`,
-        onClick: () => go(route === 'native' || route === 'hermes-remote' ? { step: 'models', route } : { step: 'agents', route }),
+        onClick: () => route === 'hermes-remote' && onRemote ? onRemote() : go(route === 'native' || route === 'hermes-remote' ? { step: 'models', route } : { step: 'agents', route }),
       },
       h(RouteMark, { route }),
       h('span', { className: 'bt-menu-label' }, routeName(route)),
@@ -538,6 +540,7 @@ export function RouteConfirm({ bot, roster, current, target, onCancel, onConfirm
 
 function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, chat = false, bar = false, onPick, onPickEffort, saved = onPick === undefined }) {
   const [view, setView] = useState(MENU_ROOT)
+  const [hermes, setHermes] = useState(false)
   // A route change waits for the person's word here, because it starts a new conversation.
   const [confirm, setConfirm] = useState(undefined)
   // The provider's key, for a model that needs one, is asked for inside the menu when the
@@ -716,7 +719,22 @@ function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, c
     bot, roster, current, target: confirm, onCancel: () => setConfirm(undefined),
     onConfirm: () => { const next = confirm; setConfirm(undefined); finish(); void Promise.resolve(pickModel(next.ref, next.effort, { routeChange: true })).catch(() => {}) },
   })
+  const remoteConnected = async next => {
+    if (typeof next?.modelRef !== 'string') return
+    await Promise.resolve(actions.refreshModels?.()).catch(() => {})
+    setHermes(false)
+    if (crossing(next.modelRef)) {
+      keys.current = true
+      setView(MENU_ROOT)
+      setConfirm({ ref: next.modelRef, effort: undefined })
+      open()
+    } else {
+      finish()
+      void Promise.resolve(pickModel(next.modelRef, undefined)).catch(() => {})
+    }
+  }
   return h(Fragment, null,
+    hermes ? h(HermesRemoteConnect, { onClose: () => { setHermes(false); button.current?.focus() }, onConnected: remoteConnected }) : null,
     link ? h('button', {
       ref: button, type: 'button', className: 'bt-model-change', 'aria-haspopup': 'menu', 'aria-expanded': isOpen,
       'aria-label': t('Change the model of {name}', { name: bot.name }), onClick: toggle,
@@ -738,6 +756,7 @@ function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, c
     shownPlace ? createPortal(h('div', { ref: menu, className: `bt-menu bt-model-menu${shownPlace.bottom !== undefined ? ' bt-menu-up' : ''}`, role: 'menu', 'aria-label': t('Model for {name}', { name: bot.name }), style: shownPlace, 'data-leaving': leaving || undefined, onKeyDown },
       confirmView ?? h(ModelSteps, {
         roster, bot, view, current, picked, levelName: effortLabel, go, onModel, onLevel,
+        onRemote: () => { close(); setHermes(true) },
         onManage: manage ? () => { finish(); manage() } : undefined,
       }),
       keyFor === undefined ? null : h(ModelKeyCard, { model: keyFor, actions: keyActions })), document.body) : null)
@@ -942,7 +961,7 @@ function SignInHost({ entry, actions }) {
   })
 }
 
-export const MODEL_CSS = `
+export const MODEL_CSS = `${HERMES_MARK_CSS}
 .bt-model-trigger{display:inline-flex;align-items:center;gap:8px;max-width:100%;min-width:0;height:auto;min-height:32px;padding:4px 8px 4px 10px;border:0;border-radius:8px;background:var(--bt-hover);color:var(--bt-ink);font:inherit;text-align:left;cursor:pointer;transition:background-color .12s ease}
 .bt-model-trigger:hover,.bt-model-trigger[aria-expanded=true]{background:var(--bt-active)}
 .bt-model-trigger:focus-visible{outline:2px solid var(--bt-accent);outline-offset:1px}
