@@ -45,8 +45,11 @@ When using or citing the work, you should not imply endorsement by the author or
 - Automagik lockup, mark, wordmark, and the existing Omni and Genie expression sprites:
   `apps/bots-dsh/src/client/art/`, the repository's Apache-2.0-licensed app assets. No new
   character artwork was generated. A Bot's art is a brand element, not a new product block.
-- GTM and Video Maker use neutral initials because the supplied material has no stored look
-  for those individual Bots; no character or accent assignment is invented.
+- GTM: the app’s existing star character, tangerine `#FF8A2E`. Video Maker: its existing
+  saucer character, cobalt `#5C78FF`. Both use `characterMarkup` from
+  `apps/bots-dsh/src/client/characters.js` and the dark inks in `src/client/inks.js`. These
+  film looks were selected from the existing app set at the reviewer’s request; no new pet
+  or character geometry was generated.
 - DM Sans and Manrope: the app's own WOFF2 fonts. SIL Open Font License 1.1; the existing
   licence copies remain in `apps/landing/assets/OFL-DMSans.txt` and `OFL-Manrope.txt`.
 - Poster and the separate YouTube thumbnail: frames from this film, containing the same

@@ -102,5 +102,5 @@ It reconstructs the storyboard's selected launch dialogue in HTML/CSS; it is not
 of a live profile. [film/automagik-launch-poster.webp](film/automagik-launch-poster.webp) is the
 film's end-card frame at 54.5 seconds. The scene decisions, source digests and review gaps are
 in [film/README.md](film/README.md); music and artwork provenance and the saved CC0 deed are
-in [film/LICENSES.md](film/LICENSES.md). Scene 4 visibly labels the Genie's current draft as
-awaiting D3. The owner approves the cut and music before publication.
+in [film/LICENSES.md](film/LICENSES.md). Scene 4 shows viewport excerpts of D3’s page from PR #1078 at
+`4de231ef`, in its own styles. The owner approves the cut and music before publication.
