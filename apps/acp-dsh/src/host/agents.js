@@ -141,7 +141,9 @@ export function launchOf(spec, cli, { store, node = { command: process.execPath,
   }
   const bin = store?.binOf(spec.adapter, spec.bin)
   if (bin === undefined) return { ready: false }
-  return { command: node.command, args: [bin.path], env: { ...node.env, ...cliEnv, ...spec.env(cli) }, ready: true, version: bin.version, key: `${bin.path} ${stamp(cli)}` }
+  return { command: node.command, args: [bin.path],
+    env: { ...cliEnv, ...node.env, ...spec.env(cli) }, ready: true,
+    version: bin.version, key: `${bin.path} ${stamp(cli)}` }
 }
 
 // Where the CLIs' own installers put them, for a DSH started from the desktop with a short PATH.
@@ -207,7 +209,12 @@ export function signedInOf(spec, cli, { env = process.env, run = execFile, onUnk
     try {
       // A CLI npm installed on Windows is a batch file (codex.cmd): through cmd.exe (batch-spawn.js).
       // DISABLE_UPDATES, as for --version (clis.js): a status check never updates the CLI itself.
-      child = run(...batchSafe(cli, spec.signIn.args, { env: { ...env, PATH: [dirname(cli), env.PATH].filter(Boolean).join(delimiter), NO_COLOR: '1', DISABLE_UPDATES: '1' }, timeout: SIGN_IN_TIMEOUT_MS, maxBuffer: 1 << 20, windowsHide: true }), (error, stdout) => {
+      child = run(...batchSafe(cli, spec.signIn.args, {
+        env: { ...env, PATH: [dirname(cli), env.PATH].filter(Boolean).join(delimiter),
+          NO_COLOR: '1', DISABLE_UPDATES: '1' },
+        cwd: env.AUTOMAGIK_BOT_CLI_HOME,
+        timeout: SIGN_IN_TIMEOUT_MS, maxBuffer: 1 << 20, windowsHide: true,
+      }), (error, stdout) => {
         const code = error ? (typeof error.code === 'number' ? error.code : undefined) : 0
         // Node ends a CLI still running at the timeout and says so (`killed`): on the error
         // when the CLI died of the signal or exited with a code of its own, and on the process

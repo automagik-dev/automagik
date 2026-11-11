@@ -6,9 +6,10 @@ import { execFile, execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { batchSafe } from './batch-spawn.js'
 import { isExecutable } from './agents.js'
+import { CliHomes, HOME_ENV } from './cli-homes.js'
 import { AdapterStore, latestVersion, runInstall } from './install.js'
 
 export const CLI_CHECK_EVERY_MS = 15 * 60 * 1000
@@ -33,7 +34,10 @@ export function compareCliVersions(a, b) {
 export function cliVersion(path, { env = process.env, run = execFile, signal } = {}) {
   return new Promise(resolve => {
     try {
-      run(...batchSafe(path, ['--version'], { env: { ...env, DISABLE_UPDATES: '1' }, signal, timeout: 8000, maxBuffer: 16_384, windowsHide: true }), (error, stdout) => {
+      run(...batchSafe(path, ['--version'], {
+        env: { ...env, DISABLE_UPDATES: '1' }, cwd: env[HOME_ENV],
+        signal, timeout: 8000, maxBuffer: 16_384, windowsHide: true,
+      }), (error, stdout) => {
         const version = String(stdout ?? '').trim().match(/^(?:claude(?: code)?|codex(?:-cli)?)?\s*(\d+\.\d+\.\d+)(?=\s|$)/i)?.[1]
         resolve(!error && VERSION.test(version ?? '') ? version : undefined)
       })
@@ -87,9 +91,16 @@ export async function installCli(dir, spec, version, env, { signal, platform = c
 }
 
 export class CliStore extends AdapterStore {
-  constructor({ env = process.env, home = clisHome(env), latest = latestVersion, install = installCli, versionOf = cliVersion, platform, ...options } = {}) {
+  constructor({ env = process.env, home = clisHome(env), latest = latestVersion,
+    install = installCli, versionOf = cliVersion, versionEnv, platform, ...options } = {}) {
     super({ ...options, home, env, latest, install })
     this.versionOf = versionOf
+    // Registry/package-manager environment stays separate. Only CLI queries use these homes.
+    if (versionEnv === undefined) {
+      this.versionHomes = new CliHomes(join(dirname(home), 'cli-homes'))
+      versionEnv = spec => this.versionHomes.environment(spec.key, env)
+    }
+    this.versionEnv = versionEnv
     this.platform = platform
     this.external = new Map()
     this.selected = new Map()
@@ -146,7 +157,8 @@ export class CliStore extends AdapterStore {
     if (!force && selected && this.checked.get(pkg) && this.now() - this.checked.get(pkg) < CLI_CHECK_EVERY_MS) return selected
     const { signal } = this.quit
     const have = this.binOf(pkg, spec)
-    const ownVersion = existing ? await this.versionOf(existing, { env: this.env, signal }) : undefined
+    const ownVersion = existing
+      ? await this.versionOf(existing, { env: this.versionEnv(spec), signal }) : undefined
     if (signal.aborted) throw new Error('install stopped: DSH is quitting')
     // Compare verified local copies before touching the network. An offline restart must
     // retain the newer one in either direction: managed upgrade or newer personal CLI.
@@ -174,7 +186,7 @@ export class CliStore extends AdapterStore {
       await this.install(tmp, spec, version, this.env, { signal, platform })
       const bin = cliLayout(spec, version, platform).bins.find(bin => isExecutable(join(tmp, bin)))
       if (!bin) throw new Error(`${spec.defaultName} installed without a runnable native binary`)
-      const actual = await this.versionOf(join(tmp, bin), { env: this.env, signal })
+      const actual = await this.versionOf(join(tmp, bin), { env: this.versionEnv(spec), signal })
       if (actual !== version) throw new Error(`${spec.defaultName} did not pass its version check after installation`)
       if (signal.aborted) throw new Error('install stopped: DSH is quitting')
       const concurrent = this.binOf(pkg, spec)
@@ -196,5 +208,10 @@ export class CliStore extends AdapterStore {
       this.installing.delete(tmp)
       rmSync(tmp, { recursive: true, force: true })
     }
+  }
+
+  dispose() {
+    super.dispose()
+    this.versionHomes?.dispose()
   }
 }

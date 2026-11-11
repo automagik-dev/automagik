@@ -726,6 +726,78 @@ Saving is explicit and remains off until the tested profile is accepted. This wi
 setup and connection ownership; it preserves the standalone contract pin, approval levels,
 replay/epoch fencing, durable submit identities and uncertainty handling above.
 
+## Amendment: separate Bot CLI accounts (#869)
+
+Owner decision (2026-11-11): **isolate**, option 1 of
+[the design note](https://github.com/automagik-si/automagik/issues/869#issuecomment-6797000812).
+Claude Code and Codex each get their own CLI home per Automagik installation, shared by that
+installation's teams and image runs. A discovered CLI and a managed CLI use the same Bot home.
+Sign-in, status, account reads, adapters, model probes and images use the same environment.
+Neither credentials nor authentication settings are copied from the terminal. CLI updates and
+the public provider ids keep their existing contracts. Native-ACP agents keep their explicit
+opt-in terminal-sharing contract above; this decision covers Claude Code and Codex only.
+
+**Settings amendment.** This supersedes the user-global settings promise in Design and Decided
+for these two agents: terminal user settings, hooks, MCP servers, skills, sessions and environment
+overrides are not automatically imported. A separate home is necessary because authentication
+can also come from helpers, environment variables and stores outside the CLI's main config file.
+Project settings still load for chat work in the Bot's working folder. The person can configure
+the Bot's own user settings separately; Automagik does not copy or link credential-bearing files.
+The DSH tool bridge, approvals and transcript replay contracts stay as described above.
+
+**Upgrade.** Existing Bot models, histories and Sessions stay. Old terminal-account consent is
+not carried into the new home. The person signs in once more inside the app; affected work waits
+with a sign-in action. A signed-out isolated Bot never restores a legacy plan route or uses an
+old ChatGPT image grant to keep working. Explicitly configured image API keys retain their own
+path. Terminal-login preservation relies on the vendor credential-store assumptions below.
+
+**Owner account controls.** Bot settings show the Bot identity and a read-only terminal identity
+when the vendor reports it, clearly labelled as separate. Account data stays on owner-only
+endpoints, never in team state, model calls, transcripts or logs. Switch and Sign out block new
+work, end starting/live chats, images, model probes and login attempts, and wait for process
+termination before the CLI changes credentials in the Bot environment. A failed or unverified
+logout leaves
+work paused until an explicit retry. Installation locks serialize authentication changes; when
+another app instance has registered the same vendor home, close it before changing accounts.
+Launches capture an account generation so delayed work cannot start under a later account.
+
+**Crash recovery and owner Reset.** Automatic app-crash recovery is Unix-only and requires the
+recorded login group's exit proof. Windows app death leaves its login record blocked, even if
+an old Job nonce exists: Windows crash recovery is by owner Reset followed by fresh sign-in.
+Automatic Windows recovery is deferred to
+[follow-up #1076](https://github.com/automagik-si/automagik/issues/1076).
+The normal Windows sign-in and stop path still waits for its live supervisor's empty-Job proof.
+A short installation-level mutex uses unique process claims, so a claimant's own crash does not
+permanently hold recovery. Lock owner and applicable evidence are revalidated under that mutex.
+
+Pending-before-spawn, damaged and legacy evidence cannot supply that proof. Cold owner settings
+show recovery per vendor and offer an explicitly confirmed Reset Bot sign-in. Reset pauses
+admission and stops known work before selecting a fresh empty home generation and forgetting
+old account consent. It requires fresh in-app sign-in, preserves Bot models and history, and
+does not log out or copy the old account. Bot CLI user settings also start empty; project
+settings still load from the workspace. The previous physical folder and its unproved records
+remain at their original path: it is never renamed and reused. A surviving vendor process can
+write only to the abandoned generation. Cleanup removes it later only when exit is proven;
+unproved generations, including Windows crash records, stay retained. Both serialization and
+app registrations sit outside the
+replaceable home. Captured launches check the installation's current-generation pointer as well
+as local version markers; delayed account reads and image tickets are invalidated by Reset.
+
+**Storage assumptions and unfinished live validation.** This design relies on Claude's
+config-directory-namespaced macOS Keychain entry and Codex's `CODEX_HOME`-namespaced OS-keyring
+key. Current vendor documentation/source supports those assumptions; fake stores and process
+tests do not prove the installed CLIs' live credential behavior. #869 remains open for both:
+
+1. A real two-account macOS sign-in/switch/sign-out sequence for Claude and Codex, verifying the
+   terminal login stays intact at every step.
+2. The Codex OS-keyring-backed path with distinct Bot and terminal homes through those actions,
+   in addition to the file-backed `auth.json` path.
+
+Vendor storage contracts:
+[Claude authentication](https://code.claude.com/docs/en/authentication),
+[Codex auth storage](https://github.com/openai/codex/blob/main/codex-rs/login/src/auth/storage.rs)
+(the CLI owns these stores).
+
 ## Tracking
 
 Ledger pass (2026-11-10): the board links this RFC from its file.

@@ -482,7 +482,7 @@ test('upgrade: a first check that says "signed out" keeps the Bot working once t
   assert.equal(await up.registered.adapter.access('acp-claude'), undefined)
 })
 
-test('the record is kept beside the adapters of the app\'s own home, and nowhere for another store', async (t) => {
+test('each installation keeps its account record inside its isolated CLI root', async t => {
   const root = mkdtempSync(join(tmpdir(), 'acp-dsh-consent-home-'))
   const before = process.env.AUTOMAGIK_HOME
   process.env.AUTOMAGIK_HOME = root
@@ -496,15 +496,15 @@ test('the record is kept beside the adapters of the app\'s own home, and nowhere
   lateBins(h)
   assert.equal((await h.service.inspect('acp-claude')).consent, 'needed')
   assert.match(await h.registered.adapter.access('acp-claude'), /Confirm the account of Claude Code/)
-  const file = join(root, 'acp', CONSENT_FILE)
-  assert.equal(dirname(file), dirname(adaptersHome()))
+  const file = join(root, 'acp', 'cli-homes', CONSENT_FILE)
+  assert.equal(dirname(file), join(dirname(adaptersHome()), 'cli-homes'))
   assert.deepEqual(stored(file).vendors, {})
-  // A store with another home (a test's, a tool's) keeps no record and asks nothing.
+  // Another installation gets its own record; it cannot inherit the first one's consent.
   const other = harness(t, { signedIn: { claude: true }, accounts: { claude: WORK }, file: null, home: join(root, 'elsewhere', 'adapters') })
   lateBins(other)
-  assert.equal(Object.hasOwn(await other.service.inspect('acp-claude'), 'consent'), false)
+  assert.equal((await other.service.inspect('acp-claude')).consent, 'needed')
   assert.equal(existsSync(join(root, 'elsewhere', CONSENT_FILE)), false)
-  assert.deepEqual(other.reads, [])
+  assert.deepEqual(stored(join(root, 'elsewhere', 'cli-homes', CONSENT_FILE)).vendors, {})
 })
 
 test('a connector is installed only once the first-run record is on disk', async (t) => {

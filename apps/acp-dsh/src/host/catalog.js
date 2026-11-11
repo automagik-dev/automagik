@@ -184,7 +184,10 @@ export class Catalog {
     const timer = setTimeout(() => run?.dispose(), PROBE_TIMEOUT_MS)
     timer.unref?.()
     try {
-      run = new AgentRun({ ...(await this.spec.spawn()), cwd: homedir(), name: this.spec.name })
+      const launch = await this.spec.spawn()
+      if (this.disposed) return
+      run = new AgentRun({ ...launch,
+        cwd: launch.env?.AUTOMAGIK_BOT_CLI_HOME ?? homedir(), name: this.spec.name })
       this.run = run
       await run.start()
       this.access = true

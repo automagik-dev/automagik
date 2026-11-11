@@ -500,6 +500,15 @@ export class AcpAdapter extends LlmAdapter {
     for (const [sessionId, live] of this.live) this.end(sessionId, live)
   }
 
+  endProvider(provider, why) {
+    for (const [id, starting] of this.starting) {
+      if (starting.provider === provider) this.endSession(id, why)
+    }
+    for (const [id, live] of this.live) {
+      if (live.provider === provider) this.endSession(id, why)
+    }
+  }
+
   /**
    * End one agent session now: its process, its bridge credential and its place in `live`. The
    * DSH Session keeps its transcript, so the next turn starts a new agent session and the
@@ -850,6 +859,7 @@ export class AcpAdapter extends LlmAdapter {
     // No agent acts for a Session a gate holds: not a new turn, not the next step of one. The
     // agent session there ends with the refusal.
     // The turn is starting from here: an `endSession` that lands before its prompt refuses it.
+    entry.provider = options.provider
     this.starting.set(sessionId, entry)
     const started = () => { if (this.starting.get(sessionId) === entry) this.starting.delete(sessionId) }
     const held = await this.heldBack(sessionId, dshAgent, options.provider) ?? entry.held
@@ -899,7 +909,9 @@ export class AcpAdapter extends LlmAdapter {
       // The account this CLI is signed in to waits for the person's word (index.js, consent.js):
       // refused like a signed-out CLI, before any process starts, and never answered elsewhere.
       let unconfirmed
-      try { unconfirmed = await this.access?.(options.provider) } catch {}
+      try { unconfirmed = await this.access?.(options.provider) } catch {
+        unconfirmed = 'The Bot account could not be checked. Sign in again in the app.'
+      }
       // Ended while the consent was read: nothing starts for this turn.
       if (entry.held !== undefined) {
         started()
@@ -951,7 +963,8 @@ export class AcpAdapter extends LlmAdapter {
             this.diagnostics?.started(sessionId, this, agent, state)
             const run = new AgentRun({
               ...spec,
-              cwd: dshAgent?.session?.header?.cwd ?? homedir(),
+              cwd: dshAgent?.session?.header?.cwd
+                ?? spec.env?.AUTOMAGIK_BOT_CLI_HOME ?? homedir(),
               name: agent.name,
               mcpServers: state.bridge === undefined ? [] : [this.bridgeServer(state.bridge)],
               ...(this.bridgeOn(agent) && agent.disableBuiltInTools === true
@@ -985,6 +998,9 @@ export class AcpAdapter extends LlmAdapter {
             if (isAuthRequired(error)) {
               this.signedOut(options.provider)
               return yield signInFailure(agent, error)
+            }
+            if (error?.code === 'acp-account/busy') {
+              return yield finish('error', error.message, MODEL_ACCESS_REQUIRED)
             }
             // A missing bridge is this computer's config, not the release: no rollback for it.
             let back = false

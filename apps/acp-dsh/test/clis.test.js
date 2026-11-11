@@ -5,14 +5,18 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { AGENTS } from '../src/host/agents.js'
+import { CliHomes, HOME_ENV } from '../src/host/cli-homes.js'
 import { CliStore, CLI_CHECK_EVERY_MS, cliLayout, cliPlatform, cliVersion, installCli } from '../src/host/clis.js'
 
 const CLAUDE = AGENTS['acp-claude']
 const CODEX = AGENTS['acp-codex']
 const PLATFORM = { platform: 'linux', arch: 'x64', musl: false }
 const scratch = t => {
-  const home = mkdtempSync(join(tmpdir(), 'automagik-cli-test-'))
-  t.after(() => rmSync(home, { recursive: true, force: true }))
+  const installation = mkdtempSync(join(tmpdir(), 'automagik-cli-test-'))
+  const home = join(installation, 'clis')
+  mkdirSync(home)
+  // CliStore's default vendor homes are siblings of its store, inside the installation.
+  t.after(() => rmSync(installation, { recursive: true, force: true }))
   return home
 }
 const executable = (path, version) => {
@@ -26,6 +30,82 @@ const fakeInstall = async (dir, spec, version, env, { platform }) => {
 }
 const fakeVersion = async path => { try { return readFileSync(path, 'utf8') } catch { return undefined } }
 const storeOf = (home, overrides = {}) => new CliStore({ home, platform: PLATFORM, latest: async () => '2.0.0', install: fakeInstall, versionOf: fakeVersion, ...overrides })
+
+test('external and staged version probes use vendor homes; installation keeps its own env',
+  async t => {
+    const root = scratch(t)
+    const env = { HOME: join(root, 'terminal'), CODEX_HOME: join(root, 'terminal-codex'),
+      CLAUDE_CONFIG_DIR: join(root, 'terminal-claude'), OPENAI_API_KEY: 'invented-terminal',
+      AUTOMAGIK_PNPM: '/fake/manager', PATH: '/fake/runtime' }
+    const queries = []
+    const installs = []
+    const store = storeOf(join(root, 'clis'), {
+      env,
+      versionOf: async (path, { env: isolated }) => {
+        queries.push({ path, env: isolated })
+        return fakeVersion(path)
+      },
+      install: async (...args) => { installs.push(args[3]); await fakeInstall(...args) },
+    })
+    t.after(() => store.dispose())
+    for (const spec of [CLAUDE, CODEX]) {
+      const own = executable(join(root, 'terminal-bin', spec.key), '1.0.0')
+      await store.ensure(spec, own)
+      const calls = queries.filter(call => call.env.HOME.endsWith(spec.key))
+      assert.equal(calls.length, 2, 'external and freshly installed binaries are both checked')
+      for (const { env: isolated } of calls) {
+        assert.equal(isolated.HOME, join(root, 'cli-homes', spec.key))
+        assert.equal(isolated.CLAUDE_CONFIG_DIR, join(isolated.HOME, '.claude'))
+        assert.equal(isolated.CODEX_HOME, join(isolated.HOME, '.codex'))
+        assert.equal(isolated.OPENAI_API_KEY, undefined)
+        assert.equal(isolated.AUTOMAGIK_PNPM, undefined)
+      }
+    }
+    assert.equal(installs.length, 2)
+    for (const installEnv of installs) assert.equal(installEnv, env)
+  })
+
+test('version execution keeps isolated cwd and env without restoring inherited credentials',
+  async t => {
+    const homes = new CliHomes(scratch(t))
+    t.after(() => homes.dispose())
+    const env = homes.environment('codex', { OPENAI_API_KEY: 'invented-terminal' })
+    let seen
+    const version = await cliVersion('/fake/codex', { env,
+      run: (file, args, options, done) => {
+        seen = { file, args, options }
+        done(null, 'codex-cli 2.0.0')
+      },
+    })
+    assert.equal(version, '2.0.0')
+    assert.equal(seen.options.cwd, env[HOME_ENV])
+    assert.equal(seen.options.env.OPENAI_API_KEY, undefined)
+    assert.equal(seen.options.env.CODEX_HOME, env.CODEX_HOME)
+    assert.deepEqual(seen.args, ['--version'])
+  })
+
+test('version probes select the current home generation after owner reset', async t => {
+  const root = scratch(t)
+  const homes = new CliHomes(join(root, 'private-homes'))
+  const seen = []
+  let latest = '2.0.0'
+  const store = storeOf(join(root, 'managed'), {
+    latest: async () => latest,
+    versionEnv: spec => homes.environment(spec.key),
+    versionOf: async (path, { env }) => { seen.push(env); return fakeVersion(path) },
+  })
+  t.after(() => { store.dispose(); homes.dispose() })
+  const external = executable(join(root, 'external'), '1.0.0')
+  await store.ensure(CODEX, external)
+  const previous = seen[0].HOME
+  const fresh = homes.reset('codex')
+  seen.length = 0
+  latest = '3.0.0'
+  await store.ensure(CODEX, external, { force: true })
+  assert.equal(seen.length, 2, 'external and installed versions both get the selected home')
+  assert.notEqual(fresh, previous)
+  for (const env of seen) assert.equal(env.HOME, fresh)
+})
 
 test('native layout covers supported desktop platforms, musl, and Rosetta without shell commands', () => {
   for (const platform of ['linux', 'darwin', 'win32']) for (const arch of ['x64', 'arm64']) {
