@@ -14,7 +14,9 @@ import { createHash } from "node:crypto";
 import { applyBotEdit, checkBots, parseBots, swapProblem } from "../mods/am-sidebar/model.js";
 import { AGENTS, AGY_FIXED_DENY, AGY_SHELL_READ, agySettingsDir, agySettingsFile, effortArgs, promptArgs } from "../mods/am-sidebar/models.js";
 import { ENV, GUARD_DIR, WORKER_OF_LABEL, stableGuardDir, stableHelper, stableRunner, baseCandidates, hcProxyEnabled, branchNamesTask, branchSlug, parseWorktrees, readLedger, reapCandidates, runsTemplate, workLeft, sessionChange, startRow, swapArm, swapByte, templateAgent,
-  KILL_GUARD_DIR, workerArgs, workerBranch, workerPlan, workerRole, workerTaskId, writesWorktree } from "../mods/am-sidebar/workers.js";
+  KILL_GUARD_DIR, workerArgs, workerBranch, workerPlan, workerRole, workerTaskId, writesWorktree,
+  PR_ASK_MAX_MS, PR_ASK_MIN_MS, PR_QUIET_EVERY_MS, PR_QUIET_FIRST_MS, PR_QUIET_WATCH_MS, PR_STATES, PR_WATCH_MS, endRow, finishedEnds, prAskDue, prBranchKey,
+  prBranches, prChecksPath, prChecksText, prLikely, prRow, prRowsFor, prTime, prWatch, readPrChecks } from "../mods/am-sidebar/workers.js";
 import { approveProject, recordFileOf } from "../mods/am-sidebar/approved.js";
 import { stableRunnerText } from "../mods/am-sidebar/dshTui.mjs";
 import { startProxy } from "../mods/am-sidebar/hcProxy.mjs";
@@ -2157,7 +2159,7 @@ test("worker #567: unpushed commits keep the worktree with one line; a later wor
   const line = `kept ${w.worktree}: 1 commit on no remote; gh couldn't tell whether fix/one has a merged or closed pull request`;
   assert.equal(r.out.trim(), line, "a gh error keeps it (fails closed)");
   assert.equal(existsSync(w.worktree), true);
-  assert.match(readFileSync(join(s.root, "gh.log"), "utf8"), /^pr list --head fix\/one --state all --json number,state --limit 20$/m);
+  assert.match(readFileSync(join(s.root, "gh.log"), "utf8"), /^pr list --head fix\/one --state all --json number,state,createdAt,mergedAt,closedAt,baseRefName --limit 20$/m);
   const next = s.cli(["worker", "two", "--branch", "fix/two", "--json"]);
   assert.equal(next.code, 0, next.err);
   assert.equal(next.json().warnings.some((x) => x.includes(w.worktree)), false, "the same reason isn't said again");
@@ -2354,12 +2356,421 @@ test("worker #567 F4: a worker call's sweep skips a kept worktree whose reason i
     .map((l) => { const r = JSON.parse(l); return JSON.stringify(r.terminal === w.terminal ? { ...r, at: new Date(Date.now() - 26 * 3600_000).toISOString() } : r); })
     .join("\n") + "\n");
   const asked = () => readFileSync(join(s.root, "gh.log"), "utf8").split("\n").filter(Boolean).length;
+  // Its pull requests were asked for a moment ago (#899): what is counted here is the cleanup's own look.
+  writeFileSync(prChecksPath(s.app), prChecksText(new Map([[prBranchKey({ project: s.project, branch: "fix/one" }), Date.now()]]), [{ project: s.project, branch: "fix/one" }]));
   const before = asked();
   const next = s.cli(["worker", "two", "--branch", "fix/two", "--json"]);
   assert.equal(next.code, 0, next.err);
   assert.equal(asked(), before, "not looked at by the worker call");
   assert.match(s.cli(["reap"], { from: null }).out.trim(), new RegExp(`^kept ${reEsc(w.worktree)}: 1 commit on no remote`));
   assert.equal(asked(), before + 1, "reap looks at it");
+});
+
+// ---- #899: how a terminal ended on its end row, and the pull requests' `pr` rows ----
+
+/** usagemeter's end_word (hc.rs): the only `hc_reason` and signal names it reads. */
+const METER_END_WORD = /^[A-Za-z0-9_-]{1,32}$/;
+const T0 = "1970-01-01T00:00:00.000Z";
+
+test("endRow #899: hc's reason, exit code and signal are copied; a row hc said nothing for keeps its shape", () => {
+  const key = { kind: "worker", terminal: "t5", core: "core-1", createdMs: 9, reason: "finished", at: 0 };
+  const legacy = { event: "end", kind: "worker", terminal: "t5", core: "core-1", created_ms: 9, reason: "finished", at: T0 };
+  assert.deepEqual(endRow(key), legacy);
+  assert.deepEqual(Object.keys(endRow(key)), ["event", "kind", "terminal", "core", "created_ms", "reason", "at"], "no new key, and none as null");
+  assert.deepEqual(endRow({ ...key, hcReason: null, exitCode: null, signal: null }), legacy, "hc's nulls are left out");
+  assert.deepEqual(endRow({ ...key, hcReason: "exited", exitCode: 3, signal: null }), { ...legacy, hc_reason: "exited", exit_code: 3, at: T0 });
+  assert.deepEqual(Object.keys(endRow({ ...key, hcReason: "exited", exitCode: 0, signal: 15 })),
+    ["event", "kind", "terminal", "core", "created_ms", "reason", "hc_reason", "exit_code", "signal", "at"]);
+  assert.deepEqual(endRow({ ...key, hcReason: "exited", exitCode: 0 }).exit_code, 0, "a clean exit is said too");
+  assert.deepEqual(endRow({ ...key, hcReason: "killed", signal: 9 }), { ...legacy, hc_reason: "killed", signal: 9, at: T0 });
+  assert.deepEqual(endRow({ ...key, hcReason: "killed", signal: "SIGKILL" }).signal, "SIGKILL");
+  assert.deepEqual(endRow({ ...key, hcReason: "stopped_by_restart" }), { ...legacy, hc_reason: "stopped_by_restart", at: T0 });
+  // What usagemeter can't read is left out, never cut: a status that isn't an integer, a signal that isn't a number or a word.
+  for (const exitCode of [1.5, "1", NaN, 2 ** 60, {}]) assert.equal("exit_code" in endRow({ ...key, hcReason: "exited", exitCode }), false, String(exitCode));
+  for (const signal of ["", "two words", "x".repeat(33), 1.5, {}, true]) assert.equal("signal" in endRow({ ...key, hcReason: "exited", signal }), false, String(signal));
+});
+
+test("endRow #899 (PR 1027 F5): never an exit code or a signal without an hc_reason usagemeter reads", () => {
+  // usagemeter counts an end row with a status or a signal and no reason as a failed run
+  // (outcomes.rs end_of): a kill or a restart must never reach it that way.
+  const key = { kind: "worker", terminal: "t5", core: "core-1", createdMs: 9, reason: "finished", at: 0 };
+  const noReason = [undefined, null, "", 7, {}, ["exited"], "two words", "exited\n", "x".repeat(33), "saída"];
+  for (const hcReason of noReason) {
+    for (const how of [{ exitCode: 1 }, { signal: 9 }, { signal: "SIGTERM" }, { exitCode: 137, signal: 9 }]) {
+      const row = endRow({ ...key, hcReason, ...how });
+      assert.deepEqual(Object.keys(row), ["event", "kind", "terminal", "core", "created_ms", "reason", "at"], `${JSON.stringify(hcReason)} ${JSON.stringify(how)}`);
+    }
+  }
+  // And every row that does hold one names a reason usagemeter reads.
+  for (const hcReason of [...noReason, "exited", "killed", "stopped_by_restart", "a-b_c9"]) {
+    const row = endRow({ ...key, hcReason, exitCode: 1, signal: 9 });
+    if ("exit_code" in row || "signal" in row) assert.match(row.hc_reason, METER_END_WORD);
+  }
+  assert.deepEqual(endRow({ ...key, hcReason: "a-b_c9", exitCode: 1 }).hc_reason, "a-b_c9");
+});
+
+test("finishedEnds #899: the sweep's end row copies how hc says the terminal ended", () => {
+  const start = (terminal, createdMs) => startRow({ kind: "worker", terminal, botId: ID.dev, worktree: `/w/${terminal}`, created: true, core: "core-1", createdMs, at: 1000 });
+  const rows = [start("t1", 10), start("t2", 20), start("t3", 30), start("t4", 40)];
+  const gets = new Map([
+    ["t1", { created_ms: 10, finished_ms: 15, reason: "exited", exit_code: 2, signal: null }],
+    ["t2", { created_ms: 20, finished_ms: 25, reason: "killed", exit_code: null, signal: 9 }],
+    ["t3", { created_ms: 30, finished_ms: 35 }],
+    // hc gave a status and no reason: the row says only that it ended.
+    ["t4", { created_ms: 40, finished_ms: 45, exit_code: 1, signal: 15 }],
+  ]);
+  const base = (terminal, created_ms, at) => ({ event: "end", kind: "worker", terminal, core: "core-1", created_ms, reason: "finished", at });
+  assert.deepEqual(finishedEnds(rows, gets, "core-1"), [
+    { ...base("t1", 10), hc_reason: "exited", exit_code: 2, at: "1970-01-01T00:00:00.015Z" },
+    { ...base("t2", 20), hc_reason: "killed", signal: 9, at: "1970-01-01T00:00:00.025Z" },
+    base("t3", 30, "1970-01-01T00:00:00.035Z"),
+    base("t4", 40, "1970-01-01T00:00:00.045Z"),
+  ]);
+});
+
+const PR = { project: "/p", branch: "fix/one", pr: 7, state: "OPEN", at: 0 };
+
+test("prRow #899: gh's state in lower case, its times as the ledger writes them, in usagemeter's key order", () => {
+  const row = prRow({ ...PR, task: "gh-899", firstCommitAt: "2026-01-02T03:04:05+01:00", openedAt: "2026-01-02T04:00:00Z", mergedAt: null, closedAt: null, core: "core-1" });
+  assert.deepEqual(row, { event: "pr", project: "/p", branch: "fix/one", task: "gh-899", pr: 7, state: "open", first_commit_at: "2026-01-02T02:04:05.000Z",
+    opened_at: "2026-01-02T04:00:00.000Z", merged_at: null, closed_at: null, core: "core-1", at: T0 });
+  assert.deepEqual(Object.keys(row), ["event", "project", "branch", "task", "pr", "state", "first_commit_at", "opened_at", "merged_at", "closed_at", "core", "at"]);
+  assert.deepEqual(Object.keys(prRow(PR)), ["event", "project", "branch", "pr", "state", "first_commit_at", "opened_at", "merged_at", "closed_at", "at"], "no task, no core: left out");
+  assert.deepEqual(PR_STATES, ["open", "merged", "closed"]);
+  assert.deepEqual(["OPEN", "MERGED", "CLOSED", "open", "merged", "closed"].map((state) => prRow({ ...PR, state, mergedAt: "2026-01-03T00:00:00Z" })?.state),
+    ["open", "merged", "closed", "open", "merged", "closed"]);
+  // A merged row says when; a time that is missing or can't be read is null, never a guess.
+  assert.equal(prRow({ ...PR, state: "MERGED" }), null);
+  assert.equal(prRow({ ...PR, state: "MERGED", mergedAt: "soon" }), null);
+  assert.equal(prRow({ ...PR, state: "MERGED", mergedAt: "2026-01-03T00:00:00Z" }).merged_at, "2026-01-03T00:00:00.000Z");
+  assert.deepEqual([undefined, null, "", "soon", {}, NaN, "1999-12-31T23:59:59Z", "2100-01-01T00:00:00Z"].map(prTime), Array(8).fill(null));
+  assert.deepEqual([prTime("2000-01-01T00:00:00Z"), prTime(Date.UTC(2026, 0, 2)), prTime(new Date(Date.UTC(2026, 0, 2)))],
+    ["2000-01-01T00:00:00.000Z", "2026-01-02T00:00:00.000Z", "2026-01-02T00:00:00.000Z"]);
+  assert.equal(prRow({ ...PR, openedAt: "soon", closedAt: "1999-01-01T00:00:00Z" }).opened_at, null);
+});
+
+test("prRow #899: a row usagemeter would refuse is not written; a task it wouldn't keep is left out", () => {
+  for (const bad of [{ project: "" }, { project: null }, { project: "/p\n" }, { project: `/${"p".repeat(1024)}` }, { branch: "" }, { branch: 7 }, { branch: "a\u0085b" },
+    { branch: "b".repeat(256) }, { branch: "é".repeat(128) }, { pr: 0 }, { pr: -1 }, { pr: 1.5 }, { pr: "7" }, { pr: null }, { state: "DRAFT" }, { state: "" }, { state: null }]) {
+    assert.equal(prRow({ ...PR, ...bad }), null, JSON.stringify(bad));
+  }
+  assert.equal(prRow({ ...PR, project: `/${"p".repeat(1023)}`, branch: "é".repeat(127) }).branch.length, 127, "its bounds are in bytes");
+  for (const task of ["gh-899", "fix/x", "t".repeat(64)]) assert.equal(prRow({ ...PR, task }).task, task);
+  for (const task of [undefined, null, "", 7, "t".repeat(65), "a:b", "a;b", "a\nb", "\u{1F600}".repeat(25)]) assert.equal("task" in prRow({ ...PR, task }), false, String(task));
+});
+
+test("prRow and prRowsFor #899: nothing of a pull request but its number, state and times is kept", () => {
+  const secret = { title: "TITLE-MARK", author: { login: "AUTHOR-MARK" }, body: "BODY-MARK", url: "https://example.invalid/URL-MARK", headRefOid: "SHA-MARK", headRefName: "HEAD-MARK",
+    baseRefName: "BASE-MARK" };
+  const keys = ["event", "project", "branch", "pr", "state", "first_commit_at", "opened_at", "merged_at", "closed_at", "at"];
+  assert.deepEqual(Object.keys(prRow({ ...PR, ...secret })), keys);
+  const [row] = prRowsFor({ project: "/p", branch: "fix/one", list: [{ number: 7, state: "OPEN", createdAt: "2026-01-02T04:00:00Z", ...secret }], rows: [], at: 0 });
+  assert.deepEqual(Object.keys(row), keys);
+  assert.doesNotMatch(JSON.stringify(row), /MARK/);
+});
+
+test("prRowsFor #899: a row for a pull request that is new or changed, none when nothing did", () => {
+  const open = { number: 7, state: "OPEN", createdAt: "2026-01-02T04:00:00Z", mergedAt: null, closedAt: null, firstCommitAt: "2026-01-02T03:00:00Z" };
+  const ask = (list, rows, extra = {}) => prRowsFor({ project: "/p", branch: "fix/one", task: "gh-899", list, rows, core: "core-1", at: 0, ...extra });
+  const first = ask([open], []);
+  assert.deepEqual(first, [{ event: "pr", project: "/p", branch: "fix/one", task: "gh-899", pr: 7, state: "open", first_commit_at: "2026-01-02T03:00:00.000Z",
+    opened_at: "2026-01-02T04:00:00.000Z", merged_at: null, closed_at: null, core: "core-1", at: T0 }]);
+  assert.deepEqual(ask([open], first), [], "seen again as it was");
+  assert.deepEqual(ask([open, open], []).length, 1, "listed twice: one row");
+  // The same number on another branch or in another project is another pull request.
+  assert.equal(ask([open], [{ ...first[0], branch: "fix/two" }, { ...first[0], project: "/q" }]).length, 1);
+  const merged = { ...open, state: "MERGED", mergedAt: "2026-01-03T00:00:00Z", closedAt: "2026-01-03T00:00:00Z" };
+  const second = ask([merged], first);
+  assert.deepEqual(second.map((r) => [r.pr, r.state, r.merged_at, r.closed_at]), [[7, "merged", "2026-01-03T00:00:00.000Z", "2026-01-03T00:00:00.000Z"]]);
+  assert.deepEqual(ask([merged], [...first, ...second]), [], "the newest row is the one compared");
+  assert.equal(ask([open], [...first, ...second]).length, 1, "reopened: a change again");
+  // A time alone changing is a change; the same time written another way is not.
+  assert.equal(ask([{ ...open, createdAt: "2026-01-02T04:00:01Z" }], first).length, 1);
+  assert.deepEqual(ask([open], [{ ...first[0], opened_at: "2026-01-02T05:00:00+01:00" }]), []);
+  // A merged pull request gh gives no merge time for is not written, and is asked for again later.
+  assert.deepEqual(ask([{ ...merged, mergedAt: null }], first), []);
+  assert.deepEqual(ask([null, 7, { number: "7", state: "OPEN" }, { number: 8, state: "DRAFT" }], []), []);
+  assert.deepEqual(ask(null, []), []);
+  // Several pull requests of one branch: each its own row.
+  assert.deepEqual(ask([open, { ...merged, number: 3 }], first).map((r) => r.pr), [3]);
+});
+
+test("prRowsFor #899: the first commit is git's while git can tell, then the one a row recorded", () => {
+  const open = { number: 7, state: "OPEN", createdAt: "2026-01-02T04:00:00Z" };
+  const ask = (list, rows) => prRowsFor({ project: "/p", branch: "fix/one", list, rows, at: 0 });
+  const seen = ask([{ ...open, firstCommitAt: "2026-01-02T03:00:00Z" }], []);
+  assert.equal(seen[0].first_commit_at, "2026-01-02T03:00:00.000Z");
+  // The branch is gone (git says nothing): no change, so no row; and a later change keeps the recorded time.
+  assert.deepEqual(ask([{ ...open, firstCommitAt: null }], seen), []);
+  const merged = ask([{ ...open, state: "MERGED", mergedAt: "2026-01-03T00:00:00Z", firstCommitAt: null }], seen);
+  assert.deepEqual(merged.map((r) => [r.state, r.first_commit_at]), [["merged", "2026-01-02T03:00:00.000Z"]]);
+  // Never recorded and git can't tell: null, which usagemeter counts as no first commit.
+  assert.equal(ask([open], [])[0].first_commit_at, null);
+  // git's reading wins over a recorded one (an amended first commit), as a change.
+  assert.deepEqual(ask([{ ...open, firstCommitAt: "2026-01-02T02:00:00Z" }], seen).map((r) => r.first_commit_at), ["2026-01-02T02:00:00.000Z"]);
+  // A first commit after the pull request opened is another pull request's (the branch name used again): not this one's.
+  assert.equal(ask([{ ...open, firstCommitAt: "2026-01-02T04:00:01Z" }], [])[0].first_commit_at, null);
+  assert.deepEqual(ask([{ ...open, firstCommitAt: "2026-01-02T04:00:01Z" }], seen), [], "the recorded one stays");
+  assert.equal(ask([{ ...open, firstCommitAt: "2026-01-02T04:00:00Z" }], [])[0].first_commit_at, "2026-01-02T04:00:00.000Z", "the same second is fine");
+  assert.equal(ask([{ number: 7, state: "OPEN", firstCommitAt: "2026-01-02T03:00:00Z" }], [])[0].first_commit_at, "2026-01-02T03:00:00.000Z", "no opening time to hold it against");
+});
+
+test("prBranches #899: which worker branches a sweep still asks gh about", () => {
+  const now = Date.UTC(2026, 5, 1);
+  const iso = (ago) => new Date(now - ago).toISOString();
+  const HOUR = 3600_000, DAY = 24 * HOUR;
+  const start = (branch, ago, extra = {}) => startRow({ kind: "worker", terminal: "t9", botId: ID.dev, project: "/p", branch, worktree: `/w/${branch}`, at: now - ago, ...extra });
+  const pr = (branch, n, state, ago) => ({ event: "pr", project: "/p", branch, pr: n, state, at: iso(ago) });
+  const rows = [
+    start("no-pr", 2 * HOUR, { task: "gh-1", base: "aaaaaaa", created: true }),
+    start("no-pr", HOUR, { task: "gh-2", base: "bbbbbbb" }), // a restart's row: the newest task, not its base
+    start("open", 5 * DAY), pr("open", 7, "open", 4 * DAY),
+    start("done", 5 * DAY), pr("done", 8, "open", 4 * DAY), pr("done", 8, "merged", 3 * DAY),
+    start("again", 5 * DAY), pr("again", 9, "closed", 3 * DAY), start("again", 2 * DAY),
+    start("two", 5 * DAY), pr("two", 10, "merged", 3 * DAY), pr("two", 11, "open", 3 * DAY),
+    start("old", 31 * DAY),
+    start("old-open", 40 * DAY), pr("old-open", 12, "open", 31 * DAY),
+    startRow({ kind: "seat", terminal: "t1", botId: ID.cap, project: "/p", branch: "seat", at: now }),
+    startRow({ kind: "worker", terminal: "t2", botId: ID.dev, branch: "no-project", at: now }),
+    { event: "start", kind: "worker", terminal: "t3", project: "/p", task: "fix/before-contract", base: "ccccccc", at: iso(HOUR) },
+    pr("stray", 13, "open", 0), // a pr row no worker start names
+  ];
+  const all = prBranches(rows, now);
+  const by = Object.fromEntries(all.map((w) => [w.branch, w]));
+  assert.deepEqual(Object.keys(by).sort(), ["again", "done", "fix/before-contract", "no-pr", "old", "old-open", "open", "two"]);
+  assert.deepEqual(Object.fromEntries(all.map((w) => [w.branch, w.followed])),
+    { "no-pr": true, "fix/before-contract": true, again: true, open: true, two: true, done: false, old: false, "old-open": false });
+  assert.deepEqual(by["no-pr"], { project: "/p", branch: "no-pr", task: "gh-2", base: "aaaaaaa", started: now - HOUR, last: now - HOUR, open: false, recorded: false, followed: true });
+  assert.deepEqual([by.open.open, by.open.recorded, by.open.last], [true, true, now - 4 * DAY]);
+  assert.deepEqual([by.done.open, by.done.recorded], [false, true], "its newest row is the one read");
+  assert.deepEqual([by.again.open, by.again.recorded, by.again.last], [false, true, now - 2 * DAY], "a worker started on it after its pull request closed");
+  assert.deepEqual([by.two.open, by.two.recorded], [true, true]);
+  assert.deepEqual([by["fix/before-contract"].task, by["fix/before-contract"].base], [null, "ccccccc"], "a row from before the task contract holds its branch in task");
+  assert.deepEqual(all.map((w) => w.last), [...all.map((w) => w.last)].sort((a, b) => b - a), "most recently active first");
+  assert.deepEqual(prWatch(rows, now).map((w) => w.branch).sort(), ["again", "fix/before-contract", "no-pr", "open", "two"]);
+  assert.equal(PR_WATCH_MS, 30 * DAY);
+});
+
+test("prAskDue #899: likely news is asked for often while fresh, a branch never pushed rarely and not for long", () => {
+  const now = Date.UTC(2026, 5, 1);
+  const MIN = 60_000, HOUR = 60 * MIN, DAY = 24 * HOUR;
+  const w = (ago, extra = {}) => ({ project: "/p", branch: "b", started: now - ago, last: now - ago, open: false, recorded: false, ...extra });
+  assert.deepEqual([PR_ASK_MIN_MS, PR_ASK_MAX_MS, PR_QUIET_FIRST_MS, PR_QUIET_EVERY_MS, PR_QUIET_WATCH_MS], [10 * MIN, 6 * HOUR, HOUR, DAY, 3 * DAY]);
+  // Likely: an open pull request, or a pushed branch with none recorded yet.
+  assert.equal(prLikely(w(0, { open: true, recorded: true }), false), true);
+  assert.equal(prLikely(w(0), true), true);
+  assert.equal(prLikely(w(0), false), false);
+  assert.equal(prLikely(w(0, { recorded: true }), true), false, "its pull requests all ended: pushed says nothing new");
+  const due = (x, opts) => prAskDue(x, { now, ...opts }) - now;
+  // Just pushed: first asked 10 min after its last activity, then a quarter of its idle time after each ask.
+  assert.equal(due(w(0), { pushed: true }), 10 * MIN);
+  assert.equal(due(w(20 * MIN), { pushed: true }), -10 * MIN, "due since");
+  assert.equal(due(w(20 * MIN), { pushed: true, checked: now - MIN }), 9 * MIN);
+  assert.equal(due(w(4 * HOUR), { pushed: true, checked: now - MIN }), HOUR - MIN);
+  assert.equal(due(w(10 * DAY, { open: true, recorded: true }), { checked: now - MIN }), 6 * HOUR - MIN, "at most 6 h apart");
+  assert.equal(due(w(10 * MIN, { open: true, recorded: true }), { checked: now - HOUR }), 0, "activity since the last ask: counted from the activity");
+  assert.equal(due(w(HOUR), { pushed: true, checked: now + DAY }), 15 * MIN, "a time ahead of the clock counts as now");
+  // Not pushed: an hour after its last worker start, then daily, for three days.
+  assert.equal(due(w(0)), HOUR);
+  assert.equal(due(w(2 * HOUR)), -HOUR);
+  assert.equal(due(w(2 * HOUR), { checked: now - MIN }), DAY - MIN);
+  assert.equal(due(w(2 * HOUR), { checked: now - 3 * HOUR }), -HOUR, "asked before its last worker start: as never");
+  assert.equal(prAskDue(w(3 * DAY + 1), { now }), Infinity);
+  assert.equal(prAskDue(w(3 * DAY + 1), { now, pushed: true }) < Infinity, true, "a pushed one is followed on");
+  // A worker started again after its pull requests ended: the rare schedule, whatever git shows.
+  assert.equal(due(w(2 * HOUR, { recorded: true }), { pushed: true }), -HOUR);
+});
+
+test("readPrChecks and prChecksText #899: when each followed branch was asked, and nothing of a branch no longer followed", () => {
+  const a = { project: "/p", branch: "fix/a" }, b = { project: "/p", branch: "fix/b" }, c = { project: "/q", branch: "fix/a" };
+  const checked = new Map([[prBranchKey(a), 5], [prBranchKey(b), 6], [prBranchKey(c), 7]]);
+  const text = prChecksText(checked, [a, c, { project: "/p", branch: "never-asked" }]);
+  assert.deepEqual(JSON.parse(text), { v: 1, checked: [{ project: "/p", branch: "fix/a", at: 5 }, { project: "/q", branch: "fix/a", at: 7 }] });
+  assert.deepEqual([...readPrChecks(text)], [[prBranchKey(a), 5], [prBranchKey(c), 7]]);
+  for (const bad of [null, "", "{", "[]", '{"v":2,"checked":[]}', '{"v":1,"checked":{}}', '{"v":1,"checked":[null,{"project":"/p"},{"project":"/p","branch":"b","at":"5"}]}']) {
+    assert.deepEqual([...readPrChecks(bad)], [], String(bad));
+  }
+});
+
+/** The scene's ledger rows of one event. */
+const rowsOf = (s, event) => s.ledger().filter((r) => r.event === event);
+const ghAsked = (s) => (existsSync(join(s.root, "gh.log")) ? readFileSync(join(s.root, "gh.log"), "utf8").split("\n").filter(Boolean) : []);
+const ghAnswer = (s, list) => writeFileSync(join(s.root, "gh.json"), JSON.stringify(list));
+/** What gh says of a pull request, with the fields no row may keep. */
+const ghPr = (number, state, extra = {}) => ({ number, state, createdAt: "2026-01-02T04:00:00Z", mergedAt: null, closedAt: null, baseRefName: "main",
+  title: "TITLE-MARK", author: { login: "AUTHOR-MARK" }, url: "https://example.invalid/URL-MARK", ...extra });
+/** A commit in `cwd` whose author date is `date`. */
+const commitAt = (cwd, date, message = "work") => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", message],
+  { cwd, env: { ...process.env, GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date } });
+
+test("worker #899: the sweep's end row says how hc saw the terminal end; a status with no reason is left out", (t) => {
+  const s = scene(t);
+  withOrigin(s);
+  const one = s.cli(["worker", "one", "--branch", "fix/one", "--json"]).json();
+  const two = s.cli(["worker", "two", "--branch", "fix/two", "--json"]).json();
+  const st = s.hcState();
+  const ended = Date.now() - 16 * 60_000;
+  Object.assign(st.terminals.find((x) => x.address === one.terminal), { state: "finished", finished_ms: ended, reason: "exited", exit_code: 3, signal: null });
+  Object.assign(st.terminals.find((x) => x.address === two.terminal), { state: "finished", finished_ms: ended, exit_code: 1, signal: 9 });
+  writeFileSync(join(s.root, "hc.json"), JSON.stringify(st));
+  const r = s.cli(["reap"], { from: null });
+  assert.equal(r.code, 0, r.err);
+  const ends = Object.fromEntries(rowsOf(s, "end").map((row) => [row.terminal, row]));
+  const key = (w) => ({ event: "end", kind: "worker", terminal: w.terminal, core: "fakecore0000", created_ms: s.ledger().find((x) => x.event === "start" && x.terminal === w.terminal).created_ms,
+    reason: "finished" });
+  assert.deepEqual(ends[one.terminal], { ...key(one), hc_reason: "exited", exit_code: 3, at: new Date(ended).toISOString() });
+  assert.deepEqual(ends[two.terminal], { ...key(two), at: new Date(ended).toISOString() }, "no reason from hc: neither its status nor its signal");
+  assert.equal(s.cli(["reap"], { from: null }).code, 0);
+  assert.equal(rowsOf(s, "end").length, 2, "once each");
+});
+
+test("worker #899: a pushed worker branch's pull request gets a pr row; only a change adds another; an ended one is asked for no more", (t) => {
+  const s = scene(t);
+  withOrigin(s);
+  const w = s.cli(["worker", "one", "--task", "gh-899", "--branch", "fix/gh-899-one", "--json"]);
+  assert.equal(w.code, 0, w.err);
+  const { worktree, terminal } = w.json();
+  commitAt(worktree, "2026-01-02T03:04:05Z");
+  commitAt(worktree, "2026-01-02T03:30:00Z", "more");
+  assert.deepEqual(ghAsked(s), [], "a worker call asks nothing of the branch it just started");
+  git(worktree, "push", "-q", "origin", "fix/gh-899-one");
+  // Pushed, no pull request yet: reap asks, and gh lists none.
+  ghAnswer(s, []);
+  assert.equal(s.cli(["reap"], { from: null }).code, 0);
+  assert.deepEqual(ghAsked(s), ["pr list --head fix/gh-899-one --state all --json number,state,createdAt,mergedAt,closedAt,baseRefName --limit 20"]);
+  assert.deepEqual(rowsOf(s, "pr"), []);
+  ghAnswer(s, [ghPr(7, "OPEN")]);
+  const opened = s.cli(["reap"], { from: null });
+  assert.equal(opened.code, 0, opened.err);
+  assert.equal(opened.out.trim(), "No finished worker's worktree to remove.", "the pull request rows are said nowhere");
+  assert.equal(opened.err, "");
+  const [row, ...more] = rowsOf(s, "pr");
+  assert.deepEqual(more, []);
+  assert.match(row.at, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+  assert.deepEqual(row, { event: "pr", project: s.project, branch: "fix/gh-899-one", task: "gh-899", pr: 7, state: "open", first_commit_at: "2026-01-02T03:04:05.000Z",
+    opened_at: "2026-01-02T04:00:00.000Z", merged_at: null, closed_at: null, core: "fakecore0000", at: row.at });
+  assert.equal(s.cli(["reap"], { from: null }).code, 0);
+  assert.equal(ghAsked(s).length, 3, "an open pull request is asked for again");
+  assert.equal(rowsOf(s, "pr").length, 1, "and nothing changed: no row");
+  // It merges; its worker ends, and its worktree goes. Then the branch is deleted: git can no longer tell its first commit.
+  s.finish(terminal);
+  assert.match(s.cli(["reap"], { from: null }).out, /^removed /);
+  git(s.project, "branch", "-q", "-D", "fix/gh-899-one");
+  ghAnswer(s, [ghPr(7, "MERGED", { mergedAt: "2026-01-03T05:00:00Z", closedAt: "2026-01-03T05:00:00Z" })]);
+  assert.equal(s.cli(["reap"], { from: null }).code, 0);
+  assert.deepEqual(rowsOf(s, "pr").map((x) => [x.pr, x.state, x.first_commit_at, x.opened_at, x.merged_at, x.closed_at]), [
+    [7, "open", "2026-01-02T03:04:05.000Z", "2026-01-02T04:00:00.000Z", null, null],
+    [7, "merged", "2026-01-02T03:04:05.000Z", "2026-01-02T04:00:00.000Z", "2026-01-03T05:00:00.000Z", "2026-01-03T05:00:00.000Z"],
+  ]);
+  const asked = ghAsked(s).length;
+  assert.equal(s.cli(["reap"], { from: null }).code, 0);
+  assert.equal(ghAsked(s).length, asked, "merged, and no worker on it since: done with");
+  // Nothing of the pull request but its number, state and times, in the ledger or in what was printed.
+  assert.doesNotMatch(readFileSync(join(s.app, "automagik-herdr/workers.jsonl"), "utf8"), /MARK/);
+  // When each branch was last asked: the owner's file.
+  const checks = prChecksPath(s.app);
+  assert.equal(statSync(checks).mode & 0o777, 0o600);
+  const file = JSON.parse(readFileSync(checks, "utf8"));
+  assert.deepEqual([file.v, file.checked.map((c) => [c.project, c.branch, Number.isSafeInteger(c.at)])], [1, [[s.project, "fix/gh-899-one", true]]]);
+});
+
+test("worker #899: the first commit is the worker's own after a rebase on the branch its pull request targets", (t) => {
+  const s = scene(t);
+  withOrigin(s);
+  const { worktree } = s.cli(["worker", "one", "--branch", "fix/one", "--json"]).json();
+  commitAt(worktree, "2026-01-02T03:04:05Z");
+  // main moves on (an older commit, landed after the worktree was made), and the worker rebases on it.
+  commitAt(s.project, "2026-01-01T00:00:00Z", "someone else's");
+  git(s.project, "push", "-q", "origin", "main");
+  git(worktree, "rebase", "-q", "origin/main");
+  git(worktree, "push", "-q", "origin", "fix/one");
+  ghAnswer(s, [ghPr(7, "OPEN")]);
+  assert.equal(s.cli(["reap"], { from: null }).code, 0);
+  assert.deepEqual(rowsOf(s, "pr").map((x) => x.first_commit_at), ["2026-01-02T03:04:05.000Z"], "not the commit main gained");
+});
+
+test("worker #899: what gh told the cleanup is used for the pr rows, with no second call", (t) => {
+  const s = scene(t);
+  withOrigin(s);
+  ghAnswer(s, [ghPr(5, "MERGED", { mergedAt: "2026-01-03T05:00:00Z", closedAt: "2026-01-03T05:00:00Z" }), ghPr(3, "CLOSED", { createdAt: "2026-01-01T00:00:00Z", closedAt: "2026-01-01T01:00:00Z" })]);
+  const w = s.cli(["worker", "one", "--branch", "fix/one", "--json"]).json();
+  commitAt(w.worktree, "2026-01-02T03:04:05Z", "squashed upstream");
+  s.finish(w.terminal);
+  const r = s.cli(["reap"], { from: null });
+  assert.equal(r.out.trim(), `removed ${w.worktree}: its workers ended`, r.err);
+  assert.equal(ghAsked(s).length, 1, "asked once, by the cleanup's check of the commits on no remote");
+  // Pull request 3 opened before the branch's first commit here: that commit isn't its own.
+  assert.deepEqual(rowsOf(s, "pr").map((x) => [x.pr, x.state, x.first_commit_at, x.merged_at, x.closed_at]), [
+    [5, "merged", "2026-01-02T03:04:05.000Z", "2026-01-03T05:00:00.000Z", "2026-01-03T05:00:00.000Z"],
+    [3, "closed", null, null, "2026-01-01T01:00:00.000Z"],
+  ]);
+  assert.equal(s.cli(["reap"], { from: null }).code, 0);
+  assert.equal(ghAsked(s).length, 1, "both ended: not asked again");
+  assert.equal(rowsOf(s, "pr").length, 2);
+});
+
+test("worker #899: a worker call asks gh for three branches at most, the next call for the next ones, and none before it is due", (t) => {
+  const s = scene(t);
+  withOrigin(s);
+  // Five worker branches pushed two hours ago, none with a pull request; and one never pushed, started just now.
+  const names = [1, 2, 3, 4, 5].map((n) => `fix/b${n}`);
+  for (const name of names) git(s.project, "push", "-q", "origin", `main:refs/heads/${name}`);
+  mkdirSync(join(s.app, "automagik-herdr"), { recursive: true });
+  writeFileSync(join(s.app, "automagik-herdr/workers.jsonl"), names.map((branch, i) => `${JSON.stringify(startRow({ kind: "worker", terminal: `t${50 + i}`, botId: ID.dev,
+    project: s.project, branch, worktree: join(s.root, "gone", String(i)), at: Date.now() - 2 * 3600_000 - i * 1000 }))}\n`).join(""), { mode: 0o600 });
+  ghAnswer(s, []);
+  const heads = () => ghAsked(s).map((l) => l.split(" ")[3]);
+  assert.equal(s.cli(["worker", "one", "--branch", "fix/one", "--json"]).code, 0);
+  assert.deepEqual(heads(), ["fix/b5", "fix/b4", "fix/b3"], "the cap, the longest due first");
+  assert.equal(s.cli(["worker", "two", "--branch", "fix/two", "--json"]).code, 0);
+  assert.deepEqual(heads().slice(3), ["fix/b2", "fix/b1"], "the rest; the first three were asked a moment ago");
+  assert.equal(s.cli(["worker", "three", "--branch", "fix/three", "--json"]).code, 0);
+  assert.equal(heads().length, 5, "none is due, and a branch never pushed isn't asked about in its first hour");
+  assert.deepEqual(JSON.parse(readFileSync(prChecksPath(s.app), "utf8")).checked.map((c) => c.branch).sort(), names);
+  // reap asks for every pushed branch now, due or not; still not for the ones never pushed.
+  assert.equal(s.cli(["reap"], { from: null }).code, 0);
+  assert.deepEqual(heads().slice(5).sort(), names);
+  assert.deepEqual(rowsOf(s, "pr"), []);
+});
+
+test("worker #899: a branch never pushed is asked about an hour after its worker started; gh failing writes nothing and isn't run again at once", (t) => {
+  const s = scene(t);
+  withOrigin(s);
+  const w = s.cli(["worker", "one", "--branch", "fix/one", "--json"]).json();
+  assert.equal(s.cli(["reap"], { from: null }).code, 0);
+  assert.deepEqual(ghAsked(s), [], "not pushed, started just now");
+  const ledgerFile = join(s.app, "automagik-herdr/workers.jsonl");
+  const aged = (ms) => writeFileSync(ledgerFile, s.ledger().map((r) => `${JSON.stringify(r.terminal === w.terminal ? { ...r, at: new Date(Date.now() - ms).toISOString() } : r)}\n`).join(""));
+  aged(61 * 60_000);
+  // No gh.json: the fake gh fails.
+  const failed = s.cli(["reap"], { from: null });
+  assert.equal(failed.code, 0, failed.err);
+  assert.equal(failed.err, "");
+  assert.equal(ghAsked(s).length, 1);
+  assert.deepEqual(rowsOf(s, "pr"), []);
+  assert.equal(s.cli(["reap"], { from: null }).code, 0);
+  assert.equal(ghAsked(s).length, 1, "asked a moment ago: next in a day");
+  aged(4 * 24 * 3600_000);
+  rmSync(prChecksPath(s.app));
+  assert.equal(s.cli(["reap"], { from: null }).code, 0);
+  assert.equal(ghAsked(s).length, 1, "three days on with no push: no longer asked about");
+});
+
+test("worker #899: a pr row that can't be written is said as what it is", (t) => {
+  const s = scene(t);
+  withOrigin(s);
+  const w = s.cli(["worker", "one", "--branch", "fix/one", "--json"]).json();
+  git(w.worktree, "push", "-q", "origin", "fix/one");
+  ghAnswer(s, [ghPr(7, "OPEN")]);
+  const ledgerFile = join(s.app, "automagik-herdr/workers.jsonl");
+  // The ledger can be read and not appended to (a file given away): the row is lost, and the line says which.
+  chmodSync(ledgerFile, 0o400);
+  let r;
+  try { r = s.cli(["reap"], { from: null }); } finally { chmodSync(ledgerFile, 0o600); }
+  assert.equal(r.code, 0, r.err);
+  if (process.getuid?.() === 0) return; // root appends anyway
+  assert.match(r.out, /^fix\/one's pull request 7 isn't in automagik-herdr\/workers\.jsonl, so usagemeter won't see it: /m);
+  assert.doesNotMatch(r.out, /undefined/);
 });
 
 // Refs #631: the real PATH guard plus a fake hc that forwards only run to the fixture proxy.

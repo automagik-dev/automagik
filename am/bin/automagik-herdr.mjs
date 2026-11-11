@@ -34,6 +34,7 @@ import { AG_MODELS_TIMEOUT_MS, agModelsSpawnResult, refreshAgModelsSync } from "
 import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, WORKTREES_EXCLUDE,
   GUARD_DIR, KILL_GUARD_DIR, KILL_GUARD_NAME, SESSION_LABEL, baseCandidates, branchNamesTask, branchSlug, guardPathWith,
   LEDGER_MODE, endRow, finishedEnds, launchKey, ledgerLine, ledgerPath, optionLike, paneArgs, readLedger, reapCandidates, reapPath, reapRow,
+  prAskDue, prBranchKey, prBranches, prChecksPath, prChecksText, prLikely, prRowsFor, readPrChecks,
   sessionRow, stableGuardDir, stableKillDir, stableRootOf,
   parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
   taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, templateAgent, workerArgs, workerBranch, workerKillRefusal, workerPlan, workerRole, worktreeFolder,
@@ -2329,7 +2330,8 @@ export function appendLedger(row, appHomeDir = appHome()) {
       writeSync(fd, ledgerLine(row));
     } finally { closeSync(fd); }
   } catch (e) {
-    notes.push(`${row.terminal} runs, but it isn't in ${LEDGER_FILE}, so its usage won't be tied to it: ${e?.message ?? e}`);
+    notes.push(`${row.event === "pr" ? `${row.branch}'s pull request ${row.pr} isn't in ${LEDGER_FILE}, so usagemeter won't see it`
+      : `${row.terminal} runs, but it isn't in ${LEDGER_FILE}, so its usage won't be tied to it`}: ${e?.message ?? e}`);
   }
   return notes.length ? notes.join("; ") : null;
 }
@@ -5593,14 +5595,128 @@ async function settled(names, terms, gets = new Map()) {
 }
 const firstLine = (r) => (r.stderr || r.stdout || `exit ${r.code}`).trim().split("\n")[0];
 
-/** The branch's pull requests as gh lists them ([{ state }]), or null when gh is missing or fails. */
+/**
+ * The branch's pull requests as gh lists them ([{ number, state, createdAt, mergedAt, closedAt,
+ * baseRefName }]), or null when gh is missing or fails. Only what the cleanup's check and a
+ * `pr` row need is asked for: never a title, an author, a text or an address.
+ */
 async function pullRequestsOf(branch, cwd) {
   const gh = programPath("gh");
   if (!gh || !branch) return null;
-  const r = await runProgram(gh, ["pr", "list", "--head", branch, "--state", "all", "--json", "number,state", "--limit", "20"],
+  const r = await runProgram(gh, ["pr", "list", "--head", branch, "--state", "all", "--json", "number,state,createdAt,mergedAt,closedAt,baseRefName", "--limit", "20"],
     { cwd, timeout: GH_TIMEOUT });
   if (r.code !== 0) return null;
   try { const list = JSON.parse(r.stdout); return Array.isArray(list) ? list : null; } catch { return null; }
+}
+
+// ---- pull requests (#899): the sweep's `pr` rows ----
+
+/** A worker call's sweep asks gh for at most this many branches' pull requests; reap asks for every one that is due. */
+const PR_ASK_MAX = 3;
+
+/**
+ * The branches of `project` git shows a push of: one a remote has a branch of the same name
+ * for (its remote-tracking ref, kept until a prune), or whose upstream is a branch of its own
+ * name (git push -u, gh pr create; kept as long as the branch). A Set, or null when git can't
+ * say. A branch made from origin's dev has dev as its upstream: that is no push of it.
+ */
+async function pushedBranches(project) {
+  const refs = await git(["for-each-ref", "--format=%(refname)%09%(upstream)", "refs/heads", "refs/remotes"], project);
+  if (refs === null) return null;
+  const tracked = (ref) => /^refs\/remotes\/[^/]+\/(.+)$/.exec(ref ?? "")?.[1] ?? null;
+  const out = new Set();
+  for (const line of refs.split("\n")) {
+    const [ref, upstream] = line.split("\t");
+    const there = tracked(ref);
+    if (there) out.add(there);
+    if (ref.startsWith("refs/heads/") && tracked(upstream) === ref.slice(11)) out.add(ref.slice(11));
+  }
+  return out;
+}
+
+/**
+ * The author date of `branch`'s first commit in `project` (git's ISO text), or null when git
+ * can't tell: the oldest commit on the branch that is neither in `base` (the commit the
+ * worker's worktree started from, from its start row) nor on the branch its pull request
+ * targets as origin has it (`target`: a rebase on that branch, or a merge of it, brings its
+ * commits in, and they are not the worker's). Null when git knows neither commit, when the
+ * branch is gone, and when every commit of it is on the target now (a merge that kept them):
+ * the sweep then keeps what an earlier row recorded.
+ */
+async function firstCommitAt(project, branch, base, target) {
+  const not = [];
+  for (const ref of [/^[0-9a-f]{7,64}$/.test(base ?? "") ? base : null, target ? `refs/remotes/origin/${target}` : null]) {
+    if (ref && await git(["rev-parse", "--verify", "--quiet", `${ref}^{commit}`], project)) not.push(ref);
+  }
+  if (!not.length) return null;
+  const log = await git(["log", "--reverse", "--format=%aI", `refs/heads/${branch}`, "--not", ...not], project);
+  return log?.split("\n").find(Boolean) ?? null;
+}
+
+/**
+ * The sweep's `pr` rows (#899, workers.js): asks gh for the pull requests of the worker
+ * branches the ledger still follows (prBranches) and appends a row for each one that is new or
+ * whose state or times changed. `asked`: what gh already answered in this sweep, by branch
+ * (reapOne's check of a worktree with commits on no remote): used as it is, for any worker
+ * branch, with no second call. Any other branch is asked only when it is due (prAskDue; a
+ * branch git shows no push of, rarely), the likely ones first; `every` (reap) also asks for
+ * each likely one now. A worker call asks at most PR_ASK_MAX times, and nothing is asked once
+ * `budget` ms have passed since `start`. When each branch was asked is kept in the app home
+ * (pr-checks.json), so a later sweep goes on with the next ones. gh missing: nothing is done.
+ * Says nothing unless a row couldn't be written.
+ */
+async function recordPullRequests({ asked, start, budget, every, lines }) {
+  if (!programPath("gh")) return;
+  const rows = workerLedgerRows();
+  const now = Date.now();
+  const branches = prBranches(rows, now);
+  const file = prChecksPath(appHome());
+  let checked = new Map();
+  try { checked = readPrChecks(readText(file) ?? ""); } catch { /* asked again: nothing is lost */ }
+  const pushedIn = new Map();
+  const due = [];
+  for (const w of branches) {
+    const key = prBranchKey(w);
+    if (asked.has(key)) { due.push({ w, key, rank: 0, at: 0 }); continue; }
+    if (!w.followed || !isDir(w.project)) continue;
+    // Whether it was pushed only matters for a branch with no pull request recorded yet.
+    if (!w.recorded && !pushedIn.has(w.project)) pushedIn.set(w.project, await pushedBranches(w.project));
+    const pushed = !w.recorded && (pushedIn.get(w.project)?.has(w.branch) ?? false);
+    const at = prAskDue(w, { pushed, checked: checked.get(key) ?? null, now });
+    if (at <= now || (every && prLikely(w, pushed))) due.push({ w, key, rank: prLikely(w, pushed) ? 1 : 2, at });
+  }
+  if (!due.length) return;
+  due.sort((a, b) => a.rank - b.rank || a.at - b.at);
+  const core = await rowCore();
+  let calls = 0;
+  for (const { w, key } of due) {
+    let list = asked.get(key) ?? null;
+    if (!asked.has(key)) {
+      if ((!every && calls >= PR_ASK_MAX) || Date.now() - start > budget) break;
+      calls += 1;
+      list = await pullRequestsOf(w.branch, w.project);
+    }
+    // A failed answer counts as asked too: a gh that is signed out isn't run again by every call.
+    checked.set(key, Date.now());
+    if (!list?.length) continue;
+    const firsts = new Map();
+    const found = [];
+    for (const item of list) {
+      const target = typeof item?.baseRefName === "string" ? item.baseRefName : "";
+      if (!firsts.has(target)) firsts.set(target, await firstCommitAt(w.project, w.branch, w.base, target));
+      found.push({ ...item, firstCommitAt: firsts.get(target) });
+    }
+    for (const row of prRowsFor({ project: w.project, branch: w.branch, task: w.task, list: found, rows, core })) {
+      const unlogged = appendLedger(row);
+      if (unlogged) lines.push(unlogged);
+    }
+  }
+  // Written in place, under the sweep's lock (one writer): a write cut short reads as no file,
+  // and the same branches are then asked again sooner. Nothing is lost.
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, prChecksText(checked, branches.filter((w) => w.followed)), { mode: 0o600 });
+  } catch { /* asked again sooner */ }
 }
 
 /**
@@ -5608,9 +5724,10 @@ async function pullRequestsOf(branch, cwd) {
  * started in it since the sweep's hc ls), then checked for work (workLeft), looked at for a live
  * terminal once more, and removed with git worktree remove (no --force), then git worktree prune. Never throws: { result, why }, result
  * "waiting" (left for a later sweep, nothing recorded), "kept", "failed" or "removed". Any git
- * or hc failure keeps it (fails closed).
+ * or hc failure keeps it (fails closed). What gh answered for its branch is left in `asked`, by
+ * branch (prBranchKey), for the sweep's `pr` rows.
  */
-async function reapOne(c) {
+async function reapOne(c, asked = new Map()) {
   const path = c.worktree;
   const now = await hcTerminals(false);
   if (!now) return { result: "waiting" };
@@ -5629,7 +5746,10 @@ async function reapOne(c) {
     unpushed = Number(count.stdout.trim());
     if (count.code !== 0 || !Number.isSafeInteger(unpushed)) return { result: "kept", why: `git rev-list failed: ${firstLine(count)}` };
     branch = (await git(["symbolic-ref", "--short", "-q", "HEAD"], path))?.trim() || null;
-    if (unpushed > 0 && branch && branch === c.branch) prs = await pullRequestsOf(branch, main);
+    if (unpushed > 0 && branch && branch === c.branch) {
+      prs = await pullRequestsOf(branch, main);
+      if (c.project) asked.set(prBranchKey({ project: c.project, branch }), prs);
+    }
   }
   const why = workLeft({ changes, unpushed, prs, branch, expected: c.branch });
   if (why) return { result: "kept", why };
@@ -5654,13 +5774,16 @@ async function reapOne(c) {
  * hc failing skips the sweep. Each new outcome is a row in the cleanup file and a line.
  * `every` (reap): a line for every kept or failed one, even unchanged; without it (a worker
  * call), a kept one whose reason hasn't changed in REAP_QUIET_MS is skipped.
+ * The same sweep, under the same lock and budget, records the worker branches' pull requests
+ * in the workers ledger (#899, recordPullRequests), whether or not a worktree is left to remove.
  * Never throws: { removed, kept, failed, waiting, more, lines }.
  */
 async function reapWorktrees({ max = REAP_MAX, budget = REAP_BUDGET_MS, every = false } = {}) {
   const out = { removed: [], kept: [], failed: [], waiting: 0, more: 0, lines: [] };
   try {
-    const candidates = reapCandidates(workerLedgerRows(), reapRows());
-    if (!candidates.length) return out;
+    const ledger = workerLedgerRows();
+    const candidates = reapCandidates(ledger, reapRows());
+    if (!candidates.length && !prBranches(ledger).some((w) => w.followed)) return out;
     const lockDir = dirname(ledgerPath(appHome()));
     mkdirSync(lockDir, { recursive: true });
     let token;
@@ -5668,11 +5791,13 @@ async function reapWorktrees({ max = REAP_MAX, budget = REAP_BUDGET_MS, every = 
     try { token = await takeLockAsync(lock, 0); } catch { return out; }
     const stop = keepFresh(lock, token);
     try {
-      const terms = await hcTerminals(true);
+      const terms = candidates.length ? await hcTerminals(true) : [];
       if (!terms) { out.lines.push("worktree cleanup skipped: hc ls --all failed"); return out; }
       const start = Date.now();
       // The finished workers' terminals hc answered for: their end rows, after the loop.
       const gets = new Map();
+      // What gh answered for a candidate's branch: its pull requests' rows, after the loop.
+      const asked = new Map();
       for (const c of candidates) {
         if (!every && c.last?.result === "kept" && Date.now() - Date.parse(c.last.at) > REAP_QUIET_MS) continue;
         if (c.terminals.some((t) => terms.some((x) => x?.address === t && x.state !== "finished"))) { out.waiting += 1; continue; }
@@ -5688,7 +5813,7 @@ async function reapWorktrees({ max = REAP_MAX, budget = REAP_BUDGET_MS, every = 
           done = { result: "waiting" };
         } else {
           try {
-            done = await withLockAsync(worktreeLock(lockDir, path), () => reapOne(c), { wait: 0 });
+            done = await withLockAsync(worktreeLock(lockDir, path), () => reapOne(c, asked), { wait: 0 });
           } catch { done = { result: "waiting" }; }
         }
         if (done.result === "waiting") { out.waiting += 1; continue; }
@@ -5708,6 +5833,9 @@ async function reapWorktrees({ max = REAP_MAX, budget = REAP_BUDGET_MS, every = 
           const unlogged = appendLedger(row);
           if (unlogged) out.lines.push(unlogged);
         }
+      }
+      try { await recordPullRequests({ asked, start, budget, every, lines: out.lines }); } catch (e) {
+        out.lines.push(`pull requests not recorded: ${e?.message ?? e}`);
       }
       if (out.more) out.lines.push(`${out.more} more finished ${out.more === 1 ? "worker's worktree" : "workers' worktrees"} left for the next cleanup (automagik-herdr reap)`);
     } finally { stop(); dropLock(lock, token); }
