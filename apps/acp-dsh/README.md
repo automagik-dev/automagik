@@ -244,7 +244,7 @@ A settings page reads the agents through this host service; the plugin stays hos
 | `inspect(id)` | One agent's `status()` row with a fresh sign-in check, for a Bot about to be put on it. Asks that CLI's sign-in status only; installs, enables and starts nothing. Simultaneous checks share one probe. An answer stands for 3 seconds, and a confirmed sign-in for 5 minutes, since the check starts the whole CLI; `refresh()` clears it, and so does the agent itself saying it is signed out (ACP `auth_required`). Undefined for an id that is no agent here. |
 | `refresh()` | Looks for the CLIs again (one installed after DSH started is offered now), then asks each CLI whether it is signed in (`claude auth status --json`, of which only `loggedIn` is read; `codex login status`, by its exit code). No agent turn. |
 | `retry(id)` | Retries the required CLI and its connector, and answers at once. Does not turn its model switch on. |
-| `loginStart(id, { label? })` | Starts the CLI's own sign-in (`src/host/login.js`), or answers the attempt already at work for that agent. Codex: a device code through `codex app-server`; Claude Code: `claude auth login --claudeai`, whose link must ask for the manual code (`code=true`). Only the official authorization pages are relayed. `label` names the view that opened it (a Bot id), for a cancel confirmation; it is not an access check. |
+| `loginStart(id, { label? })` | Starts the CLI's own sign-in (`src/host/login.js`), or answers the attempt already at work for that agent. Codex: a device code through `codex app-server`; Claude Code: `claude auth login --claudeai`, whose link must ask for the manual code (`code=true`). Only the official authorization pages are relayed. `label` names the view that opened it (a Bot id), for a cancel confirmation; it is not an access check. An attempt that fails writes one line to the host log: a fixed class (no CLI found, no sign-in link in time, unsupported sign-in link, the CLI exited, the CLI could not be started, the CLI did not confirm the sign-in, device-code login is not enabled, device sign-in did not start, or unknown), where the attempt stood, how the CLI ended, and the version the CLI had when the attempt started. Never what the CLI printed. |
 | `loginCurrent(id)` | The attempt at work for that agent, from any view, or undefined. Never starts or cancels one. |
 | `loginStatus(id, attemptId)` / `loginAnswer(id, attemptId, value)` / `loginCancel(id, attemptId)` | Reads an attempt (an ended one stays readable for 60 seconds), sends Claude's pasted `code#state` to the CLI (which then has 90 seconds to confirm), or ends it. |
 | `loginTextMatches(text)` | Whether a text carries a Claude sign-in state shown in the last 24 hours. Only a boolean: the states are kept as keyed hashes in memory. |
@@ -521,6 +521,16 @@ An install still running when DSH quits is killed with everything it started and
 removed; one a killed DSH left behind is removed at the next start.
 Until the first install lands, the agent lists no model; a Session already on it says the
 adapter is being installed, with the last install error.
+
+**No network at the first start (#970).** The check for the newest release is a request to
+npm. When it gets no answer (a name that does not resolve, a refused or dropped connection,
+the check's own 15-second deadline: a closed list of connection failures) and the connector
+is not installed yet, the install is tried again by itself after 1, 5, 15 and 60 minutes, then
+by the regular check. One failed check is one step, whoever waited on it; a retry installs
+only while the agent is on, its CLI found and its connector still missing. An answer npm did
+give (any status), any other install failure and a connector that is installed are not retried
+sooner. What `status()` and a turn say of the failure is unchanged (the installer's own
+words); a plain sentence for it belongs to the settings page and its translations.
 
 ## Check it
 
