@@ -13,7 +13,7 @@
 Automagik is the umbrella: open building blocks of superintelligence. The home page introduces
 that umbrella, carries the launch film and links to each block's own page. Desktop and Mobile
 show their distribution channels. Cloud is coming soon and carries an interest form with email
-or inbound-first WhatsApp confirmation. Arca and Mykes have coming-soon pages.
+or inbound-first WhatsApp confirmation. Mykes has a coming-soon page; Arca owns its page in a separate Worker.
 
 The owner's 2026-11-11 decisions replace the original single-page, seven-block site and the
 Genie draft's look. The site uses the app's actual default Stage design system: theme tokens,
@@ -36,8 +36,8 @@ No extra product pages are introduced. Nothing goes live before the owner's OKs.
   and Mykes.
 - **Q5, sending half decided on 2026-11-11:** email confirmation uses Resend from the verified
   `send.automagik.si` subdomain, with the Pages secret `RESEND_API_KEY`. It sends one
-  confirmation, no launch, marketing or other email. WhatsApp is inbound-first through Omni:
-  the person sends a one-time code, the site confirms the entry, and Omni replies once in that
+  confirmation, no launch, marketing or other email. WhatsApp is inbound-first through our cx Support Bot:
+  the person sends a one-time code, the site confirms the entry, and the support Bot replies once in that
   conversation. The exact final v2 integration contract is in D3b below. No other sending is
   authorized. A future launch email remains a separate owner decision.
 - **Visual system:** the real app's current default Stage theme, not the external draft's
@@ -58,7 +58,7 @@ No extra product pages are introduced. Nothing goes live before the owner's OKs.
 | `/omni/` | Omni connects chat apps to Automagik, with channels and canvases in the same window. |
 | `/genie/` | A wish becomes a branch, test run and report the person approves; `genie desktop` opens it on the team. |
 | `/cloud/` | Coming soon, private and paid, not live. The intent form, confirmation choices, consent, privacy note and removal form. |
-| `/arca/` | Coming soon. No invented features, download or licence claim. |
+| `/arca` and `/arca/*` | Owned and served by Arca’s Worker, not Pages. The home card links to `/arca/` in the same tab. |
 | `/mykes/` | Coming soon. No invented features, download or licence claim. |
 
 There is no meter page or meter product card. A page that uses usagemeter may describe it
@@ -167,23 +167,25 @@ configuration, missing client address or failed store access is 503. Invalid inp
 wrong method 405, wrong media type 415, and an exhausted quota 429. No endpoint logs bodies,
 contact details, text, names or credentials; no cookies are set.
 
-Email entries expire unconfirmed after a day; WhatsApp codes after thirty minutes. Expired
-entries are excluded immediately and deleted on the next human request. Quota/cooldown rows
+Email entries expire unconfirmed after a day and are deleted on the next human request.
+WhatsApp codes cover messages received within thirty minutes, with a 180-day processing
+backlog window after expiry; pending WhatsApp rows are retained until that window ends. Quota/cooldown rows
 are pruned on requests after expiry. This is opportunistic deletion, not a promised timed
 cron. The owner reviews retention every six months and clears the confirmed list at launch
 or earlier removal. Confirmed WhatsApp replay receipts stay only while their waitlist row
-exists. The original reply can be retried for the same message ID after code expiry; it
-cannot confirm a new row. A new message/code attempt after expiry is 404.
+exists. The original reply can be retried for the same message ID inside the backlog window;
+it cannot confirm a new row. A message received after expiry, or processing after the 180-day
+window, is 404. Cleanup does not erase a pending WhatsApp row inside that window.
 
-### WhatsApp endpoint contract (verbatim, final v2)
+### WhatsApp endpoint contract (v2 envelope, follow-up decisions applied)
 
-WhatsApp confirmation contract (RFC 0027 D3b), FINAL v2 2026-11-11 (owner ruled no Omni code change; Omni sends its standard event envelope):
+WhatsApp confirmation contract (RFC 0027 D3b), v2 envelope updated 2026-11-11: our cx Support Bot calls the endpoint. The existing event-envelope shape is unchanged; the credential and timing rules below supersede the earlier caller/processing-time contract.
 1. Endpoint: POST <site origin>/api/waitlist/whatsapp-confirm (production https://automagik.si, preview the pages.dev host). HTTPS, JSON only (else 415).
-2. Auth: Authorization: Bearer <OMNI_WAITLIST_SECRET> (Pages secret; Omni reads it from its server env, never stored in the automation). Constant-time compare; missing or wrong 401 with empty body. No body signature and no timestamp: replay safety rests on the single-use code, its 30-minute expiry and message_id idempotency. The RFC records this as the accepted cost.
-3. Body: Omni's standard event envelope (its push contract), always valid JSON: {"id", "type": "message.received", "timestamp": <Unix ms>, "metadata", "payload": {"externalId", "chatId", "from", "senderName", "content": {"text"}, ...}}; headers X-Omni-Event-Id (stable across Omni retries), X-Omni-Delivery-Id, Authorization: Bearer. The site: (a) refuses any type other than message.received with 400; (b) finds the code in payload.content.text with its own regex, case-insensitive (AMG-[0-9A-HJKMNP-TV-Z]{6} with the i flag), upper-cased; no code found: 404; (c) uses payload.externalId as message_id for the replay rule (X-Omni-Event-Id is the same on a retry and may be used as a second key); (d) takes from = payload.from, drops any @ suffix; all digits: a phone number with a leading +; otherwise an opaque sender id (a privacy LID); (e) takes received_at from timestamp; (f) reads the text and senderName only in memory to find the code and never stores or logs them, nor any part of the request body: no request-body logging anywhere, errors log only a status and a request id. Missing payload.content.text, payload.from or payload.externalId, or malformed JSON: 400.
-4. Responses (Omni replies only on 2xx, with the reply field's text; nothing on any non-2xx or timeout):
+2. Auth: Authorization: Bearer <WAITLIST_CONFIRM_SECRET> (Pages secret; the cx Support Bot reads it from its server environment). Constant-time compare; missing or wrong 401 with empty body. No body signature or separate authentication timestamp: replay safety rests on the single-use code, authenticated message receive time, 180-day backlog limit and message_id idempotency. The RFC records this as the accepted cost.
+3. Body: Omni's standard event envelope (its push contract), always valid JSON: {"id", "type": "message.received", "timestamp": <Unix ms>, "metadata", "payload": {"externalId", "chatId", "from", "senderName", "content": {"text"}, ...}}; headers X-Omni-Event-Id (stable across Omni retries), X-Omni-Delivery-Id, Authorization: Bearer. The site: (a) refuses any type other than message.received with 400; (b) finds the code in payload.content.text with its own regex, case-insensitive (AMG-[0-9A-HJKMNP-TV-Z]{6} with the i flag), upper-cased; no code found: 404; (c) uses payload.externalId as message_id for the replay rule (X-Omni-Event-Id is the same on a retry and may be used as a second key); (d) takes from = payload.from, drops any @ suffix; all digits: a phone number with a leading +; otherwise an opaque sender id (a privacy LID); (e) requires received_at from the envelope timestamp in Unix milliseconds, rejects a missing/invalid time or a time more than 120 seconds in the future with 400, and accepts only received_at <= expires_at plus processing within 180 days after expiry; (f) reads the text and senderName only in memory to find the code and never stores or logs them, nor any part of the request body: no request-body logging anywhere, errors log only a status and a request id. Missing payload.content.text, payload.from or payload.externalId, or malformed JSON: 400.
+4. Responses (the support Bot replies only on 2xx, with the reply field's text; nothing on any non-2xx or timeout):
    - 200 {"reply": "<text>"} on first match.
-   - 200 {"reply": "<same text>"} when the same message_id arrives again (an Omni retry).
+   - 200 {"reply": "<same text>"} when the same message_id arrives again (a support Bot retry).
    - 409 {"status": "already_confirmed"} when the code is already confirmed and the message_id is new (no second reply); also when it was confirmed from a different sender id.
    - 404 {"status": "unknown_or_expired"}; 429 rate-limited; 503 store down.
    The reply is short, in the language used on the form, says the sign-up is confirmed and how to remove it.
@@ -193,13 +195,13 @@ WhatsApp confirmation contract (RFC 0027 D3b), FINAL v2 2026-11-11 (owner ruled 
 ### Replay and identity cost accepted by the owner
 
 The shared Bearer authenticates the integration, not a person. It has no per-event signature
-or freshness timestamp. The single-use code, server-clock expiry, and externalId/message_id
-receipt are the replay boundary. A same-ID retry returns the retained reply only for the same
+or freshness timestamp. The single-use code, authenticated receive-time expiry, 180-day processing limit, and
+externalId/message_id receipt are the replay boundary. A same-ID retry returns the retained reply only for the same
 code and normalized sender. A new ID for a used code, or a different sender, is 409. A stolen
 Bearer can submit guessed codes until rate-limited; rotate it in both systems if compromised.
-The site does not infer a phone number from an opaque identifier. Omni owns its automation,
-instance filter, exclusion of its own messages and the one conversation reply; that work is
-coordinated in Omni's own project, not implemented here.
+The site does not infer a phone number from an opaque identifier. Our cx Support Bot owns
+the instance filter, exclusion of its own messages and the conversation reply; its
+configuration is coordinated by the Orchestrator, outside this site.
 
 The raw body is never persisted. Only the explicit extracted confirmation fields listed in
 Storage are retained; text, senderName, chatId and metadata are discarded. The callback makes
@@ -223,16 +225,20 @@ matching waitlist rows and replies identically whether a match existed. It sends
 Short-lived abuse/cooldown hashes keep their original expiry after removal so deletion cannot
 reset a mail cap. Removal by contact is unauthenticated, as D3b originally chose: a person who
 knows a contact or code can remove that row, but cannot read it. Expired unconfirmed rows
-may await the next cleanup request physically; they are ineligible immediately.
+may await the next cleanup request physically; WhatsApp retention and eligibility follow
+the received-time/backlog rule above. The owner-approved Support on WhatsApp section is
+included verbatim in English and with the same meaning in Portuguese. Support conversations
+are retained for the assistant’s memory until the person asks to download or reset them;
+this is distinct from the waitlist, which never retains the message text.
 
 ### Owner configuration
 
 Preview and production each need a different D1 database, created in the EU jurisdiction,
 with `waitlist/schema.sql` applied, bound as `WAITLIST_DB`. Plain variable
 `WAITLIST_DATA_JURISDICTION=eu` acknowledges that configuration; the function fails closed
-without it. Pages secrets: `RESEND_API_KEY`, `OMNI_WAITLIST_SECRET`. Plain variable:
+without it. Pages secrets: `RESEND_API_KEY`, `WAITLIST_CONFIRM_SECRET`. Plain variable:
 `WAITLIST_WHATSAPP_NUMBER`. There is no account, zone or database identifier in source.
-The owner verifies the sending subdomain, creates the privacy address and configures Omni.
+The owner verifies the sending subdomain, creates the privacy address and configures the cx Support Bot.
 The setup report lists the same names for both Pages environments. Previews remain
 owner-only/noindex and use isolated test contacts. No agent reads the owner's list or secrets.
 
@@ -251,7 +257,7 @@ an account.
   reviewed local/external links, noindex preview and browser evidence. Keep draft until OK.
 - **D3b, 2026-11-15:** intent/consent/removal form, D1 schema, email confirmation, final v2
   WhatsApp callback, tests and owner setup instructions in this same PR. The owner configures
-  the databases, secrets, plain variables, sending domain and Omni automation.
+  the databases, secrets, plain variables, sending domain and the support Bot.
 - **D4, 2026-11-16:** after the owner's page/film/README OKs, attach automagik.si, check HTTPS
   and canonical paths, remove noindex, and redirect the old domain. Confirm each live download
   and block link. Test a real email and inbound WhatsApp once, then remove the test rows.
@@ -273,7 +279,7 @@ an account.
 ## Rollback
 
 Revert the landing/RFC/CI commits or redeploy the prior preview. Remove function bindings and
-secrets and stop Omni's automation. Delete the dedicated waitlist database to withdraw the
+secrets and stop the support Bot integration. Delete the dedicated waitlist database to withdraw the
 service and its only list. No installed app, plugin ID, storage prefix, version or release
 changes. Before D4 there is no production domain to undo; after D4 detach it and restore the
 previous deployment/DNS. No launch or marketing email was sent by this flow.
@@ -284,3 +290,70 @@ README PR #956 and the repository READMEs for Desktop, the Bot team, Pocket and 
 pack; the owner's 2026-11-10 and 2026-11-11 decisions; RFCs 0011 (lanes), 0013 (modes), 0017
 and 0018 (meter component), 0024 and 0025 (Cloud); the app's Stage theme and DSH adapter;
 `apps/landing/assets/CAPTURES.md`; the final v2 WhatsApp contract recorded above.
+
+
+## Follow-up decisions, 2026-11-11
+
+### Arca boundary and root discovery
+
+Pages owns `robots.txt`, `sitemap.xml` and `llms.txt`. Arca owns exactly the Worker routes
+`automagik.si/arca` and `automagik.si/arca/*`, which the owner configures. The home card links
+to `/arca/` in the same tab. Pages carries no `/arca` page or descendants. `/arcade` and other
+paths remain with Pages. The owner adds a zone Single Redirect with BOTH hostname equal to
+`automagik.si` AND URI path equal to `/arca`: 301 to `https://automagik.si/arca/`, preserving
+the query. A path-only redirect is wrong because `arca.automagik.si` is Arca's dashboard.
+No account routing or redirect is changed by this delivery.
+
+Arca's supplied sitemap entries are included verbatim:
+
+```xml
+<url><loc>https://automagik.si/arca/</loc></url> <url><loc>https://automagik.si/arca/llms.txt</loc></url> <url><loc>https://automagik.si/arca/index.md</loc></url>
+```
+
+Arca's supplied assistant-index lines are included verbatim:
+
+```md
+- [Automagik Arca, the page](https://automagik.si/arca/)
+- [Automagik Arca, for an assistant](https://automagik.si/arca/llms.txt)
+```
+
+The owner allows every crawler, AI training crawlers included, across the entire site. The
+root robots policy is `User-agent: *`, `Allow: /`, with explicit `Allow: /arca`. This settles
+the earlier pending rule for the rest of the site. Preview retains noindex headers and meta;
+production becomes indexable only after the owner's preview OK. These discovery files do
+not attach a domain, alter account settings or remove the preview gate.
+
+### WhatsApp visibility and delayed processing
+
+WhatsApp stays visible beside email, even before the support assistant is live. Plain copy
+near the option says “WhatsApp confirmation may take a little while” and “A confirmação pelo
+WhatsApp pode demorar um pouco.” No coming-soon substitute, disabled choice, hidden QR or
+suppressed wa.me link replaces the existing confirmation path.
+
+The authenticated caller supplies the original message receive time in the v2 envelope's
+`timestamp` (Unix milliseconds). A message received **at or before** the code's `expires_at`
+can confirm when processed later, up to **180 days after expiry**, inclusive. More than
+120 seconds in the future, missing, non-finite or invalid receive time is 400. A receive time
+after expiry or processing beyond the 180-day window is 404. The pending row survives cleanup
+inside the backlog window; email cleanup is unchanged. The same limits apply to stored
+receipts, while single use, message_id idempotency, sender matching, constant-time Bearer
+comparison and every no-text/no-logging rule remain. The owner accepts the receive timestamp
+from the authenticated caller; there is no additional event signature.
+
+The four regression tests prove: an on-time message confirms after days of processing delay
+(including intervening cleanup); a message received after expiry is 404; a time more than
+two minutes ahead is 400; processing after 180 days is 404. The expiry mutant named before
+editing, `processing-clock-expiry`, replaces the received-time expiry guard with a processing-
+clock guard. The delayed-processing test must kill that mutant.
+
+The integration secret is now `WAITLIST_CONFIRM_SECRET`, in both Pages environments and the
+cx Support Bot environment. The old Omni-specific secret name is not used. The v2 envelope
+body is retained; this follow-up does not introduce a new body format or an Omni automation.
+The owner subsequently approved the Support on WhatsApp privacy text. This follow-up includes
+it verbatim in English and with the same meaning in Portuguese. It explains that the support
+assistant replies only, people from the team may watch and join, each conversation is sandboxed
+and retained for memory without automatic deletion, Omni carries messages to the AI model,
+no data is sold or used for advertising/marketing, and people may download/reset their
+conversation through the assistant or privacy address. A waitlist code is recorded as confirmed
+without the waitlist retaining the message text. Public copies of the approved text and
+translation live under `apps/landing/waitlist/privacy-support.*.md`.

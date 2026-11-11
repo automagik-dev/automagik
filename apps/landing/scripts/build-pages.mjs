@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { waitlistForm, privacyNote } from '../waitlist/lib/ui.js'
 
-export const routes = ['/', '/desktop/', '/mobile/', '/omni/', '/genie/', '/cloud/', '/arca/', '/mykes/']
+export const routes = ['/', '/desktop/', '/mobile/', '/omni/', '/genie/', '/cloud/', '/mykes/']
 const repo = 'https://github.com/automagik-si/automagik'
 const mac = `${repo}/releases/latest/download/Automagik-Mac.dmg`
 const linux = `${repo}/releases/latest/download/Automagik-Linux.deb`
@@ -48,13 +48,46 @@ export function pages() {
     ['/', frame('/', 'Open building blocks of superintelligence', home)],
     ['/desktop/', frame('/desktop/', 'Desktop', desktop)], ['/mobile/', frame('/mobile/', 'Mobile', mobile)],
     ['/omni/', frame('/omni/', 'Omni', omni)], ['/genie/', frame('/genie/', 'Genie', genie)],
-    ['/cloud/', frame('/cloud/', 'Cloud', cloud)], ['/arca/', frame('/arca/', 'Arca', coming('Arca'))], ['/mykes/', frame('/mykes/', 'Mykes', coming('Mykes'))],
+    ['/cloud/', frame('/cloud/', 'Cloud', cloud)], ['/mykes/', frame('/mykes/', 'Mykes', coming('Mykes'))],
+  ])
+}
+export function rootFiles() {
+  const arcaSitemap = '<url><loc>https://automagik.si/arca/</loc></url> <url><loc>https://automagik.si/arca/llms.txt</loc></url> <url><loc>https://automagik.si/arca/index.md</loc></url>'
+  return new Map([
+    ['robots.txt', 'User-agent: *\nAllow: /\nAllow: /arca\nSitemap: https://automagik.si/sitemap.xml\n'],
+    ['sitemap.xml', `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${routes.map(route => `<url><loc>https://automagik.si${route}</loc></url>`).join('\n')}
+${arcaSitemap}
+</urlset>
+`],
+    ['llms.txt', `# Automagik
+
+> Open building blocks of superintelligence.
+
+## Building blocks
+
+- [Automagik Desktop](https://automagik.si/desktop/): Mac and Linux downloads; install on Herdr or DSH.
+- [Automagik Mobile](https://automagik.si/mobile/): the Android companion for your own machines.
+- [Omni](https://automagik.si/omni/): connect chat apps to your agent team.
+- [Genie](https://automagik.si/genie/): a wish, a branch, a test run and a report.
+- [Cloud](https://automagik.si/cloud/): coming soon; register your interest.
+- [Automagik Arca, the page](https://automagik.si/arca/)
+- [Automagik Arca, for an assistant](https://automagik.si/arca/llms.txt)
+- [Mykes](https://automagik.si/mykes/): coming soon.
+
+## Crawling
+
+All crawlers are allowed, including AI training crawlers. Preview responses remain noindex;
+production becomes indexable only after the owner's approval.
+`],
   ])
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  for (const [route, html] of pages()) {
-    const target = new URL(`..${route}index.html`, import.meta.url)
-    if (process.argv[2] === '--check') assert.equal(await readFile(target, 'utf8'), html, `Regenerate ${route}`)
-    else { await mkdir(new URL('.', target), { recursive: true }); await writeFile(target, html) }
+  const files = [...pages()].map(([route, html]) => [`${route.slice(1)}index.html`, html])
+  for (const [path, text] of [...files, ...rootFiles()]) {
+    const target = new URL(`../${path}`, import.meta.url)
+    if (process.argv[2] === '--check') assert.equal(await readFile(target, 'utf8'), text, `Regenerate ${path}`)
+    else { await mkdir(new URL('.', target), { recursive: true }); await writeFile(target, text) }
   }
 }

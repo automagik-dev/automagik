@@ -9,9 +9,12 @@ Preview and production are separate configurations. No real message is sent by t
 |---|---|---|
 | D1 binding | `WAITLIST_DB` | A different database for Preview and Production, each created with EU jurisdiction and initialized with `schema.sql`. |
 | Secret | `RESEND_API_KEY` | Resend key authorized for the verified `send.automagik.si` sending subdomain. Never commit it. |
-| Secret | `OMNI_WAITLIST_SECRET` | A strong random shared Bearer secret; Omni reads the matching value from its server environment, never from an automation definition. Use a different value in Preview. Never commit it. |
-| Plain variable | `WAITLIST_WHATSAPP_NUMBER` | The chosen Omni WhatsApp number, international digits without `+`, punctuation or `@` suffix. No real number is hard-coded. |
+| Secret | `WAITLIST_CONFIRM_SECRET` | A strong random shared Bearer secret; our cx Support Bot reads the matching value from its server environment. Use a different value in Preview. Never commit it. |
+| Plain variable | `WAITLIST_WHATSAPP_NUMBER` | The support Bot’s WhatsApp number, international digits without `+`, punctuation or `@` suffix. No real number is hard-coded. |
 | Plain variable | `WAITLIST_DATA_JURISDICTION` | `eu`, set only after confirming the bound database was created with EU jurisdiction. |
+
+When renaming an existing integration, keep the secret value matched between the new Pages
+name and the support Bot. No agent reads or copies that value.
 
 The exact sending address is `Automagik <confirm@send.automagik.si>`. The owner verifies the
 subdomain's Resend DNS requirements and creates the `privacy@automagik.si` role address.
@@ -54,10 +57,10 @@ Do not use a live list for browser tests.
 
 The callback returns exactly the retained `reply` on a successful first confirmation or a
 retry of the same external message ID/code/sender. A new message for a used code, or another
-sender, is 409 without a reply. Omni sends a conversation reply only on 2xx and uses that
-field; it stops on every failure/timeout. The site makes no WhatsApp request. Omni owns its
-instance-scoped automation, excludes its own messages and reads its Bearer from its server
-environment. The site cannot prove those Omni-side settings; the Orchestrator coordinates them.
+sender, is 409 without a reply. Our cx Support Bot sends a conversation reply only on 2xx
+and uses that field; it stops on every failure/timeout. The site makes no WhatsApp request.
+The Bot sends the existing v2 event-envelope shape, keeps the Bearer in its server environment,
+and excludes its own messages. Its configuration is coordinated by the Orchestrator.
 
 ## Quotas, consent and removal
 
@@ -69,15 +72,16 @@ counter; raw IPs/user agents are never stored. The callback permits sixty authen
 calls per fixed UTC minute. The owner can add a production WAF burst filter; it is not the
 authoritative quota and does not cover a preview host automatically.
 
-Unconfirmed email entries expire after a day; WhatsApp codes after thirty minutes. They
-become ineligible immediately and are deleted on the next human request, along with expired
-counters. Confirmed entries remain until launch or removal, with an owner retention review
+Unconfirmed email entries expire after a day and are deleted on the next human request.
+WhatsApp messages must be received by the code’s thirty-minute expiry, but processing may
+arrive up to 180 days after expiry. Pending WhatsApp rows are retained until that backlog
+limit, then pruned on a human request. Expired counters are pruned as before. Confirmed entries remain until launch or removal, with an owner retention review
 every six months. No cron or automatic launch mail exists. Token/code values are hashed in
 storage. Explicit consent covers only the declared review and confirmation.
 
 Removal accepts the email, normalized WhatsApp sender ID/number, or original WhatsApp code.
 It deletes matching waitlist rows, sends nothing, and replies identically for absent contacts.
-Keeping the original code lets a WhatsApp user remove an entry even if WhatsApp gave Omni
+Keeping the original code lets a WhatsApp user remove an entry even if WhatsApp supplied
 an opaque identity. Contact removal is intentionally unauthenticated: knowing a contact/code
 lets someone delete that row, not read it. The privacy note states all retained fields and
 processors. Owner access/correction is through the privacy role address.
@@ -86,8 +90,28 @@ processors. Owner access/correction is through the privacy role address.
 
 Run the local page/waitlist/browser gates, then have the owner check the configured preview:
 register one test email, confirm it, and remove it; register WhatsApp, send the prepared code
-to the selected Omni instance, see one reply, retry the same delivery ID, try a new message
+to the selected support Bot number, see one reply, retry the same delivery ID, try a new message
 for the used code (409), then remove the entry. Confirm the list's columns, jurisdiction and
 absence of message text/body/name. Check that request-body logging is disabled in any
 account-level tooling or proxy. No source code reads or logs the request body on failure.
-Local tests mock Resend and use real local SQLite; they do not claim live D1/Resend/Omni proof.
+Local tests mock Resend and use real local SQLite; they do not claim live D1/Resend/support Bot proof.
+
+## Received-time contract
+
+WhatsApp remains an enabled choice alongside email. The form displays “WhatsApp confirmation
+may take a little while” and “A confirmação pelo WhatsApp pode demorar um pouco.” The support
+Bot calls with `Authorization: Bearer <WAITLIST_CONFIRM_SECRET>` and the v2 envelope:
+`type=message.received`, `payload.content.text`, `payload.from`, `payload.externalId` and
+original top-level `timestamp` in Unix milliseconds. No body/name/text is logged or stored.
+
+The authenticated timestamp is required, finite, and at most 120 seconds ahead of processing
+time (otherwise 400). The message must have arrived at or before `expires_at` (inclusive),
+and processing must be no later than `expires_at + 180 days` (inclusive); otherwise 404.
+The SQL single-use update enforces both bounds too. Receipt identity/code/sender must still
+match for an idempotent reply. A new message for a used code remains 409. After the backlog
+window even the old receipt is 404. Email token/cooldown timing is unchanged.
+
+The owner approved the Support on WhatsApp section on 2026-11-11. The privacy note includes
+the English text verbatim and the same meaning in Portuguese, distinguishing retained support
+conversations from waitlist records, which never store the message text. The approved source
+and translation are in `privacy-support.en.md` and `privacy-support.pt-BR.md`.

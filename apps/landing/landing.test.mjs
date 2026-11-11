@@ -5,8 +5,9 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { fileText, scan } from '../../herdr/scripts/privacy-check.mjs'
+import { supportPrivacy } from './waitlist/lib/ui.js'
 import { themeCss } from './scripts/sync-theme.mjs'
-import { pages, routes } from './scripts/build-pages.mjs'
+import { pages, routes, rootFiles } from './scripts/build-pages.mjs'
 
 const root = resolve(fileURLToPath(new URL('.', import.meta.url)))
 const read = path => readFileSync(resolve(root, path), 'utf8')
@@ -33,7 +34,7 @@ const local = path => {
 }
 
 test('approved umbrella map, one h1 per page, generated sources current, no client scripting', () => {
-  assert.deepEqual(routes, ['/', '/desktop/', '/mobile/', '/omni/', '/genie/', '/cloud/', '/arca/', '/mykes/'])
+  assert.deepEqual(routes, ['/', '/desktop/', '/mobile/', '/omni/', '/genie/', '/cloud/', '/mykes/'])
   for (const route of routes) {
     const html = htmlAt(route)
     assert.equal(html, generated.get(route), `Regenerate ${route}`)
@@ -68,7 +69,7 @@ test('distribution order, real release links, no links for Windows or iPhone soo
   assert.match(desktop, /Code mode needs Herdr and the pack; the app download alone does not set it up/)
   assert.match(desktop, /switch still says Work/)
   assert.match(htmlAt('/cloud/'), /Cloud is not live/)
-  for (const route of ['/arca/', '/mykes/']) assert.match(htmlAt(route), /Coming soon\./)
+  for (const route of ['/mykes/']) assert.match(htmlAt(route), /Coming soon\./)
 })
 
 test('every href/action points locally or to an exact reviewed destination', () => {
@@ -79,6 +80,8 @@ test('every href/action points locally or to an exact reviewed destination', () 
         const url = new URL(href, `https://automagik.si${route}`)
         if (routes.includes(url.pathname)) {
           if (url.hash) assert.ok(htmlAt(url.pathname).includes(`id="${url.hash.slice(1)}"`), href)
+        } else if (url.pathname === '/arca/') {
+          assert.equal(url.hash, ''); assert.equal(href, '/arca/')
         } else local(url.pathname)
       }
     }
@@ -142,4 +145,47 @@ test('all landing files pass privacy; no tracking or preview URL is committed', 
   walk('')
   for (const html of generated.values()) assert.doesNotMatch(html, /(?:gtag|googletagmanager|google-analytics|plausible\.io)/i)
   assert.match(read('_headers'), /X-Robots-Tag: noindex, nofollow/)
+})
+
+
+test('Arca is delegated to its Worker; home links to its same-tab canonical path', () => {
+  assert.ok(!existsSync(resolve(root, 'arca')), 'Pages must own no /arca content')
+  assert.ok(!routes.includes('/arca/'))
+  const card = htmlAt('/').match(/<article class="product-card"><h3><a href="\/arca\/">Arca[\s\S]*?<\/article>/)?.[0]
+  assert.ok(card)
+  assert.doesNotMatch(card, /target=/)
+})
+
+test('root discovery files allow every crawler including training and preserve Arca lines', () => {
+  for (const [path, text] of rootFiles()) assert.equal(read(path), text, path)
+  const robots = read('robots.txt')
+  assert.match(robots, /^User-agent: \*\nAllow: \/\nAllow: \/arca\n/m)
+  assert.doesNotMatch(robots, /Disallow|ai-train=no|ai-input=no/i)
+  const sitemap = read('sitemap.xml')
+  for (const route of routes) assert.ok(sitemap.includes(`<url><loc>https://automagik.si${route}</loc></url>`))
+  assert.ok(sitemap.includes('<url><loc>https://automagik.si/arca/</loc></url> <url><loc>https://automagik.si/arca/llms.txt</loc></url> <url><loc>https://automagik.si/arca/index.md</loc></url>'))
+  for (const line of ['- [Automagik Arca, the page](https://automagik.si/arca/)', '- [Automagik Arca, for an assistant](https://automagik.si/arca/llms.txt)']) assert.ok(read('llms.txt').split('\n').includes(line))
+  assert.match(read('_headers'), /X-Robots-Tag: noindex, nofollow/)
+})
+
+test('WhatsApp remains visible with the English and Portuguese delay notice', () => {
+  const html = htmlAt('/cloud/')
+  assert.match(html, /<option value="whatsapp">WhatsApp/)
+  assert.match(html, /WhatsApp confirmation may take a little while/)
+  assert.match(html, /lang="pt-BR">A confirmação pelo WhatsApp pode demorar um pouco/)
+})
+
+
+test('approved WhatsApp support privacy is verbatim in English with its Portuguese counterpart', () => {
+  const markup = supportPrivacy()
+  const english = markup.match(/<section lang="en"[\s\S]*?<\/section>/)[0]
+  const plain = text => text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+  const approved = read('waitlist/privacy-support.en.md').replace(/^## /, '')
+  assert.equal(plain(english), plain(approved))
+  const portuguese = markup.match(/<section lang="pt-BR"[\s\S]*?<\/section>/)[0]
+  assert.equal(plain(portuguese), plain(read('waitlist/privacy-support.pt-BR.md').replace(/^## /, '')))
+  for (const phrase of ['nunca inicia a conversa', 'seu próprio sandbox', 'nada é excluído automaticamente', 'modelo de IA', 'Não vendemos seus dados', 'baixar sua conversa ou reiniciá-la', 'nunca armazena o texto da sua mensagem']) assert.ok(plain(portuguese).includes(phrase), phrase)
+  const html = htmlAt('/cloud/')
+  assert.ok(html.includes(markup))
+  assert.match(html, /180 days after code expiry/)
 })

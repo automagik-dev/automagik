@@ -6,11 +6,28 @@ export function waitlistForm() {
     <div class="field-row"><label>Where would you use it?<select name="platform" required><option value="android">Android</option><option value="linux">Linux</option><option value="both">Android and Linux</option></select></label><label>Apps or tools <span class="muted">(optional)</span><input name="apps" maxlength="200" placeholder="The tools involved in your work"></label></div>
     <label>What would a good result look like?<textarea name="expected_result" required maxlength="500" rows="2" placeholder="Describe the outcome you would like."></textarea></label>
     <div class="field-row"><label>Confirm through<select name="channel" required><option value="email">Email</option><option value="whatsapp">WhatsApp — you send the first message</option></select></label><label>Confirmation language<select name="language"><option value="en">English</option><option value="pt-BR">Português</option></select></label></div>
+    <p class="fine" id="whatsapp-delay">WhatsApp confirmation may take a little while. <span lang="pt-BR">A confirmação pelo WhatsApp pode demorar um pouco.</span></p>
     <label>Your email <span class="muted">(required for email confirmation)</span><input type="email" name="email" autocomplete="email" maxlength="254" placeholder="you@example.com"></label>
     <label class="consent"><input type="checkbox" name="consent" value="yes" required><span>I agree to the use of my contact details and answers to record and review my interest in Automagik Cloud, and to one confirmation through my chosen channel. This does not create an account or sign me up for marketing. <a href="#privacy">Privacy and removal</a>.</span></label>
     <button class="button primary" type="submit">Register my interest <span aria-hidden="true">→</span></button>
-    <p class="fine">Email sends a confirmation link. WhatsApp shows a code for you to send to our Omni. We never message you first on WhatsApp, and send nothing else.</p>
+    <p class="fine">Email sends a confirmation link. WhatsApp shows a code for you to send to our support Bot. We never message you first on WhatsApp, and send nothing else.</p>
   </form>`
+}
+export function supportPrivacy() {
+  return `<section lang="en" aria-labelledby="support-whatsapp-en"><h3 id="support-whatsapp-en">Support on WhatsApp</h3><p>When you write to Automagik on WhatsApp, Automagik's support assistant answers, with people from our
+team watching and joining in. It only answers you; it never writes first.</p><p>Your conversation is isolated in its own sandbox: the assistant uses only your conversation to answer
+you. We keep it so the assistant remembers you; nothing is deleted automatically. Your messages reach
+us through Omni, our messaging service, and are processed by the AI model behind the assistant. We do
+not sell your data, use it for advertising or send you marketing messages.</p><p>You can download your conversation or reset it at any time: just ask the assistant, or write to
+privacy@automagik.si. A waitlist code you send is recorded as confirmed; the waitlist never stores the
+text of your message.</p></section><section lang="pt-BR" aria-labelledby="support-whatsapp-pt"><h3 id="support-whatsapp-pt">Suporte pelo WhatsApp</h3><p>Quando você escreve para a Automagik pelo WhatsApp, o assistente de suporte da Automagik responde,
+com pessoas da nossa equipe acompanhando e participando. Ele só responde a você; nunca inicia a conversa.</p><p>Sua conversa fica isolada em seu próprio sandbox: o assistente usa apenas a sua conversa para responder
+a você. Nós a mantemos para que o assistente se lembre de você; nada é excluído automaticamente.
+Suas mensagens chegam até nós pelo Omni, nosso serviço de mensagens, e são processadas pelo modelo
+de IA por trás do assistente. Não vendemos seus dados, não os usamos para publicidade e não enviamos
+mensagens de marketing.</p><p>Você pode baixar sua conversa ou reiniciá-la a qualquer momento: basta pedir ao assistente ou escrever
+para privacy@automagik.si. Um código da lista de espera que você enviar é registrado como confirmado;
+a lista de espera nunca armazena o texto da sua mensagem.</p></section>`
 }
 export function privacyNote() {
   return `<details id="privacy" class="privacy"><summary>Privacy, consent and removing your details</summary><div>
@@ -18,9 +35,10 @@ export function privacyNote() {
     <p>We keep your answers, chosen platform, language, contact channel, consent version and registration time. Email confirmation stores your email and confirmation time. WhatsApp confirmation stores the sender ID or number WhatsApp gives us, the message identifier, confirmation reply, event time and confirmation time, never your message text or sender name. WhatsApp may give us an opaque sender ID instead of a phone number. Confirmation tokens and codes are stored as hashes.</p>
     <p>Your consent lets us record and review your interest in Cloud. This is not a Cloud account, a purchase, or consent to training. Only the owner can read or export the list. We do not sell it or share it for advertising.</p>
     <p>Cloudflare processes the page and stores the list in a D1 database restricted to the European Union. This involves international transfers. Email confirmation uses Resend and its delivery providers; choosing WhatsApp involves WhatsApp/Meta and our Omni. Use email if you prefer not to share your WhatsApp number.</p>
-    <p>Unconfirmed email entries expire after a day; WhatsApp codes expire after half an hour. Expired entries are excluded immediately and deleted on the next request. Confirmed entries stay until Cloud launches or you remove them; the owner reviews retention every six months. Short-lived keyed abuse counters and email cooldown hashes expire after a day. Raw IPs and user agents are not stored by the function.</p>
+    <p>Unconfirmed email entries expire after a day. Send a WhatsApp code within half an hour; confirmation may be processed up to 180 days after code expiry, using the time your message was received. Pending WhatsApp entries are kept for that backlog window. Entries outside their applicable window are deleted on the next request. Confirmed entries stay until Cloud launches or you remove them; the owner reviews retention every six months. Short-lived keyed abuse counters and email cooldown hashes expire after a day. Raw IPs and user agents are not stored by the function.</p>
     <p>You can request confirmation, access, correction or deletion, withdraw consent, and complain to the ANPD or your EU supervisory authority. Removing your details withdraws consent. There are no cookies or analytics in this page.</p>
     <form class="removal-form" method="post" action="/api/waitlist"><input type="hidden" name="action" value="remove"><label>Contact to remove<select name="channel"><option value="email">Email</option><option value="whatsapp">WhatsApp sender ID or number</option><option value="code">WhatsApp confirmation code</option></select></label><label>Email, WhatsApp sender ID/number or original code<input name="contact" autocomplete="off" maxlength="254" required placeholder="Email, +international number or AMG-code"></label><button class="button secondary" type="submit">Remove my details</button><p class="fine">The response is the same whether or not the contact was registered.</p></form>
+    ${supportPrivacy()}
   </div></details>`
 }
 export function htmlPage(title, content, status = 200) {

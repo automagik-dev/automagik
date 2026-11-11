@@ -28,7 +28,7 @@ export async function onRequest({ request, env }) {
   try { fields = new URLSearchParams(await boundedBody(request)) } catch { return bad() }
   const action = fields.get('action')
   if (!['add', 'remove', 'confirm'].includes(action)) return bad()
-  if (!env.WAITLIST_DB || !env.OMNI_WAITLIST_SECRET || env.WAITLIST_DATA_JURISDICTION !== 'eu') return unavailable()
+  if (!env.WAITLIST_DB || !env.WAITLIST_CONFIRM_SECRET || env.WAITLIST_DATA_JURISDICTION !== 'eu') return unavailable()
   const db = env.WAITLIST_DB
   try {
     await cleanup(db, time)
@@ -65,8 +65,8 @@ export async function onRequest({ request, env }) {
     const secretValue = channel === 'email' ? token() : randomCode()
     const digest = await hash(secretValue)
     const day = new Date(time * 1000).toISOString().slice(0, 10)
-    const group = await hmac(env.OMNI_WAITLIST_SECRET, `${day}.${prefix}`)
-    const addressKey = email ? await hmac(env.OMNI_WAITLIST_SECRET, email) : null
+    const group = await hmac(env.WAITLIST_CONFIRM_SECRET, `${day}.${prefix}`)
+    const addressKey = email ? await hmac(env.WAITLIST_CONFIRM_SECRET, email) : null
     try {
       await db.prepare('INSERT INTO waitlist(id,channel,email,goal,platform,apps,expected_result,language,consent_version,created_at,expires_at,confirmation_hash,address_key,group_key,mail_day) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)').bind(id, channel, email, goal, platform, apps, expected, language, CONSENT_VERSION, time, time + (channel === 'email' ? 86400 : 1800), digest, addressKey, group, day).run()
     } catch (error) {
@@ -79,7 +79,7 @@ export async function onRequest({ request, env }) {
     if (channel === 'whatsapp') {
       const link = `https://wa.me/${number}?text=${encodeURIComponent(`Confirm my Automagik waitlist: ${secretValue}`)}`
       const qr = qrcode(0, 'M'); qr.addData(link); qr.make()
-      return htmlPage('Send your confirmation to Omni', `<p>You start the conversation. Open WhatsApp or scan this code, then send the prepared message to <strong>+${escape(number)}</strong>.</p><a class="button primary" href="${escape(link)}">Open WhatsApp</a><div class="qr" role="img" aria-label="QR code for the WhatsApp confirmation link">${qr.createSvgTag({ cellSize: 4, margin: 16, scalable: true })}</div><p>Your code: <strong>${secretValue}</strong>. It expires in half an hour. Omni replies once when your interest is confirmed; we send nothing else.</p><p>Changed your mind? Do not send the code. The pending entry expires automatically.</p>`)
+      return htmlPage('Send your confirmation to our support Bot', `<p>You start the conversation. Open WhatsApp or scan this code, then send the prepared message to <strong>+${escape(number)}</strong>.</p><a class="button primary" href="${escape(link)}">Open WhatsApp</a><div class="qr" role="img" aria-label="QR code for the WhatsApp confirmation link">${qr.createSvgTag({ cellSize: 4, margin: 16, scalable: true })}</div><p>Your code: <strong>${secretValue}</strong>. Send it within half an hour. WhatsApp confirmation may take a little while. <span lang="pt-BR">A confirmação pelo WhatsApp pode demorar um pouco.</span> Our support Bot replies once when your interest is confirmed; we send nothing else.</p><p>Changed your mind? Do not send the code. The pending entry expires automatically.</p>`)
     }
     const origin = url.origin
     if (!(origin === 'https://automagik.si' || /^https:\/\/[a-z0-9.-]+\.pages\.dev$/.test(origin) || /^http:\/\/127\.0\.0\.1:\d+$/.test(origin))) return unavailable()

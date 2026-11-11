@@ -1,7 +1,7 @@
 # automagik.si preview
 
 RFC 0027, revised by the owner on 2026-11-11: the umbrella home plus Desktop, Mobile,
-Omni, Genie, Cloud, Arca and Mykes pages. The app's current default Stage theme supplies
+Omni, Genie, Cloud and Mykes pages, plus the Arca card linking to its separate Worker. The app's current default Stage theme supplies
 the colours, type and component treatment. Every product screen is a provenance-backed
 capture; brand/font licences are in `assets/brand/LICENSES.md`.
 
@@ -9,6 +9,7 @@ The committed HTML needs no Pages build step and contains no client JavaScript. 
 has one labelled D2 film slot. Cloud is coming soon and carries intent, consent and removal
 forms, with email or inbound-first WhatsApp confirmation. No launch or marketing email.
 The meter is not a product or page. Herdr and DSH are Desktop installation channels.
+Pages serves no `/arca` content; Arca owns `/arca` and `/arca/*` in its own Worker.
 
 ## Source and checks
 
@@ -53,7 +54,8 @@ account ID, zone ID, database ID or key belongs in the repository. D4 removes in
 restrictions and attaches the production domain after the owner's OK. No agent changes DNS.
 
 See [waitlist setup](waitlist/README.md) for the exact binding, secrets, plain variables,
-schema, EU jurisdiction, Resend sender and final Omni event-envelope contract. Missing
+schema, EU jurisdiction, Resend sender and the v2 event-envelope contract called by our
+cx Support Bot using `WAITLIST_CONFIRM_SECRET`. Missing
 configuration fails closed with 503. Preview and production databases/credentials are separate.
 
 ## Developer entry points
@@ -69,3 +71,32 @@ The Genie CLI supports Linux x64/arm64 and Apple silicon Macs. `genie desktop` n
 x64 or an Apple silicon Mac; there is no Linux arm64 desktop build. It downloads the matching
 Automagik release and checks SHA256SUMS. On Mac, drag the app into Applications. Bring an AI
 account or API key; provider terms apply. Code mode needs Herdr and the Automagik pack separately.
+
+## Discovery and Arca routing
+
+`robots.txt`, `sitemap.xml` and `llms.txt` live at this Pages root and are generated with the
+HTML. The owner allows all crawlers, including AI training crawlers: `User-agent: *`,
+`Allow: /`, and explicit `Allow: /arca`. This crawling rule does not remove preview noindex
+headers/meta; production becomes indexable only after the owner's preview OK.
+
+The root sitemap and assistant index include Arca's supplied lines verbatim. The home card
+links to `/arca/` in the same tab. The owner configures Worker routes **exactly**
+`automagik.si/arca` and `automagik.si/arca/*`. A zone Single Redirect matches hostname equal
+to `automagik.si` AND URI path equal to `/arca`, returning 301 to
+`https://automagik.si/arca/` with the query preserved. Do not match the path alone:
+`arca.automagik.si` is the Arca dashboard. `/arcade` and other paths stay with Pages.
+No Worker route, redirect or account setting is changed by this source update.
+
+## WhatsApp timing
+
+WhatsApp remains visible beside email. The form warns in English and Portuguese that
+confirmation may take a little while. Our support Bot sends the v2 envelope with the original
+message receive time in top-level `timestamp` (Unix milliseconds). The callback accepts a
+message received at or before the code's 30-minute expiry, even if processed days later.
+More than two minutes ahead of processing time is 400; missing/invalid receive time is 400.
+Processing more than 180 days after expiry is 404, including retries after that backlog limit.
+Pending WhatsApp rows survive cleanup until that limit; email expiry is unchanged. Single
+use, message-ID idempotency and every no-text/no-logging rule remain in force.
+
+The owner-approved Support on WhatsApp section is included verbatim in English, with the
+same meaning in Portuguese. Its approved source and translation are in `waitlist/privacy-support.*.md`.

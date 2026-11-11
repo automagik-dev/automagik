@@ -145,3 +145,5 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:var(--st-ring);bo
 @media (max-width:700px){nav{gap:16px;flex-wrap:wrap;justify-content:flex-end;max-width:240px}nav a:first-child{display:none}.hero-heading{grid-template-columns:1fr;padding:26px}.hero-aside{display:none}.hero-heading>.accent-art{width:96px;justify-self:start}.product-grid,.install-platforms,.field-row{grid-template-columns:1fr}.product-card{padding:22px}.install-platforms{gap:28px}.waitlist-form{padding:20px}.page-heading .intro{font-size:18px}.form-section{gap:22px}.top-inner{min-height:78px}.response h1{font-size:28px}}
 @media (max-width:360px){nav{gap:10px;font-size:11px}.brand img{width:105px}.hero h1{font-size:36px}.waitlist-form{padding:16px}.button{padding-inline:18px}}
 @media (max-width:360px){.hero h1{font-size:28px}.page-heading{min-width:0}}
+.privacy section{padding-block:24px 0}
+.privacy section h3{font-size:16px;line-height:22px}

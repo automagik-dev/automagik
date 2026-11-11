@@ -1,0 +1,19 @@
+# Automagik
+
+> Open building blocks of superintelligence.
+
+## Building blocks
+
+- [Automagik Desktop](https://automagik.si/desktop/): Mac and Linux downloads; install on Herdr or DSH.
+- [Automagik Mobile](https://automagik.si/mobile/): the Android companion for your own machines.
+- [Omni](https://automagik.si/omni/): connect chat apps to your agent team.
+- [Genie](https://automagik.si/genie/): a wish, a branch, a test run and a report.
+- [Cloud](https://automagik.si/cloud/): coming soon; register your interest.
+- [Automagik Arca, the page](https://automagik.si/arca/)
+- [Automagik Arca, for an assistant](https://automagik.si/arca/llms.txt)
+- [Mykes](https://automagik.si/mykes/): coming soon.
+
+## Crawling
+
+All crawlers are allowed, including AI training crawlers. Preview responses remain noindex;
+production becomes indexable only after the owner's approval.

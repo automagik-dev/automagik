@@ -1,3 +1,4 @@
+export const WHATSAPP_BACKLOG_SECONDS = 180 * 86400
 export const CONSENT_VERSION = '2026-11-11'
 export const encoder = new TextEncoder()
 export const now = () => Math.floor(Date.now() / 1000)
@@ -35,7 +36,7 @@ export async function boundedBody(request, max = 8192) {
 }
 export async function cleanup(db, time) {
   await db.batch([
-    db.prepare('DELETE FROM waitlist WHERE confirmed_at IS NULL AND expires_at<=?').bind(time),
+    db.prepare("DELETE FROM waitlist WHERE confirmed_at IS NULL AND ((channel='email' AND expires_at<=?) OR (channel='whatsapp' AND expires_at<?))").bind(time, time - WHATSAPP_BACKLOG_SECONDS),
     db.prepare('DELETE FROM waitlist_quota WHERE expires_at<=?').bind(time),
     db.prepare('DELETE FROM waitlist_cooldown WHERE sent_at<=?').bind(time - 86400),
   ])

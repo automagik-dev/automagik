@@ -6,14 +6,14 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
-import { routes } from './scripts/build-pages.mjs'
+import { routes, rootFiles } from './scripts/build-pages.mjs'
 import { fixture } from './waitlist/d1-fixture.mjs'
 import { onRequest as waitlist } from './functions/api/waitlist.js'
 import { onRequest as emailLink } from './functions/api/waitlist/email-confirm.js'
 
 const root = dirname(fileURLToPath(import.meta.url))
 const evidence = resolve(process.env.LANDING_EVIDENCE ?? join(root, '../../.cache/landing-evidence'))
-const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.png': 'image/png', '.webp': 'image/webp', '.woff2': 'font/woff2', '.mp4': 'video/mp4' }
+const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.png': 'image/png', '.webp': 'image/webp', '.woff2': 'font/woff2', '.mp4': 'video/mp4', '.txt': 'text/plain; charset=utf-8', '.xml': 'application/xml' }
 const isolated = fixture()
 let bindingMode = 'missing', origin
 const server = createServer(async (req, res) => {
@@ -44,6 +44,13 @@ try {
   await new Promise((done, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', done) })
   origin = `http://127.0.0.1:${server.address().port}`
   await mkdir(evidence, { recursive: true })
+  for (const [path, text] of rootFiles()) {
+    const response = await fetch(`${origin}/${path}`)
+    assert.equal(response.status, 200, path)
+    assert.equal(await response.text(), text, path)
+    assert.match(response.headers.get('x-robots-tag'), /noindex/)
+  }
+  console.log('PASS root discovery files: 200, generated content, preview noindex')
   browser = await chromium.launch({ executablePath: process.env.LANDING_CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true })
   for (const route of routes) for (const colorScheme of ['light', 'dark']) for (const width of [1440, 1024, 390, 320]) {
     const context = await browser.newContext({ viewport: { width, height: 900 }, deviceScaleFactor: 1, colorScheme, reducedMotion: 'reduce' })
@@ -82,6 +89,13 @@ try {
         await page.waitForFunction(() => document.querySelector('video').currentTime > 0)
         await video.evaluate(element => element.pause())
         assert.ok(responses.some(response => response.url.endsWith('.mp4') && response.contentType === 'video/mp4' && [200, 206].includes(response.status)))
+      }
+      if (route === '/cloud/') {
+        await page.locator('#privacy').evaluate(details => { details.open = true })
+        await page.getByRole('heading', { name: 'Support on WhatsApp', exact: true }).waitFor()
+        await page.getByRole('heading', { name: 'Suporte pelo WhatsApp', exact: true }).waitFor()
+        assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), width, `Expanded privacy overflow: ${label}`)
+        await page.locator('#privacy').evaluate(details => { details.open = false })
       }
       const slug = route === '/' ? 'home' : route.split('/')[1]
       const screenshot = join(evidence, `${slug}-${colorScheme}-${width}.png`)
@@ -123,7 +137,7 @@ try {
     const success = page.waitForResponse(response => response.url() === origin + '/api/waitlist' && response.request().method() === 'POST')
     await page.getByRole('button', { name: /Register my interest/ }).click()
     assert.equal((await success).status(), 200)
-    await page.getByRole('heading', { name: 'Send your confirmation to Omni' }).waitFor()
+    await page.getByRole('heading', { name: 'Send your confirmation to our support Bot' }).waitFor()
     assert.ok(await page.locator('a[href^="https://wa.me/15555550100"]').count())
     assert.ok(await page.locator('.qr svg').count())
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), 390)

@@ -23,6 +23,6 @@ export function fixture() {
       } catch (error) { sqlite.exec('ROLLBACK'); throw error }
     },
   }
-  const env = { WAITLIST_DB: db, OMNI_WAITLIST_SECRET: 'isolated-test-secret-not-a-credential', RESEND_API_KEY: 'isolated-test-key', WAITLIST_WHATSAPP_NUMBER: '15555550100', WAITLIST_DATA_JURISDICTION: 'eu' }
+  const env = { WAITLIST_DB: db, WAITLIST_CONFIRM_SECRET: 'isolated-test-secret-not-a-credential', RESEND_API_KEY: 'isolated-test-key', WAITLIST_WHATSAPP_NUMBER: '15555550100', WAITLIST_DATA_JURISDICTION: 'eu' }
   return { db, env, sqlite, close: () => sqlite.close() }
 }
