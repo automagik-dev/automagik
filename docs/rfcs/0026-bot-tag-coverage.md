@@ -490,6 +490,93 @@ number. Both are read-only; neither changes the store.
   points, a pack update landing mid-window, or the definition changing. Any of them restarts the
   comparison; none of them is averaged away.
 
+#### Measured P0–P3 on the operator's store (2026-11-10 to 2026-11-11)
+
+The operator supplied these aggregate measurements; raw records stay with the operator.
+All window bounds below are UTC in 2026, with `[start, end)` hour bounds.
+
+**Run metadata per point:**
+
+| Point | `as_of` (watermark) | `meter_version` | `schema_version` | `counted_from` | `records_from` | `evidence_from` | `complete` / `stale` |
+|---|---|---|---:|---|---|---|---|
+| **P0** (baseline, PR #949) | `2026-11-10T15:34:57Z` | `3.123.0` | `3` | `2026-10-03T00:00:00Z` | `2026-11-07T17:03:05Z` | `2026-11-10T15:00:00Z` | `true` / `false` |
+| **P1** (worker + seat labels, PR #949) | `2026-11-10T15:34:57Z` | `3.123.0` | `3` | `2026-10-03T00:00:00Z` | `2026-11-07T17:03:05Z` | `2026-11-10T15:00:00Z` | `true` / `false` |
+| **P2** (`dsh-tui` seat + 4d backfill, PR #1018) | `2026-11-10T19:50:34Z` | `3.125.2` | `3` | `2026-10-03T00:00:00Z` | `2026-11-07T17:03:05Z` | `2026-11-07T00:00:00Z` | `true` / `false` |
+| **P3** (sync + 90d backfill, #897) | `2026-11-11T02:56:32Z` | `3.125.19` | `3` | `2026-10-03T00:00:00Z` | `2026-11-07T17:03:05Z` | `2026-10-03T00:00:00Z` | `true` / `false` |
+
+**Aggregate window measurements (`d1`, `d7`, `d30`):**
+
+| Point | Window (`[start, end)`) | `evidence` | `bot_coverage` | `inspected` | `attributed` (`session` / `label` / `worktree`) | `claimants_differ` | `no_record` | `dsh_tui_seat` | `other_machine` | `before_evidence` (`tagged`) | `total` (counted) | `no_repo` |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| **P0** | `d1` (`11-09T16..11-10T16Z`) | `partial` | `0.0417` (4.17%) | `0.8970` | `247,478,849` (`178,950,327` / `29,648,284` / `38,880,238`) | `0` (0.00%) | `2,700,438` (0.05%) | `25,730,303` (0.43%) | `0` | `5,652,391,203` (95.35%; `3,522,068,857`) | `5,928,300,793` | `44,086,936` |
+| **P0** | `d7` (`11-03T16..11-10T16Z`) | `partial` | `0.0164` (1.64%) | `0.8970` | `247,478,849` (`178,950,327` / `29,648,284` / `38,880,238`) | `0` (0.00%) | `2,700,438` (0.02%) | `25,730,303` (0.17%) | `0` | `14,813,634,856` (98.17%; `6,036,756,574`) | `15,089,544,446` | `370,584,997` |
+| **P0** | `d30` (`10-11T16..11-10T16Z`) | `partial` | `0.0103` (1.03%) | `0.8970` | `247,478,849` (`178,950,327` / `29,648,284` / `38,880,238`) | `0` (0.00%) | `2,700,438` (0.01%) | `25,730,303` (0.11%) | `0` | `23,728,980,670` (98.85%; `6,036,756,574`) | `24,004,890,260` | `536,152,231` |
+| **P1** | `d1` (`11-09T16..11-10T16Z`) | `partial` | `0.0417` (4.17%) | `0.8970` | `247,478,849` (`178,950,327` / `29,648,284` / `38,880,238`) | `0` (0.00%) | `2,700,438` (0.05%) | `25,730,303` (0.43%) | `0` | `5,652,391,203` (95.35%; `3,522,068,857`) | `5,928,300,793` | `44,086,936` |
+| **P1** | `d7` (`11-03T16..11-10T16Z`) | `partial` | `0.0164` (1.64%) | `0.8970` | `247,478,849` (`178,950,327` / `29,648,284` / `38,880,238`) | `0` (0.00%) | `2,700,438` (0.02%) | `25,730,303` (0.17%) | `0` | `14,813,634,856` (98.17%; `6,036,756,574`) | `15,089,544,446` | `370,584,997` |
+| **P1** | `d30` (`10-11T16..11-10T16Z`) | `partial` | `0.0103` (1.03%) | `0.8970` | `247,478,849` (`178,950,327` / `29,648,284` / `38,880,238`) | `0` (0.00%) | `2,700,438` (0.01%) | `25,730,303` (0.11%) | `0` | `23,728,980,670` (98.85%; `6,036,756,574`) | `24,004,890,260` | `536,152,231` |
+| **P2** | `d1` (`11-09T20..11-10T20Z`) | `full` | `0.4185` (41.85%) | `0.6537` | `2,144,146,061` (`1,379,600,312` / `221,639,647` / `542,906,102`) | `13,205,786` (0.26%) | `86,110,542` (1.68%) | `1,036,368,316` (20.23%) | `0` | `1,843,521,936` (35.98%; `1,254,322,380`) | `5,123,352,641` | `50,860,378` |
+| **P2** | `d7` (`11-03T20..11-10T20Z`) | `partial` | `0.2265` (22.65%) | `0.4447` | `3,619,494,595` (`1,614,991,301` / `221,639,647` / `1,782,863,647`) | `152,667,093` (0.96%) | `1,071,942,988` (6.71%) | `3,295,550,277` (20.63%) | `0` | `7,838,257,420` (49.06%; `2,627,864,697`) | `15,977,912,373` | `378,262,771` |
+| **P2** | `d30` (`10-11T20..11-10T20Z`) | `partial` | `0.1454` (14.54%) | `0.4447` | `3,619,494,595` (`1,614,991,301` / `221,639,647` / `1,782,863,647`) | `152,667,093` (0.61%) | `1,071,942,988` (4.31%) | `3,295,550,277` (13.24%) | `0` | `16,753,603,234` (67.30%; `2,627,864,697`) | `24,893,258,187` | `543,830,005` |
+| **P3** | `d1` (`11-10T03..11-11T03Z`) | `full` | `0.5699` (56.99%) | `0.7315` | `3,170,546,681` (`1,554,893,551` / `606,607,320` / `1,009,045,810`) | `13,205,786` (0.24%) | `69,372,343` (1.25%) | `1,080,909,339` (19.43%) | `0` | `1,229,254,720` (22.10%; `895,823,164`) | `5,563,288,869` | `51,669,751` |
+| **P3** | `d7` (`11-04T03..11-11T03Z`) | `full` | `0.2845` (28.45%) | `0.5113` | `5,026,541,406` (`2,143,050,830` / `606,607,320` / `2,276,883,256`) | `152,667,093` (0.86%) | `1,086,896,714` (6.15%) | `3,563,928,039` (20.17%) | `0` | `7,838,124,968` (44.36%; `2,627,864,697`) | `17,668,158,220` | `379,072,144` |
+| **P3** | `d30` (`10-12T03..11-11T03Z`) | `full` | `0.1891` (18.91%) | `0.5113` | `5,026,541,406` (`2,143,050,830` / `606,607,320` / `2,276,883,256`) | `152,667,093` (0.57%) | `1,086,896,714` (4.09%) | `3,563,928,039` (13.41%) | `0` | `16,753,470,782` (63.02%; `2,627,864,697`) | `26,583,504,034` | `544,639,378` |
+
+**Transitions and C4's closing floor:**
+
+- **C4 floor check:** `d7` `bot_coverage` rose **17.35x** from P0 (`0.0164`) to P3 (`0.2845`),
+  exceeding the 2x floor; `d30` `bot_coverage` rose **18.36x** from P0 (`0.0103`) to P3 (`0.1891`),
+  never falling; `d1` `bot_coverage` rose **13.67x** from P0 (`0.0417`) to P3 (`0.5699`).
+- **P0 -> P1 (delivery 3, worker & seat label claims):** On the static P0 snapshot (`54` minutes of
+  post-migration evidence), 1 unlogged seat in `no_repo` with `bot` + `agent.session` labels moved
+  `904,332` tokens from `no_record` (`4,990,325 -> 4,085,993`) to `attributed` at `label` basis
+  (`29,726,298 -> 30,630,630` across store rollups), while the counted repo windows had no unlogged
+  labelled workers in that 54-minute slice. Across subsequent live syncs (P1 -> P2 -> P3),
+  `label`-basis counted attribution rose from `29,648,284` to `221,639,647` (P2) and `606,607,320`
+  (P3).
+- **P1 -> P2 (delivery 4b, `dsh-tui` seat linking + 4-day backfill to `2026-11-07T00:00:00Z`):**
+  `evidence_from` moved from `2026-11-10T15:00:00Z` to `2026-11-07T00:00:00Z`; `before_evidence`
+  fell from `95.35% -> 35.98%` (`d1`), `98.17% -> 49.06%` (`d7`), and `98.85% -> 67.30%` (`d30`).
+  Counted `attributed` tokens rose from `247,478,849` to `2,144,146,061` (`d1`) and `3,619,494,595`
+  (`d7`/`d30`), with `session`-basis attribution rising from `178,950,327` to `1,614,991,301`
+  (`d7`/`d30`). Because the 4-day backfill also adopted 3.5 days of pre-4a `dsh-tui` project-root
+  seat logs (written without a terminal header or session record), `dsh_tui_seat` rose to
+  `3,295,550,277` (`d7`/`d30`), making `inspected` `0.6537` (`d1`) and `0.4447` (`d7`/`d30`) over
+  the 4-day evidence horizon instead of P0's 54-minute post-migration slice.
+- **P2 -> P3 (delivery 6, sync + 90-day backfill to `2026-10-03T00:00:00Z`):** Live worker and seat
+  attribution raised `bot_coverage` to `0.5699` (`d1`), `0.2845` (`d7`), and `0.1891` (`d30`), and
+  `inspected` to `0.7315` (`d1`) and `0.5113` (`d7`/`d30`). Running `usagemeter sync
+  --evidence-backfill --days 90` completed in 7 chunked passes, moving `evidence_from` from
+  `2026-11-07T00:00:00Z` back to `counted_from` (`2026-10-03T00:00:00Z`, so `evidence` is `full`
+  across `d1`, `d7`, and `d30`), adopting `900` additional pre-`2026-11-07` log calls (`evidence`
+  rows `68,332 -> 69,232`, moving `132,452` counted `dsh-tui` tokens out of `before_evidence` in
+  `d7`/`d30`), and keeping every window's `total` unchanged across the backfill (`5,563,288,869` in
+  `d1`, `17,668,158,220` in `d7`, `26,583,504,034` in `d30`).
+- **What remains in `before_evidence` at P3 (`16,753,470,782` tokens in `d30`):**
+  1. `10,519,127,491` tokens (`437` `claude-code` rows = `10,228,363,271` + `27` `codex` rows =
+     `290,764,220`, in `2026-10-19..2026-11-09T10:00:00Z`) were written in schema 2 under the
+     machine's fallback id (`meta.machine_fallback`) before `hc` first supplied its core id
+     (`meta.machine`); `evidence::adopt` matches `machine = meta.machine` and leaves
+     `machine_fallback` rollups frozen.
+  2. `5,931,774,745` tokens (`138` `claude-code` rows = `1,753,956,424` + `176` `dsh-tui` rows =
+     `4,177,818,321`, in `2026-11-09T10:00:00Z..2026-11-10T14:00:00Z`) are frozen schema 2 rollups
+     (`actor_state IS NULL`) whose logs were already rotated or whose rollup dimensions no longer
+     had un-adopted log lines on disk.
+  3. `302,568,546` tokens (`32` `codex` rows) are pre-evidence Codex thread rollups (Codex rollout
+     deltas carry no request identity for `adopt`, so `mark_unbacked` stamps them
+     `before_evidence`).
+
+`evidence: full` describes the window's position relative to `evidence_from`; it does not
+mean that every counted rollup has evidence. Frozen rollups can remain in `before_evidence`
+even after the backfill reaches `counted_from`. P0 and P1 use the same watermark; later
+points include live syncs and moving windows, so their changes combine new usage, new
+claims and backfill. The unchanged totals above compare the immediate pre/post backfill
+at P3, rather than totals across P0–P3.
+
+The C4 closing floor is met for `d7` and `d30`. The earlier expectation that `inspected`
+would rise at P1 and P2 did not hold: P1 is unchanged in the counted windows, and P2
+inspects a much longer evidence horizon containing previously unrecorded seats. The
+transition explanations above account for both results; neither is hidden by the headline.
+
 ## Contracts introduced
 
 - `usagemeter coverage`: a new local verb, read-only, fork-and-exit, not contract 1. Nothing genie
@@ -553,9 +640,11 @@ is named.
    failing machine, T9's linked seat, and the record validates against its schema and example.
    *Rollback:* revert the pack; each machine's own report stays, the linked seat returns to
    unknown, and the record disappears.
-6. **The backfill and the measurement** (operator; no code). A sync, the backfill to the horizon,
-   then P0 to P3 on the real store and the aggregate table in the closing PR. *Check:* T6, T7 and
-   (i). *Rollback:* none needed; the backfill keeps a generation and never changes a total.
+6. **The backfill and the measurement** (operator measurement plus crate tests). A sync and
+   the backfill to the horizon; (i) records the measured P0–P3 aggregate tables closing #897,
+   also carried in the closing PR. *Check:* T6 (backfill) and T7 (retention pruning) in
+   `meter/usagemeter/tests/coverage.rs`, and the C4 floor measured in (i). *Rollback:* none
+   needed; the backfill keeps a generation and never changes a total.
 
 #897 closes with delivery 6's table once 2, 3, 4b and 6 are in; 4a is asked in parallel, and its
 absence only leaves the `dsh_tui_seat` share in that table. Delivery 5 is filed under this RFC's
