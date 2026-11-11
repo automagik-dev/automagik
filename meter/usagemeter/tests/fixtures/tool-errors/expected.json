@@ -3,18 +3,12 @@
     "rule": "a tool_result block with is_error true (the JSON boolean), counted once per tool_use_id",
     "tool_errors": ["toolu_fixture_02", "toolu_fixture_04"],
     "api_error_rule": "a type: assistant line with top-level isApiErrorMessage true (the JSON boolean), counted once per line uuid",
-    "api_errors": ["uuid-api-err-01"],
-    "api_error": {
-      "rule": "a type: assistant line with top-level isApiErrorMessage true (the JSON boolean), counted once per line uuid",
-      "count": 1,
-      "uuids": ["uuid-api-err-01"]
-    }
+    "api_errors": ["uuid-api-err-01"]
   },
   "codex.jsonl": {
     "rule": "an item_completed item with status failed, or an exit_code that is a non-zero integer, counted once per item id",
     "tool_errors": ["item-a", "item-b"],
     "api_error_rule": null,
-    "api_errors": null,
-    "api_error": null
+    "api_errors": null
   }
 }
