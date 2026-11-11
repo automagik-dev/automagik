@@ -1,8 +1,10 @@
 import { createElement as h, Fragment, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { AUTO } from '../shared/permission-levels.js'
 import { Segmented } from './motion.js'
 import { CheckIcon } from './icons.js'
 import { CLI_NAMES, cliProviderOf } from './cli-login-model.js'
+import { Caret, useAnchoredMenu } from './model-menu.js'
 import { t } from './i18n.js'
 
 const LABELS = { 'read-only': 'Read only', 'workspace-write': 'Workspace', 'danger-full-access': 'Full access', [AUTO]: 'Auto review' }
@@ -96,7 +98,7 @@ export function usePermissionPick({ saved, onPick, repick = false, confirmFull =
     if (flight.current.value !== undefined) { flight.current.latest = value; return }
     send(value)
   }
-  return { current, pick, confirming, cancel: () => setConfirming(false) }
+  return { current, pick, confirming, asks, cancel: () => setConfirming(false) }
 }
 
 // The question asked before Auto review or Full access is sent; `name` is the Bot it is for.
@@ -163,7 +165,72 @@ export function PermissionList({ catalog, saved, onPick, repick = false, disable
   const { current, pick, confirming, cancel } = usePermissionPick({ saved, onPick, repick, confirmFull: true })
   return h(Fragment, null,
     h(PermissionOptions, { catalog, current, onPick: value => pick(value), disabled, cli }),
-    confirming && !disabled ? h(PermissionConfirm, { value: confirming, name, cli, onConfirm: () => pick(confirming, true), onCancel: cancel }) : null)
+    confirming && !disabled ? h(PermissionConfirm, { value: confirming, name, cli, onConfirm: (event) => { if (event?.detail > 1) return; pick(confirming, true) }, onCancel: cancel }) : null)
+}
+
+// Details keeps the pick and its save queue mounted while the explained menu opens and closes.
+export function PermissionSelect({ catalog, saved, onPick, repick = false, disabled = false, name, cli }) {
+  const { current, pick, confirming, asks, cancel } = usePermissionPick({ saved, onPick, repick, confirmFull: true })
+  const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu({ minWidth: Math.min(380, window.innerWidth - 24) })
+  useEffect(() => {
+    if (!isOpen && menu.current?.contains(document.activeElement)) button.current?.focus({ preventScroll: true })
+    if (confirming && (!isOpen || disabled)) cancel()
+  }, [isOpen, disabled, confirming])
+  useEffect(() => {
+    if (!isOpen) return
+    const target = (!repick && !disabled && menu.current?.querySelector('.bt-q-opt[aria-pressed="true"]:not(:disabled)')) || menu.current
+    target?.focus()
+  }, [isOpen])
+  useEffect(() => {
+    if (isOpen && disabled) menu.current?.focus()
+  }, [isOpen, disabled])
+  const catalogValues = catalog.options.map(option => option.value).join(',')
+  useEffect(() => {
+    if (isOpen && document.activeElement === document.body) menu.current?.focus()
+  }, [isOpen, catalogValues])
+  useEffect(() => {
+    if (isOpen && confirming) menu.current?.querySelector('.bt-perm-confirm')?.scrollIntoView?.({ block: 'nearest' })
+  }, [isOpen, confirming])
+  const finish = () => { close(); button.current?.focus({ preventScroll: true }) }
+  const choose = (value) => {
+    if (disabled) return
+    if (value === current && !repick) { finish(); return }
+    pick(value)
+    if (!asks(value)) finish()
+  }
+  const onConfirm = (event) => { if (event?.detail > 1) return; pick(confirming, true); finish() }
+  const onCancel = () => {
+    const row = menu.current?.querySelector(`.bt-q-opt[data-permission="${confirming}"]:not(:disabled)`)
+    cancel()
+    ;(row ?? menu.current)?.focus()
+  }
+  const onKeyDown = (event) => {
+    if (event.key !== 'Tab') return
+    const buttons = [...menu.current.querySelectorAll('button:not(:disabled)')]
+    const first = buttons[0]
+    const last = buttons.at(-1)
+    const active = document.activeElement
+    if (!first || (event.shiftKey ? active === first || active === menu.current : active === last)) {
+      event.preventDefault()
+      ;(event.shiftKey ? last ?? menu.current : first ?? menu.current).focus()
+    }
+  }
+  const level = presetName(current, catalog)
+  const text = catalog.options.some(option => option.value === current) ? presetText(current, catalog, cli) : ''
+  const danger = presetDanger(current)
+  return h(Fragment, null,
+    h('button', {
+      ref: button, className: 'bt-model-trigger', 'data-wide': true, type: 'button',
+      'aria-haspopup': 'dialog', 'aria-expanded': isOpen, 'aria-label': t('Permissions: {level}', { level }),
+      onClick: () => { if (isOpen) finish(); else open() },
+    }, h('span', { className: 'bt-model-copy' }, h('span', { className: `bt-model-name${danger ? ' bt-danger' : ''}` }, level)), h(Caret)),
+    text ? h('div', { className: 'bt-note' }, danger ? h('span', { className: 'bt-danger' }, text) : text) : null,
+    shownPlace ? createPortal(h('div', {
+      ref: menu, className: `bt-menu bt-permission-menu${shownPlace.bottom !== undefined ? ' bt-menu-up' : ''}`,
+      role: 'dialog', 'aria-label': t('Permissions'), tabIndex: -1, style: shownPlace, 'data-leaving': leaving || undefined, onKeyDown,
+      onClickCapture: (event) => { if (event.detail > 1 && event.target.closest('.bt-q-opt')) event.stopPropagation() },
+    }, h(PermissionOptions, { catalog, current, onPick: choose, disabled, cli }),
+    confirming && !disabled ? h(PermissionConfirm, { value: confirming, name, cli, onConfirm, onCancel }) : null), document.body) : null)
 }
 
 // What every offered level does, as plain lines: for the places that keep the segmented choice.

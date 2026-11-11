@@ -1,4 +1,4 @@
-// The explained permission choice: the list in Details, the card in a Bot's chat and the lines
+// The explained permission choice: the select in Details, the card in a Bot's chat and the lines
 // under the segmented picker, rendered with the React DSH ships in jsdom. The options are the
 // host catalog's, in its order: three in the common install, four while Auto review is offered.
 // Only a press by the person saves a level, through actions.updateBot.
@@ -75,7 +75,11 @@ function mount(t) {
   const root = createRoot(window.document.querySelector('#mount'))
   t.after(async () => { try { await act(() => root.unmount()) } catch {} dom.window.close() })
   const click = async (node, init = {}) => { assert.ok(node, 'the control to press is on the page'); await act(() => node.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true, detail: 1, ...init }))) }
-  const key = async name => act(() => { (window.document.activeElement ?? window.document.body).dispatchEvent(new window.KeyboardEvent('keydown', { key: name, bubbles: true, cancelable: true })) })
+  const key = async (name, init = {}) => {
+    const event = new window.KeyboardEvent('keydown', { key: name, bubbles: true, cancelable: true, ...init })
+    await act(() => (window.document.activeElement ?? window.document.body).dispatchEvent(event))
+    return event
+  }
   return { window, document: window.document, root, click, key, ...module.exports }
 }
 
@@ -259,33 +263,312 @@ test('a group\'s shared level asks before Full access and explains every level',
 
 const panelProps = { useSessions: hook({ byId: {} }), useSessionStatus: hook(new Map()), useActivity: hook({}), useWork: hook({}), useBrowserTabs: hook({}), useBrowserPages: hook({}) }
 
-test('Details lists every level explained and saves a press through updateBot', async (t) => {
-  const { document, root, click, BotPanel, indexRoster } = mount(t)
-  const { actions, saves } = recorder()
-  await act(() => root.render(React.createElement(BotPanel, { pane: { id: 'omni', view: 'details' }, leaving: false, roster: teamOf(indexRoster), actions, ...panelProps })))
-  const section = document.querySelector('.bt-drawer-permission')
-  assert.equal(section.querySelector('.bt-seg'), null, 'the segmented picker is gone from Details')
-  assert.deepEqual(rows(section).map(row => row.dataset.permission), ['read-only', 'workspace-write', 'danger-full-access'])
-  assert.deepEqual(rows(section).map(row => row.querySelector('.bt-q-desc').textContent), [TEXT['read-only'], TEXT['workspace-write'], TEXT['danger-full-access']])
-  assert.equal(rowOf(section, 'read-only').getAttribute('aria-pressed'), 'true', 'the default the Bot runs at is marked')
-  assert.deepEqual(saves, [], 'opening Details saves nothing')
-  await click(rowOf(section, 'workspace-write'))
-  assert.deepEqual(saves, [{ id: 'omni', patch: { permission: 'workspace-write' } }])
-  await click(rowOf(section, 'danger-full-access'))
-  assert.equal(saves.length, 1, 'Full access waits for its question')
-  await click(button(section, 'Give full access'))
-  assert.deepEqual(saves[1], { id: 'omni', patch: { permission: 'danger-full-access' } })
+function details(t, options = {}) {
+  const page = mount(t)
+  const calls = recorder(options)
+  let roster = teamOf(page.indexRoster, options)
+  const render = () => page.root.render(React.createElement(page.BotPanel, { pane: { id: 'omni', view: 'details' }, leaving: false, roster, actions: calls.actions, ...panelProps }))
+  const setTeam = async (patch) => { roster = teamOf(page.indexRoster, { ...options, ...patch }); await act(render) }
+  const section = () => page.document.querySelector('.bt-drawer-permission')
+  const trigger = () => section().querySelector('.bt-model-trigger')
+  const popup = () => page.document.querySelector('.bt-permission-menu:not([data-leaving])')
+  const open = async () => { await page.click(trigger()); assert.ok(popup()); assert.equal(trigger().getAttribute('aria-expanded'), 'true'); return popup() }
+  const closed = () => {
+    assert.equal(trigger().getAttribute('aria-expanded'), 'false')
+    assert.equal(popup(), null)
+    assert.equal(page.document.activeElement, trigger())
+  }
+  return { ...page, ...calls, render, setTeam, section, trigger, popup, open, closed }
+}
+
+for (const [label, catalog] of [['three', THREE], ['four', FOUR]]) {
+  test(`Details selects among ${label} explained levels and opens on the catalog default without saving`, async (t) => {
+    const { document, render, section, trigger, open, saves } = details(t, { catalog })
+    await act(render)
+    assert.equal(section().querySelector('.bt-seg, .bt-q-opt'), null)
+    assert.equal(trigger().getAttribute('aria-haspopup'), 'dialog')
+    assert.equal(trigger().getAttribute('aria-expanded'), 'false')
+    const current = catalog.options.find(option => option.value === catalog.defaultPreset)
+    assert.equal(trigger().textContent, current.name)
+    assert.equal(trigger().getAttribute('aria-label'), `Permissions: ${current.name}`)
+    assert.equal(section().querySelector('.bt-note').textContent, TEXT[current.value])
+    assert.equal(section().querySelector('.bt-danger'), null, 'Read only and Workspace have no danger ink while closed')
+    const menu = await open()
+    assert.equal(menu.parentElement, document.body, 'the menu is portalled outside Details')
+    assert.equal(menu.getAttribute('role'), 'dialog')
+    assert.equal(menu.getAttribute('aria-label'), 'Permissions')
+    assert.deepEqual(rows(menu).map(row => row.dataset.permission), catalog.options.map(option => option.value))
+    assert.deepEqual(rows(menu).map(row => row.querySelector('.bt-q-desc').textContent), catalog.options.map(option => TEXT[option.value]))
+    assert.deepEqual(rows(menu).map(row => row.getAttribute('aria-pressed')), catalog.options.map(option => String(option.value === current.value)))
+    assert.equal(document.activeElement, menu, 'a Bot without its own level opens on the popup')
+    assert.deepEqual(saves, [], 'opening Details and its menu saves nothing')
+  })
+}
+
+test('Details shows Full access and its own explanation in danger ink while closed', async (t) => {
+  const { render, section, trigger, saves } = details(t, { bot: { ...BOT, permission: 'danger-full-access' } })
+  await act(render)
+  assert.equal(trigger().querySelector('.bt-model-name.bt-danger').textContent, 'Full access')
+  assert.equal(section().querySelector('.bt-note > .bt-danger').textContent, TEXT['danger-full-access'])
+  assert.equal(section().querySelector('.bt-q-opt, .bt-seg'), null)
+  assert.deepEqual(saves, [])
 })
 
-test('Details in a window that can only view the team has no live permission control', async (t) => {
-  const { document, root, BotPanel, indexRoster } = mount(t)
-  const { actions, saves } = recorder()
-  await act(() => root.render(React.createElement(BotPanel, { pane: { id: 'omni', view: 'details' }, leaving: false, roster: teamOf(indexRoster, { catalog: FOUR, readOnly: 'This window can only view the team' }), actions, ...panelProps })))
-  const section = document.querySelector('.bt-drawer-permission')
-  assert.equal(rows(section).length, 4, 'the levels are still explained')
-  assert.deepEqual([...section.querySelectorAll('button')].filter(node => !node.disabled), [], 'no button there can be pressed')
-  for (const row of rows(section)) row.click()
+test('Details shows a pick before the save resolves and queues a second pick across reopening', async (t) => {
+  const { render, click, open, popup, closed, trigger, saves, held, setTeam } = details(t, { hold: true, bot: { ...BOT, permission: 'read-only' } })
+  await act(render)
+  await click(rowOf(await open(), 'workspace-write'))
+  closed()
+  assert.equal(trigger().textContent, 'Workspace', 'the optimistic pick survives closing the menu')
+  assert.deepEqual(saves, [{ id: 'omni', patch: { permission: 'workspace-write' } }])
+  await click(rowOf(await open(), 'danger-full-access'))
+  assert.equal(saves.length, 1)
+  await click(button(popup(), 'Give full access'))
+  closed()
+  assert.equal(trigger().textContent, 'Full access')
+  assert.equal(saves.length, 1, 'the second save waits for the first')
+  held[0]({})
+  await setTeam({ bot: { ...BOT, permission: 'workspace-write' } })
+  assert.deepEqual(saves, [{ id: 'omni', patch: { permission: 'workspace-write' } }, { id: 'omni', patch: { permission: 'danger-full-access' } }])
+  assert.equal(trigger().textContent, 'Full access', 'the first reply cannot replace the later pick')
+  held[1]({})
+  await setTeam({ bot: { ...BOT, permission: 'danger-full-access' } })
+  assert.equal(saves.length, 2)
+})
+
+for (const [value, confirm, warning] of [
+  ['danger-full-access', 'Give full access', /Give Omni full access\? Omni will run commands and change files anywhere without asking you first\./],
+  ['auto', 'Use Auto review', /Auto review runs tools without a sandbox/],
+]) {
+  test(`Details asks once for ${value} inside the popup; Cancel saves nothing`, async (t) => {
+    const { document, render, click, open, popup, closed, saves } = details(t, { catalog: FOUR })
+    await act(render)
+    await click(rowOf(await open(), value))
+    assert.match(popup().querySelector('.bt-perm-confirm').textContent, warning)
+    assert.notEqual(document.activeElement, button(popup(), confirm), 'focus never moves itself to the answer')
+    assert.deepEqual(saves, [])
+    await click(button(popup(), 'Cancel'))
+    assert.equal(document.activeElement, rowOf(popup(), value))
+    assert.equal(popup().querySelector('.bt-perm-confirm'), null)
+    assert.deepEqual(saves, [])
+    await click(rowOf(popup(), value))
+    await click(button(popup(), confirm), { detail: 2 })
+    assert.deepEqual(saves, [], 'a double click cannot answer the question')
+    assert.ok(popup().querySelector('.bt-perm-confirm'))
+    await click(button(popup(), confirm))
+    closed()
+    assert.deepEqual(saves, [{ id: 'omni', patch: { permission: value } }])
+  })
+}
+
+test('Details ignores the second click on a row after Cancel, then saves a single click once', async (t) => {
+  const catalog = { ...THREE, options: [READ, FULL, WORK] }
+  const { render, click, open, popup, closed, saves } = details(t, { catalog })
+  await act(render)
+  await click(rowOf(await open(), 'danger-full-access'))
+  await click(button(popup(), 'Cancel'))
+  assert.equal(popup().querySelector('.bt-perm-confirm'), null)
+  const row = rowOf(popup(), 'workspace-write')
+  await click(row.querySelector('.bt-q-label'), { detail: 2 })
+  assert.deepEqual(saves, [])
+  assert.ok(popup())
+  await click(row)
+  closed()
+  assert.deepEqual(saves, [{ id: 'omni', patch: { permission: 'workspace-write' } }])
+})
+
+for (const own of [false, true]) {
+  test(`Details pressing the current level ${own ? 'saves nothing' : 'saves the default as the Bot\'s own level'}`, async (t) => {
+    const { render, click, open, closed, saves } = details(t, { bot: { ...BOT, permission: own ? 'read-only' : undefined } })
+    await act(render)
+    await click(rowOf(await open(), 'read-only'))
+    closed()
+    assert.deepEqual(saves, own ? [] : [{ id: 'omni', patch: { permission: 'read-only' } }])
+  })
+}
+
+test('Details falls back to the saved level and shows the error when updateBot rejects', async (t) => {
+  const { document, render, click, open, closed, trigger, section, saves } = details(t, { bot: { ...BOT, permission: 'read-only' }, fail: 'Only the user can do that' })
+  await act(render)
+  await click(rowOf(await open(), 'workspace-write'))
   await act()
+  closed()
+  assert.equal(trigger().textContent, 'Read only')
+  assert.equal(section().querySelector('.bt-note').textContent, TEXT['read-only'])
+  assert.equal(document.querySelector('.bt-drawer-body .bt-error[role="alert"]').textContent, 'Only the user can do that')
+  assert.equal(saves.length, 1)
+})
+
+for (const dismiss of ['Escape', 'outside', 'scroll']) {
+  test(`Details drops its unanswered question on ${dismiss}`, async (t) => {
+    const { window, document, render, click, key, open, popup, trigger, saves, other } = details(t)
+    await act(render)
+    await click(rowOf(await open(), 'danger-full-access'))
+    assert.ok(popup().querySelector('.bt-perm-confirm'))
+    if (dismiss === 'Escape') await key('Escape')
+    else await act(() => document.body.dispatchEvent(new window.Event(dismiss === 'outside' ? 'mousedown' : 'scroll', { bubbles: true })))
+    assert.equal(popup(), null)
+    assert.equal(document.activeElement, trigger())
+    assert.equal(other.some(([name]) => name === 'closeOverlay'), false, 'Details stays open')
+    assert.equal((await open()).querySelector('.bt-perm-confirm'), null)
+    assert.deepEqual(saves, [])
+  })
+}
+
+test('Details in a view-only window opens explained disabled rows with focus on the popup', async (t) => {
+  const { document, render, click, key, open, popup, closed, trigger, section, saves } = details(t, { catalog: FOUR, readOnly: 'This window can only view the team' })
+  await act(render)
+  assert.equal(trigger().disabled, false)
+  assert.deepEqual([...section().querySelectorAll('button:not(:disabled)')], [trigger()])
+  const menu = await open()
+  assert.equal(menu.tabIndex, -1)
+  assert.equal(document.activeElement, menu)
+  assert.deepEqual(rows(menu).map(row => row.querySelector('.bt-q-desc').textContent), FOUR.options.map(option => TEXT[option.value]))
+  assert.ok(rows(menu).every(row => row.disabled))
+  for (const row of rows(menu)) await click(row)
+  assert.equal(popup().querySelector('.bt-perm-confirm'), null)
+  assert.deepEqual(saves, [])
+  await key('Escape')
+  closed()
+})
+
+test('Details becoming view-only drops the question and disables every row', async (t) => {
+  const { document, render, click, open, popup, setTeam, saves } = details(t)
+  await act(render)
+  await click(rowOf(await open(), 'danger-full-access'))
+  assert.ok(popup().querySelector('.bt-perm-confirm'))
+  button(popup(), 'Cancel').focus()
+  await setTeam({ readOnly: 'This window can only view the team' })
+  assert.equal(document.activeElement, popup())
+  assert.equal(popup().querySelector('.bt-perm-confirm'), null)
+  assert.ok(rows(popup()).every(row => row.disabled))
+  await setTeam({ readOnly: undefined })
+  assert.equal(popup().querySelector('.bt-perm-confirm'), null, 'the question was dropped, not just hidden')
+  assert.deepEqual(saves, [])
+})
+
+test('the list ignores a double click on Give full access, then saves a single answer once', async (t) => {
+  const { document, root, click, PermissionList } = mount(t)
+  const picks = []
+  await act(() => root.render(React.createElement(PermissionList, { catalog: THREE, saved: 'read-only', onPick: async value => { picks.push(value); return true } })))
+  await click(rowOf(document, 'danger-full-access'))
+  await click(button(document, 'Give full access'), { detail: 2 })
+  assert.deepEqual(picks, [])
+  assert.ok(document.querySelector('.bt-perm-confirm'))
+  await click(button(document, 'Give full access'))
+  assert.deepEqual(picks, ['danger-full-access'])
+})
+
+for (const permission of ['read-only', 'danger-full-access', 'no-longer-offered']) {
+  test(`Details opening with saved ${permission} focuses only a row that cannot save`, async (t) => {
+    const { document, render, open, key, saves } = details(t, { bot: { ...BOT, permission } })
+    await act(render)
+    const menu = await open()
+    assert.equal(document.activeElement, rowOf(menu, permission) ?? menu)
+    await key('Enter')
+    await key('Enter', { repeat: true })
+    assert.deepEqual(saves, [])
+  })
+}
+
+test('Details pressing Full access already in force closes without a question or save', async (t) => {
+  const { render, open, click, closed, saves } = details(t, { bot: { ...BOT, permission: 'danger-full-access' } })
+  await act(render)
+  await click(rowOf(await open(), 'danger-full-access'))
+  closed()
+  assert.equal((await open()).querySelector('.bt-perm-confirm'), null)
+  assert.deepEqual(saves, [])
+})
+
+for (const missing of [false, true]) {
+  test(`Details Cancel focuses the popup when the asking row is ${missing ? 'gone' : 'disabled'}`, async (t) => {
+    const { document, render, open, click, popup, setTeam, saves } = details(t, { catalog: FOUR })
+    await act(render)
+    await click(rowOf(await open(), 'danger-full-access'))
+    if (missing) await setTeam({ catalog: { ...FOUR, options: [READ, WORK, AUTO] } })
+    else rowOf(popup(), 'danger-full-access').disabled = true
+    button(popup(), 'Cancel').focus()
+    await click(button(popup(), 'Cancel'))
+    assert.equal(document.activeElement, popup())
+    assert.deepEqual(saves, [])
+  })
+}
+
+test('Details focuses the popup when the focused row leaves the catalog without taking focus elsewhere', async (t) => {
+  const { document, render, open, popup, setTeam, trigger, saves } = details(t, { catalog: FOUR })
+  await act(render)
+  rowOf(await open(), 'auto').focus()
+  assert.equal(document.activeElement, rowOf(popup(), 'auto'))
+  await setTeam({ catalog: THREE })
+  assert.equal(rowOf(popup(), 'auto'), null)
+  assert.equal(document.activeElement, popup())
+  rowOf(popup(), 'workspace-write').focus()
+  await setTeam({ catalog: FOUR })
+  assert.equal(document.activeElement, rowOf(popup(), 'workspace-write'))
+  trigger().focus()
+  await setTeam({ catalog: THREE })
+  assert.equal(document.activeElement, trigger())
+  assert.deepEqual(saves, [])
+})
+
+test('Details outside scroll restores focus without scrolling the trigger', async (t) => {
+  const { window, document, render, open, trigger, popup, saves } = details(t)
+  await act(render)
+  const menu = await open()
+  rowOf(menu, 'workspace-write').focus()
+  const calls = []
+  const focus = trigger().focus.bind(trigger())
+  trigger().focus = options => { calls.push(options?.preventScroll); focus(options) }
+  await act(() => document.body.dispatchEvent(new window.Event('scroll', { bubbles: true })))
+  assert.equal(popup(), null)
+  assert.equal(document.activeElement, trigger())
+  assert.deepEqual(calls, [true])
+  assert.deepEqual(saves, [])
+})
+
+test('Details Tab wraps through enabled rows and question buttons, or stays on an empty popup', async (t) => {
+  const { document, render, open, click, key, popup, setTeam, saves } = details(t)
+  await act(render)
+  const menu = await open()
+  const first = rowOf(menu, 'read-only')
+  const last = rowOf(menu, 'danger-full-access')
+  rowOf(menu, 'workspace-write').focus()
+  assert.equal((await key('Tab')).defaultPrevented, false)
+  last.focus()
+  assert.equal((await key('Tab')).defaultPrevented, true)
+  assert.equal(document.activeElement, first)
+  assert.equal((await key('Tab', { shiftKey: true })).defaultPrevented, true)
+  assert.equal(document.activeElement, last)
+  menu.focus()
+  assert.equal((await key('Tab', { shiftKey: true })).defaultPrevented, true)
+  assert.equal(document.activeElement, last)
+  await click(last)
+  const answerButtons = [...popup().querySelectorAll('.bt-perm-confirm button')]
+  answerButtons.at(-1).focus()
+  assert.equal((await key('Tab')).defaultPrevented, true)
+  assert.equal(document.activeElement, first)
+  assert.equal((await key('Tab', { shiftKey: true })).defaultPrevented, true)
+  assert.equal(document.activeElement, answerButtons.at(-1))
+  await setTeam({ readOnly: 'This window can only view the team' })
+  for (const shiftKey of [false, true]) {
+    assert.equal((await key('Tab', { shiftKey })).defaultPrevented, true)
+    assert.equal(document.activeElement, popup())
+  }
+  assert.deepEqual(saves, [])
+})
+
+test('Details on Claude Code explains Full access in the note, row and question', async (t) => {
+  const bot = { ...BOT, model: 'acp-claude/opus', appliedModel: 'acp-claude/opus', permission: 'danger-full-access' }
+  const text = 'Claude Code decides by itself and runs commands and changes files anywhere without asking you. Automagik asks it for its own "bypass permissions" mode, and does not review or ask. This holds while the Bot runs on Claude Code.'
+  const { render, section, open, click, popup, setTeam, saves } = details(t, { bot })
+  await act(render)
+  assert.equal(section().querySelector('.bt-note > .bt-danger').textContent, text)
+  await setTeam({ bot: { ...bot, permission: 'read-only' } })
+  const row = rowOf(await open(), 'danger-full-access')
+  assert.equal(row.querySelector('.bt-q-desc').textContent, text)
+  await click(row)
+  assert.match(popup().querySelector('.bt-perm-confirm').textContent, /Claude Code will decide by itself and run without asking you\. Automagik will ask it for its own "bypass permissions" mode, and will not review or ask\. This holds while the Bot runs on Claude Code\./)
+  assert.ok(button(popup(), 'Give full access'))
   assert.deepEqual(saves, [])
 })
 
