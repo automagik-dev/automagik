@@ -41,9 +41,9 @@ test('plain HTTP is restricted to trusted numeric SSH loopback endpoints', async
 })
 
 test('individual session cookies, bearer credentials and transient sign-in secrets are redacted', () => {
-  const cookie = randomUUID(), refresh = randomUUID(), access = randomUUID(), password = randomUUID()
-  const f = handshake({ authHeaders: { Cookie: `session=${cookie}; refresh=${refresh}`, Authorization: `Bearer ${access}` }, redactionSecrets: [password] })
-  const text = f.wire.redact(`${cookie} ${refresh} ${access} ${password}`)
-  for (const secret of [cookie, refresh, access, password]) assert.ok(!text.includes(secret))
+  const cookie = randomUUID(), refresh = randomUUID(), quoted = randomUUID(), access = randomUUID(), password = randomUUID()
+  const f = handshake({ authHeaders: { Cookie: `session=${cookie}; refresh=${refresh}; quoted="${quoted}"`, Authorization: `Bearer ${access}` }, redactionSecrets: [password] })
+  const text = f.wire.redact(`${cookie} ${refresh} ${quoted} ${access} ${password}`)
+  for (const secret of [cookie, refresh, quoted, access, password]) assert.ok(!text.includes(secret))
   assert.equal(f.wire.redact({ headers: 'private', response: { token: access } }).headers, '[redacted]')
 })

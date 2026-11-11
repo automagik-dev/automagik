@@ -110,7 +110,11 @@ export class HermesTransport {
       if (/^authorization$/i.test(name)) this.secrets.add(value.replace(/^\S+\s+/, ''))
       if (/^cookie$/i.test(name)) for (const pair of value.split(';')) {
         const separator = pair.indexOf('=')
-        if (separator >= 0 && pair.slice(separator + 1).trim()) this.secrets.add(pair.slice(separator + 1).trim())
+        if (separator >= 0) {
+          const cookie = pair.slice(separator + 1).trim()
+          if (cookie) this.secrets.add(cookie)
+          if (cookie.startsWith('"') && cookie.endsWith('"')) this.secrets.add(cookie.slice(1, -1))
+        }
       }
     }
     this.serial = 0
