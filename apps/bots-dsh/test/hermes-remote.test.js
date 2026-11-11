@@ -237,7 +237,7 @@ test('remote route crosses from Native and local ACP Hermes; changing only its m
 
 test('release contract diff follows generated schemas and detects drift without a network', () => {
   const contract = { methods: USED_METHODS.map(name => ({ name, result: { schema: { $ref: '#/components/schemas/Sample' } } })), components: { schemas: { Sample: { type: 'string' } } },
-    'x-server-requests': [{ name: 'approval' }], 'x-notifications': ['gateway.ready', 'session.info', 'message.start', 'message.delta', 'message.interim', 'message.complete', 'tool.start', 'tool.complete', 'error'].map(name => ({ name })) }
+    'x-server-requests': [{ name: 'approval' }], 'x-notifications': ['gateway.ready', 'session.info', 'message.start', 'message.delta', 'message.interim', 'message.complete', 'tool.start', 'tool.complete', 'request.cancel', 'error'].map(name => ({ name })) }
   const before = contractPin(contract)
   contract.components.schemas.Sample.type = 'number'
   assert.deepEqual(differences(before, contractPin(contract)), ['schema:Sample'])
