@@ -21,9 +21,9 @@ export function install(rt, { transport = options => new HermesTransport(options
     await rt.load()
     await rt.loadSecrets()
     const config = record()
-    if (!config.enabled) throw refusal('Turn on Hermes remote in Models and providers first.')
+    if (!config.enabled) throw refusal('Turn on Remote Hermes in Bot settings first.')
     const credential = rt.secretValue(config.credentialRef)
-    if (!credential) throw refusal('Save a credential for Hermes remote first.')
+    if (!credential) throw refusal('Save a credential for Remote Hermes first.')
     const wire = transport({ address: config.address, profile: config.profile, credential })
     active.add(wire)
     const close = wire.close.bind(wire)
@@ -59,7 +59,7 @@ export function install(rt, { transport = options => new HermesTransport(options
   async function configure(body) {
     await rt.load()
     await rt.loadSecrets()
-    if (typeof body.enabled !== 'boolean') throw refusal('Choose whether Hermes remote is on.')
+    if (typeof body.enabled !== 'boolean') throw refusal('Choose whether Remote Hermes is on.')
     const address = body.address ? remoteAddress(body.address) : record().address
     const profile = typeof body.profile === 'string' ? body.profile.trim() : record().profile ?? ''
     if (profile.length > 100 || ['\r', '\n', '\0'].some(character => profile.includes(character))) throw refusal('Enter a valid Hermes profile name.')
@@ -69,7 +69,7 @@ export function install(rt, { transport = options => new HermesTransport(options
     if (body.credential !== undefined && body.credential !== '') {
       await rt.secretEndpoint('secret-set', { name: CREDENTIAL_REF, value: body.credential, purpose: 'Remote Hermes connection credential', scope: [] })
     }
-    if (body.enabled && !rt.secretValue(CREDENTIAL_REF)) throw refusal('Save a credential before turning Hermes remote on.')
+    if (body.enabled && !rt.secretValue(CREDENTIAL_REF)) throw refusal('Save a credential before turning Remote Hermes on.')
     for (const wire of active) wire.close()
     active.clear()
     adapter.dispose()

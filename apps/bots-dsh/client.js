@@ -43,16 +43,15 @@ module.exports = __toCommonJS(index_exports);
 // src/client/i18n.js
 var NAMESPACE = "omni-ui";
 var ZH = {
-  "Hermes remote": "远程 Hermes",
-  "Remote Hermes · hermes serve": "远程 Hermes · hermes serve",
-  "No DSH team tools: message_bot, list_bots, create_bot, request_secret, memory or schedules.": "不提供 DSH 团队工具：message_bot、list_bots、create_bot、request_secret、记忆或计划任务。",
-  "Off by default. Set up Hermes remote in Bot settings.": "默认关闭。请在 Bot 设置中设置远程 Hermes。",
-  "Off by default. Connect to standalone Desktop contract 8 through hermes serve.": "默认关闭。通过 hermes serve 连接独立 Desktop 合约 8。",
-  "Remote tools use the remote profile’s rules. DSH’s local sandbox does not protect the remote machine.": "远程工具遵循远程配置的规则。DSH 的本地沙箱不保护远程机器。",
+  "Key saved": "密钥已保存",
+  "Your bots’ team tools (messages to other bots, secrets, memory, schedules) are not available in these chats.": "这些聊天无法使用 Bot 团队工具（向其他 Bot 发送消息、密钥、记忆、计划任务）。",
+  "Its own tools run there under its own rules; this computer’s sandbox does not protect that machine.": "它的工具按照它的规则在那台电脑上运行；本机沙箱无法保护那台电脑。",
+  "Chat with a Hermes agent on another computer.": "与另一台电脑上的 Hermes 智能体聊天。",
+  "Remote Hermes": "远程 Hermes",
+  "Off by default. Set up Remote Hermes in Bot settings.": "默认关闭。请在 Bot 设置中设置远程 Hermes。",
   "Credential": "凭据",
-  "Credential saved in the Bot secret store.": "凭据已保存到 Bot 密钥库。",
   "Save a credential to connect.": "请先保存连接凭据。",
-  "Enable Hermes remote": "启用远程 Hermes",
+  "Enable Remote Hermes": "启用远程 Hermes",
   "Discover models": "发现模型",
   "Connection lost; remote outcome unknown": "连接已断开；远程结果未知",
   "Reconnect and reconcile": "重新连接并核对状态",
@@ -2158,6 +2157,7 @@ __export(icons_exports, {
   ReplyIcon: () => ReplyIcon,
   SETTINGS_ICONS: () => SETTINGS_ICONS,
   SearchIcon: () => SearchIcon,
+  ServerIcon: () => ServerIcon,
   ShareIcon: () => ShareIcon,
   ShieldIcon: () => ShieldIcon,
   SideIcon: () => SideIcon,
@@ -2265,6 +2265,7 @@ var KeywordIcon = lineIcon(["M8.5 3.5a5 5 0 1 1 0 10 5 5 0 0 1 0-10z", "M12.25 1
 var UnplugIcon = lineIcon(["M3 3l14 14", "M7.5 6.5 6 5M13.5 12.5 15 14", "M9 5l1.5-1.5a3.5 3.5 0 0 1 5 5L14 10", "M11 15l-1.5 1.5a3.5 3.5 0 0 1-5-5L6 10"]);
 var ShieldIcon = lineIcon(["M10 2.75 16 5v4.75c0 3.7-2.55 6.4-6 7.5-3.45-1.1-6-3.8-6-7.5V5z", "M7.25 10l2 2 3.5-3.75"]);
 var ChannelsIcon = lineIcon(["M4 5.5h7.5A1.5 1.5 0 0 1 13 7v4a1.5 1.5 0 0 1-1.5 1.5H8L5.5 14.5v-2H4A1.5 1.5 0 0 1 2.5 11V7A1.5 1.5 0 0 1 4 5.5z", "M15 8.5h1A1.5 1.5 0 0 1 17.5 10v4a1.5 1.5 0 0 1-1.5 1.5h-1.5v2L12 15.5H9.5"]);
+var ServerIcon = lineIcon(["M4.5 3.5h11A1.5 1.5 0 0 1 17 5v10a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 15V5a1.5 1.5 0 0 1 1.5-1.5z", "M3 10h14", "M6 6.75h.01M6 13.25h.01M10 6.75h4M10 13.25h4"]);
 var ConnectorIcon = lineIcon(["M7 10a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z", "M18 10a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z", "M7 10h6"]);
 var SwitchIcon = lineIcon(["M4 7h9.5M10.5 3.5L14 7l-3.5 3.5", "M16 13H6.5M9.5 9.5L6 13l3.5 3.5"]);
 var SignOutIcon = lineIcon(["M8.5 17H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h2.5", "M10 10h6.5", "M13.5 7l3 3-3 3"]);
@@ -4725,8 +4726,8 @@ function offeredModels(models, current) {
 var offModel = (model) => model.missing === true || unavailableModel(model);
 var Tick = ({ on }) => (0, import_react12.createElement)("span", { className: "bt-model-tick", "aria-hidden": true }, on ? (0, import_react12.createElement)(CheckIcon) : null);
 var ROUTE_ORDER = Object.freeze(["native", "acp", "herdr", "hermes-remote"]);
-var ROUTE_NAME = Object.freeze({ native: "Native", acp: "ACP", herdr: "Herdr", "hermes-remote": "Hermes remote" });
-var ROUTE_ICON = Object.freeze({ native: DshMarkIcon, acp: ConnectorIcon, herdr: HerdrMarkIcon, "hermes-remote": ConnectorIcon });
+var ROUTE_NAME = Object.freeze({ native: "Native", acp: "ACP", herdr: "Herdr", "hermes-remote": "Remote Hermes" });
+var ROUTE_ICON = Object.freeze({ native: DshMarkIcon, acp: ConnectorIcon, herdr: HerdrMarkIcon, "hermes-remote": ServerIcon });
 var routeName = (route) => t(ROUTE_NAME[route] ?? route);
 var routeDetail = (route) => {
   switch (route) {
@@ -4735,7 +4736,7 @@ var routeDetail = (route) => {
     case "herdr":
       return t("herdr-core terminal");
     case "hermes-remote":
-      return t("Remote Hermes · hermes serve");
+      return "hermes serve";
     default:
       return t("DSH harness");
   }
@@ -4874,8 +4875,8 @@ function ModelSteps({ roster, bot, view, current, picked, levelName: levelName2,
       "div",
       { key: `models:${route}:${view.provider ?? view.agent ?? ""}`, className: "bt-model-step", role: "group", "aria-label": t("Models") },
       stepBack(backLabel, () => go(back.view)),
-      route === "hermes-remote" ? (0, import_react12.createElement)("div", { className: "bt-model-none" }, t("No DSH team tools: message_bot, list_bots, create_bot, request_secret, memory or schedules.")) : null,
-      route === "hermes-remote" && list.length === 0 ? (0, import_react12.createElement)("div", { className: "bt-model-none" }, t("Off by default. Set up Hermes remote in Bot settings.")) : null,
+      route === "hermes-remote" ? (0, import_react12.createElement)("div", { className: "bt-model-none" }, t("Your bots’ team tools (messages to other bots, secrets, memory, schedules) are not available in these chats.")) : null,
+      route === "hermes-remote" && list.length === 0 ? (0, import_react12.createElement)("div", { className: "bt-model-none" }, t("Off by default. Set up Remote Hermes in Bot settings.")) : null,
       (0, import_react12.createElement)("div", { className: "bt-menu-sep", role: "separator" }),
       groups.length === 0 ? (0, import_react12.createElement)("div", { className: "bt-model-none" }, t("No models are set up for this route yet.")) : null,
       groups.map(([label, entries2]) => (0, import_react12.createElement)(
@@ -5593,7 +5594,7 @@ var MODEL_CSS = `
 .bt-model-step>[data-unavailable] .bt-menu-label{color:var(--bt-ink-2);font-weight:500}
 .bt-model-step>[data-unavailable] :is(.bt-route-icon,.bt-agent-mark,.bt-agent-initial){opacity:.6}
 .bt-model-step .bt-menu-hint[data-route-detail]{max-width:64%;overflow:visible;text-align:right;white-space:normal;line-height:14px;font-style:italic}
-.bt-model-step>[data-route=hermes-remote] .bt-menu-hint{flex:1;max-width:none}
+.bt-model-step>[data-route=hermes-remote] .bt-menu-hint{flex:1;max-width:none;white-space:nowrap}
 .bt-model-confirm{padding:10px 10px 8px;gap:8px}
 .bt-model-confirm-title{font-size:13px;line-height:18px;font-weight:600;color:var(--bt-ink)}
 .bt-model-confirm-move{font-size:11px;line-height:15px;color:var(--bt-ink-3);overflow-wrap:anywhere}
@@ -21758,6 +21759,7 @@ function HermesRemoteSettings({ run: run2, Section: Section2 }) {
   const [address, setAddress] = (0, import_react62.useState)("");
   const [profile, setProfile] = (0, import_react62.useState)("");
   const [credential, setCredential] = (0, import_react62.useState)("");
+  const [replacing, setReplacing] = (0, import_react62.useState)(false);
   const [enabled, setEnabled] = (0, import_react62.useState)(false);
   const [reconciliation, setReconciliation] = (0, import_react62.useState)(null);
   const update = (next) => {
@@ -21771,31 +21773,37 @@ function HermesRemoteSettings({ run: run2, Section: Section2 }) {
   }, []);
   const save = () => run2(call("hermes-remote-configure", { address, profile, enabled, credential }).then((next) => {
     setCredential("");
+    setReplacing(false);
     update(next);
   }));
   if (!view) return null;
   return (0, import_react62.createElement)(
     Section2,
-    { title: t("Hermes remote") },
+    null,
     (0, import_react62.createElement)("div", { className: "bt-set-row" }, (0, import_react62.createElement)(
       "div",
       { className: "bt-set-copy" },
-      (0, import_react62.createElement)("span", { className: "bt-set-hint" }, t("Off by default. Connect to standalone Desktop contract 8 through hermes serve.")),
-      (0, import_react62.createElement)("span", { className: "bt-set-hint" }, t("No DSH team tools: message_bot, list_bots, create_bot, request_secret, memory or schedules.")),
-      (0, import_react62.createElement)("span", { className: "bt-set-hint" }, t("Remote tools use the remote profile’s rules. DSH’s local sandbox does not protect the remote machine."))
+      (0, import_react62.createElement)("span", { className: "bt-set-hint" }, t("Chat with a Hermes agent on another computer.")),
+      (0, import_react62.createElement)("span", { className: "bt-set-hint" }, t("Its own tools run there under its own rules; this computer’s sandbox does not protect that machine.")),
+      (0, import_react62.createElement)("span", { className: "bt-set-hint" }, t("Your bots’ team tools (messages to other bots, secrets, memory, schedules) are not available in these chats."))
     )),
     (0, import_react62.createElement)(Row, { label: t("Address"), stack: true }, (0, import_react62.createElement)("input", { className: "bt-input", "aria-label": t("Address"), value: address, autoComplete: "off", onChange: (event) => setAddress(event.target.value) })),
     (0, import_react62.createElement)(Row, { label: t("Profile"), stack: true }, (0, import_react62.createElement)("input", { className: "bt-input", "aria-label": t("Profile"), value: profile, autoComplete: "off", onChange: (event) => setProfile(event.target.value) })),
     (0, import_react62.createElement)(
       Row,
-      { label: t("Credential"), stack: true, hint: view.credentialSet ? t("Credential saved in the Bot secret store.") : t("Save a credential to connect.") },
-      (0, import_react62.createElement)("span", { className: "bt-q-field bt-secret-field" }, (0, import_react62.createElement)(MaskedInput, { value: credential, onChange: setCredential, label: t("Credential") }))
+      { label: t("Credential"), stack: true, hint: view.credentialSet ? void 0 : t("Save a credential to connect.") },
+      view.credentialSet && !replacing ? (0, import_react62.createElement)(
+        "div",
+        { className: "bt-set-row" },
+        (0, import_react62.createElement)("span", { role: "status", className: "bt-set-hint" }, t("Key saved")),
+        (0, import_react62.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: () => setReplacing(true) }, t("Replace"))
+      ) : (0, import_react62.createElement)("input", { className: "bt-input", type: "password", "aria-label": t("Credential"), value: credential, autoComplete: "new-password", spellCheck: false, onChange: (event) => setCredential(event.target.value) })
     ),
     (0, import_react62.createElement)(
       "div",
       { className: "bt-set-row" },
-      (0, import_react62.createElement)("span", { className: "bt-set-copy" }, t("Enable Hermes remote")),
-      (0, import_react62.createElement)(Switch, { on: enabled, label: t("Enable Hermes remote"), onChange: setEnabled })
+      (0, import_react62.createElement)("span", { className: "bt-set-copy" }, t("Enable Remote Hermes")),
+      (0, import_react62.createElement)(Switch, { on: enabled, label: t("Enable Remote Hermes"), onChange: setEnabled })
     ),
     (0, import_react62.createElement)(
       "div",
@@ -21818,7 +21826,7 @@ function HermesRemoteSettings({ run: run2, Section: Section2 }) {
       { role: "status", className: "bt-set-hint" },
       reconciliation.unknown ? t("Connection lost; remote outcome unknown") : t("Remote session reconciled. Review the remote transcript before sending again."),
       reconciliation.gap ? (0, import_react62.createElement)("p", null, t("Replay gap: showing a fresh remote snapshot.")) : null,
-      (0, import_react62.createElement)("pre", null, (reconciliation.messages ?? []).map((message) => `${message.role}: ${typeof message.content === "string" ? message.content : ""}`).join("\n")),
+      (0, import_react62.createElement)("pre", null, (reconciliation.messages ?? []).map((message) => `${message.role}: ${typeof message.text === "string" ? message.text : typeof message.content === "string" ? message.content : ""}`).join("\n")),
       reconciliation.inflight?.assistant ? (0, import_react62.createElement)("p", null, reconciliation.inflight.assistant) : null
     ) : null
   );
@@ -22105,10 +22113,10 @@ var PROVIDERS_CSS = `
 // src/client/settings.js
 var import_react64 = require("react");
 var capitalize3 = (word) => word[0].toUpperCase() + word.slice(1);
-var SETTINGS_PAGES = [["general", "General"], ["models", "Models"], ["hermes-remote", "Hermes remote"], ["bots", "Bots"], ["groups", "Group chats"], ["connectors", "Connectors"], ["capabilities", "Capabilities"], ["browser", "Browser"], ["schedules", "Scheduled tasks"], ["usage", "Usage"], ["secrets", "Secrets"], ["privacy", "Privacy"], ["feedback", "Feedback"], ["about", "About Automagik"]];
-var PAGE_ICONS = { ...SETTINGS_ICONS, models: SlidersIcon, "hermes-remote": ConnectorIcon, connectors: ConnectorIcon, capabilities: PlugIcon, browser: ConnectorIcon, schedules: ClockIcon, secrets: KeyIcon, privacy: ShieldIcon, feedback: FeedbackIcon, about: InfoIcon };
+var SETTINGS_PAGES = [["general", "General"], ["models", "Models"], ["bots", "Bots"], ["groups", "Group chats"], ["connectors", "Connectors"], ["capabilities", "Capabilities"], ["browser", "Browser"], ["schedules", "Scheduled tasks"], ["usage", "Usage"], ["secrets", "Secrets"], ["privacy", "Privacy"], ["feedback", "Feedback"], ["about", "About Automagik"]];
+var PAGE_ICONS = { ...SETTINGS_ICONS, models: SlidersIcon, "hermes-remote": ServerIcon, connectors: ConnectorIcon, capabilities: PlugIcon, browser: ConnectorIcon, schedules: ClockIcon, secrets: KeyIcon, privacy: ShieldIcon, feedback: FeedbackIcon, about: InfoIcon };
 function SetSection({ title, className = "", children }) {
-  return (0, import_react64.createElement)("section", { className: `bt-set-section ${className}`.trim() }, (0, import_react64.createElement)("h3", null, title), (0, import_react64.createElement)("div", { className: "bt-set-card" }, children));
+  return (0, import_react64.createElement)("section", { className: `bt-set-section ${className}`.trim() }, title ? (0, import_react64.createElement)("h3", null, title) : null, (0, import_react64.createElement)("div", { className: "bt-set-card" }, children));
 }
 function SetRow({ label, hint, children, className = "" }) {
   return (0, import_react64.createElement)(
@@ -22451,7 +22459,10 @@ function SettingsDialog({ page, id, roster, actions, useUpdate, leaving = false 
   const room2 = page === "groups" && id ? roster.roomsById[id] : void 0;
   const extra = actions.pluginSettings?.() ?? [];
   const own = SETTINGS_PAGES.filter(([key]) => key !== "models" || actions.providers !== void 0);
-  const pages = [...own.filter(([key]) => key !== "about"), ...extra.map((section) => [`plugin:${section.id}`, section.label]), ...own.filter(([key]) => key === "about")];
+  const pluginPages = extra.map((section) => [`plugin:${section.id}`, section.label]);
+  const agents = pluginPages.findIndex(([key]) => key === "plugin:acp-agents");
+  pluginPages.splice(agents < 0 ? pluginPages.length : agents + 1, 0, ["hermes-remote", "Remote Hermes"]);
+  const pages = [...own.filter(([key]) => key !== "about"), ...pluginPages, ...own.filter(([key]) => key === "about")];
   const pluginPage = extra.find((section) => `plugin:${section.id}` === page);
   const shown = pages.some(([key]) => key === page) ? page : "general";
   const usageFocus = shown === "usage" && id ? id : null;

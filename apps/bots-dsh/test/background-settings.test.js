@@ -14,9 +14,21 @@ test('remote Hermes setup remains reachable when DSH owns the provider settings'
   const nodes = (node) => !node || typeof node !== 'object' ? [] : [node, ...(node.children ?? []).flatMap(nodes)]
   const all = nodes(tree)
   const pages = all.filter(node => node.type === 'button' && node.props.className === 'bt-settings-item')
-  assert.ok(pages.some(node => node.children.includes('Hermes remote')))
+  assert.ok(pages.some(node => node.children.includes('Remote Hermes')))
   assert.ok(!pages.some(node => node.children.includes('Models')))
   assert.ok(all.some(node => node.type?.name === 'HermesRemoteSettings'))
+})
+
+test('remote Hermes settings follow coding agents by stable section ID in any language', () => {
+  const tree = module.exports.SettingsDialog({ page: 'hermes-remote', roster: { byId: {}, roomsById: {} }, actions: {
+    closeSettings() {}, openSettings() {}, pluginSettings: () => [{ id: 'before', label: 'Before' }, { id: 'acp-agents', label: 'Agentes de código' }, { id: 'after', label: 'After' }],
+  } })
+  const nodes = node => !node || typeof node !== 'object' ? [] : [node, ...(node.children ?? []).flatMap(nodes)]
+  const labels = nodes(tree).filter(node => node.type === 'button' && node.props.className === 'bt-settings-item').map(node => node.children.at(-1))
+  const agents = labels.indexOf('Agentes de código')
+  assert.ok(agents >= 0)
+  assert.equal(labels[agents + 1], 'Remote Hermes')
+  assert.equal(labels[agents + 2], 'After')
 })
 
 // Settings → Background jobs offers only a model that answers beside the chats and can run.

@@ -5,16 +5,15 @@
 export const NAMESPACE = 'omni-ui'
 
 const ZH = {
-  'Hermes remote': '远程 Hermes',
-  'Remote Hermes · hermes serve': '远程 Hermes · hermes serve',
-  'No DSH team tools: message_bot, list_bots, create_bot, request_secret, memory or schedules.': '不提供 DSH 团队工具：message_bot、list_bots、create_bot、request_secret、记忆或计划任务。',
-  'Off by default. Set up Hermes remote in Bot settings.': '默认关闭。请在 Bot 设置中设置远程 Hermes。',
-  'Off by default. Connect to standalone Desktop contract 8 through hermes serve.': '默认关闭。通过 hermes serve 连接独立 Desktop 合约 8。',
-  'Remote tools use the remote profile’s rules. DSH’s local sandbox does not protect the remote machine.': '远程工具遵循远程配置的规则。DSH 的本地沙箱不保护远程机器。',
+  'Key saved': '密钥已保存',
+  'Your bots’ team tools (messages to other bots, secrets, memory, schedules) are not available in these chats.': '这些聊天无法使用 Bot 团队工具（向其他 Bot 发送消息、密钥、记忆、计划任务）。',
+  'Its own tools run there under its own rules; this computer’s sandbox does not protect that machine.': '它的工具按照它的规则在那台电脑上运行；本机沙箱无法保护那台电脑。',
+  'Chat with a Hermes agent on another computer.': '与另一台电脑上的 Hermes 智能体聊天。',
+  'Remote Hermes': '远程 Hermes',
+  'Off by default. Set up Remote Hermes in Bot settings.': '默认关闭。请在 Bot 设置中设置远程 Hermes。',
   'Credential': '凭据',
-  'Credential saved in the Bot secret store.': '凭据已保存到 Bot 密钥库。',
   'Save a credential to connect.': '请先保存连接凭据。',
-  'Enable Hermes remote': '启用远程 Hermes',
+  'Enable Remote Hermes': '启用远程 Hermes',
   'Discover models': '发现模型',
   'Connection lost; remote outcome unknown': '连接已断开；远程结果未知',
   'Reconnect and reconcile': '重新连接并核对状态',

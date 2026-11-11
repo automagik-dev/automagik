@@ -1,7 +1,7 @@
 import { createElement as h, Fragment, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { currentPart } from './text.js'
-import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, ConnectorIcon, SlidersIcon } from './icons.js'
+import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, ConnectorIcon, ServerIcon, SlidersIcon } from './icons.js'
 import { BotMark } from './mark.js'
 import { KeyIcon, MaskedInput } from './secret-card.js'
 import { SPRING_POP, SPRING_SHAPE, spring, useLinger, useViewport, viewBottom } from './motion.js'
@@ -187,14 +187,14 @@ const Tick = ({ on }) => h('span', { className: 'bt-model-tick', 'aria-hidden': 
 // own loop; ACP is every agent acp-dsh serves; Herdr is the agent's own terminal on
 // herdr-core, which #1007 wires. The names are UI words; their details say what each means.
 export const ROUTE_ORDER = Object.freeze(['native', 'acp', 'herdr', 'hermes-remote'])
-const ROUTE_NAME = Object.freeze({ native: 'Native', acp: 'ACP', herdr: 'Herdr', 'hermes-remote': 'Hermes remote' })
-const ROUTE_ICON = Object.freeze({ native: DshMarkIcon, acp: ConnectorIcon, herdr: HerdrMarkIcon, 'hermes-remote': ConnectorIcon })
+const ROUTE_NAME = Object.freeze({ native: 'Native', acp: 'ACP', herdr: 'Herdr', 'hermes-remote': 'Remote Hermes' })
+const ROUTE_ICON = Object.freeze({ native: DshMarkIcon, acp: ConnectorIcon, herdr: HerdrMarkIcon, 'hermes-remote': ServerIcon })
 const routeName = route => t(ROUTE_NAME[route] ?? route)
 const routeDetail = (route) => {
   switch (route) {
     case 'acp': return t('Agent Client Protocol')
     case 'herdr': return t('herdr-core terminal')
-    case 'hermes-remote': return t('Remote Hermes · hermes serve')
+    case 'hermes-remote': return 'hermes serve'
     default: return t('DSH harness')
   }
 }
@@ -359,8 +359,8 @@ export function ModelSteps({ roster, bot, view, current, picked, levelName, go, 
     const groups = route === 'native' ? groupModels(list) : list.length === 0 ? [] : [[agent?.name ?? routeName(route), list]]
     return h('div', { key: `models:${route}:${view.provider ?? view.agent ?? ''}`, className: 'bt-model-step', role: 'group', 'aria-label': t('Models') },
       stepBack(backLabel, () => go(back.view)),
-      route === 'hermes-remote' ? h('div', { className: 'bt-model-none' }, t('No DSH team tools: message_bot, list_bots, create_bot, request_secret, memory or schedules.')) : null,
-      route === 'hermes-remote' && list.length === 0 ? h('div', { className: 'bt-model-none' }, t('Off by default. Set up Hermes remote in Bot settings.')) : null,
+      route === 'hermes-remote' ? h('div', { className: 'bt-model-none' }, t("Your bots’ team tools (messages to other bots, secrets, memory, schedules) are not available in these chats.")) : null,
+      route === 'hermes-remote' && list.length === 0 ? h('div', { className: 'bt-model-none' }, t('Off by default. Set up Remote Hermes in Bot settings.')) : null,
       h('div', { className: 'bt-menu-sep', role: 'separator' }),
       groups.length === 0 ? h('div', { className: 'bt-model-none' }, t('No models are set up for this route yet.')) : null,
       groups.map(([label, entries]) => h(Fragment, { key: label },
@@ -1009,7 +1009,7 @@ export const MODEL_CSS = `
 .bt-model-step>[data-unavailable] .bt-menu-label{color:var(--bt-ink-2);font-weight:500}
 .bt-model-step>[data-unavailable] :is(.bt-route-icon,.bt-agent-mark,.bt-agent-initial){opacity:.6}
 .bt-model-step .bt-menu-hint[data-route-detail]{max-width:64%;overflow:visible;text-align:right;white-space:normal;line-height:14px;font-style:italic}
-.bt-model-step>[data-route=hermes-remote] .bt-menu-hint{flex:1;max-width:none}
+.bt-model-step>[data-route=hermes-remote] .bt-menu-hint{flex:1;max-width:none;white-space:nowrap}
 .bt-model-confirm{padding:10px 10px 8px;gap:8px}
 .bt-model-confirm-title{font-size:13px;line-height:18px;font-weight:600;color:var(--bt-ink)}
 .bt-model-confirm-move{font-size:11px;line-height:15px;color:var(--bt-ink-3);overflow-wrap:anywhere}

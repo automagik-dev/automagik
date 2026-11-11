@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
 export const USED_METHODS = ['client.capabilities', 'session.create', 'session.resume', 'session.activate', 'session.close', 'session.events.since', 'session.interrupt', 'prompt.submit', 'model.options', 'config.set']
-const EVENTS = ['gateway.ready', 'session.info', 'message.start', 'message.delta', 'message.interim', 'message.complete', 'tool.start', 'tool.complete', 'error']
+const EVENTS = ['gateway.ready', 'session.info', 'message.start', 'message.delta', 'message.interim', 'message.complete', 'tool.start', 'tool.complete', 'request.cancel', 'error']
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 
 export function contractPin(contract) {

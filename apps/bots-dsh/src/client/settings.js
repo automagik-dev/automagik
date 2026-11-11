@@ -2,7 +2,7 @@ import { createElement as h, useCallback, useEffect, useRef, useState } from 're
 import { ACCENT_INKS, INKS } from './inks.js'
 import { isMainOf } from './sources.js'
 import { MESSAGE_WIDTH, allThemes, flatWidthOf, layoutOf, thinkingShown, widthOf } from './themes.js'
-import { CloseIcon, ChevronLeftIcon, ChevronRightIcon, ClockIcon, ConnectorIcon, InfoIcon, PlugIcon, PlusIcon, ShieldIcon, SlidersIcon, SETTINGS_ICONS } from './icons.js'
+import { CloseIcon, ChevronLeftIcon, ChevronRightIcon, ClockIcon, ConnectorIcon, ServerIcon, InfoIcon, PlugIcon, PlusIcon, ShieldIcon, SlidersIcon, SETTINGS_ICONS } from './icons.js'
 import { AdminStar, BotAvatar, RoomAvatar } from './mark.js'
 import { useEscape } from './overlay-hooks.js'
 import { BotSettingsForm, Switch } from './bot-settings.js'
@@ -33,11 +33,11 @@ const capitalize = word => word[0].toUpperCase() + word.slice(1)
 // Settings dialog: a 198px page list beside the page. Bots and group chats each list
 // their members, and one opens on its own settings form. Usage widens the dialog.
 // Models is there only in a window without DSH's own settings, which carry the providers.
-const SETTINGS_PAGES = [['general', 'General'], ['models', 'Models'], ['hermes-remote', 'Hermes remote'], ['bots', 'Bots'], ['groups', 'Group chats'], ['connectors', 'Connectors'], ['capabilities', 'Capabilities'], ['browser', 'Browser'], ['schedules', 'Scheduled tasks'], ['usage', 'Usage'], ['secrets', 'Secrets'], ['privacy', 'Privacy'], ['feedback', 'Feedback'], ['about', 'About Automagik']]
-const PAGE_ICONS = { ...SETTINGS_ICONS, models: SlidersIcon, 'hermes-remote': ConnectorIcon, connectors: ConnectorIcon, capabilities: PlugIcon, browser: ConnectorIcon, schedules: ClockIcon, secrets: KeyIcon, privacy: ShieldIcon, feedback: FeedbackIcon, about: InfoIcon }
+const SETTINGS_PAGES = [['general', 'General'], ['models', 'Models'], ['bots', 'Bots'], ['groups', 'Group chats'], ['connectors', 'Connectors'], ['capabilities', 'Capabilities'], ['browser', 'Browser'], ['schedules', 'Scheduled tasks'], ['usage', 'Usage'], ['secrets', 'Secrets'], ['privacy', 'Privacy'], ['feedback', 'Feedback'], ['about', 'About Automagik']]
+const PAGE_ICONS = { ...SETTINGS_ICONS, models: SlidersIcon, 'hermes-remote': ServerIcon, connectors: ConnectorIcon, capabilities: PlugIcon, browser: ConnectorIcon, schedules: ClockIcon, secrets: KeyIcon, privacy: ShieldIcon, feedback: FeedbackIcon, about: InfoIcon }
 
 function SetSection({ title, className = '', children }) {
-  return h('section', { className: `bt-set-section ${className}`.trim() }, h('h3', null, title), h('div', { className: 'bt-set-card' }, children))
+  return h('section', { className: `bt-set-section ${className}`.trim() }, title ? h('h3', null, title) : null, h('div', { className: 'bt-set-card' }, children))
 }
 function SetRow({ label, hint, children, className = '' }) {
   return h('div', { className: `bt-set-row ${className}`.trim() },
@@ -288,7 +288,11 @@ export function SettingsDialog({ page, id, roster, actions, useUpdate, leaving =
   const extra = actions.pluginSettings?.() ?? []
   // Before About: what the plugins add sits with the team's pages, not after the app's.
   const own = SETTINGS_PAGES.filter(([key]) => key !== 'models' || actions.providers !== undefined)
-  const pages = [...own.filter(([key]) => key !== 'about'), ...extra.map(section => [`plugin:${section.id}`, section.label]), ...own.filter(([key]) => key === 'about')]
+  const pluginPages = extra.map(section => [`plugin:${section.id}`, section.label])
+  // Keep remote agents together, independent of the current display language.
+  const agents = pluginPages.findIndex(([key]) => key === 'plugin:acp-agents')
+  pluginPages.splice(agents < 0 ? pluginPages.length : agents + 1, 0, ['hermes-remote', 'Remote Hermes'])
+  const pages = [...own.filter(([key]) => key !== 'about'), ...pluginPages, ...own.filter(([key]) => key === 'about')]
   const pluginPage = extra.find(section => `plugin:${section.id}` === page)
   const shown = pages.some(([key]) => key === page) ? page : 'general'
   const usageFocus = shown === 'usage' && id ? id : null

@@ -472,6 +472,7 @@ test('malformed JSON-RPC frames fail closed without uncaught callbacks or leaked
     () => ({ jsonrpc: '2.0', method: 'event', params: null }),
     () => ({ jsonrpc: '2.0', method: 'event', params: { type: 'message.delta', payload: { text: {} } } }),
     () => ({ jsonrpc: '2.0', method: 'event', params: { type: 'session.info', payload: { yolo: 'false' } } }),
+    () => ({ jsonrpc: '2.0', method: 'event', params: { type: 'request.cancel', session_id: 'sample', payload: { id: {}, method: 'approval', reason: 'sample' } } }),
     () => ({ jsonrpc: '2.0', id: 1, method: 'approval', params: null }),
     () => ({ jsonrpc: '2.0', id: 1, method: 'approval', params: { session_id: 'sample', request_id: 'sample', command: {} } }),
     () => ({ jsonrpc: '2.0', id: 99, result: {}, error: { code: -1, message: 'sample' } }),
@@ -566,4 +567,112 @@ test('reconcile answers only requests still present in the authoritative activat
   await new Promise(resolve => setImmediate(resolve))
   assert.equal(asked, 0)
   assert.ok(!f.sent.some(frame => frame.id === 'srq-finished'))
+})
+
+test('an approval arriving after activate captures open_requests is recovered from a newer snapshot', async t => {
+  for (const withdrawn of [false, true]) {
+    let activates = 0, asked = 0, request
+    const f = fixture(t, { question: () => { asked++; return 'once' }, handle: (frame, socket) => {
+      if (frame.method !== 'session.activate') return false
+      activates++
+      // Source: _live_session_payload has already captured _open_requests(sid).
+      const captured = { ...f.live, running: true, status: 'working', ...(activates > 1 && !withdrawn ? { open_requests: [request] } : {}) }
+      if (activates === 1) {
+        // server_requests.ServerRequest.frame can be written before the captured reply.
+        request = { id: 'srq-during-capture', method: 'approval', params: { session_id: f.snapshot.session_id, request_id: randomUUID(), command: 'Sample command', choices: ['once', 'deny'] } }
+        socket.frame({ jsonrpc: '2.0', ...request })
+        if (withdrawn) socket.event('request.cancel', { id: request.id, method: request.method, reason: 'resolved' })
+      }
+      queueMicrotask(() => socket.reply(frame, captured))
+      return true
+    } })
+    Object.assign(f.identity, { storedSessionId: f.snapshot.stored_session_id, pendingSubmit: true, uncertain: true, epoch: 'epoch-a' })
+    await f.wire.connect()
+    const result = await f.run.reconcile({ answerQuestions: true })
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(activates, 2)
+    assert.equal(result.unknown, true)
+    assert.equal(asked, withdrawn ? 0 : 1)
+    assert.deepEqual(f.sent.filter(frame => frame.id === request.id), withdrawn ? [] : [{ jsonrpc: '2.0', id: request.id, result: { choice: 'once' } }])
+    assert.ok(!f.sent.some(frame => frame.method === 'prompt.submit'))
+  }
+})
+
+test('real adapter recovers upstream role/text history through reconcile without resubmission or secret echoes', async t => {
+  const messages = [{ role: 'user', text: 'Earlier prompt' }, { role: 'assistant', text: '' }]
+  const f = fixture(t, { snapshot: { messages } })
+  messages[1].text = `Recovered answer ${f.credential} ${f.ticket}`
+  Object.assign(f.identity, { storedSessionId: f.snapshot.stored_session_id, pendingSubmit: true, uncertain: true, epoch: 'epoch-a' })
+  const agent = { session: { id: 'sample-recovered-chat' }, ctx: { tools: { register: () => () => {} } } }
+  const rt = { ctx: { get: name => name === 'agents' ? { get: () => agent, list: () => [agent] } : undefined, on() {} } }
+  const adapter = new RemoteChatAdapter(rt, { enabled: () => true, models: () => [{ id: 'sample:model', model: 'model', provider: 'sample' }], identity: () => f.identity, save: async () => {}, open: async () => { await f.wire.connect(); return f.run } })
+  t.after(() => adapter.dispose())
+  const chunks = []
+  for await (const chunk of adapter.stream(markAgentLoopRequest({ provider: 'hermes-remote', model: 'sample:model', sessionId: agent.session.id, messages: [{ role: 'user', content: 'Never resubmit this' }] }))) chunks.push(chunk)
+  const recovered = chunks.filter(chunk => chunk.type === 'text-delta').map(chunk => chunk.text).join('\n')
+  assert.match(recovered, /Recovered answer \[redacted\] \[redacted\]/)
+  assert.ok(!JSON.stringify(chunks).includes(f.credential) && !JSON.stringify(chunks).includes(f.ticket))
+  assert.equal(chunks.at(-1).reason.kind, 'stop')
+  assert.ok(f.sent.some(frame => frame.method === 'session.resume'))
+  assert.ok(f.sent.some(frame => frame.method === 'session.activate'))
+  assert.ok(!f.sent.some(frame => frame.method === 'session.create' || frame.method === 'prompt.submit'))
+})
+
+test('a cancellation after activate captures a pending approval causes a newer snapshot with no answer', async t => {
+  let activates = 0, asked = 0
+  const f = fixture(t, { question: () => { asked++; return 'once' }, handle: (frame, socket) => {
+    if (frame.method !== 'session.activate') return false
+    activates++
+    const request = { id: 'srq-withdrawn', method: 'approval', params: { session_id: f.snapshot.session_id, request_id: randomUUID(), choices: ['once', 'deny'] } }
+    const captured = { ...f.live, ...(activates === 1 ? { open_requests: [request] } : {}) }
+    if (activates === 1) socket.event('request.cancel', { id: request.id, method: request.method, reason: 'timeout' })
+    queueMicrotask(() => socket.reply(frame, captured))
+    return true
+  } })
+  Object.assign(f.identity, { storedSessionId: f.snapshot.stored_session_id, uncertain: true, epoch: 'epoch-a' })
+  await f.wire.connect()
+  const result = await f.run.reconcile({ answerQuestions: true })
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(activates, 2)
+  assert.equal(result.unknown, false)
+  assert.equal(asked, 0)
+  assert.ok(!f.sent.some(frame => frame.id === 'srq-withdrawn'))
+})
+
+test('a live request cancellation invalidates an approval choice still being awaited', async t => {
+  let resolveQuestion
+  const f = fixture(t, { question: () => new Promise(resolve => { resolveQuestion = resolve }) })
+  await f.wire.connect(); await f.run.prepare()
+  const request = { id: 'srq-cancelled-choice', method: 'approval', params: { session_id: f.snapshot.session_id, request_id: randomUUID(), choices: ['once', 'deny'] }, epoch: 'epoch-a' }
+  const answering = f.run.control(request)
+  f.socket().event('request.cancel', { id: request.id, method: request.method, reason: 'resolved' })
+  resolveQuestion('once')
+  await answering
+  assert.ok(!f.sent.some(frame => frame.id === request.id))
+  assert.equal(f.run.questions.has(request.id), false)
+})
+
+test('approval churn during activate is bounded and observational capture never answers questions', async t => {
+  for (const churn of [true, false]) {
+    let activates = 0, asked = 0, request
+    const f = fixture(t, { question: () => { asked++; return 'once' }, handle: (frame, socket) => {
+      if (frame.method !== 'session.activate') return false
+      activates++
+      const captured = { ...f.live, ...(request ? { open_requests: [request] } : {}) }
+      if (churn || activates === 1) {
+        request = { id: `srq-capture-${activates}`, method: 'approval', params: { session_id: f.snapshot.session_id, request_id: randomUUID(), choices: ['once', 'deny'] } }
+        socket.frame({ jsonrpc: '2.0', ...request })
+      }
+      queueMicrotask(() => socket.reply(frame, captured))
+      return true
+    } })
+    Object.assign(f.identity, { storedSessionId: f.snapshot.stored_session_id, uncertain: true, epoch: 'epoch-a' })
+    await f.wire.connect()
+    if (churn) await assert.rejects(f.run.reconcile({ answerQuestions: true }), /changed while reconciling/)
+    else await f.run.reconcile()
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(activates, churn ? 3 : 2)
+    assert.equal(asked, 0)
+    assert.ok(!f.sent.some(frame => frame.id === request.id || frame.method === 'prompt.submit'))
+  }
 })

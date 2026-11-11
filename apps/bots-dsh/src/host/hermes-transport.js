@@ -22,9 +22,10 @@ function eventShape(value) {
   if (!object(value) || !string(value.type) || !object(value.payload) || !optional(value.session_id, string)
     || !optional(value.seq, value => Number.isSafeInteger(value) && value >= 0)) return false
   const p = value.payload
-  if (['session.info', 'message.delta', 'message.interim', 'message.complete', 'tool.start', 'tool.complete'].includes(value.type) && (!string(value.session_id) || !value.session_id)) return false
+  if (['session.info', 'message.delta', 'message.interim', 'message.complete', 'tool.start', 'tool.complete', 'request.cancel'].includes(value.type) && (!string(value.session_id) || !value.session_id)) return false
   if (value.type === 'gateway.ready') return string(p.replay_epoch) && optional(p.session_authority, value => typeof value === 'boolean')
   if (value.type === 'session.info') return infoShape(p)
+  if (value.type === 'request.cancel') return string(p.id) && string(p.method) && string(p.reason)
   if (['message.delta', 'message.interim'].includes(value.type)) return string(p.text)
     && optional(p.offset, value => Number.isSafeInteger(value) && value >= 0) && optional(p.already_streamed, value => typeof value === 'boolean')
   if (value.type === 'message.complete') return fields(p, ['text', 'status', 'error', 'failure_reason'], string)
@@ -323,6 +324,7 @@ export class RemoteChat {
     this.queue = []
     this.tools = new Map()
     this.questions = new Map()
+    this.cancelledQuestions = new Set()
     this.streamed = ''
     this.off = event => this.receive(event)
     transport.listeners.add(this.off)
@@ -353,6 +355,11 @@ export class RemoteChat {
       this.identity.lastSeq = event.seq
     }
     const payload = event.payload ?? {}
+    if (event.type === 'request.cancel') {
+      this.cancelledQuestions.add(payload.id)
+      this.questions.delete(payload.id)
+      return
+    }
     if (event.type === 'session.info' && typeof payload.stored_session_id === 'string' && payload.stored_session_id) {
       this.identity.storedSessionId = payload.stored_session_id
       void this.save().catch(() => {})
@@ -408,7 +415,8 @@ export class RemoteChat {
     const epoch = event.epoch ?? this.transport.epoch
     if (this.reconciling || epoch !== this.transport.epoch || (epoch && this.identity.epoch && epoch !== this.identity.epoch)) return
     if (event.method === 'approval' && !this.question) return
-    if (this.questions.has(event.id)) return
+    if (event.params?.session_id !== this.identity.runtimeSessionId && event.params?.session_id !== this.identity.storedSessionId) return
+    if (this.questions.has(event.id) || this.cancelledQuestions.has(event.id)) return
     this.questions.set(event.id, true)
     const generation = this.generation
     if (event.method !== 'approval') { this.transport.answer(event.id, undefined, true); return }
@@ -416,7 +424,7 @@ export class RemoteChat {
     try {
       choice = await this.transport.bounded(Promise.resolve(this.question(event.params)), this.transport.deadlines.control, 'Approval deadline expired.')
     } catch {}
-    if (this.reconciling || generation !== this.generation || epoch !== this.transport.epoch
+    if (this.reconciling || this.cancelledQuestions.has(event.id) || generation !== this.generation || epoch !== this.transport.epoch
       || (epoch && this.identity.epoch && epoch !== this.identity.epoch)) return
     this.transport.answer(event.id, { choice: choice === 'once' ? 'once' : 'deny' })
   }
@@ -436,6 +444,7 @@ export class RemoteChat {
     for (const tool of this.tools.values()) { tool.status = 'unknown'; tool.done?.() }
     this.tools.clear()
     this.questions.clear()
+    this.cancelledQuestions.clear()
     this.streamed = ''
     this.transport.textCarry = ''
   }
@@ -458,11 +467,16 @@ export class RemoteChat {
       this.identity.lastSeq = changedEpoch ? replay.latest_seq : Math.max(this.identity.lastSeq ?? 0, replay.latest_seq)
       // Buffer live events while fetching an authoritative snapshot. A terminal received
       // during the fetch requires a newer snapshot; no old queued delta can cross epochs.
+      // Controls can also be emitted after _open_requests was captured but before the
+      // reply was written. Re-read their current pending state before answering any.
+      const snapshotChanges = () => this.reconciling.filter(event => event.epoch === replay.epoch
+        && (event.kind === 'question' ? [this.identity.runtimeSessionId, this.identity.storedSessionId].includes(event.params?.session_id)
+          : ['message.complete', 'request.cancel'].includes(event.type) && [this.identity.runtimeSessionId, this.identity.storedSessionId].includes(event.session_id))).length
       let snapshot
       for (let attempt = 0; attempt < 3; attempt++) {
-        const before = this.reconciling.filter(event => event.type === 'message.complete').length
+        const before = snapshotChanges()
         snapshot = await this.transport.approvalSnapshot(await this.transport.request('session.activate', { session_id: this.identity.runtimeSessionId }))
-        if (this.reconciling.filter(event => event.type === 'message.complete').length === before) break
+        if (snapshotChanges() === before) break
         if (attempt === 2) throw failure('Remote session changed while reconciling. Reconnect and reconcile again before sending.')
       }
       Object.assign(this.identity, { runtimeSessionId: snapshot.session_id, storedSessionId: snapshot.stored_session_id })

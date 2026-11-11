@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { SELECTOR_ROUTES, crossesHarness, routeOfRef, selectorRouteOf, selectorRoutePolicy } from '../src/shared/routes.js'
 
-test('the selector routes preserve Native, ACP, Herdr, then add Hermes remote', () => {
+test('the selector routes preserve Native, ACP, Herdr, then add Remote Hermes', () => {
   assert.deepEqual([...SELECTOR_ROUTES], ['native', 'acp', 'herdr', 'hermes-remote'])
 })
 

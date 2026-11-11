@@ -81,7 +81,7 @@ export class RemoteChatAdapter extends LlmAdapter {
     this.registerAll()
   }
 
-  providerInfo(provider) { return { id: provider, name: 'Hermes remote' } }
+  providerInfo(provider) { return { id: provider, name: 'Remote Hermes' } }
   async listModels(provider) { return this.enabled() ? this.models().map(model => ({ id: model.id, name: model.name, provider })) : [] }
   async resolveModel(provider, id) { return { provider, id, name: this.models().find(model => model.id === id)?.name ?? id } }
 
@@ -115,7 +115,8 @@ export class RemoteChatAdapter extends LlmAdapter {
           }
           if (!reconciled.unknown) {
             const last = reconciled.snapshot.messages?.filter(message => message.role === 'assistant').at(-1)
-            if (!reconciled.snapshot.inflight?.assistant && typeof last?.content === 'string') yield* textBlocks(last.content, index++)
+            const recovered = typeof last?.text === 'string' ? last.text : last?.content
+            if (!reconciled.snapshot.inflight?.assistant && typeof recovered === 'string') yield* textBlocks(recovered, index++)
             complete = true
             return yield finish('stop')
           }
