@@ -188,7 +188,14 @@ func TestHCProvisionHandsATemplateItsTask(t *testing.T) {
 }
 
 func TestHCDo(t *testing.T) {
-	code := 2
+	status := func(state string) *struct {
+		State string `json:"state"`
+	} {
+		return &struct {
+			State string `json:"state"`
+		}{State: state}
+	}
+	code, zero := 2, 0
 	cases := []struct {
 		name    string
 		waits   []hc.Wait
@@ -211,6 +218,67 @@ func TestHCDo(t *testing.T) {
 			term: hc.Terminal{State: "finished", Reason: "killed"}, want: "cancelled"},
 		{name: "agent exited", waits: []hc.Wait{{Ended: true, Reason: "exit", ExitCode: &code}},
 			term: hc.Terminal{State: "finished", Reason: "exited", ExitCode: &code}, want: "exited with code 2"},
+		// #938, a finished run listed failed: the agent's own done is enough.
+		// A turn shorter than one wait is never seen working, and an agent
+		// that reports no turn count stays at turn 0.
+		{name: "done at turn 0, never seen working", waits: []hc.Wait{
+			{Ended: true, Reason: "status", Status: "idle", Turn: 0},
+			{Ended: true, Reason: "status", Status: "done", Turn: 0},
+		}},
+		{name: "done at turn 0 after paneReady is not never started", waits: []hc.Wait{
+			{Ended: false, Reason: "timeout", Turn: 0},
+			{Ended: false, Reason: "timeout", Turn: 0},
+			{Ended: true, Reason: "status", Status: "done", Turn: 0},
+		}, term: hc.Terminal{State: "live", Status: status("done")}, slow: true},
+		// #938, the same direction: a program that left on its own with exit
+		// code 0 is not a crash, when nothing says its work was cut short: it
+		// never reported a status (a plain program, a template's script), or
+		// its last word was done, or idle after its turn.
+		{name: "exited 0, a program that reports no status", waits: []hc.Wait{{Ended: true, Reason: "exit", ExitCode: &zero}},
+			term: hc.Terminal{State: "finished", Reason: "exited", ExitCode: &zero}},
+		{name: "exited 0 after saying done", waits: []hc.Wait{{Ended: true, Reason: "exit", ExitCode: &zero}},
+			term: hc.Terminal{State: "finished", Reason: "exited", ExitCode: &zero, Status: status("done")}},
+		{name: "exited 0, idle after its turn", waits: []hc.Wait{
+			{Ended: false, Reason: "timeout", Status: "working", Turn: 1},
+			{Ended: true, Reason: "exit", ExitCode: &zero},
+		}, term: hc.Terminal{State: "finished", Reason: "exited", ExitCode: &zero, Status: status("idle")}},
+		// And the other direction: agents exit 0 when a person quits them, so
+		// exit 0 from an agent that had not finished is not done.
+		{name: "quit mid-turn with exit 0", waits: []hc.Wait{
+			{Ended: false, Reason: "timeout", Status: "working", Turn: 1},
+			{Ended: true, Reason: "exit", ExitCode: &zero},
+		}, term: hc.Terminal{State: "finished", Reason: "exited", ExitCode: &zero, Status: status("working")},
+			want: "exited with code 0 before finishing"},
+		{name: "quit on a dialog with exit 0", waits: []hc.Wait{
+			{Ended: true, Reason: "status", Status: "blocked", Turn: 1},
+			{Ended: true, Reason: "exit", ExitCode: &zero},
+		}, term: hc.Terminal{State: "finished", Reason: "exited", ExitCode: &zero, Status: status("blocked")},
+			want: "exited with code 0 before finishing"},
+		{name: "exit 0 before any work", waits: []hc.Wait{
+			{Ended: true, Reason: "status", Status: "idle", Turn: 0},
+			{Ended: true, Reason: "exit", ExitCode: &zero},
+		}, term: hc.Terminal{State: "finished", Reason: "exited", ExitCode: &zero, Status: status("idle")},
+			want: "exited with code 0 before finishing"},
+		{name: "exited with no code", waits: []hc.Wait{{Ended: true, Reason: "exit"}},
+			term: hc.Terminal{State: "finished", Reason: "exited"}, want: "exited before finishing"},
+		// #938, a failed run listed done: a dialog before the prompt was read
+		// is not work, so the idle after it is not a finished turn. Nothing
+		// ran here, and the run ends as never started, not done.
+		{name: "blocked before any turn, then idle, is not done", waits: []hc.Wait{
+			{Ended: true, Reason: "status", Status: "blocked", Turn: 0},
+			{Ended: true, Reason: "status", Status: "idle", Turn: 0},
+		}, want: "never started working", timeout: time.Second},
+		{name: "blocked before any turn, then its turn", waits: []hc.Wait{
+			{Ended: true, Reason: "status", Status: "blocked", Turn: 0},
+			{Ended: true, Reason: "status", Status: "idle", Turn: 0},
+			{Ended: false, Reason: "timeout", Status: "working", Turn: 1},
+			{Ended: true, Reason: "status", Status: "idle", Turn: 1},
+		}},
+		{name: "error after work is not done", waits: []hc.Wait{
+			{Ended: false, Reason: "timeout", Status: "working", Turn: 1},
+			{Ended: true, Reason: "status", Status: "error", Turn: 1},
+			{Ended: true, Reason: "status", Status: "idle", Turn: 1},
+		}, want: "reported an error"},
 		{name: "agent error", waits: []hc.Wait{{Ended: true, Reason: "status", Status: "error", Turn: 1}}, want: "error"},
 		// pi counts its turn when the turn ends, Claude when it starts: working
 		// at turn 0 for longer than paneReady is pi on a long task, not a dialog.

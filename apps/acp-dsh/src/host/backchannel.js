@@ -18,6 +18,7 @@ import { appendPluginRecord } from '@deepseek-ai/dsh-session'
 import { SYNTHETIC_KIND } from './names.js'
 import { contentImages } from './acp.js'
 import { levelOf, TOOL_NAME } from './tool.js'
+import { guardSession } from './write-guard.js'
 
 /** How long a bridge's long-poll waits before answering "nothing changed". */
 export const WAIT_MS = 20_000
@@ -317,6 +318,8 @@ export class Backchannel {
       abort: new AbortController(),
     }
     this.records.set(credential, record)
+    // From here the bridge may write rows on this Session: none the reader refuses (#958).
+    record.guard = guardSession(agent?.session, { log: this.log })
     return record
   }
 
@@ -338,6 +341,7 @@ export class Backchannel {
     } catch {}
     for (const wake of record.waiters) wake()
     record.waiters.clear()
+    record.guard?.release()
   }
 
   /**
@@ -424,11 +428,21 @@ export class Backchannel {
       return reply(200, { tools: offeredTools(this.ctx, record.agent), generation: record.generation })
     }
     if (op === 'call') {
-      const result = await this.call(record, {
-        name: typeof body.name === 'string' ? body.name : '',
-        arguments: body.arguments ?? {},
-        callId: typeof body.callId === 'string' ? body.callId : undefined,
-      })
+      // Counted while it runs, its rows included: who ends this bridge with a call under way
+      // (the adapter's endSession) keeps the Session's write guard until the last one is back.
+      record.calls = (record.calls ?? 0) + 1
+      let result
+      try {
+        result = await this.call(record, {
+          name: typeof body.name === 'string' ? body.name : '',
+          arguments: body.arguments ?? {},
+          callId: typeof body.callId === 'string' ? body.callId : undefined,
+        })
+      } finally {
+        record.calls -= 1
+        if (record.calls === 0) record.drained?.()
+      }
+      this.diagnostics?.bridgeCall(record, result)
       // Revoked while the call was awaiting approval: the caller sees the refusal, not a result.
       if (result?.revoked === true) return reply(401, { error: 'refused' })
       return reply(200, result)

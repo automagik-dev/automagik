@@ -16,7 +16,14 @@ export const toolDefs = [
   {
     name: 'browser_open',
     needsBrowser: true,
-    description: 'Open a URL and return the page snapshot.',
+    // The model reads this before it reports a page to the person: this browser is the Bot's
+    // own, never a tab in the user's right-panel Browser. Outside the app it is a window the
+    // person can see; in the app the Bot's browser panel shows the same tabs.
+    description: 'Open a URL in this Bot\'s own browser and return the page snapshot. '
+      + 'It is not a tab in the user\'s right-panel Browser. Outside the Automagik app this is a '
+      + 'separate browser window the person can see (headless only on Linux without a display); in '
+      + 'the Automagik app the Bot\'s browser panel shows the same tabs. Call browser_handoff when '
+      + 'the person needs to take over.',
     parameters: {
       url: { type: 'string', required: true, description: 'URL to open' },
     },
@@ -128,7 +135,13 @@ export const toolDefs = [
   {
     name: 'browser_handoff',
     needsBrowser: true,
-    description: 'Hand the browser to the user for a login, payment, or captcha.',
+    // The person gets a card in this chat and takes over this same Bot browser: its window
+    // outside the app, the Bot's browser panel in the app. No tab is opened for them in the
+    // right-panel Browser.
+    description: 'Hand this Bot\'s browser to the person for a login, payment, or captcha. They get a '
+      + 'handoff card in this chat and take over the Bot\'s browser — outside the app in its browser '
+      + 'window, in the app in the Bot\'s browser panel. Nothing opens in the user\'s right-panel '
+      + 'Browser. Call browser_resume when they are done.',
     parameters: {
       reason: { type: 'string', required: true, enum: ['login', 'payment', 'captcha', 'other'], description: 'Why the user must take over' },
       note: { type: 'string', description: 'What the user should do' },

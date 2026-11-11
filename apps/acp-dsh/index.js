@@ -18,16 +18,18 @@ import { homedir } from 'node:os'
 import z from '@deepseek-ai/schemastery'
 import { accountOf, accountView } from './src/host/account.js'
 import { AcpAdapter, aside, BRIDGE_PATH, SIDE_MODEL } from './src/host/adapter.js'
-import { AGENTS, findCommand, signedInOf } from './src/host/agents.js'
+import { AGENTS, findCommand, isNative, launchOf, signedInOf } from './src/host/agents.js'
 import { Backchannel } from './src/host/backchannel.js'
 import { Catalog, cliStamp, DEFAULT_MODEL } from './src/host/catalog.js'
 import { CliStore, CLI_CHECK_EVERY_MS } from './src/host/clis.js'
 import { CONSENT_FILE, ConsentStore } from './src/host/consent.js'
-import { adaptersHome, AdapterStore, CHECK_EVERY_MS } from './src/host/install.js'
+import { adaptersHome, AdapterStore, CHECK_TICK_MS } from './src/host/install.js'
+import { handshake } from './src/host/handshake.js'
 import { drawImage, imageRefusal, imageSupport, SIGNED_OUT, UNAVAILABLE, unsupported } from './src/host/image.js'
 import { CliLogins } from './src/host/login.js'
 import { CREDENTIAL_ENV, URL_ENV } from './src/host/names.js'
-import { enginesFor, pressureGuard } from './src/host/pressure.js'
+import { PermissionDiagnostics } from './src/host/permission-diagnostics.js'
+import { enginesFor, PRESSURE_METHOD, pressureGuard } from './src/host/pressure.js'
 import { redactorFor } from './src/host/redact.js'
 import { agentRoute, carryEffort, crossed } from './src/host/switch.js'
 
@@ -42,11 +44,17 @@ export const inject = ['llm', 'agents']
 // default, so an absent key still reaches the adapter as absent.
 export const DSH_TOOLS_DEFAULT = true
 
-// claude, codex, sideModel and dshTools are live (volatile): DSH's settings service writes them
+// claude, codex, hermes, antigravity, omp, sideModel and dshTools are live (volatile): DSH's settings service writes them
 // without remounting the plugin, and loader/volatile-update brings the change here.
 export const Config = z.object({
   claude: z.boolean().default(true).volatile().description("Offer Claude Code as the acp-claude model when the claude CLI is installed. It keeps the person's own Claude Code settings: what their allow rules and hooks allow runs without DSH's approval dialog."),
   codex: z.boolean().default(true).volatile().description('Offer Codex as the acp-codex model when the codex CLI is installed.'),
+  // The native-ACP agents (#959) are off until the person turns one on: none is installed by
+  // Automagik, and turning one on is the person's word that the app may use the sign-in that CLI
+  // already has on this computer, shared with their terminal.
+  hermes: z.boolean().default(false).volatile().description('Offer Hermes as the acp-hermes model when the hermes CLI is installed. It runs `hermes acp` on the sign-in and settings Hermes already has on this computer.'),
+  antigravity: z.boolean().default(false).volatile().description('Offer Antigravity as the acp-antigravity model when the agy CLI is installed. It runs `agy acp` on the sign-in and settings Antigravity already has on this computer.'),
+  omp: z.boolean().default(false).volatile().description('Offer omp as the acp-omp model when the omp CLI is installed. It runs `omp acp` on the sign-in and settings omp already has on this computer.'),
   sideModel: z.object({
     provider: z.string().required(),
     model: z.string().required(),
@@ -99,7 +107,7 @@ export function nodeCommand() {
 
 /**
  * @param {any} ctx
- * @param {{ claude?: any, codex?: any, sideModel?: any, fakeAgent?: string, dshTools?: any }}
+ * @param {{ claude?: any, codex?: any, hermes?: any, antigravity?: any, omp?: any, sideModel?: any, fakeAgent?: string, dshTools?: any }}
  *   [config]
  * @param {{ store?: any, cliStore?: any, find?: typeof findCommand, signedIn?: typeof signedInOf, catalogHome?: string, loginSpawn?: typeof spawn, loginTimers?: any, imageSetup?: (launch: any) => Promise<any> }} [deps]
  *   catalogHome: where each agent's models and efforts are kept (beside the adapters by default).
@@ -130,7 +138,10 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   // The chat's image keeper (`keepImages`): where an image an agent makes in a chat is kept so the
   // chat can show it. One at a time; the Bot team registers its images folder.
   let imageKeeper
+  // The turn gates (`holdTurns`): each registrant's own entry, so one never replaces another's.
+  const turnGates = new Set()
   const adapter = new AcpAdapter(ctx, agents, {
+    holds: () => [...turnGates].map(entry => entry.gate),
     images: () => imageKeeper,
     // The raw tri-state: an absent setting takes each agent's own switch in AcpAdapter.
     dshTools: () => flagOf(config.dshTools),
@@ -139,6 +150,9 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     onSignedOut: id => signedOut(id),
     access: id => consentGate(id),
   })
+  // What acted on each Session's permissions (permission-diagnostics.js): it only records.
+  const diagnostics = new PermissionDiagnostics()
+  adapter.diagnostics = backchannel.diagnostics = diagnostics
   // The kill switch is live: any change of `dshTools` ends the agent sessions and revokes their
   // bridges, so a credential minted while it was on cannot keep calling DSH tools and a Session
   // started with the bridge never runs on the old tool set. The next turn starts afresh.
@@ -172,10 +186,13 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   // and no record exists yet) is carried: it keeps working through the upgrade.
   const consents = consentFile === undefined ? undefined : new ConsentStore({
     file: consentFile,
-    ids: Object.keys(AGENTS),
-    earlier: id => store.binOf(AGENTS[id].adapter, AGENTS[id].bin) !== undefined,
+    // The vendors whose account the app can read and ask about. A native agent has no account
+    // read and is off by default: its switch is the person's word (Config, above).
+    ids: Object.keys(AGENTS).filter(id => !isNative(AGENTS[id])),
+    earlier: id => !isNative(AGENTS[id]) && store.binOf(AGENTS[id].adapter, AGENTS[id].bin) !== undefined,
     log: message => warn(ctx, message),
   })
+  const consentIds = Object.keys(AGENTS).filter(id => !isNative(AGENTS[id]))
   const consentStates = new Map()
   const accountsSeen = new Map()
   // The account reads still running behind an answer already given (`probe`), and a count per
@@ -203,7 +220,9 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     return { CODEX_MANAGED_BY_NPM: undefined, CODEX_MANAGED_BY_PNPM: undefined, CODEX_MANAGED_BY_BUN: undefined, CODEX_MANAGED_BY_VITE_PLUS: undefined, CODEX_MANAGED_PACKAGE_ROOT: undefined }
   }
 
-  const enabled = spec => flagOf(config[spec.key]) !== false
+  // An absent switch is on for Claude Code and Codex, as it always was (a bare config in a
+  // test, an older profile), and off for a native agent, whatever built the config.
+  const enabled = spec => (isNative(spec) ? flagOf(config[spec.key]) === true : flagOf(config[spec.key]) !== false)
   // The routes DSH serves follow `agents`; each change is published as llm/adapters-updated.
   const publish = () => {
     if (disposed) return
@@ -217,7 +236,21 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       registration.replace?.(routes)
     }
   }
+  // A new connector release is started once before it replaces the one in use (install.js): it
+  // is spawned as a Session would spawn it and asked `initialize`, nothing more. Without the
+  // agent's CLI nothing could run it either way, so there is nothing to check.
+  if (store instanceof AdapterStore && store.check === undefined) {
+    store.check = async (pkg, staged) => {
+      const [id, spec] = Object.entries(AGENTS).find(([, entry]) => entry.adapter === pkg) ?? []
+      const cli = id === undefined ? undefined : clis.get(id)
+      if (cli === undefined) return
+      const node = nodeCommand()
+      await handshake({ command: node.command, args: [staged.path], env: { ...node.env, ...cliEnvironment(spec, cliDetails.get(id)), ...spec.env(cli) } }, { signal: store.quit?.signal })
+    }
+  }
   const install = (spec) => {
+    // A native agent has no connector: its CLI is the ACP server.
+    if (isNative(spec)) return Promise.resolve()
     // The first-run account record is on disk before this version installs a connector, so a
     // connector found with no record always means an earlier version (consent.js).
     consents?.settle()
@@ -238,7 +271,10 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       () => { if (!disposed) warn(ctx, `${spec.adapter} not installed: ${store.lastError?.(spec.adapter) ?? 'the install failed'}`) },
     )
   }
-  const agentOf = (spec, cli, id = idOf(spec), node = nodeCommand(), cliEnv = cliEnvironment(spec, cliDetails.get(id))) => ({
+  // How `spec` starts now (agents.js launchOf): the adapter installed at this moment, or the
+  // CLI itself for a native agent.
+  const launch = (spec, cli, id = idOf(spec)) => launchOf(spec, cli, { store, node: nodeCommand(), cliEnv: cliEnvironment(spec, cliDetails.get(id)), stamp: cliStamp })
+  const agentOf = (spec, cli, id = idOf(spec)) => ({
     name: spec.name,
     modeFor: spec.modeFor,
     // The adapter reads these off the agent object: without them the bridge default would not
@@ -246,6 +282,11 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     ...(spec.disableBuiltInTools === true ? { disableBuiltInTools: true } : {}),
     ...(spec.drift === true ? { drift: true } : {}),
     ...(spec.refresh === undefined ? {} : { refresh: spec.refresh }),
+    // A native agent takes no bridge, names its own sign-in command when signed out, and says
+    // so in the chat when it has no mode for DSH's level (adapter.js).
+    ...(isNative(spec) ? { bridge: false } : {}),
+    ...(typeof spec.signInHint === 'string' ? { signInHint: spec.signInHint } : {}),
+    ...(spec.modeFor === undefined ? { levelNotice: true } : {}),
     cli,
     // The agent's own models and efforts, read from the adapter release installed now.
     catalog: new Catalog({
@@ -255,24 +296,31 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       fallback: spec.fallback,
       home: catalogHome,
       log,
-      key: () => {
-        const bin = store.binOf(spec.adapter, spec.bin)
-        return bin === undefined ? undefined : `${bin.path} ${cliStamp(cli)}`
-      },
-      spawn: () => ({ command: node.command, args: [store.binOf(spec.adapter, spec.bin).path], env: { ...node.env, ...cliEnv, ...spec.env(cli) } }),
+      key: () => launch(spec, cli, id).key,
+      spawn: () => { const { command, args, env } = launch(spec, cli, id); return { command, args, env } },
     }),
-    installed: () => store.binOf(spec.adapter, spec.bin) !== undefined,
+    installed: () => launch(spec, cli, id).ready,
+    // The connector in use opened a session: it is the last-known-good. One that did not start
+    // goes back to the release before it, when that is still here (install.js). A native agent
+    // has no connector in the store, so it has neither: a failed start is only reported.
+    ...(isNative(spec) ? {} : {
+      proven: () => store.markGood?.(spec.adapter),
+      rollback: (reason) => {
+        const back = store.rollback?.(spec.adapter, spec.bin, reason) !== undefined
+        if (back && !disposed) warn(ctx, `${spec.adapter}: the newest release did not start; running the one before it`)
+        return back
+      },
+    }),
     spawn: () => {
-      const bin = store.binOf(spec.adapter, spec.bin)
-      if (bin === undefined) {
+      const { ready, command, args, env } = launch(spec, cli, id)
+      if (!ready) {
         const failed = store.lastError?.(spec.adapter)
         void install(spec)
         throw new Error(failed
           ? `its ACP adapter (${spec.adapter}) is still being installed; the last install failed: ${failed}`
           : `its ACP adapter (${spec.adapter}) is still being installed; send this again in a minute`)
       }
-      const node = nodeCommand()
-      return { command: node.command, args: [bin.path], env: { ...node.env, ...cliEnv, ...spec.env(cli) } }
+      return { command, args, env }
     },
   })
 
@@ -283,7 +331,8 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     const added = []
     for (const [id, spec] of Object.entries(AGENTS)) {
       const external = find(spec.cli)
-      const detail = cliStore?.find(spec, external) ?? (external ? { path: external, managed: false } : undefined)
+      // Only a CLI Automagik installs itself (`cliPackage`) can have a managed copy.
+      const detail = (spec.cliPackage === undefined ? undefined : cliStore?.find(spec, external)) ?? (external ? { path: external, managed: false } : undefined)
       const cli = detail?.path
       cliDetails.set(id, detail)
       if (clis.get(id) !== cli) signIns.delete(id)
@@ -306,13 +355,16 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     return added
   }
 
-  const probe = async (id) => {
+  // A native agent's sign-in is what its own ACP session said (catalog.js `signedIn`): its CLI
+  // has no status command. Only while it is offered: an agent that is off starts nothing.
+  const nativeSignedIn = (id, fresh) => Promise.resolve(agents.get(id)?.catalog?.signedIn?.({ fresh })).catch(() => undefined)
+  const probe = async (id, { fresh = false } = {}) => {
     const spec = AGENTS[id]
     const cli = clis.get(id)
     const env = { ...process.env, ...cliEnvironment(spec, cliDetails.get(id)) }
-    const authenticated = cli === undefined ? undefined : await signedIn(spec, cli, { env }).catch(() => undefined)
+    const authenticated = cli === undefined ? undefined : isNative(spec) ? await nativeSignedIn(id, fresh) : await signedIn(spec, cli, { env }).catch(() => undefined)
     const epoch = nextEpoch(id)
-    if (authenticated !== true || consents === undefined) {
+    if (authenticated !== true || consents === undefined || isNative(spec)) {
       if (clis.get(id) === cli) {
         signIns.set(id, authenticated)
         noteAccount(id, authenticated, undefined)
@@ -344,7 +396,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       noteAccount(id, true, who)
     }
   }
-  const probeAll = () => Promise.all(Object.keys(AGENTS).map(probe))
+  const probeAll = options => Promise.all(Object.keys(AGENTS).map(id => probe(id, options)))
   // One agent's status with a fresh sign-in check, for a Bot that is about to be put on it
   // (bots-dsh models.js). Read-only: it asks the CLI `auth status` and nothing else, never
   // installs, enables or starts a login. Only that sign-in check is shared and kept: checks a
@@ -361,6 +413,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     consentStates.delete(id)
     accountsSeen.delete(id)
     nextEpoch(id)
+    agents.get(id)?.catalog?.signedOut?.()
     if (signIns.get(id) !== false) {
       signIns.set(id, false)
       publish()
@@ -402,7 +455,8 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   // Required desktop tools are independent of model switches and onboarding. Installing
   // them never starts authentication; the existing explicit refresh owns sign-in checks.
   const ensureCli = (spec, { force = false } = {}) => {
-    if (!cliStore || disposed) return Promise.resolve()
+    // Only a CLI with an official package (`cliPackage`) is Automagik's to install.
+    if (!cliStore || disposed || spec.cliPackage === undefined) return Promise.resolve()
     return cliStore.ensure(spec, find(spec.cli), { force }).then(() => {
       if (!disposed) reconcile()
     }, () => {
@@ -430,15 +484,20 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     const spec = AGENTS[id]
     const cli = clis.get(id)
     const on = enabled(spec)
-    const bin = cli === undefined ? undefined : store.binOf(spec.adapter, spec.bin)
-    const busy = store.busy?.(spec.adapter) === true
-    const failure = store.lastFailure?.(spec.adapter)
-    const cliFailure = cliStore?.lastFailure(spec.cliPackage)
-    const cliBusy = cliStore?.busy(spec.cliPackage) === true
+    const native = isNative(spec)
+    // A native agent has no connector to install: it is ready as soon as its CLI is found.
+    const bin = cli === undefined || native ? undefined : store.binOf(spec.adapter, spec.bin)
+    const busy = !native && store.busy?.(spec.adapter) === true
+    const failure = native ? undefined : store.lastFailure?.(spec.adapter)
+    const connectorState = native ? undefined : store.stateOf?.(spec.adapter)
+    // Only a CLI Automagik installs itself has an install to report; any other is found or missing.
+    const managed = cliStore !== undefined && spec.cliPackage !== undefined
+    const cliFailure = managed ? cliStore.lastFailure(spec.cliPackage) : undefined
+    const cliBusy = managed && cliStore.busy(spec.cliPackage) === true
     const detail = cliDetails.get(id)
     const connector = !on ? 'off'
       : cli === undefined ? 'no-cli'
-        : bin !== undefined ? 'ready'
+        : bin !== undefined || native ? 'ready'
           : busy || failure === undefined ? 'installing'
             : 'failed'
     // In the picker: DSH serves the route. Read from the registry, never the model list, which may
@@ -454,7 +513,9 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       on,
       cli: {
         found: cli !== undefined, installUrl: spec.installUrl,
-        state: cli ? 'ready' : cliBusy || (cliStore && !cliFailure) ? 'installing' : cliFailure ? 'failed' : 'missing',
+        // How the person signs in to a CLI that has no sign-in in the app: its terminal command.
+        ...(typeof spec.signInHint === 'string' ? { signInHint: spec.signInHint } : {}),
+        state: cli ? 'ready' : cliBusy || (managed && !cliFailure) ? 'installing' : cliFailure ? 'failed' : 'missing',
         managed: detail?.managed === true,
         ...(detail?.version ? { version: detail.version } : {}),
         ...(cliBusy && cli ? { updating: true } : {}),
@@ -466,6 +527,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       },
       connector: {
         state: connector,
+        ...(native ? { native: true } : {}),
         ...(bin ? { version: bin.version } : {}),
         ...(connector === 'failed'
           ? {
@@ -475,6 +537,10 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
           }
           : {}),
         ...(connector === 'ready' && busy ? { updating: true } : {}),
+        // The release before the one in use, and a rollback while the failed release is held
+        // back: "running the previous connector; the newest failed to start".
+        ...(bin && connectorState?.previous ? { previous: connectorState.previous } : {}),
+        ...(bin && connectorState?.rolledBack ? { rolledBack: connectorState.rolledBack } : {}),
       },
       ...(signIns.get(id) === undefined ? {} : { signedIn: signIns.get(id) }),
       // Only the state of the person's word for the signed-in account; who it is never rides here.
@@ -662,7 +728,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   }
   async function confirmAccount(id, ref) {
     if (disposed) throw accountFailure('disposed', 'Automagik is restarting. Try again.')
-    if (!Object.hasOwn(AGENTS, id)) throw accountFailure('invalid', 'Choose Claude Code or Codex.')
+    if (!consentIds.includes(id)) throw accountFailure('invalid', `Choose ${consentIds.map(other => AGENTS[other].defaultName).sort().join(' or ')}.`)
     if (consents === undefined) throw accountFailure('unavailable', 'This installation keeps no account record.')
     // The CLI is asked again: the word is for the account signed in now, not for an old answer.
     inspections.delete(id)
@@ -789,6 +855,40 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       return () => { if (imageKeeper === keeper) imageKeeper = undefined }
     },
     /**
+     * A veto on agent turns, for a plugin that must keep an agent from acting in a Session (the
+     * Bot team: a Session whose permission level could not be set). `gate({ sessionId, agent,
+     * provider })` is asked before every model step on an agent's route, and again right before
+     * a turn's prompt is sent. It answers (or resolves) undefined to let the Session go, or the
+     * sentence to answer the step with. It can only refuse: a gate that throws, takes longer
+     * than ten seconds, or answers anything else holds the Session with a fixed sentence. A held
+     * Session's agent session is ended (as `endSession`). Several plugins may register; any
+     * refusal wins, and the returned disposer removes only its own gate. With none registered
+     * nothing is asked.
+     */
+    holdTurns(gate) {
+      if (typeof gate !== 'function') return () => {}
+      const entry = { gate }
+      turnGates.add(entry)
+      return () => { turnGates.delete(entry) }
+    },
+    /**
+     * Ends one Session's agent session now, a turn under way included: the agent's process is
+     * stopped and its bridge credential revoked, and the step answers `why` (a sentence for the
+     * person; a fixed one without it). The DSH Session and its transcript stay; the next turn
+     * starts a fresh agent session. A turn still starting there is refused too. Answers whether
+     * one was live or starting.
+     */
+    endSession: (sessionId, why) => adapter.endSession(sessionId, why),
+    /**
+     * What acted on one Session's permissions, for a diagnostics view (read-only, a fresh plain
+     * copy, undefined for a Session that ran no agent here): { version, agent, startedAt, active,
+     * bridge?: { on, why, at, open? }, modes?: { wanted, offered, chosen?, fellToStrict, at,
+     * current?, applied? }, lastCall?: { path, kind, at }, bridgeCall?: { at }, reviewer?:
+     * { provider, model, ok, code?, at }, review?: { code, at } }. Identifiers and fixed values
+     * only: never a credential, a prompt, a file's content or path, or an account.
+     */
+    permissionDiagnostics: sessionId => diagnostics.read(sessionId),
+    /**
      * What the Bot team gates its one-time Claude move on: whether DSH's tools reach an agent
      * here (`dshTools`), and whether this machine's bridge really answers `initialize` and
      * `tools/list` for a freshly minted per-session credential. The answer is cached per
@@ -807,7 +907,8 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     async refresh() {
       inspections.clear()
       reconcile()
-      await probeAll()
+      // The person asked: a native agent that was not signed in is asked again.
+      await probeAll({ fresh: true })
       // The owner asked: the answer waits for every account read.
       await Promise.all(accountReads.values())
       return status()
@@ -827,7 +928,10 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   // The fake agent alone changes nothing reconcile counts.
   if (registration === undefined) publish()
   ctx.provide?.(SERVICE, service)
-  ctx.on?.('llm/stream', aside(agents, ctx, () => flagOf(config.sideModel) ?? SIDE_MODEL, redact))
+  ctx.on?.('llm/stream', aside(agents, ctx, () => flagOf(config.sideModel) ?? SIDE_MODEL, redact, diagnostics))
+  // The record goes with its Session, and reads the review code of a call DSH's own gate refused.
+  ctx.on?.('agent/disposed', ({ agent } = {}) => diagnostics.drop(agent?.session?.id))
+  ctx.on?.('tools/result', (exec, result) => diagnostics.result(exec, result))
   // The other crossing: a transcript that carries an agent's turn is redacted before it is
   // handed back to a native provider. Live switching's rule, so it follows `dshTools`.
   const crossing = crossed(agents, ctx, redact, () => dshToolsOn(config.dshTools))
@@ -855,7 +959,17 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   // reloaded compaction plugin) is covered before its guard prices the next switch. The
   // request listener is not prepended: compaction-basic's prepended listener calls `next()`
   // (this one) before it prices the switch.
-  const pressure = pressureGuard({ agentDestination: provider => agentRoute(agents, provider) })
+  // A compaction engine without that private method (a DSH update took it away, #871) is
+  // said once, as a warning: the switch to an agent then fails as it did without this guard.
+  let unguardedSaid = false
+  const pressure = pressureGuard({
+    agentDestination: provider => agentRoute(agents, provider),
+    onUnguarded: (reason) => {
+      if (unguardedSaid) return
+      unguardedSaid = true
+      warn(ctx, `the compaction engine ${reason === 'missing' ? 'has no' : 'does not let this plugin wrap'} ${PRESSURE_METHOD}: switching a conversation to Claude Code or Codex can fail (MODEL_SWITCH_COMPACTION_FAILED)`)
+    },
+  })
   const adoptPressure = (agent) => {
     if (agent === undefined || agent === null) return
     for (const engine of enginesFor(ctx, agent)) pressure.adopt(engine)
@@ -871,7 +985,8 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   }
   const first = setTimeout(() => { required(); refresh() }, FIRST_CHECK_MS)
   const cliChecks = cliStore ? setInterval(required, CLI_CHECK_EVERY_MS) : undefined
-  const daily = setInterval(() => { reconcile({ kick: false }); refresh() }, CHECK_EVERY_MS)
+  // Every few hours, so npm is asked at least once a day (install.js, CHECK_TICK_MS).
+  const daily = setInterval(() => { reconcile({ kick: false }); refresh() }, CHECK_TICK_MS)
   first.unref?.()
   daily.unref?.()
   cliChecks?.unref?.()
@@ -889,6 +1004,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     cliStore?.dispose?.()
     adapter.dispose()
     backchannel.dispose()
+    diagnostics.clear()
   })
 }
 

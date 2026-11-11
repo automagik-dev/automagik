@@ -69,7 +69,11 @@ export function isLoginUrl(id, value) {
   } catch { return false }
 }
 
-const known = id => Object.hasOwn(AGENTS, id)
+// Only an agent this module has a sign-in for (its official entry points above). Any other
+// agent of the table signs in in a terminal with its own command (`signInHint`, agents.js).
+const known = id => Object.hasOwn(AGENTS, id) && Object.hasOwn(URL_PATHS, id)
+const CHOOSE = `Choose ${Object.keys(URL_PATHS).map(id => AGENTS[id]?.defaultName).filter(Boolean).sort().join(' or ')}.`
+const terminalOnly = id => (Object.hasOwn(AGENTS, id) && typeof AGENTS[id].signInHint === 'string' ? failure('terminal', `Sign in to ${AGENTS[id].defaultName} in a terminal: run ${AGENTS[id].signInHint}, then check again.`) : undefined)
 // A name for the view that opened the attempt; never an access check.
 const labelOf = value => (typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value) ? value : undefined)
 
@@ -201,7 +205,7 @@ export class CliLogins {
    */
   start(id, { label } = {}) {
     if (this.disposed) throw failure('disposed', 'Sign-in is unavailable while Automagik restarts.')
-    if (!known(id)) throw failure('invalid', 'Choose Claude Code or Codex.')
+    if (!known(id)) throw terminalOnly(id) ?? failure('invalid', CHOOSE)
     const previous = this.flows.get(id)
     if (previous) this.lapse(previous)
     if (previous && this.active(previous)) return this.view(previous)
@@ -216,7 +220,7 @@ export class CliLogins {
 
   /** The attempt at work for this agent (`loginCurrent`), or undefined. Never starts one. */
   current(id) {
-    if (!known(id)) throw failure('invalid', 'Choose Claude Code or Codex.')
+    if (!known(id)) throw failure('invalid', CHOOSE)
     const flow = this.flows.get(id)
     if (!flow) return undefined
     this.lapse(flow)
@@ -257,11 +261,20 @@ export class CliLogins {
     this.pruneStates()
     if (this.states.size === 0) return false
     const cleaned = text.slice(0, 1_000_000).replace(/[\p{Cf}]/gu, '')
+    // The cost of one call (#871): a token's prefix is hashed once however often the text
+    // repeats it, in either reading. So a call costs at most one HMAC per distinct prefix, and
+    // never more than 2 x 1,000,000 / (length + 1) of them for each state length shown (the
+    // lengths add up; Claude's states have one).
+    const tried = new Set()
     for (const candidate of new Set([cleaned, cleaned.replace(/\s+/gu, '')])) {
       for (const match of candidate.matchAll(/#([A-Za-z0-9_-]+)/g)) {
         const token = match[1]
         for (const length of this.stateLengths) {
-          if (token.length >= length && this.states.has(this.hashState(token.slice(0, length)))) return true
+          if (token.length < length) continue
+          const prefix = token.slice(0, length)
+          if (tried.has(prefix)) continue
+          tried.add(prefix)
+          if (this.states.has(this.hashState(prefix))) return true
         }
       }
     }

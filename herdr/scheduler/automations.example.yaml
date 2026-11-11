@@ -22,6 +22,19 @@ automations:
     # Leave the workspace open: each morning's triage is meant to be read.
     close_workspace: never
 
+  # No agent, no model: the scheduler runs the program itself, as you.
+  # Exit 0 is done; anything else, or the timeout, is failed.
+  - name: daily-check
+    cron: "0 7 * * *"
+    command:
+      argv: ["./check.sh", "--all"]
+      cwd: ~/checks
+      env:
+        REGION: eu
+    timeout_minutes: 10
+    # Optional: send the one-line result to this bot (hc send).
+    # notify: b-xxxxxxxx
+
   - name: nightly-deps
     cron: "@daily"
     repo: ~/Projects/myapp

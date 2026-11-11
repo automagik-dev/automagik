@@ -9244,6 +9244,8 @@ var PT_BR = {
   "Signed in to {name}.": "Login feito no {name}.",
   "Not signed in to {name}. Sign in from a Bot's chat.": "Sem login no {name}. Entre pelo chat de um Bot.",
   "Or run {command} in a terminal, then check again.": "Ou rode {command} em um terminal e verifique de novo.",
+  "Not signed in to {name}. Run {command} in a terminal, then check again.": "Sem login no {name}. Rode {command} em um terminal e verifique de novo.",
+  "Turning it on lets Automagik use the sign-in {name} already has on this computer.": "Ao ligar, o Automagik passa a usar o login que o {name} já tem neste computador.",
   "The sign-in to {name} has not been checked yet.": "O login no {name} ainda não foi verificado.",
   "Sign in": "Entrar",
   "No Bot chat to sign in from here. Run {command} in a terminal instead.": "Não há chat de Bot para entrar por aqui. Rode {command} em um terminal.",
@@ -11971,12 +11973,14 @@ function redactorFor(ctx) {
 
 // src/client/acp-agents.js
 var import_react8 = require("react");
-var CLI_OF = { "acp-claude": "claude", "acp-codex": "codex" };
-var LOGO_OF = { "acp-claude": "CC", "acp-codex": "CX" };
+var CLI_OF = { "acp-claude": "claude", "acp-codex": "codex", "acp-hermes": "hermes", "acp-antigravity": "agy", "acp-omp": "omp" };
+var LOGO_OF = { "acp-claude": "CC", "acp-codex": "CX", "acp-hermes": "HM", "acp-antigravity": "AG", "acp-omp": "OM" };
+var isNative = (agent) => agent?.connector?.native === true;
+var signInCommand = (agent) => agent.cli?.signInHint ?? SIGN_IN_OF[agent.id] ?? CLI_OF[agent.id] ?? agent.key;
 var SIGN_IN_OF = { "acp-claude": "claude auth login", "acp-codex": "codex login" };
 var CHAT_LOGIN = /* @__PURE__ */ Symbol.for("automagik.cli-login");
 function openChatLogin(provider, scope = globalThis) {
-  if (!Object.hasOwn(CLI_OF, provider)) return false;
+  if (!Object.hasOwn(SIGN_IN_OF, provider)) return false;
   try {
     return scope[CHAT_LOGIN]?.open?.(provider) === true;
   } catch {
@@ -12033,13 +12037,15 @@ function agentLines(agent) {
   lines.push({ tone: "ok", text: agent.cli.version ? t("Found the {cli} CLI on this computer (version {version}).", { cli, version: agent.cli.version }) : t("Found the {cli} CLI on this computer.", { cli }) });
   if (agent.signedIn === true && agent.consent !== "needed") lines.push({ tone: "ok", text: t("Signed in to {name}.", { name }) });
   if (agent.signedIn === true && agent.consent === "needed" && !cliBusy(agent)) lines.push({ tone: "bad", text: t("{name} is signed in on this computer. Confirm its account in a Bot's chat before Bots use it.", { name }), action: "login", label: t("Confirm account") });
-  if (agent.signedIn === false && !cliBusy(agent)) {
+  if (agent.signedIn === false && isNative(agent)) lines.push({ tone: "bad", text: t("Not signed in to {name}. Run {command} in a terminal, then check again.", { name, command: signInCommand(agent) }), action: "check" });
+  if (agent.signedIn === false && !isNative(agent) && !cliBusy(agent)) {
     lines.push({ tone: "bad", text: t("Not signed in to {name}. Sign in from a Bot's chat.", { name }), action: "login" });
     lines.push({ tone: "muted", text: t("Or run {command} in a terminal, then check again.", { command: SIGN_IN_OF[agent.id] ?? cli }), action: "check" });
   }
-  if (agent.signedIn === void 0 && !cliBusy(agent)) lines.push({ tone: "muted", text: t("The sign-in to {name} has not been checked yet.", { name }), action: "check" });
+  if (agent.signedIn === void 0 && !cliBusy(agent) && (agent.on || !isNative(agent))) lines.push({ tone: "muted", text: t("The sign-in to {name} has not been checked yet.", { name }), action: "check" });
   if (!agent.on) {
     lines.push({ tone: "muted", text: t("Off. Turn it on to use {name} as a model in DSH.", { name }) });
+    if (isNative(agent)) lines.push({ tone: "muted", text: t("Turning it on lets Automagik use the sign-in {name} already has on this computer.", { name }) });
     return lines;
   }
   const { state, version, error, diagnostic, logPath } = agent.connector;
@@ -12056,7 +12062,7 @@ function agentLines(agent) {
     });
   }
   if (state === "ready") {
-    lines.push({ tone: "ok", text: version ? t("Connector ready (version {version}).", { version }) : t("Connector ready.") });
+    if (!isNative(agent)) lines.push({ tone: "ok", text: version ? t("Connector ready (version {version}).", { version }) : t("Connector ready.") });
     if (agent.restartNeeded) lines.push({ tone: "bad", text: t("Restart DSH to see {name} in the model picker.", { name }) });
     else if (stateOf(agent) === "ready") lines.push({ tone: "ok", text: t("Ready: pick {name} in the model picker.", { name }), ready: true });
   }
@@ -12130,7 +12136,7 @@ function useAcp(request2 = call, { onLoginOpen, open = openChatLogin } = {}) {
     login: (agent) => {
       say(agent.id, null);
       if (!open(agent.id)) {
-        say(agent.id, t("No Bot chat to sign in from here. Run {command} in a terminal instead.", { command: SIGN_IN_OF[agent.id] ?? CLI_OF[agent.id] ?? agent.key }));
+        say(agent.id, t("No Bot chat to sign in from here. Run {command} in a terminal instead.", { command: signInCommand(agent) }));
         return false;
       }
       onLoginOpen?.(agent);

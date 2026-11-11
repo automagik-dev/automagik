@@ -115,7 +115,8 @@ test('the service answers even with no CLI here, with each install link, and reg
   apply(h.ctx, { claude: live(true), codex: live(true) }, h.deps)
   assert.deepEqual(h.log, [])
   const status = await h.services[SERVICE].status()
-  assert.deepEqual(status.agents.map(agent => [agent.id, agent.connector.state, agent.cli.found]), [['acp-claude', 'no-cli', false], ['acp-codex', 'no-cli', false]])
+  // The native agents are listed too, off until the person turns one on (native.test.js).
+  assert.deepEqual(status.agents.map(agent => [agent.id, agent.connector.state, agent.cli.found]), [['acp-claude', 'no-cli', false], ['acp-codex', 'no-cli', false], ['acp-hermes', 'off', false], ['acp-antigravity', 'off', false], ['acp-omp', 'off', false]])
   assert.match(byId(status, 'acp-claude').cli.installUrl, /^https:\/\//)
   assert.match(byId(status, 'acp-codex').cli.installUrl, /^https:\/\//)
   // Asking for the status spawns nothing.
@@ -149,7 +150,7 @@ test('flipping a switch offers or withdraws the agent at once, without a restart
   h.ctx.emit('loader/volatile-update')
   assert.deepEqual(h.log.at(-1), ['dispose'])
   const status = await h.services[SERVICE].status()
-  assert.deepEqual(status.agents.map(agent => [agent.on, agent.connector.state]), [[false, 'off'], [false, 'off']])
+  assert.deepEqual(status.agents.slice(0, 2).map(agent => [agent.on, agent.connector.state]), [[false, 'off'], [false, 'off']])
   // On again: a new registration.
   config.claude.set(true)
   h.ctx.emit('loader/volatile-update')
@@ -487,4 +488,24 @@ test('a sign-in through the service records the confirmed CLI, refreshes inspect
   assert.equal(service.loginActive(), 0)
   assert.equal(service.loginTextMatches('nothing here'), false)
   h.ctx.emit('stop')
+})
+
+test('the status shows the previous connector, and a rollback while the failed release is held back', async () => {
+  const h = harness({ clis: { claude: '/bin/claude', codex: '/bin/codex' } })
+  h.bins[CLAUDE.adapter] = { path: '/x/dist/index.js', version: '0.9.1' }
+  h.bins[CODEX.adapter] = { path: '/y/dist/index.js', version: '2.0.0' }
+  const states = {
+    [CLAUDE.adapter]: { version: '0.9.1', proven: true, previous: '0.9.0', rolledBack: { from: '0.9.2', to: '0.9.1', at: 5, reason: 'it exited (1) before it answered initialize' } },
+    [CODEX.adapter]: { version: '2.0.0', proven: true },
+  }
+  h.deps.store.stateOf = pkg => states[pkg]
+  apply(h.ctx, { claude: live(true), codex: live(true) }, h.deps)
+  const status = await h.services[SERVICE].status()
+  assert.deepEqual(byId(status, 'acp-claude').connector, {
+    state: 'ready',
+    version: '0.9.1',
+    previous: '0.9.0',
+    rolledBack: { from: '0.9.2', to: '0.9.1', at: 5, reason: 'it exited (1) before it answered initialize' },
+  })
+  assert.deepEqual(byId(status, 'acp-codex').connector, { state: 'ready', version: '2.0.0' })
 })

@@ -55,7 +55,7 @@ placement and the progress strip do not.
   (`Teams.kt:403`) hold the end state and the gesture rule; `Teams.deckAfterSelection`
   (`Teams.kt:395`) keeps the deck through a card's Back and closes it for any other selection.
   `PocketApp` owns the open state
-  (`MainActivity.kt:127`), and Home's needs-you count tile and **Review** bar open it
+  (`MainActivity.kt:128`), and Home's needs-you count tile and **Review** bar open it
   (`MainActivity.kt:441`, `:470`), so a later "Answer all" button opens the same screen. A card's
   terminal or chat keeps the deck's answers on the way Back, and a disconnected machine's requests
   show the offline end. The last answer shows All clear ("You answered N requests. Your bots are

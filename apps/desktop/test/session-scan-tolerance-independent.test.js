@@ -17,8 +17,10 @@
 // 3. the skip set on the listing paths: format, corruption, identity and the four named
 //    filesystem codes are skipped and reported once each (capped at 20 lines plus a summary),
 //    while EIO, EMFILE and aborts still fail the scan;
-// 4. the boundary: an unreadable session folder still fails list() at the strict root check,
-//    and the skip applies only to a later listing whose root check already passed;
+// 4. the boundary (#885): an unreadable session folder is skipped and reported at the root
+//    check too, but that pass is never cached, so the folder still fails the root once it is
+//    readable and holds the other compression; a pass that skipped nothing is cached, and a
+//    folder that turns unreadable after it is skipped by the listing;
 // 5. duplicates keep the first copy in sorted sourcePath order, the migration child catalog
 //    lists strictly, and a genuinely fatal header still fails;
 // 6. the held tree: one valid session plus a backup-shaped folder, a stray flat file and a
@@ -52,7 +54,7 @@ const DSH = '0.2.2-rc.1'
 const VERSION = '0.2.2-rc.1'
 // patches.json's session-scan-tolerance entry: the published bytes and the carried result.
 const BEFORE = '69efef5f84dddf947032bc1425067878fa610416c8885acde2ded9b01230c9b7'
-const AFTER = 'c8663b1fc8e6783ef70d3c24340bdacb8790033ca529ab25b7f9fe667d274ad0'
+const AFTER = 'fae8a417cfa075e3cab004add29a3fe010270fdf925f75b7fafe02775aee51a0'
 // The workspace fixture is unchanged 0.2.2-rc.1 activation glue: it has no patches.json entry,
 // so this rows its bytes independently of the persistence pin.
 const WORKSPACE_SHA256 = '931ca0cb10c5102066c7723690a887f0e6e8e7ab0ffdee1a782686745b0b934f'
@@ -70,14 +72,9 @@ const importFile = (path, tag) => import(`${pathToFileURL(path).href}?${tag}`)
 // The scan JSON-stringifies a path in its warning; mirror that so a Windows separator is portable.
 const jsonPath = path => JSON.stringify(path).slice(1, -1)
 
-// Keep synthetic runtimes out of /tmp and the project: use the platform's ephemeral shared
-// mount when it exists (Linux /dev/shm), and os.tmpdir() elsewhere. Each test removes its own.
-const TEMP_ROOT = (() => {
-  try {
-    if (statSync('/dev/shm').isDirectory()) return '/dev/shm'
-  } catch {}
-  return tmpdir()
-})()
+// Synthetic runtimes go under os.tmpdir(), so the suite follows the run's own TMPDIR (the
+// gate's scratch rule) and reproduces on any machine (#885). Each test removes its own.
+const TEMP_ROOT = tmpdir()
 
 /** Install one package.json-only node_modules package and return its directory. */
 function installPackage(root, name, version = VERSION, fields = {}) {
@@ -413,7 +410,8 @@ test('row 1: the fixture bytes are the pinned before-images; the patch yields th
   assert.ok(patchText.startsWith(`--- a/${PERSIST}/${LIB}\n+++ b/${PERSIST}/${LIB}\n`), patchText.slice(0, 120))
   assert.ok(patchText.includes('+const SKIPPED_SESSION_LINES = 20;'), 'the patch carries the skip-line cap')
   assert.ok(patchText.includes('this.listArtifacts(signal, { strict: true })'), 'the migration child catalog lists strictly')
-  assert.ok(patchText.includes('}, void 0, { skipFlatFiles: true });'), 'the root encoding check stays strict')
+  assert.ok(patchText.includes('+\t\t\tskipFlatFiles: true,\n+\t\t\tonUnreadable: () => {'), 'the root check skips only flat files and unreadable folders')
+  assert.ok(patchText.includes('+\t\tif (unreadable) this.rootEncodingCheck = void 0;'), 'a root pass that skipped a folder is never cached')
 
   const runtime = makeRuntime(t)
   assert.equal(sha256(readFileSync(runtime.persist)), BEFORE, 'the runtime copy starts at the pinned bytes')
@@ -490,6 +488,29 @@ test('row 2b: the root check still fails after construction when the root stops 
     assert.equal(patchedRegistry.message, unpatchedRegistry.message)
   })
   assert.deepEqual(warnings, [], 'a broken root is a refusal, not a skipped project')
+})
+
+// Row 2c (#885): the same loss after a cached passing root check. The first listing passes and
+// caches the check, so the refusal here comes from the tolerant listing's own root read.
+test('row 2c: a cached passing root check, then the root goes: the tolerant listing still refuses', async (t) => {
+  const runtime = makeRuntime(t)
+  const { sessions, cwd } = makeTree(runtime, 'cached-root')
+  writeSession(sessions, cwd, { id: 'cached-one' })
+  assert.equal(patchRuntime(runtime.modules, runtime.patches)[0].state, 'patched')
+  const patched = await openPersistence(runtime.persist, sessions, 'cached-patched')
+  assert.deepEqual((await patched.list()).map(snapshot => snapshot.header.id), ['cached-one'])
+  assert.ok(patched.rootEncodingCheck instanceof Promise, 'the first listing cached the passing root check')
+  rmSync(sessions, { recursive: true, force: true })
+  writeFileSync(sessions, 'not a directory\n')
+  const { warnings } = await withWarnings(async () => {
+    const first = await rejectionOf(() => patched.list())
+    const second = await rejectionOf(() => patched.list())
+    assert.equal(first.code, 'ENOTDIR')
+    assert.equal(second.code, 'ENOTDIR')
+    const registry = await rejectionOf(() => activateWorkspace(runtime, patched, 'cached-workspace'))
+    assert.equal(registry.code, 'ENOTDIR')
+  })
+  assert.deepEqual(warnings, [], 'a root lost after a cached pass is a refusal, not a skipped project')
 })
 
 // Row 3a: the named skip set.
@@ -624,53 +645,76 @@ test('row 3c: EIO, EMFILE and aborts still fail the scan instead of being skippe
   assert.deepEqual(duringWarnings, [], 'an abort is not converted into a skip line')
 })
 
-// Row 4: the strict-root boundary.
-test('row 4: an unreadable folder still fails list() at the strict root check; only a later listing skips', async (t) => {
+// Row 4: the root-check boundary (#885).
+test('row 4: an unreadable folder is skipped at the root check, which never caches that pass', async (t) => {
   const runtime = makeRuntime(t)
   const { sessions, cwd } = makeTree(runtime, 'boundary')
   writeSession(sessions, cwd, { id: 'valid-one' })
-  writeSession(sessions, cwd, { id: 'locked-one' })
+  const lockedDir = writeSession(sessions, cwd, { id: 'locked-one' })
   const unreadable = dir => Object.assign(new Error(`EACCES: permission denied, scandir '${basename(dir)}'`), { code: 'EACCES' })
-  const lockProbe = persistence => {
-    const probe = persistence.findOppositeGenerationInDirectory.bind(persistence)
-    persistence.findOppositeGenerationInDirectory = async (dir, ...rest) => {
-      if (basename(dir) === 'locked-one') throw unreadable(dir)
-      return probe(dir, ...rest)
+  // Every read of the folder by the real instance fails until the returned switch is turned off.
+  const lockFolder = (persistence) => {
+    const state = { locked: true }
+    for (const method of ['findOppositeGenerationInDirectory', 'resolveGenerationInDirectory']) {
+      const real = persistence[method].bind(persistence)
+      persistence[method] = async (dir, ...rest) => {
+        if (state.locked && basename(dir) === 'locked-one') throw unreadable(dir)
+        return real(dir, ...rest)
+      }
     }
-    return persistence
+    return state
   }
 
-  const unpatched = lockProbe(await openPersistence(runtime.persist, sessions, 'boundary-unpatched'))
+  const unpatched = await openPersistence(runtime.persist, sessions, 'boundary-unpatched')
+  lockFolder(unpatched)
   const unpatchedError = await rejectionOf(() => unpatched.list())
   assert.equal(unpatchedError.code, 'EACCES')
+  const unpatchedRegistry = await rejectionOf(() => activateWorkspace(runtime, unpatched, 'boundary-workspace-unpatched'))
+  assert.equal(unpatchedRegistry.code, 'EACCES', 'unpatched, the registry does not activate')
 
   assert.equal(patchRuntime(runtime.modules, runtime.patches)[0].state, 'patched')
-  const checked = lockProbe(await openPersistence(runtime.persist, sessions, 'boundary-patched'))
-  const { warnings } = await withWarnings(async () => {
-    const error = await rejectionOf(() => checked.list())
-    assert.equal(error.code, 'EACCES')
-  })
-  assert.deepEqual(warnings, [], 'the strict root check refuses before the listing can skip')
+  const checked = await openPersistence(runtime.persist, sessions, 'boundary-patched')
+  const lock = lockFolder(checked)
+  const first = await withWarnings(() => activateWorkspace(runtime, checked, 'boundary-workspace-patched'))
+  assert.deepEqual([...first.value.registry.headers.keys()], ['valid-one'], 'the registry activates over the readable session')
+  assert.equal(first.value.state().initialized, true)
+  assert.equal(first.warnings.length, 1, first.warnings.join('\n'))
+  assert.ok(first.warnings[0].includes('locked-one'), first.warnings[0])
+  assert.match(first.warnings[0], /^dsh-session: skipped session folder .*EACCES/)
+  assert.equal(checked.rootEncodingCheck, undefined, 'a pass that skipped a folder is not cached')
+  const again = await withWarnings(() => checked.list())
+  assert.deepEqual(again.value.map(snapshot => snapshot.header.id), ['valid-one'])
+  assert.deepEqual(again.warnings, [], 'the folder is reported once per backend instance')
 
-  // Once the root check has passed and cached, the same folder failure is a skip.
+  // Never a cached OK: the folder turns readable holding the other compression, and the next
+  // call refuses the root exactly as a root that never had an unreadable folder.
+  renameSync(sourceOf(lockedDir), `${sourceOf(lockedDir)}.zstd`)
+  lock.locked = false
+  const refused = await withWarnings(async () => {
+    const error = await rejectionOf(() => checked.list())
+    assert.ok(error.message.includes('uses .jsonl.zstd, but this backend is configured for compression "none"'), error.message)
+    assert.ok(error.message.includes('locked-one'), error.message)
+    assert.equal((await rejectionOf(() => checked.list())).message, error.message)
+  })
+  assert.deepEqual(refused.warnings, [], 'the mismatch is a refusal, not a skipped folder')
+  renameSync(`${sourceOf(lockedDir)}.zstd`, sourceOf(lockedDir))
+
+  // A pass that skipped nothing is cached; the same folder failure after it is the listing's skip.
   const late = await openPersistence(runtime.persist, sessions, 'boundary-late')
   assert.deepEqual(
     (await late.list()).map(snapshot => snapshot.header.id).sort(),
     ['locked-one', 'valid-one'],
     'the first listing passes the root check',
   )
-  const skipped = await withWarnings(async () => {
-    const resolve = late.resolveGenerationInDirectory.bind(late)
-    late.resolveGenerationInDirectory = async (dir, signal) => {
-      if (basename(dir) === 'locked-one') throw unreadable(dir)
-      return resolve(dir, signal)
-    }
-    return late.list()
-  })
+  const cached = late.rootEncodingCheck
+  assert.ok(cached instanceof Promise, 'a clean pass is cached')
+  lockFolder(late)
+  const skipped = await withWarnings(() => late.list())
   assert.deepEqual(skipped.value.map(snapshot => snapshot.header.id), ['valid-one'])
   assert.equal(skipped.warnings.length, 1, skipped.warnings.join('\n'))
   assert.ok(skipped.warnings[0].includes('locked-one'), skipped.warnings[0])
   assert.match(skipped.warnings[0], /EACCES/)
+  assert.equal(late.rootEncodingCheck, cached, 'the cached pass is kept')
 })
 
 // Row 5a: the duplicate pick.

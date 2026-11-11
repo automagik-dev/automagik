@@ -1298,9 +1298,10 @@ fn contract_1_carries_the_attribution_contract() {
     }
     assert_eq!(
         s["properties"]["query"]["oneOf"][1]["properties"]["by"]["enum"],
-        json!(["bot"])
+        json!(["bot", "task"])
     );
     assert!(s["$defs"]["botRow"].is_object());
+    assert!(s["$defs"]["taskRow"].is_object());
     assert!(s["properties"]["actor_unattributed"].is_object());
 }
 
@@ -1559,7 +1560,7 @@ fn request_sha256_covers_by_on_every_example() {
     // A branch request hashes as before by existed; a bot request adds the line `by bot`, which
     // no branch can be, after the window.
     use sha2::Digest;
-    let mut by = 0;
+    let (mut bots, mut tasks) = (0, 0);
     for n in example_names() {
         let v = example(&n);
         let q = &v["query"];
@@ -1572,7 +1573,11 @@ fn request_sha256_covers_by_on_every_example() {
         ];
         if let Some(b) = q.get("by") {
             lines.push(format!("by {}", b.as_str().unwrap()));
-            by += 1;
+            match b.as_str().unwrap() {
+                "bot" => bots += 1,
+                "task" => tasks += 1,
+                other => panic!("{n}: an unknown query.by {other}"),
+            }
         }
         for b in q["branches"].as_array().unwrap() {
             lines.push(b.as_str().unwrap().to_string());
@@ -1584,7 +1589,7 @@ fn request_sha256_covers_by_on_every_example() {
         }
         assert_eq!(q["request_sha256"], meter::event::hex(&h.finalize()), "{n}");
     }
-    assert_eq!(by, 5, "the bot examples");
+    assert_eq!((bots, tasks), (5, 3), "the bot and task examples");
 }
 
 #[test]
@@ -2239,6 +2244,12 @@ fn query_and_status_never_change_the_store_and_add_only_sqlite_companions() {
     assert_eq!(v["store"]["location"], "override");
     assert!(out.stderr.is_empty());
     same_folder(&folder(&fx.env.state()), &before, "query");
+
+    // A task query reads the evidence too; it still writes nothing.
+    let task = bin(&fx, &["query", "--repo", REPO, "--by", "task", "--json"]);
+    assert_eq!(task.status.code(), Some(0), "{task:?}");
+    assert!(schema().valid(&serde_json::from_slice(&task.stdout).unwrap()));
+    same_folder(&folder(&fx.env.state()), &before, "a task query");
 
     let out = bin(&fx, &["status"]);
     assert_eq!(
@@ -3181,4 +3192,496 @@ fn a_real_free_space_refusal_reads_the_filesystem() {
     assert_eq!(fs::metadata(fx.db()).unwrap().len(), len_before);
     assert_eq!(head(&fx.db()), head_before);
     assert_eq!(names(&state), names_before, "no generation, no companion");
+}
+
+// ---------------------------------------------------------------------------------------------
+// The task rows (RFC 0018 M3, RFC 0021 D4).
+
+#[test]
+fn a_task_row_reports_its_tokens_and_every_bot_and_role() {
+    let s = scenes::tasks();
+    let (code, raw) = s.query(&scenes::task_args(&[
+        "feat/gn-41-pager",
+        "feat/gn-42-cache",
+    ]));
+    assert_eq!(code, 0, "{raw}");
+    let v: Value = serde_json::from_str(&raw).unwrap();
+    assert!(schema().valid(&v), "{:#?}", schema().errors(&v));
+    let rows = rows_of(&v);
+    assert_eq!(rows.len(), 2, "{rows:?}");
+    let row = &rows[0];
+    assert_eq!(row["task"], "gn-41");
+    assert_eq!(row["state"], "measured");
+    assert_eq!(row["attribution"]["precision"], "task_interval");
+    let total = row["tokens"]["total"].as_i64().unwrap();
+    assert!(total > 0);
+    let actors: Vec<(&str, &str, &str)> = row["actors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| {
+            (
+                a["bot"].as_str().unwrap(),
+                a["role"].as_str().unwrap(),
+                a["kind"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        actors,
+        [("heron", "review", "worker"), ("kite", "dev", "worker")]
+    );
+    // Every token of a task row is attributed to a launch that names it: the four counts and
+    // both basis splits add up (the schema cannot add).
+    let a = &row["attribution"]["actor"];
+    assert_eq!(a["tokens_attributed"].as_i64().unwrap(), total);
+    for k in [
+        "tokens_ambiguous",
+        "tokens_unlinked",
+        "tokens_before_evidence",
+    ] {
+        assert_eq!(a[k], 0, "{k}");
+    }
+    let basis: i64 = ["session", "label", "worktree"]
+        .iter()
+        .map(|k| a["tokens_by_basis"][k].as_i64().unwrap())
+        .sum();
+    assert_eq!(basis, total);
+    let branch: i64 = ["log", "ledger", "none"]
+        .iter()
+        .map(|k| a["tokens_by_branch_basis"][k].as_i64().unwrap())
+        .sum();
+    assert_eq!(branch, total);
+    // The second task was the dev bot alone.
+    assert_eq!(rows[1]["task"], "gn-42");
+    assert_eq!(
+        rows[1]["actors"],
+        json!([{"bot": "kite", "kind": "worker", "role": "dev", "squad": "lark",
+                "unrecorded": [], "harness": "claude-code"}])
+    );
+    assert!(rows[1]["tokens"]["total"].as_i64().unwrap() > 0);
+}
+
+#[test]
+fn same_id_tasks_in_two_checkouts_are_ambiguous_and_never_print_a_path() {
+    let s = scenes::tasks_ambiguous();
+    let (code, raw) = s.query(&scenes::task_args(&["feat/gn-51-a", "feat/gn-51-b"]));
+    assert_eq!(code, 0, "{raw}");
+    for p in [scenes::ROOT, "/work/widgets-copy"] {
+        assert!(!raw.contains(p), "the answer prints a checkout path: {raw}");
+    }
+    for session in ["s-kite-51a", "s-kite-51b"] {
+        assert!(
+            !raw.contains(session),
+            "the answer prints a session id: {raw}"
+        );
+    }
+    let v: Value = serde_json::from_str(&raw).unwrap();
+    assert!(schema().valid(&v), "{:#?}", schema().errors(&v));
+    let rows = rows_of(&v);
+    assert_eq!(rows.len(), 1, "one row per task id, never one per checkout");
+    assert_eq!(rows[0]["task"], "gn-51");
+    assert_eq!(rows[0]["state"], "missing");
+    assert_eq!(rows[0]["reason"], "task_ambiguous");
+    assert!(rows[0]["tokens"].is_null() && rows[0]["cost"].is_null());
+    assert_eq!(rows[0]["actors"], json!([]));
+    assert_eq!(rows[0]["actors_omitted"], 0);
+
+    // The branch answer a reader falls back to still holds every token, and the bots are named.
+    let (_, branch_raw) = s.query(&scenes::args(false, &["feat/gn-51-a", "feat/gn-51-b"]));
+    let branch: Value = serde_json::from_str(&branch_raw).unwrap();
+    assert!(schema().valid(&branch));
+    let total: i64 = rows_of(&branch)
+        .iter()
+        .filter_map(|r| r["tokens"]["total"].as_i64())
+        .sum();
+    assert!(total > 0, "{branch_raw}");
+    let (_, bots_raw) = s.query(&scenes::args(true, &[]));
+    let bots: Value = serde_json::from_str(&bots_raw).unwrap();
+    assert!(
+        rows_of(&bots).iter().any(|r| r["bot"] == "kite"),
+        "{bots_raw}"
+    );
+}
+
+#[test]
+fn a_window_without_task_labels_is_an_empty_ok_answer_and_the_branch_answer_is_unchanged() {
+    let none = scenes::task_fallback(None);
+    let labelled = scenes::task_fallback(Some("gn-60"));
+    let branch = scenes::args(false, &["feat/gn-60-plain"]);
+
+    let (code, raw) = none.query(&scenes::task_args(&["feat/gn-60-plain"]));
+    assert_eq!(code, 0, "{raw}");
+    let v: Value = serde_json::from_str(&raw).unwrap();
+    assert!(schema().valid(&v), "{:#?}", schema().errors(&v));
+    assert_eq!(v["status"], "ok");
+    assert_eq!(v["query"]["by"], "task");
+    assert_eq!(
+        v["rows"],
+        json!([]),
+        "no task labels is a clean ok answer with no rows, not an error or a false 0"
+    );
+    assert_eq!(v["ingestion"]["complete"], true);
+
+    // The branch answer is the fallback, and a task label does not move it: byte-identical.
+    let (_, plain) = none.query(&branch);
+    let (_, with_task) = labelled.query(&branch);
+    assert_eq!(
+        plain, with_task,
+        "recording a task must not change the branch answer"
+    );
+    let b: Value = serde_json::from_str(&plain).unwrap();
+    assert!(schema().valid(&b));
+    assert_eq!(rows_of(&b)[0]["state"], "measured");
+    assert!(rows_of(&b)[0]["tokens"]["total"].as_i64().unwrap() > 0);
+
+    // The labelled store does report the task row.
+    let (_, raw) = labelled.query(&scenes::task_args(&["feat/gn-60-plain"]));
+    let t: Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(rows_of(&t).len(), 1);
+    assert_eq!(rows_of(&t)[0]["task"], "gn-60");
+    assert_eq!(rows_of(&t)[0]["state"], "measured");
+}
+
+/// Make every stored call of one (task, project) parent-only: its own session names no link, its
+/// parent names the task launch's linked session, and its start folder is not the launch's
+/// worktree. The stored attribution is left as it is, as the resolver would have derived it from
+/// the parent (`ledger.rs` matches either the call's session or its parent).
+fn make_parent_only(db: &Path, task: &str, project: &str) -> usize {
+    let c = Connection::open(db).unwrap();
+    let parent: Vec<u8> = c
+        .query_row(
+            "SELECT l.session FROM link l JOIN launch g ON g.lkey = l.lkey
+             WHERE g.task = ?1 AND g.project = ?2 LIMIT 1",
+            params![task, project],
+            |r| r.get(0),
+        )
+        .unwrap();
+    let ids: Vec<i64> = {
+        let mut st = c
+            .prepare(
+                "SELECT e.id FROM evidence e JOIN ev_actor a ON a.id = e.actor
+                 WHERE a.task = ?1 AND a.project = ?2 ORDER BY e.id",
+            )
+            .unwrap();
+        let rows = st.query_map(params![task, project], |r| r.get(0)).unwrap();
+        rows.collect::<rusqlite::Result<_>>().unwrap()
+    };
+    let elsewhere = format!("/work/elsewhere-{task}");
+    c.execute(
+        "INSERT INTO ev_cwd(path) VALUES(?1) ON CONFLICT(path) DO NOTHING",
+        params![elsewhere],
+    )
+    .unwrap();
+    let cwd: i64 = c
+        .query_row(
+            "SELECT id FROM ev_cwd WHERE path = ?1",
+            params![elsewhere],
+            |r| r.get(0),
+        )
+        .unwrap();
+    for (i, id) in ids.iter().enumerate() {
+        let child = vec![0xC0 + i as u8; 16];
+        c.execute(
+            "UPDATE evidence SET session = ?1, parent = ?2, session_cwd = ?3 WHERE id = ?4",
+            params![child, parent, cwd, id],
+        )
+        .unwrap();
+    }
+    ids.len()
+}
+
+#[test]
+fn a_parent_only_task_call_is_counted_in_its_task_row() {
+    let s = scenes::tasks();
+    let db = s.env.state().join("meter.db");
+    assert!(
+        make_parent_only(&db, "gn-41", scenes::ROOT) > 0,
+        "the task's calls"
+    );
+    // What the task row must hold: every evidence-backed call of gn-41, parent-only included.
+    let expected: i64 = {
+        let c = Connection::open(&db).unwrap();
+        c.query_row(
+            "SELECT coalesce(sum(e.input_uncached + e.cache_read + e.cache_write_5m
+                                + e.cache_write_1h + e.output + e.unsplit), 0)
+             FROM evidence e JOIN ev_actor a ON a.id = e.actor
+             WHERE a.task = 'gn-41' AND a.state = 'attributed'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    let (code, raw) = s.query(&scenes::task_args(&[
+        "feat/gn-41-pager",
+        "feat/gn-42-cache",
+    ]));
+    assert_eq!(code, 0, "{raw}");
+    let v: Value = serde_json::from_str(&raw).unwrap();
+    assert!(schema().valid(&v), "{:#?}", schema().errors(&v));
+    let row = rows_of(&v)
+        .iter()
+        .find(|r| r["task"] == "gn-41")
+        .expect("the gn-41 row");
+    assert_eq!(row["state"], "measured");
+    assert_eq!(
+        row["tokens"]["total"].as_i64().unwrap(),
+        expected,
+        "a parent-only call is never dropped from its task row"
+    );
+    assert_eq!(row["actors_omitted"], 0);
+}
+
+#[test]
+fn a_parent_only_second_checkout_still_makes_the_task_ambiguous() {
+    let s = scenes::tasks_ambiguous();
+    let db = s.env.state().join("meter.db");
+    let other = format!("{}-copy", scenes::ROOT);
+    assert!(
+        make_parent_only(&db, "gn-51", &other) > 0,
+        "the second checkout's calls"
+    );
+    let (code, raw) = s.query(&scenes::task_args(&["feat/gn-51-a", "feat/gn-51-b"]));
+    assert_eq!(code, 0, "{raw}");
+    let v: Value = serde_json::from_str(&raw).unwrap();
+    assert!(schema().valid(&v), "{:#?}", schema().errors(&v));
+    let rows = rows_of(&v);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["task"], "gn-51");
+    assert_eq!(
+        rows[0]["state"], "missing",
+        "a parent-only second checkout is still seen: {raw}"
+    );
+    assert_eq!(rows[0]["reason"], "task_ambiguous");
+    assert!(rows[0]["tokens"].is_null(), "never summed: {raw}");
+}
+
+#[test]
+fn an_empty_or_control_character_task_id_never_becomes_a_task_row() {
+    // A store an older or foreign writer left with a task id the contract cannot print: the
+    // call fails closed, with no blank row and no row carrying an escape.
+    for bad in ["", "gn\u{1b}[2J", "gn\n41", "\u{7f}"] {
+        let s = scenes::tasks();
+        let db = s.env.state().join("meter.db");
+        {
+            let c = Connection::open(&db).unwrap();
+            let changed = c
+                .execute(
+                    "UPDATE ev_actor SET task = ?1 WHERE task = 'gn-41'",
+                    params![bad],
+                )
+                .unwrap();
+            assert!(changed > 0, "the gn-41 actors");
+        }
+        let (code, raw) = s.query(&scenes::task_args(&[
+            "feat/gn-41-pager",
+            "feat/gn-42-cache",
+        ]));
+        assert_eq!(code, 0, "{bad:?}: {raw}");
+        let v: Value = serde_json::from_str(&raw).unwrap();
+        assert!(schema().valid(&v), "{:#?}", schema().errors(&v));
+        let tasks: Vec<&str> = rows_of(&v)
+            .iter()
+            .map(|r| r["task"].as_str().unwrap())
+            .collect();
+        assert_eq!(tasks, ["gn-42"], "{bad:?} made a task row: {raw}");
+    }
+}
+
+/// The sum of the stored calls of one task id from `from_ms` on, every kind of token.
+fn stored_task_tokens(db: &Path, task: &str, from_ms: i64) -> i64 {
+    let c = Connection::open(db).unwrap();
+    c.query_row(
+        "SELECT coalesce(sum(e.input_uncached + e.cache_read + e.cache_write_5m
+                            + e.cache_write_1h + e.output + e.unsplit), 0)
+         FROM evidence e JOIN ev_actor a ON a.id = e.actor
+         WHERE a.task = ?1 AND a.state = 'attributed' AND e.ts_ms >= ?2",
+        params![task, from_ms],
+        |r| r.get(0),
+    )
+    .unwrap()
+}
+
+/// The task rows of one answer, by task id.
+fn task_totals(v: &Value) -> Vec<(String, Option<i64>)> {
+    rows_of(v)
+        .iter()
+        .map(|r| {
+            (
+                r["task"].as_str().unwrap().to_string(),
+                r["tokens"]["total"].as_i64(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_checkout_outside_the_branch_filter_still_makes_the_task_ambiguous() {
+    // The ambiguity rule is judged on every call of the task in the window, not only on those
+    // the branch filter keeps: naming one checkout's branch must not sum that checkout alone.
+    let s = scenes::tasks_ambiguous();
+    for branch in ["feat/gn-51-a", "feat/gn-51-b"] {
+        let (code, raw) = s.query(&scenes::task_args(&[branch]));
+        assert_eq!(code, 0, "{raw}");
+        let v: Value = serde_json::from_str(&raw).unwrap();
+        assert!(schema().valid(&v), "{:#?}", schema().errors(&v));
+        let rows = rows_of(&v);
+        assert_eq!(rows.len(), 1, "{branch}: {raw}");
+        assert_eq!(rows[0]["task"], "gn-51");
+        assert_eq!(rows[0]["state"], "missing", "{branch}: {raw}");
+        assert_eq!(rows[0]["reason"], "task_ambiguous", "{branch}: {raw}");
+        assert!(rows[0]["tokens"].is_null(), "never summed: {raw}");
+    }
+}
+
+#[test]
+fn a_stale_store_makes_a_task_row_stale_and_an_ambiguous_one_stays_ambiguous() {
+    let stale = |branches: &[&str]| {
+        let mut a = scenes::task_args(branches);
+        a.extend(["--stale-after".to_string(), "60".to_string()]);
+        a
+    };
+    let s = scenes::tasks();
+    let branches = ["feat/gn-41-pager", "feat/gn-42-cache"];
+    let (_, fresh_raw) = s.query(&scenes::task_args(&branches));
+    let fresh: Value = serde_json::from_str(&fresh_raw).unwrap();
+    let (code, raw) = s.query(&stale(&branches));
+    assert_eq!(code, 0, "{raw}");
+    let v: Value = serde_json::from_str(&raw).unwrap();
+    assert!(schema().valid(&v), "{:#?}", schema().errors(&v));
+    assert_eq!(v["ingestion"]["stale"], true, "{raw}");
+    let rows = rows_of(&v);
+    assert_eq!(rows.len(), 2, "{raw}");
+    for r in rows {
+        assert_eq!(r["state"], "stale", "{r}");
+        assert_eq!(r["reason"], "ingestion_stale", "{r}");
+    }
+    // The numbers are what the store holds, as of the last sync.
+    assert_eq!(task_totals(&v), task_totals(&fresh));
+    assert!(
+        task_totals(&v)
+            .iter()
+            .all(|(_, n)| n.is_some_and(|n| n > 0))
+    );
+
+    // RFC 0018's one exception to stale coming first: the identity is what is unknown.
+    let s = scenes::tasks_ambiguous();
+    let (code, raw) = s.query(&stale(&["feat/gn-51-a", "feat/gn-51-b"]));
+    assert_eq!(code, 0, "{raw}");
+    let v: Value = serde_json::from_str(&raw).unwrap();
+    assert!(schema().valid(&v), "{:#?}", schema().errors(&v));
+    assert_eq!(v["ingestion"]["stale"], true, "{raw}");
+    let rows = rows_of(&v);
+    assert_eq!(rows.len(), 1, "{raw}");
+    assert_eq!(rows[0]["state"], "missing", "{raw}");
+    assert_eq!(rows[0]["reason"], "task_ambiguous", "{raw}");
+    assert!(rows[0]["tokens"].is_null(), "no stale lower bound: {raw}");
+}
+
+#[test]
+fn a_task_call_before_the_window_is_not_counted() {
+    let s = scenes::tasks();
+    let db = s.env.state().join("meter.db");
+    let branches = ["feat/gn-41-pager", "feat/gn-42-cache"];
+    let mut args = scenes::task_args(&branches);
+    args.extend(["--window".to_string(), "d7".to_string()]);
+    let (code, raw) = s.query(&args);
+    assert_eq!(code, 0, "{raw}");
+    let v: Value = serde_json::from_str(&raw).unwrap();
+    assert!(schema().valid(&v), "{:#?}", schema().errors(&v));
+    let start = scenes::t(v["window"]["start"].as_str().unwrap());
+    let rows = rows_of(&v);
+    assert_eq!(rows.len(), 2, "{raw}");
+    for r in rows {
+        let task = r["task"].as_str().unwrap();
+        let inside = stored_task_tokens(&db, task, start);
+        let all = stored_task_tokens(&db, task, 0);
+        assert!(
+            0 < inside && inside < all,
+            "{task}: the scene has calls on both sides of the bound"
+        );
+        assert_eq!(r["state"], "measured", "{r}");
+        assert_eq!(
+            r["tokens"]["total"].as_i64().unwrap(),
+            inside,
+            "{task}: only the calls from the window's start on"
+        );
+    }
+}
+
+#[test]
+fn a_branch_named_narrows_the_task_rows() {
+    let s = scenes::tasks();
+    let (_, all_raw) = s.query(&scenes::task_args(&[]));
+    let all: Value = serde_json::from_str(&all_raw).unwrap();
+    assert!(schema().valid(&all), "{:#?}", schema().errors(&all));
+    let all = task_totals(&all);
+    assert_eq!(
+        all.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>(),
+        ["gn-41", "gn-42"],
+        "{all_raw}"
+    );
+    for (branch, i) in [("feat/gn-42-cache", 1), ("feat/gn-41-pager", 0)] {
+        let (code, raw) = s.query(&scenes::task_args(&[branch]));
+        assert_eq!(code, 0, "{raw}");
+        let v: Value = serde_json::from_str(&raw).unwrap();
+        assert!(schema().valid(&v), "{:#?}", schema().errors(&v));
+        assert_eq!(
+            task_totals(&v),
+            [all[i].clone()],
+            "{branch}: the other branch's task is left out, this one's numbers unchanged"
+        );
+    }
+    // A branch no task call names: an empty ok answer, never the unfiltered rows.
+    let (code, raw) = s.query(&scenes::task_args(&["docs/none"]));
+    assert_eq!(code, 0, "{raw}");
+    let v: Value = serde_json::from_str(&raw).unwrap();
+    assert!(schema().valid(&v), "{:#?}", schema().errors(&v));
+    assert!(rows_of(&v).is_empty(), "{raw}");
+}
+
+#[test]
+fn the_schema_refuses_what_the_task_contract_forbids() {
+    let s = schema();
+    let base = example("task-rows");
+    assert!(s.valid(&base), "{:#?}", s.errors(&base));
+    let mut bad: Vec<(&str, Value)> = Vec::new();
+
+    // D1 and D2: one kind of row per answer.
+    let mut v = example("actor-ambiguous");
+    v["rows"]
+        .as_array_mut()
+        .unwrap()
+        .push(example("task-rows")["rows"][0].clone());
+    bad.push(("a task row in a branch answer", v));
+    let mut v = example("task-rows");
+    v["rows"][0] = example("actor-ambiguous")["rows"][0].clone();
+    bad.push(("a branch row in a task answer", v));
+    let mut v = example("task-rows");
+    v["rows"][0] = example("by-bot")["rows"][0].clone();
+    bad.push(("a bot row in a task answer", v));
+
+    // The task row's own rules.
+    let mut v = example("task-ambiguous");
+    v["rows"][0]["tokens"] = example("task-rows")["rows"][0]["tokens"].clone();
+    bad.push(("an ambiguous task row with tokens", v));
+    let mut v = example("task-rows");
+    v["rows"][0]["actors"] = json!([]);
+    bad.push(("a measured task row that names no actor and omits none", v));
+    let mut v = example("task-rows");
+    v["rows"][0]["attribution"]["precision"] = json!("actor_interval");
+    bad.push(("a task row at actor_interval", v));
+    let mut v = example("task-rows");
+    v["rows"][0].as_object_mut().unwrap().remove("task");
+    bad.push(("a task row without a task", v));
+    let mut v = example("task-rows");
+    v["rows"][0]["reason"] = json!("task_ambiguous");
+    bad.push(("a measured task row marked ambiguous", v));
+    let mut v = example("task-rows");
+    v["rows"][0]["actors"][0]["kind"] = json!("seat");
+    bad.push(("a task actor that is a seat", v));
+
+    for (what, v) in bad {
+        assert!(!s.errors(&v).is_empty(), "the schema accepts {what}: {v}");
+    }
 }

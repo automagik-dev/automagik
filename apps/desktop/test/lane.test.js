@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict'
 import { createHash, generateKeyPairSync, sign } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { test } from 'node:test'
 import { LANE_KEYS } from '../src/lane-keys.js'
-import { PUBLISHERS, beforeStart, confirm, laneMemory, laneUpdate, satisfies, stage, stagedOf, stagedVersion, trialFailed, verifyLane } from '../src/lane.js'
+import { PUBLISHERS, beforeStart, carryDependencies, confirm, laneMemory, laneUpdate, satisfies, stage, stagedOf, stagedVersion, trialFailed, verifyLane } from '../src/lane.js'
 import { updatePresentation } from '../src/frame.js'
 import { tarOf } from '../src/tar.js'
 
@@ -302,4 +302,395 @@ test('the lane unpacks with the system\'s own tar: System32 on Windows, /usr/bin
   assert.equal(tarOf({ platform: 'win32', env: {} }), 'C:\\Windows\\System32\\tar.exe')
   assert.equal(tarOf({ platform: 'darwin', env: {} }), '/usr/bin/tar')
   assert.equal(tarOf({ platform: 'linux', env: {} }), 'tar')
+})
+
+// A plugin's own dependencies (#lane-deps): pnpm put ACP's SDK inside the plugin's folder, and the
+// swap of that folder for the release tarball, which has no node_modules, left it without them.
+// A profile with one plugin installed the hoisted way (a real folder) or pnpm's store way (a link).
+function depsProfile(t, { name = '@automagik/acp-dsh', version = '3.22.0', dependencies = { '@agentclientprotocol/sdk': '2.5.0', zod: '4.4.3' }, store = false } = {}) {
+  const root = temp(t)
+  const target = join(root, 'profile')
+  const link = join(target, 'node_modules', name)
+  const real = store ? join(target, 'node_modules', '.pnpm', `${name.replace('/', '+')}@${version}`, 'node_modules', name) : link
+  mkdirSync(real, { recursive: true })
+  writeFileSync(join(real, 'package.json'), JSON.stringify({ name, version, dependencies }))
+  writeFileSync(join(real, 'index.js'), `export const version = '${version}'\n`)
+  if (store) { mkdirSync(dirname(link), { recursive: true }); symlinkSync(real, link) }
+  const packageIn = (dir, dependency, depVersion = '1.0.0') => {
+    mkdirSync(join(dir, 'node_modules', dependency), { recursive: true })
+    writeFileSync(join(dir, 'node_modules', dependency, 'package.json'), JSON.stringify({ name: dependency, version: depVersion }))
+    writeFileSync(join(dir, 'node_modules', dependency, 'index.js'), `export const of = '${dependency}@${depVersion}'\n`)
+  }
+  // The release tarball of `next`: `files` puts in what a tarball would not normally hold.
+  const stageNext = async (next, { publisher = 'automagik', sequence = 220001, manifest = {}, files = {} } = {}) => {
+    const dir = join(root, 'pack', next, 'package')
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, version: next, dependencies, ...manifest }))
+    writeFileSync(join(dir, 'index.js'), `export const version = '${next}'\n`)
+    for (const [path, text] of Object.entries(files)) { mkdirSync(dirname(join(dir, path)), { recursive: true }); writeFileSync(join(dir, path), text) }
+    const file = join(root, 'pack', `${next}.tgz`)
+    execFileSync(tarOf(), ['-czf', file, '-C', join(dir, '..'), 'package'])
+    const bytes = readFileSync(file)
+    const plugin = { name, version: next, url: `https://github.com/x/${next}.tgz`, size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), integrity: `sha512-${createHash('sha512').update(bytes).digest('base64')}` }
+    await stage({ publisher, version: next, sequence, plugins: [plugin] }, { home: join(root, 'home'), fetch: async () => new Response(bytes) })
+  }
+  return { root, home: join(root, 'home'), target, real, link, packageIn, stageNext }
+}
+// Everything under `dir`: each folder, each file with its text, each link with its text (never followed).
+function listing(dir, prefix = '') {
+  return readdirSync(dir).sort().flatMap((entry) => {
+    const full = join(dir, entry)
+    const stat = lstatSync(full)
+    if (stat.isSymbolicLink()) return [`${prefix}${entry} -> ${readlinkSync(full)}`]
+    if (stat.isDirectory()) return [`${prefix}${entry}/`, ...listing(full, `${prefix}${entry}/`)]
+    return [`${prefix}${entry} = ${readFileSync(full, 'utf8')}`]
+  })
+}
+const versionAt = dir => JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')).version
+// A refusal writes nothing a later run of the app reads: no bad.json, no sequence taken.
+const neverBad = home => ({ bad: existsSync(join(home, 'lane', 'bad.json')), last: laneMemory(home).last })
+const unixOnly = process.platform === 'win32' ? 'links and modes as on Linux and macOS' : false
+
+test('a plugin keeps the dependencies pnpm put inside its folder through a lane update', async (t) => {
+  const { home, target, real, packageIn, stageNext } = depsProfile(t)
+  packageIn(real, '@agentclientprotocol/sdk', '2.5.0')
+  packageIn(real, 'zod', '4.4.3')
+  const before = listing(join(real, 'node_modules'))
+  await stageNext('3.22.1')
+  assert.equal(beforeStart({ home, target }), 'applied')
+  assert.equal(versionAt(real), '3.22.1')
+  assert.deepEqual(listing(join(real, 'node_modules')), before)
+  // The folder it replaced is whole, its dependencies still in it.
+  assert.deepEqual(listing(join(`${real}.lane-prev`, 'node_modules')), before)
+  assert.equal(confirm(home), true)
+  assert.equal(existsSync(`${real}.lane-prev`), false)
+  assert.deepEqual(listing(join(real, 'node_modules')), before)
+})
+
+test('a plugin with no dependencies of its own in its folder gets none from a lane update', async (t) => {
+  const { home, target, real, stageNext } = depsProfile(t, { dependencies: {} })
+  await stageNext('3.22.1')
+  assert.equal(beforeStart({ home, target }), 'applied')
+  assert.deepEqual(listing(real), ['index.js = export const version = \'3.22.1\'\n', `package.json = ${JSON.stringify({ name: '@automagik/acp-dsh', version: '3.22.1', dependencies: {} })}`])
+})
+
+test('a failed trial brings the previous plugin back exactly as it was, dependencies included', async (t) => {
+  const { home, target, real, packageIn, stageNext } = depsProfile(t)
+  packageIn(real, '@agentclientprotocol/sdk', '2.5.0')
+  packageIn(real, 'zod', '4.4.3')
+  const before = listing(real)
+  await stageNext('3.22.1', { files: { 'new.js': 'new\n' } })
+  assert.equal(beforeStart({ home, target }), 'applied')
+  assert.ok(existsSync(join(real, 'new.js')))
+  trialFailed(home)
+  assert.equal(beforeStart({ home, target }), 'restored')
+  assert.deepEqual(listing(real), before)
+  assert.equal(existsSync(`${real}.lane-prev`), false)
+  assert.deepEqual(laneMemory(home).bad, ['3.22.1'])
+})
+
+test('a staged plugin that carries its own node_modules keeps it: nothing is copied over or into it', async (t) => {
+  const { home, target, real, packageIn, stageNext } = depsProfile(t)
+  packageIn(real, '@agentclientprotocol/sdk', '2.5.0')
+  packageIn(real, 'zod', '4.4.3')
+  const own = { 'node_modules/@agentclientprotocol/sdk/package.json': '{"name":"@agentclientprotocol/sdk","version":"2.5.1"}', 'node_modules/zod/package.json': '{"name":"zod","version":"4.4.4"}' }
+  await stageNext('3.22.1', { files: own })
+  assert.equal(beforeStart({ home, target }), 'applied')
+  assert.deepEqual(listing(join(real, 'node_modules')), ['@agentclientprotocol/', '@agentclientprotocol/sdk/', `@agentclientprotocol/sdk/package.json = ${own['node_modules/@agentclientprotocol/sdk/package.json']}`, 'zod/', `zod/package.json = ${own['node_modules/zod/package.json']}`])
+})
+
+test('a dependency the plugin found before the swap and not after it undoes the swap, and marks nothing bad', async (t) => {
+  const { home, target, real, packageIn, stageNext } = depsProfile(t)
+  packageIn(real, '@agentclientprotocol/sdk', '2.5.0')
+  packageIn(real, 'zod', '4.4.3')
+  const before = listing(target)
+  // The staged folder brings a node_modules of its own, without the SDK: the carry leaves it alone.
+  await stageNext('3.22.1', { files: { 'node_modules/zod/package.json': '{"name":"zod","version":"4.4.3"}' } })
+  const lines = []
+  assert.equal(beforeStart({ home, target, log: line => lines.push(line) }), null)
+  assert.deepEqual(listing(target), before)
+  assert.equal(lines.length, 1)
+  assert.match(lines[0], /@automagik\/acp-dsh would lose @agentclientprotocol\/sdk\); nothing changed, and it waits for the app's next start$/)
+  assert.deepEqual(neverBad(home), { bad: false, last: 0 })
+  // No trial began: the next start has nothing to judge or to put back.
+  assert.equal(beforeStart({ home, target }), null)
+  assert.deepEqual(listing(target), before)
+})
+
+test('a dependency the plugin did not find before the swap is never a reason to refuse it', async (t) => {
+  // Declared and nowhere on disk (DSH's loader supplies it, or it was already missing).
+  const { home, target, real, packageIn, stageNext } = depsProfile(t, { dependencies: { '@agentclientprotocol/sdk': '2.5.0', 'supplied-elsewhere': '1.0.0' } })
+  packageIn(real, '@agentclientprotocol/sdk', '2.5.0')
+  // A dependency only the new version names is not one either.
+  await stageNext('3.22.1', { manifest: { dependencies: { '@agentclientprotocol/sdk': '2.5.0', 'supplied-elsewhere': '1.0.0', 'new-and-absent': '1.0.0' } } })
+  assert.equal(beforeStart({ home, target }), 'applied')
+  assert.equal(versionAt(real), '3.22.1')
+  assert.ok(existsSync(join(real, 'node_modules', '@agentclientprotocol', 'sdk', 'package.json')))
+  assert.deepEqual(laneMemory(home).bad, [])
+})
+
+test('dependencies hoisted beside the plugin are found after the swap as before it, with nothing copied', async (t) => {
+  const { home, target, real, packageIn, stageNext } = depsProfile(t)
+  packageIn(target, '@agentclientprotocol/sdk', '2.5.0')
+  packageIn(target, 'zod', '4.4.3')
+  await stageNext('3.22.1')
+  assert.equal(beforeStart({ home, target }), 'applied')
+  assert.equal(existsSync(join(real, 'node_modules')), false)
+})
+
+test('links inside the carried node_modules are copied as links, relative ones right again in place', { skip: unixOnly }, async (t) => {
+  const { root, home, target, real, stageNext } = depsProfile(t, { store: true })
+  // pnpm's store layout: the plugin's own node_modules links each dependency, relatively, into .pnpm.
+  const store = join(target, 'node_modules', '.pnpm', 'sdk@2.5.0', 'node_modules', '@agentclientprotocol', 'sdk')
+  mkdirSync(store, { recursive: true })
+  writeFileSync(join(store, 'package.json'), '{"name":"@agentclientprotocol/sdk","version":"2.5.0"}')
+  mkdirSync(join(real, 'node_modules', '@agentclientprotocol'), { recursive: true })
+  const relative = '../../../../../../sdk@2.5.0/node_modules/@agentclientprotocol/sdk'
+  symlinkSync(relative, join(real, 'node_modules', '@agentclientprotocol', 'sdk'))
+  assert.equal(versionAt(join(real, 'node_modules', '@agentclientprotocol', 'sdk')), '2.5.0')
+  // A link out of the profile altogether (zod): never followed, never copied through.
+  const outside = join(root, 'outside', 'zod')
+  mkdirSync(outside, { recursive: true })
+  writeFileSync(join(outside, 'package.json'), '{"name":"zod","version":"4.4.3"}')
+  writeFileSync(join(outside, 'big.js'), 'outside\n')
+  symlinkSync(outside, join(real, 'node_modules', 'zod'))
+  const storeBefore = listing(store)
+  const outsideBefore = listing(outside)
+  await stageNext('3.22.1')
+  assert.equal(beforeStart({ home, target }), 'applied')
+  assert.equal(versionAt(real), '3.22.1')
+  assert.deepEqual(listing(join(real, 'node_modules')), ['@agentclientprotocol/', `@agentclientprotocol/sdk -> ${relative}`, `zod -> ${outside}`])
+  assert.equal(versionAt(join(real, 'node_modules', '@agentclientprotocol', 'sdk')), '2.5.0')
+  assert.deepEqual(listing(store), storeBefore)
+  assert.deepEqual(listing(outside), outsideBefore)
+  // Back out again: the links of the previous folder are as they were, and what they name too.
+  trialFailed(home)
+  assert.equal(beforeStart({ home, target }), 'restored')
+  assert.deepEqual(listing(join(real, 'node_modules')), ['@agentclientprotocol/', `@agentclientprotocol/sdk -> ${relative}`, `zod -> ${outside}`])
+  assert.deepEqual(listing(store), storeBefore)
+  assert.deepEqual(listing(outside), outsideBefore)
+})
+
+test('a node_modules that is itself a link is carried as that link', { skip: unixOnly }, async (t) => {
+  const { home, target, real, packageIn, stageNext } = depsProfile(t)
+  const shared = join(target, 'shared')
+  packageIn(shared, '@agentclientprotocol/sdk', '2.5.0')
+  packageIn(shared, 'zod', '4.4.3')
+  symlinkSync('../../../shared/node_modules', join(real, 'node_modules'))
+  assert.equal(versionAt(join(real, 'node_modules', 'zod')), '4.4.3')
+  const sharedBefore = listing(shared)
+  await stageNext('3.22.1')
+  assert.equal(beforeStart({ home, target }), 'applied')
+  assert.equal(readlinkSync(join(real, 'node_modules')), '../../../shared/node_modules')
+  assert.equal(versionAt(join(real, 'node_modules', 'zod')), '4.4.3')
+  assert.equal(confirm(home), true)
+  // The trial's end deletes the replaced folder, never what its link named.
+  assert.deepEqual(listing(shared), sharedBefore)
+})
+
+test('a copy of the dependencies that fails half way changes nothing: the installed plugin stays whole', { skip: unixOnly || (process.getuid?.() === 0 && 'root reads any file') }, async (t) => {
+  const { home, target, real, packageIn, stageNext } = depsProfile(t)
+  packageIn(real, '@agentclientprotocol/sdk', '2.5.0')
+  packageIn(real, 'zod', '4.4.3')
+  const unreadable = join(real, 'node_modules', 'zod', 'index.js')
+  const before = listing(target)
+  chmodSync(unreadable, 0o000)
+  await stageNext('3.22.1')
+  const lines = []
+  assert.equal(beforeStart({ home, target, log: line => lines.push(line) }), null)
+  chmodSync(unreadable, 0o644)
+  assert.match(lines.join('\n'), /could not be put in place .*; nothing changed/)
+  assert.deepEqual(listing(target), before)
+  assert.equal(existsSync(`${real}.lane-prev`), false)
+  assert.deepEqual(neverBad(home), { bad: false, last: 0 })
+})
+
+test('with two plugins staged, one that would lose a dependency takes the other back out with it', async (t) => {
+  const { root, home, target, real, packageIn, stageNext } = depsProfile(t)
+  packageIn(real, '@agentclientprotocol/sdk', '2.5.0')
+  packageIn(real, 'zod', '4.4.3')
+  // Genie's plugin beside it, healthy, on its own lane.
+  const genie = join(target, 'node_modules', '@automagik', 'genie-dsh')
+  mkdirSync(join(genie, 'node_modules', 'yaml'), { recursive: true })
+  writeFileSync(join(genie, 'package.json'), JSON.stringify({ name: '@automagik/genie-dsh', version: '0.1.3', dependencies: { yaml: '2.0.0' } }))
+  writeFileSync(join(genie, 'node_modules', 'yaml', 'package.json'), '{"name":"yaml","version":"2.0.0"}')
+  const dir = join(root, 'pack', 'genie', 'package')
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: '@automagik/genie-dsh', version: '0.1.4', dependencies: { yaml: '2.0.0' } }))
+  execFileSync(tarOf(), ['-czf', join(root, 'genie.tgz'), '-C', join(dir, '..'), 'package'])
+  const bytes = readFileSync(join(root, 'genie.tgz'))
+  await stage({ publisher: 'genie', version: '0.1.4', sequence: 10004, plugins: [{ name: '@automagik/genie-dsh', version: '0.1.4', url: 'https://github.com/x/g.tgz', size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), integrity: `sha512-${createHash('sha512').update(bytes).digest('base64')}` }] }, { home, fetch: async () => new Response(bytes) })
+  await stageNext('3.22.1', { files: { 'node_modules/zod/package.json': '{"name":"zod","version":"4.4.3"}' } })
+  const before = listing(target)
+  assert.equal(beforeStart({ home, target }), null)
+  assert.deepEqual(listing(target), before)
+  assert.deepEqual(neverBad(home), { bad: false, last: 0 })
+  assert.equal(laneMemory(home, 'genie').last, 0)
+})
+
+test('Genie\'s lane carries its plugin\'s own dependencies the same way', async (t) => {
+  const { home, target, real, packageIn, stageNext } = depsProfile(t, { name: '@automagik/genie-dsh', version: '0.1.3', dependencies: { yaml: '2.0.0' } })
+  packageIn(real, 'yaml', '2.0.0')
+  const before = listing(join(real, 'node_modules'))
+  await stageNext('0.1.4', { publisher: 'genie', sequence: 10004 })
+  assert.equal(beforeStart({ home, target }), 'applied')
+  assert.equal(versionAt(real), '0.1.4')
+  assert.deepEqual(listing(join(real, 'node_modules')), before)
+  assert.equal(confirm(home), true)
+  assert.equal(laneMemory(home, 'genie').last, 10004)
+})
+
+test('a refused lane version is not taken again in this run of the app, and once more in the next', async (t) => {
+  const { home, target, real, packageIn, stageNext } = depsProfile(t)
+  packageIn(real, '@agentclientprotocol/sdk', '2.5.0')
+  const refusedLane = lane({ plugins: [{ ...lane().plugins[0], name: '@automagik/acp-dsh' }] })
+  const asked = { ...context, installed: { '@automagik/acp-dsh': '3.22.0' } }
+  assert.equal(laneUpdate(refusedLane, { ...asked, ...laneMemory(home) })?.version, '3.22.1')
+  await stageNext('3.22.1', { files: { 'node_modules/zod/package.json': '{"name":"zod","version":"4.4.3"}' } })
+  assert.equal(beforeStart({ home, target }), null)
+  // The next look of this run: the app's own question (main.js lookOnce) finds nothing to stage.
+  assert.deepEqual(laneMemory(home).bad, ['3.22.1'])
+  assert.equal(laneUpdate(refusedLane, { ...asked, ...laneMemory(home) }), null)
+  assert.equal(stagedOf(home), null)
+  // Only that version of that lane, in that home: the next version and Genie's lane are taken.
+  assert.equal(laneUpdate(lane({ version: '3.22.2', sequence: 220002, plugins: refusedLane.plugins.map(plugin => ({ ...plugin, version: '3.22.2' })) }), { ...asked, ...laneMemory(home) })?.version, '3.22.2')
+  assert.deepEqual(laneMemory(home, 'genie').bad, [])
+  assert.deepEqual(laneMemory(join(home, 'other')).bad, [])
+  // Nothing on disk says so: the next run of the app (the module loaded anew) takes it once more.
+  assert.equal(existsSync(join(home, 'lane', 'bad.json')), false)
+  const nextRun = await import('../src/lane.js?next-run')
+  assert.deepEqual(nextRun.laneMemory(home).bad, [])
+  assert.equal(nextRun.laneUpdate(refusedLane, { ...asked, ...nextRun.laneMemory(home) })?.version, '3.22.1')
+})
+
+test('a dependency the staged folder lacks is not lost when a folder above still has it', async (t) => {
+  const { home, target, real, packageIn, stageNext } = depsProfile(t)
+  packageIn(real, '@agentclientprotocol/sdk', '2.5.0')
+  packageIn(real, 'zod', '4.4.3')
+  // The profile's root has the SDK too: after the swap Node finds that one.
+  packageIn(target, '@agentclientprotocol/sdk', '2.5.0')
+  await stageNext('3.22.1', { files: { 'node_modules/zod/package.json': '{"name":"zod","version":"4.4.3"}' } })
+  assert.equal(beforeStart({ home, target }), 'applied')
+  assert.equal(existsSync(join(real, 'node_modules', '@agentclientprotocol')), false)
+})
+
+test('a dependency only the new version names, found before the swap, must still be found after it', async (t) => {
+  const { home, target, real, packageIn, stageNext } = depsProfile(t, { dependencies: { zod: '4.4.3' } })
+  packageIn(real, '@agentclientprotocol/sdk', '2.5.0')
+  packageIn(real, 'zod', '4.4.3')
+  const before = listing(target)
+  await stageNext('3.22.1', { manifest: { dependencies: { '@agentclientprotocol/sdk': '2.5.0', zod: '4.4.3' } }, files: { 'node_modules/zod/package.json': '{"name":"zod","version":"4.4.3"}' } })
+  assert.equal(beforeStart({ home, target }), null)
+  assert.deepEqual(listing(target), before)
+})
+
+test('Genie\'s plugin that would lose a dependency is refused the same way', async (t) => {
+  const { home, target, real, packageIn, stageNext } = depsProfile(t, { name: '@automagik/genie-dsh', version: '0.1.3', dependencies: { yaml: '2.0.0', ms: '2.0.0' } })
+  packageIn(real, 'yaml', '2.0.0')
+  packageIn(real, 'ms', '2.0.0')
+  const before = listing(target)
+  await stageNext('0.1.4', { publisher: 'genie', sequence: 10004, files: { 'node_modules/ms/package.json': '{"name":"ms","version":"2.0.0"}' } })
+  const lines = []
+  assert.equal(beforeStart({ home, target, log: line => lines.push(line) }), null)
+  assert.match(lines.join('\n'), /@automagik\/genie-dsh would lose yaml/)
+  assert.deepEqual(listing(target), before)
+  assert.deepEqual([laneMemory(home, 'genie').bad, laneMemory(home, 'automagik').bad], [['0.1.4'], []])
+  assert.equal(existsSync(join(home, 'lane', 'bad.json')), false)
+})
+
+test('a refusal after the swap puts the profile\'s own records back exactly: package.json, the locks, pnpm\'s modules file', async (t) => {
+  const root = temp(t)
+  const home = join(root, 'home')
+  const { target, real } = profileWith(root, '3.22.0')
+  // The installed Bot team with a dependency in its own folder, and pnpm's records beside the lock.
+  writeFileSync(join(real, 'package.json'), JSON.stringify({ name: '@automagik/bots-dsh', version: '3.22.0', dependencies: { yaml: '2.0.0', ms: '2.0.0' } }))
+  for (const name of ['yaml', 'ms']) {
+    mkdirSync(join(real, 'node_modules', name), { recursive: true })
+    writeFileSync(join(real, 'node_modules', name, 'package.json'), JSON.stringify({ name, version: '2.0.0' }))
+  }
+  const id = 'file:vendor/automagik-bots-dsh-3.22.0.tgz'
+  writeFileSync(join(target, 'node_modules', '.pnpm', 'lock.yaml'), readFileSync(join(target, 'pnpm-lock.yaml'), 'utf8'))
+  writeFileSync(join(target, 'node_modules', '.modules.yaml'), `hoistedDependencies:\n  '@automagik/bots-dsh@${id}': public\n`)
+  mkdirSync(join(target, 'vendor'))
+  writeFileSync(join(target, 'vendor', 'automagik-bots-dsh-3.22.0.tgz'), 'the shipped tarball')
+  const before = listing(target)
+  // The new version brings a node_modules of its own, without yaml.
+  const dir = join(root, 'pack', 'package')
+  mkdirSync(join(dir, 'node_modules', 'ms'), { recursive: true })
+  writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: '@automagik/bots-dsh', version: '3.22.1', dependencies: { yaml: '2.0.0', ms: '2.0.0' } }))
+  writeFileSync(join(dir, 'node_modules', 'ms', 'package.json'), '{"name":"ms","version":"2.0.0"}')
+  execFileSync(tarOf(), ['-czf', join(root, 'plugin.tgz'), '-C', join(root, 'pack'), 'package'])
+  const bytes = readFileSync(join(root, 'plugin.tgz'))
+  const plugin = { ...lane().plugins[0], size: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'), integrity: `sha512-${createHash('sha512').update(bytes).digest('base64')}` }
+  await stage({ version: '3.22.1', sequence: 220001, plugins: [plugin] }, { home, fetch: async () => new Response(bytes) })
+  const lines = []
+  assert.equal(beforeStart({ home, target, log: line => lines.push(line) }), null)
+  assert.match(lines.join('\n'), /@automagik\/bots-dsh would lose yaml/)
+  // The lane's tarball had gone into vendor/ by then, and stays, as after any trial that fails:
+  // nothing names it any more.
+  const left = 'vendor/automagik-bots-dsh-3.22.1.tgz'
+  assert.deepEqual(listing(target).filter(entry => !entry.startsWith(left)), before)
+  assert.ok(existsSync(join(target, left)))
+  assert.equal(existsSync(join(home, 'lane', 'applied.json')), false)
+})
+
+test('a link to a folder that may not be made as a symbolic link is made as a junction to the same place', { skip: unixOnly }, async (t) => {
+  const { root, home, target, real, packageIn, stageNext } = depsProfile(t)
+  // As on Windows without the right to make symbolic links: EPERM for one, a junction is allowed.
+  // This host makes no junctions, so the stand-in records the call and makes a link to that path.
+  const store = join(target, 'store')
+  packageIn(store, 'zod', '4.4.3')
+  mkdirSync(join(real, 'node_modules'))
+  symlinkSync('../../../../store/node_modules/zod', join(real, 'node_modules', 'zod'))
+  writeFileSync(join(real, 'node_modules', 'file.js'), 'a file\n')
+  symlinkSync('file.js', join(real, 'node_modules', 'file-link.js'))
+  const calls = []
+  const noSymlinks = (text, path, type) => {
+    calls.push([text, type])
+    if (type !== 'junction') throw Object.assign(new Error('EPERM: operation not permitted, symlink'), { code: 'EPERM' })
+    symlinkSync(text, path)
+  }
+  const staged = join(root, 'staged-by-hand')
+  mkdirSync(staged)
+  carryDependencies(real, staged, { link: (text, path, type) => (type === 'file' ? symlinkSync(text, path) : noSymlinks(text, path, type)) })
+  // Asked as a folder link with its own text first; then a junction, whose place is absolute:
+  // where the link points from the installed folder, not from the staged one.
+  assert.deepEqual(calls, [['../../../../store/node_modules/zod', 'dir'], [join(store, 'node_modules', 'zod'), 'junction']])
+  assert.equal(versionAt(join(staged, 'node_modules', 'zod')), '4.4.3')
+  assert.equal(readlinkSync(join(staged, 'node_modules', 'file-link.js')), 'file.js')
+  // Through the whole apply: the plugin goes in with its dependency reachable.
+  await stageNext('3.22.1')
+  assert.equal(beforeStart({ home, target, link: noSymlinks }), null, 'a file link that cannot be made refuses the apply')
+  assert.equal(versionAt(real), '3.22.0')
+  rmSync(join(real, 'node_modules', 'file-link.js'))
+  const again = await import('../src/lane.js?junction-run')
+  await stageNext('3.22.1')
+  assert.equal(again.beforeStart({ home, target, link: noSymlinks }), 'applied')
+  assert.equal(versionAt(real), '3.22.1')
+  assert.equal(versionAt(join(real, 'node_modules', 'zod')), '4.4.3')
+})
+
+test('no kind of link can be made: the apply is refused and the installed plugin stays whole', { skip: unixOnly }, async (t) => {
+  const { home, target, real, packageIn, stageNext } = depsProfile(t)
+  const store = join(target, 'store')
+  packageIn(store, 'zod', '4.4.3')
+  mkdirSync(join(real, 'node_modules'))
+  symlinkSync('../../../../store/node_modules/zod', join(real, 'node_modules', 'zod'))
+  const before = listing(target)
+  await stageNext('3.22.1')
+  const lines = []
+  const never = () => { throw Object.assign(new Error('EPERM: operation not permitted, symlink'), { code: 'EPERM' }) }
+  assert.equal(beforeStart({ home, target, log: line => lines.push(line), link: never }), null)
+  assert.match(lines.join('\n'), /EPERM.*nothing changed/)
+  assert.deepEqual(listing(target), before)
+  assert.deepEqual(neverBad(home), { bad: false, last: 0 })
+})
+
+test('a dependency the new version no longer names is not missed', async (t) => {
+  const { home, target, real, packageIn, stageNext } = depsProfile(t, { dependencies: { zod: '4.4.3', ms: '2.0.0' } })
+  packageIn(real, 'zod', '4.4.3')
+  packageIn(real, 'ms', '2.0.0')
+  await stageNext('3.22.1', { manifest: { dependencies: { zod: '4.4.3' } }, files: { 'node_modules/zod/package.json': '{"name":"zod","version":"4.4.3"}' } })
+  assert.equal(beforeStart({ home, target }), 'applied')
+  assert.equal(existsSync(join(real, 'node_modules', 'ms')), false)
 })
