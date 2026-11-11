@@ -1,6 +1,7 @@
 // Client channel: the team view the browser renders, and the POST /api/bot endpoints.
 import { randomUUID } from 'node:crypto'
-import { botConfig, roomConfig, createAgentAccess } from './agent-access.js'
+import { AsyncLocalStorage } from 'node:async_hooks'
+import { AGENT_TOOLS, botConfig, roomConfig, createAgentAccess } from './agent-access.js'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -267,6 +268,51 @@ export function install(rt) {
     return rt.save()
   }
 
+  // UI edits retain their existing concurrency. An MCP audit excludes UI config edits
+  // for its entire before/handler/after interval, so attribution cannot absorb an owner edit.
+  const adminContext = new AsyncLocalStorage()
+  const inTransaction = async fn => {
+    const scope = { active: true }
+    try { return await adminContext.run(scope, fn) }
+    finally { scope.active = false }
+  }
+  let adminQueue = Promise.resolve()
+  let pendingAgents = 0
+  let activeOwners = 0
+  let ownersIdle
+  const adminTransaction = fn => {
+    pendingAgents += 1
+    const job = adminQueue.then(async () => {
+      if (activeOwners > 0) await new Promise(resolve => { ownersIdle = resolve })
+      return inTransaction(fn)
+    }).finally(() => { pendingAgents -= 1 })
+    adminQueue = job.catch(() => {})
+    return job
+  }
+  const ownerTransaction = async fn => {
+    if (adminContext.getStore()?.active) return fn()
+    while (pendingAgents > 0) await adminQueue
+    activeOwners += 1
+    try { return await inTransaction(fn) }
+    finally {
+      activeOwners -= 1
+      if (activeOwners === 0) { ownersIdle?.(); ownersIdle = undefined }
+    }
+  }
+  // Internal Bot tools call these same runtime mutators directly. They participate as
+  // owners; nested calls from an already admitted handler reuse its admission.
+  for (const name of ['createBot', 'duplicateBot', 'updateBot', 'deleteBot', 'setMain',
+    'createRoom', 'updateRoom', 'deleteRoom', 'setFlags', 'bootstrap', 'switchRoute',
+    'addAgent', 'removeAgent', 'adoptAgentSession', 'adoptBotSession', 'adoptAsBot',
+    'rollbackAdoption']) {
+    const original = rt[name]
+    if (typeof original === 'function') {
+      rt[name] = (...args) => ownerTransaction(() => original(...args))
+    }
+  }
+  const adminActions = new Set([...AGENT_TOOLS.map(tool => tool.endpoint),
+    'state', 'switch-route', 'duplicate-bot', 'add-agent', 'remove-agent', 'set-flags',
+    'agent-adopt', 'bot-session-adopt', 'agent-bot-adopt', 'agent-bot-rollback'])
   const handle = async (endpoint, payload, signal) => {
     try {
       const body = payload ?? {}
@@ -289,9 +335,9 @@ export function install(rt) {
         case 'agent-token-revoke':
           return ok(await agentAccess.owner('revoke', body))
         case 'list-bots':
-          return ok(Object.values(state.bots).map(botConfig))
+          return ok(Object.values(state.bots).map(bot => botConfig(bot, state.mainBotIds)))
         case 'get-bot':
-          return ok(botConfig(rt.own(state.bots, body.id)))
+          return ok(botConfig(rt.own(state.bots, body.id), state.mainBotIds))
         case 'list-rooms':
           return ok(Object.values(state.rooms).map(roomConfig))
         case 'get-room':
@@ -784,7 +830,7 @@ export function install(rt) {
     }
   }
 
-  const agentAccess = createAgentAccess(rt, handle)
+  const agentAccess = createAgentAccess(rt, handle, { transaction: adminTransaction })
   rt.agentAccess = agentAccess
   ctx.effect(() => {
     void agentAccess.resume().catch(() => rt.warn('Agent access could not start'))
@@ -851,7 +897,9 @@ export function install(rt) {
     fetch: async (request) => {
       let body
       try { body = await request.json() } catch { body = {} }
-      const result = await handle(String(body?.endpoint ?? ''), body?.payload, request.signal)
+      const endpoint = String(body?.endpoint ?? '')
+      const dispatch = () => handle(endpoint, body?.payload, request.signal)
+      const result = await (adminActions.has(endpoint) ? ownerTransaction(dispatch) : dispatch())
       const noStore = CLI_LOGIN.has(body?.endpoint)
         || ['agent-access', 'agent-token-create', 'agent-token-revoke'].includes(body?.endpoint)
       return new Response(JSON.stringify(result), { status: 200, headers: {

@@ -12,7 +12,8 @@ const BOT_FIELDS = ['id', 'name', 'role', 'color', 'instructions', 'model', 'eff
 const ROOM_FIELDS = ['id', 'name', 'notice', 'members', 'admin', 'permission', 'mode']
 const pick = (value, fields) => value == null ? null
   : Object.fromEntries(fields.filter(key => value[key] !== undefined).map(key => [key, value[key]]))
-export const botConfig = bot => pick(bot, BOT_FIELDS)
+export const botConfig = (bot, mainBotIds = []) => bot == null ? null
+  : { ...pick(bot, BOT_FIELDS), main: mainBotIds.includes(bot.id) }
 export const roomConfig = room => pick(room, ROOM_FIELDS)
 const string = { type: 'string', maxLength: 16000 }
 const nullable = { anyOf: [string, { type: 'null' }] }
@@ -60,9 +61,9 @@ const validArgs = (args, schema) => args !== null && typeof args === 'object'
   && Object.entries(args).every(([key, value]) => Object.hasOwn(schema.properties, key)
     && matches(value, schema.properties[key]))
 
-export function createAgentAccess(rt, handle, { now = Date.now } = {}) {
-  const tokenPath = join(rt.home, 'agent-tokens.json')
-  const auditPath = join(rt.home, 'agent-audit.jsonl')
+export function createAgentAccess(rt, handle, { now = Date.now, transaction = fn => fn() } = {}) {
+  const tokenPath = () => join(rt.home, 'agent-tokens.json')
+  const auditPath = () => join(rt.home, 'agent-audit.jsonl')
   let records
   let queue = Promise.resolve()
   let server
@@ -76,9 +77,8 @@ export function createAgentAccess(rt, handle, { now = Date.now } = {}) {
     return job
   }
   const load = async () => {
-    if (records !== undefined) return
     try {
-      const value = JSON.parse(await readFile(tokenPath, 'utf8'))
+      const value = JSON.parse(await readFile(tokenPath(), 'utf8'))
       if (!Array.isArray(value) || value.some(row => !/^[a-f0-9]{64}$/.test(row.hash)
         || typeof row.name !== 'string' || typeof row.id !== 'string')) throw invalid()
       records = value
@@ -95,19 +95,19 @@ export function createAgentAccess(rt, handle, { now = Date.now } = {}) {
   }
   const audit = async entry => {
     await mkdir(rt.home, { recursive: true })
-    await appendFile(auditPath, JSON.stringify(clean({ time: now(), ...entry })) + '\n',
+    await appendFile(auditPath(), JSON.stringify(clean({ time: now(), ...entry })) + '\n',
       { mode: 0o600 })
   }
   const persist = async next => {
-    const temp = `${tokenPath}.${randomUUID()}.tmp`
+    const temp = `${tokenPath()}.${randomUUID()}.tmp`
     await mkdir(rt.home, { recursive: true })
     await writeFile(temp, JSON.stringify(next), { mode: 0o600 })
-    await replaceFile(temp, tokenPath)
+    await replaceFile(temp, tokenPath())
     records = next
   }
   const history = async () => {
     try {
-      const file = await open(auditPath, 'r')
+      const file = await open(auditPath(), 'r')
       try {
         const size = (await file.stat()).size
         const start = Math.max(0, size - 256 * 1024)
@@ -123,7 +123,7 @@ export function createAgentAccess(rt, handle, { now = Date.now } = {}) {
     }
   }
   const snapshot = () => clean({
-    bots: Object.values(rt.state.bots).map(botConfig),
+    bots: Object.values(rt.state.bots).map(bot => botConfig(bot, rt.state.mainBotIds)),
     groups: Object.values(rt.state.rooms).map(roomConfig), mainBotIds: [...rt.state.mainBotIds],
   })
   const changes = (before, after) => {
@@ -149,7 +149,8 @@ export function createAgentAccess(rt, handle, { now = Date.now } = {}) {
     return diff
   }
   const json = (status, value) => new Response(JSON.stringify(clean(value)), {
-    status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
+    status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store',
+      ...(status === 405 ? { allow: 'POST' } : {}) },
   })
   const processRequest = async request => {
     await load()
@@ -172,7 +173,9 @@ export function createAgentAccess(rt, handle, { now = Date.now } = {}) {
       const bytes = await request.arrayBuffer()
       if (bytes.byteLength > LIMIT) bodyError = 'Request too large'
       else body = JSON.parse(Buffer.from(bytes).toString('utf8'))
-    } catch { bodyError = 'Invalid JSON' }
+    } catch (error) {
+      bodyError = error.code === 'agent/oversize' ? 'Request too large' : 'Invalid JSON'
+    }
     const method = body?.method
     const definition = method === 'tools/call'
       ? AGENT_TOOLS.find(item => item.name === body.params?.name) : undefined
@@ -191,7 +194,8 @@ export function createAgentAccess(rt, handle, { now = Date.now } = {}) {
       return refuse(failures > 10 ? 429 : 401,
         failures > 10 ? 'Too many failed attempts' : 'Invalid agent token')
     }
-    const url = new URL(request.url)
+    let url
+    try { url = new URL(request.url) } catch { return refuse(400, 'Invalid MCP URL') }
     if (url.pathname !== '/mcp' || url.search || request.headers.has('origin')) {
       return refuse(403, 'Invalid MCP origin or URL')
     }
@@ -247,7 +251,7 @@ export function createAgentAccess(rt, handle, { now = Date.now } = {}) {
     const before = snapshot()
     // An intent persists before side effects. Audit failure therefore fails closed.
     await audit({ ...entry, outcome: 'started' })
-    const result = await handle(definition.endpoint, args, request.signal)
+    const result = await handle(definition.endpoint, clean(args), request.signal)
     const after = snapshot()
     const delta = changes(before, after)
     if (args.id === undefined && definition.endpoint === 'create-bot') {
@@ -267,7 +271,7 @@ export function createAgentAccess(rt, handle, { now = Date.now } = {}) {
     return reply({ isError: !result.ok, content: [{ type: 'text', text: JSON.stringify(value) }] })
   }
   const fetch = request => serial(async () => {
-    try { return await processRequest(request) }
+    try { return await transaction(() => processRequest(request)) }
     catch { return json(503, { error: 'Agent access unavailable' }) }
   })
   const start = async () => {
@@ -276,21 +280,22 @@ export function createAgentAccess(rt, handle, { now = Date.now } = {}) {
     if (!Number.isInteger(port) || port < 0 || port > 65535) throw invalid()
     server = createServer(async (req, res) => {
       try {
-        let size = 0
-        const chunks = []
-        for await (const chunk of req) {
-          size += chunk.length
-          if (size > LIMIT) {
-            await serial(() => audit({ tokenName: 'Unknown token', action: 'http', target: null,
-              outcome: 'refused', reason: 'Request too large' }))
-            res.writeHead(413).end()
-            return
-          }
-          chunks.push(chunk)
-        }
-        const response = await fetch(new Request(`http://127.0.0.1:${address.port}${req.url}`,
-          { method: req.method, headers: req.headers,
-            ...(['GET', 'HEAD'].includes(req.method) ? {} : { body: Buffer.concat(chunks) }) }))
+        const response = await fetch({
+          url: `http://127.0.0.1:${address.port}${req.url}`,
+          method: req.method, headers: new Headers(req.headers),
+          arrayBuffer: async () => {
+            let size = 0
+            const chunks = []
+            for await (const chunk of req) {
+              size += chunk.length
+              if (size <= LIMIT) chunks.push(chunk)
+            }
+            if (size > LIMIT) throw Object.assign(new Error('Request too large'), {
+              code: 'agent/oversize',
+            })
+            return Buffer.concat(chunks)
+          },
+        })
         res.writeHead(response.status, Object.fromEntries(response.headers))
         res.end(Buffer.from(await response.arrayBuffer()))
       } catch { res.writeHead(503).end() }
@@ -334,10 +339,10 @@ export function createAgentAccess(rt, handle, { now = Date.now } = {}) {
     throw invalid()
   })
   const resume = () => serial(async () => {
-    await rt.load()
-    if (rt.readOnly() !== undefined) return
     await load()
-    if (records.some(row => row.revokedAt === undefined)) await start()
+    if (!records.some(row => row.revokedAt === undefined)) return
+    await rt.load()
+    if (rt.readOnly() === undefined) await start()
   })
   const close = async () => {
     stopped = true

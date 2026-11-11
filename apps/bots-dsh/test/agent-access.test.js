@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { request as httpRequest } from 'node:http'
 import { createHash } from 'node:crypto'
 import { mkdtemp, readFile, rm, stat, writeFile, mkdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -156,6 +157,7 @@ test('every tool uses the channel handler and edits appear in the ordinary team 
     'New instructions')
   assert.equal((await tool('set_main', { id: bot.id, main: true })).isError, false)
   assert.equal((await call('state')).value.mainBotIds.includes(bot.id), true)
+  assert.equal((await tool('get_bot', { id: bot.id })).value.main, true)
   const group = (await tool('create_group', { name: 'Writers', members: ['a', bot.id] })).value
   assert.equal((await tool('list_groups')).value.length, 1)
   assert.equal((await tool('get_group', { id: group.id })).value.name, 'Writers')
@@ -232,11 +234,12 @@ test('HTTP initialize, notifications, restricted surface and loopback binding', 
 })
 
 test('tokens and revocation tombstones persist after restart', async t => {
-  const { rt, request, id } = await fixture(t)
+  const { rt, request, id, rpc } = await fixture(t)
   const next = createAgentAccess(rt, async () => ({ ok: true }))
   t.after(next.close)
   assert.equal((await next.fetch(request({ jsonrpc: '2.0', id: 1, method: 'ping' }))).status, 200)
   await next.owner('revoke', { id })
+  assert.equal((await rpc('ping')).status, 401, 'an existing reader reloads revocations')
   const restarted = createAgentAccess(rt, async () => ({ ok: true }))
   t.after(restarted.close)
   assert.equal((await restarted.fetch(request({ jsonrpc: '2.0', id: 2, method: 'ping' }))).status,
@@ -244,10 +247,140 @@ test('tokens and revocation tombstones persist after restart', async t => {
 })
 
 test('an unavailable audit refuses to perform a mutation', async t => {
-  const { home, tool, rt } = await fixture(t)
+  const { home, tool, rt, call } = await fixture(t)
   await mkdir(join(home, 'agent-audit.jsonl'))
   const response = await rt.agentAccess.fetch(new Request('http://localhost/mcp'))
   assert.equal(response.status, 503)
   await assert.rejects(tool('update_bot', { id: 'a', instructions: 'bad' }))
   assert.equal(rt.state.bots.a.instructions, 'Help')
+  assert.equal((await call('update-bot', { id: 'b', role: 'Still editable' })).ok, true)
+})
+
+
+test('owner edits cannot interleave with an MCP audit transaction', async t => {
+  const { rt, tool, call, view } = await fixture(t)
+  let release
+  let entered
+  const blocked = new Promise(resolve => { release = resolve })
+  const ready = new Promise(resolve => { entered = resolve })
+  const original = rt.updateBot
+  rt.updateBot = async (id, ...args) => {
+    if (id === 'a') { entered(); await blocked }
+    return original(id, ...args)
+  }
+  const agentEdit = tool('update_bot', { id: 'a', instructions: 'Agent edit' })
+  await ready
+  const ownerEdit = call('update-bot', { id: 'b', instructions: 'Owner edit' })
+  await new Promise(resolve => setImmediate(resolve))
+  const beforeRelease = rt.state.bots.b.instructions
+  release()
+  await Promise.all([agentEdit, ownerEdit])
+  assert.equal(beforeRelease, '')
+  const completed = (await view()).audit.find(entry => entry.action === 'update_bot'
+    && entry.outcome === 'allowed')
+  assert.deepEqual(completed.changes.bots, {
+    a: { instructions: { before: 'Help', after: 'Agent edit' } },
+  })
+  assert.equal((await call('get-bot', { id: 'b' })).value.instructions, 'Owner edit')
+})
+
+test('real HTTP oversized and unsupported requests retain token audit identity', async t => {
+  const { token, view } = await fixture(t)
+  const { url } = await view()
+  const headers = { authorization: `Bearer ${token}`,
+    accept: 'application/json, text/event-stream', 'content-type': 'application/json' }
+  const large = await fetch(url, { method: 'POST', headers, body: JSON.stringify({
+    jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'update_bot',
+      arguments: { id: 'a', instructions: 'x'.repeat(65536) } },
+  }) })
+  assert.equal(large.status, 413)
+  const status = await new Promise((resolve, reject) => {
+    const req = httpRequest(url, { method: 'TRACE', headers }, res => {
+      res.resume()
+      res.on('end', () => resolve(res.statusCode))
+    })
+    req.on('error', reject)
+    req.end()
+  })
+  assert.equal(status, 405)
+  const refused = (await view()).audit.filter(entry => entry.outcome === 'refused')
+  assert.equal(refused.length, 2)
+  assert.equal(refused.every(entry => entry.tokenName === 'Test agent' && entry.callId), true)
+})
+
+
+test('an active token resumes the loopback listener after restart', async t => {
+  const { rt, token } = await fixture(t)
+  await rt.agentAccess.close()
+  const resumed = createAgentAccess(rt, async () => ({ ok: true }))
+  t.after(resumed.close)
+  await resumed.resume()
+  const info = await resumed.owner('view')
+  assert.match(info.url, /^http:\/\/127\.0\.0\.1:\d+\/mcp$/)
+  const response = await fetch(info.url, { method: 'POST', headers: {
+    authorization: `Bearer ${token}`, accept: 'application/json, text/event-stream',
+    'content-type': 'application/json',
+  }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }) })
+  assert.equal(response.status, 200)
+})
+
+
+test('internal Bot tool edits wait outside the external agent audit', async t => {
+  const { rt, ctx, tool, view } = await fixture(t)
+  let release
+  let entered
+  const blocked = new Promise(resolve => { release = resolve })
+  const ready = new Promise(resolve => { entered = resolve })
+  const original = rt.updateBot
+  rt.updateBot = async (id, ...args) => {
+    if (id === 'a') { entered(); await blocked }
+    return original(id, ...args)
+  }
+  const agentEdit = tool('update_bot', { id: 'a', instructions: 'External edit' })
+  await ready
+  const internalEdit = ctx.registeredTools.get('update_bot').execute({
+    bot: 'Beta', instructions: 'Internal edit',
+  }, { agent: { id: 'a' } })
+  await new Promise(resolve => setImmediate(resolve))
+  const beforeRelease = rt.state.bots.b.instructions
+  release()
+  const [, response] = await Promise.all([agentEdit, internalEdit])
+  assert.equal(beforeRelease, '')
+  assert.match(response, /Updated Beta/)
+  const completed = (await view()).audit.find(entry => entry.action === 'update_bot'
+    && entry.outcome === 'allowed')
+  assert.equal(completed.changes.bots.b, undefined)
+  assert.equal(rt.state.bots.b.instructions, 'Internal edit')
+})
+
+test('queued MCP and owner edits complete after a refused MCP action', async t => {
+  const { rt, tool, call, view } = await fixture(t)
+  let release
+  let entered
+  const blocked = new Promise(resolve => { release = resolve })
+  const ready = new Promise(resolve => { entered = resolve })
+  const original = rt.updateBot
+  rt.updateBot = async (id, patch, ...rest) => {
+    if (patch.instructions === 'Refused edit') {
+      entered()
+      await blocked
+      throw Object.assign(new Error('Refused edit'), { code: 'bot/refused' })
+    }
+    return original(id, patch, ...rest)
+  }
+  const refused = tool('update_bot', { id: 'a', instructions: 'Refused edit' })
+  await ready
+  const next = tool('update_bot', { id: 'a', instructions: 'Next edit' })
+  const owner = call('update-bot', { id: 'b', instructions: 'Owner edit' })
+  release()
+  const [first, second, third] = await Promise.all([refused, next, owner])
+  assert.equal(first.isError, true)
+  assert.equal(second.isError, false)
+  assert.equal(third.ok, true)
+  const changes = (await view()).audit.filter(entry => entry.outcome === 'allowed'
+    && entry.action === 'update_bot')
+  assert.equal(changes.length, 1)
+  assert.deepEqual(changes[0].changes.bots, {
+    a: { instructions: { before: 'Help', after: 'Next edit' } },
+  })
 })

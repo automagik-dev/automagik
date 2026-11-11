@@ -43,6 +43,23 @@ module.exports = __toCommonJS(index_exports);
 // src/client/i18n.js
 var NAMESPACE = "omni-ui";
 var ZH = {
+  "Agent access": "智能体访问",
+  "Allow an outside agent to configure your Bots": "允许外部智能体配置你的 Bot",
+  "Tokens allow Bot and group administration with your rights. Keep them private.": "令牌允许智能体以你的权限管理 Bot 和群聊。请妥善保密。",
+  "MCP address": "MCP 地址",
+  "Create a token to start access.": "创建令牌以启用访问。",
+  "Token name": "令牌名称",
+  "My agent": "我的智能体",
+  "Create a named token": "创建具名令牌",
+  "Create token": "创建令牌",
+  "Copy this token now. It will not be shown again.": "请立即复制此令牌。之后将不再显示。",
+  "Active": "有效",
+  "Revoked": "已撤销",
+  "Revoke": "撤销",
+  "Agent activity": "智能体活动",
+  "Recent calls": "最近的调用",
+  "Latest 200 audit records. Refresh to see new calls.": "最近 200 条审计记录。刷新以查看新调用。",
+  "Refresh": "刷新",
   "Bot sign-in recovery is needed. Reset Bot sign-in to start fresh.": "需要恢复 Bot 登录。重置 Bot 登录以重新开始。",
   "Reset Bot sign-in": "重置 Bot 登录",
   "This signs {vendor} out for Bots. Sign in again in the app.": "这会使 Bot 退出 {vendor}。请在应用内重新登录。",

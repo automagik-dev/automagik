@@ -21,7 +21,7 @@ const mutants = [
   {
     name: 'log the raw token',
     from: 'const hash = digest(candidate)',
-    to: `await appendFile(auditPath, JSON.stringify({ rawToken: candidate }) + '\\n')
+    to: `await appendFile(auditPath(), JSON.stringify({ rawToken: candidate }) + '\\n')
     const hash = digest(candidate)`,
     test: 'no raw token or secret values in responses or audit, including pasted config',
   },

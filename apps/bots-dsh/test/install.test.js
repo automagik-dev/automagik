@@ -164,6 +164,7 @@ test('apply registers listeners, tools, and effects in a fixed order', (t) => {
     'effect ds-bot: live feed route',
     'route GET /api/omni-ui/feed',
     'effect ds-bot: live feed',
+    'effect ds-bot: agent access',
     'effect ds-bot: pet route',
     'route GET /api/omni-ui/pet',
     'effect ds-bot: image route',
