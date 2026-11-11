@@ -11,12 +11,12 @@ const DANGER = new Set(['danger-full-access'])
 export const presetDanger = value => DANGER.has(value)
 
 // A Bot whose model runs on a coding CLI (Claude Code, Codex): there Full access is the CLI's
-// own no-ask mode, so it is shown as "Auto" and explained by the CLI's name. `mode` is the
-// CLI's own word for that mode. The stored level is the same one (danger-full-access): only
-// the words differ, and only for such a Bot. Both the model saved for the Bot and the one last
-// applied to its Sessions must be on that CLI: a Bot saved on Codex that answers on another
+// own no-ask mode, explained by the CLI's name. `mode` is the CLI's own word for that mode.
+// The stored level is the same one (danger-full-access): only the explanation differs, and
+// only for such a Bot. Both the model saved for the Bot and the one last applied to its
+// Sessions must be on that CLI: a Bot saved on Codex that answers on another
 // model (its CLI not served, a move not applied yet) runs DSH's own tools there, so "the CLI
-// decides" would be false and it reads Full access. Undefined for any other Bot.
+// decides" would be false. Undefined for any other Bot.
 const CLI_MODES = { 'acp-claude': 'bypass permissions', 'acp-codex': 'full access' }
 export const cliOfBot = (bot) => {
   const id = cliProviderOf(bot?.model)
@@ -29,7 +29,7 @@ const cliWords = cli => ({ cli: cli.name, mode: cli.mode })
 export const cliAuto = (value, cli) => cli !== undefined && presetDanger(value)
 export const cliConfirmText = cli => t(CLI_CONFIRM, cliWords(cli))
 
-export const presetName = (value, catalog, cli) => (cliAuto(value, cli) ? t('Auto') : LABELS[value] ? t(LABELS[value]) : catalog?.options?.find(option => option.value === value)?.name ?? value)
+export const presetName = (value, catalog) => (LABELS[value] ? t(LABELS[value]) : catalog?.options?.find(option => option.value === value)?.name ?? value)
 
 // A saved Auto that runs as workspace-write where Auto cannot hold (`permissionFallback`).
 // `owner.permissionNotOffered`: the saved level is one DeepSeek Harness no longer offers
@@ -111,8 +111,8 @@ function PermissionConfirm({ value, name, cli, onConfirm, onCancel }) {
   if (cliAuto(value, cli)) {
     return h('div', { className: 'bt-perm-confirm', role: 'alert' },
       h('span', { className: 'bt-note' }, h('span', { className: 'bt-danger' }, name === undefined ? cliConfirmText(cli)
-        : `${t('Use Auto for {name}?', { name })} ${cliConfirmText(cli)}`)),
-      h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: onConfirm }, t('Use Auto')),
+        : `${t('Give {name} full access?', { name })} ${cliConfirmText(cli)}`)),
+      h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: onConfirm }, t('Give full access')),
       h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: onCancel }, t('Cancel')))
   }
   return h('div', { className: 'bt-perm-confirm', role: 'alert' },
@@ -151,7 +151,7 @@ export function PermissionOptions({ catalog, current, onPick, disabled = false, 
         onClick: () => onPick(option.value),
       },
       h('span', { className: 'bt-q-body' },
-        h('span', { className: `bt-q-label${danger}` }, presetName(option.value, catalog, cli), option.value === AUTO ? h('span', { className: 'bt-perm-exp' }, t('Experimental')) : null),
+        h('span', { className: `bt-q-label${danger}` }, presetName(option.value, catalog), option.value === AUTO ? h('span', { className: 'bt-perm-exp' }, t('Experimental')) : null),
         text ? h('span', { className: `bt-q-desc${danger}` }, text) : null),
       option.value === current ? h('span', { className: 'bt-q-check', title: t('Selected') }, h(CheckIcon)) : null)
     }))

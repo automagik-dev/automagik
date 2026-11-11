@@ -392,7 +392,7 @@ export function install(rt) {
   // failed, so the Session is still on the model DSH made it with. Which one that is cannot
   // be told before its first request, so it is not taken for the Bot's CLI: refused too.
   // `owner`: whose Session it is when it is not on record yet (permissions.js sessionWide).
-  const STAYS = 'This Bot has Auto (full access) on its coding CLI, which is not available now, so nothing was started on another model. Fix the CLI or sign in to it, or pick another model for the Bot yourself.'
+  const STAYS = 'This Bot has Full access on its coding CLI, which is not available now, so nothing was started on another model. Fix the CLI or sign in to it, or pick another model for the Bot yourself.'
   async function assertNotOffCli(bot, sessionId, session, { unselected = false, owner } = {}) {
     if (!bot?.model || !onDsh(bot) || !cliRoute(splitRef(bot.model).provider)) return
     if (rt.sessionWide?.(sessionId, session, owner) !== true) return

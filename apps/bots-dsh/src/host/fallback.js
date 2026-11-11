@@ -56,11 +56,11 @@ export function fallbackNotice(failed, fallback, failure) {
 
 /**
  * What the chat reads when a failed turn is not moved to the fallback model: the Bot has Full
- * access ("Auto") on its coding CLI, where the CLI itself runs without asking, and another
+ * access on its coding CLI, where the CLI itself runs without asking, and another
  * model would run DSH's own tools at that level. The turn fails as it did, with its own error;
  * this is one fixed sentence, the one the language tables carry (client/i18n.js, the pt-BR pack).
  */
-export const STAYS_ON_CLI = 'The model failed and no other model answered in its place: this Bot has Auto (full access) on its coding CLI and stays there. Fix the CLI or sign in to it, or pick another model for the Bot yourself.'
+export const STAYS_ON_CLI = 'The model failed and no other model answered in its place: this Bot has Full access on its coding CLI and stays there. Fix the CLI or sign in to it, or pick another model for the Bot yourself.'
 export function stayNotice(failed) {
   return createUserMessage({
     content: [{ type: 'text', text: STAYS_ON_CLI }],

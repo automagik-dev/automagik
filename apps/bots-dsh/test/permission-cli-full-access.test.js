@@ -1,5 +1,5 @@
-// Full access on a Bot that runs on a coding CLI (Claude Code, Codex) is shown as "Auto", in
-// that CLI's words: the label follows the Bot's route, the stored level stays
+// Full access keeps its name on a Bot that runs on a coding CLI (Claude Code, Codex), with
+// an explanation in that CLI's words. The stored level stays
 // danger-full-access, and a CLI that did not take its no-ask mode is said where the level is
 // shown. Words only: nothing here decides a permission.
 import assert from 'node:assert/strict'
@@ -14,6 +14,7 @@ const plugin = fileURLToPath(new URL('..', import.meta.url))
 const { outputFiles } = await build({
   stdin: { contents: [
     "export { PermissionPicker, PermissionList, PermissionOptions, presetName, presetText, cliOfBot } from './src/client/permission-picker.js'",
+    "export { ComposerPermission } from './src/client/composer.js'",
     "export { PermissionChoiceDock } from './src/client/permission-card.js'",
     "export { permissionRows, noAskMissed } from './src/client/permission-diagnostics.js'",
   ].join('\n'), resolveDir: plugin },
@@ -85,26 +86,25 @@ const CLAUDE = { id: 'b1', name: 'Ada', model: 'acp-claude/opus', appliedModel: 
 const CODEX = { id: 'b2', name: 'Bob', model: 'acp-codex/default', appliedModel: 'acp-codex/gpt-5', permission: FULL, sessionId: 's2' }
 const NATIVE = { id: 'b3', name: 'Cy', model: 'deepseek-official/deepseek-chat', appliedModel: 'deepseek-official/deepseek-chat', permission: FULL, sessionId: 's3' }
 
-test('the label follows the Bot\'s route: Auto on a coding CLI, Full access anywhere else', () => {
+test('the label is Full access on a coding CLI and anywhere else', () => {
   const { presetName, cliOfBot } = load()
-  assert.equal(presetName(FULL, CATALOG, cliOfBot(CLAUDE)), 'Auto')
-  assert.equal(presetName(FULL, CATALOG, cliOfBot(CODEX)), 'Auto')
-  assert.equal(presetName(FULL, CATALOG, cliOfBot(NATIVE)), 'Full access')
-  assert.equal(presetName(FULL, CATALOG, cliOfBot({ name: 'No model yet' })), 'Full access')
-  assert.equal(presetName(FULL, CATALOG), 'Full access')
+  for (const bot of [CLAUDE, CODEX, NATIVE, { name: 'No model yet', permission: FULL }]) {
+    assert.equal(presetName(bot.permission, CATALOG), 'Full access')
+  }
+  assert.equal(cliOfBot({ name: 'No model yet' }), undefined)
   assert.equal(cliOfBot(CLAUDE).name, 'Claude Code')
   assert.equal(cliOfBot(CODEX).name, 'Codex')
   assert.equal(cliOfBot(NATIVE), undefined)
 })
 
-test('a Bot that changes route changes label, and the stored level is the same one', () => {
-  const { presetName, cliOfBot } = load()
+test('a Bot that changes route keeps its label and stored level', () => {
+  const { presetName } = load()
   const bot = { ...NATIVE }
-  assert.equal(presetName(bot.permission, CATALOG, cliOfBot(bot)), 'Full access')
+  assert.equal(presetName(bot.permission, CATALOG), 'Full access')
   Object.assign(bot, { model: 'acp-codex/default', appliedModel: 'acp-codex/default' })
-  assert.equal(presetName(bot.permission, CATALOG, cliOfBot(bot)), 'Auto')
+  assert.equal(presetName(bot.permission, CATALOG), 'Full access')
   Object.assign(bot, { model: 'openai/gpt-5', appliedModel: 'openai/gpt-5' })
-  assert.equal(presetName(bot.permission, CATALOG, cliOfBot(bot)), 'Full access')
+  assert.equal(presetName(bot.permission, CATALOG), 'Full access')
   assert.equal(bot.permission, FULL)
 })
 
@@ -114,7 +114,7 @@ test('a Bot saved on a CLI that runs on another model reads Full access: there n
   for (const applied of ['deepseek-official/deepseek-chat', 'acp-claude/opus', undefined, '']) {
     const bot = { ...CODEX, appliedModel: applied }
     assert.equal(cliOfBot(bot), undefined, String(applied))
-    assert.equal(presetName(FULL, CATALOG, cliOfBot(bot)), 'Full access', String(applied))
+    assert.equal(presetName(FULL, CATALOG), 'Full access', String(applied))
     assert.equal(presetText(FULL, CATALOG, cliOfBot(bot)), plain, String(applied))
   }
   // And the other way: applied on the CLI, saved elsewhere (a pick not applied yet).
@@ -126,9 +126,9 @@ test('a Bot saved on a CLI that runs on another model reads Full access: there n
 test('the other levels keep their names on a CLI Bot, DSH\'s reviewer level included', () => {
   const { presetName, presetText, cliOfBot } = load()
   const cli = cliOfBot(CLAUDE)
-  assert.equal(presetName('auto', CATALOG, cli), 'Auto review')
-  assert.equal(presetName('read-only', CATALOG, cli), 'Read only')
-  assert.equal(presetName('workspace-write', CATALOG, cli), 'Workspace')
+  assert.equal(presetName('auto', CATALOG), 'Auto review')
+  assert.equal(presetName('read-only', CATALOG), 'Read only')
+  assert.equal(presetName('workspace-write', CATALOG), 'Workspace')
   for (const value of ['auto', 'read-only', 'workspace-write']) assert.equal(presetText(value, CATALOG, cli), presetText(value, CATALOG))
 })
 
@@ -146,30 +146,30 @@ test('the explanation names the CLI and its own mode, and says Automagik does no
   assert.equal(presetText(FULL, CATALOG, cliOfBot(NATIVE)), 'Runs commands and changes files anywhere without asking you. Choose it only when you trust what you asked for.')
 })
 
-test('the list in Details shows Auto for a CLI Bot, in the danger ink, and asks before it sends', () => {
+test('the list in Details shows Full access for a CLI Bot, in the danger ink, and asks before it sends', () => {
   const { PermissionList, cliOfBot, render } = load()
   const sent = []
   const props = { catalog: CATALOG, saved: 'read-only', name: 'Ada', cli: cliOfBot(CLAUDE), onPick: (value) => { sent.push(value); return true } }
   let tree = render(PermissionList, props)
   const row = buttons(tree).find(button => button.props['data-permission'] === FULL)
-  assert.match(labelOf(row), /^Auto /)
+  assert.match(labelOf(row), /^Full access /)
   assert.match(labelOf(row), /Claude Code decides by itself/)
   assert.ok(nodes(row).some(node => /bt-danger/.test(node?.props?.className ?? '')), 'the danger ink stays')
-  assert.ok(!buttons(tree).some(button => /Full access/.test(labelOf(button))))
+  assert.ok(!nodes(tree).some(node => node?.props?.className?.startsWith('bt-q-label') && textOf(node) === 'Auto'))
   row.props.onClick()
   assert.deepEqual(sent, [], 'a click only asks')
   tree = render(PermissionList, props)
   const text = textOf(tree)
-  assert.match(text, /Use Auto for Ada\? Claude Code will decide by itself and run without asking you\. Automagik will ask it for its own "bypass permissions" mode, and will not review or ask\./)
-  const [use, cancel] = ['Use Auto', 'Cancel'].map(label => buttons(tree).find(button => labelOf(button) === label))
+  assert.match(text, /Give Ada full access\? Claude Code will decide by itself and run without asking you\. Automagik will ask it for its own "bypass permissions" mode, and will not review or ask\./)
+  const [use, cancel] = ['Give full access', 'Cancel'].map(label => buttons(tree).find(button => labelOf(button) === label))
   assert.ok(use && cancel)
   cancel.props.onClick()
   assert.deepEqual(sent, [])
   tree = render(PermissionList, props)
-  assert.ok(!buttons(tree).some(button => labelOf(button) === 'Use Auto'))
+  assert.ok(!buttons(tree).some(button => labelOf(button) === 'Give full access'))
   buttons(tree).find(button => button.props['data-permission'] === FULL).props.onClick()
   tree = render(PermissionList, props)
-  buttons(tree).find(button => labelOf(button) === 'Use Auto').props.onClick()
+  buttons(tree).find(button => labelOf(button) === 'Give full access').props.onClick()
   assert.deepEqual(sent, [FULL], 'the level sent is the stored one, unchanged')
 })
 
@@ -194,7 +194,20 @@ test('Settings and the group picker take no Bot, so they keep Full access', () =
   assert.ok(!labels.includes('Auto'))
 })
 
-test('the card in the chat of a CLI Bot shows Auto, asks in the CLI\'s words and sends Full access', async () => {
+test('the composer chip of a CLI Bot reads Full access, including its tooltip and accessible label', () => {
+  for (const bot of [CLAUDE, CODEX]) {
+    const { ComposerPermission, render } = load()
+    const roster = { byId: { [bot.sessionId]: bot }, permissions: CATALOG, readOnly: false }
+    const tree = render(ComposerPermission, { sessionId: bot.sessionId, useRoster: pick => pick(roster), actions: {} })
+    const chip = buttons(tree).find(button => button.props.className === 'bt-perm-chip')
+    assert.ok(chip)
+    assert.equal(labelOf(chip), 'Full access')
+    assert.equal(chip.props.title, 'Permissions: Full access')
+    assert.equal(chip.props['aria-label'], 'Permissions: Full access')
+  }
+})
+
+test('the card in the chat of a CLI Bot shows Full access, asks in the CLI\'s words and sends Full access', async () => {
   const { PermissionChoiceDock, render } = load()
   const bot = { ...CODEX, permission: undefined }
   const sent = []
@@ -204,15 +217,15 @@ test('the card in the chat of a CLI Bot shows Auto, asks in the CLI\'s words and
   assert.ok(card, 'the card is raised for a Bot with no level yet')
   let tree = render(card.type, card.props)
   const row = buttons(tree).find(button => button.props['data-permission'] === FULL)
-  assert.match(labelOf(row), /^Auto Codex decides by itself/)
+  assert.match(labelOf(row), /^Full access Codex decides by itself/)
   row.props.onClick()
   tree = render(card.type, card.props)
   nodes(tree).find(node => node?.type === 'form').props.onSubmit({ preventDefault() {} })
   tree = render(card.type, card.props)
   const text = textOf(tree)
-  assert.match(text, /Use Auto for Bob\?/)
+  assert.match(text, /Give Bob full access\?/)
   assert.match(text, /Codex will decide by itself and run without asking you\. Automagik will ask it for its own "full access" mode, and will not review or ask\./)
-  const use = buttons(tree).find(button => labelOf(button) === 'Use Auto')
+  const use = buttons(tree).find(button => labelOf(button) === 'Give full access')
   assert.ok(use)
   assert.deepEqual(sent, [], 'nothing is sent before the second answer')
   use.props.onClick({ detail: 1 })
@@ -225,10 +238,10 @@ const record = (agent, modes) => ({ agent, active: true, modes })
 const ROSTER = { bots: [CLAUDE, CODEX, NATIVE], rooms: [] }
 const report = sessions => ({ version: 1, sessions })
 
-test('the diagnostics section names the level by the Bot\'s route', () => {
+test('the diagnostics section names the level Full access on every route', () => {
   const { permissionRows } = load()
   const rows = permissionRows(report([row(CLAUDE), row(NATIVE)]), ROSTER)
-  assert.match(rows[0].level, /Saved level: Auto, set for the Bot · Running as: Auto/)
+  assert.match(rows[0].level, /Saved level: Full access, set for the Bot · Running as: Full access/)
   assert.match(rows[1].level, /Saved level: Full access, set for the Bot · Running as: Full access/)
 })
 
@@ -277,10 +290,10 @@ test('Details shows no such line: it is told only where the record is read fresh
 const KEYS = [
   '{cli} decides by itself and runs commands and changes files anywhere without asking you. Automagik asks it for its own "{mode}" mode, and does not review or ask. This holds while the Bot runs on {cli}.',
   '{cli} will decide by itself and run without asking you. Automagik will ask it for its own "{mode}" mode, and will not review or ask. This holds while the Bot runs on {cli}.',
-  'Use Auto for {name}?',
-  'Use Auto',
+  'Give {name} full access?',
+  'Give full access',
   '{cli} is in its mode "{mode}" here, not its no-ask mode.',
-  'Auto',
+  'Full access',
 ]
 
 test('the copy is there in English, Chinese and pt-BR, with its placeholders', () => {
