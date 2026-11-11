@@ -50,6 +50,14 @@ const PERM_REVIEWS = {
   AUTO_REVIEW_DENIED: 'it stopped the action',
 }
 
+// What became of a conversation whose saved level is no longer offered (host: applyGone).
+const PERM_GONE = {
+  narrowed: 'The saved level is no longer offered: this conversation was lowered to the narrowest level that is.',
+  kept: 'The saved level is no longer offered: this conversation already ran no wider than the narrowest level that is, so it was left as it is.',
+  unknown: 'The saved level is no longer offered, and the level this conversation has cannot be compared with those that are: it was left as it is.',
+  held: 'The saved level is no longer offered, and the narrower level could not be set here.',
+}
+
 const permText = value => (typeof value === 'string' ? value : undefined)
 const permTime = value => (typeof value === 'number' && Number.isFinite(value) ? permWhen(value) : undefined)
 
@@ -96,6 +104,7 @@ function levelFacts(row, cli) {
     else if (effective !== undefined) out.push(t('Running as: {level}', { level: effective }))
     else out.push(t('Running as: not known now'))
   }
+  if (typeof row.notOffered === 'string' && Object.hasOwn(PERM_GONE, row.notOffered)) out.push(t(PERM_GONE[row.notOffered]))
   if (row.fallback === true) out.push(t('Runs as Workspace here'))
   // The host compared the two levels by their own keys: two custom ones may differ.
   else if (row.differs === true && row.open === true) out.push(t('The level in force here is not the saved one.'))

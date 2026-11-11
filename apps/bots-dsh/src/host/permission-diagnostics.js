@@ -33,6 +33,8 @@ const OTHER = 'other'
 export const CUSTOM = 'custom'
 const LEVELS = new Set(['read-only', 'workspace-write', 'danger-full-access', AUTO])
 
+/** What became of a Session whose saved level DSH no longer offers (permissions.js applyGone). */
+const GONE = new Set(['narrowed', 'kept', 'unknown', 'held'])
 const AGENTS = new Set(['acp-claude', 'acp-codex'])
 const BUILT_IN = { provider: 'deepseek-official', model: 'deepseek-flash' }
 const BRIDGE_WHY = new Set(['no-backchannel', 'agent-no-bridge', 'agent-default', 'setting'])
@@ -186,6 +188,8 @@ export function install(rt) {
         // Compared by their own keys, before a custom one loses its key: two different
         // presets of the person's own still differ.
         differs: typeof facts.saved === 'string' && typeof facts.effective === 'string' ? facts.saved !== facts.effective : undefined,
+        // The saved level is no longer offered: one of the fixed outcomes, never a level's name.
+        notOffered: typeof facts.gone === 'string' && GONE.has(facts.gone) ? facts.gone : undefined,
         unapplied: facts.unapplied === undefined ? undefined : kept({ level: levelView(facts.unapplied.level), at: time(facts.unapplied.at) }),
         acp: acpOf(sessionId),
       }))

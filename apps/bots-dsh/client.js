@@ -1316,6 +1316,14 @@ var ZH = {
   "More conversations are open than fit here.": "打开的对话太多，这里显示不下。",
   "Conversations with a level not applied that do not fit here: {count}.": "权限级别未能应用、这里显示不下的对话：{count} 个。",
   "This window only views the team: the saved levels here are as of its last refresh.": "此窗口只能查看团队：这里的已保存级别以它上次刷新时为准。",
+  "Saved level: {level}. DeepSeek Harness no longer offers it.": "已保存的级别：{level}。DeepSeek Harness 已不再提供它。",
+  "This conversation runs as {level} now.": "这个对话现在按“{level}”运行。",
+  "Each conversation keeps the level it has now, or a narrower one. Settings → Feedback lists them.": "每个对话保持它现在的级别，或更窄的级别。设置 → 反馈 中列出了它们。",
+  "Pick a level to settle it. If DeepSeek Harness offers the saved level again, it is used again by itself.": "选择一个级别即可确定。如果 DeepSeek Harness 重新提供已保存的级别，会自动再次使用它。",
+  "The saved level is no longer offered: this conversation was lowered to the narrowest level that is.": "已保存的级别已不再提供：这个对话已降到仍提供的最窄级别。",
+  "The saved level is no longer offered: this conversation already ran no wider than the narrowest level that is, so it was left as it is.": "已保存的级别已不再提供：这个对话原本就不比仍提供的最窄级别更宽，因此保持不变。",
+  "The saved level is no longer offered, and the level this conversation has cannot be compared with those that are: it was left as it is.": "已保存的级别已不再提供，而这个对话现有的级别无法与仍提供的级别比较：因此保持不变。",
+  "The saved level is no longer offered, and the narrower level could not be set here.": "已保存的级别已不再提供，而更窄的级别未能在这里设置。",
   "Recent errors": "最近的错误",
   "Recent errors · {count}": "最近的错误 · {count}",
   "No errors recorded.": "没有错误记录。",
@@ -18833,7 +18841,19 @@ var cliWords = (cli) => ({ cli: cli.name, mode: cli.mode });
 var cliAuto = (value, cli) => cli !== void 0 && presetDanger(value);
 var cliConfirmText = (cli) => t(CLI_CONFIRM, cliWords(cli));
 var presetName = (value, catalog, cli) => cliAuto(value, cli) ? t("Auto") : LABELS[value] ? t(LABELS[value]) : catalog?.options?.find((option) => option.value === value)?.name ?? value;
-var PermissionFallback = ({ fallback }) => fallback ? (0, import_react53.createElement)("div", { className: "bt-note" }, t("Runs as Workspace here")) : null;
+function PermissionFallback({ fallback, owner, catalog }) {
+  if (owner?.permissionNotOffered === true && typeof owner.permission === "string") {
+    const runs = typeof owner.permissionRuns === "string" ? owner.permissionRuns : void 0;
+    return (0, import_react53.createElement)(
+      import_react53.Fragment,
+      null,
+      (0, import_react53.createElement)("div", { className: "bt-note" }, t("Saved level: {level}. DeepSeek Harness no longer offers it.", { level: presetName(owner.permission, catalog) })),
+      (0, import_react53.createElement)("div", { className: "bt-note" }, runs === void 0 ? t("Each conversation keeps the level it has now, or a narrower one. Settings → Feedback lists them.") : t("This conversation runs as {level} now.", { level: presetName(runs, catalog) })),
+      (0, import_react53.createElement)("div", { className: "bt-note" }, t("Pick a level to settle it. If DeepSeek Harness offers the saved level again, it is used again by itself."))
+    );
+  }
+  return fallback ? (0, import_react53.createElement)("div", { className: "bt-note" }, t("Runs as Workspace here")) : null;
+}
 var TEXTS = {
   "read-only": "It cannot change files unless you allow that one action. It can still run commands and use the network and its other tools.",
   "workspace-write": "Changes files inside its folder and a temporary folder without asking. For other files it asks you first. It can still run commands and use the network and its other tools.",
@@ -19029,7 +19049,7 @@ function RelayLimitRow({ room: room2, update }) {
   );
 }
 function GroupPermission({ room: room2, catalog, update }) {
-  if (!catalog?.options?.length) return null;
+  if (!catalog?.options?.length) return room2.permissionNotOffered === true ? (0, import_react54.createElement)(Card, { title: t("Permissions") }, (0, import_react54.createElement)(PermissionFallback, { owner: room2, catalog })) : null;
   const shared2 = room2.permission !== void 0;
   return (0, import_react54.createElement)(
     Card,
@@ -19044,7 +19064,7 @@ function GroupPermission({ room: room2, catalog, update }) {
       "div",
       { className: "bt-set-row bt-bs-row bt-bs-stack bt-gs-perm bt-veil" },
       (0, import_react54.createElement)(PermissionPicker, { catalog, saved: room2.permission, confirmFull: true, onPick: (permission) => update({ permission }) }),
-      (0, import_react54.createElement)(PermissionFallback, { fallback: room2.permissionFallback }),
+      (0, import_react54.createElement)(PermissionFallback, { fallback: room2.permissionFallback, owner: room2, catalog }),
       (0, import_react54.createElement)(PermissionExplanations, { catalog })
     ) : null
   );
@@ -20646,6 +20666,12 @@ var PERM_REVIEWS = {
   AUTO_REVIEW_TIMEOUT: "it took too long",
   AUTO_REVIEW_DENIED: "it stopped the action"
 };
+var PERM_GONE = {
+  narrowed: "The saved level is no longer offered: this conversation was lowered to the narrowest level that is.",
+  kept: "The saved level is no longer offered: this conversation already ran no wider than the narrowest level that is, so it was left as it is.",
+  unknown: "The saved level is no longer offered, and the level this conversation has cannot be compared with those that are: it was left as it is.",
+  held: "The saved level is no longer offered, and the narrower level could not be set here."
+};
 var permText = (value) => typeof value === "string" ? value : void 0;
 var permTime = (value) => typeof value === "number" && Number.isFinite(value) ? permWhen(value) : void 0;
 var PERM_LEVELS = /* @__PURE__ */ new Set(["read-only", "workspace-write", "danger-full-access", "auto"]);
@@ -20678,6 +20704,7 @@ function levelFacts(row, cli) {
     else if (effective !== void 0) out.push(t("Running as: {level}", { level: effective }));
     else out.push(t("Running as: not known now"));
   }
+  if (typeof row.notOffered === "string" && Object.hasOwn(PERM_GONE, row.notOffered)) out.push(t(PERM_GONE[row.notOffered]));
   if (row.fallback === true) out.push(t("Runs as Workspace here"));
   else if (row.differs === true && row.open === true) out.push(t("The level in force here is not the saved one."));
   const missed = levelName(row.unapplied?.level, cli);
@@ -22469,7 +22496,9 @@ var shortUrl = (url) => String(url ?? "").replace(/^https?:\/\//i, "").replace(/
 var EMPTY_TABS = { ids: [], active: null };
 function PermissionRow({ bot, roster, actions, run: run2 }) {
   const catalog = roster.permissions;
-  if (!catalog?.options?.length) return null;
+  if (!catalog?.options?.length) {
+    return bot.permissionNotOffered === true ? (0, import_react66.createElement)("div", { className: "bt-drawer-permission" }, (0, import_react66.createElement)("div", { className: "bt-section-title" }, t("Permissions")), (0, import_react66.createElement)(PermissionFallback, { owner: bot, catalog })) : null;
+  }
   return (0, import_react66.createElement)(
     "div",
     { className: "bt-drawer-permission" },
@@ -22477,7 +22506,7 @@ function PermissionRow({ bot, roster, actions, run: run2 }) {
     // A Bot without its own preset may run on another one set in DSH, so its first pick always applies.
     // Every level with what it does; a window that can only view the team gets no live rows.
     (0, import_react66.createElement)(PermissionList, { catalog, name: bot.name, saved: bot.permission ?? catalog.defaultPreset, repick: bot.permission === void 0, disabled: Boolean(roster.readOnly), cli: cliOfBot(bot), onPick: (permission) => run2(actions.updateBot(bot.id, { permission })) }),
-    (0, import_react66.createElement)(PermissionFallback, { fallback: bot.permissionFallback }),
+    (0, import_react66.createElement)(PermissionFallback, { fallback: bot.permissionFallback, owner: bot, catalog }),
     roster.readOnly ? null : (0, import_react66.createElement)("button", { type: "button", className: "bt-more", onClick: () => reopenPermissionChoice(bot.id) }, t("Choose in the chat"))
   );
 }
@@ -22654,7 +22683,7 @@ function GroupOverview({ room: room2, roster, actions, usage, useWork, openSetti
       (0, import_react66.createElement)("div", { className: "bt-section-title" }, t("Permissions")),
       (0, import_react66.createElement)("div", { className: "bt-kv" }, (0, import_react66.createElement)("span", { className: presetDanger(room2.permission) ? "bt-perm-danger" : void 0 }, presetName(room2.permission, roster.permissions))),
       presetText(room2.permission, roster.permissions) ? (0, import_react66.createElement)("div", { className: "bt-note" }, presetText(room2.permission, roster.permissions)) : null,
-      (0, import_react66.createElement)(PermissionFallback, { fallback: room2.permissionFallback })
+      (0, import_react66.createElement)(PermissionFallback, { fallback: room2.permissionFallback, owner: room2, catalog: roster.permissions })
     ) : null,
     roster.memory === false ? null : (0, import_react66.createElement)(MemoryRow, { key: "memory", owner: { id: room2.id, name: room2.name, group: true }, actions }),
     usage ? (0, import_react66.createElement)(
