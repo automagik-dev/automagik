@@ -1,5 +1,7 @@
 import { encodeUrlComponent, redactor } from './secrets.js'
 
+const longSecretEnv = /PASSWORD|PASSWD|PASSPHRASE|SECRET|TOKEN|CREDENTIALS?|APIKEY|PRIVATEKEY/i
+// Short fragments need boundaries so names such as COMPASS and MONKEY stay readable.
 const secretEnv = new RegExp('(?:^|_)(?:KEYS?|TOKENS?|SECRETS?|PASS(?:WD|WORD)?|PWD|'
   + 'CREDENTIALS?|PRIVATE|AUTH)(?:_|$)', 'i')
 const pathEnv = new Set(['PATH', 'HOME', 'PWD', 'OLDPWD'])
@@ -36,7 +38,8 @@ export function createAgentRedactor(rt) {
     const refs = new Set(rt.keyRefs?.().values() ?? [])
     for (const [name, value] of Object.entries(process.env)) {
       const password = urlPassword(value)
-      if (password !== undefined || (!pathEnv.has(name) && secretEnv.test(name))) {
+      if (password !== undefined || (!pathEnv.has(name)
+        && (longSecretEnv.test(name) || secretEnv.test(name)))) {
         refs.add(name)
         remember(value)
       }

@@ -178,6 +178,8 @@ test('short provider credentials containing regex metacharacters cannot throw or
 })
 
 const environmentCases = [
+  ['PGPASSWORD', 'fixture-postgres-password-1093'],
+  ['MYSQL_PWD', 'fixture-mysql-password-1093'],
   ['AUTOMAGIK_REVIEW_DB_PASS', 'fixture-database-pass-1093'],
   ['AUTOMAGIK_REVIEW_DATABASE_URL',
     'postgres://fixture:fixture-database-password-1093@database.invalid:5432/fixture'],
@@ -189,27 +191,53 @@ const environmentCases = [
 for (const [name, credential] of environmentCases) {
   test(`environment ${name} is redacted across SDK reads, arguments and audit`, async t => {
     const { rt, home, tool } = await fixture(t)
-    plantEnv(t, { [name]: credential })
+    const harmless = {
+      AUTOMAGIK_REVIEW_COMPASS: 'fixture-readable-compass-1093',
+      AUTOMAGIK_REVIEW_MONKEY: 'fixture-readable-monkey-1093',
+      AUTOMAGIK_REVIEW_KEYBOARD: 'fixture-readable-keyboard-1093',
+    }
+    plantEnv(t, { [name]: credential, ...harmless })
+    const readable = Object.values(harmless).join(' ')
     rt.chatPage = async () => ({ items: [{ kind: 'user', seq: 1,
-      text: `Pasted ${credential}`, time: 1 }], cursor: null })
-    absent(await tool('read_messages', { id: 'a' }), [credential])
-    rt.state.bots.a.instructions = `Before ${credential}`
+      text: `Pasted ${credential} ${readable}`, time: 1 }], cursor: null })
+    const messages = await tool('read_messages', { id: 'a' })
+    absent(messages, [credential])
+    assert.equal(messages.items[0].text, `Pasted [secret:credential] ${readable}`)
+    rt.state.bots.a.instructions = `Before ${credential} ${readable}`
     rt.state.prefs.theme = credential
     absent(await tool('get_bot', { id: 'a' }), [credential])
     absent(await tool('list_bots'), [credential])
     absent(await tool('read_settings'), [credential])
-    absent(await tool('update_bot', { id: 'a', instructions: `After ${credential}` }),
+    absent(await tool('update_bot', { id: 'a', instructions: `After ${credential} ${readable}` }),
       [credential])
     absent(rt.state.bots.a.instructions, [credential])
+    assert.equal(rt.state.bots.a.instructions, `After [secret:credential] ${readable}`)
     const audit = await readFile(join(home, 'agent-audit.jsonl'), 'utf8')
     absent(audit, [credential])
     const change = audit.trim().split('\n').map(JSON.parse)
       .findLast(row => row.changes?.bots?.a?.instructions).changes.bots.a.instructions
-    assert.equal(change.before, 'Before [secret:credential]')
-    assert.equal(change.after, 'After [secret:credential]')
+    assert.equal(change.before, `Before [secret:credential] ${readable}`)
+    assert.equal(change.after, `After [secret:credential] ${readable}`)
     absent(await tool('read_audit'), [credential])
   })
 }
+
+test('full credential words match prefixed and suffixed environment names', async t => {
+  const { rt } = await fixture(t)
+  const words = ['PASSWORD', 'PASSWD', 'PASSPHRASE', 'SECRET', 'TOKEN', 'CREDENTIAL',
+    'CREDENTIALS', 'APIKEY', 'PRIVATEKEY']
+  const names = words.flatMap(word => [word, `PREFIX${word}`, `${word}SUFFIX`,
+    `PREFIX${word.toLowerCase()}SUFFIX`])
+  const entries = Object.fromEntries(names.map((name, index) => [
+    `AUTOMAGIK_REVIEW_${name}`, `fixture-full-credential-word-${index}-1093`,
+  ]))
+  plantEnv(t, entries)
+  const redaction = createAgentRedactor(rt)
+  await redaction.refresh()
+  for (const credential of Object.values(entries)) {
+    assert.equal(redaction.text(credential), '[secret:credential]')
+  }
+})
 
 test('password name parts and password URLs refresh without masking harmless environment',
   async t => {

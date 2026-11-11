@@ -52,6 +52,14 @@ const mutants = [
     file: 'test/agent-redaction.test.js',
     test: 'environment AUTOMAGIK_REVIEW_ENDPOINT is redacted across SDK reads, arguments and audit',
   },
+  {
+    name: 'require a boundary before full credential words',
+    source: '../src/host/agent-redaction.js',
+    from: 'longSecretEnv.test(name)',
+    to: 'false',
+    file: 'test/agent-redaction.test.js',
+    test: 'environment PGPASSWORD is redacted across SDK reads, arguments and audit',
+  },
 ]
 for (const mutant of mutants) {
   const source = new URL(mutant.source ?? accessSource.href, import.meta.url)
