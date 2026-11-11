@@ -14,6 +14,7 @@ const read = path => readFileSync(resolve(root, path), 'utf8')
 const theme = read('theme.css'), css = read('styles.css')
 const captures = read('assets/CAPTURES.md')
 const manifest = JSON.parse(read('assets/screens/manifest.json'))
+const art = JSON.parse(read('assets/art/manifest.json'))
 const release = JSON.parse(read('assets/releases.json')).pocket
 const privacy = JSON.parse(read('../../herdr/scripts/privacy-list.json'))
 const generated = pages()
@@ -88,14 +89,22 @@ test('every href/action points locally or to an exact reviewed destination', () 
   }
 })
 
-test('images are reviewed brand assets or unchanged, provenance-backed captures', () => {
+test('images are reviewed brand assets, unchanged captures or recorded crops of them', () => {
   const brand = new Set(['/assets/brand/lockup.webp', '/assets/brand/mark.webp', '/assets/brand/omni-pleased.png'])
   for (const html of generated.values()) {
-    for (const [, source] of html.matchAll(/(?:src|srcset|poster)="([^"]+)"/g)) {
-      local(source)
-      assert.ok(brand.has(source) || Object.hasOwn(manifest.images, source.replace(/^\/assets\/screens\//, '')), source)
+    for (const [, value] of html.matchAll(/(?:src|srcset|poster)="([^"]+)"/g)) {
+      for (const source of value.split(',').map(candidate => candidate.trim().split(/\s+/)[0])) {
+        local(source)
+        const derived = source.startsWith('/assets/art/') && Object.hasOwn(art.files, source.slice('/assets/art/'.length))
+        assert.ok(brand.has(source) || derived || Object.hasOwn(manifest.images, source.replace(/^\/assets\/screens\//, '')), source)
+      }
     }
-    for (const [image] of html.matchAll(/<img\b[^>]*>/g)) assert.match(image, /alt="[^"]{20,}"|alt="Automagik"/)
+    for (const [image] of html.matchAll(/<img\b[^>]*>/g)) {
+      // Plain-words alt text, or an explicitly decorative image hidden from assistive technology.
+      assert.match(image, /alt="[^"]{20,}"|alt="Automagik"|alt="" aria-hidden="true"/)
+      assert.match(image, /\bwidth="\d+" height="\d+"/, image)
+      assert.match(image, /loading="lazy"|fetchpriority="high"|decoding="async"|alt="Automagik"/, image)
+    }
   }
   const files = readdirSync(resolve(root, 'assets/screens')).filter(file => file.endsWith('.png')).sort()
   assert.deepEqual(Object.keys(manifest.images).sort(), files)
@@ -106,6 +115,28 @@ test('images are reviewed brand assets or unchanged, provenance-backed captures'
   assert.equal(manifest.captureScriptsClean, true)
   assert.equal(manifest.themeCapture.runtime.version, '0.2.2-rc.1')
   assert.equal(manifest.themeCapture.reports.length, 4)
+  assert.deepEqual(manifest.pocketCapture.images.toSorted(), files.filter(file => file.startsWith('pocket-')))
+  assert.ok(existsSync(resolve(root, 'capture/pocket/PocketDemoShotsTest.kt')))
+})
+
+test('derived art: each file is one recorded rectangle of a hashed source, at 1x and 2x', () => {
+  const files = readdirSync(resolve(root, 'assets/art')).filter(file => file !== 'manifest.json').sort()
+  assert.deepEqual(Object.keys(art.files).sort(), files)
+  for (const [file, entry] of Object.entries(art.files)) {
+    assert.match(file, /^[a-z0-9-]+\.webp$/)
+    assert.equal(createHash('sha256').update(readFileSync(resolve(root, 'assets/art', file))).digest('hex'), entry.sha256, file)
+    const source = resolve(root, '../..', entry.source)
+    assert.equal(createHash('sha256').update(readFileSync(source)).digest('hex'), entry.sourceSha256, `${file} source changed: rebuild the art`)
+    // A crop of a capture comes from the unchanged, provenance-backed file itself.
+    if (entry.source.startsWith('apps/landing/assets/screens/')) assert.equal(entry.sourceSha256, manifest.images[entry.source.split('/').pop()], file)
+    else assert.ok(/^apps\/(?:desktop|bots-dsh|landing)\/(?:assets|src)\//.test(entry.source), entry.source)
+    assert.equal(entry.rect.length, 4)
+    const twin = file.endsWith('-2x.webp') ? file.replace('-2x.webp', '.webp') : file.replace('.webp', '-2x.webp')
+    assert.ok(Object.hasOwn(art.files, twin), `${file} needs its ${twin}`)
+  }
+  for (const [file, entry] of Object.entries(art.files)) {
+    if (!file.endsWith('-2x.webp')) assert.ok(art.files[file.replace('.webp', '-2x.webp')].width >= entry.width * 1.5, `${file}: 2x is too small`)
+  }
 })
 
 test('only Cloud carries the add/removal forms, fields, explicit consent and privacy', () => {

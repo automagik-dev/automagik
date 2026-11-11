@@ -82,7 +82,36 @@ try {
           text: [...range.getClientRects()].filter(rect => rect.width > 0).map(horizontal),
         }
       }))
+      // Layout checks for the redesign: no heading word split across lines at any width, every
+      // image sized, the film's still never the biggest picture, and a visible keyboard focus.
+      const layout = await page.evaluate(() => {
+        const brokenWords = []
+        for (const heading of document.querySelectorAll('h1, h2, h3')) {
+          if (!heading.getClientRects().length) continue
+          const walker = document.createTreeWalker(heading, NodeFilter.SHOW_TEXT)
+          for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            for (const match of node.data.matchAll(/\S+/g)) {
+              const range = document.createRange(); range.setStart(node, match.index); range.setEnd(node, match.index + match[0].length)
+              const lines = new Set([...range.getClientRects()].filter(rect => rect.width > 0).map(rect => Math.round(rect.top)))
+              if (lines.size > 1) brokenWords.push(`${heading.tagName} "${match[0]}"`)
+            }
+          }
+        }
+        const area = image => { const box = image.getBoundingClientRect(); return box.width * box.height }
+        const shown = [...document.images].filter(image => image.getClientRects().length && getComputedStyle(image).visibility !== 'hidden')
+        const film = document.querySelector('[data-film] img')
+        const unsized = [...document.images].filter(image => !image.getAttribute('width') || !image.getAttribute('height')).map(image => image.src)
+        return { brokenWords, unsized, film: film ? area(film) : 0, largest: Math.max(0, ...shown.filter(image => !image.closest('[data-film]')).map(area)) }
+      })
+      await page.keyboard.press('Tab')
+      const focus = await page.evaluate(() => ({ skip: document.activeElement?.classList.contains('skip'), outline: getComputedStyle(document.activeElement).outlineStyle }))
+      await page.keyboard.press('Tab')
+      const nextFocus = await page.evaluate(() => { const style = getComputedStyle(document.activeElement).outlineStyle; document.activeElement.blur(); return style })
       const label = `${route} ${colorScheme} ${width}px`
+      assert.deepEqual(layout.brokenWords, [], `A heading word breaks across lines: ${label}`)
+      assert.deepEqual(layout.unsized, [], `Images without width/height: ${label}`)
+      if (layout.film) assert.ok(layout.film < layout.largest, `The film still must not be the biggest picture: ${label} ${layout.film} vs ${layout.largest}`)
+      assert.ok(focus.skip && focus.outline !== 'none' && nextFocus !== 'none', `Keyboard focus is visible: ${label}`)
       for (const bounds of headingBounds) {
         assert.ok([bounds.heading, ...bounds.text].every(box => box.left >= bounds.content.left - 0.5 && box.right <= bounds.content.right + 0.5), `Heading stays inside card padding: ${label} ${JSON.stringify(bounds)}`)
       }

@@ -5,8 +5,15 @@ Omni, Genie, Cloud and Mykes pages, plus the Arca card linking to its separate W
 the colours, type and component treatment. Every product screen is a provenance-backed
 capture; brand/font licences are in `assets/brand/LICENSES.md`.
 
+Each block has its own visual: the home's stage with Genie, Omni and the real app; a bento of
+blocks (the app, Pocket on a phone, the octopus, Genie on plum, Cloud on the stage); the real
+Pocket app in its own preview; the three-step wish flow from real captures. Light and dark
+both follow the visitor's system. Pages show WebP art from `assets/art/`, built at 1x and 2x
+by `scripts/build-art.mjs` from Automagik's own art and crops of the captures, each recorded
+with its source digest in `assets/art/manifest.json`.
+
 The committed HTML needs no Pages build step and contains no client JavaScript. The home
-has one film slot with a plain-language coming-film message. Cloud is coming soon and carries intent, consent and removal
+has one small film slot: a real still with one quiet line until the film exists. Cloud is coming soon and carries intent, consent and removal
 forms, with email or inbound-first WhatsApp confirmation. No launch or marketing email.
 The meter is not a product or page. Herdr and DSH are Desktop installation channels.
 Pages serves no `/arca` content; Arca owns `/arca` and `/arca/*` in its own Worker.
@@ -19,6 +26,7 @@ Edit public page copy in `scripts/build-pages.mjs`; shared Cloud form/response c
 
 ```sh
 node apps/landing/scripts/sync-theme.mjs
+node apps/landing/scripts/build-art.mjs   # only after an art or capture change; needs ffmpeg with libwebp
 node apps/landing/scripts/build-pages.mjs
 bun install --frozen-lockfile --ignore-scripts
 node --test apps/landing/landing.test.mjs apps/landing/waitlist.test.mjs
@@ -27,6 +35,8 @@ node herdr/scripts/privacy-check.mjs
 ```
 
 The browser gate checks all pages at 1440, 1024, 390 and 320 px, light and dark. It checks
+that no heading word breaks across lines, every image is sized, the film still stays smaller
+than the page's main picture and keyboard focus shows. It checks
 images/fonts, overflow, failed/external loads and native form 503/200 responses against an
 isolated SQLite fixture. It writes full-page images and a JSON report to ignored
 `.cache/landing-evidence/`; set `LANDING_EVIDENCE` to another absolute report directory.
@@ -39,7 +49,9 @@ make no third-party request. The live account integration is an owner check.
 reference shots come from `capture/theme.mjs --run`, a fresh isolated DSH profile without
 an AI model or live chat. Set `LANDING_CHROME` to an installed matching Chrome/headless-shell
 binary; install the declared Bot harness/dependencies and the desktop runtime's pinned
-pnpm first. The original Northwind capture pipeline remains under `capture/`.
+pnpm first. The original Northwind capture pipeline remains under `capture/`. The Pocket
+screens come from `capture/pocket/PocketDemoShotsTest.kt`, run in a scratch copy of Pocket
+(steps in `assets/CAPTURES.md`), never inside `apps/pocket`.
 
 ## Downloads and hosting
 

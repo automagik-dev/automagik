@@ -42,7 +42,11 @@
     "app-stage-light-1440.png": "b61f6dd2112c09d0dee41df04c2d3e7d7cd575cc39b2b2f2b5180d7876c64b09",
     "app-stage-light-390.png": "8528443ecf2f453ae7c96e7faecbcfbb1235c7e394644ac39e8d54b7b3549b6f",
     "app-stage-dark-1440.png": "323a3e2846cad29ac9dcfe089b8509616b761d569cda119e253790c2a81591ab",
-    "app-stage-dark-390.png": "9008aec909bbf9d82d6b04b8cd5368d3e8b7aab5a5cc3b6d798055ca773714a4"
+    "app-stage-dark-390.png": "9008aec909bbf9d82d6b04b8cd5368d3e8b7aab5a5cc3b6d798055ca773714a4",
+    "pocket-team-light.png": "8a5b95845831f63b8ffce758a775b93de3343a79007debca6495b7850d673ca3",
+    "pocket-team-dark.png": "d0b95257723df0313c7dd143ac1294d57b6ce3f92239c8efb18636cfff306ba8",
+    "pocket-home-light.png": "449db9022ae4ea625b3259296a118b4581032a7cf154f6465df6f80498b5c91d",
+    "pocket-home-dark.png": "0da1411a417e48e7d2feb0d9dae5d58d897a2cd0eb30910def65e91bb8491819"
   },
   "additionalCaptures": {
     "code-sidebar.png": {
@@ -110,5 +114,29 @@
       }
     ],
     "captureScriptSha256": "4b2fcad7eaa7b2dfd7e6bcb9223fb9f8e19d0291335ad851f8deab1403ee8f47"
+  },
+  "pocketCapture": {
+    "capturedBy": "apps/landing/capture/pocket/PocketDemoShotsTest.kt (Robolectric, steps in assets/CAPTURES.md)",
+    "checkout": "9777efcabbef89cf1d97e4528089c7e88e2ef620",
+    "scratchOnly": "local.properties with the SDK path; pocket.updateUrl set to a closed loopback address so the updater made no request",
+    "app": {
+      "path": "apps/pocket/android",
+      "applicationId": "ai.namastex.automagik",
+      "version": "3.127.14"
+    },
+    "renderer": {
+      "robolectric": "4.14.1",
+      "graphicsMode": "NATIVE",
+      "pixelCopyRenderMode": "hardware",
+      "sdk": 35,
+      "qualifiers": "w393dp-h852dp-xxhdpi, +notnight / +night"
+    },
+    "scenario": "The real MainActivity in the app’s own interface preview (PocketViewModel.enterDemo): made-up sample machines, projects and Bots, labelled in the app as Interface preview · sample data. No machine, network or account is reached. Unchanged PixelCopy of the window; Robolectric draws no Android status bar.",
+    "images": [
+      "pocket-team-light.png",
+      "pocket-team-dark.png",
+      "pocket-home-light.png",
+      "pocket-home-dark.png"
+    ]
   }
 }

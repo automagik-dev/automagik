@@ -20,3 +20,13 @@ new drawings are included.
 The fonts are copied unchanged from the draft's brand folder; the OFL text is reproduced with
 line endings and trailing whitespace normalized. No private
 brief, chat, account information or input directory is part of this site.
+
+## Derived site art (`assets/art/`)
+
+The site's WebP art is cropped and scaled, never redrawn, from Automagik's own files in this
+repository, all Apache-2.0: the clay mark (`apps/desktop/assets/mark.png`), Genie
+(`apps/desktop/assets/dmg-source/genie.png`), the Omni octopus and app icon (above), the lamp
+and the Genie and Omni expression strips (`apps/bots-dsh/src/client/art/`) and the Automagik
+pet's first frame (`apps/bots-dsh/src/host/pets/automagik/`). The Bots' art carries the DS Bot
+and Automagik notices of `apps/bots-dsh/NOTICE`. Crops of product captures are recorded in
+`assets/CAPTURES.md`; `assets/art/manifest.json` lists every source and digest.

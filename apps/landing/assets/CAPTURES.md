@@ -113,8 +113,9 @@ channel, phone, meter or Cloud screen is fabricated to illustrate the other bloc
 ### The film slot
 
 D2 has not supplied the committed encode or poster at D3's implementation. The single film
-figure reuses `pip-delegates.png` as a clearly labelled stand-in and says **The film comes in
-D2**. It is not a rendered film, play control or new capture. D2 replaces that one figure with
+figure shows a crop of `team-step.png` (`assets/art/team-step.webp`, see below) as a small,
+clearly described still and says **A short film is coming.** It is not a rendered film, play
+control or new capture, and it is smaller than the page's other pictures. D2 replaces that one figure with
 the approved poster/player and records the film's provenance and music licence. There is no
 second film element and no off-site player.
 
@@ -153,3 +154,37 @@ saved in the private report directory, never presented as product captures on th
 `apps/bots-dsh/src/client/stage.js`. This includes its cream/plum light and dark palettes,
 stage gradient, paper/raised surfaces, typography, radii, focus ring and component shadows.
 The desktop renderer's `shell.css` and `frame.js` use the same table and ink colours.
+
+## Site redesign, 2026-11-11
+
+### Pocket, in its own preview
+
+`pocket-team-light.png`, `pocket-team-dark.png`, `pocket-home-light.png` and
+`pocket-home-dark.png` (1179×2556, a 393×852 dp phone at 3x) are the real Automagik Mobile
+app, recorded by `capture/pocket/PocketDemoShotsTest.kt`. The test launches the app's real
+`MainActivity` under Robolectric 4.14.1 with native graphics, calls the app's own
+`PocketViewModel.enterDemo()` (what **Explore the interface** on its welcome screen calls),
+and saves the window through Android's `PixelCopy`, light (`+notnight`) and dark (`+night`).
+The data is the app's built-in sample (made-up machines, projects and Bots), and the app
+itself labels every screen **Interface preview · sample data**. No machine, network or
+account is reached. Robolectric draws no Android status bar; the page's phone frame is plain
+CSS around the unchanged picture. Pets show the frame current at capture time.
+
+To record them again, copy `apps/pocket` (and `apps/bots-dsh/src/host/pets/genie-clay`, which
+the Genie pet bundling task reads, plus the root `package.json`) into a scratch folder with
+`git archive`, put the test in its `app/src/test/java/ai/namastex/automagik/`, give it a
+`local.properties` with the SDK path, and set `pocket.updateUrl` in its `gradle.properties` to a
+closed loopback address so the updater sends nothing. Then, with `POCKET_SHOTS` naming an
+output folder, run `./gradlew --no-daemon :app:testDebugUnitTest --tests
+'ai.namastex.automagik.PocketDemoShotsTest'` there. The test never goes into `apps/pocket`.
+Checkout, renderer and digests are under `pocketCapture` and `images` in the manifest.
+
+### Derived art
+
+The pages show WebP files from `assets/art/`, made by `scripts/build-art.mjs`. Each is one
+rectangle of one source, scaled with Lanczos to 1x and 2x: Automagik's own art (the mark,
+Genie, the Omni octopus, the lamp, the Automagik pet's first frame, the app icon and the
+Genie and Omni expression strips), and crops of the unchanged captures above. Nothing is
+drawn, recoloured or retouched. `assets/art/manifest.json` records each file's source, the
+source's SHA-256, the rectangle and the output's SHA-256; the page test checks all of them,
+and that every capture-derived file's source digest matches this manifest.

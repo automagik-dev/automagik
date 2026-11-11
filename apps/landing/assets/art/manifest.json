@@ -1,0 +1,552 @@
+{
+  "builtBy": "node apps/landing/scripts/build-art.mjs",
+  "tool": "ffmpeg version 8.0.1-3ubuntu2",
+  "files": {
+    "mark.webp": {
+      "source": "apps/desktop/assets/mark.png",
+      "sourceSha256": "c82785378c286a9e3c00629fb44e7d575bad9e3fcf73d7086470df6a7f316d6f",
+      "rect": [
+        180,
+        124,
+        1099,
+        957
+      ],
+      "width": 300,
+      "height": 261,
+      "sha256": "5647ca0736ce0beee598250cff6eaf30f156454d9638461b91b38dae6b432a4c"
+    },
+    "mark-2x.webp": {
+      "source": "apps/desktop/assets/mark.png",
+      "sourceSha256": "c82785378c286a9e3c00629fb44e7d575bad9e3fcf73d7086470df6a7f316d6f",
+      "rect": [
+        180,
+        124,
+        1099,
+        957
+      ],
+      "width": 600,
+      "height": 522,
+      "sha256": "0487b29119159da1bc43a8fba9c245dbc35a193ffb936e6c4ec10e433a401322"
+    },
+    "genie.webp": {
+      "source": "apps/desktop/assets/dmg-source/genie.png",
+      "sourceSha256": "679f15ef33e0b9670f610fba12af2e79b12d31342717d3bb1b2553336e32f37f",
+      "rect": [
+        185,
+        102,
+        653,
+        820
+      ],
+      "width": 220,
+      "height": 276,
+      "sha256": "53e5f7a5e077e11d60ff7b4b79bc65bcd2a1303d04739edbad21aa557600909e"
+    },
+    "genie-2x.webp": {
+      "source": "apps/desktop/assets/dmg-source/genie.png",
+      "sourceSha256": "679f15ef33e0b9670f610fba12af2e79b12d31342717d3bb1b2553336e32f37f",
+      "rect": [
+        185,
+        102,
+        653,
+        820
+      ],
+      "width": 440,
+      "height": 553,
+      "sha256": "e4c73cc7ba096c60fabd1fb4096cedddf1b61a2136e979b29cb9f15c9a6e44b9"
+    },
+    "omni.webp": {
+      "source": "apps/landing/assets/brand/omni-pleased.png",
+      "sourceSha256": "af22400a73c0346eb97a784ac6c039f7477fba7f140245346e6b99cbf9cd347b",
+      "rect": [
+        103,
+        158,
+        818,
+        763
+      ],
+      "width": 260,
+      "height": 243,
+      "sha256": "67fbc5e3c7cb7a6010f2200c16832cba77654e6d537c980167b36b52db94f4f1"
+    },
+    "omni-2x.webp": {
+      "source": "apps/landing/assets/brand/omni-pleased.png",
+      "sourceSha256": "af22400a73c0346eb97a784ac6c039f7477fba7f140245346e6b99cbf9cd347b",
+      "rect": [
+        103,
+        158,
+        818,
+        763
+      ],
+      "width": 520,
+      "height": 485,
+      "sha256": "4e7224283958d97812746b7836fd2f16ab8eb1724493c34d7899bbb85bbb594c"
+    },
+    "lamp.webp": {
+      "source": "apps/bots-dsh/src/client/art/lamp.webp",
+      "sourceSha256": "bd225f63f8d2312dd111314e1199c95112aa02e8d73613e3f94269836bd91fa8",
+      "rect": [
+        0,
+        0,
+        256,
+        122
+      ],
+      "width": 128,
+      "height": 61,
+      "sha256": "f8c26ff32fd48206d720e1e66b6a37e5591c602ce351d2d02e087ddad4252204"
+    },
+    "lamp-2x.webp": {
+      "source": "apps/bots-dsh/src/client/art/lamp.webp",
+      "sourceSha256": "bd225f63f8d2312dd111314e1199c95112aa02e8d73613e3f94269836bd91fa8",
+      "rect": [
+        0,
+        0,
+        256,
+        122
+      ],
+      "width": 256,
+      "height": 122,
+      "sha256": "36cca83762f3a3f881e71ece288a7ca0b375815d793c8c7dda69ac3578c03838"
+    },
+    "pet.webp": {
+      "source": "apps/bots-dsh/src/host/pets/automagik/spritesheet.webp",
+      "sourceSha256": "9c0715e1b55cc04de0fe61ae89d1ad0ce1194c1305c357e1e8f2a6b4d694da75",
+      "rect": [
+        0,
+        0,
+        192,
+        208
+      ],
+      "width": 96,
+      "height": 104,
+      "sha256": "9286e3090212749ce06078660991ec5c0bbb7a2b2451e6580fe4d3107e732445"
+    },
+    "pet-2x.webp": {
+      "source": "apps/bots-dsh/src/host/pets/automagik/spritesheet.webp",
+      "sourceSha256": "9c0715e1b55cc04de0fe61ae89d1ad0ce1194c1305c357e1e8f2a6b4d694da75",
+      "rect": [
+        0,
+        0,
+        192,
+        208
+      ],
+      "width": 192,
+      "height": 208,
+      "sha256": "a5b8001e9b43fd5210ede45211a07c17a16ccb5875c0a7c5aa28a49994269ef3"
+    },
+    "app-icon.webp": {
+      "source": "apps/landing/assets/brand/app-icon.png",
+      "sourceSha256": "075aa39c1c4895a8598bbb738c639f23a8a7f6bcaf7239b93fd63515048c74c4",
+      "rect": [
+        74,
+        94,
+        876,
+        876
+      ],
+      "width": 112,
+      "height": 112,
+      "sha256": "4c5ad3d388a3c66c211aa08787fac1827a68b2c5a8d7053b699f8832a3bd4ef8"
+    },
+    "app-icon-2x.webp": {
+      "source": "apps/landing/assets/brand/app-icon.png",
+      "sourceSha256": "075aa39c1c4895a8598bbb738c639f23a8a7f6bcaf7239b93fd63515048c74c4",
+      "rect": [
+        74,
+        94,
+        876,
+        876
+      ],
+      "width": 224,
+      "height": 224,
+      "sha256": "f14887bf6c9e2aed62344f361207ef984158a5b64b37c8e8e3849788328c7820"
+    },
+    "genie-faces.webp": {
+      "source": "apps/bots-dsh/src/client/art/genie-expressions.webp",
+      "sourceSha256": "d143b4b2230b421db237f9fc2b37208af505abd2a013f80460c96760440fa87f",
+      "rect": [
+        33,
+        22,
+        1269,
+        178
+      ],
+      "width": 504,
+      "height": 71,
+      "sha256": "4b48b49da8cacb9cd7e7a43972b4bb368c7fc28ead43c8dcfff1121b74972dd9"
+    },
+    "genie-faces-2x.webp": {
+      "source": "apps/bots-dsh/src/client/art/genie-expressions.webp",
+      "sourceSha256": "d143b4b2230b421db237f9fc2b37208af505abd2a013f80460c96760440fa87f",
+      "rect": [
+        33,
+        22,
+        1269,
+        178
+      ],
+      "width": 1008,
+      "height": 141,
+      "sha256": "f4fe1b88d90c761fd6a98faa5e6a8fc9aa88d8b8a2395e06394d0a6d5732062d"
+    },
+    "omni-faces.webp": {
+      "source": "apps/bots-dsh/src/client/art/omni-expressions.webp",
+      "sourceSha256": "fe9d79c7cb2b7f134ca433f9eec1c75e33184f239ee224f5e6a2460bb8ae6402",
+      "rect": [
+        2,
+        13,
+        1340,
+        177
+      ],
+      "width": 504,
+      "height": 67,
+      "sha256": "dcb8e5aeb6039c41112a084d74cb93f6812ca8a0d81fb6a8b1544b4b9a0b950f"
+    },
+    "omni-faces-2x.webp": {
+      "source": "apps/bots-dsh/src/client/art/omni-expressions.webp",
+      "sourceSha256": "fe9d79c7cb2b7f134ca433f9eec1c75e33184f239ee224f5e6a2460bb8ae6402",
+      "rect": [
+        2,
+        13,
+        1340,
+        177
+      ],
+      "width": 1008,
+      "height": 133,
+      "sha256": "d16428a0ebc94279b42ecba0c98ce03ca50d7586abb2d7aded84456c26cf1ab4"
+    },
+    "team-chat.webp": {
+      "source": "apps/landing/assets/screens/pip-delegates.png",
+      "sourceSha256": "5621587264b57581d0604f2f7b2e7bd277a59052d1416f081c08aef8a4a29510",
+      "rect": [
+        0,
+        0,
+        2880,
+        1800
+      ],
+      "width": 1040,
+      "height": 650,
+      "sha256": "3e42367ecb33d6a02a128f9e53a1080c8e53f875f367e572e23dff3cd46639da"
+    },
+    "team-chat-2x.webp": {
+      "source": "apps/landing/assets/screens/pip-delegates.png",
+      "sourceSha256": "5621587264b57581d0604f2f7b2e7bd277a59052d1416f081c08aef8a4a29510",
+      "rect": [
+        0,
+        0,
+        2880,
+        1800
+      ],
+      "width": 2080,
+      "height": 1300,
+      "sha256": "105390ba222392e527711b2105101ab1550a968b0bb8a31626c86a5e855cfd86"
+    },
+    "stage-light.webp": {
+      "source": "apps/landing/assets/screens/app-stage-light-1440.png",
+      "sourceSha256": "b61f6dd2112c09d0dee41df04c2d3e7d7cd575cc39b2b2f2b5180d7876c64b09",
+      "rect": [
+        0,
+        0,
+        2880,
+        1800
+      ],
+      "width": 1040,
+      "height": 650,
+      "sha256": "2db31534c05c8e5aa8598469245413b30c5bf9e1d6f039fe23565216da14e39f"
+    },
+    "stage-light-2x.webp": {
+      "source": "apps/landing/assets/screens/app-stage-light-1440.png",
+      "sourceSha256": "b61f6dd2112c09d0dee41df04c2d3e7d7cd575cc39b2b2f2b5180d7876c64b09",
+      "rect": [
+        0,
+        0,
+        2880,
+        1800
+      ],
+      "width": 2080,
+      "height": 1300,
+      "sha256": "226afc1c1a175855d771d81b7f56b1481a5172f7f0ba9e5350365f1cc0453e10"
+    },
+    "stage-dark.webp": {
+      "source": "apps/landing/assets/screens/app-stage-dark-1440.png",
+      "sourceSha256": "323a3e2846cad29ac9dcfe089b8509616b761d569cda119e253790c2a81591ab",
+      "rect": [
+        0,
+        0,
+        2880,
+        1800
+      ],
+      "width": 1040,
+      "height": 650,
+      "sha256": "e53c99563feffba41ff24581ef76cd4a0b6ef1bcdc010b8e6b86d31c5cc4f0be"
+    },
+    "stage-dark-2x.webp": {
+      "source": "apps/landing/assets/screens/app-stage-dark-1440.png",
+      "sourceSha256": "323a3e2846cad29ac9dcfe089b8509616b761d569cda119e253790c2a81591ab",
+      "rect": [
+        0,
+        0,
+        2880,
+        1800
+      ],
+      "width": 2080,
+      "height": 1300,
+      "sha256": "dd02935e9ab5d008b69fe6ce2fe3f5882946eff24a68712d6e6bd4f1352ad81b"
+    },
+    "ask.webp": {
+      "source": "apps/landing/assets/screens/pip-delegates.png",
+      "sourceSha256": "5621587264b57581d0604f2f7b2e7bd277a59052d1416f081c08aef8a4a29510",
+      "rect": [
+        944,
+        492,
+        1560,
+        640
+      ],
+      "width": 520,
+      "height": 213,
+      "sha256": "3c59899e703481a6f9a4f5aea63da97cbf349ab15470526a99490b37fac4126c"
+    },
+    "ask-2x.webp": {
+      "source": "apps/landing/assets/screens/pip-delegates.png",
+      "sourceSha256": "5621587264b57581d0604f2f7b2e7bd277a59052d1416f081c08aef8a4a29510",
+      "rect": [
+        944,
+        492,
+        1560,
+        640
+      ],
+      "width": 1040,
+      "height": 427,
+      "sha256": "cbd24096afc469df6b441a8f1305325249f123feed1c484e086417da249dbb0d"
+    },
+    "checks.webp": {
+      "source": "apps/landing/assets/screens/wish-checks.png",
+      "sourceSha256": "f70f49db400ff16df291cb1c1e48dd359def6b767eb471c3761f96180c5cbb06",
+      "rect": [
+        936,
+        628,
+        1560,
+        640
+      ],
+      "width": 520,
+      "height": 213,
+      "sha256": "d184c1b10f33d7c90ec3db2b684199a1fedf971ff837bee0892147d15e365ad9"
+    },
+    "checks-2x.webp": {
+      "source": "apps/landing/assets/screens/wish-checks.png",
+      "sourceSha256": "f70f49db400ff16df291cb1c1e48dd359def6b767eb471c3761f96180c5cbb06",
+      "rect": [
+        936,
+        628,
+        1560,
+        640
+      ],
+      "width": 1040,
+      "height": 427,
+      "sha256": "1b22dfad8888d1d048d2c13d5ef7afb7045a4e3848db607d42fff9331632c3b2"
+    },
+    "report.webp": {
+      "source": "apps/landing/assets/screens/genie-report.png",
+      "sourceSha256": "1c7c934b1e22df8b384b6f5a153ee5da8eeca18e15706c9d236bb3ce4d743e7d",
+      "rect": [
+        944,
+        532,
+        1560,
+        640
+      ],
+      "width": 520,
+      "height": 213,
+      "sha256": "d2b16da5bbe2d89c6f3040b55c04756ccf23ba50d620280cb1ef2167bd162232"
+    },
+    "report-2x.webp": {
+      "source": "apps/landing/assets/screens/genie-report.png",
+      "sourceSha256": "1c7c934b1e22df8b384b6f5a153ee5da8eeca18e15706c9d236bb3ce4d743e7d",
+      "rect": [
+        944,
+        532,
+        1560,
+        640
+      ],
+      "width": 1040,
+      "height": 427,
+      "sha256": "56ebf5cc32439c0406afc7ff33d8ee7c8bd2dad16b1add140a784a25f01c26f4"
+    },
+    "team-step.webp": {
+      "source": "apps/landing/assets/screens/team-step.png",
+      "sourceSha256": "fe5dd8a9750845b2b8b9d5f484703177114d0bd135de5317ecaf9848508f1d1f",
+      "rect": [
+        440,
+        0,
+        2000,
+        1560
+      ],
+      "width": 600,
+      "height": 468,
+      "sha256": "22df5c62c6dca59ab60752d8bdfa6a4232f7a7fd9104e1ffb89f31db2734cfd8"
+    },
+    "team-step-2x.webp": {
+      "source": "apps/landing/assets/screens/team-step.png",
+      "sourceSha256": "fe5dd8a9750845b2b8b9d5f484703177114d0bd135de5317ecaf9848508f1d1f",
+      "rect": [
+        440,
+        0,
+        2000,
+        1560
+      ],
+      "width": 1200,
+      "height": 936,
+      "sha256": "1a67f908f0e2fd6f1e8864b7a8f84ab64e6a1fd4fd7c4e0dea807ad4e5350c80"
+    },
+    "omni-card.webp": {
+      "source": "apps/landing/assets/screens/team-step.png",
+      "sourceSha256": "fe5dd8a9750845b2b8b9d5f484703177114d0bd135de5317ecaf9848508f1d1f",
+      "rect": [
+        500,
+        800,
+        940,
+        1000
+      ],
+      "width": 400,
+      "height": 426,
+      "sha256": "b18ceae66aec72041f9097520e58efcd3bb3db17878f665aea5ef0567961f732"
+    },
+    "omni-card-2x.webp": {
+      "source": "apps/landing/assets/screens/team-step.png",
+      "sourceSha256": "fe5dd8a9750845b2b8b9d5f484703177114d0bd135de5317ecaf9848508f1d1f",
+      "rect": [
+        500,
+        800,
+        940,
+        1000
+      ],
+      "width": 800,
+      "height": 851,
+      "sha256": "058f37c829b3116bc966b79c715dc0c2cd873913294446ea0cbee084b18dbb2a"
+    },
+    "code-tree.webp": {
+      "source": "apps/landing/assets/screens/code-sidebar.png",
+      "sourceSha256": "b623f219e94013dcf8ca296e8b98cd1d627110b0527fec3cd9f98472399c2479",
+      "rect": [
+        0,
+        0,
+        722,
+        668
+      ],
+      "width": 361,
+      "height": 334,
+      "sha256": "eac6eabe6d3f037da9ca578e4e5f3bd29f51ead794f6a1de310accbd9edcd8dd"
+    },
+    "code-tree-2x.webp": {
+      "source": "apps/landing/assets/screens/code-sidebar.png",
+      "sourceSha256": "b623f219e94013dcf8ca296e8b98cd1d627110b0527fec3cd9f98472399c2479",
+      "rect": [
+        0,
+        0,
+        722,
+        668
+      ],
+      "width": 722,
+      "height": 668,
+      "sha256": "ec409fd2990bfd7a221ec05370c2806abf3edc6fcec2e41291aa7105b8e5f41d"
+    },
+    "pocket-team-light.webp": {
+      "source": "apps/landing/assets/screens/pocket-team-light.png",
+      "sourceSha256": "8a5b95845831f63b8ffce758a775b93de3343a79007debca6495b7850d673ca3",
+      "rect": [
+        0,
+        0,
+        1179,
+        2556
+      ],
+      "width": 300,
+      "height": 650,
+      "sha256": "0b1398d924cc957c83d506b81c88bbd7c7d01b4ef478ed065279db4bbcfeed6c"
+    },
+    "pocket-team-light-2x.webp": {
+      "source": "apps/landing/assets/screens/pocket-team-light.png",
+      "sourceSha256": "8a5b95845831f63b8ffce758a775b93de3343a79007debca6495b7850d673ca3",
+      "rect": [
+        0,
+        0,
+        1179,
+        2556
+      ],
+      "width": 600,
+      "height": 1301,
+      "sha256": "3cb0e4b7aa8b001ec50cdeffd744d5b6ac54c3b07419bfcf331683e27e8af15b"
+    },
+    "pocket-team-dark.webp": {
+      "source": "apps/landing/assets/screens/pocket-team-dark.png",
+      "sourceSha256": "d0b95257723df0313c7dd143ac1294d57b6ce3f92239c8efb18636cfff306ba8",
+      "rect": [
+        0,
+        0,
+        1179,
+        2556
+      ],
+      "width": 300,
+      "height": 650,
+      "sha256": "d34c71426f569870e5faf4700d97aa45b1b335f85e49fc1f394d34ccfbc09202"
+    },
+    "pocket-team-dark-2x.webp": {
+      "source": "apps/landing/assets/screens/pocket-team-dark.png",
+      "sourceSha256": "d0b95257723df0313c7dd143ac1294d57b6ce3f92239c8efb18636cfff306ba8",
+      "rect": [
+        0,
+        0,
+        1179,
+        2556
+      ],
+      "width": 600,
+      "height": 1301,
+      "sha256": "c2f82c30d3f004645ae6d6f41474eb72433c5672f6dba9b4cf9759baca46798a"
+    },
+    "pocket-home-light.webp": {
+      "source": "apps/landing/assets/screens/pocket-home-light.png",
+      "sourceSha256": "449db9022ae4ea625b3259296a118b4581032a7cf154f6465df6f80498b5c91d",
+      "rect": [
+        0,
+        0,
+        1179,
+        2556
+      ],
+      "width": 300,
+      "height": 650,
+      "sha256": "2961b3b4fe53eb45cbb70863d5acf936f05c8b689506b3f5639efdececa52627"
+    },
+    "pocket-home-light-2x.webp": {
+      "source": "apps/landing/assets/screens/pocket-home-light.png",
+      "sourceSha256": "449db9022ae4ea625b3259296a118b4581032a7cf154f6465df6f80498b5c91d",
+      "rect": [
+        0,
+        0,
+        1179,
+        2556
+      ],
+      "width": 600,
+      "height": 1301,
+      "sha256": "ca9fd668b34aa9fa9d5183a2770b8ea6d3c95b89031bf505346b65e8693e2672"
+    },
+    "pocket-home-dark.webp": {
+      "source": "apps/landing/assets/screens/pocket-home-dark.png",
+      "sourceSha256": "0da1411a417e48e7d2feb0d9dae5d58d897a2cd0eb30910def65e91bb8491819",
+      "rect": [
+        0,
+        0,
+        1179,
+        2556
+      ],
+      "width": 300,
+      "height": 650,
+      "sha256": "c34bd94fa97438c0aa4edffd2fdf6f8bbd66072bd0c4ba1dcb65ba42e89abbf8"
+    },
+    "pocket-home-dark-2x.webp": {
+      "source": "apps/landing/assets/screens/pocket-home-dark.png",
+      "sourceSha256": "0da1411a417e48e7d2feb0d9dae5d58d897a2cd0eb30910def65e91bb8491819",
+      "rect": [
+        0,
+        0,
+        1179,
+        2556
+      ],
+      "width": 600,
+      "height": 1301,
+      "sha256": "8eeadead0c5967d6dd5a4eb10d7f93e5eb48ace2ed3bfb1e1a8b826aaec1f3ef"
+    }
+  }
+}
