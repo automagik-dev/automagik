@@ -286,7 +286,7 @@ const pack = createPack({
     "Changing the route starts a new conversation. {name} writes a handoff note first.": "Mudar a rota começa uma nova conversa. {name} escreve primeiro uma nota de passagem.",
     "Full access: DSH's own tools run without asking.": "Acesso total: as ferramentas do próprio DSH rodam sem perguntar.",
     "Full access: the CLI's own no-ask mode.": "Acesso total: o modo sem perguntas da própria CLI.",
-    "Full access: the agent's own no-ask mode.": "Acesso total: o modo sem perguntas do próprio agente.",
+    "Full access: the agent's actions run without asking.": "Acesso total: as ações do próprio agente rodam sem perguntar.",
     "Changing the agent starts a new conversation. {name} writes a handoff note first.": "Mudar o agente começa uma nova conversa. {name} escreve primeiro uma nota de passagem.",
     "Keep this conversation": "Manter esta conversa",
     "Change route": "Mudar rota",

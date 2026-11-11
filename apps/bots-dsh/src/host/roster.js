@@ -410,9 +410,10 @@ export function install(rt) {
     // own step, and the caller can update them after it.
     const currentModel = bot.model ?? bot.appliedModel
     if (modelRef !== undefined && modelRef !== null && currentModel !== undefined && crossesHarness(currentModel, modelRef)) {
-      // A host-owned Session has no DSH agent to write a note or start a fresh part: its host
-      // owns the conversation, so the host's own in-place move stands. Every DSH agent takes
-      // the new-conversation path, never a silent in-place crossing.
+      // A host-owned Session has no DSH agent with `whenIdle`, so no fresh part can be
+      // started here: its host owns the conversation, and the host's in-place move stands.
+      // A DSH agent, pinned included, takes the new-conversation path; the pinned check in
+      // switchRoute refuses it rather than carrying the Session across the harness.
       const agent = await rt.resolveAgent(rt.chatOf(bot.id)).catch(() => undefined)
       if (typeof agent?.whenIdle === 'function') {
         const extra = Object.keys(patch).filter(key => key !== 'id' && key !== 'model' && key !== 'effort')

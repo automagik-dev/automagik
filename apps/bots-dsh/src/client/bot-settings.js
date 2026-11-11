@@ -6,6 +6,7 @@ import { PencilIcon, ChevronRightIcon } from './icons.js'
 import { BotMark } from './mark.js'
 import { CharacterSelect } from './character-select.js'
 import { ModelMenu, modelHint } from './model-menu.js'
+import { settingsModelPicker } from './settings-model-picker.js'
 import { FolderMenu } from './folder-menu.js'
 import { BotSchedules } from './schedules.js'
 import { BotCapabilitiesCard } from './capability-settings.js'
@@ -144,13 +145,9 @@ export function BotSettingsForm({ bot, roster, actions, run }) {
     if (error?.code === 'bot/account-confirm-required' && cliProviderOf(ref)) setAccount(ref)
     throw error
   }
-  const pickModel = ref => run(actions.updateBot(bot.id, { model: ref }).catch(pickFailure(ref)))
   // A route or agent crossing is the host's new-conversation handoff, never an in-place
-  // updateBot (the host refuses that too). The picker asks first; this is the confirmed pick.
-  const pickRoute = (ref, patch = {}) => run(actions.switchRoute(bot.id, ref, patch).catch(pickFailure(ref)))
-  const pick = (ref, { routeChange = false, effort } = {}) => (routeChange
-    ? pickRoute(ref, effort === undefined ? {} : { effort })
-    : (ref !== (bot.model ?? bot.appliedModel) || !bot.model ? pickModel(ref) : undefined))
+  // updateBot. The picker asks first; this is the confirmed pick.
+  const picker = settingsModelPicker({ bot, roster, actions, run, onFailure: pickFailure })
   // What the model really did (the host's model state, with every state answer).
   const modelState = useSyncExternalStore(actions.subscribeWork ?? noSubscribe, () => actions.modelStateOf?.(bot.id))
   // Cards other Omni plugins add (extend.js), such as what the Bot may do on Omni.
@@ -175,7 +172,7 @@ export function BotSettingsForm({ bot, roster, actions, run }) {
     h(Card, { title: t('Model') },
       h('div', { className: 'bt-set-row bt-bs-row' },
         h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, t('Model')), h('span', { className: 'bt-set-hint', role: modelState?.lastFailure?.kept ? 'status' : undefined }, modelHint(bot, roster, modelState))),
-        h(ModelMenu, { bot, roster, actions, run, saved: true, onPick: pick })),
+        h(ModelMenu, picker)),
       signIn && actions.openCliLogin ? h('div', { className: 'bt-set-row bt-bs-row' },
         h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-set-hint' }, t('This model needs a sign-in to its coding agent.'))),
         h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: () => { actions.openCliLogin(bot.id, cliProviderOf(signIn), signIn); setSignIn(null) } }, t('Sign in'))) : null,

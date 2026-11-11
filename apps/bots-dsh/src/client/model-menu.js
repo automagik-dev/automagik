@@ -515,7 +515,7 @@ export function RouteConfirm({ bot, roster, current, target, onCancel, onConfirm
   const fullAccessLine = !fullAccess ? undefined
     : to.route === 'native' ? t("Full access: DSH's own tools run without asking.")
       : to.provider === 'acp-claude' || to.provider === 'acp-codex' ? t("Full access: the CLI's own no-ask mode.")
-        : t("Full access: the agent's own no-ask mode.")
+        : t("Full access: the agent's actions run without asking.")
   return h('div', { className: 'bt-model-step bt-model-confirm', role: 'group', 'aria-label': t('Start a new conversation?') },
     h('div', { className: 'bt-model-confirm-title' }, t('Start a new conversation?')),
     h('div', { className: 'bt-model-confirm-move' },

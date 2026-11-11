@@ -690,7 +690,7 @@ const ZH = {
   'Changing the route starts a new conversation. {name} writes a handoff note first.': '更改路线会开始新对话。{name} 会先写一份交接说明。',
   "Full access: DSH's own tools run without asking.": '完全访问：DSH 自己的工具无需询问即可运行。',
   "Full access: the CLI's own no-ask mode.": '完全访问：CLI 自身的免询问模式。',
-  "Full access: the agent's own no-ask mode.": '完全访问：代理自身的免询问模式。',
+  "Full access: the agent's actions run without asking.": '完全访问：代理的操作无需询问即可运行。',
   'Changing the agent starts a new conversation. {name} writes a handoff note first.': '更改代理会开始新对话。{name} 会先写一份交接说明。',
   'Keep this conversation': '保留当前对话',
   'Change route': '更改路线',

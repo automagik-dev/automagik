@@ -229,6 +229,19 @@ test('a Bot model applies its thinking level, and only re-selects on a change', 
   assert.equal(bot.appliedEffort, undefined)
 })
 
+test('a Bot whose own part is switching is not selected on the old part', async () => {
+  const { rt, selected } = bench()
+  rt.switchingChat = id => id === 'b1'
+  const bot = { id: 'b1', model: 'deepseek/v4-flash' }
+  assert.equal(await rt.applyModel(bot, { force: true }), undefined)
+  assert.deepEqual(selected, [])
+  assert.equal(await rt.desiredModel(bot), undefined)
+  // The fresh part asks with its own Session id and still gets the target.
+  assert.equal(await rt.desiredModel(bot, { sessionId: 'fresh' }), 'deepseek/v4-flash')
+  await rt.syncModels()
+  assert.deepEqual(selected, [])
+})
+
 test('a target level that only shares the name is carried as its own id', async () => {
   const efforts = [{ id: 'max', name: 'High' }]
   const { rt } = bench({ reasoning: { 'deepseek/v4-flash': { reasoning: { efforts } } } })

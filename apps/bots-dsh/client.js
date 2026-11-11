@@ -714,7 +714,7 @@ var ZH = {
   "Changing the route starts a new conversation. {name} writes a handoff note first.": "更改路线会开始新对话。{name} 会先写一份交接说明。",
   "Full access: DSH's own tools run without asking.": "完全访问：DSH 自己的工具无需询问即可运行。",
   "Full access: the CLI's own no-ask mode.": "完全访问：CLI 自身的免询问模式。",
-  "Full access: the agent's own no-ask mode.": "完全访问：代理自身的免询问模式。",
+  "Full access: the agent's actions run without asking.": "完全访问：代理的操作无需询问即可运行。",
   "Changing the agent starts a new conversation. {name} writes a handoff note first.": "更改代理会开始新对话。{name} 会先写一份交接说明。",
   "Keep this conversation": "保留当前对话",
   "Change route": "更改路线",
@@ -4999,7 +4999,7 @@ function RouteConfirm({ bot, roster, current, target, onCancel, onConfirm }) {
   const to = modelRoute(roster, target.ref);
   const routeChanged = from?.route !== to.route;
   const fullAccess = bot.permission === "danger-full-access";
-  const fullAccessLine = !fullAccess ? void 0 : to.route === "native" ? t("Full access: DSH's own tools run without asking.") : to.provider === "acp-claude" || to.provider === "acp-codex" ? t("Full access: the CLI's own no-ask mode.") : t("Full access: the agent's own no-ask mode.");
+  const fullAccessLine = !fullAccess ? void 0 : to.route === "native" ? t("Full access: DSH's own tools run without asking.") : to.provider === "acp-claude" || to.provider === "acp-codex" ? t("Full access: the CLI's own no-ask mode.") : t("Full access: the agent's actions run without asking.");
   return (0, import_react12.createElement)(
     "div",
     { className: "bt-model-step bt-model-confirm", role: "group", "aria-label": t("Start a new conversation?") },
@@ -15970,6 +15970,15 @@ var CHARACTER_SELECT_CSS = `
 body[data-bt-motion=quiet] :is(.bt-cs-spot,.bt-cs-tile[data-focus]){animation:none}
 `;
 
+// src/client/settings-model-picker.js
+function settingsModelPicker({ bot, roster, actions, run: run2, onFailure = () => () => {
+} }) {
+  const pickModel = (ref) => run2(actions.updateBot(bot.id, { model: ref }).catch(onFailure(ref)));
+  const pickRoute = (ref, patch = {}) => run2(actions.switchRoute(bot.id, ref, patch).catch(onFailure(ref)));
+  const pick2 = (ref, { routeChange = false, effort } = {}) => routeChange ? pickRoute(ref, effort === void 0 ? {} : { effort }) : ref !== (bot.model ?? bot.appliedModel) || !bot.model ? pickModel(ref) : void 0;
+  return { bot, roster, actions, run: run2, saved: true, onPick: pick2 };
+}
+
 // src/client/folder-menu.js
 var import_react39 = require("react");
 var import_react_dom10 = require("react-dom");
@@ -17510,9 +17519,7 @@ function BotSettingsForm({ bot, roster, actions, run: run2 }) {
     if (error?.code === "bot/account-confirm-required" && cliProviderOf(ref)) setAccount(ref);
     throw error;
   };
-  const pickModel = (ref) => run2(actions.updateBot(bot.id, { model: ref }).catch(pickFailure(ref)));
-  const pickRoute = (ref, patch = {}) => run2(actions.switchRoute(bot.id, ref, patch).catch(pickFailure(ref)));
-  const pick2 = (ref, { routeChange = false, effort } = {}) => routeChange ? pickRoute(ref, effort === void 0 ? {} : { effort }) : ref !== (bot.model ?? bot.appliedModel) || !bot.model ? pickModel(ref) : void 0;
+  const picker = settingsModelPicker({ bot, roster, actions, run: run2, onFailure: pickFailure });
   const modelState = (0, import_react44.useSyncExternalStore)(actions.subscribeWork ?? noSubscribe2, () => actions.modelStateOf?.(bot.id));
   const extraCards = useEntries(botSettings);
   const duplicate = () => run2(actions.duplicateBot(bot.id).then((copy2) => actions.openSession(copy2.id)));
@@ -17560,7 +17567,7 @@ function BotSettingsForm({ bot, roster, actions, run: run2 }) {
         "div",
         { className: "bt-set-row bt-bs-row" },
         (0, import_react44.createElement)("span", { className: "bt-set-copy" }, (0, import_react44.createElement)("span", { className: "bt-bs-label" }, t("Model")), (0, import_react44.createElement)("span", { className: "bt-set-hint", role: modelState?.lastFailure?.kept ? "status" : void 0 }, modelHint(bot, roster, modelState))),
-        (0, import_react44.createElement)(ModelMenu, { bot, roster, actions, run: run2, saved: true, onPick: pick2 })
+        (0, import_react44.createElement)(ModelMenu, picker)
       ),
       signIn && actions.openCliLogin ? (0, import_react44.createElement)(
         "div",

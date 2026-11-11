@@ -675,6 +675,10 @@ test('the crossing says what Full access means on the route it moves to, only fo
   }), node => node.props.className === 'bt-model-confirm-access')[0]?.children[0]
   assert.equal(line({ name: 'Ops', permission: 'danger-full-access' }, 'acp-codex/default', 'deepseek/flash'), "Full access: DSH's own tools run without asking.")
   assert.equal(line({ name: 'Ops', permission: 'danger-full-access' }, 'deepseek/flash', 'acp-codex/default'), "Full access: the CLI's own no-ask mode.")
+  const withAgent = { ready: true, models: [...cascade, { ref: 'acp-gemini/pro', provider: 'acp-gemini', providerName: 'Gemini', name: 'Pro' }], defaultModel: 'deepseek/flash' }
+  assert.equal(nodes(RouteConfirm({
+    bot: { name: 'Ops', permission: 'danger-full-access' }, roster: withAgent, current: 'deepseek/flash', target: { ref: 'acp-gemini/pro' }, onCancel: () => {}, onConfirm: () => {},
+  }), node => node.props.className === 'bt-model-confirm-access')[0]?.children[0], "Full access: the agent's actions run without asking.")
   assert.equal(line({ name: 'Ops', permission: 'workspace-write' }, 'deepseek/flash', 'acp-codex/default'), undefined)
   assert.equal(line({ name: 'Ops' }, 'deepseek/flash', 'acp-codex/default'), undefined)
 })
