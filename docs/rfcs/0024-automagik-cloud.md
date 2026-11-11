@@ -296,8 +296,10 @@ pinned exact).
    access or an operator's private SSH tunnel reaches it. Main-port claims return `404` even
    with a correct code. `remote` serves claims on the main listener for operators who deliver
    the code to the authenticated owner out of band: the 128-bit code is then the barrier.
-   Each wrong remote code incurs a bounded per-attempt delay outside the state queue; wrong
-   attempts cannot drain a bucket that blocks the correct code. Log a count, never the code.
+   Wrong remote codes share at most 64 pending per-attempt delays outside the state queue;
+   excess wrong attempts get `429` immediately without a timer, and disconnects cancel and
+   release their delay. Check the code first: correct codes bypass the penalty limit and delay.
+   Wrong attempts cannot drain a bucket that blocks the correct code. Log a count, never the code.
    Other unauthenticated workspace routes answer `401`. Host reset remains a `0600` local
    socket operation in both modes and restores the configured claim boundary, including when
    a connector continues forwarding the main listener after reset.

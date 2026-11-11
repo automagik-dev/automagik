@@ -13,6 +13,8 @@ import { claimPage } from './gate-claim-ui.mjs'
 export const CLAIM_MS = 15 * 60 * 1000
 export const CHALLENGE_MS = 5 * 60 * 1000
 export const PREAUTH_COOKIE = '__Host-automagik-preauth'
+export const CLAIM_PENALTY_LIMIT = 64
+export const CLAIM_PENALTY_MS = 250
 const scrypt = promisify(derive)
 const hash = value => createHash('sha256').update(String(value ?? '')).digest()
 const opaque = () => randomBytes(32).toString('base64url')
@@ -75,7 +77,7 @@ export class SelfHostedClaim extends EventEmitter {
     mkdirSync(dir, { recursive: true, mode: 0o700 })
     this.owner = readOwner(dir)
     if (this.owner?.auth !== undefined) validateAuth(this.owner.auth)
-    this.pending = new Map(); this.rates = new Map(); this.preauth = new Map(); this.claimFailures = 0; this.queue = Promise.resolve()
+    this.pending = new Map(); this.rates = new Map(); this.preauth = new Map(); this.claimPenalties = new Set(); this.claimFailures = 0; this.queue = Promise.resolve()
     this.claimFile = join(dir, 'claim-state.json'); this.codeFile = join(dir, 'claim-code')
   }
   get claimed() { return this.owner?.auth?.status === 'claimed' && this.owner.auth.origin === this.origin.origin && this.owner.auth.rpID === this.origin.hostname }
@@ -203,15 +205,33 @@ export class SelfHostedClaim extends EventEmitter {
     })
   }
   async renewCode() { return this.exclusive(async () => { this.newCode(); return { renewed: true } }) }
-  async action(route, data, family, browser) {
+  penalty(signal) {
+    if (signal?.aborted) return Promise.resolve()
+    if (this.claimPenalties.size >= CLAIM_PENALTY_LIMIT) throw fail(429, 'Too many pending claim attempts')
+    return new Promise(resolve => {
+      let timer
+      const done = () => {
+        if (!this.claimPenalties.delete(done)) return
+        clearTimeout(timer)
+        signal?.removeEventListener('abort', done)
+        resolve()
+      }
+      this.claimPenalties.add(done)
+      timer = setTimeout(done, CLAIM_PENALTY_MS)
+      signal?.addEventListener('abort', done, { once: true })
+      if (signal?.aborted) done()
+    })
+  }
+  async action(route, data, family, browser, signal) {
     if (this.claimMode === 'remote' && (route === 'claim/options' || route === 'claim/verify')) {
       try { this.checkCode(data.code) }
       catch (error) {
         this.claimFailures = Math.min(Number.MAX_SAFE_INTEGER, this.claimFailures + 1)
-        this.audit({ status: 401, claim_failures: this.claimFailures, request_id: randomUUID() })
+        const status = !signal?.aborted && this.claimPenalties.size >= CLAIM_PENALTY_LIMIT ? 429 : error.status ?? 400
+        this.audit({ status, claim_failures: this.claimFailures, request_id: randomUUID() })
         // Delay each wrong attempt outside the state queue. Invalid traffic must never
         // spend a shared allowance or make a correct code wait behind the penalty.
-        await new Promise(resolve => setTimeout(resolve, 250))
+        await this.penalty(signal)
         throw error
       }
     }
@@ -350,10 +370,19 @@ export class SelfHostedClaim extends EventEmitter {
       }
       if (req.method === 'GET' && route === 'settings') throw fail()
       if (req.method !== 'POST' || !actions.has(route)) throw fail()
-      const result = await this.action(route, await body(req), family, this.browser(req, res))
-      if (result.cookie) { res.setHeader('set-cookie', result.cookie); delete result.cookie }
-      reply(res, 200, result)
+      const controller = new AbortController()
+      const disconnected = () => controller.abort()
+      res.once('close', disconnected)
+      try {
+        const data = await body(req)
+        if (res.destroyed || controller.signal.aborted) return true
+        const result = await this.action(route, data, family, this.browser(req, res), controller.signal)
+        if (res.destroyed) return true
+        if (result.cookie) { res.setHeader('set-cookie', result.cookie); delete result.cookie }
+        reply(res, 200, result)
+      } finally { res.off('close', disconnected) }
     } catch (error) {
+      if (res.destroyed) return true
       this.audit({ status: error.status ?? 400, request_id: randomUUID() })
       reply(res, error.status ?? 400, { error: error.status ? error.message : 'Passkey verification failed' })
     }

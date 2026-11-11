@@ -428,7 +428,7 @@ browsers. These modes therefore control which listener serves the claim:
 | Mode | Claim boundary |
 |---|---|
 | `local` | Claim page/API only on the separate `127.0.0.1:3083` bootstrap listener. `AUTOMAGIK_GATE_BOOTSTRAP_PORT` can change it, but it must differ from DSH and the main gate port. Main port 3082 returns `404` for claims, including requests with the correct code. **Never forward the bootstrap listener through a public or tailnet connector.** Reach it only from the operator's host or private SSH tunnel |
-| `remote` | Claim page/API on main port 3082. The 128-bit code, delivered to the owner out of band, is the claim barrier. Choose this only when that delivery is trusted. Each wrong code waits 250 ms outside the state queue; wrong attempts cannot spend a shared allowance that blocks a correct code. Logs contain a failure count, never the code |
+| `remote` | Claim page/API on main port 3082. The 128-bit code, delivered to the owner out of band, is the claim barrier. Choose this only when that delivery is trusted. Up to 64 wrong attempts can wait 250 ms outside the state queue; excess wrong attempts get `429` immediately without a timer. Disconnecting cancels the delay and releases its slot. The code is checked first, so a correct code always bypasses this limit and delay. Logs contain a failure count, never the code |
 
 Until claimed, the main listener still binds only `127.0.0.1`, even with
 `AUTOMAGIK_GATE_HOST=0.0.0.0`. After claiming, the default remains loopback, which is correct for

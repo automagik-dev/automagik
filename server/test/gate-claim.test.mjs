@@ -10,7 +10,7 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { promisify } from 'node:util'
 import { Script } from 'node:vm'
-import { CLAIM_MS, CHALLENGE_MS, ClaimConfigurationError, SelfHostedClaim, passkeyOrigin } from '../gate-claim.mjs'
+import { CLAIM_MS, CHALLENGE_MS, CLAIM_PENALTY_LIMIT, CLAIM_PENALTY_MS, ClaimConfigurationError, SelfHostedClaim, passkeyOrigin } from '../gate-claim.mjs'
 import { controlServer, hostCommand } from '../gate-control.mjs'
 import { SessionStore, readOwner } from '../gate-store.mjs'
 import { createGate } from '../gate.mjs'
@@ -529,4 +529,77 @@ test('recovery verification is bound to its initiating browser and remains singl
   assert.equal(completed.status, 200); assert.equal(cookieOf(completed), undefined)
   assert.equal(readOwner(f.dir).auth.credentials.length, 2)
   assert.equal((await a('/_gate/recovery/verify', { data })).status, 401)
+})
+
+function holdPenaltyTimers(t) {
+  const nativeSet = globalThis.setTimeout, nativeClear = globalThis.clearTimeout, live = new Map()
+  let total = 0, peak = 0
+  t.mock.method(globalThis, 'setTimeout', (callback, ms, ...args) => {
+    if (ms !== CLAIM_PENALTY_MS) return nativeSet(callback, ms, ...args)
+    const timer = { unref() { return this } }
+    live.set(timer, () => callback(...args)); total++; peak = Math.max(peak, live.size)
+    return timer
+  })
+  t.mock.method(globalThis, 'clearTimeout', timer => { if (!live.delete(timer)) nativeClear(timer) })
+  const flush = () => { for (const callback of [...live.values()]) callback() }
+  t.after(flush)
+  const until = async (condition, message) => {
+    for (let i = 0; i < 200 && !condition(); i++) await new Promise(resolve => nativeSet(resolve, 10))
+    assert.ok(condition(), message)
+  }
+  return { live, flush, until, total: () => total, peak: () => peak }
+}
+
+// Mutants REMOTE_PENALTIES_UNBOUNDED and REMOTE_PENALTIES_BLOCK_OWNER remove the cap or apply it before checking a correct code.
+test('remote flood retains only 64 penalty timers, rejects overflow immediately and admits a correct claim while saturated', async t => {
+  const f = await fixture(t, { claimMode: 'remote' }), held = holdPenaltyTimers(t)
+  assert.equal(CLAIM_PENALTY_LIMIT, 64)
+  const statuses = []
+  const flood = Array.from({ length: 256 }, (_, i) => f.request(i % 2 ? '/_gate/claim/options' : '/_gate/claim/verify', { data: { code: 'wrong' } })
+    .then(r => { statuses.push(r.status); return r }, () => { statuses.push(0); return { status: 0 } }))
+  t.after(async () => { held.flush(); await Promise.all(flood) })
+  await held.until(() => held.live.size > 64 || statuses.length >= 192, 'overflow must answer without waiting for any penalty deadline')
+  assert.equal(held.live.size, 64, 'the global delayed-attempt resource ceiling is fixed')
+  assert.equal(f.claim.claimPenalties.size, 64)
+  assert.equal(held.peak(), 64)
+  assert.equal(statuses.length, 192); assert.ok(statuses.every(status => status === 429))
+  const overflow = await Promise.all(Array.from({ length: 4096 }, (_, i) => f.claim.action(i % 2 ? 'claim/options' : 'claim/verify', { code: 'wrong' })
+    .then(() => 200, error => error.status)))
+  assert.ok(overflow.every(status => status === 429), 'both claim routes share the same resource ceiling')
+  assert.equal(held.total(), 64, 'overflow must allocate no penalty timer')
+  const owner = await enroll(f)
+  assert.ok(owner.cookie)
+  assert.equal((await f.request('/', { cookie: owner.cookie })).status, 200)
+  assert.equal(held.live.size, 64, 'a complete correct claim must finish before the delayed wrong attempts')
+  held.flush()
+  await Promise.all(flood)
+  assert.equal(statuses.filter(status => status === 401).length, 64)
+  assert.equal(statuses.filter(status => status === 429).length, 192)
+  assert.equal(held.live.size, 0); assert.equal(f.claim.claimPenalties.size, 0)
+})
+
+// Mutant REMOTE_PENALTIES_NO_CANCEL keeps a disconnected client's timer and slot alive.
+test('remote penalty disconnect cancels its timer, releases its slot and allows immediate reuse', async t => {
+  const f = await fixture(t, { claimMode: 'remote' }), held = holdPenaltyTimers(t)
+  const req = http.request({ hostname: DSH_HOST, port: f.port, method: 'POST', path: '/_gate/claim/options', headers: {
+    host: new URL(f.origin).host, origin: f.origin, 'content-type': 'application/json', connection: 'close',
+  } })
+  req.on('error', () => {})
+  req.end(JSON.stringify({ code: 'wrong' }))
+  t.after(() => req.destroy())
+  await held.until(() => held.live.size === 1, 'a complete request must keep its penalty until response disconnect or deadline')
+  const lateCallback = [...held.live.values()][0]
+  const closed = new Promise(resolve => req.once('close', resolve)); req.destroy(); await closed
+  await held.until(() => f.claim.claimPenalties.size === 0 && held.live.size === 0, 'disconnect must clear the penalty timer and release its slot before the deadline')
+  lateCallback()
+  assert.equal(f.claim.claimPenalties.size, 0, 'late timeout cleanup must be idempotent')
+  const next = f.request('/_gate/claim/verify', { data: { code: 'wrong' } })
+  await held.until(() => held.live.size === 1, 'a freed slot must admit another wrong attempt immediately')
+  held.flush()
+  assert.equal((await next).status, 401)
+  assert.equal(f.claim.claimPenalties.size, 0); assert.equal(held.live.size, 0)
+  const aborted = new AbortController(); aborted.abort()
+  const before = held.total()
+  await assert.rejects(f.claim.action('claim/options', { code: 'wrong' }, undefined, undefined, aborted.signal), { status: 401 })
+  assert.equal(held.total(), before, 'an already-disconnected request must allocate no timer')
 })
