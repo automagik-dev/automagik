@@ -1,6 +1,7 @@
 import http from 'node:http'
+import { randomUUID } from 'node:crypto'
 import { Transform } from 'node:stream'
-import { cookieSecret, LOCAL_TRUST_NOTICE, sessionCookie } from './gate-store.mjs'
+import { COOKIE, cookieSecret, LOCAL_TRUST_NOTICE, sessionCookie } from './gate-store.mjs'
 import { DSH_HOST, responseHeaders, upstreamHeaders } from './gate-upstream.mjs'
 
 export function pinOrigin(value) {
@@ -10,12 +11,41 @@ export function pinOrigin(value) {
   }
   return url
 }
-function trustedRequest(req, origin, upgrade) {
+function trustedRequest(req, origin, upgrade, allowNavigation = false) {
   if (req.headers.host !== origin.host) return false
   if (req.headers.origin !== undefined && req.headers.origin !== origin.origin) return false
-  if (req.headers['sec-fetch-site'] === 'cross-site') return false
+  if (req.headers['sec-fetch-site'] === 'cross-site' && !(allowNavigation && !upgrade && ['GET', 'HEAD'].includes(req.method) && req.headers['sec-fetch-mode'] === 'navigate')) return false
   return !(upgrade || !['GET', 'HEAD'].includes(req.method)) || req.headers.origin === origin.origin
 }
+// Gate management has one spelling. Do this before authentication so an alias cannot
+// become a second sign-in/management entry, or pass raw to a differently decoding upstream.
+function reservedPathAlias(rawUrl, origin) {
+  const raw = rawUrl.split('?', 1)[0]
+  const reserved = path => path === '/_gate' || path.startsWith('/_gate/')
+  const queue = [raw]
+  const seen = new Set(queue)
+  for (let i = 0; i < queue.length; i++) {
+    const candidate = queue[i]
+    if (reserved(candidate) && (candidate !== raw || !raw.startsWith('/_gate/'))) return true
+    let normalized
+    try { normalized = new URL(candidate, origin).pathname }
+    catch { return true }
+    const forms = [normalized, candidate.replace(/\\/g, '/').replace(/\/{2,}/g, '/')]
+    try { forms.push(decodeURIComponent(candidate)) }
+    catch { if (reserved(candidate)) return true }
+    // Explore compositions too: collapsing empty segments changes which '..' is resolved.
+    for (const form of forms) {
+      if (form !== raw && (reserved(raw) || reserved(form))) return true
+      if (!seen.has(form)) {
+        if (seen.size >= 64) return true
+        seen.add(form)
+        queue.push(form)
+      }
+    }
+  }
+  return false
+}
+
 function answer(res, status, value) {
   res.writeHead(status, { 'cache-control': 'no-store', 'content-type': 'application/json' })
   res.end(JSON.stringify(value))
@@ -30,16 +60,35 @@ function refuseSocket(socket, status = 401) {
   socket.end(`HTTP/1.1 ${status} Refused\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`, destroy)
 }
 
-export function createGate({ origin: value, sessions, credentials }) {
+export function createGate({ origin: value, sessions, credentials, access, auditAccess = record => process.stderr.write(`${JSON.stringify(record)}\n`) }) {
   const origin = pinOrigin(value)
   const sockets = new Map()
-  function authorize(req, upgrade = false) {
-    if (!trustedRequest(req, origin, upgrade)) return undefined
-    return sessions.authenticate(cookieSecret(req.headers.cookie), origin.origin)
+  async function authorize(req, upgrade = false) {
+    if (trustedRequest(req, origin, upgrade)) {
+      const family = sessions.authenticate(cookieSecret(req.headers.cookie), origin.origin)
+      if (family) return { family }
+    }
+    // Access exchanges happen only on HTTP; an upgrade must already hold a gate session.
+    if (!access || upgrade) return undefined
+    try {
+      if (!trustedRequest(req, origin, upgrade, true)) throw new Error('Refused')
+      // Invalid or replayed gate cookies never silently turn into a fresh Access session.
+      if (req.headers.cookie?.split(';').some(part => part.trim().startsWith(`${COOKIE}=`))) throw new Error('Refused')
+      if (!req.url.startsWith('/') || req.url.startsWith('//') || new URL(req.url, origin).searchParams.has('token')) throw new Error('Refused')
+      const principal = await access.signIn(req.headers['cf-access-jwt-assertion'])
+      const issued = sessions.issue(origin.origin, principal)
+      return { family: issued.family, cookie: sessionCookie(issued.secret) }
+    } catch {
+      auditAccess({ status: 401, request_id: randomUUID() })
+      return undefined
+    }
   }
   const server = http.createServer(async (req, res) => {
-    const family = authorize(req)
+    if (reservedPathAlias(req.url, origin)) { answer(res, 400, { error: 'Non-canonical gate path' }); return }
+    const authorization = await authorize(req)
+    const family = authorization?.family
     if (!family) { answer(res, 401, { error: 'Session required' }); return }
+    if (authorization.cookie) res.setHeader('set-cookie', authorization.cookie)
     try {
       // No absolute-form URLs, launch-token exchanges or token-bearing browser URLs.
       if (!req.url.startsWith('/') || req.url.startsWith('//')) { answer(res, 400, { error: 'Invalid path' }); return }
@@ -76,10 +125,12 @@ export function createGate({ origin: value, sessions, credentials }) {
       req.pipe(proxy)
     } catch { if (!res.headersSent) answer(res, 502, { error: 'DSH unavailable' }); else res.destroy() }
   })
-  server.on('connect', (req, socket) => refuseSocket(socket))
+  server.on('connect', (req, socket) => refuseSocket(socket, reservedPathAlias(req.url, origin) ? 400 : 401))
   server.on('upgrade', async (req, socket, head) => {
     socket.on('error', () => {})
-    const family = authorize(req, true)
+    if (reservedPathAlias(req.url, origin)) { refuseSocket(socket, 400); return }
+    const authorization = await authorize(req, true)
+    const family = authorization?.family
     if (!family) { refuseSocket(socket); return }
     try {
       if (!req.url.startsWith('/') || req.url.startsWith('//') || new URL(req.url, origin).searchParams.has('token') || req.headers.upgrade?.toLowerCase() !== 'websocket') { refuseSocket(socket); return }
