@@ -21036,6 +21036,13 @@ function pluginRows({ app, Row: Row3 }) {
   }
   return rows2;
 }
+var PLUGINS_COMING = /* @__PURE__ */ new Set(["ready", "downloading"]);
+function opensIntoPlugins(bridge, state) {
+  if (!bridge || typeof bridge.check === "function") return false;
+  if (state == null) return true;
+  if (!splitsPlugins(state) || state.plugins.auto === false) return false;
+  return PLUGINS_COMING.has(state.plugins.phase) || state.kind === "plugins" && PLUGINS_COMING.has(state.phase);
+}
 var linkProps = (href) => ({ className: "bt-soft bt-soft-sm bt-about-link", href, target: "_blank", rel: "noopener noreferrer" });
 function AboutPage({ useUpdate, actions, run: run2, Section: Section2, Row: Row3 }) {
   const update = useUpdate((value) => value) ?? {};
@@ -21078,14 +21085,16 @@ function AboutPage({ useUpdate, actions, run: run2, Section: Section2, Row: Row3
   const appPill = updatePill(appState(app.state));
   const appBusy = ["checking", "downloading", "installing"].includes(appState(app.state)?.phase);
   const ours = inApp(update, app);
+  const held = opensIntoPlugins(app.bridge, app.state);
   const appCheck = () => {
+    if (held) return;
     void (typeof app.bridge.check === "function" ? app.bridge.check() : app.bridge.open()).catch(() => {
     });
   };
   const botControl = ours ? app.bridge && !updatesOff(versions) ? appPill?.primary ? (0, import_react60.createElement)("button", { type: "button", className: "bt-fb-primary", disabled: appBusy, onClick: () => {
     void app.bridge.open().catch(() => {
     });
-  } }, appPill.label) : (0, import_react60.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", disabled: appBusy, onClick: appCheck }, appBusy ? t("Checking…") : t("Check for updates")) : null : phase === "installed" || phase === "updated" ? null : update.available || phase === "installing" ? (0, import_react60.createElement)(
+  } }, appPill.label) : (0, import_react60.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", disabled: appBusy || held, onClick: appCheck }, appBusy ? t("Checking…") : t("Check for updates")) : null : phase === "installed" || phase === "updated" ? null : update.available || phase === "installing" ? (0, import_react60.createElement)(
     "button",
     { type: "button", className: "bt-fb-primary", disabled: phase === "installing", onClick: () => run2(actions.installUpdate()) },
     phase === "installing" ? t("Updating…") : phase === "failed" ? t("Try again") : t("Update")
