@@ -3,9 +3,9 @@
 // remains the vendor's protocol. No process exit authorizes an auth change without job proof.
 import { execFile, spawn as spawnProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, win32 } from 'node:path'
+import { basename, join, win32 } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { batchSafe } from './batch-spawn.js'
 
@@ -38,7 +38,8 @@ export function launchWindowsLogin(file, args, options = {}, {
   const nonce = randomUUID()
   const env = options.env ?? process.env
   const request = { ...windowsLoginCommand(file, args, env), cwd: options.cwd,
-    stop: stopFile, done: doneFile, nonce }
+    stop: stopFile, done: doneFile, nonce, parent: process.pid,
+    challenge: join(directory, 'challenge'), acknowledge: join(directory, 'acknowledge') }
   const system = read(env, 'SystemRoot') ?? 'C:\\Windows'
   const powershell = win32.join(system, 'System32', 'WindowsPowerShell', 'v1.0',
     'powershell.exe')
@@ -57,7 +58,20 @@ export function launchWindowsLogin(file, args, options = {}, {
   let closed = false
   let spawnFailed = false
   let stopping
+  // A handle opened from a PID could otherwise belong to a process that reused it during
+  // PowerShell startup. Only this live app knows to answer its fresh private challenge.
+  const parentWatch = setInterval(() => {
+    try {
+      if (readFileSync(request.challenge, 'utf8') !== nonce) return
+      const staged = `${request.acknowledge}.tmp`
+      writeFileSync(staged, nonce, { mode: 0o600 })
+      renameSync(staged, request.acknowledge)
+      clearInterval(parentWatch)
+    } catch {}
+  }, 20)
+  parentWatch.unref?.()
   const dispose = () => {
+    clearInterval(parentWatch)
     if (verified) try { rmSync(directory, { recursive: true, force: true }) } catch {}
   }
   const done = new Promise((resolve, reject) => {
@@ -72,11 +86,11 @@ export function launchWindowsLogin(file, args, options = {}, {
       reject(failed())
     })
     child.once('close', () => {
+      clearInterval(parentWatch)
       closed = true
       if (spawnFailed) return
       try { verified = readFileSync(doneFile, 'utf8') === nonce } catch {}
       if (!verified) { reject(failed()); return }
-      dispose()
       resolve()
     })
   })
@@ -108,5 +122,7 @@ export function launchWindowsLogin(file, args, options = {}, {
     })().finally(() => { stopping = undefined })
     return stopping
   }
-  return { child, done, stop, dispose }
+  return { child, done, stop, dispose,
+    identity: { kind: 'windows', supervisor: child.pid,
+      directory: basename(directory), nonce } }
 }

@@ -4,6 +4,9 @@ import {
   existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync,
 } from 'node:fs'
 import { join, resolve } from 'node:path'
+import {
+  LOGIN_OWNER_ENV, LOGIN_RECORD_VERSION, unverifiedLogin, verifyLoginRecords,
+} from './login-ownership.js'
 
 export const HOME_ENV = 'AUTOMAGIK_BOT_CLI_HOME'
 const VERSION_ENV = 'AUTOMAGIK_BOT_CLI_VERSION'
@@ -40,13 +43,14 @@ export class CliHomes {
     // Register before checking the mutation lock: either a concurrent changer sees us and
     // refuses, or we see its lock and refuse. Other app processes can never change live auth.
     if (!this.registered.has(vendor)) {
-      writeFileSync(join(instances, this.instance), '', { mode: 0o600 })
+      writeFileSync(join(instances, this.instance), LOGIN_RECORD_VERSION, { mode: 0o600 })
       if (existsSync(join(home, 'changing'))) {
         rmSync(join(instances, this.instance), { force: true })
         throw failure('The Bot account is changing. Try again when it finishes.')
       }
       this.registered.add(vendor)
     }
+    verifyLoginRecords(home, this.instance)
     const env = Object.fromEntries(Object.keys(source).map(key => [
       key, inherited.test(key) ? source[key] : undefined,
     ]))
@@ -70,6 +74,7 @@ export class CliHomes {
       CLAUDE_SECURESTORAGE_CONFIG_DIR: join(home, '.claude'),
       CODEX_HOME: join(home, '.codex'),
       [HOME_ENV]: home,
+      [LOGIN_OWNER_ENV]: this.instance,
       [VERSION_ENV]: existsSync(join(home, 'version'))
         ? readFileSync(join(home, 'version'), 'utf8') : '',
     }
@@ -81,15 +86,41 @@ export class CliHomes {
 
   // Deliberately fail closed after a crashed account operation: the app must not resume on
   // credentials whose logout could not be confirmed. A new attempt can explicitly recover
-  // the lock only when its owning process is gone.
+  // the lock only when its owning process AND every persisted login tree are gone.
   begin(vendor) {
     const home = this.home(vendor)
     mkdirSync(home, { recursive: true, mode: 0o700 })
+    verifyLoginRecords(home, this.instance)
     const lock = join(home, 'changing')
     if (existsSync(lock)) {
       let pid
       try { pid = Number(readFileSync(join(lock, 'pid'), 'utf8')) } catch {}
-      if (!alive(pid)) rmSync(lock, { recursive: true, force: true })
+      if (!alive(pid)) {
+        // Pre-ownership versions cannot prove whether they left a detached login behind.
+        let owner
+        try { owner = readFileSync(join(lock, 'owner'), 'utf8') } catch {}
+        if (!owner || !/^\d+-[a-f0-9-]+$/.test(owner)) throw unverifiedLogin()
+        // Serialize stale-lock recovery. Re-read under the claim: another recovery may
+        // already have replaced the dead lock since we read its PID. Never remove that lock.
+        const claim = join(lock, 'recovering')
+        try {
+          writeFileSync(claim, this.instance, { mode: 0o600, flag: 'wx' })
+        } catch { throw unverifiedLogin() }
+        try {
+          const current = Number(readFileSync(join(lock, 'pid'), 'utf8'))
+          if (current !== pid || alive(current)
+            || readFileSync(join(lock, 'owner'), 'utf8') !== owner) {
+            throw unverifiedLogin()
+          }
+          verifyLoginRecords(home, this.instance)
+          rmSync(lock, { recursive: true, force: true })
+        } catch (error) {
+          if (existsSync(claim) && readFileSync(claim, 'utf8') === this.instance) {
+            rmSync(claim, { force: true })
+          }
+          throw error
+        }
+      }
     }
     this.environment(vendor)
     try { mkdirSync(lock, { mode: 0o700 }) } catch {
@@ -98,11 +129,15 @@ export class CliHomes {
     this.changes.add(vendor)
     try {
       writeFileSync(join(lock, 'pid'), String(process.pid), { mode: 0o600 })
+      writeFileSync(join(lock, 'owner'), this.instance, { mode: 0o600 })
       const instances = join(home, 'instances')
       for (const name of readdirSync(instances)) {
         if (name === this.instance) continue
         if (alive(Number(name.split('-')[0]))) {
           throw failure('Close other Automagik sessions before changing the Bot account.')
+        }
+        if (readFileSync(join(instances, name), 'utf8') !== LOGIN_RECORD_VERSION) {
+          throw unverifiedLogin()
         }
         rmSync(join(instances, name), { force: true })
       }

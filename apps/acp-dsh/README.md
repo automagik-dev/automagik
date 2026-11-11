@@ -286,6 +286,10 @@ Generation checks prevent work delayed across a switch from starting on the next
 the old drawing request. A missing/reloading ACP service never authorizes legacy image billing.
 A failed logout stays paused until the owner retries. Authentication changes hold an installation
 lock; close other app instances registered on that vendor home before changing accounts.
+After an app crash, recovery also requires proof that its recorded login group or Windows Job
+has ended. Windows stops that Job when the owning app exits. While an old Unix login is still
+running, close it and retry. Missing or damaged exit evidence keeps account changes and new
+vendor work blocked with a support action; a dead app PID alone never clears the ownership.
 Account details stay on owner-only routes, never in state, transcripts, model calls or logs.
 
 **Credential-store assumptions and missing live checks.** Claude's documented macOS Keychain

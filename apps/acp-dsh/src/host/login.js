@@ -21,6 +21,7 @@
 import { spawn as spawnProcess } from 'node:child_process'
 import { createHmac, randomBytes, randomUUID } from 'node:crypto'
 import { LoginProcess } from './login-process.js'
+import { recordLogin } from './login-ownership.js'
 import { launchWindowsLogin } from './windows-login.js'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -359,18 +360,29 @@ export class CliLogins {
       stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
       detached: process.platform !== 'win32',
     }
-    const owned = process.platform === 'win32' && this.spawn === spawnProcess
-      ? launchWindowsLogin(selected.cli, args, options)
-      : new LoginProcess(this.spawn(...batchSafe(selected.cli, args, options)), {
-        grouped: process.platform !== 'win32' && this.spawn === spawnProcess,
-        timers: this.timers,
-      })
+    // Write the pending record before spawning: a crash before PID persistence cannot let
+    // recovery assume that no vendor started. Only verified full-tree exit clears it.
+    const ownership = this.spawn === spawnProcess ? recordLogin(env) : undefined
+    let owned
+    try {
+      owned = process.platform === 'win32' && this.spawn === spawnProcess
+        ? launchWindowsLogin(selected.cli, args, options)
+        : new LoginProcess(this.spawn(...batchSafe(selected.cli, args, options)), {
+          grouped: process.platform !== 'win32' && this.spawn === spawnProcess,
+          timers: this.timers,
+        })
+    } catch (error) {
+      ownership?.clear() // synchronous spawn failure: no child exists
+      throw error
+    }
+    owned.done.then(() => { ownership?.clear(); owned.dispose?.() }).catch(() => {})
     flow.process = owned
     flow.child = owned.child
     this.children ??= new Map()
     if (!this.children.has(flow.id)) this.children.set(flow.id, new Set())
     this.children.get(flow.id).add(owned)
     owned.done.then(() => this.children.get(flow.id)?.delete(owned)).catch(() => {})
+    ownership?.update(owned.identity ?? { kind: 'unix', group: owned.child.pid })
     // First of its `close` listeners, so the failure it may end with knows how the CLI ended.
     flow.child.once('close', (code, signal) => { flow.exit = { code, signal } })
     flow.child.stdin.on('error', () => this.finish(flow, 'failed', failedMessage))

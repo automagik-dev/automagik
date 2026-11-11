@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { spawn, spawnSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { AgentRun } from '../src/host/acp.js'
 import { AGENTS, launchOf } from '../src/host/agents.js'
 import { CliHomes, HOME_ENV, stopRuns, trackRun } from '../src/host/cli-homes.js'
+import { recordLogin } from '../src/host/login-ownership.js'
 
 function place(t) {
   const root = mkdtempSync(join(tmpdir(), 'bot-cli-homes-'))
@@ -68,6 +69,47 @@ test('account mutation excludes other app instances, blocks new work and survive
   homes.resume('codex')
   homes.end('codex')
   assert.equal(homes.paused('codex'), false)
+})
+
+test('an interrupted launch with no persisted tree identity keeps recovery blocked', t => {
+  const { homes } = place(t)
+  const first = new CliHomes(homes.root)
+  const env = first.environment('claude')
+  const ownership = recordLogin(env)
+  first.dispose()
+  assert.throws(() => homes.begin('claude'), /previous Bot sign-in stopped/)
+  ownership.clear()
+  homes.begin('claude')
+  homes.end('claude')
+})
+
+test('a damaged login record cannot be ignored during account recovery', t => {
+  const { homes } = place(t)
+  const env = homes.environment('codex')
+  const directory = join(env.HOME, 'login-trees')
+  mkdirSync(directory)
+  writeFileSync(join(directory, 'interrupted'), '{')
+  assert.throws(() => homes.begin('codex'), /previous Bot sign-in stopped/)
+  assert.equal(existsSync(join(directory, 'interrupted')), true)
+})
+
+test('legacy dead sessions without login ownership evidence cannot be reclaimed', t => {
+  const { homes } = place(t)
+  const pid = Number(spawnSync(process.execPath, ['-p', 'process.pid'], {
+    encoding: 'utf8',
+  }).stdout.trim())
+  assert.ok(Number.isInteger(pid) && pid > 1)
+  const home = homes.environment('codex').HOME
+  const stale = join(home, 'instances', `${pid}-old-session`)
+  writeFileSync(stale, '')
+  assert.throws(() => homes.begin('codex'), /previous Bot sign-in stopped/)
+  assert.equal(existsSync(stale), true)
+  rmSync(stale)
+  const lock = join(home, 'changing')
+  mkdirSync(lock)
+  writeFileSync(join(lock, 'pid'), String(pid))
+  assert.throws(() => homes.begin('codex'), /previous Bot sign-in stopped/)
+  assert.equal(existsSync(lock), true)
 })
 
 test('a failed stop can be verified again after its process finally exits', async t => {
