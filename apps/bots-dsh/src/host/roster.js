@@ -8,7 +8,7 @@ import { currentColor, isColor, normalize, unquote } from './text.js'
 import { nameProblem } from '../shared/mentions.js'
 import { contextPatch } from '../shared/context-policy.js'
 import { crossesHarness } from '../shared/routes.js'
-import { cleanPetId } from './pets.js'
+import { cleanPetId, shippedPet } from './pets.js'
 import { cleanDenyTools } from './tool-deny.js'
 
 // A Bot's role: a few words of plain text on one line, shown beside the first Main Bot's
@@ -136,7 +136,7 @@ export function install(rt) {
     // A pet (pets.js) the team keeps or ships; a photo, set after it, wins.
     const pet = input.pet
     if (avatar.image === undefined && pet !== null && typeof pet === 'object' && ['builtin', 'team'].includes(pet.source) && cleanPetId(pet.id) && [1, 2].includes(pet.version)) {
-      avatar.pet = { source: pet.source, id: pet.id, version: pet.version, ...(pet.sleep === true ? { sleep: true } : {}) }
+      avatar.pet = shippedPet({ source: pet.source, id: pet.id, version: pet.version, ...(pet.sleep === true ? { sleep: true } : {}) })
     }
     return Object.keys(avatar).length > 0 ? avatar : undefined
   }

@@ -206,6 +206,7 @@ test('the Session hooks pass Omni\'s own requests through, and still act on a Se
   const handoff = [{ role: 'user', source: { kind: 'bot', handoff: true }, content: [{ type: 'text', text: 'Handoff note' }] }]
   const acknowledge = hook(/acknowledge/)
   assert.equal(acknowledge(own('b2', handoff), pass), passed)
+  assert.equal(acknowledge(round('b2', [...handoff, { role: 'user', source: { kind: 'retry', rpcId: 'retry-handoff-probe' }, content: [] }]), pass), passed, 'a retry is not swallowed by the bare-handoff acknowledgement')
   assert.ok((await drain(acknowledge(round('b2', handoff), pass))).some(chunk => chunk.type === 'text-delta'))
 
   const picture = [{ role: 'user', source: { kind: 'user' }, content: [{ type: 'image', attachment }] }]

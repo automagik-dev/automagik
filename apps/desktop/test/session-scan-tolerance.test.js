@@ -6,9 +6,9 @@
 //
 // These tests run against the real pinned package bytes, not stand-ins:
 // fixtures/session-scan-tolerance/persistence-jsonl.js is the unmodified lib/index.js of
-// @deepseek-ai/dsh-session-persistence-jsonl 0.2.2-rc.1 (the carried patch's target, pinned by
+// @deepseek-ai/dsh-session-persistence-jsonl 0.2.2-rc.2 (the carried patch's target, pinned by
 // sha256 in runtime/patches/patches.json), and workspace.js is the unmodified lib/index.js of
-// @deepseek-ai/dsh-workspace 0.2.2-rc.1 (MIT; LICENSE beside them). Each test applies the carried
+// @deepseek-ai/dsh-workspace 0.2.2-rc.2 (MIT; LICENSE beside them). Each test applies the carried
 // patch to the bytes npm installs, imports the patched listing, and runs it on a synthetic
 // sessions tree made in this file. The unpatched listing is the fail-before control and throws on
 // the same tree; the patched one skips and reports each bad folder, returns the valid snapshot,
@@ -39,8 +39,8 @@ const FIXTURE = join(HERE, 'fixtures', 'session-scan-tolerance')
 const PERSIST_FIXTURE = join(FIXTURE, 'persistence-jsonl.js')
 const WORKSPACE_FIXTURE = join(FIXTURE, 'workspace.js')
 const LICENSE = join(FIXTURE, 'LICENSE')
-const DSH = '0.2.2-rc.1'
-const VERSION = '0.2.2-rc.1'
+const DSH = '0.2.2-rc.2'
+const VERSION = '0.2.2-rc.2'
 const PATCH = 'session-scan-tolerance.patch'
 const PERSIST = '@deepseek-ai/dsh-session-persistence-jsonl'
 const WORKSPACE = '@deepseek-ai/dsh-workspace'
@@ -50,8 +50,8 @@ const SESSION = 'valid-one'
 const BACKUP = `${SESSION}.backup-20260101T000000`
 const STRAY = 'notes.jsonl'
 // The workspace module is unchanged glue, so it has no patches.json entry; this pins the copy
-// the activation test reads to the same published 0.2.2-rc.1 bytes.
-const WORKSPACE_SHA256 = '931ca0cb10c5102066c7723690a887f0e6e8e7ab0ffdee1a782686745b0b934f'
+// the activation test reads to the same published 0.2.2-rc.2 bytes.
+const WORKSPACE_SHA256 = '8964c54f3c3f2fd79ed92e5fb1413d84ba80272c4eb984677aaf70bf4d687848'
 // The cordis stand-in registers Service.init under this key; the registry fixture extends it.
 const SERVICE_INIT = Symbol.for('automagik.test.serviceInit')
 
@@ -344,7 +344,7 @@ function snapshotTree(root) {
   return files
 }
 
-test('patches.json pins the real 0.2.2-rc.1 listing to the desktop runtime', () => {
+test('patches.json pins the real 0.2.2-rc.2 listing to the desktop runtime', () => {
   const patch = entryOf(PATCH)
   assert.equal(patch.dsh, DSH)
   assert.equal(readJson(join(APP, 'runtime', 'package.json')).dependencies['@deepseek-ai/dsh'], DSH)
@@ -359,7 +359,7 @@ test('patches.json pins the real 0.2.2-rc.1 listing to the desktop runtime', () 
   assert.match(file.after, /^[0-9a-f]{64}$/)
   assert.notEqual(file.before, file.after)
   assert.equal(sha256(readFileSync(PERSIST_FIXTURE)), file.before, 'the persistence fixture must be the exact file the entry was made against')
-  assert.equal(sha256(readFileSync(WORKSPACE_FIXTURE)), WORKSPACE_SHA256, 'the workspace fixture must be the pinned 0.2.2-rc.1 bytes')
+  assert.equal(sha256(readFileSync(WORKSPACE_FIXTURE)), WORKSPACE_SHA256, 'the workspace fixture must be the pinned 0.2.2-rc.2 bytes')
   assert.match(readFileSync(LICENSE, 'utf8'), /^MIT License\n/)
   const text = readFileSync(join(PATCHES, PATCH), 'utf8')
   assert.ok(text.startsWith(`--- a/${PERSIST}/${FILE}\n+++ b/${PERSIST}/${FILE}\n`), text.slice(0, 120))

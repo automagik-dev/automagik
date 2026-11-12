@@ -991,7 +991,7 @@ export function install(rt) {
       const exchangeId = message.source?.exchangeId
       if (exchangeId !== undefined && pending.some(queued => queued.source?.exchangeId === exchangeId)) continue
       const copy = createUserMessage({ content: message.content, ...(message.source ? { source: message.source } : {}) })
-      if (kind === 'user' || kind === SOURCE_KIND || kind === REPLY_KIND) agent.followup(copy)
+      if (kind === 'user' || kind === 'retry' || kind === SOURCE_KIND || kind === REPLY_KIND) agent.followup(copy)
       else agent.inject(copy)
       pending.push(copy)
     }
@@ -1005,7 +1005,7 @@ export function install(rt) {
   const noteInfo = (template, ...args) => { try { ctx.logger.info(template, ...args) } catch {} }
 
   // A message's inbox boundary, the same one forward() delivers it to.
-  const inboxTargetOf = message => (message.source?.kind === 'user' || message.source?.kind === SOURCE_KIND || message.source?.kind === REPLY_KIND ? 'next-turn' : 'next-step')
+  const inboxTargetOf = message => (message.source?.kind === 'user' || message.source?.kind === 'retry' || message.source?.kind === SOURCE_KIND || message.source?.kind === REPLY_KIND ? 'next-turn' : 'next-step')
 
   // Input a switch could not hand on goes back into the part's own durable inbox, in
   // order: input followup would deliver waits for the next turn, the rest waits for
@@ -1284,7 +1284,7 @@ export function install(rt) {
     const fresh = await rt.resolveAgent(freshId).catch(() => undefined)
     if (fresh === undefined) return
     const own = message => message.source?.handoff !== true && message.source?.kind !== 'working-directory'
-    const said = message => message.role === 'user' && (message.source?.kind === 'user' || message.source?.kind === SOURCE_KIND || message.source?.kind === REPLY_KIND) && own(message)
+    const said = message => message.role === 'user' && (message.source?.kind === 'user' || message.source?.kind === 'retry' || message.source?.kind === SOURCE_KIND || message.source?.kind === REPLY_KIND) && own(message)
     let recorded = []
     try { recorded = fresh.session.deriveMessages().filter(said) } catch {}
     const queued = [...fresh.inbox.nextStep, ...fresh.inbox.nextTurn].filter(own)
@@ -1747,7 +1747,7 @@ export function install(rt) {
     if (options.sessionId === undefined || options.purpose !== undefined || rt.ownRequest(options)) return next()
     const messages = options.messages ?? []
     const since = messages.findLastIndex(message => message.role === 'assistant' || message.role === 'tool') + 1
-    const opened = messages.slice(since).filter(message => message.role === 'user' && (message.source?.kind === 'user' || message.source?.kind === SOURCE_KIND))
+    const opened = messages.slice(since).filter(message => message.role === 'user' && (message.source?.kind === 'user' || message.source?.kind === 'retry' || message.source?.kind === SOURCE_KIND))
     const bare = opened.length > 0 && opened.every(message => message.source.kind === SOURCE_KIND && message.source.handoff === true && message.source.resume !== true)
     if (!bare) return next()
     if (awaiting.has(options.sessionId)) acked.add(options.sessionId)

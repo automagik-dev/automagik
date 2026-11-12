@@ -1,8 +1,8 @@
 // The v4 loader's recovery contract for a bridged tool call (issue #842), tested against the
 // real pinned package bytes rather than stand-ins: fixtures/acp-bridge-tool-lifecycle/
 // format-v3-to-v4.js is the unmodified lib/index.js of @deepseek-ai/dsh-session-format-v3-to-v4
-// 0.2.2-rc.1, and worker.cjs is the unmodified lib/worker.cjs of
-// @deepseek-ai/dsh-session-persistence-jsonl 0.2.2-rc.1 (MIT; LICENSE beside them). Their
+// 0.2.2-rc.2, and worker.cjs is the unmodified lib/worker.cjs of
+// @deepseek-ai/dsh-session-persistence-jsonl 0.2.2-rc.2 (MIT; LICENSE beside them). Their
 // sha256 must be the `before` hashes in runtime/patches/patches.json, so these tests apply the
 // carried patch to the bytes npm actually installs, import the patched loader, and run the
 // patched migration verifier on a synthetic session log. The broken shape is the one a bridge
@@ -40,8 +40,8 @@ const FIXTURE = join(HERE, 'fixtures', 'acp-bridge-tool-lifecycle')
 const FORMAT_FIXTURE = join(FIXTURE, 'format-v3-to-v4.js')
 const WORKER_FIXTURE = join(FIXTURE, 'worker.cjs')
 const LICENSE = join(FIXTURE, 'LICENSE')
-const DSH = '0.2.2-rc.1'
-const VERSION = '0.2.2-rc.1'
+const DSH = '0.2.2-rc.2'
+const VERSION = '0.2.2-rc.2'
 const PATCH = 'acp-bridge-tool-lifecycle.patch'
 const FORMAT = '@deepseek-ai/dsh-session-format-v3-to-v4'
 const PERSIST = '@deepseek-ai/dsh-session-persistence-jsonl'
@@ -214,7 +214,7 @@ function verifyWithWorker(workerPath, logPath, eventCount = EVENTS.length) {
   })
 }
 
-test('patches.json pins the real 0.2.2-rc.1 loader and verifier to the desktop runtime', () => {
+test('patches.json pins the real 0.2.2-rc.2 loader and verifier to the desktop runtime', () => {
   const patch = entryOf(PATCH)
   assert.equal(patch.dsh, DSH)
   assert.equal(readJson(join(APP, 'runtime', 'package.json')).dependencies['@deepseek-ai/dsh'], DSH)

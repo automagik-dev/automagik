@@ -93,7 +93,7 @@ async function nativeTransition(t) {
   const resolve = rt.resolveAgent
   rt.resolveAgent = async id => id === 'picked' ? target : resolve(id)
   // dsh 0.2.2 reads the turn boundary and the preset through their owning services.
-  bench.ctx.agents = { turnBoundaryOf: session => session.id === 'picked' ? target.boundary : undefined, isOwnedBy: () => false }
+  bench.ctx.agents = { turnBoundaryOf: session => session.id === 'picked' ? target.boundary : undefined }
   const selected = []
   const presets = {
     list: async () => [{ id: 'cordis' }],
@@ -168,6 +168,11 @@ for (const invalid of ['nonblank', 'subagent', 'depth', 'task', 'other-owner', '
     if (invalid === 'nonblank') target.boundary.lastTurn = 1
     if (invalid === 'subagent') target.session.header.origin = 'subagent'
     if (invalid === 'depth') target.session.header.delegationDepth = 1
+    if (invalid === 'subagent' || invalid === 'depth') {
+      target.session.header.parentSession = 'loaded-parent'
+      bench.ctx.agents.get = id => id === 'loaded-parent' ? { id } : undefined
+      assert.equal(bench.ctx.agents.isOwnedBy, undefined, 'rc.2 has no isOwnedBy export')
+    }
     if (invalid === 'task') rt.state.tasks = { ...rt.state.tasks, picked: { from: botId } }
     if (invalid === 'other-owner') rt.state.bots.other = { id: 'other', sessionId: 'picked', name: 'Other' }
     if (invalid === 'group') rt.state.rooms.room = { id: 'room', members: [botId], sessions: { [botId]: 'picked' } }

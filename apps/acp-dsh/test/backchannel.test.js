@@ -323,6 +323,15 @@ test('the bridge lists the preset\'s tools, never the mirror, and hides file wri
   }
 })
 
+test('read-only ACP hides Office outputs and user-terminal observations', () => {
+  const names = ['office_convert', 'office_recalculate', 'office_render', 'user_terminal_list', 'user_terminal_read']
+  const definitions = names.map(name => ({ name, description: name, parameters: { type: 'object' } }))
+  const readonly = host({ sandbox: 'read-only', definitions })
+  assert.deepEqual(offeredTools(readonly.ctx, readonly.agent).map(tool => tool.name), [])
+  const writable = host({ sandbox: 'workspace-write', definitions })
+  assert.deepEqual(offeredTools(writable.ctx, writable.agent).map(tool => tool.name), names)
+})
+
 test('a DSH tool call asks DSH before it runs, then writes the call and its result rows', async () => {
   const h = await serve()
   try {

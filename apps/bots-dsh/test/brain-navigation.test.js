@@ -47,7 +47,10 @@ runInNewContext(readFileSync(join(harness, 'node_modules/@deepseek-ai/dsh-client
   window: { __ModuleLoader__: { load: record => { nativeConversation = record.factory(name => name === '@deepseek-ai/cordis' ? { ...nativeRequire(name), Service: class { constructor(ctx, name) { this.ctx = ctx; ctx[name] = this } } } : nativeRequire(name)) } } },
   AbortController, AbortSignal, console, setTimeout, clearTimeout,
 })
-runInNewContext(readFileSync(join(harness, 'node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/client.js'), 'utf8').replace('return module.exports;', 'exports.NavigationForTest = UiWorkspaceService; return module.exports;'), {
+const workspaceBundle = readFileSync(join(harness, 'node_modules/@deepseek-ai/dsh-client-ui-workspace/lib/client.js'), 'utf8')
+const workspaceTail = /return module\.exports;?(?=\s*\}\s*\}\);)/
+assert.match(workspaceBundle, workspaceTail, 'the published workspace bundle must expose its factory return')
+runInNewContext(workspaceBundle.replace(workspaceTail, 'exports.NavigationForTest = UiWorkspaceService; return module.exports;'), {
   window: { __ModuleLoader__: { load: record => { nativeWorkspace = record.factory(nativeRequire).NavigationForTest } } },
   AbortController, AbortSignal, console, setTimeout, clearTimeout,
 })

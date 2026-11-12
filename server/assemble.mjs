@@ -133,7 +133,7 @@ export function applyRuntimePatches(runtimeDir, patchesDir = PATCHES_SOURCE) {
   return results
 }
 
-export async function assemble({ out, version = '3.90.1', dsh = '0.2.2-rc.1', revision = 'unknown', repository = 'https://github.com/automagik-dev/automagik' }) {
+export async function assemble({ out, version = '3.90.1', dsh = '0.2.2-rc.2', revision = 'unknown', repository = 'https://github.com/automagik-dev/automagik' }) {
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error(`not a release version: ${version}`)
   const runtimeDir = join(out, 'runtime')
   const dshHome = join(out, 'dsh-home')
@@ -188,15 +188,13 @@ export async function assemble({ out, version = '3.90.1', dsh = '0.2.2-rc.1', re
   // extras and the other platforms' native prebuilds. npm installs dsh's whole dependency
   // list; the automagik-web tree names none of these entries.
   const PRUNE = [
-    // office-to-pdf is a composed entry (libreoffice-kit-wasm included), so its stack stays
+    // office-kit is a composed entry (libreoffice-kit-wasm included), so its stack stays
     '@deepseek-ai/dsh-experimental-inspector', '@deepseek-ai/dsh-experimental-inspector-profile',
     '@deepseek-ai/dsh-experimental-session-inspector',
     '@deepseek-ai/dsh-experimental-client-ui-forge', '@deepseek-ai/dsh-experimental-forge',
     '@deepseek-ai/dsh-experimental-forge-bundle', '@deepseek-ai/dsh-experimental-forge-github',
     '@deepseek-ai/dsh-experimental-forge-session',
     '@deepseek-ai/dsh-experimental-liveshare', '@deepseek-ai/dsh-experimental-liveshare-protocol',
-    '@deepseek-ai/dsh-experimental-agent-team', '@deepseek-ai/dsh-experimental-agent-team-profile',
-    '@deepseek-ai/dsh-experimental-client-ui-agent-team', '@deepseek-ai/dsh-experimental-tool-agent-team',
     '@deepseek-ai/dsh-experimental-auto-review', '@deepseek-ai/dsh-experimental-badge-skill-bundle',
     '@deepseek-ai/dsh-experimental-cot-translation-bundle', '@deepseek-ai/dsh-experimental-client-ui-cot-translation',
     '@deepseek-ai/dsh-experimental-translator',
@@ -254,7 +252,7 @@ export async function assemble({ out, version = '3.90.1', dsh = '0.2.2-rc.1', re
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const args = argsOf(process.argv.slice(2))
-    if (!args.out) throw new Error('usage: node assemble.mjs --out <dir> [--version 3.90.1] [--dsh 0.2.2-rc.1] [--repository <url>]')
+    if (!args.out) throw new Error('usage: node assemble.mjs --out <dir> [--version 3.90.1] [--dsh 0.2.2-rc.2] [--repository <url>]')
     const result = await assemble({ out: resolve(args.out), version: args.version, dsh: args.dsh, revision: args.revision, repository: args.repository })
     console.log(`[assemble] ready: dsh ${result.dsh}, automagik ${result.version}`)
   } catch (error) {

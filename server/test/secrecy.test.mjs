@@ -57,7 +57,7 @@ test('a clean rootfs: the profile code and the empty /data tree pass', () => {
   cpSync(join(HERE, '..', 'lib.mjs'), join(dir, 'opt/automagik/lib.mjs'))
   cpSync(join(HERE, '..', 'entrypoint.mjs'), join(dir, 'opt/automagik/entrypoint.mjs'))
   cpSync(join(HERE, '..', 'healthcheck.mjs'), join(dir, 'opt/automagik/healthcheck.mjs'))
-  write(dir, 'opt/automagik/versions.json', '{"automagik":"3.93.0","dsh":"0.2.2-rc.1"}\n')
+  write(dir, 'opt/automagik/versions.json', '{"automagik":"3.93.0","dsh":"0.2.2-rc.2"}\n')
   write(dir, 'etc/passwd', 'root:x:0:0:root:/root:/sbin/nologin\nautomagik:x:1000:1000::/data:/sbin/nologin\n')
   const { hits: findings } = scanTree(dir, undefined, [])
   assert.deepEqual(findings, [])

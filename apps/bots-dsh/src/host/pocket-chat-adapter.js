@@ -1,5 +1,5 @@
 // The Session Controller adapter for Pocket chat (#517), imported only when the runtime has the
-// methods (pocket-chat.js hasSessionApi). It speaks DSH 0.2.2-rc.1's Host Remote shapes
+// methods (pocket-chat.js hasSessionApi). It speaks DSH 0.2.2-rc.2's Host Remote shapes
 // (@deepseek-ai/dsh-api-session-controller lib/types/index.d.ts:166-215, types.d.ts:332-372, 386-473
 // and 578-592) and imports no DSH package: the controller is the plugin's injected service.
 //

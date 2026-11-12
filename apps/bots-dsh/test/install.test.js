@@ -192,6 +192,8 @@ test('apply registers listeners, tools, and effects in a fixed order', (t) => {
     'effect ds-bot: api route',
     'route POST /api/omni-ui',
     'effect ds-bot: load state',
+    'on agent/created',
+    'effect ds-bot: remote Hermes',
     // Auto's judge, after every module, so it runs first (auto-judge.js installAhead).
     'on approval/request (prepend)',
     'provide omniTeam',

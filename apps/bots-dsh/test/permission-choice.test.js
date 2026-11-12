@@ -33,6 +33,7 @@ const { outputFiles } = await build({
   stdin: { contents: [
     "export { PermissionPicker, PermissionList, PermissionExplanations, presetText, autoQuestion } from './src/client/permission-picker.js'",
     "export { PermissionChoiceDock, reopenPermissionChoice } from './src/client/permission-card.js'",
+    "export { ComposerPermission } from './src/client/composer.js'",
     "export { BotPanel } from './src/client/browser-pane.js'",
     "export { GroupSettingsForm } from './src/client/group-settings.js'",
     "export { indexRoster } from './src/client/sources.js'",
@@ -90,6 +91,7 @@ function recorder({ fail, hold } = {}) {
   // `hold` keeps each save open until the test settles it (`held`).
   const held = []
   const actions = new Proxy({
+    setBotAuto: (...args) => { other.push(['setBotAuto', args]); return Promise.resolve() },
     updateBot: (id, patch) => {
       saves.push(JSON.parse(JSON.stringify({ id, patch })))
       if (hold) return new Promise((resolve) => { held.push(resolve) })
@@ -103,6 +105,25 @@ const rowOf = (scope, value) => scope.querySelector(`.bt-q-opt[data-permission="
 const button = (scope, label) => [...scope.querySelectorAll('button')].find(node => node.textContent.trim() === label)
 const hook = value => select => select(value)
 const BOT = { id: 'omni', name: 'Omni', sessionId: 'omni', model: 'deepseek/v3' }
+const REMOTE_BOT = { ...BOT, model: 'hermes-remote/sample:model', appliedModel: 'hermes-remote/sample:model' }
+const ASK_REMOTE = 'Automagik asks you before answering each Hermes approval question.'
+const FULL_REMOTE = 'Automagik answers yes to each Hermes approval question once, without asking you.'
+const AUTO_REMOTE = `${ASK_REMOTE} Auto review does not review Hermes approval questions.`
+const remoteWords = scope => {
+  assert.match(scope.textContent, /Hermes.*approval question/)
+  assert.match(scope.textContent, /other computer/)
+  assert.doesNotMatch(scope.textContent, /DSH|A model reviews Hermes|model to review Hermes|Changes files inside its folder|It cannot change files unless|Runs commands and changes files anywhere/)
+}
+const remoteList = scope => {
+  remoteWords(scope)
+  assert.equal(scope.querySelectorAll('.bt-remote-permission-note').length, 1)
+  assert.equal(rowOf(scope, 'read-only').querySelector('.bt-q-desc').textContent, ASK_REMOTE)
+  assert.equal(rowOf(scope, 'workspace-write').querySelector('.bt-q-desc').textContent, ASK_REMOTE)
+  assert.equal(rowOf(scope, 'auto').querySelector('.bt-q-desc').textContent, AUTO_REMOTE)
+  assert.equal(rowOf(scope, 'danger-full-access').querySelector('.bt-q-desc').textContent, FULL_REMOTE)
+  for (const row of rows(scope)) assert.doesNotMatch(row.textContent, /own rules|sandbox|Remote chats do not use/)
+  assert.match(scope.querySelector('.bt-remote-permission-note').textContent, /differ only for files on this computer.*Remote chats do not use those files.*own rules.*sandbox/)
+}
 const teamOf = (indexRoster, { bot = BOT, catalog = THREE, readOnly, rooms = [] } = {}) => ({
   ...indexRoster({ bots: [bot], rooms }), permissions: catalog, models: [{ ref: 'deepseek/v3', id: 'v3' }], exchangeTurns: {}, questions: {}, sideChats: {}, memory: false, prefs: {},
   ...(readOnly ? { readOnly } : {}),
@@ -286,6 +307,7 @@ for (const [label, catalog] of [['three', THREE], ['four', FOUR]]) {
     const { document, render, section, trigger, open, saves } = details(t, { catalog })
     await act(render)
     assert.equal(section().querySelector('.bt-seg, .bt-q-opt'), null)
+    assert.equal(button(section(), 'Choose in the chat').style.textDecoration, '', 'native Details keeps its existing appearance')
     assert.equal(trigger().getAttribute('aria-haspopup'), 'dialog')
     assert.equal(trigger().getAttribute('aria-expanded'), 'false')
     const current = catalog.options.find(option => option.value === catalog.defaultPreset)
@@ -846,6 +868,144 @@ test('in the list, Full access confirmed while another save is open waits its tu
   assert.equal(rowOf(document, 'danger-full-access').getAttribute('aria-pressed'), 'true')
 })
 
+test('Remote Hermes chat levels and both confirmations describe remote approvals, preserving explicit saves', async t => {
+  const { document, render, click, saves } = dock(t, { bot: REMOTE_BOT, catalog: FOUR })
+  await act(render)
+  remoteList(card(document))
+  await click(rowOf(document, 'danger-full-access'))
+  await click(button(card(document), 'Save'))
+  remoteWords(card(document))
+  assert.match(card(document).textContent, /once, without asking you/)
+  assert.deepEqual(saves, [])
+  await click(button(card(document), 'Cancel'))
+  await click(rowOf(document, 'auto'))
+  await click(button(card(document), 'Save'))
+  remoteWords(card(document))
+  assert.match(card(document).textContent, /Auto review does not review Hermes approval questions/ )
+  assert.match(card(document).textContent, /asks you before answering each/ )
+  await click(button(card(document), 'Use Auto review'))
+  assert.deepEqual(saves, [{ id: BOT.id, patch: { permission: 'auto' } }])
+})
+
+test('Remote Hermes Details explains remote limits and its full-access confirmation without local file promises', async t => {
+  const { document, render, section, open, popup, click, saves } = details(t, { bot: { ...REMOTE_BOT, permission: 'workspace-write' }, catalog: FOUR })
+  await act(render)
+  remoteWords(section())
+  assert.equal(section().querySelector('.bt-note').textContent, ASK_REMOTE)
+  assert.equal(section().querySelectorAll('.bt-remote-permission-note').length, 1)
+  await open()
+  remoteList(popup())
+  assert.equal(section().querySelectorAll('.bt-remote-permission-note').length, 0, 'the open dropdown owns the shared warning')
+  assert.equal(document.querySelectorAll('.bt-remote-permission-note').length, 1)
+  await click(rowOf(popup(), 'danger-full-access'))
+  remoteWords(popup())
+  assert.match(popup().textContent, /once, without asking you/)
+  await click(button(popup(), 'Give full access'))
+  assert.deepEqual(saves, [{ id: BOT.id, patch: { permission: 'danger-full-access' } }])
+  assert.equal(document.querySelector('.bt-perm-confirm'), null)
+})
+
+test('Remote Hermes composer levels use the remote explanation for known and custom restrictive levels', async t => {
+  const { document, root, click, ComposerPermission, indexRoster } = mount(t)
+  const catalog = { ...FOUR, options: [...FOUR.options, { value: 'no-ask-custom', name: 'Careful', description: 'Changes files inside its folder.' }] }
+  const roster = teamOf(indexRoster, { bot: REMOTE_BOT, catalog })
+  const { actions, saves } = recorder()
+  await act(() => root.render(React.createElement(ComposerPermission, { sessionId: BOT.id, useRoster: hook(roster), actions })))
+  await click(document.querySelector('.bt-perm-chip'))
+  remoteWords(document.querySelector('.bt-permission-menu'))
+  remoteList(document.querySelector('.bt-permission-menu'))
+  assert.match(rowOf(document, 'no-ask-custom').textContent, /according to this level/)
+  assert.deepEqual(saves, [])
+})
+
+
+for (const [direction, bot] of [
+  ['away from Remote Hermes', { ...REMOTE_BOT, model: BOT.model }],
+  ['toward Remote Hermes', { ...REMOTE_BOT, appliedModel: BOT.model }],
+]) {
+  test(`permission card during a handoff ${direction} explains both routes before confirming Full access`, async t => {
+    const { document, render, click, saves } = dock(t, { bot, catalog: FOUR })
+    await act(render)
+    remoteWords(card(document))
+    assert.equal(card(document).querySelectorAll('.bt-remote-permission-note').length, 1)
+    assert.doesNotMatch(card(document).textContent, /Remote chats do not use those files/)
+    assert.match(card(document).textContent, /On a local route, this level’s file rules apply/)
+    assert.match(card(document).textContent, /changes routes|changing routes/)
+    await click(rowOf(document, 'danger-full-access'))
+    await click(button(card(document), 'Save'))
+    remoteWords(card(document))
+    assert.match(card(document).textContent, /local route run commands and change files/)
+    assert.match(card(document).textContent, /Hermes approval question once/)
+    await click(button(card(document), 'Cancel'))
+    await click(rowOf(document, 'auto'))
+    await click(button(card(document), 'Save'))
+    remoteWords(card(document))
+    assert.match(card(document).textContent, /On a local route, a model reviews each action first/)
+    assert.match(card(document).textContent, /Auto review does not review Hermes approval questions/)
+    assert.deepEqual(saves, [])
+  })
+
+  test(`Details during a handoff ${direction} retains the remote warning and conditional confirmation`, async t => {
+    const { render, section, open, popup, click, saves } = details(t, { bot: { ...bot, permission: 'workspace-write' }, catalog: FOUR })
+    await act(render)
+    remoteWords(section())
+    assert.equal(button(section(), 'Choose in the chat').style.textDecoration, 'underline', 'mixed routes retain the remote affordance')
+    await open()
+    remoteWords(popup())
+    await click(rowOf(popup(), 'danger-full-access'))
+    assert.match(popup().textContent, /local route run commands and change files/)
+    assert.match(popup().textContent, /Hermes approval question once/)
+    assert.deepEqual(saves, [])
+  })
+
+  test(`composer during a handoff ${direction} retains the remote warning`, async t => {
+    const { document, root, click, ComposerPermission, indexRoster } = mount(t)
+    const roster = teamOf(indexRoster, { bot, catalog: FOUR })
+    const { actions, saves } = recorder()
+    await act(() => root.render(React.createElement(ComposerPermission, { sessionId: BOT.id, useRoster: hook(roster), actions })))
+    await click(document.querySelector('.bt-perm-chip'))
+    remoteWords(document.querySelector('.bt-permission-menu'))
+    assert.match(document.querySelector('.bt-permission-menu').textContent, /changes routes|changing routes/)
+    assert.deepEqual(saves, [])
+  })
+}
+
+
+test('Choose in the chat is a visible link that reopens the real permission card from Details', async t => {
+  const page = mount(t)
+  const bot = { ...REMOTE_BOT, permission: 'workspace-write' }
+  const roster = teamOf(page.indexRoster, { bot, catalog: FOUR })
+  const { actions, saves } = recorder()
+  await act(() => page.root.render(React.createElement(React.Fragment, null,
+    React.createElement(page.BotPanel, { pane: { id: bot.id, view: 'details' }, leaving: false, roster, actions, ...panelProps }),
+    React.createElement(page.PermissionChoiceDock, { sessionId: bot.id, useRoster: hook(roster), actions }))))
+  assert.equal(card(page.document), null, 'a saved level has no card until requested')
+  const choose = button(page.document.querySelector('.bt-drawer-permission'), 'Choose in the chat')
+  assert.equal(choose.style.textDecoration, 'underline')
+  await page.click(choose)
+  remoteList(card(page.document))
+  await page.click(button(card(page.document), 'Not now'))
+  assert.equal(card(page.document), null)
+  await page.click(choose)
+  assert.ok(card(page.document), 'the Details control also reopens a dismissed card')
+  assert.deepEqual(saves, [], 'reopening never changes the saved level')
+})
+
+test('Remote Hermes Details Auto review note matches its row and asks for explicit confirmation', async t => {
+  const { document, render, section, open, popup, click, saves } = details(t, { bot: { ...REMOTE_BOT, permission: 'auto' }, catalog: FOUR })
+  await act(render)
+  assert.equal(section().querySelector('.bt-note').textContent, AUTO_REMOTE)
+  await open()
+  assert.equal(rowOf(popup(), 'auto').querySelector('.bt-q-desc').textContent, AUTO_REMOTE)
+  await click(rowOf(popup(), 'workspace-write'))
+  await open()
+  await click(rowOf(popup(), 'auto'))
+  assert.match(document.querySelector('.bt-perm-confirm').textContent, /asks you before answering each Hermes approval question.*does not review Hermes/)
+  assert.deepEqual(saves, [{ id: BOT.id, patch: { permission: 'workspace-write' } }])
+  await click(button(popup(), 'Use Auto review'))
+  assert.deepEqual(saves, [{ id: BOT.id, patch: { permission: 'workspace-write' } }, { id: BOT.id, patch: { permission: 'auto' } }])
+})
+
 test('Auto question explains the reviewer and retains the revision at opening across renders', async t => {
   const { document, root, click, PermissionList } = mount(t)
   const catalog = { ...THREE, options: [READ, WORK, { value: 'workspace-write:auto', name: 'Auto' }, FULL] }
@@ -876,3 +1036,34 @@ test('Auto questions explain each route and preserve Codex wording', t => {
   assert.match(codex[2], /Codex 0.167.0/)
   assert.equal(w.autoQuestion('ada', 'Workspace', { by: 'codex', bridged: true, model: 'x' }).length, 5)
 })
+
+for (const surface of ['chat', 'Details', 'composer']) {
+  test(`${surface} keeps Auto separate from Auto review and sends the revision confirmed before a roster update`, async t => {
+    const page = mount(t)
+    const { document, root, click } = page
+    const { actions, saves, other } = recorder()
+    const bot = { ...BOT, permission: 'read-only', permissionRev: 3, autoOffered: true, autoJudge: { by: 'own', model: 'Test reviewer' } }
+    let roster = teamOf(page.indexRoster, { bot, catalog: FOUR })
+    const render = () => root.render(surface === 'Details'
+      ? React.createElement(page.BotPanel, { pane: { id: bot.id, view: 'details' }, leaving: false, roster, actions, ...panelProps })
+      : React.createElement(surface === 'chat' ? page.PermissionChoiceDock : page.ComposerPermission, { sessionId: bot.id, useRoster: select => select(roster), actions }))
+    if (surface === 'chat') page.reopenPermissionChoice(bot.id)
+    await act(render)
+    if (surface !== 'chat') await click(document.querySelector(surface === 'Details' ? '.bt-drawer-permission .bt-model-trigger' : '.bt-perm-chip'))
+    const auto = rowOf(document, 'workspace-write:auto')
+    assert.ok(auto)
+    assert.match(auto.querySelector('.bt-q-desc').textContent, /Test reviewer, this Bot's own model/)
+    assert.ok(rowOf(document, 'auto'), 'Auto review remains a separate offered level')
+    await click(auto)
+    if (surface === 'chat') await click(button(card(document), 'Save'))
+    assert.match(document.body.textContent, /Test reviewer.*separate request/)
+    assert.deepEqual(saves, [])
+    const autoCalls = () => other.filter(([name]) => name === 'setBotAuto')
+    assert.deepEqual(autoCalls(), [])
+    roster = teamOf(page.indexRoster, { bot: { ...bot, permissionRev: 9 }, catalog: FOUR })
+    await act(render)
+    await click(button(document, 'Use Auto'))
+    assert.deepEqual(saves, [], 'Auto is never persisted as an ordinary permission preset')
+    assert.deepEqual(autoCalls(), [['setBotAuto', [bot.id, 3]]], 'the host receives the original revision fence')
+  })
+}

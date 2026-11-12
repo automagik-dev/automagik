@@ -1,0 +1,32 @@
+{
+  "figure": "genie-approved-v5: the full-body Genie the owner approved on 2026-10-25",
+  "source": [
+    {
+      "path": "apps/bots-dsh/dev/art/genie-approved-v5/approved-genie.png",
+      "delivery": "approved-genie.png",
+      "sha256": "4d34a8d97aee68b04dc4b217f1a39176d205eddb8e0a9ba51c9906de73aa3674"
+    },
+    {
+      "path": "apps/bots-dsh/src/host/pets/genie-clay/spritesheet.webp",
+      "delivery": "dsh/spritesheet.webp",
+      "sha256": "a627262a7a96206edc30439349e92677e96406c733839c3baa99700ff6ac1a8d"
+    },
+    {
+      "path": "apps/bots-dsh/src/host/pets/genie-clay/sleep.webp",
+      "delivery": "dsh/sleep.webp",
+      "sha256": "edfe14233f33bd7c33ebdff53ed224883fea4a81ef89f4f8a908263df3ca3328"
+    }
+  ],
+  "reference": [
+    {
+      "path": "apps/bots-dsh/dev/art/genie-approved-v5/state-map.json",
+      "delivery": "dsh/pet.json",
+      "sha256": "f3cc909ea5e9ec93aeeacafade578618fd9a6062cee5c2182c1ddb4725df047b"
+    }
+  ],
+  "derived": {
+    "apps/bots-dsh/src/client/art/genie-expressions.webp": "9df7083cca4a14afc804875b87d9f9cdd18c032f725084f2424434e502bac926",
+    "apps/welcome-dsh/src/client/vendor/art/genie-expressions.webp": "9df7083cca4a14afc804875b87d9f9cdd18c032f725084f2424434e502bac926",
+    "apps/desktop/assets/dmg-source/genie.png": "b4f5a874c1373db0f1cfcb26e7ac3ceb2f2ae22f234324df6234abd1754481f6"
+  }
+}

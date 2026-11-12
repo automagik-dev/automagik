@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
+import { registerHooks } from 'node:module'
 import { fallbackFor, fallbackNotice, install, KEEP_CODES } from '../src/host/fallback.js'
 
 const OPENAI = { provider: 'openai', model: 'gpt-5.4-mini', reasoningEffort: 'high' }
@@ -174,4 +175,39 @@ test('a switch failure on a pending switch or a fresh part waiting for its answe
   assert.equal(fellBack.followed.length, 1)
   const other = await run({ bot: pending, failure: { code: 'SERVER' } })
   assert.deepEqual(other.selected, [DEEPSEEK], 'a failure the fallback answers still falls back on a pending switch')
+})
+
+
+// Exercise rc.2's own HTTP-status-first mapping; the installed package remains unchanged.
+test('native gateway failure codes retain fallback wake and route restoration', async () => {
+  const hook = registerHooks({
+    resolve(specifier, context, next) {
+      if (specifier === 'fallback-test:pi-ai') {
+        const result = next('@deepseek-ai/dsh-llm-pi-ai', context)
+        return { ...result, url: `${result.url}?fallback-native-status` }
+      }
+      return next(specifier, context)
+    },
+    load(url, context, next) {
+      const result = next(url, context)
+      return url.endsWith('?fallback-native-status') ? { ...result, source: `${result.source}\nexport { mapStopReason as nativeStopReason }` } : result
+    },
+  })
+  let nativeStopReason
+  try { ({ nativeStopReason } = await import('fallback-test:pi-ai')) } finally { hook.deregister() }
+  for (const [text, code] of [['500 gateway says upstream 401', 'SERVER'], ['429 gateway says upstream 401', 'RATE_LIMIT'], ['401 upstream 500', 'AUTH'], ['upstream returned 401', 'AUTH']]) {
+    const reason = nativeStopReason({ role: 'assistant', api: 'openai-completions', provider: 'openai', model: 'probe-model', content: [], usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }, stopReason: 'error', errorMessage: text, timestamp: 0 })
+    assert.deepEqual(reason, { kind: 'error', failure: { code, message: text } })
+    const h = harness()
+    assert.equal(await h.failed(reason.failure), undefined)
+    assert.deepEqual(h.selected, [DEEPSEEK])
+    assert.equal(h.followed.length, 1)
+    assert.ok(h.followed[0].content[0].text.includes(`failed (${code}: ${text});`))
+    h.turnEnd(3)
+    assert.deepEqual(h.selected, [DEEPSEEK])
+    h.turnEnd(4)
+    assert.deepEqual(h.selected, [DEEPSEEK, OPENAI])
+    h.turnEnd(5)
+    assert.equal(h.selected.length, 2)
+  }
 })

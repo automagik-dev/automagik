@@ -19,7 +19,7 @@ export const cliRoute = provider => CODING_CLIS.includes(provider)
 /** Whether a move from `from` to `to` leaves a coding CLI for another provider; another model of the same CLI does not. */
 export const leavesCli = (from, to) => cliRoute(from?.provider) && to?.provider !== from.provider
 
-export const CONNECTED_BY = Object.freeze(['native', 'pi-ai', 'claude-code-plugin', 'acp'])
+export const CONNECTED_BY = Object.freeze(['native', 'pi-ai', 'claude-code-plugin', 'acp', 'hermes-remote'])
 export const HARNESSES = Object.freeze(['dsh', 'claude-code', 'codex', 'gemini'])
 
 // The settings namespace DSH's pi-ai adapter (dsh-llm-pi-ai) declares its routes under.
@@ -49,6 +49,7 @@ export const piAiRoutes = directory => new Set([
  */
 export function routeOf(provider, { piAi = new Set(SUBSCRIPTION_ROUTES) } = {}) {
   const id = String(provider ?? '')
+  if (id === 'hermes-remote') return { harness: 'hermes', connectedBy: 'hermes-remote' }
   if (isClaudeCode(id)) return { harness: 'claude-code', connectedBy: 'claude-code-plugin' }
   if (id.startsWith('acp-')) return { harness: ACP_HARNESS[id.slice(4)] ?? id.slice(4), connectedBy: 'acp' }
   if (piAi.has(id)) return { harness: 'dsh', connectedBy: 'pi-ai' }
@@ -58,10 +59,11 @@ export function routeOf(provider, { piAi = new Set(SUBSCRIPTION_ROUTES) } = {}) 
 // The selector's first level (RFC 0030, issue #1016): the route the person is crossing to.
 // Native is DSH's own loop; ACP is an agent of the person's, over its sign-in; Herdr is the
 // agent's native terminal on herdr-core, wired by #1007. A route is a public word: keep it.
-export const SELECTOR_ROUTES = Object.freeze(['native', 'acp', 'herdr'])
+export const SELECTOR_ROUTES = Object.freeze(['native', 'acp', 'herdr', 'hermes-remote'])
 
 /** The selector route a provider id belongs to: 'native', 'acp' or 'herdr'. */
 export function selectorRouteOf(provider) {
+  if (provider === 'hermes-remote') return 'hermes-remote'
   return routeOf(provider).connectedBy === 'acp' ? 'acp' : 'native'
 }
 
@@ -69,7 +71,7 @@ export function selectorRouteOf(provider) {
 export function routeOfRef(ref) {
   const provider = String(ref ?? '').split('/')[0]
   const route = routeOf(provider)
-  return { provider, route: route.connectedBy === 'acp' ? 'acp' : 'native', harness: route.harness }
+  return { provider, route: selectorRouteOf(provider), harness: route.harness }
 }
 
 /**

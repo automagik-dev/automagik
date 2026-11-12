@@ -135,7 +135,7 @@ const photoCard = key => h('svg', { key, className: 'bt-img-pic', viewBox: '0 0 
   h('path', { className: 'bt-img-pic-h2', d: 'M14 22l7.5-6.5L27.5 22z' }))
 
 /**
- * Genie painting ("G3a · Pictures puff out"): the clay lamp rocks and glows, Genie's clay head
+ * Genie painting ("G3a · Pictures puff out"): the clay lamp rocks and glows, Genie
  * hovers over the spout, and four photo cards leave the spout one after another, rise, drift,
  * grow a little and fade like smoke. A Genie in its own colour wears it here too (genie-tint.js).
  */

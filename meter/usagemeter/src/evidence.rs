@@ -662,7 +662,7 @@ pub fn reattribute(
     let Some(row) = from else {
         return Ok(false);
     };
-    tx.execute("DELETE FROM usage WHERE id = ?1 AND events <= 0", [&row])?;
+    delete_empty_rollup(tx, &row)?;
     let id = intern.actor(tx, to)?;
     tx.execute(
         "UPDATE evidence SET actor = ?1 WHERE id = ?2",
@@ -716,6 +716,18 @@ fn debit(tx: &Transaction<'_>, row: &str, call: &Stored, now_ms: i64) -> rusqlit
     Ok(n == 1)
 }
 
+/// A last event need not account for every remaining token (for example, a re-read log's
+/// split changed). Keep that remainder; deleting it is neither adoption nor attribution.
+fn delete_empty_rollup(tx: &Transaction<'_>, row: &str) -> rusqlite::Result<()> {
+    tx.execute(
+        "DELETE FROM usage WHERE id = ?1 AND events = 0
+           AND input_uncached = 0 AND cache_read = 0 AND cache_write_5m = 0
+           AND cache_write_1h = 0 AND output = 0 AND reasoning = 0 AND unsplit = 0",
+        [row],
+    )?;
+    Ok(())
+}
+
 /// The `meta` key set once every ambiguous and unlinked rollup is keyed with its reason (RFC 0021
 /// delivery 6): a store an older meter wrote is re-keyed on its first open by this one.
 pub const REASON_KEYED_META: &str = "rollups_reason_keyed";
@@ -732,12 +744,83 @@ CREATE TABLE IF NOT EXISTS ev_backfill (
   path TEXT PRIMARY KEY, offset INTEGER NOT NULL, ctx TEXT NOT NULL DEFAULT '{}'
 );
 CREATE TABLE IF NOT EXISTS ev_backfill_seen (k INTEGER PRIMARY KEY);
+-- Connection-local backing, reset at the start of each backfill invocation. No store migration.
+CREATE TEMP TABLE IF NOT EXISTS ev_adoption_hours (hour_ms INTEGER PRIMARY KEY);
+CREATE TEMP TABLE IF NOT EXISTS ev_adoption_backed (
+  id TEXT PRIMARY KEY,
+  input_uncached INTEGER NOT NULL, cache_read INTEGER NOT NULL,
+  cache_write_5m INTEGER NOT NULL, cache_write_1h INTEGER NOT NULL,
+  output INTEGER NOT NULL, reasoning INTEGER NOT NULL, unsplit INTEGER NOT NULL,
+  events INTEGER NOT NULL
+);
+DELETE FROM temp.ev_adoption_hours;
+DELETE FROM temp.ev_adoption_backed;
 ";
+
+/// Load an hour once per invocation, using evidence_ts rather than a per-call store scan.
+/// Both the loaded marker and backing credits live in the caller's transaction: a failed chunk
+/// rolls them back too. A resumed invocation starts fresh from its committed evidence.
+fn load_adoption_hour(tx: &Transaction<'_>, hour: i64) -> rusqlite::Result<()> {
+    if tx.execute(
+        "INSERT OR IGNORE INTO temp.ev_adoption_hours(hour_ms) VALUES(?1)",
+        [hour],
+    )? == 0
+    {
+        return Ok(());
+    }
+    let mut backed: BTreeMap<String, (Tokens, i64)> = BTreeMap::new();
+    let mut st = tx.prepare_cached(&format!("{STORED} WHERE e.ts_ms >= ?1 AND e.ts_ms < ?2"))?;
+    for call in st.query_map(params![hour, hour + crate::time::HOUR_MS], stored)? {
+        let call = call?;
+        let (k, p) = rollup_key(&call.dim, &call.actor, hour);
+        let entry = backed.entry(k.id(p)).or_default();
+        entry.0.add(&call.tokens);
+        entry.1 += 1;
+    }
+    for (id, (tokens, events)) in backed {
+        credit_adoption_backing(tx, &id, &tokens, events)?;
+    }
+    Ok(())
+}
+
+fn credit_adoption_backing(
+    tx: &Transaction<'_>,
+    id: &str,
+    t: &Tokens,
+    events: i64,
+) -> rusqlite::Result<()> {
+    tx.prepare_cached(
+        "INSERT INTO temp.ev_adoption_backed
+           (id, input_uncached, cache_read, cache_write_5m, cache_write_1h, output,
+            reasoning, unsplit, events)
+         VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+         ON CONFLICT(id) DO UPDATE SET
+           input_uncached = input_uncached + excluded.input_uncached,
+           cache_read = cache_read + excluded.cache_read,
+           cache_write_5m = cache_write_5m + excluded.cache_write_5m,
+           cache_write_1h = cache_write_1h + excluded.cache_write_1h,
+           output = output + excluded.output, reasoning = reasoning + excluded.reasoning,
+           unsplit = unsplit + excluded.unsplit, events = events + excluded.events",
+    )?
+    .execute(params![
+        id,
+        t.input_uncached,
+        t.cache_read,
+        t.cache_write_5m,
+        t.cache_write_1h,
+        t.output,
+        t.reasoning,
+        t.unsplit,
+        events
+    ])?;
+    Ok(())
+}
 
 /// Gives one re-read call of an hour before `evidence_from` its evidence (an evidence backfill):
 /// its tokens leave a rollup row that counted it before evidence (a frozen row, or one of an hour
 /// before `evidence_from`) with the same logging (harness, model, machine, repo, branch, hour and
-/// precision) and at least its tokens of every kind, for the row its derived attribution names, and
+/// precision) and at least its tokens of every kind remaining beyond the row's evidence, for
+/// the row its derived attribution names, and
 /// its evidence row is written, all in the caller's transaction. A call no such row holds (its
 /// usage was counted under other logging, or never) is left alone: a backfill never adds a token
 /// to a total or takes one from it. Returns whether the call was adopted.
@@ -753,17 +836,23 @@ pub fn adopt(
     now_ms: i64,
 ) -> rusqlite::Result<bool> {
     let hour = crate::time::hour_start(ts_ms);
+    load_adoption_hour(tx, hour)?;
     let found: Option<String> = tx
         .prepare_cached(
-            "SELECT id FROM usage
-             WHERE harness = ?1 AND model = ?2 AND machine = ?3 AND repo IS ?4
-               AND (branch IS ?5 OR (?5 IS NULL AND branch_basis = 'ledger'))
-               AND hour_ms = ?6 AND precision = ?7
-               AND (actor_state IS NULL OR hour_ms < ?8)
-               AND input_uncached >= ?9 AND cache_read >= ?10 AND cache_write_5m >= ?11
-               AND cache_write_1h >= ?12 AND output >= ?13 AND reasoning >= ?14
-               AND unsplit >= ?15 AND events >= 1
-             ORDER BY id LIMIT 1",
+            "SELECT u.id FROM usage u LEFT JOIN temp.ev_adoption_backed b ON b.id = u.id
+             WHERE u.harness = ?1 AND u.model = ?2 AND u.machine = ?3 AND u.repo IS ?4
+               AND (u.branch IS ?5 OR (?5 IS NULL AND u.branch_basis = 'ledger'))
+               AND u.hour_ms = ?6 AND u.precision = ?7
+               AND (u.actor_state IS NULL OR u.hour_ms < ?8)
+               AND u.input_uncached - coalesce(b.input_uncached, 0) >= ?9
+               AND u.cache_read - coalesce(b.cache_read, 0) >= ?10
+               AND u.cache_write_5m - coalesce(b.cache_write_5m, 0) >= ?11
+               AND u.cache_write_1h - coalesce(b.cache_write_1h, 0) >= ?12
+               AND u.output - coalesce(b.output, 0) >= ?13
+               AND u.reasoning - coalesce(b.reasoning, 0) >= ?14
+               AND u.unsplit - coalesce(b.unsplit, 0) >= ?15
+               AND u.events - coalesce(b.events, 0) >= 1
+             ORDER BY u.id LIMIT 1",
         )?
         .query_row(
             params![
@@ -813,9 +902,10 @@ pub fn adopt(
             now_ms
         ],
     )?;
-    tx.execute("DELETE FROM usage WHERE id = ?1 AND events <= 0", [&row])?;
+    delete_empty_rollup(tx, &row)?;
     insert(tx, intern, e, ts_ms, t, reported_usd)?;
     let (key, p) = rollup_key(&e.dim, &e.actor, hour);
+    let id = key.id(p);
     let mut rows = BTreeMap::new();
     rows.insert(
         (key, p),
@@ -828,6 +918,7 @@ pub fn adopt(
         },
     );
     crate::store::upsert_rows(tx, &rows, now_ms)?;
+    credit_adoption_backing(tx, &id, t, 1)?;
     Ok(true)
 }
 
@@ -1571,7 +1662,7 @@ pub fn freeze_unbacked(
                 now_ms
             ],
         )?;
-        tx.execute("DELETE FROM usage WHERE id = ?1 AND events <= 0", [&row.id])?;
+        delete_empty_rollup(tx, &row.id)?;
         let mut frozen = BTreeMap::new();
         frozen.insert(
             (row.key, row.precision),
@@ -1631,6 +1722,9 @@ pub fn stored_rollups(
     })?
     .collect()
 }
+
+#[cfg(test)]
+mod adoption_tests;
 
 #[cfg(test)]
 mod tests {

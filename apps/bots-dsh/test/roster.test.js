@@ -643,7 +643,7 @@ test('a Main Bot still wearing the whale becomes the octopus once, and the chang
   assert.equal(JSON.parse(readFileSync(join(home, 'state.json'), 'utf8')).bots.m1.avatar.shape, 'moon')
 })
 
-const GENIE_CLAY = { source: 'builtin', id: 'genie-clay', version: 1, sleep: true }
+const GENIE_CLAY = { source: 'builtin', id: 'genie-clay', version: 2, sleep: true }
 
 test('a Bot wearing the genie-cosmic pet wears genie-clay once, and the change is kept', async (t) => {
   const COSMIC_TEAM = {
@@ -692,6 +692,39 @@ test('a Bot wearing a builtin pet that no longer ships wears Genie instead of no
   // A pet the plugin still ships stays, even one this instance does not list (Unfold's).
   assert.deepEqual(bots.w2.avatar, { pet: { source: 'builtin', id: 'unfold', version: 2, sleep: true } })
   assert.deepEqual(JSON.parse(readFileSync(join(home, 'state.json'), 'utf8')).bots.m1.avatar, { pet: GENIE_CLAY })
+})
+
+// Genie's atlas was v1 (nine rows) before the approved full-body figure, a v2 atlas under
+// the same id. A v2 atlas drawn as v1 shows the wrong cells, so a Genie kept from then is
+// the Genie shipped now: on load, and when a client names the old version again.
+test('a Bot that kept Genie from the atlas before the approved figure wears the Genie shipped now', async (t) => {
+  const V1_TEAM = {
+    ...OLD_TEAM,
+    whaleStored: true,
+    octopusStored: true,
+    genieClayStored: true,
+    bots: {
+      ...OLD_TEAM.bots,
+      m1: { ...OLD_TEAM.bots.m1, avatar: { shape: 'octopus', pet: { source: 'builtin', id: 'genie-clay', version: 1, sleep: true } } },
+      w2: { ...OLD_TEAM.bots.w2, avatar: { pet: { source: 'builtin', id: 'genie-clay', version: 1 } } },
+      t3: { id: 't3', sessionId: 't3', name: 'Fox', role: 'Plays', instructions: '', createdAt: 3, avatar: { pet: { source: 'team', id: 'genie-clay', version: 1 } } },
+    },
+  }
+  const { call, stop, home } = start(V1_TEAM)
+  t.after(stop)
+  const bots = async () => Object.fromEntries((await call('state', {})).value.bots.map(bot => [bot.id, bot]))
+  const loaded = await bots()
+  // The id and the look under the pet stay; a team's own pet of the same name is the team's.
+  assert.deepEqual(loaded.m1.avatar, { shape: 'octopus', pet: GENIE_CLAY })
+  assert.deepEqual(loaded.w2.avatar, { pet: GENIE_CLAY })
+  assert.deepEqual(loaded.t3.avatar, { pet: { source: 'team', id: 'genie-clay', version: 1 } })
+  const saved = JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'))
+  assert.deepEqual(saved.bots.m1.avatar, { shape: 'octopus', pet: GENIE_CLAY })
+  assert.deepEqual(saved.bots.w2.avatar, { pet: GENIE_CLAY })
+  // A client still holding the old look sends it back: it is kept as the shipped Genie.
+  const sent = (await call('update-bot', { id: 'w2', avatar: { pet: { source: 'builtin', id: 'genie-clay', version: 1 } } })).value
+  assert.deepEqual(sent.avatar, { pet: GENIE_CLAY })
+  assert.deepEqual(JSON.parse(readFileSync(join(home, 'state.json'), 'utf8')).bots.w2.avatar, { pet: GENIE_CLAY })
 })
 
 // Oh My Claude left Automagik. Once, a Bot on a claude-code model moves to the closest pi-ai
@@ -1039,7 +1072,7 @@ test('a Bot wears a pet Genie ships with; a photo set after it wins, and a pet f
   await call('state', {})
   const writer = (await call('create-bot', { name: 'Writer', role: 'Writes' })).value
   const worn = (await call('pet-use', { botId: writer.id, source: 'builtin', id: 'genie-clay' })).value
-  assert.deepEqual(worn.avatar, { pet: { source: 'builtin', id: 'genie-clay', version: 1, sleep: true } })
+  assert.deepEqual(worn.avatar, { pet: { source: 'builtin', id: 'genie-clay', version: 2, sleep: true } })
   // A photo, uploaded over it, replaces it; a pet named outside what the team keeps is dropped.
   const photo = 'data:image/png;base64,iVBORw0KGgo='
   const pictured = (await call('update-bot', { id: writer.id, avatar: { ...worn.avatar, image: photo } })).value

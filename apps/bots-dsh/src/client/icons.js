@@ -74,6 +74,8 @@ export const KeywordIcon = lineIcon(['M8.5 3.5a5 5 0 1 1 0 10 5 5 0 0 1 0-10z', 
 export const UnplugIcon = lineIcon(['M3 3l14 14', 'M7.5 6.5 6 5M13.5 12.5 15 14', 'M9 5l1.5-1.5a3.5 3.5 0 0 1 5 5L14 10', 'M11 15l-1.5 1.5a3.5 3.5 0 0 1-5-5L6 10'])
 export const ShieldIcon = lineIcon(['M10 2.75 16 5v4.75c0 3.7-2.55 6.4-6 7.5-3.45-1.1-6-3.8-6-7.5V5z', 'M7.25 10l2 2 3.5-3.75'])
 export const ChannelsIcon = lineIcon(['M4 5.5h7.5A1.5 1.5 0 0 1 13 7v4a1.5 1.5 0 0 1-1.5 1.5H8L5.5 14.5v-2H4A1.5 1.5 0 0 1 2.5 11V7A1.5 1.5 0 0 1 4 5.5z', 'M15 8.5h1A1.5 1.5 0 0 1 17.5 10v4a1.5 1.5 0 0 1-1.5 1.5h-1.5v2L12 15.5H9.5'])
+// Two stacked server bays: a remote computer, distinct from connection links.
+export const ServerIcon = lineIcon(['M4.5 3.5h11A1.5 1.5 0 0 1 17 5v10a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 15V5a1.5 1.5 0 0 1 1.5-1.5z', 'M3 10h14', 'M6 6.75h.01M6 13.25h.01M10 6.75h4M10 13.25h4'])
 export const ConnectorIcon = lineIcon(['M7 10a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z', 'M18 10a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0z', 'M7 10h6'])
 export const SwitchIcon = lineIcon(['M4 7h9.5M10.5 3.5L14 7l-3.5 3.5', 'M16 13H6.5M9.5 9.5L6 13l3.5 3.5'])
 export const SignOutIcon = lineIcon(['M8.5 17H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h2.5', 'M10 10h6.5', 'M13.5 7l3 3-3 3'])

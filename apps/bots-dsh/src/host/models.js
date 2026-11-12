@@ -250,7 +250,7 @@ export function install(rt) {
   // (prefs.backgroundModel, in Settings) when it is served and can run; else DSH's default
   // model (DeepSeek, unless the person chose another there) when that can; else the first
   // account connected here, as for a Bot's default.
-  const answersAside = entry => routeOf(entry.provider).connectedBy !== 'acp'
+  const answersAside = entry => !['acp', 'hermes-remote'].includes(routeOf(entry.provider).connectedBy)
   function pickBackground(entries) {
     const aside = entries.filter(answersAside)
     const chosen = state.prefs?.backgroundModel
@@ -259,7 +259,7 @@ export function install(rt) {
   }
   const backgroundModel = async () => pickBackground(await catalog())
   /** Whether a `provider/model` ref can answer a job beside the chats (not an ACP agent). */
-  const answersAsideRef = ref => typeof ref === 'string' && ref.includes('/') && routeOf(ref.split('/')[0]).connectedBy !== 'acp'
+  const answersAsideRef = ref => typeof ref === 'string' && ref.includes('/') && !['acp', 'hermes-remote'].includes(routeOf(ref.split('/')[0]).connectedBy)
 
   // A ChatGPT or Claude plan runs a Bot only through its CLI (D-a, D-c), whoever picks the model
   // (the menu, a tool, the API, Pocket): a covered sign-in route is read as the closest model on

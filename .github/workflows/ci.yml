@@ -75,9 +75,11 @@ jobs:
   id:
     name: Automagik ID (local Workers runtime)
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     env:
       WRANGLER_SEND_METRICS: 'false'
+      # The pages are tested in a real Chromium; without this their browser tests would skip.
+      ID_PAGES_BROWSER: required
     defaults:
       run:
         working-directory: apps/id
@@ -93,6 +95,8 @@ jobs:
           bun-version: 1.4.4
       - run: bun install --frozen-lockfile --ignore-scripts
       - run: bun run check
+      - name: Chromium for the page tests
+        run: node node_modules/playwright-core/cli.js install --with-deps chromium
       - run: bun run test
       - run: node scripts/mutations.mjs
 

@@ -10,7 +10,7 @@ matches its digest.
 
 | Part | Version | Source |
 |---|---|---|
-| DeepSeek Harness (`@deepseek-ai/dsh`) | 0.2.2-rc.1 | The runtime the Bot team's harness and the desktop app both declare (`apps/bots-dsh/dev/harness`, `apps/desktop/runtime`) |
+| DeepSeek Harness (`@deepseek-ai/dsh`) | 0.2.2-rc.1 | The runtime used for these captures, then pinned by the Bot team's harness and the desktop app (`apps/bots-dsh/dev/harness`, `apps/desktop/runtime`) |
 | `@automagik/bots-dsh` (the Bot team) | 3.127.14 | This repository at release commit `c57acbed`; the script refuses to run if any shipped file differs from it |
 | `@automagik/welcome-dsh` (the welcome) | 3.127.14 | Same release commit, same check |
 | `@automagik/genie-dsh` (Genie) | 0.1.4 | `automagik-si/genie` at `39402fb1`, `plugins/genie-dsh`: the commit `marketplace/automagik.json` pins, exported with `git archive` |

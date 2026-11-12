@@ -3,6 +3,11 @@ import { RUN_CODE_NAME } from '@deepseek-ai/dsh-tools'
 import { hardToUndo, refusalCounter } from './auto-judge.js'
 import { TEAM_LOOKUPS, teamToolOf } from './approvals.js'
 
+// Office operations create host-owned output files outside the shell sandbox. Read only
+// declines them. User-terminal observations need Full access: they are outside the Bot
+// workspace and may contain secrets.
+export const OFFICE_OUTPUT_TOOLS = new Set(['office_convert', 'office_recalculate', 'office_render'])
+export const USER_TERMINAL_TOOLS = new Set(['user_terminal_list', 'user_terminal_read'])
 export const KEEP_WORKING = 'keep_working'
 export const askText = step => `This step is hard to undo: ${step}. Allow it once?`
 export const questionText = (name, count, tool) => `${name} was refused ${count} times in this turn, the last time on ${tool}. Let it keep working?`
@@ -62,6 +67,16 @@ export function install(rt) {
     const id = session?.id ?? exec.agent?.id
     if (id === undefined) return next()
     if (stopped.has(id)) return { kind: 'deny', reason: stopped.get(id) }
+    if (USER_TERMINAL_TOOLS.has(teamToolOf(exec.name)) && rt.botOfSession(id, exec.agent) && !fullHere(session)) {
+      return { kind: 'deny', reason: 'Only Full access may read the user’s terminals: they are outside this Bot’s workspace and can contain secrets.' }
+    }
+    if (OFFICE_OUTPUT_TOOLS.has(teamToolOf(exec.name)) && rt.botOfSession(id, exec.agent)) {
+      let mode
+      try { mode = ctx.get('sandboxPolicy')?.resolve({ session })?.mode } catch {
+        return { kind: 'deny', reason: 'The Office tool cannot run because this conversation’s filesystem permission could not be read.' }
+      }
+      if (mode === 'read-only') return { kind: 'deny', reason: 'Read only does not allow Office tools to create output files. Choose a permission level that allows writes before converting, rendering or recalculating a document.' }
+    }
     const decision = await next()
     if (decision.kind === 'deny') { refusedHere.add(exec); return decision }
     if (decision.kind !== 'allow') return decision

@@ -3,9 +3,10 @@ import { genieExpressions, lamp, lockup, mark, omniExpressions, unfoldExpression
 // -------------------------------------------------------------------------
 // Clay characters: Omni and Genie as the Automagik clay universe draws them, in place of the
 // vector characters (characters.js) where the team shows them. Each is one row of seven
-// faces from the owner's clay kit (dev/art/clay-kit.py): Genie in 192x208 cells, Omni in
-// 192x192. Unfold's row is made from its pet's stills (dev/art/unfold-expressions.sh), in
-// 192x208 cells. CLAY_OMNI false puts the vector octopus back everywhere.
+// faces: Omni's from the owner's clay kit (dev/art/clay-kit.py), in 192x192 cells; Genie's
+// are seven frames of the approved full-body figure's atlas (dev/art/genie-approved-v5), in
+// 192x208 cells; Unfold's row is made from its pet's stills (dev/art/unfold-expressions.sh),
+// in 192x208 cells. CLAY_OMNI false puts the vector octopus back everywhere.
 export const CLAY_OMNI = true
 export const GENIE_ATLAS = genieExpressions
 export const OMNI_ATLAS = omniExpressions

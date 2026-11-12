@@ -1,7 +1,8 @@
 import { betterAuth } from 'better-auth';
-import { jwt, phoneNumber } from 'better-auth/plugins';
+import { jwt } from 'better-auth/plugins';
 import { passkey } from '@better-auth/passkey';
 import { oauthProvider } from '@better-auth/oauth-provider';
+import { whatsappEnabled, whatsappPlugin } from './whatsapp';
 
 function strictRedirectUri(uri: string, registered: readonly string[], defaultResult: boolean) {
   const url = new URL(uri);
@@ -16,13 +17,12 @@ export interface Env {
   DB: D1Database;
   BETTER_AUTH_URL: string;
   BETTER_AUTH_SECRET: string;
-  OMNI_OTP_URL?: string;
-  OMNI_API_TOKEN?: string;
+  WHATSAPP_RECEIVING_NUMBER?: string;
+  OMNI_INBOUND_TOKEN?: string;
   PAGES?: Fetcher;
 }
 
-// Always include phone fields in migrations; installing its routes remains conditional.
-export function createAuth(env: Env, ctx: Pick<ExecutionContext, 'waitUntil'>, schemaOnly = false) {
+export function createAuth(env: Env, ctx: Pick<ExecutionContext, 'waitUntil'>) {
   if (!env.BETTER_AUTH_SECRET || env.BETTER_AUTH_SECRET.length < 32) {
     throw new Error('BETTER_AUTH_SECRET must be provisioned');
   }
@@ -35,6 +35,11 @@ export function createAuth(env: Env, ctx: Pick<ExecutionContext, 'waitUntil'>, s
     database: env.DB,
     emailAndPassword: { enabled: false },
     socialProviders: {},
+    logger: { disabled: true },
+    user: { additionalFields: {
+      phoneNumber: { type: 'string', required: false, unique: true, input: false },
+      phoneNumberVerified: { type: 'boolean', required: false, defaultValue: false, input: false },
+    } },
     session: { cookieCache: { enabled: false } },
     rateLimit: { enabled: true, storage: 'database', window: 60, max: 60 },
     advanced: {
@@ -72,30 +77,7 @@ export function createAuth(env: Env, ctx: Pick<ExecutionContext, 'waitUntil'>, s
         clientRegistrationRequirePKCE: true,
         validateRedirectUri: strictRedirectUri,
       }),
-      ...(env.OMNI_OTP_URL || schemaOnly ? [phoneNumber({
-        allowedAttempts: 3,
-        requireVerification: true,
-        phoneNumberValidator: number => /^\+[1-9]\d{7,14}$/.test(number),
-        sendOTP({ phoneNumber, code }) {
-          if (!env.OMNI_OTP_URL) return;
-          const url = new URL(env.OMNI_OTP_URL);
-          if (url.protocol !== 'https:') throw new Error('Omni requires HTTPS');
-          ctx.waitUntil(fetch(url, {
-            method: 'POST',
-            headers: {
-              'content-type': 'application/json',
-              ...(env.OMNI_API_TOKEN ? { authorization: `Bearer ${env.OMNI_API_TOKEN}` } : {}),
-            },
-            body: JSON.stringify({ phoneNumber, code }),
-          }).then(response => {
-            if (!response.ok) throw new Error('Omni delivery failed');
-          }).catch(() => { console.error('Omni OTP delivery failed'); }));
-        },
-        signUpOnVerification: {
-          getTempEmail: () => `${crypto.randomUUID()}@id.invalid`,
-          getTempName: () => 'Automagik user',
-        },
-      })] : []),
+      ...(whatsappEnabled(env) ? [whatsappPlugin(env)] : []),
     ],
   });
 }

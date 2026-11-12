@@ -1,7 +1,7 @@
 // The launch-token recovery contract (issue #361), tested against the real pinned packages
 // rather than stand-ins: fixtures/web-launch-token/index.js is the unmodified lib/index.js of
-// @deepseek-ai/dsh-web-app 0.2.2-rc.1, and fixtures/client-connection-cookie-lax/index.js is
-// the unmodified lib/index.js of @deepseek-ai/dsh-client-connection 0.2.2-rc.1 (MIT; LICENSE
+// @deepseek-ai/dsh-web-app 0.2.2-rc.2, and fixtures/client-connection-cookie-lax/index.js is
+// the unmodified lib/index.js of @deepseek-ai/dsh-client-connection 0.2.2-rc.2 (MIT; LICENSE
 // beside each). Their sha256 must be the `before` hash in runtime/patches/patches.json, so
 // these tests apply the carried patches to the bytes npm actually installs, import the patched
 // modules, and drive their real apply()/authorizeIndex: the real web app records the launch URL
@@ -37,7 +37,7 @@ const APP = dirname(HERE)
 const PATCHES = join(APP, 'runtime', 'patches')
 const WEB_FIXTURE = join(HERE, 'fixtures', 'web-launch-token')
 const CONNECTION_FIXTURE = join(HERE, 'fixtures', 'client-connection-cookie-lax', 'index.js')
-const DSH = '0.2.2-rc.1'
+const DSH = '0.2.2-rc.2'
 const PATCH = 'web-launch-token-persistence.patch'
 const COOKIE_PATCH = 'client-connection-cookie-lax.patch'
 const WEB_APP = '@deepseek-ai/dsh-web-app'

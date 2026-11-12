@@ -1,9 +1,10 @@
 // Copied from apps/bots-dsh/src/client/clay-art.js (the pictures in art/ from
 // apps/bots-dsh/src/client/art), not imported: this plugin installs on its own.
 //
-// Omni and Genie in clay: one row of seven faces each from the owner's clay kit (genie in
-// 192x208 cells, omni in 192x192); Unfold's row is made from its pet's stills (192x208). CLAY_OMNI false puts the vector octopus (octopus.js
-// OCTOPUS_SVG) back.
+// Omni and Genie in clay: one row of seven faces each. Omni's are from the owner's clay kit
+// (192x192 cells); Genie's are seven frames of the approved full-body figure's atlas
+// (192x208, apps/bots-dsh/dev/art/genie-approved-v5); Unfold's row is made from its pet's
+// stills (192x208). CLAY_OMNI false puts the vector octopus (octopus.js OCTOPUS_SVG) back.
 import { genieExpressions, lamp, omniExpressions, unfoldExpressions } from './art/inline.js'
 
 export const CLAY_OMNI = true

@@ -9,6 +9,8 @@ import { hostText, t } from './i18n.js'
 import { HostModelMenu } from './host-model-menu.js'
 import { AgentMark, DshMarkIcon, HerdrMarkIcon } from './marks.js'
 import { crossesHarness, routeOf, selectorRouteOf } from '../shared/routes.js'
+import { HermesMark, HERMES_MARK_CSS } from './hermes-mark.js'
+import { HermesRemoteConnect } from './hermes-remote.js'
 
 const MENU_EXIT_MS = 120
 
@@ -62,8 +64,8 @@ export function modelOf(bot, roster) {
   const ref = bot.model ?? bot.appliedModel
   if (!ref) return undefined
   const served = servedOf(roster, ref)
-  const [provider, ...rest] = ref.split('/')
-  return { ref, name: served ? modelLabel(served) : rest.join('/'), provider: served ? connectionOf(served) : provider, served: served !== undefined, unavailable: served === undefined || unavailableModel(served) }
+  const [, ...rest] = ref.split('/')
+  return { ref, name: served ? modelLabel(served) : rest.join('/'), provider: modelRoute(roster, ref).connection, served: served !== undefined, unavailable: served === undefined || unavailableModel(served) }
 }
 
 // What a Bot's model really did, from the host's model state (model-state.js): a switch that
@@ -186,14 +188,15 @@ const Tick = ({ on }) => h('span', { className: 'bt-model-tick', 'aria-hidden': 
 // The selector's three routes, in the order they are offered (issue #1016). Native is DSH's
 // own loop; ACP is every agent acp-dsh serves; Herdr is the agent's own terminal on
 // herdr-core, which #1007 wires. The names are UI words; their details say what each means.
-export const ROUTE_ORDER = Object.freeze(['native', 'acp', 'herdr'])
-const ROUTE_NAME = Object.freeze({ native: 'Native', acp: 'ACP', herdr: 'Herdr' })
-const ROUTE_ICON = Object.freeze({ native: DshMarkIcon, acp: ConnectorIcon, herdr: HerdrMarkIcon })
+export const ROUTE_ORDER = Object.freeze(['native', 'acp', 'herdr', 'hermes-remote'])
+const ROUTE_NAME = Object.freeze({ native: 'Native', acp: 'ACP', herdr: 'Herdr', 'hermes-remote': 'Remote Hermes' })
+const ROUTE_ICON = Object.freeze({ native: DshMarkIcon, acp: ConnectorIcon, herdr: HerdrMarkIcon, 'hermes-remote': HermesMark })
 const routeName = route => t(ROUTE_NAME[route] ?? route)
 const routeDetail = (route) => {
   switch (route) {
     case 'acp': return t('Agent Client Protocol')
     case 'herdr': return t('herdr-core terminal')
+    case 'hermes-remote': return 'hermes serve'
     default: return t('DSH harness')
   }
 }
@@ -214,11 +217,13 @@ export function modelRoute(roster, ref) {
   const served = servedOf(roster, ref)
   const provider = providerOf(served ?? { ref })
   const route = served?.route?.connectedBy === 'acp' ? 'acp' : routeOfProvider(provider)
+  const remote = roster.prefs?.hermesRemote
+  const remoteConnection = remote?.profile || (remote?.mode === 'ssh' ? remote.ssh?.host : remote?.address?.replace(/^https?:\/\//, '').replace(/\/$/, ''))
   return {
     provider,
     route,
     harness: served?.route?.harness ?? routeOf(provider).harness,
-    connection: served ? connectionOf(served) : provider,
+    connection: route === 'hermes-remote' ? remoteConnection || routeName(route) : served ? connectionOf(served) : provider,
   }
 }
 
@@ -325,7 +330,7 @@ const stepBack = (label, onClick) => h('button', { type: 'button', role: 'menuit
 // `current` is the Bot's model, `picked` its level when that model serves it, `levelName`
 // that level's name. `go(view)` opens another step; `onModel(model, route)` and
 // `onLevel(model, effort)` pick; the menu offers the provider's API key where it can.
-export function ModelSteps({ roster, bot, view, current, picked, levelName, go, onModel, onLevel, onManage }) {
+export function ModelSteps({ roster, bot, view, current, picked, levelName, go, onModel, onLevel, onManage, onRemote }) {
   const models = roster.models ?? []
   const currentRoute = current === undefined ? undefined : modelRoute(roster, current).route
   const levelModel = view.step === 'levels' ? models.find(entry => entry.ref === view.ref) : undefined
@@ -349,13 +354,17 @@ export function ModelSteps({ roster, bot, view, current, picked, levelName, go, 
     const route = view.route ?? routeOfProvider(view.provider)
     const agent = route === 'acp' ? acpAgents(models).find(entry => entry.provider === view.provider) : undefined
     const list = route === 'native' ? nativeModels(models, current)
+      : route === 'hermes-remote' ? models.filter(model => providerOf(model) === 'hermes-remote')
       : route === 'acp' ? (agent?.models ?? [])
         : herdrAgents().find(entry => entry.id === view.agent)?.models ?? []
-    const back = route === 'native' ? { label: t('Back to routes'), view: MENU_ROOT } : { label: t('Back to agents'), view: { step: 'agents', route } }
-    const backLabel = route === 'native' ? back.label : t('Back to {agent}', { agent: agent?.name ?? routeName(route) })
+    const direct = route === 'native' || route === 'hermes-remote'
+    const back = direct ? { label: t('Back to routes'), view: MENU_ROOT } : { label: t('Back to agents'), view: { step: 'agents', route } }
+    const backLabel = direct ? back.label : t('Back to {agent}', { agent: agent?.name ?? routeName(route) })
     const groups = route === 'native' ? groupModels(list) : list.length === 0 ? [] : [[agent?.name ?? routeName(route), list]]
     return h('div', { key: `models:${route}:${view.provider ?? view.agent ?? ''}`, className: 'bt-model-step', role: 'group', 'aria-label': t('Models') },
       stepBack(backLabel, () => go(back.view)),
+      route === 'hermes-remote' ? h('div', { className: 'bt-model-none' }, t("Your bots’ team tools (messages to other bots, secrets, memory, schedules) are not available in these chats.")) : null,
+      route === 'hermes-remote' && list.length === 0 ? h('div', { className: 'bt-model-none' }, t('Off by default. Set up Remote Hermes in Bot settings.')) : null,
       h('div', { className: 'bt-menu-sep', role: 'separator' }),
       groups.length === 0 ? h('div', { className: 'bt-model-none' }, t('No models are set up for this route yet.')) : null,
       groups.map(([label, entries]) => h(Fragment, { key: label },
@@ -396,7 +405,7 @@ export function ModelSteps({ roster, bot, view, current, picked, levelName, go, 
         const why = herdr || pending ? t('Not available yet') : signedOut ? t('Needs a sign-in') : undefined
         const now = here ? modelLabel(agent.models.find(entry => entry.ref === current) ?? {}) ?? agent.name : undefined
         return h('button', {
-          key: agent.provider ?? agent.id, type: 'button', role: 'menuitem', 'aria-haspopup': 'menu', 'data-current': here ? '' : undefined,
+          key: agent.provider ?? agent.id, type: 'button', role: 'menuitem', 'aria-haspopup': route === 'hermes-remote' && onRemote ? 'dialog' : 'menu', 'data-current': here ? '' : undefined,
           'data-unavailable': why ? '' : undefined,
           'aria-label': here ? t('{agent}, current model {model}', { agent: agent.name, model: now ?? '' }) : why ? `${agent.name} · ${why}` : agent.name,
           onClick: () => go({ step: 'models', route, ...(agent.provider ? { provider: agent.provider } : { agent: agent.id }) }),
@@ -413,16 +422,20 @@ export function ModelSteps({ roster, bot, view, current, picked, levelName, go, 
     routes.length === 0 ? h('div', { className: 'bt-model-none' }, t('No route is available for this Bot.')) : null,
     routes.map((route) => {
       const here = route === currentRoute && current !== undefined
-      const now = here
+      const remembered = roster.prefs?.hermesRemote
+      const rememberedProfile = remembered?.enabled ? remembered.profile : undefined
+      const now = route === 'hermes-remote' && onRemote
+        ? rememberedProfile || t('Set up')
+        : here
         ? [modelRoute(roster, current).connection, levelName].filter(Boolean).join(' · ')
         : route === 'herdr' ? t('Not available yet') : undefined
       return h('button', {
-        key: route, type: 'button', role: 'menuitem', 'aria-haspopup': 'menu', 'data-current': here ? '' : undefined,
+        key: route, type: 'button', role: 'menuitem', 'aria-haspopup': route === 'hermes-remote' && onRemote ? 'dialog' : 'menu', 'data-current': here ? '' : undefined,
         'data-route': route, 'data-unavailable': route === 'herdr' ? '' : undefined,
         title: route === 'acp' ? t('Agent Client Protocol') : route === 'herdr' ? t('Not available yet') : undefined,
         'aria-label': here ? t('{route}, current model {model}', { route: routeName(route), model: now ?? '' })
           : now ? `${routeName(route)} · ${now}` : `${routeName(route)} · ${routeDetail(route)}`,
-        onClick: () => go(route === 'native' ? { step: 'models', route } : { step: 'agents', route }),
+        onClick: () => route === 'hermes-remote' && onRemote ? onRemote() : go(route === 'native' || route === 'hermes-remote' ? { step: 'models', route } : { step: 'agents', route }),
       },
       h(RouteMark, { route }),
       h('span', { className: 'bt-menu-label' }, routeName(route)),
@@ -514,6 +527,7 @@ export function RouteConfirm({ bot, roster, current, target, onCancel, onConfirm
   const fullAccess = bot.permission === 'danger-full-access'
   const fullAccessLine = !fullAccess ? undefined
     : to.route === 'native' ? t("Full access: DSH's own tools run without asking.")
+      : to.route === 'hermes-remote' ? t('Full access: each remote approval is answered once. Remote profile rules still apply.')
       : to.provider === 'acp-claude' || to.provider === 'acp-codex' ? t("Full access: the CLI's own no-ask mode.")
         : t("Full access: the agent's actions run without asking.")
   return h('div', { className: 'bt-model-step bt-model-confirm', role: 'group', 'aria-label': t('Start a new conversation?') },
@@ -532,6 +546,14 @@ export function RouteConfirm({ bot, roster, current, target, onCancel, onConfirm
 
 function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, chat = false, bar = false, onPick, onPickEffort, saved = onPick === undefined }) {
   const [view, setView] = useState(MENU_ROOT)
+  const [hermes, setHermes] = useState(false)
+  const remote = useRef({ generation: 0, active: false, mounted: true })
+  const owner = useRef(bot.id)
+  owner.current = bot.id
+  useEffect(() => {
+    remote.current.mounted = true
+    return () => { remote.current.mounted = false; remote.current.active = false; remote.current.generation++ }
+  }, [])
   // A route change waits for the person's word here, because it starts a new conversation.
   const [confirm, setConfirm] = useState(undefined)
   // The provider's key, for a model that needs one, is asked for inside the menu when the
@@ -702,7 +724,7 @@ function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, c
         }),
       }
     : actions
-  const bits = shown === undefined ? [] : [currentRoute ? routeName(currentRoute.route) : undefined, shown.provider].filter(Boolean)
+  const bits = shown === undefined ? [] : [...new Set([currentRoute ? routeName(currentRoute.route) : undefined, shown.provider].filter(Boolean))]
   if (shown !== undefined && shown.unavailable && models.length > 0) bits.push(t('not available'))
   else if (effortLabel !== undefined) bits.push(effortLabel)
   const second = bits.length > 0 ? bits.join(' · ') : null
@@ -710,7 +732,39 @@ function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, c
     bot, roster, current, target: confirm, onCancel: () => setConfirm(undefined),
     onConfirm: () => { const next = confirm; setConfirm(undefined); finish(); void Promise.resolve(pickModel(next.ref, next.effort, { routeChange: true })).catch(() => {}) },
   })
+  const openRemote = () => {
+    const generation = ++remote.current.generation
+    remote.current.active = true
+    close()
+    setHermes(generation)
+  }
+  const closeRemote = generation => {
+    if (remote.current.generation !== generation) return
+    remote.current.active = false
+    remote.current.generation++
+    setHermes(false)
+    button.current?.focus()
+  }
+  const remoteConnected = async (next, generation) => {
+    const current = () => remote.current.mounted && remote.current.active && remote.current.generation === generation && owner.current === bot.id
+    if (!current() || typeof next?.modelRef !== 'string') return
+    await Promise.resolve(actions.refreshModels?.()).catch(() => {})
+    if (!current()) return
+    remote.current.active = false
+    remote.current.generation++
+    setHermes(false)
+    if (crossing(next.modelRef)) {
+      keys.current = true
+      setView(MENU_ROOT)
+      setConfirm({ ref: next.modelRef, effort: undefined })
+      open()
+    } else {
+      finish()
+      void Promise.resolve(pickModel(next.modelRef, undefined)).catch(() => {})
+    }
+  }
   return h(Fragment, null,
+    hermes ? h(HermesRemoteConnect, { key: hermes, onClose: () => closeRemote(hermes), onConnected: next => remoteConnected(next, hermes) }) : null,
     link ? h('button', {
       ref: button, type: 'button', className: 'bt-model-change', 'aria-haspopup': 'menu', 'aria-expanded': isOpen,
       'aria-label': t('Change the model of {name}', { name: bot.name }), onClick: toggle,
@@ -732,6 +786,7 @@ function DshModelMenu({ bot, roster, actions, run, wide = false, link = false, c
     shownPlace ? createPortal(h('div', { ref: menu, className: `bt-menu bt-model-menu${shownPlace.bottom !== undefined ? ' bt-menu-up' : ''}`, role: 'menu', 'aria-label': t('Model for {name}', { name: bot.name }), style: shownPlace, 'data-leaving': leaving || undefined, onKeyDown },
       confirmView ?? h(ModelSteps, {
         roster, bot, view, current, picked, levelName: effortLabel, go, onModel, onLevel,
+        onRemote: openRemote,
         onManage: manage ? () => { finish(); manage() } : undefined,
       }),
       keyFor === undefined ? null : h(ModelKeyCard, { model: keyFor, actions: keyActions })), document.body) : null)
@@ -751,7 +806,7 @@ function modelWords(roster, ref) {
   return {
     model: served ? modelLabel(served) : rest.join('/'),
     route: info === undefined ? '' : routeName(info.route),
-    provider: served ? connectionOf(served) : provider,
+    provider: info?.connection ?? (served ? connectionOf(served) : provider),
   }
 }
 
@@ -762,7 +817,7 @@ function modelWords(roster, ref) {
 export function ModelLine({ bot, roster, actions, run, modelRef, onPick, chat = false }) {
   const words = modelWords(roster, modelRef ?? bot.model ?? bot.appliedModel)
   return h('div', { className: 'bt-model-line' },
-    h('span', { className: 'bt-model-line-text' }, words.route === ''
+    h('span', { className: 'bt-model-line-text' }, words.route === '' || words.route === words.provider
       ? t('Using {model} · {provider}', words)
       : t('Using {model} · {route} · {provider}', words)),
     h('span', { className: 'bt-model-line-sep', 'aria-hidden': true }, '·'),
@@ -936,7 +991,7 @@ function SignInHost({ entry, actions }) {
   })
 }
 
-export const MODEL_CSS = `
+export const MODEL_CSS = `${HERMES_MARK_CSS}
 .bt-model-trigger{display:inline-flex;align-items:center;gap:8px;max-width:100%;min-width:0;height:auto;min-height:32px;padding:4px 8px 4px 10px;border:0;border-radius:8px;background:var(--bt-hover);color:var(--bt-ink);font:inherit;text-align:left;cursor:pointer;transition:background-color .12s ease}
 .bt-model-trigger:hover,.bt-model-trigger[aria-expanded=true]{background:var(--bt-active)}
 .bt-model-trigger:focus-visible{outline:2px solid var(--bt-accent);outline-offset:1px}
@@ -993,6 +1048,7 @@ export const MODEL_CSS = `
 .bt-route-icon{flex:none;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;color:var(--bt-ink-2)}
 .bt-route-icon svg{width:16px;height:16px}
 .bt-model-step>[data-route=acp] .bt-route-icon{color:var(--bt-accent)}
+.bt-model-step>[data-route=hermes-remote] .bt-menu-label{flex:none}
 .bt-agent-mark{flex:none;display:block;border-radius:4px;object-fit:contain}
 .bt-agent-initial{flex:none;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;background:var(--bt-tag-bg);color:var(--bt-ink-2);font-weight:600;line-height:1}
 .bt-model-menu .bt-model-step .bt-menu-label{font-size:13px;line-height:18px;font-weight:500;color:var(--bt-ink)}
@@ -1002,6 +1058,7 @@ export const MODEL_CSS = `
 .bt-model-step>[data-unavailable] .bt-menu-label{color:var(--bt-ink-2);font-weight:500}
 .bt-model-step>[data-unavailable] :is(.bt-route-icon,.bt-agent-mark,.bt-agent-initial){opacity:.6}
 .bt-model-step .bt-menu-hint[data-route-detail]{max-width:64%;overflow:visible;text-align:right;white-space:normal;line-height:14px;font-style:italic}
+.bt-model-step>[data-route=hermes-remote] .bt-menu-hint{flex:1;max-width:none;white-space:nowrap}
 .bt-model-confirm{padding:10px 10px 8px;gap:8px}
 .bt-model-confirm-title{font-size:13px;line-height:18px;font-weight:600;color:var(--bt-ink)}
 .bt-model-confirm-move{font-size:11px;line-height:15px;color:var(--bt-ink-3);overflow-wrap:anywhere}
