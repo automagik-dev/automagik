@@ -79,6 +79,7 @@ export async function readCatalog(run, { defaultName, seen = () => {}, stopped =
     if (model.probed) continue
     if (stopped()) return state
     await run.setOption('model', model.id)
+    if (stopped()) return state
     model.reasoning = reasoningOf(run.option('thought_level'))
     model.probed = true
     seen(state)
@@ -113,6 +114,7 @@ export class Catalog {
    *   id: string, name: string, defaultName: string, fallback: CatalogModel[],
    *   key(): string | undefined, spawn(): { command: string, args?: string[], env?: Record<string, string> } | Promise<any>,
    *   home?: string, log?(message: string): void, waitMs?: number, now?(): number,
+   *   onChange?(catalog: Catalog): void,
    * }} spec - `key` names what the probe ran (the adapter's release); a new one probes again.
    */
   constructor(spec) {
@@ -131,6 +133,10 @@ export class Catalog {
     this.failedAt = undefined
     this.run = undefined
     this.disposed = false
+    this.generation = 0
+    this.refreshing = false
+    this.releaseList = undefined
+    this.notified = this.visibleKey()
     // What the agent's own session last said of its sign-in: true once a probe opened a
     // session, false when the agent refused one with ACP's auth_required, undefined until then.
     this.access = undefined
@@ -169,49 +175,112 @@ export class Catalog {
       ? this.now() - this.failedAt < RETRY_MS
       : this.readAt !== undefined && this.now() - this.readAt < STALE_MS
     if (this.probedKey === key && fresh) return
-    this.probedKey = key
-    this.failedAt = undefined
-    let listed
-    this.listed = new Promise((resolve) => { listed = resolve })
-    this.probing = this.probe(key, listed).finally(() => {
-      listed()
-      this.probing = undefined
-    })
+    this.begin(key)
   }
 
-  async probe(key, listed) {
+  /** Read again after sign-in, keeping the last catalog while this read runs. */
+  refresh() {
+    if (this.disposed || this.refreshing) return this.probing
+    const key = this.spec.key()
+    if (key === undefined) return
+    this.retire()
+    return this.begin(key, true)
+  }
+
+  retire() {
+    this.generation += 1
+    this.run?.dispose()
+    this.run = undefined
+    this.releaseList?.()
+    this.releaseList = undefined
+    this.probing = undefined
+    this.refreshing = false
+  }
+
+  begin(key, forced = false) {
+    const generation = ++this.generation
+    this.probedKey = key
+    this.failedAt = undefined
+    this.refreshing = forced
+    let listed
+    this.listed = new Promise((resolve) => { listed = resolve })
+    this.releaseList = listed
+    this.probing = this.probe(key, generation, listed).finally(() => {
+      listed()
+      if (this.disposed || this.generation !== generation) return
+      this.probing = undefined
+      this.refreshing = false
+      this.releaseList = undefined
+    })
+    return this.probing
+  }
+
+  visibleKey() {
+    return JSON.stringify(this.current().map(model => ({
+      id: model.id, name: model.name,
+      resolvesTo: model.resolvesTo ?? (model.id === DEFAULT_MODEL
+        ? /^Its own setting: (.+)$/.exec(model.description ?? '')?.[1]?.trim() : undefined),
+      reasoning: model.reasoning,
+    })))
+  }
+
+  changed() {
+    const visible = this.visibleKey()
+    if (visible === this.notified) return
+    this.notified = visible
+    try {
+      this.spec.onChange?.(this)
+    } catch (error) {
+      this.spec.log?.(`could not publish ${this.spec.name}'s models: ${error?.message ?? error}`)
+    }
+  }
+
+  async probe(key, generation, listed) {
+    const current = () => !this.disposed && this.generation === generation
     let run
+    let first = true
+    const previous = this.live?.complete ? this.live : undefined
     const timer = setTimeout(() => run?.dispose(), PROBE_TIMEOUT_MS)
     timer.unref?.()
     try {
       const launch = await this.spec.spawn()
-      if (this.disposed) return
+      if (!current()) return
       run = new AgentRun({ ...launch,
         cwd: launch.env?.AUTOMAGIK_BOT_CLI_HOME ?? homedir(), name: this.spec.name })
       this.run = run
       await run.start()
+      if (!current()) return
       this.access = true
       const state = await readCatalog(run, {
         defaultName: this.spec.defaultName,
-        stopped: () => this.disposed || !run.alive,
+        stopped: () => !current() || !run.alive,
         seen: (state) => {
-          if (this.probedKey !== key) return
-          this.live = state
+          if (!current()) return
+          // readCatalog mutates its state as efforts arrive. Retired reads own no live data.
+          this.live = structuredClone(state)
           listed()
+          if (first || state.complete) this.changed()
+          first = false
         },
       })
+      if (!current()) return
       if (!state.complete) throw new Error('it stopped before every model was read')
       this.readAt = this.now()
+      this.saved = { key, at: this.readAt, models: structuredClone(state.models) }
       this.write(key, state.models)
     } catch (error) {
+      if (!current()) return
+      if (previous !== undefined) this.live = previous
       this.failedAt = this.now()
       // Signed out is the agent's own word; any other failure says nothing of the sign-in.
       if (isAuthRequired(error)) this.access = false
-      if (!this.disposed) this.spec.log?.(`could not read ${this.spec.name}'s models, offering its usual ones: ${error?.message ?? error}`)
+      this.changed()
+      this.spec.log?.(`could not read ${this.spec.name}'s models, offering its usual ones: `
+        + `${error?.message ?? error}`)
     } finally {
       clearTimeout(timer)
       run?.dispose()
-      if (this.run === run) this.run = undefined
+      if (current() && this.run === run) this.run = undefined
     }
   }
 
@@ -288,6 +357,6 @@ export class Catalog {
 
   dispose() {
     this.disposed = true
-    this.run?.dispose()
+    this.retire()
   }
 }
