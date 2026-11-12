@@ -537,13 +537,14 @@ try {
   console.log('PASS download hook motion: the sheet eases in for visitors who allow motion, appears at once otherwise, and ends in place')
   // The projects row. Every mark is the project's own file at its own proportions, the dark
   // file on a dark page. For a visitor who allows motion it is one line that drifts (slower on
-  // a phone, where every name is whole on screen as it passes), stops under the pointer and
-  // turns into the still list for the keyboard; with reduced motion it is the still, wrapped
-  // list. The copy that fills the gap is never reached.
+  // a phone, where every name is whole on screen for at least 7 s as it passes), stops under
+  // the pointer and turns into the still list for the keyboard; a pause switch under it holds
+  // it still for a tap, a click or the Space key. With reduced motion it is the still, wrapped
+  // list and there is no switch. The copy that fills the gap is never reached.
   const drift = {}
   for (const colorScheme of ['light', 'dark']) for (const [width, height] of [[1440, 900], [390, 844]]) for (const reducedMotion of ['no-preference', 'reduce']) {
     const label = `${width}px ${colorScheme} ${reducedMotion}`
-    const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, colorScheme, reducedMotion })
+    const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, colorScheme, reducedMotion, hasTouch: width < 700 })
     try {
       const outside = await guard(context), page = await context.newPage()
       await page.goto(origin + '/', { waitUntil: 'load' })
@@ -556,6 +557,8 @@ try {
           items: [...list.children].map(item => { const box = item.getBoundingClientRect(), image = item.querySelector('img'), drawn = image.getBoundingClientRect(); return { left: box.left, right: box.right, middle: Math.round(box.top + box.height / 2), width: box.width, file: new URL(image.currentSrc).pathname, loaded: image.naturalWidth > 0, ratio: image.naturalWidth / image.naturalHeight, drawn: [drawn.width, drawn.height], link: item.querySelector('a').getBoundingClientRect().height } }),
           wraps: style.flexWrap, copy: getComputedStyle(copy).display, running: list.getAnimations().map(animation => [animation.animationName, animation.playState]),
           lap: parseFloat(style.animationDuration), length: list.getBoundingClientRect().width, clear: track.clientWidth * (1 - 2 * edge / 100), overflow: document.documentElement.scrollWidth - innerWidth,
+          tall: document.querySelector('.we-use').getBoundingClientRect().height,
+          pause: (() => { const label = document.querySelector('.we-use-pause'), box = label.getBoundingClientRect(), input = label.querySelector('input'), over = input.getBoundingClientRect(); return { shown: getComputedStyle(label).display, size: [box.width, box.height], covered: over.width >= box.width - 0.5 && over.height >= box.height - 0.5, on: input.checked, says: label.innerText.trim(), inTrack: Boolean(label.closest('.we-use-track')) } })(),
         }
       })
       let state = await row()
@@ -568,6 +571,7 @@ try {
       })
       if (reducedMotion === 'reduce') {
         assert.deepEqual([state.wraps, state.copy, state.running], ['wrap', 'none', []], `Reduced motion: the still, wrapped list: ${label}`)
+        assert.equal(state.pause.shown, 'none', `Reduced motion: nothing moves, so there is no pause switch: ${label}`)
         for (const item of state.items) assert.ok(item.left >= 0 && item.right <= width, `Every item is on screen: ${label}`)
       } else {
         assert.deepEqual([state.wraps, state.copy, state.running], ['nowrap', 'flex', [['we-use-drift', 'running']]], `The row is one drifting line: ${label} ${JSON.stringify(state.running)}`)
@@ -575,16 +579,41 @@ try {
         // Slow enough to read: the widest item fits whole between the faded edges, with time to spare.
         const speed = state.length / state.lap, widest = Math.max(...state.items.map(item => item.width))
         drift[width] = speed
-        assert.ok(widest < state.clear && (state.clear - widest) / speed >= 4, `Each name is whole on screen for seconds as it passes: ${label} ${speed.toFixed(1)}px/s`)
+        const whole = (state.clear - widest) / speed, least = width < 700 ? 7 : 4
+        assert.ok(widest < state.clear && whole >= least, `Each name is whole on screen for at least ${least} s as it passes: ${label} ${speed.toFixed(1)}px/s ${whole.toFixed(1)}s`)
         if (width === 1440) {
           const band = await page.locator('.we-use-track').boundingBox()
           await page.mouse.move(band.x + band.width / 2, band.y + band.height / 2)
           assert.deepEqual((await row()).running, [['we-use-drift', 'paused']], `The row stops under the pointer: ${label}`)
           await page.mouse.move(0, 0)
         }
+        // The pause switch: a real checkbox under the row, a 44px target that the box itself
+        // covers. A tap on a phone (a click elsewhere) holds the row where it is, with nothing
+        // moved on the page; the Space key lets it go again, and the row drifts on.
+        assert.deepEqual([state.pause.shown, state.pause.covered, state.pause.on, state.pause.says, state.pause.inTrack], ['flex', true, false, 'Pause', false], `The pause switch is shown, off, outside the row: ${label} ${JSON.stringify(state.pause)}`)
+        assert.ok(state.pause.size[0] >= 44 && state.pause.size[1] >= 44, `The pause switch is a 44px target: ${label} ${state.pause.size}`)
+        // What assistive technology is told: one checkbox, named by its label, with its state.
+        const told = async () => {
+          const cdp = await context.newCDPSession(page), { nodes } = await cdp.send('Accessibility.getFullAXTree')
+          await cdp.detach()
+          return nodes.filter(node => !node.ignored && node.role?.value === 'checkbox').map(node => [node.name?.value, String(node.properties?.find(property => property.name === 'checked')?.value.value)])
+        }
+        assert.deepEqual(await told(), [['Pause', 'false']], `The switch is read out as a checkbox named Pause, not checked: ${label}`)
+        const box = page.getByRole('checkbox', { name: 'Pause', exact: true })
+        if (width < 700) await box.tap(); else await box.click()
+        await page.mouse.move(0, 0)
+        assert.deepEqual(await told(), [['Paused', 'true']], `Once on, it is read out as Paused, checked: ${label}`)
+        const held = await row()
+        assert.deepEqual([held.running, held.wraps, held.copy, held.pause.on, held.pause.says, held.tall], [[['we-use-drift', 'paused']], 'nowrap', 'flex', true, 'Paused', state.tall], `The switch holds the row still, in place: ${label} ${JSON.stringify([held.running, held.pause, held.tall])}`)
+        await page.getByRole('checkbox', { name: 'Paused', exact: true }).focus()
+        await page.keyboard.press('Space')
+        const freed = await row()
+        assert.deepEqual([freed.running, freed.wraps, freed.pause.on, freed.pause.says], [[['we-use-drift', 'running']], 'nowrap', false, 'Pause'], `Space lets the row go again: ${label} ${JSON.stringify([freed.running, freed.pause])}`)
+        await page.evaluate(() => document.activeElement.blur())
       }
       await page.screenshot({ path: join(evidence, `we-use-${width}-${colorScheme}-${reducedMotion === 'reduce' ? 'still' : 'drifting'}.png`) })
-      // The keyboard reaches the eleven links once, in order, and the row holds still while it is in it.
+      // The keyboard reaches the eleven links once, in order, and the row holds still while it is in it;
+      // then the pause switch, where there is one; then it leaves the row.
       await page.locator('.we-use-title').evaluate(node => { node.tabIndex = -1; node.focus() })
       const reached = []
       for (const { href } of used) {
@@ -594,6 +623,14 @@ try {
       assert.deepEqual(reached, used.map(({ href }) => [href, false, true]), `Tab walks the row once, each link on screen: ${label}`)
       state = await row()
       assert.deepEqual([state.wraps, state.copy, state.running], ['wrap', 'none', []], `With the keyboard in it the row is the still list: ${label}`)
+      if (reducedMotion !== 'reduce') {
+        // The next Tab is the pause switch: the ring goes round its pill, and with the keyboard
+        // out of the row the row drifts again.
+        await page.keyboard.press('Tab')
+        const ring = await page.evaluate(() => { const active = document.activeElement, pill = active.closest('.we-use-pause'), style = pill && getComputedStyle(pill); return { on: active.matches('.we-use-pause input:focus-visible'), ring: style && [style.outlineStyle, style.outlineWidth, style.outlineColor !== 'rgba(0, 0, 0, 0)'] } })
+        assert.deepEqual(ring, { on: true, ring: ['solid', '3px', true] }, `Tab reaches the pause switch and its focus ring shows: ${label} ${JSON.stringify(ring)}`)
+        assert.deepEqual((await row()).running, [['we-use-drift', 'running']], `With the keyboard on the switch the row drifts: ${label}`)
+      }
       await page.keyboard.press('Tab')
       assert.equal(await page.evaluate(() => Boolean(document.activeElement.closest('.we-use'))), false, `The copy is never reached: ${label}`)
       assert.deepEqual(outside, [], `The row asks nothing of another site: ${label}`)
