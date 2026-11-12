@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Queued (owner's direction 2026-11-10, issue #1007; replaces RFC 0013's D27; amends RFC 0003's live switching at a harness change; Decided 10 (the route) by the owner 2026-11-10; Q1-Q14 open for the owner) |
+| Status | Proposed (owner not yet read; owner's direction 2026-11-10, issue #1007; replaces RFC 0013's D27; amends RFC 0003's live switching at a harness change; Decided 10 (the route) by the owner 2026-11-10; Q1-Q14 open for the owner) |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | none here (docs); plugin (3.N.P) for bots-dsh; desktop (3.N) only if the preload must change; the server image; herdr (3.N.P) for the pack's fix-only period, the `am mailbox send` verb (the pack's CLI is its source; `am/` gets it as a byte copy) and the retirement notice; am (3.N.P) for those copies |
 | Created | 2026-11-10 |
