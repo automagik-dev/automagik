@@ -1,6 +1,6 @@
 # Brand assets
 
-Automagik's own marks and character art, Arca's icon and we unfold's Open Intelligence seal
+Automagik's own marks and character art, Arca's icon and we unfold's Open Intelligence tag
 are used. No third-party customer marks or new drawings are included.
 
 - `mark.webp`, `wordmark.webp`, `lockup.webp`, `app-icon.png`: Automagik
@@ -16,11 +16,19 @@ are used. No third-party customer marks or new drawings are included.
   kit (draft 3), copied unchanged under the kit's file names. Arca's mark belongs to Arca;
   it is shown here for Arca with Arca's agreement, by its kit's rules, and is not covered by
   this site's Apache-2.0 grant. A newer kit replaces these files at the same paths.
-- `open-intelligence/site-seal-full-colour.snippet.html`: we unfold's official Open
-  Intelligence seal, the full-colour site embed, supplied by the we unfold team (rendered
-  from the drawing code of the weunfold.ai site, commit `df162c96`) and placed unchanged.
-  The seal belongs to we unfold; it is shown by its usage rules and is not covered by this
-  site's Apache-2.0 grant.
+- `open-intelligence/open-intelligence-tag.svg`: we unfold's horizontal Open Intelligence
+  tag, one colour, copied unchanged from Arca's public repository (`automagik-si/arca`,
+  commit `7da787e`, `assets/open-intelligence/`). The tag is we unfold's mark, used as the
+  owner directs; it is not covered by this site's Apache-2.0 grant, and we unfold's source
+  carries no licence file.
+- `automagik/automagik-lockup-oi-ink.svg`, `-cream.svg`, `-ink.png`, `-cream.png`: the
+  official Automagik lockup, built by `scripts/build-lockup.mjs` from `lockup.webp`
+  (unchanged; enlarged from its 902 px in the PNGs), the tag above (unchanged) and IBM Plex
+  Mono SemiBold for the tag's words. The logo is Apache-2.0 as the other Automagik brand
+  files; the tag inside it stays we unfold's.
+- `ibm-plex-mono-latin-600.woff2`: IBM Plex Mono SemiBold, Latin, Copyright 2017 IBM Corp.,
+  from `@fontsource/ibm-plex-mono` 5.3.0, unchanged. SIL Open Font License 1.1, reproduced
+  in `OFL-IBMPlexMono.txt`. It sets the tag's words.
 - `manrope-latin.woff2`: Manrope, Copyright 2018 The Manrope Project Authors.
   SIL Open Font License 1.1, reproduced in `OFL-Manrope.txt`.
 - `dm-sans-latin.woff2`: DM Sans, Copyright 2014 The DM Sans Project Authors.

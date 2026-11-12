@@ -7,7 +7,8 @@ import { fileURLToPath } from 'node:url'
 import { fileText, scan } from '../../herdr/scripts/privacy-check.mjs'
 import { supportPrivacy } from './waitlist/lib/ui.js'
 import { themeCss } from './scripts/sync-theme.mjs'
-import { pages, routes, rootFiles, weUnfold, arca, seal } from './scripts/build-pages.mjs'
+import { pages, routes, rootFiles, weUnfold, arca, oiTag } from './scripts/build-pages.mjs'
+import { GEOMETRY, LOGO, TONES, tagInner } from './scripts/build-lockup.mjs'
 
 const root = resolve(fileURLToPath(new URL('.', import.meta.url)))
 const read = path => readFileSync(resolve(root, path), 'utf8')
@@ -22,7 +23,7 @@ const htmlAt = route => read(`${route.slice(1)}index.html`)
 const repo = 'https://github.com/automagik-si/automagik'
 const docs = 'https://docs.automagik.dev'
 const downloads = [...['Mac.dmg', 'Linux.deb', 'Linux.AppImage'].map(name => `${repo}/releases/latest/download/Automagik-${name}`), release.url]
-const allowed = new Set([repo, docs, ...downloads, ...routes.map(route => `https://automagik.si${route}`), 'mailto:privacy@automagik.si', weUnfold.url, 'https://weunfold.ai'])
+const allowed = new Set([repo, docs, ...downloads, ...routes.map(route => `https://automagik.si${route}`), 'mailto:privacy@automagik.si', weUnfold.url])
 // Text as a reader gets it: inline tags vanish, block tags become a space.
 const plain = html => html.replace(/<\/?(?:a|span|strong)\b[^>]*>/g, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
 const productOrder = ['/desktop/', '/mobile/', '/omni/', '/genie/', '/cloud/', '/arca/', '/mykes/']
@@ -96,7 +97,7 @@ test('every href/action points locally or to an exact reviewed destination', () 
 
 test('images are reviewed brand assets, unchanged captures or recorded crops of them', () => {
   // Arca's two icon files are its kit's, under the kit's own names.
-  const brand = new Set(['/assets/brand/lockup.webp', '/assets/brand/mark.webp', '/assets/brand/omni-pleased.png', '/assets/brand/arca/svg/arca-icon-ink.svg', '/assets/brand/arca/svg/arca-icon-ivory.svg'])
+  const brand = new Set(['/assets/brand/lockup.webp', '/assets/brand/mark.webp', '/assets/brand/omni-pleased.png', '/assets/brand/arca/svg/arca-icon-ink.svg', '/assets/brand/arca/svg/arca-icon-ivory.svg', '/assets/brand/automagik/automagik-lockup-oi-ink.svg', '/assets/brand/automagik/automagik-lockup-oi-cream.svg'])
   for (const html of generated.values()) {
     for (const [, value] of html.matchAll(/(?:src|srcset|poster)="([^"]+)"/g)) {
       for (const source of value.split(',').map(candidate => candidate.trim().split(/\s+/)[0])) {
@@ -249,7 +250,7 @@ test('Arca has exactly one stand-in page here; home links to its same-tab canoni
   assert.doesNotMatch(card, /tile-tag/)
   // Arca's own logo stands wherever Arca does, never another product's mark: its kit's icon,
   // ink in light and ivory in dark. The two menus, the home card and the page's heading
-  // each carry one; nothing else does, and it never stands with the Open Intelligence seal.
+  // each carry one; nothing else does, and it never stands with the Open Intelligence tag.
   const slot = /<span class="arca-mark at-(\w+)"><picture><source media="\(prefers-color-scheme: dark\)" srcset="\/assets\/brand\/arca\/svg\/arca-icon-ivory\.svg"><img src="\/assets\/brand\/arca\/svg\/arca-icon-ink\.svg" width="64" height="64" alt="" aria-hidden="true" decoding="async"><\/picture><\/span>/g
   // The kit's files, never redrawn here: one colour each, Arca's ink and Arca's ivory.
   for (const [tone, colour] of [['ink', '#2a1d12'], ['ivory', '#ebe6da']]) {
@@ -263,7 +264,7 @@ test('Arca has exactly one stand-in page here; home links to its same-tab canoni
     assert.deepEqual(places, ['menu', 'menu', ...(route === '/' ? ['card'] : route === '/arca/' ? ['hero'] : [])], route)
     assert.equal((html.match(/arca-mark/g) ?? []).length, places.length, route)
     for (const [item] of html.matchAll(/<a class="menu-item" href="\/arca\/"[\s\S]*?<\/a>/g)) assert.doesNotMatch(item, /<img[^>]*\/assets\/(?:art|brand\/(?:mark|lockup))/, route)
-    assert.doesNotMatch(html.slice(html.indexOf('<div class="footer-open">')), /arca-mark|<img/, route)
+    assert.doesNotMatch(html.slice(html.indexOf('<div class="footer-end">')), /arca-mark|<img/, route)
   }
   assert.doesNotMatch(page.match(/<main[\s\S]*<\/main>/)[0].split('class="more ')[0], /<img[^>]*\/assets\/(?:art|brand\/(?:mark|lockup))/)
   for (const html of generated.values()) for (const [link] of html.matchAll(/<a\b[^>]*href="\/arca\/"[^>]*>/g)) assert.doesNotMatch(link, /target=/)
@@ -276,17 +277,11 @@ test('we unfold and Open Intelligence: the approved wording, from one constant, 
   assert.equal(weUnfold.partOf, 'Automagik is part of we unfold, the home of the Open Intelligence movement.')
   assert.equal(weUnfold.openIntelligence, 'Open Intelligence: a future more people can understand, question, and shape.')
   for (const [route, html] of generated) {
-    const text = plain(html)
-    // Every footer carries we unfold's official seal, byte for byte as given, once, beside
-    // the Apache-2.0 line (it marks the part built in the open), with "Support Open
-    // Intelligence" as link text beside it and never drawn into it. The part-of line stays
-    // in the footer and in the Company menu. Automagik's own stamp is gone.
+    // The tag's own words are capitals inside the tag; the wording rules are for sentences.
+    const text = plain(html.replace(oiTag, ''))
+    // The part-of line stays in the footer and in the Company menu, never beside the tag.
     const footer = html.slice(html.indexOf('<footer'))
-    assert.equal(html.split(seal).length, 2, route)
-    assert.ok(footer.includes(`<div class="footer-open">${seal}<div class="footer-open-copy"><p class="footer-open-label"><a href="${weUnfold.url}">Support Open Intelligence `), route)
-    assert.match(footer.slice(footer.indexOf('footer-open-copy')), /^[^]*?<p class="footer-license">[^<]*Apache-2\.0/, route)
-    assert.ok(plain(footer).includes(weUnfold.partOf), route)
-    assert.doesNotMatch(html, /class="stamp|seal-ring|stamp-ink/, route)
+    assert.ok(plain(footer.slice(0, footer.indexOf('<div class="footer-end">'))).includes(weUnfold.partOf), route)
     assert.ok(plain(html.match(/id="menu-company"[\s\S]*?<\/div><\/div>/)[0]).includes(weUnfold.partOf), route)
     assert.ok(html.includes(`<a href="${weUnfold.url}">we unfold</a>`), route)
     // Open Intelligence keeps both capitals and is never shortened; we unfold is lower case
@@ -299,11 +294,63 @@ test('we unfold and Open Intelligence: the approved wording, from one constant, 
   }
   const home = plain(htmlAt('/').match(/<main[\s\S]*<\/main>/)[0])
   assert.ok(home.includes(weUnfold.openIntelligence) && home.includes(weUnfold.partOf))
-  // The seal is we unfold's own file: its link, its title, its words in the page's colour.
-  assert.equal(seal, read('assets/brand/open-intelligence/site-seal-full-colour.snippet.html').trim())
-  assert.match(seal, /^<!-- Open Intelligence seal -->\n<a href="https:\/\/weunfold\.ai" title="Open Intelligence: built in the open" style="display:inline-block;line-height:0;color:inherit;text-decoration:none"><svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox="0 0 200 200" width="96" height="96" role="img" aria-label="Open Intelligence">/)
-  // The file as the Unfold team handed it over; a new seal file is a reviewed change here.
-  assert.equal(createHash('sha256').update(readFileSync(resolve(root, 'assets/brand/open-intelligence/site-seal-full-colour.snippet.html'))).digest('hex'), '93cd10bc5b30c5de8a8d982ff1e4fc96793de482329e6e8decb0df5c7e03f14c')
+})
+
+test('Open Intelligence is applied as on Arca\'s site: the horizontal tag in the footer, and the official lockup', () => {
+  // The tag is we unfold's file, pasted as given: one colour (the text colour around it), its
+  // own words, no round seal anywhere. A new tag file is a reviewed change here.
+  assert.equal(oiTag, read('assets/brand/open-intelligence/open-intelligence-tag.svg').trim())
+  assert.equal(createHash('sha256').update(readFileSync(resolve(root, 'assets/brand/open-intelligence/open-intelligence-tag.svg'))).digest('hex'), '5fc165fb016108292d99eb21bc3ba7f3fcd8a1cb6d96ce14501c3a26c332666c')
+  assert.match(oiTag, /^<svg id="oi-badge-ink-kit" xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox="0 0 340 64" width="340" height="64" role="img" aria-label="Open Intelligence badge, one colour">/)
+  assert.match(oiTag, /<text x="68" y="39" font-family="IBM Plex Mono, monospace" font-size="18" font-weight="600" letter-spacing="3\.2" fill="currentColor">OPEN INTELLIGENCE<\/text><\/svg>$/)
+  assert.deepEqual([...new Set([...oiTag.matchAll(/(?:fill|stroke)="([^"]+)"/g)].map(match => match[1]))].sort(), ['currentColor', 'none'])
+  assert.deepEqual(readdirSync(resolve(root, 'assets/brand/open-intelligence')), ['open-intelligence-tag.svg'])
+  for (const [route, html] of generated) {
+    // Footer: the last row ends with the tag, a link to we unfold that holds nothing but the
+    // tag. No words in the link, no sentence about it, no seal, and the tag nowhere else.
+    assert.ok(html.includes(`<span aria-hidden="true">↗</span></a></p><a class="oi-tag" href="${weUnfold.url}">${oiTag}</a></div></div></footer>`), route)
+    assert.match(html, /<div class="footer-end"><p class="footer-license">[^<]*Apache-2\.0[^<]*<a href="https:\/\/github\.com\/automagik-si\/automagik">Source code /, route)
+    assert.equal(html.split(oiTag).length, 2, route)
+    assert.equal(html.split('OPEN INTELLIGENCE').length, 2, route)
+    assert.doesNotMatch(html, /Support Open Intelligence|Open Intelligence seal|site-seal|footer-open|class="stamp|seal-ring/, route)
+    // The official lockup is shown once, on the home page's brand block: never in a header,
+    // a hero, the favicon or a share picture.
+    assert.equal(html.split('automagik-lockup-oi').length, route === '/' ? 7 : 1, route)
+    assert.doesNotMatch(html.slice(0, html.indexOf('<main')), /lockup-oi|oi-tag|oi-badge/, route)
+    assert.doesNotMatch(html, /<meta[^>]*(?:og:image|twitter:image)/, route)
+  }
+  const block = htmlAt('/').match(/<section id="brand" class="wrap kit"[\s\S]*?<\/section>/)[0]
+  assert.ok(block.includes('<picture><source media="(prefers-color-scheme: dark)" srcset="/assets/brand/automagik/automagik-lockup-oi-cream.svg"><img src="/assets/brand/automagik/automagik-lockup-oi-ink.svg" width="902" height="340" alt="The Automagik logo, with the Open Intelligence tag under it at the right" loading="lazy" decoding="async"></picture>'))
+  assert.deepEqual([...block.matchAll(/href="([^"]+)" download/g)].map(match => match[1]), ['ink.svg', 'ink.png', 'cream.svg', 'cream.png'].map(name => `/assets/brand/automagik/automagik-lockup-oi-${name}`))
+  assert.ok(htmlAt('/').indexOf('<section id="brand"') > htmlAt('/').indexOf('<section id="film"'))
+  // Size and colour, as Arca's footer: 170 by 32 px in the footer's text colour, never an
+  // effect on it, and never bigger than the logo it sits with (the logo's word alone, 676 of
+  // the lockup's 902 px, passes 170 px).
+  assert.match(css, /\.oi-tag,\.oi-tag:hover\{flex:none;display:block;border-radius:16px;color:var\(--text\)\}\n\.oi-tag svg\{width:170px;height:32px;max-width:none\}/)
+  for (const [rule] of css.matchAll(/[^{}]*oi-tag[^{}]*\{[^}]*\}/g)) assert.doesNotMatch(rule, /filter|shadow|stroke|outline|opacity|transform|scale|rotate|animation|transition|background/, rule)
+  const footerLogo = Number(css.match(/\.footer-brand \.brand img\{width:(\d+)px\}/)[1])
+  assert.ok(footerLogo * 676 / 902 >= 170, 'the footer logo\'s word is at least as wide as the tag')
+  assert.equal([...css.matchAll(/\.brand img\{width:\d+px\}/g)].length, 4, 'no narrower footer logo at any width')
+  assert.match(css, /@media \(max-width:700px\)\{\.footer-end\{flex-direction:column;align-items:flex-start\}\}/)
+  assert.match(css, /@font-face\{font-family:"IBM Plex Mono";font-style:normal;font-weight:600;font-display:block;src:url\("assets\/brand\/ibm-plex-mono-latin-600\.woff2"\) format\("woff2"\)\}/)
+  // The lockup files: Automagik's logo, unchanged, with the tag under it, right edges
+  // together, the tag 170/275 of the logo's width (Arca's proportion), one colour per ground.
+  assert.deepEqual(readdirSync(resolve(root, 'assets/brand/automagik')).sort(), ['automagik-lockup-oi-cream.png', 'automagik-lockup-oi-cream.svg', 'automagik-lockup-oi-ink.png', 'automagik-lockup-oi-ink.svg'])
+  assert.ok(Math.abs(GEOMETRY.scale * 340 / LOGO.width - 170 / 275) < 1e-9 && Math.abs(GEOMETRY.x + 340 * GEOMETRY.scale - LOGO.width) < 1e-9 && GEOMETRY.y > LOGO.height)
+  assert.deepEqual(TONES, { ink: '#3c3049', cream: '#f3e9dd' })
+  const font = readFileSync(resolve(root, 'assets/brand/ibm-plex-mono-latin-600.woff2')).toString('base64')
+  const size = png => [png.readUInt32BE(16), png.readUInt32BE(20), png[25]]
+  for (const [tone, colour] of Object.entries(TONES)) {
+    const svg = read(`assets/brand/automagik/automagik-lockup-oi-${tone}.svg`)
+    assert.ok(svg.startsWith(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 902 340.02" width="902" height="340.02" color="${colour}" role="img" aria-label="Automagik, with the Open Intelligence tag"><style>@font-face{font-family:"IBM Plex Mono";font-weight:600;src:url(data:font/woff2;base64,${font}) format("woff2")}</style><image href="data:image/png;base64,`), tone)
+    assert.ok(svg.endsWith(`" width="902" height="192"/><g transform="translate(344.40 235.06) scale(1.64000)">${tagInner()}</g></svg>\n`), tone)
+    assert.deepEqual(size(Buffer.from(svg.match(/<image href="data:image\/png;base64,([^"]+)"/)[1], 'base64')), [902, 192, 6], tone)
+    assert.deepEqual(size(readFileSync(resolve(root, `assets/brand/automagik/automagik-lockup-oi-${tone}.png`))), [3000, 1131, 6], tone)
+  }
+  assert.equal(oiTag, oiTag.replace(/^(<svg\b[^>]*>)[\s\S]*(<\/svg>)$/, `$1${tagInner()}$2`))
+  // Arca's own lockup is not cleared for a public repository: it is never among these files.
+  const walk = folder => readdirSync(folder, { withFileTypes: true }).flatMap(entry => entry.isDirectory() ? walk(resolve(folder, entry.name)) : [entry.name])
+  assert.deepEqual(walk(root).filter(name => /arca-lockup/i.test(name)), [])
 })
 
 test('navigation: menus, phone menu, footer sitemap, breadcrumb and previous/next on every page', () => {

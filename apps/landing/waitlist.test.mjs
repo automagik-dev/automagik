@@ -1,13 +1,25 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { onRequest as form, networkPrefix } from './functions/api/waitlist.js'
-import { onRequest as confirm } from './functions/api/waitlist/whatsapp-confirm.js'
-import { onRequest as emailLink } from './functions/api/waitlist/email-confirm.js'
+import { onRequest as formFunction, networkPrefix } from './functions/api/waitlist.js'
+import { onRequest as confirmFunction } from './functions/api/waitlist/whatsapp-confirm.js'
+import { onRequest as emailLinkFunction } from './functions/api/waitlist/email-confirm.js'
 import { constantEqual, hash, now, WHATSAPP_BACKLOG_SECONDS } from './waitlist/lib/shared.js'
 import { fixture } from './waitlist/d1-fixture.mjs'
 
 const origin = 'https://automagik.si'
+// The site's pages are indexable; the waitlist's answers never are. Every response a test
+// receives from the three functions goes through this check: the header on all of them,
+// and the robots meta too on every HTML answer.
+const kinds = new Set()
+const outOfSearch = handler => async context => {
+  const response = await handler(context), type = response.headers.get('content-type') ?? ''
+  assert.equal(response.headers.get('x-robots-tag'), 'noindex, nofollow', `${context.request.method} ${context.request.url} answered ${response.status} without X-Robots-Tag`)
+  if (type.startsWith('text/html')) assert.match(await response.clone().text(), /<head>(?:(?!<\/head>).)*<meta name="robots" content="noindex, nofollow">/s, `${context.request.url} answered ${response.status} without the robots meta`)
+  kinds.add(type.split(';')[0] || 'empty')
+  return response
+}
+const form = outOfSearch(formFunction), confirm = outOfSearch(confirmFunction), emailLink = outOfSearch(emailLinkFunction)
 const fields = { action: 'add', goal: 'Organise my project reports', platform: 'both', apps: 'My editor', expected_result: 'A report I can review', language: 'en', channel: 'email', email: 'demo@example.com', consent: 'yes' }
 function post(env, values = {}, options = {}) {
   const request = new Request(origin + '/api/waitlist', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'CF-Connecting-IP': '203.0.113.1', ...options.headers }, body: new URLSearchParams({ ...fields, ...values }) })
@@ -288,4 +300,23 @@ test('WhatsApp backlog cutoff: replay allows the exact boundary and refuses one 
   const pastBoundary = await callback(f.env, body)
   assert.equal(pastBoundary.status, 404, 'replay at cutoff + 1ms')
   assert.deepEqual(await pastBoundary.json(), { status: 'unknown_or_expired' })
+})
+
+test('waitlist answers stay out of search: X-Robots-Tag on every kind, the robots meta on HTML', async t => {
+  const f = fixture(); t.after(f.close)
+  // One answer of each kind, read here directly; every other test's answers pass the same check.
+  const page = await formFunction({ env: {}, request: new Request(origin + '/api/waitlist', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'CF-Connecting-IP': '203.0.113.1' }, body: new URLSearchParams(fields) }) })
+  assert.equal(page.status, 503); assert.match(page.headers.get('content-type'), /^text\/html/)
+  assert.equal(page.headers.get('x-robots-tag'), 'noindex, nofollow')
+  assert.equal((await page.text()).match(/<meta name="robots" content="noindex, nofollow">/g)?.length, 1)
+  const link = await emailLinkFunction({ env: f.env, request: new Request(origin + '/api/waitlist/email-confirm?token=absent') })
+  assert.match(link.headers.get('content-type'), /^text\/html/); assert.equal(link.headers.get('x-robots-tag'), 'noindex, nofollow')
+  assert.match(await link.text(), /<meta name="robots" content="noindex, nofollow">/)
+  const refused = await confirmFunction({ env: f.env, request: new Request(origin + '/api/waitlist/whatsapp-confirm') })
+  assert.equal(refused.status, 405); assert.equal(refused.headers.get('content-type'), null); assert.equal(refused.headers.get('x-robots-tag'), 'noindex, nofollow')
+  const unknown = await callback(f.env, event('AMG-ABSENT-CODE'))
+  assert.equal(unknown.headers.get('content-type'), 'application/json'); assert.equal(unknown.headers.get('x-robots-tag'), 'noindex, nofollow')
+  // The wrapped functions met all three kinds across this file.
+  await post(f.env, { consent: '' }); await callback(f.env, {}, { method: 'GET' })
+  assert.deepEqual([...kinds].sort(), ['application/json', 'empty', 'text/html'])
 })

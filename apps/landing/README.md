@@ -1,4 +1,4 @@
-# automagik.si preview
+# automagik.si
 
 RFC 0027, revised by the owner on 2026-11-11: the umbrella home plus Desktop, Mobile,
 Omni, Genie, Cloud and Mykes pages, plus one stand-in page for Arca until Arca's own site is
@@ -42,19 +42,29 @@ everywhere; it is the `products` list in `scripts/build-pages.mjs`.
 
 Automagik is part of we unfold. The link and both lines of wording are one constant,
 `weUnfold` in `scripts/build-pages.mjs`: change them there and regenerate. They appear in the
-Company menu, once on the home page and once in every footer. Beside the footer's licence
-line (the Apache-2.0 parts, since the seal marks the part built in the open and not the
-whole offer) stands we unfold's official Open Intelligence seal, with the link text Support
-Open Intelligence next to it, never drawn into it. The seal is
-`assets/brand/open-intelligence/site-seal-full-colour.snippet.html`, we unfold's own site
-embed, placed byte for byte: its words, ring weights and mark are never changed, it links
-`https://weunfold.ai` with its own title, it is never smaller than 84 px, it keeps a quarter
-of its width clear on every side and it never moves. A newer seal replaces the file and the
-digest pinned in the contract test. No other product's logo stands with it. The contract test holds
+Company menu, once on the home page and once in every footer.
+
+Open Intelligence is applied the way Arca's site applies it. The only mark is we unfold's
+horizontal tag, `assets/brand/open-intelligence/open-intelligence-tag.svg`, pasted inline as
+given (one colour, the text colour around it; its words are live text in IBM Plex Mono
+SemiBold, which `styles.css` loads). No round seal anywhere. In every footer the tag is 170
+by 32 px, in the footer's text colour, at the right end of the last row (under it, at the
+left, on a phone), and it is a link to we unfold that holds nothing but the tag: no words
+in the link, no sentence beside it. The tag is never bigger than the logo it sits with, so
+the footer's logo is 228 px wide (its word alone passes 170 px). Never redraw, stretch,
+outline, shadow or recolour the tag; its words never change; it never stands in the header,
+a hero, the favicon or a share picture. The tag is we unfold's mark: it is not under this
+site's Apache-2.0 grant, and nothing here calls it open-licensed.
+
+The official Automagik lockup is the logo with the tag under it, right edges together, the
+tag 62% of the logo's width (Arca's proportion): `assets/brand/automagik/` holds it as SVG
+and as PNG at 3000 px wide, in ink for light grounds and cream for dark ones.
+`node apps/landing/scripts/build-lockup.mjs --png` rebuilds the files from the logo, the tag
+and the font. The home page shows it once, in its brand block. Arca's own lockup files are
+not cleared for a public repository and are never committed here. The contract test holds
 the rules from the we unfold team: Open Intelligence keeps both capitals and is never
 shortened; we unfold is lower case in running text; "part of" means the movement, never
-ownership; no we unfold logo, the text is the link, and the only mark is the official
-seal. The owner approves both lines before the site
+ownership; in a sentence the text is the link. The owner approves both lines before the site
 goes live.
 
 ## Links out
@@ -71,7 +81,7 @@ Arca's own icon from Arca's logo kit: `assets/brand/arca/svg/arca-icon-ink.svg` 
 `arca-icon-ivory.svg`, copied unchanged under the kit's own names. A newer kit replaces the
 files at the same paths; never edit a copy. Ink on Arca's sand ground in light, ivory on its
 night ground in dark. Arca's rules hold here: one colour, never redrawn or tinted, never
-animated by this site, never locked up with the Open Intelligence seal, no tagline locked to it,
+animated by this site, never locked up with the Open Intelligence tag, no tagline locked to it,
 and the small cut for any size under 24 px (no place here is that small). Name any retina
 file `name-2x`, since the privacy check reads the usual at-sign form as an address.
 
