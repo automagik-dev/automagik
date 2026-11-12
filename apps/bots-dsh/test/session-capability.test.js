@@ -23,6 +23,7 @@ const KEY = 'person-key-6c1f0e9a-value'
 const OTHER_KEY = 'other-person-key-41d2-value'
 const TOOL = 'mcp__person-space__read_key'
 const PREFIX = 'mcp__person-space__'
+const PUBLIC_TOOL = 'mcp__public-space__read_key'
 const BOT_SESSIONS = ['chief', 'support', 'room-support', 'room-chief']
 
 const secret = (name, value, scope, extra = {}) => ({ name, value, purpose: '', scope, requestedBy: null, createdAt: 1, updatedAt: 1, ...extra })
@@ -122,6 +123,8 @@ async function setup(t, { home = makeHome(), dsh } = {}) {
     name: 'person-space', kind: 'mcp', description: 'One person\'s space', transport: 'stdio',
     command: process.execPath, args: [SERVER], env: { PERSON_KEY: '$DSH_SECRET_PERSON_KEY' },
   }, { ui: true })
+  // One with no secret: its tools must stay in their Session on their own, key or not.
+  await rt.capabilitySave({ name: 'public-space', kind: 'mcp', description: 'No key', transport: 'stdio', command: process.execPath, args: [SERVER] }, { ui: true })
   return env
 }
 const textOf = result => (result.content ?? []).map(block => block.text ?? '').join('')
@@ -134,9 +137,12 @@ test('a Session mount puts its tools in that Session alone; another Session cann
   const b = await env.open('person-b')
   assert.deepEqual(await env.rt.mountCapability('person-a', 'person-space', grant),
     { sessionId: 'person-a', name: 'person-space', state: 'ready', toolPrefix: PREFIX })
+  assert.equal((await env.rt.mountCapability('person-a', 'public-space')).state, 'ready')
   assert.ok(env.tools(a).includes(TOOL), 'A lists the mounted tool')
-  assert.deepEqual(env.tools(b).filter(name => name.startsWith(PREFIX)), [], 'B lists none of it')
-  assert.deepEqual(env.tools().filter(name => name.startsWith(PREFIX)), [], 'nor does the global list')
+  assert.ok(env.tools(a).includes(PUBLIC_TOOL))
+  assert.deepEqual(env.tools(b).filter(name => name.startsWith('mcp__')), [], 'B lists none of them')
+  assert.deepEqual(env.tools().filter(name => name.startsWith('mcp__')), [], 'nor does the global list')
+  assert.equal((await env.call(b, PUBLIC_TOOL)).isError, true, 'B naming a mounted tool with no key is refused too')
 
   const own = await env.call(a)
   assert.notEqual(own.isError, true)
@@ -161,6 +167,7 @@ test('the Session\'s key resolves for no Bot, not for Support\'s own Session and
   for (const sessionId of BOT_SESSIONS) {
     await env.open(sessionId)
     await assert.rejects(env.rt.mountCapability(sessionId, 'person-space', grant), /belongs to a Bot/, sessionId)
+    await assert.rejects(env.rt.mountCapability(sessionId, 'public-space'), /belongs to a Bot/, sessionId)
   }
   // A Bot that has the capability attached cannot start it: the key is not the Bot's.
   for (const botId of ['support', 'chief']) await env.rt.changeCapabilityAttachment('attach', { name: 'person-space' }, botId)
@@ -171,7 +178,10 @@ test('the Session\'s key resolves for no Bot, not for Support\'s own Session and
     assert.match(status.error, /PERSON_KEY is missing or unavailable for this Bot/)
     assert.equal(env.rt.canUseSecret('PERSON_KEY', botId), false)
   }
-  for (const sessionId of BOT_SESSIONS) assert.equal(env.tools(await env.rt.resolveAgent(sessionId)).includes(TOOL), false, sessionId)
+  for (const sessionId of BOT_SESSIONS) {
+    const names = env.tools(await env.rt.resolveAgent(sessionId))
+    assert.equal(names.includes(TOOL) || names.includes(PUBLIC_TOOL), false, sessionId)
+  }
 
   // No Bot's shell has it or is told of it, list_secrets leaves it out, and no card offers it.
   const shell = env.shellEnv.registered.at(-1)
