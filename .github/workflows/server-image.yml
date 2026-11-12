@@ -51,10 +51,12 @@ name: Server image
 # build or into the image. GitHub has no REST endpoint for a Container package's visibility:
 # the job checks it and leaves the organization package-settings path in the summary.
 #
-# A release published with release.yml's GITHUB_TOKEN starts no workflow (GitHub suppresses
-# events made with that token), so the cut's own releases do not trigger this automatically:
-# dispatch it on dev with -f content=<a release that has plugins.json> (the command above), or
-# on a v<version> tag. A release published by hand (or by a PAT) triggers it.
+# A release published with release.yml's GITHUB_TOKEN starts no release-event workflow. After
+# the cut, release.yml explicitly dispatches this on the release tag with content=v<version>
+# for every stable release carrying plugins.json. That independent job only warns on failure;
+# no other lane waits for the image. Manual dispatches can retry it on dev or the release tag.
+# A release published by hand (or by a PAT) also triggers the release event above. The record
+# job's summary links server-image.json beside the pushed digest for the release's live proof.
 
 on:
   pull_request:
@@ -546,5 +548,5 @@ jobs:
             echo
             echo "### Release record"
             echo
-            echo "\`server-image.json\` on \`v${CONTENT}\` records \`${GHCR}@${DIGEST}\`. Pin a workspace by that digest, never by a tag."
+            echo "[server-image.json](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/v${CONTENT}/server-image.json) on \`v${CONTENT}\` records \`${GHCR}@${DIGEST}\`. Pin a workspace by that digest, never by a tag."
           } >> "$GITHUB_STEP_SUMMARY"
