@@ -198,7 +198,13 @@ test('data-root working folders stay guarded when the workspace contains or equa
     const link = join(env.root, 'data-link')
     symlinkSync(join(env.home, 'memory'), link, 'junction')
     assert.match((await env.call('update-bot', { id: 'b', workDir: link })).error?.message, /holds DeepSeek Harness data/)
-    assert.equal((await env.call('update-bot', { id: 'b', workDir: env.project })).value.workDir, env.project)
+    // A matching name prefix is not containment in the protected DSH root.
+    const sibling = env.dsh + '2'
+    mkdirSync(sibling)
+    for (const path of [env.project, sibling]) {
+      assert.equal((await env.call('update-bot', { id: 'b', workDir: path })).value?.workDir, path)
+      assert.equal(env.state().bots.b.workDir, path)
+    }
   })
 })
 
@@ -213,10 +219,14 @@ test('data-root avatar reads stay guarded when the workspace contains or equals 
         `Could not update the Bot: ${pic} is in DeepSeek Harness data, so it cannot be a Bot's photo. Pass an image from another folder.`)
       assert.equal(env.state().bots.b.avatar, undefined)
     }
-    const pic = join(env.project, 'pic.png')
-    writeFileSync(pic, png)
-    assert.equal(await env.tool('update_bot', { avatar: pic }, 'b'), 'Updated Writer.')
-    assert.equal(env.state().bots.b.avatar.image, `data:image/png;base64,${png.toString('base64')}`)
+    const sibling = env.dsh + '2'
+    mkdirSync(sibling)
+    for (const path of [env.project, sibling]) {
+      const pic = join(path, 'pic.png')
+      writeFileSync(pic, png)
+      assert.equal(await env.tool('update_bot', { avatar: pic }, 'b'), 'Updated Writer.')
+      assert.equal(env.state().bots.b.avatar.image, `data:image/png;base64,${png.toString('base64')}`)
+    }
   })
   await t.test('default workspace inside data permits photos', async (t) => {
     const env = await start()
