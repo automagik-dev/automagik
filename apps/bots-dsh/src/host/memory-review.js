@@ -39,6 +39,7 @@ export function installReview(rt, memory) {
     return cursors
   }
   const clip = (text, max) => (text.length > max ? `${text.slice(0, max)} …(cut)` : text)
+  const failureCode = error => (typeof error?.code === 'string' && /^[\w./-]{1,40}$/.test(error.code) ? error.code : 'error')
   // A long message often ends with what the user wants of it, so both ends stay.
   const ends = (text, max) => (text.length > max ? `${text.slice(0, Math.ceil(max * 2 / 3))} …(middle cut)… ${text.slice(-Math.floor(max / 3))}` : text)
 
@@ -175,7 +176,7 @@ export function installReview(rt, memory) {
         problem !== undefined ? (secretEntry(text) ? 'the entry looks like a key, token, password, or ID number, which memory never keeps' : `the entry "${clip(text, 160)}": ${problem}`) :
         undefined
       if (leftOut !== undefined) {
-        rt.warn('omni-ui: memory review of %s left out a change: %s', name, leftOut)
+        rt.warn('omni-ui: memory review of %s left out a change: %s', name, leftOut.startsWith('it names') ? 'invalid target' : leftOut.startsWith('it names the topic') ? 'invalid topic' : leftOut.startsWith('the entry') ? 'invalid entry' : 'not allowed')
         continue
       }
       try {
@@ -186,9 +187,9 @@ export function installReview(rt, memory) {
         if (failure?.code === GONE) return counts()
         // The change is named by its text and where it was headed, so the
         // diagnostics say what was not kept, not only why.
-        const held = op === 'remove' ? `the removal of "${clip(target.text, 160)}"` : `the entry "${clip(text, 160)}"`
+        const held = op === 'remove' ? 'the removal' : 'the entry'
         const aimed = `${fileName(op === 'add' ? { topic } : target.file)} of ${label}`
-        rt.warn('omni-ui: memory review of %s left out a change: %s for %s: %s', name, held, aimed, failure?.message ?? failure)
+        rt.warn('omni-ui: memory review of %s left out a change: %s for %s: %s', name, held, aimed, failureCode(failure))
         if (!ROUTED.has(failure?.code)) failed ??= failure
       }
     }
@@ -253,7 +254,7 @@ export function installReview(rt, memory) {
     if (keeper === undefined) return
     const since = cursorsNow()[seen.key]
     const room = withKeptLines(joinLogs(seen.room, live), await rt.groupLinesAfter(live.id, since).catch((error) => {
-      rt.warn('omni-ui: the log of group "%s" could not be read: %s', live.name, error?.message ?? error)
+      rt.warn('omni-ui: the group log could not be read: %s', failureCode(error))
       return []
     }))
     const members = live.members.map(id => rt.botOf(id)).filter(Boolean).map(bot => `${bot.name}${live.admin === bot.id ? ' (admin)' : ''}`)
@@ -302,12 +303,12 @@ export function installReview(rt, memory) {
       // is said, and the place moves on — the same lines are not read again. A
       // change that is not well formed is set aside and said, one by one.
       if (parsed === undefined) {
-        rt.warn('omni-ui: memory review of %s got no list of changes from the model: %s', name, clip(reply.replace(/\s+/g, ' '), 120))
+        rt.warn('omni-ui: memory review of %s got no list of changes from the model', name)
       } else {
         const { changes, leftOut } = parsed
         for (const change of leftOut) {
           const whole = JSON.stringify(change)
-          rt.warn('omni-ui: memory review of %s left out a change: %s', name, secretEntry(whole) ? 'it looks like a key, token, password, or ID number, which memory never keeps' : `it is not a well-formed change: ${clip(whole, 160)}`)
+          rt.warn('omni-ui: memory review of %s left out a change: %s', name, secretEntry(whole) ? 'it looks like a key, token, password, or ID number, which memory never keeps' : 'it is not a well-formed change')
         }
         // The limit is what one answer may hold, not a cut of the one the model
         // gave: every change in it is kept or set aside, none is dropped.
@@ -361,7 +362,7 @@ export function installReview(rt, memory) {
       try {
         if (rt.readOnly() === undefined) await (waited.roomId === undefined ? reviewChat(waited) : reviewGroup(waited))
       } catch (error) {
-        rt.warn('omni-ui: memory review of %s failed: %s', waited.key, error?.message ?? error)
+        rt.warn('omni-ui: memory review of %s failed: %s', waited.key, failureCode(error))
       } finally {
         reviewsRunning -= 1
       }

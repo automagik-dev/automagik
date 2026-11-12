@@ -241,13 +241,13 @@ export function installTidy(rt, memory) {
       const job = jobs().find(due)
       if (job !== undefined) await tidy(job)
     } catch (error) {
-      rt.warn('omni-ui: the memory tidy failed: %s', error?.message ?? error)
+      rt.warn('omni-ui: the memory tidy failed: %s', typeof error?.code === 'string' ? error.code : 'error')
     } finally {
       running = false
     }
   }
 
-  if (config.memoryTidy !== false) {
+  if (config.memoryTidy === true) {
     ctx.effect(() => {
       const timer = setInterval(() => void tick(), config.memoryTidyEveryMs ?? EVERY_MS)
       timer.unref?.()

@@ -147,11 +147,8 @@ export function install(rt) {
     if (!(await isFolder(path))) throw refusal(`${text} is a file, not a folder`)
     if (await holdsData(path)) throw refusal(`${text} holds DeepSeek Harness data, so it cannot be the team workspace`)
     if (path === await realTeam()) return path
-<<<<<<< HEAD
-=======
     const clash = await rt.privateClash(path)
     if (clash) throw new Error(`${text} is in or around the folder of ${clash.name}, a private Bot, so it cannot be the team workspace`)
->>>>>>> vendor/ds-bot-0.3.6-prepared
     const workspace = await ctx.workspaceRegistry.resolveByPath(path) ?? await ctx.workspaceRegistry.create(path, 'Omni')
     state.workspaceId = workspace.id
     await rt.save()
