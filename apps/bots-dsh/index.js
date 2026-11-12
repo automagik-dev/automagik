@@ -69,6 +69,10 @@ import * as feed from './src/host/feed.js'
 import * as appManifest from './src/host/app-manifest.js'
 import * as pocketChat from './src/host/pocket-chat.js'
 import * as hermesRemote from './src/host/hermes-remote.js'
+import * as im from './src/host/im/index.js'
+import * as officeSkills from './src/host/office-skills.js'
+import * as goalSkills from './src/host/goal-skills.js'
+import * as localAgents from './src/host/local-agents/index.js'
 
 export { COLORS } from './src/host/constants.js'
 
@@ -85,8 +89,7 @@ const MODULES = [
   roster, folders, privateBots, agents, toolDeny, prompt, timeContext, tools, chatIndex, groups, goals, approvals,
   stops, whoRefused, subagentAsks, resume, memory, parts, fallback, cliLogin, images, imagegen, avatarLibrary,
   secrets, connectors, capabilities, learning, schedules, browser, browserPlugins, computer, usage, update, dshUpdate,
-  thinking, agentSpace, feed, channel, appManifest, pocketChat, hermesRemote, phone, mobile, im, officeSkills,
-  goalSkills, localAgents,
+  thinking, agentSpace, feed, channel, appManifest, pocketChat, hermesRemote, im, officeSkills, goalSkills, localAgents,
 ]
 
 // Other Omni plugins inject the runtime as `omniTeam` and add to it through rt.hooks

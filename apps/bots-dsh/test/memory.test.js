@@ -9,7 +9,7 @@ import {
   MEMORY_LIMITS, addLink, cleanEntry, cleanTopic, formatEntry, insertEntry, looksLikeKey,
   looksSecret, matchEntries, parseAsk, parseMemory, parseReview, reviewEntries, removeLink, splitMeta, writtenIn,
 } from '../src/host/memory.js'
-import { fitWindow, promptEntry } from '../src/host/memory-entries.js'
+import { fitWindow, isExpired, isPinned, promptEntry } from '../src/host/memory-entries.js'
 import { rankEntries } from '../src/host/memory-search.js'
 import { estimateTokens } from '../src/host/text.js'
 import { latestMemoryChange, summaryBlocks } from '../src/client/text.js'
@@ -62,6 +62,27 @@ test('a request names one entry by its text, or by a part only it has', () => {
   assert.deepEqual(matchEntries(nested, '- - Nested note').map(entry => entry.text), ['- - Nested note'])
   const nestedTwins = parseMemory('- - - Nested note\n- - - Nested note\n').entries
   assert.deepEqual(matchEntries(nestedTwins, '- - Nested note').map(entry => entry.line), [0, 1])
+})
+
+test('memory search recalls Han text by character bigrams', () => {
+  const [hit] = rankEntries([
+    { text: 'AI中文教程在书架上', file: { topic: '' } },
+    { text: 'English notes about a shelf', file: { topic: '' } },
+  ], '中文')
+  assert.equal(hit?.entry.text, 'AI中文教程在书架上')
+  assert.equal(hit?.hits, 1)
+})
+
+test('memory windows keep pinned entries and recognize expiry without moving earlier', () => {
+  const pinned = { text: 'Pinned fact', meta: { pinned: 'true', added: '2026-01-01' } }
+  const newer = { text: 'Newer fact', meta: { added: '2026-11-01' } }
+  const expired = { text: 'Expired fact', meta: { until: '2026-11-01' } }
+  assert.equal(isPinned(pinned), true)
+  assert.equal(isExpired(expired, '2026-11-12'), true)
+  assert.equal(isExpired(newer, '2026-11-12'), false)
+  const window = fitWindow([newer, pinned], 28, prompt => prompt.length)
+  assert.deepEqual(window.shown, [pinned])
+  assert.equal(window.left, 1)
 })
 
 test('keys are refused, while paths, names, and links are kept', () => {
@@ -272,6 +293,25 @@ test('topics hold details, linked from MEMORY.md, and go when their last entry d
   assert.match(await tool('forget', { entry: 'window', topic: 'travel' }, 'b2'), /The topic \[\[travel\]\] was empty, so it is gone too\./)
   assert.equal(existsSync(join(home, 'memory', 'bots', 'b2', 'travel.md')), false)
   assert.equal(read('bots', 'b2', 'MEMORY.md'), '# Memory\n\n## Index\n')
+})
+
+test('memory history and restore keep a change anchored to its original entry', async (t) => {
+  const { tool, call, read, journal, stop } = start()
+  t.after(() => stop())
+  await tool('remember', { text: 'User prefers short replies' }, 'b2')
+  const added = journal().at(-1)
+  await tool('forget', { entry: 'short replies' }, 'b2')
+  const removed = journal().at(-1)
+  const history = await call('memory-history', { botId: 'b2' })
+  assert.equal(history.ok, true, JSON.stringify(history))
+  assert.equal(history.value.rows.find(row => row.id === removed.id)?.restored, false)
+  const restored = await call('memory-restore', { botId: 'b2', id: removed.id })
+  assert.equal(restored.ok, true, JSON.stringify(restored))
+  assert.match(read('bots', 'b2', 'MEMORY.md'), /- User prefers short replies \[/)
+  assert.equal(journal().at(-1).restored, removed.id)
+  const undone = await call('memory-restore', { botId: 'b2', id: added.id })
+  assert.equal(undone.ok, true, JSON.stringify(undone))
+  assert.doesNotMatch(read('bots', 'b2', 'MEMORY.md'), /short replies/)
 })
 
 test('duplicate entries never resolve to the first: one file is ambiguous, a topic names one', async (t) => {

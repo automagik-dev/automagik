@@ -856,3 +856,29 @@ test('findBot unquotes a Bot ref before matching the name', async (t) => {
   assert.equal(rt.findBot('"Nobody"'), undefined)
   assert.equal(rt.findBot(undefined), undefined)
 })
+
+test('state v0, v1 and v2 migrate without renaming ACP model identifiers', async (t) => {
+  for (const version of [0, 1, 2]) {
+    const { rt, statePath } = runtime(t, {
+      version,
+      mainBotIds: ['acp-main'],
+      bots: { 'acp-main': { id: 'acp-main', name: 'Omni', model: 'acp-claude' } },
+      rooms: {},
+      agents: {},
+    })
+    await rt.load()
+    assert.equal(rt.state.version, 2, `version ${version} is upgraded`)
+    assert.equal(rt.state.bots['acp-main'].model, 'acp-claude')
+    await rt.save()
+    assert.equal(JSON.parse(fs.readFileSync(statePath, 'utf8')).version, 2)
+  }
+})
+
+test('a state newer than v2 is refused without rewriting its ACP model', async (t) => {
+  const original = JSON.stringify({ version: 3, revision: 7, mainBotIds: ['a'], bots: { a: { id: 'a', model: 'acp-codex' } } })
+  const { rt, statePath, warnings } = runtime(t, original)
+  await rt.load()
+  assert.equal(fs.readFileSync(statePath, 'utf8'), original)
+  assert.equal(rt.state.bots.a?.model, undefined)
+  assert.ok(warnings.length > 0)
+})

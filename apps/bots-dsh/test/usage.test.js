@@ -323,6 +323,48 @@ test('a ledger from the previous version keeps its metered calls and gains the s
   assert.deepEqual(second.warnings, [])
 })
 
+
+async function seedV3Ledger(home, { details = false, listed = false } = {}) {
+  writeFileSync(join(home, 'state.json'), JSON.stringify({
+    version: 1, mainBotIds: ['b1'], revision: 1,
+    bots: { b1: { id: 'b1', sessionId: 's-b1', name: 'Omni', model: 'acp-claude' } },
+    rooms: {}, agents: {}, exchanges: [], exchangeTurns: {}, questions: {},
+  }))
+  const { DatabaseSync } = await import('node:sqlite')
+  const db = new DatabaseSync(join(home, 'usage.sqlite'))
+  db.exec(`CREATE TABLE calls (key TEXT PRIMARY KEY, session TEXT NOT NULL, time INTEGER NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, kind TEXT NOT NULL, live INTEGER NOT NULL, input INTEGER NOT NULL, cache_read INTEGER NOT NULL, cache_write INTEGER NOT NULL, output INTEGER NOT NULL);
+    CREATE TABLE marks (session TEXT PRIMARY KEY, through INTEGER NOT NULL, fold TEXT NOT NULL, sealed INTEGER NOT NULL${listed ? ', listed INTEGER' : ''});
+    CREATE TABLE owners (session TEXT PRIMARY KEY, owner TEXT NOT NULL, name TEXT NOT NULL);
+    CREATE TABLE kinds (session TEXT PRIMARY KEY, kind TEXT NOT NULL);`)
+  db.prepare('INSERT INTO calls VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run('live-1', 's-b1', 1, 'deepseek', 'v4', 'chat', 1, 10, 2, 0, 3)
+  db.prepare(`INSERT INTO marks (session, through, fold, sealed${listed ? ', listed' : ''}) VALUES (?, ?, ?, ?${listed ? ', ?' : ''})`)
+    .run('s-b1', 2, '{}', 0, ...(listed ? [17] : []))
+  if (details) {
+    db.exec(`CREATE TABLE usage_details (key TEXT PRIMARY KEY, session_id TEXT NOT NULL, request_id TEXT, turn_id TEXT, attempt_id TEXT, turn INTEGER, step INTEGER, retry_ordinal INTEGER, source_seq INTEGER, input INTEGER, output INTEGER, cache_read INTEGER, cache_write INTEGER, total_tokens INTEGER, provenance TEXT NOT NULL, cache_semantics TEXT, outcome TEXT)`)
+    db.prepare('INSERT INTO usage_details VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run('live-1', 's-b1', 'req-1', 'turn-1', 'attempt-1', 1, 0, 0, 2, 10, 3, 2, 0, 15, 'legacy', null, 'ok')
+  }
+  db.exec('PRAGMA user_version = 3')
+  db.close()
+}
+
+test('usage v4 upgrades both v3 schemas, preserving details, live rows, and marks.listed', async (t) => {
+  for (const shape of [{ details: false, listed: false }, { details: true, listed: true }]) {
+    const home = mkdtempSync(join(tmpdir(), 'ds-bot-usage-v3-'))
+    await seedV3Ledger(home, shape)
+    const runtime = start(home)
+    t.after(() => runtime.stop())
+    await runtime.call('usage', { timeZone: 'Asia/Shanghai' })
+    const { DatabaseSync } = await import('node:sqlite')
+    const db = new DatabaseSync(join(home, 'usage.sqlite'))
+    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 4)
+    assert.equal(db.prepare('SELECT live, input, output FROM calls WHERE key = ?').get('live-1').live, 1)
+    assert.deepEqual(db.prepare('SELECT listed FROM marks WHERE session = ?').get('s-b1').listed, shape.listed ? 17 : null)
+    assert.equal(db.prepare('SELECT COUNT(*) AS count FROM usage_details').get().count, shape.details ? 1 : 0)
+    db.close()
+  }
+})
+
 test('a cached projection watermark beyond the log is not used as a page cursor', async (t) => {
   const { call, ctx, stop, warnings } = start(undefined, {
     listedExtra: [{ sessionId: 's-x', projections: { kind: 'cached', asOfSeq: 202, values: {} } }],

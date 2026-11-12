@@ -35,7 +35,6 @@
     "src/shared/",
     "src/office/",
     "client.js",
-    "link.js",
     "office.js",
     "locale/",
     "web-search.js",
