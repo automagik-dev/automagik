@@ -417,6 +417,40 @@ test('each real error names what went wrong and its one fix in one line, with th
   })
 })
 
+test('Details opened on one failure are closed again on the next one', async t => {
+  const failure = { code: 'bot/hermes-ssh-auth', kind: 'auth-failed', stage: 'ssh-sign-in', identities: ['id_sample'] }
+  const render = await startWizard(t, {
+    'hermes-remote-test': () => { throw Object.assign(Error('Fake refusal'), { code: failure.code }) },
+    'hermes-remote-test-status': payload => ({ stage: 'open', ...(payload?.requestId ? { failure } : {}) }),
+  }, { props: { more: false } })
+  const { document, click, fill, calls } = render
+  const tests = () => calls.filter(call => call.endpoint === 'hermes-remote-test').length
+  await fill('SSH host or config name', 'sample-box')
+  await click('Connect')
+  await waitFor(() => document.querySelector('[data-status=error]'), 'the first failure')
+  assert.equal(document.querySelector('.bt-hw-details'), null)
+  assert.equal(document.querySelector('.bt-hw-details-toggle').getAttribute('aria-expanded'), 'false')
+  await click('Details')
+  assert.ok(document.querySelector('.bt-hw-details'), 'Details open when asked for')
+  await click('Try again')
+  await waitFor(() => tests() === 2 && document.querySelector('[data-status=error]'), 'the second failure')
+  assert.equal(document.querySelector('.bt-hw-details'), null, 'a new failure starts with its one fix only')
+  assert.equal(document.querySelector('.bt-hw-details-toggle').getAttribute('aria-expanded'), 'false')
+})
+
+test('a typed host starts from its own SSH defaults, not the user and port of a host picked before', async t => {
+  const render = await startWizard(t, { 'hermes-remote-ssh-hosts': sampleHosts, 'hermes-remote-test': oneProfile }, { props: { more: false } })
+  const { document, click, fill, calls } = render
+  await waitFor(() => document.querySelectorAll('.bt-hw-host-choice').length === 2, 'hosts from the SSH config')
+  await click('Use SSH host sample-box')
+  await fill('SSH host or config name', 'typed-box')
+  await click('Connect')
+  await waitFor(() => calls.some(call => call.endpoint === 'hermes-remote-test'), 'the connection request')
+  const tested = calls.find(call => call.endpoint === 'hermes-remote-test').payload
+  assert.equal(tested.mode, 'ssh')
+  assert.deepEqual(tested.ssh, { host: 'typed-box', user: '', identityFile: '', hermesPath: '' })
+})
+
 test('dashboard sign-in is masked and a refused test clears the password before editing', async t => {
   const secret = randomUUID()
   const render = await startWizard(t, { 'hermes-remote-test': () => { throw Object.assign(Error('Fake refusal'), { code: 'bot/hermes-auth' }) } })
