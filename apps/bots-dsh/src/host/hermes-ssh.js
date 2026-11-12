@@ -174,13 +174,14 @@ def child_status():
 
 def tail(data):
     # The last lines Hermes wrote, for a failed start only: never this connection's
-    # token or nonce, and the home folder by its short name.
-    text = re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]", "", data[-8192:].decode("utf-8", "replace"))
+    # token or nonce, and the home folder by its short name. All of it is cleaned before the
+    # end is taken: a cut inside a token or a home would leave the rest of it unrecognised.
+    text = re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]", "", data.decode("utf-8", "replace"))
     for secret in (token, nonce):
         if isinstance(secret, str) and secret: text = text.replace(secret, "[hidden]")
     home = os.path.expanduser("~")
     if len(home) > 1: text = text.replace(home, "~")
-    lines = [re.sub(r"[\x00-\x1f\x7f]", " ", line).strip()[:240] for line in text.splitlines()]
+    lines = [re.sub(r"[\x00-\x1f\x7f]", " ", line).strip()[:240] for line in text[-8192:].splitlines()]
     return [line for line in lines if line][-8:]
 
 def group_exists(pid):

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import { test } from 'node:test'
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -17,7 +17,7 @@ import { desktop8Session } from './fixtures/hermes-desktop8.mjs'
 
 // All addresses and secrets are generated per test. No network or Hermes process is used.
 function fixture(t, overrides = {}) {
-  const credential = randomUUID(), ticket = randomUUID()
+  const credential = overrides.credential ?? randomUUID(), ticket = randomUUID()
   const address = `https://${randomUUID()}.invalid`
   const sent = [], headers = [], identities = []
   const source = desktop8Session(randomUUID(), randomUUID())
@@ -340,6 +340,103 @@ test('streaming redaction carries credential and one-use ticket prefixes across 
   for (;;) { const row = await f.run.next(); if (row.kind === 'done') break; if (row.kind === 'text') output += row.text }
   assert.ok(!output.includes(f.credential) && !output.includes(f.ticket))
   assert.match(output, /redacted/)
+})
+
+// A line of chat text with one secret in it, and the same line as a chat may show it.
+// Nothing around the secret shares three characters in a row with it (hex and dashes).
+const SECRET_LINES = [
+  ['a token query value', value => [`Look: wss://sample.invalid/api/ws?token=${value}&next=1 ok`, 'Look: wss://sample.invalid/api/ws?token=[redacted]&next=1 ok']],
+  ['a ticket query value', value => [`Look: wss://sample.invalid/api/ws?first=1&ticket=${value} ok`, 'Look: wss://sample.invalid/api/ws?first=1&ticket=[redacted] ok']],
+  ['an internal query value', value => [`Look: "wss://sample.invalid/api/ws?INTERNAL=${value}" ok`, 'Look: "wss://sample.invalid/api/ws?INTERNAL=[redacted]" ok']],
+  ['a bearer', value => [`Look: Authorization: Bearer  ${value} ok`, 'Look: Authorization: Bearer [redacted] ok']],
+  ['a gateway ticket', value => [`Look: hermes-gateway-v1, hermes-gateway-ticket.${value}, ok`, 'Look: hermes-gateway-v1, hermes-gateway-ticket.[redacted], ok']],
+]
+// Whose secret it is: the connection's own, one with a character that ends a query value,
+// and ones the connection has never seen (a token Hermes only repeats), two of them
+// starting the way another rule's mark does.
+const SECRET_KINDS = [
+  ['the saved credential', () => { const value = randomUUID(); return { value, credential: value } }],
+  ['a credential with an ampersand', () => { const value = `${randomBytes(8).toString('hex')}&${randomBytes(8).toString('hex')}`; return { value, credential: value } }],
+  ['an unknown token', () => ({ value: randomBytes(32).toString('hex') })],
+  ['an unknown token that starts like a bearer', () => ({ value: `bea${randomBytes(30).toString('hex')}` })],
+  ['an unknown token that starts like a gateway ticket', () => ({ value: `he${randomBytes(30).toString('hex')}-b${randomBytes(4).toString('hex')}` })],
+]
+/** The first three characters in a row of `value` that `row` shows, if any. */
+const fragment = (row, value) => {
+  const shown = row.replaceAll('[redacted]', '')
+  for (let at = 0; at + 3 <= value.length; at++) if (shown.includes(value.slice(at, at + 3))) return value.slice(at, at + 3)
+}
+const textRows = async f => { const rows = []; for (;;) { const row = await f.run.next(); if (row.kind === 'text') rows.push(row.text); else return rows } }
+const cutCases = () => SECRET_KINDS.flatMap(([whose, make]) => SECRET_LINES.map(([what, line]) => {
+  const { value, credential } = make(), [sent, shown] = line(value)
+  assert.equal(fragment(shown, value), undefined, 'the line around the secret holds none of it')
+  return { name: `${what}, ${whose}`, value, credential, sent, shown }
+}))
+
+test('a secret cut between two frames reaches no row, wherever the cut is: query values, a bearer, a gateway ticket', async t => {
+  for (const { name, value, credential, sent, shown } of cutCases()) {
+    const f = fixture(t, { credential })
+    await f.wire.connect(); await f.run.submit('Sample')
+    for (let cut = 0; cut <= sent.length; cut++) {
+      f.socket().event('message.delta', { text: sent.slice(0, cut) })
+      f.socket().event('message.delta', { text: sent.slice(cut) })
+      f.socket().event('message.complete', { response_reused: true, status: 'complete' })
+      const rows = await textRows(f)
+      for (const row of rows) assert.equal(fragment(row, value), undefined, `${name}, cut at ${cut}: a row shows part of the secret`)
+      assert.equal(rows.join(''), shown, `${name}, cut at ${cut}`)
+    }
+    // One character a frame: every cut at once.
+    for (const character of sent) f.socket().event('message.delta', { text: character })
+    f.socket().event('message.complete', { response_reused: true, status: 'complete' })
+    const rows = await textRows(f)
+    for (const row of rows) assert.equal(fragment(row, value), undefined, `${name}, one character a frame`)
+    assert.equal(rows.join(''), shown, `${name}, one character a frame`)
+  }
+})
+
+test('the rest of a cut secret that arrives in the final text reaches no row either', async t => {
+  for (const { name, value, credential, sent, shown } of cutCases()) {
+    for (let cut = 0; cut <= sent.length; cut++) {
+      const f = fixture(t, { credential })
+      await f.wire.connect(); await f.run.submit('Sample')
+      f.socket().event('message.delta', { text: sent.slice(0, cut) })
+      f.socket().event('message.complete', { text: sent, status: 'complete' })
+      const rows = await textRows(f)
+      for (const row of rows) assert.equal(fragment(row, value), undefined, `${name}, cut at ${cut}: a row shows part of the secret`)
+      assert.equal(rows.join(''), shown, `${name}, cut at ${cut}`)
+      f.run.dispose()
+    }
+  }
+})
+
+test('a final text that is not what was streamed starts again: nothing held of the stream is shown', async t => {
+  for (const { name, value, credential, sent } of cutCases()) {
+    for (let cut = 0; cut <= sent.length; cut++) {
+      const f = fixture(t, { credential })
+      await f.wire.connect(); await f.run.submit('Sample')
+      f.socket().event('message.delta', { text: sent.slice(0, cut) })
+      f.socket().event('message.complete', { text: 'Another answer.', status: 'complete' })
+      const rows = await textRows(f)
+      for (const row of rows) assert.equal(fragment(row, value), undefined, `${name}, cut at ${cut}: a row shows part of the secret`)
+      assert.equal(rows.at(-1), 'Another answer.', `${name}, cut at ${cut}`)
+      f.run.dispose()
+    }
+  }
+})
+
+test('a cut value ends with its turn: the text after it is whole', async t => {
+  const f = fixture(t)
+  await f.wire.connect(); await f.run.submit('Sample')
+  const value = randomBytes(32).toString('hex')
+  for (const [end, payload] of [['message.complete', { response_reused: true, status: 'complete' }], ['message.interim', { text: '', already_streamed: true }], ['tool.start', { tool_id: 'tool-a', name: 'sample' }]]) {
+    f.socket().event('message.delta', { text: `See /api/ws?token=${value.slice(0, 20)}` })
+    f.socket().event(end, payload)
+    f.socket().event('message.delta', { text: 'plain-words-after go on' })
+    f.socket().event('message.complete', { response_reused: true, status: 'complete' })
+    const rows = []
+    for (let done = 0; done < (end === 'message.complete' ? 2 : 1);) { const row = await f.run.next(); if (row.kind === 'text') rows.push(row.text); else if (row.kind === 'done') done++ }
+    assert.deepEqual(rows, ['See /api/ws?token=[redacted]', 'plain-words-after go on'], end)
+  }
 })
 
 test('observational reconciliation never answers a live approval delivered during replay', async t => {

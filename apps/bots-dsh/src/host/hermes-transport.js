@@ -99,6 +99,19 @@ const SOCKET_QUERY = /([?&](?:token|ticket|internal)=)[^&#\s"'<>\\]+/gi
 /** Text with the credential of any socket address in it removed. */
 export const redactSocketQuery = text => String(text ?? '').replace(SOCKET_QUERY, '$1[redacted]')
 
+// The rules whose secret has no end of its own: a mark, then every character of a kind.
+// Text that is all there takes `whole`. A stream can be cut inside either part: `cut` is a
+// mark, or the start of one, at the end of what has arrived; `more` is the rest of a value
+// at the start of what arrives next.
+const starts = word => Array.from(word, (_, index) => word.slice(0, index + 1).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
+const OPEN_ENDED = [
+  { whole: /\bBearer\s+\S+/gi, shown: 'Bearer [redacted]', cut: new RegExp(`\\b(?:Bearer\\s+|${starts('Bearer')})$`, 'i'), more: /^\S+/ },
+  { whole: /hermes-gateway-ticket\.[A-Za-z0-9._~-]+/g, shown: 'hermes-gateway-ticket.[redacted]', cut: new RegExp(`(?:${starts('hermes-gateway-ticket.')})$`), more: /^[A-Za-z0-9._~-]+/ },
+  { whole: SOCKET_QUERY, shown: '$1[redacted]', cut: new RegExp(`[?&](?:${['token=', 'ticket=', 'internal='].map(starts).join('|')})?$`, 'i'), more: /^[^&#\s"'<>\\]+/ },
+]
+// The events whose text is one stream: it reaches a chat only through text().
+const STREAM_TEXT = new Set(['message.delta', 'message.interim', 'message.complete'])
+
 // The requests that are about the connection, not a profile: Hermes refuses a field its
 // contract does not name, so these never carry one.
 const UNSCOPED = new Set(['client.capabilities'])
@@ -141,37 +154,62 @@ export class HermesTransport {
     this.sessionInfos = new Map()
   }
 
-  redact(value) {
-    const clean = text => {
-      for (const secret of this.secrets) {
-        if (!secret) continue
-        for (const form of [secret, encodeURIComponent(secret), JSON.stringify(secret).slice(1, -1)]) text = text.split(form).join('[redacted]')
-      }
-      return text.replace(/\bBearer\s+\S+/gi, 'Bearer [redacted]')
-        .replace(/hermes-gateway-ticket\.[A-Za-z0-9._~-]+/g, 'hermes-gateway-ticket.[redacted]')
-        .replace(SOCKET_QUERY, '$1[redacted]')
+  /** The secrets this connection knows, in each form they are written. */
+  known(text) {
+    for (const secret of this.secrets) {
+      if (!secret) continue
+      for (const form of [secret, encodeURIComponent(secret), JSON.stringify(secret).slice(1, -1)]) text = text.split(form).join('[redacted]')
     }
+    return text
+  }
+
+  redact(value) {
+    const clean = text => OPEN_ENDED.reduce((out, rule) => out.replace(rule.whole, rule.shown), this.known(text))
     if (typeof value === 'string') return clean(value)
     if (Array.isArray(value)) return value.map(item => this.redact(item))
     if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [clean(key), /authorization|cookie|ticket|token|secret|password|headers/i.test(key) ? '[redacted]' : this.redact(item)]))
     return value
   }
 
+  /**
+   * One stream of text, as it arrives. A secret can be cut between two frames, anywhere:
+   * inside a known secret, inside the mark of an open-ended rule or inside its value. So
+   * the text arrives here as Hermes sent it, and what could still be the start of a
+   * secret is held until the next frame or the end (`flush`).
+   */
   text(text = '', flush = false) {
-    this.textCarry = (this.textCarry ?? '') + text
-    this.textCarry = this.redact(this.textCarry)
+    const carry = this.known((this.textCarry ?? '') + text)
     let keep = 0
     if (!flush) for (const secret of this.secrets) {
       if (!secret) continue
       for (const form of [secret, encodeURIComponent(secret), JSON.stringify(secret).slice(1, -1)]) {
-        for (let count = Math.min(form.length - 1, this.textCarry.length); count > keep; count--) {
-          if (form.startsWith(this.textCarry.slice(-count))) { keep = count; break }
+        for (let count = Math.min(form.length - 1, carry.length); count > keep; count--) {
+          if (form.startsWith(carry.slice(-count))) { keep = count; break }
         }
       }
     }
-    const output = this.redact(this.textCarry.slice(0, this.textCarry.length - keep))
-    this.textCarry = keep ? this.textCarry.slice(-keep) : ''
-    return output
+    let head = carry.slice(0, carry.length - keep)
+    // A value the last frame cut goes on here. While all of it is taken, or only the held
+    // start of a known secret is left, the value is not over.
+    if (this.textRun) {
+      head = head.replace(this.textRun, '')
+      if (head || flush) this.textRun = undefined
+    }
+    // Again until nothing more is held: "?token=b" holds the "b" a bearer may start with,
+    // and then the "?token=" that has no value yet.
+    if (!flush) for (;;) {
+      const cut = Math.max(0, ...OPEN_ENDED.map(rule => head.match(rule.cut)?.[0].length ?? 0))
+      if (!cut) break
+      keep += cut
+      head = head.slice(0, head.length - cut)
+    }
+    for (const rule of OPEN_ENDED) {
+      const last = [...head.matchAll(rule.whole)].at(-1)
+      if (!flush && last && last.index + last[0].length === head.length) this.textRun = rule.more
+      head = head.replace(rule.whole, rule.shown)
+    }
+    this.textCarry = carry.slice(carry.length - keep)
+    return head
   }
 
   async bounded(promise, ms, message, code = 'bot/hermes-timeout') {
@@ -278,6 +316,8 @@ export class HermesTransport {
     }
     if (frame.method === 'event') {
       const params = this.redact(frame.params)
+      // Masking one frame would lose the mark its value belongs to; text() masks the stream.
+      if (STREAM_TEXT.has(frame.params.type) && typeof frame.params.payload.text === 'string') params.payload.text = frame.params.payload.text
       if (params.type === 'session.info') this.sessionInfos.set(params.session_id, params.payload)
       for (const listener of this.listeners) listener({ kind: 'event', ...params, epoch: this.epoch })
       return
@@ -462,7 +502,11 @@ export class RemoteChat {
       this.terminalPayload = payload
       let rest = ''
       if (!payload.response_reused && typeof payload.text === 'string') {
-        rest = payload.text.startsWith(this.streamed) ? payload.text.slice(this.streamed.length) : payload.text
+        const goesOn = payload.text.startsWith(this.streamed)
+        // A final text that is not what was streamed replaces it: what is held of the
+        // stream is not the start of this text.
+        if (!goesOn) this.dropHeld()
+        rest = goesOn ? payload.text.slice(this.streamed.length) : payload.text
       }
       const safe = this.transport.text(rest, true)
       if (safe) this.push({ kind: 'text', text: safe })
@@ -517,7 +561,13 @@ export class RemoteChat {
     this.questions.clear()
     this.cancelledQuestions.clear()
     this.streamed = ''
+    this.dropHeld()
+  }
+
+  /** Forget what the transport holds of a stream that will not go on. */
+  dropHeld() {
     this.transport.textCarry = ''
+    this.transport.textRun = undefined
   }
 
   async reconcile({ answerQuestions = false } = {}) {

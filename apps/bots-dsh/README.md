@@ -514,7 +514,10 @@ its cookies out of every address: the transport mints a one-use ticket at
 `POST /api/auth/ws-ticket`, then offers `hermes-gateway-ticket.<ticket>` beside the stable
 `hermes-gateway-v1` WebSocket subprotocol. The address that holds a token goes to the socket
 and nowhere else: it is never kept, and a `token=`, `ticket=` or `internal=` query is removed
-from every row, error and diagnostics line. No credential enters command arguments or prompts.
+from every row, error and diagnostics line. Streamed chat text is masked as one stream, not
+frame by frame: a secret cut between two frames (inside a known credential, inside `?token=`
+or inside the value after it, a bearer or a gateway ticket) is held until the next frame, so
+no row shows a part of it. No credential enters command arguments or prompts.
 The SSH-generated session credential travels over the encrypted channel, not SSH's argv. On
 the remote computer it is written once, mode 0600, to the folder `hermes serve` reads it from
 (`~/.hermes/desktop-ssh/<random>/`, mode 0700), and Hermes removes it after reading.

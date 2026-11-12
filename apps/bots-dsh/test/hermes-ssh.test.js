@@ -398,6 +398,16 @@ test('the actual supervisor refuses an unsupported platform before launching a r
   assert.ok(!(await f.records()).some(record => record.event === 'runtime-start'))
 })
 
+test('the last lines are cleaned before their end is taken: a token the cut falls inside leaves no part of itself', async t => {
+  const f = await fixture(t, 'runtime-exit-cut')
+  const hermesPath = await fakeRuntime(f)
+  let failure
+  await assert.rejects(f.open({ ...f.config, hermesPath }), error => { failure = error; return error.code === 'bot/hermes-ssh-exited' })
+  assert.match(failure.sshDetail.hermes.join('\n'), /private-output \[hidden\]/, 'the token is hidden where it was whole')
+  const kept = JSON.stringify(failure.sshDetail) + failure.stack
+  for (let at = 0; at + 6 <= f.credential.length; at++) assert.ok(!kept.includes(f.credential.slice(at, at + 6)), `a part of the token is kept (from ${at})`)
+})
+
 test('a Hermes that exits early is its own kind, with its exit code and last lines cleaned', async t => {
   const f = await fixture(t, 'runtime-exit-early')
   const hermesPath = await fakeRuntime(f)

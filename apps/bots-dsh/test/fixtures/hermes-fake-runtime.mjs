@@ -44,6 +44,12 @@ if (args.includes('--version')) {
     console.log(`sample cache at ${homedir()}/.cache/sample`)
     process.exit(3)
   }
+  if (scenario === 'runtime-exit-cut') {
+    // A start that fails after enough output that the kept end begins inside the token
+    // printed above: its line end, this line and its line end are 8160 of the 8192 bytes.
+    console.log('x'.repeat(8158))
+    process.exit(3)
+  }
   if (scenario === 'runtime-never-ready') { console.log('sample server still loading'); setInterval(() => {}, 1000); await new Promise(() => {}) }
   if (scenario === 'runtime-bad-port') { console.log('HERMES_DASHBOARD_READY port=99999'); setInterval(() => {}, 1000); await new Promise(() => {}) }
   if (scenario.startsWith('runtime-leader-exits')) {
