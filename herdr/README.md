@@ -1311,7 +1311,8 @@ on this computer are labelled. The lead's pane is the one the attach ledger ties
   folder in `trustedWorkspaces` (see below) -- the project folder for a seat, the worker's
   worktree for a worker, the helper's folder for a helper, a review worker and a reviewer seat
   included -- so the rest of the person's trust list and saved settings stay theirs.
-  `create|edit --agy-mode` sets it (`--agy-mode auto` clears it back to the default); the form
+  `create|edit --agy-mode` sets it (`--agy-mode auto` or an empty value clears it back to the
+  default); setting it on another agent warns that it only applies to Antigravity. The form
   offers it for an Antigravity bot. Other edits, installs and updates keep it in the roster.
   `show`, `ls` and `dsh-tui doctor` print it.
 - `agyPermissions` is optional: rules an Antigravity bot and its workers add to the permission
@@ -1334,7 +1335,9 @@ on this computer are labelled. The lead's pane is the one the attach ledger ties
   `{ "template": "dev-sol" }`, each key optional, the defaults of the bot's
   [workers](#workers). Without `agent`, workers run the bot's own agent; a `template` (an hc
   template name: letters, digits, `.`, `_`, `-`, no dash first) wins over `agent`, `model`
-  and `effort`. `agyMode` is the Antigravity workers' `--mode` (auto when absent).
+  and `effort`. `agyMode` is the Antigravity workers' `--mode` (auto when absent or empty).
+  A template owns its command line: add `--mode` to the template's command if needed;
+  `worker.agyMode` adds no mode flag to a template worker.
   `create|edit --worker-agent/--worker-model/--worker-effort/--worker-template/--worker-agy-mode` set them
   (an empty value clears one); the form keeps the field as it is. An invalid one is ignored
   with a warning. A Codex worker passes `--approve-for-me --disable hooks` like its bot's seat,

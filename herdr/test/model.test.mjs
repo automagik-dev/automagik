@@ -306,6 +306,23 @@ test("lead: absent means the main bot; a valid lead holds at any depth", () => {
   assert.deepEqual(effectiveLead(file, ID.main), { lead: "" });
 });
 
+test("mode #821: empty seat and worker modes mean default on read, validation and save", () => {
+  const raw = sample((f) => {
+    f.bots[0].agyMode = "";
+    f.bots[0].worker = { agent: "antigravity", agyMode: "" };
+    return f;
+  });
+  assert.deepEqual(checkBots(raw), []);
+  const parsed = parseBots(text(raw));
+  assert.deepEqual(parsed.warnings, []);
+  assert.equal(parsed.file.bots[0].agyMode, undefined);
+  assert.deepEqual(parsed.file.bots[0].worker, { agent: "antigravity" });
+  assert.equal(parsed.raw.bots[0].worker.agyMode, "", "reading does not mutate the raw roster");
+  const saved = applyBotEdit(raw, { ...raw.bots[0], name: "Renamed" }).bots[0];
+  assert.equal(saved.agyMode, undefined);
+  assert.deepEqual(saved.worker, { agent: "antigravity" });
+});
+
 test("lead: a missing lead falls back to the main bot with a warning", () => {
   const file = sample((f) => { f.bots[2].lead = "b-zzzzzzzzzz"; return f; });
   const r = effectiveLead(file, ID.dev);

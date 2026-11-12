@@ -203,7 +203,8 @@ export function parseBots(text) {
     // Antigravity's launch mode: kept when it is text, even an unknown one, so a start refuses
     // it by name instead of silently launching on the default.
     if (bot.agyMode !== undefined) {
-      if (typeof bot.agyMode !== "string") { warnings.push(`${where}: agyMode is not text; ignored`); delete bot.agyMode; }
+      if (bot.agyMode === "") delete bot.agyMode;
+      else if (typeof bot.agyMode !== "string") { warnings.push(`${where}: agyMode is not text; ignored`); delete bot.agyMode; }
       else if (!AGY_MODES.includes(bot.agyMode)) warnings.push(`${where}: agyMode ${JSON.stringify(bot.agyMode)} isn't one of ${AGY_MODES.join(", ")}`);
     }
     // Antigravity's permission additions (#823): a malformed shape is dropped whole; a bad rule
@@ -218,6 +219,10 @@ export function parseBots(text) {
         if (normalized.allow.length || normalized.deny.length) bot.agyPermissions = { allow: normalized.allow, deny: normalized.deny };
         else delete bot.agyPermissions;
       }
+    }
+    if (isObject(bot.worker) && bot.worker.agyMode === "") {
+      bot.worker = { ...bot.worker };
+      delete bot.worker.agyMode;
     }
     const workerWhy = workerProblem(bot.worker);
     if (workerWhy) { warnings.push(`${where}: ${workerWhy}; ignored`); delete bot.worker; }
@@ -616,10 +621,10 @@ export function checkBots(file, before = null, { project = null, projects = null
     else if (b.instructions.length > MAX_INSTRUCTIONS) errors.push(`${at}: instructions longer than ${MAX_INSTRUCTIONS} characters`);
     if (b.planned !== undefined && (!isObject(b.planned) || !isWave(b.planned.wave))) errors.push(`${at}: planned needs a positive whole wave`);
     if (!b.planned && !isText(b.agent)) errors.push(`${at}: no coding agent`);
-    if (b.agyMode !== undefined && !AGY_MODES.includes(b.agyMode)) {
+    if (b.agyMode !== undefined && b.agyMode !== "" && !AGY_MODES.includes(b.agyMode)) {
       errors.push(`${at}: agyMode ${JSON.stringify(b.agyMode)} isn't one of ${AGY_MODES.join(", ")}`);
     }
-    if (isObject(b.worker) && b.worker.agyMode !== undefined && !AGY_MODES.includes(b.worker.agyMode)) {
+    if (isObject(b.worker) && b.worker.agyMode !== undefined && b.worker.agyMode !== "" && !AGY_MODES.includes(b.worker.agyMode)) {
       errors.push(`${at}: worker agyMode ${JSON.stringify(b.worker.agyMode)} isn't one of ${AGY_MODES.join(", ")}`);
     }
     if (b.agyPermissions !== undefined) {
@@ -892,6 +897,11 @@ export function applyBotEdit(raw, entry, newCategory = null) {
   }
   if ("rank" in bot && (bot.rank === undefined || bot.rank === null || bot.rank === "")) delete merged.rank;
   if ("code" in bot && (bot.code === undefined || bot.code === null || bot.code === "")) delete merged.code;
+  if (isObject(merged.worker) && merged.worker.agyMode === "") {
+    merged.worker = { ...merged.worker };
+    delete merged.worker.agyMode;
+    if (!Object.keys(merged.worker).length) delete merged.worker;
+  }
   if ("worker" in bot && (!isObject(bot.worker) || Object.keys(bot.worker).length === 0)) delete merged.worker;
   if (i >= 0) out.bots[i] = merged; else out.bots.push(merged);
   return out;

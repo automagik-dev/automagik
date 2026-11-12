@@ -1649,7 +1649,8 @@ export function entryFrom(opts, base, project, { creating }) {
     const why = agyModeProblem(opts["agy-mode"]);
     if (why) throw new CliError(`--agy-mode: ${why}`, 2);
     const mode = agyModeOf(opts["agy-mode"]);
-    entry.agyMode = mode === AGY_MODE_DEFAULT ? "" : mode;
+    if (entry.agent !== "antigravity") report(["--agy-mode only applies to Antigravity; this bot's agent will ignore it."]);
+    if (mode === AGY_MODE_DEFAULT) delete entry.agyMode; else entry.agyMode = mode;
   }
   // Antigravity's permission additions (#823): repeatable rules that add to the fixed deny rules
   // and the launch's own allow list; one empty value clears that list, and --no-agy-permissions

@@ -809,6 +809,35 @@ test("Antigravity #812: create/edit set agyMode (auto clears), show, ls and doct
   assert.match(row.detail, /agy deny .*command\(git push --force\)/);
 });
 
+test("mode #821: editing another agent warns that agy-mode only applies to Antigravity", (t) => {
+  const s = scene(t);
+  s.seed(team());
+  const edited = s.cli(["edit", "Genie", "--agy-mode", "plan"]);
+  assert.equal(edited.code, 0, edited.err);
+  assert.match(edited.err, /--agy-mode only applies to Antigravity/);
+  assert.equal(s.bots().bots[0].agyMode, "plan");
+});
+
+test("mode #821: empty modes read as auto in show, ls and doctor and clear on edit", (t) => {
+  const s = scene(t);
+  const file = team();
+  Object.assign(file.bots[0], { agent: "antigravity", agyMode: "", worker: { agent: "antigravity", agyMode: "" } });
+  s.seed(file);
+  const shown = s.cli(["show", "Genie", "--json"]);
+  assert.equal(shown.code, 0, shown.err);
+  assert.equal(shown.json().agyMode, "auto");
+  assert.equal(shown.json().worker.agyMode, "auto");
+  assert.doesNotMatch(shown.err, /agyMode/);
+  assert.match(s.cli(["ls"]).out, /agy-mode auto/);
+  const doctor = s.cli(["dsh-tui", "doctor", "--json"]);
+  const row = doctor.json().checks.find((c) => c.check === `hc-proxy:${ID.main}`);
+  assert.match(row.detail, /agy mode auto/);
+  const edited = s.cli(["edit", "Genie", "--agy-mode=", "--worker-agy-mode="]);
+  assert.equal(edited.code, 0, edited.err);
+  assert.equal(s.bots().bots[0].agyMode, undefined);
+  assert.deepEqual(s.bots().bots[0].worker, { agent: "antigravity" });
+});
+
 test("Antigravity #823: start and restart write a private permission file and pass --settings; the roster adds rules", (t) => {
   const s = scene(t);
   const f = team();
