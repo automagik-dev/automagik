@@ -145,3 +145,17 @@ These are on the site but are not part of this folder:
 - **Motion.** The site's motion rules are in the component stylesheet; there are no motion tokens.
 - **The stage gradient and the three tile colours.** They are a gradient and colour mixes, which a token cannot hold; they are in the component stylesheet as `--st-stage`, `--tile-cyan`, `--tile-lilac` and `--tile-pink`.
 - **Some app-only tokens** are in the theme but unused by the site's pages; their notes say so.
+
+## Using this in another repository
+
+Genie, Omni and Arca carry a byte copy of this folder at the same path, `docs/brand/`, with the agents' skill (`.claude/skills/automagik-brand/`) and the tool that makes the copy (`scripts/brand-sync.mjs`). Automagik's repository is the source. A copy is never edited: a change is made in Automagik's repository and copied again. `SOURCE.json` exists only in a copy; it records the Automagik commit the copy was made from and the sha256 of every copied file.
+
+```sh
+node scripts/brand-sync.mjs --write --from <an Automagik checkout, or a commit>
+node scripts/brand-sync.mjs --check
+```
+
+- `--write` copies the files as they are committed at that commit, removes the files the source no longer has, and writes `SOURCE.json`. A repository with no copy yet runs the tool from an Automagik checkout, from its own folder: `node <checkout>/scripts/brand-sync.mjs --write --from <checkout>`.
+- `--check` is for that repository's CI. It exits 1 and names each file that differs from `SOURCE.json`, is missing, or is not recorded.
+- Both then look at Automagik's `dev`. When the brand there is no longer the copy's, they name the newer commit; `--check` warns and does not fail. With no network they say so and go on.
+- The two type files are not in this folder (see "Type"), so a copy has none: `tokens/tokens.css` falls back to the reader's own faces until the repository carries the two files at the path it names.
