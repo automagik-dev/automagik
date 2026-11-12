@@ -632,6 +632,12 @@ export class AgentRun {
         },
       }
       permission.title = title
+      // A later call update must not change what an answer to this question allows
+      // (tool.js reviewHolds). A failed copy leaves this question to be asked as before.
+      try {
+        const { id, title, kind, rawInput, content, locations, structuredName } = tool
+        permission.call = structuredClone({ id, title, kind, rawInput, content, locations, structuredName })
+      } catch {}
       tool.permission = permission
       // The agent took its question back (it cancelled the request, or the connection closed):
       // nothing waits for an answer any more, so the dialog must not stay up for it.
