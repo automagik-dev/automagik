@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -174,6 +174,152 @@ test('capability tool descriptions and attach results explain approval', async t
     { agent: { id: 'worker' } },
   )
   assert.ok(attached.endsWith(' The user must allow blocked before it can work: in Settings > Capabilities > Allow (name it in exactly these words).'))
+})
+
+test('deleting a Bot drops only its attached pending local MCP and persists the cleanup', async t => {
+  const env = await setup({
+    beforeLoad: ({ ctx }) => { ctx.workspaceRegistry = { archiveSession: async () => {} } },
+  })
+  t.after(() => env.dispose())
+  const { rt } = env
+  await rt.capabilitySave(mcp('pending-mine'), { botId: 'worker' })
+  await rt.capabilitySave(mcp('pending-mine', 'node-new'), { botId: 'worker' })
+  assert.equal(rt.state.capabilities.items['pending-mine'].botRequested, true)
+  await rt.capabilitySave(mcp('unattached'), { botId: 'worker' })
+  rt.state.bots.worker.capabilities = ['pending-mine', 'missing']
+
+  await rt.deleteBot('worker')
+
+  assert.equal(rt.botOf('worker'), undefined)
+  assert.deepEqual(Object.keys(rt.state.capabilities.items), ['unattached'])
+  const saved = JSON.parse(await (await import('node:fs/promises')).readFile(join(env.home, 'state.json'), 'utf8'))
+  assert.deepEqual(Object.keys(saved.capabilities.items), ['unattached'])
+  await assert.rejects(rt.capabilityEndpoint('capability-approve', { name: 'pending-mine' }), /No unapproved stdio MCP/)
+})
+
+test('deleting a Bot preserves capabilities belonging to the user, other Bots or packs', async t => {
+  const env = await setup({
+    beforeLoad: ({ ctx }) => { ctx.workspaceRegistry = { archiveSession: async () => {} } },
+  })
+  t.after(() => env.dispose())
+  const { rt } = env
+  await rt.capabilitySave(mcp('approved-mine'), { botId: 'worker' })
+  await rt.capabilityEndpoint('capability-approve', { name: 'approved-mine' })
+  await rt.capabilitySave(mcp('pending-chief'), { botId: 'chief' })
+  await rt.capabilitySave(mcp('user-saved'), { ui: true })
+  await rt.capabilitySave(mcp('shared'), { botId: 'worker' })
+  await rt.capabilitySave(mcp('packed'), { botId: 'worker' })
+  await rt.capabilitySave(mcp('unused-pack-member'), { botId: 'worker' })
+  await rt.capabilitySave({ name: 'guide', kind: 'skill', content: 'Do the work.' }, { botId: 'worker' })
+  await rt.capabilitySave({ name: 'team', kind: 'pack', items: ['guide', 'packed'] }, { botId: 'worker' })
+  await rt.capabilitySave({ name: 'unused-pack', kind: 'pack', items: ['unused-pack-member'] }, { botId: 'worker' })
+  // Persisted HTTP entries must stay regardless of an old approval value; only stdio
+  // approval requests belong to this cleanup. No remote server is contacted here.
+  rt.state.capabilities.items.remote = {
+    name: 'remote', kind: 'mcp', transport: 'streamable-http', url: 'https://example.test/mcp',
+    createdBy: 'worker', botRequested: true, approved: false,
+  }
+  rt.state.bots.worker.capabilities = ['approved-mine', 'pending-chief', 'user-saved', 'shared',
+    'packed', 'unused-pack-member', 'guide', 'team', 'remote']
+  rt.state.bots.helper.capabilities = ['shared', 'team']
+  const before = structuredClone(rt.state.capabilities.items)
+
+  await rt.deleteBot('worker')
+
+  assert.deepEqual(rt.state.capabilities.items, before)
+  assert.deepEqual(rt.state.bots.helper.capabilities, ['shared', 'team'])
+  const saved = JSON.parse(await (await import('node:fs/promises')).readFile(join(env.home, 'state.json'), 'utf8'))
+  assert.deepEqual(saved.capabilities.items, before)
+  await rt.capabilityEndpoint('capability-approve', { name: 'pending-chief' })
+  assert.equal(rt.state.capabilities.items['pending-chief'].approved, true)
+})
+
+test('deleting a former Main Bot preserves user and unknown MCP provenance after command edits', async t => {
+  for (const [label, createdBy] of [['user-created', null], ['missing provenance', undefined], ['unknown creator', '']]) {
+    await t.test(label, async t => {
+      const env = await setup({
+        beforeLoad: ({ ctx }) => { ctx.workspaceRegistry = { archiveSession: async () => {} } },
+      })
+      t.after(() => env.dispose())
+      const { rt } = env
+      await rt.capabilitySave(mcp('server'), { ui: true })
+      // Older library entries can lack attribution. An edit cannot establish who
+      // originally created them, even when the editor is allowed to change them.
+      if (createdBy === undefined) delete rt.state.capabilities.items.server.createdBy
+      else rt.state.capabilities.items.server.createdBy = createdBy
+      await rt.save()
+      await rt.setMain('worker', true)
+      const edited = await rt.capabilitySave(mcp('server', 'node-new'), { botId: 'worker' })
+      assert.equal(edited.approved, false)
+      assert.equal(edited.botRequested, undefined)
+      rt.state.bots.worker.capabilities = ['server']
+      await rt.setMain('worker', false)
+
+      await rt.deleteBot('worker')
+
+      assert.equal(rt.botOf('worker'), undefined)
+      assert.deepEqual(rt.state.capabilities.items.server, edited)
+      assert.equal(rt.state.capabilities.items.server.createdBy, createdBy ?? null)
+      const saved = JSON.parse(await (await import('node:fs/promises')).readFile(join(env.home, 'state.json'), 'utf8'))
+      assert.deepEqual(saved.capabilities.items.server, edited)
+    })
+  }
+})
+
+test('deleting a former Main Bot preserves legacy MCP entries misattributed by old edits', async t => {
+  for (const editAgain of [false, true]) {
+    await t.test(editAgain ? 'edited again after upgrade' : 'unchanged after upgrade', async t => {
+      const state = team()
+      // Saved by capabilities.js at 8ff30182: UI creation, then a Main Bot command
+      // edit. The old fallback lost the user's null provenance and recorded worker.
+      const legacy = JSON.parse(readFileSync(new URL('./fixtures/legacy-user-edited-mcp.json', import.meta.url), 'utf8'))
+      assert.equal(legacy.createdBy, 'worker')
+      assert.equal(legacy.approved, false)
+      assert.equal(legacy.botRequested, undefined)
+      state.capabilities = { items: { server: legacy } }
+      state.mainBotIds.push('worker')
+      state.bots.worker.capabilities = ['server']
+      const env = await setup({
+        state,
+        beforeLoad: ({ ctx }) => { ctx.workspaceRegistry = { archiveSession: async () => {} } },
+      })
+      t.after(() => env.dispose())
+      const { rt } = env
+      // Echoing or inventing a marker in edit input must not certify legacy data.
+      if (editAgain) await rt.capabilitySave({ ...mcp('server', 'node-latest'), botRequested: true }, { botId: 'worker' })
+      const before = structuredClone(rt.state.capabilities.items.server)
+      assert.equal(before.botRequested, undefined)
+      await rt.setMain('worker', false)
+
+      await rt.deleteBot('worker')
+
+      assert.equal(rt.botOf('worker'), undefined)
+      assert.deepEqual(rt.state.capabilities.items.server, before)
+      const saved = JSON.parse(readFileSync(join(env.home, 'state.json'), 'utf8'))
+      assert.deepEqual(saved.capabilities.items.server, before)
+    })
+  }
+})
+
+test('a refused Bot deletion or failed session release preserves its pending local MCP', async t => {
+  for (const failure of ['main', 'adopted', 'release']) {
+    await t.test(failure, async t => {
+      const env = await setup()
+      t.after(() => env.dispose())
+      const { rt } = env
+      const id = failure === 'main' ? 'chief' : 'worker'
+      await rt.capabilitySave(mcp('pending'), { botId: id })
+      rt.state.bots[id].capabilities = ['pending']
+      if (failure === 'adopted') rt.state.bots[id].dshAgentId = 'original-agent'
+      if (failure === 'release') rt.releaseBot = async () => { throw new Error('session release failed') }
+      const before = structuredClone(rt.state.capabilities.items)
+
+      await assert.rejects(rt.deleteBot(id), /Main Bot cannot be deleted|Roll back DSH adoption|session release failed/)
+
+      assert.ok(rt.botOf(id))
+      assert.deepEqual(rt.state.capabilities.items, before)
+    })
+  }
 })
 
 test('read-only secret reload does not requeue capability reconciliation', async t => {

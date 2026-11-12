@@ -1,0 +1,13 @@
+{
+  "name": "server",
+  "kind": "mcp",
+  "description": "",
+  "createdBy": "worker",
+  "createdAt": 1794511733792,
+  "updatedAt": 1794511733793,
+  "transport": "stdio",
+  "command": "node-new",
+  "args": [],
+  "env": {},
+  "approved": false
+}

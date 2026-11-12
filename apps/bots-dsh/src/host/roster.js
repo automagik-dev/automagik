@@ -981,6 +981,8 @@ export function install(rt) {
     rt.capTasks(task => task.from === id)
     if (bot.permissionAuto) rt.endAuto?.(bot)
     delete state.bots[id]
+    // Only a still-unapproved local MCP this Bot alone asked for leaves with it.
+    rt.dropOrphanCapabilities?.(bot)
     for (const part of parts) {
       delete state.questions[part]
       if (state.views !== undefined) delete state.views[part]
