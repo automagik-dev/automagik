@@ -2,7 +2,7 @@
 // keeps in ~/.codex/pets: a folder with a pet.json and one spritesheet.webp atlas of 192x208
 // cells, eight to a row (v1: 9 rows; v2: 11, the last two the sixteen directions a pet looks
 // in). A pet may also carry the DSH extension's sleep strip (sleep.webp). Three places hold
-// them: the pets this plugin ships (Genie), the team's own (<home>/pets: installed from
+// them: the pets this plugin ships (Genie first), the team's own (<home>/pets: installed from
 // codex-pets.net, or copied from Codex's folder when picked), and Codex's folder, read only.
 // Nothing reaches codex-pets.net until the person opens the Pets tab or picks a pet there.
 import { existsSync } from 'node:fs'
@@ -26,8 +26,18 @@ const PAGE_SIZE = 24
 const TIMEOUT_MS = 15_000
 
 export const cleanPetId = id => (typeof id === 'string' && /^[a-z0-9][a-z0-9._-]{0,63}$/i.test(id) && !id.includes('..') ? id : undefined)
-/** Genie, the pet a Bot of kind genie wears (the client's GENIE_PET), and the one a Bot falls back to. */
-export const GENIE_CLAY = Object.freeze({ source: 'builtin', id: 'genie-clay', version: 1, sleep: true })
+/**
+ * Genie, the pet a Bot of kind genie wears (the client's GENIE_PET), and the one a Bot falls
+ * back to: the approved full-body figure (dev/art/genie-approved-v5), a v2 atlas with its
+ * sleep strip. Its id is the one installed teams already keep.
+ */
+export const GENIE_CLAY = Object.freeze({ source: 'builtin', id: 'genie-clay', version: 2, sleep: true })
+/**
+ * A Bot's pet as this plugin ships it. Genie's atlas was v1 (nine rows) before the approved
+ * figure; a pet kept from then names that version, and a v2 atlas read as v1 draws the wrong
+ * cells. So Genie is always the Genie shipped; any other pet is returned as it is.
+ */
+export const shippedPet = pet => (pet?.source === 'builtin' && pet.id === GENIE_CLAY.id ? { ...GENIE_CLAY } : pet)
 /** Whether this plugin ships the builtin pet `id` (a folder of its own with a pet.json), whatever the instance lists. */
 export const shipsPet = id => cleanPetId(id) !== undefined && existsSync(join(BUILTIN, id, 'pet.json'))
 const fail = (message, code = 'bot/invalid') => Object.assign(new Error(message), { code })

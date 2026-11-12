@@ -106,6 +106,13 @@ test('a Genie Bot wears its pet, and its clay face where a mark is too small for
   assert.equal(pet.children[0].props.state, 'alert')
   assert.match(pet.children[0].props.pet.sheet, /^api\/omni-ui\/pet\?source=builtin&id=genie-clay$/)
   assert.match(pet.children[0].props.pet.sleep, /part=sleep/)
+  // Genie is a v2 atlas (eleven rows); a look kept from the v1 atlas before it draws as v2 too.
+  assert.equal(pet.children[0].props.pet.version, 2)
+  const kept = BotMark({ bot: { id: 'k', name: 'Kept', avatar: { pet: { source: 'builtin', id: 'genie-clay', version: 1 } } }, size: 36 })
+  assert.equal(kept.children[0].props.pet.version, 2)
+  assert.match(kept.children[0].props.pet.sleep, /part=sleep/)
+  const team = BotMark({ bot: { id: 't', name: 'Team', avatar: { pet: { source: 'team', id: 'genie-clay', version: 1 } } }, size: 36 })
+  assert.equal(team.children[0].props.pet.version, 1)
   assert.match(SHELL_CSS, /\.bt-clay-genie\{[^}]*url\("data:image\/webp;base64,/)
 })
 

@@ -143,8 +143,16 @@ export function PetSprite({ pet, size, state = 'idle', live = false, gaze = fals
   onceRef.current = onOnce
   useEffect(() => { setFrame(0) }, [row, asleep])
   useEffect(() => {
-    if (!live || quiet() || direction !== undefined) return undefined
+    if (!live || direction !== undefined) return undefined
     const { ms } = asleep ? SLEEP : ROWS[row]
+    // Reduced motion shows one frame: a loop rests on its first cell. A row that plays once
+    // holds its first cell for the row's length and then hands back, so the mark is not left
+    // in a wave or a jump that never ends.
+    if (quiet()) {
+      if (asleep || !ONCE.includes(row)) return undefined
+      const held = setTimeout(() => onceRef.current?.(row), ms.reduce((sum, each) => sum + each, 0))
+      return () => clearTimeout(held)
+    }
     const slow = state === 'sleeping' && !asleep ? 3 : 1
     const timer = setTimeout(() => {
       const next = frame + 1

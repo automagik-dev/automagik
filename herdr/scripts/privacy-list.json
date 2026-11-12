@@ -113,16 +113,6 @@
       "why": "a synthetic credential in a redaction test, not a real key"
     },
     {
-      "file": "apps/bots-dsh/dev/art/genie-pet-v1/spritesheet.webp",
-      "text": "P@CP.XH",
-      "why": "binary image bytes that coincidentally read as an address"
-    },
-    {
-      "file": "apps/bots-dsh/src/host/pets/genie-clay/spritesheet.webp",
-      "text": "P@CP.XH",
-      "why": "binary image bytes that coincidentally read as an address"
-    },
-    {
       "file": "apps/bots-dsh/src/host/pets/unfold/spritesheet.webp",
       "text": "~g9~]2_t",
       "why": "binary image bytes that coincidentally read as a deny-listed short name"
