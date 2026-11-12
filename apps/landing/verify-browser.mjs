@@ -355,10 +355,19 @@ try {
           for (let at = 0; at < pixels.length; at += 4) if (pixels[at + 3] === 255) { const colour = `${pixels[at]},${pixels[at + 1]},${pixels[at + 2]}`; seen.set(colour, (seen.get(colour) || 0) + 1) }
           return [...seen].sort((one, other) => other[1] - one[1])[0]?.[0].split(',').map(Number) ?? null
         }
+        // The ground the logo stands on: every background from the page down to the logo's own
+        // link, painted one over the other (a see-through one lets the one under it show).
+        const ground = image => {
+          const layers = []; for (let node = image.parentElement; node; node = node.parentElement) layers.unshift(getComputedStyle(node).backgroundColor)
+          const canvas = document.createElement('canvas'); canvas.width = canvas.height = 1
+          const pen = canvas.getContext('2d'); pen.fillStyle = '#fff'; pen.fillRect(0, 0, 1, 1)
+          for (const layer of layers) { pen.fillStyle = layer; pen.fillRect(0, 0, 1, 1) }
+          return [...pen.getImageData(0, 0, 1, 1).data.slice(0, 3)]
+        }
         const place = scope => {
           const link = document.querySelector(`${scope} .brand`), image = link.querySelector('img'), box = image.getBoundingClientRect(), frame = link.getBoundingClientRect()
           return {
-            size: [box.width, box.height], top: box.top, hang: box.bottom - frame.bottom, right: box.right, file: image.currentSrc.split('/').pop(), drawn: image.naturalWidth > 0, word: word(image),
+            size: [box.width, box.height], top: box.top, hang: box.bottom - frame.bottom, right: box.right, file: image.currentSrc.split('/').pop(), drawn: image.naturalWidth > 0, word: word(image), ground: ground(image),
             effects: [link, image].map(node => { const style = getComputedStyle(node); return [style.filter, style.opacity, style.transform, style.mixBlendMode].join(' ') }),
           }
         }
@@ -367,7 +376,6 @@ try {
         const tabs = [...document.querySelectorAll('link[rel="icon"], link[rel="apple-touch-icon"], link[rel="manifest"]')].map(link => new URL(link.href).pathname)
         return {
           top: place('.top'), foot: place('.footer-brand'), rowMiddle: row.top + row.height / 2, tabs,
-          ground: getComputedStyle(document.body).backgroundColor.match(/\d+/g).slice(0, 3).map(Number),
           apart: shown.every((box, index) => index === 0 || box.left >= shown[index - 1].right), inside: shown.at(-1).right <= innerWidth && shown[0].left >= 0,
           column: document.querySelector('.footer-brand').getBoundingClientRect().right, over: document.documentElement.scrollWidth - innerWidth,
         }
@@ -375,10 +383,11 @@ try {
       for (const [name, spot, mark] of [['header', logo.top, header], ['footer', logo.foot, footer]]) {
         const unit = mark / 222, near = (value, wanted) => Math.abs(value - wanted) <= 0.6
         assert.equal(spot.file, `automagik-lockup-three-colours-${colorScheme === 'dark' ? 'cream' : 'ink'}-header.svg`, `The logo's file follows the theme: ${name} ${label}`)
-        // The file's name is not enough: the name must be drawn dark on the light page and light on the dark one.
+        // The file's name is not enough: the name must be drawn dark on a light ground and light on a
+        // dark one, measured against the ground the logo itself stands on (the header's, the footer's).
         const light = colour => colour.map(value => value / 255).map(value => value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0)
-        const against = spot.word && (Math.max(light(spot.word), light(logo.ground)) + 0.05) / (Math.min(light(spot.word), light(logo.ground)) + 0.05)
-        assert.ok(against >= 7, `The name is drawn in the theme's colour, clear against the page: ${name} ${label} ${JSON.stringify([spot.word, logo.ground, against])}`)
+        const against = spot.word && (Math.max(light(spot.word), light(spot.ground)) + 0.05) / (Math.min(light(spot.word), light(spot.ground)) + 0.05)
+        assert.ok(against >= 7, `The name is drawn in the theme's colour, clear against its own ground: ${name} ${label} ${JSON.stringify([spot.word, spot.ground, against])}`)
         assert.ok(spot.drawn && near(spot.size[1], 264 * unit) && near(spot.size[0], 1632.34 * unit), `The logo's size, unstretched: ${name} ${label} ${spot.size}`)
         assert.ok(near(spot.hang, name === 'header' ? 42 * unit : 0), `The g's tail hangs under the header's link and inside the footer's: ${name} ${label} ${spot.hang}`)
         assert.deepEqual([...new Set(spot.effects)], ['none 1 none normal'], `Nothing is drawn over the logo: ${name} ${label}`)
