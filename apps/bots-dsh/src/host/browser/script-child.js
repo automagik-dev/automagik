@@ -8,6 +8,12 @@
 // something else. It is a process and not a worker thread because a worker that runs
 // out of heap in one large allocation aborts the whole host; this process only ends
 // itself, and the host can kill it when the script never returns.
+//
+// The context is the inner wall and nothing rests on it alone: script-runner.js starts
+// this process with nothing to give, and says what that closes and what it does not.
+// It talks to the host in JSON lines, read from stdin and written to stdout. This file
+// is the process's entry and imports only Node's own modules: under the permission
+// model the entry is the one file the process may read.
 import vm from 'node:vm'
 
 const PRELUDE = `'use strict';
@@ -79,7 +85,7 @@ const invoke = (fn, value) => {
 }
 
 const send = message => {
-  try { process.send(message) } catch {}
+  try { process.stdout.write(`${JSON.stringify(message)}\n`) } catch {}
 }
 
 const call = (name, args, resolve, reject) => {
@@ -122,7 +128,7 @@ const start = ({ body, names, wait }) => {
 }
 
 let started = false
-process.on('message', message => {
+const receive = message => {
   if (message?.type === 'start') {
     if (started || typeof message.body !== 'string' || !Array.isArray(message.names)) return
     started = true
@@ -135,9 +141,29 @@ process.on('message', message => {
   const ok = message.ok === true && (typeof message.value === 'string' || message.value === null)
   if (ok) invoke(waiter.resolve, message.value)
   else invoke(waiter.reject, typeof message.error === 'string' ? message.error : 'The helper failed.')
+}
+
+// One message a line; what has no line end yet is held until it has.
+let held = []
+process.stdin.setEncoding('utf8')
+process.stdin.on('data', chunk => {
+  let from = 0
+  for (;;) {
+    const at = chunk.indexOf('\n', from)
+    if (at === -1) break
+    held.push(chunk.slice(from, at))
+    const line = held.join('')
+    held = []
+    from = at + 1
+    let message
+    try { message = JSON.parse(line) } catch { continue }
+    receive(message)
+  }
+  if (from < chunk.length) held.push(chunk.slice(from))
 })
 // The host went away: nothing is left to answer the script.
-process.on('disconnect', () => process.exit(0))
+process.stdin.on('end', () => process.exit(0))
+process.stdin.on('error', () => process.exit(0))
 // A helper promise the script never awaited can reject; its reason belongs to the
 // context and needs no handling here, and it must not end the run.
 process.on('unhandledRejection', () => {})

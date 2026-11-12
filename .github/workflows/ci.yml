@@ -1284,6 +1284,16 @@ jobs:
         if: matrix.app == 'bots-dsh'
         run: echo "CHROME_BIN=/usr/bin/google-chrome" >> "$GITHUB_ENV"
 
+      - name: Electron for the Bot team's script wall check
+        # browser_exec's process wall is checked on both runtimes the Bot team ships on. The
+        # desktop app's is Electron as Node: the Electron apps/desktop pins, from its lock.
+        # Under CI that half fails, rather than skips, when it finds no Electron.
+        if: matrix.app == 'bots-dsh'
+        working-directory: apps/desktop
+        run: |
+          npm ci --no-fund --no-audit
+          echo "ELECTRON_BIN=$(node -p "require('electron')")" >> "$GITHUB_ENV"
+
       - name: Generated files are current
         # A package with no browser half has no client to build.
         run: '[ ! -f scripts/build-client.mjs ] || node scripts/build-client.mjs --check'

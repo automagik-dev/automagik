@@ -17,10 +17,10 @@ const helpers = () => {
 
 function observeChildren(t) {
   const children = []
-  const fork = childProcess.fork
-  const spy = t.mock.method(childProcess, 'fork', (...args) => {
-    const child = fork(...args)
-    children.push({ child, options: args[2] })
+  const spawn = childProcess.spawn
+  const spy = t.mock.method(childProcess, 'spawn', (...args) => {
+    const child = spawn(...args)
+    children.push({ child, args: args[1], options: args[2] })
     return child
   })
   syncBuiltinESMExports()
@@ -45,11 +45,15 @@ test('the child starts without host environment or flags and with a bounded heap
   })
   assert.equal(await runIsolatedScript('done("ready")', {}), 'ready')
   assert.equal(children.length, 1)
-  const { child, options } = children[0]
+  const { child, args, options } = children[0]
   assert.notEqual(child.pid, process.pid)
   assert.equal(options.env[name], undefined)
   assert.deepEqual(Object.keys(options.env).filter(key => !['SystemRoot', 'ELECTRON_RUN_AS_NODE'].includes(key)), [])
-  assert.deepEqual(options.execArgv, ['--max-old-space-size=128', '--experimental-vm-modules'])
+  // The flags, then the child's file: no --allow-* flag grants anything back.
+  assert.deepEqual(args.slice(0, -1), ['--permission', '--max-old-space-size=128', '--experimental-vm-modules'])
+  assert.match(args.at(-1), /script-child\.js$/)
+  // No Node IPC channel: the host reads and checks every line itself.
+  assert.deepEqual(options.stdio, ['pipe', 'pipe', 'ignore'])
 })
 
 test('browser sessions isolate scripts and keep the source limit and answer contract', async () => {
