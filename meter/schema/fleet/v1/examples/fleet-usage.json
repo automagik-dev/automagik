@@ -1,0 +1,294 @@
+{
+  "actor_unattributed": {
+    "absent_bot_is_zero": false,
+    "parts": [
+      {
+        "harnesses": [
+          "claude-code",
+          "codex"
+        ],
+        "reason": "no_record",
+        "state": "unlinked",
+        "tokens_total": 6478000
+      }
+    ],
+    "tokens_ambiguous": 0,
+    "tokens_before_evidence": 0,
+    "tokens_total": 6478000,
+    "tokens_unlinked": 6478000
+  },
+  "as_of": "2026-11-08T19:52:41Z",
+  "capability": "meter.fleet.usage@1",
+  "contract": "usagemeter.fleet.usage",
+  "contract_version": 1,
+  "error": null,
+  "generated_at": "2026-11-08T20:00:05Z",
+  "machines": [
+    {
+      "as_of": "2026-11-08T19:52:41Z",
+      "clipped": false,
+      "complete": true,
+      "id": "machine-a1b2c3",
+      "scope": "local",
+      "stale": false,
+      "store_schema_version": 3
+    },
+    {
+      "as_of": "2026-11-08T19:52:41Z",
+      "clipped": false,
+      "complete": true,
+      "id": "machine-d4e5f6",
+      "scope": "local",
+      "stale": false,
+      "store_schema_version": 3
+    }
+  ],
+  "meter_version": "1.2.3",
+  "missing": [],
+  "query": {
+    "branch_count": 3,
+    "branches": [
+      "feat/gn-12-cache",
+      "fix/gn-14-retry",
+      "docs/gn-90-readme"
+    ],
+    "repo": "example.com/acme/widgets",
+    "window": "d30"
+  },
+  "rows": [
+    {
+      "activity": {
+        "first_hour": null,
+        "harnesses": [],
+        "hours": 0,
+        "last_hour": null
+      },
+      "attribution": {
+        "actor": {
+          "tokens_ambiguous": 0,
+          "tokens_attributed": 0,
+          "tokens_before_evidence": 0,
+          "tokens_by_basis": {
+            "label": 0,
+            "session": 0,
+            "worktree": 0
+          },
+          "tokens_by_branch_basis": {
+            "ledger": 0,
+            "log": 0,
+            "none": 0
+          },
+          "tokens_unlinked": 0
+        },
+        "coverage": "complete",
+        "exclusive": false,
+        "precision": "branch_window",
+        "shared": false
+      },
+      "branch": "docs/gn-90-readme",
+      "cost": {
+        "state": "zero",
+        "tokens_priced": 0,
+        "tokens_reported": 0,
+        "tokens_unpriced": 0,
+        "unpriced_models": [],
+        "unpriced_models_omitted": 0,
+        "usd": 0,
+        "usd_estimated": 0,
+        "usd_reported": 0
+      },
+      "incomplete_sources": [],
+      "models": [],
+      "models_omitted": 0,
+      "reason": null,
+      "requested": 1,
+      "state": "zero",
+      "token_precision": null,
+      "tokens": {
+        "cache_read": 0,
+        "cache_write_1h": 0,
+        "cache_write_5m": 0,
+        "input": 0,
+        "output": 0,
+        "reasoning": 0,
+        "total": 0,
+        "unsplit": 0
+      }
+    },
+    {
+      "activity": {
+        "first_hour": "2026-11-02T09:00:00Z",
+        "harnesses": [
+          "claude-code"
+        ],
+        "hours": 34,
+        "last_hour": "2026-11-08T19:00:00Z"
+      },
+      "attribution": {
+        "actor": {
+          "tokens_ambiguous": 0,
+          "tokens_attributed": 0,
+          "tokens_before_evidence": 0,
+          "tokens_by_basis": {
+            "label": 0,
+            "session": 0,
+            "worktree": 0
+          },
+          "tokens_by_branch_basis": {
+            "ledger": 0,
+            "log": 5528000,
+            "none": 0
+          },
+          "tokens_unlinked": 5528000
+        },
+        "coverage": "complete",
+        "exclusive": false,
+        "precision": "branch_window",
+        "shared": false
+      },
+      "branch": "feat/gn-12-cache",
+      "cost": {
+        "state": "priced",
+        "tokens_priced": 5528000,
+        "tokens_reported": 0,
+        "tokens_unpriced": 0,
+        "unpriced_models": [],
+        "unpriced_models_omitted": 0,
+        "usd": 6.28,
+        "usd_estimated": 6.28,
+        "usd_reported": 0.0
+      },
+      "incomplete_sources": [],
+      "models": [
+        {
+          "calls": 34,
+          "cost_usd": 6.28,
+          "model": "model-0",
+          "tokens": {
+            "cache_read": 4800000,
+            "cache_write_1h": 0,
+            "cache_write_5m": 360000,
+            "input": 240000,
+            "output": 128000,
+            "reasoning": 24000,
+            "total": 5528000,
+            "unsplit": 0
+          }
+        }
+      ],
+      "models_omitted": 0,
+      "reason": null,
+      "requested": 1,
+      "state": "measured",
+      "token_precision": "exact",
+      "tokens": {
+        "cache_read": 4800000,
+        "cache_write_1h": 0,
+        "cache_write_5m": 360000,
+        "input": 240000,
+        "output": 128000,
+        "reasoning": 24000,
+        "total": 5528000,
+        "unsplit": 0
+      }
+    },
+    {
+      "activity": {
+        "first_hour": "2026-11-06T13:00:00Z",
+        "harnesses": [
+          "claude-code",
+          "codex"
+        ],
+        "hours": 12,
+        "last_hour": "2026-11-08T11:00:00Z"
+      },
+      "attribution": {
+        "actor": {
+          "tokens_ambiguous": 0,
+          "tokens_attributed": 0,
+          "tokens_before_evidence": 0,
+          "tokens_by_basis": {
+            "label": 0,
+            "session": 0,
+            "worktree": 0
+          },
+          "tokens_by_branch_basis": {
+            "ledger": 0,
+            "log": 950000,
+            "none": 0
+          },
+          "tokens_unlinked": 950000
+        },
+        "coverage": "complete",
+        "exclusive": false,
+        "precision": "branch_window",
+        "shared": false
+      },
+      "branch": "fix/gn-14-retry",
+      "cost": {
+        "state": "priced",
+        "tokens_priced": 950000,
+        "tokens_reported": 0,
+        "tokens_unpriced": 0,
+        "unpriced_models": [],
+        "unpriced_models_omitted": 0,
+        "usd": 1.2,
+        "usd_estimated": 1.2,
+        "usd_reported": 0.0
+      },
+      "incomplete_sources": [],
+      "models": [
+        {
+          "calls": 10,
+          "cost_usd": 1.04,
+          "model": "model-0",
+          "tokens": {
+            "cache_read": 600000,
+            "cache_write_1h": 20000,
+            "cache_write_5m": 40000,
+            "input": 40000,
+            "output": 20000,
+            "reasoning": 0,
+            "total": 720000,
+            "unsplit": 0
+          }
+        },
+        {
+          "calls": 2,
+          "cost_usd": 0.16,
+          "model": "model-1",
+          "tokens": {
+            "cache_read": 200000,
+            "cache_write_1h": 0,
+            "cache_write_5m": 0,
+            "input": 20000,
+            "output": 10000,
+            "reasoning": 0,
+            "total": 230000,
+            "unsplit": 0
+          }
+        }
+      ],
+      "models_omitted": 0,
+      "reason": null,
+      "requested": 1,
+      "state": "measured",
+      "token_precision": "exact",
+      "tokens": {
+        "cache_read": 800000,
+        "cache_write_1h": 20000,
+        "cache_write_5m": 40000,
+        "input": 60000,
+        "output": 30000,
+        "reasoning": 0,
+        "total": 950000,
+        "unsplit": 0
+      }
+    }
+  ],
+  "status": "ok",
+  "unattributed": {
+    "harnesses": [],
+    "tokens_total": 0
+  }
+}

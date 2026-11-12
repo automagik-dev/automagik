@@ -1,0 +1,249 @@
+{
+  "capability": "meter.fleet.outcomes@1",
+  "contract": "usagemeter.fleet.outcomes",
+  "contract_version": 1,
+  "error": null,
+  "generated_at": "2026-11-08T20:00:05Z",
+  "machines": [
+    {
+      "complete": true,
+      "id": "machine-a1b2c3",
+      "recorded": true,
+      "stale": false,
+      "store_schema_version": 3
+    },
+    {
+      "complete": true,
+      "id": "machine-d4e5f6",
+      "recorded": true,
+      "stale": false,
+      "store_schema_version": 3
+    }
+  ],
+  "meter_version": "1.2.3",
+  "missing": [],
+  "status": "ok",
+  "windows": [
+    {
+      "abandoned_branches": {
+        "branches": [
+          {
+            "branch": "feat/abandoned",
+            "launches": 4,
+            "repo": "example.com/acme/widgets"
+          }
+        ],
+        "branches_omitted": 0,
+        "by_repo": [
+          {
+            "branches": 1,
+            "launches": 4,
+            "repo": "example.com/acme/widgets"
+          }
+        ],
+        "by_repo_omitted": 0
+      },
+      "clipped": false,
+      "end": "2026-11-08T20:00:05Z",
+      "errors": {
+        "api_error": {
+          "state": "ok",
+          "total": 0
+        },
+        "by_bot": [
+          {
+            "api_error": 0,
+            "bot": "otter",
+            "harness": "claude-code",
+            "kind": "worker",
+            "role": "dev",
+            "run_failed": 0,
+            "squad": "acme",
+            "tool_error": 4
+          }
+        ],
+        "by_bot_omitted": 0,
+        "by_bot_omitted_count": 0,
+        "by_branch": [
+          {
+            "api_error": 0,
+            "attributed": 4,
+            "branch": "feat/widgets",
+            "repo": "example.com/acme/widgets",
+            "run_failed": 2,
+            "tool_error": 4,
+            "unattributed": 2
+          }
+        ],
+        "by_branch_omitted": 0,
+        "by_branch_omitted_count": 0,
+        "by_harness": [
+          {
+            "api_error": 0,
+            "harness": "claude-code",
+            "run_failed": 0,
+            "tool_error": 4
+          },
+          {
+            "api_error": 0,
+            "harness": "codex",
+            "run_failed": 2,
+            "tool_error": 0
+          }
+        ],
+        "by_harness_omitted": 0,
+        "by_harness_omitted_count": 0,
+        "by_task": [
+          {
+            "api_error": 0,
+            "repo": "example.com/acme/widgets",
+            "run_failed": 0,
+            "task": "task-widgets",
+            "tool_error": 4
+          }
+        ],
+        "by_task_omitted": 0,
+        "by_task_omitted_count": 0,
+        "run_failed": {
+          "state": "ok",
+          "total": 2
+        },
+        "tool_error": {
+          "state": "ok",
+          "total": 4
+        }
+      },
+      "launches": {
+        "ended": 6,
+        "recorded": 6,
+        "running": 0,
+        "seat": 2,
+        "total": 6,
+        "unrecorded": 0,
+        "worker": 4
+      },
+      "prs": {
+        "closed_unmerged": 0,
+        "merged": 1,
+        "not_recorded": 0,
+        "open": 1,
+        "opened": 2
+      },
+      "run_ends": {
+        "by_bot": [
+          {
+            "agent": "model-0",
+            "bot": "heron",
+            "clean": 4,
+            "failed": 2,
+            "kind": "worker",
+            "role": "dev",
+            "squad": "lark",
+            "unclassified": 0,
+            "unrecorded": []
+          }
+        ],
+        "by_bot_omitted": 0,
+        "clean": 4,
+        "failed": 2,
+        "unclassified": 0
+      },
+      "start": "2026-11-07T20:00:05Z",
+      "state": "ok",
+      "time_to_pr": {
+        "by_branch": [
+          {
+            "branch": "feat/second",
+            "first_commit_at": "2026-11-08T10:00:00Z",
+            "first_launch_at": "2026-11-08T10:30:00Z",
+            "launch_to_merge_s": null,
+            "launch_to_open_s": 0,
+            "launches": 2,
+            "merged_at": null,
+            "pr": 43,
+            "pr_created_at": "2026-11-08T10:30:00Z",
+            "repo": "example.com/acme/widgets",
+            "shared": false,
+            "state": "open",
+            "to_merge_s": null,
+            "to_open_s": 1800
+          },
+          {
+            "branch": "feat/widgets",
+            "first_commit_at": "2026-11-08T10:00:00Z",
+            "first_launch_at": "2026-11-08T10:30:00Z",
+            "launch_to_merge_s": 5400,
+            "launch_to_open_s": 1800,
+            "launches": 2,
+            "merged_at": "2026-11-08T12:00:00Z",
+            "pr": 42,
+            "pr_created_at": "2026-11-08T11:00:00Z",
+            "repo": "example.com/acme/widgets",
+            "shared": true,
+            "state": "merged",
+            "to_merge_s": 7200,
+            "to_open_s": 3600
+          }
+        ],
+        "by_branch_omitted": 0,
+        "by_repo": [
+          {
+            "launch_to_merge_s": {
+              "n": 1,
+              "n_shared": 1,
+              "p50_s": 5400,
+              "p90_s": 5400
+            },
+            "launch_to_open_s": {
+              "n": 2,
+              "n_shared": 1,
+              "p50_s": 0,
+              "p90_s": 1800
+            },
+            "repo": "example.com/acme/widgets",
+            "to_merge_s": {
+              "n": 1,
+              "n_shared": 1,
+              "p50_s": 7200,
+              "p90_s": 7200
+            },
+            "to_open_s": {
+              "n": 2,
+              "n_shared": 1,
+              "p50_s": 1800,
+              "p90_s": 3600
+            }
+          }
+        ],
+        "by_repo_omitted": 0,
+        "overall": {
+          "launch_to_merge_s": {
+            "n": 1,
+            "n_shared": 1,
+            "p50_s": 5400,
+            "p90_s": 5400
+          },
+          "launch_to_open_s": {
+            "n": 2,
+            "n_shared": 1,
+            "p50_s": 0,
+            "p90_s": 1800
+          },
+          "to_merge_s": {
+            "n": 1,
+            "n_shared": 1,
+            "p50_s": 7200,
+            "p90_s": 7200
+          },
+          "to_open_s": {
+            "n": 2,
+            "n_shared": 1,
+            "p50_s": 1800,
+            "p90_s": 3600
+          }
+        }
+      },
+      "window": "d1"
+    }
+  ]
+}

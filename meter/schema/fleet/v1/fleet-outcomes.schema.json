@@ -1,0 +1,1439 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://automagik.si/schema/meter/fleet/v1/fleet-outcomes.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "contract_version",
+    "capability",
+    "meter_version",
+    "status",
+    "error",
+    "generated_at",
+    "machines",
+    "missing",
+    "windows"
+  ],
+  "properties": {
+    "contract": {
+      "const": "usagemeter.fleet.outcomes"
+    },
+    "contract_version": {
+      "const": 1
+    },
+    "capability": {
+      "const": "meter.fleet.outcomes@1"
+    },
+    "meter_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+([-+][0-9A-Za-z.-]+)?$"
+    },
+    "status": {
+      "enum": [
+        "ok",
+        "partial",
+        "usage",
+        "error"
+      ]
+    },
+    "error": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      ]
+    },
+    "generated_at": {
+      "$ref": "#/$defs/time"
+    },
+    "machines": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "store_schema_version",
+          "recorded",
+          "complete",
+          "stale"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "store_schema_version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "recorded": {
+            "type": "boolean"
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "stale": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "missing": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "machine",
+          "reason",
+          "message"
+        ],
+        "properties": {
+          "machine": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "windows": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/window"
+      },
+      "maxItems": 3
+    }
+  },
+  "$defs": {
+    "time": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$"
+    },
+    "timeOrNull": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/time"
+        }
+      ]
+    },
+    "repo": {
+      "type": "string",
+      "pattern": "^[a-z0-9.-]+(/[^/\\s]+)+$"
+    },
+    "stat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "n",
+        "n_shared",
+        "p50_s",
+        "p90_s"
+      ],
+      "properties": {
+        "n": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "n_shared": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "p50_s": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "p90_s": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "n": {
+                "const": 0
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "p50_s": {
+                "type": "null"
+              },
+              "p90_s": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "n": {
+                "minimum": 1
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "p50_s": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "p90_s": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "clocks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "to_open_s",
+        "to_merge_s",
+        "launch_to_open_s",
+        "launch_to_merge_s"
+      ],
+      "properties": {
+        "to_open_s": {
+          "$ref": "#/$defs/stat"
+        },
+        "to_merge_s": {
+          "$ref": "#/$defs/stat"
+        },
+        "launch_to_open_s": {
+          "$ref": "#/$defs/stat"
+        },
+        "launch_to_merge_s": {
+          "$ref": "#/$defs/stat"
+        }
+      }
+    },
+    "branchErrorLine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repo",
+        "branch",
+        "tool_error",
+        "api_error",
+        "run_failed",
+        "attributed",
+        "unattributed"
+      ],
+      "properties": {
+        "repo": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/repo"
+            }
+          ]
+        },
+        "branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tool_error": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "api_error": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "run_failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "attributed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unattributed": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "taskErrorLine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repo",
+        "task",
+        "tool_error",
+        "api_error",
+        "run_failed"
+      ],
+      "properties": {
+        "repo": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/repo"
+            }
+          ]
+        },
+        "task": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tool_error": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "api_error": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "run_failed": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "prBranch": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repo",
+        "branch",
+        "pr",
+        "state",
+        "to_open_s",
+        "to_merge_s",
+        "launch_to_open_s",
+        "launch_to_merge_s"
+      ],
+      "properties": {
+        "repo": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/repo"
+            }
+          ]
+        },
+        "branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pr": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "state": {
+          "enum": [
+            "open",
+            "merged",
+            "closed",
+            "no_pr"
+          ]
+        },
+        "to_open_s": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "to_merge_s": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "launch_to_open_s": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "launch_to_merge_s": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "first_commit_at": {
+          "$ref": "#/$defs/timeOrNull"
+        },
+        "pr_created_at": {
+          "$ref": "#/$defs/timeOrNull"
+        },
+        "merged_at": {
+          "$ref": "#/$defs/timeOrNull"
+        },
+        "first_launch_at": {
+          "$ref": "#/$defs/timeOrNull"
+        },
+        "shared": {
+          "type": "boolean"
+        },
+        "launches": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "timeToPr": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "overall",
+        "by_repo",
+        "by_repo_omitted",
+        "by_branch",
+        "by_branch_omitted"
+      ],
+      "properties": {
+        "overall": {
+          "$ref": "#/$defs/clocks"
+        },
+        "by_repo": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "repo",
+              "to_open_s",
+              "to_merge_s",
+              "launch_to_open_s",
+              "launch_to_merge_s"
+            ],
+            "properties": {
+              "repo": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/$defs/repo"
+                  }
+                ]
+              },
+              "to_open_s": {
+                "$ref": "#/$defs/stat"
+              },
+              "to_merge_s": {
+                "$ref": "#/$defs/stat"
+              },
+              "launch_to_open_s": {
+                "$ref": "#/$defs/stat"
+              },
+              "launch_to_merge_s": {
+                "$ref": "#/$defs/stat"
+              }
+            }
+          },
+          "maxItems": 50
+        },
+        "by_repo_omitted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "by_branch": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/prBranch"
+          },
+          "maxItems": 50
+        },
+        "by_branch_omitted": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "kindCount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "total"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "ok",
+            "partial",
+            "not_recorded"
+          ]
+        },
+        "total": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "not_recorded"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "total": {
+                "type": "null"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "total": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "errorBot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bot",
+        "kind",
+        "role",
+        "squad",
+        "harness",
+        "tool_error",
+        "api_error",
+        "run_failed"
+      ],
+      "properties": {
+        "bot": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "The bot id the launch recorded. At most 64 characters and 96 bytes as JSON, its escapes included."
+        },
+        "kind": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "role": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "The start row's role (dev, test, review or fix). null only when unrecorded names it. At most 64 characters and 96 bytes as JSON, its escapes included: one past either is unrecorded."
+        },
+        "squad": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "The bot heading the launching bot's lead chain, frozen at launch (RFC 0021 (e)). null for the main bot, which heads no squad, or, when unrecorded names it, unknown. At most 64 characters and 96 bytes as JSON, its escapes included: one past either is unrecorded."
+        },
+        "unrecorded": {
+          "enum": [
+            [],
+            [
+              "role"
+            ],
+            [
+              "squad"
+            ],
+            [
+              "role",
+              "squad"
+            ]
+          ],
+          "description": "The key fields the launch's start row did not record (rows written before RFC 0021 delivery 3): each is null, and unknown, never none."
+        },
+        "harness": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "tool_error": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "api_error": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "run_failed": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "errorHarness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "harness",
+        "tool_error",
+        "api_error",
+        "run_failed"
+      ],
+      "properties": {
+        "harness": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "tool_error": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "api_error": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "run_failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bot": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "The bot id the launch recorded. At most 64 characters and 96 bytes as JSON, its escapes included."
+        },
+        "kind": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1
+        },
+        "role": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "The start row's role (dev, test, review or fix). null only when unrecorded names it. At most 64 characters and 96 bytes as JSON, its escapes included: one past either is unrecorded."
+        },
+        "squad": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "The bot heading the launching bot's lead chain, frozen at launch (RFC 0021 (e)). null for the main bot, which heads no squad, or, when unrecorded names it, unknown. At most 64 characters and 96 bytes as JSON, its escapes included: one past either is unrecorded."
+        },
+        "unrecorded": {
+          "enum": [
+            [],
+            [
+              "role"
+            ],
+            [
+              "squad"
+            ],
+            [
+              "role",
+              "squad"
+            ]
+          ],
+          "description": "The key fields the launch's start row did not record (rows written before RFC 0021 delivery 3): each is null, and unknown, never none."
+        }
+      }
+    },
+    "errors": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tool_error",
+        "api_error",
+        "run_failed",
+        "by_harness",
+        "by_harness_omitted",
+        "by_harness_omitted_count",
+        "by_bot",
+        "by_bot_omitted",
+        "by_bot_omitted_count",
+        "by_branch",
+        "by_branch_omitted",
+        "by_branch_omitted_count",
+        "by_task",
+        "by_task_omitted",
+        "by_task_omitted_count"
+      ],
+      "properties": {
+        "tool_error": {
+          "$ref": "#/$defs/kindCount"
+        },
+        "api_error": {
+          "$ref": "#/$defs/kindCount"
+        },
+        "run_failed": {
+          "$ref": "#/$defs/kindCount"
+        },
+        "by_harness": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/errorHarness"
+          },
+          "maxItems": 50
+        },
+        "by_harness_omitted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "by_harness_omitted_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "by_bot": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/errorBot"
+          },
+          "maxItems": 50
+        },
+        "by_bot_omitted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "by_bot_omitted_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "by_branch": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/branchErrorLine"
+          },
+          "maxItems": 50
+        },
+        "by_branch_omitted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "by_branch_omitted_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "by_task": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/taskErrorLine"
+          },
+          "maxItems": 50
+        },
+        "by_task_omitted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "by_task_omitted_count": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "tool_error": {
+                "properties": {
+                  "total": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "by_harness": {
+                "items": {
+                  "properties": {
+                    "tool_error": {
+                      "type": "null"
+                    }
+                  }
+                }
+              },
+              "by_bot": {
+                "items": {
+                  "properties": {
+                    "tool_error": {
+                      "type": "null"
+                    }
+                  }
+                }
+              },
+              "by_branch": {
+                "items": {
+                  "properties": {
+                    "tool_error": {
+                      "type": "null"
+                    }
+                  }
+                }
+              },
+              "by_task": {
+                "items": {
+                  "properties": {
+                    "tool_error": {
+                      "type": "null"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "api_error": {
+                "properties": {
+                  "total": {
+                    "type": "null"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "by_harness": {
+                "items": {
+                  "properties": {
+                    "api_error": {
+                      "type": "null"
+                    }
+                  }
+                }
+              },
+              "by_bot": {
+                "items": {
+                  "properties": {
+                    "api_error": {
+                      "type": "null"
+                    }
+                  }
+                }
+              },
+              "by_branch": {
+                "items": {
+                  "properties": {
+                    "api_error": {
+                      "type": "null"
+                    }
+                  }
+                }
+              },
+              "by_task": {
+                "items": {
+                  "properties": {
+                    "api_error": {
+                      "type": "null"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "runEnds": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "failed",
+        "by_bot",
+        "by_bot_omitted"
+      ],
+      "properties": {
+        "clean": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unclassified": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "exited_ok": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "killed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stopped_by_restart": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "other": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unknown": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "by_bot": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "bot",
+              "kind",
+              "role",
+              "squad",
+              "unrecorded",
+              "agent",
+              "clean",
+              "failed",
+              "unclassified"
+            ],
+            "properties": {
+              "bot": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "description": "The bot id the launch recorded. At most 64 characters and 96 bytes as JSON, its escapes included."
+              },
+              "kind": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1
+              },
+              "role": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1,
+                "maxLength": 64,
+                "description": "The start row's role (dev, test, review or fix). null only when unrecorded names it. At most 64 characters and 96 bytes as JSON, its escapes included: one past either is unrecorded."
+              },
+              "squad": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1,
+                "maxLength": 64,
+                "description": "The bot heading the launching bot's lead chain, frozen at launch (RFC 0021 (e)). null for the main bot, which heads no squad, or, when unrecorded names it, unknown. At most 64 characters and 96 bytes as JSON, its escapes included: one past either is unrecorded."
+              },
+              "unrecorded": {
+                "enum": [
+                  [],
+                  [
+                    "role"
+                  ],
+                  [
+                    "squad"
+                  ],
+                  [
+                    "role",
+                    "squad"
+                  ]
+                ],
+                "description": "The key fields the launch's start row did not record (rows written before RFC 0021 delivery 3): each is null, and unknown, never none."
+              },
+              "harness": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1
+              },
+              "agent": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "minLength": 1
+              },
+              "clean": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "failed": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "unclassified": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "maxItems": 50
+        },
+        "by_bot_omitted": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "abandoned": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "branches",
+        "branches_omitted",
+        "by_repo",
+        "by_repo_omitted"
+      ],
+      "properties": {
+        "branches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "repo",
+              "branch",
+              "launches"
+            ],
+            "properties": {
+              "repo": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/$defs/repo"
+                  }
+                ]
+              },
+              "branch": {
+                "type": "string",
+                "minLength": 1
+              },
+              "launches": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "maxItems": 50
+        },
+        "branches_omitted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "by_repo": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "repo",
+              "branches",
+              "launches"
+            ],
+            "properties": {
+              "repo": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/$defs/repo"
+                  }
+                ]
+              },
+              "branches": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "launches": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "maxItems": 50
+        },
+        "by_repo_omitted": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "window",
+        "start",
+        "end",
+        "clipped",
+        "state",
+        "launches",
+        "run_ends",
+        "prs",
+        "time_to_pr",
+        "abandoned_branches",
+        "errors"
+      ],
+      "properties": {
+        "window": {
+          "enum": [
+            "d1",
+            "d7",
+            "d30"
+          ]
+        },
+        "start": {
+          "$ref": "#/$defs/time"
+        },
+        "end": {
+          "$ref": "#/$defs/time"
+        },
+        "clipped": {
+          "type": "boolean"
+        },
+        "state": {
+          "enum": [
+            "ok",
+            "partial",
+            "no_data"
+          ]
+        },
+        "launches": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "properties": {},
+              "required": []
+            }
+          ]
+        },
+        "run_ends": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/runEnds"
+            }
+          ]
+        },
+        "prs": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "opened",
+            "merged",
+            "closed_unmerged",
+            "open",
+            "not_recorded"
+          ],
+          "properties": {
+            "opened": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "merged": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "closed_unmerged": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "open": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "not_recorded": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "time_to_pr": {
+          "$ref": "#/$defs/timeToPr"
+        },
+        "abandoned_branches": {
+          "$ref": "#/$defs/abandoned"
+        },
+        "errors": {
+          "$ref": "#/$defs/errors"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "ok"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "missing": {
+            "maxItems": 0
+          },
+          "error": {
+            "type": "null"
+          },
+          "machines": {
+            "minItems": 1,
+            "items": {
+              "properties": {
+                "recorded": {
+                  "const": true
+                },
+                "complete": {
+                  "const": true
+                },
+                "stale": {
+                  "const": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "missing": {
+            "minItems": 1
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "partial"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "const": "partial"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "usage",
+              "error"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "minLength": 1
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "machines": {
+            "maxItems": 0
+          },
+          "windows": {
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "ok",
+              "partial"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "error": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ]
+}

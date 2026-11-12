@@ -7,6 +7,7 @@
 pub mod coverage;
 pub mod event;
 pub mod evidence;
+pub mod fleet;
 pub mod hc;
 pub mod ledger;
 pub mod outcomes;
