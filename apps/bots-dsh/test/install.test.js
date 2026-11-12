@@ -98,6 +98,8 @@ test('apply registers listeners, tools, and effects in a fixed order', (t) => {
     'effect ds-bot: cancel held subagent asks',
     'on session/event',
     'on tools/result',
+    'on tools/post-execute',
+    'on agent/pre-step',
     'on agent/created',
     'on session/event',
     'effect ds-bot: subagent asks context',

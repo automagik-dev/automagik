@@ -1,5 +1,6 @@
 // Permission stops are a memory-only view for the person, never Session events.
 import { randomUUID } from 'node:crypto'
+import { approvalPolicyOf } from './approval-policy.js'
 
 export const STOP_WHYS = ['never', 'unavailable', 'tool', 'level', 'address', 'review', 'sandbox', 'rule']
 export const STOP_KEEP_MS = 6 * 60 * 60 * 1000
@@ -48,6 +49,7 @@ export function install(rt) {
   const sessions = new Map()
   const asks = new Map()
   const decided = new Map()
+  const unasked = new Map()
   const entries = new Map()
   const stateOf = id => sessions.get(id) ?? put(sessions, id, { turn: 0, pending: new Map() }, 500)
 
@@ -86,6 +88,18 @@ export function install(rt) {
       }
     } catch {}
     return undefined
+  }
+
+  function noteUnasked(sessionId, { tool, why, callId, reason }, agent) {
+    if (teamOwnerOf(sessionId, agent)?.child !== true) return
+    const record = unasked.get(sessionId) ?? put(unasked, sessionId, { items: [], more: 0, seen: new Set() }, 200)
+    if (callId !== undefined) {
+      if (record.seen.has(callId)) return
+      record.seen.add(callId)
+      if (record.seen.size > 200) record.seen.delete(record.seen.values().next().value)
+    }
+    if (record.items.length < CALLS_MAX) record.items.push({ tool: line(tool, 64), why, callId, reason: line(reason, 200) })
+    else record.more += 1
   }
 
   const prune = () => {
@@ -156,7 +170,10 @@ export function install(rt) {
         case 'turn/end': {
           const pending = sessions.get(id)?.pending
           if (pending) {
-            for (const stop of pending.values()) noteResolved(stop)
+            for (const stop of pending.values()) {
+              noteResolved(stop)
+              if (approvalPolicyOf(ctx.get('approval'), session) === 'never') noteUnasked(id, { ...stop.detail, why: 'sandbox' }, { session })
+            }
             pending.clear()
           }
           break
@@ -175,14 +192,16 @@ export function install(rt) {
           const ask = asks.get(key)
           asks.delete(key)
           if (!ask) break
-          if (ask.callId !== undefined) put(decided, pairKey(id, ask.callId), true, 200)
+          if (ask.callId !== undefined) put(decided, pairKey(id, ask.callId), { outcome: data.outcome, policy: ask.policy }, 200)
           const why = data.outcome === 'unavailable' ? 'unavailable' : data.outcome === 'rejected' && ask.policy === 'never' ? 'never' : undefined
           if (why) noteStop(id, { why, tool: ask.toolName, callId: ask.callId }, { session })
+          if (why) noteUnasked(id, { tool: ask.toolName, why, callId: ask.callId }, { session })
           break
         }
         case 'tool/result':
           if (data.error?.name === 'ApprovalDeniedError' && data.error.code === 'UNAVAILABLE' && !decided.has(pairKey(id, data.message?.toolCallId))) {
             noteStop(id, { why: 'unavailable', callId: data.message?.toolCallId }, { session })
+            noteUnasked(id, { why: 'unavailable', callId: data.message?.toolCallId }, { session })
           }
           break
         case 'user/message':
@@ -204,11 +223,22 @@ export function install(rt) {
       const info = result.error?.info
       if (result.isError && ['AUTO_REVIEW_DENIED', 'AUTO_REVIEW_FAILED'].includes(info?.code)) {
         noteStop(sessionId, { why: 'review', tool: exec.name, callId: exec.callId, text: info.reason }, exec.agent)
+        if (info.code === 'AUTO_REVIEW_DENIED') noteUnasked(sessionId, { why: 'review', tool: exec.name, callId: exec.callId, reason: info.reason }, exec.agent)
       } else if ((result.isError && info?.code === 'FS_SANDBOX_DENIED') || (!result.isError && result.value?.sandbox?.denied === true)) {
         const stop = resolved(sessionId, { why: 'sandbox', tool: exec.name, callId: exec.callId }, exec.agent)
         if (stop) put(stateOf(sessionId).pending, operation, stop, 200)
       }
     } catch {}
   })
-  Object.assign(rt, { teamOwnerOf, noteStop, stopsView, stopsIn, stopLineOfTurn })
+  const decidedOf = (sessionId, callId) => {
+    const record = decided.get(pairKey(sessionId, callId))
+    return record === undefined ? undefined : { ...record }
+  }
+  const takeUnasked = sessionId => {
+    const record = unasked.get(sessionId)
+    if (record === undefined) return undefined
+    unasked.delete(sessionId)
+    return { items: record.items.map(item => ({ ...item })), more: record.more }
+  }
+  Object.assign(rt, { teamOwnerOf, noteStop, stopsView, stopsIn, stopLineOfTurn, decidedOf, takeUnasked })
 }

@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { apply } from '../index.js'
+import { HELD_NOT_SET } from '../src/shared/held.js'
 import { fakeContext } from './fake-ctx.js'
 
 const FULL = 'danger-full-access'
@@ -481,7 +482,7 @@ test('a task no Bot asked for whose level cannot be read is held under its paren
   let ran = false
   await assert.rejects(toolCall(child, () => { ran = true }, 'shell'), /so no tool runs here/)
   assert.equal(ran, false)
-  assert.match(await turn(child), /so no tool runs here/)
+  assert.equal(await turn(child), HELD_NOT_SET)
   // Readable again and wider than the parent: lowered, and it runs.
   service.current = current
   rt.levelRetryMs = 0
@@ -619,7 +620,7 @@ test('a child that cannot take the lower level runs no tool and no agent turn un
   let ran = false
   await assert.rejects(toolCall(child, () => { ran = true }, 'shell'), /could not be set on this conversation, so no tool runs here/)
   assert.equal(ran, false)
-  assert.match(await turn(child), /could not be set on this conversation, so no tool runs here/)
+  assert.equal(await turn(child), HELD_NOT_SET)
   // The diagnostics facts only read: the level it should run at, and the mark.
   const facts = rt.permissionFactsOf(child, { id: child })
   assert.deepEqual([facts.kind, facts.saved, facts.effective, facts.unapplied?.level], ['task', WRITE, FULL, WRITE])
@@ -659,7 +660,7 @@ test('a running task whose level can no longer be compared with its parent\'s is
   let ran = false
   await assert.rejects(toolCall(child, () => { ran = true }, 'shell'), /so no tool runs here/)
   assert.equal(ran, false)
-  assert.match(await turn(child), /so no tool runs here/)
+  assert.equal(await turn(child), HELD_NOT_SET)
   assert.notEqual(rt.permissionFactsOf(child, { id: child }).unapplied, undefined)
   // Not even when the Session comes to read that level: reading it proves nothing.
   service.set({ id: child }, 'odd')

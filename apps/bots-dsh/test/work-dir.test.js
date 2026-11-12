@@ -150,6 +150,9 @@ const approvalServices = (outcome, { policy = 'on-request', mode = 'workspace-wr
     services: {
       sandboxPolicy: { resolve: ({ session } = {}) => ({ mode: modes[session?.id] ?? mode }) },
       approval: {
+        // DSH reads the policy of the call's own Session (it has a header); its agent, also id 'b', has none.
+        overrideOf: s => (policy === 'never' && s?.header !== undefined && s.id === 'b' ? 'never' : undefined),
+        config: { policy: 'ask' },
         request: async (request) => {
           requests.push(request)
           return policy === 'never' ? 'rejected' : outcome
@@ -403,7 +406,7 @@ test('a folder outside the team workspace needs the user\'s approval', async (t)
 
   const never = await start(approvalServices('allowed-once', { policy: 'never' }))
   t.after(never.stop)
-  assert.equal(await never.tool('update_bot', { work_dir: never.project }, 'b'), `Could not update the Bot: ${notAllowed(never.project)}`)
+  assert.equal(await never.tool('update_bot', { work_dir: never.project }, 'b'), `Could not update the Bot: Working in ${never.project} needs the person's approval, and nobody was asked: approval prompts are off in this conversation (a subagent, or Full access), so nothing changed. The person can make this change in the settings, or give this Bot a level that asks first, such as Workspace.`)
   assert.equal(never.state().bots.b.workDir, undefined)
 
   const allowed = approvalServices('allowed-once')
