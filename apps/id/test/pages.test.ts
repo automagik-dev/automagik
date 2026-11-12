@@ -93,8 +93,9 @@ describe('pages: files', () => {
     expect([(bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1]).toEqual([7 * 192, 208]);
     // The folder holds this one Genie file and nothing else that could be an older one.
     expect((await readdir(resolve('pages/assets'))).sort()).toEqual([
-      'LICENSES.md', 'OFL-DMSans.txt', 'OFL-Manrope.txt', 'dm-sans-latin.woff2', 'genie-faces.webp', 'icon.png',
-      'manrope-latin.woff2', 'omni-faces.webp', 'wordmark.webp',
+      'LICENSES.md', 'OFL-DMSans.txt', 'OFL-Manrope.txt', 'automagik-lockup-three-colours-cream-header.svg',
+      'automagik-lockup-three-colours-ink-header.svg', 'dm-sans-latin.woff2', 'genie-faces.webp', 'icon.png',
+      'manrope-latin.woff2', 'omni-faces.webp',
     ]);
     const notes = await read('assets/LICENSES.md');
     expect(notes).toContain(`SHA-256 \`${approved}\``);
@@ -102,6 +103,40 @@ describe('pages: files', () => {
     const css = await read('id.css');
     expect(css).toContain('[data-who="genie"] .pet,[data-who="omni"] .pal{aspect-ratio:192/208;background-image:url("/assets/genie-faces.webp")}');
     expect([...css.matchAll(/genie[\w-]*\.(?:webp|png|svg)/g)].map(match => match[0])).toEqual(['genie-faces.webp']);
+  });
+
+  test('the logo is the approved set\'s lockup, unchanged, on both pages, and the old capitals are gone', async () => {
+    const notes = await read('assets/LICENSES.md');
+    const files = ['automagik-lockup-three-colours-ink-header.svg', 'automagik-lockup-three-colours-cream-header.svg'];
+    // Each file is the set's, byte for byte: its digest is the one recorded beside its source.
+    const pinned = new Map([...notes.matchAll(/^\| `([^`]+)` \| `([^`]+)` \| `([0-9a-f]{64})` \|$/gm)].map(match => [match[1], match[3]]));
+    expect([...pinned.keys()]).toEqual(files);
+    for (const [file, colour] of [[files[0], '#3c3049'], [files[1], '#f3e9dd']]) {
+      const svg = await readFile(resolve('pages/assets', file));
+      expect(createHash('sha256').update(svg).digest('hex'), file).toBe(pinned.get(file));
+      // One box for both, the letters' tone in the file's colour, and nothing that could load
+      // or run. What the file draws is pinned only by its digest, so a newer set is a file swap.
+      const text = svg.toString('utf8');
+      expect(text.startsWith(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -186 1632.34 264" role="img" aria-label="Automagik" color="${colour}">`), file).toBe(true);
+      expect(/<script|<foreignObject|<image|<text|href=|url\((?!#)/i.test(text), file).toBe(false);
+    }
+    // One picture on each page: ink letters on the light page, cream on the dark one.
+    const logo = '<header class="brand"><picture><source media="(prefers-color-scheme: dark)" srcset="/assets/automagik-lockup-three-colours-cream-header.svg">'
+      + '<img src="/assets/automagik-lockup-three-colours-ink-header.svg" width="1632" height="264" alt="Automagik"></picture></header>';
+    for (const page of PAGES) {
+      const html = await read(`${page}.html`);
+      expect(html.split(logo).length, page).toBe(2);
+      expect(html.match(/<(?:img|source|picture)\b/g), page).toEqual(['<picture', '<source', '<img']);
+      expect(/wordmark/i.test(html), page).toBe(false);
+    }
+    expect(existsSync(resolve('pages/assets/wordmark.webp'))).toBe(false);
+    // Sized by the triskle's height as on the site (32 px in a wide window, 26 on a phone,
+    // 23 under 360 px), and no rule draws on the logo.
+    const css = await read('id.css');
+    expect(css).toContain('.brand{--mark:26px;order:-1;display:flex;justify-content:center}\n.brand picture{display:contents}\n.brand img{display:block;width:auto;height:calc(var(--mark)*264/222)}\n');
+    expect([...css.matchAll(/\n\s*\.brand\{--mark:(\d+)px/g)].map(match => Number(match[1]))).toEqual([26, 23, 32]);
+    for (const [rule] of css.matchAll(/[^{}]*\.brand[^{}]*\{[^}]*\}/g)) expect(/filter|shadow|stroke|opacity|transform|scale|rotate|animation|transition|background|object-/.test(rule), rule).toBe(false);
+    expect(/wordmark/i.test(css)).toBe(false);
   });
 
   test('the CI job runs the browser tests', async () => {
@@ -1248,6 +1283,40 @@ describe('pages: every state', () => {
     for (const step of steps) expect(step).toBeCloseTo(steps[0], 1);
     await phone.close();
   }, 120000);
+
+  test('the logo: the set\'s file for the theme, drawn unstretched at the site\'s sizes, centred, on both pages', async ({ skip }) => {
+    if (!(await chromium())) return skip();
+    const { origin } = await world();
+    const named = (name: string) => scenes.find(scene => scene.name === name)!;
+    const measure = `(async () => {
+      const image = document.querySelector('.brand img'); await image.decode();
+      const box = image.getBoundingClientRect(), style = getComputedStyle(image);
+      return {
+        file: image.currentSrc.split('/').pop(), drawn: image.naturalWidth > 0, name: image.alt, size: [box.width, box.height],
+        off: box.left + box.width / 2 - innerWidth / 2, top: box.top, over: document.documentElement.scrollWidth - innerWidth,
+        effects: [style.filter, style.opacity, style.transform].join(' '), pictures: document.images.length,
+      };
+    })()`;
+    for (const colorScheme of ['light', 'dark'] as const) {
+      for (const [width, height, mark] of [[1440, 900, 32], [390, 844, 26], [320, 700, 23]] as const) {
+        const context = await browser.newContext({ viewport: { width, height }, colorScheme, reducedMotion: 'reduce' });
+        for (const name of ['sign-in-02-passkey', 'consent-02-ask']) {
+          const label = `${name} ${colorScheme} ${width}`;
+          const { page } = await stage(context, origin, named(name));
+          const logo = await page.evaluate(measure) as any;
+          expect([logo.file, logo.drawn, logo.name, logo.pictures], label).toEqual([`automagik-lockup-three-colours-${colorScheme === 'dark' ? 'cream' : 'ink'}-header.svg`, true, 'Automagik', 1]);
+          expect(Math.abs(logo.size[1] - mark * 264 / 222), label).toBeLessThanOrEqual(0.6);
+          expect(Math.abs(logo.size[0] - mark * 1632.34 / 222), label).toBeLessThanOrEqual(0.6);
+          expect(Math.abs(logo.off), label).toBeLessThanOrEqual(1);
+          expect(logo.top, label).toBeGreaterThanOrEqual(0);
+          expect(logo.over, label).toBeLessThanOrEqual(0);
+          expect(logo.effects, label).toBe('none 1 none');
+          await page.close();
+        }
+        await context.close();
+      }
+    }
+  }, 180000);
 
   test('a framed page shows nothing and calls nothing', async ({ skip }) => {
     if (!(await chromium())) return skip();
