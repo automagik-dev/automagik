@@ -59,19 +59,34 @@ const reason = error => {
   return lines.find(line => line.startsWith('fatal:')) ?? lines.pop() ?? 'no reason given';
 };
 
-function git(args, { cwd, timeout, buffer = false } = {}) {
-  // A hook's own GIT_DIR must not point these calls at another repository.
-  const { GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, ...env } = process.env;
-  return execFileSync('git', args, {
-    cwd, timeout, encoding: buffer ? 'buffer' : 'utf8', maxBuffer: 1 << 28, stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...env, GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C' },
+// The only GIT_ variables a call inherits: how to reach a remote. Every other one is dropped, so
+// nothing the caller's shell or a hook set (GIT_DIR, GIT_WORK_TREE, GIT_COMMON_DIR,
+// GIT_OBJECT_DIRECTORY, GIT_ALTERNATE_OBJECT_DIRECTORIES, GIT_INDEX_FILE, GIT_NAMESPACE, the
+// GIT_CONFIG family, GIT_CEILING_DIRECTORIES, or one git adds later) can point a call, or a
+// scratch repository's objects, config and shallow file, at another repository.
+const TRANSPORT = /^GIT_(SSH|SSH_COMMAND|SSH_VARIANT|ASKPASS|SSL_[A-Z_]+|HTTP_[A-Z_]+|PROXY_COMMAND)$/;
+const gitEnv = () => ({
+  ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('GIT_') || TRANSPORT.test(name))),
+  GIT_TERMINAL_PROMPT: '0', LC_ALL: 'C',
+});
+
+/** Runs git: in `cwd`, or on the scratch repository `dir`, named outright and never discovered. */
+function git(args, { cwd, dir, timeout, buffer = false } = {}) {
+  return execFileSync('git', dir ? ['--git-dir', dir, ...args] : args, {
+    cwd: dir ?? cwd, timeout, encoding: buffer ? 'buffer' : 'utf8', maxBuffer: 1 << 28, stdio: ['ignore', 'pipe', 'pipe'], env: gitEnv(),
   });
 }
 
 function scratchRepo(remote) {
   const repo = mkdtempSync(join(tmpdir(), 'brand-sync-'));
-  git(['init', '-q', '--bare', repo]);
-  git(['remote', 'add', 'origin', remote], { cwd: repo });
+  try {
+    git(['init', '-q', '--bare', repo]);
+    git(['remote', 'add', 'origin', remote], { dir: repo });
+  } catch (error) {
+    // Nothing is left behind when the scratch repository cannot be made.
+    rmSync(repo, { recursive: true, force: true });
+    throw error;
+  }
   return repo;
 }
 
@@ -143,16 +158,23 @@ function refuseUnsafe(root, writes, removes) {
 
 /**
  * Writes one file of the copy: into a new file beside it, then a rename over it. A rename replaces
- * what is at the path, a link included, and never writes through it; and the folder it lands in
- * must resolve inside the repository, whatever the checks before found.
+ * what is at the path, a link included, and never writes through it. Before anything is made, a
+ * folder included: the deepest folder that exists on the way must resolve inside the repository,
+ * and no folder on the way may be a link, whatever the checks before found.
  */
 export function replaceFile(root, path, bytes, mode = 0o644) {
-  const target = join(root, path);
-  const folder = dirname(target);
-  mkdirSync(folder, { recursive: true });
   const inside = realpathSync(root);
-  const real = realpathSync(folder);
-  if (real !== inside && !real.startsWith(`${inside}${sep}`)) throw new Error(`${path} resolves outside this repository (${dirname(path)} leads elsewhere): not written`);
+  const target = join(inside, path);
+  const folder = dirname(target);
+  const way = path.split('/').slice(0, -1);
+  let deepest = inside;
+  for (let at = 1; at <= way.length && lstatOf(join(inside, ...way.slice(0, at))); at += 1) deepest = join(inside, ...way.slice(0, at));
+  let real;
+  try { real = realpathSync(deepest); } catch { real = undefined; }
+  if (real !== inside && !real?.startsWith(`${inside}${sep}`)) throw new Error(`${path} resolves outside this repository (${dirname(path)} leads elsewhere): nothing was made or written`);
+  const link = way.length ? linkOn(inside, way.join('/')) : undefined;
+  if (link) throw new Error(`${link} ${LINK}: ${path} was not written`);
+  mkdirSync(folder, { recursive: true });
   // A folder left where a file goes: its files were stale and are gone, so it is empty or it stays.
   if (isFolder(target)) pruneEmpty(target);
   const temp = join(folder, `.brand-sync-${process.pid}-${randomBytes(6).toString('hex')}.tmp`);
@@ -176,24 +198,24 @@ export function openSource(from, remote = `${SOURCE}.git`) {
     try { top = git(['rev-parse', '--show-toplevel'], { cwd: from }).trim(); } catch { throw new Error(`${from} is a folder, but not a git checkout`); }
     const commit = git(['rev-parse', 'HEAD'], { cwd: top }).trim();
     const dirty = git(['status', '--porcelain', '--', ...FOLDERS, TOOL], { cwd: top }).trim() !== '';
-    return { repo: top, top, commit, dirty, close() {} };
+    return { where: { cwd: top }, top, commit, dirty, close() {} };
   }
   if (from.startsWith('-') || remote.startsWith('-')) throw new Error(`not a checkout or a commit: ${from}`);
   let repo;
   try {
     repo = scratchRepo(remote);
-    git(['fetch', '-q', '--depth', '1', 'origin', from], { cwd: repo, timeout: NETWORK_MS });
-    const commit = git(['rev-parse', 'FETCH_HEAD^{commit}'], { cwd: repo }).trim();
-    return { repo, commit, dirty: false, close: () => rmSync(repo, { recursive: true, force: true }) };
+    git(['fetch', '-q', '--depth', '1', 'origin', from], { dir: repo, timeout: NETWORK_MS });
+    const commit = git(['rev-parse', 'FETCH_HEAD^{commit}'], { dir: repo }).trim();
+    return { where: { dir: repo }, commit, dirty: false, close: () => rmSync(repo, { recursive: true, force: true }) };
   } catch (error) {
     if (repo) rmSync(repo, { recursive: true, force: true });
     throw new Error(`could not read ${from} from ${remote}: give an Automagik checkout, a branch or a full commit id (${reason(error)})`);
   }
 }
 
-/** The files the source holds at its commit: `{ path, mode, oid }`, plain files only. */
-export function sourceFiles({ repo, commit }) {
-  const listed = git(['ls-tree', '-r', '-z', commit, '--', ...FOLDERS, TOOL], { cwd: repo }).split('\0').filter(Boolean).map(line => {
+/** The files the source (what `openSource` returned) holds at its commit: `{ path, mode, oid }`, plain files only. */
+export function sourceFiles({ where, commit }) {
+  const listed = git(['ls-tree', '-r', '-z', commit, '--', ...FOLDERS, TOOL], where).split('\0').filter(Boolean).map(line => {
     const tab = line.indexOf('\t');
     const [mode, type, oid] = line.slice(0, tab).split(' ');
     return { path: line.slice(tab + 1), mode, type, oid };
@@ -227,7 +249,7 @@ export function write({ to, from, remote }) {
     for (const path of removed) rmSync(join(root, path));
     const hashes = {};
     for (const file of files) {
-      const bytes = git(['cat-file', 'blob', file.oid], { cwd: source.repo, buffer: true });
+      const bytes = git(['cat-file', 'blob', file.oid], { ...source.where, buffer: true });
       replaceFile(root, file.path, bytes, file.mode === '100755' ? 0o755 : 0o644);
       hashes[file.path] = sha256(bytes);
     }
@@ -297,8 +319,8 @@ export function staleness({ commit, remote = `${SOURCE}.git`, branch = BRANCH })
   try {
     repo = scratchRepo(remote);
     // The two commits and their trees are enough: no file's bytes are fetched.
-    git(['fetch', '-q', '--depth', '1', '--filter=blob:none', 'origin', dev, commit], { cwd: repo, timeout: NETWORK_MS });
-    const brandAt = at => git(['ls-tree', '-r', at, '--', ...FOLDERS, TOOL], { cwd: repo });
+    git(['fetch', '-q', '--depth', '1', '--filter=blob:none', 'origin', dev, commit], { dir: repo, timeout: NETWORK_MS });
+    const brandAt = at => git(['ls-tree', '-r', at, '--', ...FOLDERS, TOOL], { dir: repo });
     if (brandAt(dev) === brandAt(commit)) return { state: 'current', dev };
   } catch (error) {
     return { state: 'unknown', dev, why: reason(error) };
@@ -309,8 +331,8 @@ export function staleness({ commit, remote = `${SOURCE}.git`, branch = BRANCH })
   let history;
   try {
     history = scratchRepo(remote);
-    git(['fetch', '-q', '--filter=tree:0', 'origin', dev], { cwd: history, timeout: NETWORK_MS });
-    const onDev = git(['rev-list', dev], { cwd: history }).split('\n').includes(commit);
+    git(['fetch', '-q', '--filter=tree:0', 'origin', dev], { dir: history, timeout: NETWORK_MS });
+    const onDev = git(['rev-list', dev], { dir: history }).split('\n').includes(commit);
     return { state: onDev ? 'behind' : 'apart', dev };
   } catch (error) {
     return { state: 'unknown', dev, why: reason(error) };

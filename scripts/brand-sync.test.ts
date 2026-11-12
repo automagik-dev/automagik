@@ -270,6 +270,69 @@ describe('the brand copy tool (scripts/brand-sync.mjs)', () => {
     expect(readdirSync(scratch)).toEqual([]);
   });
 
+  test("git variables inherited from the caller cannot point the tool's git at the target: its objects, config, shallow file and index are unchanged", () => {
+    const { source, target, first } = small();
+    write({ to: target, from: source });
+    commit(target, 'the copy');
+    put(source, 'docs/brand/tokens/tokens.css', ':root{--bt-main:#fffaf0}\n');
+    const newer = commit(source, 'a new cream');
+    const base = dirname(target);
+    const scratch = join(base, 'scratch');
+    mkdirSync(scratch);
+    // What a hook, a wrapper or a shell may have set. First the variables that name a repository's
+    // parts, all pointing at the target; then the ones that change what git reads or reaches.
+    const groups: Record<string, string>[] = [{
+      GIT_DIR: join(target, '.git'), GIT_WORK_TREE: target, GIT_COMMON_DIR: join(target, '.git'),
+      GIT_OBJECT_DIRECTORY: join(target, '.git/objects'), GIT_ALTERNATE_OBJECT_DIRECTORIES: join(target, '.git/objects'),
+      GIT_INDEX_FILE: join(target, '.git/index'),
+    }, {
+      GIT_NAMESPACE: 'planted', GIT_CEILING_DIRECTORIES: base, GIT_CONFIG_GLOBAL: join(target, '.git/config'), GIT_CONFIG_NOSYSTEM: '1',
+      // A url rewrite that would send every read of the remote to a folder that does not exist.
+      GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: `url.${join(base, 'nowhere')}/.insteadOf`, GIT_CONFIG_VALUE_0: `${base}/`,
+    }];
+    /** Every file under the target's .git, with its bytes' sha256: objects, config, shallow, index, refs, FETCH_HEAD. */
+    const gitFolder = () => Object.fromEntries(readdirSync(join(target, '.git'), { withFileTypes: true, recursive: true })
+      .filter(entry => !entry.isDirectory())
+      .map(entry => join(entry.parentPath, entry.name))
+      .sort()
+      .map(path => [path.slice(target.length + 1), sha256(readFileSync(path))]));
+    const before = gitFolder();
+    expect(Object.keys(before)).toContain('.git/config');
+    expect(Object.keys(before).some(path => path.startsWith('.git/objects/'))).toBe(true);
+
+    for (const inherited of groups) {
+      const tool = (...args: string[]) => spawnSync('node', [join(ROOT, TOOL), ...args], { cwd: target, encoding: 'utf8', env: { ...process.env, GITHUB_ACTIONS: '', TMPDIR: scratch, ...inherited } });
+      // The look runs both fetches. The target's .git first: not one file added, changed or removed.
+      const checked = tool('--check', '--remote', source);
+      expect(gitFolder()).toEqual(before);
+      expect(existsSync(join(target, '.git/shallow'))).toBe(false);
+      expect(readdirSync(scratch)).toEqual([]);
+      // And it still saw the real remote: dev is ahead.
+      expect(checked.stderr).toBe('');
+      expect(checked.status).toBe(0);
+      expect(checked.stdout).toContain(`Copy it again: node scripts/brand-sync.mjs --write --from ${newer}`);
+
+      // A copy from a commit id (a third fetch), then from the checkout: the files change, the target's .git does not.
+      const fromCommit = tool('--write', '--from', first, '--remote', source);
+      expect(gitFolder()).toEqual(before);
+      expect(fromCommit.stderr).toBe('');
+      expect(fromCommit.status).toBe(0);
+      expect(fromCommit.stdout).toContain(`copied 5 files from Automagik ${first}`);
+      expect(readFileSync(join(target, 'docs/brand/tokens/tokens.css'), 'utf8')).toBe(':root{--bt-main:#fff}\n');
+      const fromCheckout = tool('--write', '--from', source, '--remote', source);
+      expect(gitFolder()).toEqual(before);
+      expect(fromCheckout.status).toBe(0);
+      expect(fromCheckout.stdout).toContain(`copied 5 files from Automagik ${newer}`);
+      expect(readFileSync(join(target, 'docs/brand/tokens/tokens.css'), 'utf8')).toBe(':root{--bt-main:#fffaf0}\n');
+      expect(readdirSync(scratch)).toEqual([]);
+      // The source checkout was read, not written: no record there, and its own .git gained no shallow file.
+      expect(existsSync(join(source, RECORD))).toBe(false);
+      expect(existsSync(join(source, '.git/shallow'))).toBe(false);
+      // Back to the first copy for the next group.
+      write({ to: target, from: first, remote: source });
+    }
+  });
+
   test("the look at Automagik's dev: quiet while the brand there is the copy's, a warning that never fails once it is not", () => {
     const { source, target, first } = small();
     write({ to: target, from: source });
@@ -499,6 +562,30 @@ describe('the brand copy tool and symbolic links', () => {
     symlinkSync(join(outside, 'folder'), join(target, 'docs/brand/linked'));
     expect(() => replaceFile(target, 'docs/brand/linked/file.md', 'x\n')).toThrow('resolves outside this repository');
     expect(readdirSync(join(outside, 'folder'))).toEqual([]);
+  });
+
+  test('the writer makes no folder before its checks: a missing parent beneath a link is not created, outside or inside', () => {
+    const { target, outside } = carried();
+    // Beneath a link that leads outside: the folders that are missing must not appear there.
+    mkdirSync(join(outside, 'folder'));
+    symlinkSync(join(outside, 'folder'), join(target, 'docs/brand/linked'));
+    expect(() => replaceFile(target, 'docs/brand/linked/new/deeper/file.md', 'x\n')).toThrow('docs/brand/linked/new/deeper/file.md resolves outside this repository');
+    expect(readdirSync(join(outside, 'folder'))).toEqual([]);
+
+    // Beneath a link that stays inside the repository: containment holds, the link is still refused, and nothing is made.
+    mkdirSync(join(target, 'elsewhere'));
+    symlinkSync(join(target, 'elsewhere'), join(target, 'docs/brand/inner'));
+    expect(() => replaceFile(target, 'docs/brand/inner/new/file.md', 'x\n')).toThrow('docs/brand/inner is a symbolic link');
+    expect(readdirSync(join(target, 'elsewhere'))).toEqual([]);
+
+    // A link that leads nowhere is refused as well.
+    symlinkSync(join(outside, 'gone'), join(target, 'docs/brand/dangling'));
+    expect(() => replaceFile(target, 'docs/brand/dangling/new/file.md', 'x\n')).toThrow('resolves outside this repository');
+    expect(existsSync(join(outside, 'gone'))).toBe(false);
+
+    // With real folders all the way, the missing ones are made and the file is written.
+    replaceFile(target, 'docs/brand/a/b/file.md', 'made\n');
+    expect(readFileSync(join(target, 'docs/brand/a/b/file.md'), 'utf8')).toBe('made\n');
   });
 
   test('a repository reached through a link is still its real folder: the copy is written and checks', () => {
