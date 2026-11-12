@@ -105,15 +105,13 @@ html:has(.sheet:popover-open) :is(.top,main,.site-footer,.skip){interactivity:in
    the same panel in CSS. The panel sits in one place under the header in both cases. */
 .top{--top-h:72px;position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 84%,transparent);-webkit-backdrop-filter:saturate(1.4) blur(14px);backdrop-filter:saturate(1.4) blur(14px);border-bottom:1px solid var(--line)}
 .top-inner{display:flex;align-items:center;gap:clamp(12px,2.4vw,28px);min-height:var(--top-h)}
-/* The logo: the clay triskle at --mark tall, then the wordmark, placed as the logo kit's own
-   lockup places it, in 222nds of the triskle's height: the word's file is 257 tall and
-   starts 7 down and 46 to the right, and its g hangs 42 under the triskle, outside the
-   link's box, so the triskle stays where the header centres it. */
-.brand{--mark:32px;display:flex;align-items:flex-start;flex-shrink:0}
+/* The logo: the kit's lockup for small sizes, one file. Its box is 264 tall where the
+   triskle is 222 (--mark): the g hangs 42 under the triskle, outside the link's box, so the
+   triskle stays where the header centres it. */
+.brand{--mark:32px;display:block;flex-shrink:0}
 .brand picture{display:contents}
 .brand:focus-visible{outline-offset:calc(var(--mark)*42/222 + 3px)}
-.brand-mark{width:auto;height:var(--mark)}
-.brand-word{width:auto;max-width:none;height:calc(var(--mark)*257/222);margin:calc(var(--mark)*7/222) 0 calc(var(--mark)*-42/222) calc(var(--mark)*46/222)}
+.brand img{width:auto;max-width:none;height:calc(var(--mark)*264/222);margin-bottom:calc(var(--mark)*-42/222)}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .main-nav{margin-right:auto;font:600 .94rem/1 var(--head)}
 .menus{display:flex;gap:2px}

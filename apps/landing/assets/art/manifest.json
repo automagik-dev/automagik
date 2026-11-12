@@ -2,32 +2,6 @@
   "builtBy": "node apps/landing/scripts/build-art.mjs",
   "tool": "ffmpeg version 8.0.1-3ubuntu2",
   "files": {
-    "mark.webp": {
-      "source": "apps/desktop/assets/mark.png",
-      "sourceSha256": "c82785378c286a9e3c00629fb44e7d575bad9e3fcf73d7086470df6a7f316d6f",
-      "rect": [
-        180,
-        124,
-        1099,
-        957
-      ],
-      "width": 300,
-      "height": 261,
-      "sha256": "5647ca0736ce0beee598250cff6eaf30f156454d9638461b91b38dae6b432a4c"
-    },
-    "mark-2x.webp": {
-      "source": "apps/desktop/assets/mark.png",
-      "sourceSha256": "c82785378c286a9e3c00629fb44e7d575bad9e3fcf73d7086470df6a7f316d6f",
-      "rect": [
-        180,
-        124,
-        1099,
-        957
-      ],
-      "width": 600,
-      "height": 522,
-      "sha256": "0487b29119159da1bc43a8fba9c245dbc35a193ffb936e6c4ec10e433a401322"
-    },
     "genie.webp": {
       "source": "apps/desktop/assets/dmg-source/genie.png",
       "sourceSha256": "b4f5a874c1373db0f1cfcb26e7ac3ceb2f2ae22f234324df6234abd1754481f6",

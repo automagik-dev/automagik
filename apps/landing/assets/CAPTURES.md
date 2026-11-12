@@ -193,8 +193,7 @@ Checkout, renderer and digests are under `pocketCapture` and `images` in the man
 ### Derived art
 
 The pages show WebP files from `assets/art/`, made by `scripts/build-art.mjs`. Each is one
-rectangle of one source, scaled with Lanczos to 1x and 2x: Automagik's own art (the mark,
-Genie, the Omni octopus, the lamp, the Automagik pet's first frame, the app icon and the
+rectangle of one source, scaled with Lanczos to 1x and 2x: Automagik's own art (Genie, the Omni octopus, the lamp, the Automagik pet's first frame, the app icon and the
 Genie and Omni expression strips), and crops of the unchanged captures above. Nothing is
 drawn, recoloured or retouched. Every capture crop has a dark twin, `name-dark`: the same
 rectangle of the same view's dark capture, which the page shows to a visitor whose system

@@ -4,26 +4,34 @@ Automagik's own marks and character art, Arca's icon, we unfold's Open Intellige
 the official logos of eleven open projects the products are built on (the last section) are
 used. No customer marks or new drawings are included.
 
-- `mark.webp`, `wordmark.webp`, `lockup.webp`, `app-icon.png`: Automagik
+- `app-icon.png`: Automagik
   brand files copied from the owner's Genie landing draft for RFC 0027 D3, 2026-11-11.
   Apache-2.0, Namastex Labs and the Automagik contributors; see `LICENSE-Apache-2.0.txt`.
-- `automagik-wordmark-ink.svg`, `automagik-wordmark-cream.svg`: the lowercase Automagik
-  wordmark with the pink dot, from Automagik's own logo kit of 2026-11-12, copied unchanged
-  under the kit's file names (letters as outlines; dark for the light page, cream for the
-  dark one). Apache-2.0 as the files above. The header and the footer show it beside the
-  triskle. SHA-256, `automagik-wordmark-ink.svg`: `09d2caacb6bf3b98589a26edc430a6e75ccedb98e2588fa57771c32d603eeec0`;
-  `automagik-wordmark-cream.svg`: `148ef1cf2c0453378f5ba30712841974914436bed9e87a530f0c637018b3b3c8`.
-- `triskle.webp`: the clay triskle of `lockup.webp`, for the header and the footer: that
-  file's first 225 of 902 columns, every pixel as a browser decodes it, stored lossless.
-  Made with sharp 0.35.4 (libwebp 1.6.0, the decoder browsers use; ffmpeg's own decoder
-  gives other colours for the same file, so it is not used here):
-  `sharp('lockup.webp').extract({ left: 0, top: 0, width: 225, height: 192 }).webp({ lossless: true, effort: 6 }).toFile('triskle.webp')`.
-  The browser gate decodes both files and compares every pixel.
-  The cut ends where the triskle's tip ends; the column after it, where the tip's soft edge
-  met the first capital's, is left out. SHA-256, `triskle.webp`: `1c846b39f813238fb8d083a110396b0dd5f3725493047ae8539ccec72d57a559`;
-  its source `lockup.webp`: `17dfab1ee84cbcdf6b27f877226730dbba68f75439b3337e2df93574749cabda`.
-  `lockup.webp`, the triskle with the retired gradient capitals, stays only as the source
-  of this file and of the official lockup below; no page shows it.
+- The logo and the browser's icons: Automagik's own logo kit, the approved set of
+  2026-11-12 (the triskle in three colours with its seam line, the lowercase wordmark),
+  copied unchanged under the kit's file names. Apache-2.0 as the files above. The triskle
+  is always shown in colour; only the letters change, ink on the light page and cream on
+  the dark one. The lockups with `-header` are the kit's drawings for small sizes: the
+  header and the footer show them. The large lockups are set inside the official lockup
+  below. The triskle alone is the kit's large drawing and its 32 px drawing, each shown
+  near its own size. The icons sit at the site's root (paths below are from
+  `apps/landing`); `site.webmanifest` names the two large ones. Never recolour, stretch or
+  redraw these files; a newer kit replaces them at the same paths, with new digests here.
+
+| File | In the kit | SHA-256 |
+| --- | --- | --- |
+| `assets/brand/automagik-lockup-three-colours-ink-header.svg` | `lockups/svg/automagik-lockup-three-colours-ink-header.svg` | `4d0f87696e31e5f889e2e60d98c7814d515a85f2f60918f4bd999f298338af2f` |
+| `assets/brand/automagik-lockup-three-colours-cream-header.svg` | `lockups/svg/automagik-lockup-three-colours-cream-header.svg` | `e8dd0d21e42d7b2722386738972d46432f083895fb2bf00a990ee7588d3561f7` |
+| `assets/brand/automagik-lockup-three-colours-ink.svg` | `lockups/svg/automagik-lockup-three-colours-ink.svg` | `86cecf0da06bb2d3dcea22c4fcfbe4cc8a8bef0c9422c6af339be72edb326a14` |
+| `assets/brand/automagik-lockup-three-colours-cream.svg` | `lockups/svg/automagik-lockup-three-colours-cream.svg` | `33288af6de838023da4e9170103b80f247d31dfa8d08241ad425222e23a1db1e` |
+| `assets/brand/triskle-three-colours.svg` | `svg/triskle-three-colours.svg` | `bc9fd54124f5d3cfdd0461c5ab6ac6860254c14bfdedf46a11cc5ca433e01a72` |
+| `assets/brand/triskle-three-colours-32.svg` | `svg/triskle-three-colours-32.svg` | `3ce36573385e5c18116e894b77b2aea39594a2763cfd911c553265d7b09abbf9` |
+| `favicon.ico` | `favicon/favicon.ico` | `5a99c83b69d9e3a34483fbc4df15770da82d722e8f2b0ced16cb2cd2a7502a2b` |
+| `favicon.svg` | `favicon/favicon.svg` | `3ce36573385e5c18116e894b77b2aea39594a2763cfd911c553265d7b09abbf9` |
+| `apple-touch-icon.png` | `favicon/apple-touch-icon.png` | `c673e97dd84b5a014bb836c5d384ac8f99a176a2a9731351d8f2a487e2df3492` |
+| `icon-192.png` | `favicon/icon-192.png` | `a312e3087539ef7828577813c531a285565dc5e5ed6c6103586e84e983efd5c7` |
+| `icon-512.png` | `favicon/icon-512.png` | `4b5093fda26231b81851e579600bcf811bb67ea98135aa84b20651c53440b6e1` |
+
 - `lamp.webp`, `omni-pleased.png`: Automagik's own character art, copied unchanged from the
   same draft. The lamp also lives in `apps/bots-dsh/src/client/art/lamp.webp`; the octopus
   in `apps/desktop/assets/dmg-source/omni-pleased.png`. Apache-2.0. The app's art comes
@@ -40,10 +48,10 @@ used. No customer marks or new drawings are included.
   owner directs; it is not covered by this site's Apache-2.0 grant, and we unfold's source
   carries no licence file.
 - `automagik/automagik-lockup-oi-ink.svg`, `-cream.svg`, `-ink.png`, `-cream.png`: the
-  official Automagik lockup, built by `scripts/build-lockup.mjs` from `lockup.webp`
-  (unchanged; enlarged from its 902 px in the PNGs), the tag above (unchanged) and IBM Plex
-  Mono SemiBold for the tag's words. The logo is Apache-2.0 as the other Automagik brand
-  files; the tag inside it stays we unfold's.
+  official Automagik lockup, built by `scripts/build-lockup.mjs` from the kit's large
+  lockup (unchanged, set inside), the tag above (unchanged) and IBM Plex Mono SemiBold for
+  the tag's words. The logo is Apache-2.0 as the other Automagik brand files; the tag
+  inside it stays we unfold's.
 - `ibm-plex-mono-latin-600.woff2`: IBM Plex Mono SemiBold, Latin, Copyright 2017 IBM Corp.,
   from `@fontsource/ibm-plex-mono` 5.3.0, unchanged. SIL Open Font License 1.1, reproduced
   in `OFL-IBMPlexMono.txt`. It sets the tag's words.
@@ -59,7 +67,7 @@ brief, chat, account information or input directory is part of this site.
 ## Derived site art (`assets/art/`)
 
 The site's WebP art is cropped and scaled, never redrawn, from Automagik's own files in this
-repository, all Apache-2.0: the clay mark (`apps/desktop/assets/mark.png`), Genie
+repository, all Apache-2.0: Genie
 (`apps/desktop/assets/dmg-source/genie.png`), the Omni octopus and app icon (above), the lamp
 and the Genie and Omni expression strips (`apps/bots-dsh/src/client/art/`) and the Automagik
 pet's first frame (`apps/bots-dsh/src/host/pets/automagik/`). The Bots' art carries the DS Bot

@@ -96,19 +96,34 @@ credit: no ranking, and no partnership, sponsorship or endorsement wording.
 - `assets/brand/LICENSES.md` lists every file's source, the rule read and its SHA-256, and the
   standing rule: if a project's owner asks, its logo comes down the same day.
 
-## The logo in the header and the footer
+## The logo and the browser's icons
 
-The clay triskle, then the lowercase wordmark with the pink dot. They are two files:
-`assets/brand/triskle.webp`, the triskle of the logo the site had (cut out of
-`lockup.webp` without a changed pixel), and the logo kit's wordmark, unchanged, as
-`automagik-wordmark-ink.svg` on the light page and `automagik-wordmark-cream.svg` on the
-dark one. `styles.css` places them as the kit's own lockup does, in 222nds of the triskle's
-height (`--mark`): the word's file is 257 tall, starts 7 down and 46 to the right, and its
-g hangs 42 under the triskle. The triskle is 32 px tall in the header (26 on a phone, 23
-under 360 px), as before, and 40 px in the footer (34 on a phone). Never recolour, stretch
-or redraw either file, and never set the word in type. `LICENSES.md` records each file's
-source and SHA-256; `landing.test.mjs` and the browser gate check them. The official lockup
-with the tag (above) still shows the capitals; it changes in its own pass.
+The logo is Automagik's logo kit, the approved set: the triskle in three colours with its
+seam line, and the lowercase wordmark. The triskle is always shown in colour. Its files are
+copied unchanged, and `LICENSES.md` pins each one's SHA-256 (`landing.test.mjs` checks them).
+
+- Header and footer, and the Cloud form's answer pages (`waitlist/lib/ui.js`): the kit's
+  lockup for small sizes, `assets/brand/automagik-lockup-three-colours-ink-header.svg`
+  (ink letters) on the light page and `-cream-header.svg` (cream letters) on the dark one.
+  `styles.css` sizes it by the triskle's height (`--mark`): the file is 264 tall where the
+  triskle is 222, and the g's tail hangs under the triskle. The triskle is 32 px tall in the
+  header (26 on a phone, 23 under 360 px) and 40 px in the footer (34 on a phone).
+  The browser gate reads the name's drawn colour in both themes, not only the file's name:
+  it must stand clear of the page (a contrast of 7 or more), so the two files cannot be
+  swapped unseen. No colour is named there.
+- The official lockup with the tag (above) is built from the kit's large lockup.
+- The triskle alone (the Mykes entry in the menus, the Cloud and Mykes heroes) is the kit's
+  drawing for the size shown: `triskle-three-colours-32.svg` in a menu,
+  `triskle-three-colours.svg` from about 100 px up.
+- The browser's icons are the kit's favicon set at the site's root, all in three colours:
+  `favicon.ico` (16, 32 and 48 px), `favicon.svg` (the drawing for small sizes),
+  `apple-touch-icon.png`, and `icon-192.png` and `icon-512.png` (the mark on the ink
+  ground) named by `site.webmanifest`.
+
+Never recolour, stretch or redraw a kit file, and never set the word in type. The gradient
+capitals and the old clay triskle without its seam line are retired; their files are gone.
+A newer kit (a changed wordmark, say) is a file swap: copy its files to the same paths and
+put their digests in `LICENSES.md`; no page, style or test names what the files draw.
 
 ## Arca's logo
 
