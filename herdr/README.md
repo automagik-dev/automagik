@@ -1428,6 +1428,11 @@ outside its sandbox (`hc run`, `hc exec`): the workspace-write sandbox does not 
 delegated through hc. The hc guard is a guardrail, not a boundary (#624, #628); the boundary is
 the per-pane hc proxy sandbox (#631), opt-in and off by default.
 
+Under that proxy, a Codex worker gets the mode words without the `--add-dir` folders: the proxy
+starts only the approved command, which names no per-launch folder, and its contract is
+unchanged. The worker says so in one warning. Its writes to the git dirs, herdr-core's folders or
+the caches go to Codex's reviewer, and the proxy's own sandbox may still refuse them.
+
 ### Antigravity's permission list
 
 agy takes a permission list from

@@ -6217,7 +6217,15 @@ async function cmdWorker(opts, rest) {
     const name = taskName ?? hcName(opts.name ?? branchSlug(place.branch), bot.id, taken);
     // #1125: a Codex worker may write its worktree's own git dir and git common dir (the main
     // checkout's .git), herdr-core's folders and the tool caches, resolved from the worktree it runs in.
-    workerArgv = plan.agent === "codex" ? withCodexGrants(launchArgv, await localCodexGrants(place.worktree)) : launchArgv;
+    // Through the actual hc proxy (#631) it gets the mode words alone: the proxy starts only the
+    // approved argv, which names no per-launch folder, and that contract stays as it is.
+    const grantless = plan.agent === "codex" && proxied;
+    if (grantless) {
+      warnings.push(`${bot.name}'s Codex worker starts through the hc proxy, so it runs Codex's launch mode without its extra `
+        + `folders (git dirs, herdr-core's, tool caches; #1125): the proxy starts only the approved command. A write there `
+        + `goes to Codex's reviewer, and the proxy's own sandbox may still refuse it.`);
+    }
+    workerArgv = plan.agent === "codex" && !grantless ? withCodexGrants(launchArgv, await localCodexGrants(place.worktree)) : launchArgv;
     const args = workerArgs({ botId: bot.id, branch: place.branch, role, name, cwd: place.worktree, parent: me.address, space,
       agent: plan.agent, model: plan.model, effort: plan.effort, agyMode: plan.agyMode, argv: workerArgv, session, task, template: plan.template,
       templateArgv,
