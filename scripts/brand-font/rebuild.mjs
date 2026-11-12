@@ -1,5 +1,7 @@
-// Rebuilds ../fredoka-latin.woff2 from the Google Fonts source file and fails unless the result is
-// that file, byte for byte. CI runs it (the "Brand font rebuild" job); ../README.md has the call.
+// Rebuilds docs/brand/fonts/fredoka-latin.woff2 from the Google Fonts source file and fails unless
+// the result is that file, byte for byte. CI runs it (the "Brand font rebuild" job);
+// docs/brand/fonts/README.md has the call. This folder is tooling, so it lives outside docs/brand:
+// the brand folder is copied whole into other repositories and holds brand files only.
 // Usage: node rebuild.mjs <path to Fredoka[wdth,wght].ttf> [where to write the rebuilt .woff2]
 import subsetFont from 'subset-font'
 import { readFileSync, writeFileSync } from 'node:fs'
@@ -23,7 +25,7 @@ const rebuilt = Buffer.from(await subsetFont(input, text.toString('utf8'), {
   variationAxes: { wdth: 100, wght: { min: 300, max: 700 } },
 }))
 if (output) writeFileSync(output, rebuilt)
-const committed = readFileSync(new URL('../fredoka-latin.woff2', import.meta.url))
+const committed = readFileSync(new URL('../../docs/brand/fonts/fredoka-latin.woff2', import.meta.url))
 console.log(`rebuilt:   ${rebuilt.length} bytes, sha256 ${sha256(rebuilt)}`)
 console.log(`committed: ${committed.length} bytes, sha256 ${sha256(committed)}`)
 if (!rebuilt.equals(committed)) fail('the rebuilt font is not the committed docs/brand/fonts/fredoka-latin.woff2')

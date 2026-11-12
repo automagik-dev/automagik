@@ -1,5 +1,5 @@
 {
-  "name": "fredoka-rebuild",
+  "name": "brand-font",
   "private": true,
   "type": "module",
   "description": "Rebuilds docs/brand/fonts/fredoka-latin.woff2 from its pinned source. CI runs it; nothing ships from here.",

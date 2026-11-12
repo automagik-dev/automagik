@@ -138,6 +138,53 @@ describe('the brand copy tool (scripts/brand-sync.mjs)', () => {
     expect(check({ to: target }).problems).toEqual([]);
   });
 
+  // The brand folders are copied whole, so tooling has no place in them. The font's rebuild script
+  // was first merged under docs/brand/fonts/rebuild and was copied into Genie, Omni and Arca from
+  // that commit; it is now in scripts/brand-font. A copy runs the tool it carries, so this test
+  // runs the copy's own tool, not this checkout's.
+  test("a copy that holds the old docs/brand/fonts/rebuild loses it at the next --write, never gains scripts/brand-font, and --check passes", () => {
+    const old = ['rebuild.mjs', 'text.txt', 'package.json', 'package-lock.json'].map(name => `docs/brand/fonts/rebuild/${name}`);
+    const { source, target } = repositories(source => {
+      put(source, 'docs/brand/README.md', '# Brand\n');
+      put(source, 'docs/brand/fonts/fredoka-latin.woff2', Buffer.from([0x77, 0x4f, 0x46, 0x32, 0x00, 0xff]));
+      for (const path of old) put(source, path, `${path}\n`);
+      put(source, SKILL, '---\nname: automagik-brand\n---\n');
+      put(source, TOOL, readFileSync(join(ROOT, TOOL)));
+    });
+    const own = (...args: string[]) => spawnSync('node', [join(target, TOOL), ...args], { cwd: target, encoding: 'utf8', env: { ...process.env, GITHUB_ACTIONS: '' } });
+    write({ to: target, from: source });
+    for (const path of old) expect(existsSync(join(target, path))).toBe(true);
+    commit(target, 'the brand copy, with the rebuild folder');
+
+    mkdirSync(join(source, 'scripts/brand-font'));
+    for (const path of old) git(source, 'mv', path, path === old[3] ? 'scripts/brand-font/bun.lock' : path.replace('docs/brand/fonts/rebuild', 'scripts/brand-font'));
+    const moved = commit(source, 'the rebuild tooling leaves the brand folder');
+    const wrote = own('--write', '--from', source, '--remote', source);
+    expect(wrote.stderr).toBe('');
+    expect(wrote.status).toBe(0);
+    for (const path of old) expect(wrote.stdout).toContain(path);
+    expect(existsSync(join(target, 'docs/brand/fonts/rebuild'))).toBe(false);
+    expect(existsSync(join(target, 'docs/brand/fonts/fredoka-latin.woff2'))).toBe(true);
+    expect(existsSync(join(target, 'scripts/brand-font'))).toBe(false);
+    const record = JSON.parse(readFileSync(join(target, RECORD), 'utf8'));
+    expect(record.commit).toBe(moved);
+    expect(Object.keys(record.files)).toEqual(['.claude/skills/automagik-brand/SKILL.md', 'docs/brand/README.md', 'docs/brand/fonts/fredoka-latin.woff2', TOOL]);
+    const checked = own('--check', '--remote', source);
+    expect(checked.stderr).toBe('');
+    expect(checked.status).toBe(0);
+    expect(check({ to: target }).problems).toEqual([]);
+  }, 60_000);
+
+  test("Automagik's brand folders hold no package manifest, lockfile or installed packages: tooling lives under scripts/", () => {
+    const tooling = /(^|\/)(package\.json|package-lock\.json|bun\.lock|bun\.lockb|yarn\.lock|pnpm-lock\.yaml|node_modules)(\/|$)/;
+    const ours = FOLDERS.flatMap(folder => filesUnder(ROOT, folder));
+    expect(ours).toContain('docs/brand/fonts/fredoka-latin.woff2');
+    expect(ours.filter(path => tooling.test(path))).toEqual([]);
+    // The font's rebuild is that tooling.
+    expect(existsSync(join(ROOT, 'scripts/brand-font/rebuild.mjs'))).toBe(true);
+    expect(existsSync(join(ROOT, 'scripts/brand-font/bun.lock'))).toBe(true);
+  });
+
   test('a record that is missing, broken or names a path outside the brand fails the check', () => {
     const { source, target } = small();
     expect(check({ to: target }).problems).toEqual([`${RECORD} is missing: nothing here says which Automagik commit this copy is`]);
