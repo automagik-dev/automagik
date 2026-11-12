@@ -1535,3 +1535,30 @@ for (const machine of [null, "vm"]) for (const action of ["start", "restart", "r
     assert.equal(state.closed.length, 0);
   });
 }
+
+for (const machine of [null, "vm"]) for (const choice of ["menu-restart-helpers", "menu-end-helpers-restart"]) {
+  test(`helper refusal: ${choice} is one click on ${machine ?? "local"}, keeping agent and conversation choice`, async (t) => {
+    seed([MAIN, OMP]);
+    const args = fakeCli({ refused: "helpers", terminal: "t5", error: "Its helpers would end." }, 1);
+    state.timeoutProbe = "honours";
+    t.after(() => { delete state.timeoutProbe; });
+    const { form, cx, draw, click } = await menu({ machine });
+    form.restart({ key: project, machine }, OMP, cx, { agent: "codex", fresh: true });
+    await cx.settle();
+    draw();
+    assert.ok(nodes.has("menu-restart-helpers"));
+    assert.ok(nodes.has("menu-end-helpers-restart"));
+    assert.equal(nodes.has("menu-restart-force"), false);
+    fakeCli({ terminal: "t100", replaced: "t5" });
+    await click(choice);
+    const last = args().at(-1);
+    assert.match(last, /--agent codex/);
+    assert.match(last, /--force/);
+    assert.match(last, /--fresh/);
+    assert.equal(last.includes("--tree"), choice === "menu-restart-helpers");
+    assert.equal(last.includes("--machine vm"), Boolean(machine));
+    assert.equal(form.busy, false);
+    assert.equal(form.error, null);
+    assert.deepEqual(state.closed, ["o9"]);
+  });
+}

@@ -426,9 +426,13 @@ restarts it (Restart runs `automagik-herdr restart`; Restart on… restarts it o
 agent, a new conversation, the bot's definition keeping its agent), attaches it to the focused
 pane or detaches it; What happened shows `automagik-herdr history` for it (its panes, starts,
 sessions, the newest transcript, which a click copies, its workers) and the helpers its pane runs
-now. A planned bot's menu has no Run items. A queued restart waits for its next idle. A refusal offers
-"Restart anyway". The Bots list and the Attach picker open on the bots the sidebar already
-knows and refresh behind.
+now. A planned bot's menu has no Run items. A queued restart waits for its next idle. A busy-pane
+refusal offers "Restart anyway". With helpers, choose "Restart with its helpers" to restart immediately and resume
+those conversations, or "End helpers and restart" to end them. On a linked machine, the first choice
+runs the installed CLI's local `--tree --force` restart on the machine holding the panes, then updates
+this sidebar's attachment. Saved configuration changes use these same choices when you restart to apply
+them. Pack updates reload mods and do not restart bot panes. The Bots list and the Attach picker open
+on the bots the sidebar already knows and refresh behind.
 
 A project on a linked machine (`hc machine ls`) is managed from here too. Its bots' menu has
 Configure, Prompt and Run (Start, Focus, Restart, Attach to a focused pane of that machine,

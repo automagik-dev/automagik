@@ -6,6 +6,7 @@ import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { scratchProject, scratchRoot } from "./scratch-project.mjs";
 import { readJsonLines } from "./log-lines.mjs";
+import { attachPath } from "../mods/am-sidebar/attach.js";
 
 const fixture = JSON.parse(readFileSync(new URL("./fixtures/start-programs.json", import.meta.url), "utf8"));
 const fake = new URL("./fake-hc.mjs", import.meta.url).pathname;
@@ -46,7 +47,7 @@ function scene(t, cli, agent, paired, remote) {
       assert.equal(attached.status, 0, attached.stderr);
     }
   };
-  return { root, app, project, binding, run, live, calls: () => readJsonLines(logPath) };
+  return { root, bin, app, project, binding, run, live, statePath, calls: () => readJsonLines(logPath) };
 }
 
 export function startProgramsTests(cli) {
@@ -110,4 +111,54 @@ export function startProgramsTests(cli) {
       assert.equal(s.calls().some((c) => c[0] === "run" || c[0] === "kill"), false);
     });
   }
+  for (const mode of ["tree", "end", "partial"]) test(`programs fixture: linked paired helper restart ${mode}`, (t) => {
+    const tree = mode !== "end";
+    const s = scene(t, cli, "hermes", true, true);
+    s.live();
+    // Configure writes the bot before the owner restarts to apply that update.
+    const edited = s.run(["edit", id, "--role", "updated role"]);
+    assert.equal(edited.status, 0, edited.stderr);
+    const state = JSON.parse(readFileSync(s.statePath, "utf8"));
+    const helperFolder = join(s.root, "helper");
+    mkdirSync(helperFolder);
+    state.terminals.push({ address: "vm/t2", name: "helper", created_ms: 2, state: "live", parent: "vm/t1", die_with_parent: true,
+      cwd: helperFolder, argv: ["codex"], foreground: { argv: ["codex"], cwd: helperFolder },
+      status: { state: "working", app: "codex" }, labels: { "agent.session": "helper-session" } });
+    if (mode === "partial") state.failRun = ["helper"];
+    const holdingApp = join(s.root, "holding-app");
+    mkdirSync(holdingApp);
+    // Its ledger already exists: one-time label import cannot discover this remote start.
+    mkdirSync(dirname(attachPath(holdingApp)), { recursive: true });
+    writeFileSync(attachPath(holdingApp), "");
+    writeFileSync(join(holdingApp, "programs.json"), JSON.stringify(fixture));
+    state.machines[0].env = { HOLDING_CLI: cli, HOLDING_APP: holdingApp };
+    writeFileSync(s.statePath, JSON.stringify(state));
+    const holding = new URL("./fake-holding-cli.mjs", import.meta.url).pathname;
+    exe(join(s.bin, "automagik-herdr"), `#!/bin/sh\nexec "${process.execPath}" "${holding}" "$@"\n`);
+    const refusal = s.run(["restart", id]);
+    assert.equal(refusal.status, 1);
+    assert.equal(JSON.parse(refusal.stdout).refused, "helpers");
+    const r = s.run(["restart", id, "--force", ...(tree ? ["--tree"] : [])]);
+    assert.equal(r.status, mode === "partial" ? 1 : 0, r.stderr);
+    const result = JSON.parse(r.stdout);
+    const after = JSON.parse(readFileSync(s.statePath, "utf8"));
+    assert.equal(after.terminals.find((p) => p.address === "vm/t1").state, "finished");
+    assert.equal(after.terminals.find((p) => p.address === "vm/t2").state, "finished");
+    const live = after.terminals.filter((p) => p.state === "live");
+    assert.equal(live.length, mode === "tree" ? 2 : 1);
+    const lead = live.find((p) => p.address === `vm/${result.terminal}`);
+    assert.equal(JSON.parse(readFileSync(join(s.project, ".herdr/bots.json"), "utf8")).bots[0].role, "updated role");
+    assert.ok(lead.argv.includes("research"), "paired profile retained");
+    assert.equal(lead.argv.filter((word) => word === "--tui").length, 1);
+    if (tree) {
+      if (mode === "tree") {
+        const helper = live.find((p) => p.parent === lead.address);
+        assert.ok(helper.argv.includes("helper-session"), "helper conversation resumed");
+        assert.equal(helper.cwd, helperFolder);
+      } else assert.match(result.helpers[0].error, /hc run failed/);
+      const who = s.run(["whois", lead.address]);
+      assert.equal(who.status, 0, who.stderr);
+      assert.equal(JSON.parse(who.stdout).bot, id, "controller attachment moved");
+    }
+  });
 }

@@ -3093,6 +3093,82 @@ async function startOnMachine(opts, project, bot) {
   return opts.json ? seatOnJson(bot, seat) : seat.address;
 }
 
+// Execute the existing local tree transaction where the panes and worker ledger live.
+// Every argument is positional shell data; no controller path or --machine is forwarded.
+async function restartTreeOnMachine(opts, project, bot) {
+  // A queue on the holding machine would outlive this controller transaction and leave
+  // its attachment on the old pane. The sidebar's explicit helper choice is immediate.
+  if (!opts.force) throw new CliError("Restart with its helpers runs immediately; pass --tree --force to restart them on their machine now.", 2);
+  if (opts.space) throw new CliError("A restart on a linked machine keeps the old pane's window place.", 2);
+  const { machine, key } = project;
+  const m = await connectedMachine(machine, "nothing was restarted");
+  const view = await attachView();
+  const held = liveFor(view, bot.id, project);
+  if (unknownFor(view, bot.id, project)) throw new CliError(`${machine} isn't answering; reconnect it and retry the restart.`);
+  const paneEnv = await paneEnvOn(machine, key);
+  if (paneEnv.refused) throw new CliError(`The project's pane environment on ${machine} could not be read; fix it and retry the restart.`);
+  const args = ["restart", bot.id, "--project", key, "--tree", "--json"];
+  for (const flag of ["force", "fresh", "fresh-shared", "save"]) if (opts[flag]) args.push(`--${flag}`);
+  for (const flag of ["agent", "model"]) if (opts[flag] !== undefined) args.push(`--${flag}`, opts[flag]);
+  const script = `
+if [ -n "$1" ]; then HERDR_APP_HOME=$1; export HERDR_APP_HOME; fi
+PATH="$HOME/.local/bin:$PATH"
+if [ -n "$2" ]; then PATH="$2:$PATH"; fi
+export PATH
+restart_terminal=$3; restart_bot=$4; restart_project=$5
+shift 5
+unset HC_TERMINAL_ID
+if command -v automagik-herdr >/dev/null 2>&1; then restart_cli=automagik-herdr
+elif command -v am >/dev/null 2>&1; then restart_cli=am
+else
+  printf '%s\\n' 'Automagik is missing on this machine; install it there and retry.' >&2
+  exit 127
+fi
+if [ -n "$restart_terminal" ]; then
+  "$restart_cli" attach "$restart_bot" "$restart_terminal" --project "$restart_project" --json >/dev/null || exit $?
+fi
+exec "$restart_cli" "$@"`;
+  const result = await remoteIo.exec("sh", ["-c", script, "sh", paneEnv.appHome ?? "", paneEnv.prepend ?? "",
+    held?.binding.terminal ?? "", bot.id, key, ...args], machine, { cwd: key, timeout: 540 });
+  let out;
+  try { out = JSON.parse(result.stdout); } catch { /* a missing CLI or a lost reply */ }
+  if (!out || out.error || !out.terminal) {
+    if (result.stderr) console.error(result.stderr);
+    const message = out?.error ?? (result.code === 127
+      ? `Automagik is missing on ${machine}; install it there and retry.`
+      : result.code !== -1 && result.stderr.trim() ? actionError(result.stderr, "Restart")
+      : `The restart on ${machine} gave no completion result; inspect its panes before retrying.`);
+    throw new CliError(message, 1, out?.refused ? { refused: out.refused, terminal: out.terminal } : undefined);
+  }
+  if (!/^[A-Za-z0-9._-]+$/.test(out.terminal)) throw new CliError(`The restart on ${machine} returned an invalid pane; inspect its panes before retrying.`);
+  if (!out.queued) {
+    const address = `${machine}/${out.terminal}`;
+    const get = await hcGet(address).catch(() => null);
+    if (!get || get.state !== "live" || !Number.isSafeInteger(get.created_ms) || get.labels?.[BOT_LABEL] !== bot.id) {
+      throw new CliError(`The restart ran on ${machine}, but its replacement pane could not be confirmed; inspect its panes before retrying.`);
+    }
+    try {
+      await underLedger(async ({ machines, heldBy, holds, write }) => {
+        const now = heldBy(bot.id, m.id);
+        const sameReplacement = now?.terminal === out.terminal && now.created_ms === get.created_ms && now.project === key;
+        if (now && (!held || attachKey(now) !== attachKey(held.binding)) && !sameReplacement && await holds(now)) {
+          throw new Error(`${bot.name} was attached to ${addressOf(now, machines)} while it restarted`);
+        }
+        write([...(now ? [closingRow(now, "detach", "start", "moved")] : []),
+          attachRow({ event: "attach", bot: bot.id, project: key, terminal: out.terminal, core: m.id,
+            created_ms: get.created_ms, machine, by: "start" })]);
+      });
+    } catch (e) {
+      console.error(e);
+      throw new CliError(`${bot.name} restarted in ${address}, but its sidebar attachment could not be saved; attach that pane before restarting again.`);
+    }
+  }
+  exitAfter.code = result.code === 0 ? 0 : 1;
+  report(out.warnings ?? []);
+  if (result.code !== 0 && result.stderr) console.error(result.stderr);
+  return opts.json ? { ...out, machine } : `${bot.name}: ${out.queued ? "restart queued in" : "restarted in"} ${machine}/${out.terminal}.`;
+}
+
 /**
  * restart --machine: cmdRestart's rule on the project's linked machine, without --tree (cmdRestart
  * refuses it there, #437). The old pane must say whether its agent is busy: one that reports no
@@ -3113,7 +3189,10 @@ async function restartOnMachine(opts, project, bot, entry) {
   }
   const old = held ? { ...held.get, address: addressOf(held.binding, view.machines) } : null;
   if (old) {
-    const refusal = restartRefusal({ name: bot.name, old, helpers: await helpersOf(old.address), force: opts.force, onMachine: true });
+    const helpers = await helpersOf(old.address);
+    const helperRefusal = restartRefusal({ name: bot.name, old: { ...old, status: { state: "idle" } }, helpers, force: opts.force, onMachine: true });
+    if (helperRefusal) throw new CliError(helperRefusal, 1, { refused: "helpers", terminal: old.address });
+    const refusal = restartRefusal({ name: bot.name, old, force: opts.force, onMachine: true });
     if (refusal) throw busyRefusal(refusal, old);
     if (!old.status && !opts.force) {
       throw new CliError(`${old.address} doesn't tell hc whether ${bot.name}'s agent is busy or waiting for an approval, so a restart `
@@ -4301,16 +4380,6 @@ async function cmdRestart(opts, [ref]) {
   if (opts.cwd !== undefined && opts.machine !== undefined) {
     throw new CliError("--cwd is a folder on this computer; a restart on a linked machine keeps the old pane's.", 2);
   }
-  // --tree on a linked machine isn't built yet (#437): refused before anything is read there, so
-  // its helpers are never left behind by a restart that looks done. Each sentence that says what
-  // happened names no flag: the Accounts panel shows a refusal without the clauses that name one.
-  if (opts.tree && opts.machine !== undefined) {
-    throw new CliError(`Restarting a bot's helpers on a linked machine isn't built yet, so nothing was read or restarted: `
-      + `${ref} and its helpers on ${opts.machine} still run as they were, on the account they started with. `
-      + `By hand: wait for a helper still working to finish, end each helper's pane (hc kill ${opts.machine}/tN for one), `
-      + `then restart ${ref} there without --tree. A helper that still had work to do, start again yourself with hc run `
-      + `on ${opts.machine} once ${ref} is back.`, 2);
-  }
   if (opts.cwd !== undefined) {
     const dir = opts.cwd ? realDir(resolvePath(opts.cwd)) : null;
     if (!dir || !isDir(dir)) throw new CliError(`--cwd ${opts.cwd || '""'} isn't a folder on this computer.`, 2);
@@ -4322,6 +4391,7 @@ async function cmdRestart(opts, [ref]) {
   const bot = await botIn(project, ref, opts);
   const why = startRefusal(file, bot.id);
   if (why) throw new CliError(why);
+  if (project.machine && opts.tree) return restartTreeOnMachine(opts, project, bot);
   // A swap's agent and model are checked as an edit checks them (entryFrom); a new agent
   // without --model drops the old agent's pin. bots.json changes only with --save.
   let entry = null;
