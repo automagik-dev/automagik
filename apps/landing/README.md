@@ -1,4 +1,4 @@
-# automagik.si preview
+# automagik.si
 
 RFC 0027, revised by the owner on 2026-11-11: the umbrella home plus Desktop, Mobile,
 Omni, Genie, Cloud and Mykes pages, plus one stand-in page for Arca until Arca's own site is
