@@ -15,18 +15,32 @@ Better Auth's user schema requires a unique email. Accounts receive a random
 address under the reserved `.invalid` domain solely for that database field.
 It is never mailed or returned by this service, and the provider offers no email
 scope. The JWT plugin's session response header is disabled. Public WebAuthn
-options use the display name instead. Phone verification accepts only
-`phoneNumber`, `code` and `oauth_query`; the Worker rejects linking flags and all
-other extra fields. A phone code cannot add phone authentication to a passkey account.
+options use the display name instead.
 
-Phone verification routes are absent until `OMNI_OTP_URL` is configured. Delivery
-posts `{phoneNumber, code}` over HTTPS, with an optional `OMNI_API_TOKEN` bearer
-credential, through the request's `waitUntil`. The response does not wait for Omni.
-Failures emit a generic delivery error without the destination, code or token.
-Three wrong codes prevent subsequent use of that challenge, including the correct
-code. A new send is separately rate limited.
+WhatsApp sign-in starts in the browser and requires the person to send the
+prefilled message first. The service never sends a code or contacts Omni.
+`WHATSAPP_RECEIVING_NUMBER` and the Worker secret `OMNI_INBOUND_TOKEN` enable
+this flow together; without either, all three inbound-proof routes return 404.
+The old outbound phone-code routes are permanently absent.
 
-Sessions, WebAuthn challenges, OTP challenges, OAuth codes, grants, signing keys,
+A six-character challenge lives for five minutes. D1 stores its hash and a hash
+of a separate random browser cookie; the cookie is Secure, HttpOnly, SameSite=Lax
+and host-only. The browser receives a WhatsApp link, the code and the expiry.
+Omni pushes the received event to `/api/omni/inbound`, authenticated with the
+shared bearer secret. Only numeric sender IDs or numeric phone JIDs are accepted;
+privacy IDs and other identifiers produce no reply. Message timestamps must be
+inside the challenge life and no later than receipt time. A message sent during
+that life but delivered after expiry can receive the expiry reply; out-of-window
+messages receive no reply.
+
+One D1 batch deduplicates both event IDs, enforces ten events per sender per
+minute and three per challenge per five minutes, and consumes the challenge.
+The browser can claim the verified proof once. Better Auth creates the session
+for the account owning the verified number, or creates a separate phone account.
+The browser's existing passkey account is never selected or modified. The
+receiving number, sender, code and secret are never logged.
+
+Sessions, WebAuthn and WhatsApp challenges, OAuth codes, grants, signing keys,
 and rate limits live in D1. There is no secondary storage or session cookie cache.
 Only Cloudflare's replaced `cf-connecting-ip` header supplies the limiter's IP.
 The default limit is 60 requests per rolling minute per IP and path; Better Auth
@@ -46,8 +60,8 @@ The sign-in and consent pages live in `pages/` and follow [PAGES-CONTRACT.md](PA
 `sign-in.html`, `consent.html`, one stylesheet (`id.css`), one script (`id.js`) and
 `assets/` (fonts, wordmark, the pet, their licences). They are plain files with no
 build step; nothing is loaded from another origin, and a meta Content-Security-Policy
-allows same-origin files only. Passkey is the main action; the phone code shows only
-when `/api/id/config` reports it on. Copy is English only, in one table in `id.js`.
+allows same-origin files only. Passkey is the main action. The existing outbound-phone action stays hidden;
+its replacement WhatsApp controls are a separate page delivery. Copy is English only, in one table in `id.js`.
 
 The Worker serves a page only at `/sign-in` and `/consent`, where it adds
 `referrer-policy`, `cache-control: no-store` and `x-frame-options`. Any direct
@@ -66,14 +80,14 @@ node scripts/mutations.mjs
 
 Tests bundle the actual Worker and exercise it inside Miniflare/workerd, using
 local persistent D1 and a software WebAuthn authenticator. Outbound requests are
-denied except for fake Omni delivery and local dispatch of the provider's own
+denied except for local dispatch of the provider's own
 JWKS lookup for logout verification. No Cloudflare credentials are needed.
 The cross-runtime limiter test uses two independent workerd runtimes sharing D1.
 
 `test/pages.test.ts` covers the pages in three layers. The files: only the
 contract's endpoints, nothing stored or logged, no inline code. A real Chromium
 on the real Worker with a virtual authenticator: create a passkey, sign in,
-allow, cancel, phone codes. Then every state of both pages with the service's
+allow and cancel. Then every state of both pages with the service's
 answers scripted, checked for its words, console errors, the calls it made and
 sideways overflow at 390 and 320 wide. The browser layers need a Chromium
 (`node node_modules/playwright-core/cli.js install chromium`, or `ID_PAGES_CHROME`
@@ -82,7 +96,8 @@ a missing browser a failure. `ID_PAGES_SHOTS=<folder> bun run test -- pages` als
 writes a picture of every state (1440 and 390 wide, light and dark; 320 light)
 with an `INDEX.md`.
 
-Mutation checks restore the session JWT header, allow phone linking, disable
+Mutation checks drop inbound authentication or timestamp checks, permit proof
+reuse, select the current session account, restore the session JWT header, disable
 PKCE, relax redirects, enable public registration, move rate limits to memory,
 serve a page file directly as `.html` and let CI skip the page browser tests,
 one at a time. Each must fail its targeted test; source files are restored
@@ -94,5 +109,4 @@ See [DEPLOY.md](DEPLOY.md) for the owner's first workers.dev deployment. This
 delivery does not deploy, provision infrastructure, or choose a public domain.
 
 Pinned API references: [passkeys](https://www.better-auth.com/docs/plugins/passkey),
-[OAuth provider](https://www.better-auth.com/docs/plugins/oauth-provider),
-[phone numbers](https://www.better-auth.com/docs/plugins/phone-number).
+[OAuth provider](https://www.better-auth.com/docs/plugins/oauth-provider).

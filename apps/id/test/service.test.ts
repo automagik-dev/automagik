@@ -2,7 +2,7 @@ import { beforeAll, afterAll, beforeEach, afterEach, describe, expect, test } fr
 import { build } from 'esbuild';
 import { Miniflare } from 'miniflare';
 import { createHash } from 'node:crypto';
-import { readFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { readFile, readdir, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { createLocalJWKSet, jwtVerify } from 'jose';
 import { clientSeedSQL } from '../scripts/client-seed';
@@ -12,6 +12,8 @@ const origin = 'https://id.example.com';
 const cloudSecret = 'test-only-cloud-client-secret-never-deployed';
 const digest = (value: string) => createHash('sha256').update(value).digest('base64url');
 const verifier = 'a'.repeat(64);
+const phoneJid = (digits: string) => `${digits}@s.whatsapp.net`;
+const inboundToken = 'test-only-inbound-token-placeholder-not-deployed';
 let bundle: string;
 let root: string;
 let state: string;
@@ -32,7 +34,7 @@ beforeAll(async () => {
 });
 afterAll(async () => { await rm(root, { recursive: true, force: true }); });
 
-async function instance(phone = false, delivered?: (data: any) => void | Promise<void>, pages = false) {
+async function instance(whatsapp = false, _unused?: undefined, pages = false, config: Record<string, string> = {}) {
   const mf = new Miniflare({
     modules: [{ type: 'ESModule', path: bundle }],
     compatibilityDate: '2025-11-18', compatibilityFlags: ['nodejs_compat'],
@@ -42,11 +44,6 @@ async function instance(phone = false, delivered?: (data: any) => void | Promise
       // Dispatch that back into this local runtime; never contact the public origin.
       if (request.method === 'GET' && request.url === `${origin}/api/auth/jwks`) {
         return mf.dispatchFetch(request.url);
-      }
-      if (phone && request.url === 'https://omni.example.com/send') {
-        expect(request.headers.get('authorization')).toBe('Bearer test-only-token');
-        await delivered?.(await request.json());
-        return Response.json({});
       }
       throw new Error('Unexpected outbound network request');
     },
@@ -61,7 +58,8 @@ async function instance(phone = false, delivered?: (data: any) => void | Promise
     bindings: {
       BETTER_AUTH_URL: origin,
       BETTER_AUTH_SECRET: 'test-only-auth-secret-placeholder-never-deployed',
-      ...(phone ? { OMNI_OTP_URL: 'https://omni.example.com/send', OMNI_API_TOKEN: 'test-only-token' } : {}),
+      ...(whatsapp ? { WHATSAPP_RECEIVING_NUMBER: '15555550100', OMNI_INBOUND_TOKEN: inboundToken } : {}),
+      ...config,
     },
   });
   runtimes.push(mf);
@@ -73,9 +71,9 @@ beforeEach(async () => {
   runtimes = [];
   runtime = await instance();
   const db = await runtime.getD1Database('DB');
-  const migration = await readFile('migrations/0001_auth.sql', 'utf8');
-  for (const sql of migration.split(';').map(s => s.trim()).filter(Boolean)) {
-    await db.prepare(sql).run();
+  for (const file of (await readdir('migrations')).filter(name => name.endsWith('.sql')).sort()) {
+    const migration = await readFile(`migrations/${file}`, 'utf8');
+    for (const sql of migration.split(';').map(s => s.trim()).filter(Boolean)) await db.prepare(sql).run();
   }
   for (const sql of clientSeedSQL(digest(cloudSecret)).split(';').filter(Boolean)) {
     await db.prepare(sql).run();
@@ -188,7 +186,235 @@ function exchange(authorizationCode: string, extra: Record<string, string> = {})
   return request('/api/auth/oauth2/token', body, { form: true, cookie: '' });
 }
 
+async function startWhatsApp(mf: Miniflare, oauth_query?: string) {
+  const response = await request('/api/auth/whatsapp/start', oauth_query ? { oauth_query } : {}, { mf });
+  const challengeCookie = response.headers.get('set-cookie') ?? '';
+  for (const attribute of ['__Host-automagik-id-whatsapp=', 'HttpOnly', 'Secure', 'SameSite=Lax', 'Max-Age=300']) {
+    expect(challengeCookie).toContain(attribute);
+  }
+  expect(challengeCookie).not.toContain('Domain=');
+  return jsonOK(response);
+}
+
+function deliver(mf: Miniflare, code: string, options: {
+  eventId?: string; externalId?: string; from?: string; timestamp?: number; token?: string;
+} = {}) {
+  return request('/api/omni/inbound', {
+    timestamp: options.timestamp ?? Date.now(),
+    payload: { from: options.from ?? '15555550127', externalId: options.externalId ?? crypto.randomUUID(),
+      content: { text: `Sign in to Automagik: ${code}` } },
+  }, { mf, headers: {
+    authorization: `Bearer ${options.token ?? inboundToken}`,
+    'x-omni-event-id': options.eventId ?? crypto.randomUUID(),
+  } });
+}
+
 describe('Worker + D1 identity', () => {
+  test('WhatsApp full inbound flow creates a phone account and resumes signed authorization', async () => {
+    const mf = await instance(true);
+    const login = await authorizationResult({ prompt: 'login' });
+    const started = await startWhatsApp(mf, login.url.search.slice(1));
+    expect(started.code).toMatch(/^[A-HJ-NP-Z2-9]{6}$/);
+    const link = new URL(started.url);
+    expect(link.origin).toBe('https://wa.me');
+    expect(link.pathname).toBe('/15555550100');
+    expect(link.searchParams.get('text')).toBe(`Sign in to Automagik: ${started.code}`);
+    expect(started.expiresAt - Date.now()).toBeGreaterThan(290_000);
+    const boundCookie = cookie;
+    expect(await jsonOK(await request('/api/auth/whatsapp/status', undefined, { mf })))
+      .toEqual({ status: 'pending' });
+    expect(await jsonOK(await deliver(mf, started.code))).toEqual({
+      reply: 'Done. Go back to your browser to finish signing in to Automagik desktop.',
+    });
+    const status = await jsonOK(await request('/api/auth/whatsapp/status', undefined, { mf }));
+    expect(status.redirect).toBe(true);
+    const authorizationCode = new URL(status.url).searchParams.get('code')!;
+    const tokens = await jsonOK(await exchange(authorizationCode));
+    expect(tokens.id_token).toBeTruthy();
+    const session = await jsonOK(await request('/api/auth/get-session', undefined, { mf }));
+    expect(session.user.phoneNumber).toBe('+15555550127');
+    expect(session.user.phoneNumberVerified).toBe(true);
+    const replay = await request('/api/auth/whatsapp/status', undefined, { mf, cookie: boundCookie });
+    expect(await jsonOK(replay)).toEqual({ status: 'expired' });
+    expect(replay.headers.get('set-cookie')).toBeNull();
+    const db = await mf.getD1Database('DB');
+    const stored = await db.prepare('SELECT * FROM whatsapp_challenge').first<any>();
+    expect(stored.state).toBe('used');
+    expect(stored.codeHash).toHaveLength(64);
+    expect(stored.cookieHash).toHaveLength(64);
+    expect(JSON.stringify(stored)).not.toContain(started.code);
+  });
+
+  test('WhatsApp bearer check refuses a wrong token without consuming the proof', async () => {
+    const mf = await instance(true);
+    const started = await startWhatsApp(mf);
+    expect((await deliver(mf, started.code, { token: 'wrong-token' })).status).toBe(401);
+    expect((await deliver(mf, started.code)).status).toBe(200);
+  });
+
+  test('WhatsApp timestamp window rejects history, future messages and post-life timestamps', async () => {
+    const mf = await instance(true);
+    const started = await startWhatsApp(mf);
+    const db = await mf.getD1Database('DB');
+    const row = await db.prepare('SELECT createdAt, expiresAt FROM whatsapp_challenge').first<any>();
+    for (const timestamp of [row.createdAt - 1, row.expiresAt + 1, Date.now() + 60_000]) {
+      expect((await deliver(mf, started.code, { timestamp })).status).toBe(204);
+    }
+    expect(await jsonOK(await request('/api/auth/whatsapp/status', undefined, { mf })))
+      .toEqual({ status: 'pending' });
+    expect((await deliver(mf, started.code)).status).toBe(200);
+  });
+
+  test('WhatsApp expired proof gives the expiry reply for a delayed in-window message', async () => {
+    const mf = await instance(true);
+    const started = await startWhatsApp(mf);
+    const db = await mf.getD1Database('DB');
+    const row = await db.prepare('SELECT createdAt FROM whatsapp_challenge').first<any>();
+    await db.prepare('UPDATE whatsapp_challenge SET expiresAt = createdAt').run();
+    expect(await jsonOK(await deliver(mf, started.code, { timestamp: row.createdAt })))
+      .toEqual({ reply: 'That code expired. Start again on the sign-in page.' });
+    expect(await jsonOK(await request('/api/auth/whatsapp/status', undefined, { mf })))
+      .toEqual({ status: 'expired' });
+  });
+
+  test('WhatsApp event and external IDs are independently idempotent and code cannot be reused', async () => {
+    const mf = await instance(true);
+    const first = await startWhatsApp(mf);
+    const originalCookie = cookie;
+    const eventId = crypto.randomUUID();
+    const externalId = crypto.randomUUID();
+    expect((await deliver(mf, first.code, { eventId, externalId })).status).toBe(200);
+    const firstUser = await jsonOK(await request('/api/auth/whatsapp/status', undefined, { mf }));
+    cookie = '';
+    const second = await startWhatsApp(mf);
+    expect((await deliver(mf, second.code, { eventId })).status).toBe(204);
+    expect((await deliver(mf, second.code, { externalId })).status).toBe(204);
+    expect(await jsonOK(await request('/api/auth/whatsapp/status', undefined, { mf })))
+      .toEqual({ status: 'pending' });
+    expect((await deliver(mf, first.code, { from: '15555550128' })).status).toBe(204);
+    const replay = await request('/api/auth/whatsapp/status', undefined, { mf, cookie: originalCookie });
+    expect(await jsonOK(replay)).toEqual({ status: 'expired' });
+    expect(replay.headers.get('set-cookie')).toBeNull();
+    expect(firstUser.user.id).toBeTruthy();
+  });
+
+  test('WhatsApp accepts numeric sender IDs and phone JIDs, refusing all privacy and non-phone IDs', async () => {
+    const mf = await instance(true);
+    for (const from of ['15555550129', phoneJid('15555550130')]) {
+      cookie = '';
+      const started = await startWhatsApp(mf);
+      expect((await deliver(mf, started.code, { from })).status).toBe(200);
+      await jsonOK(await request('/api/auth/whatsapp/status', undefined, { mf }));
+      const session = await jsonOK(await request('/api/auth/get-session', undefined, { mf }));
+      expect(session.user.phoneNumber).toBe(`+${from.split('@')[0]}`);
+    }
+    cookie = '';
+    const started = await startWhatsApp(mf);
+    for (const from of ['15555550129@lid', '15555550129@other.example.com', 'opaque@lid',
+      'not-a-number', phoneJid('abc'), '+15555550129', phoneJid('15555550129:2'), '0123456789']) {
+      const response = await deliver(mf, started.code, { from });
+      expect(response.status, from).toBe(204);
+      expect(await response.text()).toBe('');
+    }
+  });
+
+  test('WhatsApp per-sender rate limit persists across isolated runtimes sharing D1', async () => {
+    const mf = await instance(true);
+    const started = await startWhatsApp(mf);
+    const unknown = started.code === 'AAAAAA' ? 'BBBBBB' : 'AAAAAA';
+    for (let i = 0; i < 10; i++) expect((await deliver(mf, unknown)).status).toBe(204);
+    const peer = await instance(true);
+    expect((await deliver(peer, started.code)).status).toBe(204);
+    expect((await deliver(peer, started.code, { from: '15555550131' })).status).toBe(200);
+  });
+
+  test('WhatsApp per-challenge rate limit suppresses repeated expiry replies', async () => {
+    const mf = await instance(true);
+    const started = await startWhatsApp(mf);
+    const db = await mf.getD1Database('DB');
+    const row = await db.prepare('SELECT createdAt FROM whatsapp_challenge').first<any>();
+    await db.prepare('UPDATE whatsapp_challenge SET expiresAt = createdAt').run();
+    for (let i = 0; i < 3; i++) {
+      expect((await deliver(mf, started.code, { timestamp: row.createdAt, from: `1555555014${i}` })).status).toBe(200);
+    }
+    expect((await deliver(mf, started.code, { timestamp: row.createdAt, from: '15555550149' })).status).toBe(204);
+  });
+
+  test('WhatsApp concurrent inbound proofs consume a challenge only once', async () => {
+    const mf = await instance(true);
+    const started = await startWhatsApp(mf);
+    const responses = await Promise.all([
+      deliver(mf, started.code, { from: '15555550150' }),
+      deliver(mf, started.code, { from: '15555550151' }),
+    ]);
+    expect(responses.map(response => response.status).sort()).toEqual([200, 204]);
+    const signedIn = await jsonOK(await request('/api/auth/whatsapp/status', undefined, { mf }));
+    expect(signedIn.user.id).toBeTruthy();
+    const replay = await request('/api/auth/whatsapp/status', undefined, { mf });
+    expect(await jsonOK(replay)).toEqual({ status: 'expired' });
+    expect(replay.headers.get('set-cookie')).toBeNull();
+  });
+
+  test('WhatsApp proof signs in its phone account and never links the current passkey account', async () => {
+    const { userId } = await signup();
+    const mf = await instance(true);
+    const started = await startWhatsApp(mf);
+    expect((await deliver(mf, started.code)).status).toBe(200);
+    const phone = await jsonOK(await request('/api/auth/whatsapp/status', undefined, { mf }));
+    expect(phone.user.id).not.toBe(userId);
+    const db = await mf.getD1Database('DB');
+    expect(await db.prepare('SELECT phoneNumber FROM user WHERE id = ?').bind(userId).first())
+      .toEqual({ phoneNumber: null });
+    await db.prepare('UPDATE user SET phoneNumberVerified = 0 WHERE id = ?').bind(phone.user.id).run();
+    cookie = '';
+    const again = await startWhatsApp(mf);
+    expect((await deliver(mf, again.code)).status).toBe(200);
+    const existing = await jsonOK(await request('/api/auth/whatsapp/status', undefined, { mf }));
+    expect(existing.user.id).toBe(phone.user.id);
+    const verified = await jsonOK(await request('/api/auth/get-session', undefined, { mf }));
+    expect(verified.user.phoneNumberVerified).toBe(true);
+    expect((await db.prepare('SELECT count(*) AS n FROM user WHERE phoneNumber IS NOT NULL').first<any>()).n).toBe(1);
+  });
+
+  test('phone linking flags cannot select an account through WhatsApp start', async () => {
+    await signup();
+    const mf = await instance(true);
+    for (const body of [{ phoneNumber: '+15555550127' }, { updatePhoneNumber: true },
+      { userId: 'chosen-user' }, { linkAccount: true }]) {
+      const response = await request('/api/auth/whatsapp/start', body, { mf });
+      expect(response.status).toBe(400);
+      expect((await response.json() as any).code).toBe('INVALID_REQUEST');
+    }
+  });
+
+  test('WhatsApp status needs the challenge cookie, blocks cross-site polls and forbids public POST', async () => {
+    const mf = await instance(true);
+    const started = await startWhatsApp(mf);
+    expect((await deliver(mf, started.code)).status).toBe(200);
+    expect(await jsonOK(await request('/api/auth/whatsapp/status', undefined, { mf, cookie: '' })))
+      .toEqual({ status: 'expired' });
+    expect((await request('/api/auth/whatsapp/status', undefined, {
+      mf, headers: { 'sec-fetch-site': 'cross-site' },
+    })).status).toBe(403);
+    expect((await request('/api/auth/whatsapp/status', {}, { mf })).status).toBe(404);
+    expect((await request('/api/auth/whatsapp/status', undefined, { mf })).status).toBe(200);
+  });
+
+  test('WhatsApp is off unless both config values exist and outbound phone routes stay absent', async () => {
+    for (const config of [{ OMNI_INBOUND_TOKEN: '' }, { WHATSAPP_RECEIVING_NUMBER: '' }] as Record<string, string>[]) {
+      const mf = await instance(true, undefined, false, config);
+      expect((await request('/api/auth/whatsapp/start', {}, { mf })).status).toBe(404);
+      expect((await request('/api/auth/whatsapp/status', undefined, { mf })).status).toBe(404);
+      expect((await deliver(mf, 'AAAAAA')).status).toBe(404);
+    }
+    const mf = await instance(true);
+    expect(await jsonOK(await request('/api/id/config', undefined, { mf })))
+      .toEqual({ phoneEnabled: false, whatsappEnabled: true });
+    for (const path of ['/phone-number/send-otp', '/phone-number/verify', '/sign-in/phone-number']) {
+      expect((await request(`/api/auth${path}`, {}, { mf })).status).toBe(404);
+    }
+    expect((await request('/api/auth/whatsapp/start', { oauth_query: 'invalid' }, { mf })).status).toBe(400);
+  });
   test('internal email stays out of response headers and bodies, including encoded JWTs', async () => {
     const { userId } = await signup();
     const db = await runtime.getD1Database('DB');
@@ -454,7 +680,7 @@ describe('Worker + D1 identity', () => {
       expect(response.status).toBe(501);
       expect(await response.text()).toBe('page not built yet');
     }
-    expect(await jsonOK(await request('/api/id/config'))).toEqual({ phoneEnabled: false });
+    expect(await jsonOK(await request('/api/id/config'))).toEqual({ phoneEnabled: false, whatsappEnabled: false });
     for (const path of ['/phone-number/send-otp', '/phone-number/verify']) {
       expect((await request(`/api/auth${path}`, {})).status).toBe(404);
     }
@@ -500,97 +726,7 @@ describe('Worker + D1 identity', () => {
       .toBeGreaterThan(0);
   });
 
-  test('Omni receives OTP with background fetch; verification signs in and three wrong codes lock', async () => {
-    const deliveries: { phoneNumber: string; code: string }[] = [];
-    const phoneRuntime = await instance(true, data => { deliveries.push(data); });
-    const phoneNumber = '+15555550123';
-    await jsonOK(await request('/api/auth/phone-number/send-otp', { phoneNumber }, { mf: phoneRuntime }));
-    expect(deliveries).toHaveLength(1);
-    expect(deliveries[0].phoneNumber).toBe(phoneNumber);
-    expect(deliveries[0].code).toMatch(/^\d{6}$/);
-    const signedIn = await jsonOK(await request('/api/auth/phone-number/verify', {
-      phoneNumber, code: deliveries[0].code,
-    }, { mf: phoneRuntime }));
-    expect(signedIn.user.id).toBeTruthy();
-    cookie = '';
-    const lockedNumber = '+15555550124';
-    await jsonOK(await request('/api/auth/phone-number/send-otp', { phoneNumber: lockedNumber }, { mf: phoneRuntime }));
-    const goodCode = deliveries[1].code;
-    const badCode = goodCode === '000000' ? '111111' : '000000';
-    for (let attempt = 0; attempt < 3; attempt++) {
-      expect((await request('/api/auth/phone-number/verify', {
-        phoneNumber: lockedNumber, code: badCode,
-      }, { mf: phoneRuntime })).status).toBeGreaterThanOrEqual(400);
-    }
-    expect((await request('/api/auth/phone-number/verify', {
-      phoneNumber: lockedNumber, code: goodCode,
-    }, { mf: phoneRuntime })).status).toBe(403);
-  });
 
-  test('phone linking flags cannot add phone sign-in to a passkey identity', async () => {
-    const { userId } = await signup();
-    const deliveries: { phoneNumber: string; code: string }[] = [];
-    const phoneRuntime = await instance(true, data => { deliveries.push(data); });
-    const phoneNumber = '+15555550126';
-    await jsonOK(await request('/api/auth/phone-number/send-otp', { phoneNumber }, { mf: phoneRuntime }));
-    const code = deliveries[0].code;
-    const rejection = {
-      code: 'UNSUPPORTED_PHONE_OPERATION', message: 'Phone verification supports sign-in only',
-    };
-    for (const flags of [
-      { updatePhoneNumber: true }, { updatePhoneNumber: false },
-      { linkAccount: true }, { linkPhoneNumber: true }, { userId }, { disableSession: true },
-    ]) {
-      const response = await request('/api/auth/phone-number/verify', {
-        phoneNumber, code, ...flags,
-      }, { mf: phoneRuntime });
-      expect(response.status).toBe(400);
-      expect(await response.json()).toEqual(rejection);
-    }
-    const queryFlag = await request('/api/auth/phone-number/verify?updatePhoneNumber=true', {
-      phoneNumber, code,
-    }, { mf: phoneRuntime });
-    expect(queryFlag.status).toBe(400);
-    expect(await queryFlag.json()).toEqual(rejection);
-    const db = await phoneRuntime.getD1Database('DB');
-    expect(await db.prepare('SELECT phoneNumber FROM user WHERE id = ?').bind(userId).first())
-      .toEqual({ phoneNumber: null });
-    const originalSession = await jsonOK(await request('/api/auth/get-session', undefined, { mf: phoneRuntime }));
-    expect(originalSession.user.id).toBe(userId);
 
-    cookie = '';
-    await jsonOK(await request('/api/auth/phone-number/send-otp', { phoneNumber }, { mf: phoneRuntime }));
-    const phoneSession = await jsonOK(await request('/api/auth/phone-number/verify', {
-      phoneNumber, code: deliveries[1].code,
-    }, { mf: phoneRuntime }));
-    expect(phoneSession.user.id).not.toBe(userId);
-    expect(await db.prepare('SELECT phoneNumber FROM user WHERE id = ?').bind(userId).first())
-      .toEqual({ phoneNumber: null });
-  });
 
-  test('OTP response completes while the Omni waitUntil delivery is still pending', async () => {
-    let release!: () => void;
-    let started!: () => void;
-    const begun = new Promise<void>(resolve => { started = resolve; });
-    const gate = new Promise<void>(resolve => { release = resolve; });
-    const phoneRuntime = await instance(true, async () => { started(); await gate; });
-    const pending = request('/api/auth/phone-number/send-otp', {
-      phoneNumber: '+15555550125',
-    }, { mf: phoneRuntime });
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    try {
-      await begun;
-      const response = await Promise.race([
-        pending,
-        new Promise<never>((_, reject) => {
-          timer = setTimeout(() => reject(new Error('OTP response awaited Omni')), 2000);
-        }),
-      ]);
-      expect(response.status).toBe(200);
-    } finally {
-      if (timer) clearTimeout(timer);
-      release();
-      await pending;
-    }
-  });
 });

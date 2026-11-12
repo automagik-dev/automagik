@@ -3,14 +3,38 @@ import { spawnSync } from 'node:child_process';
 
 const mutations = [
   {
+    name: 'drop the inbound bearer check',
+    test: 'WhatsApp bearer check',
+    edits: [['src/whatsapp.ts', 'if (!authorized)', 'if (false)']],
+  },
+  {
+    name: 'drop the message timestamp window',
+    test: 'WhatsApp timestamp window',
+    edits: [['src/whatsapp.ts', 'if (!timestampValid)', 'if (false)']],
+  },
+  {
+    name: 'allow WhatsApp code reuse',
+    test: 'IDs are independently idempotent',
+    edits: [['src/whatsapp.ts', "AND state = 'pending' AND expiresAt > ?", 'AND expiresAt > ?']],
+  },
+  {
+    name: "link to the session's account",
+    test: 'never links the current passkey account',
+    edits: [
+      ['src/whatsapp.ts', 'createAuthEndpoint, APIError', 'createAuthEndpoint, APIError, getSessionFromCtx'],
+      ['src/whatsapp.ts', 'let user = await findPhoneUser();',
+        'let user = (await getSessionFromCtx(ctx))?.user ?? await findPhoneUser();'],
+    ],
+  },
+  {
     name: 'restore the email-bearing session JWT header',
     test: 'internal email stays out',
     edits: [['src/auth.ts', 'disableSettingJwtHeader: true', 'disableSettingJwtHeader: false']],
   },
   {
     name: 'allow phone-number linking flags',
-    test: 'phone linking flags cannot',
-    edits: [['src/index.ts', 'if (!isSignInOnly)', 'if (false)']],
+    test: 'phone linking flags cannot select',
+    edits: [['src/whatsapp.ts', "Object.keys(body).some(key => key !== 'oauth_query')", 'false']],
   },
   {
     name: 'drop PKCE enforcement',

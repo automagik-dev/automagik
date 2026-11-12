@@ -134,7 +134,7 @@ async function freePort(): Promise<number> {
 
 // The real Worker with the real pages as its static assets, on a local port. `localhost` is
 // a secure context, so passkeys work as they do on the deployed origin.
-async function world(phone = false) {
+async function world() {
   if (!bundle) {
     await mkdir('.wrangler', { recursive: true });
     root = await mkdtemp('.wrangler/test-pages-');
@@ -147,7 +147,6 @@ async function world(phone = false) {
   }
   const port = await freePort();
   const origin = `http://localhost:${port}`;
-  const codes: string[] = [];
   const mf = new Miniflare({
     modules: [{ type: 'ESModule', path: bundle }],
     compatibilityDate: '2025-11-18', compatibilityFlags: ['nodejs_compat'],
@@ -158,17 +157,10 @@ async function world(phone = false) {
       routerConfig: { has_user_worker: true, invoke_user_worker_ahead_of_assets: true },
       assetConfig: { html_handling: 'none' },
     },
-    outboundService: async (request) => {
-      if (phone && request.url === 'https://omni.example.com/send') {
-        codes.push(((await request.json()) as { code: string }).code);
-        return Response.json({});
-      }
-      throw new Error('Unexpected outbound network request');
-    },
+    outboundService: async () => { throw new Error('Unexpected outbound network request'); },
     bindings: {
       BETTER_AUTH_URL: origin,
       BETTER_AUTH_SECRET: 'test-only-auth-secret-placeholder-never-deployed',
-      ...(phone ? { OMNI_OTP_URL: 'https://omni.example.com/send', OMNI_API_TOKEN: 'test-only-token' } : {}),
     },
   });
   worlds.push(mf);
@@ -188,7 +180,7 @@ async function world(phone = false) {
     JSON.stringify(['openid', 'profile']), JSON.stringify(['authorization_code']),
     JSON.stringify(['code']), 0, 1,
   ).run();
-  return { origin, codes };
+  return { origin };
 }
 
 afterAll(async () => {
@@ -407,50 +399,7 @@ describe('pages: a real browser on the real Worker', () => {
     await context.close();
   }, 120000);
 
-  test('phone codes, when the service has them on', async ({ skip }) => {
-    if (!(await chromium())) return skip();
-    const { origin, codes } = await world(true);
-    const { context, page, check } = await visitor(origin, '192.0.2.22');
-    await page.goto(`${origin}/sign-in`);
-    await page.locator('#use-phone').click();
-    await page.locator('#phone').fill('+1 (555) 555-0123');
-    await page.locator('#send-code').click();
-    await page.locator('#code').waitFor();
-    expect(await said(page)).toBe('Code sent to +1 (555) 555-0123. It can take a moment.');
-    expect(await page.locator('#resend').isDisabled()).toBe(true);
-    expect(codes).toHaveLength(1);
-    await page.locator('#code').fill(codes[0]);
-    await page.locator('#sign-out').waitFor();
-    expect(await heading(page)).toBe('You’re signed in');
-    check();
 
-    // Three wrong codes lock that code; only a new send goes on.
-    await page.locator('#sign-out').click();
-    await page.locator('#use-phone').click();
-    await page.locator('#phone').fill('+15555550124');
-    await page.locator('#send-code').click();
-    await page.locator('#code').waitFor();
-    const wrong = codes[1] === '000000' ? '111111' : '000000';
-    for (const attempt of [1, 2]) {
-      await page.locator('#code').fill(wrong);
-      await page.locator('#code[aria-invalid="true"]').waitFor();
-      expect(await said(page), `attempt ${attempt}`).toBe('That code isn’t right. Check it and try again.');
-    }
-    await page.locator('#code').fill(wrong);
-    await page.locator('#code[data-hold]').waitFor();
-    expect(await said(page)).toBe('Too many wrong codes. Send a new code to keep going.');
-    expect(await page.locator('#code').isDisabled()).toBe(true);
-    expect(await page.locator('#check-code').isDisabled()).toBe(true);
-    expect(await page.locator('#resend').isEnabled()).toBe(true);
-    check(3);
-    await page.locator('#resend').click();
-    await page.locator('#code:enabled').waitFor();
-    expect(codes).toHaveLength(3);
-    await page.locator('#code').fill(codes[2]);
-    await page.locator('#sign-out').waitFor();
-    check();
-    await context.close();
-  }, 120000);
 });
 
 // ---- Every state, with the service's answers scripted -------------------------------
