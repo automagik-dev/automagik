@@ -1,0 +1,36 @@
+{
+  "set": "final-triskle-seam",
+  "what": "The approved Automagik logo in the desktop app: the window bar's lockup and the waking mark (src/art), the macOS update splash's lockup (src/splash) and the app icon's mark (assets). Each file is a byte copy of the named file of the final set; paths are from apps/desktop. Never edit one, replace it from a new set and record it here.",
+  "files": {
+    "src/art/triskle-three-colours.svg": {
+      "from": "svg/triskle-three-colours.svg",
+      "bytes": 56569,
+      "sha256": "bc9fd54124f5d3cfdd0461c5ab6ac6860254c14bfdedf46a11cc5ca433e01a72"
+    },
+    "src/art/automagik-lockup-three-colours-ink-header.svg": {
+      "from": "lockups/svg/automagik-lockup-three-colours-ink-header.svg",
+      "bytes": 44634,
+      "sha256": "4d0f87696e31e5f889e2e60d98c7814d515a85f2f60918f4bd999f298338af2f"
+    },
+    "src/art/automagik-lockup-three-colours-cream-header.svg": {
+      "from": "lockups/svg/automagik-lockup-three-colours-cream-header.svg",
+      "bytes": 44634,
+      "sha256": "e8dd0d21e42d7b2722386738972d46432f083895fb2bf00a990ee7588d3561f7"
+    },
+    "src/splash/automagik-lockup-three-colours-ink-128.png": {
+      "from": "lockups/png/automagik-lockup-three-colours-ink-128.png",
+      "bytes": 31596,
+      "sha256": "89a274a63cf3812a4ff2ecf832204e33236444118c06ece93d5766b58d595380"
+    },
+    "src/splash/automagik-lockup-three-colours-cream-128.png": {
+      "from": "lockups/png/automagik-lockup-three-colours-cream-128.png",
+      "bytes": 31242,
+      "sha256": "f1113affc7f486217330d7ebc4fbce0c9538d63f84ddea88c40680ec79a87e9a"
+    },
+    "assets/triskle-three-colours.svg": {
+      "from": "svg/triskle-three-colours.svg",
+      "bytes": 56569,
+      "sha256": "bc9fd54124f5d3cfdd0461c5ab6ac6860254c14bfdedf46a11cc5ca433e01a72"
+    }
+  }
+}

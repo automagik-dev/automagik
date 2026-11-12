@@ -1,4 +1,7 @@
-import { genieExpressions, lamp, lockup, mark, omniExpressions, unfoldExpressions, wordmark } from './art/inline.js'
+import {
+  automagikLockupThreeColoursCreamHeader, automagikLockupThreeColoursInkHeader, automagikWordmarkCream, automagikWordmarkInk,
+  genieExpressions, lamp, omniExpressions, triskleThreeColours, triskleThreeColours16, triskleThreeColours32, triskleThreeColours64, unfoldExpressions,
+} from './art/inline.js'
 
 // -------------------------------------------------------------------------
 // Clay characters: Omni and Genie as the Automagik clay universe draws them, in place of the
@@ -12,16 +15,24 @@ export const GENIE_ATLAS = genieExpressions
 export const OMNI_ATLAS = omniExpressions
 export const UNFOLD_ATLAS = unfoldExpressions
 export const LAMP = lamp
-// The Automagik mark: the owner's clay triskelion (logo.js OmniMark, the tab icon).
-export const MARK_ART = mark
-// The AUTOMAGIK wordmark in the same clay: its letters from the owner's lockup (art kit v4,
-// brand/lockup.png), cyan to magenta, the open A and the dotted O and i.
-export const WORDMARK_ART = wordmark
-export const WORDMARK_RATIO = 471 / 96
-// The whole lockup as the owner drew it, the mark beside the letters at their own sizes
-// (brand/lockup.png cropped to its art): the mark stands about 1.4 times the letters' height.
-export const LOCKUP_ART = lockup
-export const LOCKUP_RATIO = 1630 / 347
+// The Automagik logo is the approved set's own files (art/brand, byte for byte; SOURCE.json
+// beside them names each one's place in the set and its SHA-256).
+// The mark is the triskle in its three colours, always. Its seam line is drawn to stay about a
+// pixel wide, so there is a drawing per size and a mark takes the one made for the size it is
+// shown at (CSS px), never a larger one scaled down: up to 23, up to 47, up to 99, and the
+// large drawing from 100 up.
+const MARK_DRAWINGS = Object.freeze([[23, triskleThreeColours16], [47, triskleThreeColours32], [99, triskleThreeColours64]])
+export const markArt = size => (MARK_DRAWINGS.find(([upTo]) => size <= upTo) ?? [0, triskleThreeColours])[1]
+// The mark's frame is square (all four drawings share it); the three arms fill its width and
+// 222/257.7 of its height, from 17.9/257.7 below its top.
+// The lowercase wordmark, its i dotted with Automagik's violet sparkle: ink letters for a light
+// ground, cream for a dark one. Its frame is as tall as the lockup's.
+export const WORDMARK_ART = Object.freeze({ ink: automagikWordmarkInk, cream: automagikWordmarkCream })
+export const WORDMARK_RATIO = 1333 / 264
+// The lockup, the mark beside the wordmark: the drawing made for headers (under about 56 px
+// high), again with ink or cream letters.
+export const LOCKUP_ART = Object.freeze({ ink: automagikLockupThreeColoursInkHeader, cream: automagikLockupThreeColoursCreamHeader })
+export const LOCKUP_RATIO = 1632.34 / 264
 export const FACES = Object.freeze(['calm', 'pleased', 'delighted', 'focused', 'curious', 'asleep', 'sad'])
 
 // A mark's state (mark.js STATES: what the Bot is doing, from its Session and its work) as a

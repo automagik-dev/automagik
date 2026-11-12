@@ -404,7 +404,7 @@ export function TeamSidebar(props) {
   const toolProps = { wide, roster, actions: rowActions, useRoster }
   return h('div', { className: wide ? 'bt-side' : 'bt-side bt-rail', onKeyDown: typeToSearch },
     wide ? h('div', { className: 'bt-side-top' },
-      h('span', { className: 'bt-brand' }, h(Lockup, { height: 27 })),
+      h('span', { className: 'bt-brand' }, h(Lockup, { height: 21 })),
       h(WorkCodeSwitch, { roster, useSessions }),
       h(UpdateButton, { useUpdate: props.useUpdate, actions }),
       h(SidebarTools, toolProps),
@@ -814,7 +814,7 @@ export function BrandMark({ size = 24 }) {
   return h('span', { className: 'bt-brand-mark' }, h(OmniMark, { size }))
 }
 export function BrandName() {
-  return h('span', { className: 'bt-brand-name' }, h(Wordmark, { height: 16 }))
+  return h('span', { className: 'bt-brand-name' }, h(Wordmark, { height: 25 }))
 }
 
 // With the whale holding the settings seat, the Bot row is just the account menu;
@@ -829,7 +829,7 @@ export const SIDEBAR_CSS = `
 .bt-confirm-go{height:28px;padding:0 14px;border:0;border-radius:999px;background:var(--bt-accent);color:var(--bt-accent-ink);font:inherit;font-size:13px;font-weight:500;cursor:pointer;transition:opacity .12s ease}
 .bt-confirm-go:hover:not(:disabled){opacity:.9}
 .bt-confirm-go:disabled{opacity:.6;cursor:default}
-.bt-side-top .bt-brand{cursor:default;padding-left:6px}
+.bt-side-top .bt-brand{cursor:default;padding-left:6px;padding-right:4px}
 .bt-side-top .bt-brand:hover{background:none}
 .bt-brand .bt-mark{flex:none}
 /* In the app the window's title bar carries the brand (or the system's, on macOS): the
