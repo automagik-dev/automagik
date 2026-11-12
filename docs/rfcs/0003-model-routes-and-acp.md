@@ -591,10 +591,15 @@ sign-in is read last. CLI auto-updates stay on (D-h).
 **Image read boundary (#870).** Each draw writes an owner-only project config in its scratch
 folder with a fresh permission profile and `default_permissions`. It denies `:root`, reads
 only `:workspace_roots`, and has no network table, `extends` or `:minimal`. The adapter must
-offer and acknowledge `permission-profile:<id>` before the prompt. Where Codex enforces
-profiles (Seatbelt on macOS, bubblewrap on Linux, the Windows sandbox), the image run cannot
-read outside its scratch folder, including through the image tool's file inputs. Feature and
-offered-tool checks stay in place. An `Invalid configuration` warning fails a pre-session check.
+offer and acknowledge `permission-profile:<id>` before the prompt. This is containment, not a
+scratch-only read boundary: Codex adds `:minimal` and helper-executable read grants, with
+platform runtime roots. Images there remain readable. Automagik passes only prompt text and
+has no pre-read hook for Codex's image-input paths; output bytes are inline, never opened from
+`savedPath`. No adapter-controlled input path exists to validate. The [security notes and
+pinned source lines][codex-image-security] list Linux, macOS and Windows grants and the real
+helper read tests. Those tests reconstruct the helper policy; they do not prove the signed-in
+ACP image-tool path. **#870 remains open.** Feature and offered-tool checks stay in place.
+An `Invalid configuration` warning fails a pre-session check.
 The run uses the Bot's isolated Codex home and removes the scratch config with the folder.
 
 **Accepted image security risk (owner decision, 2026-11-11).** If the profile mode is absent

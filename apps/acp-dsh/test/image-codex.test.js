@@ -1,5 +1,5 @@
 // The image run's lockdown against a real Codex and a real codex-acp (image.js, #870). Opt-in:
-// CI installs neither, so every test here is skipped unless both are named:
+// The ordinary plugin CI job installs neither; every test here skips unless both are named:
 //   AUTOMAGIK_TEST_CODEX_ACP  codex-acp's dist/index.js
 //   AUTOMAGIK_TEST_CODEX      a Codex executable (the native one, or its launcher)
 // Codex runs in a throwaway HOME and CODEX_HOME made here: it is never signed in, no model

@@ -1289,6 +1289,76 @@ jobs:
       - name: Test
         run: bun run test
 
+  acp-image-read:
+    name: acp-dsh (real Codex image reads)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: apps/acp-dsh
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.9
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Install plugin dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Pinned native Codex and public runtime canary
+        run: |
+          set -euo pipefail
+          dir="${RUNNER_TEMP}/image-read"
+          mkdir -p "${dir}/tmp"
+          release="https://github.com/openai/codex/releases/download/rust-v0.167.1"
+          curl -fsSL "${release}/codex-x86_64-unknown-linux-musl.tar.gz" -o "${dir}/codex.tgz"
+          hash=64bcc99c32e434b4bcb0508a97df9b7aeecdb97e956d976fb13661096ec4e3e2
+          echo "${hash}  ${dir}/codex.tgz" | sha256sum --check --strict
+          tar -xzf "${dir}/codex.tgz" -C "${dir}"
+          curl -fsSL "${release}/bwrap-x86_64-unknown-linux-musl.tar.gz" -o "${dir}/bwrap.tgz"
+          hash=eb799e781a9ffd37b1ee46280fda10212a6efaf3cccfb8bf7603a00520355ac7
+          echo "${hash}  ${dir}/bwrap.tgz" | sha256sum --check --strict
+          mkdir -p "${dir}/codex-resources"
+          tar -xzf "${dir}/bwrap.tgz" -C "${dir}/codex-resources"
+          mv "${dir}/codex-resources/bwrap-x86_64-unknown-linux-musl" \
+            "${dir}/codex-resources/bwrap"
+          # Ubuntu restricts unprofiled user namespaces. Allow this runner's bwrap only;
+          # its mount/network sandbox and the tested Codex read policy still apply.
+          cat > "${dir}/bwrap.apparmor" <<EOF
+          abi <abi/4.0>,
+          profile image-read-bwrap "${dir}/codex-resources/bwrap" flags=(unconfined) {
+            userns,
+          }
+          EOF
+          sudo apparmor_parser -r "${dir}/bwrap.apparmor"
+          # A public 1x1 PNG, installed only in this disposable runner's runtime read root.
+          png='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9aw'
+          printf '%s' "${png}AAAABJRU5ErkJggg==" | base64 --decode > "${dir}/runtime.png"
+          sudo install -m 644 "${dir}/runtime.png" /usr/local/share/automagik-image-read.png
+          echo "AUTOMAGIK_TEST_CODEX=${dir}/codex-x86_64-unknown-linux-musl" >> "$GITHUB_ENV"
+          echo 'AUTOMAGIK_TEST_CODEX_RUNTIME_IMAGE=/usr/local/share/automagik-image-read.png' \
+            >> "$GITHUB_ENV"
+          echo "TMPDIR=${dir}/tmp" >> "$GITHUB_ENV"
+
+      - name: Real helper reads (required, no skips)
+        run: |
+          set -euo pipefail
+          sudo systemd-run --quiet --wait --pipe \
+            -p MemoryMax=4G -p MemorySwapMax=0 -p "User=$(id -un)" \
+            -p "WorkingDirectory=${PWD}" \
+            env "PATH=${PATH}" "TMPDIR=${TMPDIR}" NODE_OPTIONS=--max-old-space-size=2048 \
+            "AUTOMAGIK_TEST_CODEX=${AUTOMAGIK_TEST_CODEX}" \
+            "AUTOMAGIK_TEST_CODEX_RUNTIME_IMAGE=${AUTOMAGIK_TEST_CODEX_RUNTIME_IMAGE}" \
+            AUTOMAGIK_REQUIRE_IMAGE_READ_TEST=1 \
+            node scripts/image-read-gate.mjs
+
   pets:
     # The headless pet bake (automagik-pets) on Node, as DSH and Automagik Herdr run it: Bun
     # installs sharp, whose prebuilt binary carries libvips; no browser is needed (the parity
