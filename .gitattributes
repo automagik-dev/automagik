@@ -9,3 +9,4 @@ apps/desktop/runtime/patches/*.patch -text whitespace=-space-before-tab
 apps/bots-dsh/src/client/art/brand/*.svg -text
 apps/desktop/src/art/*.svg -text
 apps/desktop/assets/triskle-three-colours.svg -text
+apps/welcome-dsh/src/client/vendor/art/brand/*.svg -text
