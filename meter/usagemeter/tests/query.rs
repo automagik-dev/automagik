@@ -4069,3 +4069,291 @@ fn models_keep_reported_costs_and_default_event_counts() {
         assert_eq!(row["models"][0]["cost_usd"], row["cost"]["usd_reported"]);
     }
 }
+
+#[test]
+fn query_d90_includes_usage_older_than_d30() {
+    let mut s = scenes::Scene::migrated(
+        "2026-09-16T00:30:00Z",
+        &[scenes::Frozen {
+            bot: None,
+            harness: "claude-code",
+            model: CLAUDE_MODEL,
+            branch: Some("feat/history"),
+            hour: t("2026-09-15T10:00:00Z"),
+            tokens: [100, 0, 0, 0, 20, 0],
+        }],
+    );
+    s.sync();
+    for (window, expected) in [("d30", 0), ("d90", 120)] {
+        let mut a = scenes::args(false, &["feat/history"]);
+        a.extend(["--window".into(), window.into()]);
+        let (code, raw) = s.query(&a);
+        assert_eq!(code, 0, "{raw}");
+        let v: Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(v["window"]["name"], window);
+        assert_eq!(v["query"]["window"], window);
+        assert!(v["query"].get("since").is_none());
+        assert!(v["query"].get("until").is_none());
+        assert_eq!(v["rows"][0]["tokens"]["total"], expected, "{v}");
+        if expected > 0 {
+            assert_eq!(v["rows"][0]["state"], "measured");
+        }
+        assert!(schema().valid(&v), "{:#?}", schema().errors(&v));
+    }
+}
+
+fn interval_args(by: &str, since: &str, until: &str) -> Vec<String> {
+    let mut a = scenes::args(false, &["feat/interval"]);
+    a.extend([
+        "--by".into(),
+        by.into(),
+        "--since".into(),
+        since.into(),
+        "--until".into(),
+        until.into(),
+    ]);
+    a
+}
+
+/// Two calls sharing an hourly rollup, distinguishable only by their evidence timestamps.
+fn interval_scene(logged_branch: bool) -> scenes::Scene {
+    use scenes::{H, Scene, Start, Usage, worker};
+    let mut s = Scene::migrated(
+        "2026-11-08T09:30:00Z",
+        &[scenes::Frozen {
+            bot: None,
+            harness: "claude-code",
+            model: CLAUDE_MODEL,
+            branch: Some("feat/history"),
+            hour: t("2026-11-08T09:00:00Z"),
+            tokens: [70, 0, 0, 0, 7, 0],
+        }],
+    );
+    let cwd = scenes::wt("interval");
+    s.start(Start {
+        task: Some("gn-interval"),
+        session: Some("s-interval"),
+        ..worker(
+            "t-interval",
+            "kite",
+            "dev",
+            "lark",
+            if logged_branch { "claude" } else { "dsh-tui" },
+            &cwd,
+            "feat/interval",
+            t("2026-11-08T09:40:00Z"),
+        )
+    });
+    // Scene writers offset the supplied time; keep both calls in the same hour.
+    let offset = if logged_branch { 15 } else { 20 } * 60_000;
+    for (at, tokens) in [
+        ("2026-11-08T10:05:00Z", [10, 90, 0, 0, 50, 0]),
+        ("2026-11-08T10:45:00Z", [100, 900, 0, 0, 500, 0]),
+    ] {
+        s.add(
+            Usage::new(
+                if logged_branch { H::Claude } else { H::Dsh },
+                "s-interval",
+                &cwd,
+                logged_branch.then_some("feat/interval"),
+                vec![t(at) - offset],
+            )
+            .tokens(tokens),
+        );
+    }
+    s.sync();
+    s
+}
+
+#[test]
+fn custom_interval_reads_exact_calls_for_branch_bot_and_task() {
+    for logged in [true, false] {
+        let s = interval_scene(logged);
+        for by in ["branch", "bot", "task"] {
+            let a = interval_args(by, "2026-11-08T10:00:00Z", "2026-11-08T10:30:00Z");
+            let before = folder(&s.env.state());
+            let (code, raw) = s.query(&a);
+            assert_eq!(code, 0, "{by}: {raw}");
+            let v: Value = serde_json::from_str(&raw).unwrap();
+            assert_eq!(v["rows"].as_array().unwrap().len(), 1, "{by}: {v}");
+            let row = &v["rows"][0];
+            assert_eq!(row["state"], "measured", "logged={logged} by={by}: {v}");
+            assert_eq!(row["tokens"]["total"], 150, "{by}: {v}");
+            assert_eq!(row["models"][0]["calls"], 1);
+            assert_eq!(row["models"][0]["tokens"], row["tokens"]);
+            let basis = if logged { "log" } else { "ledger" };
+            assert_eq!(
+                row["attribution"]["actor"]["tokens_by_branch_basis"][basis],
+                150
+            );
+            assert_eq!(v["window"]["name"], "custom");
+            assert_eq!(v["query"]["window"], "custom");
+            assert_eq!(v["query"]["since"], "2026-11-08T10:00:00Z");
+            assert_eq!(v["query"]["until"], "2026-11-08T10:30:00Z");
+            assert_eq!(v["window"]["requested_start"], "2026-11-08T10:00:00Z");
+            assert_eq!(v["window"]["start"], "2026-11-08T10:00:00Z");
+            assert_eq!(v["window"]["end"], "2026-11-08T10:30:00Z");
+            assert_eq!(v["window"]["clipped"], false);
+            same_folder(&folder(&s.env.state()), &before, "custom query");
+            assert!(schema().valid(&v), "{:#?}", schema().errors(&v));
+
+            // Inclusive since, exclusive until, including two calls in the same hour.
+            let (code, raw) = s.query(&interval_args(
+                by,
+                "2026-11-08T10:05:00Z",
+                "2026-11-08T10:45:00Z",
+            ));
+            assert_eq!(code, 0, "{raw}");
+            let boundary: Value = serde_json::from_str(&raw).unwrap();
+            assert_eq!(boundary["rows"][0]["tokens"]["total"], 150);
+            assert_ne!(
+                boundary["query"]["request_sha256"],
+                v["query"]["request_sha256"]
+            );
+            let (_, raw) = s.query(&interval_args(
+                by,
+                "2026-11-08T10:45:00Z",
+                "2026-11-08T11:00:00Z",
+            ));
+            let later: Value = serde_json::from_str(&raw).unwrap();
+            assert_eq!(later["rows"][0]["tokens"]["total"], 1500);
+
+            // Offset spelling normalizes to the same echo and request hash.
+            let (_, raw) = s.query(&interval_args(
+                by,
+                "2026-11-08T11:00:00+01:00",
+                "2026-11-08T11:30:00+01:00",
+            ));
+            assert_eq!(serde_json::from_str::<Value>(&raw).unwrap(), v);
+            let mut bad = v.clone();
+            bad["query"].as_object_mut().unwrap().remove("since");
+            assert!(!schema().valid(&bad));
+            let mut bad = v.clone();
+            bad["query"]["window"] = json!("d30");
+            assert!(!schema().valid(&bad));
+        }
+    }
+}
+
+#[test]
+fn custom_interval_rejects_invalid_cli_before_opening_store() {
+    let s = scenes::Scene::migrated("2026-11-08T09:30:00Z", &[]);
+    let since = "2026-11-08T10:00:00Z";
+    let until = "2026-11-08T11:00:00Z";
+    let cases: Vec<(Vec<&str>, &str)> = vec![
+        (
+            vec!["--since", since],
+            "--since and --until must be given together",
+        ),
+        (
+            vec!["--until", until],
+            "--since and --until must be given together",
+        ),
+        (
+            vec!["--window", "d7", "--since", since, "--until", until],
+            "--window cannot be combined with --since and --until",
+        ),
+        (
+            vec!["--window", "d7", "--until", until],
+            "--window cannot be combined with --since and --until",
+        ),
+        (
+            vec!["--since", since, "--until", since],
+            "--since must be earlier than --until",
+        ),
+        (
+            vec!["--since", until, "--until", since],
+            "--since must be earlier than --until",
+        ),
+        (
+            vec!["--since", "bad", "--until", until],
+            "--since takes an RFC 3339 timestamp, not \"bad\"",
+        ),
+        (
+            vec!["--since", since, "--until", "bad"],
+            "--until takes an RFC 3339 timestamp, not \"bad\"",
+        ),
+        (
+            vec!["--since", since, "--since", since, "--until", until],
+            "--since is given twice",
+        ),
+        (
+            vec!["--since", since, "--until", until, "--until", until],
+            "--until is given twice",
+        ),
+        (vec!["--since"], "--since needs a value"),
+        (vec!["--until"], "--until needs a value"),
+        (
+            vec!["--window", "d91"],
+            "--window takes d1, d7, d30 or d90, not \"d91\"",
+        ),
+    ];
+    fs::remove_file(s.env.state().join("meter.db")).unwrap();
+    for (extra, message) in cases {
+        let mut a = scenes::args(false, &["feat/interval"]);
+        a.extend(extra.into_iter().map(String::from));
+        let (code, raw) = s.query(&a);
+        assert_eq!(code, 2, "{raw}");
+        let v: Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(v["status"], "usage");
+        assert_eq!(v["error"]["message"], message);
+        assert!(schema().valid(&v), "{:#?}", schema().errors(&v));
+    }
+}
+
+#[test]
+fn custom_interval_clips_evidence_and_keeps_historical_actor_totals() {
+    let s = interval_scene(true);
+    let mut a = interval_args("branch", "2026-11-08T09:10:00Z", "2026-11-08T10:30:00Z");
+    a.extend(["--branch".into(), "feat/history".into()]);
+    let (code, raw) = s.query(&a);
+    assert_eq!(code, 0, "{raw}");
+    let v: Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(v["ingestion"]["evidence_from"], "2026-11-08T10:00:00Z");
+    assert_eq!(v["window"]["requested_start"], "2026-11-08T09:10:00Z");
+    assert_eq!(v["window"]["start"], v["ingestion"]["evidence_from"]);
+    assert_eq!(v["window"]["clipped"], true);
+    assert_eq!(v["rows"][0]["tokens"]["total"], 150);
+    assert_eq!(v["rows"][1]["state"], "missing");
+    assert_eq!(v["rows"][1]["reason"], "before_evidence");
+    assert!(v["rows"][1]["tokens"].is_null());
+    assert_eq!(v["actor_unattributed"]["tokens_before_evidence"], 77);
+    assert_eq!(
+        v["actor_unattributed"]["parts"][0]["reason"],
+        "before_evidence"
+    );
+    assert!(schema().valid(&v), "{:#?}", schema().errors(&v));
+
+    // Entirely before evidence: clamp the effective start to until, keep only actor history.
+    let (_, raw) = s.query(&interval_args(
+        "branch",
+        "2026-11-08T09:00:00Z",
+        "2026-11-08T09:30:00Z",
+    ));
+    let v: Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(v["window"]["start"], v["window"]["end"]);
+    assert_eq!(v["rows"][0]["reason"], "before_evidence");
+    assert_eq!(v["actor_unattributed"]["tokens_before_evidence"], 77);
+    assert!(schema().valid(&v), "{:#?}", schema().errors(&v));
+
+    // No evidence floor: no exact rows, even if evidence table entries exist.
+    s.store()
+        .conn
+        .execute(
+            "DELETE FROM meta WHERE k = ?1",
+            [meter::evidence::FROM_META],
+        )
+        .unwrap();
+    let (_, raw) = s.query(&a);
+    let v: Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(v["window"]["start"], v["window"]["end"]);
+    assert_eq!(v["rows"][0]["state"], "missing");
+    assert_eq!(v["rows"][0]["reason"], "before_evidence");
+    assert!(
+        v["actor_unattributed"]["tokens_before_evidence"]
+            .as_i64()
+            .unwrap()
+            > 0
+    );
+    assert!(schema().valid(&v), "{:#?}", schema().errors(&v));
+}
