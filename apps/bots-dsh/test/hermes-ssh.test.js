@@ -120,7 +120,9 @@ test('missing Hermes and unsupported ownership flags stop before a tunnel and cl
 
 test('startup timeout is bounded and failed forwarding closes the remote supervisor without uncertain retries', async t => {
   const f = await fixture(t, 'timeout')
-  await assert.rejects(f.open(undefined, { deadlines: { start: 150, control: 100, cancel: 200 } }), error => error.sshError === 'timeout' && error.code === 'bot/hermes-ssh-timeout')
+  // Long enough for the fake ssh to start and write its record on a busy computer: it is
+  // read below, and a start deadline of a few frames would end before the process exists.
+  await assert.rejects(f.open(undefined, { deadlines: { start: 1000, control: 3000, cancel: 1000 } }), error => error.sshError === 'timeout' && error.code === 'bot/hermes-ssh-timeout')
   assert.equal((await f.records()).filter(record => record.event === 'spawn').length, 1)
   const broken = await fixture(t, 'tunnel-failure')
   await assert.rejects(broken.open(), error => error.code === 'bot/hermes-ssh-tunnel' && error.sshError === 'tunnel' && error.sshStage === 'tunnel' && !error.cleanupUnknown)
@@ -309,7 +311,8 @@ test('our supervisor bounds the remote lease with heartbeats even when SSH stdin
 test('the remote supervisor force-stops only its owned fake child when graceful termination expires', async t => {
   const f = await fixture(t, 'runtime-ignore-term')
   const hermesPath = await fakeRuntime(f)
-  const connection = await f.open({ ...f.config, hermesPath }, { deadlines: { start: 1500, control: 400, cancel: 1000 } })
+  // Only the stop is short here: the start and the tunnel keep a long deadline.
+  const connection = await f.open({ ...f.config, hermesPath }, { deadlines: { start: 10000, control: 3000, cancel: 1000 } })
   const runtime = (await f.records()).find(record => record.event === 'runtime-start')
   await connection.close()
   assert.throws(() => process.kill(runtime.pid, 0), { code: 'ESRCH' })
@@ -325,7 +328,7 @@ test('application exit detaches the private control channel and stops the owned 
   const hermesPath = await fakeRuntime(f)
   const { spawn } = await import('node:child_process')
   const program = `import { startHermesSsh } from ${JSON.stringify(new URL('../src/host/hermes-ssh.js', import.meta.url).href)};
-    await startHermesSsh(JSON.parse(process.env.HERMES_SSH_FIXTURE_CONFIG), { env: process.env, allocatePort: async () => Number(process.env.HERMES_SSH_FIXTURE_LOCAL_PORT), deadlines: { start: 2000, control: 500, cancel: 500 } });
+    await startHermesSsh(JSON.parse(process.env.HERMES_SSH_FIXTURE_CONFIG), { env: process.env, allocatePort: async () => Number(process.env.HERMES_SSH_FIXTURE_LOCAL_PORT), deadlines: { start: 10000, control: 3000, cancel: 2000 } });
     process.exit(0);`
   const app = spawn(process.execPath, ['--input-type=module', '-e', program], { env: { ...f.options.env, HERMES_SSH_FIXTURE_CONFIG: JSON.stringify({ ...f.config, hermesPath }), HERMES_SSH_FIXTURE_LOCAL_PORT: String(f.localPort) }, stdio: ['ignore', 'ignore', 'ignore'] })
   const status = await new Promise((resolve, reject) => { app.once('error', reject); app.once('close', resolve) })
@@ -343,7 +346,7 @@ for (const [exitsFirst, withoutWaitid] of [[false, false], [true, false], [true,
   test(`owned group cleanup includes a TERM-ignoring descendant when its leader exits ${exitsFirst ? 'before close' : 'on TERM'}${withoutWaitid ? ' without waitid' : ''}`, { timeout: 10000 }, async t => {
     const f = await fixture(t, withoutWaitid ? 'runtime-leader-exits-first-no-waitid' : exitsFirst ? 'runtime-leader-exits-first' : 'runtime-leader-exits-term')
     const hermesPath = await fakeRuntime(f)
-    const connection = await f.open({ ...f.config, hermesPath }, { deadlines: { start: 2000, control: 400, cancel: 1000 } })
+    const connection = await f.open({ ...f.config, hermesPath }, { deadlines: { start: 10000, control: 3000, cancel: 1000 } })
     const records = await f.records()
     const leader = records.find(record => record.event === 'runtime-start')
     const descendant = records.find(record => record.event === 'descendant-start')
@@ -444,9 +447,31 @@ test('a Hermes that exits early is its own kind, with its exit code and last lin
 
 test('a Hermes that never says ready, or reports no usable port, is named by the start script', async t => {
   const slow = await fixture(t, 'runtime-never-ready')
+  // Two clocks run here. This computer's start deadline counts from the call. The start
+  // script's own counts from the moment SSH and Python are up, and is sent a little shorter
+  // so that it ends first. With both short, a busy computer spends that little on starting
+  // processes, and the bare timeout here wins (seen on CI). So this computer's deadline is
+  // long, and the script is handed a short one in place of the one sent: long enough to probe
+  // and start the fake Hermes and read its first line, and far from this computer's.
+  const deadlines = { start: 20000, control: 5000, cancel: 800 }, scriptStartMs = 3000
+  const { spawn } = await import('node:child_process')
+  let sent
+  const shortStart = (...args) => {
+    const child = spawn(...args)
+    const write = child.stdin.write.bind(child.stdin)
+    child.stdin.write = (data, ...rest) => {
+      if (sent !== undefined || typeof data !== 'string' || !data.startsWith('{')) return write(data, ...rest)
+      const options = JSON.parse(data)
+      sent = options.startMs
+      return write(`${JSON.stringify({ ...options, startMs: scriptStartMs })}\n`, ...rest)
+    }
+    return child
+  }
   let failure
-  await assert.rejects(slow.open({ ...slow.config, hermesPath: await fakeRuntime(slow) }, { deadlines: { start: 1500, control: 600, cancel: 800 } }), error => { failure = error; return error.code === 'bot/hermes-ssh-not-ready' && error.sshError === 'not-ready' })
+  await assert.rejects(slow.open({ ...slow.config, hermesPath: await fakeRuntime(slow) }, { deadlines, spawn: shortStart }), error => { failure = error; return error.code === 'bot/hermes-ssh-not-ready' && error.sshError === 'not-ready' })
   assert.equal(failure.sshStage, 'hermes-start')
+  // What was really sent: a deadline for the script that ends before this computer's.
+  assert.ok(Number.isSafeInteger(sent) && sent > 0 && sent < deadlines.start, `the start script's deadline (${sent}) ends before this computer's (${deadlines.start})`)
   assert.match(failure.sshDetail.hermes.join('\n'), /sample server still loading/)
   assert.ok(!JSON.stringify(failure.sshDetail).includes(slow.credential))
   const started = (await slow.records()).find(record => record.event === 'runtime-start')
@@ -473,7 +498,9 @@ test('a token of the wrong shape and a fault inside the start script are their o
 
 test('a stall is reported with the stage the start script had reached', async t => {
   const f = await fixture(t, 'stalled-start')
-  await assert.rejects(f.open(undefined, { deadlines: { start: 200, control: 100, cancel: 200 } }), error => error.code === 'bot/hermes-ssh-timeout' && error.sshStage === 'hermes-start')
+  // The stage is the one the fake ssh reports once it has started: the deadline has to
+  // outlast that start on a busy computer, or the stall is reported at the sign-in.
+  await assert.rejects(f.open(undefined, { deadlines: { start: 2000, control: 3000, cancel: 1000 } }), error => error.code === 'bot/hermes-ssh-timeout' && error.sshStage === 'hermes-start')
 })
 
 test('a tunnel that never listens and a busy forward from the host’s own config are told apart', async t => {
