@@ -116,6 +116,9 @@ export function install(rt) {
       updatedAt: now,
     }
     if (kind === 'mcp') {
+      // Older saves could misattribute a user entry to its Bot editor. Only a new
+      // Bot request establishes provenance; edits never upgrade an unmarked entry.
+      if (previous?.botRequested === true || (!previous && !ui && rt.botOf(botId))) item.botRequested = true
       const transport = body.transport === 'streamable-http' ? 'streamable-http' : 'stdio'
       if (transport === 'stdio') {
         const command = String(body.command ?? '').trim()
@@ -172,7 +175,8 @@ export function install(rt) {
     return true
   }
   // Called after the Bot leaves the team. The shared library belongs to the user:
-  // only an attached, unapproved local MCP this Bot created and nobody else uses goes.
+  // only an attached, unapproved local MCP this Bot verifiably requested goes.
+  // Unmarked legacy entries have uncertain provenance and always stay.
   // A pack keeps its members even when no Bot currently has that pack attached.
   const dropOrphanCapabilities = (bot) => {
     const items = library()
@@ -180,6 +184,7 @@ export function install(rt) {
     for (const name of bot.capabilities ?? []) {
       const item = own(items, name)
       if (item === undefined || item.kind !== 'mcp' || item.transport !== 'stdio' || item.approved === true) continue
+      if (item.botRequested !== true) continue
       if (item.createdBy !== bot.id || usedByOthers(name, bot.id) || packed(name)) continue
       delete items[item.name]
     }

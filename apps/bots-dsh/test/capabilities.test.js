@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -183,6 +183,8 @@ test('deleting a Bot drops only its attached pending local MCP and persists the 
   t.after(() => env.dispose())
   const { rt } = env
   await rt.capabilitySave(mcp('pending-mine'), { botId: 'worker' })
+  await rt.capabilitySave(mcp('pending-mine', 'node-new'), { botId: 'worker' })
+  assert.equal(rt.state.capabilities.items['pending-mine'].botRequested, true)
   await rt.capabilitySave(mcp('unattached'), { botId: 'worker' })
   rt.state.bots.worker.capabilities = ['pending-mine', 'missing']
 
@@ -215,7 +217,7 @@ test('deleting a Bot preserves capabilities belonging to the user, other Bots or
   // approval requests belong to this cleanup. No remote server is contacted here.
   rt.state.capabilities.items.remote = {
     name: 'remote', kind: 'mcp', transport: 'streamable-http', url: 'https://example.test/mcp',
-    createdBy: 'worker', approved: false,
+    createdBy: 'worker', botRequested: true, approved: false,
   }
   rt.state.bots.worker.capabilities = ['approved-mine', 'pending-chief', 'user-saved', 'shared',
     'packed', 'unused-pack-member', 'guide', 'team', 'remote']
@@ -249,6 +251,7 @@ test('deleting a former Main Bot preserves user and unknown MCP provenance after
       await rt.setMain('worker', true)
       const edited = await rt.capabilitySave(mcp('server', 'node-new'), { botId: 'worker' })
       assert.equal(edited.approved, false)
+      assert.equal(edited.botRequested, undefined)
       rt.state.bots.worker.capabilities = ['server']
       await rt.setMain('worker', false)
 
@@ -259,6 +262,41 @@ test('deleting a former Main Bot preserves user and unknown MCP provenance after
       assert.equal(rt.state.capabilities.items.server.createdBy, createdBy ?? null)
       const saved = JSON.parse(await (await import('node:fs/promises')).readFile(join(env.home, 'state.json'), 'utf8'))
       assert.deepEqual(saved.capabilities.items.server, edited)
+    })
+  }
+})
+
+test('deleting a former Main Bot preserves legacy MCP entries misattributed by old edits', async t => {
+  for (const editAgain of [false, true]) {
+    await t.test(editAgain ? 'edited again after upgrade' : 'unchanged after upgrade', async t => {
+      const state = team()
+      // Saved by capabilities.js at 8ff30182: UI creation, then a Main Bot command
+      // edit. The old fallback lost the user's null provenance and recorded worker.
+      const legacy = JSON.parse(readFileSync(new URL('./fixtures/legacy-user-edited-mcp.json', import.meta.url), 'utf8'))
+      assert.equal(legacy.createdBy, 'worker')
+      assert.equal(legacy.approved, false)
+      assert.equal(legacy.botRequested, undefined)
+      state.capabilities = { items: { server: legacy } }
+      state.mainBotIds.push('worker')
+      state.bots.worker.capabilities = ['server']
+      const env = await setup({
+        state,
+        beforeLoad: ({ ctx }) => { ctx.workspaceRegistry = { archiveSession: async () => {} } },
+      })
+      t.after(() => env.dispose())
+      const { rt } = env
+      // Echoing or inventing a marker in edit input must not certify legacy data.
+      if (editAgain) await rt.capabilitySave({ ...mcp('server', 'node-latest'), botRequested: true }, { botId: 'worker' })
+      const before = structuredClone(rt.state.capabilities.items.server)
+      assert.equal(before.botRequested, undefined)
+      await rt.setMain('worker', false)
+
+      await rt.deleteBot('worker')
+
+      assert.equal(rt.botOf('worker'), undefined)
+      assert.deepEqual(rt.state.capabilities.items.server, before)
+      const saved = JSON.parse(readFileSync(join(env.home, 'state.json'), 'utf8'))
+      assert.deepEqual(saved.capabilities.items.server, before)
     })
   }
 })
