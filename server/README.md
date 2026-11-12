@@ -153,7 +153,7 @@ docker volume create automagik-data
 docker run -d --name automagik --network host \
   --volume automagik-data:/data \
   --env DEEPSEEK_API_KEY=sk-… \
-  ghcr.io/automagik-dev/automagik-server@sha256:…
+  ghcr.io/automagik-si/automagik-server@sha256:…
 ```
 
 Use `automagik-server:local` here after `node server/build.mjs --tag automagik-server:local` to
@@ -289,7 +289,7 @@ GitHub creates a new Container package private even when the repository is publi
 API has no endpoint for a Container package's visibility (as of 2026-11). Make it public once, as
 an organization owner:
 
-1. Open <https://github.com/orgs/automagik-dev/packages/container/automagik-server>.
+1. Open <https://github.com/orgs/automagik-si/packages/container/automagik-server>.
 2. **Package settings → Danger Zone → Change visibility → Public**.
 
 The publish job checks the package with `GITHUB_TOKEN` and, when it is not public (or the token
@@ -298,7 +298,7 @@ but anonymous pulls fail until the flip; the login-less pull is the verification
 
 ```sh
 docker logout ghcr.io 2>/dev/null || true
-docker pull ghcr.io/automagik-dev/automagik-server@sha256:…
+docker pull ghcr.io/automagik-si/automagik-server@sha256:…
 ```
 
 ## Measured

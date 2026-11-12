@@ -81,6 +81,8 @@ test('the CLI writes the asset and checks the posted one against the pushed dige
 
 // The workflow's wiring, read as text: the record is the release's own, on every pushing run.
 const workflow = readFileSync(join(ROOT, '.github/workflows/server-image.yml'), 'utf8')
+const readme = readFileSync(join(ROOT, 'server/README.md'), 'utf8')
+const rfc = readFileSync(join(ROOT, 'docs/rfcs/0011-monorepo-parts-and-releases.md'), 'utf8')
 const job = (name) => {
   const start = workflow.indexOf(`\n  ${name}:\n`)
   assert.notEqual(start, -1, name)
@@ -148,6 +150,12 @@ test('server-lane advances only for stable content, one at a time, and never mar
   const script = readFileSync(join(HERE, '..', 'server-lane.mjs'), 'utf8')
   assert.match(script, /'--prerelease', '--latest=false'/)
   assert.ok(!script.includes('release edit'))
+})
+
+test('the consumer docs pin the rolling pointer and provenance verification', () => {
+  assert.match(readme, /https:\/\/github\.com\/automagik-si\/automagik\/releases\/download\/server-lane\/server-image\.json/)
+  assert.match(readme, /gh attestation verify "oci:\/\/\$\{ref\}" --repo automagik-si\/automagik/)
+  assert.match(rfc, /\[server-lane\/server-image\.json\]\(https:\/\/github\.com\/automagik-si\/automagik\/releases\/download\/server-lane\/server-image\.json\)/)
 })
 
 const SRC = ROOT + '/server/server-lane.mjs'
