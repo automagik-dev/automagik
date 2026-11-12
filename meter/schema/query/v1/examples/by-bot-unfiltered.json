@@ -146,6 +146,39 @@
         "unpriced_models": [],
         "unpriced_models_omitted": 0
       },
+      "models": [
+        {
+          "model": "claude-opus-5-5",
+          "calls": 10,
+          "tokens": {
+            "input": 69997,
+            "cache_read": 899988,
+            "cache_write_5m": 60000,
+            "cache_write_1h": 0,
+            "output": 20052,
+            "reasoning": 5000,
+            "unsplit": 0,
+            "total": 1050037
+          },
+          "cost_usd": 1.161
+        },
+        {
+          "model": "claude-haiku-5-5",
+          "calls": 1,
+          "tokens": {
+            "input": 3,
+            "cache_read": 12,
+            "cache_write_5m": 0,
+            "cache_write_1h": 0,
+            "output": 9948,
+            "reasoning": 0,
+            "unsplit": 0,
+            "total": 9963
+          },
+          "cost_usd": 0.005
+        }
+      ],
+      "models_omitted": 0,
       "token_precision": "exact",
       "attribution": {
         "precision": "actor_interval",
@@ -209,6 +242,39 @@
         "unpriced_models": [],
         "unpriced_models_omitted": 0
       },
+      "models": [
+        {
+          "model": "claude-opus-5-5",
+          "calls": 7,
+          "tokens": {
+            "input": 10000,
+            "cache_read": 250000,
+            "cache_write_5m": 0,
+            "cache_write_1h": 0,
+            "output": 0,
+            "reasoning": 0,
+            "unsplit": 0,
+            "total": 260000
+          },
+          "cost_usd": 0.09
+        },
+        {
+          "model": "claude-sonnet-5-5",
+          "calls": 1,
+          "tokens": {
+            "input": 20000,
+            "cache_read": 0,
+            "cache_write_5m": 0,
+            "cache_write_1h": 0,
+            "output": 20000,
+            "reasoning": 0,
+            "unsplit": 0,
+            "total": 40000
+          },
+          "cost_usd": 0.24
+        }
+      ],
+      "models_omitted": 0,
       "token_precision": "exact",
       "attribution": {
         "precision": "actor_interval",

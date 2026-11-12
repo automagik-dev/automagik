@@ -141,6 +141,54 @@
         "unpriced_models": [],
         "unpriced_models_omitted": 0
       },
+      "models": [
+        {
+          "model": "claude-opus-5-5",
+          "calls": 23,
+          "tokens": {
+            "input": 120000,
+            "cache_read": 1974993,
+            "cache_write_5m": 150000,
+            "cache_write_1h": 0,
+            "output": 49477,
+            "reasoning": 14000,
+            "unsplit": 0,
+            "total": 2294470
+          },
+          "cost_usd": 2.6145
+        },
+        {
+          "model": "gpt-6.1-sol",
+          "calls": 3,
+          "tokens": {
+            "input": 20000,
+            "cache_read": 275000,
+            "cache_write_5m": 0,
+            "cache_write_1h": 0,
+            "output": 13000,
+            "reasoning": 5000,
+            "unsplit": 0,
+            "total": 308000
+          },
+          "cost_usd": 0.1975
+        },
+        {
+          "model": "claude-haiku-5-5",
+          "calls": 1,
+          "tokens": {
+            "input": 0,
+            "cache_read": 7,
+            "cache_write_5m": 0,
+            "cache_write_1h": 0,
+            "output": 15523,
+            "reasoning": 0,
+            "unsplit": 0,
+            "total": 15530
+          },
+          "cost_usd": 0.0078
+        }
+      ],
+      "models_omitted": 0,
       "token_precision": "exact",
       "attribution": {
         "precision": "branch_window",
