@@ -105,8 +105,15 @@ html:has(.sheet:popover-open) :is(.top,main,.site-footer,.skip){interactivity:in
    the same panel in CSS. The panel sits in one place under the header in both cases. */
 .top{--top-h:72px;position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 84%,transparent);-webkit-backdrop-filter:saturate(1.4) blur(14px);backdrop-filter:saturate(1.4) blur(14px);border-bottom:1px solid var(--line)}
 .top-inner{display:flex;align-items:center;gap:clamp(12px,2.4vw,28px);min-height:var(--top-h)}
-.brand{display:block;flex-shrink:0}
-.brand img{width:150px}
+/* The logo: the clay triskle at --mark tall, then the wordmark, placed as the logo kit's own
+   lockup places it, in 222nds of the triskle's height: the word's file is 257 tall and
+   starts 7 down and 46 to the right, and its g hangs 42 under the triskle, outside the
+   link's box, so the triskle stays where the header centres it. */
+.brand{--mark:32px;display:flex;align-items:flex-start;flex-shrink:0}
+.brand picture{display:contents}
+.brand:focus-visible{outline-offset:calc(var(--mark)*42/222 + 3px)}
+.brand-mark{width:auto;height:var(--mark)}
+.brand-word{width:auto;max-width:none;height:calc(var(--mark)*257/222);margin:calc(var(--mark)*7/222) 0 calc(var(--mark)*-42/222) calc(var(--mark)*46/222)}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .main-nav{margin-right:auto;font:600 .94rem/1 var(--head)}
 .menus{display:flex;gap:2px}
@@ -440,7 +447,7 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:var(--ring);box-s
 
 /* Footer */
 .site-footer{background:var(--raised);border-top:1px solid var(--line)}
-.footer-grid{display:grid;grid-template-columns:minmax(228px,1.5fr) repeat(3,minmax(0,1fr));gap:32px 48px;padding-block:clamp(40px,5vw,64px) 36px}
+.footer-grid{display:grid;grid-template-columns:minmax(296px,1.5fr) repeat(3,minmax(0,1fr));gap:32px 48px;padding-block:clamp(40px,5vw,64px) 36px}
 .footer-brand p{margin-top:14px;color:var(--muted);font-size:.94rem;max-width:30ch}
 .site-footer nav a[aria-current="page"]{font-weight:700}
 .site-footer nav{display:flex;flex-direction:column;align-items:flex-start;gap:10px;font-size:.94rem}
@@ -455,7 +462,7 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:var(--ring);box-s
    it sits with, so the footer's logo is wide enough for its word alone to pass 170 px, and
    the footer's first column never gets narrower than that logo. */
 @font-face{font-family:"IBM Plex Mono";font-style:normal;font-weight:600;font-display:block;src:url("assets/brand/ibm-plex-mono-latin-600.woff2") format("woff2")}
-.footer-brand .brand img{width:228px}
+.footer-brand .brand{--mark:40px;padding-bottom:calc(var(--mark)*42/222)}
 .footer-end{grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;gap:22px 48px;padding-top:26px;border-top:1px solid var(--line)}
 .oi-tag,.oi-tag:hover{flex:none;display:block;border-radius:16px;color:var(--text)}
 .oi-tag svg{width:170px;height:32px;max-width:none}
@@ -500,7 +507,8 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:var(--ring);box-s
 @media (max-width:700px){
   html{scroll-padding-top:84px}
   body{font-size:1rem}
-  .brand img{width:124px}
+  .brand{--mark:26px}
+  .footer-brand .brand{--mark:34px}
   .pager{grid-template-columns:repeat(2,minmax(0,1fr))}
   .pager-all{grid-column:1/-1;grid-row:1;justify-self:start;padding-left:4px}
   .pager-link{padding:12px 16px}
@@ -558,7 +566,7 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:var(--ring);box-s
   .install-line code{font-size:clamp(.72rem,3.6vw,.8rem)}
 }
 @media (max-width:360px){
-  .brand img{width:108px}
+  .brand{--mark:23px}
   .bubble{font-size:.74rem}
   .scene-omni{width:78px}
   .bubble{right:calc(1% + 82px)}

@@ -7,6 +7,23 @@ used. No customer marks or new drawings are included.
 - `mark.webp`, `wordmark.webp`, `lockup.webp`, `app-icon.png`: Automagik
   brand files copied from the owner's Genie landing draft for RFC 0027 D3, 2026-11-11.
   Apache-2.0, Namastex Labs and the Automagik contributors; see `LICENSE-Apache-2.0.txt`.
+- `automagik-wordmark-ink.svg`, `automagik-wordmark-cream.svg`: the lowercase Automagik
+  wordmark with the pink dot, from Automagik's own logo kit of 2026-11-12, copied unchanged
+  under the kit's file names (letters as outlines; dark for the light page, cream for the
+  dark one). Apache-2.0 as the files above. The header and the footer show it beside the
+  triskle. SHA-256, `automagik-wordmark-ink.svg`: `09d2caacb6bf3b98589a26edc430a6e75ccedb98e2588fa57771c32d603eeec0`;
+  `automagik-wordmark-cream.svg`: `148ef1cf2c0453378f5ba30712841974914436bed9e87a530f0c637018b3b3c8`.
+- `triskle.webp`: the clay triskle of `lockup.webp`, for the header and the footer: that
+  file's first 225 of 902 columns, every pixel as a browser decodes it, stored lossless.
+  Made with sharp 0.35.4 (libwebp 1.6.0, the decoder browsers use; ffmpeg's own decoder
+  gives other colours for the same file, so it is not used here):
+  `sharp('lockup.webp').extract({ left: 0, top: 0, width: 225, height: 192 }).webp({ lossless: true, effort: 6 }).toFile('triskle.webp')`.
+  The browser gate decodes both files and compares every pixel.
+  The cut ends where the triskle's tip ends; the column after it, where the tip's soft edge
+  met the first capital's, is left out. SHA-256, `triskle.webp`: `1c846b39f813238fb8d083a110396b0dd5f3725493047ae8539ccec72d57a559`;
+  its source `lockup.webp`: `17dfab1ee84cbcdf6b27f877226730dbba68f75439b3337e2df93574749cabda`.
+  `lockup.webp`, the triskle with the retired gradient capitals, stays only as the source
+  of this file and of the official lockup below; no page shows it.
 - `lamp.webp`, `omni-pleased.png`: Automagik's own character art, copied unchanged from the
   same draft. The lamp also lives in `apps/bots-dsh/src/client/art/lamp.webp`; the octopus
   in `apps/desktop/assets/dmg-source/omni-pleased.png`. Apache-2.0. The app's art comes

@@ -149,7 +149,7 @@ test('every href/action points locally or to an exact reviewed destination', () 
 
 test('images are reviewed brand assets, unchanged captures or recorded crops of them', () => {
   // Arca's two icon files are its kit's, under the kit's own names.
-  const brand = new Set(['/assets/brand/lockup.webp', '/assets/brand/mark.webp', '/assets/brand/omni-pleased.png', '/assets/brand/arca/svg/arca-icon-ink.svg', '/assets/brand/arca/svg/arca-icon-ivory.svg', '/assets/brand/automagik/automagik-lockup-oi-ink.svg', '/assets/brand/automagik/automagik-lockup-oi-cream.svg'])
+  const brand = new Set(['/assets/brand/triskle.webp', '/assets/brand/automagik-wordmark-ink.svg', '/assets/brand/automagik-wordmark-cream.svg', '/assets/brand/mark.webp', '/assets/brand/omni-pleased.png', '/assets/brand/arca/svg/arca-icon-ink.svg', '/assets/brand/arca/svg/arca-icon-ivory.svg', '/assets/brand/automagik/automagik-lockup-oi-ink.svg', '/assets/brand/automagik/automagik-lockup-oi-cream.svg'])
   for (const { mark: [light, dark] } of used) for (const file of [light, dark]) if (file) brand.add(`/assets/brand/used/${file}`)
   for (const html of generated.values()) {
     for (const [, value] of html.matchAll(/(?:src|srcset|poster)="([^"]+)"/g)) {
@@ -163,7 +163,7 @@ test('images are reviewed brand assets, unchanged captures or recorded crops of 
       // Plain-words alt text, or an explicitly decorative image hidden from assistive technology.
       assert.match(image, /alt="[^"]{20,}"|alt="Automagik"|alt="" aria-hidden="true"/)
       assert.match(image, /\bwidth="\d+" height="\d+"/, image)
-      assert.match(image, /loading="lazy"|fetchpriority="high"|decoding="async"|alt="Automagik"/, image)
+      assert.match(image, /loading="lazy"|fetchpriority="high"|decoding="async"|class="brand-(?:mark|word)"/, image)
     }
   }
   const files = readdirSync(resolve(root, 'assets/screens')).filter(file => file.endsWith('.png')).sort()
@@ -239,6 +239,48 @@ test('the projects row: eleven projects in the approved order, each with its own
   const start = css.indexOf('@media (prefers-reduced-motion:no-preference){')
   assert.ok(css.indexOf('we-use-drift') > start && !css.slice(0, start).includes('.we-use-copy{display:flex}'))
   assert.ok(css.includes('.we-use-copy{display:none}') && css.includes('.we-use-track:hover .we-use-list{animation-play-state:paused}') && css.includes('.we-use-track:not(:focus-within) .we-use-list{'))
+})
+
+test('the logo in the header and the footer: the clay triskle and the lowercase wordmark, each file unchanged', () => {
+  const digest = file => createHash('sha256').update(readFileSync(resolve(root, 'assets/brand', file))).digest('hex')
+  const notes = read('assets/brand/LICENSES.md')
+  const logo = '<a class="brand" href="/" aria-label="Automagik home"><img class="brand-mark" src="/assets/brand/triskle.webp" width="225" height="192" alt="" aria-hidden="true"><picture><source media="(prefers-color-scheme: dark)" srcset="/assets/brand/automagik-wordmark-cream.svg"><img class="brand-word" src="/assets/brand/automagik-wordmark-ink.svg" width="1333" height="257" alt="Automagik"></picture></a>'
+  for (const [route, html] of generated) {
+    // Once in the header and once in the footer, and the gradient capitals in neither.
+    assert.equal(html.split(logo).length, 3, route)
+    assert.equal(html.split('class="brand"').length, 3, route)
+    assert.ok(html.slice(0, html.indexOf('<main')).includes(`<div class="wrap top-inner">${logo}`), route)
+    assert.ok(html.slice(html.indexOf('<footer')).includes(`<div class="footer-brand">${logo}`), route)
+    assert.doesNotMatch(html, /\/assets\/brand\/(?:lockup|wordmark)\.webp/, route)
+  }
+  // The wordmark: the logo kit's two files under their own names, byte for byte. One set of
+  // outlined letters in the file's one colour (dark for the light page, cream for the dark
+  // one) and the pink dot; no font, text, picture or link inside.
+  const tones = { ink: '#3c3049', cream: '#f3e9dd' }, letters = []
+  for (const [tone, colour] of Object.entries(tones)) {
+    const file = `automagik-wordmark-${tone}.svg`, svg = read(`assets/brand/${file}`)
+    assert.ok(notes.includes(`\`${file}\`: \`${digest(file)}\``), `${file} is not the recorded file`)
+    const shape = svg.match(/^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox="-22 -179 1333 257" role="img" aria-label="automagik" color="(#[0-9a-f]{6})"><path fill="currentColor" d="([^"]+)"\/><circle cx="1145" cy="-158" r="21" fill="#ee5496"\/><\/svg>\n$/)
+    assert.ok(shape, file)
+    assert.equal(shape[1], colour, file)
+    letters.push(shape[2])
+  }
+  assert.equal(letters[0], letters[1], 'the two tones carry the same letters')
+  // The triskle: the clay triskle of the logo the site had, cut out of that file without a
+  // changed pixel (the browser gate compares them) and stored lossless.
+  for (const file of ['triskle.webp', 'lockup.webp']) assert.ok(notes.includes(`\`${file}\`: \`${digest(file)}\``), `${file} is not the recorded file`)
+  const triskle = readFileSync(resolve(root, 'assets/brand/triskle.webp'))
+  assert.equal(triskle.toString('latin1', 0, 4) + triskle.toString('latin1', 8, 16), 'RIFFWEBPVP8L', 'a lossless WebP')
+  const bits = triskle.readUInt32LE(21)
+  assert.deepEqual([(bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1], [225, 192])
+  // Placed as the kit's lockup places them, in 222nds of the triskle's height; the triskle
+  // keeps the size it had in the header, and no rule draws on either file.
+  assert.ok(css.includes('.brand{--mark:32px;display:flex;align-items:flex-start;flex-shrink:0}\n.brand picture{display:contents}\n.brand:focus-visible{outline-offset:calc(var(--mark)*42/222 + 3px)}\n.brand-mark{width:auto;height:var(--mark)}\n.brand-word{width:auto;max-width:none;height:calc(var(--mark)*257/222);margin:calc(var(--mark)*7/222) 0 calc(var(--mark)*-42/222) calc(var(--mark)*46/222)}\n'))
+  assert.deepEqual([...css.matchAll(/\n\s*\.brand\{--mark:(\d+)px/g)].map(match => Number(match[1])), [32, 26, 23])
+  for (const [rule] of css.matchAll(/[^{}]*\.brand[^{}]*\{[^}]*\}/g)) assert.doesNotMatch(rule, /filter|shadow|stroke|opacity|transform|scale|rotate|animation|transition|background|object-/, rule)
+  // The footer's first column is never narrower than its logo (the triskle, the gap, the word).
+  const column = Number(css.match(/\.footer-grid\{display:grid;grid-template-columns:minmax\((\d+)px,1\.5fr\)/)[1])
+  assert.ok(column >= 40 * (225 / 192 + (46 + 1333) / 222) && column < 300, `the footer's first column holds the logo: ${column}`)
 })
 
 test('derived art: each file is one recorded rectangle of a hashed source, at 1x and 2x', () => {
@@ -439,13 +481,13 @@ test('Open Intelligence is applied as on Arca\'s site: the horizontal tag in the
   assert.deepEqual([...block.matchAll(/href="([^"]+)" download/g)].map(match => match[1]), ['ink.svg', 'ink.png', 'cream.svg', 'cream.png'].map(name => `/assets/brand/automagik/automagik-lockup-oi-${name}`))
   assert.ok(htmlAt('/').indexOf('<section id="brand"') > htmlAt('/').indexOf('<section id="film"'))
   // Size and colour, as Arca's footer: 170 by 32 px in the footer's text colour, never an
-  // effect on it, and never bigger than the logo it sits with (the logo's word alone, 676 of
-  // the lockup's 902 px, passes 170 px).
+  // effect on it, and never bigger than the logo it sits with: the footer's word alone (its
+  // letters are 1325 wide when the triskle is 222 tall) passes 170 px at every width.
   assert.match(css, /\.oi-tag,\.oi-tag:hover\{flex:none;display:block;border-radius:16px;color:var\(--text\)\}\n\.oi-tag svg\{width:170px;height:32px;max-width:none\}/)
   for (const [rule] of css.matchAll(/[^{}]*oi-tag[^{}]*\{[^}]*\}/g)) assert.doesNotMatch(rule, /filter|shadow|stroke|outline|opacity|transform|scale|rotate|animation|transition|background/, rule)
-  const footerLogo = Number(css.match(/\.footer-brand \.brand img\{width:(\d+)px\}/)[1])
-  assert.ok(footerLogo * 676 / 902 >= 170, 'the footer logo\'s word is at least as wide as the tag')
-  assert.equal([...css.matchAll(/\.brand img\{width:\d+px\}/g)].length, 4, 'no narrower footer logo at any width')
+  const footerMarks = [...css.matchAll(/\.footer-brand \.brand\{--mark:(\d+)px[;}]/g)].map(match => Number(match[1]))
+  assert.deepEqual(footerMarks, [40, 34], 'the footer logo: one size, and one for phones')
+  for (const mark of footerMarks) assert.ok(mark * 1325 / 222 >= 170, 'the footer logo\'s word is at least as wide as the tag')
   assert.match(css, /@media \(max-width:700px\)\{\.footer-end\{flex-direction:column;align-items:flex-start\}\}/)
   assert.match(css, /@font-face\{font-family:"IBM Plex Mono";font-style:normal;font-weight:600;font-display:block;src:url\("assets\/brand\/ibm-plex-mono-latin-600\.woff2"\) format\("woff2"\)\}/)
   // The lockup files: Automagik's logo, unchanged, with the tag under it, right edges
