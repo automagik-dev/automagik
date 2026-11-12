@@ -1393,30 +1393,44 @@ a worker and a Restart --tree helper:
   the home folder: `hc` needs them to reach its core), and the tool caches a build writes: Go's
   module and build caches (`GOMODCACHE`, `GOCACHE`), npm's (`npm_config_cache`, else `~/.npm`),
   pnpm's store and cache, and Bun's install cache (`BUN_INSTALL_CACHE_DIR`). Never the root, the
-  home folder, a folder above it, or a whole XDG, cache, `GOPATH` or Bun folder. A linked
-  machine's folders are read there (its environment and git, through `hc exec`). Anything else
-  the sandbox blocks goes to Codex's reviewer, which may refuse it.
+  home folder, a folder above it, the app home (its attach binding, locks and ledgers), a folder
+  inside it or above it, or a whole XDG, cache, `GOPATH` or Bun folder. Each folder is weighed in
+  its canonical form where the launch runs (#1142): `.` and `..` resolved, and symlinks through the
+  nearest folder that is there, so an alias of the home folder or the app home goes too; a path
+  whose place can't be proved (a dangling link, a file in the way) goes as well. The app home is
+  the launch's effective one (`HERDR_APP_HOME`, a linked project's pane-env) and the default under
+  the home folder both. A linked machine's folders are read and resolved there (its environment,
+  git and realpaths, through `hc exec`), never against this computer. Anything else the sandbox
+  blocks goes to Codex's reviewer, which may refuse it.
 
 A source that picks its own approvals or sandbox loses those words, named in one warning with
 flag names only (never a value): a `programs.json` Codex run naming the bypass flag or `--yolo`,
 `-a`/`--ask-for-approval` or `-s`/`--sandbox` (separate, joined or `=` forms), `--remote` (another
-app server, outside the pane), an `--add-dir` of the root or the home folder, or a `-c`/`--config`
+app server, outside the pane), an `--add-dir` the folder rules above refuse (by any alias, or a
+relative one, whose place can't be proved), or a `-c`/`--config`
 for `sandbox_mode`, `approval_policy`, `approvals_reviewer`, `sandbox_workspace_write`,
 `default_permissions`, `permission_profile` or `permissions` (on 0.167 a
 `-c default_permissions=":danger-full-access"` overrides `--approve-for-me`). Every other word stays.
+Only a Codex run's words before its `--` are options: after it, Codex reads them as prompt text.
 
 Templates keep their command. A worker started with `--template`, or by a bot's
 `worker.template`, runs its hc template exactly as written, in hc's template form, so the
 template's instructions still reach the task: the owner's exception for template workers,
-bypass included. One that runs Codex without `--no-daemon` starts as before with one warning
-naming the template and the fix (add `--no-daemon` to its command). Restart --tree keeps that
-exception only for a pane with the `worker.template` label (or a ledger row naming its
-template); any other Codex helper runs the launch mode, and one whose shell command picks its
-own approvals or can't take words is refused by name. A bot's seat never runs a template's
-bypass: a Codex seat's template with no approval or sandbox word of its own is kept (a seat's
-template has run through `sh -c` with words after it through `"$@"` since #213), with the mode
-words it lacks and the folders after it; any other is set aside for the agent row, and the
-restart says which template and which flags.
+bypass included, and never with the pack's folders. One that runs Codex without `--no-daemon`
+among its options starts as before with one warning naming the template and the fix (add
+`--no-daemon` to its command). One whose Codex run puts a Codex option after its `--` (the mode
+words, an approval, sandbox or bypass word, `-c`, `--add-dir`) is refused before anything starts,
+by name (#1142): Codex would read that option as prompt text, so the launch it means can't be
+proved. Restart --tree keeps that exception, and that refusal, only for a pane with the
+`worker.template` label (or a ledger row naming its template); any other Codex helper runs the
+launch mode, and one whose shell command picks its own approvals, names a refused `--add-dir`
+or can't be shown to pass words to Codex as options is refused by name. A bot's seat never runs
+a template's bypass: a Codex seat's template is kept (a seat's template has run through `sh -c`
+with words after it through `"$@"` since #213) only when it names no approval, sandbox or
+refused `--add-dir` word of its own and Codex provably gets words after it as options: Codex runs
+once, as the last command, with no `--`, and nothing before it expands `"$@"` or `$*`. Then the
+mode words it lacks and the folders go after it; any other is set aside for the agent row, and
+the restart says which template and why, by flag name.
 
 Migration: nothing restarts on its own and a running pane keeps its launch. A Codex seat gets the
 mode at its next start or restart; a `programs.json` Codex run with its own approval words gets

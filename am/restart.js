@@ -7,7 +7,7 @@ import { agentKeyOfArgv, agyGuarded, agyModeArgs, agyModeProblem, agySettingsArg
   modelArgs, ownsSession, resumeArgs, resumesById, sessionIdArgs, withCodexGrants, withoutAgySettings, withoutBriefing, withoutResume } from "./models.js";
 import { SQUAD_LABEL, SQUAD_MARK } from "./launchArgs.js";
 import { ENV, WORKER_AGY_MODE_LABEL, WORKER_EFFORT_LABEL, WORKER_MODEL_LABEL, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, codexCommandCheck,
-  codexTemplateWarning, templateAgent } from "./workers.js";
+  codexTemplateRefusal, codexTemplateWarning, templateAgent } from "./workers.js";
 import { CONFIG_VAR, envWords } from "./logins.js";
 
 /** The pane label the briefing hook sets to the Claude session a terminal runs (workers.js SESSION_LABEL). */
@@ -127,15 +127,17 @@ export function withoutPrompt(args) {
  * person's --session-id, --resume or --continue wins) or is a template command that can't take
  * words; a resume never gets one (it keeps its session). Else `sessionId` is null.
  * A Codex seat (#1125: a bot runs the pack's Codex launch mode, never a template's bypass) keeps
- * its template only when the template's command names no approval or sandbox flag of its own and
- * takes words after it (codexCommandCheck): the mode words it lacks and an `--add-dir` for each
+ * its template only when the template's command names no approval or sandbox flag of its own (nor
+ * an `--add-dir` `where` doesn't allow: models.js codexWhere) and provably forwards words to Codex
+ * as options (codexCommandCheck `forwards`, #1142: no `--` in its Codex run, no earlier "$@"),
+ * and takes words after it: the mode words it lacks and an `--add-dir` for each
  * of `grants` (the folders this launch may write, models.js codexGrants) go after it through
  * "$@", as resume words do, and `granted` is true. Any other Codex template is set aside for the
  * agent row, and `templateNote` names it and its flags (never a value). Else `templateNote` is
  * null and `granted` false (the caller adds the grants to the agent row's mode words).
  */
 export function restartPlan({ bot, run, runningAgent = null, session = null, fresh = false, agent, model, template = null,
-  agy = null, newSession = null, grants = [] }) {
+  agy = null, newSession = null, grants = [], where = null }) {
   const swap = agent !== undefined || model !== undefined;
   const key = agent ?? bot.agent;
   // A new agent without --model starts on its own default: the old pin belongs to the old agent.
@@ -157,11 +159,13 @@ export function restartPlan({ bot, run, runningAgent = null, session = null, fre
   // #1125: a Codex seat's template, read (never rewritten): kept with the mode words it lacks and
   // the grants after it, or set aside for the agent row, by name.
   let codexWords = [], templateNote = null;
-  const check = tpl && key === "codex" ? codexCommandCheck(tpl.command) : null;
+  const check = tpl && key === "codex" ? codexCommandCheck(tpl.command, undefined, where) : null;
   if (check) {
-    if (check.conflicts.length || !check.single || !takesWords(tpl.command)) {
-      templateNote = `its template ${tpl.name} ${check.conflicts.length ? `names ${check.conflicts.join(", ")}`
-        : "can't take the pack's Codex words after its command"}, so it started from its agent row in Codex's launch mode (#1125)`;
+    if (check.conflicts.length || !check.forwards || !takesWords(tpl.command)) {
+      const why = check.conflicts.length ? `names ${check.conflicts.join(", ")}`
+        : check.lost.length ? `puts ${check.lost.join(", ")} after its --, where Codex reads them as prompt text`
+          : "can't pass the pack's Codex words to Codex as options";
+      templateNote = `its template ${tpl.name} ${why}, so it started from its agent row in Codex's launch mode (#1125)`;
       tpl = null;
     } else codexWords = [...check.missing, ...grants.flatMap((d) => ["--add-dir", d])];
   }
@@ -518,16 +522,19 @@ export function restartRefusal({ name, old, helpers = [], force = false, tree = 
  * twice) unless a template owns it;
  * any other helper's is its own launch command (paneCommand). Codex (#1125): only a template
  * worker (its worker.template label, or its ledger row's template) keeps its command as it is,
- * the owner's template exception, with a warning when it lacks --no-daemon. Any other Codex
+ * the owner's template exception, with a warning when it lacks --no-daemon, never with the pack's
+ * folders, and refused when it puts a Codex option after its `--` (#1142). Any other Codex
  * helper runs the pack's Codex launch mode: a rebuilt worker or an argv command gets the mode
  * words (its own approval and sandbox words left out, named in `warning`) and an `--add-dir` for
  * each of `grants` (the folders this launch may write, from helperCwd's folder); a shell command
- * that names no approval or sandbox flag of its own and takes words gets the mode words it lacks
- * and the grants through "$@"; any other is refused by name. Returns { name, replaced, cwd,
+ * that names no approval or sandbox flag of its own (nor an --add-dir `where`, models.js
+ * codexWhere, doesn't allow) and provably forwards words to Codex as options (codexCommandCheck
+ * `forwards`) gets the mode words it lacks and the grants through "$@"; any other is refused by name. Returns { name, replaced, cwd,
  * labels, agent, session, mode: "resume" | "fresh", resume, argv, agySettings (the file to write
  * first, or null), note, warning }, or { name, replaced, error } when there is nothing to run.
  */
-export function helperPlan({ get, worker = null, session = null, agents, fresh = null, agy = null, bot = null, launchAgent = false, grants = [] }) {
+export function helperPlan({ get, worker = null, session = null, agents, fresh = null, agy = null, bot = null, launchAgent = false, grants = [],
+  where = null }) {
   const name = typeof get?.name === "string" && get.name ? get.name : null;
   const replaced = get?.address ?? null;
   const cwd = helperCwd({ get, worker, realpath: agy?.realpath });
@@ -550,27 +557,35 @@ export function helperPlan({ get, worker = null, session = null, agents, fresh =
     const agyMode = labels[WORKER_AGY_MODE_LABEL] ?? null;
     const modeWhy = agent === "antigravity" ? agyModeProblem(agyMode) : null;
     if (modeWhy) return { name, replaced, error: `${name ?? replaced} can't be run again: ${modeWhy}` };
-    command = { argv: withCodexGrants([...launchRun(agent, agents[agent].run, bot, agy?.homeDir ?? null), ...agyModeArgs(agent, agyMode),
+    command = { argv: withCodexGrants([...launchRun(agent, agents[agent].run, bot, where ?? agy?.homeDir ?? null), ...agyModeArgs(agent, agyMode),
       ...modelArgs(agent, model), ...effortArgs(agent, effort)], grants) };
   } else {
     const launch = paneCommand(get);
-    const check = launch?.shell !== undefined ? codexCommandCheck(launch.shell, agents) : null;
+    const check = launch?.shell !== undefined ? codexCommandCheck(launch.shell, agents, where) : null;
+    const who = name ?? replaced;
     if (check && templateWorker) {
+      // The owner's exception keeps the template's command as written, never with the pack's
+      // folders; one that puts a Codex option after its -- is refused, never run (#1142).
+      const refusal = codexTemplateRefusal(template, launch.shell, agents);
+      if (refusal) return { name, replaced, error: `${who} can't be run again: ${refusal}` };
       command = launch;
       warning = codexTemplateWarning(template, launch.shell, agents);
     } else if (check) {
-      const who = name ?? replaced;
       if (check.conflicts.length) return { name, replaced, error: `${who} can't be run again: its command runs Codex with ${check.conflicts.join(", ")}, and a helper that isn't a template worker runs in Codex's launch mode (#1125)` };
-      if (!check.single || !takesWords(launch.shell)) return { name, replaced, error: `${who} can't be run again: its command runs Codex but can't take the pack's Codex words after it (#1125)` };
+      if (!check.forwards || !takesWords(launch.shell)) {
+        const why = check.lost.length ? `puts ${check.lost.join(", ")} after its --, where Codex reads them as prompt text`
+          : "can't pass the pack's Codex words to Codex as options";
+        return { name, replaced, error: `${who} can't be run again: its command runs Codex but ${why} (#1125)` };
+      }
       command = launch;
       codexWords = [...check.missing, ...grants.flatMap((d) => ["--add-dir", d])];
     } else if (launch?.shell !== undefined) command = launch;
     else if (launch && agent && agentKeyOfArgv(launch.argv, agents) === agent) {
       const own = withoutPrompt(withoutResume(agent, launch.argv));
       if (agent === "codex") {
-        const { dropped } = codexClean(own, agy?.homeDir ?? null);
+        const { dropped } = codexClean(own, where ?? agy?.homeDir ?? null);
         if (dropped.length) warning = `${name ?? replaced}'s command named ${dropped.join(", ")}: left out; it runs in Codex's launch mode (#1125).`;
-        command = { argv: withCodexGrants(launchRun("codex", own, bot, agy?.homeDir ?? null), grants) };
+        command = { argv: withCodexGrants(launchRun("codex", own, bot, where ?? agy?.homeDir ?? null), grants) };
       } else command = { argv: own };
     }
   }

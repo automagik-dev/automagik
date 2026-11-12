@@ -10,13 +10,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { AGENTS, CODEX_MODE_ARGS, CODEX_NETWORK, codexClean, codexCleanNote, codexGrants, homeWide, launchRun, withCodexGrants, withoutBriefing }
-  from "../mods/am-sidebar/models.js";
+import { AGENTS, CODEX_MODE_ARGS, CODEX_NETWORK, absPath, codexClean, codexCleanNote, codexDirAllowed, codexGrants, codexKeepDirs, codexWhere,
+  homeWide, launchRun, withCodexGrants, withoutBriefing } from "../mods/am-sidebar/models.js";
 import { helperPlan, restartPlan } from "../mods/am-sidebar/restart.js";
-import { codexCommandCheck, codexTemplateWarning, workerPlan } from "../mods/am-sidebar/workers.js";
+import { codexCommandCheck, codexTemplateRefusal, codexTemplateWarning, workerPlan } from "../mods/am-sidebar/workers.js";
+import { RESOLVE_PROBE, resolvedThere } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 import { readJsonLines } from "./log-lines.mjs";
 import { scratchProject, scratchRoot } from "./scratch-project.mjs";
 
@@ -158,8 +159,8 @@ test("withCodexGrants puts each --add-dir right after the mode words: before res
 
 test("codexCommandCheck reads a template's Codex words; the --no-daemon warning names the template and the fix", () => {
   const full = `codex --approve-for-me --disable hooks --no-daemon -c ${CODEX_NETWORK} -m x`;
-  assert.deepEqual(codexCommandCheck(full), { conflicts: [], missing: [], single: true });
-  assert.deepEqual(codexCommandCheck("env A=1 codex -m x"), { conflicts: [], missing: MODE, single: true });
+  assert.deepEqual(codexCommandCheck(full), { conflicts: [], missing: [], lost: [], forwards: true, single: true });
+  assert.deepEqual(codexCommandCheck("env A=1 codex -m x"), { conflicts: [], missing: MODE, lost: [], forwards: true, single: true });
   assert.deepEqual(codexCommandCheck("codex --no-daemon --dangerously-bypass-approvals-and-sandbox -a never").conflicts,
     ["--dangerously-bypass-approvals-and-sandbox", "-a"]);
   assert.equal(codexCommandCheck('sh -c "codex --approve-for-me"').single, false, "words after an outer sh -c never reach codex");
@@ -196,7 +197,7 @@ test("a seat's Codex template: kept with the words it lacks and the grants throu
   for (const command of ['sh -c "codex -m x"', "codex -m x # pinned"]) {
     const p = plan(command);
     assert.deepEqual([p.template, p.argv.slice(0, run.length)], [null, run], command);
-    assert.match(p.templateNote, /can't take the pack's Codex words/);
+    assert.match(p.templateNote, /can't pass the pack's Codex words to Codex as options/);
   }
   // Another agent's template is as before (#213).
   const claude = restartPlan({ bot: { agent: "claude" }, run: ["claude"], runningAgent: "claude", template: { name: "c", command: "claude --x" }, fresh: true });
@@ -232,6 +233,177 @@ test("Restart --tree keeps the template exception only for a template worker; se
   // A compliant shell pane that isn't a template worker: its command, the missing words and grants after it.
   const shell = helperPlan({ ...base, get: { ...get({}), argv: ["sh", "-c", "codex -m x"], foreground: { argv: ["codex", "-m", "x"], cwd: "/w" } } });
   assert.deepEqual(shell.argv, ["sh", "-c", 'codex -m x "$@"', "sh", ...MODE, "--add-dir", "/r/.git", "resume", "--last"]);
+});
+
+// ---- #1142: the folder policy, resolved where the launch runs ----
+
+/** A scratch tree standing for a launch's machine: its home, its app home, ordinary folders, links and a file. */
+function tree(t) {
+  const root = realpathSync(scratchRoot(t, "hb-1142-"));
+  const home = join(root, "home"), app = join(home, ".config/herdr-app");
+  for (const d of [join(app, "sub"), join(app, "pnpm"), join(home, "work"), join(home, ".config/other"), join(home, ".npm"), join(root, "shared"),
+    join(root, "state/herdr-core")]) mkdirSync(d, { recursive: true });
+  symlinkSync(home, join(root, "to-home"));
+  symlinkSync(app, join(root, "to-app"));
+  symlinkSync(join(root, "nowhere"), join(root, "dangling"));
+  writeFileSync(join(root, "file"), "x");
+  return { root, home, app };
+}
+/** RESOLVE_PROBE run by a real sh over `paths`, read back by resolvedThere: how that machine resolves each. */
+const probe = (paths) => {
+  const r = spawnSync("sh", ["-c", RESOLVE_PROBE, "sh", ...[...new Set(paths.map(absPath).filter(Boolean))]], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  return resolvedThere(r.stdout);
+};
+/** The launch rules for a tree, every path in `paths` (and the roots) resolved there by the probe. */
+const whereOn = (paths, home, appHome) => codexWhere({ home, appHome, resolve: probe([home, appHome, `${home}/.config/herdr-app`, ...paths]).resolve });
+
+test("#1142 an --add-dir naming the home folder or an app home by any alias (dot, parent, symlink, inside, above) goes; ordinary folders stay", (t) => {
+  const { root, home, app } = tree(t);
+  const blocked = [`${home}/.`, `${home}/`, `${home}/work/..`, join(root, "to-home"), `${join(root, "to-home")}/`, app, join(app, "sub"),
+    join(root, "to-app"), join(root, "to-app", "sub"), join(home, ".config"), join(root, "dangling"), join(root, "dangling", "x"),
+    join(root, "file", "x"), root, "/", "..", "sub"];
+  const allowed = [join(home, "work"), join(home, ".config/other"), join(home, ".npm"), join(root, "to-home", "work"), join(home, "new-folder"),
+    join(root, "shared")];
+  const where = whereOn([...blocked, ...allowed], home, app);
+  const { argv, dropped } = codexClean(["codex", ...[...blocked, ...allowed].flatMap((d) => ["--add-dir", d]), "-m", "x"], where);
+  assert.deepEqual(addDirs(argv), allowed, "positive controls: a project folder, an app home's sibling, a cache, a path through a link, a new folder");
+  assert.deepEqual(dropped, ["--add-dir"], "named by flag, never by value");
+  assert.deepEqual(codexClean(["codex", `--add-dir=${home}/.`, `--add-dir=${join(home, "work")}`], where).argv, ["codex", `--add-dir=${join(home, "work")}`]);
+  // launchRun the same way; a word after -- is no option and stays as written.
+  assert.deepEqual(launchRun("codex", ["codex", "--add-dir", join(root, "to-home"), "--", "--add-dir", home], {}, where), ["codex", ...MODE, "--", "--add-dir", home]);
+  for (const d of [home, root, "/", app, join(app, "sub"), join(home, ".config")]) assert.equal(codexDirAllowed(d, where), false, d);
+  for (const d of [join(home, "work"), join(home, ".config/other"), join(root, "shared")]) assert.equal(codexDirAllowed(d, where), true, d);
+  // The default app home under the home folder stays protected whatever the effective one is.
+  assert.equal(codexDirAllowed(app, whereOn([], home, join(root, "shared"))), false);
+  // A finished argv (a linked machine's): the same rule, by codexKeepDirs.
+  assert.deepEqual(codexKeepDirs(["codex", ...MODE, "--add-dir", `${home}/.`, "--add-dir", join(home, "work"), "resume", "--last"], where),
+    { argv: ["codex", ...MODE, "--add-dir", join(home, "work"), "resume", "--last"], dropped: true });
+});
+
+test("#1142 codexGrants: a cache or XDG override naming the home folder or an app home by any alias is never granted; real caches are", (t) => {
+  const { root, home, app } = tree(t);
+  const env = { GOCACHE: app, npm_config_cache: `${home}/.`, GOMODCACHE: join(root, "to-home"), XDG_CACHE_HOME: join(root, "to-app"),
+    BUN_INSTALL_CACHE_DIR: join(home, ".npm"), XDG_STATE_HOME: join(root, "state") };
+  const { resolve, isDir } = probe([home, app, `${home}/.config/herdr-app`, ...Object.values(env), join(root, "to-app/pnpm"), join(root, "to-app/go-build"),
+    join(root, "state/herdr-core"), join(home, ".local/share"), join(home, ".local/share/herdr-core"), join(home, ".local/share/pnpm/store"),
+    join(home, ".config"), join(home, ".local"), join(home, "go"), join(home, ".bun"), join(home, ".bun/install/cache")]);
+  const where = codexWhere({ home, appHome: app, resolve });
+  assert.deepEqual(codexGrants({ where, env, isDir }), [join(root, "state/herdr-core"), join(home, ".npm")]);
+});
+
+test("#1142 a linked machine's folders are resolved there: the probe answers per path; a path it wasn't asked about proves nothing", (t) => {
+  const { root, home, app } = tree(t);
+  const { resolve, isDir } = probe([`${home}/.`, join(root, "to-home"), join(root, "dangling", "x"), join(root, "file", "x"), join(home, "new-folder"),
+    join(root, "to-app", "sub")]);
+  assert.equal(resolve(home), home);
+  assert.equal(resolve(join(root, "to-home")), home);
+  assert.equal(resolve(join(root, "dangling", "x")), null, "a dangling link proves nothing");
+  assert.equal(resolve(join(root, "file", "x")), null, "nor a file in the way");
+  assert.equal(resolve(join(home, "new-folder")), join(home, "new-folder"), "a missing tail: its nearest folder's place");
+  assert.equal(isDir(join(home, "new-folder")), false);
+  assert.equal(resolve(join(root, "to-app", "sub")), join(app, "sub"));
+  assert.equal(isDir(join(app, "sub")), true);
+  // Never this computer's answer: a path the machine wasn't asked about resolves to nothing, so it goes.
+  assert.equal(resolve(join(home, "work")), null);
+  assert.deepEqual(codexKeepDirs(["codex", "--add-dir", join(home, "work")], codexWhere({ home, appHome: app, resolve })), { argv: ["codex"], dropped: true });
+  // A root it can't resolve is still protected as written.
+  assert.equal(codexDirAllowed(app, codexWhere({ home, appHome: app, resolve: () => null })), false);
+});
+
+/** A real sh runs `argv` with a fake codex first on PATH that prints its arguments: what Codex receives. */
+function codexReceives(t, argv) {
+  const bin = join(realpathSync(scratchRoot(t, "hb-fakecodex-")), "bin");
+  mkdirSync(bin);
+  exe(join(bin, "codex"), '#!/bin/sh\nfor a do printf "%s\\n" "$a"; done\n');
+  const r = spawnSync(argv[0], argv.slice(1), { env: { PATH: `${bin}:/usr/bin:/bin` }, encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  return r.stdout.split("\n").filter(Boolean);
+}
+/** Codex's options (its words before any --) hold every mode word, and --no-daemon comes once. */
+const modeAsOptions = (got, name) => {
+  const cut = got.indexOf("--");
+  const options = cut < 0 ? got : got.slice(0, cut);
+  for (const m of MODE) assert.ok(options.includes(m), `${name}: ${m} before any --: ${JSON.stringify(got)}`);
+  assert.equal(count(got, "--no-daemon"), 1, `${name}: --no-daemon once: ${JSON.stringify(got)}`);
+};
+
+test("#1142 a seat's Codex template is kept only when Codex provably gets the pack's words as options; checked by a real sh", (t) => {
+  const bot = { agent: "codex" };
+  const run = launchRun("codex", ["codex"], bot);
+  const plan = (command, extra = {}) => restartPlan({ bot, run, runningAgent: "codex", session: "s-1", template: { name: "seat-tpl", command },
+    grants: ["/r/.git"], ...extra });
+  // Proven: Codex runs last and is the only taker of "$@" (its own, or the one the pack adds).
+  for (const command of ["codex -m x", 'codex -m x "$@"', 'env A=1 codex -m x "$@"']) {
+    const p = plan(command);
+    assert.deepEqual([p.template, p.granted, p.templateNote], ["seat-tpl", true, null], command);
+    const got = codexReceives(t, p.argv);
+    modeAsOptions(got, command);
+    assert.equal(got[got.indexOf("--add-dir") + 1], "/r/.git", command);
+  }
+  // Not proven: an earlier "$@" or $* takes the words; a -- makes them prompt text. The agent row, said by name.
+  for (const [command, why] of [['printf "" "$@"; codex', /can't pass the pack's Codex words to Codex as options/],
+    [`printf '%s' "$*"; codex -m x`, /can't pass/], ["codex --", /can't pass/], ['codex -m x -- "$@"', /can't pass/],
+    ["codex -- --no-daemon", /puts --no-daemon after its --, where Codex reads them as prompt text/]]) {
+    const p = plan(command);
+    assert.deepEqual([p.template, p.granted], [null, false], command);
+    assert.match(p.templateNote, why, command);
+    modeAsOptions(codexReceives(t, p.argv), command);
+  }
+  // A template naming the home folder or an app home is set aside too (the launch's rules).
+  const where = codexWhere({ home: "/home/u", appHome: "/home/u/.config/herdr-app" });
+  for (const command of ["codex --add-dir /home/u/.", "codex --add-dir /home/u/.config/herdr-app", "codex --add-dir /home/u/.config"]) {
+    const p = plan(command, { where });
+    assert.deepEqual([p.template, p.granted], [null, false], command);
+    assert.match(p.templateNote, /template seat-tpl names --add-dir, so it started from its agent row/, command);
+  }
+  assert.equal(plan("codex --add-dir /home/u/work", { where }).template, "seat-tpl", "an ordinary folder is fine");
+});
+
+test("#1142 a Restart --tree helper's shell command runs again only when Codex provably gets the words; else refused by name", (t) => {
+  const base = { agents: AGENTS, bot: { agent: "codex" }, grants: ["/r/.git"] };
+  const helper = (command, extra = {}) => helperPlan({ ...base, ...extra, get: { address: "t7", name: "h7", cwd: "/w", labels: {},
+    argv: ["sh", "-c", command], foreground: { argv: ["codex"], cwd: "/w" } } });
+  for (const command of ["codex -m x", 'codex -m x "$@"']) {
+    const p = helper(command);
+    assert.equal(p.error, undefined, command);
+    modeAsOptions(codexReceives(t, p.argv), command);
+  }
+  for (const [command, why] of [['printf "" "$@"; codex', /h7 can't be run again: its command runs Codex but can't pass the pack's Codex words to Codex as options/],
+    ["codex --", /can't pass/], ["codex -- --no-daemon", /puts --no-daemon after its --/]]) {
+    const p = helper(command);
+    assert.match(p.error ?? "", why, command);
+    assert.equal(p.argv, undefined, command);
+  }
+  const home = helper("codex --add-dir /home/u/.", { where: codexWhere({ home: "/home/u" }) });
+  assert.match(home.error, /h7 can't be run again: its command runs Codex with --add-dir/);
+});
+
+test("#1142 a template worker keeps the owner's command as written, never with the pack's folders; a Codex option after its -- is refused", (t) => {
+  const base = { agents: AGENTS, bot: { agent: "codex" }, grants: ["/r/.git"], where: codexWhere({ home: "/home/u" }) };
+  const tw = (command) => helperPlan({ ...base, get: { address: "t7", name: "w7", cwd: "/w", labels: { "worker.of": ID.dev, "worker.template": "tpl" },
+    argv: ["sh", "-c", command], foreground: { argv: ["codex"], cwd: "/w" } } });
+  // Its own flags before --: run as written (its bypass and its own --add-dir too), no pack folder, no granted classification.
+  const command = "codex --no-daemon --dangerously-bypass-approvals-and-sandbox --add-dir /home/u -m x";
+  const owner = tw(command);
+  assert.equal(owner.error, undefined);
+  assert.deepEqual(owner.argv.slice(0, 4), ["sh", "-c", `${command} "$@"`, "sh"]);
+  assert.equal(owner.argv.includes("/r/.git"), false, "no pack-injected --add-dir");
+  assert.equal("granted" in owner, false);
+  assert.equal(owner.warning, null);
+  const got = codexReceives(t, owner.argv);
+  assert.deepEqual(got.slice(0, 2), ["--no-daemon", "--dangerously-bypass-approvals-and-sandbox"], "the owner's flags reach Codex as options");
+  // A Codex option after its --: refused before anything runs, by name.
+  const lost = tw("codex -- --no-daemon");
+  assert.match(lost.error, /w7 can't be run again: Template tpl runs Codex with --no-daemon after its --, where Codex reads it as prompt text.*not started/);
+  assert.equal(lost.argv, undefined);
+  assert.match(codexTemplateRefusal("tpl", "codex -m x -- --no-daemon --approve-for-me"), /with --no-daemon, --approve-for-me after its --/);
+  assert.match(codexTemplateRefusal("tpl", "codex -- -c sandbox_mode=x --add-dir /r"), /with -c, --add-dir after its --/);
+  assert.equal(codexTemplateRefusal("tpl", "codex --no-daemon -m x -- fix-it"), null, "a prompt after -- is no option");
+  assert.equal(codexTemplateRefusal("tpl", command), null);
+  // The warning reads options only: --no-daemon after -- is missing.
+  assert.match(codexTemplateWarning("tpl", "codex -- --no-daemon"), /without --no-daemon/);
+  assert.equal(codexCommandCheck("codex -- --no-daemon").missing.includes("--no-daemon"), true);
 });
 
 // ---- the CLI: starts, workers and hc's answers ----
@@ -339,4 +511,73 @@ test("hc's answers about the calling pane are told apart: not found, a failed lo
   assert.equal(bad.code, 1);
   assert.match(bad.err, /hc couldn't look up this pane \(t1\).*printed no JSON/s);
   assert.equal(s.runs().length, before, "no hc run on any refusal");
+});
+
+test("#1142 a Codex seat's start resolves programs.json's --add-dir here: a symlink to the home folder, an app home, its parent and a dangling link go", (t) => {
+  const s = scene(t);
+  symlinkSync(s.home, join(s.root, "to-home"));
+  symlinkSync(join(s.root, "nowhere"), join(s.root, "dangling"));
+  mkdirSync(join(s.root, "shared"));
+  const app = join(s.root, "app");
+  writeFileSync(join(app, "programs.json"), `${JSON.stringify({ programs: { codex: { run: ["codex", "--add-dir", join(s.root, "to-home"),
+    "--add-dir", join(app, "x"), "--add-dir", join(s.home, ".config"), "--add-dir", `${s.home}/work/..`, "--add-dir", join(s.root, "dangling", "x"),
+    "--add-dir", join(s.root, "shared")] } } })}\n`);
+  s.setState((st) => { st.terminals = []; });
+  const r = s.cli(["start", "Dev", "--json"], { from: null });
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(addDirs(launched(s.runs()[0])), [join(s.root, "shared"), ...s.grants], "an ordinary folder stays, before the derived ones");
+  assert.match(r.err, /programs\.json's Codex command names --add-dir: left out/);
+});
+
+test("#1142 the CLI refuses a worker template that puts a Codex option after its --, before anything starts; the owner's flags before -- run", (t) => {
+  const s = scene(t, { templates: [{ name: "lost-dd", command: "codex -m x -- --no-daemon" },
+    { name: "mac-dev", command: "codex --no-daemon --dangerously-bypass-approvals-and-sandbox -m gpt-6.1-sol" }] });
+  const before = s.runs().length;
+  const r = s.cli(["worker", "task", "--branch", "fix/1142-a", "--template", "lost-dd", "--json"]);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /Template lost-dd runs Codex with --no-daemon after its --, where Codex reads it as prompt text.*not started/);
+  assert.equal(s.runs().length, before, "no hc run");
+  assert.equal(existsSync(join(s.project, ".claude/worktrees/fix-1142-a")), false, "no worktree made");
+  const mac = s.cli(["worker", "task", "--branch", "fix/1142-b", "--template", "mac-dev", "--json"]);
+  assert.equal(mac.code, 0, mac.err);
+  const call = s.runs().at(-1);
+  assert.deepEqual(call.slice(-2), ["mac-dev", "task"]);
+  assert.equal(call.includes("--add-dir"), false, "no pack-injected --add-dir for a template worker");
+  assert.equal("granted" in JSON.parse(mac.out), false);
+});
+
+test("#1142 a Codex seat on a linked machine: its --add-dir words and derived folders are weighed by that machine's home and app home", (t) => {
+  const root = realpathSync(scratchRoot(t, "hb-1142-vm-"));
+  const bin = join(root, "bin"), home = join(root, "home"), app = join(root, "app"), vm = join(root, "vm"), vmBin = join(root, "vm-bin");
+  for (const d of [bin, home, app, vmBin, join(vm, ".config/herdr-app"), join(vm, ".npm"), join(vm, ".local/state/herdr-core"), join(vm, "shared")]) {
+    mkdirSync(d, { recursive: true });
+  }
+  symlinkSync(vm, join(vm, "link-home"));
+  exe(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
+  exe(join(bin, "herdr-app"), "#!/bin/sh\nexit 1\n");
+  exe(join(vmBin, "codex"), "#!/bin/sh\nexit 0\n");
+  exe(join(vmBin, "uname"), "#!/bin/sh\necho Linux\n");
+  // This computer's rules alone would keep every one of these: none is under its home or app home.
+  writeFileSync(join(app, "programs.json"), `${JSON.stringify({ programs: { codex: { run: ["codex", "--add-dir", `${vm}/.`,
+    "--add-dir", join(vm, "link-home"), "--add-dir", join(vm, ".config/herdr-app/x"), "--add-dir", join(vm, ".config"), "--add-dir", join(vm, "shared")] } } })}\n`);
+  const project = scratchProject(vm, "proj", { commit: true, bots: { version: 1, categories: [], bots: [
+    { id: ID.dev, name: "Dev", kind: "main", agent: "codex", look: { character: "star", colour: "blue" }, role: "r", instructions: "i" }] } });
+  const statePath = join(root, "hc.json"), logPath = join(root, "hc.log");
+  const blank = Object.fromEntries(["HERDR_APP_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "GOPATH", "GOMODCACHE",
+    "GOCACHE", "npm_config_cache", "NPM_CONFIG_CACHE", "BUN_INSTALL", "BUN_INSTALL_CACHE_DIR"].map((k) => [k, ""]));
+  writeFileSync(statePath, JSON.stringify({ next: 100, terminals: [],
+    machines: [{ name: "vm", id: "core-of-vm", state: "connected", uname: "Linux x86_64", home: vm, path: vmBin, env: blank }] }));
+  writeFileSync(logPath, "");
+  const env = { PATH: `${bin}:/usr/bin:/bin`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath, LANG: "C",
+    GIT_CEILING_DIRECTORIES: root, XDG_DATA_HOME: "", AUTOMAGIK_HERDR_TAB_WAIT_MS: "0" };
+  const r = spawnSync(process.execPath, [CLI, "start", "Dev", "--machine", "vm", "--project", project, "--json"], { cwd: root, env, encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  const call = readJsonLines(logPath).find((c) => c[0] === "run");
+  const argv = launched(call);
+  assert.deepEqual(argv.slice(0, 1), ["codex"]);
+  assert.deepEqual(addDirs(argv), [join(vm, "shared"), realpathSync(join(project, ".git")), join(vm, ".local/state/herdr-core"), join(vm, ".npm")]);
+  modeAsOptions(argv.slice(1), "the linked seat");
+  assert.match(r.stderr, /vm: an --add-dir in Codex's command names the home folder, an app home or a folder whose place there can't be proved: left out/);
+  assert.ok(readJsonLines(logPath).some((c) => c[0] === "exec" && c.includes("vm") && c.some((w) => typeof w === "string" && w.includes("pwd -P"))),
+    "resolved there, through hc exec");
 });

@@ -28,7 +28,7 @@ import { addressOf, attachKey, attachLine, attachPath, attachRow, closingRow, co
 import { PANE_ENV_PATH, agentOnMachine, interpreterPath, paneEnvOf } from "../agentPath.mjs";
 import { briefingFilePath, installHook, launchBriefingText, screenTail, stableBriefingPath, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
-import { AGENTS, AGY_MODE_DEFAULT, AGY_MODES, AUTO_MODE, AUTO_MODE_NONE, agentKeyOfArgv, agyGuarded, agyModeArgs, agyModeOf, agyModeProblem, agyModeWarning, agyPermissionPlan, agyRuleProblem, agySandbox, agySettingsArgs, agySettingsDir, agySettingsPlan, autoModeArgs, codexCleanNote, codexGrants, withCodexGrants, choosesSession, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, launchRun, modelArgs, modelRefusal, ownPromptIn, ownsSession, resolveAgent, resumeAfterTurn, resumesById,
+import { AGENTS, AGY_MODE_DEFAULT, AGY_MODES, AUTO_MODE, AUTO_MODE_NONE, agentKeyOfArgv, agyGuarded, agyModeArgs, agyModeOf, agyModeProblem, agyModeWarning, agyPermissionPlan, agyRuleProblem, agySandbox, agySettingsArgs, agySettingsDir, agySettingsPlan, autoModeArgs, codexCleanNote, codexGrantPaths, codexGrants, codexKeepDirs, codexWhere, absPath, withCodexGrants, choosesSession, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, launchRun, modelArgs, modelRefusal, ownPromptIn, ownsSession, resolveAgent, resumeAfterTurn, resumesById,
   promptByMessage, sessionIdArgs, shownModel, withAgySettings, withBriefing, withOverrides } from "../models.js";
 import { AG_MODELS_TIMEOUT_MS, agModelsSpawnResult, refreshAgModelsSync } from "../modelCache.js";
 import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, WORKTREES_EXCLUDE,
@@ -37,7 +37,7 @@ import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, 
   prAskDue, prBranchKey, prBranches, prChecksPath, prChecksText, prLikely, prRowsFor, readPrChecks,
   sessionRow, stableGuardDir, stableKillDir, stableRootOf,
   parseWorktrees, runsTemplate, startRow, swapArm, swapByte,
-  taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, codexTemplateWarning, templateAgent, workerArgs, workerBranch, workerKillRefusal, workerPlan, workerRole, worktreeFolder,
+  taskIdProblem, taskWorkerName, TEMPLATE_SHAPE, codexTemplateRefusal, codexTemplateWarning, templateAgent, workerArgs, workerBranch, workerKillRefusal, workerPlan, workerRole, worktreeFolder,
   workLeft, writesWorktree } from "../workers.js";
 import { SESSION_MASK, carriedLabels, maskSession, commandArgv, continueRefusal, doomedHelpers, helperArgs, helperCwd, helperPlan, launchChange, ledgerSession, maskedArgv,
   isPaneIdle, pendingDialog, paneCommand, planText as restartText, restartAnswer, restartPlan, sharedFresh, claudeSlug, paneSession, restartRefusal, sameSessions, sessionFor, sessionId, sharedFolders } from "../restart.js";
@@ -3008,9 +3008,10 @@ async function seatOnMachine(project, bot, over = {}) {
   const briefingHome = needsHome ? await briefingHomeOn(machine, bot, paneEnv) : { dir: null, warnings: [] };
   const briefed = await briefedOn(machine, project, bot, agentKey, there.argv, briefingHome.dir,
     agentKey === "dsh-tui" ? Boolean(remoteGuard) : null);
-  // #1125: a Codex seat there gets the folders that machine derives for its folder (codexGrantsOn).
-  const codexHere = agentKey === "codex" ? await codexGrantsOn(machine, over.cwd ?? key) : null;
-  const argv = codexHere ? withCodexGrants(briefed.argv, codexHere.dirs) : briefed.argv;
+  // #1125: a Codex seat there gets the folders that machine derives for its folder, and its own
+  // --add-dir words are weighed there too (#1142: resolved on that machine, never this one).
+  const codexHere = agentKey === "codex" ? await codexOn(machine, over.cwd ?? key, paneEnv, briefed.argv) : null;
+  const argv = codexHere ? withCodexGrants(codexHere.argv, codexHere.dirs) : briefed.argv;
   const codexNotes = [codexHere?.warning, agentKey === "codex" ? codexCleanNote(agent.run) : null].filter(Boolean);
   // The hook goes in before the session starts, so Claude Code reads it at startup.
   const hook = briefingHook(agentKey) && briefingHome.dir ? await briefingHookOn(machine, bot, over.cwd ?? key, briefingHome.dir)
@@ -3261,32 +3262,95 @@ async function restartOnMachine(opts, project, bot, entry) {
 }
 
 /**
+ * Absolute path `p` as this computer resolves it (#1142): the realpath of its nearest folder
+ * that is there, then the rest of `p` (no symlink can hide in a part that isn't there). Null when
+ * that can't be proved: a part that is a file, or a symlink that points nowhere.
+ */
+function canonHere(p) {
+  let base = p, rest = "";
+  for (;;) {
+    try {
+      const real = realpathSync.native(base);
+      if (rest && !statSync(real).isDirectory()) return null;
+      return rest ? `${real === "/" ? "" : real}${rest}` : real;
+    } catch (e) {
+      if (e?.code !== "ENOENT") return null;
+      try { lstatSync(base); return null; } catch { /* not there at all: its parent decides */ }
+    }
+    if (base === "/") return null;
+    const i = base.lastIndexOf("/");
+    rest = `${base.slice(i)}${rest}`;
+    base = base.slice(0, i) || "/";
+  }
+}
+
+/** This computer's Codex launch rules (models.js codexWhere): its home folder and app home, resolved here. */
+const localWhere = () => codexWhere({ home: home(), appHome: appHome(), resolve: canonHere });
+
+/**
  * The folders a Codex launch in `cwd` on this computer may write besides it (#1125,
  * models.js codexGrants): `cwd`'s own git dir and its git common dir (a linked worktree's
  * `.git/worktrees/<name>` and its main checkout's .git), herdr-core's state and data folders
- * and the tool caches, from this process's environment, each only when it is a folder here.
- * Never fails: a folder git can't answer for just has no git grant.
+ * and the tool caches, from this process's environment, each resolved here (#1142) and only when
+ * it is a folder here. Never fails: a folder git can't answer for just has no git grant.
  */
 async function localCodexGrants(cwd) {
   const out = cwd ? await git(["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], cwd) : null;
   const [gitDir, gitCommonDir] = (out ?? "").split("\n").map((l) => l.trim());
-  return codexGrants({ home: home(), env: process.env, gitDir: gitDir || null, gitCommonDir: gitCommonDir || null, isDir });
+  return codexGrants({ where: localWhere(), env: process.env, gitDir: gitDir || null, gitCommonDir: gitCommonDir || null, isDir });
 }
 
-// The environment words codexGrants reads, printed on a linked machine one per line as NAME=value
-// (printenv per name: never the whole environment).
-const GRANT_VARS = ["HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "GOPATH", "GOMODCACHE", "GOCACHE",
-  "npm_config_cache", "NPM_CONFIG_CACHE", "BUN_INSTALL", "BUN_INSTALL_CACHE_DIR"];
+// The environment words codexGrantPaths reads, printed on a linked machine one per line as NAME=value
+// (printenv per name: never the whole environment), then its git dirs for the launch folder.
+const GRANT_VARS = ["HOME", "HERDR_APP_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "GOPATH",
+  "GOMODCACHE", "GOCACHE", "npm_config_cache", "NPM_CONFIG_CACHE", "BUN_INSTALL", "BUN_INSTALL_CACHE_DIR"];
 const GRANT_PROBE = `for k in ${GRANT_VARS.join(" ")}; do v=$(printenv "$k") && printf '%s=%s\\n' "$k" "$v"; done; `
   + `g=$(git rev-parse --path-format=absolute --git-dir 2>/dev/null) && printf 'GIT_DIR=%s\\n' "$g"; `
   + `g=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && printf 'GIT_COMMON_DIR=%s\\n' "$g"; true`;
+// Each path argument as that machine resolves it (#1142): path, TAB, its canonical form (the nearest
+// folder there through cd and pwd -P, then the rest; "-" when a part is a file or a dangling
+// link), TAB, 1 when the path itself is a folder there.
+export const RESOLVE_PROBE = 'for p do b=$p; r=; out=; while :; do '
+  + 'if [ -d "$b" ]; then c=$(cd "$b" 2>/dev/null && pwd -P) && { out=${c%/}$r; [ -n "$out" ] || out=/; }; break; fi; '
+  + 'if [ -e "$b" ] || [ -L "$b" ]; then break; fi; [ "$b" = / ] && break; '
+  + 'r=/${b##*/}$r; b=${b%/*}; [ -n "$b" ] || b=/; done; '
+  + 'd=0; [ -n "$out" ] && [ -z "$r" ] && d=1; printf "%s\\t%s\\t%s\\n" "$p" "${out:--}" "$d"; done; true';
+
+/** RESOLVE_PROBE's answer as { resolve, isDir } for models.js codexWhere and codexGrants: unknown paths resolve to null. */
+export function resolvedThere(stdout) {
+  const canon = new Map(), dirs = new Set();
+  for (const line of String(stdout ?? "").split("\n")) {
+    const [path, real, dir] = line.split("\t");
+    if (!path || real === undefined) continue;
+    const c = real === "-" ? null : absPath(real);
+    canon.set(path, c);
+    if (c && dir === "1") dirs.add(c);
+  }
+  return { resolve: (p) => canon.get(p) ?? null, isDir: (p) => dirs.has(p) };
+}
+
+/** The values of a Codex argv's `--add-dir` words, before any `--`. */
+const addDirValues = (argv) => {
+  const out = [];
+  for (let i = 0; i < argv.length && argv[i] !== "--"; i += 1) {
+    if (argv[i] === "--add-dir" && i + 1 < argv.length) out.push(argv[++i]);
+    else if (argv[i].startsWith("--add-dir=")) out.push(argv[i].slice("--add-dir=".length));
+  }
+  return out;
+};
 
 /**
- * localCodexGrants on `machine`, asked there through hc (its own environment and git, then which
- * of the folders are there). { dirs, warning }: no grants and one warning when it can't be asked.
+ * A Codex launch on `machine` (#1125, #1142), resolved there and never against this computer:
+ * that machine's home folder and effective app home (`paneEnv`'s HERDR_APP_HOME as launchHomeOn
+ * picks it, the shell's, and the default under its home, all protected), its own realpaths for
+ * each path weighed, its git dirs for `cwd` and its environment. `argv` loses each `--add-dir`
+ * those rules don't allow (all of them when the machine can't be asked); `dirs` are the folders it
+ * derives (codexGrants). { argv, dirs, warning }.
  */
-async function codexGrantsOn(machine, cwd) {
-  const away = (why) => ({ dirs: [], warning: `Codex's extra folders on ${machine} couldn't be resolved (${why}): it starts with its working folder only.` });
+async function codexOn(machine, cwd, paneEnv, argv) {
+  const blind = { home: null, appHomes: [], canon: () => null };
+  const away = (why) => ({ argv: codexKeepDirs(argv, blind).argv, dirs: [],
+    warning: `Codex's folders on ${machine} couldn't be resolved there (${why}): it starts with its working folder only.` });
   const r = await remoteIo.exec("sh", ["-c", GRANT_PROBE], machine, { cwd });
   if (r.code !== 0) return away(r.code === -1 ? "no answer" : `exit ${r.code}`);
   const env = {};
@@ -3294,12 +3358,20 @@ async function codexGrantsOn(machine, cwd) {
     const eq = line.indexOf("=");
     if (eq > 0) env[line.slice(0, eq)] = line.slice(eq + 1);
   }
-  const candidates = codexGrants({ home: env.HOME ?? null, env, gitDir: env.GIT_DIR ?? null, gitCommonDir: env.GIT_COMMON_DIR ?? null, isDir: () => true });
-  if (!candidates.length) return { dirs: [], warning: null };
-  const there = await remoteIo.exec("sh", ["-c", 'for d do [ -d "$d" ] && printf "%s\\n" "$d"; done; true', "sh", ...candidates], machine);
+  if (!absPath(env.HOME)) return away("no home folder");
+  const appHomes = [paneEnv?.appHome, env.HERDR_APP_HOME].filter(Boolean);
+  const { candidates, general } = codexGrantPaths({ home: env.HOME, env, gitDir: env.GIT_DIR ?? null, gitCommonDir: env.GIT_COMMON_DIR ?? null });
+  const paths = [...new Set([env.HOME, `${env.HOME}/.config/herdr-app`, ...appHomes, ...candidates, ...general, ...addDirValues(argv)]
+    .map(absPath).filter(Boolean))];
+  const there = await remoteIo.exec("sh", ["-c", RESOLVE_PROBE, "sh", ...paths], machine);
   if (there.code !== 0) return away(there.code === -1 ? "no answer" : `exit ${there.code}`);
-  const found = new Set(String(there.stdout ?? "").split("\n").filter(Boolean));
-  return { dirs: candidates.filter((d) => found.has(d)), warning: null };
+  const { resolve, isDir: dirThere } = resolvedThere(there.stdout);
+  const where = codexWhere({ home: env.HOME, appHome: appHomes, resolve });
+  if (!where.home) return away("its home folder doesn't resolve there");
+  const kept = codexKeepDirs(argv, where);
+  const dirs = codexGrants({ where, env, gitDir: env.GIT_DIR ?? null, gitCommonDir: env.GIT_COMMON_DIR ?? null, isDir: dirThere });
+  return { argv: kept.argv, dirs, warning: kept.dropped
+    ? `${machine}: an --add-dir in Codex's command names the home folder, an app home or a folder whose place there can't be proved: left out (#1142).` : null };
 }
 
 /** The agent a bot starts on, from Herdr's table: refused when it isn't one, or isn't installed. */
@@ -3362,7 +3434,7 @@ async function launchSeat(project, bot, over = {}) {
   const labels = { ...paneLabels(file, bot.id, carry, lead ? leadPane(await liveRows(lead))?.labels ?? null : null), ...carry }; // A16
   const taken = new Set(rowsOf(await hcJson(["ls"])).map((r) => r?.name).filter(Boolean));
   // A Start's command, on a new session whose id Herdr chooses (Claude), unless it picks its own.
-  const source = over.argv ?? [...launchRun(agentKey, agent.run, bot, home()), ...agyModeArgs(agentKey, agyMode), ...modelArgs(bot.agent, bot.model)];
+  const source = over.argv ?? [...launchRun(agentKey, agent.run, bot, localWhere()), ...agyModeArgs(agentKey, agyMode), ...modelArgs(bot.agent, bot.model)];
   const chosen = !over.argv && choosesSession(agentKey) && !ownsSession(source) ? newSessionId() : null;
   const session = over.argv ? (over.session ?? null) : chosen;
   if (session && agentKey === "claude") labels[SESSION_LABEL] = session;
@@ -3376,7 +3448,7 @@ async function launchSeat(project, bot, over = {}) {
   // #1125: a Codex seat runs the pack's Codex launch mode, with an --add-dir for each folder this
   // launch in `cwd` may write (unless a restart's template plan carries them already); a
   // programs.json run's own approval and sandbox words were left out, and that is said.
-  const cleaned = agentKey === "codex" ? codexCleanNote(agent.run, home()) : null;
+  const cleaned = agentKey === "codex" ? codexCleanNote(agent.run, localWhere()) : null;
   if (cleaned) briefed.warnings.push(cleaned);
   const argv = agentKey === "codex" && !over.granted ? withCodexGrants(briefed.argv, await localCodexGrants(cwd)) : briefed.argv;
   // As a worker (cmdWorker): the pane gets this PATH, with an npm agent's (#!/usr/bin/env node,
@@ -4126,7 +4198,8 @@ async function treePlans({ project, bot, old, helpers, view, ledger, agents, kno
     holdId(knownSession(h, agentKey)?.session);
     return { ...helperPlan({ get: h, worker, session: knownSession(h, agentKey)?.session ?? null,
       agents, fresh, bot: agyBot, agy: { appHomeDir: appHome(), bot: agyBot, realpath: realDir, homeDir: home() },
-      launchAgent: revive && isBareShell(h), grants: grantsAt.get(helperCwd({ get: h, worker, realpath: realDir })) ?? [] }), worker, binding, proxyIdentity,
+      launchAgent: revive && isBareShell(h), grants: grantsAt.get(helperCwd({ get: h, worker, realpath: realDir })) ?? [], where: localWhere() }),
+      worker, binding, proxyIdentity,
       createdMs: Number.isSafeInteger(h.created_ms) ? h.created_ms : null };
   };
   let tree = doomed.map((h) => planOf(h));
@@ -4478,7 +4551,7 @@ async function cmdRestart(opts, [ref]) {
   const oldCwd = old?.foreground?.cwd ?? old?.cwd ?? ghost?.cwd ?? null;
   const cwd = wanted ?? (oldCwd && isDir(oldCwd) ? (realDir(oldCwd) ?? oldCwd) : key);
   const planned = {
-    bot, run: launchRun(entry?.agent ?? bot.agent, startableAgent(bot, entry?.agent ?? bot.agent).run, bot, home()),
+    bot, run: launchRun(entry?.agent ?? bot.agent, startableAgent(bot, entry?.agent ?? bot.agent).run, bot, localWhere()), where: localWhere(),
     runningAgent, session: known?.session ?? null,
     // #1125: the folders a Codex seat in `cwd` may write, for a template plan's words (launchSeat
     // adds them to an agent row's).
@@ -6073,7 +6146,7 @@ async function cmdWorker(opts, rest) {
     }
   }
   const override = !swap && Object.values(given).some((v) => v !== undefined);
-  const plan = workerPlan(bot, pick, agents, home());
+  const plan = workerPlan(bot, pick, agents, localWhere());
   if (plan.error) throw new CliError(plan.error, 2);
   warnings.push(...plan.warnings);
   // The agent that runs: the plan's, or the one a template's command names (null: can't tell).
@@ -6088,6 +6161,9 @@ async function cmdWorker(opts, rest) {
     templateCommand = t.command?.trim() ? t.command : null;
     // #1125: a worker template owns its command (the owner's exception, bypass included): never
     // rewritten or refused here; one that runs Codex without --no-daemon is named, with the fix.
+    // #1142: one whose Codex run puts an option after its -- would run without it: refused first.
+    const lost = templateCommand ? codexTemplateRefusal(plan.template, templateCommand, agents) : null;
+    if (lost) throw new CliError(lost);
     const noDaemon = templateCommand ? codexTemplateWarning(plan.template, templateCommand, agents) : null;
     if (noDaemon) warnings.push(noDaemon);
     if (runs === "claude") {

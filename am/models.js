@@ -483,17 +483,101 @@ export const homeWide = (dir, home) => {
   return d === "/" || (h !== null && (d === h || h.startsWith(`${d}/`)));
 };
 
+/** `p` as one absolute path, its `.` and `..` segments resolved and no trailing slash; null when it isn't absolute. */
+export function absPath(p) {
+  if (typeof p !== "string" || !p.startsWith("/") || /[\x00-\x1f\x7f]/.test(p)) return null;
+  const out = [];
+  for (const seg of p.split("/")) {
+    if (!seg || seg === ".") continue;
+    if (seg === "..") out.pop();
+    else out.push(seg);
+  }
+  return `/${out.join("/")}`;
+}
+
+/** Whether canonical `a` is canonical `b` or inside it. */
+const within = (a, b) => a === b || b === "/" || a.startsWith(`${b}/`);
+
+/**
+ * Where a Codex launch runs, for its folder rules (#1125, #1142): `{ home, appHomes, canon }`,
+ * each root canonical there. `canon(p)`: an absolute path as that machine resolves it, or null
+ * when its narrowness can't be proved (not absolute, or `resolve` couldn't tell). `resolve` answers
+ * for the launch's own machine (realpath through the nearest folder that is there: symlinks
+ * followed); without one, paths compare as written (absPath). `appHome`: the launch's effective app
+ * home (one path or several); the default one under `home` is always protected too.
+ */
+export function codexWhere({ home = null, appHome = null, resolve = null } = {}) {
+  const canon = (p) => {
+    const a = absPath(p);
+    if (!a) return null;
+    if (!resolve) return a;
+    try { return absPath(resolve(a)) ?? null; } catch { return null; }
+  };
+  // A root that can't be resolved is still protected as written: the rules only ever widen what is kept out.
+  const root = (p) => canon(p) ?? absPath(p);
+  const h = home ? root(home) : null;
+  const raw = [...(Array.isArray(appHome) ? appHome : [appHome]), home ? `${home}/.config/herdr-app` : null];
+  const appHomes = [...new Set(raw.filter(Boolean).map(root).filter(Boolean))];
+  return { home: h, appHomes, canon };
+}
+
+/**
+ * Whether a Codex launch may be granted canonical `dir` under `where` (codexWhere): never the root,
+ * the home folder or a folder above it, nor an app home (its attach binding, locks and ledgers stay
+ * with Codex's reviewer), a folder inside one or above one.
+ */
+export function codexDirAllowed(dir, where = {}) {
+  if (typeof dir !== "string" || !dir.startsWith("/") || dir === "/") return false;
+  if (where.home && within(where.home, dir)) return false;
+  return !(where.appHomes ?? []).some((app) => within(dir, app) || within(app, dir));
+}
+
+/** `where` as codexWhere gives it, from one: a codexWhere result, a home folder (compared as written), or nothing. */
+const whereOf = (where) => (where && typeof where === "object" && typeof where.canon === "function" ? where
+  : codexWhere({ home: typeof where === "string" ? where : null }));
+
+/** Whether an `--add-dir` value may stay under `where`: absolute and allowed once canonical there. */
+const addDirAllowed = (value, where) => {
+  const c = where.canon(value);
+  return c !== null && codexDirAllowed(c, where);
+};
+
+/**
+ * A Codex argv's `--add-dir` words (before any `--`) that `where` doesn't allow, left out:
+ * { argv, dropped } (dropped: true when one went). For a launch whose folders are known only
+ * where it runs (a linked machine: seatOnMachine), after the argv is built.
+ */
+export function codexKeepDirs(argv, where) {
+  const w = whereOf(where);
+  const words = Array.isArray(argv) ? argv.map(String) : [];
+  const out = [];
+  let dropped = false;
+  for (let i = 0; i < words.length; i += 1) {
+    const x = words[i];
+    if (x === "--") { out.push(...words.slice(i)); break; }
+    const value = x === "--add-dir" ? words[i + 1] : x.startsWith("--add-dir=") ? x.slice("--add-dir=".length) : undefined;
+    if (value !== undefined && !addDirAllowed(value, w)) { dropped = true; if (x === "--add-dir") i += 1; continue; }
+    out.push(x);
+    if (x === "--add-dir" && i + 1 < words.length) out.push(words[++i]);
+  }
+  return { argv: out, dropped };
+}
+
 /**
  * A Codex source's words (`run`, Herdr's table with programs.json applied) without the ones that
  * pick its approvals or sandbox: bypass and --yolo, -a/--ask-for-approval and -s/--sandbox in
  * their separate, joined and `=` forms, -c/--config for the keys CODEX_CONFIG_KEYS names (and
  * any key under one), --remote (another app server: outside the pane, #1125), and an --add-dir
- * of the root, `home` or a folder above it. The pack's own --approve-for-me, --no-daemon and
- * network word go quietly (launchRun puts them back once). Every other word stays as it is, after a `--` too.
+ * `where` doesn't allow (codexWhere, codexDirAllowed: canonical where the launch runs, so a dot,
+ * parent or symlink alias of the home folder or the app home goes too, as does a relative one:
+ * its narrowness can't be proved, #1142). `where` may also be a home folder, compared as written.
+ * The pack's own --approve-for-me, --no-daemon and network word go quietly (launchRun puts them
+ * back once). Every other word stays as it is, after a `--` too.
  * Returns { argv, dropped } (`dropped`: the flags left out, by name, `-c sandbox_mode` style:
  * never a value).
  */
-export function codexClean(run, home = null) {
+export function codexClean(run, where = null) {
+  const at = whereOf(where);
   const words = Array.isArray(run) ? run.map(String) : [];
   const argv = [], dropped = [];
   const drop = (name) => { if (!dropped.includes(name)) dropped.push(name); };
@@ -515,7 +599,7 @@ export function codexClean(run, home = null) {
       continue;
     }
     const addDir = w === "--add-dir" ? words[i + 1] : w.startsWith("--add-dir=") ? w.slice("--add-dir=".length) : undefined;
-    if (addDir !== undefined && homeWide(addDir, home)) { drop("--add-dir"); if (w === "--add-dir") i += 1; continue; }
+    if (addDir !== undefined && !addDirAllowed(addDir, at)) { drop("--add-dir"); if (w === "--add-dir") i += 1; continue; }
     argv.push(w);
     if (CODEX_TAKES_VALUE.has(w) && i + 1 < words.length) argv.push(words[++i]);
   }
@@ -523,44 +607,58 @@ export function codexClean(run, home = null) {
 }
 
 /** One line naming what codexClean left out of `run` (flag names only), or null when nothing. */
-export function codexCleanNote(run, home = null, where = "programs.json's Codex command") {
-  const { dropped } = codexClean(run, home);
-  return dropped.length ? `${where} names ${dropped.join(", ")}: left out. Every Codex seat and worker runs in auto mode `
+export function codexCleanNote(run, where = null, source = "programs.json's Codex command") {
+  const { dropped } = codexClean(run, where);
+  return dropped.length ? `${source} names ${dropped.join(", ")}: left out. Every Codex seat and worker runs in auto mode `
     + "(--approve-for-me) with its sandbox on (#1125)." : null;
 }
 
 /**
- * The folders a Codex launch may write besides its working folder (#1125): each one only when it
- * is a folder there (`isDir`), absolute, and never the root, `home` or a folder above it, nor a
- * whole XDG or cache folder. `gitDir`: the launch checkout's own git dir (a linked worktree's
- * `.git/worktrees/<name>`, which Codex keeps read-only even beside its common dir), and
- * `gitCommonDir`: its git common dir (its own .git, or the main checkout's for a linked
- * worktree; Codex keeps a working folder's .git read-only).
- * Then herdr-core's state and data folders (XDG_STATE_HOME, XDG_DATA_HOME, else under `home`),
- * which hc needs to reach its core, and the tool caches a build here writes: Go's module and
- * build caches (GOMODCACHE, GOCACHE, else GOPATH's), npm's (npm_config_cache), pnpm's store and
- * cache, and Bun's install cache (BUN_INSTALL_CACHE_DIR, BUN_INSTALL). `env` is the launch's
- * environment (process.env here, or the linked machine's). Pure: `isDir` answers for the machine.
+ * The paths codexGrants weighs for a launch, as written (absPath), before any is resolved:
+ * { candidates, general }. `candidates`, in order: `gitDir`, the launch checkout's own git dir (a
+ * linked worktree's `.git/worktrees/<name>`, which Codex keeps read-only even beside its common
+ * dir), and `gitCommonDir`, its git common dir (its own .git, or the main checkout's); then
+ * herdr-core's state and data folders (XDG_STATE_HOME, XDG_DATA_HOME, else under `home`), which hc
+ * needs to reach its core; then the tool caches a build writes: Go's module and build caches
+ * (GOMODCACHE, GOCACHE, else GOPATH's), npm's (npm_config_cache), pnpm's store and cache, and Bun's
+ * install cache (BUN_INSTALL_CACHE_DIR, BUN_INSTALL). `general`: the folders never granted whole
+ * (each XDG folder, ~/.local, GOPATH and Bun's own). `env` is the launch's environment.
  */
-export function codexGrants({ home = null, env = {}, gitDir = null, gitCommonDir = null, isDir = () => false }) {
-  const h = typeof home === "string" && home.startsWith("/") ? home.replace(/\/+$/, "") : null;
-  const abs = (p) => (typeof p === "string" && p.startsWith("/") && !p.split("/").includes("..") ? p.replace(/\/+$/, "") || "/" : null);
-  const at = (base, rest) => (base ? `${base}/${rest}` : null);
+export function codexGrantPaths({ home = null, env = {}, gitDir = null, gitCommonDir = null }) {
+  const h = absPath(home);
+  const abs = (p) => absPath(p);
+  const at = (base, rest) => (base ? absPath(`${base}/${rest}`) : null);
   const xdg = (name, fallback) => abs(env[name]) ?? at(h, fallback);
   const state = xdg("XDG_STATE_HOME", ".local/state"), data = xdg("XDG_DATA_HOME", ".local/share");
   const cache = xdg("XDG_CACHE_HOME", ".cache"), config = xdg("XDG_CONFIG_HOME", ".config");
   const gopath = abs(String(env.GOPATH ?? "").split(":")[0]) ?? at(h, "go");
   const bun = abs(env.BUN_INSTALL) ?? at(h, ".bun");
-  // Never a whole XDG folder, nor ~/.local, nor GOPATH or Bun's own folder.
-  const general = new Set([state, data, cache, config, at(h, ".local"), gopath, bun].filter(Boolean));
+  const general = [state, data, cache, config, at(h, ".local"), gopath, bun].filter(Boolean);
   const candidates = [abs(gitDir), abs(gitCommonDir), at(state, "herdr-core"), at(data, "herdr-core"),
     abs(env.GOMODCACHE) ?? at(gopath, "pkg/mod"), abs(env.GOCACHE) ?? at(cache, "go-build"),
     abs(env.npm_config_cache) ?? abs(env.NPM_CONFIG_CACHE) ?? at(h, ".npm"),
     at(data, "pnpm/store"), at(cache, "pnpm"),
-    abs(env.BUN_INSTALL_CACHE_DIR) ?? at(bun, "install/cache")];
+    abs(env.BUN_INSTALL_CACHE_DIR) ?? at(bun, "install/cache")].filter(Boolean);
+  return { candidates, general };
+}
+
+/**
+ * The folders a Codex launch may write besides its working folder (#1125): codexGrantPaths'
+ * candidates, each made canonical where the launch runs (`where`, codexWhere: a dot, parent or
+ * symlink alias resolved there, #1142), kept only when it is a folder there (`isDir`, asked with
+ * the canonical path), codexDirAllowed (never the root, the home folder or above it, never an app
+ * home, inside one or above one) and not a whole general folder (canonical too). `where`: a
+ * codexWhere result; without one, `home` and `appHome` build it with paths compared as written.
+ * Pure: `where.canon` and `isDir` answer for the launch's machine.
+ */
+export function codexGrants({ where = null, home = null, appHome = null, env = {}, gitDir = null, gitCommonDir = null, isDir = () => false }) {
+  const w = where ?? codexWhere({ home, appHome });
+  const { candidates, general } = codexGrantPaths({ home: w.home ?? home, env, gitDir, gitCommonDir });
+  const whole = new Set(general.map((g) => w.canon(g)).filter(Boolean));
   const out = [];
-  for (const dir of candidates) {
-    if (!dir || out.includes(dir) || homeWide(dir, h) || general.has(dir)) continue;
+  for (const raw of candidates) {
+    const dir = w.canon(raw);
+    if (!dir || out.includes(dir) || !codexDirAllowed(dir, w) || whole.has(dir)) continue;
     let there = false;
     try { there = isDir(dir) === true; } catch { there = false; }
     if (there) out.push(dir);
@@ -655,13 +753,13 @@ export function autoModeArgs(agentKey, bot = null, run = []) {
  * The words `agentKey` starts with: the given run (Herdr's table, programs.json applied) and the
  * flags this pack adds for that agent's automatic mode. They are added here, so a bot's start,
  * its restart and its workers all take them from the definition, never from an old pane's command.
- * A Codex run loses its own approval and sandbox words first (codexClean, #1125; `home`, when
- * the caller knows it, also stops an --add-dir of the person's home folder); the mode words go
- * before a `--` in it, so they stay options.
+ * A Codex run loses its own approval and sandbox words first (codexClean, #1125; `where`, the
+ * launch's codexWhere when the caller knows it, also stops an --add-dir of the home folder or an
+ * app home, by any alias); the mode words go before a `--` in it, so they stay options.
  */
-export function launchRun(agentKey, run, bot, home = null) {
+export function launchRun(agentKey, run, bot, where = null) {
   if (agentKey !== "codex") return [...run, ...autoModeArgs(agentKey, bot, run)];
-  const { argv } = codexClean(run, home);
+  const { argv } = codexClean(run, where);
   const cut = argv.indexOf("--");
   return cut < 0 ? [...argv, ...CODEX_MODE_ARGS] : [...argv.slice(0, cut), ...CODEX_MODE_ARGS, ...argv.slice(cut)];
 }

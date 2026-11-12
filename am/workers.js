@@ -274,12 +274,12 @@ export const EFFORT_SHAPE = /^[a-z][a-z0-9-]{0,31}$/;
  * always gets `--mode` (the bot's `worker.agyMode`, auto by default; an unknown one is refused).
  * A model or effort the agent has no flag for is left out with a warning. `agents`: the table
  * Herdr starts from. A Codex worker runs the pack's Codex launch mode (#1125); its source's own
- * approval and sandbox words are left out with a warning naming them (`home`: the person's home
- * folder, so an --add-dir of it goes too).
+ * approval and sandbox words are left out with a warning naming them (`where`: the launch's
+ * models.js codexWhere, so an --add-dir of the home folder or an app home goes too, by any alias).
  * Returns { template, agent, model, effort, agyMode, argv, warnings } (template null, or agent,
  * model, effort, agyMode and argv null) or { error }.
  */
-export function workerPlan(bot, pick = {}, agents = AGENTS, home = null) {
+export function workerPlan(bot, pick = {}, agents = AGENTS, where = null) {
   const warnings = [];
   const defaults = bot?.worker && typeof bot.worker === "object" ? bot.worker : {};
   const picked = ["agent", "model", "effort"].filter((k) => pick[k]);
@@ -339,9 +339,9 @@ export function workerPlan(bot, pick = {}, agents = AGENTS, home = null) {
     warnings.push(`${agents[agent].name} has no effort flag; effort ${effort} left out.`);
     effort = null;
   }
-  const cleaned = agent === "codex" ? codexCleanNote(agents[agent].run, home) : null;
+  const cleaned = agent === "codex" ? codexCleanNote(agents[agent].run, where) : null;
   if (cleaned) warnings.push(cleaned);
-  const argv = [...launchRun(agent, agents[agent].run, bot, home), ...agyModeArgs(agent, agyMode), ...modelArgs(agent, model), ...effortArgs(agent, effort)];
+  const argv = [...launchRun(agent, agents[agent].run, bot, where), ...agyModeArgs(agent, agyMode), ...modelArgs(agent, model), ...effortArgs(agent, effort)];
   return { template: null, agent, model, effort, agyMode, argv, warnings };
 }
 
@@ -529,20 +529,36 @@ export function templateAgent(command, agents = AGENTS) {
   return found.size === 1 ? [...found][0] : null;
 }
 
+// The Codex options a template could mean for its launch: when one comes after the run's `--`,
+// Codex reads it as prompt text, never as the option (#1142).
+const CODEX_LOST_OPTIONS = new Set(["--approve-for-me", "--no-daemon", "--disable", "--enable", "-c", "--config", "--add-dir",
+  "-a", "--ask-for-approval", "-s", "--sandbox", "--remote", "--dangerously-bypass-approvals-and-sandbox", "--yolo",
+  "-p", "--profile"]);
+const optionName = (w) => (w.startsWith("--") ? w.split("=")[0] : w.startsWith("-c") || w.startsWith("-a") || w.startsWith("-s") ? w.slice(0, 2) : w);
+// A positional-parameter expansion in a shell command ($@, $*, ${@…}, ${*…}): where the words after a command go.
+const POSITIONAL = /\$(?:[@*]|\{[@*])/g;
+const isPositional = (w) => /^\$(?:[@*]|\{[@*]\})$/.test(w);
+
 /**
  * What a shell command that runs Codex (an hc template's, a helper's) says about the pack's
  * Codex launch mode (#1125), read from its words, never changed: null when it runs no Codex
- * (or another agent too). `conflicts`: the flags in it that pick Codex's approvals or sandbox
- * (models.js codexClean, by name: bypass, -a, -s, the -c keys, --remote); `missing`: the pack
- * mode words it lacks, in the order the mode has them (`--approve-for-me`, `--disable hooks`,
- * `--no-daemon`, network on); `single`: Codex runs once, as the top-level last simple command,
- * so words after the command (through "$@") reach it.
+ * (or another agent too). Only a Codex run's words before its `--` are options (#1142).
+ * `conflicts`: the flags among them that pick Codex's approvals or sandbox, or an `--add-dir`
+ * `where` doesn't allow (models.js codexClean, by name: bypass, -a, -s, the -c keys, --remote,
+ * --add-dir); `missing`: the pack mode words they lack, in the order the mode has them
+ * (`--approve-for-me`, `--disable hooks`, `--no-daemon`, network on); `lost`: Codex options
+ * written after a run's `--`, by name (prompt text to Codex); `forwards`: words after the
+ * command provably reach Codex as options: Codex runs once, as the top-level last simple
+ * command, with no `--`, and the command expands no positional parameter ($@, $*) except as
+ * that run's own word (an earlier "$@" takes them all, and commandArgv then adds none).
  */
-export function codexCommandCheck(command, agents = AGENTS) {
+export function codexCommandCheck(command, agents = AGENTS, where = null) {
   const text = String(command ?? "");
   if (templateAgent(text, agents) !== "codex") return null;
   const runs = commandRuns(text).filter((r) => agentOfProgram(r.program, agents) === "codex");
-  const all = (test) => runs.length > 0 && runs.every((r) => test(r.args));
+  const split = (args) => { const cut = args.indexOf("--"); return cut < 0 ? [args, []] : [args.slice(0, cut), args.slice(cut + 1)]; };
+  const options = runs.map((r) => split(r.args)[0]);
+  const all = (test) => options.length > 0 && options.every((a) => test(a));
   const pair = (args, flag, value) => args.some((w, i) => (w === flag && args[i + 1] === value) || w === `${flag}=${value}`);
   const config = (args, value) => pair(args, "-c", value) || pair(args, "--config", value) || args.includes(`-c${value}`);
   const missing = [];
@@ -550,14 +566,33 @@ export function codexCommandCheck(command, agents = AGENTS) {
   if (!all((a) => pair(a, "--disable", "hooks") || config(a, "features.hooks=false"))) missing.push("--disable", "hooks");
   if (!all((a) => a.includes("--no-daemon"))) missing.push("--no-daemon");
   if (!all((a) => config(a, CODEX_NETWORK))) missing.push("-c", CODEX_NETWORK);
-  const conflicts = [...new Set(runs.flatMap((r) => codexClean(["codex", ...r.args]).dropped))];
-  return { conflicts, missing, single: runs.length === 1 && runs[0].last };
+  const conflicts = [...new Set(options.flatMap((a) => codexClean(["codex", ...a], where).dropped))];
+  const lost = [...new Set(runs.flatMap((r) => split(r.args)[1].map(optionName).filter((n) => CODEX_LOST_OPTIONS.has(n))))];
+  const only = runs.length === 1 && runs[0].last ? runs[0] : null;
+  const expansions = (text.match(POSITIONAL) ?? []).length;
+  const forwards = Boolean(only) && !only.args.includes("--") && expansions === only.args.filter(isPositional).length;
+  return { conflicts, missing, lost, forwards, single: runs.length === 1 && runs[0].last };
 }
 
 /**
- * The warning for a worker template whose command runs Codex without --no-daemon (#1125): hc
- * says Codex must run with it, or its commands run outside hc. The owner's template exception
- * keeps the command as it is (never rewritten, rerouted or refused): this names the fix.
+ * Why a worker template whose Codex run puts a Codex option after its `--` is not started
+ * (#1142, the lead's condition): Codex would read that option as prompt text, so the launch the
+ * template means can't be proved. Null when none does. The owner's template exception keeps every
+ * other template as written (never rewritten, rerouted or stripped).
+ */
+export function codexTemplateRefusal(template, command, agents = AGENTS) {
+  const check = codexCommandCheck(command, agents);
+  if (!check?.lost.length) return null;
+  return `Template ${template} runs Codex with ${check.lost.join(", ")} after its --, where Codex reads ${check.lost.length > 1 ? "them" : "it"} `
+    + `as prompt text, not as options, so the launch it means can't be proved: not started (#1142). Put those options before -- `
+    + `in that template's file (hc templates lists it).`;
+}
+
+/**
+ * The warning for a worker template whose command runs Codex without --no-daemon among its
+ * options (#1125): hc says Codex must run with it, or its commands run outside hc. The owner's
+ * template exception keeps the command as it is (never rewritten, rerouted or refused): this
+ * names the fix.
  */
 export function codexTemplateWarning(template, command, agents = AGENTS) {
   const check = codexCommandCheck(command, agents);
