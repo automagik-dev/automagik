@@ -508,3 +508,62 @@ test('the Bot is told to allow an MCP server where the user\'s interface names i
   await bench.call('state', { allowPlace: 'Settings > Capabilities > Allow' })
   assert.match((await bench.tool('save_capability', { ...server, name: 'echo5' }, 'm1')).text, /in Settings > Capabilities > Allow \(name it/)
 })
+
+// Internal cleanup callers must compare at the mutation boundary, after any load await.
+test('internal conditional secret deletion keeps a replacement made during its awaited load boundary', async t => {
+  const bench = start()
+  t.after(bench.stop)
+  const rt = bench.ctx.get('omniTeam'), previous = fresh(), replacement = fresh()
+  await rt.secretEndpoint('secret-set', { name: 'SAMPLE_TOKEN', value: previous, scope: [] })
+  assert.equal(typeof rt.deleteSecretIfUnchanged, 'function')
+  const replacing = rt.secretEndpoint('secret-set', { name: 'SAMPLE_TOKEN', value: replacement, scope: [] })
+  assert.ok(rt.secretValue('SAMPLE_TOKEN') === previous, 'the direct replacement is still awaiting load when conditional deletion starts')
+  const results = await Promise.allSettled([rt.deleteSecretIfUnchanged('SAMPLE_TOKEN', previous), replacing])
+  assert.ok(rt.secretValue('SAMPLE_TOKEN') === replacement, 'the replacement remains in the actual secret map')
+  const stored = JSON.parse(readFileSync(join(bench.home, 'secrets.json'), 'utf8')).secrets
+  assert.ok(stored.find(entry => entry.name === 'SAMPLE_TOKEN')?.value === replacement, 'the replacement remains on disk')
+  assert.equal(results[0].status, 'fulfilled')
+  assert.equal(results[0].value, false)
+  assert.equal(results[1].status, 'fulfilled')
+  assert.ok(!JSON.stringify(await bench.view()).includes(replacement))
+})
+
+test('internal conditional secret deletion commits only a matching known value and exposes no endpoint', async t => {
+  const bench = start()
+  t.after(bench.stop)
+  const rt = bench.ctx.get('omniTeam'), value = fresh()
+  await rt.secretEndpoint('secret-set', { name: 'SAMPLE_TOKEN', value, scope: [] })
+  assert.equal(await rt.deleteSecretIfUnchanged('MISSING_TOKEN', value), false)
+  assert.equal(await rt.deleteSecretIfUnchanged('sample_token', value), false, 'an internal exact name is never normalized into a different name')
+  assert.equal(await rt.deleteSecretIfUnchanged('SAMPLE_TOKEN', undefined), false)
+  assert.equal(await rt.deleteSecretIfUnchanged('SAMPLE_TOKEN', fresh()), false)
+  assert.ok(rt.secretValue('SAMPLE_TOKEN') === value)
+  assert.equal(await rt.deleteSecretIfUnchanged('SAMPLE_TOKEN', value), true)
+  assert.equal(rt.secretValue('SAMPLE_TOKEN'), undefined)
+  assert.deepEqual(JSON.parse(readFileSync(join(bench.home, 'secrets.json'), 'utf8')).secrets, [])
+  assert.equal((await bench.call('secret-delete-if-unchanged', { name: 'SAMPLE_TOKEN', expectedValue: value })).ok, false)
+})
+
+test('internal conditional secret deletion retains keys when the store is read-only or stopped', async t => {
+  const bench = start()
+  t.after(bench.stop)
+  const rt = bench.ctx.get('omniTeam'), value = fresh(), writable = rt.readOnly
+  await rt.secretEndpoint('secret-set', { name: 'SAMPLE_TOKEN', value, scope: [] })
+  rt.readOnly = () => 'Fixture read-only'
+  assert.equal(await rt.deleteSecretIfUnchanged('SAMPLE_TOKEN', value), false)
+  assert.ok(rt.secretValue('SAMPLE_TOKEN') === value)
+  rt.readOnly = writable
+  await bench.ctx.dispose()
+  assert.equal(await rt.deleteSecretIfUnchanged('SAMPLE_TOKEN', value), false)
+  assert.ok(JSON.parse(readFileSync(join(bench.home, 'secrets.json'), 'utf8')).secrets[0].value === value)
+})
+
+test('internal conditional secret deletion keeps an unreadable store untouched', async t => {
+  const home = mkdtempSync(join(tmpdir(), 'ds-bot-secrets-'))
+  mkdirSync(join(home, 'secrets.json'))
+  const bench = start({ home })
+  t.after(bench.stop)
+  const rt = bench.ctx.get('omniTeam')
+  assert.equal(await rt.deleteSecretIfUnchanged('SAMPLE_TOKEN', fresh()), false)
+  assert.ok(statSync(join(home, 'secrets.json')).isDirectory())
+})

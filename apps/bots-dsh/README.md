@@ -488,6 +488,124 @@ dev/check.sh                             # all checks (see below)
 
 [Apache-2.0](LICENSE)
 
+### Remote Hermes (first delivery, #1070)
+
+**Remote Hermes** is its own route after Native, ACP and Herdr, identified by the original
+Hermes girl mark (upstream MIT notice in `NOTICE`). Local Hermes continues to use ACP.
+The route is off by default. Clicking it without a saved connection opens the setup wizard;
+a saved working connection opens its remembered profile in one click. Crossing harnesses still
+uses the conversation/handoff confirmation. **Bot settings → Remote Hermes** can reopen setup.
+
+The wizard follows **Connection → Details → Test → Profile → Ready**:
+
+- **Remote address** connects to an existing `hermes serve` over HTTPS, including a reverse-proxy
+  path prefix. Use its session token, or sign in through the instance's dashboard with a user
+  and password when that sign-in is available. The password is used for that sign-in only and
+  is never saved. Authentication failures show fixed guidance, never a response body.
+- **Through SSH** uses the system SSH client and the user's SSH config/agent. Enter a host or
+  config alias; user, port, identity-file path and Hermes executable path are optional overrides.
+  A blank Hermes path enables remote auto-detection. Key authentication must already work;
+  SSH passwords and interactive key passphrases are not accepted. A host this computer has
+  never seen stops setup and shows its key type and SHA256 fingerprint; **Trust this host**
+  saves exactly that key to the user's known hosts (as `accept-new` would) and tests again. A
+  changed host key is always refused: the user checks it in a terminal. Host-key checks are
+  never weakened, and private keys are never uploaded, copied or stored by the plugin.
+- **Test** checks the connection with visible progress. Each SSH failure has its own screen,
+  naming the host and the step that stopped: sign-in, host key, the start script, Hermes
+  exiting early (its exit code and last lines), Hermes not ready in time, no port, the one-time
+  token, the tunnel, a busy forward from the SSH config, an old Hermes, or unconfirmed cleanup.
+  Before it starts anything, the start script reads `hermes --version`. A release older than
+  the minimum (below) gets **Update Hermes on `<host>` to v… or newer**, with the release found
+  there and the update command for that install kind (`hermes update`, the Docker image, the
+  Termux package, or Nix). A build that names no release is reported as that, never guessed.
+  A failed test also leaves one line in the diagnostics log (Settings → Feedback): the step,
+  the kind, the time it took and the last SSH and Hermes lines. The line names no one: the
+  host as typed, the remote user, the host name and every IP address are replaced by
+  `<alias>`, `<user>`, `<host>` and `<ip>`, and tokens, key material, fingerprints and home
+  folders are removed. Only the wizard's own screen shows the host and what SSH said.
+  **Profile** lists profiles available from that instance; choose one before saving.
+  **Ready** remembers that connection and profile for later clicks. Cancel closes pending test
+  resources. Editing a draft does not silently disconnect an unrelated active chat.
+
+SSH requires an existing supported Hermes installation, its working runtime and provider setup,
+an SSH server, a POSIX shell and Python 3 on the remote computer, and a usable local SSH client.
+The connection launches an isolated `hermes serve` on remote loopback and forwards it to an
+OS-assigned local loopback port. It supervises the owned remote process and tunnel and stops
+both when the connection ends or the plugin/app quits, with the same bounded deadlines as the
+chat. This does not prove unrelated remote children were killed. Missing Hermes is an error;
+setup never installs software on the remote computer.
+
+The connection record stores mode, address or SSH overrides, chosen profile, discovered models,
+and a credential reference. Tokens and authenticated session credentials live only in the
+existing mode-0600 Bot secret store, with no Bot scope; saved values are never echoed. An SSH
+identity path is a reference to the user's file, not a copy of its contents. Passwords and key
+bytes are never persisted. Test credentials stay in a bounded transient draft until save/cancel.
+The chat socket opens the way Hermes itself accepts each sign-in. A session token (a saved
+token, or the one-time token of an SSH connection) opens `/api/ws?token=…` with no subprotocol,
+as Hermes Desktop does: Hermes mints no ticket for a session token. A password sign-in keeps
+its cookies out of every address: the transport mints a one-use ticket at
+`POST /api/auth/ws-ticket`, then offers `hermes-gateway-ticket.<ticket>` beside the stable
+`hermes-gateway-v1` WebSocket subprotocol. The address that holds a token goes to the socket
+and nowhere else: it is never kept, and a `token=`, `ticket=` or `internal=` query is removed
+from every row, error and diagnostics line. Streamed chat text is masked as one stream, not
+frame by frame: a secret cut between two frames (inside a known credential, inside `?token=`
+or inside the value after it, a bearer or a gateway ticket) is held until the next frame, so
+no row shows a part of it. No credential enters command arguments or prompts.
+The SSH-generated session credential travels over the encrypted channel, not SSH's argv. On
+the remote computer it is written once, mode 0600, to the folder `hermes serve` reads it from
+(`~/.hermes/desktop-ssh/<random>/`, mode 0700), and Hermes removes it after reading.
+
+The oldest Hermes release that works is **v0.21.5** (`minimumRelease` in
+`src/host/hermes-contract.json`, the one place that names it): the first release with Desktop
+contract 8. v0.21.4 speaks contract 7 and is refused.
+
+Only **standalone Desktop contract 8 with server-request approvals** is accepted. Canonical
+authority is refused. The remote profile must already use manual approvals: DSH never changes
+its global setting. Full access answers each approval `once`; a restrictive no-ask level refuses;
+Read only and Workspace both ask the person before answering each Hermes approval question.
+Their file-permission difference applies only to this computer, which a Remote Hermes chat does
+not use for its tools. Auto review also asks the person: its model reviewer does not cover Hermes
+approval questions. Automagik's local sandbox does not constrain the remote computer. Distinct
+remote approval boundaries are follow-up [#1084](https://github.com/automagik-si/automagik/issues/1084).
+Other server requests (including secret/sudo/clarification) receive an unsupported-method error
+in this delivery. Hermes's own allow rules can still run actions without asking DSH.
+
+Text, remote tool cards, Stop and resume share the DSH chat. Stored/runtime session IDs and any
+returned admission ID are saved. An ambiguous submit is never sent again automatically, and
+never falls back to another model. **Connection lost; remote outcome unknown** requires
+**Reconnect and reconcile** in setup. That action only reads: it never answers a pending
+approval. It shows an authoritative snapshot when replay has a gap. Returning to the chat can
+resume the existing remote turn and its DSH approvals; that message is explicitly not submitted
+as a new prompt. Review the recovered result before sending a new turn. Stop requests interrupt,
+waits up to five seconds for terminal confirmation, then detaches; background remote children
+may continue. Startup and control waits are 60 and 15 seconds.
+
+There is no DSH team-tool bridge: `message_bot`, `list_bots`, `create_bot`, `request_secret`,
+DSH memory and schedules are unavailable remotely. Crossing routes uses the existing new
+conversation and handoff confirmation. Model changes within this route use `--session` and do
+not carry history across harnesses. A handoff note needs a configured native background model.
+
+**Every Hermes release needs a contract review before updating this adapter.** The tested source
+is [the generated OpenRPC contract at the pinned upstream commit](https://github.com/NousResearch/hermes-agent/blob/3bcd071226d3d605a2bb3b4f3933e7d583e189d6/apps/shared/src/gateway-contract.openrpc.json).
+`src/host/hermes-contract.json` pins its full normalized digest and the transitive schemas of
+all methods, events and server requests this delivery consumes. Download that generated file
+for the proposed release into scratch, review its upstream diff, and run:
+
+```sh
+node scripts/hermes-contract.mjs <downloaded-generated-contract>
+```
+
+Any change exits nonzero and names the changed surfaces. Do not update the pin solely to make
+the check pass: rerun the disposable fixtures against the reviewed shapes and keep the runtime
+version/dialect gate closed to every untested contract. The checker is offline and never
+contacts a Hermes instance.
+
+The minimum release and the socket rule above were proven against real Hermes installs in
+throwaway homes (v0.21.4, v0.21.5, v0.22.7, v0.23.0, v0.23.1 and the pinned commit), with the
+start script run on the same machine and a stand-in model on loopback: no SSH, no other
+computer, no provider key. Repeat that for a new minimum; the fixtures alone cannot show what
+a real Hermes accepts.
+
 ## Agent access (MCP)
 
 In **Settings → Agent access**, name the agent and choose **Create key**. Copy the key

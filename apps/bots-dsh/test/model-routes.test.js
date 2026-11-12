@@ -2,8 +2,8 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { SELECTOR_ROUTES, crossesHarness, routeOfRef, selectorRouteOf, selectorRoutePolicy } from '../src/shared/routes.js'
 
-test('the selector routes are Native, ACP, Herdr, in that order', () => {
-  assert.deepEqual([...SELECTOR_ROUTES], ['native', 'acp', 'herdr'])
+test('the selector routes preserve Native, ACP, Herdr, then add Remote Hermes', () => {
+  assert.deepEqual([...SELECTOR_ROUTES], ['native', 'acp', 'herdr', 'hermes-remote'])
 })
 
 test('a provider is placed on its selector route and harness', () => {

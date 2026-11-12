@@ -22,6 +22,8 @@ import { VoiceSection } from './voice-settings.js'
 import { ImagesSection } from './image-cell.js'
 import { AboutPage } from './about.js'
 import { ProvidersPage } from './providers-page.js'
+import { HermesRemoteSettings } from './hermes-remote.js'
+import { HermesMark } from './hermes-mark.js'
 import { FolderMenu } from './folder-menu.js'
 import { PermissionExplanations, PermissionFallback, PermissionPicker } from './permission-picker.js'
 import { AUTO, AUTO_FALLBACK } from '../shared/permission-levels.js'
@@ -41,13 +43,13 @@ const SETTINGS_PAGES = [
   ['about', 'About Automagik'],
 ]
 const PAGE_ICONS = {
-  ...SETTINGS_ICONS, models: SlidersIcon, connectors: ConnectorIcon, capabilities: PlugIcon,
+  ...SETTINGS_ICONS, models: SlidersIcon, 'hermes-remote': HermesMark, connectors: ConnectorIcon, capabilities: PlugIcon,
   browser: ConnectorIcon, schedules: ClockIcon, secrets: KeyIcon, 'agent-access': KeyIcon,
   privacy: ShieldIcon, feedback: FeedbackIcon, about: InfoIcon,
 }
 
 function SetSection({ title, className = '', children }) {
-  return h('section', { className: `bt-set-section ${className}`.trim() }, h('h3', null, title), h('div', { className: 'bt-set-card' }, children))
+  return h('section', { className: `bt-set-section ${className}`.trim() }, title ? h('h3', null, title) : null, h('div', { className: 'bt-set-card' }, children))
 }
 function SetRow({ label, hint, children, className = '' }) {
   return h('div', { className: `bt-set-row ${className}`.trim() },
@@ -298,7 +300,11 @@ export function SettingsDialog({ page, id, roster, actions, useUpdate, leaving =
   const extra = actions.pluginSettings?.() ?? []
   // Before About: what the plugins add sits with the team's pages, not after the app's.
   const own = SETTINGS_PAGES.filter(([key]) => key !== 'models' || actions.providers !== undefined)
-  const pages = [...own.filter(([key]) => key !== 'about'), ...extra.map(section => [`plugin:${section.id}`, section.label]), ...own.filter(([key]) => key === 'about')]
+  const pluginPages = extra.map(section => [`plugin:${section.id}`, section.label])
+  // Keep remote agents together, independent of the current display language.
+  const agents = pluginPages.findIndex(([key]) => key === 'plugin:acp-agents')
+  pluginPages.splice(agents < 0 ? pluginPages.length : agents + 1, 0, ['hermes-remote', 'Remote Hermes'])
+  const pages = [...own.filter(([key]) => key !== 'about'), ...pluginPages, ...own.filter(([key]) => key === 'about')]
   const pluginPage = extra.find(section => `plugin:${section.id}` === page)
   const shown = pages.some(([key]) => key === page) ? page : 'general'
   const usageFocus = shown === 'usage' && id ? id : null
@@ -341,6 +347,7 @@ export function SettingsDialog({ page, id, roster, actions, useUpdate, leaving =
           errorLine,
           shown === 'general' ? h(GeneralPage, { roster, actions, run }) : null,
           shown === 'models' ? h(ProvidersPage, { actions, run, Section: SetSection }) : null,
+          shown === 'hermes-remote' ? h(HermesRemoteSettings, { run, Section: SetSection, actions }) : null,
           bot ? h('div', { className: 'bt-settings-form' }, h(BotSettingsForm, { key: bot.id, bot, roster, actions, run })) : null,
           shown === 'bots' && !bot ? h(BotsPage, { roster, actions, run }) : null,
           room ? h('div', { className: 'bt-settings-form' }, h(GroupSettingsForm, { key: room.id, room, roster, actions, run })) : null,
