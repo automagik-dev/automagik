@@ -1,6 +1,6 @@
-// Browser storage keys, under this plugin's own prefix. A DSH may run upstream Omni
-// beside Omni on the same origin, and Omni keeps its own values under omni-ui: and its
-// earlier names, so Omni never reads, moves or removes keys outside its prefix.
+// Browser storage keys, under this plugin's own prefix. A DSH may run the upstream plugin
+// beside Omni on the same origin, and that one keeps its own values under its own prefix and
+// its earlier names, so Omni never reads, moves or removes keys outside its prefix.
 export const STORAGE = {
   unread: 'omni-ui:unread',
   reactions: 'omni-ui:reactions',
@@ -14,7 +14,7 @@ export const STORAGE = {
   permissionAsked: 'omni-ui:permission-asked',
 }
 
-// No legacy names: the keys before this prefix were shared with Omni.
+// No legacy names: the keys before this prefix were shared with the upstream plugin.
 const LEGACY_PREFIXES = []
 // The v1 store kept one page per Bot; v2 keeps a tab strip per Bot.
 const LEGACY_BROWSER_KEYS = []

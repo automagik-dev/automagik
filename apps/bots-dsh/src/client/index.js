@@ -14,25 +14,14 @@ import { CHARACTERS, DEFAULT_MASK, MAIN_LOOK, SHAPES, markupCache, maskOf } from
 import { createSource, EMPTY_ROSTER, indexRoster, isAgentSession } from './sources.js'
 import { teamActions } from './team-actions.js'
 import { themeCss, shellTokens, registry, registerShape, registerTheme, allThemes, layoutOf, widthOf, flatWidthOf } from './themes.js'
-<<<<<<< HEAD
 import { markConversation } from './stage.js'
 import { MENTION_ORIGIN, currentPart, relativeShort } from './text.js'
 import { SHELL_CSS, CONVERSATION_CSS, installStyles, installCompiledStyles } from './styles.js'
 import { BotMark, lookOf } from './mark.js'
 import { TeamSidebar, ChannelsMoved, YouAvatar, AccountLauncher, FooterAccount, BrandMark, BrandName, BotReturn, SIDEBAR_CSS, RETURN_CSS, holdShellShortcuts, openHarnessOnboarding, openHarnessSettings } from './sidebar.js'
+import { frameLayout } from './frame-layout.js'
 import { HeaderPill, NativeBotHeader, NativeControlsNote } from './header.js'
 import { ComposerPermission, ComposerPlus, ComposerVoice, menuIcons } from './composer.js'
-=======
-import { MENTION_ORIGIN, currentPart } from './text.js'
-import { SHELL_CSS, CONVERSATION_CSS, botOwnCss, installStyles, installCompiledStyles, RETURN_TOKENS } from './styles.js'
-import { lookOf } from './mark.js'
-import { TeamSidebar, YouAvatar, AccountLauncher, FooterAccount, BrandMark, BrandName, BotReturn, SIDEBAR_CSS, RETURN_CSS, holdShellShortcuts } from './sidebar.js'
-import { installSettingsShell, SETTINGS_SHELL_CSS } from './settings-shell.js'
-import { frameLayout, readSidebar, writeSidebar, toggledPref, DSH_NARROW } from './frame-layout.js'
-import { installFrameWatch } from './frame-watch.js'
-import { HeaderPill } from './header.js'
-import { ComposerPlus, ComposerVoice, menuIcons } from './composer.js'
->>>>>>> vendor/ds-bot-0.3.6-prepared
 import { CHATS_SOURCE, atSources } from './at-menu.js'
 import { BtwDock, BtwTurnTail } from './btw.js'
 import { SIDE_CSS, sideSource } from './side-chat.js'
@@ -50,33 +39,23 @@ import { IMAGE_CELL_CSS } from './image-cell.js'
 import { ChildApprovalDock, TeamApproval, TEAM_APPROVAL_CSS, isTeamApproval } from './team-approval.js'
 import { AnsweredReply, WidgetDock, WIDGET_CSS } from './widget-cell.js'
 import { HandoffDock, HANDOFF_CSS } from './handoff-card.js'
-<<<<<<< HEAD
-import { headerNavigation, installHeaderNavigation } from './header-navigation.js'
-import { AssistantCell, TriggerCell, TurnProcessCell, Nothing, TurnTailCell, ToolCell } from './cells.js'
-=======
 import { AppAccessDock, ComputerHandoffDock, ComputerIndicator, COMPUTER_CSS } from './computer.js'
-import { installHeaderNavigation } from './header-navigation.js'
+import { headerNavigation, installHeaderNavigation } from './header-navigation.js'
 import { AssistantCell, TriggerCell, TurnProcessCell, Nothing, CellEmpty, TurnTailCell, ToolCell } from './cells.js'
 import { FailureCell, TURN_ERROR_CSS } from './turn-error.js'
->>>>>>> vendor/ds-bot-0.3.6-prepared
 import { Overlays } from './overlays.js'
 import { createBotBrowsers, serveBrowserReads } from './bot-browsers.js'
 import { BROWSER_CSS } from './browser-pane.js'
 import { SECRET_CSS, SecretDock } from './secret-card.js'
-<<<<<<< HEAD
 import { PermissionChoiceDock } from './permission-card.js'
 import { MODEL_CSS, ModelChoiceDock, ModelLineTail, DeepSeekSignIn } from './model-menu.js'
 import { announceCarried, CLI_LOGIN_CSS, CliLoginConversation, installCliLoginBridge, installKnownStateGuard } from './cli-login.js'
 import { createCliLogin } from './cli-login-state.js'
 import { cliLoginBotOf } from './cli-login-model.js'
-=======
 import { ConnectorDock, MailDock, CONNECTOR_CSS } from './connectors.js'
 import { CONNECTORS_PAGE_CSS } from './connectors-page.js'
 import { LearningDock, LearningTurnTail, LEARNING_CSS } from './learning-card.js'
-import { MODEL_CSS, ModelChoiceDock, DeepSeekSignIn } from './model-menu.js'
->>>>>>> vendor/ds-bot-0.3.6-prepared
 import { BOT_SETTINGS_CSS } from './bot-settings.js'
-import { AGENT_CARDS_CSS } from './agent-cards.js'
 import { AVATAR_LIBRARY_CSS } from './avatar-library.js'
 import { GROUP_SETTINGS_CSS } from './group-settings.js'
 import { FOLDER_CSS } from './folder-menu.js'
@@ -94,12 +73,8 @@ import { RIGHTBAR_ATTRIBUTES, columnOpened, createSwitchWindow, drawerOpened, ri
 import { ErrorToast, FEEDBACK_CSS } from './feedback.js'
 import { ABOUT_CSS } from './about.js'
 import { MEMBER_CSS, MemberDock } from './member-status.js'
-<<<<<<< HEAD
 import { SUGGEST_CSS, SuggestionDock } from './suggestions.js'
-=======
-import { IM_CSS } from './im-page.js'
 import { GOAL_CSS } from './goal.js'
->>>>>>> vendor/ds-bot-0.3.6-prepared
 import { USER_MESSAGE_CSS, UserMessageCell, canDrawUserMessages } from './user-message.js'
 import { QueueDock, QUEUE_CSS } from './queue-dock.js'
 import { noticeApprovals } from './approval-notices.js'
@@ -108,7 +83,7 @@ import { agentSessionToReuse, singleFlight } from './agent-new.js'
 
 export const inject = ['sessions', 'uiWorkspace', 'uiConversation', 'slots', 'theme', 'layout']
 // What a state answer carries that is not roster data, or is kept apart from it.
-const LIVE_OWN = new Set(['revision', 'unchanged', 'activity', 'work', 'memoryNews', 'memoryReviews'])
+const LIVE_OWN = new Set(['revision', 'unchanged', 'activity', 'work', 'memoryNews', 'memoryReviews', 'liveKey', 'computerLive'])
 
 // What other Omni plugins build on (the channels and canvas plugins, which require this
 // bundle through `dsh.client.external`). They share this module instance: one interface
@@ -131,14 +106,9 @@ export const omni = Object.freeze({
 const DSH_SETTINGS = new Set(['general', 'account', 'models', 'agent-presets', 'plugins'])
 
 export function apply(ctx) {
-<<<<<<< HEAD
   ctx.effect(() => installLocale(ctx.get('locale')), 'omni-ui: interface copy')
-  const roster = createSource(EMPTY_ROSTER)
   // A Bot's own browser hold, from the team view, where no browser bridge reports holds.
   const hostHolds = createSource({})
-=======
-  ctx.effect(() => installLocale(ctx.get('locale')), 'omni-ui: interface copy')
->>>>>>> vendor/ds-bot-0.3.6-prepared
   migrateStorage()
   // The window's cached prefs stand in until the first pull answers: a saved
   // `enterToSend: false` then already holds, instead of Enter sending meanwhile.
@@ -153,37 +123,27 @@ export function apply(ctx) {
   let seenAt = seenStore.read()
   // `details` is the panel's subject (a Session id); `view` picks details or the
   // subject Bot's browser inside it.
-  const ui = createSource({ details: null, view: 'details', renaming: false, tab: null, side: null, newChat: null, exchange: null, menu: null, voice: null, palette: null, quote: null, settings: null, memory: null, toast: null, signIn: null, renameAgent: null, unread: unreadStore.read(), reactions: reactionStore.read(), visits: {}, panelYield: false, leftDrawer: false, bootFailed: false, goalCompose: null, goalOpen: null })
-  // The left column's kept preference, and the frame geometry the layout rules
-  // in frame-layout.js read: the window and the shell's collapsed track come from
-  // installFrameWatch, the open column's width is the user's own.
-  let sidebarSaved = readSidebar()
-  const sidebarPref = createSource(sidebarSaved.pref)
-  const frame = createSource({ viewport: typeof window === 'undefined' ? 0 : window.innerWidth, sidebarWidth: sidebarSaved.width, collapsedWidth: 0, collapsed: false })
+  const ui = createSource({ details: null, view: 'details', renaming: false, tab: null, side: null, newChat: null, exchange: null, menu: null, voice: null, palette: null, quote: null, settings: null, memory: null, toast: null, signIn: null, renameAgent: null, unread: unreadStore.read(), reactions: reactionStore.read(), visits: {}, panelYield: false, bootFailed: false, goalCompose: null, goalOpen: null })
+  // The window's width, which the Bot panel's fit rule reads (frame-layout.js). The team's bar
+  // sits in the shell's own sidebar, which keeps its own track: no column of ours takes room.
+  const frame = createSource({ viewport: typeof window === 'undefined' ? 0 : window.innerWidth })
   // Bot mode paints the whole team surface; Agent mode withdraws every slot and
   // style so the shell's own interface returns. `plain` stays false until a Bot-mode
   // view hosts a plain session, which drops only the conversation replacements.
   const surface = createSource({ mode: readMode(), plain: false })
-  // Whether Omni holds the settings seat; Overlays draws the Settings dialog while it does not.
-  const settingsShellHeld = createSource(false)
-  let settingsShell = null
   // DSH Agent Session ids from the last pull, so a reload already knows the main
   // view is a plain Session before the team answers.
   let agentSessionCache = new Set()
   try { agentSessionCache = new Set(JSON.parse(localStorage.getItem(STORAGE.agentSessions) ?? '[]')) } catch { agentSessionCache = new Set() }
   // Sessions adopted on this window (workspace pick, fork) but not yet in the roster.
   const pendingAdopt = new Map()
-<<<<<<< HEAD
   // Bot ownership is distinct from standalone Agent ownership and native rendering.
   const pendingBot = new Map()
   let nativeDestination
-  const isAgentSessionId = id => isAgentSession(roster.getSnapshot(), agentSessionCache, id) || pendingAdopt.has(id) || pendingBot.has(id) || (id !== undefined && id === nativeDestination)
-=======
   // A create can finish before the DSH list publishes its Session (#1225).
   const pendingAgentSession = new Map()
   const agentNewInFlight = new Map()
-  const isAgentSessionId = id => isAgentSession(roster.getSnapshot(), agentSessionCache, id) || pendingAdopt.has(id)
->>>>>>> vendor/ds-bot-0.3.6-prepared
+  const isAgentSessionId = id => isAgentSession(roster.getSnapshot(), agentSessionCache, id) || pendingAdopt.has(id) || pendingBot.has(id) || (id !== undefined && id === nativeDestination)
   const agentOfSession = id => roster.getSnapshot().agentOf[id] ?? pendingAdopt.get(id)
   // The workspace a Session lives in, for follow-up creates and switch detection.
   const workspaces = ctx.get('workspaces')
@@ -268,11 +228,7 @@ export function apply(ctx) {
   const pull = async () => {
     const order = ++pulls
     const known = roster.getSnapshot()
-<<<<<<< HEAD
-    const value = await call('state', { since: known.revision, models: known.modelsKey ?? '', locale: language(), allowPlace: allowPlace() })
-=======
-    const value = await call('state', { since: known.revision, models: known.modelsKey ?? '', live: liveKey, locale: language() })
->>>>>>> vendor/ds-bot-0.3.6-prepared
+    const value = await call('state', { since: known.revision, models: known.modelsKey ?? '', live: liveKey, locale: language(), allowPlace: allowPlace() })
     if (order < applied) return
     applied = order
     if (value.liveKey !== undefined) liveKey = value.liveKey
@@ -290,13 +246,15 @@ export function apply(ctx) {
     }
     if (value.memoryNews !== undefined) noteMemoryNews(value.memoryNews)
     const current = roster.getSnapshot()
-<<<<<<< HEAD
     // Connector and capability states change without a new revision, and so does what
     // other Omni plugins add to every answer (the host's extend.js), such as the events
     // Omni listens to: an unchanged answer carries only those.
     const live = {}
     if (value.connectors !== undefined && JSON.stringify(value.connectors) !== JSON.stringify(current.connectors ?? [])) live.connectors = value.connectors
     if (value.capabilityStatuses !== undefined && JSON.stringify(value.capabilityStatuses) !== JSON.stringify(current.capabilityStatuses ?? {})) live.capabilityStatuses = value.capabilityStatuses
+    if (value.learning !== undefined && JSON.stringify(value.learning) !== JSON.stringify(current.learning ?? {})) live.learning = value.learning
+    if (value.learningSettled !== undefined && JSON.stringify(value.learningSettled) !== JSON.stringify(current.learningSettled ?? {})) live.learningSettled = value.learningSettled
+    if (value.imVia !== undefined && JSON.stringify(value.imVia) !== JSON.stringify(current.imVia ?? {})) live.imVia = value.imVia
     if (value.unchanged) {
       for (const [key, next] of Object.entries(value)) {
         if (!LIVE_OWN.has(key) && !(key in live) && JSON.stringify(next) !== JSON.stringify(current[key])) live[key] = next
@@ -305,19 +263,6 @@ export function apply(ctx) {
     if (value.btwCards !== undefined && JSON.stringify(value.btwCards) !== JSON.stringify(current.btwCards ?? {})) live.btwCards = value.btwCards
     if (value.sideChats !== undefined && JSON.stringify(value.sideChats) !== JSON.stringify(current.sideChats ?? {})) live.sideChats = value.sideChats
     if (value.browserHolds !== undefined && JSON.stringify(value.browserHolds) !== JSON.stringify(hostHolds.getSnapshot())) hostHolds.set(value.browserHolds)
-=======
-    // Connector, capability and phone states change without a new revision.
-    const live = {}
-    if (value.connectors !== undefined && JSON.stringify(value.connectors) !== JSON.stringify(current.connectors ?? [])) live.connectors = value.connectors
-    if (value.capabilityStatuses !== undefined && JSON.stringify(value.capabilityStatuses) !== JSON.stringify(current.capabilityStatuses ?? {})) live.capabilityStatuses = value.capabilityStatuses
-    if (value.phone !== undefined && JSON.stringify(value.phone) !== JSON.stringify(current.phone ?? null)) live.phone = value.phone
-    if (value.learning !== undefined && JSON.stringify(value.learning) !== JSON.stringify(current.learning ?? {})) live.learning = value.learning
-    if (value.learningSettled !== undefined && JSON.stringify(value.learningSettled) !== JSON.stringify(current.learningSettled ?? {})) live.learningSettled = value.learningSettled
-    if (value.btwCards !== undefined && JSON.stringify(value.btwCards) !== JSON.stringify(current.btwCards ?? {})) live.btwCards = value.btwCards
-    if (value.sideChats !== undefined && JSON.stringify(value.sideChats) !== JSON.stringify(current.sideChats ?? {})) live.sideChats = value.sideChats
-    if (value.imStatus !== undefined && JSON.stringify(value.imStatus) !== JSON.stringify(current.imStatus ?? {})) live.imStatus = value.imStatus
-    if (value.imVia !== undefined && JSON.stringify(value.imVia) !== JSON.stringify(current.imVia ?? {})) live.imVia = value.imVia
->>>>>>> vendor/ds-bot-0.3.6-prepared
     if (Object.keys(live).length > 0 && current.ready) roster.set({ ...current, ...live })
     if (value.unchanged || (value.revision === current.revision && value.modelsKey === current.modelsKey)) return
     // On a browser with no visit record yet, everything already there counts as seen.
@@ -410,27 +355,9 @@ export function apply(ctx) {
     }, 'omni-ui: app update status')
   }
 
-<<<<<<< HEAD
   // Bot browsers need a webview bridge: DSH Desktop's, or a desktop app's of the same shape
   // (`views`: the Automagik app's, whose views are the Bot's own browser). The host turns the
   // panel on there (`browser` in the state).
-=======
-  // The Omni app's own updater; its state goes beside the host's answer as ownApp,
-  // which the About row turns into the app's update state and buttons.
-  const ownAppUpdates = globalThis.dsBotApp?.updates ?? null
-  if (ownAppUpdates?.state && ownAppUpdates.subscribe) {
-    ctx.effect(() => {
-      let stopped = false
-      const take = (ownApp) => { if (!stopped && ownApp) update.set(previous => ({ ...previous, ownApp })) }
-      void ownAppUpdates.state().then(take, () => {})
-      const unsubscribe = ownAppUpdates.subscribe(take)
-      return () => { stopped = true; unsubscribe?.() }
-    }, 'omni-ui: own app update state')
-  }
-
-  // Bot browsers need a webview bridge: DSH Desktop's, or the desktop app's of the
-  // same shape. The host serves read_browser only in those two (`browser` in the state).
->>>>>>> vendor/ds-bot-0.3.6-prepared
   const bridge = (window.dshDesktop?.protocolVersion === 1 ? window.dshDesktop.browser : globalThis.dsBotApp?.browser) ?? null
   const browsers = bridge ? createBotBrowsers({ bridge, createSource, savedTabs: () => roster.getSnapshot().browserTabs }) : null
   if (browsers) {
@@ -568,13 +495,12 @@ export function apply(ctx) {
   const mainView = () => Object.values(ctx.sessions.list.getSnapshot().byId ?? {}).find(session => (session?.retainedBy?.mainView ?? 0) > 0)?.id
   const show = listedOpener({ list: ctx.sessions.list, refresh: () => Promise.resolve(ctx.sessions.refresh?.()).catch(quietly('refresh sessions')), open: (target) => { expected = target; ctx.uiWorkspace.openSession(target) }, current: mainView })
   // Whether the open Bot panel is folded away for lack of room: its opener then
-  // means "show it" (the column yields), not "close it". A panel shown because
-  // the column already yielded is not folded, so its opener closes it.
+  // means "show it" (over the conversation), not "close it". A panel shown because
+  // it was asked for that way is not folded, so its opener closes it.
   const panelFolded = (view) => {
     const state = ui.getSnapshot()
     if (state.details === null) return false
-    const f = frame.getSnapshot()
-    return frameLayout({ viewport: f.viewport, sidebarWidth: f.sidebarWidth, pref: sidebarPref.getSnapshot(), drawer: state.leftDrawer, panel: { view: view ?? state.view, yielded: state.panelYield === true } }).panel === 'folded'
+    return frameLayout({ viewport: frame.getSnapshot().viewport, sidebarWidth: 0, pref: 'hidden', panel: { view: view ?? state.view, yielded: state.panelYield === true } }).panel === 'folded'
   }
   const yieldBrowser = state => state.panelYield === true || panelFolded('browser')
   // Bot mode's view must hold a team conversation; an outside Session wears the
@@ -600,12 +526,8 @@ export function apply(ctx) {
   }
   let cliLogin
   const actions = {
-<<<<<<< HEAD
-    ...teamActions({ call, after, partFor, roster, ui, live, cards, heldCards, turnClock, openSession: id => actions.openSession(id), loginState: () => cliLogin }),
-=======
-    ...teamActions({ call, after, partFor, roster, ui, live, cards, heldCards, turnClock, panelFolded }),
+    ...teamActions({ call, after, partFor, roster, ui, live, cards, heldCards, turnClock, openSession: id => actions.openSession(id), loginState: () => cliLogin, panelFolded }),
     learningAnswer: (id, approve) => after(call('learning-answer', { id, approve })),
->>>>>>> vendor/ds-bot-0.3.6-prepared
     // The full-pane overlays sit above the conversation, so opening one must dismiss them
     // or the click appears to do nothing.
     isAgentSession: id => isAgentSessionId(id),
@@ -653,21 +575,8 @@ export function apply(ctx) {
     },
     newAgentSession: async (agentId) => {
       const agent = roster.getSnapshot().agentsById[agentId]
-<<<<<<< HEAD
       // Tasks come from the Bots that start them, never from the row.
       if (agent === undefined || agent.kind === 'tasks') return
-      const list = ctx.sessions.list.getSnapshot()
-      const recent = agentSessions(agentId).sort((a, b) => (list.byId[b]?.updatedAt ?? 0) - (list.byId[a]?.updatedAt ?? 0))
-      // An untouched Session is already the new conversation the user wants.
-      if (recent.length > 0 && list.byId[recent[0]]?.blank === true) {
-        actions.openAgentSession(recent[0])
-        return recent[0]
-      }
-      const { sessionId } = await after(call('agent-session', { agentId, workspaceId: workspaceOf(recent[0]) }))
-      actions.openAgentSession(sessionId)
-      return sessionId
-=======
-      if (agent === undefined) return
       // One create per Agent at a time, so two clicks in a row make one Session.
       return singleFlight(agentNewInFlight, agentId, async () => {
         const list = ctx.sessions.list.getSnapshot()
@@ -684,7 +593,6 @@ export function apply(ctx) {
         actions.openAgentSession(sessionId)
         return sessionId
       })
->>>>>>> vendor/ds-bot-0.3.6-prepared
     },
     archiveAgentSession: async (agentId, sessionId) => {
       await after(call('agent-archive', { agentId, sessionId }))
@@ -722,24 +630,6 @@ export function apply(ctx) {
     },
     selectPanel: (id) => { ctx.layout.selectPanel(id) },
     toggleSidebar: () => { ctx.layout.toggleSidebar() },
-    // The left column's own preference: 'open', 'rail' or 'hidden'. The switch
-    // remembers the shown one it hid; a drag sets the open column's width.
-    setSidebarPref: (pref) => {
-      const next = pref === 'rail' || pref === 'hidden' ? pref : 'open'
-      sidebarSaved = { ...sidebarSaved, pref: next, ...(next === 'hidden' ? {} : { shown: next }) }
-      writeSidebar(sidebarSaved)
-      sidebarPref.set(next)
-    },
-    toggleLeftHidden: () => {
-      ui.set(state => (state.leftDrawer || state.panelYield ? { ...state, leftDrawer: false, panelYield: false } : state))
-      actions.setSidebarPref(toggledPref(sidebarPref.getSnapshot(), sidebarSaved.shown))
-    },
-    setSidebarWidth: (width) => {
-      sidebarSaved = { ...sidebarSaved, width }
-      writeSidebar(sidebarSaved)
-      frame.set(state => (state.sidebarWidth === width ? state : { ...state, sidebarWidth: width }))
-    },
-    setLeftDrawer: (on) => ui.set(state => (state.leftDrawer === on ? state : { ...state, leftDrawer: on })),
     setPanelYield: (on) => ui.set(state => (state.panelYield === on ? state : { ...state, panelYield: on })),
     // Agent mode hands the surface back to the shell; everything open on the Bot
     // surface closes first so nothing stale reopens on the way back.
@@ -757,9 +647,6 @@ export function apply(ctx) {
       }
       writeMode(mode)
       surface.set(state => ({ ...state, mode }))
-      // The Bot view kept the shell's sidebar collapsed under its own column; the
-      // shell's own view gets it back (below DSH_NARROW the shell decides itself).
-      if (mode === 'agent' && window.innerWidth >= DSH_NARROW && frame.getSnapshot().collapsed) ctx.layout.toggleSidebar()
       if (mode !== 'bot') return
       ensureBotHome()
     },
@@ -898,7 +785,6 @@ export function apply(ctx) {
   actions.openPlugins = () => ctx.get('pluginNavigation')?.openList()
   // The Voice Input plugin's speech Remote; absent while that plugin is off.
   actions.speech = () => ctx.get('remote.speech') ?? undefined
-<<<<<<< HEAD
   // DSH's own settings: models, providers, keys and its plugins.
   actions.openHarnessSettings = openHarnessSettings
   // Pages other plugins add to DSH's settings (its settings.section slot), such as Omni's link:
@@ -909,17 +795,11 @@ export function apply(ctx) {
     .map(({ component, options }) => ({ id: options.id, order: options.order ?? 0, label: typeof options.label === 'function' ? options.label() : String(options.label ?? options.id), Component: component }))
     .sort((a, b) => a.order - b.order)
   actions.openHarnessOnboarding = openHarnessOnboarding
-  actions.voiceSetup = () => {
-=======
-  // One of DSH's onboarding editors, such as the DeepSeek API key form, opened by id
-  // through the settings shell's coordinator.
-  actions.openHarnessOnboarding = id => settingsShell?.openOnboarding(id)
   // With the plugin manager mounted, setup is its bundle page (the model's size
   // and download notes live there). Where it is not mounted — the desktop app's
   // profile has no plugin manager — the speech Remote prepares the provider
   // itself, and the voice pane follows its progress.
   actions.voiceSetup = (providerId) => {
->>>>>>> vendor/ds-bot-0.3.6-prepared
     const navigation = ctx.get('pluginNavigation')
     if (navigation !== undefined) return { navigate: () => navigation.openBundle(VOICE_BUNDLE) }
     const speech = ctx.get('remote.speech')
@@ -968,11 +848,7 @@ export function apply(ctx) {
   actions.modelStateOf = botId => work.getSnapshot().models?.[botId]
   const browserPages = browsers?.pages ?? createSource({})
   const browserTabs = browsers?.tabs ?? createSource({})
-<<<<<<< HEAD
   const browserHolds = browsers?.holds ?? hostHolds
-  const face = () => ({ actions, hooks: { roster, ui, activity, work, memoryNews, registry, turnClock, live, cards, heldCards, browserPages, browserTabs, browserHolds, surface, update, panel: ctx.layout.panelInfo } })
-=======
-  const browserHolds = browsers?.holds ?? createSource({})
 
   // The desktop app carries the floating indicator and the tray entries, and reads the
   // OS idle time for the foreground gate; the entries and the pushes ride its bridge.
@@ -1049,14 +925,7 @@ export function apply(ctx) {
       else if (kind === 'letgo') void actions.computerAllowForeground(botId)
     })
   }
-  const face = () => ({ actions, hooks: { roster, ui, activity, work, memoryNews, registry, turnClock, live, computer, cards, heldCards, browserPages, browserTabs, browserHolds, surface, update, frame, sidebarPref, settingsShellHeld } })
-  // Omni holds the settings seat in every mode, Agent mode included: the bundle patch
-  // turns DSH's own shell off, and this one draws DSH's settings pages in Omni's dialog.
-  ctx.effect(() => {
-    const offStyles = installCompiledStyles(SETTINGS_SHELL_CSS, 'settings-shell')
-    settingsShell = installSettingsShell(ctx, { face, actions, ui, held: settingsShellHeld })
-    return () => { settingsShell?.dispose(); settingsShell = null; offStyles() }
-  }, 'omni-ui: settings shell')
+  const face = () => ({ actions, hooks: { roster, ui, activity, work, memoryNews, registry, turnClock, live, computer, cards, heldCards, browserPages, browserTabs, browserHolds, surface, update, frame, panel: ctx.layout.panelInfo } })
   // The queue dock's per-session verbs, supplied the way the shell's own dock
   // injects them (the session facade and the conversation service).
   const queueFace = (sessionId) => ({
@@ -1064,7 +933,6 @@ export function apply(ctx) {
     updateQueue: async (itemId, action) => (await ctx.sessions.binding(sessionId)?.session?.updateQueue(itemId, action)) ?? { ok: false },
     loadImage: (attachment) => ctx.uiConversation.imageUrl(sessionId, attachment),
   })
->>>>>>> vendor/ds-bot-0.3.6-prepared
   ctx.effect(() => noticeApprovals({
     work,
     roster,
@@ -1251,80 +1119,48 @@ export function apply(ctx) {
     controller.toggleSource(CHATS_SOURCE, { trigger: '@', query: '', quoted: false, position: 'inline', span })
   }
 
-  // The panel's yield flag and the drawer's flag follow the frame: opening (or
-  // re-aiming) a panel that does not fit yields the column to the rail; a panel
-  // that fits again, or is closed, and a drawer that no longer applies drop
-  // their flags.
+  // The panel's yield flag follows the window: opening (or re-aiming) a panel that does not
+  // fit shows it over the conversation; a panel that fits again, or is closed, drops the flag.
   const installFrameSync = () => {
     let lastDetails = ui.getSnapshot().details
     const sync = () => {
       const s = ui.getSnapshot()
-      const f = frame.getSnapshot()
       // Only a fresh open counts: a folded panel that just follows the chat to
       // another subject is not the user asking to see it — the openers in
       // team-actions carry the yield themselves.
       const opened = s.details !== null && lastDetails === null
       lastDetails = s.details
-      const layout = frameLayout({ viewport: f.viewport, sidebarWidth: f.sidebarWidth, pref: sidebarPref.getSnapshot(), drawer: s.leftDrawer === true, panel: s.details === null ? null : { view: s.view, yielded: false } })
+      const layout = frameLayout({ viewport: frame.getSnapshot().viewport, sidebarWidth: 0, pref: 'hidden', panel: s.details === null ? null : { view: s.view, yielded: false } })
       if (s.details === null) {
         if (s.panelYield) actions.setPanelYield(false)
       } else if (!s.panelYield && opened && layout.panel === 'folded') actions.setPanelYield(true)
       else if (s.panelYield && layout.panel === 'shown') actions.setPanelYield(false)
-      if (s.leftDrawer === true && layout.left !== 'drawer') actions.setLeftDrawer(false)
     }
-    const offs = [ui.subscribe(sync), frame.subscribe(sync), sidebarPref.subscribe(sync)]
+    const offs = [ui.subscribe(sync), frame.subscribe(sync)]
     return () => { for (const off of offs) off() }
+  }
+  const installViewportWatch = () => {
+    const read = () => frame.set(state => (state.viewport === window.innerWidth ? state : { ...state, viewport: window.innerWidth }))
+    read()
+    window.addEventListener('resize', read)
+    return () => window.removeEventListener('resize', read)
   }
 
   // The shell group paints the team surface around the session; the conversation
   // group re-skins the session itself. Each step returns a disposer from slots.inject,
   // so a surface change withdraws the whole group and the outlets re-render.
-  // The shell group's sheets. Strip and panel styles also serve the side-chat tabs, which need no bridge.
-  const SHELL_SHEETS = [
-    [SHELL_CSS, 'shell'],
-    [SIDEBAR_CSS, 'sidebar'],
-    [SECRET_CSS + CONNECTOR_CSS + CONNECTORS_PAGE_CSS, 'secrets'],
-    [LEARNING_CSS, 'learning'],
-    [MODEL_CSS + FOLDER_CSS + BOT_SETTINGS_CSS + AGENT_CARDS_CSS + GROUP_SETTINGS_CSS + AVATAR_LIBRARY_CSS, 'models'],
-    [USAGE_CSS, 'usage'],
-    [SCHEDULE_CSS, 'schedules'],
-    [FEEDBACK_CSS, 'feedback'],
-    [ABOUT_CSS, 'about'],
-    [MEMBER_CSS, 'members'],
-    [IM_CSS, 'im'],
-    [GOAL_CSS, 'goal'],
-    [USER_MESSAGE_CSS, 'user-messages'],
-    [WIDGET_CSS, 'widgets'],
-    [HANDOFF_CSS, 'handoff'],
-    [SIDE_CSS, 'side'],
-    [BROWSER_CSS, 'browser'],
-  ]
-  // Settings outside Bot mode (Agent mode) brings Omni's own rules and colors while it
-  // shows; the shell overrides and DSH's tokens stay as Agent mode has them.
-  let shellSheets = 0
-  actions.holdSettingsLook = () => {
-    if (shellSheets > 0) return () => {}
-    const snapshot = roster.getSnapshot()
-    const prefs = snapshot.ready ? snapshot.prefs ?? {} : savedPrefs
-    const themes = allThemes()
-    const theme = themes[prefs.theme] ?? themes.deepseek
-    const offs = [
-      ...SHELL_SHEETS.map(([text, tag]) => installCompiledStyles(botOwnCss(text), `settings-${tag}`)),
-      installCompiledStyles(botOwnCss(themeCss(theme, isHex(prefs.accent) ? prefs.accent : undefined)), 'settings-theme'),
-    ]
-    return () => { for (const off of offs) off() }
-  }
   const installShell = () => [
-<<<<<<< HEAD
     () => installCompiledStyles(SHELL_CSS, 'shell'),
     () => installCompiledStyles(SIDEBAR_CSS, 'sidebar'),
-    () => installCompiledStyles(SECRET_CSS, 'secrets'),
+    () => installCompiledStyles(SECRET_CSS + CONNECTOR_CSS + CONNECTORS_PAGE_CSS, 'secrets'),
+    () => installCompiledStyles(LEARNING_CSS, 'learning'),
     () => installCompiledStyles(MODEL_CSS + CLI_LOGIN_CSS + FOLDER_CSS + BOT_SETTINGS_CSS + GROUP_SETTINGS_CSS + AVATAR_LIBRARY_CSS, 'models'),
     () => installCompiledStyles(USAGE_CSS, 'usage'),
     () => installCompiledStyles(SCHEDULE_CSS, 'schedules'),
     () => installCompiledStyles(FEEDBACK_CSS, 'feedback'),
     () => installCompiledStyles(ABOUT_CSS, 'about'),
     () => installCompiledStyles(MEMBER_CSS, 'members'),
+    () => installCompiledStyles(GOAL_CSS, 'goal'),
     () => installCompiledStyles(USER_MESSAGE_CSS, 'user-messages'),
     () => installCompiledStyles(TASK_CSS, 'tasks'),
     () => installCompiledStyles(DESKTOP_UPDATE_CSS, 'desktop-update'),
@@ -1352,12 +1188,8 @@ export function apply(ctx) {
     () => installCompiledStyles(SIDE_CSS, 'side'),
     // Strip and panel styles also serve the side-chat tabs, which need no bridge.
     () => installCompiledStyles(BROWSER_CSS, 'browser'),
-=======
-    () => { shellSheets += 1; return () => { shellSheets -= 1 } },
-    ...SHELL_SHEETS.map(([text, tag]) => () => installCompiledStyles(text, tag)),
-    () => installFrameWatch(frame),
+    () => installViewportWatch(),
     () => installFrameSync(),
->>>>>>> vendor/ds-bot-0.3.6-prepared
     () => installTheme(),
     () => shadow('sidebar.workspaces', { priority: BOT_PRIORITY, inject: face }, TeamSidebar),
     () => shadow('sidebar.brand.mark', { priority: BOT_PRIORITY }, BrandMark),
@@ -1447,39 +1279,25 @@ export function apply(ctx) {
     () => shadow('conversation.chat.node', { key: 'assistant-step', priority: BOT_PRIORITY, locale: 'chat', inject: assistantFace }, AssistantCell),
     () => shadow('conversation.chat.node', { key: 'turn-trigger', priority: BOT_PRIORITY, locale: 'chat', inject: face }, TriggerCell),
     () => shadow('conversation.chat.node', { key: 'tool-call', priority: BOT_PRIORITY, locale: 'chat', inject: face }, ToolCell),
-<<<<<<< HEAD
     () => simpleOnly(() => shadow('conversation.chat.node', { key: 'turn-process', priority: BOT_PRIORITY, locale: 'chat', inject: face }, TurnProcessCell)),
-=======
-    () => shadow('conversation.chat.node', { key: 'turn-process', priority: BOT_PRIORITY, locale: 'chat', inject: face }, TurnProcessCell),
     // A failed turn shows what the user can do about it instead of the provider's raw text.
     () => shadow('conversation.chat.node', { key: 'turn-error', priority: BOT_PRIORITY, locale: 'chat', inject: face }, FailureCell),
->>>>>>> vendor/ds-bot-0.3.6-prepared
     // DSH's own turn tail stays, so what other plugins add there shows, such as the
     // cards of the files a turn delivered; its copy and branch row is hidden.
     () => shadow('conversation.chat.turnTail', { id: 'bot-turn-separators', order: 1000, inject: face }, TurnTailCell),
     // A side question is not a transcript row. After its snapshot turn closes it
     // sits on that turn's tail, ahead of the time separator.
     () => shadow('conversation.chat.turnTail', { id: 'bot-btw', order: 800, priority: BOT_PRIORITY, inject: face }, BtwTurnTail),
-<<<<<<< HEAD
+    () => shadow('conversation.chat.turnTail', { id: 'bot-learning', order: 850, priority: BOT_PRIORITY, inject: face }, LearningTurnTail),
     // While a Bot's chat holds only its greeting, the line under it names its model.
     () => shadow('conversation.chat.turnTail', { id: 'bot-model-line', order: 900, priority: BOT_PRIORITY, inject: face }, ModelLineTail),
     // A Bot condenses its conversation without telling anyone; the chat keeps showing
     // every message.
     () => shadow('conversation.chat.node', { key: 'question-reply', priority: BOT_PRIORITY, locale: 'chat' }, AnsweredReply),
-    () => simpleOnly(() => shadow('conversation.chat.node', { key: 'compaction', priority: BOT_PRIORITY, locale: 'chat' }, Nothing)),
+    () => simpleOnly(() => shadow('conversation.chat.node', { key: 'compaction', priority: BOT_PRIORITY, locale: 'chat' }, CellEmpty)),
     // A Bot chat leaves DSH's context lines (tool updates, injected context) out; a Bot
     // message spliced in mid-turn gets an event line from the step that reads it instead.
-    () => simpleOnly(() => shadow('conversation.chat.node', { key: 'context', priority: BOT_PRIORITY, locale: 'chat' }, Nothing)),
-=======
-    () => shadow('conversation.chat.turnTail', { id: 'bot-learning', order: 850, priority: BOT_PRIORITY, inject: face }, LearningTurnTail),
-    // A Bot condenses its conversation without telling anyone; the chat keeps showing
-    // every message.
-    () => shadow('conversation.chat.node', { key: 'question-reply', priority: BOT_PRIORITY, locale: 'chat' }, AnsweredReply),
-    () => shadow('conversation.chat.node', { key: 'compaction', priority: BOT_PRIORITY, locale: 'chat' }, CellEmpty),
-    // A Bot chat leaves DSH's context lines (tool updates, injected context) out; a Bot
-    // message spliced in mid-turn gets an event line from the step that reads it instead.
-    () => shadow('conversation.chat.node', { key: 'context', priority: BOT_PRIORITY, locale: 'chat' }, CellEmpty),
->>>>>>> vendor/ds-bot-0.3.6-prepared
+    () => simpleOnly(() => shadow('conversation.chat.node', { key: 'context', priority: BOT_PRIORITY, locale: 'chat' }, CellEmpty)),
     ...(canDrawUserMessages() ? ['user', 'steering'].map(key => () => shadow('conversation.chat.node', { key, priority: BOT_PRIORITY, locale: 'chat', inject: face }, UserMessageCell)) : []),
     () => installPackCell('conversation.input.permission', 'permission'),
     () => simpleOnly(() => shadow('conversation.input.plan', { priority: BOT_PRIORITY }, Nothing)),
@@ -1512,12 +1330,9 @@ export function apply(ctx) {
     () => shadow('conversation.input.dock', { id: 'bot-question', order: -100, inject: face }, QuestionDock),
     () => shadow('conversation.input.dock', { id: 'bot-view', order: -95, inject: face }, WidgetDock),
     () => shadow('conversation.input.dock', { id: 'bot-secret', order: -90, inject: face }, SecretDock),
-<<<<<<< HEAD
-    () => shadow('conversation.input.dock', { id: 'bot-suggest', order: -80, inject: face }, SuggestionDock),
-=======
     () => shadow('conversation.input.dock', { id: 'bot-connector', order: -89, inject: face }, ConnectorDock),
     () => shadow('conversation.input.dock', { id: 'bot-mail', order: -88, inject: face }, MailDock),
->>>>>>> vendor/ds-bot-0.3.6-prepared
+    () => shadow('conversation.input.dock', { id: 'bot-suggest', order: -80, inject: face }, SuggestionDock),
     () => shadow('conversation.input.dock', { id: 'bot-handoff', order: -85, inject: face }, HandoffDock),
     () => shadow('conversation.input.dock', { id: 'bot-computer-handoff', order: -84, inject: face }, ComputerHandoffDock),
     () => shadow('conversation.input.dock', { id: 'bot-computer-app', order: -83, inject: face }, AppAccessDock),
@@ -1528,7 +1343,7 @@ export function apply(ctx) {
     () => shadow('conversation.input.dock', { id: 'queue', order: 20, priority: BOT_PRIORITY, inject: queueFace }, QueueDock),
   ]
   // The return button belongs to neither group: it renders only in Agent mode.
-  ctx.effect(() => installCompiledStyles(RETURN_TOKENS + RETURN_CSS, 'return'), 'omni-ui: return styles')
+  ctx.effect(() => installCompiledStyles(RETURN_CSS, 'return'), 'omni-ui: return styles')
   ctx.effect(() => installCompiledStyles(COMPUTER_CSS, 'computer'), 'omni-ui: computer styles')
   shadow('sidebar.footer.action', { id: 'bot-return', order: -300, inject: face }, BotReturn)
   ctx.effect(() => installFavicon(), 'omni-ui: Omni tab icon')
