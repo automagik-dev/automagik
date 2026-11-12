@@ -388,7 +388,7 @@ export const SECRET_CSS = `
 .bt-secret-inline .bt-input{flex:1;height:34px}
 .bt-secret-row-actions{display:flex;align-items:center;justify-content:flex-end;gap:8px;flex-wrap:wrap}
 .bt-secret-row-actions .bt-set-hint{flex:1}
-.bt-secret-danger{color:var(--bt-danger);display:inline-flex;align-items:center;gap:4px}
+.bt-secret-danger{color:var(--st-bad-strong,var(--bt-danger));display:inline-flex;align-items:center;gap:4px}
 .bt-secret-danger svg{width:13px;height:13px}
 .bt-secret-add .bt-input{height:34px}
 @media (prefers-reduced-motion:reduce){.bt-secret-glide{transition:none}.bt-secret-check,.bt-secret-done,.bt-secret-ok,.bt-secret-edit{animation:none}}

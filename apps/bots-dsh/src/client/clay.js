@@ -62,7 +62,7 @@ html body[data-ds-dark-theme]{
   --clay-cream:#322a39;--clay-niche:#16121a;--clay-ok:#91f1be;--clay-bad:#e8695f;
   --clay-shine:#fff;--clay-umber:#000;--clay-hi:84%;--clay-lo:62%;--clay-ledge:50%;
   --clay-cast:rgba(0,0,0,.42);--clay-cast-far:rgba(0,0,0,.28);--clay-ring:#f2a6dc;
-  --st-ok:#91f1be;--st-okdot:#71e8a8;--st-bad:#e8695f;--st-warn:#f4cc7e;--st-warndot:#f4bb43;--st-work:#3faec2;--st-warn-strong:#f4cc7e;--st-bad-strong:#eb7b72;
+  --st-ok:#91f1be;--st-okdot:#71e8a8;--st-bad:#e8695f;--st-warn:#f4cc7e;--st-warndot:#f4bb43;--st-work:#3faec2;--st-warn-strong:#f4cc7e;--st-bad-strong:#ffa89e;
   --bt-hover:rgba(255,240,225,.07);--bt-active:rgba(255,240,225,.12);--bt-danger:#e8695f;--bt-green:#91f1be}
 html body ::selection{background:var(--clay-lilac);color:var(--clay-lilac-ink)}
 `
