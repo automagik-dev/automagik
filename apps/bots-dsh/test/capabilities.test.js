@@ -232,6 +232,37 @@ test('deleting a Bot preserves capabilities belonging to the user, other Bots or
   assert.equal(rt.state.capabilities.items['pending-chief'].approved, true)
 })
 
+test('deleting a former Main Bot preserves user and unknown MCP provenance after command edits', async t => {
+  for (const [label, createdBy] of [['user-created', null], ['missing provenance', undefined], ['unknown creator', '']]) {
+    await t.test(label, async t => {
+      const env = await setup({
+        beforeLoad: ({ ctx }) => { ctx.workspaceRegistry = { archiveSession: async () => {} } },
+      })
+      t.after(() => env.dispose())
+      const { rt } = env
+      await rt.capabilitySave(mcp('server'), { ui: true })
+      // Older library entries can lack attribution. An edit cannot establish who
+      // originally created them, even when the editor is allowed to change them.
+      if (createdBy === undefined) delete rt.state.capabilities.items.server.createdBy
+      else rt.state.capabilities.items.server.createdBy = createdBy
+      await rt.save()
+      await rt.setMain('worker', true)
+      const edited = await rt.capabilitySave(mcp('server', 'node-new'), { botId: 'worker' })
+      assert.equal(edited.approved, false)
+      rt.state.bots.worker.capabilities = ['server']
+      await rt.setMain('worker', false)
+
+      await rt.deleteBot('worker')
+
+      assert.equal(rt.botOf('worker'), undefined)
+      assert.deepEqual(rt.state.capabilities.items.server, edited)
+      assert.equal(rt.state.capabilities.items.server.createdBy, createdBy ?? null)
+      const saved = JSON.parse(await (await import('node:fs/promises')).readFile(join(env.home, 'state.json'), 'utf8'))
+      assert.deepEqual(saved.capabilities.items.server, edited)
+    })
+  }
+})
+
 test('a refused Bot deletion or failed session release preserves its pending local MCP', async t => {
   for (const failure of ['main', 'adopted', 'release']) {
     await t.test(failure, async t => {

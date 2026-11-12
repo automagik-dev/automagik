@@ -109,7 +109,9 @@ export function install(rt) {
       name,
       kind,
       description: String(body.description ?? '').trim().slice(0, 2000),
-      createdBy: previous?.createdBy ?? (ui ? null : botId),
+      // An edit never claims creation: null is the user's entry, and missing
+      // provenance is unknown. Neither may become the editing Bot's orphan.
+      createdBy: previous ? previous.createdBy ?? null : ui ? null : botId ?? null,
       createdAt: previous?.createdAt ?? now,
       updatedAt: now,
     }
