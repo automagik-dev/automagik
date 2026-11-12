@@ -1,9 +1,9 @@
 # Sign-in and consent page contract
 
-The owner builds `pages/sign-in.html` and `pages/consent.html`, with any supporting
-assets in that directory. The Worker serves them at `/sign-in` and `/consent`.
-An absent page returns plain text `501 page not built yet`. No UI is included in
-delivery 1. Serve scripts and styles from the same origin. No third-party scripts,
+The sign-in and consent pages are `pages/sign-in.html` and `pages/consent.html`,
+with supporting assets in that directory. The Worker serves them at `/sign-in`
+and `/consent`. An absent page returns plain text `501 page not built yet`.
+Scripts and styles are served from the same origin. No third-party scripts,
 analytics, external fonts, or tokens in browser storage are needed.
 
 ## HTTP conventions
@@ -54,8 +54,8 @@ a name or URL provided directly in the page query. Failed, expired or modified
 queries must show an error and ask the user to restart from the product. Do not
 load an untrusted logo or turn arbitrary metadata into HTML.
 
-For sign-in requests, include `oauth_query` in the passkey or phone verification
-POST body. The provider verifies it and automatically resumes authorization when
+For sign-in requests, include `oauth_query` in the passkey verification POST body
+or the WhatsApp start body. The provider verifies it and resumes authorization when
 the session cookie is set. A successful verification can therefore return
 `{redirect: true, url: string}` instead of the ordinary credential/session result.
 Navigate to that server-returned URL. This is required for `prompt=login` and
@@ -76,9 +76,11 @@ the signed-in state and no invented destination.
 
 ## Sign-in page
 
-On load, call `GET /api/id/config`. Response: `{phoneEnabled: boolean}`.
-The phone option must be absent when false. A config failure should leave the
-passkey option usable and the phone option hidden.
+On load, call `GET /api/id/config`. Response:
+`{phoneEnabled: false, whatsappEnabled: boolean}`. Show the WhatsApp option only
+when `whatsappEnabled` is true. The person sends a prefilled message from the
+returned link or QR code; the page collects no phone number or code. A config
+failure should leave the passkey option usable and the WhatsApp option hidden.
 
 Optionally call `GET /api/auth/get-session`. Response is `null` when signed out,
 or `{session: {id, userId, expiresAt, ...}, user: {id, name, ...}}`. No email
@@ -96,10 +98,8 @@ Authentication:
    timeout?, userVerification, allowCredentials?, extensions?}`. With no session,
    `allowCredentials` is omitted or empty, enabling discoverable credentials.
 2. Convert the JSON options' base64url byte fields to ArrayBuffers and call
-   `navigator.credentials.get({publicKey})`. For browsers supporting conditional
-   mediation, the same endpoint supports `mediation: "conditional"` and a form
-   field marked `autocomplete="username webauthn"`. No username is sent to the
-   service. Abort the pending conditional request before starting another ceremony.
+   `navigator.credentials.get({publicKey})` from the explicit passkey action.
+   These pages have no username field and do not start conditional mediation.
 3. Serialize the credential with `credential.toJSON()` where supported, or the
    equivalent base64url WebAuthn JSON shape. `POST /api/auth/passkey/verify-authentication`
    with `{response: AuthenticationResponseJSON, oauth_query?: string}`. The normal
@@ -108,6 +108,10 @@ Authentication:
 4. Follow the server redirect or use the continuation rules above.
 
 Account creation:
+
+**Create a passkey** always creates a fresh account. If a session is active, the
+page signs out before requesting registration options. Both registration steps
+ignore session identity while retaining the WebAuthn challenge cookie.
 
 1. `GET /api/auth/passkey/generate-register-options`, no body. Optional query
    `authenticatorAttachment=platform` or `cross-platform`; omit for broad support.
@@ -132,32 +136,53 @@ For browsers without the WebAuthn JSON conversion helpers, use the matching
 Better Auth passkey client or a WebAuthn JSON adapter. Do not send a raw
 `PublicKeyCredential` to JSON.stringify; its binary fields will be lost.
 
-Phone flow, only when enabled:
+WhatsApp inbound proof, only when `whatsappEnabled` is true:
 
-1. Collect an international E.164 number, including `+`, with 8–15 digits.
-   `POST /api/auth/phone-number/send-otp` with `{phoneNumber: string}`.
-   HTTP 200: `{message: "code sent"}`. This acknowledges queued Omni delivery,
-   not receipt on the phone. Show code entry, resend cooldown and delivery retry.
-2. `POST /api/auth/phone-number/verify` with `{phoneNumber: string, code: string,
-   oauth_query?: string}`. Omit `oauth_query` for `prompt=create`.
-   HTTP 200: `{status: true, token: string, user: {id, name, phoneNumber,
-   phoneNumberVerified, ...}}`, plus the session cookie. Ignore the body token.
-   A provider flow can instead return `{redirect: true, url}`.
-   The Worker accepts only `phoneNumber`, `code` and `oauth_query`: it rejects
-   `updatePhoneNumber`, `disableSession`, all other extra fields and query
-   parameters with HTTP 400 `{code: "UNSUPPORTED_PHONE_OPERATION", message:
-   "Phone verification supports sign-in only"}`. The page offers no password or
-   account-linking flow. Successful verification can create a separate phone account.
-3. Continue the provider query. Show an invalid-code state, an expired-code state,
-   and a locked-challenge state after three incorrect guesses. Codes expire after
-   five minutes. A locked challenge needs a new send, subject to rate limits.
-   Do not promise how many attempts remain; the API does not return a counter.
+1. `POST /api/auth/whatsapp/start` with `{oauth_query?: string}`. Preserve the
+   signed provider query exactly as described above. No phone number or linking
+   flag is accepted from the browser. Success: `{url: string, code: string,
+   expiresAt: number}`. The expiry is Unix time in milliseconds, five minutes
+   after creation. A new Secure, HttpOnly, host-only SameSite=Lax challenge cookie
+   binds this request to the browser. The URL is a WhatsApp link with the message
+   prefilled. Show the code and an open-WhatsApp action; on desktop the designer
+   can also show a QR code for the exact returned URL. The person must send the
+   message themselves; no code is sent to them.
+   For `prompt=create`, omit `oauth_query` here and call the documented
+   `{created: true, oauth_query}` continuation after status becomes verified.
+2. Poll `GET /api/auth/whatsapp/status` every two seconds, with credentials and
+   no body or query parameters. Before proof, success is `{status: "pending"}`.
+   After expiry, a missing cookie or an already used proof: `{status: "expired"}`.
+   Stop polling on expiry, navigation away, or completion. A restart requires
+   another start request and a new message; do not reuse an old link or code.
+3. On proof, a standalone sign-in returns `{status: "verified", user: {id, name}}`
+   and sets Better Auth's session cookie. With a signed provider query it normally
+   returns `{redirect: true, url: string}` through the same provider hooks as
+   passkey sign-in. Navigate only to this server-returned URL. The browser never
+   receives a phone number to choose or an account-linking option. The verified
+   sender determines the account, regardless of any existing browser session.
+4. Treat 429 as a wait state, 403 as an invalid/cross-site request, and a signed
+   query error as a request to restart from the product. A direct POST to status
+   is not public and returns 404. Do not call `/api/omni/inbound` from a page;
+   it is the authenticated server-to-server proof receiver.
+
+The legacy `/api/auth/phone-number/send-otp`, `/api/auth/phone-number/verify` and
+`/api/auth/sign-in/phone-number` endpoints always return 404. There is no phone
+number input, code-to-browser delivery, resend-code action or linking flag in the
+new flow. The pages use `whatsappEnabled`; `phoneEnabled` remains false for
+compatibility with the retired outbound flow.
+
+WhatsApp states: unavailable/hidden, starting, link and code ready, waiting for the
+person's message, pending proof, expiry with restart, verified, redirecting,
+rate-limited, invalid provider request and service/network error. Never promise
+that opening WhatsApp or scanning a QR code completes sign-in: sending the
+message is required. An invalid or unrecognized sender identifier gets no reply
+and cannot complete proof.
 
 Required visible states: loading/config, passkey offered, authenticator prompt
-pending, conditional mediation pending when supported, passkey cancelled,
+pending, passkey cancelled,
 passkey unavailable, passkey failed with retry, account created, signed in,
-continuing to product, phone offered only when enabled, sending, code entry,
-code rejected/expired/locked, resend wait, rate limited, service/network error,
+continuing to product, WhatsApp offered only when enabled, waiting for a message,
+expired proof, restart wait, rate limited, service/network error,
 invalid or expired provider request. No email field or social/password buttons.
 
 ## Consent page

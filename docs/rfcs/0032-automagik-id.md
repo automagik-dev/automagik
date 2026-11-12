@@ -8,7 +8,8 @@
 Automagik ID uses Better Auth, under its MIT license, in one Cloudflare Worker
 with D1. Passkeys are the first sign-in method, including account creation without
 an existing session. There is no email, password, social sign-in or sign-up form.
-WhatsApp codes through Omni are wired for a later rollout and disabled by default.
+WhatsApp proof through Omni is disabled by default. Delivery 2 requires the person
+to send a browser-issued challenge message first; the service never sends first.
 
 Automagik desktop and Cloud connect through OpenID Connect first. Arca, Omni and
 Brain can each gain their own client later. Every client requires S256 PKCE;
@@ -46,3 +47,15 @@ There is no automatic migration from another provider's principals.
 Recovery, account linking, additional product clients, phone rollout, and the
 eventual public name each need a later owner decision. Enabling phone codes
 does not link a number to an existing passkey identity.
+
+## Delivery 2: inbound phone proof
+
+The browser receives a short-lived challenge and a prefilled messaging link.
+The person sends that message; Omni forwards the event to an authenticated
+inbound endpoint. Hashed challenges, browser binding, event deduplication,
+message-time checks and shared rate limits live in D1. A verified sender can
+sign in once to its phone account or create a separate one. An existing browser
+session never becomes the account selected by the phone proof. Privacy IDs and
+other non-phone identifiers cannot verify a number. The outbound phone-code
+path is removed. Page controls follow the extended page contract in a separate
+delivery; receiving configuration and secret provisioning remain owner actions.
