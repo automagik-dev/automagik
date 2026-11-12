@@ -2536,3 +2536,161 @@ fn the_outcomes_schema_accepts_every_example_and_refuses_bad_records() {
         .remove("p90_s");
     assert!(!s.valid(&v), "p90_s is required even when null");
 }
+
+#[test]
+fn repo_alias_folds_failures_and_prs_into_primary_repo() {
+    const OLD: &str = "example.com/old-acme/widgets";
+    let (s, _) = fleet();
+    let st = s.store();
+    st.conn
+        .execute(
+            "UPDATE launch SET task = 'task-widget' WHERE kind = 'worker'",
+            [],
+        )
+        .unwrap();
+    st.conn
+        .execute(
+            "UPDATE ev_actor SET task = 'task-widget' WHERE kind = 'worker'",
+            [],
+        )
+        .unwrap();
+    drop(st);
+    let before = report(&s, &["--repo", REPO]);
+    let st = s.store();
+    // Rename only part of the evidence; both names must contribute to the same aggregates.
+    for table in ["usage", "ev_dim", "pr"] {
+        let changed = st
+            .conn
+            .execute(
+                &format!("UPDATE {table} SET repo = ?1 WHERE repo = ?2 AND branch = 'feat/gh-1'"),
+                params![OLD, REPO],
+            )
+            .unwrap();
+        assert!(changed > 0, "{table}");
+    }
+    st.conn
+        .execute(
+            "UPDATE ev_dim SET repo = ?1 WHERE repo = ?2 AND branch = 'main'",
+            params![OLD, REPO],
+        )
+        .unwrap();
+    st.conn
+        .execute(
+            "UPDATE cwd_repo SET repo = ?1 WHERE cwd = ?2",
+            params![OLD, ROOT],
+        )
+        .unwrap();
+    drop(st);
+    let without = report(&s, &["--repo", REPO]);
+    assert_ne!(without["windows"], before["windows"]);
+    let v = report(
+        &s,
+        &[
+            "--repo",
+            REPO,
+            "--repo-alias",
+            OLD,
+            "--repo-alias",
+            OLD,
+            "--repo-alias",
+            REPO,
+        ],
+    );
+    assert_eq!(v["windows"], before["windows"]);
+    let w = window(&v, "d1");
+    for field in ["by_branch", "by_task", "rows"] {
+        assert!(
+            !w["errors"][field].as_array().unwrap().is_empty(),
+            "{field}"
+        );
+    }
+    assert!(
+        !window(&v, "d7")["errors"]["unattributed"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(w["run_ends"]["failed"].as_i64().unwrap() > 0);
+    assert_eq!(w["time_to_pr"]["repos"][0]["repo"], REPO);
+    assert!(
+        w["time_to_pr"]["branches"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|b| b["repo"] == REPO && b["branch"] == "feat/gh-1")
+    );
+
+    // Usage under only the old name still prevents a false no_data result.
+    let st = s.store();
+    st.conn
+        .execute_batch("DELETE FROM ev_error; DELETE FROM launch; DELETE FROM pr;")
+        .unwrap();
+    st.conn
+        .execute("DELETE FROM usage WHERE repo IS NULL OR repo != ?1", [OLD])
+        .unwrap();
+    drop(st);
+    let v = report(&s, &["--window", "d1", "--repo", REPO, "--repo-alias", OLD]);
+    assert_ne!(window(&v, "d1")["state"], "no_data");
+    let v = report(&s, &["--window", "d1", "--repo", REPO]);
+    assert_eq!(window(&v, "d1")["state"], "no_data");
+}
+
+#[test]
+fn repo_alias_requires_one_repo_and_bounded_normalized_names() {
+    let s = Scene::migrated(MIGRATED, &[]);
+    let long = format!("example.com/acme/{}", "w".repeat(query::MAX_REPO_BYTES));
+    for (a, expected) in [
+        (
+            args(&["--repo-alias", REPO]),
+            "--repo-alias requires --repo",
+        ),
+        (
+            args(&[
+                "--repo",
+                REPO,
+                "--repo",
+                "example.com/acme/other",
+                "--repo-alias",
+                REPO,
+            ]),
+            "--repo-alias requires a single --repo",
+        ),
+        (
+            args(&["--repo", REPO, "--repo-alias"]),
+            "--repo-alias needs a value",
+        ),
+        (
+            args(&[
+                "--repo",
+                REPO,
+                "--repo-alias",
+                "https://example.com/acme/widgets",
+            ]),
+            "--repo-alias takes host/owner/repo",
+        ),
+        (
+            args(&["--repo", REPO, "--repo-alias", &long]),
+            "--repo-alias takes",
+        ),
+        (
+            {
+                let mut a = args(&["--repo", REPO]);
+                a.extend(
+                    (0..17)
+                        .flat_map(|i| ["--repo-alias".into(), format!("example.com/acme/old-{i}")]),
+                );
+                a
+            },
+            "at most 16 --repo-alias values may be given",
+        ),
+    ] {
+        let r = outcomes::run(&a, &ctx(&s));
+        assert_eq!(r.code, query::exit::USAGE);
+        assert!(r.stderr.unwrap().contains(expected));
+    }
+    let mut a = args(&["--repo", REPO]);
+    for i in (0..16).chain(0..16) {
+        a.extend(["--repo-alias".into(), format!("example.com/acme/old-{i}")]);
+    }
+    assert_ne!(outcomes::run(&a, &ctx(&s)).code, query::exit::USAGE);
+}
