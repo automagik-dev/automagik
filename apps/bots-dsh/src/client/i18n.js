@@ -1,12 +1,6 @@
-// Interface copy follows the DSH language. Keys are the English text; `zh`, `zh-TW`,
-// `ja`, `ko`, `es`, `fr` and `de` map them. Copy is looked up at render time and every
-// slot outlet re-renders on a language switch, so nothing caches a translated string.
-import { convertDict, convertHostErrors, toTraditional } from './locales/zh-tw.js'
-import { DSH_JA, HOST_ERRORS_JA, JA } from './locales/ja.js'
-import { DSH_KO, HOST_ERRORS_KO, KO } from './locales/ko.js'
-import { DSH_ES, HOST_ERRORS_ES, ES } from './locales/es.js'
-import { DSH_FR, HOST_ERRORS_FR, FR } from './locales/fr.js'
-import { DSH_DE, HOST_ERRORS_DE, DE } from './locales/de.js'
+// Interface copy follows the DSH language. Keys are the English text; `zh` maps them.
+// Copy is looked up at render time and every slot outlet re-renders on a language
+// switch, so nothing caches a translated string.
 
 export const NAMESPACE = 'omni-ui'
 
@@ -806,8 +800,6 @@ const ZH = {
   'Key set outside Omni': 'key 在 Omni 之外设置',
   'No models': '没有模型',
   '{count} models': '{count} 个模型',
-<<<<<<< HEAD
-=======
   // What a Bot runs on
   'Runs on': '运行方式',
   'Omni model': 'Omni 模型',
@@ -832,14 +824,12 @@ const ZH = {
   'Local agents': '本地 Agent',
   'This DSH cannot register local agent routes.': '这个 DSH 不能注册本地 Agent 路由。',
   'Detected agents': '已检测到的 Agent',
-  Refresh: '刷新',
   'No agent CLIs found': '没有找到 Agent CLI',
   'Scan again for agent CLIs.': '重新扫描 Agent CLI。',
   'Custom agents': '自定义 Agent',
   'ACP-compatible agents, added by command.': '按命令添加的 ACP 兼容 Agent。',
   'Add agent': '添加 Agent',
   'Copies the sign-in command': '复制登录命令',
-  'Sign in': '登录',
   'Sign-in command copied. Run it in a terminal: {command}': '登录命令已复制。请在终端运行：{command}',
   'Could not copy the sign-in command. Run this in a terminal: {command}': '没能复制登录命令。请在终端手动运行：{command}',
   Found: '已找到',
@@ -852,7 +842,6 @@ const ZH = {
   'Current session': '当前会话',
   'This page could not be shown.': '这个页面无法显示。',
   'Current': '当前',
->>>>>>> vendor/ds-bot-0.3.6-prepared
   'This key comes from outside Omni, such as an environment variable, and cannot be changed here.': '这个 key 来自 Omni 之外（例如环境变量），这里改不了。',
   'and {count} more': '还有 {count} 个',
   'Remove {name}? Bots on its models need another model.': '删除 {name}？用它的模型的 Bot 要换一个模型。',
@@ -886,8 +875,6 @@ const ZH = {
   'Sign in to DeepSeek': '登录 DeepSeek 账号',
   'Enter a DeepSeek API key': '填入 DeepSeek API key',
   'Open settings to set up a custom model': '打开设置配置自定义模型',
-<<<<<<< HEAD
-=======
   'Create a key on the DeepSeek platform ↗': '去 DeepSeek 开放平台创建 Key ↗',
   'The API is billed by usage; the account needs a balance first.': 'API 按用量计费，账户里要先有余额。',
   'Models and API keys': '模型和 API Key',
@@ -923,7 +910,6 @@ const ZH = {
   'HTTP status': 'HTTP 状态码',
   'Request ID': '请求 ID',
   'Provider message': '原文',
->>>>>>> vendor/ds-bot-0.3.6-prepared
   'Omni': 'Omni',
 
   // Header
@@ -932,7 +918,6 @@ const ZH = {
   'Press Enter to steer queued messages': '按 Enter 插话发送排队的消息',
   'Couldn’t steer the queued messages. Try again.': '插话发送失败，请重试。',
   '{n} queued messages': '{n} 条排队消息',
-  'Sending…': '发送中…',
   'Queued image': '排队消息图片',
   'Queued file {name}': '排队文件 {name}',
   'Edit queued message': '编辑排队消息',
@@ -1043,11 +1028,7 @@ const ZH = {
   Rename: '重命名',
   'Add instructions in Bot settings': '在 Bot 设置里添加说明',
   'No scheduled tasks yet. To add one, tell the Bot in its chat what to do and when.': '还没有定时任务。要添加，在对话里告诉 Bot 做什么、什么时候做。',
-<<<<<<< HEAD
   'The browser is in DSH Desktop and the Automagik app.': '浏览器在 DSH 桌面版和 Automagik 应用里。',
-=======
-  'The browser is in DSH Desktop and the Omni app.': '浏览器在 DSH 桌面版和 Omni 应用里。',
->>>>>>> vendor/ds-bot-0.3.6-prepared
   'New tab': '新标签页',
   'Close tab': '关闭标签页',
   'Open {title}': '打开 {title}',
@@ -1391,10 +1372,8 @@ const ZH = {
   'The service version changed': '服务版本变化',
   'This page paused live updates. Reload to load the new version.': '服务版本已变化，本页面已暂停热更新，刷新后加载新版本。',
   'Reload to load the new version': '刷新以加载新版本',
-  'Not now': '暂不刷新',
   Service: '服务',
   Page: '页面',
-  Unknown: '未解析',
   'Back to Bots': '返回 Bot 列表',
   'Close settings': '关闭设置',
 
@@ -1437,7 +1416,6 @@ const ZH = {
   'New session': '新会话',
   Archive: '归档',
   'Session actions': '会话操作',
-  Plugins: '插件',
   'Plain dsh session': '原生 dsh 会话',
   'just now': '刚刚',
   '{n} min': '{n} 分钟',
@@ -1607,7 +1585,6 @@ const ZH = {
   'Set a goal': '设定目标',
   'This group has no admin': '这个群没有管理员',
   'What should this group achieve?': '这个群要达成什么？',
-  Start: '开始',
   Resume: '继续',
   'Stop the goal?': '确认终止？',
   'Aligning the goal with you': '正在和你对齐目标',
@@ -1644,18 +1621,13 @@ const ZH = {
   'Goal stopped': '目标已终止',
   Reject: '拒绝',
   'Allow once': '允许一次',
-  Deny: '拒绝',
   'Run a remote tool': '运行远程工具',
   'Remote Hermes asks before it runs this. Allow it?': '远程 Hermes 在运行此操作前询问。是否允许？',
   "Couldn't message {name}": '没能给 {name} 发消息',
   Messaged: '已发消息给',
   "Couldn't stop {name}": '没能叫停 {name}',
-<<<<<<< HEAD
   "Couldn't delete {name}": '没能删除 {name}',
-  Stopped: '已叫停',
-=======
   Stopped: '已终止',
->>>>>>> vendor/ds-bot-0.3.6-prepared
   Created: '已创建',
   Updated: '已更新',
   'Created group': '已创建群聊',
@@ -1961,10 +1933,7 @@ const ZH = {
   '{share}% of all usage from {span}': '占 {span} 全部用量的 {share}%',
   // About
   'About Omni': '关于 Omni',
-<<<<<<< HEAD
   'About Automagik': '关于 Automagik',
-=======
->>>>>>> vendor/ds-bot-0.3.6-prepared
   'Version {version}': '版本 {version}',
   'Star Omni on GitHub': '在 GitHub 上给 Omni 点 Star',
   '{count} stars': '{count} 个 Star',
@@ -1983,12 +1952,8 @@ const ZH = {
   '{version} is available': '{version} 已发布',
   'Installed from a local folder; update it there.': '从本地文件夹安装，请在那里更新。',
   'Updates are not offered for this install.': '这种安装方式不提供更新。',
-<<<<<<< HEAD
   'Updates come with the Automagik app.': '随 Automagik 应用一起更新。',
   'Updates are off in this copy of Automagik.': '此 Automagik 副本已关闭更新。',
-=======
-  'Updates come with the Omni app.': '随 Omni 应用一起更新。',
->>>>>>> vendor/ds-bot-0.3.6-prepared
   Links: '链接',
   'Source code': '源代码',
   'Release notes': '发布说明',
@@ -2004,11 +1969,7 @@ const ZH = {
   Show: '查看',
   Hide: '收起',
   'GitHub issue': 'GitHub issue',
-<<<<<<< HEAD
   'Opens a new issue in the Omni repository with all of this filled in. The page it opens carries these diagnostics in its address, so GitHub receives them when it opens; nothing is posted until you submit it.': '在 Omni 仓库新建一个 issue，并填好以上内容。打开的页面地址里带着这些诊断信息，所以页面打开时 GitHub 就会收到它们；你提交之前不会发布任何内容。',
-=======
-  'Opens a new issue in the Omni repository with all of this filled in. Nothing is sent until you submit it there.': '在 Omni 仓库新建一个 issue，并填好以上内容。你在 GitHub 上提交之前，什么都不会发出。',
->>>>>>> vendor/ds-bot-0.3.6-prepared
   'Report on GitHub': '在 GitHub 上报告',
   'Copied the diagnostics.': '已复制诊断信息。',
   'Could not copy. Select the text below and copy it.': '无法复制。请选中下面的文字手动复制。',
@@ -2214,7 +2175,6 @@ const ZH = {
   'Up one level': '上一级',
   'No folders inside.': '里面没有文件夹。',
   'Some folders are not shown.': '还有一些文件夹没有显示。',
-<<<<<<< HEAD
   'failed': '失败',
   'no': '否',
   'working…': '进行中…',
@@ -2284,7 +2244,6 @@ const ZH = {
   'Painting your image…': '正在绘制你的图片…',
   'Images': '图片',
   'Drawn with': '绘制方式',
-  'Not connected': '未连接',
   'Your ChatGPT account': '你的 ChatGPT 账户',
   'Your OpenAI key': '你的 OpenAI 密钥',
   'Sign in to Codex from a Bot\'s chat, or add an OpenAI key in Settings → Models, and every Bot can draw images in its chats.': '在 Bot 的聊天中登录 Codex，或在“设置 → 模型”中添加 OpenAI 密钥后，每个 Bot 都能在聊天中绘制图片。',
@@ -2319,7 +2278,6 @@ const ZH = {
   'Automatic, by language': '自动，按语言',
   'Try it': '试听',
   'Speed': '语速',
-  'Privacy': '隐私',
   'Local first': '本地优先',
   'Your Bots, chats, memory and files stay on this computer. Nothing that could train a model leaves it unless you switch it on below, and nothing at all goes to us at Namastex: no analytics, no usage counts, no crash reports.': '你的 Bot、对话、记忆和文件都留在这台电脑上。除非你在下面打开，任何可用于训练模型的内容都不会离开它；我们 Namastex 什么都不会收到：没有分析、没有用量统计、没有崩溃报告。',
   "The AI a chat runs on receives that chat, the way any message reaches the one it is sent to. Sharing your chats for training is off. The tools you use keep their own features, like Claude Code's error reports and updates; you can switch those off here too.": '对话所用的 AI 会收到这段对话，就像消息会送到收件人那里一样。用于训练的对话分享是关闭的。你使用的工具保留它们自己的功能，比如 Claude Code 的错误报告和更新；你也可以在这里关闭它们。',
@@ -2360,7 +2318,6 @@ const ZH = {
   // The Work / Code switch (work-code-switch.js, RFC 0013).
   'Work or code': '工作或代码',
   'Work': '工作',
-  'Code': '代码',
   'Work, in this window': '工作，就在这个窗口',
   'Code: open this Bot’s folder in Herdr': '代码：在 Herdr 中打开这个 Bot 的文件夹',
   'Code: open Herdr': '代码：打开 Herdr',
@@ -2371,7 +2328,6 @@ const ZH = {
   'Herdr is not set up': 'Herdr 尚未安装',
   'Herdr has no build for this computer': 'Herdr 没有适用于这台电脑的版本',
   "Herdr didn't open": 'Herdr 没有打开',
-  'Retry': '重试',
   'Herdr is open in another window': 'Herdr 已在另一个窗口中打开',
   'No connection: Herdr opened on the installed version': '没有网络：Herdr 以已安装的版本打开',
   "Herdr couldn't update: it opened on the installed version": 'Herdr 无法更新：已以已安装的版本打开',
@@ -2395,7 +2351,6 @@ const ZH = {
   'Apply plugin updates automatically': '自动应用插件更新',
   'A plugin update goes in once no agent is at work: DSH restarts for a few seconds and the window stays.': '插件更新会在没有智能体工作时安装：DSH 重启几秒钟，窗口保持打开。',
   'Plugin updates wait until you update them here or restart Automagik.': '插件更新会等到你在这里更新或重启 Automagik。',
-  'This Bot': '这个 Bot',
   '{from} wants to hand work to {to}': '{from} 想把工作交给 {to}',
   'another Bot': '另一个 Bot',
   '{to} works on it in its own chat and reports back.': '{to} 会在自己的对话里处理，然后汇报结果。',
@@ -2435,7 +2390,6 @@ const ZH = {
   'Open task': '打开任务',
   'step {count}': '第 {count} 步',
   'Task running': '任务进行中',
-  'Waiting for you': '等你处理',
   'It asks for your OK. Open it to answer.': '它在等你同意，打开它来回答。',
   'Answer it': '去回答',
   'Working on 1 thing': '正在做 1 件事',
@@ -2451,7 +2405,6 @@ const ZH = {
   'broadcast': '广播',
   'thread': '话题',
   'community': '社区',
-=======
   'Waiting for sign-in…': '等待登录…',
   'This service needs an app client ID': '该服务需要应用 Client ID',
   'Open the sign-in page': '打开登录页',
@@ -2472,7 +2425,6 @@ const ZH = {
   'App password / authorization code': '应用密码 / 授权码',
   'Catalog': '目录',
   'App password': '应用专用密码',
-  'Authorization code': '授权码',
   'Password or app password': '密码或授权码',
   'Official help': '官方帮助',
   'Finish signing in in your browser.': '在浏览器里完成登录。',
@@ -2564,7 +2516,6 @@ const ZH = {
   'All': '全部',
   'Developer': '开发',
   'Docs & files': '文档与文件',
-  'Work': '工作',
   'Design': '设计',
   'Data': '数据',
   'Commerce': '商务',
@@ -2586,9 +2537,14 @@ const ZH = {
   'Bcc': '密送',
   'Attachments: {names}': '附件：{names}',
   'Sent': '已发送',
-  'Failed': '失败',
 
->>>>>>> vendor/ds-bot-0.3.6-prepared
+  // Our settings seat: DSH's own pages stay behind the Harness settings button.
+  'Bot settings': 'Bot 设置',
+  'Switch to classic Agent mode': '切换经典 Agent 模式',
+  'Models, providers, and the rest of DeepSeek Harness': '模型、服务商和 DeepSeek Harness 的其他设置',
+  'Harness settings': 'Harness 设置',
+  'Switch on Automation tasks on the Plugins page in Harness settings.': '在 Harness 设置的插件页启用「自动化任务」。',
+  'Open Harness settings': '打开 Harness 设置',
 }
 
 // Host errors stay English, since Bots read them too; they are translated where the
@@ -2631,12 +2587,10 @@ const HOST_ERRORS = [
   [/^There is no folder at (.+)$/, '找不到文件夹 $1'],
   [/^(.+) is a file, not a folder$/, '$1 是文件，不是文件夹'],
   [/^(.+) holds DeepSeek Harness data, so Bots cannot work there$/, '$1 里有 DeepSeek Harness 的数据，Bot 不能在这里工作'],
-<<<<<<< HEAD
   // A Bot made on a Session its host runs (parts.js `pinned`).
   [/^(.+) works in the folder its host gave its conversation, so its folder cannot change here$/, '$1 在宿主为它的对话指定的文件夹里工作，这里不能更改它的文件夹'],
   [/^(.+) speaks in the conversation its host runs, so it cannot start a new one here\.$/, '$1 在宿主运行的对话里说话，这里不能开始新对话'],
   [/^(.+) speaks in the conversation its host runs; that conversation keeps its own compaction controls\.$/, '$1 在宿主运行的对话里说话，那个对话由宿主自己压缩'],
-=======
   [/^(.+) needs a folder of its own to be private$/, '$1 需要有自己的工作文件夹，才能设为隐私 Bot'],
   [/^(.+) is a Main Bot, so it cannot be private$/, '$1 是主 Bot，不能设为隐私 Bot'],
   [/^(.+) is in a group chat, where every member reads what is said\. Remove it from its groups first$/, '$1 还在群聊里，群成员都能看到群里的内容。请先把它移出群聊'],
@@ -2648,7 +2602,6 @@ const HOST_ERRORS = [
   [/^(.+) is in or around the folder of (.+), a private Bot, so (.+) cannot work there$/, '$1 在隐私 Bot「$2」的文件夹内或外层，$3 不能在这里工作'],
   [/^(.+) is in or around the folder of (.+), a private Bot, so a group cannot work there$/, '$1 在隐私 Bot「$2」的文件夹内或外层，群聊不能在这里工作'],
   [/^(.+) is in or around the folder of (.+), a private Bot, so it cannot be the team workspace$/, '$1 在隐私 Bot「$2」的文件夹内或外层，不能作为总工作区'],
->>>>>>> vendor/ds-bot-0.3.6-prepared
   // Memory changes the memory panel asked for; the whole message is matched.
   [/^This looks like a key, token, or password[\s\S]*$/, '看起来像密钥、令牌或密码，记忆不会保存这类内容'],
   [/^An entry holds at most (\d+) characters; this one has (\d+)\.[\s\S]*$/, '一条记忆最多 $1 个字符，这条有 $2 个'],
@@ -2726,12 +2679,10 @@ const HOST_ZH = {
   'Nothing to cancel': '没有要取消的内容',
   'Nothing to close': '没有要关闭的内容',
   'Omni is still loading this chat.': 'Omni 还在加载这个对话。',
-<<<<<<< HEAD
   "{name}'s permissions changed meanwhile, so nothing was saved. Look again and choose.": '{name} 的权限在此期间已经改变，因此没有保存任何内容。请重新查看后再选择。',
   'Auto is not offered for {name} here.': '这里不为 {name} 提供自动模式。',
   'This host cannot save the Bot team.': '这台主机无法保存 Bot 团队。',
   "Only the person turns Auto on, from the Bot's permission choice.": '只有用户本人能在 Bot 的权限选择中开启自动模式。',
-=======
   // Computer use
   'Computer use': '电脑操控',
   'Computer': '电脑',
@@ -2779,7 +2730,6 @@ const HOST_ZH = {
   'Stop {name}': '停止 {name}',
   '{name} · foreground': '{name} · 前台',
   '{name} waits for the computer': '{name} 等你停手',
->>>>>>> vendor/ds-bot-0.3.6-prepared
 }
 Object.assign(ZH, {
   "This step is hard to undo: {step}. Allow it once?": "这一步难以撤销：{step}。允许这一次吗？",
@@ -2788,65 +2738,6 @@ Object.assign(ZH, {
   "Allow once lets it keep working: nothing that was refused runs. Reject stops it here.": "“允许一次”让它继续工作：被拒绝的步骤都不会执行。“拒绝”让它在这里停止。"
 })
 Object.assign(ZH, HOST_ZH)
-
-const ZH_TW = convertDict(ZH)
-const HOST_ERRORS_ZH_TW = convertHostErrors(HOST_ERRORS)
-
-export const LANGUAGES = [
-  { id: 'zh-TW', label: '繁體中文', fallback: 'zh' },
-  { id: 'ja', label: '日本語', fallback: 'en' },
-  { id: 'ko', label: '한국어', fallback: 'en' },
-  { id: 'es', label: 'Español', fallback: 'en' },
-  { id: 'fr', label: 'Français', fallback: 'en' },
-  { id: 'de', label: 'Deutsch', fallback: 'en' },
-]
-
-export const DICTIONARY = {
-  zh: ZH,
-  'zh-TW': ZH_TW,
-  ja: JA,
-  ko: KO,
-  es: ES,
-  fr: FR,
-  de: DE,
-}
-
-const HOST_ERROR_TABLE = {
-  zh: HOST_ERRORS,
-  'zh-TW': HOST_ERRORS_ZH_TW,
-  ja: HOST_ERRORS_JA,
-  ko: HOST_ERRORS_KO,
-  es: HOST_ERRORS_ES,
-  fr: HOST_ERRORS_FR,
-  de: HOST_ERRORS_DE,
-}
-
-const DSH_LOCALE_PACKS = {
-  ja: DSH_JA,
-  ko: DSH_KO,
-  es: ES && DSH_ES,
-  fr: DSH_FR,
-  de: DSH_DE,
-}
-
-const DATE_LOCALES = {
-  zh: 'zh-CN',
-  'zh-TW': 'zh-TW',
-  ja: 'ja-JP',
-  ko: 'ko-KR',
-  es: 'es-ES',
-  fr: 'fr-FR',
-  de: 'de-DE',
-  en: 'en-US',
-}
-
-function resolveLangKey(tag) {
-  const lower = String(tag ?? '').toLowerCase()
-  if (lower === 'zh-tw' || lower === 'zh-hk' || lower === 'zh-mo' || lower.startsWith('zh-hant')) return 'zh-TW'
-  if (lower.startsWith('zh')) return 'zh'
-  const primary = lower.split('-')[0]
-  return Object.hasOwn(DICTIONARY, primary) ? primary : 'en'
-}
 
 const fill = (text, params) => (params
   ? text.replace(/\{(\w+)\}/g, (match, name) => (name in params ? String(params[name]) : match))
@@ -2871,7 +2762,6 @@ export function installLocale(locale) {
   if (!locale || typeof locale.register !== 'function' || typeof locale.bind !== 'function') return () => {}
   service = locale
   bound = locale.bind(NAMESPACE)
-<<<<<<< HEAD
   publish()
   return () => {
     if (service !== locale) return
@@ -2880,70 +2770,6 @@ export function installLocale(locale) {
     bound = null
     unregister = null
     if (typeof off === 'function') off()
-=======
-  const offs = []
-  const pushOff = (fn) => { if (typeof fn === 'function') offs.push(fn) }
-
-  if (typeof locale.addLanguage === 'function') {
-    const existing = new Set((locale.getLocale?.()?.locales ?? []).map(item => String(item.id).toLowerCase()))
-    for (const def of LANGUAGES) {
-      if (!existing.has(def.id.toLowerCase())) {
-        try { pushOff(locale.addLanguage(def)) } catch { /* already added */ }
-      }
-    }
-  }
-
-  for (const [langId, dict] of Object.entries(DICTIONARY)) {
-    pushOff(locale.register(NAMESPACE, langId, dict))
-  }
-
-  // Register DSH settings/common namespace translations only after each owning DSH plugin registers its namespace.
-  let syncing = false
-  let disposed = false
-  const syncDshNamespaces = () => {
-    if (disposed || syncing || !(locale.dicts instanceof Map)) return
-    syncing = true
-    try {
-      for (const [langId, namespaces] of Object.entries(DSH_LOCALE_PACKS)) {
-        for (const [ns, dict] of Object.entries(namespaces ?? {})) {
-          const map = locale.dicts.get(ns)
-          if (!map || map.has(langId.toLowerCase())) continue
-          try { pushOff(locale.register(ns, langId, dict)) } catch { /* already registered */ }
-        }
-      }
-      for (const [ns, map] of locale.dicts.entries()) {
-        if (ns === NAMESPACE || map.has('zh-tw')) continue
-        const zhDict = map.get('zh')
-        if (zhDict) {
-          try { pushOff(locale.register(ns, 'zh-TW', convertDict(zhDict))) } catch { /* ignore */ }
-        }
-      }
-    } finally {
-      syncing = false
-    }
-  }
-  syncDshNamespaces()
-  if (typeof locale.subscribe === 'function') {
-    pushOff(locale.subscribe(syncDshNamespaces))
-  }
-
-  const origResolveText = typeof locale.resolveText === 'function' ? locale.resolveText.bind(locale) : null
-  if (origResolveText) {
-    locale.resolveText = (text) => {
-      const resolved = origResolveText(text)
-      if (resolveLangKey(language()) === 'zh-TW' && typeof text === 'object' && text !== null && !('zh-tw' in text)) {
-        return toTraditional(resolved)
-      }
-      return resolved
-    }
-    offs.push(() => { locale.resolveText = origResolveText })
-  }
-
-  return () => {
-    disposed = true
-    if (service === locale) { service = null; bound = null }
-    for (let i = offs.length - 1; i >= 0; i--) offs[i]()
->>>>>>> vendor/ds-bot-0.3.6-prepared
   }
 }
 
@@ -3006,7 +2832,6 @@ function hostTemplate(message) {
 
 // A message from the host, in the interface language.
 export function hostText(message) {
-<<<<<<< HEAD
   if (typeof message === 'string' && (bound || language().startsWith('zh'))) {
     const worded = hostTemplate(message)
     if (worded !== undefined) return worded
@@ -3018,12 +2843,8 @@ export function hostText(message) {
     if (worded !== message) return worded
   }
   if (!language().startsWith('zh')) return message
-=======
-  const lang = resolveLangKey(language())
-  if (lang === 'en') return message
->>>>>>> vendor/ds-bot-0.3.6-prepared
   if (Object.hasOwn(ZH, message)) return t(message)
-  for (const [pattern, template] of HOST_ERROR_TABLE[lang] ?? []) {
+  for (const [pattern, template] of HOST_ERRORS) {
     if (pattern.test(message)) return message.replace(pattern, template)
   }
   return message
@@ -3035,4 +2856,7 @@ export function language() {
   return typeof active === 'string' ? active : 'en'
 }
 
-export const dateLocale = () => DATE_LOCALES[resolveLangKey(language())] ?? 'en-US'
+export const dateLocale = () => (language().startsWith('zh') ? 'zh-CN' : 'en-US')
+
+// Translations for the tests: the Chinese dictionary itself.
+export const DICTIONARY = { zh: ZH }
