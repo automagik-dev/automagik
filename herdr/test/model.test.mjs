@@ -323,6 +323,21 @@ test("lead: a planned lead falls back to the main bot with a warning", () => {
   assert.deepEqual(checkBots(file), []);
 });
 
+test("lead #742: a planned main is valid in a shared roster and remains the members' lead", () => {
+  const file = sample((f) => {
+    f.bots[0].planned = { wave: 1 };
+    delete f.bots[0].agent;
+    f.bots[2].lead = ID.main;
+    return f;
+  });
+  assert.deepEqual(checkBots(file), []);
+  assert.deepEqual(parseBots(text(file)).warnings, []);
+  assert.deepEqual(effectiveLead(file, ID.main), { lead: "" });
+  for (const id of [ID.cap, ID.dev]) {
+    assert.deepEqual(effectiveLead(file, id), { lead: ID.main }, "implicit and explicit main leads");
+  }
+});
+
 test("lead: a cycle falls back to the main bot for every bot in it, not for those under it", () => {
   const file = sample((f) => { f.bots[1].lead = ID.tst; f.bots[3].lead = ID.cap; return f; });
   for (const id of [ID.cap, ID.tst]) {
