@@ -3104,6 +3104,48 @@ function mentionSpans(text2, bots, { references = [] } = {}) {
   return spans;
 }
 
+// src/shared/plain-text.js
+var HELD = /\uE000(\d+)\uE001/;
+var HELD_ALL = new RegExp(HELD, "g");
+function plainText(markdown) {
+  if (typeof markdown !== "string" || markdown === "") return "";
+  const held = [];
+  const hold = (value) => {
+    held.push(value);
+    return `${held.length - 1}`;
+  };
+  let text2 = markdown.replace(/[\uE000\uE001]/g, "");
+  text2 = text2.replace(/(^|\n)[ \t]*(`{3,}|~{3,})[^\n]*((?:\n(?![ \t]*\2)[^\n]*)*)(?:\n[ \t]*\2[`~]*[ \t]*(?=\n|$))?/g, (_all, start2, _fence, code) => `${start2}${hold(code.slice(1))}`);
+  text2 = text2.replace(/(`+)(?!`)([\s\S]*?[^`])\1(?!`)/g, (_all, _ticks, code) => hold(code.replace(/^ ([\s\S]*) $/, "$1")));
+  text2 = text2.replace(/\\([!-/:-@[-`{-~])/g, (_all, mark) => hold(mark));
+  text2 = text2.replace(/!?\[((?:[^\][]|\[[^\][]*\])*)\]\((?:[^()\s]|\([^()\s]*\))*(?:[ \t]+(?:"[^"]*"|'[^']*'))?\)/g, "$1");
+  text2 = text2.replace(/!?\[((?:[^\][]|\[[^\][]*\])+)\]\[[^\]]*\]/g, "$1");
+  text2 = text2.replace(/<((?:https?:\/\/|mailto:)[^<>\s]+)>/g, (_all, address) => hold(address));
+  text2 = text2.replace(/\bhttps?:\/\/[^\s<>)\]]+/g, (address) => hold(address));
+  text2 = text2.replace(/^[ \t]*([-*_])(?:[ \t]*\1){2,}[ \t]*$/gm, "");
+  text2 = text2.replace(/^[ \t]*={3,}[ \t]*$/gm, "");
+  text2 = text2.replace(/^[ \t]*(?:>[ \t]?)+/gm, "");
+  text2 = text2.replace(/^[ \t]*#{1,6}[ \t]+(.*?)(?:[ \t]+#+)?[ \t]*$/gm, "$1");
+  text2 = text2.replace(/^[ \t]*[-*+][ \t]+(?:\[[ xX]\][ \t]+)?/gm, "");
+  text2 = text2.replace(/^([ \t]*\d+[.)][ \t]+)\[[ xX]\][ \t]+/gm, "$1");
+  for (let round = 0; round < 4; round += 1) {
+    const before = text2;
+    text2 = text2.replace(/\*\*(?=\S)([\s\S]*?\S)\*\*/g, "$1");
+    text2 = text2.replace(/(?<!\w)__(?=\S)([\s\S]*?\S)__(?!\w)/g, "$1");
+    text2 = text2.replace(/~~(?=\S)([\s\S]*?\S)~~/g, "$1");
+    text2 = text2.replace(/(?<!\*)\*(?![*\s])([^*\n]*?[^*\s])\*(?!\*)/g, "$1");
+    text2 = text2.replace(/(?<![\w_])_(?![_\s])([^_\n]*?[^_\s])_(?![\w_])/g, "$1");
+    if (text2 === before) break;
+  }
+  while (HELD.test(text2)) text2 = text2.replace(HELD_ALL, (_all, index) => held[Number(index)]);
+  return text2;
+}
+var PREVIEW_SOURCE = 400;
+function previewText(text2) {
+  if (typeof text2 !== "string") return "";
+  return plainText(text2.slice(0, PREVIEW_SOURCE)).replace(/\s+/g, " ").trim();
+}
+
 // src/client/text.js
 var MENTION_ORIGIN = "https://bots.local/";
 function linkMentions(text2, bots, selfId) {
@@ -3283,7 +3325,7 @@ function previewOf(list, id, hiddenTurns = []) {
     const entry = outline[index];
     if (hiddenTurns.includes(entry.turn)) continue;
     const text2 = entry.response || entry.prompt || "";
-    if (text2 !== "") return stripHeader(text2).replace(/\s+/g, " ").trim();
+    if (text2 !== "") return previewText(stripHeader(text2));
   }
   return "";
 }
