@@ -1,3 +1,4 @@
+import { nativeCss } from './native-css.js'
 // #322: a Bot's composer card must have its settled height on its first paint. DSH paints the
 // card before it mounts any input slot (its controls row is empty for a few frames), so the
 // Stage rules key on the conversation group's page marker, not on the "+" inside the card,
@@ -14,8 +15,7 @@ import { browserGuard } from './browser-guard.js'
 
 const requireHarness = createRequire(new URL('../dev/harness/package.json', import.meta.url))
 const nativeBundle = readFileSync(requireHarness.resolve('@deepseek-ai/dsh-client-ui-conversation/client'), 'utf8')
-const hostCss = [...nativeBundle.matchAll(/const css\$?\w* = ("(?:[^"\\]|\\.)*");/g)]
-  .map(match => JSON.parse(match[1])).find(css => /_card\{/.test(css) && /_placeholder\{/.test(css))
+const hostCss = nativeCss(nativeBundle).find(css => /_card\{/.test(css) && /_placeholder\{/.test(css))
 assert.ok(hostCss, 'supported DSH InputBar CSS must be present')
 const prefix = hostCss.match(/\.([\w]+)_card\{/)[1]
 const { outputFiles } = await build({

@@ -1,6 +1,6 @@
 // The layout-widths persistence contract (issue #483), tested against the real pinned package
 // rather than a stand-in: fixtures/layout-widths-persistence/client.js is the unmodified
-// lib/client.js of @deepseek-ai/dsh-client-ui-layout 0.2.2-rc.1 (MIT; LICENSE beside it).
+// lib/client.js of @deepseek-ai/dsh-client-ui-layout 0.2.2-rc.2 (MIT; LICENSE beside it).
 // Its sha256 must be the `before` hash in runtime/patches/patches.json, so these tests apply
 // the carried patch to the bytes npm actually installs, import the patched client module
 // through the DSH module loader, and drive its real apply()/createLayoutStore with a fake
@@ -36,9 +36,9 @@ const PACKAGE = '@deepseek-ai/dsh-client-ui-layout'
 const FILE = 'lib/client.js'
 const PATCH = 'layout-widths-persistence.patch'
 // The release this patch is carried for, as the PR promises: dsh and the package are both
-// 0.2.2-rc.1. The runtime pins must agree, and the fixture must be the file they were made on.
-const DSH = '0.2.2-rc.1'
-const VERSION = '0.2.2-rc.1'
+// 0.2.2-rc.2. The runtime pins must agree, and the fixture must be the file they were made on.
+const DSH = '0.2.2-rc.2'
+const VERSION = '0.2.2-rc.2'
 const KEY = 'dsh.layout.widths'
 
 const readJson = file => JSON.parse(readFileSync(file, 'utf8'))
@@ -250,7 +250,7 @@ async function openStore(t, { innerWidth = 1200, raw, storage, readError = false
   return { runtime, window, document, storage: local, store, instance, layout: () => instance.getSnapshot().layoutInfo }
 }
 
-test('patches.json pins the real 0.2.2-rc.1 file to the desktop runtime', () => {
+test('patches.json pins the real 0.2.2-rc.2 file to the desktop runtime', () => {
   const patch = entry()
   assert.equal(patch.dsh, DSH)
   assert.equal(readJson(join(APP, 'runtime', 'package.json')).dependencies['@deepseek-ai/dsh'], DSH)
@@ -268,8 +268,8 @@ test('patches.json pins the real 0.2.2-rc.1 file to the desktop runtime', () => 
   const patchText = readFileSync(join(PATCHES, PATCH), 'utf8')
   assert.ok(patchText.startsWith(`--- a/${PACKAGE}/${FILE}\n+++ b/${PACKAGE}/${FILE}\n`), patchText.slice(0, 120))
   assert.match(patchText, /WIDTHS_KEY = "dsh\.layout\.widths"/)
-  assert.match(patchText, /sidebar: saved\.sidebar/)
-  assert.match(patchText, /sidebar = d\.layoutInfo\.sidebar === 0 \? lastSidebar : 0/)
+  assert.match(patchText, /sidebar:\s*saved\.sidebar/)
+  assert.match(patchText, /sidebar\s*=\s*d\.layoutInfo\.sidebar\s*===\s*0\s*\?\s*lastSidebar\s*:\s*0/)
   assert.match(patchText, /normalizeRightbar/)
   assert.doesNotMatch(patchText, /clampWidth\(d\.layoutInfo\.rightbar/, 'a viewport change must not clamp the preference')
   const development = readFileSync(join(APP, 'docs', 'DEVELOPMENT.md'), 'utf8')

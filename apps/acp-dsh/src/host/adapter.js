@@ -173,12 +173,15 @@ export function ownPermissionsNotice(name) {
 export function promptOf(messages, redact = text => text) {
   let start = messages.length
   while (start > 0 && messages[start - 1].role === 'user') start--
-  const turn = messages.slice(start).filter(message => message.source?.kind !== NOTICE_KIND)
-  const own = turn.filter(message => message.source?.kind === 'user' || isHandoff(message))
+  // A failed request may leave no assistant row. Retry starts a new continuation even
+  // then: never resend the earlier instruction to an ACP session that already accepted it.
+  const retry = messages.findLastIndex(message => message.role === 'user' && message.source?.kind === 'retry')
+  const turn = messages.slice(Math.max(start, retry)).filter(message => message.source?.kind !== NOTICE_KIND)
+  const own = turn.filter(message => message.source?.kind === 'user' || message.source?.kind === 'retry' || isHandoff(message))
   const text = (own.length > 0 ? own : turn)
     .map(message => (isHandoff(message) ? redact(textOf(message.content)) : textOf(message.content)))
     .filter(Boolean).join('\n\n')
-  return [{ type: 'text', text }]
+  return [{ type: 'text', text: text || (own.some(message => message.source?.kind === 'retry') ? 'Continue.' : '') }]
 }
 
 /** Where a Session title on an agent's chat goes when DSH's default model is an agent too. */

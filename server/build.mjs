@@ -3,7 +3,7 @@
 // machine builds the same way.
 //
 //   node server/build.mjs [--tag automagik-server:local] [--version 3.90.1] [--image-version 3.93.0]
-//                         [--revision 91cf4862…] [--dsh 0.2.2-rc.1]
+//                         [--revision 91cf4862…] [--dsh 0.2.2-rc.2]
 //                         [--repository https://github.com/automagik-dev/automagik] [--no-cache]
 //
 // `--version` is the release whose plugin tarballs are installed; `--image-version` is the
@@ -37,7 +37,7 @@ const tag = args.tag || 'automagik-server:local'
 const version = args.version || '3.90.1'
 const imageVersion = args['image-version'] || version
 const revision = args.revision || 'unknown'
-const dsh = args.dsh || '0.2.2-rc.1'
+const dsh = args.dsh || '0.2.2-rc.2'
 const repository = args.repository || 'https://github.com/automagik-dev/automagik'
 // The context is explicit: GitHub aliases `docker build` to buildx, which requires it.
 const command = ['build', '--file', 'server/Dockerfile', '--tag', tag,

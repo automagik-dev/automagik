@@ -154,3 +154,27 @@ test('D13 refusalCounter resets the row independently from the total', () => {
   assert.equal(counter.total('ada'), 0)
   assert.equal(counter.tripped('ada'), false)
 })
+
+
+test('Read only refuses Office outputs; only Full access may read user terminals', async () => {
+  const w = world()
+  w.ctx.provide('sandboxPolicy', { resolve: () => ({ mode: 'read-only' }) })
+  for (const tool of ['office_convert', 'office_recalculate', 'office_render']) for (const name of [tool, `mcp__dsh__${tool}`]) {
+    const result = await w.pre(w.exec({ name, arguments: { input: 'document.xlsx' } }))
+    assert.equal(result.kind, 'deny', name)
+    assert.match(result.reason, /Read only/)
+  }
+  for (const mode of ['read-only', 'workspace-write']) {
+    w.ctx.provide('sandboxPolicy', { resolve: () => ({ mode }) })
+    for (const tool of ['user_terminal_list', 'user_terminal_read']) for (const name of [tool, `mcp__dsh__${tool}`]) {
+      const result = await w.pre(w.exec({ name, arguments: {} }))
+      assert.equal(result.kind, 'deny', `${mode}: ${name}`)
+      assert.match(result.reason, /Only Full access/)
+    }
+  }
+  assert.equal(w.requests.length, 0, 'a read-only refusal never asks for an override')
+  w.ctx.provide('sandboxPolicy', { resolve: () => ({ mode: 'workspace-write' }) })
+  for (const name of ['office_convert', 'office_recalculate', 'office_render']) assert.equal(await w.pre(w.exec({ name, arguments: { input: 'document.xlsx' } })), allow, name)
+  w.rt.sessionWide = () => true
+  for (const name of ['user_terminal_list', 'user_terminal_read']) assert.equal(await w.pre(w.exec({ name, arguments: {} })), allow, name)
+})

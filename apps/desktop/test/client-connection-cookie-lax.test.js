@@ -1,6 +1,6 @@
 // The browser-session cookie contract (issue #632), tested against the real pinned package
 // rather than a stand-in: fixtures/client-connection-cookie-lax/index.js is the unmodified
-// lib/index.js of @deepseek-ai/dsh-client-connection 0.2.2-rc.1 (MIT; LICENSE beside it).
+// lib/index.js of @deepseek-ai/dsh-client-connection 0.2.2-rc.2 (MIT; LICENSE beside it).
 // Its sha256 must be the `before` hash in runtime/patches/patches.json, so these tests apply
 // the carried patch to the bytes npm actually installs, import the patched module, and drive
 // its real apply(): the real BrowserAuth/HostConnectionService mint the launch cookie through
@@ -32,9 +32,9 @@ const PACKAGE = '@deepseek-ai/dsh-client-connection'
 const FILE = 'lib/index.js'
 const PATCH = 'client-connection-cookie-lax.patch'
 // The release this patch is carried for, as the PR promises: dsh and the package are both
-// 0.2.2-rc.1. The runtime pins must agree, and the fixture must be the file they were made on.
-const DSH = '0.2.2-rc.1'
-const VERSION = '0.2.2-rc.1'
+// 0.2.2-rc.2. The runtime pins must agree, and the fixture must be the file they were made on.
+const DSH = '0.2.2-rc.2'
+const VERSION = '0.2.2-rc.2'
 // The Host the fake requests carry; the cookie audience is derived from it (and, on TLS, from
 // its https origin), exactly as requestAudience reads a real node:http request.
 const HOST = '127.0.0.1:3773'
@@ -148,7 +148,7 @@ function authorize(connection, { url = '/', method = 'GET', headers = {} } = {})
   return { allowed, ...response }
 }
 
-test('patches.json pins the real 0.2.2-rc.1 file to the desktop runtime', () => {
+test('patches.json pins the real 0.2.2-rc.2 file to the desktop runtime', () => {
   const patch = entry()
   assert.equal(patch.dsh, DSH)
   assert.equal(readJson(join(APP, 'runtime', 'package.json')).dependencies['@deepseek-ai/dsh'], DSH)

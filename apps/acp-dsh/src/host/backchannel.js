@@ -40,7 +40,9 @@ const LEVEL_EVENTS = new Set(['permission/preset', 'sandbox/mode', 'approval/pol
 // Tools that only write files: a Session in DSH's read-only sandbox cannot run them, so they
 // are not offered. Shell tools stay (read-only commands are legitimate; the sandbox denies the
 // writes) and every other tool is DSH's own decision at execution time.
-export const MUTATING_TOOLS = Object.freeze(new Set(['write', 'edit', 'apply_patch', 'str_replace_editor']))
+export const MUTATING_TOOLS = Object.freeze(new Set(['write', 'edit', 'apply_patch', 'str_replace_editor', 'office_convert', 'office_recalculate', 'office_render']))
+// User-owned terminals are outside the Session's read-only filesystem boundary.
+export const READ_ONLY_DENIED_TOOLS = new Set([...MUTATING_TOOLS, 'user_terminal_list', 'user_terminal_read'])
 
 const textOf = (content) => {
   if (typeof content === 'string') return content
@@ -163,7 +165,7 @@ export function presetOf(ctx, session) {
 
 /**
  * What the bridge offers this Session right now: its preset's visible tools, without the mirror
- * tool, and without the file-only mutators when the Session is read-only.
+ * tool, and without output tools or user-terminal access when the Session is read-only.
  * @param {{ get?: (name: string) => any }} ctx
  * @param {any} agent the DSH Agent the Session runs
  * @returns {Array<{ name: string, description: string, inputSchema: object }>}
@@ -178,7 +180,7 @@ export function offeredTools(ctx, agent) {
     // own tools here run outside the agent's loop, so only unconditionally executable ones are
     // offered.
     .filter((definition) => typeof tools.executable !== 'function' || tools.executable(definition.name, agent) !== undefined)
-    .filter((definition) => level.sandbox !== 'read-only' || !MUTATING_TOOLS.has(definition.name))
+    .filter((definition) => level.sandbox !== 'read-only' || !READ_ONLY_DENIED_TOOLS.has(definition.name))
     .map((definition) => ({
       name: definition.name,
       description: typeof definition.description === 'string' ? definition.description : '',

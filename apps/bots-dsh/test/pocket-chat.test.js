@@ -662,9 +662,13 @@ test('writes: send cleans the text; empty after cleaning is refused empty, over 
 test('writes: a Retry with a known id prompts nothing (64 ids kept per Session, and the ids the Session log holds)', async () => {
   const all = sessions()
   all['s-omni-2'].records.push(userAt(7, 'from before a restart', { kind: 'user', rpcId: 'pocket-old' }))
+  const retry = userAt(8, '', { kind: 'retry', rpcId: 'pocket-retry-before' })
+  all['s-omni-2'].records.push(retry)
+  assert.deepEqual(rowsOf(retry.event, { sessionId: 's-omni-2', turn: 1 }), [], 'empty continuation control has no Pocket chat bubble')
   const controller = fakeController(all)
   const w = await watching(writableOf(controller))
   assert.deepEqual(await w.handle.send({ text: 'again', id: 'old' }), { ok: true, state: 'sent', id: 'old', repeat: true })
+  assert.deepEqual(await w.handle.send({ text: 'again', id: 'retry-before' }), { ok: true, state: 'sent', id: 'retry-before', repeat: true })
   assert.equal(controller.prompts.length, 0)
   await w.handle.send({ text: 'once', id: 'r1' })
   assert.equal((await w.handle.send({ text: 'once', id: 'r1' })).repeat, true)

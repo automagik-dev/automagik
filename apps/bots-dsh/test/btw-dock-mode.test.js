@@ -1,3 +1,4 @@
+import { nativeCss } from './native-css.js'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { readFileSync } from 'node:fs'
@@ -11,8 +12,7 @@ import { browserGuard } from './browser-guard.js'
 // hidden there (it holds the context meter), and the hide rule outranked the show rule.
 // Requires the dev/harness install; reads the supported DSH InputBar and ConversationRoot CSS.
 const requireHarness = createRequire(new URL('../dev/harness/package.json', import.meta.url))
-const sheetsOf = id => [...readFileSync(requireHarness.resolve(id), 'utf8').matchAll(/const css\$?\w* = ("(?:[^"\\]|\\.)*");/g)]
-  .map(match => JSON.parse(match[1]))
+const sheetsOf = id => nativeCss(readFileSync(requireHarness.resolve(id), 'utf8'))
 const sheets = sheetsOf('@deepseek-ai/dsh-client-ui-conversation/client')
 const sheet = (name, test) => {
   const css = sheets.find(test)

@@ -19,7 +19,7 @@ FROM gcr.io/distroless/nodejs24-debian12@sha256:61f4f4341db81820c24ce771b83d202e
 FROM node:24.22.2-trixie-slim@sha256:54f84b4cf8432b21aaffd5d3ce8d41e12cea0d10d33c09d2f3c9879d49d6b446 AS builder
 
 ARG AUTOMAGIK_VERSION=3.90.1
-ARG DSH_VERSION=0.2.2-rc.1
+ARG DSH_VERSION=0.2.2-rc.2
 ARG IMAGE_REVISION=unknown
 ARG AUTOMAGIK_REPOSITORY=https://github.com/automagik-dev/automagik
 
@@ -29,7 +29,7 @@ ENV DO_NOT_TRACK=1 \
     npm_config_update_notifier=false
 
 WORKDIR /build
-# The desktop's own runtime pins (dsh 0.2.2-rc.1, pnpm 10.34.6, zod 4.4.3), the pruner the
+# The desktop's own runtime pins (dsh 0.2.2-rc.2, pnpm 10.34.6, zod 4.6.6), the pruner the
 # desktop build uses, and the runtime patches the desktop carries (assemble applies them to the
 # same pinned packages). The same pins keep this image on the harness the plugins are tested on.
 COPY apps/desktop/runtime/package.json apps/desktop/runtime/package-lock.json /build/apps/desktop/runtime/

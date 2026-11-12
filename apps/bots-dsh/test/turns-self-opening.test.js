@@ -27,11 +27,12 @@ const request = { kind: SOURCE_KIND, form: 'relay', role: 'request', exchangeId:
 
 for (const [label, opener] of [
   ['a goal round', { kind: 'goal', goalId: 'g', revision: 1, round: 2 }],
+  ['an empty user retry', { kind: 'retry', rpcId: 'retry-turn-probe' }],
 ]) {
   test(`a turn opened by ${label} keeps its reply when another Bot's request joins it`, async () => {
     const { rt, emit, delivered, shown } = host()
     emit('turn/start', { turn: 7 })
-    emit('user/message', { content: text('opener'), source: opener })
+    emit('user/message', { content: opener.kind === 'retry' ? [] : text('opener'), source: opener })
     emit('assistant/message', { message: { content: text('Here is the final answer: the migration is done.') } })
     emit('user/message', { content: text('[Message from Omni]\nstatus?'), source: request })
     emit('assistant/message', { message: { content: text('Still on it.') } })

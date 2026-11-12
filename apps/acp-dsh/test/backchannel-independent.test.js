@@ -27,7 +27,7 @@ const artifactOf = session => ({
   inheritedEventCount: 0,
 })
 
-// The same real v4 loader a desktop reload runs, with the installed (unpatched) 0.2.2-rc.1
+// The same real v4 loader a desktop reload runs, with the installed (unpatched) 0.2.2-rc.2
 // bytes: a Session the bridge writes must load on its own, without the carried recovery patch.
 const assertLoadable = session => {
   const artifact = artifactOf(session)

@@ -2,7 +2,7 @@
 
 Brazilian Portuguese for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH). DSH 0.2.2 ships Portuguese itself, as **Português** (`pt`); this client plugin adds the part DSH does not carry — the Bot team's own `omni-ui` strings — under that same entry. It adds no language: Settings › General › Language keeps exactly **one** Portuguese row, DSH's.
 
-Supported runtime: **DSH 0.2.2-rc.1 or later** (`engines.dsh` is `>=0.2.2-rc.1 <0.3.0-0`). Earlier DSH releases have no `pt` to register under, and DSH refuses the install there.
+Supported runtime: **DSH 0.2.2-rc.2 or later** (`engines.dsh` is `>=0.2.2-rc.2 <0.3.0-0`). Earlier DSH series have no `pt` to register under; this pack requires rc.2 or later.
 
 ## One Portuguese entry
 

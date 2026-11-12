@@ -688,6 +688,7 @@ export function createAutoSearchProvider(deps, config = {}) {
 
   return {
     id: AUTO_PROVIDER_ID,
+    title: 'Auto',
     available: () => options.native || options.fallback,
     async search(request, signal) {
       if (signal?.aborted) throw aborted(signal)

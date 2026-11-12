@@ -68,6 +68,10 @@ test('the app takes a lane meant for it, and nothing else', () => {
   assert.equal(only({ version: '3.22.0' }), null)
   assert.equal(only({ url: 'https://example.com/x.tgz' }), null)
   assert.equal(only({ engines: { dsh: '>=0.3.0' } }), null)
+  const rc2 = lane({ plugins: [{ ...lane().plugins[0], engines: { dsh: '>=0.2.2-rc.2 <0.3.0-0' } }] })
+  assert.equal(laneUpdate(rc2, { ...context, dshVersion: '0.2.2-rc.1' }), null, 'an rc.1 desktop never takes the rc.2 plugins')
+  assert.ok(laneUpdate(rc2, { ...context, dshVersion: '0.2.2-rc.2' }), 'the matching rc.2 desktop accepts them')
+  assert.equal(laneUpdate(rc2, { ...context, dshVersion: '0.3.0-alpha.1' }), null, 'the ceiling excludes the next minor prerelease')
 })
 
 // A profile as pnpm lays it out: node_modules/<name> links into the store.

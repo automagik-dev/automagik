@@ -1,33 +1,12 @@
 [
   {
-    "patch": "teammate-models.patch",
-    "about": "Agent Teams: spawn_teammate takes llm_provider, model and reasoning_effort for a fresh teammate (checked against DSH's subagent model selection), list_teammate_models, and each teammate's own route in the roster. Delete it in the release whose dsh has the change upstream.",
-    "dsh": "0.2.2-rc.1",
-    "files": [
-      {
-        "package": "@deepseek-ai/dsh-experimental-agent-team",
-        "version": "0.2.2-rc.1",
-        "file": "lib/index.js",
-        "before": "d5ed602b92410d40b1350185fd48cf1cefb9f606fb0a69351a10e12204afc3a2",
-        "after": "191ea98f920771ac6caebed911bb93c5fab88ba13ad3b0a5e7729d73cc74ecd4"
-      },
-      {
-        "package": "@deepseek-ai/dsh-experimental-tool-agent-team",
-        "version": "0.2.2-rc.1",
-        "file": "lib/index.js",
-        "before": "cac22fe5f83a179056469cf329def58393c7620eae23b018c66f42c37d849f63",
-        "after": "f7f2c992e0c55a701b6cb90edb74f0fcb8e45ae53e271159e1731c7a422643a6"
-      }
-    ]
-  },
-  {
     "patch": "frontend-static-index-cache.patch",
     "about": "Frontend static server: index.html gets cache-control: no-cache and a weak ETag from the rendered bytes, and a matching If-None-Match gets an empty 304, so a normal reload after a plugin update cannot keep a stale manifest or client bundle. No Last-Modified: a plugin update can rewrite the manifest without touching index.html's mtime, so a content ETag is the only correct validator (the desktop runtime and the server image both apply this patch). Delete it in the DSH release that serves the index with cache directives.",
-    "dsh": "0.2.2-rc.1",
+    "dsh": "0.2.2-rc.2",
     "files": [
       {
         "package": "@deepseek-ai/dsh-host-frontend-static",
-        "version": "0.2.2-rc.1",
+        "version": "0.2.2-rc.2",
         "file": "lib/index.js",
         "before": "6bb17c239f48fc26d4cf990af3139e7b64ae9f06fc5249bce7b58a3130edaed4",
         "after": "97cbae5491b6d941ead10487d557e67536fb23300224bb43fcd5ad91bfc167c2"
@@ -37,11 +16,11 @@
   {
     "patch": "client-connection-cookie-lax.patch",
     "about": "Connection: the browser-session cookie is SameSite=Lax instead of Strict. A launch link opened from a phone camera or QR is a top-level cross-site navigation, and the redirected ./ request withholds a Strict cookie, so authorizeIndex answers the 401 failed-authentication page; Lax sends the cookie on that navigation (#632). HttpOnly, the computed Secure attribute and the 303 are unchanged. A request without a valid cookie names $DSH_HOME/launch-url in its 401, where dsh web records the launch URL for recovery (#361). Delete it in the DSH release whose browser-session cookie is Lax.",
-    "dsh": "0.2.2-rc.1",
+    "dsh": "0.2.2-rc.2",
     "files": [
       {
         "package": "@deepseek-ai/dsh-client-connection",
-        "version": "0.2.2-rc.1",
+        "version": "0.2.2-rc.2",
         "file": "lib/index.js",
         "before": "0ebcca7583e082716f79b0b55bc1749d48269cc8db2989b043b321b57abd3684",
         "after": "38fa6e39447e4f5b92ad5c8c7f9fff5d3902b3e4034b483d40eb285500a7ef54"
@@ -51,25 +30,25 @@
   {
     "patch": "layout-widths-persistence.patch",
     "about": "Client layout: the sidebar and right panel widths are saved in localStorage under dsh.layout.widths and restored when the client plugin reloads, instead of resetting on every reload (#483). setSidebar, setRightbar and openRightbar save the width the user chose; a right panel width chosen on a wider frame is kept as the preference when the viewport shrinks (the renderer clamps only the display), a hand-stored sidebar 0 restores as the default 280, and toggleSidebar reopens at the last positive sidebar width. Missing, unreadable or invalid stored values fall back to the contract defaults. Delete it in the DSH release whose ui-layout persists the panel widths itself.",
-    "dsh": "0.2.2-rc.1",
+    "dsh": "0.2.2-rc.2",
     "files": [
       {
         "package": "@deepseek-ai/dsh-client-ui-layout",
-        "version": "0.2.2-rc.1",
+        "version": "0.2.2-rc.2",
         "file": "lib/client.js",
-        "before": "338bcbdea1180e56b0a8e86788d1e75b09296cbe7ba042a06cdc91028001cf93",
-        "after": "d8878ab1a28c9634dbeb03079bff9a774659db5b9a96f2544a65239b512d596d"
+        "before": "dfbc793b4147fd695fdb2a57c0982d73c668e57493f609945d5d04fb36fdd48e",
+        "after": "2697dc3ddbae8c291fbca645a8090414a816115159ce3bdfa3f3de675ee6a1ab"
       }
     ]
   },
   {
     "patch": "web-launch-token-persistence.patch",
     "about": "Web: dsh web records its launch URL (token included) in $DSH_HOME/launch-url, mode 0600, replacing the previous start's file without partial content (a brief absence is possible while it is replaced) and removing it on shutdown, so --no-open with stdout lost is recoverable without a restart. A failed write is reported and returns null, so the launch URL line still prints, even when cleaning up the temporary file also fails. The connection patch that owns its file names it in the 401, and the desktop launcher reads it when dsh's output is unavailable. It is a credential: never log or commit it. Delete it in the DSH release that persists the launch URL itself.",
-    "dsh": "0.2.2-rc.1",
+    "dsh": "0.2.2-rc.2",
     "files": [
       {
         "package": "@deepseek-ai/dsh-web-app",
-        "version": "0.2.2-rc.1",
+        "version": "0.2.2-rc.2",
         "file": "lib/index.js",
         "before": "6662ca712368c56fb8818efa53039ef92ce215a328a76b9cdd5e1bed624a0e84",
         "after": "2cb829414f5e66268d078f9d3771173518d1d51c072214384caf3e890ddf7693"
@@ -79,32 +58,32 @@
   {
     "patch": "acp-bridge-tool-lifecycle.patch",
     "about": "Session format v4: a tool call that a bridged (ACP) tool recorded out of band has no assistant/message advertisement in sessions written before the bridge always wrote one (#842), and the loader refused the whole session with SessionFormatError \"tool/call <id> has no advertised tool lifecycle\". The loader now treats such a tool/call as its own advertisement: its tool/result closes it (since #957 the end of its step or turn also closes it, as superseded, when no result came: see below), an orphan result or a repeated call (before or after its result) still fails, no event is rewritten or discarded, and one stderr line reports how many calls were tolerated. A bridged call also runs out of band, so sessions written before the bridge closed its calls itself can hold a step/end or turn/end with a bridged call still open, that call's one late result stamped with its ended step, and the bridge's empty replacement of its advertisement stamped the same way (#957, SessionFormatError \"step/end leaves unresolved tool call <id>\"). The loader closes such a call as superseded at the boundary and matches one late result (the call's own turn and step) to it where it stands; the same holds for a bridged call that was advertised but whose tool/call row was never written (the error then names an id with no tool/call row), with or without a result; a second late result, a late result for a call that is not bridged and any other unresolved call still fail, and a second stderr line reports the counts. The worker's copy of the same validation is patched too, so migration verification agrees. Delete it in the DSH release that tolerates the shape itself.",
-    "dsh": "0.2.2-rc.1",
+    "dsh": "0.2.2-rc.2",
     "files": [
       {
         "package": "@deepseek-ai/dsh-session-format-v3-to-v4",
-        "version": "0.2.2-rc.1",
+        "version": "0.2.2-rc.2",
         "file": "lib/index.js",
-        "before": "2f7ba42e79072b2674be9f28d051665e006732fa6cc5de474f783b823bdfb0a9",
-        "after": "0fbda0a768c705684ef6072ee0a519c80ae566e6c4de282099bb957c98900aad"
+        "before": "da0b0c2e1460316e659f48f4222730962046b3634d1fb634683bb7243a7bba80",
+        "after": "71e44b2e63b9104d7a9a530cf2d55bd33254ebad55d609f09233bbe9fa1a6c72"
       },
       {
         "package": "@deepseek-ai/dsh-session-persistence-jsonl",
-        "version": "0.2.2-rc.1",
+        "version": "0.2.2-rc.2",
         "file": "lib/worker.cjs",
-        "before": "c5c8ccb7a661ef343e9d0c792d8d5cba376ed783ea48c6489fe90eab264ae321",
-        "after": "e2426d6532363bcc0fdfc89353f192a1d0d0759a573183bb1575db015aa481a3"
+        "before": "94cec706d4ffc83647c3d1317cf872c942a69becf6a2f666703bfecd5330aaf6",
+        "after": "5e505b9da32b0545af7ac0fdeff36299b72a6dff8490bd6b74081de7836f09aa"
       }
     ]
   },
   {
     "patch": "session-scan-tolerance.patch",
     "about": "Session listing: one bad folder in the sessions tree aborted the whole scan, so a backup copy of a session (a sibling folder carrying the original header, e.g. <session>.backup-<timestamp>), a misnamed folder or a stray .jsonl file left the desktop on its startup screen and none of the registered workspaces started (#861). The listing (list(), through listGenerations and listArtifacts) now reports each skipped path once with console.warn and goes on, for named cases only: a flat session file; a project or session folder that is gone or not readable (ENOENT, ENOTDIR, EACCES, EPERM); a header that is an unsupported format, a corrupt log, or does not identify its path (the identity check's plain \"corrupt session log \\\"<path>\\\": ...\" Error); and a duplicate session id, which keeps the copy first in sorted sourcePath order (code-unit order, not readdir order) and reports the others. Any other failure (EIO, EMFILE, an abort) still fails the listing. The root encoding check stays fail-closed: a session of the other compression still throws its encoding mismatch and an unreadable root still fails, and a flat file is left to the listing. A project or session folder the check cannot read (gone or not readable, the same four codes) is reported and skipped there too, so the registry activates (#885), but a pass that skipped a folder is never cached: every later call checks the root again, and the folder fails the root with the mismatch once it is readable and holds the other compression. One rule for files and folders: an unreadable log and an unreadable folder are both skipped and reported from the first listing on, so a session behind one is not listed (and not known to the workspace registry) until it is readable; the skip line is the record of that storage fault. The migration child catalog (prepareStoredMigration's children()) lists strictly, as upstream, so a child cannot drop out of a catalog. A backend instance prints at most 20 skip lines and then one summary line per listing with the count of the rest, so a tree with many bad folders cannot flood the log. A backup-shaped skip says session backups belong outside the sessions tree, in the app home's session-backups/ directory. The valid sessions still list, the root itself still fails closed, and the scan stays read-only: no event, header or file is rewritten, moved or deleted. Delete it in the DSH release whose listing tolerates a bad folder.",
-    "dsh": "0.2.2-rc.1",
+    "dsh": "0.2.2-rc.2",
     "files": [
       {
         "package": "@deepseek-ai/dsh-session-persistence-jsonl",
-        "version": "0.2.2-rc.1",
+        "version": "0.2.2-rc.2",
         "file": "lib/index.js",
         "before": "69efef5f84dddf947032bc1425067878fa610416c8885acde2ded9b01230c9b7",
         "after": "fae8a417cfa075e3cab004add29a3fe010270fdf925f75b7fafe02775aee51a0"

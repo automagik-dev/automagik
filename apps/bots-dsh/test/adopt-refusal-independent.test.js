@@ -141,7 +141,7 @@ async function adoptBench(t) {
   const resolve = rt.resolveAgent
   rt.resolveAgent = async id => id === 'picked' ? target : resolve(id)
   // dsh 0.2.2 reads the turn boundary and the preset through their owning services.
-  bench.ctx.agents = { turnBoundaryOf: session => session.id === 'picked' ? target.boundary : undefined, isOwnedBy: () => false }
+  bench.ctx.agents = { turnBoundaryOf: session => session.id === 'picked' ? target.boundary : undefined }
   const selected = []
   const presets = {
     list: async () => [{ id: 'cordis' }],

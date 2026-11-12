@@ -1,4 +1,4 @@
-// Independent recovery rows for issue #842: the real pinned 0.2.2-rc.1 loader and persistence
+// Independent recovery rows for issue #842: the real pinned 0.2.2-rc.2 loader and persistence
 // worker bytes, the carried narrowed acp-bridge-tool-lifecycle.patch, and synthetic v4 logs made
 // in this file. Nothing here is copied from a real session.
 //
@@ -41,8 +41,8 @@ const FORMAT = '@deepseek-ai/dsh-session-format-v3-to-v4'
 const PERSIST = '@deepseek-ai/dsh-session-persistence-jsonl'
 const FORMAT_FILE = 'lib/index.js'
 const WORKER_FILE = 'lib/worker.cjs'
-const DSH = '0.2.2-rc.1'
-const VERSION = '0.2.2-rc.1'
+const DSH = '0.2.2-rc.2'
+const VERSION = '0.2.2-rc.2'
 
 const CALL = 'bridge_probe_alpha'
 const OTHER = 'bridge_probe_beta'

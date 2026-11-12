@@ -107,3 +107,17 @@ test('a group made under the PTC preset relays through run_code', async (t) => {
     timeoutMs: 600_000,
   })
 })
+
+
+for (const [name, messages, opens] of [
+  ['ordinary user with rpcId', [{ ...userText('Hello team'), source: { kind: 'user', rpcId: 'probe-user' } }], true],
+  ['consumed user then retry', [userText('Hello team'), { role: 'assistant', content: [] }, { role: 'user', source: { kind: 'retry', rpcId: 'probe-retry' }, content: [] }], false],
+  ['unconsumed user then retry', [userText('Hello team'), { role: 'user', source: { kind: 'retry', rpcId: 'probe-retry' }, content: [] }], true],
+  ['retry alone', [{ role: 'user', source: { kind: 'retry', rpcId: 'probe-retry' }, content: [] }], false],
+]) test(`rc.2 group continuation: ${name}`, async t => {
+  const { relay, stop } = start()
+  t.after(stop)
+  const chunks = await drain(relay({ provider: 'deepseek', model: 'v4', sessionId: 'room', messages, tools: declared('group_relay') }, () => { throw new Error('a group round never reaches the model') }))
+  assert.equal(chunks.at(-1).reason.kind, opens ? 'tool-calls' : 'stop')
+  assert.equal(chunks.some(chunk => chunk.type === 'block-end'), opens, 'retry is correlation, not an additional group post')
+})

@@ -4,7 +4,7 @@
 //
 //   source maps (*.js.map, *.d.ts.map, *.css.map, ...)   Node runs without them; DSH serves
 //       a plugin's map to DevTools only when one exists (dsh-client-modules: ENOENT is no map)
-//   TypeScript sources under src/ of a package that ships lib/   Node does not run
+//   TypeScript sources under src/ of a package that ships lib/ or dist/   Node does not run
 //       TypeScript from node_modules; kept when the package's entry points name src/
 //   typings (*.d.ts, *.d.mts, *.d.cts)                     only an editor reads them
 //   a package's README, CHANGELOG and HISTORY (.md)         runtime only: plugins in the
@@ -89,7 +89,7 @@ export function pruneNodeModules(nodeModules, { keepDocsOf = () => false, docs =
     const manifest = readJson(join(dir, 'package.json'))
     const has = sub => lstatSync(join(dir, sub), { throwIfNoEntry: false })?.isDirectory() === true
     const options = {
-      srcIsSource: manifest !== null && has('lib') && has('src') && !entriesNameSrc(manifest),
+      srcIsSource: manifest !== null && (has('lib') || has('dist')) && has('src') && !entriesNameSrc(manifest),
       keepDocs: keepDocsOf(name),
       docs,
     }
