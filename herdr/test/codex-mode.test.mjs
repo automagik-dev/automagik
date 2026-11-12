@@ -393,6 +393,14 @@ test("#1142 a template worker keeps the owner's command as written, never with t
   assert.equal(owner.warning, null);
   const got = codexReceives(t, owner.argv);
   assert.deepEqual(got.slice(0, 2), ["--no-daemon", "--dangerously-bypass-approvals-and-sandbox"], "the owner's flags reach Codex as options");
+  // #1142, warning-only (no --no-daemon among its options): recovered as written, warned, never with the pack's folders or granted.
+  const warned = tw("codex -m x");
+  assert.equal(warned.error, undefined);
+  assert.deepEqual(warned.argv.slice(0, 4), ["sh", "-c", 'codex -m x "$@"', "sh"]);
+  assert.equal(warned.argv.includes("/r/.git") || warned.argv.includes("--add-dir"), false, "no pack-injected --add-dir");
+  assert.equal(warned.argv.includes("--no-daemon"), false, "its command is never rewritten");
+  assert.equal("granted" in warned, false);
+  assert.match(warned.warning, /^Template tpl runs Codex without --no-daemon/);
   // A Codex option after its --: refused before anything runs, by name.
   const lost = tw("codex -- --no-daemon");
   assert.match(lost.error, /w7 can't be run again: Template tpl runs Codex with --no-daemon after its --, where Codex reads it as prompt text.*not started/);
@@ -488,6 +496,12 @@ test("a Codex worker in a linked worktree may write its own git dir and the main
   assert.equal(old.code, 0, old.err);
   assert.deepEqual(s.runs().at(-1).slice(-2), ["old-codex", "task two"]);
   assert.match(old.err, /Template old-codex runs Codex without --no-daemon.*Add --no-daemon/);
+  // #1142, warning-only: it starts in hc's template form, never with the pack's folders and never classified granted.
+  const oldCall = s.runs().at(-1);
+  assert.equal(oldCall.includes("--add-dir"), false, "a warning-only template worker gets no pack-injected --add-dir");
+  assert.equal(oldCall.includes("worker.template=old-codex"), true, "labelled as that template's worker");
+  assert.equal(oldCall.includes("--"), false, "hc's template form: the template runs its own command, never an argv of the pack's");
+  assert.equal("granted" in JSON.parse(old.out), false, "a warning-only template worker is never classified granted");
   // The owner's bypass template: neither refused nor warned, its command untouched.
   const mac = s.cli(["worker", "task three", "--branch", "fix/1125-c", "--template", "mac-dev", "--json"]);
   assert.equal(mac.code, 0, mac.err);
