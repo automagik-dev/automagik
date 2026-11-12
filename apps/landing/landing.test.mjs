@@ -6,7 +6,7 @@ import { resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { fileText, scan } from '../../herdr/scripts/privacy-check.mjs'
 import { htmlPage, supportPrivacy } from './waitlist/lib/ui.js'
-import { themeCss, titleFace, brandFonts } from './scripts/sync-theme.mjs'
+import { themeCss, titleFace, brandFonts, statusNames } from './scripts/sync-theme.mjs'
 import { pages, routes, rootFiles, weUnfold, arca, oiTag, platforms, offered, used, usedCredit, trademarks, brand as siteLogo, icons, manifest as webManifest } from './scripts/build-pages.mjs'
 import { BOX, GEOMETRY, LOGO, TONES, logoInner, tagInner } from './scripts/build-lockup.mjs'
 
@@ -402,6 +402,17 @@ test('theme primitives match the app source, with keyboard and motion support', 
   assert.match(theme, /prefers-color-scheme:dark/)
   assert.match(css, /prefers-reduced-motion:reduce/)
   assert.doesNotMatch(css, /overflow-x:\s*hidden/)
+})
+
+test('the status colours are the brand\'s: the theme takes them from docs/brand, light and dark', () => {
+  const brand = JSON.parse(read('../../docs/brand/tokens/tokens.json')).color.tokens
+  const generated = themeCss()
+  const blocks = { light: generated.match(/^:root\{([^}]*)\}$/m)[1], dark: generated.match(/^@media \(prefers-color-scheme:dark\)\{:root\{([^}]*)\}\}$/m)[1] }
+  assert.deepEqual(statusNames, ['st-ok', 'st-okdot', 'st-bad', 'st-warn', 'st-warndot', 'st-work', 'bt-danger', 'bt-green'])
+  for (const name of statusNames) for (const theme of ['light', 'dark']) {
+    const set = blocks[theme].split(';').map(part => part.trim()).filter(part => part.startsWith(`--${name}:`))
+    assert.deepEqual(set, [`--${name}:${brand.find(token => token.name === name).value[theme]}`], `${name}, ${theme}`)
+  }
 })
 
 test('the title face is the brand\'s: Fredoka from docs/brand, at its three weights only', () => {
