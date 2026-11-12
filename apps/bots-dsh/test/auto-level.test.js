@@ -243,8 +243,8 @@ test('Auto offer and fallback follow bridge availability and change the permissi
   assert.equal(w.rt.autoViewOf(bot).autoOffered, true)
   const key = w.rt.autoKey()
   w.acpAgents.ownModeOf = () => ({ mode: 'agent', bridged: true, answerer: true })
-  assert.equal(w.rt.autoViewOf(bot).autoOffered, undefined)
-  assert.equal(w.rt.autoViewOf(bot).permissionFallback, WRITE)
+  assert.equal(w.rt.autoViewOf(bot).autoOffered, true)
+  assert.equal(w.rt.autoViewOf(bot).permissionFallback, undefined)
   assert.notEqual(w.rt.autoKey(), key)
 })
 
@@ -254,7 +254,7 @@ test('Auto key counts a Bot as false when the session list throws', async t => {
   t.mock.method(w.ctx.sessions, 'list', () => { throw new Error('session list unavailable') })
   assert.doesNotThrow(() => w.rt.autoKey())
   assert.notEqual(w.rt.autoKey(), key)
-  assert.ok(w.rt.autoKey().split(',').includes('m1:truefalse'))
+  assert.ok(w.rt.autoKey().split(',').includes('m1:truefalse:codex'))
 })
 
 test('Auto waiters settle a rejected enable: clear continues and the second enable is stale', async t => {
@@ -371,9 +371,9 @@ test('Auto: create_bot from the own-mode chat marks a new Codex Bot on disk; a d
 // The refusals, word for word: the window words them by these templates (i18n.js HOST_TEMPLATES).
 test('Auto: set-bot-auto refuses, writing nothing, wherever Auto is not offered', async t => {
   const cases = [
-    ['a Claude Code Bot', { model: 'acp-claude/default', appliedModel: 'acp-claude/default' }],
+    ['a retired Claude Code route', { model: 'claude-code/x', appliedModel: 'claude-code/x' }],
     ['a deny list', { ...codex, denyTools: ['bash'] }],
-    ['a bridged Codex', codex, w => { w.acpAgents.ownModeOf = () => ({ mode: 'agent', bridged: true, answerer: true }) }],
+    ['a bridged Codex without an answerer', codex, w => { w.acpAgents.ownModeOf = () => ({ mode: 'agent', bridged: true, answerer: false }) }],
     ['no answerer', codex, w => { w.acpAgents.ownModeOf = () => ({ mode: 'agent', bridged: false, answerer: false }) }],
     ['a lost lock', codex, w => { t.mock.method(w.rt, 'holdsLock', () => false) }],
   ]

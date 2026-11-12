@@ -72,7 +72,7 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
       h('div', { className: 'bt-q-head' },
         h('div', { className: 'bt-q-text' },
           h('p', { className: 'bt-q-title', id: titleId }, draft === AUTO_ROW ? t('Put {name} on Auto?', { name: bot.name }) : draft === AUTO ? name : t('Give {name} full access?', { name: bot.name })),
-          draft === AUTO_ROW ? h('div', { className: 'bt-q-detail' }, ...autoQuestion(bot.name, presetName(bot.permission ?? catalog.defaultPreset, catalog)).map(text => h('div', { className: 'bt-note' }, text))) : draft === AUTO
+          draft === AUTO_ROW ? h('div', { className: 'bt-q-detail' }, ...autoQuestion(bot.name, presetName(bot.permission ?? catalog.defaultPreset, catalog), { ...bot.autoJudge, agent: String(bot.model ?? '').split('/')[0] }).map(text => h('div', { className: 'bt-note' }, text))) : draft === AUTO
             ? h('div', { className: 'bt-q-detail' }, t('Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.'))
             : h('div', { className: 'bt-q-detail' },
               h('span', { className: 'bt-danger' }, auto ? cliConfirmText(cli) : t('{name} will run commands and change files anywhere without asking you first.', { name: bot.name })),

@@ -1,3 +1,4 @@
+import { markOf } from '../shared/permission-levels.js'
 // Roster: creating, changing, and deleting Bots and group chats, the Main Bot role, and
 // the first Main Bot of a new team.
 import { mkdir } from 'node:fs/promises'
@@ -452,7 +453,11 @@ export function install(rt) {
     if (patch.permission !== undefined) rt.checkPreset(patch.permission)
     // The model goes first: checked above, applied to the Session now, and only then part of
     // the record. A selection DSH turns down refuses the whole update, with nothing written.
-    if (patch.permission !== undefined || patch.denyTools !== undefined || (patch.model !== undefined && String(patch.model).split('/')[0] !== 'acp-codex')) await rt.clearAuto?.(bot)
+    const markBefore = markOf(bot.model)
+    const revBefore = bot.permissionRev
+    if (patch.permission !== undefined || patch.denyTools !== undefined || (patch.model !== undefined && (bot.permissionAuto
+      ? markOf(String(patch.model)) !== bot.permissionAuto
+      : String(patch.model).split('/')[0] !== 'acp-codex'))) await rt.clearAuto?.(bot)
     const modelChanged = patch.model !== undefined || patch.effort !== undefined
     const modelBefore = modelChanged ? modelFields(bot) : undefined
     if (modelChanged) await switchModel(bot, patch, modelRef, effortId)
@@ -508,6 +513,7 @@ export function install(rt) {
       if (value === null) delete bot[key]
       else bot[key] = value
     }
+    if (!bot.permissionAuto && markOf(bot.model) !== markBefore && bot.permissionRev === revBefore) rt.movePermissionRev(bot)
     await rt.save()
     // The list changed: every Session of this Bot is lifted and re-set from the new one, so
     // a name added now disappears at once and a name removed comes back.

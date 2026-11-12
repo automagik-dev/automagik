@@ -201,7 +201,7 @@ const routeDetail = (route) => {
 // The ACP agents in the order the owner names them; any agent acp-dsh adds later follows,
 // alphabetical, without a change here.
 const ACP_ORDER = Object.freeze(['acp-claude', 'acp-codex', 'acp-hermes', 'acp-antigravity', 'acp-omp'])
-const ACP_NAME = Object.freeze({
+export const ACP_NAME = Object.freeze({
   'acp-claude': 'Claude Code', 'acp-codex': 'Codex', 'acp-hermes': 'Hermes',
   'acp-antigravity': 'Antigravity', 'acp-omp': 'omp',
 })

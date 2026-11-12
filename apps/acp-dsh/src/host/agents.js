@@ -12,6 +12,8 @@ const efforts = (...ids) => Object.freeze({ efforts: Object.freeze(ids.map(id =>
 
 export const AGENTS = Object.freeze({
   'acp-claude': Object.freeze({
+    // RFC 0031: asked only through acpAgents.ownMode.
+    ownMode: 'auto',
     key: 'claude',
     name: 'Claude Code (ACP)',
     // The models and efforts come from the agent itself (catalog.js). Until it has answered once,

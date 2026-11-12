@@ -760,15 +760,17 @@ export class Backchannel {
       // pipeline's pre-execute is auto-review's gate, and its ask (if any) is the one dialog.
       if (!level.full && !level.auto) {
         let outcome = 'unavailable'
-        try {
-          outcome = await approval.request({
+        const request = {
             agent: record.agent,
             toolName: name,
             callId: id,
             reason: `${record.name}: ${name}`,
             displayReason: { en: `${record.name} wants to run ${name}` },
             signal: stopped,
-          })
+            bridgeCall: { agentAsked: record.agentAsked === true },
+        }
+        try {
+          outcome = await approval.request(request)
         } catch (cause) {
           outcome = 'unavailable'
           this.log(`approval for ${name} failed: ${cause?.message ?? cause}`)
@@ -784,7 +786,9 @@ export class Backchannel {
           // Stop (or a caller that went away) withdrew the dialog: nobody refused the call.
           if (own.signal.aborted) return await cancelled()
           const why = outcome === 'rejected' ? 'The person rejected' : 'DSH could not approve'
-          const text = `${why} ${name}.`
+          const text = outcome === 'rejected' && typeof request.bridgeCall.judged?.reason === 'string'
+            ? `Auto's judge refused ${name}: ${request.bridgeCall.judged.reason}.`.replace(/\s+/g, ' ').slice(0, 300)
+            : `${why} ${name}.`
           return await settle([{ type: 'text', text }], true, { name: 'ApprovalDeniedError', code: String(outcome).toUpperCase() })
         }
       }

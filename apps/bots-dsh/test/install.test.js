@@ -49,6 +49,9 @@ test('apply registers listeners, tools, and effects in a fixed order', (t) => {
     'on settings/document-updated',
     'on session/created',
     'on permission-presets/catalog-changed',
+    'on tools/pre-execute',
+    'on tools/result',
+    'on session/event',
     'on session/event',
     'effect ds-bot: agent tool restrict retry',
     'on agent/created',
@@ -184,6 +187,8 @@ test('apply registers listeners, tools, and effects in a fixed order', (t) => {
     'effect ds-bot: api route',
     'route POST /api/omni-ui',
     'effect ds-bot: load state',
+    // Auto's judge, after every module, so it runs first (auto-judge.js installAhead).
+    'on approval/request (prepend)',
     'provide omniTeam',
   ])
 })

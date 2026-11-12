@@ -135,6 +135,21 @@ var ZH = {
   "members": "成员",
   "admin": "管理员",
   "mode": "模式",
+  "Works as Workspace. Where Workspace would ask you, Claude Code decides first, with its auto mode: it runs the step, refuses it, or asks you.": "按工作区权限运行。工作区需要询问你的步骤，由 Claude Code 的 auto 模式先决定：执行、拒绝或询问你。",
+  "Works as Workspace. Where Workspace would ask you, {model}, this Bot's own model, decides first: it runs the step, refuses it, or asks you.": "按工作区权限运行。工作区需要询问你的步骤，由此 Bot 自己的模型 {model} 先决定：执行、拒绝或询问你。",
+  "Works as Workspace. Where Workspace would ask you, {model}, the team's background model, decides first: it runs the step, refuses it, or asks you.": "按工作区权限运行。工作区需要询问你的步骤，由团队的后台模型 {model} 先决定：执行、拒绝或询问你。",
+  "On Auto, {model}, {name}'s own model, decides in a separate request each step Workspace would ask you about, except plugin, folder and website changes: it runs the step, refuses it with a reason, or asks you. Commands and file changes stay in the sandbox, except a step it allows to leave it: that step may change files outside {name}'s folder without asking you.": "在 Auto 下，{name} 自己的模型 {model} 通过独立请求决定工作区会询问你的每个步骤，插件、文件夹和网站变更除外：执行、说明理由并拒绝，或询问你。命令和文件变更留在沙箱中，但获准离开沙箱的步骤可能无需询问你就修改 {name} 文件夹以外的文件。",
+  "On Auto, Claude Code decides by itself, with its auto mode, which steps it runs, refuses or asks you about. Steps it runs with its own tools may change files outside {name}'s folder without asking you, and Automagik does not review them.": "在 Auto 下，Claude Code 通过自己的 auto 模式决定执行、拒绝或询问你。使用自有工具执行的步骤可能无需询问你就修改 {name} 文件夹以外的文件，Automagik 不会审查这些步骤。",
+  "On Auto, {model}, the team's background model, decides each step {agent} asks you about: it runs the step, refuses it with a reason, or asks you. {agent} runs its own tools, so a step it allows may change files outside {name}'s folder without asking you.": "在 Auto 下，团队的后台模型 {model} 决定 {agent} 询问你的每个步骤：执行、说明理由并拒绝，或询问你。{agent} 运行自己的工具，因此获准的步骤可能无需询问你就修改 {name} 文件夹以外的文件。",
+  "When it uses DeepSeek Harness's tools, {model}, the team's background model, decides each call first and asks you when unsure. Those tools stay in the sandbox.": "使用 DeepSeek Harness 的工具时，团队的后台模型 {model} 先决定每次调用，不确定时询问你。这些工具留在沙箱中。",
+  "{model} never decides hard-to-undo steps, such as deleting many files or a force push: they come to you, and so does the rest of a turn after three refusals in a row or ten in all.": "{model} 从不决定难以撤销的步骤，例如删除大量文件或强制推送：这些步骤由你决定。连续拒绝三次或累计拒绝十次后，本轮剩余步骤也由你决定。",
+  "This replaces {level}.": "这会替换 {level}。",
+  "Auto counts here.": "Auto 在这里生效。",
+  "the agent here does not offer its own mode, or nothing answers for Auto": "此处的代理不提供自己的模式，或没有服务为 Auto 回答",
+  "no background model is available to decide": "没有可用于决定的后台模型",
+  "For the last prompt {name} was put in its own mode.": "上次提示中，{name} 被设为自己的模式。",
+  "For the last prompt {name} was put in its strict mode: {why}.": "上次提示中，{name} 被设为严格模式：{why}。",
+  "{name} refused its own mode": "{name} 拒绝了自己的模式",
   "Bot sign-in recovery is needed. Reset Bot sign-in to start fresh.": "需要恢复 Bot 登录。重置 Bot 登录以重新开始。",
   "Reset Bot sign-in": "重置 Bot 登录",
   "This signs {vendor} out for Bots. Sign in again in the app.": "这会使 Bot 退出 {vendor}。请在应用内重新登录。",
@@ -14566,6 +14581,16 @@ var AUTO_FALLBACK = "workspace-write";
 var AUTO_MARK = "acp-codex";
 var MARK_LEVEL = "workspace-write";
 var AUTO_ROW = "workspace-write:auto";
+var OWN_MODE_MARKS = ["acp-codex", "acp-claude"];
+var TEAM_MARKS = ["acp-hermes", "acp-antigravity", "acp-omp"];
+function markOf(ref) {
+  if (typeof ref !== "string") return void 0;
+  const slash = ref.indexOf("/");
+  const provider = slash < 0 ? ref : ref.slice(0, slash);
+  if (OWN_MODE_MARKS.includes(provider) || TEAM_MARKS.includes(provider)) return provider;
+  return slash > 0 && ref.slice(slash + 1) && ["native", "pi-ai"].includes(routeOf(provider).connectedBy) ? `api:${ref}` : void 0;
+}
+var judgeOf = (mark2) => mark2 === "acp-codex" ? "codex" : mark2 === "acp-claude" ? "claude" : TEAM_MARKS.includes(mark2) ? "team" : typeof mark2 === "string" && mark2.startsWith("api:") ? "own" : void 0;
 
 // src/client/permission-picker.js
 var import_react33 = require("react");
@@ -14605,7 +14630,7 @@ var TEXTS = {
   [AUTO]: "A model reviews each action first. You are asked only about the ones it stops. The rest run with full access, and it can let a wrong one through.",
   "danger-full-access": "Runs commands and changes files anywhere without asking you. Choose it only when you trust what you asked for."
 };
-var presetText = (value, catalog, cli) => cliAuto(value, cli) ? t(CLI_TEXT, cliWords(cli)) : Object.hasOwn(TEXTS, value) ? t(TEXTS[value]) : String(catalog?.options?.find((option) => option.value === value)?.description ?? "");
+var presetText = (value, catalog, cli) => value === AUTO_ROW ? catalog?.options?.find((option) => option.value === value)?.description ?? t(TEXTS[AUTO_ROW]) : cliAuto(value, cli) ? t(CLI_TEXT, cliWords(cli)) : Object.hasOwn(TEXTS, value) ? t(TEXTS[value]) : String(catalog?.options?.find((option) => option.value === value)?.description ?? "");
 function usePermissionPick({ saved, onPick, askedOf, repick = false, confirmFull = false }) {
   const asked2 = (0, import_react33.useRef)();
   const [pending, setPending] = (0, import_react33.useState)(null);
@@ -14647,13 +14672,13 @@ function usePermissionPick({ saved, onPick, askedOf, repick = false, confirmFull
   };
   return { current, pick: pick2, confirming, asks, cancel: () => setConfirming(false) };
 }
-function PermissionConfirm({ value, name, replaced, cli, onConfirm, onCancel }) {
+function PermissionConfirm({ value, name, replaced, cli, judge, onConfirm, onCancel }) {
   if (value === AUTO_ROW) {
     return (0, import_react33.createElement)(
       "div",
       { className: "bt-perm-confirm", role: "alert" },
       (0, import_react33.createElement)("span", { className: "bt-note" }, t("Put {name} on Auto?", { name })),
-      ...autoQuestion(name, replaced).map((text2) => (0, import_react33.createElement)("span", { className: "bt-note" }, text2)),
+      ...autoQuestion(name, replaced, judge).map((text2) => (0, import_react33.createElement)("span", { className: "bt-note" }, text2)),
       (0, import_react33.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: onConfirm }, t("Use Auto")),
       (0, import_react33.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: onCancel }, t("Cancel"))
     );
@@ -14735,19 +14760,19 @@ function PermissionOptions({ catalog, current, onPick, disabled = false, cli }) 
     })
   );
 }
-function PermissionList({ catalog, saved, onPick, repick = false, disabled = false, name, cli, askedOf, replaced }) {
+function PermissionList({ catalog, saved, onPick, repick = false, disabled = false, name, cli, askedOf, replaced, judge }) {
   const { current, pick: pick2, confirming, cancel } = usePermissionPick({ saved, onPick, askedOf, repick, confirmFull: true });
   return (0, import_react33.createElement)(
     import_react33.Fragment,
     null,
     (0, import_react33.createElement)(PermissionOptions, { catalog, current, onPick: (value) => pick2(value), disabled, cli }),
-    confirming && !disabled ? (0, import_react33.createElement)(PermissionConfirm, { value: confirming, name, replaced, cli, onConfirm: (event) => {
+    confirming && !disabled ? (0, import_react33.createElement)(PermissionConfirm, { value: confirming, name, replaced, cli, judge, onConfirm: (event) => {
       if (event?.detail > 1) return;
       pick2(confirming, true);
     }, onCancel: cancel }) : null
   );
 }
-function PermissionSelect({ catalog, saved, onPick, repick = false, disabled = false, name, cli, askedOf, replaced }) {
+function PermissionSelect({ catalog, saved, onPick, repick = false, disabled = false, name, cli, askedOf, replaced, judge }) {
   const { current, pick: pick2, confirming, asks, cancel } = usePermissionPick({ saved, onPick, askedOf, repick, confirmFull: true });
   const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu({ minWidth: Math.min(380, window.innerWidth - 24) });
   (0, import_react33.useEffect)(() => {
@@ -14839,7 +14864,7 @@ function PermissionSelect({ catalog, saved, onPick, repick = false, disabled = f
         }
       },
       (0, import_react33.createElement)(PermissionOptions, { catalog, current, onPick: choose, disabled, cli }),
-      confirming && !disabled ? (0, import_react33.createElement)(PermissionConfirm, { value: confirming, name, replaced, cli, onConfirm, onCancel }) : null
+      confirming && !disabled ? (0, import_react33.createElement)(PermissionConfirm, { value: confirming, name, replaced, cli, judge, onConfirm, onCancel }) : null
     ), document.body) : null
   );
 }
@@ -14854,18 +14879,28 @@ function PermissionExplanations({ catalog }) {
     );
   }));
 }
-var savedLevelOf = (bot, catalog) => bot.permission === MARK_LEVEL && bot.permissionAuto === AUTO_MARK ? AUTO_ROW : bot.permission ?? catalog.defaultPreset;
+var savedLevelOf = (bot, catalog) => bot.permission === MARK_LEVEL && typeof bot.permissionAuto === "string" ? AUTO_ROW : bot.permission ?? catalog.defaultPreset;
 function levelsOf(catalog, bot) {
   if (!catalog) return catalog;
-  if (bot?.autoOffered !== true && bot?.permissionAuto !== AUTO_MARK) return catalog;
-  return { ...catalog, options: catalog.options.flatMap((option) => option.value === MARK_LEVEL ? [option, { value: AUTO_ROW, name: "Auto" }] : [option]) };
+  if (bot?.autoOffered !== true && typeof bot?.permissionAuto !== "string") return catalog;
+  return { ...catalog, options: catalog.options.flatMap((option) => option.value === MARK_LEVEL ? [option, { value: AUTO_ROW, name: "Auto", description: autoRowText(bot.autoJudge) }] : [option]) };
 }
 var pickLevel = (actions, bot, value, asked2) => value === AUTO_ROW ? actions.setBotAuto(asked2.id, asked2.rev) : actions.updateBot(bot.id, { permission: value });
-var autoQuestion = (name, level) => [
-  t("On Auto, Codex decides by itself, with its own reviewer, which steps it runs, refuses or asks you about. It may change files outside {name}'s folder without asking you, and Automagik does not review those steps.", { name }),
-  t("Any message that reaches {name}'s chat can lead to such a step: yours, another Bot's or a schedule's. Tasks and Bots it starts from that chat while on Auto start on Auto too.", { name }),
-  t("This replaces {level}. Based on Codex 0.167.0; a later Codex may decide differently.", { level })
-];
+function autoRowText(judge) {
+  const text2 = { "claude": "Works as Workspace. Where Workspace would ask you, Claude Code decides first, with its auto mode: it runs the step, refuses it, or asks you.", "own": "Works as Workspace. Where Workspace would ask you, {model}, this Bot's own model, decides first: it runs the step, refuses it, or asks you.", "team": "Works as Workspace. Where Workspace would ask you, {model}, the team's background model, decides first: it runs the step, refuses it, or asks you." };
+  return t(text2[judge?.by] ?? TEXTS[AUTO_ROW], { model: judge?.model });
+}
+var autoQuestion = (name, level, judge) => {
+  const by = judge?.by ?? "codex";
+  const words = { name, level, model: judge?.model, agent: ACP_NAME[judge?.agent] ?? judge?.agent };
+  const first = { "own": "On Auto, {model}, {name}'s own model, decides in a separate request each step Workspace would ask you about, except plugin, folder and website changes: it runs the step, refuses it with a reason, or asks you. Commands and file changes stay in the sandbox, except a step it allows to leave it: that step may change files outside {name}'s folder without asking you.", "claude": "On Auto, Claude Code decides by itself, with its auto mode, which steps it runs, refuses or asks you about. Steps it runs with its own tools may change files outside {name}'s folder without asking you, and Automagik does not review them.", "team": "On Auto, {model}, the team's background model, decides each step {agent} asks you about: it runs the step, refuses it with a reason, or asks you. {agent} runs its own tools, so a step it allows may change files outside {name}'s folder without asking you." };
+  const out = [by === "codex" ? t("On Auto, Codex decides by itself, with its own reviewer, which steps it runs, refuses or asks you about. It may change files outside {name}'s folder without asking you, and Automagik does not review those steps.", { name }) : t(first[by], words)];
+  if (judge?.bridged && judge.model && ["codex", "claude"].includes(by)) out.push(t("When it uses DeepSeek Harness's tools, {model}, the team's background model, decides each call first and asks you when unsure. Those tools stay in the sandbox.", words));
+  if (judge?.model && (["own", "team"].includes(by) || judge.bridged)) out.push(t("{model} never decides hard-to-undo steps, such as deleting many files or a force push: they come to you, and so does the rest of a turn after three refusals in a row or ten in all.", words));
+  out.push(t("Any message that reaches {name}'s chat can lead to such a step: yours, another Bot's or a schedule's. Tasks and Bots it starts from that chat while on Auto start on Auto too.", { name }));
+  out.push(by === "codex" ? t("This replaces {level}. Based on Codex 0.167.0; a later Codex may decide differently.", { level }) : t("This replaces {level}.", { level }));
+  return out;
+};
 
 // src/client/composer.js
 var import_react34 = require("react");
@@ -15039,7 +15074,7 @@ function ComposerPermission({ sessionId, useRoster, actions }) {
       "aria-label": t("Permissions"),
       style: shownPlace,
       "data-leaving": leaving || void 0
-    }, (0, import_react34.createElement)(PermissionList, { catalog, saved, onPick: pick2, name: bot.name, cli, askedOf: () => ({ id: bot.id, rev: bot.permissionRev ?? 0 }), replaced: presetName(bot.permission ?? catalog.defaultPreset, catalog) }), bot.permissionAuto ? (0, import_react34.createElement)(PermissionFallback, { fallback: bot.permissionFallback, owner: bot, catalog }) : null), document.body) : null
+    }, (0, import_react34.createElement)(PermissionList, { judge: { ...bot.autoJudge, agent: String(bot.model ?? "").split("/")[0] }, catalog, saved, onPick: pick2, name: bot.name, cli, askedOf: () => ({ id: bot.id, rev: bot.permissionRev ?? 0 }), replaced: presetName(bot.permission ?? catalog.defaultPreset, catalog) }), bot.permissionAuto ? (0, import_react34.createElement)(PermissionFallback, { fallback: bot.permissionFallback, owner: bot, catalog }) : null), document.body) : null
   );
 }
 function ComposerPlus({ sessionId, inputActions, useRoster, actions }) {
@@ -22274,10 +22309,10 @@ function noAskMissed(acp) {
   if (current === void 0 || current === "other" || NO_ASK.has(current)) return void 0;
   return { mode: current };
 }
-var AUTO_WHY = { "lock": "this window does not hold the team", "level": "the saved level is not Workspace", "deny": "the Bot has a tool deny list", "session": "this is not the Bot's own current chat", "preset": "this conversation is not at Workspace now", "route": "this conversation runs on another model", "agent": "Codex here gets DeepSeek Harness's tools, or does not offer its own mode" };
+var AUTO_WHY = { "lock": "this window does not hold the team", "level": "the saved level is not Workspace", "deny": "the Bot has a tool deny list", "session": "this is not the Bot's own current chat", "preset": "this conversation is not at Workspace now", "route": "this conversation runs on another model", "agent": "the agent here does not offer its own mode, or nothing answers for Auto", "judge": "no background model is available to decide" };
 function levelFacts(row, cli) {
   const out = [];
-  if (row.auto?.counts === true) out.push(t("Auto counts here: Codex decides on its own."));
+  if (row.auto?.counts === true) out.push(t(!row.auto.by || row.auto.by === "codex" ? "Auto counts here: Codex decides on its own." : "Auto counts here."));
   else if (row.auto && AUTO_WHY[row.auto.why]) out.push(t("Auto is saved, but here it runs as Workspace: {why}.", { why: t(AUTO_WHY[row.auto.why]) }));
   if (row.presets === false) out.push(t("Permissions are not available in this DeepSeek Harness"));
   const saved = levelName(row.saved);
@@ -22305,12 +22340,12 @@ var modeList = (list) => Array.isArray(list) ? list.filter((item) => typeof item
 function agentFacts(acp) {
   if (acp === null || typeof acp !== "object") return [];
   const out = [];
-  if (acp.ownMode?.taken === true) out.push(t("For the last prompt Codex was put in its own mode."));
-  else if (acp.ownMode) {
-    const why = { late: "no answer came in time", changed: "the answer changed before the prompt", refused: "Codex refused its own mode" }[acp.ownMode.answer] ?? "Auto does not count here";
-    out.push(t("For the last prompt Codex was put in its strict mode: {why}.", { why: t(why) }));
-  }
   const name = CLI_NAMES[acp.agent] ?? t("Another agent");
+  if (acp.ownMode?.taken === true) out.push(t("For the last prompt {name} was put in its own mode.", { name }));
+  else if (acp.ownMode) {
+    const why = { late: "no answer came in time", changed: "the answer changed before the prompt", refused: "{name} refused its own mode" }[acp.ownMode.answer] ?? "Auto does not count here";
+    out.push(t("For the last prompt {name} was put in its strict mode: {why}.", { name, why: t(why, { name }) }));
+  }
   out.push(acp.active === true ? name : t("{name}, not running now: this is from its last run", { name }));
   const modes = acp.modes;
   if (modes && typeof modes === "object") {
@@ -24014,7 +24049,7 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
           "div",
           { className: "bt-q-text" },
           (0, import_react68.createElement)("p", { className: "bt-q-title", id: titleId }, draft === AUTO_ROW ? t("Put {name} on Auto?", { name: bot.name }) : draft === AUTO ? name : t("Give {name} full access?", { name: bot.name })),
-          draft === AUTO_ROW ? (0, import_react68.createElement)("div", { className: "bt-q-detail" }, ...autoQuestion(bot.name, presetName(bot.permission ?? catalog.defaultPreset, catalog)).map((text2) => (0, import_react68.createElement)("div", { className: "bt-note" }, text2))) : draft === AUTO ? (0, import_react68.createElement)("div", { className: "bt-q-detail" }, t("Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.")) : (0, import_react68.createElement)(
+          draft === AUTO_ROW ? (0, import_react68.createElement)("div", { className: "bt-q-detail" }, ...autoQuestion(bot.name, presetName(bot.permission ?? catalog.defaultPreset, catalog), { ...bot.autoJudge, agent: String(bot.model ?? "").split("/")[0] }).map((text2) => (0, import_react68.createElement)("div", { className: "bt-note" }, text2))) : draft === AUTO ? (0, import_react68.createElement)("div", { className: "bt-q-detail" }, t("Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.")) : (0, import_react68.createElement)(
             "div",
             { className: "bt-q-detail" },
             (0, import_react68.createElement)("span", { className: "bt-danger" }, auto ? cliConfirmText(cli) : t("{name} will run commands and change files anywhere without asking you first.", { name: bot.name })),
@@ -24130,7 +24165,7 @@ function PermissionRow({ bot, roster, actions, run: run2 }) {
     (0, import_react69.createElement)("div", { className: "bt-section-title" }, t("Permissions")),
     // A Bot without its own preset may run on another one set in DSH, so its first pick always applies.
     // The select explains the current level; its menu lets even a view-only window read every level.
-    (0, import_react69.createElement)(PermissionSelect, { catalog: levelsOf(catalog, bot), name: bot.name, saved: savedLevelOf(bot, catalog), askedOf: () => ({ id: bot.id, rev: bot.permissionRev ?? 0 }), replaced: presetName(bot.permission ?? catalog.defaultPreset, catalog), repick: bot.permission === void 0, disabled: Boolean(roster.readOnly), cli: cliOfBot(bot), onPick: (permission, asked2) => run2(pickLevel(actions, bot, permission, asked2)) }),
+    (0, import_react69.createElement)(PermissionSelect, { judge: { ...bot.autoJudge, agent: String(bot.model ?? "").split("/")[0] }, catalog: levelsOf(catalog, bot), name: bot.name, saved: savedLevelOf(bot, catalog), askedOf: () => ({ id: bot.id, rev: bot.permissionRev ?? 0 }), replaced: presetName(bot.permission ?? catalog.defaultPreset, catalog), repick: bot.permission === void 0, disabled: Boolean(roster.readOnly), cli: cliOfBot(bot), onPick: (permission, asked2) => run2(pickLevel(actions, bot, permission, asked2)) }),
     (0, import_react69.createElement)(PermissionFallback, { fallback: bot.permissionFallback, owner: bot, catalog }),
     roster.readOnly ? null : (0, import_react69.createElement)("button", { type: "button", className: "bt-more", onClick: () => reopenPermissionChoice(bot.id) }, t("Choose in the chat"))
   );
@@ -24249,7 +24284,7 @@ function MemberPile({ room: room2, roster }) {
     more > 0 ? (0, import_react69.createElement)("span", { key: "more", className: "bt-pile-face bt-pile-more", style: { animationDelay: `${shown.length * 40}ms` } }, `+${more}`) : null
   );
 }
-var markOf = (entry) => entry?.state === "ask" ? "alert" : entry?.state === "work" ? workState(entry.doing) : "idle";
+var markOf2 = (entry) => entry?.state === "ask" ? "alert" : entry?.state === "work" ? workState(entry.doing) : "idle";
 function MemberRow({ member, entry, room: room2, roster, actions }) {
   return (0, import_react69.createElement)(
     "div",
@@ -24260,7 +24295,7 @@ function MemberRow({ member, entry, room: room2, roster, actions }) {
       (0, import_react69.createElement)(
         "button",
         { type: "button", className: "bt-member-open", title: t("Open {name}'s chat", { name: member.name }), onClick: () => actions.openSession(member.id) },
-        (0, import_react69.createElement)(BotMark, { bot: member, size: 32, state: markOf(entry) }),
+        (0, import_react69.createElement)(BotMark, { bot: member, size: 32, state: markOf2(entry) }),
         (0, import_react69.createElement)(
           "span",
           { className: "bt-member-text" },

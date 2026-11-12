@@ -176,3 +176,13 @@ test('Auto row follows Workspace only when offered or saved, and uses its own ac
   await pickLevel(actions, bot, 'workspace-write')
   assert.equal(JSON.stringify(calls[1]), JSON.stringify(['level', 'bot', { permission: 'workspace-write' }]))
 })
+
+test('Auto rows accept exact API and team marks and name their model', () => {
+  const { levelsOf, savedLevelOf } = module.exports
+  const catalog = { options: OPTIONS, defaultPreset: 'read-only' }
+  for (const permissionAuto of ['api:deepseek/v4', 'acp-hermes']) {
+    const bot = { permission: 'workspace-write', permissionAuto, autoJudge: { by: permissionAuto.startsWith('api:') ? 'own' : 'team', model: 'x' } }
+    assert.equal(savedLevelOf(bot, catalog), 'workspace-write:auto')
+    assert.match(levelsOf(catalog, bot).options.find(row => row.value === 'workspace-write:auto').description, /x/)
+  }
+})
