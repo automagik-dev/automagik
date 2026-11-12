@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { fileText, scan } from '../../herdr/scripts/privacy-check.mjs'
 import { supportPrivacy } from './waitlist/lib/ui.js'
 import { themeCss } from './scripts/sync-theme.mjs'
-import { pages, routes, rootFiles, weUnfold, arca, oiTag, platforms, offered } from './scripts/build-pages.mjs'
+import { pages, routes, rootFiles, weUnfold, arca, oiTag, platforms, offered, used, usedCredit, trademarks } from './scripts/build-pages.mjs'
 import { GEOMETRY, LOGO, TONES, tagInner } from './scripts/build-lockup.mjs'
 
 const root = resolve(fileURLToPath(new URL('.', import.meta.url)))
@@ -23,7 +23,7 @@ const htmlAt = route => read(`${route.slice(1)}index.html`)
 const repo = 'https://github.com/automagik-si/automagik'
 const docs = 'https://docs.automagik.dev'
 const downloads = [...['Mac.dmg', 'Linux.deb', 'Linux.AppImage'].map(name => `${repo}/releases/latest/download/Automagik-${name}`), release.url]
-const allowed = new Set([repo, docs, ...downloads, ...routes.map(route => `https://automagik.si${route}`), 'mailto:privacy@automagik.si', weUnfold.url])
+const allowed = new Set([repo, docs, ...downloads, ...routes.map(route => `https://automagik.si${route}`), 'mailto:privacy@automagik.si', weUnfold.url, ...used.map(project => project.href)])
 // Text as a reader gets it: inline tags vanish, block tags become a space.
 const plain = html => html.replace(/<\/?(?:a|span|strong)\b[^>]*>/g, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
 const productOrder = ['/desktop/', '/mobile/', '/omni/', '/genie/', '/cloud/', '/arca/', '/mykes/']
@@ -150,6 +150,7 @@ test('every href/action points locally or to an exact reviewed destination', () 
 test('images are reviewed brand assets, unchanged captures or recorded crops of them', () => {
   // Arca's two icon files are its kit's, under the kit's own names.
   const brand = new Set(['/assets/brand/lockup.webp', '/assets/brand/mark.webp', '/assets/brand/omni-pleased.png', '/assets/brand/arca/svg/arca-icon-ink.svg', '/assets/brand/arca/svg/arca-icon-ivory.svg', '/assets/brand/automagik/automagik-lockup-oi-ink.svg', '/assets/brand/automagik/automagik-lockup-oi-cream.svg'])
+  for (const { mark: [light, dark] } of used) for (const file of [light, dark]) if (file) brand.add(`/assets/brand/used/${file}`)
   for (const html of generated.values()) {
     for (const [, value] of html.matchAll(/(?:src|srcset|poster)="([^"]+)"/g)) {
       for (const source of value.split(',').map(candidate => candidate.trim().split(/\s+/)[0])) {
@@ -176,6 +177,68 @@ test('images are reviewed brand assets, unchanged captures or recorded crops of 
   assert.equal(manifest.themeCapture.reports.length, 4)
   assert.deepEqual(manifest.pocketCapture.images.toSorted(), files.filter(file => file.startsWith('pocket-')))
   assert.ok(existsSync(resolve(root, 'capture/pocket/PocketDemoShotsTest.kt')))
+})
+
+test('the projects row: eleven projects in the approved order, each with its own unchanged file and a link to its site', () => {
+  const home = htmlAt('/')
+  assert.deepEqual(used.map(project => project.name), ['DeepSeek Harness', 'Herdr', 'Agent Client Protocol', 'Model Context Protocol', 'A2A', 'Hermes Agent', 'Oh My Pi', 'Pi', 'NATS', 'iroh', 'Better Auth'])
+  // Only the home carries the row, once, between the hero and the blocks.
+  for (const route of routes) assert.equal(htmlAt(route).split('class="we-use"').length - 1, route === '/' ? 1 : 0, route)
+  const row = home.slice(home.indexOf('<section class="we-use"'), home.indexOf('<section id="blocks"'))
+  assert.ok(home.indexOf('<section class="we-use"') > home.indexOf('class="scene"') && row.length > 0)
+  assert.match(row, /<h2 id="we-use-title" class="we-use-title">Things that made our stack possible<\/h2>/)
+  assert.ok(row.endsWith(`<p class="we-use-note wrap">${usedCredit}</p></section>\n`))
+  assert.equal(usedCredit, 'Each name and logo belongs to its project; none endorses Automagik.')
+  // No ranking, sponsorship or endorsement wording, and no trademark sentence in the row.
+  assert.doesNotMatch(plain(row), /sponsor|partner|powered by|trusted by|official|registered|trademark/i)
+  const [list, copy] = [...row.matchAll(/<ul class="we-use-list[^"]*"[^>]*>(.*?)<\/ul>/g)]
+  assert.equal(list[0].startsWith('<ul class="we-use-list">'), true)
+  // The second copy only fills the gap while the row drifts: same items, out of reach.
+  assert.ok(copy[0].startsWith('<ul class="we-use-list we-use-copy" aria-hidden="true" inert>') && copy[1] === list[1])
+  const items = [...list[1].matchAll(/<li>(.*?)<\/li>/g)].map(match => match[1])
+  assert.equal(items.length, used.length)
+  const digests = new Map([...read('assets/brand/LICENSES.md').matchAll(/`used\/([^`]+)`[^|]*\|[^|]*\|[^|]*\| `([0-9a-f]{64})` \|/g)].map(match => [match[1], match[2]]))
+  const files = readdirSync(resolve(root, 'assets/brand/used'), { recursive: true }).filter(file => /\.\w+$/.test(file)).map(file => file.split(sep).join('/')).sort()
+  assert.deepEqual(used.flatMap(({ mark: [light, dark] }) => dark ? [light, dark] : [light]).sort(), files, 'every file in the folder is shown, and nothing else is there')
+  used.forEach(({ name, href, mark: [light, dark, width, height], shown, alt, wordmark }, index) => {
+    const item = items[index]
+    // One link, to the project's own site, never to a page of ours or to a repository host.
+    assert.ok(item.startsWith(`<a class="used" href="${href}">`) && item.endsWith('</a>') && item.split('<a ').length === 2, name)
+    assert.match(href, /^https:\/\/[a-z0-9.-]+(?:\/harness)?$/)
+    assert.doesNotMatch(href, /github|automagik/)
+    // The file is drawn at its own proportions, never stretched, and never taller than the site's own name in the header.
+    const image = item.match(/<img[^>]*>/)[0]
+    assert.ok(image.includes(` src="/assets/brand/used/${light}" width="${Math.round(shown * width / height)}" height="${shown}" `), name)
+    assert.ok(shown <= 32 || image.includes('class="used-inset"'), name)
+    // The proportions written for a mark are the file's own: an SVG's box, a PNG's header.
+    for (const file of dark ? [light, dark] : [light]) {
+      const bytes = readFileSync(resolve(root, 'assets/brand/used', file)), tag = file.endsWith('.svg') ? bytes.toString('utf8').match(/<svg\b[^>]*>/)[0] : ''
+      const box = tag.match(/viewBox="[\d.-]+ [\d.-]+ ([\d.]+) ([\d.]+)"/)?.slice(1) ?? [tag.match(/ width="([\d.]+)"/)?.[1], tag.match(/ height="([\d.]+)"/)?.[1]]
+      const [w, h] = file.endsWith('.png') ? [bytes.readUInt32BE(16), bytes.readUInt32BE(20)] : box.map(Number)
+      assert.ok(Math.abs(w / h - width / height) < 0.002, `${file} is ${w} by ${h}`)
+    }
+    assert.equal(item.includes(`<source media="(prefers-color-scheme: dark)" srcset="/assets/brand/used/${dark}">`), Boolean(dark), name)
+    // The name is read once: from the site's own type, or from the alt text of a mark that carries words or a trademark sign.
+    if (alt) assert.ok(image.includes(` alt="${alt}" `) && alt.startsWith(name === 'NATS' ? 'NATS™' : name), name)
+    else assert.ok(image.includes(' alt="" aria-hidden="true" '), name)
+    assert.equal(item.includes(`<span${alt ? ' aria-hidden="true"' : ''}>${name}</span>`), !wordmark, name)
+    // Unchanged copies: each file's digest is the one recorded beside its source.
+    for (const file of dark ? [light, dark] : [light]) {
+      assert.equal(createHash('sha256').update(readFileSync(resolve(root, 'assets/brand/used', file))).digest('hex'), digests.get(file), file)
+      if (file.endsWith('.svg')) assert.doesNotMatch(read(`assets/brand/used/${file}`), /<script|<foreignObject|<image|href=/i, file)
+    }
+  })
+  assert.equal(digests.size, files.length)
+  // The marks keep their own colours: no filter, blend or opacity rule touches them.
+  for (const [, rule] of css.matchAll(/\.used[^{]*\{([^}]*)\}/g)) assert.doesNotMatch(rule, /filter|mix-blend|opacity|invert/, rule)
+  // The trademark sentence is in the footer's legal line, on every page; a logo comes down the day its owner asks.
+  assert.equal(trademarks, 'DeepSeek Harness is a trademark of DeepSeek; NATS™ is a trademark of The Linux Foundation.')
+  for (const route of routes) assert.ok(htmlAt(route).includes(`<p class="footer-license">Automagik, Genie and Omni are free and open source (Apache-2.0). Cloud will be a private, paid service; its contracts are public. ${trademarks} <a href="${repo}">Source code `), route)
+  assert.match(read('assets/brand/LICENSES.md'), /If a project's owner asks, its logo comes down the same day\./)
+  // Still by default: it drifts only for a visitor who allows motion, and stops for the pointer and the keyboard.
+  const start = css.indexOf('@media (prefers-reduced-motion:no-preference){')
+  assert.ok(css.indexOf('we-use-drift') > start && !css.slice(0, start).includes('.we-use-copy{display:flex}'))
+  assert.ok(css.includes('.we-use-copy{display:none}') && css.includes('.we-use-track:hover .we-use-list{animation-play-state:paused}') && css.includes('.we-use-track:not(:focus-within) .we-use-list{'))
 })
 
 test('derived art: each file is one recorded rectangle of a hashed source, at 1x and 2x', () => {

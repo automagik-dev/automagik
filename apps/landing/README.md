@@ -72,7 +72,29 @@ goes live.
 Guides and help link to the docs site, `https://docs.automagik.dev`, with no deep paths
 while that site is being redone. GitHub is linked for the downloads and once, quietly, at
 the end of the footer. No page links to an RFC or to the capture notes; both stay in the
-repository.
+repository. The projects row on the home links each of its eleven projects to that
+project's own site (the list is `used` in `scripts/build-pages.mjs`).
+
+## The projects row
+
+The home shows one row, "Things that made our stack possible", between the hero and the blocks:
+DeepSeek Harness, Herdr, Agent Client Protocol, Model Context Protocol, A2A, Hermes Agent, Oh My
+Pi, Pi, NATS, iroh and Better Auth, in that order (`used` in `scripts/build-pages.mjs`). It is a
+credit: no ranking, and no partnership, sponsorship or endorsement wording.
+
+- One type system: each project's own standalone mark, an unchanged copy of its official file,
+  and the name in this site's type. iroh publishes only a wordmark, so that is its item. Marks
+  keep their own colours and are drawn at one optical height, never taller than the site's
+  own name in the header; a project's dark file is used on a dark page.
+- Each item links to the project's own site, in the same tab, and nowhere else.
+- One line of credit under the row; the trademark sentence is in the footer's legal line on
+  every page, and NATS™ is in its mark's alt text.
+- The row drifts only for a visitor who allows motion (slower on a phone, so every name is
+  whole on screen as it passes), stops under the pointer, and is the still, wrapped list with
+  reduced motion or with the keyboard in it. The second copy of the list only fills the gap
+  while it drifts and is out of reach of the keyboard and of assistive technology.
+- `assets/brand/LICENSES.md` lists every file's source, the rule read and its SHA-256, and the
+  standing rule: if a project's owner asks, its logo comes down the same day.
 
 ## Arca's logo
 
