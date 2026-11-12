@@ -555,8 +555,11 @@ Set `AUTOMAGIK_TEST_CODEX` to the native executable and `AUTOMAGIK_TEST_CODEX_RU
 to a public PNG under a runtime read root, then run `node --test test/image-read.test.js` from
 this plugin. Use a scratch `TMPDIR` outside the runtime roots. The ordinary plugin suite skips
 this test without those variables. CI's `acp-dsh (real Codex image reads)` job downloads the
-checksum-verified native Codex 0.167.1 and its bubblewrap runtime, and requires every read test
-to run; missing configuration fails instead of skipping. It uses public PNG canaries and no sign-in.
+checksum-verified native Codex 0.167.1 and its bubblewrap runtime. It runs
+`node scripts/image-read-gate.mjs`, which requires a complete TAP plan, exactly seven passing
+tests, and zero failures, cancellations, skips or todos. Missing configuration also fails.
+`test/image-read-gate.test.js` proves skipped, todo and missing coverage fail despite Node's
+zero exit code. The helper tests use public PNG canaries and no sign-in.
 The test supports Linux/macOS invocation; Windows is explicitly skipped outside that job.
 The recorded local run used Linux Codex 0.167.0, not the audited 0.167.1 binary. It proves helper
 reads under a reconstructed policy, not automatic grant injection, ACP per-turn propagation,

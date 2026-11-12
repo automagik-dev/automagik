@@ -1321,7 +1321,7 @@ jobs:
             "AUTOMAGIK_TEST_CODEX=${AUTOMAGIK_TEST_CODEX}" \
             "AUTOMAGIK_TEST_CODEX_RUNTIME_IMAGE=${AUTOMAGIK_TEST_CODEX_RUNTIME_IMAGE}" \
             AUTOMAGIK_REQUIRE_IMAGE_READ_TEST=1 \
-            node --test test/image-read.test.js
+            node scripts/image-read-gate.mjs
 
   pets:
     # The headless pet bake (automagik-pets) on Node, as DSH and Automagik Herdr run it: Bun
