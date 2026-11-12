@@ -17,7 +17,7 @@ registerHooks({
 });
 
 const { state } = await import(stubs.herdr);
-const { nodes, index, textOf } = await import(stubs["gpui-kit"]);
+const { nodes, index, textOf, all } = await import(stubs["gpui-kit"]);
 const { default: Automations, SCHEDULER, repairCommand } = await import("../mods/am-automations/main.js");
 
 function makeCx() {
@@ -980,7 +980,7 @@ test("the list row and the inbox show a command's result line, and the detail sp
     view.view = { kind: "detail", name: "daily-check" };
     n = draw();
     const text = textOf(view.render(cx));
-    assert.match(text, /Runs\s*a command, as you: no agent, no model/);
+    assert.match(text, /Runs\s*a command, as you, no model/);
     assert.match(text, /Folder\s*\/srv\/checks/);
     assert.match(text, /Tells\s*b-captain/);
     assert.doesNotMatch(text, /Permissions|Repo|Agent\b/);
@@ -991,6 +991,136 @@ test("the list row and the inbox show a command's result line, and the detail sp
     assert.equal(textOf(n.get("d-last-notified")), "b-captain: sent to t7");
     assert.equal(textOf(n.get("h-line-r1")), "12 checked, 0 broken");
     assert.equal(textOf(n.get("h-line-r2")), "exited 7: no route to host");
+  } finally { s.done(); }
+});
+
+// ---- #938: the panel as the footer opens it, a popup ----
+// The footer's Automations tab opens this mod as a popup (am-footer PANEL_POPUP), which Herdr makes
+// as tall as its content, its height share only the most. Seen in a scratch Herdr 0.1.13 and
+// 0.1.15: with its body built on overflow_y_scrollbar the panel drew its header alone there, and
+// none of the list, the detail or the form (popup-layout.mjs: such a box measures 0 where its box
+// is sized by its content). The body is now am-sidebar's bot-form shape (#239, #397). Laid out
+// as that popup in an 820 px window (the app's default), every view shows its rows; in a layout
+// block of a set height the body fills, as it always did.
+import { layoutPopup } from "./popup-layout.mjs";
+
+const builds = (node) => node.calls.map(([name]) => name);
+const WINDOW_H = 820;
+/** The footer's popup for this panel, read from am-footer's own PANEL_POPUP. */
+function footerPopup() {
+  const source = readFileSync(new URL("../mods/am-footer/main.js", import.meta.url), "utf8");
+  const m = /PANEL_POPUP = Object\.freeze\(\{ kind: "popup", width: (\d+), height: ([\d.]+) \}\)/.exec(source);
+  assert.ok(m, "am-footer opens the panel as a popup of a set width and a share of the window's height");
+  return { width: Number(m[1]), height: Math.round(Number(m[2]) * WINDOW_H) };
+}
+
+/** The panel on a scheduler with the command kind, two command runs and an agent entry. */
+async function commandPanel() {
+  const at = new Date(Date.now() - 120000).toISOString();
+  const failed = { run_id: "r2", automation: "daily-check", status: "failed", started: at, at, seconds: 3, seen: false,
+    error: "exited 3", exit_code: 3, result: "exited 3: checksum mismatch", stderr: "opening archive\nchecksum mismatch",
+    notified: "not delivered: hc send: no terminal" };
+  const done = { run_id: "r1", automation: "daily-check", status: "done", started: at, at, seconds: 2, seen: false,
+    exit_code: 0, result: "3 checks passed, 0 warnings", notified: "sent to t1" };
+  return stubPanel([{ ...check, last: failed }, nightly("claude")], { version: NEXT, commands: true, history: [failed, done] });
+}
+
+/** The three views a person reaches: the list, a command's detail, a new command's form. */
+const VIEWS = {
+  list: async () => {},
+  detail: async (view) => { view.view = { kind: "detail", name: "daily-check" }; },
+  form: async (view, cx, draw) => { view.edit(null, cx); await cx.settle(); draw().get("f-kind-command").click({}, cx); await cx.settle(); },
+};
+
+for (const [name, open] of Object.entries(VIEWS)) {
+  test(`${name}: the body scrolls in flow with a bar paired by name, so it has a height in a popup (#938)`, async () => {
+    const { s, view, cx, draw } = await commandPanel();
+    try {
+      await open(view, cx, draw);
+      const root = view.render(cx);
+      index(root);
+      const area = nodes.get("automations-body");
+      assert.equal(area.kind, "div", "the scroll area, not the bar, carries the id");
+      const body = builds(area);
+      assert.ok(body.includes("overflow_y_scroll"), "the body scrolls past the popup's height");
+      assert.ok(!body.includes("overflow_y_scrollbar"), "no scrollbar wrapper: it measures 0 in a popup");
+      for (const call of ["flex_1", "min_h"]) assert.ok(body.includes(call), `the area has ${call}: a flex item, sized by its rows`);
+      assert.ok(!body.includes("size_full") && !body.includes("h_full"), "no percentage height: it measures 0 in a popup (#397)");
+      assert.ok(!body.includes("absolute"), "the area stays in flow, so its rows' height reaches the popup");
+      const bars = all(root).filter((n) => n.kind.startsWith("scrollbar"));
+      assert.equal(bars.length, 1, "one bar");
+      const [bar] = bars;
+      assert.equal(bar.kind, "scrollbar-y", "a vertical bar");
+      assert.equal(bar.arg, "automations-body", "keyed to the scroll area");
+      assert.ok(builds(bar).includes("absolute") && builds(bar).includes("inset_0"), "the bar fills its wrapper");
+      const wrapper = all(root).find((n) => n.kids.some((k) => k?.__node === area));
+      assert.ok(wrapper.kids.some((k) => k?.__node === bar), "the bar sits beside the area");
+      assert.equal(wrapper.kind, "v_flex", "a flex column, so the area's flex_1 and min_h(0) apply");
+      for (const call of ["relative", "flex_1", "min_h"]) assert.ok(builds(wrapper).includes(call), `the wrapper has ${call}`);
+      assert.equal(nodes.get("automations").kids.at(-1)?.__node, wrapper, "the wrapper is the panel's body, under the header");
+    } finally { s.done(); }
+  });
+}
+
+// What each view must show in the popup: the command kind's rows and the result line (#938).
+const SHOWN = {
+  list: ["inbox-line-r2", "inbox-line-r1", "auto-kind-daily-check"],
+  detail: ["d-last-status", "d-last-result", "d-work"],
+  form: ["f-kind-agent", "f-kind-command", "f-command"],
+};
+
+for (const [name, open] of Object.entries(VIEWS)) {
+  test(`${name}, laid out as the footer's popup: its rows show under the header, and the rest scrolls (#938)`, async () => {
+    const { s, view, cx, draw } = await commandPanel();
+    try {
+      await open(view, cx, draw);
+      const root = view.render(cx);
+      index(root);
+      const { height } = footerPopup();
+      const pop = layoutPopup(root, { height }, nodes);
+      const area = pop.box("automations-body");
+      assert.ok(area.h > 0, `the body has a height (got ${area.h}); the popup is more than its header (got ${pop.height})`);
+      assert.ok(pop.height <= height, `the popup stops at ${height} (got ${pop.height})`);
+      assert.equal(area.h, Math.min(pop.contentOf("automations-body"), height - 2 - 42),
+        "the body is as tall as its rows, or what the header leaves when they are taller");
+      for (const id of SHOWN[name]) assert.ok(pop.box(id)?.visible > 0, `${id} shows (got ${JSON.stringify(pop.box(id))})`);
+    } finally { s.done(); }
+  });
+}
+
+test("in a layout block of a set height the body still fills what the header leaves (#938)", async () => {
+  const { s, view, cx } = await commandPanel();
+  try {
+    const root = view.render(cx);
+    index(root);
+    const pop = layoutPopup(root, { height: 740, fixed: true }, nodes);
+    assert.equal(pop.box("automations-body").h, 740 - 2 - 42, "border and header aside, all of it");
+    assert.ok(pop.box("inbox-line-r2").visible > 0);
+  } finally { s.done(); }
+});
+
+// The detail's value column truncates (kv), so a line wider than it loses its end. In a scratch
+// Herdr 0.1.15, at the footer popup's 320 px, 33 characters of the column's 12 px text filled it
+// before the ellipsis (about 6.2 px a character), and "a command, as you: no agent, no model" was
+// cut at "no m…" (#938). The column is worked out from the panel's own builder calls; a character
+// is taken as 6.5 px, wider than that measure.
+const CHAR_PX = 6.5;
+const callArg = (node, name) => node.calls.find(([m]) => m === name)?.[1];
+test("a command's detail says how it runs in one line that fits the popup's value column (#938)", async () => {
+  const { s, view, cx } = await commandPanel();
+  try {
+    view.view = { kind: "detail", name: "daily-check" };
+    const root = view.render(cx);
+    index(root);
+    const panel = nodes.get("automations"), detail = nodes.get("automations-body").kids[0].__node;
+    const row = all(root).find((n) => n.kind === "h_flex" && textOf(n.kids[0]) === "Runs");
+    const label = row.kids[0].__node, value = textOf(row.kids[1]);
+    assert.ok(builds(panel).includes("border_1"), "the panel draws a 1 px border");
+    assert.ok(builds(row.kids[1].__node).includes("truncate"), "the value is cut, not wrapped, past its column");
+    const column = footerPopup().width - 2 - 2 * callArg(detail, "p") - callArg(label, "w") - callArg(row, "gap");
+    assert.equal(column, 204, "320 less the border, 2 x 14 padding, the 78 px label and the 8 px gap");
+    assert.ok(value.length * CHAR_PX <= column, `"${value}" must fit: ${value.length * CHAR_PX} of ${column} px`);
+    assert.equal(value, "a command, as you, no model");
   } finally { s.done(); }
 });
 
