@@ -1293,6 +1293,15 @@ jobs:
           tar -xzf "${dir}/bwrap.tgz" -C "${dir}/codex-resources"
           mv "${dir}/codex-resources/bwrap-x86_64-unknown-linux-musl" \
             "${dir}/codex-resources/bwrap"
+          # Ubuntu restricts unprofiled user namespaces. Allow this runner's bwrap only;
+          # its mount/network sandbox and the tested Codex read policy still apply.
+          cat > "${dir}/bwrap.apparmor" <<EOF
+          abi <abi/4.0>,
+          profile image-read-bwrap "${dir}/codex-resources/bwrap" flags=(unconfined) {
+            userns,
+          }
+          EOF
+          sudo apparmor_parser -r "${dir}/bwrap.apparmor"
           # A public 1x1 PNG, installed only in this disposable runner's runtime read root.
           png='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9aw'
           printf '%s' "${png}AAAABJRU5ErkJggg==" | base64 --decode > "${dir}/runtime.png"
