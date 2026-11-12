@@ -353,8 +353,13 @@ try {
         // What assistive technology is offered: the drawer's own things and nothing of the page.
         const phone = width <= 860
         const names = ['Automagik', ...(phone ? ['Cloud', 'Arca', 'Get the app', 'Privacy'] : []), 'Automagik', 'Desktop', 'Mobile', 'Omni', 'Genie', 'Mykes', 'Support', 'Close']
-        const offered = (await cdp.send('Accessibility.getFullAXTree')).nodes.filter(node => !node.ignored && ['link', 'button'].includes(node.role?.value)).map(node => node.name?.value ?? '')
-        assert.ok(offered.length === names.length && offered.every((name, at) => name.startsWith(names[at])), `Only the drawer is offered while it is open: ${about} ${JSON.stringify(offered)}`)
+        // (The tree lists them in its own order, with a label's capitals as they are drawn.)
+        const offered = (await cdp.send('Accessibility.getFullAXTree')).nodes.filter(node => !node.ignored && ['link', 'button'].includes(node.role?.value)).map(node => (node.name?.value ?? '').toLowerCase())
+        const unmatched = [...offered]
+        for (const name of names) { const at = unmatched.findIndex(given => given.startsWith(name.toLowerCase())); assert.ok(at >= 0, `The drawer offers ${name}: ${about} ${JSON.stringify(offered)}`); unmatched.splice(at, 1) }
+        assert.deepEqual(unmatched, [], `Only the drawer is offered while it is open: ${about}`)
+        // Every link and control of the page is inside the wrapper the drawer puts out of reach.
+        assert.deepEqual(await page.evaluate(() => [...document.querySelectorAll('a, button, input, select, textarea, summary')].filter(node => !node.closest('[data-family-page], [data-family-drawer], [popover]')).map(node => node.outerHTML.slice(0, 80))), [], `Nothing of the page stands outside its wrapper: ${about}`)
         // The art: Automagik's lockup for this ground, then omni, genie and mykes as words,
         // at one letter size; no pet, no head, no mark beside a product; "Coming soon." under Mykes.
         await page.waitForFunction(() => [...document.querySelectorAll('[data-family-drawer] img')].filter(image => image.getClientRects().length).every(image => image.complete && image.naturalWidth > 0))

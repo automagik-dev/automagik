@@ -706,6 +706,14 @@ test('the family drawer on every page: the piece\'s markup with Automagik in the
     assert.ok(html.includes(`<header class="top topbar">${familyButton}<div class="wrap top-inner topbar-in">`), `${route}: the button is the header's first child, outside the column`)
     assert.equal(html.split('data-family-open').length, 2, route)
     assert.ok(html.includes('</footer></div>') && html.indexOf('</footer></div>') < html.indexOf(drawer), route)
+    // The wrapper holds the whole page: no stray closing tag inside it shuts it early (one
+    // did, on the home page, and everything under the hero stood outside the wrapper, in
+    // reach behind the open drawer). Its one closing tag is the one after the footer.
+    const wrapped = html.slice(html.indexOf('<div class="page" data-family-page>'), html.indexOf('</footer></div>') + '</footer></div>'.length)
+    let depth = 0
+    const shut = [...wrapped.matchAll(/<(\/?)div\b[^>]*>/g)].filter(([, closing]) => (depth += closing ? -1 : 1) === 0)
+    assert.ok(shut.length === 1 && shut[0].index === wrapped.length - '</div>'.length && depth === 0, `${route}: the page wrapper closes after the footer and nowhere else`)
+    for (const part of ['<main id="main">', '</main>', '<footer class="site-footer">']) assert.ok(wrapped.includes(part), `${route} ${part}`)
     assert.ok(html.endsWith(`\n${drawer}\n${familyScript}</body></html>\n`), route)
     assert.equal(html.split('data-family-drawer').length, 2, route)
     // The piece's stylesheet loads before the site's, which holds the host's side.
