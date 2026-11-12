@@ -3685,3 +3685,159 @@ fn the_schema_refuses_what_the_task_contract_forbids() {
         assert!(!s.errors(&v).is_empty(), "the schema accepts {what}: {v}");
     }
 }
+
+#[test]
+fn repo_alias_merges_usage_and_tasks_under_primary_repo() {
+    use sha2::{Digest, Sha256};
+
+    const OLD: &str = "example.com/old-acme/widgets";
+    const OLDER: &str = "example.com/older-acme/widgets";
+    let s = scenes::tasks();
+    let requests: Vec<Vec<String>> = ["branch", "bot", "task"]
+        .iter()
+        .map(|by| {
+            let mut a = args(&["feat/gn-41-pager", "feat/gn-42-cache"]);
+            a.extend(["--by".into(), (*by).into()]);
+            a
+        })
+        .collect();
+    let baseline: Vec<Value> = requests
+        .iter()
+        .map(|a| {
+            let (code, raw) = s.query(a);
+            assert_eq!(code, 0, "{raw}");
+            serde_json::from_str(&raw).unwrap()
+        })
+        .collect();
+    // Split one task's actors and usage across names, leaving the other task on the primary.
+    let st = s.store();
+    for table in ["usage", "ev_dim"] {
+        let changed = st
+            .conn
+            .execute(
+                &format!(
+                    "UPDATE {table} SET repo = ?1 WHERE repo = ?2 AND branch = 'feat/gn-41-pager'"
+                ),
+                params![OLD, REPO],
+            )
+            .unwrap();
+        assert!(changed > 0);
+    }
+    drop(st);
+    for (a, before) in requests.iter().zip(&baseline) {
+        let (code, raw) = s.query(a);
+        assert_eq!(code, 0, "{raw}");
+        let without: Value = serde_json::from_str(&raw).unwrap();
+        assert_ne!(without["rows"], before["rows"]);
+        let mut a = a.clone();
+        for alias in [OLD, OLD, REPO, OLDER, OLDER] {
+            a.extend(["--repo-alias".into(), alias.into()]);
+        }
+        let (code, raw) = s.query(&a);
+        assert_eq!(code, 0, "{raw}");
+        let v: Value = serde_json::from_str(&raw).unwrap();
+        assert!(schema().valid(&v), "{:#?}", schema().errors(&v));
+        assert_eq!(v["rows"], before["rows"]);
+        assert_eq!(v["actor_unattributed"], before["actor_unattributed"]);
+        assert_eq!(v["query"]["repo"], REPO);
+        assert_eq!(v["query"]["repo_aliases"], json!([OLD, OLDER]));
+        let by = before["query"]["by"].as_str();
+        let mut hash_input = format!("{REPO}\nalias {OLD}\nalias {OLDER}\nd30\n");
+        if let Some(by) = by {
+            hash_input.push_str(&format!("by {by}\n"));
+        }
+        hash_input.push_str("feat/gn-41-pager\nfeat/gn-42-cache\n");
+        assert_eq!(
+            v["query"]["request_sha256"],
+            format!("{:x}", Sha256::digest(hash_input))
+        );
+
+        let mut same = a[..a.len() - 10].to_vec();
+        same.extend(["--repo-alias".into(), REPO.into()]);
+        let (_, raw) = s.query(&same);
+        let same: Value = serde_json::from_str(&raw).unwrap();
+        assert!(same["query"].get("repo_aliases").is_none());
+        assert_eq!(
+            same["query"]["request_sha256"],
+            before["query"]["request_sha256"]
+        );
+    }
+
+    // No primary rows, and the alias only has historical usage outside d1: repo_seen must
+    // consult all names even when the window's scan returns no rows.
+    let st = s.store();
+    st.conn
+        .execute(
+            "UPDATE usage SET repo = ?1, hour_ms = ?2 WHERE repo = ?3",
+            params![OLD, t("2026-10-22T09:00:00Z"), REPO],
+        )
+        .unwrap();
+    st.conn
+        .execute(
+            "UPDATE usage SET hour_ms = ?1 WHERE repo = ?2",
+            params![t("2026-10-22T09:00:00Z"), OLD],
+        )
+        .unwrap();
+    drop(st);
+    let mut a = args(&["feat/gn-41-pager"]);
+    a.extend(["--window".into(), "d1".into()]);
+    let (_, raw) = s.query(&a);
+    let without: Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(without["rows"][0]["reason"], "repo_not_seen");
+    a.extend(["--repo-alias".into(), OLD.into()]);
+    let (code, raw) = s.query(&a);
+    assert_eq!(code, 0, "{raw}");
+    let v: Value = serde_json::from_str(&raw).unwrap();
+    assert_ne!(v["rows"][0]["reason"], "repo_not_seen");
+}
+
+#[test]
+fn repo_alias_validation_refuses_bad_or_excessive_names() {
+    let fx = Fx::new(SYNCED);
+    let long = format!("example.com/acme/{}", "w".repeat(query::MAX_REPO_BYTES));
+    for (extra, message, error) in [
+        (
+            vec!["--repo-alias".to_string()],
+            "--repo-alias needs a value",
+            "usage",
+        ),
+        (
+            vec![
+                "--repo-alias".into(),
+                "https://example.com/acme/widgets".into(),
+            ],
+            "--repo-alias takes host/owner/repo",
+            "usage",
+        ),
+        (
+            vec!["--repo-alias".into(), long],
+            "--repo-alias takes",
+            "request_too_large",
+        ),
+        (
+            (0..17)
+                .flat_map(|i| ["--repo-alias".into(), format!("example.com/acme/old-{i}")])
+                .collect(),
+            "at most 16 --repo-alias values may be given",
+            "usage",
+        ),
+    ] {
+        let mut a = args(&["main"]);
+        a.extend(extra);
+        let (code, v) = fx.query(&a);
+        assert_eq!(code, query::exit::USAGE, "{v}");
+        assert!(
+            v["error"]["message"].as_str().unwrap().starts_with(message),
+            "{v}"
+        );
+        assert_eq!(v["error"]["code"], error, "{v}");
+    }
+    // Sixteen distinct aliases fit, and repetitions do not consume the cap.
+    let mut a = args(&["main"]);
+    for i in (0..16).chain(0..16) {
+        a.extend(["--repo-alias".into(), format!("example.com/acme/old-{i}")]);
+    }
+    let (code, v) = fx.query(&a);
+    assert_ne!(code, query::exit::USAGE, "{v}");
+    assert_eq!(v["query"]["repo_aliases"].as_array().unwrap().len(), 16);
+}

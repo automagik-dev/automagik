@@ -1,0 +1,47 @@
+[
+  {
+    "clientId": "automagik-desktop",
+    "name": "Automagik desktop",
+    "applicationType": "native",
+    "tokenEndpointAuthMethod": "none",
+    "redirectUris": ["http://127.0.0.1:49152/callback"],
+    "skipConsent": true,
+    "disabled": false
+  },
+  {
+    "clientId": "automagik-cloud",
+    "name": "Automagik Cloud",
+    "applicationType": "web",
+    "tokenEndpointAuthMethod": "client_secret_basic",
+    "redirectUris": ["https://cloud.example.com/auth/callback"],
+    "skipConsent": true,
+    "disabled": false
+  },
+  {
+    "clientId": "arca",
+    "name": "Arca",
+    "applicationType": "web",
+    "tokenEndpointAuthMethod": "client_secret_basic",
+    "redirectUris": [],
+    "skipConsent": false,
+    "disabled": true
+  },
+  {
+    "clientId": "omni",
+    "name": "Omni",
+    "applicationType": "web",
+    "tokenEndpointAuthMethod": "client_secret_basic",
+    "redirectUris": [],
+    "skipConsent": false,
+    "disabled": true
+  },
+  {
+    "clientId": "brain",
+    "name": "Brain",
+    "applicationType": "web",
+    "tokenEndpointAuthMethod": "client_secret_basic",
+    "redirectUris": [],
+    "skipConsent": false,
+    "disabled": true
+  }
+]

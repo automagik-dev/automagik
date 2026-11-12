@@ -2,605 +2,410 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (2026-11-10, by the owner: the story, the site base and the 2026-11-16 deadline; Q1-Q4 answered 2026-11-10, Q5 open; he OKs the exact README text, the film cut and a site preview before go-live) |
-| Goal | By 2026-11-16: a stranger opens the repository, watches the film in the README, and reaches a live automagik.si that shows every building block with one working call to action. |
-| Milestone | none (ships outside the five milestones) |
-| Lanes | none here (docs and a static site: `README.md` and `apps/landing/` are in `NEVER_SHIPPED`, so they ship to no install) |
+| Status | Accepted; site map and confirmation choices revised by the owner on 2026-11-11. Exact pages, film and deployment still need the owner's preview OK. |
+| Goal | A stranger opens the repository, watches the film and reaches automagik.si: the umbrella of Automagik's building blocks, each with its own page. |
+| Deadline | 2026-11-16 |
+| Lanes | README, RFC and `apps/landing/` ship to no installed app. No release, account change or DNS change is authorized by this RFC. |
 | Created | 2026-11-10 |
 
 ## Summary
 
-This RFC writes down one launch's front door: one README, one film and one site, with a real
-Cloud waitlist. The README leads with the umbrella, then the film and the seven building blocks;
-the site is the Genie's draft extended to the same seven, with the download as its one primary
-action and the waitlist as a second, optional one; the film is the storyboard rendered, embedded
-in both. It fixes the claims the current READMEs make that the source does not support, sets the
-tone rules that keep the page honest, and names five deliveries to 2026-11-16. Nothing goes
-public before the owner reads the exact README text in its PR, OKs the film cut, and OKs a site
-preview.
+Automagik is the umbrella: open building blocks of superintelligence. The home page introduces
+that umbrella, carries the launch film and links to each block's own page. Desktop and Mobile
+show their distribution channels. Cloud is coming soon and carries an interest form with email
+or inbound-first WhatsApp confirmation. Mykes has a coming-soon page; Arca owns its page in a separate Worker.
 
-**Happy delivery, which the owner can check himself:** a stranger opens the repository, watches
-the film in the README, and reaches a live automagik.si that shows every building block with one
-working call to action.
+The owner's 2026-11-11 decisions replace the original single-page, seven-block site and the
+Genie draft's look. The site uses the app's actual default Stage design system: theme tokens,
+fonts, surfaces, controls and components. The meter is a component, never a product or page.
+No extra product pages are introduced. Nothing goes live before the owner's OKs.
 
-The RFC is docs only: it writes no page, renders no film and changes no code.
+## Owner decisions
 
-## Motivation
+- **Q1, hosting:** Cloudflare Pages, from this repository. Root `apps/landing`, build command
+  empty, output `.`. The owner connects and configures the account. Preview deployments remain
+  unlisted and noindex; production DNS and removing noindex are D4.
+- **Q2, film:** the storyboard, HyperFrames, 16:9, under a minute, instrumental only. The
+  soundtrack is CC0, with its source and licence. The owner approves the exact cut and music.
+- **Q3, reversed on 2026-11-11:** the site is the umbrella, and each building block has its own
+  page. Arca and Mykes are included. The approved map below supersedes the original rule
+  forbidding additional blocks. The meter has no product page.
+- **Q4, distribution:** Desktop leads with Mac, Linux, Windows soon, then Install on Herdr and
+  Install on DSH. Mobile leads with Android, then iPhone soon. Only existing channels have
+  links. The owner's explicit “soon” wording applies to these unshipped channels, Cloud, Arca
+  and Mykes.
+- **Q5, sending half decided on 2026-11-11:** email confirmation uses Resend from the verified
+  `send.automagik.si` subdomain, with the Pages secret `RESEND_API_KEY`. It sends one
+  confirmation, no launch, marketing or other email. WhatsApp is inbound-first through our cx Support Bot:
+  the person sends a one-time code, the site confirms the entry, and the support Bot replies once in that
+  conversation. The exact final v2 integration contract is in D3b below. No other sending is
+  authorized. A future launch email remains a separate owner decision.
+- **Visual system:** the real app's current default Stage theme, not the external draft's
+  visual direction. `apps/bots-dsh/src/client/stage.js` defines the palettes, typography,
+  surfaces and component treatment; `themes.js` adapts them to DSH; the desktop renderer's
+  `shell.css` and `frame.js` carry the same table and ink colours. Comparison shots place the
+  site and a real app capture side by side at equal width in the same theme.
+- **Acceptance:** PR #1078 remains draft until the owner approves the revised preview. One
+  reviewed push at the end of this revision; no subsequent push before the Orchestrator replies.
 
-Owner's words (2026-11-10): "Automagik needs a proper readme, the gtm video embedded in it, also
-it needs to finish the automagik.si webpage showcasing everything in it."
+## Approved site map
 
-The front door does not do that today:
-
-- **The root README is a developer index.** Its first screen is a plugin table, and a stranger
-  meets the repository's contents before the product. It has no film, no link to a site, and no
-  picture of what Automagik is.
-- **The site exists only as a draft outside this repository.** The Genie's page ("Your own agent
-  force") was written for automagik.dev before the 2026-11-07 umbrella story. It is one page,
-  uncommitted, with no remote, and it shows one product, not the whole set.
-- **The film is a storyboard.** Nothing is rendered; the music is unchosen and uncleared, and
-  the storyboard still has `[TBD]`s.
-- **The parts are spread out.** Omni and Genie live in their own repositories, Herdr the app in
-  its own, and the pack and the DSH plugins here. The one place to show them together, as one
-  set, is the new front door.
-- **The READMEs claim what the source does not support.** The 2026-11-08 source read flags ten;
-  the ones the current text states exactly are in "The claims to fix" below.
-- **automagik.si has no address.** The DNS zone exists and the domain is the owner's; no A or
-  AAAA record points at a page.
-
-The repository already carries a landing page (`apps/landing/`, #177): a developer page for
-automagik.dev, built from real captured screens, with a capture pipeline, a provenance file and a
-contract test. The new site keeps that machinery and replaces the story and the look with the
-Genie's draft. That is the cheapest honest path: the product story is new, the evidence is
-already recorded.
-
-## Decided by the owner, 2026-11-10
-
-- **The story is "open building blocks".** automagik.si is the superintelligence open building
-  blocks; each part is shown as its own block, usable alone: Team mode on DSH, Code mode on
-  Herdr, Genie, Omni, Pocket, the meter and Cloud. Open, in this RFC's reading of his answer,
-  means the set is open to use and compose, each block on its own; it does not mean every block
-  is open source. This repository,
-  Genie and Omni are Apache-2.0; Cloud is the private, paid hosted service (RFC 0024).
-- **The site starts from the Genie's draft** ("Your own agent force") and its brand brief,
-  extended to the whole set and moved into this repository.
-- **The film follows the storyboard**: HyperFrames, 16:9, under a minute, music only, embedded
-  in the README and on the site.
-- **The deadline is 2026-11-16.**
-- **Nothing goes public before his OKs**: he reads the exact README text in a PR, OKs the film
-  cut, and opens a site preview. All three happen before D4.
-
-The four questions, answered 2026-11-10:
-
-- **Q1, hosting: Cloudflare Pages**, as recommended. The site is served from `apps/landing` with
-  no build step; previews first; `automagik.dev` 301s to `automagik.si`.
-- **Q2, music: a CC0 instrumental.** The team picks it, and the track, licence and scope go in
-  `apps/landing/assets/film/LICENSES.md`; he OKs it with the cut.
-- **Q3, no additional product blocks.** None appears on the page.
-- **Q4, the call to action: Download and a Cloud waitlist** on the first screen. Download stays
-  the primary button; the waitlist is a real form, designed in "The waitlist" and delivered as
-  D3b by 2026-11-15.
-
-Two more answers, in Chat's question dialog, 2026-11-10:
-
-- **The README opens with the Automagik umbrella first.** The desktop app (Team mode on DSH, Code
-  mode on Herdr, Genie, Omni) is its flagship right below it.
-- **The README names both the meter and Cloud.** Cloud is coming, never free or open, as this RFC
-  already says.
-
-Owner's words on the seven blocks (2026-11-10): "Open building blocks: automagik.si =
-superintelligence open building blocks; each part shown as its own block you can use alone
-(DSH team mode, Herdr code mode, Genie, Omni, Pocket, the meter/usagemeter, Cloud)."
-
-Owner's words on the scope (2026-11-10): "automagik is one product with the team mode dsh, herdr
-code... genie omni."
-
-His umbrella ruling, as the Unfold orchestrator relayed it: "automagik-si owns automagik, which
-is the umbrella with genie, omni, mykes, arca, etc... weunfold is the manifesto and unfold is the
-vitrine, it wont have other projects, for now."
-
-## Design
-
-### The one story
-
-- **The site's headline stays the draft's:** "Your own agent force." The line under it carries
-  the umbrella: "Superintelligence, in open building blocks. Use one, or all of them." The small
-  print under it says what open covers: this repository, Genie and Omni are Apache-2.0; Cloud is
-  a private, paid service, and its contracts are public.
-- **The README's first line:** "Automagik is superintelligence, in open building blocks: a team
-  of AI agents in your chats, and each part usable on its own once it ships; Cloud is still in
-  design." The
-  tagline stays: "A team of AI helpers that lives in your chats."
-- **Free and open source, Apache-2.0, for this repository, Genie and Omni**, said exactly that
-  way, in the first screen's small print and the footer. Cloud is never called free or open: it
-  is the private, paid hosted service, and only its contracts are public (RFC 0024).
-- **The film is the proof of the team at work**, not a second origin story: the film is "Our own
-  GTM team", the team launching Automagik, and the site and README present it as that.
-
-### The seven blocks
-
-The seven are the owner's list, quoted in Decided (2026-11-10). Each line is drawn from the
-repo, cut to one line; nothing here comes from automagik.dev or from a deck.
-
-| Block | One line (README and site) | Source |
-|---|---|---|
-| **Team mode (DSH)** | The Bot team on DeepSeek Harness: long-lived Bots with their own name, role, model and memory, group chats, schedules and the Bot browser. | `README.md`'s table; `apps/bots-dsh/README.md` |
-| **Code mode (Herdr)** | Your code agents in the real Herdr window with the Automagik pack; nothing in Herdr is rebuilt. | RFC [0013](0013-work-code-switch.md); `herdr/README.md` |
-| **Genie** | A wish becomes a branch, a test run and a report you approve; `genie desktop` opens it on the team. | `apps/landing/README.md`; `apps/landing/assets/CAPTURES.md`; `marketplace/automagik.json` |
-| **Omni** | The service that links your chat apps to Automagik, with its channels and canvases in the same window. | `apps/desktop/README.md`; `README.md` |
-| **Pocket** | Your coding agents on your Android phone, paired to your own machines. | `apps/pocket/README.md` |
-| **The meter** | usagemeter, the Rust token meter that records usage and cost on the machine and answers `usagemeter query`. | RFCs [0017](0017-usagemeter-crate.md), [0018](0018-meter-query-contract.md) |
-| **Cloud** | One sign-in, organisations and hosted workspaces, with a rail that opens each. | RFCs [0024](0024-automagik-cloud.md), [0025](0025-cloud-economics.md) |
-
-Caveats stay in the small print, never as status chips:
-
-- **Cloud is accepted, not shipped; when it ships it is private and paid.** RFC 0024 is the
-  design, and it says the hosted service starts private, billed per workspace, with only its
-  contracts public. The block says what Cloud is; the footnote says it is not live, not free and
-  not open source.
-- **The app's switch still says Work.** The owner calls the mode Team; RFC 0013 ships the
-  switch as Work/Code. Until the rename ships, the copy says "Team mode" and the screenshot
-  keeps the app's own label, Work.
-- **Code mode is not part of the app download.** It needs Herdr and the Automagik pack; RFC 0013
-  delivery 7 ("one install") is still open. The copy says so, and the Code block links to the
-  pack's install.
-
-Unfold is not one of the seven: it is a separate product and the owner's list does not include
-it (RFC [0020](0020-unfold-plugins-leave.md)). No additional product blocks: Q3 in Decided.
-
-Each block links to its own README or RFC, all under the `automagik-si` org: Team and Pocket to
-their app folders, Code to `herdr/`, Genie to `genie`, Omni to `omni`, the meter to
-`meter/usagemeter/`, and Cloud to RFC 0024, since there is no Cloud page yet. The landing test's
-allow-list carries exactly these destinations.
-
-### The README
-
-The order, top to bottom:
-
-1. **First screen:** the title, the one line, the film (poster, player, and a link for a client
-   that does not play it), **Download for Mac** and **Download for Linux**, a line to the site's
-   Cloud waitlist ("Cloud is coming; no date yet"), and the small print (this repository, Genie
-   and Omni are free and open source, Apache-2.0; Cloud is a private, paid service; Mac with
-   Apple silicon, macOS 13+; Linux 64-bit; Windows not yet).
-2. **Two modes:** Team and Code, in two short paragraphs, with the corrections from "The claims
-   to fix"; Code mode names Herdr and the pack, and says the app download alone does not set it
-   up.
-3. **The seven blocks:** the table above as a list, one line and a link each.
-4. **What makes it yours:** your model, local files and memory, secrets the Bots never see, and
-   the corrected approval sentence with its exceptions.
-5. **Install:** the current release, the Mac and Linux steps, and the platform line.
-6. **This repository:** the existing developer sections move below the product story and keep
-   their content: the plugin table, installing into your own DSH, history, versions and
-   releases, develop, license.
-
-The film is one cut in two encodes. The site plays the committed file, which may be larger; the
-README plays a GitHub attachment of the same cut, 10 MB or under: at D2 the owner drags that
-encode into a PR comment, the attachment URL and the attachment's sha256 go in "The film" below
-and in the README, and the README's player points at the attachment. The poster in the repo is
-the fallback. github.com's CSP only plays media from GitHub's own hosts and caps video
-attachments at 10 MB, so the site's URL cannot be the README player.
-
-The app's README (`apps/desktop/README.md`) gets the same corrected sentences for the four
-claims in "The claims to fix"; the root README and the app README do not disagree.
-
-### The site
-
-**Where it lives:** `apps/landing/`, the folder and the test that already exist. One page, no
-build step, no JavaScript, no analytics, no cookies. The only forms are the waitlist's, and the
-only server-side code is the waitlist function; both are "The waitlist" below.
-
-- `apps/landing/index.html` and `styles.css`: the one page and its styles.
-- `apps/landing/assets/screens/`: the recorded captures and their manifest (existing).
-- `apps/landing/assets/brand/`: the marks, wordmark, lockup, app icon, the app's own character
-  art (copied, with its licence note) and the fonts already in the draft's brand folder; the OFL
-  files stay beside them.
-- `apps/landing/assets/film/`: the film and its poster, with `LICENSES.md`.
-- `apps/landing/assets/CAPTURES.md`: extended with every new screen and the film's provenance.
-- `apps/landing/README.md`: rewritten for the new page and its commands.
-- `apps/landing/landing.test.mjs`, `verify-browser.mjs`, `capture/`: kept and extended.
-
-**The sections, top to bottom:**
-
-1. **Hero:** the headline and line above, **Download for Mac** as the one primary action, Linux
-   beside it, a real capture as the visual, and the Cloud waitlist card below the buttons. The
-   poster belongs with the film.
-2. **The film:** the player, click to play, with a one-paragraph description under it.
-3. **The seven blocks:** each its own block, its one line, a link, and an anchor (`#team`,
-   `#code`, `#genie`, `#omni`, `#pocket`, `#meter`, `#cloud`). Cloud's line carries the
-   footnote that it is not live, not free and not open source.
-4. **Two modes, shown working:** Team's screen is a recorded capture. Code's is a fresh capture
-   of herdr-app with the pack, or the pack's own share image for the bot view
-   (`herdr/mods/am-sidebar/preview.png`) if that is a capture of the running mod; whichever is
-   used is recorded in `CAPTURES.md`. Never a mock dashboard. Code mode says it needs Herdr and
-   the pack; the app download alone does not set it up.
-5. **What makes it yours:** your model, your files, secrets, and what the Bots ask before they
-   do.
-6. **Your first five minutes:** the draft's three steps, cut to what the app really does.
-7. **Install:** the current release, the Mac and Linux steps, the platform line, and the same
-   download links as the hero, under `#install`.
-8. **Made by this team:** the draft's line, made true of this page: "This page started as a
-   Genie's draft, in a group chat with the rest of the launch team, inside Automagik."
-9. **Footer:** download, the repository, "This repository, Genie and Omni: free and open source,
-   Apache-2.0. Cloud: a private, paid service; its contracts are public", and the licence note
-   for the music if it needs one.
-
-**The base and what changes:** the Genie's draft supplies the copy, the section order, the look
-and the brand brief. The existing page supplies the evidence: real captures, their provenance
-and the checks. Where they disagree, the capture rule wins; the draft's rebuilt sidebar becomes
-a real capture. The characters come from the app's own art, used as brand accents, never as a
-stand-in for a screen; no new drawings, no invented pets.
-
-The page keeps the existing no-script rule: the draft's little JavaScript is not carried over.
-The only motion is CSS (one rise per section, `prefers-reduced-motion` respected) and the film.
-The draft's cursor-following pets are cut for this page.
-
-**The old page:** `apps/landing/` stops being the automagik.dev developer page. The developer
-commands it carried (`genie desktop`, the Genie installer) move to the README; the site keeps
-one link to the repository. Q1 is answered: `automagik.dev` 301s to `automagik.si`.
-
-### The waitlist
-
-The first screen carries the second action: a small card under the download buttons, visually
-secondary, with the honest line "Cloud is coming. There is no date yet. Leave your email and we
-will use it only to tell you when Cloud opens." Download stays the primary button; the waitlist
-never outranks it in the DOM, the colour or the space. Until Q5 is answered, it only stores: no
-email is sent and no mail service is integrated.
-
-- **The form.** One native HTML form, no JavaScript: `method="post"`, `action="/api/waitlist"`,
-  `input type="email" name="email" autocomplete="email" required maxlength="254"`, a hidden
-  `action=add`, and a submit button. Under the button, one visible line: "By joining, I agree to
-  one email when Cloud opens. See the privacy note." The function returns a small HTML page, so
-  the page still has no script.
-- **The privacy note.** Under the form, short and expandable: the controller (Namastex Labs, the
-  owner's entity) and the `privacy` role address at automagik.si for access and correction; what
-  is kept (the email and the UTC time it was added); why (the one email when Cloud opens); the
-  legal basis (your consent, withdrawn by removing the row); how long (until Cloud launches or
-  you remove it, reviewed every six months); who processes it and where (Cloudflare, as the
-  processor, with the transfer abroad and the D1 jurisdiction named); no sharing beyond that
-  processor; no analytics, no cookies; and the rights: confirmation, access, correction,
-  deletion, to withdraw consent, and to complain to the ANPD or, in the EU, the local
-  supervisory authority. It says the address is not verified and there is no double opt-in.
-  Removal is a second small form in the same `details`, posting `action=remove`; it deletes the
-  row and answers the same whether or not the email was there. Only the owner can read or
-  export the list; no agent does.
-- **The function.** `apps/landing/functions/api/waitlist.js`, one Pages Function, POST only:
-  `application/x-www-form-urlencoded`; trim and lowercase the email; reject over 254 characters
-  or a malformed address with 400; accept `action=add` or `action=remove` only. Add:
-  `INSERT INTO waitlist(email, created_at) VALUES (?, ?) ON CONFLICT(email) DO NOTHING`;
-  remove: `DELETE FROM waitlist WHERE email = ?`; both return the same small HTML page. It never
-  sends email, never calls `fetch`, never redirects to a caller's URL, does no rate limiting and
-  logs no email, IP or user agent. That is the "no open relay" rule: it can only write or delete
-  one row.
-- **The store.** D1, not KV: a unique email, a timestamp, one statement to delete, and an easy
-  export for a privacy request. The binding `WAITLIST_DB`; the table
-  `waitlist(email TEXT PRIMARY KEY, created_at TEXT NOT NULL)`; the schema in
-  `apps/landing/waitlist/schema.sql`; the setup steps in `apps/landing/waitlist/README.md`. It
-  holds only the email and the timestamp: no IP, no user agent, no referrer, no source. Its D1
-  jurisdiction is set in the owner's account (a jurisdiction, not a location hint) and named in
-  the note. Preview and production use separate databases; no test row reaches production.
-- **The limits.** A Cloudflare WAF rate rule on the production domain, path `/api/waitlist`, is
-  the limiter (Cloudflare counts per location, so the limit is approximate). It is account
-  configuration, not a Pages Functions binding: the function has no limiter, sees no IP and
-  never rate-limits in code. The preview is a `*.pages.dev` host not
-  covered by the domain rule; it is unlisted, `noindex` and owner-only, with its own database,
-  so the block is checked on production at D4. A missing D1 binding or a failed write is a 503
-  with the failure page, never a success.
-- **The failure rule.** The success page is returned only after the D1 write resolves. If the
-  write throws or the binding is missing, the function answers 503 with "We could not save that.
-  Try again in a minute"; it never returns the success text. `apps/landing/waitlist.test.mjs`
-  injects a D1 that throws and asserts exactly that; `verify-browser.mjs` submits the form
-  against a 503 and asserts the success text is absent, then against a 200 and asserts it is
-  present.
-- **The owner's part.** The database, the database bindings (preview and production), the WAF
-  rate rule and the `privacy` role address are created in his Cloudflare account by him, or with
-  his OK. The bindings are made in the dashboard: no `wrangler.toml` with an account, database
-  or zone id is committed, and the setup steps use placeholders. Only the owner can read or
-  export the list; an access request is answered from that export. The agent does not touch the
-  account.
-- **Not Cloud.** A waitlist row never becomes a Cloud account, a Pocket ID user or a billing
-  customer, and is never imported into Cloud's identity service. It is an announcement list,
-  not a sign-up.
-- **The test bar.** A row is exactly `(email, created_at)`; a duplicate is one row; an invalid
-  address is 400; a non-POST is 405; a wrong content type is 415; a store failure is 503 with no
-  success text; a missing binding is 503; a remove deletes and gives the same page; no
-  `Set-Cookie`; no third-party request; no email in any log; no email is sent. The WAF block is
-  a production check at D4, not a function test. No account or database id is committed.
-
-### The film
-
-- **Source:** the storyboard, scene for scene, exactly as written: 16:9, 1920×1080, 30 fps,
-  0:58, music only, no voice-over and no sound effects on top of the track.
-- **Two encodes of one cut.** The site plays the committed
-  `apps/landing/assets/film/automagik-launch.mp4` (H.264 and AAC, faststart, no LFS, no master in
-  the repo); it may be the larger file. The README plays a GitHub attachment, which GitHub caps
-  at 10 MB on this plan, so D2 makes a 10 MB-or-under encode of the same cut and uploads that.
-- **The README player is that 10 MB attachment.** At D2 the owner drags the encode into a PR
-  comment; the attachment URL and the attachment's sha256 go in the table below and in the
-  README, next to the poster. The poster is the fallback. The site's committed file is the same
-  cut, may be larger, and is not the attachment.
-- **Metadata stripped** before either file is committed or uploaded: the privacy matcher reads
-  both mp4s' and the poster's readable strings.
-- **The end card** names `github.com/automagik-si/automagik`; #921 moves the live URLs from
-  `automagik-dev` and the film follows it.
-- **The storyboard's open items are resolved or cut, never filled in:** the group's name before
-  the rename (fallback: start on "Automagik Launch"), each Bot's real colour and avatar from the
-  app (never a new pet), the music (Q2: a CC0 track, picked by the team), and the page version
-  the film shows (D3's page, re-pulled at build).
-- **Music:** one CC0 instrumental, picked by the team, roughly 100-110 BPM, sparse to full and
-  easing before the end card. `LICENSES.md` records the track's source URL, the creator, the
-  download date and a saved copy of the CC0 deed; he OKs it with the cut. No track without a
-  written licence.
-
-| Item | Value |
+| Path | What it contains |
 |---|---|
-| Site file | `apps/landing/assets/film/automagik-launch.mp4`, the site's encode (may be larger) |
-| README player | the GitHub attachment URL, a 10 MB-or-under encode, uploaded by the owner at D2 |
-| sha256 | the attachment's sha256, taken from the downloaded attachment at D2, in this table and the README |
+| `/` | The Automagik umbrella: open building blocks of superintelligence, the film, one card per page below. |
+| `/desktop/` | Automagik Desktop: Download for Mac, Download for Linux, Download for Windows (soon, no link), then Install on Herdr and Install on DSH. Team mode on DSH and Code mode through Herdr are parts of this page. |
+| `/mobile/` | Automagik Mobile: Android download, iPhone (soon, no link). Pocket pairs with the person's own machines through Pocket Link. |
+| `/omni/` | Omni connects chat apps to Automagik, with channels and canvases in the same window. |
+| `/genie/` | A wish becomes a branch, test run and report the person approves; `genie desktop` opens it on the team. |
+| `/cloud/` | Coming soon, private and paid, not live. The intent form, confirmation choices, consent, privacy note and removal form. |
+| `/arca` and `/arca/*` | Owned and served by Arca’s Worker, not Pages. The home card links to `/arca/` in the same tab. Until Arca’s site is deployed, Pages carries one stand-in page at `/arca/` (see “Arca boundary and root discovery”). |
+| `/mykes/` | Coming soon. No invented features, download or licence claim. |
 
-**Frame rules:** no account emails, keys, QR codes, home-folder paths or anyone's real chats; the
-person is "You"; no metrics, users or dates beyond the sources; a missing fact is cut, not
-invented. This is the storyboard's own rule, kept.
+There is no meter page or meter product card. A page that uses usagemeter may describe it
+briefly as a component, grounded in RFCs 0017 and 0018. Herdr and DSH are installation channels
+on Desktop, not separate product blocks. No additional product page is part of this delivery.
+The shared footer scopes Apache-2.0 to this repository, Genie and Omni; it never calls the
+entire umbrella free or open source. Cloud is a private, paid service with public contracts.
 
-### Tone rules
+## Design and copy
 
-These apply to the README, the site and the film's copy (his deck rules, 2026-11-08):
+- Use the real app's Stage palette: cream by day, plum at night, the cyan/lilac/pink stage,
+  paper cards, hairline dividers, flat controls and the app's lift, radii and focus treatment.
+  The landing's `theme.css` is generated from the app source; a test detects drift.
+- DM Sans and Manrope are bundled with their OFL files. Only Automagik's own marks and art
+  appear as brand accents. Brand assets keep their licence notes.
+- Screens are real captures with source, scenario and SHA-256 in
+  `assets/screens/manifest.json` and `assets/CAPTURES.md`. No invented UI or recoloured screen.
+  A fixture may use fictional data, clearly identified. No private profile or real chat is
+  captured. The pack's original share capture is provenance-backed but is not used as a
+  separate product block in the revised site.
+- No unverified numbers, vanity metrics, customer marks, testimonials or status chips.
+  Technical platform requirements and the explicit “soon” choices above are stated plainly.
+- Every claim is grounded in the repository or the owner's words. No claim is taken from the
+  previous domain. Do not claim the app download sets up Code mode: it needs Herdr and the
+  Automagik pack. The app's switch still says Work for Team mode.
+- Secrets are entered in the app's own card and are not shown to Bots. Approval copy names
+  its exceptions: Main and Omni Bots read chats and post to groups, WhatsApp channels and
+  the person's own chat without asking; other Bots request chat access, and an Always grant
+  permits subsequent posts there. The source citations are in README PR #956.
+- Native HTML and CSS, no client JavaScript, embedded third-party player, tracking or cookies.
+  The only server work is the confirmation/removal flow. Motion respects reduced motion.
 
-- **Confident, never self-deprecating.** No "just", "soon", "we hope", "small project".
-- **No unverified numbers.** No size, minutes, users, downloads, stars, percentages, "fastest"
-  or "only". A number ships only with the line that proves it, and a date.
-- **No vanity metrics.** No npm downloads, stars, follower counts.
-- **No logos, customers or testimonials.** The only marks are Automagik's own.
-- **No status chips.** A caveat is small print or a footnote.
-- **Real UI and motion.** Screens are recorded captures or the app's own share image; the film
-  is rendered from the storyboard. No mock dashboards, no stock screenshots, no plain boxes.
-- **Every claim traceable** to this repository or the owner's words. Never automagik.dev.
-- **One primary action:** download the app, from this repository's release. The Cloud waitlist
-  is second: a small card on the first screen, never the loudest button.
+## Files and distribution
 
-### The claims to fix
+The static source is `apps/landing/`: committed `index.html` files at the routes above,
+`styles.css`, generated `theme.css`, `assets/{brand,screens,film}` and `_headers`.
+`scripts/build-pages.mjs` generates shared page markup, including the Cloud form, from public
+copy. `scripts/sync-theme.mjs` derives the app's tokens. Pages needs no build step.
 
-The 2026-11-08 source read flags ten claims the source does not support. These are the ones the
-current text states exactly; D1 and the site apply the same rule to every line they write: if
-the repo or the owner's words do not support it, it does not ship.
+Mac and Linux links use this repository's desktop release aliases. Android links to the APK
+URL in the Pocket release lane's `latest.json`, recorded with its version, digest and check
+date in `assets/releases.json`. Refresh it before go-live; do not invent a stable APK alias.
+Windows and iPhone are plain soon text, without a link or disabled download button.
 
-| Where | The claim today | What the source shows | The fix |
-|---|---|---|---|
-| `apps/desktop/README.md:27` | "Before it sends anything as you, deletes something or disconnects a channel, it shows you exactly what it will do and asks first, every time." | It asks before it acts as you, but WhatsApp group and channel sends, and Main or Omni Bots, do not go through that step (the source read). | Name the exceptions; drop "every time". D1's PR cites the code behind each exception (`omni_send` lives outside this repo; `apps/bots-dsh/src/host/constants.js:92` only names it); if it cannot cite one, the sentence is cut. The site uses the corrected sentence. |
-| `apps/desktop/README.md:28` | "lists, boards and forms that keep themselves up to date." | Only Main-Bot canvases keep themselves up to date. | Say "in a Main Bot's canvas". |
-| `apps/desktop/README.md:32-34` | "You need two things," then "you can skip either and come back later." | Both can wait; the app itself says so. | "Two things to connect when you are ready", not needs. |
-| `apps/desktop/README.md:39` | "It's about 330 MB." | The 2026-11-08 Mac build was 297 MB. | Measure the dmg D1 links, on the day, and state that number, or drop it. |
-| `README.md:1-3` | "Automagik's plugins for DeepSeek Harness (DSH), and the Automagik desktop app that runs them." | That is the repository's contents, not the product a stranger meets. | Lead with the product; keep this as the developer section's first line. |
-| Whole set | "Free and open source, Apache-2.0" about the set, and Cloud among the open blocks. | This repository, Genie and Omni are Apache-2.0; Cloud is the private, paid hosted service, with only its contracts public (RFC 0024). | Scope the Apache line to the three; Cloud's footnote says private, paid, not live, not open source. |
-| Two modes | The app download alone gives both modes. | Code mode needs Herdr and the pack; RFC 0013 delivery 7 ("one install") is open. | D1 and the site say Code needs Herdr and the pack; the app download alone does not set it up. |
-| README film | The README plays the film from the site's URL. | github.com's CSP only plays media from GitHub's own hosts and caps video attachments at 10 MB. | One GitHub attachment, 10 MB or under, its URL and sha256 recorded, the poster as the fallback (M2). |
-| Naming | The app's switch says **Work**; the owner calls the mode **Team**. | RFC 0013: the shipped switch is Work/Code; the owner's rename to Team is not in the code. | "Team mode (the app's switch still says Work)" in the small print; screenshots keep the app's label. |
+The root README's umbrella-first story and existing developer sections remain D1's work
+(PR #956). Any later README adjustment to this revised map is separate from inventing new
+product claims. The site's developer commands live in `apps/landing/README.md`.
 
-The source read's other flags are the same kind of thing: a claim stated more broadly than the
-source supports. D1 rewrites the page, so the class goes; its PR body lists what it checked,
-claim by claim, so the owner can see none was dropped.
+## The film (D2)
 
-### Where it is checked
+One cut, one film element on the home page. The site's committed paths remain
+`assets/film/automagik-launch.mp4` and `automagik-launch-poster.webp`, with `LICENSES.md`.
+The film shows the launch team at work, not an invented product dashboard. Until D2 supplies
+the approved files, the single poster slot says “A short film is coming” and reuses a labelled
+recorded capture. It has no false play control. Other pages contain no film element.
 
-| Check | Command | What it proves |
-|---|---|---|
-| **Page contract** | `node --test apps/landing/landing.test.mjs` | One `h1`; the sections and anchors; every image is a capture, a brand mark or the film's poster, and every screen capture matches its digest; every `href` is local or on the reviewed allow-list; exactly one film element; no script, iframe or analytics; only the two waitlist forms, with their action and method; the privacy scan of the page files; the responsive rules. |
-| **Browser** | `node apps/landing/verify-browser.mjs` (with `LANDING_CHROME` on Linux/CI) | 1440, 1024, 390 and 320 px: no sideways scroll, every image answers 200 and decodes, no request outside the page. D3 adds `video/mp4` and the poster; D3b submits the form against a 503 and a 200. |
-| **Waitlist** | `node --test apps/landing/waitlist.test.mjs` | One row of exactly `(email, created_at)`; a duplicate is one row; an invalid email is 400; a non-POST is 405; a wrong type is 415; a store failure is 503 with no success text; a missing binding is 503; remove deletes and answers the same; no `Set-Cookie`, no third-party request, no email in a log; no email is sent. The WAF block is a D4 production check. |
-| **Rendered README** | a screenshot attached to D1's PR by its author | The rendered github.com page at 1440 px: one `h1`, the film player (or the poster fallback) and the download buttons. |
-| **Privacy matcher** | `node herdr/scripts/privacy-check.mjs` from the root | No home path, private name, account, email, secret or database file in the new text, or in the film's and the poster's readable strings. Run before every push. |
-| **Link check** | The landing test's allow-list, then `curl -fsSIL` on each destination at D4 | No unreviewed outbound link; the README attachment, the poster, the download and the waitlist answer as expected on the live site. |
-| **Release** | `bun scripts/lane.ts ships <last tag>` | No. `README.md` and `apps/landing/` are in `NEVER_SHIPPED`; the deliveries cut no release. |
-| **CI** | D3 adds a `landing` job (with Chrome and `LANDING_CHROME`) and D3b adds the waitlist test | The page contract, the browser check and the waitlist test run on every PR. |
-| **Owner** | D1's PR text and screenshot, D2's cut and attachment line, D3b's preview | The OKs that gate D4. |
+The README plays a GitHub attachment of the same cut, no more than 10 MB, since GitHub's CSP
+cannot play a site-hosted film there. D2 records the attachment URL and sha256 and retains the
+committed poster fallback. The owner approves the attachment, cut and track before D4.
 
-## Contracts introduced
+## D3b: Cloud intent and confirmation
 
-- **`https://automagik.si`** is the site's canonical origin. Q1 is answered: `www` redirects to
-  the apex, and `https://automagik.dev` 301s to `https://automagik.si`.
-- **`apps/landing/`** is the site's source of truth: one `index.html`, `styles.css`, and
-  `assets/{brand,screens,film}`. Its anchors are `#film`, `#blocks`, `#team`, `#code`, `#genie`,
-  `#omni`, `#pocket`, `#meter`, `#cloud` and `#install`.
-- **The film paths:** `apps/landing/assets/film/automagik-launch.mp4` (the site's encode) and
-  `apps/landing/assets/film/automagik-launch-poster.webp`, plus `LICENSES.md` beside them. The
-  README's film is a GitHub attachment URL, a 10 MB-or-under encode of the same cut; its sha256
-  is recorded in "The film" and in the README, and the poster is the fallback.
-- **`POST /api/waitlist`** is the site's one endpoint: `application/x-www-form-urlencoded`,
-  `action=add|remove`, `email` up to 254 characters. It answers 200 (the same page for add and
-  remove), 400, 405, 415 or 503; it never sends email, redirects or sets a cookie. The store is
-  the D1 table `waitlist(email TEXT PRIMARY KEY, created_at TEXT NOT NULL)`, through the
-  `WAITLIST_DB` binding; its jurisdiction is set and named in the note. The production domain's
-  WAF rate rule on `/api/waitlist` bounds the path; it is account configuration, not a code
-  binding. No `wrangler.toml` with an account, database or zone id is committed. The `privacy`
-  role address at automagik.si is the contact; D3b adds it to the privacy list's allowed emails.
-- **The waitlist is not Cloud:** a row never becomes a Cloud account, Pocket ID user or billing
-  customer, and is never imported into Cloud's identity service.
-- **The README's first screen** contains the film, the download links and the link to the site's
-  Cloud waitlist; the developer sections stay below it.
-- **The reviewed destinations** are exactly the landing test's allow-list; a new outbound link
-  is a test change, reviewed like any other.
-- **No app contract changes:** no app id, plugin id, route, storage key or version is touched;
-  both paths ship nothing (`NEVER_SHIPPED`). An installed app is unaffected by every delivery.
+### Human form and stored fields
 
-## Threat model
+The Cloud page has one native POST form to `/api/waitlist`, plus a removal form under its
+expandable privacy note. The visitor supplies a goal (1–1000 characters), platform (`android`,
+`linux` or `both`), optional app/tool names (up to 200 characters), expected result (1–500
+characters), confirmation channel (`email` or `whatsapp`), language (`en` or `pt-BR`) and
+explicit consent. Email is required only for email confirmation and is trimmed and lowercased,
+up to 254 characters. These are bounded, inert text; nothing a visitor enters is fetched,
+executed, or interpolated into executable markup.
 
-- **Who can reach it:** anyone. The page is static; the waitlist is one server endpoint
-  (`POST /api/waitlist`) with a D1 binding. It accepts one email and a timestamp, never sends
-  email, never fetches another site, sets no cookie and uses no analytics or third party. The
-  download is a link; the waitlist is a row.
-- **Waitlist abuse:** a Cloudflare WAF rate rule on the production domain bounds the path; the
-  function has no limiter and no IP. Validation bounds the field; the D1 unique key makes a
-  duplicate a no-op; there is no open relay (no email, no fetch, no redirect) and no CAPTCHA or
-  third party. A bot within the rule can add addresses; the list is not an email sender, and the
-  owner can delete rows.
-- **Consent cannot be proven:** there is no double opt-in; anyone can add or remove any address.
-  The list is an announcement list, not a verified or transactional list, and is not used for
-  anything that needs proven consent.
-- **Enumeration and removal:** add and remove answer the same page whether or not the email
-  exists; the success page shows no timestamp; the remove page says "If that email was on the
-  list, it's removed"; the remove form deletes the row. Only the owner can read or export the
-  list; an access request is answered from that export; no agent reads it.
-- **A false success:** the success page is written only after the D1 write resolves. A throw or
-  a missing binding is a 503 with the failure page; the unit and browser tests cover it.
-- **The waitlist data:** only email and timestamp; no IP, user agent or referrer; no cookie; no
-  analytics; no third party; the controller is Namastex Labs; Cloudflare is the processor, the
-  transfer abroad and the D1 jurisdiction are named; the database is in the owner's account,
-  reached only through the binding; preview and production are separate; the privacy note states
-  purpose, consent, retention, sharing, the rights (including withdrawal and the ANPD or an EU
-  authority) and removal; the `privacy` role address handles access and correction. A row never
-  becomes a Cloud account, Pocket ID user or billing customer, and is never imported into
-  Cloud's identity service.
-- **Private data in a public front door:** the privacy matcher scans the new text, the film's
-  readable strings and the poster; the film's frame rules keep out emails, keys, QR codes, home
-  paths and real chats; the screens are captures from the isolated fixture, never a live
-  profile. The capture rule and its manifest are the evidence.
-- **A claim that is not true:** every line is sourced above or cut; the owner reads the exact
-  README text and the preview; the link test keeps unreviewed destinations out. A wrong claim
-  that ships is fixed in the next deploy, and the deploy is one commit.
-- **A dead or wrong download:** the CTA is checked live at D4 against the file it names; no
-  third-party binary and no redirect shortener.
-- **The music licence:** a written licence and its scope in `LICENSES.md`; no track ships
-  without one. The CC0 deed is saved with it; a licence that requires credit gets its credit in
-  the footer.
-- **A bad deploy or a lost domain:** deploys come from the repository only, under the owner's
-  hosting account; no credential is in the page or the repo. Undo is redeploying the previous
-  commit and removing the custom domain or DNS record. The film and the page stay in history;
-  installed apps are untouched.
+The consent covers recording and reviewing interest and one confirmation through the chosen
+channel. It creates no Cloud account, entitlement, purchase, marketing subscription or
+training consent. There is no launch email. The human's answers are written in Automagik's
+own words. No private reference material is copied into the public repository.
 
-## Deliveries
+D1 stores the intent, channel/language, consent version, created/expiry/confirmation times,
+email when selected, token/code hash, and the WhatsApp sender ID or number, external message
+ID, event time and retained reply when confirmed. It never stores message text, sender name,
+raw event/envelope, metadata, an IP or user agent. The reply is retained so an exact retry
+returns the same text after a deploy. Only the owner can read/export confirmed entries;
+unconfirmed or expired entries are never treated as confirmed.
 
-Each delivery is one pull request against `dev`, except D4, which is the hosting change and the
-merge of D1's PR. None cuts a release. The dates run to the owner's 2026-11-16 deadline; Q1-Q4
-are answered, Q5 (the launch email) is open and blocks no delivery here, since D3b only stores.
+### Email
 
-**D1, Wednesday 2026-11-11: the README PR.**
+`RESEND_API_KEY` is a Pages secret. From is `Automagik <confirm@send.automagik.si>`, on the
+owner-verified `send.automagik.si` domain. The endpoint calls only Resend's fixed email API,
+with a unique idempotency key and a fixed plain-text confirmation. No visitor-controlled
+recipient list, URL, subject or sender is accepted. The one random token is hashed in D1,
+valid for a day. Opening its link displays a native confirm form; only its POST confirms, so
+an email scanner's GET cannot consume it. Duplicate submissions send no additional email.
+A failed or ambiguous delivery consumes its reservation and is never retried inside the
+cooldown. The response is 503, never a claim that confirmation succeeded.
 
-- *What ships:* the rewritten `README.md` in the order above and the corrected
-  `apps/desktop/README.md`, with the film section, the seven blocks, the corrected claims and
-  the developer sections below; the Apache-2.0 line scoped to this repository, Genie and Omni;
-  Cloud's footnote private and paid; Code mode names Herdr and the pack; the link to the site's
-  Cloud waitlist; links follow #921's `automagik-si` org, with no new `automagik-dev` URL. The
-  film section carries the poster and the film text; D2 adds the 10 MB player, its sha256 line
-  and the README line.
-- *Check:* the owner reads the exact text of both READMEs in the PR and OKs it; `bun
-  scripts/lane.ts ships <last tag>` says no; the privacy matcher is clean; every link that is
-  live answers 200 (the site, the waitlist and the film are checked at D4); each approval
-  exception cites its code (or is cut); GitHub's licence detection says Apache-2.0 on automagik,
-  Genie and Omni (the owner fixes it there if not); the D1 author attaches a 1440 px screenshot
-  of the rendered page on github.com with one `h1`, the player or poster and the download
-  buttons.
-- *Rollback:* close or revert the PR. Nothing is released; no install changes. The PR stays open
-  until his OK, D2's attachment line and D4.
+### Quotas, retention and failures
 
-**D2, Friday 2026-11-13: the film.**
+One email per normalized address per 24 hours; one pending entry per address; five form joins
+per fixed UTC-minute network bucket; ten per network bucket per UTC day; sixty confirmation
+emails per UTC day. IPv6 is grouped at /64, IPv4 by address. The client address comes from
+Cloudflare's trusted edge header and is transformed in memory into a daily keyed digest;
+only short-lived digest counters are stored. D1 triggers check and reserve all counters in
+the same INSERT transaction before any send, so concurrent isolates cannot overspend the
+budget. The callback has a separate sixty-authenticated-calls-per-minute limit. Missing
+configuration, missing client address or failed store access is 503. Invalid input is 400,
+wrong method 405, wrong media type 415, and an exhausted quota 429. No endpoint logs bodies,
+contact details, text, names or credentials; no cookies are set.
 
-- *What ships:* the site's encode and the poster in `apps/landing/assets/film/`, from the
-  storyboard, with the team's CC0 track and its licence in `LICENSES.md` (source URL, creator,
-  download date and the saved CC0 deed); a 10 MB-or-under encode of the same cut, uploaded by the
-  owner as a GitHub attachment in a PR comment; the attachment URL and the attachment's sha256
-  in "The film" table and in the README.
-- *Check:* the owner watches the cut and OKs it, the music with it; `ffprobe` says 0:58 (under a
-  minute), 1920x1080, 30 fps, one audio track (the owner's watch covers no voice-over and no
-  SFX); the attachment is 10 MB or under; `curl -L` the attachment and compute its sha256: it
-  equals the recorded value, which also proves GitHub did not re-encode it; the site's file is
-  the same cut and may be larger; the privacy matcher is clean on both files and the poster; the
-  storyboard's frame rules hold; its `[TBD]`s are resolved or cut.
-- *Rollback:* delete the site file and the poster; remove the attachment line; the GitHub
-  comment can stay; D3 ships without the player, or with the poster linking to the site film, and
-  names the gap; nothing is public until D4.
+Email entries expire unconfirmed after a day and are deleted on the next human request.
+WhatsApp codes cover messages received within thirty minutes, with a 180-day processing
+backlog window after expiry; pending WhatsApp rows are retained until that window ends. Quota/cooldown rows
+are pruned on requests after expiry. This is opportunistic deletion, not a promised timed
+cron. The owner reviews retention every six months and clears the confirmed list at launch
+or earlier removal. Confirmed WhatsApp replay receipts stay only while their waitlist row
+exists. The original reply can be retried for the same message ID inside the backlog window;
+it cannot confirm a new row. A message received after expiry, or processing after the 180-day
+window, is 404. Cleanup does not erase a pending WhatsApp row inside that window.
 
-**D3, Saturday 2026-11-14: the site in the repo, with a preview.**
+### WhatsApp endpoint contract (v2 envelope, follow-up decisions applied)
 
-- *What ships:* `apps/landing/` becomes the automagik.si page, from the Genie's draft, extended
-  to the seven blocks, with the real captures, the film (the committed site encode), the brand
-  assets, the Install section and the updated `CAPTURES.md`; `landing.test.mjs` allows exactly
-  one film element and the new sources and anchors; the `landing` CI job (`bun install` for
-  playwright-core, the runner's Chrome or an installed one, `LANDING_CHROME`); a Cloudflare
-  Pages preview, unlisted and `noindex`. The waitlist card is D3b.
-- *Check:* the page test is green; the browser check passes at 1440, 1024, 390 and 320 px; the
-  privacy matcher is clean; every `href` is local or allow-listed; the film plays in the
-  preview; the preview is not linked from a committed file; `#film`, `#blocks`, `#install` and
-  the seven block anchors exist; the page says Code needs Herdr and the pack.
-- *Rollback:* revert the page and CI commits; delete the preview deployment. No DNS yet; no
-  release.
+WhatsApp confirmation contract (RFC 0027 D3b), v2 envelope updated 2026-11-11: our cx Support Bot calls the endpoint. The existing event-envelope shape is unchanged; the credential and timing rules below supersede the earlier caller/processing-time contract.
+1. Endpoint: POST <site origin>/api/waitlist/whatsapp-confirm (production https://automagik.si, preview the pages.dev host). HTTPS, JSON only (else 415).
+2. Auth: Authorization: Bearer <WAITLIST_CONFIRM_SECRET> (Pages secret; the cx Support Bot reads it from its server environment). Constant-time compare; missing or wrong 401 with empty body. No body signature or separate authentication timestamp: replay safety rests on the single-use code, authenticated message receive time, 180-day backlog limit and message_id idempotency. The RFC records this as the accepted cost.
+3. Body: Omni's standard event envelope (its push contract), always valid JSON: {"id", "type": "message.received", "timestamp": <Unix ms>, "metadata", "payload": {"externalId", "chatId", "from", "senderName", "content": {"text"}, ...}}; headers X-Omni-Event-Id (stable across Omni retries), X-Omni-Delivery-Id, Authorization: Bearer. The site: (a) refuses any type other than message.received with 400; (b) finds the code in payload.content.text with its own regex, case-insensitive (AMG-[0-9A-HJKMNP-TV-Z]{6} with the i flag), upper-cased; no code found: 404; (c) uses payload.externalId as message_id for the replay rule (X-Omni-Event-Id is the same on a retry and may be used as a second key); (d) takes from = payload.from, drops any @ suffix; all digits: a phone number with a leading +; otherwise an opaque sender id (a privacy LID); (e) requires received_at from the envelope timestamp in Unix milliseconds, rejects a missing/invalid time or a time more than 120 seconds in the future with 400, and accepts only received_at <= expires_at plus processing within 180 days after expiry; (f) reads the text and senderName only in memory to find the code and never stores or logs them, nor any part of the request body: no request-body logging anywhere, errors log only a status and a request id. Missing payload.content.text, payload.from or payload.externalId, or malformed JSON: 400.
+4. Responses (the support Bot replies only on 2xx, with the reply field's text; nothing on any non-2xx or timeout):
+   - 200 {"reply": "<text>"} on first match.
+   - 200 {"reply": "<same text>"} when the same message_id arrives again (a support Bot retry).
+   - 409 {"status": "already_confirmed"} when the code is already confirmed and the message_id is new (no second reply); also when it was confirmed from a different sender id.
+   - 404 {"status": "unknown_or_expired"}; 429 rate-limited; 503 store down.
+   The reply is short, in the language used on the form, says the sign-up is confirmed and how to remove it.
+5. Code: "AMG-" plus 6 Crockford base32 characters (0-9 A-H J K M N P-T V-Z), random, single use, valid 30 minutes, bound to one waitlist row; shown upper case. Omni's trigger (no flags): [Aa][Mm][Gg]-[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{6} on payload.content.text, only on the instance of the chosen number, only messages not sent by Omni itself. wa.me prefilled text: Confirm my Automagik waitlist: AMG-XXXXXX
+6. Storage: channel whatsapp, the phone number OR the opaque sender id (the site may never get a phone number), message_id and confirmed_at; never the message text or the sender name, and nothing of the body is logged. The privacy note says a WhatsApp sign-up stores the sender id or number WhatsApp gives. The site never sends anything outbound.
 
-**D3b, Sunday 2026-11-15: the Cloud waitlist.**
+### Replay and identity cost accepted by the owner
 
-- *What ships:* the waitlist card on the first screen (Download stays the primary button), the
-  native form with the consent line and the remove form, the short LGPD-aware privacy note
-  (controller, contact, transfer, D1 jurisdiction, rights, ANPD/EU, removal), the Pages Function
-  `apps/landing/functions/api/waitlist.js`, the D1 schema and setup steps, the page test's
-  allowance of exactly those two forms, and the `privacy` role address's allowed entry in
-  `herdr/scripts/privacy-list.json`. The owner creates the database, the preview and production
-  bindings, the WAF rate rule and the `privacy` role address in his account, in the dashboard;
-  no `wrangler.toml` with an account, database or zone id is committed; the preview uses its own
-  database. The waitlist only stores: no email is sent and no mail service is integrated.
-- *Check:* the test bar above; the owner submits a test email on the preview, sees exactly one
-  row `(email, created_at)`, removes it and sees it gone; no email is sent; a D1 that throws is
-  503 and never the success text; the WAF rule is set for production and the preview is
-  owner-only (the block is checked at D4); the page has no cookie, no third-party request, no
-  analytics and no email in a log; the privacy matcher is clean on the page and the function; the
-  privacy note names the controller, the transfer, the D1 jurisdiction, the rights and removal;
-  the consent line shows by the button; a row never becomes a Cloud account; no account or
-  database id is committed; Download is the first action in the DOM; the owner OKs the preview.
-- *Rollback:* revert the PR; remove the form, the function, the schema, the bindings and the WAF
-  rule; delete the D1 database, the only copy of the waitlist (no email was ever sent, so no one
-  is waiting on a message); the site returns to Download only.
+The shared Bearer authenticates the integration, not a person. It has no per-event signature
+or freshness timestamp. The single-use code, authenticated receive-time expiry, 180-day processing limit, and
+externalId/message_id receipt are the replay boundary. A same-ID retry returns the retained reply only for the same
+code and normalized sender. A new ID for a used code, or a different sender, is 409. A stolen
+Bearer can submit guessed codes until rate-limited; rotate it in both systems if compromised.
+The site does not infer a phone number from an opaque identifier. Our cx Support Bot owns
+the instance filter, exclusion of its own messages and the conversation reply; its
+configuration is coordinated by the Orchestrator, outside this site.
 
-**D4, Monday 2026-11-16: go-live, after the OKs.**
+The raw body is never persisted. Only the explicit extracted confirmation fields listed in
+Storage are retained; text, senderName, chatId and metadata are discarded. The callback makes
+no third-party request, sends no WhatsApp message and logs nothing, including on errors.
+The chosen number comes from the plain variable `WAITLIST_WHATSAPP_NUMBER` (international
+digits without +), never from a hard-coded real number. The returned wa.me link and inline
+QR are generated locally. No external QR image service is used.
 
-- *What ships:* `automagik.si` is attached to the Pages project and its DNS record added; the
-  preview's `noindex` is removed; HTTPS and the canonical URL are checked; `automagik.dev` 301s
-  to the new site; the README PR merges with the 10 MB GitHub attachment player and the waitlist
-  line; the first screen's Apache line stays scoped and Cloud's footnote stays private and paid.
-- *Check, the happy delivery by hand in a clean browser:* open the repository, watch the film in
-  the README (the GitHub attachment), click through to automagik.si, see the seven blocks, use
-  the download and try the waitlist with a test email, then remove it. `curl -fsSI
-  https://automagik.si` answers 200 with HTTPS; the film answers `video/mp4`; every block link
-  answers 200; the WAF rule blocks a burst on `/api/waitlist`; the waitlist row is exactly the
-  test email and a timestamp, and is gone after the remove, and no email was sent; the page has
-  no `noindex`, no analytics, no cookie and no third party.
-- *Rollback:* remove the custom domain and DNS record; revert the README merge; apply D3b's
-  rollback if the waitlist is the failure; the preview stays available to the owner; installed
-  apps are untouched.
+### Privacy and removal
 
-## Open questions
+The visible, expandable privacy note names Namastex Labs as controller, privacy@automagik.si
+for access/correction, the intent/contact/confirmation fields, consent, retention, Cloudflare
+as processor and the D1 EU jurisdiction, international transfers, Resend for email, and
+WhatsApp/Meta and Omni for that chosen route. It explains that WhatsApp may supply an opaque
+sender ID instead of a phone number. It states no marketing/training consent, no cookies or
+analytics, no advertising sharing, owner-only access and the rights to confirmation, access,
+correction, deletion, withdrawal, and complaint to ANPD or an EU supervisory authority.
 
-**Q5. The launch email, and who sends it.**
-*Recommended:* one email only, when Cloud opens, sent by the owner from his own account or a
-transactional service he picks; the privacy note names the sender and the processor before the
-first send; the email has the removal path; the list is deleted after that send. Until he
-answers, the waitlist only stores: no email is sent and no mail service is integrated.
+Removal posts an email, WhatsApp number/sender ID or the original confirmation code, deletes
+matching waitlist rows and replies identically whether a match existed. It sends nothing.
+Short-lived abuse/cooldown hashes keep their original expiry after removal so deletion cannot
+reset a mail cap. Removal by contact is unauthenticated, as D3b originally chose: a person who
+knows a contact or code can remove that row, but cannot read it. Expired unconfirmed rows
+may await the next cleanup request physically; WhatsApp retention and eligibility follow
+the received-time/backlog rule above. The owner-approved Support on WhatsApp section is
+included verbatim in English and with the same meaning in Portuguese. Support conversations
+are retained for the assistant’s memory until the person asks to download or reset them;
+this is distinct from the waitlist, which never retains the message text.
 
-**Q6. Mykes and Arca: blocks or named members of the umbrella?**
-Do Mykes and Arca appear on the README and the site as blocks of their own, or only as named
-members of the umbrella? *Recommended:* as named members only: Q3 rules out additional product
-blocks, and the owner's umbrella ruling names them among its members. The owner reads the exact
-README text in its PR and decides there, so the question blocks no delivery.
+### Owner configuration
 
-Q1-Q4 are answered 2026-11-10, in Decided; Q4's design is "The waitlist" and D3b.
+Preview and production each need a different D1 database, created in the EU jurisdiction,
+with `waitlist/schema.sql` applied, bound as `WAITLIST_DB`. Plain variable
+`WAITLIST_DATA_JURISDICTION=eu` acknowledges that configuration; the function fails closed
+without it. Pages secrets: `RESEND_API_KEY`, `WAITLIST_CONFIRM_SECRET`. Plain variable:
+`WAITLIST_WHATSAPP_NUMBER`. There is no account, zone or database identifier in source.
+The owner verifies the sending subdomain, creates the privacy address and configures the cx Support Bot.
+The setup report lists the same names for both Pages environments. Previews remain
+owner-only/noindex and use isolated test contacts. No agent reads the owner's list or secrets.
 
-## Links
+Before production, the owner adds a WAF rule for the public join path; it is an outer filter,
+not the authoritative quota. The function is fail-closed until its required bindings and
+channel-specific configuration exist. Nothing here buys a service, changes DNS or accesses
+an account.
 
-- **The owner's answers, 2026-11-10** (the story, the site base, the deadline, Q1-Q4 and the
-  three OKs) and the 2026-11-08 source read behind "The claims to fix"; the Genie's draft and
-  its brand brief. These are working notes, not repository files.
-- **PR #933** carries this RFC's review, the FIX-FIRST and this revision.
-- **Issues:** #921 (the org rename and live URLs; this RFC adds no new `automagik-dev` URL), #177
-  (the landing page, its captures and its test).
-- **RFCs:** [0011](0011-monorepo-parts-and-releases.md) parts and releases;
-  [0013](0013-work-code-switch.md) the Work/Code switch (the shipped labels);
-  [0017](0017-usagemeter-crate.md), [0018](0018-meter-query-contract.md) and
-  [0021](0021-meter-attribution.md) the meter; [0024](0024-automagik-cloud.md) and
-  [0025](0025-cloud-economics.md) Cloud; [0020](0020-unfold-plugins-leave.md) why Unfold is not
-  a block; [0001](0001-roadmap-and-milestones.md) docs never ship.
-- **The page's machinery:** `apps/landing/README.md`, `apps/landing/landing.test.mjs`,
-  `apps/landing/verify-browser.mjs`, `apps/landing/capture/capture.mjs`,
-  `apps/landing/assets/CAPTURES.md`, `apps/landing/assets/screens/manifest.json`.
-- **The waitlist:** `apps/landing/functions/api/waitlist.js`, `apps/landing/waitlist.test.mjs`,
-  `apps/landing/waitlist/schema.sql`, `apps/landing/waitlist/README.md`.
-- **The parts' words:** `README.md`, `apps/bots-dsh/README.md`, `apps/desktop/README.md`,
-  `apps/pocket/README.md`, `apps/welcome-dsh/README.md`, `herdr/README.md`,
-  `marketplace/automagik.json`.
-- **The checks and the lanes:** `herdr/scripts/privacy-check.mjs`,
-  `herdr/scripts/privacy-list.json`, `scripts/lane.ts` (`NEVER_SHIPPED`),
-  `.github/workflows/ci.yml`.
+## Deliveries and acceptance
+
+- **D1, 2026-11-11:** README PR #956, umbrella-first story and corrected desktop claims. The
+  original seven-block README copy is historical context for this revision; the owner has
+  now chosen the multi-page site map above.
+- **D2, 2026-11-13:** approved film, encodes, poster, CC0 licence and attachment provenance.
+- **D3, 2026-11-14:** PR #1078, the approved umbrella/pages, real captures, app design system,
+  reviewed local/external links, noindex preview and browser evidence. Keep draft until OK.
+- **D3b, 2026-11-15:** intent/consent/removal form, D1 schema, email confirmation, final v2
+  WhatsApp callback, tests and owner setup instructions in this same PR. The owner configures
+  the databases, secrets, plain variables, sending domain and the support Bot.
+- **D4, 2026-11-16:** after the owner's page/film/README OKs, attach automagik.si, check HTTPS
+  and canonical paths, remove noindex, and redirect the old domain. Confirm each live download
+  and block link. Test a real email and inbound WhatsApp once, then remove the test rows.
+  No go-live is authorized before those checks and OKs.
+
+## Verification
+
+| Check | Command / evidence |
+|---|---|
+| Static pages | `node --test apps/landing/landing.test.mjs`: map, one h1 each, one film, reviewed hrefs/actions, source-backed images/digests, exact generated theme, native forms and privacy. |
+| Waitlist | `node --test apps/landing/waitlist.test.mjs`: real local SQLite schema/triggers, duplicate/concurrent reservations and caps, one mocked Resend confirmation, ambiguous failure, consent/field bounds, every final WhatsApp status, opaque IDs, no logging/outbound callback, retention and non-enumerating removal. No real message is sent by tests. |
+| Browser | `LANDING_CHROME=... node apps/landing/verify-browser.mjs`: all pages at 1440, 1024, 390, 320, light and dark; no horizontal scroll, all images decode/200, local fonts, no third-party loads, native 503/200 form responses. Equal-width side-by-side app comparisons at 1440 and 390. |
+| Privacy | `node herdr/scripts/privacy-check.mjs` before every push. Private inputs and preview URL never committed. |
+| CI | Landing job installs root playwright-core with Bun, runs page/waitlist/browser gates with the runner's Chrome and saves evidence. Whole-repository privacy runs too. |
+| Release | `bun scripts/lane.ts ships origin/dev` for this change: no installed component changes. |
+| Preview | Pages check successful; curl each path and function, verify noindex meta/header and exact deployed content. Missing bindings must give 503, not success. |
+| Owner / live boundary | Check D1 schema and declared EU jurisdiction in the account, real Resend/Omni integration, quota and WAF configuration, removal and final preview acceptance before production. Local SQLite tests do not claim to prove a configured live D1 or email domain. |
+
+## Rollback
+
+Revert the landing/RFC/CI commits or redeploy the prior preview. Remove function bindings and
+secrets and stop the support Bot integration. Delete the dedicated waitlist database to withdraw the
+service and its only list. No installed app, plugin ID, storage prefix, version or release
+changes. Before D4 there is no production domain to undo; after D4 detach it and restore the
+previous deployment/DNS. No launch or marketing email was sent by this flow.
+
+## Sources
+
+README PR #956 and the repository READMEs for Desktop, the Bot team, Pocket and the Herdr
+pack; the owner's 2026-11-10 and 2026-11-11 decisions; RFCs 0011 (lanes), 0013 (modes), 0017
+and 0018 (meter component), 0024 and 0025 (Cloud); the app's Stage theme and DSH adapter;
+`apps/landing/assets/CAPTURES.md`; the final v2 WhatsApp contract recorded above.
+
+
+## Follow-up decisions, 2026-11-11
+
+### Arca boundary and root discovery
+
+Pages owns `robots.txt`, `sitemap.xml` and `llms.txt`. Arca owns exactly the Worker routes
+`automagik.si/arca` and `automagik.si/arca/*`, which the owner configures. The home card links
+to `/arca/` in the same tab. Pages carries no `/arca` page or descendants. `/arcade` and other
+paths remain with Pages. The owner adds a zone Single Redirect with BOTH hostname equal to
+`automagik.si` AND URI path equal to `/arca`: 301 to `https://automagik.si/arca/`, preserving
+the query. A path-only redirect is wrong because `arca.automagik.si` is Arca's dashboard.
+No account routing or redirect is changed by this delivery.
+
+**Stand-in, 2026-11-12.** Arca's own site is not deployed yet and has no date. Until it is
+served at this address, Pages carries exactly one stand-in page at `/arca/` and nothing under
+it: Arca's name, the owner's one line for it ("Be your own cloud. Infrastructure for AI
+agents."), Get Arca as the install command, shown as text to copy (the installer's address
+answers with a shell script, so it is never a link), and the way back to all products. Arca is a product in
+the site's menus, the home blocks and the footer. The root `robots.txt`, `sitemap.xml` and
+`llms.txt` keep Arca's supplied lines unchanged. When Arca's Worker takes the routes above,
+the stand-in page is removed; nothing else changes.
+
+### A website's navigation, and we unfold, 2026-11-12
+
+The owner on the redesign's preview: it is the real website, not a landing page. The header
+has Products, Resources and Company menus with a one-line description per entry, a phone
+menu with the same groups, the active page in the header, a footer sitemap with the same
+groups, and on each product page the way back to all products and the previous and next
+product. The pages still carry no client JavaScript: the menus use the browser's popover.
+
+Automagik is part of we unfold, the home of the Open Intelligence movement. The link
+(`https://weunfold.ai/`) and both lines of wording live in one constant in
+`apps/landing/scripts/build-pages.mjs` and appear in the Company menu and once on the home
+page. The owner approves the two lines before the site goes live.
+
+### Stamp, links, logo slot and motion, 2026-11-12
+
+The owner on the next preview. The Open Intelligence line first got a stamp drawn for this
+site; the owner then asked for we unfold's official Open Intelligence seal instead, so the
+site's own stamp is gone. The official seal (we unfold's site embed, used as given) stands
+in every footer beside the licence line, with the link text Support Open Intelligence next
+to it: it marks the parts built in the open (Apache-2.0), not the whole offer. Guides and help link
+to `https://docs.automagik.dev`; GitHub is linked for the downloads and once in the footer;
+no page links to an RFC. Arca's own logo stands wherever Arca does: the icon from Arca's
+logo kit, published here with the owner's and Arca's agreement on 2026-11-12. The public
+copy is shortened without changing its meaning; approved copy is untouched. The pages move: scroll-driven reveals, page
+transitions and menu entrances, in CSS only, off for reduced motion, with no layout shift.
+
+Arca's supplied sitemap entries are included verbatim:
+
+```xml
+<url><loc>https://automagik.si/arca/</loc></url> <url><loc>https://automagik.si/arca/llms.txt</loc></url> <url><loc>https://automagik.si/arca/index.md</loc></url>
+```
+
+Arca's supplied assistant-index lines are included verbatim:
+
+```md
+- [Automagik Arca, the page](https://automagik.si/arca/)
+- [Automagik Arca, for an assistant](https://automagik.si/arca/llms.txt)
+```
+
+The owner allows every crawler, AI training crawlers included, across the entire site. The
+root robots policy is `User-agent: *`, `Allow: /`, with explicit `Allow: /arca`. This settles
+the earlier pending rule for the rest of the site. Since the owner's OK on 2026-11-12 the
+production site is indexable: the pages carry no robots meta and the site sends no
+`X-Robots-Tag`. Previews stay out of search through Cloudflare Pages' own preview header, and
+the waitlist API's responses keep their own noindex. These discovery files do not attach a
+domain or alter account settings.
+
+### WhatsApp visibility and delayed processing
+
+WhatsApp stays visible beside email, even before the support assistant is live. Plain copy
+near the option says “WhatsApp confirmation may take a little while” and “A confirmação pelo
+WhatsApp pode demorar um pouco.” No coming-soon substitute, disabled choice, hidden QR or
+suppressed wa.me link replaces the existing confirmation path.
+
+The authenticated caller supplies the original message receive time in the v2 envelope's
+`timestamp` (Unix milliseconds). A message received **at or before** the code's `expires_at`
+can confirm when processed later, up to **180 days after expiry**, inclusive. More than
+120 seconds in the future, missing, non-finite or invalid receive time is 400. A receive time
+after expiry or processing beyond the 180-day window is 404. The pending row survives cleanup
+inside the backlog window; email cleanup is unchanged. The same limits apply to stored
+receipts, while single use, message_id idempotency, sender matching, constant-time Bearer
+comparison and every no-text/no-logging rule remain. The owner accepts the receive timestamp
+from the authenticated caller; there is no additional event signature.
+
+The four regression tests prove: an on-time message confirms after days of processing delay
+(including intervening cleanup); a message received after expiry is 404; a time more than
+two minutes ahead is 400; processing after 180 days is 404. The expiry mutant named before
+editing, `processing-clock-expiry`, replaces the received-time expiry guard with a processing-
+clock guard. The delayed-processing test must kill that mutant.
+
+The integration secret is now `WAITLIST_CONFIRM_SECRET`, in both Pages environments and the
+cx Support Bot environment. The old Omni-specific secret name is not used. The v2 envelope
+body is retained; this follow-up does not introduce a new body format or an Omni automation.
+The owner subsequently approved the Support on WhatsApp privacy text. This follow-up includes
+it verbatim in English and with the same meaning in Portuguese. It explains that the support
+assistant replies only, people from the team may watch and join, each conversation is sandboxed
+and retained for memory without automatic deletion, Omni carries messages to the AI model,
+no data is sold or used for advertising/marketing, and people may download/reset their
+conversation through the assistant or privacy address. A waitlist code is recorded as confirmed
+without the waitlist retaining the message text. Public copies of the approved text and
+translation live under `apps/landing/waitlist/privacy-support.*.md`.
+
+
+### Review repairs: public copy, precise cutoff and headline bounds
+
+Public pages use visitor language: the launch team, an upcoming short film, GitHub downloads
+and opening workspaces. The page contract forbids internal delivery labels and team jargon
+in text and attributes. The placeholder remains one honest film slot until the cut is ready.
+
+Both receive-time and processing-time backlog guards use millisecond comparisons in
+JavaScript and SQL. The exact 180-day deadline is accepted; deadline plus one millisecond
+is 404 for first use and replay. Pending-row cleanup observes the same precise cutoff.
+Stored second-based timestamps and counter buckets retain their established units.
+
+The responsive gate checks each hero headline's element box and text rectangles against
+its card's padded content area, including 390px, instead of relying only on document width.

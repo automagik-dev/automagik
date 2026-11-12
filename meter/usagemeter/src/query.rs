@@ -36,6 +36,7 @@ pub const MAX_BRANCHES: usize = 500;
 pub const MAX_BRANCH_BYTES: usize = 255;
 pub const MAX_NAMES_BYTES: usize = 65_536;
 pub const MAX_REPO_BYTES: usize = 512;
+pub const MAX_REPO_ALIASES: usize = 16;
 /// The whole envelope as written to stdout, its line feed included.
 pub const OUTPUT_CAP: usize = 458_752;
 /// A refusal keeps the leading names whose echo fits here.
@@ -176,6 +177,7 @@ pub(crate) fn bounds(meta: &BTreeMap<String, String>, window: Window, now_ms: i6
 #[derive(Debug, Clone)]
 struct Request {
     repo: String,
+    repo_aliases: Vec<String>,
     window: Window,
     /// What a row is keyed by: the branch (default), the bot, or the task.
     by: By,
@@ -369,6 +371,8 @@ struct Echo {
     /// Present, and false, only when `repo` was cut to fit its bound (a refusal).
     #[serde(skip_serializing_if = "Option::is_none")]
     repo_complete: Option<bool>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    repo_aliases: Vec<String>,
     window: &'static str,
     /// `bot` for a `--by bot` request; absent for branch rows.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -682,12 +686,20 @@ pub fn repo_ok(r: &str) -> bool {
             .all(|s| !s.is_empty() && !s.chars().any(|c| c.is_whitespace() || c == '\u{feff}'))
 }
 
-/// The request's hash: repo, window, the line `by <by>` for a non-branch request (it holds a
-/// space, which no branch can, so it never reads as a branch), then each branch, each followed by
-/// a line feed.
-fn request_sha256(repo: &str, window: &str, by: By, branches: &[String]) -> String {
+/// The request's hash: repo, each `alias <repo>` line, window, optional `by <by>`, then each
+/// branch, each followed by a line feed. The prefixed lines hold a space, which no window or
+/// branch can, so they are unambiguous. No aliases preserves the original hash.
+fn request_sha256(
+    repo: &str,
+    aliases: &[String],
+    window: &str,
+    by: By,
+    branches: &[String],
+) -> String {
     let mut h = Sha256::new();
+    let aliases: Vec<String> = aliases.iter().map(|a| format!("alias {a}")).collect();
     for part in std::iter::once(repo)
+        .chain(aliases.iter().map(String::as_str))
         .chain(std::iter::once(window))
         .chain(by.hash_line())
         .chain(branches.iter().map(String::as_str))
@@ -700,7 +712,14 @@ fn request_sha256(repo: &str, window: &str, by: By, branches: &[String]) -> Stri
 
 /// The request echoed back. A refusal keeps the leading names that fit in 4 KiB (each name
 /// counted as its JSON bytes plus a comma), cut at a whole name: at most 500, none past 255 bytes.
-fn echo(repo: &str, window: Window, by: By, branches: &[String], capped: bool) -> Echo {
+fn echo(
+    repo: &str,
+    aliases: &[String],
+    window: Window,
+    by: By,
+    branches: &[String],
+    capped: bool,
+) -> Echo {
     let mut kept = Vec::new();
     let mut used = 0;
     for b in branches {
@@ -729,24 +748,17 @@ fn echo(repo: &str, window: Window, by: By, branches: &[String], capped: bool) -
     Echo {
         repo: repo_echo,
         repo_complete,
+        repo_aliases: aliases.to_vec(),
         window: window.name(),
         by: by.echo(),
         branch_count: branches.len(),
         branches_complete: kept.len() == branches.len(),
         branches: kept,
-        request_sha256: request_sha256(repo, window.name(), by, branches),
+        request_sha256: request_sha256(repo, aliases, window.name(), by, branches),
     }
 }
 
-fn too_large_request(
-    repo: &str,
-    window: Window,
-    by: By,
-    branches: &[String],
-    message: String,
-    limit: usize,
-    needed: usize,
-) -> Refusal {
+fn too_large_request(echo: Echo, message: String, limit: usize, needed: usize) -> Refusal {
     let mut e = ErrorObj::new("request_too_large", message);
     e.limit_bytes = Some(limit);
     e.needed_bytes = Some(needed);
@@ -754,7 +766,7 @@ fn too_large_request(
         code: exit::USAGE,
         status: "usage",
         error: e,
-        echo: Some(echo(repo, window, by, branches, true)),
+        echo: Some(echo),
         store: None,
         machine: None,
     }
@@ -762,6 +774,7 @@ fn too_large_request(
 
 fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
     let mut repo: Option<String> = None;
+    let mut repo_aliases: Vec<String> = Vec::new();
     let mut window: Option<Window> = None;
     let mut contract: Option<u64> = None;
     let mut stale: Option<i64> = None;
@@ -783,6 +796,16 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
                         "--repo is given twice: one call per project",
                     )));
                 }
+            }
+            "--repo-alias" => {
+                let alias = value("--repo-alias", it.next())?;
+                if !repo_ok(&alias) {
+                    return Err(Box::new(Refusal::usage(format!(
+                        "--repo-alias takes host/owner/repo as the meter normalizes a remote, not {}",
+                        quoted(&alias)
+                    ))));
+                }
+                repo_aliases.push(alias);
             }
             "--branch" => branches.push(value("--branch", it.next())?),
             "--by" => {
@@ -882,14 +905,32 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
             quoted(&repo)
         ))));
     }
+    repo_aliases.retain(|a| a != &repo);
+    let mut seen = BTreeSet::new();
+    repo_aliases.retain(|a| seen.insert(a.clone()));
+    for alias in &repo_aliases {
+        if alias.len() > MAX_REPO_BYTES {
+            return Err(Box::new(too_large_request(
+                echo(&repo, &[], window, by, &branches, true),
+                format!(
+                    "--repo-alias takes {} bytes; the most it takes is {MAX_REPO_BYTES}",
+                    alias.len()
+                ),
+                MAX_REPO_BYTES,
+                alias.len(),
+            )));
+        }
+    }
+    if repo_aliases.len() > MAX_REPO_ALIASES {
+        return Err(Box::new(Refusal::usage(
+            "at most 16 --repo-alias values may be given",
+        )));
+    }
     if repo.len() > MAX_REPO_BYTES {
         // The defined refusal, echoed: its repo cut to fit (`repo_complete: false`), the request
         // still matched by its count and sha256.
         return Err(Box::new(too_large_request(
-            &repo,
-            window,
-            by,
-            &branches,
+            echo(&repo, &repo_aliases, window, by, &branches, true),
             format!(
                 "--repo takes {} bytes; the most it takes is {MAX_REPO_BYTES}",
                 repo.len()
@@ -904,17 +945,14 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
             branches.len()
         ));
         r.error.code = "too_many_branches";
-        r.echo = Some(echo(&repo, window, by, &branches, true));
+        r.echo = Some(echo(&repo, &repo_aliases, window, by, &branches, true));
         return Err(Box::new(r));
     }
     if let Some(long) = branches.iter().map(String::len).max()
         && long > MAX_BRANCH_BYTES
     {
         return Err(Box::new(too_large_request(
-            &repo,
-            window,
-            by,
-            &branches,
+            echo(&repo, &repo_aliases, window, by, &branches, true),
             format!("a branch name takes {long} bytes; the most one takes is {MAX_BRANCH_BYTES}"),
             MAX_BRANCH_BYTES,
             long,
@@ -923,10 +961,7 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
     let names: usize = branches.iter().map(String::len).sum();
     if names > MAX_NAMES_BYTES {
         return Err(Box::new(too_large_request(
-            &repo,
-            window,
-            by,
-            &branches,
+            echo(&repo, &repo_aliases, window, by, &branches, true),
             format!(
                 "the branch names take {names} bytes; the most one call takes is \
                  {MAX_NAMES_BYTES}"
@@ -946,13 +981,14 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
             code: exit::UNSUPPORTED_CONTRACT,
             status: "unsupported_contract",
             error: e,
-            echo: Some(echo(&repo, window, by, &branches, true)),
+            echo: Some(echo(&repo, &repo_aliases, window, by, &branches, true)),
             store: None,
             machine: None,
         }));
     }
     Ok(Request {
         repo,
+        repo_aliases,
         window,
         by,
         branches,
@@ -1421,18 +1457,23 @@ fn task_candidates(c: &Connection) -> rusqlite::Result<TaskCandidates> {
 /// The task-labelled calls of the repo in the window (RFC 0018 M3), read only from the evidence
 /// its task launches can name. The stored attribution stays the authority; the bound only keeps
 /// the read proportional to the tasks, not to the whole evidence table.
-fn task_calls(c: &Connection, repo: &str, from: i64, to: i64) -> rusqlite::Result<Vec<TaskCall>> {
+fn task_calls(
+    c: &Connection,
+    repos: &[&str],
+    from: i64,
+    to: i64,
+) -> rusqlite::Result<Vec<TaskCall>> {
     let TaskCandidates { sessions, cwds } = task_candidates(c)?;
     let mut kept: BTreeMap<i64, TaskCall> = BTreeMap::new();
     // Three arms, one count per evidence id: a call's own session, its parent's (a sub-agent or a
     // resumed child is tied through its parent, as the resolver ties it in ledger.rs), and its
     // start folder. Each arm is one indexed column.
     for chunk in sessions.chunks(TASK_CANDIDATE_CHUNK) {
-        read_task_calls(c, repo, from, to, TaskArm::Sessions(chunk), &mut kept)?;
-        read_task_calls(c, repo, from, to, TaskArm::Parents(chunk), &mut kept)?;
+        read_task_calls(c, repos, from, to, TaskArm::Sessions(chunk), &mut kept)?;
+        read_task_calls(c, repos, from, to, TaskArm::Parents(chunk), &mut kept)?;
     }
     for chunk in cwds.chunks(TASK_CANDIDATE_CHUNK) {
-        read_task_calls(c, repo, from, to, TaskArm::Cwds(chunk), &mut kept)?;
+        read_task_calls(c, repos, from, to, TaskArm::Cwds(chunk), &mut kept)?;
     }
     Ok(kept.into_values().collect())
 }
@@ -1449,7 +1490,7 @@ enum TaskArm<'a> {
 
 /// A task id the contract can print: not empty, no control character (no blank row, no row
 /// carrying an escape), and within the tag bound. Only that is checked; Genie's id shape is not.
-fn task_id_fits(task: &str) -> bool {
+pub(crate) fn task_id_fits(task: &str) -> bool {
     !task.is_empty() && !task.chars().any(char::is_control) && crate::ledger::tag_fits(task)
 }
 
@@ -1463,20 +1504,25 @@ fn placeholders(first: usize, n: usize) -> String {
 
 fn read_task_calls(
     c: &Connection,
-    repo: &str,
+    repos: &[&str],
     from: i64,
     to: i64,
     arm: TaskArm<'_>,
     kept: &mut BTreeMap<i64, TaskCall>,
 ) -> rusqlite::Result<()> {
-    let mut values: Vec<rusqlite::types::Value> =
-        vec![from.into(), to.into(), repo.to_string().into()];
+    let mut values: Vec<rusqlite::types::Value> = vec![from.into(), to.into()];
+    values.extend(
+        repos
+            .iter()
+            .map(|r| rusqlite::types::Value::Text((*r).into())),
+    );
+    let repo_list = placeholders(3, repos.len());
     // A call is tied to its launch by its own session or by its parent's (ledger.rs), so the
     // session hashes are matched against both columns. Matching only the own session drops a
     // parent-only call with no count and can hide a second checkout from the ambiguity rule.
     let predicate = match &arm {
         TaskArm::Sessions(sessions) | TaskArm::Parents(sessions) => {
-            let list = placeholders(4, sessions.len());
+            let list = placeholders(3 + repos.len(), sessions.len());
             for s in *sessions {
                 values.push(rusqlite::types::Value::Blob(s.clone()));
             }
@@ -1487,7 +1533,7 @@ fn read_task_calls(
             }
         }
         TaskArm::Cwds(ids) => {
-            let list = placeholders(4, ids.len());
+            let list = placeholders(3 + repos.len(), ids.len());
             for id in *ids {
                 values.push(rusqlite::types::Value::Integer(*id));
             }
@@ -1500,7 +1546,7 @@ fn read_task_calls(
            e.reported_usd, a.state, a.basis, a.bot, a.kind, a.role, a.squad, a.unrecorded,
            a.task, a.project, a.filled_branch
          FROM evidence e JOIN ev_dim d ON d.id = e.dim JOIN ev_actor a ON a.id = e.actor
-         WHERE e.ts_ms >= ?1 AND e.ts_ms < ?2 AND d.repo = ?3
+         WHERE e.ts_ms >= ?1 AND e.ts_ms < ?2 AND d.repo IN ({repo_list})
            AND a.state = 'attributed' AND a.task IS NOT NULL AND a.task <> ''
            AND a.project IS NOT NULL
            AND {predicate}"
@@ -1604,6 +1650,7 @@ fn read_task_calls(
 fn read(
     c: &Connection,
     repo: &str,
+    aliases: &[String],
     by: By,
     start: impl Fn(&BTreeMap<String, String>) -> (i64, i64),
 ) -> rusqlite::Result<Read> {
@@ -1643,18 +1690,24 @@ fn read(
     // Every row of the repo in the window, through `usage_repo_branch`: branch rows read the
     // branches named, and the actor counts (`actor_unattributed`, bot rows) the whole repo.
     let mut rows = Vec::new();
-    scan_usage(c, Some(&[repo]), from, to, evidence_from, &mut |r| {
+    let repos: Vec<&str> = std::iter::once(repo)
+        .chain(aliases.iter().map(String::as_str))
+        .collect();
+    scan_usage(c, Some(&repos), from, to, evidence_from, &mut |r| {
         rows.push(r);
     })?;
     let repo_seen = rows.iter().any(|r| r.tokens.total > 0)
         || c.query_row(
-            "SELECT EXISTS(SELECT 1 FROM usage WHERE repo = ?1)",
-            [repo],
+            &format!(
+                "SELECT EXISTS(SELECT 1 FROM usage WHERE repo IN ({}))",
+                placeholders(1, repos.len())
+            ),
+            rusqlite::params_from_iter(&repos),
             |r| r.get::<_, bool>(0),
         )?;
     // The task rows read per-call evidence (RFC 0018 M3): the hourly rollups carry no task.
     let task_calls = if by == By::Task {
-        task_calls(c, repo, from, to)?
+        task_calls(c, &repos, from, to)?
     } else {
         Vec::new()
     };
@@ -2153,7 +2206,16 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
         Ok(r) => r,
         Err(r) => return refuse(*r),
     };
-    let echo_capped = || Some(echo(&req.repo, req.window, req.by, &req.branches, true));
+    let echo_capped = || {
+        Some(echo(
+            &req.repo,
+            &req.repo_aliases,
+            req.window,
+            req.by,
+            &req.branches,
+            true,
+        ))
+    };
     let failure = |code: u8,
                    status: &'static str,
                    error: ErrorObj,
@@ -2238,7 +2300,7 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
         let b = bounds(meta, req.window, ctx.now_ms);
         (b.start, b.end)
     };
-    let snap = match read(&conn, &req.repo, req.by, window_of) {
+    let snap = match read(&conn, &req.repo, &req.repo_aliases, req.by, window_of) {
         Ok(Read::Snapshot(s)) => s,
         Ok(Read::Absent) => return refuse(absent(failure)),
         Ok(Read::Version(v)) => {
@@ -2550,7 +2612,14 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
         }),
         actor_unattributed: Some(actor_unattributed),
         pricing: Some(pricing),
-        query: Some(echo(&req.repo, req.window, req.by, &req.branches, false)),
+        query: Some(echo(
+            &req.repo,
+            &req.repo_aliases,
+            req.window,
+            req.by,
+            &req.branches,
+            false,
+        )),
         rows,
     };
 
@@ -2946,7 +3015,7 @@ mod tests {
                    (3, 3000, 1, 1, x'03', x'09', 1, 10);",
             )
             .unwrap();
-        let calls = task_calls(&store.conn, "example.com/acme/widgets", 0, 10_000).unwrap();
+        let calls = task_calls(&store.conn, &["example.com/acme/widgets"], 0, 10_000).unwrap();
         assert_eq!(
             calls.len(),
             2,
@@ -2963,7 +3032,7 @@ mod tests {
                    ('claude', x'02', 'a', 'session');",
             )
             .unwrap();
-        let calls = task_calls(&store.conn, "example.com/acme/widgets", 0, 10_000).unwrap();
+        let calls = task_calls(&store.conn, &["example.com/acme/widgets"], 0, 10_000).unwrap();
         assert_eq!(calls.len(), 2, "one count per evidence id");
         assert_eq!(calls.iter().map(|c| c.tokens.total).sum::<i64>(), 20);
     }

@@ -22,6 +22,12 @@ name: Server image
 # pull_request or push only builds and scans, pinning the plugins from the newest release that
 # has them.
 #
+# A run that pushes also records the pushed manifest digest on the content release itself: the
+# asset server-image.json (server/image-record.mjs), on a release event and on a dispatch alike,
+# because the cut's own release starts no workflow (below). That record is the release's own: a
+# workspace pins the image by its digest, never by :latest (RFC 0024 (g); issue #910). A later
+# push for the same content release replaces the record, which names its commit and tag.
+#
 # The scan (server/secrecy.mjs) extracts the built rootfs and the image config before any login
 # and fails the job on a provider key, a token= or JSON token field, a private-key block with a
 # real body, a .env or launch-url file, bot/team state under /data, a home or /mnt/ai path, a git
@@ -32,12 +38,16 @@ name: Server image
 # block and containing-library sha256). Third-party test/example/docs folders, non-Linux
 # prebuilds and the profile's vendor tarballs are pruned before the scan, and the tools stage
 # strips the distroless man/changelog pages before the final scratch image copies that rootfs.
+# The same scan holds RFC 0025's Decided 12: the image carries no Stripe SDK (package, dependency
+# or import), no Stripe host, key or id, and, in this repository's own code and the image's
+# config, no billing or ledger import, billing route, or built-in gateway address or credential.
 # A self-check in image mode proves a planted key still fails; the layer list, file inventory,
 # allowlist used and external symlinks are kept as an artifact. The image is never run by the
 # scan.
 #
 # No key is baked and no test token is in this workflow: the only credential is GITHUB_TOKEN,
-# used to log in to the registry and to read the release's assets. It is not passed to docker
+# used to log in to the registry, to read the release's assets and, in the record job alone
+# (the only one with contents: write, and with no registry access), to post server-image.json. It is not passed to docker
 # build or into the image. GitHub has no REST endpoint for a Container package's visibility:
 # the job checks it and leaves the organization package-settings path in the summary.
 #
@@ -238,6 +248,13 @@ jobs:
             echo "latest=${latest}"
           } >> "$GITHUB_OUTPUT"
 
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Install locked gate dependencies
+        run: bun install --cwd server --frozen-lockfile --ignore-scripts --linker hoisted
+
       - name: Syntax
         run: |
           set -euo pipefail
@@ -281,6 +298,12 @@ jobs:
         env:
           TAG: ${{ steps.gate.outputs.tag }}
         run: node server/smoke.mjs "automagik-server:${TAG}"
+
+      - name: Plugins follow a newer image on an older release volume (offline)
+        if: steps.gate.outputs.build == 'true'
+        env:
+          TAG: ${{ steps.gate.outputs.tag }}
+        run: node server/follow-smoke.mjs "automagik-server:${TAG}"
 
       # Before this workflow has logged in anywhere: export the image's rootfs, inventory every
       # file, and fail on a secret, a home path, a credential or any baked state. The inventory
@@ -339,6 +362,8 @@ jobs:
       REVISION: ${{ needs.image.outputs.revision }}
       LATEST: ${{ needs.image.outputs.latest }}
       GHCR: ghcr.io/automagik-si/automagik-server
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -472,3 +497,54 @@ jobs:
           name: server-image-digest-${{ needs.image.outputs.tag }}
           path: image-digest.txt
           retention-days: 30
+
+  # The release's own record of what was pushed (RFC 0024 delivery 4's acceptance; issue #910).
+  # Its own job: the only one that may write to a release, and it holds no registry access. It
+  # runs on a release event and on a dispatch, whichever pushed. The record goes on the content
+  # release (v<content>): on a release event that is the release itself. It is built only from
+  # the digest the push printed, and read back from the release before the job passes.
+  record:
+    name: Record the image digest on the release
+    needs: [image, publish]
+    if: needs.image.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      DO_NOT_TRACK: '1'
+      GH_TOKEN: ${{ github.token }}
+      CONTENT: ${{ needs.image.outputs.content }}
+      TAG: ${{ needs.image.outputs.tag }}
+      REVISION: ${{ needs.image.outputs.revision }}
+      DIGEST: ${{ needs.publish.outputs.digest }}
+      GHCR: ghcr.io/automagik-si/automagik-server
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '24'
+
+      - name: Write server-image.json and post it on the content release
+        run: |
+          set -euo pipefail
+          node server/image-record.mjs write --image "${GHCR}" --digest "${DIGEST}" \
+            --version "${CONTENT}" --revision "${REVISION}" --tag "${TAG}" --out server-image.json
+          gh release upload "v${CONTENT}" server-image.json --clobber --repo "${GITHUB_REPOSITORY}"
+
+      # What a workspace will read: the asset as the release serves it, not the local file.
+      - name: Read the record back from the release
+        run: |
+          set -euo pipefail
+          mkdir posted
+          gh release download "v${CONTENT}" --pattern server-image.json --dir posted --repo "${GITHUB_REPOSITORY}"
+          node server/image-record.mjs check posted/server-image.json --digest "${DIGEST}"
+          {
+            echo
+            echo "### Release record"
+            echo
+            echo "\`server-image.json\` on \`v${CONTENT}\` records \`${GHCR}@${DIGEST}\`. Pin a workspace by that digest, never by a tag."
+          } >> "$GITHUB_STEP_SUMMARY"

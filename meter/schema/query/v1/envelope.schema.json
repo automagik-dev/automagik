@@ -210,6 +210,10 @@
               "const": false,
               "description": "Present only when repo was cut to fit its 512-byte bound (a request_too_large refusal): repo is then the request's repo cut at a whole character, and request_sha256 still covers the whole request."
             },
+            "repo_aliases": {
+              "type": "array", "minItems": 1, "maxItems": 16,
+              "items": { "$ref": "#/$defs/repo" }
+            },
             "window": { "enum": ["d1", "d7", "d30"] },
             "by": {
               "enum": ["bot", "task"],
@@ -226,7 +230,7 @@
             "request_sha256": {
               "type": "string",
               "pattern": "^[0-9a-f]{64}$",
-              "description": "sha256 of the UTF-8 of repo, window, then, only when by is present, the line `by <by>` (a space, which no branch holds, so it is never read as a branch), then each branch in order, each followed by a line feed. A branch request hashes as before by existed."
+              "description": "sha256 of the UTF-8 of repo, then each `alias <repo>` line in repo_aliases order, then window, then, only when by is present, the line `by <by>`, then each branch in order, each followed by a line feed. The prefixed lines contain a space, which no window or branch holds, so they are unambiguous. With no aliases the request hashes identically to before aliases existed."
             }
           }
         }
