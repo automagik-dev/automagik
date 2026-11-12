@@ -72,6 +72,42 @@ jobs:
           path: .cache/landing-evidence/
           if-no-files-found: warn
 
+  brand-font:
+    # The title font in docs/brand/fonts is a subset of an upstream file. This job makes the
+    # subset again from that file, at its pinned commit, and fails unless the result is the
+    # committed font, byte for byte (docs/brand/fonts/README.md has the call).
+    name: Brand font rebuild
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.9
+
+      - name: Rebuild fredoka-latin.woff2 from its pinned source and compare
+        shell: bash
+        working-directory: docs/brand/fonts/rebuild
+        env:
+          SOURCE_URL: https://raw.githubusercontent.com/google/fonts/2e5fa2e951237b6ae65f705693d12ca76a7f78c8/ofl/fredoka/Fredoka%5Bwdth%2Cwght%5D.ttf
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts --no-audit --no-fund
+          mkdir -p "$RUNNER_TEMP/font-rebuild"
+          curl -fsSL --retry 5 --retry-delay 3 --retry-all-errors -o "$RUNNER_TEMP/font-rebuild/Fredoka.ttf" "$SOURCE_URL"
+          node rebuild.mjs "$RUNNER_TEMP/font-rebuild/Fredoka.ttf" "$RUNNER_TEMP/font-rebuild/fredoka-latin.woff2"
+
+      - name: The rebuilt font
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: brand-font-rebuild
+          path: ${{ runner.temp }}/font-rebuild/fredoka-latin.woff2
+          if-no-files-found: warn
+
   id:
     name: Automagik ID (local Workers runtime)
     runs-on: ubuntu-24.04
