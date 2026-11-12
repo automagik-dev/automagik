@@ -71,49 +71,6 @@ const widthRange = (view, room) => (view === 'browser'
   ? [MIN_WIDTH, room - MIN_CHAT]
   : [DETAILS_WIDTH, Math.min(DETAILS_MAX, room - MIN_CHAT)])
 const fitWidth = (width, [low, high]) => Math.round(Math.max(low, Math.min(width, high)))
-<<<<<<< HEAD
-
-// The conversation column's right margin lives in one rule of our own, matched on the
-// column's exact class. A custom property on <body> would restyle the whole page, tens
-// of milliseconds a write. A changed rule still restyles the column's subtree, so a drag
-// writes the column's own inline style each frame and the rule once, on release.
-const room = { rule: null, selector: '' }
-const roomRule = () => {
-  const live = room.rule?.parentStyleSheet?.ownerNode?.isConnected
-  if (live && room.selector) return room.rule
-  const column = document.querySelector('[class*="_centerCol"]')
-  const selector = column ? [...column.classList].filter(name => name.includes('_centerCol')).map(name => `.${CSS.escape(name)}`).join(',') : ''
-  if (live && !selector) return room.rule
-  const declarations = room.rule?.style.cssText ?? ''
-  room.rule?.parentStyleSheet?.ownerNode?.remove()
-  const style = installStyles(`${selector || '[class*="_centerCol"]'}{${declarations}}`, 'chat-room')
-  room.rule = style.sheet.cssRules[0]
-  room.selector = selector
-  return room.rule
-}
-let roomHold = 0
-export const chatRoom = {
-  /** The column's right margin in px, or null for the shell's own. */
-  set(width) {
-    const { style } = roomRule()
-    if (width === null) style.removeProperty('margin-right')
-    else style.setProperty('margin-right', `${width}px`, 'important')
-  },
-  /** While on, a margin change lands at once instead of gliding. */
-  hold(on) {
-    cancelAnimationFrame(roomHold)
-    if (on) { roomRule().style.setProperty('transition', 'none', 'important'); return }
-    // Two frames, so the last held write is on screen before the glide comes back.
-    roomHold = requestAnimationFrame(() => { roomHold = requestAnimationFrame(() => roomRule().style.removeProperty('transition')) })
-  },
-  /** The columns themselves, for a drag's per-frame writes. */
-  columns() {
-    roomRule()
-    return room.selector ? [...document.querySelectorAll(room.selector)] : []
-  },
-}
-=======
->>>>>>> vendor/ds-bot-0.3.6-prepared
 // The address as the bar shows it while not editing: no scheme, no trailing slash.
 const shortAddress = url => String(url ?? '').replace(/^https?:\/\//i, '').replace(/^www\./i, '').replace(/\/$/, '')
 const reducedMotion = () => typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -585,7 +542,6 @@ export function BotPanel({ pane, leaving, room, overlay, roster, actions, useSes
   const instant = dragging || resizing
   const [reading, setReading] = useState(false)
 
-<<<<<<< HEAD
   // Details keeps the drawer's Escape stack (useEscape), so newer dialogs close first.
   // Focus moves only when the details open or change subject, never on rename or tab renders.
   useLayoutEffect(() => {
@@ -611,7 +567,6 @@ export function BotPanel({ pane, leaving, room, overlay, roster, actions, useSes
     }
   }, [pane.id, view, leaving])
 
-  const overlay = overlayAt(view, viewport)
   // Over a narrow window the details cover the chat: a modal dialog that holds Tab and focus.
   useEffect(() => {
     const panel = root.current
@@ -646,10 +601,7 @@ export function BotPanel({ pane, leaving, room, overlay, roster, actions, useSes
       document.removeEventListener('focusin', contain)
     }
   }, [overlay, view, leaving])
-  const panelWidth = fitWidth(width ?? (view === 'browser' ? DEFAULT_WIDTH : DETAILS_WIDTH), widthRange(view, viewport))
-=======
   const panelWidth = fitWidth(width ?? (view === 'browser' ? DEFAULT_WIDTH : DETAILS_WIDTH), widthRange(view, room))
->>>>>>> vendor/ds-bot-0.3.6-prepared
   // Once the browser has shown, the Bot page keeps its width (up to DETAILS_MAX).
   useLayoutEffect(() => { if (view === 'browser' && width === null) setWidth(DEFAULT_WIDTH) }, [view, width])
   useLayoutEffect(() => { chatRoom.hold(instant) }, [instant])

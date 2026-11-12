@@ -1,7 +1,7 @@
 import { createElement as h, useRef, useState } from 'react'
 import { PlusIcon, PeopleIcon, ArrowUpIcon, TerminalIcon, SparkIcon } from './icons.js'
 import { AdminStar, BotMark } from './mark.js'
-import { useEscape } from './overlay-hooks.js'
+import { useEscape, usePaneLeft } from './overlay-hooks.js'
 import { CreateBot } from './create-bot.js'
 import { NewGenie } from './genie-new.js'
 import { DshBotForm } from './dsh-bot-form.js'
@@ -9,7 +9,8 @@ import { QUICK_EDGES, useFlip, useGlide, useMorph } from './motion.js'
 import { t } from './i18n.js'
 import { sendsOnEnter } from './enter-key.js'
 
-export function NewChat({ mode, sectionId = null, paneLeft, roster, actions }) {
+export function NewChat({ mode, sectionId = null, roster, actions }) {
+  const paneLeft = usePaneLeft()
   const [query, setQuery] = useState('')
   const [picked, setPicked] = useState([])
   const [group, setGroup] = useState(mode === 'group')
