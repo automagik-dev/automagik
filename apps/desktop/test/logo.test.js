@@ -66,10 +66,10 @@ test('every logo file is the approved set\'s, byte for byte', () => {
     assert.equal(entry.bytes, bytes(file).length, `SOURCE.json: ${file}`)
     assert.ok(entry.from.endsWith(`/${file.slice(file.lastIndexOf('/') + 1)}`), `${file} keeps its name in the set`)
   }
-  // The old uppercase lockup is gone. (assets/mark.png, the old clay mark, stays only as the
-  // source the site's art is built from, apps/landing/scripts/build-art.mjs; the app draws
-  // nothing from it.)
+  // The old pictures are gone: the uppercase lockup and the earlier clay mark, which nothing
+  // reads any more (the icon draws the approved mark, and the site builds its art from the set).
   assert.equal(existsSync(new URL('src/splash/lockup.png', APP)), false)
+  assert.equal(existsSync(new URL('assets/mark.png', APP)), false)
 })
 
 test('the window bar shows the lockup: ink letters by day, cream at night', () => {
