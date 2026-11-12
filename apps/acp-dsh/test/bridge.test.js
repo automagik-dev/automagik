@@ -22,6 +22,8 @@ async function backchannel() {
       { name: 'read', description: 'Read a file', inputSchema: { type: 'object', properties: {} } },
     ],
     calls: [],
+    holdMs: 0,
+    abandoned: [],
     waiters: new Set(),
   }
   const wake = () => {
@@ -44,6 +46,20 @@ async function backchannel() {
     if (body.op === 'list') return reply(200, { tools: state.tools, generation: state.generation })
     if (body.op === 'call') {
       state.calls.push({ name: body.name, arguments: body.arguments })
+      // A slow call (`holdMs`), and whether its caller went away before the answer.
+      if (state.holdMs > 0) {
+        const gone = await new Promise((resolve) => {
+          const timer = setTimeout(() => resolve(false), state.holdMs)
+          response.once('close', () => {
+            clearTimeout(timer)
+            resolve(true)
+          })
+        })
+        if (gone) {
+          state.abandoned.push(body.name)
+          return
+        }
+      }
       return reply(200, { content: [{ type: 'text', text: `ran ${body.name}` }], isError: false })
     }
     if (body.op === 'wait') {
@@ -222,4 +238,46 @@ test('without its credential or address the bridge refuses to start', async () =
   const code = await run.exited
   assert.notEqual(code, 0)
   assert.match(run.stderr(), /DSH_BRIDGE_CREDENTIAL/)
+})
+
+// #957: the bridge used to give up on any exchange after a fixed 60 s, while DSH kept running
+// the tool (a `job_output` with a 240 s wait, a slow command, an approval dialog left open).
+// The deadline of the short exchanges is injected here so the test does not take a minute: a
+// call that outlasts it several times over must still come back with its real result.
+test('a call has no deadline: one that outlasts the short-exchange deadline returns its real result', async () => {
+  const channel = await backchannel()
+  const run = bridge({ DSH_BRIDGE_URL: channel.url, DSH_BRIDGE_CREDENTIAL: CREDENTIAL, DSH_BRIDGE_RPC_TIMEOUT_MS: '150' })
+  try {
+    await run.answer(run.send('initialize', { protocolVersion: '2025-06-18', capabilities: {} }))
+    channel.state.holdMs = 1_200
+    const called = await run.answer(run.send('tools/call', { name: 'bash', arguments: {} }))
+    assert.deepEqual(called.result, { content: [{ type: 'text', text: 'ran bash' }], isError: false })
+    assert.deepEqual(channel.state.abandoned, [], 'the bridge never closed the request')
+  } finally {
+    run.close()
+    channel.close()
+  }
+})
+
+test('notifications/cancelled closes that call\'s request to DSH, and the cancelled request gets no response', async () => {
+  const channel = await backchannel()
+  const run = bridge({ DSH_BRIDGE_URL: channel.url, DSH_BRIDGE_CREDENTIAL: CREDENTIAL })
+  try {
+    await run.answer(run.send('initialize', { protocolVersion: '2025-06-18', capabilities: {} }))
+    channel.state.holdMs = 4_000
+    const id = run.send('tools/call', { name: 'bash', arguments: {} })
+    const deadline = Date.now() + 3_000
+    while (channel.state.calls.length === 0 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10))
+    run.notify('notifications/cancelled', { requestId: id, reason: 'stopped' })
+    while (channel.state.abandoned.length === 0 && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10))
+    assert.deepEqual(channel.state.abandoned, ['bash'], 'DSH saw the caller go away')
+    // The bridge is still serving, and the cancelled request was never answered.
+    channel.state.holdMs = 0
+    const next = await run.answer(run.send('tools/call', { name: 'read', arguments: {} }))
+    assert.equal(next.result.isError, false)
+    assert.equal(run.messages.some(message => message.id === id), false)
+  } finally {
+    run.close()
+    channel.close()
+  }
 })

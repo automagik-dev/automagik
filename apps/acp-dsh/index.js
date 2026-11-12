@@ -12,22 +12,26 @@
 // section) what each agent has: its CLI, its connector (the ACP adapter), its sign-in, and
 // whether its model is in the picker. Provisioning keeps its own CLI store; switches remain
 // this plugin's live settings, written through DSH's settings service.
-import { spawn } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { dirname, join, sep } from 'node:path'
 import { homedir } from 'node:os'
 import z from '@deepseek-ai/schemastery'
 import { accountOf, accountView } from './src/host/account.js'
 import { AcpAdapter, aside, BRIDGE_PATH, SIDE_MODEL } from './src/host/adapter.js'
-import { AGENTS, findCommand, signedInOf } from './src/host/agents.js'
+import { AGENTS, findCommand, isNative, launchOf, signedInOf } from './src/host/agents.js'
 import { Backchannel } from './src/host/backchannel.js'
+import { batchSafe } from './src/host/batch-spawn.js'
 import { Catalog, cliStamp, DEFAULT_MODEL } from './src/host/catalog.js'
 import { CliStore, CLI_CHECK_EVERY_MS } from './src/host/clis.js'
+import { CliHomes, HOME_ENV, stopRuns } from './src/host/cli-homes.js'
 import { CONSENT_FILE, ConsentStore } from './src/host/consent.js'
-import { adaptersHome, AdapterStore, CHECK_EVERY_MS } from './src/host/install.js'
+import { adaptersHome, AdapterStore, CHECK_TICK_MS } from './src/host/install.js'
+import { handshake } from './src/host/handshake.js'
 import { drawImage, imageRefusal, imageSupport, SIGNED_OUT, UNAVAILABLE, unsupported } from './src/host/image.js'
 import { CliLogins } from './src/host/login.js'
 import { CREDENTIAL_ENV, URL_ENV } from './src/host/names.js'
-import { enginesFor, pressureGuard } from './src/host/pressure.js'
+import { PermissionDiagnostics } from './src/host/permission-diagnostics.js'
+import { enginesFor, PRESSURE_METHOD, pressureGuard } from './src/host/pressure.js'
 import { redactorFor } from './src/host/redact.js'
 import { agentRoute, carryEffort, crossed } from './src/host/switch.js'
 
@@ -42,11 +46,19 @@ export const inject = ['llm', 'agents']
 // default, so an absent key still reaches the adapter as absent.
 export const DSH_TOOLS_DEFAULT = true
 
-// claude, codex, sideModel and dshTools are live (volatile): DSH's settings service writes them
+// claude, codex, hermes, antigravity, omp, sideModel and dshTools are live (volatile): DSH's settings service writes them
 // without remounting the plugin, and loader/volatile-update brings the change here.
 export const Config = z.object({
-  claude: z.boolean().default(true).volatile().description("Offer Claude Code as the acp-claude model when the claude CLI is installed. It keeps the person's own Claude Code settings: what their allow rules and hooks allow runs without DSH's approval dialog."),
+  claude: z.boolean().default(true).volatile().description(
+    'Offer Claude Code with its own Bot sign-in and settings when the CLI is installed.',
+  ),
   codex: z.boolean().default(true).volatile().description('Offer Codex as the acp-codex model when the codex CLI is installed.'),
+  // The native-ACP agents (#959) are off until the person turns one on: none is installed by
+  // Automagik, and turning one on is the person's word that the app may use the sign-in that CLI
+  // already has on this computer, shared with their terminal.
+  hermes: z.boolean().default(false).volatile().description('Offer Hermes as the acp-hermes model when the hermes CLI is installed. It runs `hermes acp` on the sign-in and settings Hermes already has on this computer.'),
+  antigravity: z.boolean().default(false).volatile().description('Offer Antigravity as the acp-antigravity model when the agy CLI is installed. It runs `agy acp` on the sign-in and settings Antigravity already has on this computer.'),
+  omp: z.boolean().default(false).volatile().description('Offer omp as the acp-omp model when the omp CLI is installed. It runs `omp acp` on the sign-in and settings omp already has on this computer.'),
   sideModel: z.object({
     provider: z.string().required(),
     model: z.string().required(),
@@ -80,6 +92,12 @@ export const INSPECT_TTL_MS = 3000
 // asks before its first call. A sign-in that ends meanwhile is caught by the agent itself: its
 // ACP `auth_required` is MODEL_ACCESS_REQUIRED (adapter.js) and drops this answer at once.
 export const SIGNED_IN_TTL_MS = 5 * 60 * 1000
+// What a status row's `signInCheck` can say: why a sign-in check that ran could not tell.
+const SIGN_IN_CHECKS = new Set(['timeout', 'unreadable'])
+// A connector that is missing because npm could not be reached is tried again after each of
+// these, then left to the timer that checks every few hours (#970): a laptop that started
+// before its network was up does not wait for that timer.
+export const CHECK_RETRY_MS = Object.freeze([1, 5, 15, 60].map(minutes => minutes * 60 * 1000))
 
 // A live field is a reference ({ get() }) in the running fiber; a plain value elsewhere (tests).
 export const flagOf = value => (typeof value?.get === 'function' ? value.get() : value)
@@ -99,17 +117,43 @@ export function nodeCommand() {
 
 /**
  * @param {any} ctx
- * @param {{ claude?: any, codex?: any, sideModel?: any, fakeAgent?: string, dshTools?: any }}
+ * @param {{ claude?: any, codex?: any, hermes?: any, antigravity?: any, omp?: any, sideModel?: any, fakeAgent?: string, dshTools?: any }}
  *   [config]
  * @param {{ store?: any, cliStore?: any, find?: typeof findCommand, signedIn?: typeof signedInOf, catalogHome?: string, loginSpawn?: typeof spawn, loginTimers?: any, imageSetup?: (launch: any) => Promise<any> }} [deps]
  *   catalogHome: where each agent's models and efforts are kept (beside the adapters by default).
  *   loginSpawn, loginTimers: tests only, a fake CLI process and clock for sign-in attempts.
+ *   checkTimers: tests only, the clock of the retries after a connector check that failed.
  *   imageSetup: tests only, the image run's lockdown check (image.js imageSetup).
  *   account: reads which account a signed-in CLI is on (account.js); consentFile: where the
- *   person's word for each account is kept (consent.js), beside the adapters of the app's own
- *   home by default. A store with another home and no file keeps no record and asks nothing.
+ *   person's word for each account is kept (consent.js), in the isolated CLI root by default.
+ *   cliHome/logoutRun: private home root and fake logout runner for tests. A synthetic store
+ *   without a home keeps the legacy in-memory test behavior; real stores always have a home.
  */
-export function apply(ctx, config = {}, { store = new AdapterStore({ log: message => info(ctx, message) }), cliStore = !config.fakeAgent && (process.env.AUTOMAGIK_APP_BROWSER === '1' || process.env.AUTOMAGIK_PNPM) ? new CliStore({ log: message => info(ctx, message) }) : undefined, find = name => findCommand(name), signedIn = signedInOf, catalogHome = store.home ? join(dirname(store.home), 'catalog') : undefined, loginSpawn, loginTimers, imageSetup, account = accountOf, consentFile = typeof store.home === 'string' && store.home === adaptersHome() ? join(dirname(store.home), CONSENT_FILE) : undefined } = {}) {
+export function apply(ctx, config = {}, {
+  store = new AdapterStore({ log: message => info(ctx, message) }),
+  cliStore,
+  find = name => findCommand(name), signedIn = signedInOf,
+  catalogHome = store.home ? join(dirname(store.home), 'catalog') : undefined,
+  loginSpawn, loginTimers, imageSetup, account = accountOf,
+  cliHome = store.home ? join(dirname(store.home), 'cli-homes') : undefined,
+  consentFile = cliHome ? join(cliHome, CONSENT_FILE)
+    : typeof store.home === 'string' && store.home === adaptersHome()
+      ? join(dirname(store.home), CONSENT_FILE) : undefined,
+  logoutRun = execFile, checkTimers = globalThis,
+} = {}) {
+  const homes = cliHome === undefined ? undefined : new CliHomes(cliHome)
+  if (homes) for (const vendor of ['claude', 'codex']) {
+    try { homes.collect(vendor) } catch {} // Unproved abandoned homes remain untouched.
+  }
+  if (cliStore === undefined && !config.fakeAgent
+    && (process.env.AUTOMAGIK_APP_BROWSER === '1' || process.env.AUTOMAGIK_PNPM)) {
+    cliStore = new CliStore({ log: message => info(ctx, message),
+      ...(homes ? { versionEnv: spec => homes.environment(spec.key) } : {}),
+    })
+  }
+  const accountChanges = new Set()
+  const loginLocks = new Set()
+  const authVersions = new Map()
   const agents = new Map()
   const log = message => info(ctx, message)
   if (config.fakeAgent) {
@@ -130,7 +174,10 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   // The chat's image keeper (`keepImages`): where an image an agent makes in a chat is kept so the
   // chat can show it. One at a time; the Bot team registers its images folder.
   let imageKeeper
+  // The turn gates (`holdTurns`): each registrant's own entry, so one never replaces another's.
+  const turnGates = new Set()
   const adapter = new AcpAdapter(ctx, agents, {
+    holds: () => [...turnGates].map(entry => entry.gate),
     images: () => imageKeeper,
     // The raw tri-state: an absent setting takes each agent's own switch in AcpAdapter.
     dshTools: () => flagOf(config.dshTools),
@@ -139,6 +186,9 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     onSignedOut: id => signedOut(id),
     access: id => consentGate(id),
   })
+  // What acted on each Session's permissions (permission-diagnostics.js): it only records.
+  const diagnostics = new PermissionDiagnostics()
+  adapter.diagnostics = backchannel.diagnostics = diagnostics
   // The kill switch is live: any change of `dshTools` ends the agent sessions and revokes their
   // bridges, so a credential minted while it was on cannot keep calling DSH tools and a Session
   // started with the bridge never runs on the old tool set. The next turn starts afresh.
@@ -164,18 +214,23 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   const clis = new Map()
   const cliDetails = new Map()
   const signIns = new Map()
-  // Consented sharing (#869, consent.js): a signed-in CLI is used for chats, images and the
-  // welcome only once the person said so for that account. `consentStates` is what the last
+  // Why an agent's last sign-in check could not tell, while its sign-in is unknown.
+  const signInChecks = new Map()
+  // Account consent inside the isolated home (#869, consent.js): a signed-in CLI is used for
+  // chats/images only once the person said so. `consentStates` is what the last
   // read of each agent meant ('given', 'carried', 'needed'); `accountsSeen` who it was signed in
   // as then, kept in memory for the owner's confirm step and never put on a status row, in a log
-  // or in an event. A vendor an earlier version already offered (its connector is installed
-  // and no record exists yet) is carried: it keeps working through the upgrade.
+  // or in an event. Real installations never carry consent from the old terminal-shared home.
   const consents = consentFile === undefined ? undefined : new ConsentStore({
     file: consentFile,
-    ids: Object.keys(AGENTS),
-    earlier: id => store.binOf(AGENTS[id].adapter, AGENTS[id].bin) !== undefined,
+    // The vendors whose account the app can read and ask about. A native agent has no account
+    // read and is off by default: its switch is the person's word (Config, above).
+    ids: Object.keys(AGENTS).filter(id => !isNative(AGENTS[id])),
+    earlier: id => homes === undefined && !isNative(AGENTS[id])
+      && store.binOf(AGENTS[id].adapter, AGENTS[id].bin) !== undefined,
     log: message => warn(ctx, message),
   })
+  const consentIds = Object.keys(AGENTS).filter(id => !isNative(AGENTS[id]))
   const consentStates = new Map()
   const accountsSeen = new Map()
   // The account reads still running behind an answer already given (`probe`), and a count per
@@ -196,14 +251,19 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   let registration
   let disposed = false
   const cliEnvironment = (spec, detail) => {
-    if (!detail?.managed) return {}
-    if (spec.key === 'claude') return { DISABLE_UPDATES: '1' }
+    const env = homes && !isNative(spec) ? homes.environment(spec.key) : {}
+    if (!detail?.managed) return env
+    if (spec.key === 'claude') return { ...env, DISABLE_UPDATES: '1' }
     // Managed Codex runs its native executable; inherited package-manager ownership flags
     // must not send an upgrade command to a global installation.
-    return { CODEX_MANAGED_BY_NPM: undefined, CODEX_MANAGED_BY_PNPM: undefined, CODEX_MANAGED_BY_BUN: undefined, CODEX_MANAGED_BY_VITE_PLUS: undefined, CODEX_MANAGED_PACKAGE_ROOT: undefined }
+    return { ...env, CODEX_MANAGED_BY_NPM: undefined, CODEX_MANAGED_BY_PNPM: undefined,
+      CODEX_MANAGED_BY_BUN: undefined, CODEX_MANAGED_BY_VITE_PLUS: undefined,
+      CODEX_MANAGED_PACKAGE_ROOT: undefined }
   }
 
-  const enabled = spec => flagOf(config[spec.key]) !== false
+  // An absent switch is on for Claude Code and Codex, as it always was (a bare config in a
+  // test, an older profile), and off for a native agent, whatever built the config.
+  const enabled = spec => (isNative(spec) ? flagOf(config[spec.key]) === true : flagOf(config[spec.key]) !== false)
   // The routes DSH serves follow `agents`; each change is published as llm/adapters-updated.
   const publish = () => {
     if (disposed) return
@@ -217,7 +277,26 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       registration.replace?.(routes)
     }
   }
+  // A new connector release is started once before it replaces the one in use (install.js): it
+  // is spawned as a Session would spawn it and asked `initialize`, nothing more. Without the
+  // agent's CLI nothing could run it either way, so there is nothing to check.
+  if (store instanceof AdapterStore && store.check === undefined) {
+    store.check = async (pkg, staged) => {
+      const [id, spec] = Object.entries(AGENTS).find(([, entry]) => entry.adapter === pkg) ?? []
+      const cli = id === undefined ? undefined : clis.get(id)
+      if (cli === undefined) return
+      const node = nodeCommand()
+      await handshake({ command: node.command, args: [staged.path], env: {
+        ...cliEnvironment(spec, cliDetails.get(id)), ...node.env, ...spec.env(cli),
+      } }, { signal: store.quit?.signal })
+    }
+  }
+  // The connectors that wait for the account record (see `install`): connector package -> what
+  // the status and a turn say meanwhile. Without it the wait showed as "installing" for good.
+  const recordWaits = new Map()
   const install = (spec) => {
+    // A native agent has no connector: its CLI is the ACP server.
+    if (isNative(spec)) return Promise.resolve()
     // The first-run account record is on disk before this version installs a connector, so a
     // connector found with no record always means an earlier version (consent.js).
     consents?.settle()
@@ -228,17 +307,72 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     // installed says nothing new, so its updates go on.
     if (consents !== undefined && !consents.saved && before === undefined) {
       if (!disposed) warn(ctx, `${spec.adapter} not installed yet: the account record could not be saved`)
+      // Said as a failed install, so the settings page shows why and offers Retry, which comes
+      // back here and tries the record again. Only the write error's code, never a path.
+      recordWaits.set(spec.adapter, { message: `the account record could not be saved (${consents.saveError ?? 'error'})` })
+      // Nothing can be installed until the record is saved: no retry waits meanwhile.
+      forgetCheckRetry(spec)
       return Promise.resolve()
     }
+    recordWaits.delete(spec.adapter)
     return store.update(spec.adapter, spec.bin).then(
       // A connector that landed (or moved up) is announced, so the picker lists its model now.
-      () => { if (store.binOf(spec.adapter, spec.bin)?.version !== before && agents.has(idOf(spec))) publish() },
+      () => {
+        forgetCheckRetry(spec)
+        if (store.binOf(spec.adapter, spec.bin)?.version !== before && agents.has(idOf(spec))) publish()
+      },
       // The store's short message is already redacted and home-relative; the raw installer
       // error is not, so it never reaches the host log.
-      () => { if (!disposed) warn(ctx, `${spec.adapter} not installed: ${store.lastError?.(spec.adapter) ?? 'the install failed'}`) },
+      () => {
+        if (disposed) return
+        warn(ctx, `${spec.adapter} not installed: ${store.lastError?.(spec.adapter) ?? 'the install failed'}`)
+        retryCheckSoon(spec)
+      },
     )
   }
-  const agentOf = (spec, cli, id = idOf(spec), node = nodeCommand(), cliEnv = cliEnvironment(spec, cliDetails.get(id))) => ({
+  // A connector that is not here because npm could not be reached (#970): the install is tried
+  // again by itself after CHECK_RETRY_MS[0], [1], ... One timer per connector, and only for
+  // that failure on a missing connector: an install that failed for another reason would only
+  // fail again, and a connector that is here goes on while the next check waits for its timer.
+  // One failed check is one step, however many callers waited on it (a turn, the person's
+  // Retry and the timer share the store's one install). Once every step is used the entry
+  // stays, so nothing starts the steps over until an install lands or fails another way.
+  const checkRetries = new Map()
+  const forgetCheckRetry = (spec) => {
+    const entry = checkRetries.get(spec.adapter)
+    if (entry === undefined) return
+    checkTimers.clearTimeout(entry.timer)
+    checkRetries.delete(spec.adapter)
+  }
+  // Whether a retry may install now: the plugin runs, the agent is on with its CLI found, and
+  // its connector is still missing. Read when a failure arrives and again when the timer fires.
+  const wantsConnector = spec => !disposed && enabled(spec) && agents.has(idOf(spec)) && clis.get(idOf(spec)) !== undefined && store.binOf(spec.adapter, spec.bin) === undefined
+  const retryCheckSoon = (spec) => {
+    if (store.lastFailure?.(spec.adapter)?.unreachable === undefined || !wantsConnector(spec)) return forgetCheckRetry(spec)
+    const entry = checkRetries.get(spec.adapter) ?? { tries: 0, timer: undefined }
+    checkRetries.set(spec.adapter, entry)
+    // One already waiting (another caller of the same failed install set it, or this failure
+    // came from a turn or the person's Retry meanwhile), or every step used: the timer that
+    // checks every few hours goes on.
+    if (entry.timer !== undefined || entry.tries >= CHECK_RETRY_MS.length) return
+    const delay = CHECK_RETRY_MS[entry.tries]
+    entry.tries += 1
+    entry.timer = checkTimers.setTimeout(() => {
+      entry.timer = undefined
+      // The CLIs are looked for again first, as the regular check does: one removed since is
+      // no reason to install its connector.
+      if (!disposed) reconcile({ kick: false })
+      // Stopped, turned off, its CLI gone or installed meanwhile: nothing to do, and a later
+      // failure starts from the first step.
+      if (!wantsConnector(spec)) { if (!disposed) checkRetries.delete(spec.adapter); return }
+      void install(spec)
+    }, delay)
+    entry.timer?.unref?.()
+  }
+  // How `spec` starts now (agents.js launchOf): the adapter installed at this moment, or the
+  // CLI itself for a native agent.
+  const launch = (spec, cli, id = idOf(spec)) => launchOf(spec, cli, { store, node: nodeCommand(), cliEnv: cliEnvironment(spec, cliDetails.get(id)), stamp: cliStamp })
+  const agentOf = (spec, cli, id = idOf(spec)) => ({
     name: spec.name,
     modeFor: spec.modeFor,
     // The adapter reads these off the agent object: without them the bridge default would not
@@ -246,6 +380,11 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     ...(spec.disableBuiltInTools === true ? { disableBuiltInTools: true } : {}),
     ...(spec.drift === true ? { drift: true } : {}),
     ...(spec.refresh === undefined ? {} : { refresh: spec.refresh }),
+    // A native agent takes no bridge, names its own sign-in command when signed out, and says
+    // so in the chat when it has no mode for DSH's level (adapter.js).
+    ...(isNative(spec) ? { bridge: false } : {}),
+    ...(typeof spec.signInHint === 'string' ? { signInHint: spec.signInHint } : {}),
+    ...(spec.modeFor === undefined ? { levelNotice: true } : {}),
     cli,
     // The agent's own models and efforts, read from the adapter release installed now.
     catalog: new Catalog({
@@ -253,26 +392,34 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       name: spec.name,
       defaultName: spec.defaultName,
       fallback: spec.fallback,
-      home: catalogHome,
+      home: homes && !isNative(spec) ? join(cliHome, 'catalog') : catalogHome,
       log,
-      key: () => {
-        const bin = store.binOf(spec.adapter, spec.bin)
-        return bin === undefined ? undefined : `${bin.path} ${cliStamp(cli)}`
-      },
-      spawn: () => ({ command: node.command, args: [store.binOf(spec.adapter, spec.bin).path], env: { ...node.env, ...cliEnv, ...spec.env(cli) } }),
+      key: () => launch(spec, cli, id).key,
+      spawn: () => { const { command, args, env } = launch(spec, cli, id); return { command, args, env } },
     }),
-    installed: () => store.binOf(spec.adapter, spec.bin) !== undefined,
+    installed: () => launch(spec, cli, id).ready,
+    // The connector in use opened a session: it is the last-known-good. One that did not start
+    // goes back to the release before it, when that is still here (install.js). A native agent
+    // has no connector in the store, so it has neither: a failed start is only reported.
+    ...(isNative(spec) ? {} : {
+      proven: () => store.markGood?.(spec.adapter),
+      rollback: (reason) => {
+        const back = store.rollback?.(spec.adapter, spec.bin, reason) !== undefined
+        if (back && !disposed) warn(ctx, `${spec.adapter}: the newest release did not start; running the one before it`)
+        return back
+      },
+    }),
     spawn: () => {
-      const bin = store.binOf(spec.adapter, spec.bin)
-      if (bin === undefined) {
-        const failed = store.lastError?.(spec.adapter)
+      const { ready, command, args, env } = launch(spec, cli, id)
+      if (!ready) {
         void install(spec)
+        // Read after the try above: a record that still cannot be saved is this turn's reason.
+        const failed = store.lastError?.(spec.adapter) ?? recordWaits.get(spec.adapter)?.message
         throw new Error(failed
           ? `its ACP adapter (${spec.adapter}) is still being installed; the last install failed: ${failed}`
           : `its ACP adapter (${spec.adapter}) is still being installed; send this again in a minute`)
       }
-      const node = nodeCommand()
-      return { command: node.command, args: [bin.path], env: { ...node.env, ...cliEnv, ...spec.env(cli) } }
+      return { command, args, env }
     },
   })
 
@@ -283,10 +430,11 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     const added = []
     for (const [id, spec] of Object.entries(AGENTS)) {
       const external = find(spec.cli)
-      const detail = cliStore?.find(spec, external) ?? (external ? { path: external, managed: false } : undefined)
+      // Only a CLI Automagik installs itself (`cliPackage`) can have a managed copy.
+      const detail = (spec.cliPackage === undefined ? undefined : cliStore?.find(spec, external)) ?? (external ? { path: external, managed: false } : undefined)
       const cli = detail?.path
       cliDetails.set(id, detail)
-      if (clis.get(id) !== cli) signIns.delete(id)
+      if (clis.get(id) !== cli) { signIns.delete(id); signInChecks.delete(id) }
       clis.set(id, cli)
       const want = enabled(spec) && cli !== undefined
       const have = agents.get(id)
@@ -306,15 +454,38 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     return added
   }
 
-  const probe = async (id) => {
+  // A native agent's sign-in is what its own ACP session said (catalog.js `signedIn`): its CLI
+  // has no status command. Only while it is offered: an agent that is off starts nothing.
+  const nativeSignedIn = (id, fresh) => Promise.resolve(agents.get(id)?.catalog?.signedIn?.({ fresh })).catch(() => undefined)
+  const probe = async (id, { fresh = false } = {}) => {
     const spec = AGENTS[id]
+    const version = authVersions.get(id)
+    if (homes && !isNative(spec) && (accountChanges.has(id) || homes.paused(spec.key))) {
+      signIns.set(id, false)
+      return
+    }
     const cli = clis.get(id)
     const env = { ...process.env, ...cliEnvironment(spec, cliDetails.get(id)) }
-    const authenticated = cli === undefined ? undefined : await signedIn(spec, cli, { env }).catch(() => undefined)
+    // Why a check that ran could not tell (agents.js `signedInOf`): a timeout or an answer it
+    // could not read. Kept only while the sign-in is unknown, for the status row. It is this
+    // probe's own until an answer that is not "signed in" is written, and is written with it
+    // (`noteCheck`, under the same guard): a check of a CLI that was replaced meanwhile says
+    // nothing of the new one, and of two probes of one CLI the one that ends last is the one
+    // both maps hold. A "signed in" answer writes nothing here: the row shows a reason only
+    // while the sign-in is unknown (`statusOf`), so while that answer waits for its account to
+    // be read the row still says what it said, and after it the reason is not shown.
+    let unknown
+    const noteCheck = (answer) => {
+      if (answer === undefined && SIGN_IN_CHECKS.has(unknown)) signInChecks.set(id, unknown)
+      else signInChecks.delete(id)
+    }
+    const authenticated = cli === undefined ? undefined : isNative(spec) ? await nativeSignedIn(id, fresh) : await signedIn(spec, cli, { env, onUnknown: (why) => { unknown = why } }).catch(() => undefined)
+    if (authVersions.get(id) !== version) return
     const epoch = nextEpoch(id)
-    if (authenticated !== true || consents === undefined) {
+    if (authenticated !== true || consents === undefined || isNative(spec)) {
       if (clis.get(id) === cli) {
         signIns.set(id, authenticated)
+        noteCheck(authenticated)
         noteAccount(id, authenticated, undefined)
       }
       return
@@ -339,12 +510,13 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       return
     }
     const who = await read
+    if (authVersions.get(id) !== version) return
     if (clis.get(id) === cli) {
       signIns.set(id, true)
       noteAccount(id, true, who)
     }
   }
-  const probeAll = () => Promise.all(Object.keys(AGENTS).map(probe))
+  const probeAll = options => Promise.all(Object.keys(AGENTS).map(id => probe(id, options)))
   // One agent's status with a fresh sign-in check, for a Bot that is about to be put on it
   // (bots-dsh models.js). Read-only: it asks the CLI `auth status` and nothing else, never
   // installs, enables or starts a login. Only that sign-in check is shared and kept: checks a
@@ -361,6 +533,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     consentStates.delete(id)
     accountsSeen.delete(id)
     nextEpoch(id)
+    agents.get(id)?.catalog?.signedOut?.()
     if (signIns.get(id) !== false) {
       signIns.set(id, false)
       publish()
@@ -371,6 +544,18 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   // yet is read first; one already read answers at once and is read again in the background
   // when its answer is old, so no turn of a consented agent waits on the CLI.
   const consentGate = async (id) => {
+    const spec = AGENTS[id]
+    if (homes && spec && !isNative(spec)) {
+      if (accountChanges.has(id) || homes.changing(spec.key) || homes.paused(spec.key)) {
+        return `Sign in to ${spec.defaultName} in the app to resume this Bot. `
+          + 'Your terminal login is separate.'
+      }
+      await inspect(id)
+      if (signIns.get(id) !== true) {
+        return `Sign in to ${spec.defaultName} in the app to resume this Bot. `
+          + 'Your terminal login is separate.'
+      }
+    }
     if (consents === undefined || disposed || !Object.hasOwn(AGENTS, id)) return undefined
     const entry = inspections.get(id)
     const stale = entry === undefined || entry.cli !== clis.get(id) || (entry.at !== undefined && Date.now() - entry.at >= entry.ttl)
@@ -402,7 +587,8 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   // Required desktop tools are independent of model switches and onboarding. Installing
   // them never starts authentication; the existing explicit refresh owns sign-in checks.
   const ensureCli = (spec, { force = false } = {}) => {
-    if (!cliStore || disposed) return Promise.resolve()
+    // Only a CLI with an official package (`cliPackage`) is Automagik's to install.
+    if (!cliStore || disposed || spec.cliPackage === undefined) return Promise.resolve()
     return cliStore.ensure(spec, find(spec.cli), { force }).then(() => {
       if (!disposed) reconcile()
     }, () => {
@@ -430,15 +616,21 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     const spec = AGENTS[id]
     const cli = clis.get(id)
     const on = enabled(spec)
-    const bin = cli === undefined ? undefined : store.binOf(spec.adapter, spec.bin)
-    const busy = store.busy?.(spec.adapter) === true
-    const failure = store.lastFailure?.(spec.adapter)
-    const cliFailure = cliStore?.lastFailure(spec.cliPackage)
-    const cliBusy = cliStore?.busy(spec.cliPackage) === true
+    const native = isNative(spec)
+    // A native agent has no connector to install: it is ready as soon as its CLI is found.
+    const bin = cli === undefined || native ? undefined : store.binOf(spec.adapter, spec.bin)
+    const busy = !native && store.busy?.(spec.adapter) === true
+    // The installer's own failure first; else a connector that waits for the account record.
+    const failure = native ? undefined : store.lastFailure?.(spec.adapter) ?? recordWaits.get(spec.adapter)
+    const connectorState = native ? undefined : store.stateOf?.(spec.adapter)
+    // Only a CLI Automagik installs itself has an install to report; any other is found or missing.
+    const managed = cliStore !== undefined && spec.cliPackage !== undefined
+    const cliFailure = managed ? cliStore.lastFailure(spec.cliPackage) : undefined
+    const cliBusy = managed && cliStore.busy(spec.cliPackage) === true
     const detail = cliDetails.get(id)
     const connector = !on ? 'off'
       : cli === undefined ? 'no-cli'
-        : bin !== undefined ? 'ready'
+        : bin !== undefined || native ? 'ready'
           : busy || failure === undefined ? 'installing'
             : 'failed'
     // In the picker: DSH serves the route. Read from the registry, never the model list, which may
@@ -454,7 +646,9 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       on,
       cli: {
         found: cli !== undefined, installUrl: spec.installUrl,
-        state: cli ? 'ready' : cliBusy || (cliStore && !cliFailure) ? 'installing' : cliFailure ? 'failed' : 'missing',
+        // How the person signs in to a CLI that has no sign-in in the app: its terminal command.
+        ...(typeof spec.signInHint === 'string' ? { signInHint: spec.signInHint } : {}),
+        state: cli ? 'ready' : cliBusy || (managed && !cliFailure) ? 'installing' : cliFailure ? 'failed' : 'missing',
         managed: detail?.managed === true,
         ...(detail?.version ? { version: detail.version } : {}),
         ...(cliBusy && cli ? { updating: true } : {}),
@@ -466,6 +660,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       },
       connector: {
         state: connector,
+        ...(native ? { native: true } : {}),
         ...(bin ? { version: bin.version } : {}),
         ...(connector === 'failed'
           ? {
@@ -475,8 +670,16 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
           }
           : {}),
         ...(connector === 'ready' && busy ? { updating: true } : {}),
+        // The release before the one in use, and a rollback while the failed release is held
+        // back: "running the previous connector; the newest failed to start".
+        ...(bin && connectorState?.previous ? { previous: connectorState.previous } : {}),
+        ...(bin && connectorState?.rolledBack ? { rolledBack: connectorState.rolledBack } : {}),
       },
       ...(signIns.get(id) === undefined ? {} : { signedIn: signIns.get(id) }),
+      ...(homes && !native ? { authScope: 'isolated' } : {}),
+      // No `signedIn`: the last check ran and could not tell, and this is why. Absent when no
+      // check has run yet (or there was nothing to check), so the two are told apart (#971).
+      ...(signIns.get(id) === undefined && signInChecks.get(id) !== undefined ? { signInCheck: signInChecks.get(id) } : {}),
       // Only the state of the person's word for the signed-in account; who it is never rides here.
       ...(signIns.get(id) === true && consentStates.get(id) !== undefined ? { consent: consentStates.get(id) } : {}),
       model: { provider: id, id: DEFAULT_MODEL, name: spec.defaultName, listed },
@@ -598,28 +801,46 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   // is, so the Bot team can apply the model the person chose (`acp-dsh/login-ready`). The
   // number at work is announced too (`acp-dsh/login-active`): the welcome adds it to the busy
   // file, so the app's own restarts wait for an attempt to end.
+  const attemptVersions = new Map()
   const logins = new CliLogins({
+    // Why an attempt failed, for the host log (#970): a fixed class, where the attempt stood,
+    // the CLI's exit and its version. Never what the CLI printed, a link, a code or an account.
+    onFail({ id, cause, phase, exit }) {
+      // The version of the CLI the attempt started, as it was read then (`resolve` below).
+      const version = attemptVersions.get(id)
+      const cli = typeof version === 'string' && /^\d+\.\d+\.\d+[\w.+-]{0,32}$/.test(version) ? `CLI ${version}` : 'CLI version unknown'
+      warn(ctx, `sign-in to ${AGENTS[id]?.defaultName ?? id} failed: ${cause} (${phase}${exit === undefined ? '' : `, ${exit}`}; ${cli})`)
+    },
     ...(loginSpawn ? { spawn: loginSpawn } : {}),
     ...(loginTimers ? { timers: loginTimers, now: () => loginTimers.now() } : {}),
     signedIn,
     resolve(id) {
+      if (accountChanges.has(id)) throw accountFailure('busy', 'The Bot account is changing.')
       reconcile({ kick: false })
+      attemptVersions.set(id, cliDetails.get(id)?.version)
       return { cli: clis.get(id), env: { ...process.env, ...cliEnvironment(AGENTS[id], cliDetails.get(id)) } }
     },
     // `existing`: the CLI was signed in before the attempt, so nobody signed in through it. A
     // sign-in the person made here is their word for that account; an existing one waits for
     // `accountConfirm`, and until then nothing is announced, so no chosen model is applied.
     async onReady(id, selected, { existing = false } = {}) {
-      if (disposed) return
-      const same = clis.get(id) === selected.cli
+      if (disposed || accountChanges.has(id)) return
+      const version = authVersions.get(id)
+      const same = clis.get(id) === selected.cli && (!homes
+        || selected.env[HOME_ENV] === homes.home(AGENTS[id].key))
+      if (!same) return
       if (same) signIns.set(id, true)
       inspections.delete(id)
       nextEpoch(id)
       if (same && consents !== undefined) {
         const who = await Promise.resolve().then(() => account(AGENTS[id], selected.cli, { env: selected.env })).catch(() => undefined)
-        if (disposed) return
+        if (disposed || accountChanges.has(id) || authVersions.get(id) !== version) return
         if (!existing) consents.confirm(id, who)
         noteAccount(id, true, who)
+      }
+      if (loginLocks.delete(id)) {
+        homes.resume(AGENTS[id].key)
+        homes.end(AGENTS[id].key)
       }
       publish()
       if (consentStates.get(id) === 'needed') return
@@ -630,6 +851,11 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       }
     },
     onChange(active) {
+      for (const id of loginLocks) {
+        if (logins.current(id)) continue
+        loginLocks.delete(id)
+        homes.end(AGENTS[id].key)
+      }
       try {
         ctx.emit?.('acp-dsh/login-active', { active })
       } catch (error) {
@@ -648,11 +874,15 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     // The owner is shown the account read now, never the one before it.
     await accountRead(id)
     const authenticated = signIns.get(id)
-    if (authenticated !== true || consents === undefined) return { id, ...(typeof authenticated === 'boolean' ? { signedIn: authenticated } : {}) }
+    const scope = homes && !isNative(AGENTS[id]) ? { authScope: 'isolated' } : {}
+    if (authenticated !== true || consents === undefined) return {
+      id, ...scope, ...(typeof authenticated === 'boolean' ? { signedIn: authenticated } : {}),
+    }
     const who = accountsSeen.get(id)
     const shown = accountView(who)
     return {
       id,
+      ...scope,
       signedIn: true,
       ...(consentStates.get(id) === undefined ? {} : { consent: consentStates.get(id) }),
       ref: refOf(who),
@@ -662,7 +892,7 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   }
   async function confirmAccount(id, ref) {
     if (disposed) throw accountFailure('disposed', 'Automagik is restarting. Try again.')
-    if (!Object.hasOwn(AGENTS, id)) throw accountFailure('invalid', 'Choose Claude Code or Codex.')
+    if (!consentIds.includes(id)) throw accountFailure('invalid', `Choose ${consentIds.map(other => AGENTS[other].defaultName).sort().join(' or ')}.`)
     if (consents === undefined) throw accountFailure('unavailable', 'This installation keeps no account record.')
     // The CLI is asked again: the word is for the account signed in now, not for an old answer.
     inspections.delete(id)
@@ -684,6 +914,112 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     return { id, signedIn: true, consent: consentStates.get(id) }
   }
 
+  async function signOutAccount(id) {
+    if (!homes || !consentIds.includes(id) || disposed) {
+      throw accountFailure('unavailable', 'The Bot account cannot be changed here.')
+    }
+    if (accountChanges.has(id)) throw accountFailure('busy', 'The Bot account is changing.')
+    const spec = AGENTS[id]
+    const cli = clis.get(id)
+    if (!cli) throw accountFailure('unavailable', 'Install the CLI before changing accounts.')
+    if (loginLocks.delete(id)) homes.end(spec.key)
+    homes.begin(spec.key)
+    accountChanges.add(id)
+    authVersions.set(id, (authVersions.get(id) ?? 0) + 1)
+    signedOut(id)
+    try {
+      // Block admission first, then end starting/live chats, model probes, images and logins.
+      adapter.endProvider(id, 'The Bot account changed. Sign in again in the app.')
+      agents.get(id)?.catalog?.dispose()
+      await logins.stop(id)
+      await stopRuns(homes.home(spec.key))
+      const env = cliEnvironment(spec, cliDetails.get(id))
+      // Both CLIs may answer differently when logout is asked on a brand-new home. A definite
+      // signed-out status already proves there is no login to end; unknown still logs out.
+      if (await signedIn(spec, cli, { env }).catch(() => undefined) !== false) {
+        await new Promise((resolve, reject) => {
+          const args = spec.key === 'claude' ? ['auth', 'logout'] : ['logout']
+          logoutRun(...batchSafe(cli, args, {
+            env, cwd: homes.home(spec.key), timeout: 10_000, maxBuffer: 64 * 1024,
+            windowsHide: true,
+          }), error => error
+            ? reject(accountFailure('logout', 'Sign-out did not finish. Try again.')) : resolve())
+        })
+      }
+      if (await signedIn(spec, cli, { env }).catch(() => undefined) !== false) {
+        throw accountFailure('logout', 'Sign-out could not be verified. Try again.')
+      }
+      homes.resume(spec.key)
+      return { id, signedIn: false, authScope: 'isolated' }
+    } finally {
+      signedOut(id)
+      accountChanges.delete(id)
+      homes.end(spec.key)
+      // Fresh catalog/session state for the next account; Bot models and transcripts stay.
+      if (!disposed && agents.has(id)) agents.set(id, agentOf(spec, cli))
+      publish()
+    }
+  }
+
+  async function resetAccount(id) {
+    if (!homes || !consentIds.includes(id) || disposed) {
+      throw accountFailure('unavailable', 'The Bot account cannot be changed here.')
+    }
+    if (accountChanges.has(id)) throw accountFailure('busy', 'The Bot account is changing.')
+    const spec = AGENTS[id]
+    // Reserve outside the replaceable home before pausing/awaiting work. Other app instances
+    // cannot reset or admit a launch while the pointer transition is in progress.
+    const reset = homes.reserveReset(spec.key)
+    accountChanges.add(id)
+    authVersions.set(id, (authVersions.get(id) ?? 0) + 1)
+    signedOut(id)
+    try {
+      adapter.endProvider(id, 'The Bot sign-in was reset. Sign in again in the app.')
+      agents.get(id)?.catalog?.dispose()
+      await Promise.all([
+        reset.home === undefined ? undefined : stopRuns(reset.home),
+        // A failed login drain cannot prevent this explicitly proof-free fresh-home escape.
+        // Its durable record and absolute old path remain intact, isolated from the new home.
+        logins.stop(id).catch(() => {}),
+      ])
+      loginLocks.delete(id)
+      reset.complete()
+      logins.retire(id, reset.home)
+      consents?.forget(id)
+      if (consents?.saveError) {
+        throw accountFailure('unavailable', 'Bot sign-in was reset. Retry sign-in in the app.')
+      }
+      return { id, signedIn: false, authScope: 'isolated' }
+    } finally {
+      signedOut(id)
+      accountChanges.delete(id)
+      reset.release()
+      if (!disposed && agents.has(id)) agents.set(id, agentOf(spec, clis.get(id)))
+      publish()
+    }
+  }
+
+  async function startLogin(id, label, alreadySignedOut = false) {
+    if (!homes || !consentIds.includes(id)) return logins.start(id, { label })
+    if (accountChanges.has(id)) throw accountFailure('busy', 'The Bot account is changing.')
+    const current = logins.current(id)
+    if (current) return current
+    const spec = AGENTS[id]
+    if (!alreadySignedOut) await inspect(id)
+    if (!alreadySignedOut && signIns.get(id) === true && !homes.paused(spec.key)) {
+      return logins.start(id, { label })
+    }
+    if (!alreadySignedOut) await signOutAccount(id)
+    homes.begin(spec.key)
+    loginLocks.add(id)
+    authVersions.set(id, (authVersions.get(id) ?? 0) + 1)
+    try { return logins.start(id, { label }) } catch (error) {
+      loginLocks.delete(id)
+      homes.end(spec.key)
+      throw error
+    }
+  }
+
   // Images on the person's ChatGPT plan, through the Codex CLI's own sign-in (image.js). Ready
   // means: Codex is on and found, its connector installed, its CLI says it is signed in, and
   // this Codex takes the image run's lockdown. An unknown sign-in is asked once
@@ -693,10 +1029,18 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   const IMAGE_AGENT = 'acp-codex'
   const imageSupported = imageSupport({ ...(imageSetup ? { setup: imageSetup } : {}), log: line => warn(ctx, line) })
   const imageAccess = async () => {
+    const version = authVersions.get(IMAGE_AGENT) ?? 0
+    const changed = () => disposed || (authVersions.get(IMAGE_AGENT) ?? 0) !== version
+    if (disposed) return { ready: false, signedIn: false }
     reconcile({ kick: false })
     const agent = agents.get(IMAGE_AGENT)
+    if (homes && (accountChanges.has(IMAGE_AGENT)
+      || homes.paused('codex') || homes.changing('codex'))) {
+      return { ready: false, signedIn: false }
+    }
     if (agent === undefined || agent.installed?.() !== true) return { ready: false }
     if (signIns.get(IMAGE_AGENT) === undefined) await probe(IMAGE_AGENT).catch(() => {})
+    if (changed()) return { ready: false, signedIn: false }
     const signedIn = signIns.get(IMAGE_AGENT)
     if (signedIn !== true) return { ready: false, ...(signedIn === undefined ? {} : { signedIn }) }
     // Signed in to an account the person has not confirmed (#869): no image is billed to it.
@@ -708,10 +1052,25 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     try {
       support = await imageSupported(agent.spawn())
     } catch {}
-    return support?.ok === false ? { ready: false, signedIn, reason: support.reason, ...(support.reason === 'unsupported' ? { unsupported: true } : {}) } : { ready: true, signedIn }
+    if (changed()) return { ready: false, signedIn: false }
+    return support?.ok === false
+      ? { ready: false, signedIn, reason: support.reason,
+          ...(support.reason === 'unsupported' ? { unsupported: true } : {}) }
+      : { ready: true, signedIn, ...(homes ? { accountGeneration: version } : {}) }
   }
-  const generateImage = async ({ prompt, size, quality, background, signal, timeoutMs } = {}) => {
+  const generateImage = async ({ prompt, size, quality, background, signal, timeoutMs,
+    accountGeneration } = {}) => {
+    const version = authVersions.get(IMAGE_AGENT) ?? 0
+    if (disposed || (accountGeneration !== undefined && accountGeneration !== version)) {
+      throw imageRefusal(SIGNED_OUT, 'The Bot account changed. Start the image again.')
+    }
     const access = await imageAccess()
+    const checkAccount = () => {
+      if (disposed || (authVersions.get(IMAGE_AGENT) ?? 0) !== version) {
+        throw imageRefusal(SIGNED_OUT, 'The Bot account changed. Sign in again in the app.')
+      }
+    }
+    checkAccount()
     if (!access.ready && access.reason === 'account') throw imageRefusal(UNAVAILABLE, 'Codex is signed in on this computer, but you have not confirmed its account for Automagik. Confirm it in a Bot\'s chat (choose a Codex model there), or add an OpenAI key, then try again.')
     // A Codex config that does not load, or a check that keeps breaking, may have been put
     // right since it was remembered: the draw's own check answers for those.
@@ -721,21 +1080,36 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       throw imageRefusal(UNAVAILABLE, 'Codex cannot draw images here yet: it is off, not installed, or its sign-in could not be checked.')
     }
     try {
-      return await drawImage({ spawn: () => agents.get(IMAGE_AGENT).spawn(), prompt, size, quality, background, signal, ...(timeoutMs === undefined ? {} : { timeoutMs }), name: AGENTS[IMAGE_AGENT].defaultName, log: line => warn(ctx, line) })
+      return await drawImage({ spawn: () => {
+        checkAccount()
+        return agents.get(IMAGE_AGENT).spawn()
+      }, prompt, size, quality, background, signal,
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
+      name: AGENTS[IMAGE_AGENT].defaultName, log: line => warn(ctx, line) })
     } catch (error) {
       // A run refused as signed out says the CLI's sign-in ended: the next check asks again.
-      if (error?.code === SIGNED_OUT) signIns.delete(IMAGE_AGENT)
+      if (error?.code === SIGNED_OUT) { signIns.delete(IMAGE_AGENT); signInChecks.delete(IMAGE_AGENT) }
       throw error
     }
   }
 
   const service = {
+    ...(homes ? { authScope: 'isolated' } : {}),
     settingsEntry: name,
     status,
     // Sign-in, for the DSH owner's views only (the Bot team's owner-only route): never tools,
     // never listed by status(), and nothing here writes into a conversation or a model setting.
     // `label` names the view that opens an attempt (a Bot id) for the cancel confirmation.
-    loginStart: (id, { label } = {}) => logins.start(id, { label }),
+    loginStart: (id, { label } = {}) => homes && consentIds.includes(id)
+      ? startLogin(id, label) : logins.start(id, { label }),
+    accountSignOut: id => signOutAccount(id),
+    accountReset: id => resetAccount(id),
+    accountRecovery: id => ({ required: !!(homes && consentIds.includes(id)
+      && homes.recovery(AGENTS[id].key)) }),
+    accountSwitch: async (id, { label } = {}) => {
+      await signOutAccount(id)
+      return startLogin(id, label, true)
+    },
     /** The attempt at work for this agent, from any view, or undefined. Never starts or cancels one. */
     loginCurrent: id => logins.current(id),
     loginStatus: (id, attemptId) => logins.status(id, attemptId),
@@ -754,6 +1128,14 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
      * to be shown. `fresh` asks the CLI again instead of taking the last answer.
      */
     account: (id, { fresh = false } = {}) => accountOfAgent(id, { fresh }),
+    // Read-only comparison for the owner's account controls. This never logs in, refreshes a
+    // token or changes terminal auth; Bots' own account reads always use cliEnvironment.
+    terminalAccount: async (id) => {
+      if (!consentIds.includes(id)) return undefined
+      const who = await account(AGENTS[id], clis.get(id), { env: { ...process.env } })
+      const shown = accountView(who)
+      return shown ? { account: shown } : undefined
+    },
     /**
      * The person's word that the app may use the account this CLI is signed in to, shared with
      * their terminal: asks the CLI again, records the consent and announces the agent ready
@@ -770,6 +1152,8 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
      * true` says the same), `config` (Codex cannot load its configuration) or `unreadable`
      * (the check keeps breaking).
      * Never starts a sign-in and never reads a credential.
+     * Isolated ready answers include accountGeneration; pass it to generateImage to bind a
+     * drawing selected here to this account generation (including zero).
      */
     imageAccess,
     /**
@@ -789,6 +1173,40 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
       return () => { if (imageKeeper === keeper) imageKeeper = undefined }
     },
     /**
+     * A veto on agent turns, for a plugin that must keep an agent from acting in a Session (the
+     * Bot team: a Session whose permission level could not be set). `gate({ sessionId, agent,
+     * provider })` is asked before every model step on an agent's route, and again right before
+     * a turn's prompt is sent. It answers (or resolves) undefined to let the Session go, or the
+     * sentence to answer the step with. It can only refuse: a gate that throws, takes longer
+     * than ten seconds, or answers anything else holds the Session with a fixed sentence. A held
+     * Session's agent session is ended (as `endSession`). Several plugins may register; any
+     * refusal wins, and the returned disposer removes only its own gate. With none registered
+     * nothing is asked.
+     */
+    holdTurns(gate) {
+      if (typeof gate !== 'function') return () => {}
+      const entry = { gate }
+      turnGates.add(entry)
+      return () => { turnGates.delete(entry) }
+    },
+    /**
+     * Ends one Session's agent session now, a turn under way included: the agent's process is
+     * stopped and its bridge credential revoked, and the step answers `why` (a sentence for the
+     * person; a fixed one without it). The DSH Session and its transcript stay; the next turn
+     * starts a fresh agent session. A turn still starting there is refused too. Answers whether
+     * one was live or starting.
+     */
+    endSession: (sessionId, why) => adapter.endSession(sessionId, why),
+    /**
+     * What acted on one Session's permissions, for a diagnostics view (read-only, a fresh plain
+     * copy, undefined for a Session that ran no agent here): { version, agent, startedAt, active,
+     * bridge?: { on, why, at, open? }, modes?: { wanted, offered, chosen?, fellToStrict, at,
+     * current?, applied? }, lastCall?: { path, kind, at }, bridgeCall?: { at }, reviewer?:
+     * { provider, model, ok, code?, at }, review?: { code, at } }. Identifiers and fixed values
+     * only: never a credential, a prompt, a file's content or path, or an account.
+     */
+    permissionDiagnostics: sessionId => diagnostics.read(sessionId),
+    /**
      * What the Bot team gates its one-time Claude move on: whether DSH's tools reach an agent
      * here (`dshTools`), and whether this machine's bridge really answers `initialize` and
      * `tools/list` for a freshly minted per-session credential. The answer is cached per
@@ -807,7 +1225,8 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     async refresh() {
       inspections.clear()
       reconcile()
-      await probeAll()
+      // The person asked: a native agent that was not signed in is asked again.
+      await probeAll({ fresh: true })
       // The owner asked: the answer waits for every account read.
       await Promise.all(accountReads.values())
       return status()
@@ -827,7 +1246,10 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   // The fake agent alone changes nothing reconcile counts.
   if (registration === undefined) publish()
   ctx.provide?.(SERVICE, service)
-  ctx.on?.('llm/stream', aside(agents, ctx, () => flagOf(config.sideModel) ?? SIDE_MODEL, redact))
+  ctx.on?.('llm/stream', aside(agents, ctx, () => flagOf(config.sideModel) ?? SIDE_MODEL, redact, diagnostics))
+  // The record goes with its Session, and reads the review code of a call DSH's own gate refused.
+  ctx.on?.('agent/disposed', ({ agent } = {}) => diagnostics.drop(agent?.session?.id))
+  ctx.on?.('tools/result', (exec, result) => diagnostics.result(exec, result))
   // The other crossing: a transcript that carries an agent's turn is redacted before it is
   // handed back to a native provider. Live switching's rule, so it follows `dshTools`.
   const crossing = crossed(agents, ctx, redact, () => dshToolsOn(config.dshTools))
@@ -855,7 +1277,17 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   // reloaded compaction plugin) is covered before its guard prices the next switch. The
   // request listener is not prepended: compaction-basic's prepended listener calls `next()`
   // (this one) before it prices the switch.
-  const pressure = pressureGuard({ agentDestination: provider => agentRoute(agents, provider) })
+  // A compaction engine without that private method (a DSH update took it away, #871) is
+  // said once, as a warning: the switch to an agent then fails as it did without this guard.
+  let unguardedSaid = false
+  const pressure = pressureGuard({
+    agentDestination: provider => agentRoute(agents, provider),
+    onUnguarded: (reason) => {
+      if (unguardedSaid) return
+      unguardedSaid = true
+      warn(ctx, `the compaction engine ${reason === 'missing' ? 'has no' : 'does not let this plugin wrap'} ${PRESSURE_METHOD}: switching a conversation to Claude Code or Codex can fail (MODEL_SWITCH_COMPACTION_FAILED)`)
+    },
+  })
   const adoptPressure = (agent) => {
     if (agent === undefined || agent === null) return
     for (const engine of enginesFor(ctx, agent)) pressure.adopt(engine)
@@ -871,7 +1303,8 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
   }
   const first = setTimeout(() => { required(); refresh() }, FIRST_CHECK_MS)
   const cliChecks = cliStore ? setInterval(required, CLI_CHECK_EVERY_MS) : undefined
-  const daily = setInterval(() => { reconcile({ kick: false }); refresh() }, CHECK_EVERY_MS)
+  // Every few hours, so npm is asked at least once a day (install.js, CHECK_TICK_MS).
+  const daily = setInterval(() => { reconcile({ kick: false }); refresh() }, CHECK_TICK_MS)
   first.unref?.()
   daily.unref?.()
   cliChecks?.unref?.()
@@ -882,13 +1315,22 @@ export function apply(ctx, config = {}, { store = new AdapterStore({ log: messag
     pressure.dispose()
     clearTimeout(first)
     clearInterval(daily)
+    for (const entry of checkRetries.values()) checkTimers.clearTimeout(entry.timer)
+    checkRetries.clear()
     clearInterval(cliChecks)
     logins.dispose()
     // A running adapter install would otherwise outlive DSH and keep writing into its home.
     store.dispose?.()
     cliStore?.dispose?.()
     adapter.dispose()
+    if (homes) {
+      void Promise.all(consentIds.map(async id => {
+        await logins.stop(id)
+        await stopRuns(homes.home(AGENTS[id].key))
+      })).then(() => homes.dispose()).catch(() => {})
+    }
     backchannel.dispose()
+    diagnostics.clear()
   })
 }
 

@@ -1,5 +1,8 @@
 // Client channel: the team view the browser renders, and the POST /api/bot endpoints.
 import { randomUUID } from 'node:crypto'
+import { createSpaceReads } from './agent-space.js'
+import { AsyncLocalStorage } from 'node:async_hooks'
+import { MCP_PATH, AGENT_TOOLS, botConfig, roomConfig, createAgentAccess } from './agent-access.js'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -121,6 +124,8 @@ export function install(rt) {
     memory: rt.memoryEnabled !== false,
     // Set while another dsh host holds the team (store.js): why this one cannot change it.
     readOnly: rt.readOnly() ?? null,
+    // Which selector routes each bot type may use (shared/routes.js); absent: all three.
+    ...(rt.routePolicy === undefined ? {} : { routePolicy: rt.routePolicy }),
   })
   // What changes without a new revision, sent with every state answer. `memoryNews`:
   // per Bot or group chat, its latest memory change; `memoryReviews`: memory reviews waiting or
@@ -162,15 +167,34 @@ export function install(rt) {
   // Updates change the dsh profile, not the team, so a reading host may run them too.
   const privacy = createPrivacy()
   const pets = createPets({ home: () => rt.home, warn: (...args) => rt.warn?.(...args) })
-  const READS = new Set(['privacy', 'pets', 'pets-browse', 'image-access', 'image-progress', 'state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'context-status', 'usage-stats', 'memory-review-status', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking', 'agent-presets', 'avatar-library', 'model-state', 'cli-login-current', 'cli-login-status', 'cli-login-connections', 'cli-login-accounts', 'cli-login-noticed'])
+  const READS = new Set(['privacy', 'pets', 'pets-browse', 'image-access', 'image-progress', 'state', 'models', 'efforts', 'providers', 'provider-models', 'earlier', 'chat', 'run-stats', 'context-status', 'usage-stats', 'memory-review-status', 'room-progress', 'exchange', 'exchange-text', 'file-text', 'usage', 'schedules', 'memory-view', 'browser-wait', 'browser-result', 'diagnostics', 'diagnostics-log', 'diagnostics-clear', 'diagnostics-permissions', 'update-check', 'update-install', 'dsh-update-install', 'repo-stars', 'approval-answer', 'thinking', 'agent-presets', 'avatar-library', 'model-state', 'cli-login-current', 'cli-login-status', 'cli-login-connections', 'cli-login-accounts', 'cli-login-noticed'])
   // Sign-in (cli-login.js): its replies are never cached by the browser.
-  const CLI_LOGIN = new Set(['cli-login-start', 'cli-login-current', 'cli-login-status', 'cli-login-answer', 'cli-login-cancel', 'cli-login-connections', 'cli-login-confirm', 'cli-login-accounts', 'cli-login-noticed'])
+  const CLI_LOGIN = new Set([
+    'cli-login-start', 'cli-login-current', 'cli-login-status', 'cli-login-answer',
+    'cli-login-cancel', 'cli-login-connections', 'cli-login-confirm', 'cli-login-accounts',
+    'cli-login-noticed', 'cli-login-switch', 'cli-login-signout', 'cli-login-reset',
+  ])
   // The endpoints whose text reaches a Bot or a model: one that carries a Claude sign-in state
   // acp-dsh showed is refused before anything is queued (cli-login.js, loginTextMatches).
   const CODE_GUARDED = new Set(['send', 'side-ask', 'answer-question', 'view-reply', 'memory-ask'])
-  const textsOf = (value, depth = 0, out = []) => {
-    if (typeof value === 'string') out.push(value)
-    else if (depth < 4 && value !== null && typeof value === 'object') for (const item of Object.values(value).slice(0, 200)) textsOf(item, depth + 1, out)
+  // Every string of the payload, at any depth and width, its keys included (#871): the walk
+  // stops at nothing, so no nesting hides a text. The payload is the parsed JSON body of one
+  // buffered request, so the walk is linear in a size DSH already bounds, and has no cycle
+  // (`seen` only keeps another caller's object from looping). None of these endpoints takes a
+  // file: an attachment reaches a Bot through DSH's own composer, never through this route.
+  const textsOf = (payload) => {
+    const out = []
+    const seen = new Set()
+    const stack = [payload]
+    while (stack.length > 0) {
+      const value = stack.pop()
+      if (typeof value === 'string') out.push(value)
+      else if (value !== null && typeof value === 'object' && !seen.has(value)) {
+        seen.add(value)
+        if (Array.isArray(value)) for (const item of value) stack.push(item)
+        else for (const key of Object.keys(value)) stack.push(key, value[key])
+      }
+    }
     return out
   }
 
@@ -245,17 +269,85 @@ export function install(rt) {
     return rt.save()
   }
 
+  // UI edits retain their existing concurrency. An MCP audit excludes UI config edits
+  // for its entire before/handler/after interval, so attribution cannot absorb an owner edit.
+  const adminContext = new AsyncLocalStorage()
+  const inTransaction = async fn => {
+    const scope = { active: true }
+    try { return await adminContext.run(scope, fn) }
+    finally { scope.active = false }
+  }
+  let adminQueue = Promise.resolve()
+  let pendingAgents = 0
+  let activeOwners = 0
+  let ownersIdle
+  const adminTransaction = fn => {
+    pendingAgents += 1
+    const job = adminQueue.then(async () => {
+      if (activeOwners > 0) await new Promise(resolve => { ownersIdle = resolve })
+      return inTransaction(fn)
+    }).finally(() => { pendingAgents -= 1 })
+    adminQueue = job.catch(() => {})
+    return job
+  }
+  const ownerTransaction = async fn => {
+    if (adminContext.getStore()?.active) return fn()
+    while (pendingAgents > 0) await adminQueue
+    activeOwners += 1
+    try { return await inTransaction(fn) }
+    finally {
+      activeOwners -= 1
+      if (activeOwners === 0) { ownersIdle?.(); ownersIdle = undefined }
+    }
+  }
+  // Internal Bot tools call these same runtime mutators directly. They participate as
+  // owners; nested calls from an already admitted handler reuse its admission.
+  for (const name of ['createBot', 'duplicateBot', 'updateBot', 'deleteBot', 'setMain',
+    'createRoom', 'updateRoom', 'deleteRoom', 'setFlags', 'bootstrap', 'switchRoute',
+    'addAgent', 'removeAgent', 'adoptAgentSession', 'adoptBotSession', 'adoptAsBot',
+    'rollbackAdoption']) {
+    const original = rt[name]
+    if (typeof original === 'function') {
+      rt[name] = (...args) => ownerTransaction(() => original(...args))
+    }
+  }
+  const adminActions = new Set([...AGENT_TOOLS.map(tool => tool.endpoint),
+    'state', 'switch-route', 'duplicate-bot', 'add-agent', 'remove-agent', 'set-flags',
+    'agent-adopt', 'bot-session-adopt', 'agent-bot-adopt', 'agent-bot-rollback'])
+  const spaceReads = rt.spaceReads ?? createSpaceReads(rt)
   const handle = async (endpoint, payload, signal) => {
     try {
       const body = payload ?? {}
+      // The permission section of the diagnostics page (permission-diagnostics.js): answered
+      // from memory before the refresh below, which may load the team or take its lock. It
+      // takes no input.
+      if (endpoint === 'diagnostics-permissions') return ok(rt.permissionDiagnostics())
       await rt.refresh()
       const readOnly = rt.readOnly()
       // An endpoint another Omni plugin serves (extend.js) says itself whether it only reads.
       const added = rt.extended.endpointOf(endpoint)
-      if (readOnly !== undefined && !READS.has(endpoint) && added?.read !== true) return fail(readOnly, 'bot/read-only')
+      if (readOnly !== undefined && !READS.has(endpoint) && !AGENT_TOOLS.some(tool => tool.read
+        && tool.endpoint === endpoint) && added?.read !== true) {
+        return fail(readOnly, 'bot/read-only')
+      }
       if (CODE_GUARDED.has(endpoint) && textsOf(body).some(text => rt.loginTextMatches?.(text) === true)) return fail(CODE_REFUSED, 'bot/refused')
       if (CLI_LOGIN.has(endpoint)) return ok(await rt.cliLoginActions[endpoint](body))
+      if (endpoint.startsWith('space-')) return ok(await spaceReads.read(endpoint, body, handle))
       switch (endpoint) {
+        case 'agent-access':
+          return ok(await agentAccess.owner('view'))
+        case 'agent-token-create':
+          return ok(await agentAccess.owner('create', body))
+        case 'agent-token-revoke':
+          return ok(await agentAccess.owner('revoke', body))
+        case 'list-bots':
+          return ok(Object.values(state.bots).map(bot => botConfig(bot, state.mainBotIds)))
+        case 'get-bot':
+          return ok(botConfig(rt.own(state.bots, body.id), state.mainBotIds))
+        case 'list-rooms':
+          return ok(Object.values(state.rooms).map(roomConfig))
+        case 'get-room':
+          return ok(roomConfig(rt.own(state.rooms, body.id)))
         case 'state':
           if (typeof body.locale === 'string' && /^[a-z]{2,3}(-[\w-]+)?$/i.test(body.locale)) uiLocale = body.locale
           if (typeof body.allowPlace === 'string') {
@@ -373,6 +465,10 @@ export function install(rt) {
         case 'update-bot':
           await rt.load()
           return ok(await rt.updateBot(body.id, body))
+        // A model on another route (parts.js): a new conversation with a handoff note.
+        case 'switch-route':
+          await rt.load()
+          return ok(await rt.switchRoute(String(body?.id ?? ''), String(body?.model ?? ''), body?.effort))
         // The avatar library: photos the user imported once, kept beside the team.
         case 'avatar-library':
           await rt.load()
@@ -740,6 +836,13 @@ export function install(rt) {
     }
   }
 
+  const agentAccess = createAgentAccess(rt, handle, { transaction: adminTransaction })
+  rt.agentAccess = agentAccess
+  ctx.effect(() => {
+    void agentAccess.resume().catch(() => rt.warn('Agent access could not start'))
+    return () => agentAccess.close()
+  }, 'ds-bot: agent access')
+
   // A pet's sheet for the marks that wear it, and a character's baked sheet written into
   // Codex's own pets folder, as bytes rather than JSON. The write streams its body, which a
   // GET cannot have, so it has a route of its own. A failure says its kind only: the raw
@@ -792,6 +895,13 @@ export function install(rt) {
     },
   }), 'ds-bot: pet to Codex route')
 
+  ctx.effect(() => ctx.connection.fetch.register({
+    path: MCP_PATH,
+    methods: ['POST', 'GET', 'DELETE', 'OPTIONS'],
+    requestBody: 'streaming',
+    fetch: request => agentAccess.fetch(request),
+  }), 'ds-bot: MCP route')
+
   // An exact Fetch route on the shared /api channel; the browser authenticates with its session cookie.
   ctx.effect(() => ctx.connection.fetch.register({
     path: ROUTE,
@@ -800,8 +910,14 @@ export function install(rt) {
     fetch: async (request) => {
       let body
       try { body = await request.json() } catch { body = {} }
-      const result = await handle(String(body?.endpoint ?? ''), body?.payload, request.signal)
-      return new Response(JSON.stringify(result), { status: 200, headers: { 'content-type': 'application/json', ...(CLI_LOGIN.has(body?.endpoint) ? { 'cache-control': 'no-store' } : {}) } })
+      const endpoint = String(body?.endpoint ?? '')
+      const dispatch = () => handle(endpoint, body?.payload, request.signal)
+      const result = await (adminActions.has(endpoint) ? ownerTransaction(dispatch) : dispatch())
+      const noStore = CLI_LOGIN.has(body?.endpoint)
+        || ['agent-access', 'agent-token-create', 'agent-token-revoke'].includes(body?.endpoint)
+      return new Response(JSON.stringify(result), { status: 200, headers: {
+        'content-type': 'application/json', ...(noStore ? { 'cache-control': 'no-store' } : {}),
+      } })
     },
   }), 'ds-bot: api route')
 

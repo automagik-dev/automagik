@@ -11,7 +11,11 @@ import { HostConnectionService } from '@deepseek-ai/dsh-client-connection'
 import { apply } from '../index.js'
 import { fakeContext } from './fake-ctx.js'
 
-const ENDPOINTS = ['cli-login-start', 'cli-login-current', 'cli-login-status', 'cli-login-answer', 'cli-login-cancel', 'cli-login-connections']
+const ENDPOINTS = [
+  'cli-login-start', 'cli-login-current', 'cli-login-status', 'cli-login-answer',
+  'cli-login-cancel', 'cli-login-connections', 'cli-login-switch', 'cli-login-signout',
+  'cli-login-reset',
+]
 const STATE = 'expected_state_0123456789'
 
 async function fixture(t) {
@@ -69,7 +73,8 @@ test('a first Bot can start a sign-in before it has a model, with no login tool 
 test('a reading host cannot start, answer or cancel, but can read the attempt and the connections', async (t) => {
   const h = await fixture(t)
   h.rt.readOnly = () => 'The team is open in another host.'
-  for (const endpoint of ['cli-login-start', 'cli-login-answer', 'cli-login-cancel']) {
+  for (const endpoint of ['cli-login-start', 'cli-login-answer', 'cli-login-cancel',
+    'cli-login-switch', 'cli-login-signout', 'cli-login-reset']) {
     const { response, result } = await h.call(endpoint, { ...h.payload, attemptId: h.attemptId, value: 'code#state' })
     assert.equal(result.error.code, 'bot/read-only')
     assert.equal(response.headers.get('cache-control'), 'no-store')
@@ -94,6 +99,78 @@ test('a native failure cannot echo the authorization answer or enter the diagnos
   assert.deepEqual(notes, [])
   assert.doesNotMatch(JSON.stringify({ result, state: h.rt.state, logged: h.logged }), /private-authorization-code|expected_state/)
 })
+
+test('owner sign-in and account controls preserve a safe recovery action without native details',
+  async t => {
+    const h = await fixture(t)
+    h.acp.authScope = 'isolated'
+    for (const method of ['loginStart', 'accountSwitch', 'accountSignOut', 'accountReset']) {
+      h.acp[method] = async () => { throw Object.assign(new Error('private-path token-secret'), {
+        code: 'acp-account/unverified-login',
+      }) }
+    }
+    for (const action of ['start', 'switch', 'signout', 'reset']) {
+      const { result } = await h.call(`cli-login-${action}`, h.payload)
+      assert.equal(result.error.code, 'bot/account-recovery')
+      assert.match(result.error.message, /Reset Bot sign-in to start fresh/)
+      assert.doesNotMatch(JSON.stringify({ result, logged: h.logged }),
+        /private-path|token-secret/)
+    }
+  })
+
+for (const evidence of ['pending', 'damaged', 'legacy']) {
+  test(`cold settings preserve the healthy vendor beside ${evidence} recovery`, async t => {
+    const h = await fixture(t)
+    h.acp.authScope = 'isolated'
+    h.acp.status = async () => ({ agents: [] })
+    const inspected = []
+    const unverified = () => Object.assign(new Error(`private-${evidence} token-secret`), {
+      code: 'acp-account/unverified-login',
+    })
+    h.acp.accountRecovery = async id => {
+      if (id !== 'acp-claude') return { required: false }
+      if (evidence === 'legacy') throw unverified()
+      return { required: evidence === 'pending' }
+    }
+    h.acp.account = async id => {
+      inspected.push(id)
+      if (id === 'acp-claude') throw unverified()
+      return { signedIn: true, account: { email: 'healthy@example.test' } }
+    }
+    h.acp.terminalAccount = async () => ({
+      account: { email: 'terminal@example.test', token: 'never-forward' },
+    })
+    const { response, result } = await h.call('cli-login-accounts', {})
+    assert.equal(result.ok, true)
+    assert.equal(response.headers.get('cache-control'), 'no-store')
+    const rows = result.value.accounts
+    assert.equal(rows['acp-claude'].recoveryRequired, true)
+    assert.equal(rows['acp-claude'].signedIn, false)
+    assert.equal(rows['acp-codex'].recoveryRequired, undefined)
+    assert.equal(rows['acp-codex'].account.email, 'healthy@example.test')
+    assert.equal(rows['acp-claude'].terminal.email, 'terminal@example.test')
+    if (evidence === 'pending') assert.deepEqual(inspected, ['acp-codex'])
+    assert.doesNotMatch(JSON.stringify({ result, logged: h.logged }),
+      /private-|token-secret|never-forward/)
+  })
+}
+
+test('reset stays owner-only, uses only the isolated ACP action and preserves Bot history',
+  async t => {
+    const h = await fixture(t)
+    const reset = []
+    h.acp.authScope = 'isolated'
+    h.acp.accountReset = async (...args) => { reset.push(args) }
+    const before = JSON.stringify(h.rt.state)
+    const { result, response } = await h.call('cli-login-reset', h.payload)
+    assert.equal(result.ok, true)
+    assert.equal(response.headers.get('cache-control'), 'no-store')
+    assert.deepEqual(reset, [['acp-codex', { label: 'first' }]])
+    assert.equal(JSON.stringify(h.rt.state), before)
+    h.acp.authScope = 'shared'
+    assert.equal((await h.call('cli-login-reset', h.payload)).result.ok, false)
+    assert.equal(reset.length, 1, 'an older shared host is never used to reset a terminal login')
+  })
 
 test('every send endpoint refuses a text carrying a shown sign-in state before anything is queued', async (t) => {
   const h = await fixture(t)
@@ -150,4 +227,33 @@ test('a delivery carrying a shown state is never noted for a resend; one dropped
   assert.equal(h.rt.unreadOf(sessionId).length, 1)
   h.rt.dropLoginCodes({ agent: { id: sessionId }, messages: [{ role: 'user', content: [{ type: 'text', text: `abc#${STATE}` }], source: { kind: 'bot', exchangeId } }] })
   assert.deepEqual(h.rt.unreadOf(sessionId), [])
+})
+
+// #871 (L3): the guard reads the whole payload. No depth, width or key hides a text from it.
+test('the send guard finds a shown sign-in state at any depth, width or key of the payload', async (t) => {
+  const h = await fixture(t)
+  const code = `abc#${STATE}`
+  const deep = (value, levels) => { let out = value; for (let level = 0; level < levels; level++) out = { next: out }; return out }
+  const wide = Array.from({ length: 600 }, (_, index) => `line ${index}`)
+  for (const [name, endpoint, payload] of [
+    ['six levels down', 'view-reply', { sessionId: 'first', viewId: 'v', values: deep(code, 6) }],
+    ['forty levels down', 'answer-question', { sessionId: 'first', questionId: 'q', answer: deep({ text: code }, 40) }],
+    ['past the 200th item of a list', 'view-reply', { sessionId: 'first', viewId: 'v', values: { rows: [...wide, code] } }],
+    ['past the 200th field of an object', 'view-reply', { sessionId: 'first', viewId: 'v', values: { ...Object.fromEntries(wide.map((line, index) => [`f${index}`, line])), last: code } }],
+    ['deep and wide at once', 'send', { sessionId: 'first', text: 'hello', extra: deep([...wide, [wide, { a: [code] }]], 12) }],
+    ['as a field name', 'view-reply', { sessionId: 'first', viewId: 'v', values: { [code]: 'yes' } }],
+  ]) {
+    const { result } = await h.call(endpoint, payload)
+    assert.equal(result.ok, false, name)
+    assert.equal(result.error.code, 'bot/refused', name)
+    assert.match(result.error.message, /sign-in code/, name)
+    assert.doesNotMatch(JSON.stringify(result), /expected_state/, name)
+  }
+  assert.deepEqual(h.prompts, [], 'nothing was queued')
+  // The same shapes without a shown state are not refused by the guard: the send goes on.
+  const { result } = await h.call('send', { sessionId: 'first', text: 'hello #not_a_shown_state_0123456789', extra: deep([...wide, [wide, { a: ['#tag'] }]], 12) })
+  assert.equal(result.ok, true)
+  assert.equal(h.prompts.length, 1)
+  assert.deepEqual(h.prompts[0].content, [{ type: 'text', text: 'hello #not_a_shown_state_0123456789' }])
+  assert.doesNotMatch(JSON.stringify(h.logged), /expected_state/)
 })

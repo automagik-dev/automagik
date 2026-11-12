@@ -18,7 +18,7 @@ import { linkInArgs, parseDeepLink, registerSchemes } from './deeplink.js'
 import { fade, PAGE_IN_CSS } from './motion.js'
 import { noteRestart, restartLine, steps } from './timeline.js'
 import { startUp } from './startup.js'
-import { dismissSplash, showUpdateSplash } from './splash.js'
+import { dismissSplash, markSplashStep, showUpdateSplash } from './splash.js'
 import { PUBLISHERS, TRIAL_MS, beforeStart, checkLane, confirm as confirmLane, installedVersions, laneMemory, stage as stageLane, stagedOf, stagedVersion, trialFailed } from './lane.js'
 import {
   ANONYMOUS_ID, appHome, automagikHome, backupSettingsOrLog, busyFileOf, dshEnv, dshRun,
@@ -32,14 +32,15 @@ import { BotViews, isBotId, isTabId } from './bot-views.js'
 import { findHerdr, herdrStatus } from './herdr.js'
 import { openRequest, pickSpace } from './herdr-space.js'
 import { openLatest } from './herdr-update.js'
-import { tableColor, updatePresentation, WINDOW_ACTIONS, windowChrome, windowPageLayout } from './frame.js'
+import { laneMissedOf, tableColor, updatePresentation, versionsAnswer, WINDOW_ACTIONS, windowChrome, windowPageLayout } from './frame.js'
 import { dataPathsOf, PRODUCT } from './identity.js'
-import { awayInstall, LOOK_EVERY_MS, readBusy } from './idle.js'
+import { LOOK_EVERY_MS, readBusy } from './idle.js'
 import { appMenuTemplate } from './menu.js'
 import { sendPaneClose } from './pane-close.js'
-import { createQuitGuard, quitPrompt, requestQuit } from './quit-guard.js'
+import { closeAfterFade, createQuitGuard, liveBusy, quitPrompt, requestQuit, surfaceWindow } from './quit-guard.js'
 import { applyNow, applyStaged, appStopped, causeOf, changesOf, stillIdle, readAutoApply, settingsFileOf, writeAutoApply } from './auto-apply.js'
 import { readChoices, writeOverlay } from './privacy.js'
+import { draftsFileOf, PAGE_DRAFTS, saveDrafts, takeDrafts } from './drafts.js'
 import { CHECK_EVERY_MS, compareVersions, isReleasePage, startUpdates, updateMode } from './update.js'
 import {
   DSH_TUI_LABEL, DSH_TUI_LOG, dshTuiModuleDir, dshTuiRunnerOf, dshTuiSupported, ensurePathLine,
@@ -88,6 +89,9 @@ let laneFetching = null
 // carries the retrying marker instead.
 let checking = false
 let checkFailed = false
+// The last look at the lanes could not read the lane of a publisher whose plugins are installed
+// (lookOnce).
+let laneFailed = false
 // logs/start.log (timeline.js): a start's steps from the process's own start, and the way out
 // (a quit, or a restart into an update) from the moment it was asked for.
 const startLog = (line) => { try { appendFileSync(join(home, 'logs', 'start.log'), line) } catch {} }
@@ -96,15 +100,21 @@ const started = steps('start', { write: startLog, since: Date.now() - process.up
 let leaving = null
 const leave = (kind) => (leaving ??= steps(kind, { write: startLog, since: Date.now() }))
 // A quit while the welcome says a bot runs (busy.json) asks first; a missing file is an older
-// welcome or no dsh, and quits as it always has. The clean stop behind a confirmed quit is
-// stopAndQuit(), below.
+// welcome or no dsh, and quits as it always has, as does a file this run's dsh did not write
+// (a crash's leftover, liveBusy). The clean stop behind a confirmed quit is stopAndQuit(), below.
+const quitLog = line => startLog(`${new Date().toISOString()} ${line}\n`)
 const quitGuard = createQuitGuard({
-  busy: () => readBusy(busyFileOf(home)),
-  prompt: ({ running, parent }) => dialog.showMessageBox(
-    parent ?? window ?? undefined,
-    quitPrompt({ product: PRODUCT, running }),
-  ),
-  log: line => startLog(`${new Date().toISOString()} ${line}\n`),
+  busy: () => liveBusy(readBusy(busyFileOf(home)), { child: dshProcess.child, since: dshProcess.since }),
+  // The question is a sheet on the window, so the window comes where the person sees it first:
+  // minimized, hidden or behind a hidden app, the sheet would wait unseen and hold every quit.
+  prompt: ({ running, parent }) => {
+    if (process.platform === 'darwin') app.show()
+    const sheet = surfaceWindow(parent ?? window)
+    app.focus({ steal: true })
+    const question = quitPrompt({ product: PRODUCT, running })
+    return sheet ? dialog.showMessageBox(sheet, question) : dialog.showMessageBox(question)
+  },
+  log: quitLog,
 })
 // dsh's origin, from the port it is started on; Bot pages never reach it.
 let dshOrigin
@@ -142,6 +152,8 @@ app.on('open-url', (event, url) => {
 if (!app.requestSingleInstanceLock()) {
   app.quit()
 } else {
+  // Opened again after an update: the splash that update left up (splash.js) moves its bar on.
+  markSplashStep(home, 'starting')
   app.on('second-instance', (_event, argv) => {
     // `omni desktop` or `genie desktop` while the app runs: kept for the next start.
     preloadOf({ home: root, argv, env: {} })
@@ -221,9 +233,13 @@ function appMenu() {
 }
 
 // Cmd+W's path: the dsh page closes its focused pane/tab, or does nothing when there is none.
-// The window and the app are never touched here (pane-close.js).
+// With the keyboard in a Bot view, the pane under that view is the one meant, not the page's
+// last focus. The window and the app are never touched here (pane-close.js).
 function closeFocusedPane() {
-  if (page) sendPaneClose(page.webContents)
+  if (!page) return
+  const at = botViews.focusedPoint()
+  if (at) sendPaneClose(page.webContents, { at })
+  else sendPaneClose(page.webContents)
 }
 
 async function launch() {
@@ -243,7 +259,7 @@ async function launch() {
     mark: step => started.mark(step),
     // The port dsh served on last time, while it is still free: the page's URL, and so its
     // cached bundle and its storage, stay the same (dsh.js launchPort).
-    port: () => launchPort(portFileOf(home)),
+    port: () => launchPort(portFileOf(home), undefined, { onWaited: portWaited(started) }),
     // The profile is in place before dsh reads it.
     profile: async () => {
       // Before this start's dsh first reads its settings: dsh 0.2.2 moves settings.yaml into
@@ -292,6 +308,9 @@ async function launch() {
 // each restart of DSH alone.
 let dshTools = null
 let dshLog = null
+
+// A start that waited for dsh's last port (dsh.js launchPort) notes it in `steps` (start.log).
+const portWaited = steps => (ms, freed) => steps.mark(`waited ${ms} ms for dsh's last port: ${freed ? 'free again' : 'still taken'}`)
 
 // Start dsh on `port` and resolve with it once it is ready. `steps` notes the moments (start.log).
 function spawnDsh(port, steps) {
@@ -469,6 +488,7 @@ const runningVersion = () => (pluginsVersion() ? `${pluginsVersion()} (app ${app
 let looking = null
 const lookAtLanes = () => (looking ??= lookOnce().finally(() => { looking = null }))
 async function lookOnce() {
+  laneFailed = false
   if (!app.isPackaged || !laneProfile || !laneDsh || laneTrial === 'applied' || laneTrial === 'trial' || laneApplying) return Boolean(laneReady)
   for (const publisher of PUBLISHERS) {
     try {
@@ -487,6 +507,8 @@ async function lookOnce() {
       laneLog(`lane: ${found.version} is ready${readAutoApply(settingsFileOf(home)) ? ', and goes in by itself once no agent is at work' : ' and goes in at the next start'}`)
       publishUpdate()
     } catch (error) {
+      // A lane nothing here is installed from has no update to miss.
+      if (Object.keys(installedVersions(laneProfile, publisher.plugins)).length > 0) laneFailed = true
       laneLog(`lane: ${publisher.publisher}: ${error.message}`)
       publishUpdate()
     }
@@ -502,7 +524,7 @@ function restartForLane({ away = false, why } = {}) {
   update = { ...update, state: 'restarting', version: laneReady?.version ?? update?.version }
   publishUpdate()
   void fade(window, { to: 0, reduced: lessMotion() })
-    .then(() => { out.mark('window gone'); return dshProcess.stop() })
+    .then(async () => { out.mark('window gone'); await keepPageDrafts(); return dshProcess.stop() })
     .finally(() => {
       out.mark('dsh stopped')
       app.relaunch()
@@ -569,12 +591,13 @@ async function cycleDsh(prepare, status) {
     sendState({ ready: false, status })
     // The Bot team opens the same chat again once the page is back (bots-dsh reopen.js).
     await page?.webContents.executeJavaScript("try { sessionStorage.setItem('omni-ui:reopen', '1') } catch {}").catch(() => {})
+    await keepPageDrafts()
     await dshProcess.stop()
     out.mark('dsh stopped')
     if (quitting) throw appStopped('the app is quitting')
     dshProcess = dshRun()
     const prepared = prepare()
-    const running = await spawnDsh(await launchPort(portFileOf(home)), out)
+    const running = await spawnDsh(await launchPort(portFileOf(home), undefined, { onWaited: portWaited(out) }), out)
     await forgetDshLogins(session.defaultSession.cookies, dshOrigin).catch(() => {})
     if (!window || !page || page.webContents.isDestroyed()) throw appStopped('the window is gone')
     await page.webContents.loadURL(pageUrlOf(running, dshOrigin))
@@ -635,16 +658,9 @@ function watchUpdates() {
     })
     if (why === 'apply') void applyLaneNow({ auto: true })
   }, LOOK_EVERY_MS).unref?.()
-  if (mode !== 'auto') return
-  // A downloaded update goes in while the person is away (idle.js); else at a quit or Restart.
-  const away = setInterval(() => {
-    const state = { idleMs: powerMonitor.getSystemIdleTime() * 1000, focused: window?.isFocused() === true, busy: readBusy(busyFileOf(home)) }
-    if (awayInstall({ ready: updates.ready, ...state }) === 'install' && !laneApplying) {
-      clearInterval(away)
-      log.info(`update: ${updates.ready} installs now, while the computer is not in use`)
-      installUpdate({ away: true })
-    }
-  }, LOOK_EVERY_MS)
+  // A downloaded app update never goes in by itself (#859): the app keeps running the version it
+  // has, the sidebar says "Restart to update", and it installs when the person presses that or
+  // quits the app.
 }
 
 // The update shows in the page's sidebar (the Bot team's, bottom left, as in DSH's own app),
@@ -657,6 +673,41 @@ function publishUpdate() {
   if (page && !page.webContents.isDestroyed()) page.webContents.send('automagik-updates', presentUpdate())
 }
 const fromPage = event => page !== null && event.sender === page.webContents
+// The composer's unsent drafts (drafts.js, #141), for dsh's page only and only while its main
+// frame is on dsh's origin: the page's preload takes them back as it starts, when the origin is
+// not the one they were kept on, and sends them as they change. The origin kept with them is the
+// one dsh serves, never one the page names. The take is synchronous in the page, so it only reads
+// (and at most rewrites) one small file and always answers: { moved, entries }, or null, which
+// tells the preload to keep out.
+const draftsFrom = event => fromPage(event) && event.senderFrame != null
+  && event.senderFrame === page.webContents.mainFrame && event.senderFrame.origin === dshOrigin
+ipcMain.on('automagik-drafts-take', (event) => {
+  let back = null
+  try { if (draftsFrom(event)) back = takeDrafts(draftsFileOf(home), dshOrigin) } catch {}
+  event.returnValue = back
+})
+ipcMain.on('automagik-drafts-keep', (event, entries) => {
+  try { if (draftsFrom(event)) saveDrafts(draftsFileOf(home), dshOrigin, entries) } catch {}
+})
+// The page's drafts as they are now, kept before dsh is stopped for a restart of DSH alone or a
+// quit: the page's own last send may be up to its interval old, and the next dsh may serve on
+// another origin, where this page's sends are refused.
+// Never holds a restart or a quit: a page that does not answer in a second keeps its last send.
+async function keepPageDrafts() {
+  if (!page || page.webContents.isDestroyed()) return
+  const origin = dshOrigin
+  try {
+    if (page.webContents.mainFrame?.origin !== origin) return
+    const entries = await Promise.race([
+      page.webContents.executeJavaScript(PAGE_DRAFTS),
+      new Promise(done => setTimeout(done, 1000, null)),
+    ])
+    if (entries !== null && !page.webContents.isDestroyed() && page.webContents.mainFrame?.origin === origin && dshOrigin === origin) {
+      saveDrafts(draftsFileOf(home), origin, entries)
+    }
+  } catch {}
+}
+
 ipcMain.handle('automagik-updates-status', event => (fromPage(event) ? presentUpdate() : null))
 // The sidebar's update button: restart into a downloaded update, open the release page of one
 // this copy cannot install itself (a deb), or check.
@@ -667,6 +718,18 @@ ipcMain.handle('automagik-updates-open', async (event) => {
   if (update?.state === 'available' && isReleasePage(update.page)) return void shell.openExternal(update.page)
   await checkForUpdates({ quiet: true })
 })
+// About's Check for updates: a check and nothing else. Unlike `open` above it never restarts
+// into a downloaded update and never puts staged plugins in by itself.
+ipcMain.handle('automagik-updates-check', async (event) => {
+  if (fromPage(event)) await checkForUpdates({ quiet: true })
+})
+// What this copy is, for About: version text only (frame.js versionsAnswer).
+ipcMain.handle('automagik-updates-versions', event => (fromPage(event) ? versionsAnswer({
+  app: app.getVersion(),
+  dsh: laneDsh,
+  plugins: laneProfile ? installedVersions(laneProfile, PUBLISHERS.flatMap(publisher => publisher.plugins)) : {},
+  mode: updateMode({ packaged: app.isPackaged, platform: process.platform, env: process.env }),
+}) : null))
 // The plugins' own notice: put the staged plugins in now, with DSH restarted alone.
 ipcMain.handle('automagik-updates-apply-plugins', (event) => {
   if (fromPage(event) && laneReady) void applyLaneNow()
@@ -734,13 +797,17 @@ async function checkForUpdates({ quiet = false } = {}) {
   const [{ result, retrying }, staged] = await Promise.all([updates.check(), lookAtLanes().catch(() => false)])
   checking = false
   checkFailed = result === 'error' && !retrying
+  // A lane that could not be read is a failed check too, when the check found nothing else:
+  // "up to date" would not be true.
+  const laneMissed = laneMissedOf({ result, laneFailed, staged: Boolean(laneReady) })
+  if (laneMissed) checkFailed = true
   publishUpdate()
   if (quiet) return
   if (result === 'latest' && staged && laneReady) {
     const { response } = await dialog.showMessageBox(window ?? undefined, { type: 'info', buttons: ['Update now', 'Later'], defaultId: 0, cancelId: 1, message: `${PRODUCT} ${laneReady.version} is ready`, detail: `${changeText(laneWaiting)}. It goes in when DSH restarts, in a few seconds; the window stays.${readAutoApply(settingsFileOf(home)) ? ' Later, it goes in by itself once no agent is at work.' : ''} You have ${runningVersion()}.` })
     if (response === 0) void applyLaneNow()
-  } else if (result === 'latest') void dialog.showMessageBox(window ?? undefined, { type: 'info', message: `${PRODUCT} is up to date`, detail: `Version ${runningVersion()}` })
-  else if (result === 'error' && !retrying) void dialog.showMessageBox(window ?? undefined, { type: 'warning', message: 'Could not check for updates', detail: 'Check your connection and try again.' })
+  } else if (result === 'latest' && !laneMissed) void dialog.showMessageBox(window ?? undefined, { type: 'info', message: `${PRODUCT} is up to date`, detail: `Version ${runningVersion()}` })
+  else if ((result === 'error' && !retrying) || laneMissed) void dialog.showMessageBox(window ?? undefined, { type: 'warning', message: 'Could not check for updates', detail: 'Check your connection and try again.' })
 }
 
 // The title bar's menu, on a right click; on macOS the app menu has the same entries.
@@ -854,12 +921,13 @@ async function offerDshTuiPath(answer) {
 // the new app before it opens it, and the app opened again meanwhile cancels the install. So
 // the sidebar says "Installing" before the window goes, and on macOS a splash (splash.js)
 // stays on screen while macOS swaps the app, until the new copy's page is in; where the
-// splash cannot go up, a notification says it instead.
+// splash cannot go up, a notification says it instead. Only the person's Restart comes here
+// (the sidebar's button, `automagik-updates-open`): nothing calls it on a timer.
 const RESTART_NOTICE_MS = 600
-function installUpdate({ away = false } = {}) {
+function installUpdate() {
   if (!updates?.ready || quitting) return
   quitting = true
-  const out = leave(away ? 'update while away' : 'update restart')
+  const out = leave('update restart')
   update = { ...update, state: 'restarting' }
   publishUpdate()
   const splash = showUpdateSplash({ home, product: PRODUCT, version: update?.version })
@@ -868,10 +936,12 @@ function installUpdate({ away = false } = {}) {
   }
   setTimeout(() => {
     void fade(window, { to: 0, reduced: lessMotion() })
-      .then(() => { out.mark('window gone'); return dshProcess.stop() })
+      .then(async () => { out.mark('window gone'); await keepPageDrafts(); return dshProcess.stop() })
       .finally(() => {
         out.mark('dsh stopped')
         noteRestart(RESTART_NOTE(), { from: app.getVersion(), to: update?.version })
+        // The splash's bar moves on: this copy is closed, and macOS takes over.
+        markSplashStep(home, 'installing')
         updates.install()
       })
   }, RESTART_NOTICE_MS)
@@ -915,19 +985,32 @@ function openWindow() {
     void fade(window, { to: 1, reduced: lessMotion() })
   })
   // Closing fades the window out first; 'closed' and quitting follow. A running bot is asked
-  // about first (quitGuard): Cancel keeps the window and dsh exactly as they are.
+  // about first (quitGuard): Cancel keeps the window and dsh exactly as they are. The fade and
+  // the question go one after the other (closeAfterFade): a bot that starts while the window
+  // fades brings it back and is asked about, and a close with nothing to ask is settled before
+  // the window goes, so the quit behind it never asks with no window left.
   window.on('close', (event) => {
     if (closing || quitting) return
+    const askToQuit = () => requestQuit({ guard: quitGuard, parent: window, beginQuit: stopAndQuit })
     if (quitGuard.needs()) {
       event.preventDefault()
-      void requestQuit({ guard: quitGuard, parent: window, beginQuit: stopAndQuit })
+      void askToQuit()
       return
     }
-    if (process.platform === 'linux') return
+    // No fade on Linux: the window closes now, on the answer just read.
+    if (process.platform === 'linux') { quitGuard.settle(); return }
     event.preventDefault()
     closing = true
     const out = leave('quit')
-    void fade(window, { to: 0, reduced: lessMotion() }).finally(() => { out.mark('window gone'); window?.destroy() })
+    void closeAfterFade({
+      guard: quitGuard,
+      fadeOut: () => fade(window, { to: 0, reduced: lessMotion() }),
+      fadeIn: () => { closing = false; leaving = null; return fade(window, { to: 1, reduced: lessMotion() }) },
+      reveal: () => { window?.setOpacity(1); window?.show() },
+      ask: askToQuit,
+      destroy: () => { out.mark('window gone'); window?.destroy() },
+      log: quitLog,
+    })
   })
   for (const change of ['resize', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen']) window.on(change, layout)
   window.on('closed', () => { window = null; page = null })
@@ -1023,6 +1106,6 @@ function stopAndQuit() {
   const out = leave('quit')
   // The window goes at once; dsh stops behind it, so a quit never looks stuck.
   return fade(window, { to: 0, reduced: lessMotion() })
-    .then(() => { out.mark('window gone'); return dshProcess.stop() })
+    .then(async () => { out.mark('window gone'); await keepPageDrafts(); return dshProcess.stop() })
     .finally(() => { out.mark('dsh stopped'); app.quit() })
 }

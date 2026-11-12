@@ -19,7 +19,7 @@ The app is **Automagik** wherever a person sees it: the bundle and its menu bar,
 | the `automagik://` scheme (`src/deeplink.js`) | Automagik's own links (RFC 0013): `automagik://open`, which Herdr's Work button opens. They only bring the app forward. |
 | the `omni://` scheme, the `omni-desktop` client id, `window.omniDesktop` | Omni's protocol names: what Omni's pages, its API and the plugins use. `omni://` is also `automagik://`'s alias; only it connects (`omni://connect`). |
 
-There are no keychain items to carry: Electron keeps its cookies unencrypted (the cookie-encryption fuse is off), the app uses no `safeStorage`, and its credentials are the files above.
+There are no keychain items to carry: Electron keeps its cookies unencrypted (the cookie-encryption fuse is off), nothing reads or writes the secure token store yet (`src/secure-tokens.js` waits for its setting), and its credentials are the files above.
 
 What an updated install shows: the update into the rename is announced by the installed app, so that one notice still reads "Omni <version> is ready"; after the restart the window, title bar, later notices and (macOS) menu bar and About say Automagik. On macOS the updater replaces the bundle where it is, so it stays `/Applications/Omni.app` (with `CFBundleName` and `CFBundleDisplayName` Automagik and the executable `Contents/MacOS/Automagik`), and Finder, Launchpad and the Dock may keep showing the file's name until the person renames it; a fresh install from the dmg is `Automagik.app`. A versioned AppImage is replaced by `Automagik-<version>-linux-x86_64.AppImage` in the same folder (electron-updater keeps a name without a version as it is).
 
@@ -95,6 +95,10 @@ The profile also ships the add-on that connects AI subscriptions DSH does not si
 `dist:*` first runs `scripts/prepare-runtime.mjs`: it packs the Bot team and the welcome from `../bots-dsh` and `../welcome-dsh`, fetches Omni at `omni.json`'s commit (only its plugin folders) into `build/omni`, installs the pinned dsh into `build/runtime`, and installs the packed plugins into `build/profile`, in one install. Set `OMNI_SOURCE` to a local Omni checkout to pack its channels and canvases instead. Native packages are per platform, so build each target on its own platform. Builds run with `DO_NOT_TRACK=1`.
 
 To run from a checkout: `npm run prepare-runtime`, then `npx electron .` (add `--no-sandbox` on a system where Chromium's sandbox cannot start unpackaged).
+
+### The Cmd+W contract
+
+Cmd+W reaches the web client's `page.close` command by its key (`src/pane-close.js`), so `prepare-runtime` fails the build when the installed `@deepseek-ai/dsh-client-ui-sidebar-right` no longer registers that command on primary+alt+W for the web runtime on macOS. After a dsh bump that trips it, cut `test/fixtures/page-close/` again from the new bundle and check Cmd+W still closes a pane.
 
 ### Patches to DSH
 

@@ -805,3 +805,33 @@ test('a bridge whose probes do not pass, or an adapter that is not installed, mo
     assert.equal(host.saved().claudeAcpMoved, undefined)
   }
 })
+
+test('a direct update-bot route crossing takes the new-conversation path', async (t) => {
+  const switched = []
+  const host = await start(seed(), {
+    onRuntime: (rt) => {
+      rt.resolveAgent = async () => ({ whenIdle: async () => {}, session: { id: 'm1' } })
+      rt.switchRoute = async (id, model, effort) => {
+        switched.push([id, model, effort])
+        rt.botOf(id).model = model
+        return { status: 'switching' }
+      }
+    },
+  })
+  t.after(host.stop)
+  await host.moved()
+  const res = await host.call('update-bot', { id: 'm1', model: 'deepseek/deepseek-v4-flash' })
+  assert.equal(res.ok, true)
+  assert.deepEqual(switched, [['m1', 'deepseek/deepseek-v4-flash', undefined]])
+})
+
+test('the switch-route endpoint passes the level chosen with the crossing', async (t) => {
+  const switched = []
+  const host = await start(seed(), {
+    onRuntime: (rt) => { rt.switchRoute = async (...args) => { switched.push(args); return { status: 'switching' } } },
+  })
+  t.after(host.stop)
+  const res = await host.call('switch-route', { id: 'm1', model: 'deepseek/deepseek-v4-flash', effort: 'high' })
+  assert.equal(res.ok, true)
+  assert.deepEqual(switched, [['m1', 'deepseek/deepseek-v4-flash', 'high']])
+})

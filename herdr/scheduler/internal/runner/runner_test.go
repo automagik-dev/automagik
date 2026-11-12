@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DnzzL/herdr-automations/internal/command"
 	"github.com/DnzzL/herdr-automations/internal/config"
 	"github.com/DnzzL/herdr-automations/internal/herdr"
 	"github.com/DnzzL/herdr-automations/internal/history"
@@ -435,5 +436,258 @@ func TestRunStaysDoneWhenTheCloseFails(t *testing.T) {
 	}
 	if got := runs(t); got[0].Status != history.StatusDone {
 		t.Fatalf("status %q, want done", got[0].Status)
+	}
+}
+
+// ---- the command kind (ADR 0013) ----
+
+// fakeBots is the report's test seam: no herdr-core is asked.
+type fakeBots struct {
+	err  error
+	sent [][2]string
+}
+
+func (f *fakeBots) Send(bot, text string) (string, error) {
+	f.sent = append(f.sent, [2]string{bot, text})
+	if f.err != nil {
+		return "", f.err
+	}
+	return "t7", nil
+}
+
+// refusingHost fails the test if a command run touches the host: there is no
+// workspace to provision and no pane to work in.
+type refusingHost struct{ t *testing.T }
+
+func (h refusingHost) Provision(config.Automation) (host.Session, error) {
+	h.t.Error("a command run provisioned a workspace")
+	return host.Session{}, nil
+}
+func (h refusingHost) Do(host.Session, config.Automation, time.Duration) error {
+	h.t.Error("a command run was handed to the host")
+	return nil
+}
+func (h refusingHost) Close(host.Session, config.Automation) error {
+	h.t.Error("a command run closed a workspace")
+	return nil
+}
+
+func commandAutomation(script string) config.Automation {
+	return config.Automation{
+		Name: "check", Cron: "@daily", TimeoutMinutes: 1,
+		Command: &config.Command{Argv: []string{"/bin/sh", "-c", script}},
+	}
+}
+
+func TestACommandThatExitsZeroIsDoneWithItsLastLine(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	sink := &fakeSink{}
+	r := NewWith(refusingHost{t}, notify.With(sink))
+
+	if err := r.Run(commandAutomation(`echo working; echo "12 checked, 0 broken"`), "cron"); err != nil {
+		t.Fatal(err)
+	}
+	got := runs(t)
+	if len(got) != 1 {
+		t.Fatalf("want one run, got %+v", got)
+	}
+	run := got[0]
+	if run.Status != history.StatusDone || run.Result != "12 checked, 0 broken" || run.Error != "" {
+		t.Fatalf("run = %+v", run)
+	}
+	if run.ExitCode == nil || *run.ExitCode != 0 {
+		t.Fatalf("exit code = %v, want 0", run.ExitCode)
+	}
+	if run.WorkspaceID != "" || run.PaneID != "" || run.Notified != "" {
+		t.Fatalf("a command run has no workspace, pane or report: %+v", run)
+	}
+	want := []history.Status{history.StatusScheduled, history.StatusRunning, history.StatusDone}
+	if trail := statuses(t, "check"); fmt.Sprint(trail) != fmt.Sprint(want) {
+		t.Fatalf("trail = %v, want %v", trail, want)
+	}
+	if len(sink.titles) != 0 {
+		t.Fatalf("a done run raised a toast: %v", sink.titles)
+	}
+}
+
+func TestACommandThatExitsNonZeroIsFailedWithItsCodeAndStderr(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	sink := &fakeSink{}
+	r := NewWith(refusingHost{t}, notify.With(sink))
+
+	// The last line of stdout reads like success; the exit status decides.
+	err := r.Run(commandAutomation(`echo "all good"; echo "cannot reach the registry" >&2; exit 7`), "manual")
+	if err == nil {
+		t.Fatal("want the failure returned")
+	}
+	run := runs(t)[0]
+	if run.Status != history.StatusFailed || run.Error != "exited 7" {
+		t.Fatalf("run = %+v", run)
+	}
+	if run.ExitCode == nil || *run.ExitCode != 7 {
+		t.Fatalf("exit code = %v, want 7", run.ExitCode)
+	}
+	if run.Stderr != "cannot reach the registry" || run.Result != "exited 7: cannot reach the registry" {
+		t.Fatalf("stderr %q, result %q", run.Stderr, run.Result)
+	}
+	if len(sink.titles) != 1 || sink.titles[0] != "check failed" || sink.bodies[0] != "exited 7: cannot reach the registry" {
+		t.Fatalf("toast = %v / %v", sink.titles, sink.bodies)
+	}
+}
+
+func TestACommandPastItsTimeoutIsFailed(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	r := New(refusingHost{t})
+	var asked time.Duration
+	r.exec = func(_ config.Command, timeout time.Duration) command.Result {
+		asked = timeout
+		return command.Result{TimedOut: true, Problem: "timed out after 1m0s", Stderr: "still fetching"}
+	}
+	if err := r.Run(commandAutomation("sleep 600"), "cron"); err == nil {
+		t.Fatal("want the timeout returned")
+	}
+	run := runs(t)[0]
+	if asked != time.Minute {
+		t.Fatalf("the command was given %s, want the automation's 1m", asked)
+	}
+	if run.Status != history.StatusFailed || run.ExitCode != nil || run.Error != "timed out after 1m0s" {
+		t.Fatalf("run = %+v", run)
+	}
+}
+
+func TestACommandsResultGoesToItsBot(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	bots := &fakeBots{}
+	r := New(refusingHost{t})
+	r.bots = bots
+
+	done := commandAutomation(`echo "3 new, 0 broken"`)
+	done.Notify = "b-captain"
+	if err := r.Run(done, "cron"); err != nil {
+		t.Fatal(err)
+	}
+	failed := commandAutomation(`echo "no route to host" >&2; exit 2`)
+	failed.Name, failed.Notify = "probe", "b-captain"
+	if err := r.Run(failed, "cron"); err == nil {
+		t.Fatal("want the failure returned")
+	}
+	quiet := commandAutomation(`true`)
+	quiet.Name, quiet.Notify = "quiet", "b-captain"
+	if err := r.Run(quiet, "cron"); err != nil {
+		t.Fatal(err)
+	}
+
+	want := [][2]string{
+		{"b-captain", "[automation check] done: 3 new, 0 broken"},
+		{"b-captain", "[automation probe] failed: exited 2: no route to host"},
+		{"b-captain", "[automation quiet] done"},
+	}
+	if fmt.Sprint(bots.sent) != fmt.Sprint(want) {
+		t.Fatalf("sent %v\nwant %v", bots.sent, want)
+	}
+	for _, run := range runs(t) {
+		if run.Notified != "sent to t7" {
+			t.Fatalf("%s: notified = %q", run.Automation, run.Notified)
+		}
+	}
+	// The report is a second copy of the final record, never a new status.
+	if trail := statuses(t, "probe"); fmt.Sprint(trail) != "[scheduled running failed failed]" {
+		t.Fatalf("trail = %v", trail)
+	}
+}
+
+func TestAReportThatCannotBeDeliveredLeavesTheStatusAlone(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	r := New(refusingHost{t})
+	r.bots = &fakeBots{err: errors.New("hc send: the program is blocked")}
+	a := commandAutomation(`echo fine`)
+	a.Notify = "b-captain"
+
+	if err := r.Run(a, "cron"); err != nil {
+		t.Fatalf("an undelivered report failed the run: %v", err)
+	}
+	run := runs(t)[0]
+	if run.Status != history.StatusDone || run.Result != "fine" {
+		t.Fatalf("run = %+v", run)
+	}
+	if run.Notified != "not delivered: hc send: the program is blocked" {
+		t.Fatalf("notified = %q", run.Notified)
+	}
+}
+
+// A seen mark written while the report is on its way must survive the
+// report's copy of the record.
+func TestASeenMarkSurvivesTheReportsRecord(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	r := New(refusingHost{t})
+	a := commandAutomation(`echo fine`)
+	a.Notify = "b-captain"
+	r.bots = seenThenSend{t}
+	if err := r.Run(a, "cron"); err != nil {
+		t.Fatal(err)
+	}
+	if run := runs(t)[0]; !run.Seen || run.Notified != "sent to t9" || run.Status != history.StatusDone {
+		t.Fatalf("run = %+v", run)
+	}
+}
+
+type seenThenSend struct{ t *testing.T }
+
+func (s seenThenSend) Send(string, string) (string, error) {
+	if err := history.MarkAllSeen(); err != nil {
+		s.t.Fatal(err)
+	}
+	return "t9", nil
+}
+
+func TestACommandStillSkipsAnOverlappingRun(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	r := New(refusingHost{t})
+	started, release := make(chan struct{}), make(chan struct{})
+	r.exec = func(config.Command, time.Duration) command.Result {
+		close(started)
+		<-release
+		zero := 0
+		return command.Result{ExitCode: &zero}
+	}
+	a := commandAutomation("sleep 1")
+	finished := make(chan error, 1)
+	go func() { finished <- r.Run(a, "cron") }()
+	<-started
+	if err := r.Run(a, "cron"); err == nil || !strings.Contains(err.Error(), "skipped") {
+		t.Fatalf("the second run was not skipped: %v", err)
+	}
+	close(release)
+	if err := <-finished; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A command the stopping scheduler ended is failed and says why; no report is
+// sent from a process on its way out, and the run no longer counts as running.
+func TestACommandEndedByAStoppingSchedulerIsFailedAndNotReported(t *testing.T) {
+	t.Setenv("HERDR_PLUGIN_STATE_DIR", t.TempDir())
+	bots := &fakeBots{}
+	r := New(refusingHost{t})
+	r.bots = bots
+	during := -1
+	r.exec = func(config.Command, time.Duration) command.Result {
+		during = r.CommandsRunning()
+		return command.Result{Stopped: true, Problem: "stopped: the scheduler was stopping"}
+	}
+	a := commandAutomation("sleep 600")
+	a.Notify = "b-captain"
+	if err := r.Run(a, "cron"); err == nil {
+		t.Fatal("want the failure returned")
+	}
+	run := runs(t)[0]
+	if run.Status != history.StatusFailed || run.Error != "stopped: the scheduler was stopping" || run.Notified != "" {
+		t.Fatalf("run = %+v", run)
+	}
+	if len(bots.sent) != 0 {
+		t.Fatalf("a report was sent while stopping: %v", bots.sent)
+	}
+	if during != 1 || r.CommandsRunning() != 0 {
+		t.Fatalf("commands running: %d during, %d after; want 1 and 0", during, r.CommandsRunning())
 	}
 }

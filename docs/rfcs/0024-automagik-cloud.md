@@ -2,10 +2,10 @@
 
 | Field | Value |
 |---|---|
-| Status | Accepted (2026-11-10, by the owner; council review 2026-11-09: proceed with conditions, folded in; owner's answers: Q1 and Q9, 2026-11-09; amends RFC 0008; amended 2026-11-09 by [RFC 0025][25]) |
+| Status | Accepted (2026-11-10, by the owner; council review 2026-11-09: proceed with conditions, folded in; owner's answers: identity and billing, 2026-11-09; isolation, identity stand-up, hosting, the goal and Q18, 2026-11-10; Chat: Decided 19-25, 2026-11-09; amends RFC 0008; amended 2026-11-09 by [RFC 0025][25]) |
 | Goal | First goal (owner, 2026-11-10): by 23 Nov, the owner signs in and opens one hosted workspace in test mode, with no real charges: RFC 0024 deliveries 0-4 and RFC 0025 phase A. |
 | Milestone | none (ships outside the five milestones) |
-| Lanes | none here (docs); desktop (3.N) for secure storage, sign-in and the rail; the server image and plugin (3.N.P) for the self-hosted gate and the web rail; the Cloud service outside this repository |
+| Lanes | none here (docs); desktop (3.N) for secure storage, sign-in and the rail; the server image and plugin (3.N.P) for the self-hosted gate and the web rail; the Cloud service in its own private repository in the owner's organisation (its contracts stay public here) |
 | Created | 2026-11-09 |
 
 ## Summary
@@ -36,7 +36,9 @@ self-hosted instance may be linked to Cloud, and the phases. It amends RFC 0008 
 its desktop client, its questions 2, 6 and 7 and its threat model). The owner answered two
 questions on 2026-11-09: the identity service is one new instance for Cloud, which Tactu may join
 later (Decided 13, corrected 2026-11-10: Arca keeps its own sign-in), and billing is Stripe
-directly, agentic payments included (Decided 14).
+directly, agentic payments included (Decided 14). On 2026-11-10 the owner decided the isolation
+unit, the identity instance's stand-up, where Cloud runs, the first goal and the owner-only line
+(Decided 15 to 18 and 26); Automagik Chat settled the low-stakes questions (Decided 19 to 25).
 
 ## Motivation
 
@@ -85,8 +87,8 @@ From the owner (2026-11-09, above):
    people, or individuals who may invite other people.
 2. **The open-source product is one instance, free**, on the web or the desktop, as it is. Cloud
    is where many workspaces, creating one, and the rail live.
-3. **Cloud uses the same identity system as Tactu and Arca**: Pocket ID. Which instance is
-   Decided 13.
+3. **Cloud uses the same identity system Tactu uses, Pocket ID, on a new instance of its own**;
+   Arca keeps its own passkey approvals (corrected 2026-11-10). See Decided 13 and 16.
 
 From the council review (2026-11-09; five lenses, proceed with conditions; relayed by the
 Automagik Orchestrator). Nine conditions, numbered 4 to 12:
@@ -110,21 +112,64 @@ Automagik Orchestrator). Nine conditions, numbered 4 to 12:
 
 From the owner's answers (2026-11-09, asked by the Automagik Orchestrator):
 
-13. **One new identity service for Cloud** (open question 1). A single new identity service (a
+13. **One new identity service for Cloud.** A single new identity service (a
     self-hosted Pocket ID): Cloud uses it, and Tactu may move to it later, as its own project's
     decision. It is a new instance, not the one Tactu uses today. Isolation between products
     comes from a separate OIDC client and separate groups per product, and from Cloud's own
-    database for organisations and roles. Standing the instance up waits on the owner's separate
-    OK. Moving Tactu to it is its own work, later, and not a delivery of this RFC.
+    database for organisations and roles. The owner gave the separate OK on 2026-11-10: it is
+    stood up now, private at first with only the owner (Decided 16). Moving Tactu to it is its
+    own work, later, and not a delivery of this RFC.
     *Corrected 2026-11-10 (Arca's orchestrator, via Automagik Chat):* Arca keeps its own sign-in
     (its own passkey approvals) and does not move to the new identity service.
-14. **Billing is Stripe, directly** (open question 9), "including support to agentic payments"
+14. **Billing is Stripe, directly** (was open question 9), "including support to agentic payments"
     (the owner, verbatim). Cloud uses Stripe Billing itself, a subscription per workspace, and
     Stripe's signed webhooks update Cloud's entitlements; no other billing app. Agentic payments
     are a direction, to be detailed by a follow-up RFC ((i)).
     *Amended by [RFC 0025][25] (2026-11-09):* "being paid" is deferred; the inbound direction,
     Bots paying Cloud for Cloud's own resources, comes first, and outbound payments to
     third-party merchants wait for a legal review and their own RFC (0025, (j)).
+
+From the owner (2026-11-10):
+
+15. **Isolation unit: one Incus VM per workspace** (was open question 3). Never a privileged
+    container; an unprivileged container only for the operator's own workspaces. The isolation
+    review gate ((g)) reviews how it is built.
+16. **The identity instance is stood up now**, private at first with only the owner, behind the
+    owner's passkey (was open question 1). Its address, client ids and group names stay out of
+    this repository.
+17. **Cloud home: workspace VMs run on Arca's hosting, not on the build host; the Cloud service
+    lives in a new private repository in the owner's organisation.**
+18. **First goal by 2026-11-23: one workspace you can sign in to.** The owner signs in and opens
+    one hosted workspace in test mode, with no real charges: RFC 0024 deliveries 0-4 plus RFC
+    0025 phase A.
+
+From Automagik Chat (2026-11-09; recorded 2026-11-10):
+
+19. **IP-only LAN installs: no passkeys** (was open question 7). Use an SSH tunnel to loopback or
+    pair a device from a session that is already signed in; no TOTP fallback without its own
+    review ((c)).
+20. **Moving a self-hosted instance into Cloud is a later, separate decision** (was
+    open question 10); linking moves no data ((j)).
+21. **DSH's authentication hook: the gate now** (was open question 11); propose an upstream hook
+    later and move to it only once DSH ships one.
+22. **Omni keeps its own sign-in outside** (was open question 12); behind the gate it takes the
+    gate's principal with its own sign-in off ((k)).
+23. **No external OIDC provider for self-hosters** (was open question 13); the principal
+    contract leaves room for one later.
+24. **Pocket is unchanged** (was open question 15): it pairs through Pocket Link's own keys,
+    outside the gate; any phone sign-in to a web instance is a passkey of the same owner.
+25. **The contracts are public; the service is private** (was open question 16). The base answer
+    said the service starts private; the decision is now that it is private. The principal, the
+    workspace token, the entitlements document and the rail's API are public here; the Cloud
+    service is private.
+
+From the owner (2026-11-10, Q18):
+
+26. **Cloud workspaces stay owner-only until all three safeguards hold** (was open question 18):
+    an unforgeable principal channel, role-filtered DSH routes and the launch token out of the
+    Bots' reach ((f)). The narrower alternative, members and guests limited to Bots with no shell
+    or file tools in the meantime, is not adopted: a Bot's tools change over time, and one
+    mistake makes a member owner-equivalent.
 
 Carried, not new:
 
@@ -236,15 +281,28 @@ every WebSocket; a request without a session gets `401`, and `401` stays the hea
 the image's smoke and health check. DSH and its token fence stay as they are, behind it. The gate
 holds DSH's launch token on the server side; once the instance is claimed, the bearer launch URL
 is no longer a sign-in path for a browser, a QR code or a file reader. If DSH upstream later
-offers an authentication hook, moving to it is its own change (open question 11). The gate checks
+offers an authentication hook, moving to it is its own change (Decided 21). The gate checks
 passkeys itself (WebAuthn, through a maintained server library such as SimpleWebAuthn, MIT,
 pinned exact).
 
 **The claim fails closed.**
 
-1. Until it is claimed, the gate serves only on loopback, reached on the host or through an SSH
-   tunnel; it listens on its published address only after the claim. Every route but the claim
-   page answers `401`.
+1. Until claimed, the main gate binds only loopback and listens on its published address only
+   after the claim. A same-namespace connector can still forward remote browsers to loopback,
+   so `AUTOMAGIK_GATE_CLAIM` decides the actual claim boundary. `local` (default) serves the
+   claim page/API only on a separate loopback bootstrap listener, default `127.0.0.1:3083`,
+   configurable through `AUTOMAGIK_GATE_BOOTSTRAP_PORT`, never the main connector port 3082.
+   Operators must never forward bootstrap through a public or tailnet connector; only host
+   access or an operator's private SSH tunnel reaches it. Main-port claims return `404` even
+   with a correct code. `remote` serves claims on the main listener for operators who deliver
+   the code to the authenticated owner out of band: the 128-bit code is then the barrier.
+   Wrong remote codes share at most 64 pending per-attempt delays outside the state queue;
+   excess wrong attempts get `429` immediately without a timer, and disconnects cancel and
+   release their delay. Check the code first: correct codes bypass the penalty limit and delay.
+   Wrong attempts cannot drain a bucket that blocks the correct code. Log a count, never the code.
+   Other unauthenticated workspace routes answer `401`. Host reset remains a `0600` local
+   socket operation in both modes and restores the configured claim boundary, including when
+   a connector continues forwarding the main listener after reset.
 2. On first start the gate makes a claim code: 128 bits, single use, valid 15 minutes, kept only
    as a hash, compared in constant time, rate-limited. It is shown on the host console when the
    gate runs in an interactive terminal, else only written to a `0600` file in the gate's own
@@ -254,7 +312,10 @@ pinned exact).
    command of "Recovery", makes a new one.
 3. The claim page takes the code (posted, never in a URL) and registers a passkey. The first
    claim wins atomically and cannot be replayed; a test pins that two concurrent claims leave
-   exactly one owner.
+   exactly one owner. Every unauthenticated claim, sign-in and recovery ceremony is bound to
+   a short-lived server-side pre-authentication session, carried by an `HttpOnly`, `Secure`,
+   host-only cookie. Verification requires that same browser's session; challenges remain
+   single-use and expire. Another browser cannot finish a copied ceremony id or response.
 4. The claim offers a second passkey at once, and shows one-time recovery codes, stored as slow
    hashes.
 
@@ -436,13 +497,13 @@ joins a workspace until all three hold:
 1. **An unforgeable principal channel.** The principal reaches DSH and the plugins on a channel no
    Bot can forge (not the launch token on loopback).
 2. **Role-filtered DSH routes.** DSH's own routes are filtered by role, at the gate or through a DSH
-   hook (open question 11).
+   hook (Decided 21).
 3. **The launch token out of the Bots' reach.** DSH's token is masked from Bot commands.
 
-**Until all three exist, Cloud workspaces are owner-only**: only the organisation's owners and
-admins (or the individual of a personal account), who are owner-equivalent inside DSH anyway. The
-roles, invitations and Buzz's gate below are built and tested behind that line, and switched on for
-members and guests only when the three hold.
+**Until all three exist, Cloud workspaces are owner-only** (Decided 26): only the organisation's
+owners and admins (or the individual of a personal account), who are owner-equivalent inside DSH
+anyway. The roles, invitations and Buzz's gate below are built and tested behind that line, and
+switched on for members and guests only when the three hold.
 
 **Which Bots a person may talk to.** Buzz's author gate (RFC 0022), per Bot. In a workspace,
 "owners" means the organisation's owners and admins, or the individual of a personal account:
@@ -463,12 +524,23 @@ because Code mode is the raw terminal. Guests never get them.
 
 ### (g) Hosting: where workspaces run
 
-**On Arca**, the Incus-based kernel the team runs (RFC 0010), on Arca nodes that are **not the
+**On Arca**, the Incus-based kernel the team runs (RFC 0010), on Arca's hosting, **not the
 build host**, from the server image the release already builds, scans and smokes
 (`server-image.yml`), with the gate of (c) in its Cloud mode: it accepts workspace tokens instead
 of a claim. One image, no second one for Cloud. Each workspace pins the image by the digest the
 release itself recorded, never `:latest` (RFC 0019 notes the published image is not signed), and
-the Cloud service rolls releases one workspace first.
+the Cloud service rolls releases one workspace first. The Cloud service itself lives in a new
+private repository in the owner's organisation (Decided 17); only its contracts stay public here
+(Decided 25).
+
+**Interim sign-in for the first Cloud workspace.** Until delivery C2.3 (#909) provides
+workspace tokens, an explicitly configured gate may verify Cloudflare Access application JWTs
+and exchange them for its normal owner session. The operator first puts an Access policy for
+the owner's exact e-mail on the public name, then adds the tunnel route to the gate. This is
+owner-only access, with the existing gate session and DSH owner limitations, not Cloud roles or
+membership. It is off without its team domain, audience and exact e-mail allowlist. Workspace
+tokens supersede this interim mode; the private values remain on the host. See
+[the server settings](../../server/README.md#interim-cloudflare-access-sign-in).
 
 **The identity service and the first test workspace VMs** run in a restricted Incus project on
 Arca's own hosting, operated by Arca; no host name is written in this repository.
@@ -479,7 +551,7 @@ identity-service admin key: team agents run there, with the root-equivalent reac
 records. On a workspace node, no agent account holds `incus-admin` or any group equal to root.
 
 **Isolation is its own review gate** (Decided 12), before any outside person joins. The unit is
-decided (Q3: one Incus VM per workspace); the gate reviews this shape:
+decided (Decided 15: one Incus VM per workspace); the gate reviews this shape:
 
 - one Incus virtual machine per workspace, not a shared kernel, since each runs arbitrary commands
   for people other than the operator (Tactu's rule: any non-owner is a tenant, paying or not); an
@@ -528,8 +600,9 @@ its outside adopters:
 - Cloud's own pages and the workspace origins on a public edge of their own; the Cloud service
   reaches the token endpoint over the private path.
 
-Standing the new instance up, its ingress included, waits on the owner's separate OK. Tactu's
-current instance stays as it is until Tactu moves.
+Standing the new instance up, its ingress included, has the owner's OK (2026-11-10): it starts
+private at first, with only the owner (Decided 16). Tactu's current instance stays as it is
+until Tactu moves.
 
 ### (i) Billing and entitlements
 
@@ -583,13 +656,13 @@ confirms. The instance then:
 
 Unlinking removes that principal and the tile and restores local-only sign-in. Linking never merges
 accounts by email. **Identity does not move data**: importing a self-hosted instance into a Cloud
-workspace is a separate step with its own decision (open question 10).
+workspace is a separate step with its own decision (Decided 20).
 
 ### (k) Omni's own sign-in
 
 Omni has its own: a passkey or a WhatsApp code on Omni's page, and one-time grants that
 `omni://connect` carries (`deeplink.js`). With this RFC the product would have three sign-ins.
-Boundary (Decided by Automagik Chat, 2026-11-10; open question 12): Omni's sign-in stays Omni's,
+Boundary (Decided 22; Automagik Chat, 2026-11-09): Omni's sign-in stays Omni's,
 for an Omni a person connects to from outside; inside a Cloud workspace or behind a self-hosted
 gate, Omni's UI sits behind the gate and takes the gate's principal, with its own sign-in off, so
 one person signs in once per instance.
@@ -613,7 +686,7 @@ This RFC amends RFC 0008 (Queued); each amended line is marked there.
   configures. Now: a self-hosted web instance signs its owner in with the local claim and passkeys
   through the gate ((c)); Cloud signs people in through Pocket ID ((e)). An optional external OIDC
   provider for self-hosters stays possible later through the principal contract, but is not
-  planned (open question 13).
+  planned (Decided 23).
 - **Question 6 (several instances).** Was: one at a time, a switcher later. Now: the Cloud rail is
   that switcher, for a signed-in, entitled person ((a)).
 - **Question 7 (local and remote together).** Was: no. Now: yes on the desktop, with "This computer"
@@ -655,6 +728,10 @@ All new; nothing existing is renamed or moved.
 - **Stripe**: Cloud's webhook endpoint and its signing secret, in the Cloud service only.
 - **The desktop rail's state**: the active tile and order, in the app's own home.
 - No new plugin id, route prefix or storage prefix in existing plugins.
+- **The version 1 page**: [docs/cloud/contracts-v1.md](../cloud/contracts-v1.md) pins the
+  principal, the owner record, the OIDC contract, the workspace token, the open code and its
+  exchange, revocation and the entitlements document. Frozen at merge; later changes are additive
+  only, with a version on each contract.
 
 ## Threat model
 
@@ -762,10 +839,10 @@ host name, issuer or client id in a test or a default config.
      process, or the session is bound to something besides the cookie.
 3. **The Cloud service and web sign-in** (outside this repository). Personal accounts,
    organisations, roles, invitations, sessions, revocation; the new identity service and its
-   ingress (Decided 13), once the owner gives his separate OK. *Check:* an invitation binds to the
-   accepting `(issuer, sub)`, not the email; a reused rotated secret revokes the family; a request
-   after removal is refused. *Rollback:* take the service down and close the ingress; no app depends
-   on it yet.
+   ingress (Decided 13), the owner's OK given 2026-11-10 (Decided 16). *Check:* an invitation
+   binds to the accepting `(issuer, sub)`, not the email; a reused rotated secret revokes the
+   family; a request after removal is refused. *Rollback:* take the service down and close the
+   ingress; no app depends on it yet.
 4. **One workspace, made by the operator** (server image Cloud mode; Arca outside), after the
    isolation review gate passes (Decided 12). Owner-only ((f)). Workspace tokens, the VM, volume,
    network, limits, backups and a restore drill. *Check:* workspace A's token is refused by B; a
@@ -809,35 +886,20 @@ principals are keyed by `(issuer, sub)`. Arca keeps its own sign-in (its own pas
 
 ## Open questions
 
-1. **Which identity service.** *Decided by the owner, 2026-11-09 (Decided 13):* a single new
-   identity service (a self-hosted Pocket ID) that Cloud uses; Tactu may move to it later, as its
-   own project's decision. *Corrected 2026-11-10 (Arca's orchestrator, via Automagik Chat):* Arca
-   keeps its own sign-in (its own passkey approvals) and does not move. The trade-offs, as they
-   now stand:
-   - *Blast radius.* Shared by Cloud and, if it moves, Tactu: an incident in the identity
-     service, or its admin, reaches their people. Isolation between products comes from a
-     separate OIDC client and separate groups per product, and from Cloud's own database for
-     organisations and roles, not from separate instances.
-   - *Operations.* One instance to run, back up, restore and upgrade, with one break-glass admin
-     and one public ingress. Its admin key reaches Cloud and, if it moves, Tactu, so it lives only
-     in the operator's narrow, audited signup job.
-   - *Branding.* One sign-in page and passkey host for Cloud and, if it moves, Tactu; Arca keeps
-     its own.
-   - *Later.* Tactu re-binds its people to the new issuer if it moves; Arca keeps its own sign-in.
-   Standing it up waits on the owner's separate OK.
-2. **Where Cloud roles live.** Decided by the council: Cloud's database ((e)). Kept for the record.
-3. **Isolation unit.** *Decided by the owner, 2026-11-10: one Incus VM per workspace.* An
-   unprivileged container only for the operator's own; never privileged. The isolation review
-   gate ((g)) reviews how it is built.
+Answered questions point to their Decided items; the numbers stay as they were, so references
+keep their meaning.
+
+1. **Which identity service.** Answered in Decided 13 and 16.
+2. **Where Cloud roles live.** Answered in Decided 6.
+3. **Isolation unit.** Answered in Decided 15.
 4. **Who may invite.** Recommended: owners and admins, and the individual of a personal account;
    members and guests cannot ((e)).
 5. **Recovery.** Recommended: a second passkey at the claim, plus recovery codes as slow hashes,
    plus the host reset out of the Bots' reach; no email reset ((c)).
-6. **Session lifetimes.** Recommended: self-hosted sessions sliding with a 12-hour idle limit; Cloud
-   workspace tokens 5 minutes; whether DSH's own multi-day cookie can stay behind the gate unchanged
-   is an evidence gap for delivery 0.
-7. **IP-only LAN installs.** *Decided by Automagik Chat, 2026-11-10:* no passkeys there; an SSH
-   tunnel or pairing from a signed-in session; no TOTP fallback without its own review ((c)).
+6. **Session lifetimes.** Recommended: self-hosted sessions sliding with a 12-hour idle limit;
+   Cloud workspace tokens 5 minutes; whether DSH's own multi-day cookie can stay behind the gate
+   unchanged is an evidence gap for delivery 0.
+7. **IP-only LAN installs.** Answered in Decided 19.
 8. **What is paid.** Recommended: hosted workspaces, per workspace per month, seats up to a limit,
    model usage on the workspace's keys at first; personal accounts free; self-hosted free and
    complete for one instance ((i)).
@@ -845,46 +907,30 @@ principals are keyed by `(issuer, sub)`. Arca keeps its own sign-in (its own pas
    opt-in through Cloud's gateway at a published margin; compute is metered from the host
    lifecycle. The workspace subscription and seats stand; 0025's Open questions carry the
    included seats and host shape under RFC 0024 Q8.
-9. **The billing system.** *Decided by the owner, 2026-11-09 (Decided 14):* Stripe directly, Stripe
-   Billing with a subscription per workspace and signed webhooks into Cloud's entitlements,
-   "including support to agentic payments": Bots paying or being paid on a customer's behalf
-   through Stripe's agent-payment features, within limits the human sets. To be detailed by a
-   follow-up RFC, after the brainstorm on the economics ((i)).
-   *Amended by [RFC 0025][25] (2026-11-09):* 0025 is that follow-up; inbound first, "being paid"
-   deferred (0025, (j)).
-10. **Moving a self-hosted instance into Cloud.** *Decided by Automagik Chat, 2026-11-10:* a
-    separate, later decision; linking moves no data ((j)).
-11. **DSH's authentication hook.** *Decided by Automagik Chat, 2026-11-10:* the gate now; propose
-    a hook upstream (as RFC 0023 does for its pieces) and move to it only once DSH ships one.
-12. **Omni's sign-in.** *Decided by Automagik Chat, 2026-11-10:* a defined boundary: Omni keeps
-    its own for outside Omnis; behind a gate it takes the gate's principal with its own sign-in
-    off ((k)).
+9. **The billing system.** Answered in Decided 14.
+10. **Moving a self-hosted instance into Cloud.** Answered in Decided 20.
+11. **DSH's authentication hook.** Answered in Decided 21.
+12. **Omni's sign-in.** Answered in Decided 22.
 13. **An optional external OIDC provider for self-hosters** (RFC 0008's old question 2).
-    *Decided by Automagik Chat, 2026-11-10:* not planned; the principal contract leaves room for
-    it later.
+    Answered in Decided 23.
 14. **Federation for company customers** (Google or Entra sign-in, SAML, SCIM). The council's
     dissent expects customers to ask; Pocket ID's support is unverified. Recommended: delivery 0
     checks it; if it is missing, decide before the first company customer, since a later issuer move
     re-binds every person.
-15. **Pocket and Pocket Link with a claimed instance.** *Decided by Automagik Chat, 2026-11-10:*
-    unchanged; Pocket pairs through Pocket Link's own keys, outside the gate; any phone sign-in
-    to a web instance is a passkey of the same owner.
-16. **Is the Cloud service open source?** *Decided by Automagik Chat, 2026-11-10:* its contracts
-    (the principal, the workspace token, the entitlements document, the rail's API) are public
-    here; the service starts private.
+15. **Pocket and Pocket Link with a claimed instance.** Answered in Decided 24.
+16. **Is the Cloud service open source?** Answered in Decided 25.
 17. **The desktop's Cloud credential and local Bots.** Recommended: build a delivery-H-style mask
     per OS (the secret store, the session bus, the app's data folder) and keep desktop Cloud sign-in
     off on an OS until it exists there. The alternative is the owner's written acceptance of the
     risk for that OS ((d)).
-18. **Until the three safeguards hold.** Recommended: Cloud workspaces stay owner-only. The
-    reviewer's narrower alternative, members and guests limited to Bots with no shell or file tools
-    in the meantime, is not recommended: a Bot's tools change over time, and one mistake makes a
-    member owner-equivalent ((f)).
+18. **Until the three safeguards hold.** Answered in Decided 26.
 
 ## Tracking
 
 Ledger pass (2026-11-10): the board links this RFC from its file.
 
+- Contracts: [docs/cloud/contracts-v1.md](../cloud/contracts-v1.md), version 1 (issue #904),
+  frozen at merge; later changes are additive only.
 - Open issues: #902, #903, #904, #905, #906, #907, #908, #909, #910, #911, #912.
 - Merged changes that cite this RFC: #866, #888, #913 (last merged 2026-11-10).
 

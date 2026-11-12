@@ -10,8 +10,8 @@ import {
   appHome, backupSettings, backupSettingsOrLog, dshEnv, dshRun, forgetDshLogins, freePort,
   guardContents, installProfile, keepPort, LAUNCH_URL_FILE, launchPort, launchUrlFileOf,
   launchUrlFromFile, launchUrlOf, listenFailed, mergeProfilePackage, mergeProfilePatch,
-  migrateRenamed, migrateRetired, navigationOf, pageUrlOf, pinProfileStore, portFileOf, portFree,
-  preloadAsked, preloadOf, RENAMED, renamePatch, resourcesOf, RETIRED, retirePatch, scrubBuildPaths,
+  migrateRenamed, migrateRetired, navigationOf, pageUrlOf, pinProfileStore, PORT_WAIT_MS,
+  PORT_WAIT_STEP_MS, portFileOf, portFree, preloadAsked, preloadOf, RENAMED, renamePatch, resourcesOf, RETIRED, retirePatch, scrubBuildPaths,
   serveDsh, servesOrigin, SHIPPED_STORE, startDsh, startDshOnPort, stopDsh, storedPort,
   storeLayoutOf, toolFileOf, writeTools,
 } from '../src/dsh.js'
@@ -939,13 +939,100 @@ test('a start takes the stored port while it is free, and a fresh one when it is
   const taken = await squat(t)
   keepPort(file, taken)
   assert.equal(await portFree(taken), false)
-  const instead = await launchPort(file, counted)
+  const instead = await launchPort(file, counted, { waitMs: 0 })
   assert.notEqual(instead, taken)
   assert.equal(fresh, 2)
   // A stale file (garbled by a crash, or hand-edited): a fresh port.
   writeFileSync(file, 'not a port')
   await launchPort(file, counted)
   assert.equal(fresh, 3)
+})
+
+// launchPort's wait on a clock of its own: `sleep` only moves the clock, and `free` answers from
+// `freeAt` (the time the port's holder lets go, or never).
+const waitClock = ({ freeAt = Infinity } = {}) => {
+  const clock = { time: 1000, sleeps: [], looks: 0, waited: [] }
+  return Object.assign(clock, {
+    options: {
+      now: () => clock.time,
+      sleep: async (ms) => { clock.sleeps.push(ms); clock.time += ms },
+      free: async () => { clock.looks += 1; return clock.time - 1000 >= freeAt },
+      onWaited: (ms, freed) => clock.waited.push([ms, freed]),
+    },
+  })
+}
+
+test('a stored port that is taken is waited for a short while before a fresh one is taken', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'omni-desktop-port-'))
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  const file = portFileOf(home)
+  let fresh = 0
+  const other = () => { fresh += 1; return 50001 }
+  assert.ok(PORT_WAIT_MS >= 1000 && PORT_WAIT_MS <= 5000, 'a few seconds')
+  assert.ok(PORT_WAIT_STEP_MS > 0 && PORT_WAIT_STEP_MS <= 250, 'a short interval')
+
+  // No stored port: straight to a fresh one, no look and no wait.
+  const none = waitClock()
+  assert.equal(await launchPort(file, other, none.options), 50001)
+  assert.deepEqual([fresh, none.looks, none.sleeps, none.waited], [1, 0, [], []])
+
+  keepPort(file, 50000)
+  // Free at once: reused after one look, no wait.
+  const atOnce = waitClock({ freeAt: 0 })
+  assert.equal(await launchPort(file, other, atOnce.options), 50000)
+  assert.deepEqual([fresh, atOnce.looks, atOnce.sleeps, atOnce.waited], [1, 1, [], []])
+
+  // Freed during the window (the last dsh finishing its shutdown): reused, and the wait ends there.
+  const during = waitClock({ freeAt: 250 })
+  assert.equal(await launchPort(file, other, during.options), 50000)
+  assert.equal(fresh, 1)
+  assert.deepEqual(during.sleeps, [100, 100, 100])
+  assert.deepEqual(during.waited, [[300, true]])
+
+  // Still taken when the window ends: a fresh port, after the whole window and no longer.
+  const never = waitClock()
+  assert.equal(await launchPort(file, other, never.options), 50001)
+  assert.equal(fresh, 2)
+  assert.equal(never.sleeps.reduce((sum, ms) => sum + ms, 0), PORT_WAIT_MS)
+  assert.equal(never.looks, 1 + PORT_WAIT_MS / PORT_WAIT_STEP_MS)
+  assert.deepEqual(never.waited, [[PORT_WAIT_MS, false]])
+
+  // A window the step does not divide: the last wait is cut to what is left of it.
+  const uneven = waitClock()
+  await launchPort(file, other, { ...uneven.options, waitMs: 250, stepMs: 100 })
+  assert.deepEqual(uneven.sleeps, [100, 100, 50])
+
+  // Slow looks count against the window too.
+  const slow = waitClock()
+  const slowFree = async () => { slow.time += 400; return false }
+  await launchPort(file, other, { ...slow.options, free: slowFree, waitMs: 1000, stepMs: 100 })
+  assert.deepEqual(slow.sleeps, [100, 100])
+
+  // A clock that stands still (or runs back) cannot hold the start: the looks are counted too.
+  const stuck = waitClock()
+  await launchPort(file, other, { ...stuck.options, now: () => 5, waitMs: 1000, stepMs: 100 })
+  assert.equal(stuck.sleeps.length, 10)
+  assert.deepEqual(stuck.waited, [[0, false]])
+
+  // No window: the stored port is looked at once, as before.
+  const off = waitClock()
+  assert.equal(await launchPort(file, other, { ...off.options, waitMs: 0 }), 50001)
+  assert.deepEqual([off.looks, off.sleeps, off.waited], [1, [], []])
+})
+
+test('a stored port its holder lets go of within the wait is reused, on the real clock', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'omni-desktop-port-'))
+  t.after(() => rmSync(home, { recursive: true, force: true }))
+  const file = portFileOf(home)
+  const server = createServer()
+  await new Promise((done, fail) => { server.once('error', fail); server.listen(0, '127.0.0.1', done) })
+  const { port } = server.address()
+  let open = true
+  t.after(() => open && new Promise(done => server.close(done)))
+  keepPort(file, port)
+  // The holder goes on the first wait, as a dsh that was still shutting down does.
+  const sleep = () => new Promise((done) => { open = false; server.close(done) })
+  assert.equal(await launchPort(file, () => assert.fail('no fresh port'), { sleep }), port)
 })
 
 test('the page\'s origin stays the same from one start to the next, and moves only when its port is taken', async (t) => {
@@ -956,7 +1043,7 @@ test('the page\'s origin stays the same from one start to the next, and moves on
   const file = portFileOf(root)
   // A start as main.js makes it: the port, dsh on it, the port kept once dsh serves on it.
   const start = async () => {
-    const running = await startDshOnPort({ node: process.execPath, bin, env: process.env, port: await launchPort(file), cwd: root })
+    const running = await startDshOnPort({ node: process.execPath, bin, env: process.env, port: await launchPort(file, undefined, { waitMs: 0 }), cwd: root })
     keepPort(file, Number(new URL(running.url).port))
     const { origin } = new URL(running.url)
     assert.equal(servesOrigin(running, origin), true)
@@ -1092,6 +1179,20 @@ test('a quit after the retry spawned stops the retry\'s dsh, and one spawned aft
   await late.stop()
   await assert.rejects(startDsh({ node: process.execPath, bin, env: process.env, port: await freePort(), cwd: root, onSpawn: child => late.track(child) }), /exited before it was ready/)
   assert.equal(exited(late.child), true)
+})
+
+test("a run's `since` is when its current dsh was spawned, and nothing before a spawn (#882)", () => {
+  let clock = 100
+  const run = dshRun({ now: () => clock })
+  assert.equal(run.since, null)
+  const first = { exitCode: null }
+  run.track(first)
+  assert.equal(run.child, first)
+  assert.equal(run.since, 100)
+  // A retry's dsh is a new one: a busy file the first wrote is no longer the current dsh's.
+  clock = 250
+  run.track({ exitCode: null })
+  assert.equal(run.since, 250)
 })
 
 test('a port that cannot be kept is reported and the start goes on; the page URL is refused off the origin', async (t) => {

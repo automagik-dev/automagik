@@ -11,7 +11,7 @@ import { gzipSync } from "node:zlib";
 import {
   POINTER_SIG_URL, POINTER_URL, applyUpdate, checkForUpdate, compareVersions, downloadUpdate, fetchPointer, installUpdate, noticeText, packKeys,
   packOfPointer, parseSums, verifyPointer,
-  checkMods, markerOf, moveHooks, offDirOf, packOut, pickUpdate, tightenLedgers, writeMarker, repairInstall, setupHome, toCheck, prevSetOf, readMarker, readVersion, relinkCli, rollback, stateDirOf, unsafeEntries, verifySha256,
+  checkMods, markerOf, moveHooks, offDirOf, packOut, pickUpdate, tightenLedgers, writeMarker, repairInstall, setupHome, toCheck, prevSetOf, readMarker, readVersion, relinkCli, rollback, staleLayoutLine, stateDirOf, unsafeEntries, verifySha256,
   autoFileOf, autoStatus, lockOf, managedPack, olderSequence, overtaken, readAuto, takeLock, writeAuto,
 } from "../mods/am-sidebar/update.mjs";
 import { CHECK_FILE, RESTORE_FILE, formatMarker, OFF_BY_DEFAULT, parseMarker } from "../mods/am-sidebar/release.js";
@@ -1008,6 +1008,46 @@ test("#488: a rollback refuses, changing nothing, while a file in layouts/ names
   } finally {
     rmSync(t.src, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("#503: a rollback to a set kept with no layout says automagik.json still names the mods that left; one kept with its layout says nothing", async () => {
+  const tree = (...mods) => `${JSON.stringify({ id: "root", children: mods.map((m, i) => ({ id: `b${i}`, content: { mod: m } })) })}\n`;
+  const L1 = tree("am-sidebar"), L2 = tree("am-sidebar", "am-tabs");
+  for (const keptLayout of [false, true]) {
+    const { home, mods } = appHome("0.1.0", ["am-sidebar"]);
+    const t = tarballWithLayout("0.2.0", L2, MODS);
+    const live = join(home, "layouts", "automagik.json");
+    try {
+      mkdirSync(join(home, "layouts"));
+      writeFileSync(live, L1);
+      writeFileSync(join(home, "automagik-herdr", "automagik.json"), L1);
+      const url = "https://dl.test/v0.2.0/automagik-herdr-pack-0.2.0.tgz";
+      const fetch = fakeFetch({ ...served("0.2.0", { url, body: t.buf }), [url]: t.buf });
+      assert.equal((await installUpdate({ keys, fetch, env: {}, modsDir: mods })).installed.version, "0.2.0");
+      // A set kept before v0.9 carries no layout.
+      if (!keptLayout) rmSync(join(prevSetOf(mods), ".layout.json"));
+      const lines = [];
+      const back = rollback({ modsDir: mods, log: (l) => lines.push(l) });
+      assert.equal(back.version, "0.1.0");
+      assert.ok(!existsSync(join(mods, "am-tabs")), "am-tabs left mods/");
+      const said = `left automagik.json (${live}) as the rolled-out pack placed it: the pack rolled back to kept no layout to put back `
+        + "(a set kept before v0.9), and its blocks name am-tabs, which left mods/ in this rollback. "
+        + "Herdr drops a layout whose mod is gone (plain Herdr instead): if Herdr shows it, switch layouts (ctrl-shift-l)";
+      assert.equal(staleLayoutLine(live, ["am-tabs"]), said);
+      if (keptLayout) {
+        assert.equal(back.layout, "restored");
+        assert.equal(readFileSync(live, "utf8"), L1);
+        assert.ok(!lines.some((l) => l.includes("as the rolled-out pack placed it")), lines.join("\n"));
+      } else {
+        assert.equal(back.layout, null);
+        assert.equal(readFileSync(live, "utf8"), L2, "the stale layout stays, byte for byte");
+        assert.deepEqual(lines.filter((l) => l.includes("automagik.json")), [said]);
+      }
+    } finally {
+      rmSync(t.src, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
   }
 });
 
@@ -2476,7 +2516,8 @@ test("#839: tightenLedgers refuses a ledger swapped for a symlink between inspec
   chmodSync(workersFile, 0o600);
   chmodSync(attachFile, 0o600);
 
-  // (b2) Owner-unreadable ledger (0070): skipped untouched (remains 0070, not 0000) with one warning naming chmod 600.
+  // (b2) Owner-unreadable ledger (0070): skipped untouched (remains 0070, not 0000). The warning
+  // naming chmod 600 is returned and not logged (#883): the doctor reports such a ledger.
   chmodSync(attachFile, 0o070);
   try {
     const unreadLogs = [];
@@ -2486,7 +2527,7 @@ test("#839: tightenLedgers refuses a ledger swapped for a symlink between inspec
     assert.equal(rUnread.warnings.length, 1);
     assert.match(rUnread.warnings[0], /attach\.jsonl is not readable by its owner \(mode 0070\): left as it is; run chmod 600 /);
     assert.ok(rUnread.warnings[0].includes(attachFile));
-    assert.equal(unreadLogs.length, 1);
+    assert.deepEqual(unreadLogs, [], "install and update do not repeat it on every run");
   } finally {
     chmodSync(attachFile, 0o600);
   }
@@ -2509,6 +2550,111 @@ test("#839: tightenLedgers refuses a ledger swapped for a symlink between inspec
   assert.ok(gitCalls <= 2, `expected distinct folders resolved at most once, got ${gitCalls} git calls`);
 });
 
+
+test("#883: tightenLedgers skips an owner-unreadable ledger for every user, names the real reason an open fails, and refuses another regular file swapped in", (t) => {
+  const home = mkdtempSync(join(tmpdir(), "ledgers-883-"));
+  t.after(() => rmSync(home, { recursive: true, force: true }));
+  mkdirSync(join(home, "automagik-herdr"), { recursive: true });
+  const workersFile = join(home, "automagik-herdr", "workers.jsonl");
+  const attachFile = join(home, "automagik-herdr", "attach.jsonl");
+  writeFileSync(workersFile, '{"session":"w"}\n');
+  chmodSync(workersFile, 0o600);
+  const modeOf = (file) => lstatSync(file).mode & 0o777;
+  /** openSync as root's would be: it succeeds whatever the mode, and the mode is as it was after. */
+  const openAsRoot = (file, flags) => {
+    const mode = modeOf(file);
+    chmodSync(file, 0o600);
+    try { return openSync(file, flags); } finally { chmodSync(file, mode); }
+  };
+  const fchmods = [];
+  const fchmod = (fd, mode) => { fchmods.push(mode); fchmodSync(fd, mode); };
+
+  // (1a) A 0070 ledger whose open succeeds (root, where no EACCES stops it): the owner-read
+  // check alone keeps it from becoming 0000. Without root the open's EACCES hid that check.
+  writeFileSync(attachFile, '{"session":"a"}\n');
+  chmodSync(attachFile, 0o070);
+  const logs = [];
+  const asRoot = tightenLedgers(home, { open: openAsRoot, fchmod, log: (l) => logs.push(l) });
+  assert.equal(modeOf(attachFile), 0o070, "0070 stays 0070, never 0000");
+  assert.deepEqual(asRoot.tightened, []);
+  assert.deepEqual(fchmods, []);
+  assert.equal(asRoot.warnings.length, 1);
+  assert.match(asRoot.warnings[0], /attach\.jsonl is not readable by its owner \(mode 0070\): left as it is; run chmod 600 /);
+  assert.deepEqual(logs, [], "not logged: every install and update would repeat it; the doctor reports it");
+
+  // (1b) The same when the mode loses its owner-read bit between the first look and the open:
+  // the check on the opened descriptor stops it.
+  chmodSync(attachFile, 0o644);
+  let looked = false;
+  const lateUnreadable = tightenLedgers(home, {
+    stat: (p) => {
+      const st = lstatSync(p);
+      if (p === attachFile && !looked) { looked = true; chmodSync(attachFile, 0o070); }
+      return st;
+    },
+    open: openAsRoot, fchmod, log: (l) => logs.push(l),
+  });
+  assert.equal(modeOf(attachFile), 0o070, "0070 stays 0070, never 0000");
+  assert.deepEqual(lateUnreadable.tightened, []);
+  assert.deepEqual(fchmods, []);
+  assert.match(lateUnreadable.warnings[0], /attach\.jsonl is not readable by its owner \(mode 0070\)/);
+  assert.deepEqual(logs, []);
+
+  // (1c) An open that fails with EACCES or EPERM, for any user: skipped, and since the mode lets
+  // the owner read it (0644), the warning names the open, not "not readable by its owner".
+  for (const code of ["EACCES", "EPERM"]) {
+    chmodSync(attachFile, 0o644);
+    const refusedLogs = [];
+    const refusedOpen = tightenLedgers(home, {
+      open: (p, flags) => {
+        if (p !== attachFile) return openSync(p, flags);
+        throw Object.assign(new Error(`${code}: permission denied, open '${p}'`), { code });
+      },
+      fchmod, log: (l) => refusedLogs.push(l),
+    });
+    assert.equal(modeOf(attachFile), 0o644, "left as it is");
+    assert.deepEqual(refusedOpen.tightened, []);
+    assert.deepEqual(fchmods, []);
+    assert.equal(refusedOpen.warnings.length, 1);
+    assert.ok(refusedOpen.warnings[0].startsWith(`${attachFile} could not be opened (${code}) although its mode 0644 lets its owner read it`),
+      refusedOpen.warnings[0]);
+    assert.doesNotMatch(refusedOpen.warnings[0], /not readable by its owner/);
+    assert.deepEqual(refusedLogs, [`warning: ${refusedOpen.warnings[0]}`], "this one is logged");
+  }
+
+  // (2) Another regular file renamed over the ledger between the first look and the open: the
+  // device and inode re-check refuses it, and the file now there keeps its mode.
+  chmodSync(attachFile, 0o644);
+  const other = join(home, "other.jsonl");
+  writeFileSync(other, '{"session":"other"}\n');
+  chmodSync(other, 0o644);
+  let swapped = false;
+  const swappedIn = tightenLedgers(home, {
+    stat: (p) => {
+      const st = lstatSync(p);
+      if (p === attachFile && !swapped) { swapped = true; renameSync(other, attachFile); }
+      return st;
+    },
+    fchmod,
+  });
+  assert.equal(swapped, true);
+  assert.equal(readFileSync(attachFile, "utf8"), '{"session":"other"}\n', "the other file is at the ledger's path");
+  assert.equal(modeOf(attachFile), 0o644, "the file swapped in is not tightened");
+  assert.deepEqual(swappedIn.tightened, []);
+  assert.deepEqual(fchmods, []);
+  assert.equal(swappedIn.warnings.length, 1);
+  assert.match(swappedIn.warnings[0], /attach\.jsonl changed during inspection: left as it is/);
+
+  // (5) The exec bits count as wider than 0600: 0700 becomes 0600 and 0500 becomes 0400.
+  chmodSync(workersFile, 0o700);
+  chmodSync(attachFile, 0o500);
+  const exec = tightenLedgers(home, { fchmod });
+  assert.deepEqual(exec.tightened, [workersFile, attachFile]);
+  assert.deepEqual(exec.warnings, []);
+  assert.equal(modeOf(workersFile), 0o600);
+  assert.equal(modeOf(attachFile), 0o400);
+  assert.deepEqual(fchmods, [0o600, 0o400]);
+});
 
 test("#805 restore notifies only the live project main bot once per version", async (t) => {
   const { notifyMainBotOfRestore } = await import("../mods/am-sidebar/update.mjs");

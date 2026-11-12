@@ -29,9 +29,22 @@
 // The same file lists what is not personal data: placeholder user names (`users`), placeholder
 // emails (`emails`), and exact text allowed in one named file (`lines`, whose `file` is relative
 // to the scan root); only that text is cut out of the line, the rest of the line is still
-// scanned. Folders still holding hits wait in `pending`, one entry per folder with the issue
+// scanned. The list holds one entry per file and text: a text is cut from every line of its
+// file, so a repeat would change nothing and is refused. A text that ends in a home path's user
+// name (a home path for the user `ana`) is cut only where the name ends there too: a longer one
+// in the same file (the same path for `anabel`) is not cut and is still a hit, so an entry never
+// hides the front of another path. Folders still holding hits wait in `pending`, one entry per folder with the issue
 // that will clean it (a whole top-level folder, or one part of `apps/` for its own squad); they
-// are skipped until then, and the list only shrinks.
+// are skipped until then, and the list only shrinks (test/privacy-check.test.mjs holds the
+// folders it may still name, so adding one fails there).
+//
+// A pending folder is a path from the scan root and is never re-based. In the pack's standalone
+// layout the root is the pack, so the monorepo's entries (`apps/...`) name folders the pack does
+// not have and skip nothing there: an entry skips a folder only where the scan root has it at
+// that same path.
+//
+// The list is checked before it is used (checkList): every key has its type, and a key the
+// checker does not know is refused, so a misspelt `pending` or `why` cannot pass in silence.
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -111,9 +124,30 @@ function deniedNames(line, denied) {
   return kept.sort((a, b) => a.index - b.index);
 }
 
-/** `text` with every allowed span cut out (replaced by a space, so words do not join). */
+/** A character a home path's user name may hold (HOME's own class). */
+const NAME_CHAR = /[A-Za-z0-9._-]/;
+/** Whether an allowed text ends in a home path's user name, which a longer name could extend. */
+const endsInHomeName = (text) => [...text.matchAll(HOME)].some((m) => m.index + m[0].length === text.length);
+
+/**
+ * `line` with every allowed span cut out (replaced by a space, so words do not join). A span
+ * that ends in a home path's user name is cut only where that name ends: followed by a name
+ * character, it is the front of a longer path, which stays in the line and is still scanned.
+ */
 function cutAllowed(line, spans) {
-  for (const s of spans) if (s) line = line.split(s).join(" ");
+  for (const s of spans) {
+    if (!s) continue;
+    if (!endsInHomeName(s)) { line = line.split(s).join(" "); continue; }
+    let out = "";
+    let from = 0;
+    for (let at = line.indexOf(s); at !== -1; at = line.indexOf(s, from)) {
+      const end = at + s.length;
+      const longer = end < line.length && NAME_CHAR.test(line[end]);
+      out += line.slice(from, at) + (longer ? s : " ");
+      from = end;
+    }
+    line = out + line.slice(from);
+  }
   return line;
 }
 
@@ -197,9 +231,74 @@ export function repoPath(root, path = LIST_PATH) {
 /** The list's path from the scan root: `herdr/scripts/…` here, `scripts/…` in the pack. */
 export const listFileFor = (root) => repoPath(root, LIST_PATH);
 
-/** The list as data: the one beside the script unless another path is given. */
+const isObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+const isText = (value) => typeof value === "string" && value !== "";
+/** The list's keys, and each entry's keys with the type each must have (`required` or not). */
+const LIST_SHAPE = {
+  deny: {
+    sha256: { required: true, ok: (v) => typeof v === "string" && /^[0-9a-f]{64}$/.test(v), is: "a sha256 in lowercase hex" },
+    kind: { required: true, ok: isText, is: "a non-empty string" },
+    exact: { required: false, ok: (v) => typeof v === "boolean", is: "true or false" },
+    lowercaseOnly: { required: false, ok: (v) => typeof v === "boolean", is: "true or false" },
+  },
+  users: null,
+  emails: null,
+  lines: {
+    file: { required: true, ok: isText, is: "a non-empty string" },
+    text: { required: true, ok: isText, is: "a non-empty string" },
+    why: { required: true, ok: isText, is: "a non-empty string" },
+  },
+  pending: {
+    folder: { required: true, ok: isText, is: "a non-empty string" },
+    issue: { required: true, ok: isText, is: "a non-empty string" },
+  },
+};
+
+/**
+ * Checks a list's shape and returns it: an object whose keys are `deny`, `users`, `emails`,
+ * `lines` and `pending` (each optional, each an array), with every entry's keys known and of
+ * their type, and no `lines` entry repeating another's file and text. Throws one
+ * `privacy-list: ...` line naming the key and the entry's index, never an entry's text.
+ * pendingFolders checks what a pending folder and issue may be.
+ */
+export function checkList(list) {
+  const fail = (what) => { throw new Error(`privacy-list: ${what}`); };
+  if (!isObject(list)) fail("the list must be an object");
+  for (const key of Object.keys(list)) {
+    if (!Object.hasOwn(LIST_SHAPE, key)) fail(`unknown key "${key}" (known: ${Object.keys(LIST_SHAPE).join(", ")})`);
+    const entries = list[key];
+    if (!Array.isArray(entries)) fail(`${key} must be an array`);
+    const shape = LIST_SHAPE[key];
+    entries.forEach((entry, i) => {
+      const at = `${key}[${i}]`;
+      if (shape === null) {
+        if (!isText(entry)) fail(`${at} must be a non-empty string`);
+        return;
+      }
+      if (!isObject(entry)) fail(`${at} must be an object`);
+      for (const name of Object.keys(entry)) {
+        if (!Object.hasOwn(shape, name)) fail(`${at} has the unknown key "${name}" (known: ${Object.keys(shape).join(", ")})`);
+      }
+      for (const [name, { required, ok, is }] of Object.entries(shape)) {
+        if (!Object.hasOwn(entry, name)) {
+          if (required) fail(`${at} has no ${name}`);
+        } else if (!ok(entry[name])) fail(`${at}.${name} must be ${is}`);
+      }
+    });
+  }
+  // One entry per file and text: an allowed text is cut from every line of its file already.
+  const pairs = new Map();
+  (list.lines ?? []).forEach((entry, i) => {
+    const pair = JSON.stringify([entry.file, entry.text]);
+    if (pairs.has(pair)) fail(`lines[${i}] repeats lines[${pairs.get(pair)}]: one entry per file and text`);
+    pairs.set(pair, i);
+  });
+  return list;
+}
+
+/** The list as data, checked (checkList): the one beside the script unless another path is given. */
 export function loadList(file = LIST_PATH) {
-  return JSON.parse(readFileSync(file, "utf8"));
+  return checkList(JSON.parse(readFileSync(file, "utf8")));
 }
 
 /** The pending folders of a list, `{ folder, issue }`, one entry per folder. A folder is
@@ -254,8 +353,14 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     process.exit(0);
   }
   const root = repoRoot();
-  const list = loadList();
-  const pending = pendingFolders(list);
+  let list, pending;
+  try {
+    list = loadList();
+    pending = pendingFolders(list);
+  } catch (error) {
+    console.error(String(error?.message ?? error));
+    process.exit(2);
+  }
   const note = pending.length
     ? `${pending.length} folder(s) pending ${[...new Set(pending.map((p) => p.issue))].join(", ")}:`
       + ` ${pending.map((p) => p.folder).join(", ")}`

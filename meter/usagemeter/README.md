@@ -283,6 +283,21 @@ hour before `evidence_from`. Retention (RFC 0018, proposed): evidence for 90 day
 whichever comes first, oldest whole day first (`evidence_from` moves past it); closed launches and
 links for 400 days. The rollups stay as they are.
 
+**Recorded failures and pull requests (still schema 3, issues 899 and 1026).** For
+[`usagemeter outcomes`](#outcomes), `sync` adds in place, the first time it runs: `ev_error`, one
+row per tool failure (`tool_error`) or model-call failure (`api_error`) a harness flagged (its
+time, kind, source, the harness, repo and branch as logged, its launch tag, the folders, and its
+session and its own id as keyed hashes: no tool name, argument, output, error status or error
+text), kept and pruned with the evidence; `pr`, one row per pull
+request Herdr recorded (project, branch, number, repo, state and its times; no title, author or
+address), kept 400 days; and on `launch` how its terminal ended (`end_reason`, `exit_code`,
+`signal`, `end_source`, `ended_ms`). An older meter reads and writes such a store as before. It
+does not record failures, so every sync stamps how far they go (`errors_through_ms`,
+`api_errors_through_ms` and the log offsets, in `meta`): when another sync ran in between,
+`errors_from_ms` or `api_errors_from_ms` moves to now. It stamps
+the store's window too (`errors_counted_from_ms`): a reset by an older meter changes that window
+and empties the tables the failures point into, so the next sync drops the failures kept.
+
 - `repo` is `host/owner/repo` from the cwd's git remote, without credentials, port, query or
   fragment; worktrees resolve to their repository. No remote: null.
 - `branch` is the session's `gitBranch` (Claude Code), or a Codex thread's (`branch_basis: log`,
@@ -293,7 +308,10 @@ links for 400 days. The rollups stay as they are.
   0021, `src/ledger.rs`): read from the global app home's `workers.jsonl` and `attach.jsonl`,
   `$HERDR_WORKERS_LEDGER`, and each project's `.herdr/app-home` above the call's cwd. The launch
   is found by a Herdr row naming the session, else an `agent.session` or `revive.session` label
-  hc shows at the sync, else (workers only) the call's cwd being the worker's worktree. A call
+  hc shows at the sync, else (workers only) the call's cwd being the worker's worktree. A
+  dsh-tui session is also found by the terminal its own header names (RFC 0026 (d)): the launch
+  on that address, on this machine, that was running when the session started; two such
+  launches name none, and the call is ambiguous. A call
   with no claimant, or claimants that differ, stays null: a bot is never guessed. That holds
   only for logged launches: a terminal started by hand that ended before any sync saw it is
   invisible to the ledgers, so the worktree path could still name the worker beside it. The
@@ -310,6 +328,8 @@ usagemeter sync --no-publish    # update the store only
 usagemeter sync --backfill      # import the full history instead of 30 days (resumes across runs)
 usagemeter sync --evidence-backfill --days 90   # per-call evidence for the last 90 days, re-tagged
 usagemeter status               # what the store holds, as JSON
+usagemeter coverage             # the store's bot-tag coverage, per window, repo and bot
+usagemeter outcomes             # recorded failures and time to pull request, per window
 usagemeter --version
 ```
 
@@ -384,6 +404,134 @@ Actors (RFC 0021 (d)): every answer says who its tokens belong to.
 - `--by bot` answers one row per (bot, kind, role, squad, unrecorded, harness) of attributed
   usage, the branches named (none needed) a filter. A bot with no row is 0 only when
   `actor_unattributed.absent_bot_is_zero` is true; otherwise it is unknown.
+
+```sh
+usagemeter query --repo example.com/acme/widgets --by task [--branch feat/x ...] --json
+```
+
+Tasks (RFC 0018 M3, RFC 0021 D4): one row per task id with task-labelled usage in the repo and
+window, at `attribution.precision: task_interval`; the branches named (none needed) are a filter.
+The row's `task` is Genie's short id, and its `actors` names every launch tag that did the work
+(bot, kind `worker`, role, squad, unrecorded, harness), ordered like a bot row's key: a task
+answered by several bots or roles names them all, never a guessed single one. The actor list is
+bounded with the row; keys past the bound are counted in `actors_omitted`, never cut. A task id
+the meter ties to more than one checkout of the repo is never summed: its row is `missing` with
+`reason: task_ambiguous`, and the meter never prints a checkout path. Its numbers are
+evidence-backed, so the branch row stays the total. A window with no task labels is an `ok`
+answer with `rows: []` and the branch answer unchanged: a reader falls back to it.
+
+## Coverage
+
+```sh
+usagemeter coverage                                   # text: d1, d7 and d30, every repo
+usagemeter coverage --window d7 --window d30          # only those windows
+usagemeter coverage --repo example.com/acme/widgets   # narrow the rows (repeatable)
+usagemeter coverage --json                            # one record, for a fleet step
+```
+
+The store's bot-tag coverage (RFC 0026 (a)), over the same rows a `--by bot` answer counts: every
+row of `usage` whose repo is in scope and whose hour is in the window, with tokens above zero.
+They split into `attributed`, `ambiguous` (`claimants_differ`), `unlinked` (`no_record`,
+`dsh_tui_seat`, `other_machine`) and `before_evidence`; the four counts are the total.
+`bot_coverage` is attributed over total, four decimals, null (never 0) when nothing is counted;
+`inspected` is attributed over the usage not before evidence, and is always printed beside it as
+the diagnostic. The unit is tokens, never rows or cost. Usage with no repo is outside the
+denominator and printed as `no_repo` store-wide, even with `--repo` (it belongs to no query
+answer); `before_evidence_tagged` is the old definition's frozen tag, never in the numerator.
+Each repo gets its four counts and ratio, each bot its attributed tokens, share and tie mix, with
+the contract's `unrecorded` fields left visible: at most 50 repos and 50 bots are shown, the rest
+are counted (`repos_omitted`, `bots_omitted`) and summed into an `other` line, so every total
+includes every repo and bot, and `truncated` says when a list was capped. A zero class share or a
+repo with no usage is a vouched 0 only when every source is `ok` or `absent` and no old folder's
+store is degraded; otherwise it is `unknown` (a null share / `state: unknown`), and the record
+names the unreadable sources (`incomplete_sources`, `all_vouch`). Ratios are always over counted
+usage, never a bound; only token totals are lower bounds while ingestion is incomplete, stale or
+the window is clipped. It opens the store read-only as `status` does and creates nothing (SQLite
+may add an empty `-wal` and a `-shm` beside the store, as for the query): exit 0 reported, 1
+error, 2 bad request, 10 no store, 11 no snapshot in time, 12 store from a newer meter, 13 store
+only `sync` can migrate. The 64 KiB output ceiling is the RFC 0018 reference-workload bound; the
+record itself is capped by the 50/50 lists, and delivery 5's per-machine entry bound cuts it
+further.
+
+## Outcomes
+
+```sh
+usagemeter outcomes                                   # text: d1, d7 and d30, every repo
+usagemeter outcomes --window d7                       # only that window (repeatable)
+usagemeter outcomes --repo example.com/acme/widgets   # only that repo (repeatable)
+usagemeter outcomes --json                            # one record (`v: 1`)
+```
+
+Recorded failures and time to pull request (issues 899 and 1026), per window. Like `coverage` it
+is local and read-only, and it is not contract 1: nothing here is in the query envelope.
+
+**Failures are raw counts of facts something else recorded.** They are counts of harness-flagged
+failures, including expected ones (a red test run while working test-first, a grep with no
+match) and usage-limit stops (written after a harness's own retries, so a count of model calls
+that failed for the session, not each retried attempt): they are not a quality verdict on their
+own. The report prints integers per bot, kind, role, squad, harness, error kind and source, plus
+the unattributed by reason. It prints no rate, ratio, threshold, label or score; scoring
+behaviour stays in genie (RFC 0018 (c)).
+
+| `error_kind` | `source` | What counts |
+|---|---|---|
+| `tool_error` | `harness_log` | A tool result the harness itself flagged as failed. **Claude Code:** a `tool_result` block with `is_error: true`, once per `tool_use_id`. **Codex:** an `event_msg` whose payload is `item_completed` and whose item has `status: "failed"` or an `exit_code` that is a non-zero integer, once per item `id` in its thread. |
+| `api_error` | `harness_log` | A model call the harness itself flagged as failed after its own retries (model calls that failed for the session, not each retried attempt, including usage-limit stops). **Claude Code:** a `type: "assistant"` line with top-level `isApiErrorMessage: true` (the JSON boolean), once per top-level line `uuid` (a `<synthetic>` line, which usage already ignores; never counted as a `tool_error`). **Codex:** `unsupported` (rollout JSONL records no model-call failure marker). |
+| `run_failed` | `hc_snapshot` or `workers_ledger` | A launch whose terminal ended on its own with a non-zero exit status or on a signal: `hc_snapshot` from hc's list of finished terminals, `workers_ledger` from an `end` row that copied them once hc no longer lists the terminal. A window's total names the sources its failed runs came from (`hc_snapshot,workers_ledger` for both); with no failed run, the sources of the ends it read. `killed` and `stopped_by_restart` are counted as ends (`run_ends`), never as errors. |
+
+The markers are pinned by fixtures in `tests/fixtures/tool-errors/` (with the expected ids in
+`expected.json`), and none is reinterpreted. A harness-flagged failure resolves to its launch
+through the same session, label and worktree links as a call, and moves with it when a later
+ledger row links its session.
+
+**Unknown is never 0.**
+
+- A harness with no pinned marker for a failure kind (omp, dsh-tui, Antigravity for `tool_error`;
+  Codex, omp, dsh-tui, Antigravity for `api_error`) is listed as `unsupported`: its failures of
+  that kind are unknown, and no row gives it a count.
+- `errors_from` and `api_errors_from` are where the recorded `tool_error` and `api_error` counts
+  start: the first sync of a meter that records each kind (logs read before it had those failures
+  skipped), or the start of the window on a new store. A window that starts before a kind's start
+  is `partial` for that kind, its count a lower bound. A sync by an older meter (after a
+  rollback) reads logs without recording that kind, so the next sync moves its start to its own
+  time: the gap is unknown.
+- A reset by that older meter (a wider `--days`, `--backfill`) empties the tables a failure's
+  bot, harness and repo are read from and leaves the failures. They are never read against
+  those tables again: `tool_error` and `api_error` are `not_recorded` until the next sync, which
+  drops them and starts `errors_from` and `api_errors_from` at its own time.
+- A launch whose end hc no longer listed when a sync next looked is `unknown` in `run_ends`, and
+  `run_failed` is then `partial`.
+- A store no sync of this meter has prepared is `not_recorded` (the report creates nothing), and
+  a window in which nothing ran, failed or opened is `no_data`: its counts and percentiles are
+  null.
+
+**Time to pull request** comes from `pr` rows Herdr appends to its `workers.jsonl` when it sees a
+branch's pull request open, merge or close: `{event: "pr", project, branch, task, pr, state,
+first_commit_at, opened_at, merged_at, closed_at, core, at}`. The meter asks no forge and reads
+no title, author or address from a row; the repo is derived from `project`, as a call's is from
+its folder. Per pull request the newest row (by `at`) gives the state, and a time it leaves out
+keeps the one an earlier row gave. Two clocks, in whole seconds:
+
+- from the branch's first commit: `to_open_s`, `to_merge_s`;
+- from the branch's first worker launch before that moment: `launch_to_open_s`,
+  `launch_to_merge_s`.
+
+Each branch gets a row (`pr`, `state`, the four durations). A branch with worker launches in the
+window and no pull request is `state: no_pr`, its durations null: it is counted in
+`branches_no_pr` and is in no percentile. p50 and p90 are nearest-rank, with their sample count
+`n` and null at `n = 0`, over the pull requests opened (the `to_open` clocks) or merged (the
+`to_merge` clocks) in the window: for all of them, per repo, and per (bot, role) that launched a
+worker on the branch before that moment. A branch several (bot, role) pairs worked on counts in
+each (`n_shared` says how many of `n`), so those groups are views, not a partition. A pull
+request with no such launch, or one whose launch recorded no role, is counted under
+`unattributed`, and `attribution` is then `partial`. `no_first_commit` and `no_launch` count the
+pull requests a clock has no sample for.
+
+The output holds repos, branches, pull request numbers, bots, roles, squads, harnesses, counts
+and seconds: never a tool name, argument, output, error text, session, folder or terminal. At
+most 50 failure rows, 50 bots, 50 repos and 200 branches are shown per window and the whole
+output stays under 64 KiB; what is cut is counted (`*_omitted`), and `truncated` says so. Exit
+codes are `coverage`'s.
 
 ## The summary doc
 

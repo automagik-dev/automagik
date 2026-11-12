@@ -1,6 +1,8 @@
 use std::process::ExitCode;
 use std::time::Duration;
 
+use meter::coverage;
+use meter::outcomes;
 use meter::query::{self, Located};
 use meter::store::{SCHEMA_VERSION, Store};
 use meter::sync::{self, Options, Outcome};
@@ -15,6 +17,9 @@ Usage:
   usagemeter query --repo HOST/OWNER/REPO --branch B [--branch B ...] --json
                    [--window d1|d7|d30] [--contract 1] [--stale-after SECONDS]
   usagemeter query --repo HOST/OWNER/REPO --by bot [--branch B ...] --json [...]
+  usagemeter query --repo HOST/OWNER/REPO --by task [--branch B ...] --json [...]
+  usagemeter coverage [--window d1|d7|d30 ...] [--repo HOST/OWNER/REPO ...] [--json]
+  usagemeter outcomes [--window d1|d7|d30 ...] [--repo HOST/OWNER/REPO ...] [--json]
   usagemeter --version
 
 sync      Read new harness usage (omp, Claude Code, Codex, dsh-tui, Antigravity) into the store and
@@ -37,6 +42,56 @@ query     Usage and estimated cost per branch of one repo, as the contract 1 env
           does; only sync refreshes the store. Capability meter.usage@1.
   --by bot        One row per bot (RFC 0021): bot, kind, role, squad and harness, from the
                   usage tied to a launch; any --branch is then a filter, and none is needed.
+  --by task       One row per task id (RFC 0018 M3, RFC 0021 D4): the task's usage and cost,
+                  with the launch tags that did the work in actors (bot, kind, role, squad,
+                  unrecorded, harness; keys past the row's bound are counted in actors_omitted,
+                  never cut). Any --branch is then a filter, and none is needed. A task id tied
+                  to more than one checkout of the repo is missing with reason task_ambiguous,
+                  and no checkout path is printed. A window with no task labels is an empty ok
+                  answer, and the branch row stays the fallback.
+coverage  The store's bot-tag coverage (RFC 0026 (a)): text by default, or one JSON record with
+          --json. Every window's counted usage splits into attributed, ambiguous, unlinked and
+          before_evidence, per repo (50 shown, the rest counted and summed) and per bot (50 shown,
+          the rest summed), with the old definition's frozen-tag residue beside the headline. It
+          opens the store read-only, as `status` does; only `sync` refreshes the store.
+outcomes  Recorded failures and time to pull request (issues 899 and 1026), per window: text by
+          default, or one JSON record with --json. Local and read-only like coverage; not
+          contract 1.
+          Failures are raw counts per bot, kind, role, squad, harness, error kind and source,
+          plus the unattributed by reason. They are counts of harness-flagged failures,
+          including expected ones (a red test run while working test-first, a grep with no
+          match) and usage-limit stops (written after a harness's own retries, so a count of
+          model calls that failed for the session, not each retried attempt):
+          not a quality verdict on their own, and no rate, label or score is printed.
+            tool_error (harness_log)  a tool result the harness itself flagged as failed.
+                Claude Code: a tool_result block with is_error: true, once per tool_use_id.
+                Codex: an item_completed event whose item has status failed or a non-zero
+                exit_code, once per item id. omp, dsh-tui and Antigravity have no pinned
+                marker: they are listed as unsupported, never counted as 0.
+            api_error (harness_log)   a model call the harness itself flagged as failed after
+                its own retries (model calls that failed for the session, not each retried
+                attempt, including usage-limit stops). Claude Code: a type assistant line
+                with top-level isApiErrorMessage: true, once per line uuid. Codex, omp,
+                dsh-tui and Antigravity have no pinned marker: they are listed as
+                unsupported, never counted as 0.
+            run_failed (hc_snapshot, workers_ledger)  a launch whose terminal ended on its
+                own with a non-zero exit status or on a signal: hc_snapshot when hc's list
+                of finished terminals says so, workers_ledger when an end row of Herdr's
+                workers ledger copied it. A window's total names the sources its failed
+                runs came from. killed and stopped_by_restart are counted as ends, never
+                as errors.
+          Time to pull request is in seconds on two clocks, from the pull requests Herdr
+          records in its workers ledger: from the branch's first commit (to_open_s,
+          to_merge_s) and from its first worker launch (launch_to_open_s, launch_to_merge_s),
+          per branch, and as nearest-rank p50 and p90 per repo and per (bot, role); n_shared
+          counts the samples of branches several (bot, role) pairs worked on. A branch with
+          worker launches and no pull request is no_pr, in no percentile.
+          Unknown is never 0: a window is partial when it starts before errors_from or
+          api_errors_from or a launch's end is unknown, not_recorded until a sync has
+          prepared the store, and no_data (counts and percentiles null) when nothing ran in
+          it. The output holds no tool name, argument, output, error text, session, folder
+          or terminal. Lists are capped (50 rows, 50 bots, 50 repos, 200 branches, 64 KiB),
+          the rest counted.
 
 The state lives in METER_STATE_DIR if set, else $AM_HOME/meter, else ~/.automagik/meter.
 The first sync moves the meter's files out of the pre-0.5.0 default directory.
@@ -48,7 +103,9 @@ the store was written by a newer meter (sync writes nothing to it). stderr says 
 
 Exit status of query: 0 answered, 1 error, 2 bad request, 10 no store, 11 no snapshot in time,
 12 store from a newer meter, 13 store needs sync to migrate it, 14 contract not served, 15 the
-answer is past the output cap.";
+answer is past the output cap.
+Exit status of coverage and outcomes: 0 reported, 1 error, 2 bad request, 10 no store, 11 no
+snapshot in time, 12 store from a newer meter, 13 store needs sync to migrate it.";
 
 /// `sync` did nothing because files in the state directory must be resolved by hand first.
 const EXIT_BLOCKED: u8 = 3;
@@ -391,6 +448,35 @@ fn cmd_status() -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
+fn cmd_coverage(args: &[String]) -> ExitCode {
+    reply(coverage::run(args, &query::Ctx::from_env()))
+}
+
+fn cmd_outcomes(args: &[String]) -> ExitCode {
+    reply(outcomes::run(args, &query::Ctx::from_env()))
+}
+
+/// A report's answer: stdout when it reported, stderr with why not otherwise.
+fn reply(a: coverage::Reply) -> ExitCode {
+    use std::io::Write;
+    let text = if a.stdout.is_empty() {
+        a.stderr.unwrap_or_default()
+    } else {
+        a.stdout
+    };
+    let written = if a.code == query::exit::OK {
+        let mut out = std::io::stdout().lock();
+        out.write_all(text.as_bytes()).and_then(|()| out.flush())
+    } else {
+        let mut err = std::io::stderr().lock();
+        err.write_all(text.as_bytes()).and_then(|()| err.flush())
+    };
+    if written.is_err() {
+        return ExitCode::from(query::exit::ERROR);
+    }
+    ExitCode::from(a.code)
+}
+
 fn cmd_query(args: &[String]) -> ExitCode {
     use std::io::Write;
     let a = query::run(args, &query::Ctx::from_env());
@@ -412,6 +498,8 @@ fn main() -> ExitCode {
     let r = match cmd.as_deref() {
         Some("sync") => cmd_sync(rest),
         Some("query") => return cmd_query(&rest),
+        Some("coverage") => return cmd_coverage(&rest),
+        Some("outcomes") => return cmd_outcomes(&rest),
         Some("status") if rest.is_empty() => cmd_status(),
         Some("status") => Err("status takes no options".into()),
         Some("--version" | "-V" | "version") => {

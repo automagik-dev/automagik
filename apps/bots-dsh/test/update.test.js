@@ -418,3 +418,21 @@ test('a note that cannot be read is warned about and deleted', async () => {
   assert.equal(existsSync(join(home, 'update.json')), false)
   rmSync(home, { recursive: true, force: true, maxRetries: 5 })
 })
+
+test('in the desktop app the source is the app before any check, and with the check switched off (#90)', async (t) => {
+  const before = { DS_BOT_APP: process.env.DS_BOT_APP, OMNI_CLIENT_ID: process.env.OMNI_CLIENT_ID }
+  t.after(() => { for (const [name, value] of Object.entries(before)) { if (value === undefined) delete process.env[name]; else process.env[name] = value } })
+  delete process.env.OMNI_CLIENT_ID
+  process.env.DS_BOT_APP = '1'
+  // The package's own profile patch switches the check off; the app still updates as a whole.
+  const { rt, fetched } = start({ source: `${PKG.name}@^${PKG.version}`, config: { updateCheck: false } })
+  assert.equal(rt.updateView().source, 'app')
+  const view = await rt.updateCheck({ fresh: true })
+  assert.equal(view.source, 'app')
+  assert.equal(view.enabled, false)
+  assert.equal(view.available, false)
+  assert.deepEqual(fetched, [])
+  // Outside the app nothing is known until a check has looked.
+  delete process.env.DS_BOT_APP
+  assert.equal(start({ source: `${PKG.name}@^${PKG.version}` }).rt.updateView().source, 'unknown')
+})

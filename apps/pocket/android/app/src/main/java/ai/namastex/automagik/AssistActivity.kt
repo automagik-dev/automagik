@@ -1,14 +1,9 @@
 package ai.namastex.automagik
 
-import android.Manifest
 import android.app.KeyguardManager
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
-import android.speech.RecognitionListener
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -20,7 +15,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.material.icons.outlined.Send
 import androidx.lifecycle.compose.LifecycleStartEffect
-import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -30,7 +24,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -120,7 +113,7 @@ class AssistActivity : ComponentActivity() {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     OutlinedTextField(text, { text = it }, Modifier.weight(1f), placeholder = { Text("Message ${chosen.terminal.title.ifBlank { chosen.terminal.agent }}") }, maxLines = 4)
                     Spacer(Modifier.width(6.dp))
-                    Dictate { heard -> text = if (text.isBlank()) heard else "$text $heard" }
+                    Dictate { heard -> text = dictated(text, heard) }
                     IconButton(enabled = text.isNotBlank(), onClick = {
                         val send = text.trim(); val ref = chosen.ref
                         scope.launch {
@@ -133,30 +126,4 @@ class AssistActivity : ComponentActivity() {
             }
         }
     }
-}
-
-/** The mic: Android's speech recognizer fills the message box. Hidden without the microphone permission (asked in Settings). */
-@Composable private fun Dictate(onHeard: (String) -> Unit) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED ||
-        !SpeechRecognizer.isRecognitionAvailable(context)) return
-    var listening by remember { mutableStateOf(false) }
-    val recognizer = remember { SpeechRecognizer.createSpeechRecognizer(context) }
-    DisposableEffect(Unit) { onDispose { recognizer.destroy() } }
-    IconButton(onClick = {
-        if (listening) { recognizer.stopListening(); return@IconButton }
-        recognizer.setRecognitionListener(object : RecognitionListener {
-            override fun onResults(results: Bundle?) { listening = false; results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()?.let(onHeard) }
-            override fun onError(error: Int) { listening = false }
-            override fun onReadyForSpeech(params: Bundle?) {}
-            override fun onBeginningOfSpeech() {}
-            override fun onRmsChanged(rmsdB: Float) {}
-            override fun onBufferReceived(buffer: ByteArray?) {}
-            override fun onEndOfSpeech() {}
-            override fun onPartialResults(partialResults: Bundle?) {}
-            override fun onEvent(eventType: Int, params: Bundle?) {}
-        })
-        recognizer.startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM))
-        listening = true
-    }) { Icon(Icons.Outlined.Mic, if (listening) "Stop listening" else "Speak", tint = if (listening) Blocked else Accent) }
 }

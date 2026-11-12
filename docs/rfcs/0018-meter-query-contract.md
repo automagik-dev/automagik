@@ -111,6 +111,18 @@ usagemeter query --repo <host/owner/repo> --branch <b> [--branch <b> ...] --json
 - **Rows by bot** (RFC 0021 (d)). `--by bot` answers one row per bot key, with
   `attribution.precision: actor_interval`, the branches named becoming an optional filter;
   without it, rows are by branch, as above.
+- **Rows by task** (M3, RFC 0021 D4). `--by task` answers one row per task id with task-labelled
+  usage in the repo and window, with `attribution.precision: task_interval`; the branches named
+  are an optional filter, as for bots. The row's `task` is the start row's task id, and its
+  `actors` names every launch tag (bot, kind, role, squad, unrecorded, harness) that did the work,
+  one entry per key, ordered like a bot row's key: a task answered by several bots or roles names
+  them all, never a guessed single one. A task id the meter ties to more than one checkout of the
+  repo (two genie projects of one remote, each minting short ids) is never summed: its row is
+  `missing` with `reason: task_ambiguous`, and the meter never prints a checkout path. The row's
+  numbers are evidence-backed, so the branch row stays the total. A window with no task labels is
+  an `ok` answer with `rows: []`, and the branch answer is unchanged, so a reader falls back to
+  it. The actor list is bounded with the row: keys past the bound are counted in
+  `actors_omitted`, never cut short.
 
 #### The envelope
 
@@ -133,8 +145,8 @@ never has to tell a v1 refusal from an old meter's error by stderr text. The sch
 | `unattributed` | usage in this repo and window with no branch, neither logged nor filled from the start row of the worker launch it resolves to (RFC 0021): `tokens_total` and `harnesses` (OMP's and dsh-tui's, whose logs carry none). Zero when there is none. |
 | `actor_unattributed` | RFC 0021 (d): the repo's usage in the window given to no bot (ambiguous, unlinked, before `evidence_from`), each part with its reason and harnesses. Present exactly when the meter reports actors; null on a refusal |
 | `pricing` | the table's `origin` (`bundled`, `override`, later `fetched`), `date`, `source`, `label`, `sha256` (of an override's bytes, null for the bundled table); `reported_wins` (always true); `long_prompt_tiers` (false until M4) |
-| `query` | the request echoed back: `repo`, `window`, `by` (RFC 0021: present only for `--by bot`), `branch_count` (duplicates counted), `branches` as given (duplicates kept), `branches_complete`, and `request_sha256` (the sha256 of the UTF-8 of `repo`, `window`, the line `by bot` for a bot query, and each branch in order, each followed by a line feed). A refusal caps the echo (below), and a repo past its 512 bytes is echoed cut at a whole character with `repo_complete: false`; `query` is null only when the arguments do not parse. |
-| `rows[]` | one per distinct branch named (below); for `--by bot`, bot rows instead (RFC 0021 (d)) |
+| `query` | the request echoed back: `repo`, `window`, `by` (present for `--by bot` or `--by task`, absent for branch rows), `branch_count` (duplicates counted), `branches` as given (duplicates kept), `branches_complete`, and `request_sha256` (the sha256 of the UTF-8 of `repo`, `window`, the line `by <by>` for a non-branch query, and each branch in order, each followed by a line feed). A refusal caps the echo (below), and a repo past its 512 bytes is echoed cut at a whole character with `repo_complete: false`; `query` is null only when the arguments do not parse. |
+| `rows[]` | one per distinct branch named (below); for `--by bot`, bot rows instead (RFC 0021 (d)); for `--by task`, task rows instead, one per task id with usage under the filter (M3) |
 
 On a refusal, `rows` and `sources` are empty and `as_of`, `ingestion`, `window`, `unattributed`,
 `actor_unattributed` when present, and `pricing` are null, whatever the meter read before it
@@ -151,11 +163,11 @@ A row:
 |---|---|
 | `branch`, `requested` | the branch, and how many times the call named it |
 | `state` | `measured`, `zero`, `missing`, `stale` or `unsupported` (next table) |
-| `reason` | why a row is not `measured` or `zero`: `repo_not_seen`, `window_before_counted_from`, `backlog`, `source_incomplete`, `branch_unattributed`, `ingestion_stale`, `source_unsupported` |
+| `reason` | why a row is not `measured` or `zero`: `repo_not_seen`, `window_before_counted_from`, `backlog`, `source_incomplete`, `branch_unattributed`, `ingestion_stale`, `source_unsupported`, and on a task row `task_ambiguous` (M3) |
 | `tokens` | `input`, `cache_read`, `cache_write_5m`, `cache_write_1h`, `output`, `reasoning` (inside `output`, never added; null when a harness that counted toward the row logs no reasoning split, dsh-tui today), `unsplit` (known only as a total), `total`. Every field is present, zeros included. Null when nothing was measured. |
 | `cost` | `state` (`priced`, `partial`, `unpriced`, `zero`); `usd` (the known part), `usd_reported` (what the harness reported), `usd_estimated` (from the table); `tokens_priced`, `tokens_reported`, `tokens_unpriced`, which add up to `tokens.total`; `unpriced_models`, and `unpriced_models_omitted`, how many the list leaves out past its 8 (always present, 0 when none is left out; above 0, the list holds all 8) |
 | `token_precision` | `exact`, `mixed` or `total_only` (Codex threads with no split) |
-| `attribution` | `precision`: `branch_window` on a branch row, the repo and branch total over the window (`actor_interval` is a bot row's, and `task_interval` M3's task row's, RFC 0021); `exclusive`: always false in v1; `shared`; `coverage`: `complete`, or `partial` while `unattributed` is above zero; `actor`, when the meter reports actors (RFC 0021 (d)) |
+| `attribution` | `precision`: `branch_window` on a branch row, the repo and branch total over the window (`actor_interval` is a bot row's, and `task_interval` a task row's, RFC 0021); `exclusive`: always false in v1; `shared`; `coverage`: `complete`, or `partial` while `unattributed` is above zero; `actor`, when the meter reports actors (RFC 0021 (d)) |
 | `activity` | `first_hour`, `last_hour`, `hours` (distinct hours with usage, not elapsed time), `harnesses` |
 | `incomplete_sources` | harnesses whose health means this row may undercount |
 
@@ -165,9 +177,15 @@ A row:
 |---|---|---|---|
 | `measured` | usage found in the window | tokens and cost, a lower bound while `coverage` is `partial` or `ingestion.complete` is false (a budget-stopped backlog, even with a fresh watermark) | the numbers, with `cost.state`; "at least" when `coverage` is `partial` or `complete` is false |
 | `zero` | nothing found, and the meter can vouch for it: the window is not clipped, the backlog is empty, ingestion is fresh, every source is `ok` or `absent`, the repo has usage somewhere in this store, and none of the repo's usage in the window lacks a branch | all zero, `cost.state: zero` | a real 0 |
-| `missing` | nothing found, but one of those conditions fails (`reason` says which; `branch_unattributed` for the last) | null | unknown |
-| `stale` | ingestion is older than `stale_after_s`, or has no watermark (a reset's re-import has not finished a run); this state comes before every other | what the store holds for the branch: the numbers as of the last sync, which are a lower bound while `ingestion.complete` is false (a re-import in progress); `tokens`, `cost`, `token_precision` and `activity` all null when it holds nothing for the branch | unknown, or the numbers labelled with their age ("at least" while `complete` is false) |
+| `missing` | nothing found, but one of those conditions fails (`reason` says which; `branch_unattributed` for the last). A task row is also `missing` with `task_ambiguous` when the meter ties its task id to more than one checkout of the repo (M3) | null | unknown |
+| `stale` | ingestion is older than `stale_after_s`, or has no watermark (a reset's re-import has not finished a run); this state comes before every other, except that a task row's ambiguity (below) wins over it | what the store holds for the branch: the numbers as of the last sync, which are a lower bound while `ingestion.complete` is false (a re-import in progress); `tokens`, `cost`, `token_precision` and `activity` all null when it holds nothing for the branch | unknown, or the numbers labelled with their age ("at least" while `complete` is false) |
 | `unsupported` | nothing found while a source on this machine is `unsupported` | null | unknown ("update needed") |
+
+A task row is the one exception to `stale` coming first: a task id the meter ties to more than
+one checkout of the repo is `missing` with `task_ambiguous` whatever the window's age, because
+the identity, not the freshness, is what cannot be known; its numbers are never shown as a stale
+lower bound. A task row that is not ambiguous is `stale` with its store-held numbers, like any
+other row (M3).
 
 Cost: `priced` when no token is unpriced; `partial` when some are, and `usd` is then a lower
 bound; `unpriced` when none is priced, and `usd`, `usd_reported` and `usd_estimated` are then
@@ -236,7 +254,7 @@ the output cap, which it checks before it prints:
 | Request | at most 500 branches, each at most 255 bytes of UTF-8, at most 64 KiB (65,536 bytes) for all names together, and a `--repo` of at most 512 bytes. Past any of these: exit 2 |
 | Echo | at most 2 × 64 KiB of names, plus 3 bytes per name and the repo: about 134 KiB |
 | Metadata | everything outside `query.branches` and `rows` is at most 16 KiB. Its strings are bounded (`error.message` 1,000 characters; source, label and reason 200) and the source list is short |
-| A row | at most 2.25 KiB (2,304 bytes): its escaped branch name, its fixed fields, its `attribution.actor` block with every count at the largest the meter prints, and `unpriced_models`, which keeps at most 8 names (the models with the most unpriced tokens). A name takes at most 40 bytes as JSON, its two quotes and any escapes included; a cut name ends with `…` (3 bytes), inside those 40. `tokens_unpriced` still counts every unpriced token, and `unpriced_models_omitted` says how many models were left out. A bot row (RFC 0021) has no branch name and its bot, role and squad are at most 64 characters each, so it is smaller. Amended by RFC 0021 delivery 6 (PR 875): the bound was 2 KiB before the actor block; the crate's budget test fills every actor count at 19 digits beside a 255-byte quoted branch and measures 2,104 bytes |
+| A row | at most 2.25 KiB (2,304 bytes): its escaped branch name, its fixed fields, its `attribution.actor` block with every count at the largest the meter prints, and `unpriced_models`, which keeps at most 8 names (the models with the most unpriced tokens). A name takes at most 40 bytes as JSON, its two quotes and any escapes included; a cut name ends with `…` (3 bytes), inside those 40. `tokens_unpriced` still counts every unpriced token, and `unpriced_models_omitted` says how many models were left out. A bot row (RFC 0021) has no branch name and its bot, role and squad are at most 64 characters each, so it is smaller. A task row (M3) has no branch name either; it keeps the actor keys that fit its bound and counts the rest in `actors_omitted`, so a task with many workers stays within it too, and its task id is at most 64 characters. Amended by RFC 0021 delivery 6 (PR 875): the bound was 2 KiB before the actor block; the crate's budget test fills every actor count at 19 digits beside a 255-byte quoted branch and measures 2,104 bytes |
 | A refusal | at most 8 KiB. Its echo keeps the leading names that fit in 4 KiB, cut at a whole name, with `branches_complete: false`, `branch_count` and `request_sha256`, so the reader can match the refusal to its request without a full echo |
 
 The echo and the metadata together stay under 150 KiB, so any request within the request bound
@@ -372,8 +390,8 @@ For those hours the branch-window total is still there, labelled as such.
 
 **Session ids stay machine-local.** They live only in the meter's state folder (mode 0600) and
 genie's machine-local capture ledger. They never enter git-tracked state, the `herdr-meter` doc,
-a query envelope (v1 rows are per branch or, RFC 0021, per bot; later task rows count
-sessions, they do not name them), or any telemetry target unless an operator names one.
+a query envelope (v1 rows are per branch, per bot or, M3, per task; a task row counts calls,
+it never names a session), or any telemetry target unless an operator names one.
 
 ### (c) The ownership map
 
@@ -415,7 +433,7 @@ or consumer side once the calculation has moved.
 | Card cost, work, lead, start | cost: meter (query v1, task cost at M3); time: meter (M2) | genie computes the S0 time fields until M2 removes them; the board formats | M1 to M3 |
 | Card ETA | meter (lifecycle): comparable merged samples, with the basis | genie's S0 formula until M2; the board presents it | M2 |
 | Bots and lead association | meter (attribution) for bot per session, from durable evidence | the lead stays on genie's task record; unknown stays unknown | M3 |
-| Observability annotations and waste | meter: token counts, context size, `waste_usd`, `total_usd` and their price table | behaviour scores (tool errors, interrupts, rework, polling, compactions) are not usage, cost or time and stay; delivery stays | M5 |
+| Observability annotations and waste | meter: token counts, context size, `waste_usd`, `total_usd` and their price table; raw counts of recorded run failures and harness-flagged tool and model-call failures (`usagemeter outcomes`, not contract 1) | behaviour scores (tool-error rate and labels, interrupts, rework, polling, compactions) stay in genie: they are not usage, cost or time; delivery stays | M5; counts: #899, #1026 |
 | Benchmark economics | meter: normalized cost, coverage, root and child dedupe, cost per accepted result | quality judgments stay with the bench | M5 |
 | Runtime budget and depth controls | meter: the price math, exported as a frozen table the runtime reads | enforcement stays in the executing runtime; a scanner cannot stop a run | M4 |
 | mikro usage across session files, PG, Langfuse | meter (mikro source) reads one canonical record and counts it once | the other copies are projections; their delivery stays with mikro | M5 |
@@ -428,6 +446,66 @@ journal is a producer M5 reads beside the wish ledger; mikro's facts, egress and
 are attempt provenance, not a bill, and stay with mikro; mikro's batch, benchmark and output
 totals are projections of usage that is counted once at its source; the board's and the DSH
 board's formatting are presentation and stay.
+
+**Recorded failures are counted by the meter; scoring them stays in genie (amended for #899 and
+#1026, acknowledged by genie).** `usagemeter outcomes` is a local, read-only verb like `coverage`.
+It is not contract 1, and it adds no field to the query envelope. It prints three raw counts, each
+a fact something else recorded, per launch tag (bot, kind, role, squad), harness, error kind,
+source and window, plus the unattributed by reason:
+
+- `tool_error` (source `harness_log`): harness-flagged tool failures, including expected ones. One
+  marker per harness, each pinned by a fixture in `meter/usagemeter/tests/fixtures/tool-errors/`
+  that genie's annotation test can read too:
+  - Claude Code: a `tool_result` block with `is_error: true`, counted once per `tool_use_id`.
+  - Codex: an `event_msg` whose payload is `item_completed` and whose item has
+    `status: "failed"` or an `exit_code` that is a non-zero integer, counted once per item `id`
+    in its thread (an item that holds both counts once).
+- `api_error` (source `harness_log`): harness-flagged model-call failures after the harness's own
+  retries (so it counts model calls that failed for the session, not each retried attempt,
+  including usage-limit stops), pinned in the same fixture folder:
+  - Claude Code: a top-level `type: "assistant"` line whose top-level `isApiErrorMessage` is the
+    JSON boolean `true`, counted once per top-level line `uuid`, and adds 0 tokens to usage
+    (a `<synthetic>` line, which `claude.rs` already ignores; never counted as a `tool_error`).
+  - Codex: `unsupported` until a rollout JSONL marker is pinned (rollouts currently persist no
+    error-type `event_msg`).
+- `run_failed` (source `hc_snapshot` or `workers_ledger`): a launch whose terminal ended on its
+  own with a non-zero exit status or on a signal. `hc_snapshot` when hc's list of finished
+  terminals records it; `workers_ledger` when hc no longer lists the terminal and an `end` row
+  of Herdr's workers ledger copied its reason, exit status and signal. A window's total names
+  the sources its failed runs came from. `killed` and `stopped_by_restart` are printed as end
+  counts, never as errors.
+
+The conditions it holds to:
+
+1. Counts only: integers. No rate, ratio, threshold, label, score or per-session figure.
+2. One marker definition per harness and failure kind, the ones above, never reinterpreted by a
+   reader.
+3. It is named as a fact wherever it is printed (`--help`, the README, the record's `note`): the
+   count includes expected failures (a red test run while working test-first, a grep with no
+   match) and usage-limit stops (written after a harness's own retries, so a count of model calls
+   that failed for the session, not each retried attempt) and is not a quality verdict on its own.
+4. Unknown is never 0: a harness with no pinned marker for a kind (omp, dsh-tui, Antigravity for
+   `tool_error`; Codex, omp, dsh-tui, Antigravity for `api_error`) is `unsupported`; a window
+   that starts before `errors_from` or `api_errors_from`, or one after a sync that recorded no
+   failures of that kind (an older meter, after a rollback), is `partial`; a store no sync has
+   prepared is `not_recorded`. Failures left behind by an older meter's reset are dropped by the
+   next sync, never counted: until then `tool_error` and `api_error` are `not_recorded`.
+5. No tool name, argument, output, error status or error text is stored or printed. The meter
+   stores no text of a failure: its session as a keyed hash and its folders as references to the
+   evidence's own folder rows, for re-attribution, kept for the evidence's retention; prints none
+   of them. A session and a folder are stored only as the evidence store already keeps them under
+   (b): the session and its parent as keyed hashes, the folders as ids of the folder rows interned
+   in `ev_cwd`, all pruned with the evidence (90 days or 1 GiB). They are there so a failure
+   follows its session when a later record links it, and no session, folder or terminal is ever
+   printed. Beside those a failure is kept as its time, harness, launch tag and a kind-prefixed
+   keyed hash of its id.
+6. It is not in the query envelope. A reader that wants a tool-error rate, a label or a score
+   computes it in genie, from these counts or from its own annotations.
+
+The same verb prints time to pull request on two clocks (the branch's first commit, and its
+first worker launch, to the pull request opened and merged), from `pr` rows Herdr appends to its
+workers ledger; that is elapsed time the meter reads, like a launch's start and end, and the
+lifecycle fields of M2 (`pr_lead_min`, `pr_open_min`) stay where this RFC puts them.
 
 ### (d) Upgrade, downgrade and the state-path move
 
@@ -608,9 +686,9 @@ genie's side of the boundary, built in genie and named here only so the order is
 
 - `envelope.schema.json`, the contract.
 - `repo-normalization.json`, the remote-to-`--repo` cases.
-- `examples/`, one envelope per case. RFC 0021's delivery 2 adds nine, listed there, which are
-  schema-only until its delivery 6: they validate and pass the crate's sum checks, but no meter
-  answer is compared with them while the crate writes none of their fields.
+- `examples/`, one envelope per case. RFC 0021's delivery 2 adds nine, listed there, and M3 adds
+  three task examples (`task-rows.json`, `task-ambiguous.json`, `task-no-labels.json`); the crate
+  now compares every one of them with the meter's own answer, so they are no longer schema-only.
 
 | Example | Case | Exit |
 |---|---|---|
@@ -619,6 +697,9 @@ genie's side of the boundary, built in genie and named here only so the order is
 | `missing-branch.json` | a window clipped by `counted_from`: one row `missing` | 0 |
 | `stale-source.json` | ingestion 30 hours old, Codex degraded for three days: rows `stale`, with the last known numbers, or all null for a branch with nothing found | 0 |
 | `ambiguous-branch.json` | one branch named by two cards: `requested: 2`, `shared: true` | 0 |
+| `task-rows.json` | `--by task`: two tasks, one worked by a dev and a reviewer, each row naming its actors | 0 |
+| `task-ambiguous.json` | `--by task`: one task id tied to two checkouts of the repo, `missing` with `task_ambiguous`, no checkout path | 0 |
+| `task-no-labels.json` | `--by task` with no task-labelled usage: `ok` with `rows: []`, the branch row a reader falls back to unchanged | 0 |
 | `zero-usage.json` | a vouched zero | 0 |
 | `unsupported-source.json` | an unreadable Codex schema: no zero can be vouched for | 0 |
 | `unattributed-branch.json` | healthy OMP usage in the repo with no branch: a partial Claude subset, and `missing` (`branch_unattributed`) instead of 0 | 0 |

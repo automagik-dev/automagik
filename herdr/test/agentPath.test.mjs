@@ -8,7 +8,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { agentOnMachine, besideDirs, envInterpreter, interpreterPath, loginPathAsk, loginPathOf, paneEnvOf, safe } from "../mods/am-sidebar/agentPath.mjs";
-import { workerArgs } from "../mods/am-sidebar/workers.js";
+import { KILL_GUARD_DIR, workerArgs } from "../mods/am-sidebar/workers.js";
 import { withoutBriefing } from "../mods/am-sidebar/models.js";
 import { readJsonLines } from "./log-lines.mjs";
 // Start and Restart put each bot's briefing in its agent's command (models.js withBriefing);
@@ -27,9 +27,11 @@ function scratch(t) {
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const empty = join(root, "empty");
   mkdirSync(empty);
+  const sys = join(root, "sys");
+  exe(join(sys, "uname"), "#!/bin/sh\necho Linux\n");
   // No nvm, no Homebrew, no ~/.bun unless a test makes one: the host's runtimes can't answer.
   const env = { HOME: join(root, "home"), NVM_DIR: join(root, "nvm"), AUTOMAGIK_HERDR_RUNTIME_DIRS: "" };
-  return { root, empty, env };
+  return { root, empty, sys, env };
 }
 
 /** npm's global layout: <prefix>/bin/codex -> ../lib/node_modules/@openai/codex/bin/codex.js, node beside. */
@@ -48,7 +50,9 @@ const pathOf = (path) => {
     agent: "codex", model: null, effort: null, argv: ["codex"], task: "do it", template: null, path });
   const argv = args.slice(args.indexOf("--") + 1);
   assert.equal(argv[0], "/usr/bin/env");
-  return argv[1].replace(/^PATH=/, "");
+  // #955: a worker of any agent but dsh-tui has the `hc kill` shim first; the rest is the PATH under test.
+  assert.ok(argv[1].startsWith(`PATH=${KILL_GUARD_DIR}:`), "the hc kill shim is first on the worker PATH");
+  return argv[1].slice(`PATH=${KILL_GUARD_DIR}:`.length);
 };
 
 test("envInterpreter: the word env runs, past -S, other flags and VAR=x; null for anything else", () => {
@@ -277,7 +281,7 @@ test("worker CLI: a codex the pane reaches without node starts under env PATH=<n
   const r = cli("worker", "fix it", "--branch", "feat/x");
   assert.equal(r.status, 0, r.stderr);
   const run = runCall();
-  assert.deepEqual(run.slice(run.indexOf("--") + 1, run.indexOf("--") + 4), ["/usr/bin/env", `PATH=${join(prefix, "bin")}:${path}:/usr/bin:/bin`, "codex"]);
+  assert.deepEqual(run.slice(run.indexOf("--") + 1, run.indexOf("--") + 4), ["/usr/bin/env", `PATH=${KILL_GUARD_DIR}:${join(prefix, "bin")}:${path}:/usr/bin:/bin`, "codex"]);
   assert.match(r.stderr, new RegExp(`automagik-herdr: codex runs under node, which isn't on its PATH: ${join(prefix, "bin")} put first on it\\.`));
 });
 
@@ -287,10 +291,10 @@ test("start CLI (#56): a codex bot whose node is only in nvm starts under env PA
   assert.equal(r.status, 0, r.stderr);
   const run = runCall();
   const argv = run.slice(run.indexOf("--") + 1);
-  assert.deepEqual(plain(argv), ["/usr/bin/env", `PATH=${join(prefix, "bin")}:${path}:/usr/bin:/bin`, `HERDR_APP_HOME=${app}`, "codex"]);
+  assert.deepEqual(plain(argv), ["/usr/bin/env", `PATH=${KILL_GUARD_DIR}:${join(prefix, "bin")}:${path}:/usr/bin:/bin`, `HERDR_APP_HOME=${app}`, "codex", "--approve-for-me", "--disable", "hooks"]);
   assert.match(argv[4], /^-c$/);
   assert.match(argv[5], /^developer_instructions="<herdr-bot>\\nAutomagik Herdr briefing/, "codex takes it as a TOML string");
-  assert.deepEqual(plain(JSON.parse(r.stdout).argv), ["codex"]);
+  assert.deepEqual(plain(JSON.parse(r.stdout).argv), ["codex", "--approve-for-me", "--disable", "hooks"]);
   assert.match(r.stderr, new RegExp(`automagik-herdr: codex runs under node, which isn't on its PATH: ${join(prefix, "bin")} put first on it\\.`));
   // The seat's command as hc would run it: with the caller's PATH alone, env finds no node (127); as started, it runs.
   const bare = spawnSync("codex", [], { env: { PATH: path }, encoding: "utf8" });
@@ -309,7 +313,7 @@ test("restart CLI (#56): restarting a codex bot whose node is only in nvm runs u
   assert.equal(JSON.parse(r.stdout).replaced, "t7");
   const run = runCall();
   const argv = run.slice(run.indexOf("--") + 1);
-  assert.deepEqual(plain(argv), ["/usr/bin/env", `PATH=${join(prefix, "bin")}:${path}:/usr/bin:/bin`, `HERDR_APP_HOME=${app}`, "codex", "resume", "--last"]);
+  assert.deepEqual(plain(argv), ["/usr/bin/env", `PATH=${KILL_GUARD_DIR}:${join(prefix, "bin")}:${path}:/usr/bin:/bin`, `HERDR_APP_HOME=${app}`, "codex", "--approve-for-me", "--disable", "hooks", "resume", "--last"]);
   assert.ok(argv.findIndex((w) => w.startsWith("developer_instructions=")) < argv.indexOf("resume"), "its -c before the subcommand");
   assert.equal(argv.filter((w) => w.startsWith("developer_instructions=")).length, 1, "never twice after a restart");
   const seat = spawnSync(argv[0], argv.slice(1), { env: {}, encoding: "utf8" });
@@ -321,7 +325,7 @@ test("restart CLI (#56): restarting a codex bot whose node is only in nvm runs u
 const LOGIN = new URL("./fake-login-shell", import.meta.url).pathname;
 /** agentOnMachine's exec, as hc exec runs a program there: a service's PATH (login.hc comes first on it), the machine's HOME. */
 const service = (s, login = {}) => async (command, args) => {
-  const r = spawnSync(command, args, { encoding: "utf8", env: { HOME: s.env.HOME, PATH: `${login.hc ? `${login.hc}:` : ""}/usr/bin:/bin`, SHELL: LOGIN,
+  const r = spawnSync(command, args, { encoding: "utf8", env: { HOME: s.env.HOME, PATH: `${login.hc ? `${login.hc}:` : ""}${s.sys}:/usr/bin:/bin`, SHELL: LOGIN,
     FAKE_LOGIN_PATH: login.path ?? "", FAKE_LOGIN_NOISE: login.noise ?? "", FAKE_LOGIN_EXIT: login.exit ?? "" } });
   return { code: r.status ?? -1, stdout: r.stdout, stderr: r.stderr };
 };
@@ -351,7 +355,7 @@ test("agentOnMachine: an agent hc's PATH doesn't find gets the login shell's PAT
   exe(join(tools, "codex"), "#!/bin/sh\n");
   mkdirSync(join(s.env.HOME, ".local/bin"), { recursive: true });
   const got = await agentOnMachine(service(s, { path: tools + ":/usr/bin:/bin" }), "codex");
-  assert.deepEqual(got, { state: "found", path: [tools, "/usr/bin", "/bin", join(s.env.HOME, ".local/bin")].join(":"), file: join(tools, "codex"), login: true });
+  assert.deepEqual(got, { state: "found", path: [tools, "/usr/bin", "/bin", s.sys, join(s.env.HOME, ".local/bin")].join(":"), file: join(tools, "codex"), login: true });
 });
 
 /** Which fakenode a PATH runs an agent under: what really runs, not what the check says. */
@@ -363,7 +367,7 @@ test("agentOnMachine: hc's PATH finds the agent and the login shell's shadows it
   exe(join(hc, "codex"), "#!/bin/sh\necho hc copy\n");
   exe(join(login, "codex"), "#!/usr/bin/env no-such-runtime\n");
   const got = await agentOnMachine(service(s, { hc, path: login + ":/usr/bin:/bin" }), "codex");
-  assert.deepEqual(got, { state: "found", path: [hc, "/usr/bin", "/bin", login].join(":"), file: join(hc, "codex"), login: true });
+  assert.deepEqual(got, { state: "found", path: [hc, s.sys, "/usr/bin", "/bin", login].join(":"), file: join(hc, "codex"), login: true });
   assert.equal(runs(got.path, "codex").stdout, "hc copy\n");
 });
 
@@ -386,7 +390,7 @@ test("agentOnMachine: an agent only the login shell finds stays login-first, so 
   exe(join(login, "codex"), "#!/usr/bin/env fakenode\n");
   exe(join(login, "fakenode"), "#!/bin/sh\necho login interpreter\n");
   const got = await agentOnMachine(service(s, { hc, path: login + ":/usr/bin:/bin" }), "codex");
-  assert.deepEqual(got, { state: "found", path: [login, "/usr/bin", "/bin", hc].join(":"), file: join(login, "codex"), login: true });
+  assert.deepEqual(got, { state: "found", path: [login, "/usr/bin", "/bin", hc, s.sys].join(":"), file: join(login, "codex"), login: true });
   assert.equal(runs(got.path, "codex").stdout, "login interpreter\n");
 });
 
@@ -398,7 +402,7 @@ test("agentOnMachine: an absolute agent hc can run keeps hc's PATH first; a logi
   exe(join(s.root, "own/codex"), "#!/bin/sh\n");
   const got = await agentOnMachine(service(s, { hc, path: odd + ":/usr/bin:/bin" }), join(s.root, "own/codex"));
   assert.equal(got.state, "found");
-  assert.deepEqual(got.path.split(":").slice(0, 4), [hc, "/usr/bin", "/bin", odd]);
+  assert.deepEqual(got.path.split(":").slice(0, 5), [hc, s.sys, "/usr/bin", "/bin", odd]);
   assert.equal(existsSync(canary), false);
 });
 
@@ -515,4 +519,30 @@ test("AGENT_PATH_SH: PATH_PREPEND folders with spaces, $, backticks and quotes a
   assert.equal(got.path.split(":")[0], odd, "the folder as it is, first");
   assert.equal(runs(got.path, "claude").stdout, "odd node\n");
   assert.equal(existsSync(canary), false, "nothing in it ran");
+});
+
+test("agentOnMachine (#1033): on Darwin, failing security show-keychain-info returns no-keychain; exit 0 returns found", async (t) => {
+  const s = scratch(t);
+  const hc = join(s.root, "hc-bin");
+  const denied = "security: SecKeychainCopySettings <NULL>: User interaction is not allowed.";
+  exe(join(hc, "codex"), "#!/bin/sh\n");
+  exe(join(hc, "uname"), "#!/bin/sh\necho Darwin\n");
+  exe(join(hc, "security"), `#!/bin/sh\nif [ "$1" = show-keychain-info ]; then\n  echo "${denied}" >&2\n  exit 36\nfi\nexit 2\n`);
+  assert.deepEqual(await agentOnMachine(service(s, { hc }), "codex"), {
+    state: "no-keychain",
+    detail: denied,
+    login: true,
+  });
+  assert.deepEqual(await agentOnMachine(service(s, { hc, exit: "1" }), "codex"), {
+    state: "no-keychain",
+    detail: denied,
+    login: false,
+  });
+  exe(join(hc, "security"), '#!/bin/sh\n[ "$1" = show-keychain-info ] && exit 0\nexit 2\n');
+  assert.deepEqual(await agentOnMachine(service(s, { hc }), "codex"), {
+    state: "found",
+    path: [hc, s.sys, "/usr/bin", "/bin"].join(":"),
+    file: join(hc, "codex"),
+    login: true,
+  });
 });

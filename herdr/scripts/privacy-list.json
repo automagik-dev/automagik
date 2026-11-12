@@ -71,58 +71,13 @@
     },
     {
       "file": "apps/pocket/android/app/src/test/java/ai/namastex/automagik/ProjectsTest.kt",
-      "text": "git@github.com",
-      "why": "a deliberate ProjectsTest fixture: a git remote URL"
-    },
-    {
-      "file": "apps/pocket/android/app/src/test/java/ai/namastex/automagik/ProjectsTest.kt",
       "text": "secret@github.com",
       "why": "a deliberate ProjectsTest fixture: a git remote URL with a placeholder credential"
     },
     {
       "file": "apps/pocket/android/app/src/test/java/ai/namastex/automagik/ProjectsTest.kt",
-      "text": "git@github.com",
-      "why": "a deliberate ProjectsTest fixture: a git remote URL"
-    },
-    {
-      "file": "apps/pocket/android/app/src/test/java/ai/namastex/automagik/ProjectsTest.kt",
-      "text": "secret@github.com",
-      "why": "a deliberate ProjectsTest fixture: a git remote URL with a placeholder credential"
-    },
-    {
-      "file": "apps/pocket/android/app/src/test/java/ai/namastex/automagik/ProjectsTest.kt",
-      "text": "git@github.com",
-      "why": "a deliberate ProjectsTest fixture: a git remote URL"
-    },
-    {
-      "file": "apps/pocket/android/app/src/test/java/ai/namastex/automagik/ProjectsTest.kt",
       "text": "/home/brain",
       "why": "a deliberate ProjectsTest fixture: a project path"
-    },
-    {
-      "file": "apps/pocket/android/app/src/test/java/ai/namastex/automagik/ProjectsTest.kt",
-      "text": "/home/brain",
-      "why": "a deliberate ProjectsTest fixture: a project path"
-    },
-    {
-      "file": "apps/pocket/android/app/src/test/java/ai/namastex/automagik/ProjectsTest.kt",
-      "text": "/home/brain",
-      "why": "a deliberate ProjectsTest fixture: a project path"
-    },
-    {
-      "file": "apps/pocket/android/app/src/test/java/ai/namastex/automagik/ProjectsTest.kt",
-      "text": "/home/brain",
-      "why": "a deliberate ProjectsTest fixture: a project path"
-    },
-    {
-      "file": "apps/pocket/android/app/src/test/java/ai/namastex/automagik/ProjectsTest.kt",
-      "text": "git@github.com",
-      "why": "a deliberate ProjectsTest fixture: a git remote URL"
-    },
-    {
-      "file": "apps/pocket/android/app/src/test/java/ai/namastex/automagik/ProjectsTest.kt",
-      "text": "git@github.com",
-      "why": "a deliberate ProjectsTest fixture: a git remote URL"
     },
     {
       "file": "apps/pocket/android/app/src/main/java/ai/namastex/automagik/PocketViewModel.kt",
@@ -347,7 +302,7 @@
     {
       "file": "server/secrecy-allowlist.json",
       "text": "/home/cloudtest",
-      "why": "a documented example path in a vendored package, not a host account"
+      "why": "a vendored binary's build account, not a host account"
     },
     {
       "file": "server/secrecy-allowlist.json",
@@ -362,7 +317,7 @@
     {
       "file": "server/secrecy-allowlist.json",
       "text": "/home/pwuser",
-      "why": "a documented example path in a vendored package, not a host account"
+      "why": "a vendored package's container user, not a host account"
     },
     {
       "file": "server/secrecy-allowlist.json",
@@ -372,7 +327,7 @@
     {
       "file": "server/secrecy-allowlist.json",
       "text": "/home/web_user",
-      "why": "a documented example path in a vendored package, not a host account"
+      "why": "a vendored runtime's default user, not a host account"
     },
     {
       "file": "server/secrecy-allowlist.json",
@@ -386,8 +341,18 @@
     },
     {
       "file": "server/test/secrecy.test.mjs",
-      "text": "-----BEGIN PRIVATE KEY-----",
-      "why": "a PEM header fixture, not key material"
+      "text": "['private-key', `-----BEGIN PRIVATE KEY-----",
+      "why": "the PEM header of the private-key rule's fixture row, not key material"
+    },
+    {
+      "file": "server/test/secrecy.test.mjs",
+      "text": "'opt/leak/label.txt', '-----BEGIN PRIVATE KEY-----",
+      "why": "the PEM header of an empty fixture key file, not key material"
+    },
+    {
+      "file": "server/test/secrecy.test.mjs",
+      "text": "write(dir, file, `-----BEGIN PRIVATE KEY-----",
+      "why": "the PEM header of the fixture key files the test writes, not key material"
     },
     {
       "file": "server/test/secrecy.test.mjs",

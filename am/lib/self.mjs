@@ -34,7 +34,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 // removePath: rmSync that unlinks a link (live or dangling) and never follows it (#550).
 import { removePath } from "../layoutSafe.mjs";
-import { amPartEntryPath, amPartRunnerPath, hookTargetOf, stableBriefingPath } from "../briefingText.mjs";
+import { hookDoctorLine } from "../briefingText.mjs";
 import { LANE_RELEASE, PART, POINTER, RELEASES, REPOSITORY, SIGNATURE, VERSION, sequenceOf, verifyPointer } from "./lane.mjs";
 
 /** This am's own folder (the extract it runs from). */
@@ -408,26 +408,16 @@ async function fetchAndPlace({ env, keys, fetch, store, pointer }) {
 }
 
 /**
- * The briefing a project's hook runs (installHook writes <project>/.claude/settings.local.json):
- * { file, target } (target: hookTargetOf's { kind, script, runner }, or null for none), or
- * { file, error }. Read only.
+ * A project's settings.local.json, read only (installHook writes its briefing hook): { file, text }
+ * (text null when the file isn't there) or { file, readError } when it can't be read.
  */
-function briefingHookOf(project, appHome) {
+function projectSettings(project) {
   const file = join(project, ".claude", "settings.local.json");
-  let text;
-  try { text = readFileSync(file, "utf8"); } catch (e) { return e.code === "ENOENT" ? { file, target: null } : { file, error: `unreadable (${e.message})` }; }
-  let settings;
-  try { settings = JSON.parse(text); } catch (e) { return { file, error: `not valid JSON (${e.message})` }; }
-  const list = settings?.hooks?.UserPromptSubmit;
-  for (const group of Array.isArray(list) ? list : []) {
-    for (const h of Array.isArray(group?.hooks) ? group.hooks : []) {
-      if (typeof h?.command !== "string") continue;
-      const target = hookTargetOf(h.command, { appHome });
-      if (target) return { file, target };
-    }
+  try { return { file, text: readFileSync(file, "utf8"), readError: null }; } catch (e) {
+    return e.code === "ENOENT" ? { file, text: null, readError: null } : { file, text: null, readError: e.message };
   }
-  return { file, target: null };
 }
+const isFile = (path) => { try { return statSync(path).isFile(); } catch { return false; } };
 
 /**
  * am's doctor lines ({ part, check, ok, detail, fix }) and its exit code: 0 healthy, 1 broken.
@@ -460,22 +450,10 @@ export function doctorSelf({ env = process.env, project = process.cwd() } = {}) 
   // Which briefing this project's hook runs (installHook writes .claude/settings.local.json): the
   // pack's stable or direct entry, am's own entry on a CLI-only host, or none, said plainly when
   // neither is installed. The hook command itself is what the person's Claude Code runs.
-  const amEntry = amPartEntryPath(store), amRunner = amPartRunnerPath(store);
-  const amThere = existsSync(amEntry) && existsSync(amRunner);
-  const packThere = existsSync(stableBriefingPath(appHomeOf(env))) || ["am-sidebar", "spaces-agents"].some((m) => existsSync(join(appHomeOf(env), "mods", m, "briefing.mjs")));
-  const hook = briefingHookOf(project, appHomeOf(env));
-  if (hook.error) {
-    lines.push(line("briefing hook", false, `${hook.file} is ${hook.error}`, null));
-  } else if (!hook.target) {
-    const neither = !packThere && !amThere;
-    lines.push(line("briefing hook", !neither, `none: ${hook.file} has no briefing hook${neither ? `; neither the pack's entry (${stableBriefingPath(appHomeOf(env))}) nor am's entry (${amEntry}) is installed` : ""}`,
-      "am self install (or the pack's installer) writes one for a project's Claude bot"));
-  } else {
-    const kind = hook.target.kind === "am-part" ? "am's entry" : hook.target.kind === "pack-stable" ? "the pack's stable entry" : "the pack's direct entry";
-    const ok = hook.target.kind === "am-part" ? existsSync(hook.target.script) && existsSync(hook.target.runner) : existsSync(hook.target.script);
-    lines.push(line("briefing hook", ok, ok ? `${kind} (${hook.target.script}) in ${hook.file}` : `${kind} (${hook.target.script}), named in ${hook.file}, is missing`,
-      hook.target.kind === "am-part" ? "am self install" : "reinstall the pack"));
-  }
+  // hookDoctorLine is the pack doctor's too, so the two say it the same way; a settings file that
+  // can't be read is that project's state, reported without failing am's doctor.
+  const hook = hookDoctorLine({ ...projectSettings(project), appHome: appHomeOf(env), amStore: store, isFile });
+  lines.push(line("briefing hook", hook.ok, hook.detail, hook.repair === "am" ? "am self install" : "reinstall the pack"));
   const keys = ownKeys(existsSync(current) ? current : OWN_DIR);
   // Not a fault of this machine: until a release ships am's key, am only cannot update itself.
   lines.push(line("am-lane keys", true, keys.length ? keys.map((k) => k.keyId).join(", ") : "am-keys.json lists no key yet: am cannot update itself until a release ships one"));

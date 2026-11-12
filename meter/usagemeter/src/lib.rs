@@ -4,10 +4,12 @@
 //!
 //! Nothing here opens a network connection; the only process it talks to is the local `hc`.
 
+pub mod coverage;
 pub mod event;
 pub mod evidence;
 pub mod hc;
 pub mod ledger;
+pub mod outcomes;
 pub mod paths;
 pub mod prices;
 pub mod query;

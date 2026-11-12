@@ -174,6 +174,10 @@ pub struct Start<'a> {
     pub agent: &'a str,
     pub worktree: &'a str,
     pub branch: Option<&'a str>,
+    /// Genie's short task id (`--task`), else None; a seat never records one.
+    pub task: Option<&'a str>,
+    /// The main checkout the launch recorded: the task key's second half. None: [`ROOT`].
+    pub project: Option<&'a str>,
     pub created: i64,
     pub session: Option<&'a str>,
     pub core: &'a str,
@@ -184,11 +188,12 @@ impl Start<'_> {
         let mut v = serde_json::json!({
             "event": "start", "kind": self.kind, "terminal": self.terminal, "botId": self.bot,
             "worktree": self.worktree, "agent": self.agent, "branch": self.branch,
-            "project": ROOT, "lead": null, "core": self.core, "created_ms": self.created,
-            "session": self.session, "at": format_rfc3339(self.created + 5_000)
+            "project": self.project.unwrap_or(ROOT), "lead": null, "core": self.core,
+            "created_ms": self.created, "session": self.session,
+            "at": format_rfc3339(self.created + 5_000)
         });
         if self.kind == "worker" {
-            v["task"] = serde_json::json!(null);
+            v["task"] = serde_json::json!(self.task);
         }
         if let Some(r) = self.role {
             v["role"] = serde_json::json!(r);
@@ -221,6 +226,8 @@ pub fn worker<'a>(
         agent,
         worktree,
         branch: Some(branch),
+        task: None,
+        project: None,
         created,
         session: None,
         core: MACHINE,
@@ -689,6 +696,17 @@ pub fn args(by_bot: bool, branches: &[&str]) -> Vec<String> {
     if by_bot {
         v.extend(["--by".to_string(), "bot".to_string()]);
     }
+    for b in branches {
+        v.extend(["--branch".to_string(), b.to_string()]);
+    }
+    v.push("--json".into());
+    v
+}
+
+/// The request: `--by task`, each branch named, `--json`.
+pub fn task_args(branches: &[&str]) -> Vec<String> {
+    let mut v = vec!["--repo".to_string(), REPO.to_string()];
+    v.extend(["--by".to_string(), "task".to_string()]);
     for b in branches {
         v.extend(["--branch".to_string(), b.to_string()]);
     }
@@ -1298,6 +1316,197 @@ pub fn no_evidence() -> Scene {
     s
 }
 
+/// `task-rows.json`: one task worked by two bots and roles (a dev on Claude Code, named by its
+/// session, and a reviewer on Codex, found by its worktree), and a second task worked by the dev
+/// bot alone. Every id, bot, path and number here is made up.
+pub fn tasks() -> Scene {
+    let mut s = Scene::migrated("2026-09-11T23:30:00Z", &[]);
+    let (c1, c2, c3) = (
+        t("2026-10-20T09:00:00Z"),
+        t("2026-10-21T09:00:00Z"),
+        t("2026-10-22T09:00:00Z"),
+    );
+    let (d41, r41, d42) = (wt("gn-41"), wt("gn-41-review"), wt("gn-42"));
+    s.start(Start {
+        task: Some("gn-41"),
+        session: Some("s-kite-41"),
+        ..worker(
+            "t41",
+            "kite",
+            "dev",
+            "lark",
+            "claude",
+            &d41,
+            "feat/gn-41-pager",
+            c1,
+        )
+    });
+    s.start(Start {
+        task: Some("gn-41"),
+        ..worker(
+            "t42",
+            "heron",
+            "review",
+            "lark",
+            "codex",
+            &r41,
+            "feat/gn-41-pager",
+            c2,
+        )
+    });
+    s.start(Start {
+        task: Some("gn-42"),
+        session: Some("s-kite-42"),
+        ..worker(
+            "t43",
+            "kite",
+            "dev",
+            "lark",
+            "claude",
+            &d42,
+            "feat/gn-42-cache",
+            c3,
+        )
+    });
+    s.add(
+        Usage::new(
+            H::Claude,
+            "s-kite-41",
+            &d41,
+            Some("feat/gn-41-pager"),
+            hours("2026-10-22T09:00:00Z", "2026-11-06T18:00:00Z", 5),
+        )
+        .tokens([100000, 2000000, 150000, 0, 50000, 10000])
+        .cheap(HAIKU, [10, 100, 0, 0, 500, 0]),
+    );
+    s.add(
+        Usage::new(
+            H::Codex,
+            "th-heron-41",
+            &r41,
+            Some("feat/gn-41-pager"),
+            hours("2026-10-25T09:00:00Z", "2026-11-05T18:00:00Z", 4),
+        )
+        .model(SOL)
+        .tokens([30000, 250000, 0, 0, 15000, 5000])
+        .cheap(TERRA, [3000, 0, 0, 0, 0, 0]),
+    );
+    s.add(
+        Usage::new(
+            H::Claude,
+            "s-kite-42",
+            &d42,
+            Some("feat/gn-42-cache"),
+            hours("2026-10-27T09:00:00Z", "2026-11-07T18:00:00Z", 3),
+        )
+        .tokens([50000, 900000, 60000, 0, 25000, 4000]),
+    );
+    s.sync();
+    s
+}
+
+/// `task-ambiguous.json`: the same short task id minted in two checkouts of one repository. The
+/// meter can tell them apart only by the launch's project, never prints either path, and never
+/// sums them: the row is missing with task_ambiguous (RFC 0021 D4).
+pub fn tasks_ambiguous() -> Scene {
+    let mut s = Scene::migrated("2026-09-11T23:30:00Z", &[]);
+    let other = format!("{ROOT}-copy");
+    let a = wt("gn-51");
+    let b = format!("{other}/.worktrees/gn-51");
+    let (c1, c2) = (t("2026-10-24T09:00:00Z"), t("2026-10-25T09:00:00Z"));
+    s.start(Start {
+        task: Some("gn-51"),
+        project: Some(ROOT),
+        session: Some("s-kite-51a"),
+        ..worker(
+            "t51",
+            "kite",
+            "dev",
+            "lark",
+            "claude",
+            &a,
+            "feat/gn-51-a",
+            c1,
+        )
+    });
+    s.start(Start {
+        task: Some("gn-51"),
+        project: Some(&other),
+        session: Some("s-kite-51b"),
+        ..worker(
+            "t52",
+            "kite",
+            "dev",
+            "lark",
+            "claude",
+            &b,
+            "feat/gn-51-b",
+            c2,
+        )
+    });
+    s.add(
+        Usage::new(
+            H::Claude,
+            "s-kite-51a",
+            &a,
+            Some("feat/gn-51-a"),
+            hours("2026-10-28T09:00:00Z", "2026-11-05T18:00:00Z", 3),
+        )
+        .tokens([40000, 600000, 30000, 0, 20000, 3000]),
+    );
+    s.add(
+        Usage::new(
+            H::Claude,
+            "s-kite-51b",
+            &b,
+            Some("feat/gn-51-b"),
+            hours("2026-10-29T09:00:00Z", "2026-11-06T18:00:00Z", 3),
+        )
+        .tokens([30000, 500000, 20000, 0, 15000, 2000]),
+    );
+    s.sync();
+    s
+}
+
+/// One worker in one worktree with one call, the same store whichever way: the branch answer
+/// must not move when the worker records a task. `None` is `task-no-labels.json`.
+pub fn task_fallback(task: Option<&str>) -> Scene {
+    let mut s = Scene::migrated("2026-09-11T23:30:00Z", &[]);
+    let w = wt("gn-60");
+    let c = t("2026-10-26T09:00:00Z");
+    s.start(Start {
+        task,
+        session: Some("s-kite-60"),
+        ..worker(
+            "t60",
+            "kite",
+            "dev",
+            "lark",
+            "claude",
+            &w,
+            "feat/gn-60-plain",
+            c,
+        )
+    });
+    s.add(
+        Usage::new(
+            H::Claude,
+            "s-kite-60",
+            &w,
+            Some("feat/gn-60-plain"),
+            hours("2026-10-28T09:00:00Z", "2026-11-06T18:00:00Z", 4),
+        )
+        .tokens([40000, 700000, 50000, 0, 20000, 4000]),
+    );
+    s.sync();
+    s
+}
+
+/// `task-no-labels.json`: usage attributed to a bot whose worker recorded no task.
+pub fn tasks_no_labels() -> Scene {
+    task_fallback(None)
+}
+
 /// The example `name`'s answer, from its store; None for an example no scene builds.
 pub fn answer(name: &str) -> Option<(u8, String)> {
     Some(match name {
@@ -1314,6 +1523,9 @@ pub fn answer(name: &str) -> Option<(u8, String)> {
         "actor-no-evidence" => {
             no_evidence().query(&args(false, &["feat/gn-12-cache", "docs/gn-90-readme"]))
         }
+        "task-rows" => tasks().query(&task_args(&["feat/gn-41-pager", "feat/gn-42-cache"])),
+        "task-ambiguous" => tasks_ambiguous().query(&task_args(&["feat/gn-51-a", "feat/gn-51-b"])),
+        "task-no-labels" => tasks_no_labels().query(&task_args(&["feat/gn-60-plain"])),
         _ => return None,
     })
 }
