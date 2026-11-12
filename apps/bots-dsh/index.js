@@ -52,6 +52,7 @@ import * as dshUpdate from './src/host/dsh-update.js'
 import * as thinking from './src/host/thinking.js'
 import * as fallback from './src/host/fallback.js'
 import * as channel from './src/host/channel.js'
+import * as agentSpace from './src/host/agent-space.js'
 import * as feed from './src/host/feed.js'
 import * as appManifest from './src/host/app-manifest.js'
 import * as pocketChat from './src/host/pocket-chat.js'
@@ -70,7 +71,7 @@ const MODULES = [
   turns, handoffs, requests, delivery, roster, folders, agents, toolDeny, prompt, timeContext,
   tools, chatIndex, groups, approvals, resume, memory, parts, fallback, modelState, modelAccessHooks, cliLogin, images, imagegen,
   avatarLibrary, secrets, connectors, capabilities, schedules, browser, browserPlugins, usage,
-  update, dshUpdate, thinking, feed, channel, appManifest, pocketChat,
+  update, dshUpdate, thinking, agentSpace, feed, channel, appManifest, pocketChat,
 ]
 
 // Other Omni plugins inject the runtime as `omniTeam` and add to it through rt.hooks

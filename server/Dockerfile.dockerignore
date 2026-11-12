@@ -7,3 +7,4 @@
 !apps/desktop/runtime/patches/**
 !apps/desktop/scripts/prune-runtime.mjs
 !apps/desktop/scripts/runtime-patches.mjs
+server/node_modules

@@ -8975,16 +8975,8 @@ var PT_BR = {
   "Omni on this computer": "Omni neste computador",
   "Your Omni on this PC": "Seu Omni neste PC",
   "Omni on this PC": "Omni neste PC",
-  "Your Omni on your Linux server": "Seu Omni no seu servidor Linux",
-  "Omni on your Linux server": "Omni no seu servidor Linux",
-  "Your Omni on your Mac": "Seu Omni no seu Mac",
-  "Omni on your Mac": "Omni no seu Mac",
-  "Your Omni on your Windows PC": "Seu Omni no seu PC com Windows",
-  "Omni on your Windows PC": "Omni no seu PC com Windows",
-  "Your Omni on your server": "Seu Omni no seu servidor",
-  "Omni on your server": "Omni no seu servidor",
-  "Your Omni on DSH's computer": "Seu Omni no computador do DSH",
-  "Omni on DSH's computer": "Omni no computador do DSH",
+  "Your Omni on the computer this workspace runs on": "Seu Omni no computador onde este workspace funciona",
+  "Omni on the computer this workspace runs on": "Omni no computador onde este workspace funciona",
   "port {port}": "porta {port}",
   "saved in your Omni CLI": "salvo na sua CLI do Omni",
   "Not answering right now.": "Não está respondendo agora.",
@@ -8996,21 +8988,13 @@ var PT_BR = {
   "Already on this Mac": "Já está neste Mac",
   "Already on this computer": "Já está neste computador",
   "Already on this PC": "Já está neste PC",
-  "Already on your Linux server": "Já está no seu servidor Linux",
-  "Already on your Mac": "Já está no seu Mac",
-  "Already on your Windows PC": "Já está no seu PC com Windows",
-  "Already on your server": "Já está no seu servidor",
-  "Already on DSH's computer": "Já está no computador do DSH",
+  "Already on the computer this workspace runs on": "Já está no computador onde este workspace funciona",
   "Saved in your Omni CLI": "Salvo na sua CLI do Omni",
-  "Run Omni on this Mac": "Rodar o Omni neste Mac",
-  "Run Omni on this computer": "Rodar o Omni neste computador",
-  "Run Omni on this PC": "Rodar o Omni neste PC",
-  "Run Omni on your Linux server": "Rodar o Omni no seu servidor Linux",
-  "Run Omni on your Mac": "Rodar o Omni no seu Mac",
-  "Run Omni on your Windows PC": "Rodar o Omni no seu PC com Windows",
-  "Run Omni on your server": "Rodar o Omni no seu servidor",
-  "Run Omni on DSH's computer": "Rodar o Omni no computador do DSH",
-  "A private Omni of its own, set up for you": "Um Omni privado, só seu, configurado para você",
+  "Install Omni here": "Instalar o Omni aqui",
+  "On this Mac": "Neste Mac",
+  "On this PC": "Neste PC",
+  "On this computer": "Neste computador",
+  "On the computer this workspace runs on": "No computador onde este workspace funciona",
   "An Omni somewhere else": "Um Omni em outro lugar",
   "On a server, or the link Omni sent you": "Em um servidor, ou o link que o Omni enviou para você",
   "Where your Omni is": "Onde está seu Omni",
@@ -10793,29 +10777,43 @@ var around = (text, name, node) => {
   return [before, node, after];
 };
 var titleIn = (omni, choice) => omni.source === "sandbox" ? choice.title.charAt(0).toLowerCase() + choice.title.slice(1) : choice.title;
-var HERE = { at: "here", os: "other" };
-function placeOf(where = HERE) {
-  const os2 = where?.os;
-  if (where?.at === "remote") {
-    switch (os2) {
-      case "linux":
-        return { sandbox: t("Your Omni on your Linux server"), local: t("Omni on your Linux server"), already: t("Already on your Linux server"), run: t("Run Omni on your Linux server") };
-      case "macos":
-        return { sandbox: t("Your Omni on your Mac"), local: t("Omni on your Mac"), already: t("Already on your Mac"), run: t("Run Omni on your Mac") };
-      case "windows":
-        return { sandbox: t("Your Omni on your Windows PC"), local: t("Omni on your Windows PC"), already: t("Already on your Windows PC"), run: t("Run Omni on your Windows PC") };
-      default:
-        return { sandbox: t("Your Omni on your server"), local: t("Omni on your server"), already: t("Already on your server"), run: t("Run Omni on your server") };
-    }
+var WORKSPACE = { at: "unknown" };
+function placeOf(where = WORKSPACE) {
+  const install = { run: t("Install Omni here") };
+  if (where?.at !== "here") {
+    return {
+      ...install,
+      sandbox: t("Your Omni on the computer this workspace runs on"),
+      local: t("Omni on the computer this workspace runs on"),
+      already: t("Already on the computer this workspace runs on"),
+      on: t("On the computer this workspace runs on")
+    };
   }
-  if (where?.at === "unknown") return { sandbox: t("Your Omni on DSH's computer"), local: t("Omni on DSH's computer"), already: t("Already on DSH's computer"), run: t("Run Omni on DSH's computer") };
-  switch (os2) {
+  switch (where.os) {
     case "macos":
-      return { sandbox: t("Your Omni on this Mac"), local: t("Omni on this Mac"), already: t("Already on this Mac"), run: t("Run Omni on this Mac") };
+      return {
+        ...install,
+        sandbox: t("Your Omni on this Mac"),
+        local: t("Omni on this Mac"),
+        already: t("Already on this Mac"),
+        on: t("On this Mac")
+      };
     case "windows":
-      return { sandbox: t("Your Omni on this PC"), local: t("Omni on this PC"), already: t("Already on this PC"), run: t("Run Omni on this PC") };
+      return {
+        ...install,
+        sandbox: t("Your Omni on this PC"),
+        local: t("Omni on this PC"),
+        already: t("Already on this PC"),
+        on: t("On this PC")
+      };
     default:
-      return { sandbox: t("Your Omni on this computer"), local: t("Omni on this computer"), already: t("Already on this computer"), run: t("Run Omni on this computer") };
+      return {
+        ...install,
+        sandbox: t("Your Omni on this computer"),
+        local: t("Omni on this computer"),
+        already: t("Already on this computer"),
+        on: t("On this computer")
+      };
   }
 }
 var hostOf = (url) => {
@@ -10832,7 +10830,7 @@ var portOf = (url) => {
     return "";
   }
 };
-function foundChoice(omni, { where = HERE } = {}) {
+function foundChoice(omni, { where = WORKSPACE } = {}) {
   const place = placeOf(where);
   const title = omni.source === "sandbox" ? place.sandbox : omni.local ? place.local : hostOf(omni.url);
   const port = omni.local ? portOf(omni.url) : "";
@@ -11091,7 +11089,7 @@ var ICONS = {
   remote: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20m0 2c1.1 1.4 2 3.8 2.2 7H9.8c.2-3.2 1.1-5.6 2.2-7M4.1 13h3.7c.1 2.4.7 4.6 1.6 6.1A8 8 0 0 1 4.1 13m12.1 0h3.7a8 8 0 0 1-5.3 6.1c.9-1.5 1.5-3.7 1.6-6.1M4.1 11a8 8 0 0 1 5.3-6.1C8.5 6.4 7.9 8.6 7.8 11zm12.1 0c-.1-2.4-.7-4.6-1.6-6.1a8 8 0 0 1 5.3 6.1zM9.8 13h4.4c-.2 3.2-1.1 5.6-2.2 7-1.1-1.4-2-3.8-2.2-7"
 };
 var Icon = ({ name }) => (0, import_react6.createElement)("svg", { viewBox: "0 0 24 24", "aria-hidden": true }, (0, import_react6.createElement)("path", { d: ICONS[name], fill: "currentColor" }));
-function destinyOf(omnis = [], { where = HERE, newOmni = true } = {}) {
+function destinyOf(omnis = [], { where = WORKSPACE, newOmni = true } = {}) {
   const place = placeOf(where);
   const rows = omnis.map((omni) => ({ omni, choice: foundChoice(omni, { where }) }));
   const tiles = rows.filter((row) => row.choice.action).map(({ omni, choice }) => ({
@@ -11101,7 +11099,9 @@ function destinyOf(omnis = [], { where = HERE, newOmni = true } = {}) {
     title: choice.action === "use" ? t("Use {omni}", { omni: titleIn(omni, choice) }) : t("Connect {omni}", { omni: titleIn(omni, choice) }),
     sub: choice.sub || (omni.local ? place.already : t("Saved in your Omni CLI"))
   }));
-  if (newOmni && !rows.some((row) => row.omni.source === "sandbox")) tiles.push({ id: "local", icon: "sandbox", title: place.run, sub: t("A private Omni of its own, set up for you") });
+  if (newOmni && !rows.some((row) => row.omni.source === "sandbox")) {
+    tiles.push({ id: "local", icon: "sandbox", title: place.run, sub: place.on });
+  }
   tiles.push({ id: "remote", icon: "remote", title: t("An Omni somewhere else"), sub: t("On a server, or the link Omni sent you") });
   return { tiles, waiting: rows.filter((row) => !row.choice.action).map((row) => row.choice) };
 }

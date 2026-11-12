@@ -1,5 +1,8 @@
 // Client channel: the team view the browser renders, and the POST /api/bot endpoints.
 import { randomUUID } from 'node:crypto'
+import { createSpaceReads } from './agent-space.js'
+import { AsyncLocalStorage } from 'node:async_hooks'
+import { MCP_PATH, AGENT_TOOLS, botConfig, roomConfig, createAgentAccess } from './agent-access.js'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
@@ -266,6 +269,52 @@ export function install(rt) {
     return rt.save()
   }
 
+  // UI edits retain their existing concurrency. An MCP audit excludes UI config edits
+  // for its entire before/handler/after interval, so attribution cannot absorb an owner edit.
+  const adminContext = new AsyncLocalStorage()
+  const inTransaction = async fn => {
+    const scope = { active: true }
+    try { return await adminContext.run(scope, fn) }
+    finally { scope.active = false }
+  }
+  let adminQueue = Promise.resolve()
+  let pendingAgents = 0
+  let activeOwners = 0
+  let ownersIdle
+  const adminTransaction = fn => {
+    pendingAgents += 1
+    const job = adminQueue.then(async () => {
+      if (activeOwners > 0) await new Promise(resolve => { ownersIdle = resolve })
+      return inTransaction(fn)
+    }).finally(() => { pendingAgents -= 1 })
+    adminQueue = job.catch(() => {})
+    return job
+  }
+  const ownerTransaction = async fn => {
+    if (adminContext.getStore()?.active) return fn()
+    while (pendingAgents > 0) await adminQueue
+    activeOwners += 1
+    try { return await inTransaction(fn) }
+    finally {
+      activeOwners -= 1
+      if (activeOwners === 0) { ownersIdle?.(); ownersIdle = undefined }
+    }
+  }
+  // Internal Bot tools call these same runtime mutators directly. They participate as
+  // owners; nested calls from an already admitted handler reuse its admission.
+  for (const name of ['createBot', 'duplicateBot', 'updateBot', 'deleteBot', 'setMain',
+    'createRoom', 'updateRoom', 'deleteRoom', 'setFlags', 'bootstrap', 'switchRoute',
+    'addAgent', 'removeAgent', 'adoptAgentSession', 'adoptBotSession', 'adoptAsBot',
+    'rollbackAdoption']) {
+    const original = rt[name]
+    if (typeof original === 'function') {
+      rt[name] = (...args) => ownerTransaction(() => original(...args))
+    }
+  }
+  const adminActions = new Set([...AGENT_TOOLS.map(tool => tool.endpoint),
+    'state', 'switch-route', 'duplicate-bot', 'add-agent', 'remove-agent', 'set-flags',
+    'agent-adopt', 'bot-session-adopt', 'agent-bot-adopt', 'agent-bot-rollback'])
+  const spaceReads = rt.spaceReads ?? createSpaceReads(rt)
   const handle = async (endpoint, payload, signal) => {
     try {
       const body = payload ?? {}
@@ -277,10 +326,28 @@ export function install(rt) {
       const readOnly = rt.readOnly()
       // An endpoint another Omni plugin serves (extend.js) says itself whether it only reads.
       const added = rt.extended.endpointOf(endpoint)
-      if (readOnly !== undefined && !READS.has(endpoint) && added?.read !== true) return fail(readOnly, 'bot/read-only')
+      if (readOnly !== undefined && !READS.has(endpoint) && !AGENT_TOOLS.some(tool => tool.read
+        && tool.endpoint === endpoint) && added?.read !== true) {
+        return fail(readOnly, 'bot/read-only')
+      }
       if (CODE_GUARDED.has(endpoint) && textsOf(body).some(text => rt.loginTextMatches?.(text) === true)) return fail(CODE_REFUSED, 'bot/refused')
       if (CLI_LOGIN.has(endpoint)) return ok(await rt.cliLoginActions[endpoint](body))
+      if (endpoint.startsWith('space-')) return ok(await spaceReads.read(endpoint, body, handle))
       switch (endpoint) {
+        case 'agent-access':
+          return ok(await agentAccess.owner('view'))
+        case 'agent-token-create':
+          return ok(await agentAccess.owner('create', body))
+        case 'agent-token-revoke':
+          return ok(await agentAccess.owner('revoke', body))
+        case 'list-bots':
+          return ok(Object.values(state.bots).map(bot => botConfig(bot, state.mainBotIds)))
+        case 'get-bot':
+          return ok(botConfig(rt.own(state.bots, body.id), state.mainBotIds))
+        case 'list-rooms':
+          return ok(Object.values(state.rooms).map(roomConfig))
+        case 'get-room':
+          return ok(roomConfig(rt.own(state.rooms, body.id)))
         case 'state':
           if (typeof body.locale === 'string' && /^[a-z]{2,3}(-[\w-]+)?$/i.test(body.locale)) uiLocale = body.locale
           if (typeof body.allowPlace === 'string') {
@@ -769,6 +836,13 @@ export function install(rt) {
     }
   }
 
+  const agentAccess = createAgentAccess(rt, handle, { transaction: adminTransaction })
+  rt.agentAccess = agentAccess
+  ctx.effect(() => {
+    void agentAccess.resume().catch(() => rt.warn('Agent access could not start'))
+    return () => agentAccess.close()
+  }, 'ds-bot: agent access')
+
   // A pet's sheet for the marks that wear it, and a character's baked sheet written into
   // Codex's own pets folder, as bytes rather than JSON. The write streams its body, which a
   // GET cannot have, so it has a route of its own. A failure says its kind only: the raw
@@ -821,6 +895,13 @@ export function install(rt) {
     },
   }), 'ds-bot: pet to Codex route')
 
+  ctx.effect(() => ctx.connection.fetch.register({
+    path: MCP_PATH,
+    methods: ['POST', 'GET', 'DELETE', 'OPTIONS'],
+    requestBody: 'streaming',
+    fetch: request => agentAccess.fetch(request),
+  }), 'ds-bot: MCP route')
+
   // An exact Fetch route on the shared /api channel; the browser authenticates with its session cookie.
   ctx.effect(() => ctx.connection.fetch.register({
     path: ROUTE,
@@ -829,8 +910,14 @@ export function install(rt) {
     fetch: async (request) => {
       let body
       try { body = await request.json() } catch { body = {} }
-      const result = await handle(String(body?.endpoint ?? ''), body?.payload, request.signal)
-      return new Response(JSON.stringify(result), { status: 200, headers: { 'content-type': 'application/json', ...(CLI_LOGIN.has(body?.endpoint) ? { 'cache-control': 'no-store' } : {}) } })
+      const endpoint = String(body?.endpoint ?? '')
+      const dispatch = () => handle(endpoint, body?.payload, request.signal)
+      const result = await (adminActions.has(endpoint) ? ownerTransaction(dispatch) : dispatch())
+      const noStore = CLI_LOGIN.has(body?.endpoint)
+        || ['agent-access', 'agent-token-create', 'agent-token-revoke'].includes(body?.endpoint)
+      return new Response(JSON.stringify(result), { status: 200, headers: {
+        'content-type': 'application/json', ...(noStore ? { 'cache-control': 'no-store' } : {}),
+      } })
     },
   }), 'ds-bot: api route')
 

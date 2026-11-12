@@ -183,6 +183,22 @@ test('the redaction regex in the image code is not mistaken for a token', () => 
   assert.deepEqual(scanTree(dir, undefined, []).hits, [])
 })
 
+// CACHE_HOME_UNPINNED: an example-path exception must not cover changed cache bytes.
+test('ACP offline-cache examples require the exact cache path, match and complete file digest', () => {
+  const entries = loadAllowlist().filter(entry => entry.file.startsWith('opt/automagik/offline-store/') && /ACP SDK/.test(entry.reason))
+  assert.equal(entries.length, 6)
+  const examples = [['', 'home', 'user'].join('/'), ['C:', 'Users', 'user'].join('\\')]
+  for (const entry of entries) {
+    const raw = examples.find(value => sha256(value) === entry.sha256)
+    assert.ok(raw, 'only the reviewed schema example strings are exempted')
+    const hit = { file: entry.file, rule: 'home-path', raw, match: raw, fileSha256: entry.fileSha256 }
+    assert.equal(applyAllowlist([hit], [entry]).kept.length, 0)
+    assert.equal(applyAllowlist([{ ...hit, fileSha256: '0'.repeat(64) }], [entry]).kept.length, 1, 'changed file bytes are refused')
+    assert.equal(applyAllowlist([{ ...hit, file: `${hit.file}-other` }], [entry]).kept.length, 1, 'another cache path is refused')
+    assert.equal(applyAllowlist([{ ...hit, raw: `${raw}/private` }], [entry]).kept.length, 1, 'another home path is refused')
+  }
+})
+
 test('the CLI scans a rootfs, writes the inventory, and exits 1 on a hit', () => {
   const clean = rootfs()
   const cleanInventory = join(clean, 'inventory')
