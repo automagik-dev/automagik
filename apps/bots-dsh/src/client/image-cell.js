@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { call } from './api.js'
 import { CopyIcon, DownloadIcon, ExpandIcon } from './icons.js'
 import { t } from './i18n.js'
-import { clayArtOf, faceAt, LAMP, MARK_ART } from './clay-art.js'
+import { clayArtOf, faceAt, LAMP, markArt } from './clay-art.js'
 import { lookOf } from './characters.js'
 import { GENIE_AURORA, genieTint } from './genie-tint.js'
 import { IMAGE_VIEWER_CSS, ImageViewer } from './image-viewer.js'
@@ -114,16 +114,15 @@ export function OmniPaints({ face = PAINT_FACES[0] }) {
       h('span', { className: 'bt-clay bt-clay-omni', style: { '--bt-face-at': faceAt(face) } })))
 }
 
-// The mark's own shape (art/mark.webp is 256 by 222).
-const MARK_WIDTH = 124
-const MARK_HEIGHT = Math.round(MARK_WIDTH * 222 / 256)
+// The mark's frame is square; its three arms are as wide as the frame, 124 px here.
+const MARK_SIZE = 126
 
-/** Any other Bot painting ("L1 · Logo paints"): the Automagik clay mark sways among Omni's four dabs. */
+/** Any other Bot painting ("L1 · Logo paints"): the Automagik mark sways among Omni's four dabs. */
 export function LogoPaints() {
   return h('div', { className: 'bt-img-paint', 'data-painter': 'logo', 'aria-hidden': true },
     dabs(),
     h('span', { className: 'bt-img-omni bt-img-logo' },
-      h('img', { className: 'omni-logo omni-mark bt-img-mark', src: MARK_ART, width: MARK_WIDTH, height: MARK_HEIGHT, alt: '', draggable: false })))
+      h('img', { className: 'omni-logo omni-mark bt-img-mark', src: markArt(MARK_SIZE), width: MARK_SIZE, height: MARK_SIZE, alt: '', draggable: false })))
 }
 
 // The photo card the lamp puffs out: a frame, its sky, a sun and two hills.

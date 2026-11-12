@@ -1,6 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1024 1024" width="1024" height="1024">
-  <!-- The Automagik app icon: the owner's clay triskelion (mark.png, kit-v4 sources) on a cream
-       clay tile. Source of assets/icon.png (see docs/DEVELOPMENT.md, "The icon"). -->
+  <!-- The Automagik app icon: the approved three-colour triskle (triskle-three-colours.svg, a
+       byte copy of the final set's large drawing) on a cream clay tile. Source of
+       assets/icon.png (see docs/DEVELOPMENT.md, "The icon"). -->
   <defs>
     <linearGradient id="table" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#fbf5ec"/>
@@ -41,8 +42,6 @@
     <rect x="103" y="103" width="818" height="818" rx="183" fill="none" stroke="url(#bevel)" stroke-width="6"/>
   </g>
 
-  <!-- the mark, cropped to its three arms (the source canvas is 1374 x 1145) -->
-  <svg x="186" y="232" width="652" height="566" viewBox="178 120 1108 962" overflow="visible">
-    <image href="mark.png" xlink:href="mark.png" width="1374" height="1145" filter="url(#contact)"/>
-  </svg>
+  <!-- the mark: its square drawing, so the three arms are 652 wide, where the old mark sat -->
+  <image href="triskle-three-colours.svg" xlink:href="triskle-three-colours.svg" x="180.5" y="183.5" width="663" height="663" filter="url(#contact)"/>
 </svg>
