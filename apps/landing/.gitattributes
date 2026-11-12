@@ -1,0 +1,4 @@
+# The projects row's logos are byte-for-byte copies of each project's official file
+# (assets/brand/LICENSES.md records their digests): no line-ending conversion, and their own
+# whitespace is not ours to fix.
+assets/brand/used/** -text -whitespace

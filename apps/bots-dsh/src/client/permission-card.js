@@ -3,7 +3,7 @@ import { AUTO, AUTO_ROW } from '../shared/permission-levels.js'
 import { CloseIcon } from './icons.js'
 import { t } from './i18n.js'
 import { needsModelPick } from './model-menu.js'
-import { autoQuestion, savedLevelOf, levelsOf, pickLevel, PermissionFallback, cliAuto, cliConfirmText, cliOfBot, PermissionOptions, presetDanger, presetName } from './permission-picker.js'
+import { autoConfirmText, remoteConfirmText, remoteOfBot, RemotePermissionNote, autoQuestion, savedLevelOf, levelsOf, pickLevel, PermissionFallback, cliAuto, cliConfirmText, cliOfBot, PermissionOptions, presetDanger, presetName } from './permission-picker.js'
 import { setEntry, sharedMap } from './shared-map.js'
 import { createSource } from './sources.js'
 import { STORAGE } from './storage.js'
@@ -43,6 +43,7 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
   const draft = picked ?? saved
   // A Bot on a coding CLI explains Full access in that CLI's words.
   const cli = cliOfBot(bot)
+  const remote = remoteOfBot(bot)
   const auto = cliAuto(draft, cli)
   const offered = catalog.options.some(option => option.value === draft)
   const asks = draft === AUTO_ROW || draft === AUTO || presetDanger(draft)
@@ -73,10 +74,11 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
         h('div', { className: 'bt-q-text' },
           h('p', { className: 'bt-q-title', id: titleId }, draft === AUTO_ROW ? t('Put {name} on Auto?', { name: bot.name }) : draft === AUTO ? name : t('Give {name} full access?', { name: bot.name })),
           draft === AUTO_ROW ? h('div', { className: 'bt-q-detail' }, ...autoQuestion(bot.name, presetName(bot.permission ?? catalog.defaultPreset, catalog), { ...bot.autoJudge, agent: String(bot.model ?? '').split('/')[0] }).map(text => h('div', { className: 'bt-note' }, text))) : draft === AUTO
-            ? h('div', { className: 'bt-q-detail' }, t('Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.'))
+            ? h('div', { className: 'bt-q-detail' }, autoConfirmText(remote))
             : h('div', { className: 'bt-q-detail' },
-              h('span', { className: 'bt-danger' }, auto ? cliConfirmText(cli) : t('{name} will run commands and change files anywhere without asking you first.', { name: bot.name })),
+              h('span', { className: 'bt-danger' }, remote ? remoteConfirmText(remote) : auto ? cliConfirmText(cli) : t('{name} will run commands and change files anywhere without asking you first.', { name: bot.name })),
               ' ', t('Choose it only when you trust what you asked for.')))),
+      h(RemotePermissionNote, { remote }),
       note,
       h('div', { className: 'bt-q-foot' },
         // Focus goes to Cancel, never to the button that gives the access.
@@ -98,7 +100,7 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
         h('p', { className: 'bt-q-title', id: titleId }, `${t('Permissions')} · `, t('What may {name} do on its own?', { name: bot.name })),
         h('div', { className: 'bt-q-detail' }, t('You choose. Nothing changes until you save.'))),
       h('button', { type: 'button', className: 'bt-q-x', 'aria-label': t('Dismiss'), title: t('Dismiss'), onClick: onClose, disabled: busy }, h(CloseIcon))),
-    h(PermissionOptions, { catalog, current: draft, onPick: (value) => { setError(''); setPicked(value) }, disabled: busy, cli }),
+    h(PermissionOptions, { catalog, current: draft, onPick: (value) => { setError(''); setPicked(value) }, disabled: busy, cli, remote }),
     errorLine,
     bot.permissionAuto ? h(PermissionFallback, { fallback: bot.permissionFallback, owner: bot, catalog }) : null,
     note,

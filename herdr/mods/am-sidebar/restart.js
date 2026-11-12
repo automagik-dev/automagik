@@ -8,6 +8,7 @@ import { agentKeyOfArgv, agyGuarded, agyModeArgs, agyModeProblem, agySettingsArg
 import { SQUAD_LABEL, SQUAD_MARK } from "./launchArgs.js";
 import { ENV, WORKER_AGY_MODE_LABEL, WORKER_EFFORT_LABEL, WORKER_MODEL_LABEL, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, templateAgent } from "./workers.js";
 import { CONFIG_VAR, envWords } from "./logins.js";
+import { hermesPairArgs } from "./hermesPair.js";
 
 /** The pane label the briefing hook sets to the Claude session a terminal runs (workers.js SESSION_LABEL). */
 const SESSION = "agent.session";
@@ -128,6 +129,14 @@ export function withoutPrompt(args) {
  */
 export function restartPlan({ bot, run, runningAgent = null, session = null, fresh = false, agent, model, template = null,
   agy = null, newSession = null }) {
+  if (bot.agent === "hermes" && bot.hermes !== undefined) {
+    const pair = hermesPairArgs(bot);
+    if (fresh || agent !== undefined || model !== undefined || template) throw new Error("This Hermes bot is paired: unpair it before a fresh session, agent/model swap or template launch.");
+    const argv = run.length === 1 ? [...run, ...pair] : run;
+    if (JSON.stringify(argv.slice(1)) !== JSON.stringify(pair)) throw new Error("The paired Hermes launch does not match its stored binding.");
+    return { mode: "resume", agent: "hermes", model: null, resume: ["--continue", "Bot Chat"], argv,
+      source: argv, template: null, agySettings: null, sessionId: null, canonicalBot: true, note: "paired Bot Chat, resolved by exact title" };
+  }
   const swap = agent !== undefined || model !== undefined;
   const key = agent ?? bot.agent;
   // A new agent without --model starts on its own default: the old pin belongs to the old agent.
@@ -520,7 +529,7 @@ export function helperPlan({ get, worker = null, session = null, agents, fresh =
     const agyMode = labels[WORKER_AGY_MODE_LABEL] ?? null;
     const modeWhy = agent === "antigravity" ? agyModeProblem(agyMode) : null;
     if (modeWhy) return { name, replaced, error: `${name ?? replaced} can't be run again: ${modeWhy}` };
-    command = { argv: [...launchRun(agent, agents[agent].run, bot), ...agyModeArgs(agent, agyMode), ...modelArgs(agent, model), ...effortArgs(agent, effort)] };
+    command = { argv: [...launchRun(agent, agents[agent].run, { ...bot, hermes: undefined }), ...agyModeArgs(agent, agyMode), ...modelArgs(agent, model), ...effortArgs(agent, effort)] };
   } else {
     const launch = paneCommand(get);
     if (launch?.shell !== undefined) command = launch;
@@ -626,6 +635,7 @@ export function maskedArgv(argv, id = null) {
 
 /** One line for the owner: what the replacement does with the conversation. The session id itself is never shown. */
 export function planText(plan, session) {
+  if (plan.canonicalBot) return "resuming its paired Hermes Bot Chat (exact profile and title)";
   if (plan.mode === "swap") return `on ${plan.agent}${plan.model ? ` (${plan.model})` : ""}, a new conversation`;
   if (plan.mode === "fresh") return plan.note ? `a new conversation (${plan.note})` : "a new conversation";
   if (plan.agent === "claude") return session ? "resuming its session by id" : "resuming the latest conversation in its folder (--continue)";

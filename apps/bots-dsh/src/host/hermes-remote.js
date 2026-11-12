@@ -1,0 +1,810 @@
+import { randomUUID } from 'node:crypto'
+import { AsyncLocalStorage } from 'node:async_hooks'
+import { readFile } from 'node:fs/promises'
+import { HermesTransport, RemoteChat, remoteAddress, HERMES_DEADLINES } from './hermes-transport.js'
+import { prepareHermesConnection, refreshHermesProfiles } from './hermes-connection.js'
+import { discoverSshHosts } from './hermes-ssh-hosts.js'
+import { redactSshNames } from './hermes-ssh-names.js'
+import { MISSING_TOOLS, RemoteChatAdapter } from './remote-chat-adapter.js'
+import { refusal } from './refusal.js'
+
+export const HERMES_PROVIDER = 'hermes-remote'
+const CREDENTIAL_REF = 'HERMES_REMOTE_CREDENTIAL'
+const TEST_LIFETIME = 5 * 60_000
+const CHAT_BUSY = 'A chat is still running on this connection; stop it or wait.'
+const fail = (message, kind = 'connection') => refusal(message, { code: `bot/hermes-${kind}` })
+const sshFields = ssh => Object.fromEntries(['host', 'user', 'port', 'identityFile', 'hermesPath', 'hermesHome'].filter(key => ssh?.[key] !== undefined).map(key => [key, ssh[key]]))
+const CONNECTION_ERRORS = Object.freeze({
+  'bot/hermes-busy': CHAT_BUSY,
+  'bot/hermes-pairing': 'The Hermes Bot pairing could not be verified. Check the selected profile and its existing Bot Chat.',
+  'bot/hermes-auth': 'Hermes did not accept the saved sign-in. Check the token or sign in again.',
+  'bot/hermes-connection': 'Remote Hermes could not connect. Check the connection details and try again.',
+  'bot/hermes-profiles': 'Hermes could not open the selected profile. Check its available profiles and test again.',
+  'bot/hermes-expired': 'This connection test expired. Test it again before connecting.',
+  'bot/hermes-unsupported': 'Remote Hermes requires standalone Desktop contract 8. Canonical-authority Hermes is not supported.',
+  'bot/hermes-approvals': 'Set this remote profile to manual approvals in Hermes before connecting. Automagik does not change its global approval setting.',
+  'bot/hermes-protocol': 'Remote Hermes returned an invalid protocol frame. Reconnect and reconcile the remote session.',
+  'bot/hermes-timeout': 'Hermes did not answer in time. Check the connection and try again.',
+  'bot/hermes-ssh': 'SSH could not connect. Check the connection details and try again.',
+  'bot/hermes-ssh-host-key': 'Verify this computer’s SSH host key in a terminal before testing again.',
+  'bot/hermes-ssh-auth': 'SSH could not sign in. Check the user and key, then test again.',
+  'bot/hermes-ssh-missing': 'SSH could not find Hermes. Install Hermes or enter its executable path.',
+  'bot/hermes-ssh-interactive': 'SSH needs interactive sign-in. Unlock the key in your SSH agent, then test again.',
+  'bot/hermes-ssh-update': 'The remote Hermes needs an update before it can connect.',
+  'bot/hermes-ssh-version': 'The remote Hermes did not report a release number. Update it, then test again.',
+  'bot/hermes-ssh-platform': 'This remote platform does not support the Hermes SSH connection.',
+  'bot/hermes-ssh-timeout': 'SSH did not answer in time. Check the connection and test again.',
+  'bot/hermes-ssh-unreachable': 'SSH could not reach the other computer. Check the host and connection.',
+  'bot/hermes-ssh-cleanup': 'The SSH connection could not confirm remote cleanup. Check the remote Hermes before reconnecting.',
+  'bot/hermes-ssh-host-key-unknown': 'This computer has not connected to this SSH host before. Check its host key and trust it before testing again.',
+  'bot/hermes-ssh-exited': 'Hermes stopped on the other computer before it was ready.',
+  'bot/hermes-ssh-not-ready': 'Hermes started on the other computer but was not ready in time.',
+  'bot/hermes-ssh-port': 'Hermes started on the other computer but did not report its port.',
+  'bot/hermes-ssh-handshake': 'The private start handshake with the other computer failed.',
+  'bot/hermes-ssh-tunnel': 'The SSH tunnel to the remote Hermes did not start.',
+  'bot/hermes-ssh-forward': 'A port forward from this host’s own SSH config could not start.',
+  'bot/hermes-ssh-script': 'The start script stopped on the other computer.',
+  'bot/hermes-ssh-details': 'Enter valid SSH details.',
+})
+const FAILURE_LIFETIME = 10 * 60_000
+const text = (value, max) => typeof value === 'string' && value.length > 0 && value.length <= max && !/[\x00-\x1f\x7f]/.test(value) ? value : undefined
+const NO_ALIAS = '(none)'
+const strings = value => Array.isArray(value) ? value.filter(name => typeof name === 'string' && name.length > 0 && name.length <= 255).slice(0, 16) : []
+const lines = value => Array.isArray(value) ? value.filter(line => typeof line === 'string').slice(-8).map(line => line.slice(0, 240)) : []
+// What the person's own screen may show of one failed SSH connection. Every line was
+// already cleaned of this connection's secrets where SSH and Hermes said it.
+function failureView(error, alias, elapsedMs, stage) {
+  const detail = error?.sshDetail ?? {}, code = typeof error?.code === 'string' ? error.code : 'bot/refused'
+  const view = { code, kind: text(error?.sshError, 40) ?? (code.replace(/^bot\/(?:hermes-?)?/, '') || 'unknown'), stage, alias, elapsedMs }
+  if (Number.isSafeInteger(detail.exit)) view.exit = detail.exit
+  for (const key of ['ssh', 'hermes']) if (lines(detail[key]).length) view[key] = lines(detail[key])
+  for (const key of ['keyType', 'fingerprint', 'fault']) if (text(detail[key], 100)) view[key] = detail[key]
+  if (Array.isArray(detail.identities)) view.identities = detail.identities.filter(name => text(name, 64)).slice(0, 6)
+  for (const key of ['agentKeys', 'port', 'errno', 'line']) if (Number.isSafeInteger(detail[key]) && detail[key] > 0) view[key] = detail[key]
+  for (const key of ['unsaved', 'mismatch']) if (detail[key] === true) view[key] = true
+  // The release Hermes reported, the oldest one this adapter speaks to, and the install kind.
+  for (const key of ['version', 'minimum']) if (/^\d{1,4}\.\d{1,4}\.\d{1,4}$/.test(detail[key] ?? '')) view[key] = detail[key]
+  if (/^[a-z0-9-]{1,32}$/.test(detail.install ?? '')) view.install = detail.install
+  return view
+}
+// The one diagnostics line of a failed SSH connection. No identity file name and no
+// host key: the person's screen has those, a report does not need them. The line may be
+// attached to a report, so it names no one: `storedView` is what it is made from.
+const failureLine = view => [`Remote Hermes SSH failed: alias=${view.alias} stage=${view.stage} kind=${view.kind} elapsed=${view.elapsedMs}ms`,
+  view.exit !== undefined ? `exit=${view.exit}` : '', view.version ? `version=${view.version}` : '', view.minimum ? `minimum=${view.minimum}` : '', view.install ? `install=${view.install}` : '', view.fault ? `fault=${view.fault}${view.errno ? `/${view.errno}` : ''}${view.line ? `@${view.line}` : ''}` : '', view.port ? `port=${view.port}` : '',
+  view.ssh ? `ssh=${JSON.stringify(view.ssh.join(' | '))}` : '', view.hermes ? `hermes=${JSON.stringify(view.hermes.join(' | '))}` : ''].filter(Boolean).join(' ')
+// The view as a stored line may show it: the alias the person typed, the remote user,
+// the host and every address become placeholders. The screen keeps the view itself.
+function storedView(view, ssh, origin) {
+  const names = { alias: view.alias === NO_ALIAS ? undefined : view.alias, hosts: strings(origin?.sshNames?.hosts), users: [...strings(origin?.sshNames?.users), ...strings([ssh?.user])] }
+  const stored = { ...view, alias: names.alias ? '<alias>' : NO_ALIAS }
+  for (const key of ['ssh', 'hermes']) if (view[key]) stored[key] = view[key].map(line => redactSshNames(line, names))
+  return stored
+}
+const connectionFailure = (error, native = false) => error?.cleanupUnknown === true
+  ? refusal(CONNECTION_ERRORS['bot/hermes-ssh-cleanup'], { code: 'bot/hermes-ssh-cleanup' })
+  : Object.hasOwn(CONNECTION_ERRORS, error?.code)
+  ? refusal(CONNECTION_ERRORS[error.code], { code: error.code })
+  : refusal(native && error?.code === 'bot/hermes' ? error.message : 'Remote Hermes could not connect.')
+
+export function install(rt, { transport = options => new HermesTransport(options), fetch: fetcher = globalThis.fetch, startSsh, trustSsh = async (...args) => (await import('./hermes-ssh.js')).trustHermesSshHostKey(...args), sshHosts = discoverSshHosts, now = Date.now, deadlines = HERMES_DEADLINES, testLifetime = TEST_LIFETIME } = {}) {
+  const { ctx, state } = rt
+  // The last failed SSH connection of each wizard request, kept in memory for its own
+  // screen (the stage, SSH's and Hermes's last lines, a new host key to trust).
+  const failures = new Map()
+  // `origin` is the error SSH itself threw: a failure shown as another one (unconfirmed
+  // cleanup, a start deadline) still takes the connection's names from it.
+  function noteSshFailure(key, ssh, error, started, origin = error) {
+    const alias = text(typeof ssh?.host === 'string' ? ssh.host.trim() : '', 255) ?? NO_ALIAS
+    const view = failureView(error, alias, Math.max(0, Date.now() - started), text(error?.sshStage ?? error?.hermesStage, 40) ?? 'connection')
+    rt.noteFailure?.({ source: 'host', where: 'Remote Hermes', code: view.code, text: failureLine(storedView(view, ssh, origin)) })
+    if (typeof key !== 'string' || !key || key.length > 100) return view
+    failures.delete(key)
+    failures.set(key, { view, ssh: sshFields(ssh), expires: Date.now() + FAILURE_LIFETIME })
+    while (failures.size > 8) failures.delete(failures.keys().next().value)
+    return view
+  }
+  const failureOf = key => {
+    const entry = typeof key === 'string' ? failures.get(key) : undefined
+    if (entry && entry.expires <= Date.now()) { failures.delete(key); return undefined }
+    return entry
+  }
+  const record = () => state.prefs?.hermesRemote ?? { enabled: false, models: [] }
+  const sessions = () => state.hermesSessions ??= {}
+  const enabled = () => record().enabled === true
+  const identity = id => {
+    const paired = record().pairedBotId
+    if (paired) {
+      // Only this bot's current own-chat segment may enter its forever-chat. Groups,
+      // tasks and other bots must not leak their context into the paired identity.
+      if (rt.chatOwners?.get(id) !== paired) throw fail('This Hermes profile is paired to another Bot chat.', 'pairing')
+      return sessions()[`bot:${paired}`] ??= { canonicalBot: true }
+    }
+    return sessions()[id] ??= { createKey: randomUUID() }
+  }
+  // Identity-only persistence must not queue behind a Stop already awaited by
+  // a connection mutation. The store serializes required writes itself.
+  const saveState = () => rt.save({ required: true })
+  const mutationScope = new AsyncLocalStorage(), intents = new Set()
+  let mutationTail = Promise.resolve(), activeMutation
+  const mutate = (work, internal = false) => {
+    const owner = mutationScope.getStore()
+    if (internal && owner && owner === activeMutation) return Promise.resolve().then(work)
+    const next = mutationTail.then(() => {
+      const token = {}
+      return mutationScope.run(token, async () => {
+        activeMutation = token
+        try { return await work() } finally { if (activeMutation === token) activeMutation = undefined }
+      })
+    })
+    mutationTail = next.catch(() => {})
+    return next
+  }
+  const testMatches = (entry, body = {}) => entry
+    && (body.testId === undefined || entry.id === body.testId || entry.testId === body.testId)
+    && (body.requestId === undefined || entry.requestId === body.requestId)
+  function interruptTests(body = {}) {
+    if ((body.testId !== undefined && (typeof body.testId !== 'string' || !body.testId))
+      || (body.requestId !== undefined && (typeof body.requestId !== 'string' || !body.requestId))) return
+    let matched = false
+    for (const intent of intents) if (intent.test && testMatches(intent, body) && (!intent.testId || tested?.id === intent.testId)) { matched = true; intent.controller.abort() }
+    if (testMatches(tested, body)) { matched = true; tested.controller.abort() }
+    if (testMatches(pendingTest, body)) { matched = true; pendingTest.controller.abort() }
+    return matched
+  }
+  function waiting(task, startup, finish = true) {
+    let abort
+    const cancelled = new Promise((_, reject) => {
+      abort = () => reject(fail('Connection setup was cancelled or timed out.', 'timeout'))
+      startup.signal.addEventListener('abort', abort, { once: true })
+      if (startup.signal.aborted) abort()
+    })
+    return Promise.race([task, cancelled]).finally(() => {
+      startup.signal.removeEventListener('abort', abort)
+      if (finish) startup.finish()
+    })
+  }
+  function action(work, signal, fields = {}, limit = deadlines.start) {
+    const startup = budget(signal, limit), intent = { ...fields, controller: startup.controller }
+    intents.add(intent)
+    const task = mutate(async () => {
+      if (startup.signal.aborted) throw fail('Connection setup was cancelled or timed out.', 'timeout')
+      return work(startup)
+    })
+    return waiting(task, startup).finally(() => { intents.delete(intent) })
+  }
+  async function deleteUnreferenced(name) {
+    if (!name || !rt.statePath || typeof rt.deleteSecretIfUnchanged !== 'function' || disposed || rt.readOnly?.() || ctx.fiber?.state === 2 || ctx.root?.fiber?.state === 2
+      || !activeMutation || mutationScope.getStore() !== activeMutation) return
+    const expected = rt.secretValue(name)
+    if (!expected || record().credentialRef === name) return
+    try {
+      const text = await readFile(rt.statePath, 'utf8')
+      if (text.length > 16 * 1024 * 1024) return
+      const disk = JSON.parse(text), saved = disk?.prefs?.hermesRemote
+      const object = value => value !== null && typeof value === 'object' && !Array.isArray(value)
+      if (!object(disk) || !object(disk.prefs) || !object(saved) || typeof saved.enabled !== 'boolean'
+        || (saved.credentialRef !== undefined && typeof saved.credentialRef !== 'string')
+        || (saved.credentialRef === undefined && saved.mode !== 'ssh')
+        || saved.credentialRef === name || JSON.stringify(saved) !== JSON.stringify(record())
+        || text.includes(JSON.stringify(name))) return
+      if (disposed || rt.readOnly?.() || record().credentialRef === name || rt.secretValue(name) !== expected) return
+      await rt.deleteSecretIfUnchanged(name, expected)
+    } catch { /* Missing, unreadable or uncertain durable state keeps the orphan. */ }
+  }
+  const active = new Set(), leases = new Set(), closing = new Set()
+  let registration, adapter, tested, pendingTest, currentLease, pendingConnection, cleanupFailure
+  let generation = 0, testGeneration = 0, disposed = false, disconnecting = false
+
+  function budget(signal, limit = deadlines.start) {
+    const controller = new AbortController(), until = Date.now() + limit
+    const abort = () => controller.abort()
+    signal?.addEventListener('abort', abort, { once: true })
+    if (signal?.aborted) abort()
+    // Whether the deadline itself ended the work, not the person or a newer request.
+    let expired = false
+    const timer = setTimeout(() => { expired = true; abort() }, limit)
+    return { controller, signal: controller.signal, until, expired: () => expired, finish: () => { clearTimeout(timer); signal?.removeEventListener('abort', abort) } }
+  }
+  const remaining = until => ({ ...deadlines, start: Math.max(1, until - Date.now()) })
+
+  const connectionKey = config => JSON.stringify([config.mode ?? 'remote', config.address, config.profile, config.mode === 'ssh' ? config.ssh : undefined])
+  function requireReplaceable() {
+    if (Object.values(state.hermesSessions ?? {}).some(info => info.pendingSubmit || info.uncertain)) throw fail(CHAT_BUSY, 'busy')
+  }
+  function lease(connection, held = false) {
+    const entry = { connection, held, users: 0, closed: false }
+    entry.close = () => {
+      if (entry.task) return entry.task
+      entry.closed = true
+      if (currentLease === entry) currentLease = undefined
+      entry.task = Promise.resolve().then(() => connection.close())
+      closing.add(entry.task)
+      void entry.task.then(() => { leases.delete(entry); closing.delete(entry.task) }, () => {
+        cleanupFailure = fail('The SSH connection could not confirm remote cleanup. Check the remote Hermes before reconnecting.', 'ssh-cleanup')
+        closing.delete(entry.task)
+      })
+      return entry.task
+    }
+    entry.release = () => {
+      entry.users--
+      if (!entry.users && !entry.held) void entry.close().catch(() => {})
+    }
+    leases.add(entry)
+    return entry
+  }
+  async function drain() {
+    await Promise.allSettled(closing)
+    if (cleanupFailure) throw cleanupFailure
+  }
+  function savedSecret(config) {
+    const value = rt.secretValue(config.credentialRef)
+    if (!value) throw fail('Save a credential for Remote Hermes first.', 'auth')
+    if (!config.setupVersion) return { kind: 'token', credential: value }
+    try {
+      const secret = JSON.parse(value)
+      if (secret?.kind === 'token' || secret?.kind === 'session') return secret
+    } catch {}
+    throw fail('The saved sign-in is unavailable. Set up this connection again.', 'auth')
+  }
+  function reusableToken(draft) {
+    if (draft?.mode !== 'remote' || draft.authMode !== 'token' || (draft.credential !== undefined && draft.credential !== '')) return undefined
+    const config = record()
+    const key = value => JSON.stringify([value.mode ?? 'remote', value.address, value.authMode ?? 'token', value.credentialRef])
+    if (key(draft) !== key(config) || !config.credentialRef) throw fail('Enter the session token for this Hermes.', 'auth')
+    const reference = config.credentialRef, value = rt.secretValue(reference), secret = savedSecret(config), owner = generation, expected = key(config)
+    if (secret.kind !== 'token') throw fail('Enter the session token for this Hermes.', 'auth')
+    // Saving advances our configuration generation. The borrowed credential must
+    // remain independently valid across that advance and every awaited save stage.
+    const checkCredential = (source = record()) => {
+      if (key(source) !== expected || rt.secretValue(reference) !== value) {
+        throw fail('The saved connection changed. Test it again before using its token.', 'auth')
+      }
+    }
+    const check = () => {
+      if (generation !== owner) throw fail('The saved connection changed. Test it again before using its token.', 'auth')
+      checkCredential()
+    }
+    return { secret, check, checkCredential, reuseReference: config.setupVersion ? reference : undefined }
+  }
+  async function acquire(config, signal, until) {
+    if (!config.setupVersion) return undefined // Preserve the installed legacy transport contract.
+    if (currentLease && !currentLease.closed) return currentLease
+    if (!pendingConnection) {
+      const owner = generation, controller = new AbortController()
+      const secret = config.mode === 'ssh' ? undefined : savedSecret(config)
+      const pending = { controller, waiters: 0 }
+      pendingConnection = pending
+      pending.task = prepareHermesConnection({ mode: config.mode, address: config.address, authMode: config.authMode, ssh: config.ssh }, {
+        fetch: fetcher, startSsh, signal: controller.signal, deadlines: remaining(until), secret, discover: false,
+        onAuthUpdate: updated => mutate(async () => {
+          if (disposed || owner !== generation || record().credentialRef !== config.credentialRef) throw fail('Connection setup was cancelled.')
+          await rt.secretEndpoint('secret-set', { name: config.credentialRef, value: JSON.stringify(updated), purpose: 'Remote Hermes authenticated connection', scope: [] })
+        }, true),
+      }).then(async connection => {
+        if (disposed || disconnecting || owner !== generation || controller.signal.aborted) {
+          await connection.close()
+          throw fail('This connection setup was cancelled.')
+        }
+        return pending.owned = currentLease = lease(connection)
+      }).finally(() => { if (pendingConnection === pending) pendingConnection = undefined })
+      void pending.task.catch(() => {})
+    }
+    const pending = pendingConnection
+    pending.waiters++
+    let abort
+    try {
+      if (!signal) return await pending.task
+      if (signal.aborted) throw fail('Connection setup was cancelled.')
+      return await Promise.race([pending.task, new Promise((_, reject) => {
+        abort = () => reject(fail('Connection setup was cancelled.'))
+        signal.addEventListener('abort', abort, { once: true })
+      })])
+    } finally {
+      signal?.removeEventListener('abort', abort)
+      pending.waiters--
+      if (!pending.waiters && signal?.aborted) {
+        pending.controller.abort()
+        if (pending.owned && !pending.owned.users) await pending.owned.close()
+      }
+    }
+  }
+  async function open(options = {}) {
+    const startup = options.startup ?? budget(options.signal)
+    const ownsStartup = !options.startup || options.finishOnPrepare === true
+    const started = Date.now()
+    try {
+      await rt.load(); await rt.loadSecrets()
+      const config = record(), owner = generation
+      if (disposed || disconnecting || !config.enabled) throw refusal('Turn on Remote Hermes in Bot settings first.')
+      const owned = options.connectionLease ?? await acquire(config, startup.signal, startup.until)
+      if (disposed || disconnecting || owner !== generation || options.signal?.aborted || owned?.closed) {
+        if (owned && !owned.users) await owned.close()
+        throw fail('Connection setup was cancelled.')
+      }
+      const connection = owned?.connection
+      const credential = connection?.credential ?? savedSecret(config).credential
+      if (owned) owned.users++
+      let wire
+      try {
+        wire = transport(connection ? {
+          address: connection.address, profile: options.profile ?? config.profile, credential, authHeaders: connection.authHeaders,
+          allowLoopback: connection.allowLoopback, redactionSecrets: connection.redactionSecrets,
+          deadlines: remaining(startup.until),
+          fetch: async (...args) => {
+            const response = await connection.fetch(...args)
+            for (const secret of connection.redactionSecrets) wire?.secrets?.add(secret)
+            return response
+          },
+        } : { address: config.address, profile: config.profile, credential, deadlines: remaining(startup.until) })
+      } catch (error) { owned?.release(); throw error }
+      active.add(wire)
+      let closed = false
+      const close = wire.close.bind(wire), abort = () => wire.close()
+      wire.close = () => {
+        if (closed) return
+        closed = true
+        options.signal?.removeEventListener('abort', abort)
+        startup.signal.removeEventListener('abort', abort)
+        active.delete(wire)
+        close()
+        owned?.release()
+        if (ownsStartup) startup.finish()
+      }
+      startup.signal.addEventListener('abort', abort, { once: true })
+      try {
+        await wire.connect()
+        if (startup.signal.aborted) throw fail('Connection setup was cancelled or timed out.')
+        const run = new RemoteChat(wire, options)
+        const submit = run.submit.bind(run)
+        run.submit = (...args) => action(async admission => {
+          // Admit the turn on the same owner that replaces its connection. A
+          // prepared old run cannot submit after replacement/teardown has begun.
+          if (disposed || disconnecting || owner !== generation || record() !== config || admission.signal.aborted
+            || (options.identity && !Object.values(state.hermesSessions ?? {}).includes(options.identity))) throw fail(CHAT_BUSY, 'busy')
+          const stop = () => { void run.stop().catch(() => {}) }
+          admission.signal.addEventListener('abort', stop, { once: true })
+          try { return await submit(...args) }
+          finally { admission.signal.removeEventListener('abort', stop) }
+        }, options.signal, {}, Math.max(1, startup.until - Date.now()))
+        if (ownsStartup) {
+          const prepare = run.prepare.bind(run)
+          run.prepare = async (...args) => {
+            try { return await prepare(...args) }
+            finally { startup.finish(); startup.signal.removeEventListener('abort', abort) }
+          }
+        }
+        return run
+      } catch (error) {
+        wire.close()
+        throw connectionFailure(error, true)
+      }
+    } catch (error) {
+      if (ownsStartup) startup.finish()
+      if (record().mode === 'ssh' && record().enabled && !startup.signal.aborted && !options.signal?.aborted) noteSshFailure('connect', record().ssh, error, started)
+      throw error?.code === 'bot/refused' && error.cleanupUnknown !== true ? error : connectionFailure(error)
+    }
+  }
+  const view = () => ({
+    enabled: enabled(), mode: record().mode ?? 'remote', authMode: record().authMode ?? 'token',
+    address: record().address ?? '', profile: record().profile ?? '', ssh: record().mode === 'ssh' ? sshFields(record().ssh) : undefined,
+    pairedBotId: record().pairedBotId ?? '',
+    bots: Object.values(state.bots ?? {}).map(bot => ({ id: bot.id, name: bot.name })),
+    credentialRef: record().credentialRef ?? '', credentialSet: record().mode === 'ssh' ? Boolean(record().enabled) : Boolean(rt.secretValue?.(record().credentialRef)),
+    models: record().models ?? [], limitations: MISSING_TOOLS,
+    modelRef: record().models?.[0] ? `${HERMES_PROVIDER}/${record().models[0].id}` : undefined,
+    sessions: Object.entries(state.hermesSessions ?? {}).map(([sessionId, info]) => ({ sessionId, ...info })),
+  })
+  const publish = () => {
+    if (disposed) return
+    adapter.registerAll()
+    registration?.(); registration = undefined
+    if (enabled() && (record().models?.length ?? 0) > 0) registration = ctx.llm.registerAdapter([HERMES_PROVIDER], adapter)
+    rt.dropCatalog?.()
+  }
+  async function stopLive() {
+    pendingConnection?.controller.abort()
+    await Promise.allSettled([...adapter.live.values()].map(entry => entry.run.stop()))
+    adapter.dispose()
+    for (const wire of active) wire.close()
+    active.clear()
+    if (pendingConnection) await Promise.allSettled([pendingConnection.task])
+    for (const owned of leases) if (owned !== tested?.lease) await owned.close().catch(() => {})
+    await drain()
+  }
+  async function cancelTests({ testId, requestId } = {}) {
+    const scoped = testId !== undefined || requestId !== undefined
+    if ((testId !== undefined && (typeof testId !== 'string' || !testId))
+      || (requestId !== undefined && (typeof requestId !== 'string' || !requestId))) return
+    const matches = entry => entry && (testId === undefined || entry.id === testId)
+      && (requestId === undefined || entry.requestId === requestId)
+    const pending = matches(pendingTest) ? pendingTest : undefined
+    const previous = matches(tested) ? tested : undefined
+    if (scoped && !pending && !previous) return
+    if (!scoped || pending) testGeneration++
+    if (pending) pendingTest = undefined
+    if (previous) tested = undefined
+    pending?.controller.abort()
+    previous?.controller.abort()
+    clearTimeout(previous?.timer)
+    if (previous) await previous.lease.close()
+    if (pending) await Promise.allSettled([pending.task])
+  }
+  async function testDraft(draft, signal, startup = budget(signal)) {
+    if (disposed) throw fail('Connection setup is no longer available.')
+    const cancelling = cancelTests(), owner = testGeneration, started = Date.now()
+    const controller = startup.controller
+    const pending = { controller, requestId: typeof draft?.requestId === 'string' && draft.requestId.length <= 100 ? draft.requestId : undefined, stage: 'reach' }
+    pendingTest = pending
+    pending.task = (async () => {
+      await cancelling
+      if (owner !== testGeneration || controller.signal.aborted) throw fail('Connection setup was cancelled.')
+      await rt.load(); await rt.loadSecrets()
+      if (owner !== testGeneration || controller.signal.aborted) throw fail('Connection setup was cancelled.')
+      const source = reusableToken(draft)
+      const checkedFetch = source ? async (...args) => {
+        source.check()
+        const response = await fetcher(...args)
+        source.check()
+        return response
+      } : fetcher
+      const connection = await prepareHermesConnection(draft, { fetch: checkedFetch, startSsh, signal: controller.signal, deadlines: remaining(startup.until), secret: source?.secret,
+        onProgress: stage => { if (pendingTest === pending && owner === testGeneration && !controller.signal.aborted) pending.stage = stage },
+      })
+      if (disposed || owner !== testGeneration || controller.signal.aborted) { await connection.close(); throw fail('Connection setup was cancelled.') }
+      const entry = { id: randomUUID(), lease: lease(connection, true), controller, expires: now() + testLifetime, requestId: pending.requestId, checkSource: source?.check, checkSavedSource: source?.checkCredential, reuseReference: source?.reuseReference, fetch: checkedFetch }
+      try {
+        entry.checkSource?.()
+        await probe(entry.lease, connection.profiles[0].id, controller.signal, startup.until)
+        entry.checkSource?.()
+        if (disposed || owner !== testGeneration || controller.signal.aborted) throw fail('Connection setup was cancelled.')
+      } catch (error) { if (error && typeof error === 'object') error.hermesStage ??= 'chat'; await entry.lease.close(); throw error }
+      // Keep only connection references and ephemeral session material, never the submitted password/user.
+      entry.config = { mode: connection.mode, authMode: connection.authMode, address: connection.mode === 'remote' ? connection.address : '', ...(connection.mode === 'ssh' ? { ssh: sshFields(connection.ssh) } : {}) }
+      entry.timer = setTimeout(() => { entry.controller.abort(); void mutate(async () => { if (tested === entry) { tested = undefined; await entry.lease.close() } }).catch(() => {}) }, testLifetime)
+      entry.timer.unref?.()
+      tested = entry
+      pending.stage = 'connected'
+      return { testId: entry.id, profiles: connection.profiles, status: 'connected' }
+    })()
+    try {
+      const answer = await pending.task
+      if (pending.requestId) failures.delete(pending.requestId)
+      return answer
+    } catch (error) {
+      // A test the person replaced or closed is not a failure to report.
+      const shown = error?.cleanupUnknown === true ? connectionFailure(error) : error
+      // The start deadline ended this test: SSH only saw its own cancel, and the wizard
+      // shows a timeout. The record says the same, with the stage SSH had reached.
+      const noted = error?.cleanupUnknown === true ? Object.assign(shown, { sshStage: error.sshStage, sshDetail: error.sshDetail, sshError: 'cleanup' })
+        : startup.expired?.() && error?.sshError === 'unknown' ? Object.assign(new Error(CONNECTION_ERRORS['bot/hermes-ssh-timeout']), { code: 'bot/hermes-ssh-timeout', sshError: 'timeout', sshStage: error.sshStage, sshDetail: error.sshDetail })
+        : error
+      if (draft?.mode === 'ssh' && owner === testGeneration && !disposed) noteSshFailure(pending.requestId, draft.ssh, noted, started, error)
+      throw shown
+    } finally {
+      startup.finish()
+      if (pendingTest === pending) pendingTest = undefined
+    }
+  }
+  // Trust the one new host key the failed test showed: the host kept its type and
+  // fingerprint, so the browser names only its own request, never a key.
+  async function trustHostKey(body, signal) {
+    const key = typeof body?.requestId === 'string' ? body.requestId : undefined
+    const entry = failureOf(key)
+    if (disposed || !entry || entry.view.kind !== 'host-key-unknown' || !entry.view.keyType || !entry.view.fingerprint || entry.view.unsaved) {
+      throw fail('Test the connection again before trusting this host.', 'expired')
+    }
+    const started = Date.now()
+    failures.delete(key)
+    try {
+      const answer = await trustSsh(entry.ssh, { keyType: entry.view.keyType, fingerprint: entry.view.fingerprint }, { signal, deadlines })
+      return { trusted: answer?.trusted === true }
+    } catch (error) {
+      noteSshFailure(key, entry.ssh, error, started)
+      throw Object.hasOwn(CONNECTION_ERRORS, error?.code) ? refusal(CONNECTION_ERRORS[error.code], { code: error.code }) : fail('This host key could not be trusted. Test the connection again.', 'ssh')
+    }
+  }
+  async function probe(owned, profile, signal, until) {
+    // Probe a chosen profile without enabling the adapter or sending a message.
+    const wire = transport({ address: owned.connection.address, profile, credential: owned.connection.credential,
+      authHeaders: owned.connection.authHeaders, allowLoopback: owned.connection.allowLoopback, redactionSecrets: owned.connection.redactionSecrets,
+      deadlines: remaining(until), fetch: async (...args) => {
+        const response = await owned.connection.fetch(...args)
+        for (const secret of owned.connection.redactionSecrets) wire.secrets?.add(secret)
+        return response
+      } })
+    owned.users++
+    let closed = false
+    const close = wire.close.bind(wire), abort = () => wire.close()
+    wire.close = () => { if (closed) return; closed = true; signal?.removeEventListener('abort', abort); close(); owned.release() }
+    signal?.addEventListener('abort', abort, { once: true })
+    let run
+    try {
+      if (signal?.aborted) throw fail('Connection setup was cancelled.')
+      await wire.connect()
+      if (signal?.aborted) throw fail('Connection setup was cancelled or timed out.')
+      run = new RemoteChat(wire)
+      await run.prepare()
+      if (signal?.aborted) throw fail('Connection setup was cancelled or timed out.')
+      const models = await wire.models()
+      if (signal?.aborted) throw fail('Connection setup was cancelled or timed out.')
+      if (!models.length) throw fail('This profile has no available models. Configure a model in Hermes and test again.', 'profiles')
+      return models
+    } finally {
+      signal?.removeEventListener('abort', abort)
+      if (run?.identity.runtimeSessionId && !signal?.aborted) await wire.request('session.close', { session_id: run.identity.runtimeSessionId }).catch(() => {})
+      if (run) run.dispose(); else wire.close()
+    }
+  }
+  async function saveTest(body, signal, startup = budget(signal)) {
+    try { return await saveTestWithin(body, startup) }
+    catch (error) { throw error?.cleanupUnknown === true ? connectionFailure(error) : error }
+    finally { startup.finish() }
+  }
+  async function saveTestWithin(body, startup) {
+    await rt.load(); await rt.loadSecrets()
+    const entry = tested
+    if (!entry || entry.id !== body?.testId || entry.expires <= now() || entry.lease.closed) throw fail('This connection test expired. Test it again before saving.', 'expired')
+    const signal = AbortSignal.any([startup.signal, entry.controller.signal])
+    if (signal.aborted) throw fail('Connection setup was cancelled.')
+    entry.checkSource?.()
+    const profile = entry.lease.connection.profiles.find(profile => profile.id === body.profile)?.id
+    if (!profile) throw fail('Choose a profile returned by this Hermes.', 'profiles')
+    const next = { ...entry.config, profile, setupVersion: 1, enabled: true }
+    if (record().pairedBotId) {
+      if (connectionKey(next) !== connectionKey(record())) throw fail('Disconnect the paired Bot before changing its Hermes connection or profile.', 'pairing')
+      next.pairedBotId = record().pairedBotId
+    }
+    requireReplaceable()
+    const models = await probe(entry.lease, profile, signal, startup.until)
+    entry.checkSource?.()
+    if (tested !== entry || disposed || signal?.aborted || entry.expires <= now()) throw fail('This connection test expired or was cancelled. Test it again.', 'expired')
+    const old = record(), oldSessions = state.hermesSessions
+    const changed = connectionKey(next) !== connectionKey(old)
+    entry.lease.held = false
+    await entry.lease.close()
+    if (tested !== entry || disposed || signal?.aborted) throw fail('Connection setup was cancelled.')
+    entry.checkSource?.()
+    const name = entry.reuseReference ?? (entry.lease.connection.secret ? `HERMES_REMOTE_${randomUUID().replaceAll('-', '').toUpperCase()}` : undefined)
+    const writesSecret = Boolean(name && !entry.reuseReference)
+    let installed, installedSessions, saveGeneration
+    try {
+      if (tested !== entry || disposed || signal?.aborted) throw fail('Connection setup was cancelled.')
+      entry.checkSource?.()
+      disconnecting = true; saveGeneration = ++generation
+      await stopLive()
+      if (tested !== entry || disposed || signal?.aborted || generation !== saveGeneration) throw fail('Connection setup was cancelled.')
+      entry.checkSavedSource?.()
+      requireReplaceable()
+      if (writesSecret) await rt.secretEndpoint('secret-set', { name, value: JSON.stringify(entry.lease.connection.secret), purpose: 'Remote Hermes authenticated connection', scope: [] })
+      if (tested !== entry || disposed || signal?.aborted || generation !== saveGeneration) throw fail('Connection setup was cancelled.')
+      entry.checkSavedSource?.()
+      state.prefs ??= {}
+      installed = { ...next, models, ...(name ? { credentialRef: name } : {}) }
+      state.prefs.hermesRemote = installed
+      if (changed) state.hermesSessions = installedSessions = {}
+      await saveState()
+      if (tested !== entry || disposed || signal?.aborted || record() !== installed || generation !== saveGeneration) throw fail('The saved connection changed. Test it again before saving.')
+      entry.checkSavedSource?.(old)
+    } catch (error) {
+      // Roll back only our own installed state. An awaited write may have let a
+      // different configuration finish before this stale save rejects.
+      let rollbackError
+      if (installed && record() === installed && generation === saveGeneration) {
+        state.prefs.hermesRemote = old
+        if (installedSessions && state.hermesSessions === installedSessions) state.hermesSessions = oldSessions
+        try { await saveState() }
+        catch { rollbackError = fail('The saved connection could not be restored on disk. Check its settings before connecting again.') }
+      }
+      // A failed durable rollback may still reference our new secret on disk.
+      if (writesSecret && !rollbackError) await deleteUnreferenced(name)
+      throw rollbackError ?? error
+    } finally { if (generation === saveGeneration) disconnecting = false }
+    tested = undefined; clearTimeout(entry.timer)
+    // Reused token sources are never rewritten or deleted. Legacy raw tokens
+    // need a descriptor copy, but retaining their source avoids a delete race.
+    if (!entry.checkSavedSource && old.credentialRef !== name) await deleteUnreferenced(old.credentialRef)
+    publish()
+    return view()
+  }
+  async function configure(body, signal) {
+    await rt.load(); await rt.loadSecrets()
+    if (record().pairedBotId) throw fail('Disconnect the paired Bot before replacing its Hermes configuration.', 'pairing')
+    if (signal?.aborted) throw fail('Connection setup was cancelled or timed out.', 'timeout')
+    if (typeof body.enabled !== 'boolean') throw refusal('Choose whether Remote Hermes is on.')
+    const address = body.address ? remoteAddress(body.address) : record().address
+    const profile = typeof body.profile === 'string' ? body.profile.trim() : record().profile ?? ''
+    if (profile.length > 100 || ['\r', '\n', '\0'].some(character => profile.includes(character))) throw refusal('Enter a valid Hermes profile name.')
+    if (body.enabled && !address) throw refusal('Enter the Hermes address before turning it on.')
+    const next = { enabled: body.enabled, address, profile, credentialRef: CREDENTIAL_REF }
+    requireReplaceable()
+    const changed = connectionKey(next) !== connectionKey(record())
+    const credential = body.credential !== undefined && body.credential !== '' ? body.credential : undefined
+    if (body.enabled && !credential && !rt.secretValue(CREDENTIAL_REF)) throw refusal('Save a credential before turning Remote Hermes on.')
+    if (signal?.aborted) throw fail('Connection setup was cancelled or timed out.', 'timeout')
+    await cancelTests()
+    disconnecting = true; generation++
+    try {
+      await stopLive()
+      if (signal?.aborted) throw fail('Connection setup was cancelled or timed out.', 'timeout')
+      requireReplaceable()
+      if (credential !== undefined) await rt.secretEndpoint('secret-set', { name: CREDENTIAL_REF, value: credential, purpose: 'Remote Hermes connection credential', scope: [] })
+      if (signal?.aborted) throw fail('Connection setup was cancelled or timed out.', 'timeout')
+      state.prefs ??= {}
+      state.prefs.hermesRemote = { ...next, models: changed ? [] : record().models ?? [] }
+      if (changed) state.hermesSessions = {}
+      await saveState()
+    } finally { disconnecting = false }
+    publish()
+    return view()
+  }
+  async function discover(signal, startup = budget(signal)) {
+    let run
+    try {
+      run = await open({ signal: startup.signal, startup })
+      await run.prepare()
+      record().models = await run.transport.models()
+      await saveState(); publish()
+      return view()
+    } finally {
+      if (run?.identity.runtimeSessionId) await run.transport.request('session.close', { session_id: run.identity.runtimeSessionId }).catch(() => {})
+      run?.dispose()
+      startup.finish()
+      await drain()
+    }
+  }
+  async function connect(signal, startup) {
+    await rt.load(); await rt.loadSecrets()
+    if (!enabled()) throw fail('Set up Remote Hermes before connecting.')
+    return discover(signal, startup)
+  }
+  async function savePair(botId, signal) {
+    const previous = record(), owner = generation
+    if (signal?.aborted || disposed) throw fail('Pairing was cancelled.', 'pairing')
+    const installed = { ...previous, pairedBotId: botId || undefined }
+    state.prefs.hermesRemote = installed
+    try {
+      await saveState()
+      if (signal?.aborted || disposed || generation !== owner || record() !== installed) throw fail('Pairing was cancelled or changed.', 'pairing')
+    } catch (error) {
+      if (record() === installed && generation === owner) {
+        state.prefs.hermesRemote = previous
+        await saveState()
+      }
+      throw error
+    }
+    generation++
+    publish()
+    return view()
+  }
+  async function pairBot(body, signal) {
+    await rt.load(); await rt.loadSecrets()
+    if (!enabled() || !record().profile) throw fail('Connect a Hermes profile before pairing.', 'pairing')
+    const botId = body?.botId
+    if (botId === '') {
+      requireReplaceable()
+      if (adapter.live.size) throw fail(CHAT_BUSY, 'busy')
+      return savePair('', signal)
+    }
+    if (typeof botId !== 'string' || !Object.hasOwn(state.bots ?? {}, botId)) throw fail('Choose an existing Automagik Bot.', 'pairing')
+    if (!state.bots[botId].model?.startsWith(`${HERMES_PROVIDER}/`)) throw fail('Choose Remote Hermes in this Bot’s chat before pairing it.', 'pairing')
+    if (record().pairedBotId && record().pairedBotId !== botId) throw fail('This Hermes profile is already paired. Unpair it before choosing another Bot.', 'pairing')
+    requireReplaceable()
+    if (adapter.live.size) throw fail(CHAT_BUSY, 'busy')
+    const run = await open({ identity: { canonicalBot: true }, signal })
+    try {
+      await run.prepare()
+      requireReplaceable()
+      if (signal?.aborted) throw fail('Pairing was cancelled.', 'pairing')
+      return await savePair(botId, signal)
+    } finally { run.dispose(); await drain() }
+  }
+  async function disconnect(body = {}) {
+    await cancelTests(body?.testsOnly ? { testId: body.testId, requestId: body.requestId } : undefined)
+    if (body?.testsOnly) return view()
+    disconnecting = true; generation++
+    try { await stopLive() } finally { disconnecting = false }
+    return view()
+  }
+  async function refreshProfiles(body, signal, startup) {
+    const entry = tested
+    if (!entry || entry.id !== body?.testId || entry.expires <= now() || entry.lease.closed) throw fail('This connection test expired. Test it again.', 'expired')
+    entry.checkSource?.()
+    const combined = signal ? AbortSignal.any([signal, entry.controller.signal]) : entry.controller.signal
+    const profiles = await refreshHermesProfiles(entry.lease.connection, { fetch: entry.fetch, signal: combined, deadlines: startup ? remaining(startup.until) : deadlines })
+    entry.checkSource?.()
+    if (tested !== entry || entry.expires <= now() || combined.aborted) throw fail('This connection test expired or was cancelled.', 'expired')
+    entry.lease.connection.profiles = profiles
+    return { profiles }
+  }
+
+  const api = {
+    view,
+    test: (draft, signal) => {
+      interruptTests()
+      return action(startup => testDraft(draft, startup.signal, startup), signal, { test: true, requestId: draft?.requestId })
+    },
+    save: (body, signal) => action(startup => saveTest(body, startup.signal, startup), signal, { test: true, testId: body?.testId, requestId: tested?.id === body?.testId ? tested.requestId : undefined }),
+    configure: (body, signal) => {
+      interruptTests()
+      return action(startup => configure(body, startup.signal), signal, {}, deadlines.control)
+    },
+    discover: signal => action(startup => discover(startup.signal, startup), signal),
+    connect: signal => action(startup => connect(startup.signal, startup), signal),
+    refreshProfiles: (body, signal) => action(startup => refreshProfiles(body, startup.signal, startup), signal, { test: true, testId: body?.testId }),
+    disconnect: body => {
+      const filter = body?.testsOnly ? body : {}
+      const matched = interruptTests(filter)
+      if (body?.testsOnly && !matched) return Promise.resolve(view())
+      if (!body?.testsOnly) {
+        for (const intent of intents) intent.controller.abort()
+        pendingConnection?.controller.abort()
+      }
+      const startup = budget(undefined, deadlines.cancel)
+      return waiting(mutate(() => disconnect(body)), startup)
+    },
+  }
+  const openChat = options => {
+    const startup = budget(options?.signal)
+    const expectedGeneration = generation, expectedConfig = record(), changing = disconnecting
+    const expectedIdentity = options?.identity
+    const task = mutate(async () => {
+      if (startup.signal.aborted) throw fail('Connection setup was cancelled or timed out.', 'timeout')
+      if (disposed || changing || expectedGeneration !== generation || expectedConfig !== record()
+        || (expectedIdentity && !Object.values(state.hermesSessions ?? {}).includes(expectedIdentity))) throw fail(CHAT_BUSY, 'busy')
+      return open({ ...options, startup, finishOnPrepare: true })
+    })
+    return waiting(task, startup, false).catch(error => { startup.finish(); throw error })
+  }
+  adapter = new RemoteChatAdapter(rt, { open: openChat, models: () => record().models ?? [], identity, save: saveState, enabled })
+  api.adapter = adapter
+  rt.hooks.endpoint('hermes-remote', async () => { await rt.load(); await rt.loadSecrets(); return view() }, { read: true })
+  rt.hooks.endpoint('hermes-remote-ssh-hosts', async (_body, signal) => {
+    try {
+      const found = await sshHosts({ signal })
+      const project = rows => Array.isArray(rows) ? rows.flatMap(row => {
+        if (!row || typeof row.alias !== 'string' || !row.alias) return []
+        return [Object.fromEntries(['alias', 'hostname', 'user', 'port'].map(key => [key, typeof row[key] === 'string' ? row[key] : '']))]
+      }) : []
+      return { aliases: project(found?.aliases), knownHosts: project(found?.knownHosts) }
+    } catch { return { aliases: [], knownHosts: [] } }
+  }, { read: true })
+  rt.hooks.endpoint('hermes-remote-test', (body, signal) => api.test(body, signal))
+  rt.hooks.endpoint('hermes-remote-test-status', body => {
+    const failure = failureOf(body?.connect === true ? 'connect' : body?.requestId)?.view
+    return { stage: pendingTest?.requestId && pendingTest.requestId === body?.requestId
+      ? pendingTest.stage : tested?.requestId && tested.requestId === body?.requestId ? 'connected' : 'reach', ...(failure ? { failure } : {}) }
+  }, { read: true })
+  rt.hooks.endpoint('hermes-remote-ssh-trust', (body, signal) => trustHostKey(body, signal))
+  rt.hooks.endpoint('hermes-remote-test-profiles', (body, signal) => api.refreshProfiles(body, signal))
+  rt.hooks.endpoint('hermes-remote-save', (body, signal) => api.save(body, signal))
+  rt.hooks.endpoint('hermes-remote-connect', (_body, signal) => api.connect(signal))
+  rt.hooks.endpoint('hermes-remote-pair', (body, signal) => action(startup => pairBot(body, startup.signal), signal))
+  rt.hooks.endpoint('hermes-remote-disconnect', api.disconnect)
+  rt.hooks.endpoint('hermes-remote-configure', api.configure)
+  rt.hooks.endpoint('hermes-remote-discover', (_body, signal) => api.discover(signal))
+  rt.hooks.endpoint('hermes-remote-reconcile', (body, signal) => action(async startup => {
+    signal = startup.signal
+    const info = sessions()[body.sessionId]
+    if (!info?.storedSessionId) throw refusal('There is no saved remote session to reconcile.')
+    const run = await open({ identity: info, save: saveState, signal, startup })
+    try {
+      const result = await run.reconcile()
+      return { ...view(), reconciliation: { unknown: result.unknown, gap: result.gap, messages: result.snapshot.messages, inflight: result.snapshot.inflight } }
+    } finally { run.dispose(); await drain() }
+  }, signal))
+  ctx.effect(() => {
+    void rt.load().then(() => mutate(publish)).catch(() => {})
+    return async () => {
+      interruptTests()
+      for (const intent of intents) intent.controller.abort()
+      pendingConnection?.controller.abort()
+      await mutate(async () => {
+        disposed = true
+        registration?.(); registration = undefined
+        await disconnect()
+      })
+    }
+  }, 'ds-bot: remote Hermes')
+  Object.assign(rt, { hermesRemote: api })
+}

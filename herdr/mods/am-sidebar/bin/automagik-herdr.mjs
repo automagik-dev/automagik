@@ -16,6 +16,7 @@ import { homedir, uptime } from "node:os";
 import { dirname, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { hermesPairEnv } from "../hermesPair.js";
 
 import { BOT_LABEL, BOTS_PATH, CHARACTERS, COLOURS, KINDS, MAX_INSTRUCTIONS, OMNI_LOOK, applyBotEdit, checkBots,
   CATEGORY_ID, PROJECTS_FILE, RANKS, cleanProjectPath, collectProjectMap, crossMemberWarnings, crossMembersOf, defaultLook, descendantsOf, effectiveLead, leadsBackTo, listedProjects, mainBotOf, newBotId, newCategoryId,
@@ -1099,6 +1100,7 @@ const ownConfigOf = (agentKey) => (agentKey === "codex" ? configPaths(home()).co
  */
 export async function briefedLaunch(project, bot, agentKey, argv, appHomeDir = appHome()) {
   const warnings = [];
+  if (agentKey === "hermes" && bot.hermes !== undefined) return { argv, env: {}, warnings };
   const way = briefingWay(agentKey);
   const agents = agentTable();
   if (!way || agentKeyOfArgv(argv, agents) !== agentKey) return { argv, env: {}, warnings };
@@ -1176,6 +1178,7 @@ const OPTIONS = {
   character: { type: "string" }, colour: { type: "string" }, color: { type: "string" }, omni: { type: "boolean" },
   model: { type: "string" }, "no-model": { type: "boolean" }, rank: { type: "string" }, "hc-proxy": { type: "string" },
   "agy-mode": { type: "string" }, "worker-agy-mode": { type: "string" },
+  "hermes-home": { type: "string" }, "hermes-profile": { type: "string" }, "no-hermes": { type: "boolean" },
   "agy-allow": { type: "string", multiple: true }, "agy-deny": { type: "string", multiple: true },
   "no-agy-permissions": { type: "boolean" },
   "planned-wave": { type: "string" }, "planned-note": { type: "string" }, unplanned: { type: "boolean" },
@@ -1210,6 +1213,8 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
          [--instructions TEXT | --instructions-file F|-] [--lead BOT [--lead-project DIR]] [--category ID]
          [--cross-member BOT@DIR]...   reciprocal cross-project member(s) reporting to this lead
          [--character C --colour K | --omni] [--model M] [--rank R]
+         [--hermes-home DIR --hermes-profile NAME]  pair an existing Hermes Bot Chat
+         [--no-hermes]                   remove a pairing (does not delete the Hermes Bot)
          [--agy-mode accept-edits|auto|plan]   Antigravity's --mode; default auto
          [--agy-allow RULE]... [--agy-deny RULE]...
                                        Antigravity permission rules this bot and its workers add
@@ -1610,6 +1615,14 @@ export function entryFrom(opts, base, project, { creating }) {
     const key = resolveAgent(opts.agent, agents);
     if (!key) throw new CliError(`"${opts.agent}" isn't a coding agent Herdr knows. Known: ${Object.keys(agents).join(", ")}.`);
     entry.agent = key;
+  }
+  const pairFields = ["home", "profile"];
+  const pairing = pairFields.some((field) => opts[`hermes-${field}`] !== undefined);
+  if (pairing && opts["no-hermes"]) throw new CliError("Give the Hermes pairing or --no-hermes, not both.", 2);
+  if (opts["no-hermes"]) entry.hermes = undefined;
+  if (pairing) {
+    entry.hermes = { ...entry.hermes };
+    for (const field of pairFields) if (opts[`hermes-${field}`] !== undefined) entry.hermes[field] = opts[`hermes-${field}`];
   }
   // Planned (A3): a wave and an optional note; --unplanned clears it.
   if (opts.unplanned && opts["planned-wave"] !== undefined) throw new CliError("Give --planned-wave or --unplanned, not both.", 2);
@@ -2826,6 +2839,7 @@ async function ownFileOn(machine, path, text) {
  * computer's config is read. Never throws: { argv, env, warnings }.
  */
 async function briefedOn(machine, project, bot, agentKey, argv, boxHome, guard = null) {
+  if (agentKey === "hermes" && bot.hermes !== undefined) return { argv, env: {}, warnings: [] };
   const way = briefingWay(agentKey);
   const agents = agentTable();
   if (!way || briefingOwnConfig(agentKey) || agentKeyOfArgv(argv, agents) !== agentKey) return { argv, env: {}, warnings: [] };
@@ -2988,7 +3002,7 @@ async function seatOnMachine(project, bot, over = {}) {
   // The hook goes in before the session starts, so Claude Code reads it at startup.
   const hook = briefingHook(agentKey) && briefingHome.dir ? await briefingHookOn(machine, bot, over.cwd ?? key, briefingHome.dir)
     : { written: false, warnings: [] };
-  const env = { ...(paneEnv.appHome ? { HERDR_APP_HOME: paneEnv.appHome } : {}), ...briefed.env };
+  const env = { ...(paneEnv.appHome ? { HERDR_APP_HOME: paneEnv.appHome } : {}), ...briefed.env, ...hermesPairEnv(bot) };
   const carry = over.carry ?? {};
   const labels = { ...paneLabels(file, bot.id, carry, null), ...carry };
   if (chosen) labels[SESSION_LABEL] = chosen;
@@ -3116,7 +3130,7 @@ async function restartOnMachine(opts, project, bot, entry) {
   const oldLaunch = old ? paneCommand(old) : null;
   const planned = {
     bot, run: launchRun(agentKey, run, bot), runningAgent: old ? agentKeyOfArgv(unwrapKeep(old.foreground?.argv), agentTable()) : null, session: label,
-    fresh: opts.fresh || !old, agent: entry ? entry.agent : undefined, model: entry ? (entry.model ?? "") : undefined,
+    fresh: opts.fresh || (!old && !bot.hermes), agent: entry ? entry.agent : undefined, model: entry ? (entry.model ?? "") : undefined,
     // A new conversation there starts on an id chosen here too (RFC 0026 (e)), as cmdRestart's does.
     newSession: newSessionId(),
   };
@@ -3137,7 +3151,7 @@ async function restartOnMachine(opts, project, bot, entry) {
   // With no session id, a resume takes the workspace's latest conversation, which may be one
   // someone started there by hand: refused unless --force, and even then while any other live
   // pane on that machine runs the same agent in that folder (bot or not: hc ls, not the ledger).
-  if (plan.mode === "resume" && !session) {
+  if (plan.mode === "resume" && !session && !plan.canonicalBot) {
     if (!opts.force) {
       throw new CliError(`${old.address} carries no session id, so ${plan.agent} would resume the latest conversation in ${cwd}, `
         + `which may not be ${bot.name}'s (one started there by hand, say). Nothing was restarted. Restart with --fresh for a new `
@@ -3325,7 +3339,7 @@ async function launchSeat(project, bot, over = {}) {
     approvedProxyState({ project: key, bot }), process.platform,
     (warning) => briefed.warnings.push(warning));
   const env = { ...(process.env.HERDR_APP_HOME ? { HERDR_APP_HOME: appHome() } : {}),
-    ...briefed.env };
+    ...briefed.env, ...hermesPairEnv(bot) };
   const args = startArgs({ botId: bot.id, name: hcName(bot.name, bot.id, taken), cwd, space: place?.space, tab: place?.tab, parent, argv, labels, path,
     env, login, agent: agentKey, project: key, sandbox: proxyOn });
   // The hook goes in before the session starts, so Claude Code reads it at startup.
@@ -4390,7 +4404,7 @@ async function cmdRestart(opts, [ref]) {
   const planned = {
     bot, run: launchRun(entry?.agent ?? bot.agent, startableAgent(bot, entry?.agent ?? bot.agent).run, bot),
     runningAgent, session: known?.session ?? null,
-    fresh: opts.fresh || !was, agent: entry ? entry.agent : undefined, model: entry ? (entry.model ?? "") : undefined,
+    fresh: opts.fresh || (!was && !bot.hermes), agent: entry ? entry.agent : undefined, model: entry ? (entry.model ?? "") : undefined,
     template: oldTemplate?.command ? { name: oldTemplate.name, command: oldTemplate.command } : null,
     agy: { appHomeDir: appHome(), folder: cwd, realpath: realDir, homeDir: home() },
     // A new conversation on Claude runs on an id chosen here (RFC 0021 (f) 2); a resume keeps its own.
@@ -4415,7 +4429,7 @@ async function cmdRestart(opts, [ref]) {
   // --last), for every agent: beside another bot on that agent there, a new conversation, and
   // why (#328: an omp --continue picked up a teammate's). Alone there, the resume as before.
   let sharedNote = null;
-  if (plan.mode === "resume" && !resumeId) {
+  if (plan.mode === "resume" && !resumeId && !plan.canonicalBot) {
     const anywhere = continuesAnywhere(plan.agent);
     const sharers = await sharersOf({ view, cwd, botId: bot.id, file, agentKey: plan.agent, ledger, old, anywhere });
     const note = sharedFresh({ name: bot.name, old: was, cwd, sharers, agent: agentName(plan.agent), words: plan.resume.join(" "), anywhere });
@@ -4584,7 +4598,7 @@ async function cmdRestart(opts, [ref]) {
   }
   // A helper --tree couldn't run again: the command fails (the bot did restart; its line says how).
   if (rerun.some((h) => h.error)) exitAfter.code = 1;
-  if (plan.mode === "resume" && !resumeId) {
+  if (plan.mode === "resume" && !resumeId && !plan.canonicalBot) {
     const name = agentName(plan.agent);
     say(`No ${name} session id was known for ${was.address}, so ${seat.terminal} resumes the latest conversation in ${cwd} (${plan.resume.join(" ")}). `
       + `No other bot's ${name} runs there; if it isn't ${bot.name}'s, restart again with --fresh.`);
