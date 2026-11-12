@@ -1,0 +1,14 @@
+name = "automagik-id"
+main = "src/index.ts"
+compatibility_date = "2025-11-18"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+preview_urls = false
+
+# Copy to ignored wrangler.local.toml; the deployment script supplies the binding.
+# No account, database or zone identifiers belong in this file.
+[assets]
+directory = "./pages"
+binding = "PAGES"
+run_worker_first = true
+html_handling = "none"
