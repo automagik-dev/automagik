@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import test, { after } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import {
-  applyAllowlist, BILLING_RULES, configHits, DATA_DIRS, loadAllowlist, maskAddress, maskRoute, maskSpecifier, maskStripePackage,
+  applyAllowlist, BILLING_RULES, configHits, DATA_DIRS, hitOf, LABELS, loadAllowlist,
   nameHits, ownCode, scanRepo, scanTree, sha256,
   sha256Bytes, walk,
 } from '../secrecy.mjs'
@@ -177,7 +178,7 @@ test('the ACP SDK example home paths have one exact entry each, and each is nece
     assert.match(found[0].reason, /ACP SDK/)
     assert.match(found[0].reason, /not a host account/)
     const kept = scanTree(dir, undefined, entries.filter((entry) => entry !== found[0])).hits
-    assert.deepEqual(kept.map((hit) => [hit.file, hit.rule, hit.match]), [[file, 'home-path', match]])
+    assert.deepEqual(kept.map((hit) => [hit.file, hit.rule, hit.raw, hit.match]), [[file, 'home-path', match, LABELS['home-path']]])
   }
 })
 
@@ -428,101 +429,188 @@ test('--repo refuses a Stripe key, price or account id in a tracked file, and th
   assert.deepEqual(repo.hits.map((hit) => `${hit.file}:${hit.line}: ${hit.rule}`), [])
 })
 
-// PR 976 review: a billing finding once printed its whole match (MASK_RAW_URL), then a route
-// through its last billing segment (MASK_GREEDY_ROUTE), and the token-url finding kept the URL
-// around its token (TOKEN_URL_KEEPS_URL), so a credential in a URL, between two segments or in
-// userinfo reached stderr and the inventory. These findings now show fixed words only.
-test('a billing finding never prints a credential carried in its URL, route, import, package or key', () => {
-  const secret = `tk${'9xQ7'.repeat(8)}`
-  const password = `pw${'4Lm2'.repeat(6)}`
-  const label = `lb${'7k3z'.repeat(6)}`
-  const parts = [secret, password, label].flatMap((value) => [value, value.slice(0, 8), value.slice(8, 16), value.slice(-8), value.slice(2, 6)])
+// PR 976 review (RAW_INPUT_IN_PUBLIC_MATCH and its earlier cases MASK_RAW_URL, MASK_GREEDY_ROUTE,
+// TOKEN_URL_KEEPS_URL): a finding once showed text taken from what it scanned, so a credential in
+// a URL, a route, a package or a variable name reached stderr and the uploaded inventory. Every
+// finding's public text is now one constant of LABELS. This plants a per-run synthetic secret in
+// every field each finding kind reads and runs the real CLI, on a rootfs and on an image.
+test('no finding prints what it scanned: every field, through the real CLI, in both modes', () => {
+  const made = []
+  // A unique per-run value over an alphabet, never written in this file.
+  const synth = (length, alphabet = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789') => {
+    let value = ''
+    for (const byte of randomBytes(length)) value += alphabet[byte % alphabet.length]
+    // The id rules need a digit and a capital; the suffix keeps the value unique enough.
+    value = `${value.slice(0, length - 2)}${alphabet.includes('A') ? 'Q' : 'q'}7`
+    made.push(value)
+    return value
+  }
+  const lower = 'abcdefghijkmnpqrstuvwxyz23456789'
+  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
   const vendor = ['gateway', 'vendor', 'net'].join('.')
   const stripe = ['stripe', 'com'].join('.')
-  const dir = rootfs()
-  write(dir, `${PLUGIN}/models.js`, [
-    `const gatewayUrl = 'https://${vendor}/v1?token=${secret}'`,
-    `const gatewayStream = 'wss://svc:${password}@${vendor}:8443/stream#${secret}'`,
-    `const gateway_${label} = 'https://${label}.${vendor}/${secret}/v1'`,
-    // Userinfo and a token together: the overlapping token-url finding once kept the userinfo.
-    `const gatewayAuth = 'https://svc:${secret}@${vendor}/v1/${password}?key=${password}&token=${secret}'`,
-    `const other = 'http://${password}@${label}.host.invalid/${secret}?a=${password}&token=${secret}'`,
-    `const gateway_${label}_token = '${secret}'`,
-    `ctx.server.get('/api/billing/portal?token=${secret}', handler)`,
-    `ctx.server.get('/cloud/ledger/${secret}', handler)`,
-    // Repeated and mixed segments, and a credential before the first one.
-    `ctx.server.get('/api/billing/${secret}/ledger/events', handler)`,
-    `ctx.server.get('/api/ledger/${secret}/billing', handler)`,
-    `ctx.server.get('/billing/${secret}/billing', handler)`,
-    `ctx.server.get('/${secret}/billing/${password}/ledger/${secret}/billing/x', handler)`,
-    `ctx.server.get('/${secret}/ledger', handler)`,
-    `import { charge } from './billing.mjs?token=${secret}'`,
-    `import { a } from './billing/${secret}/ledger/${password}/index.js'`,
-    `import { b } from './${secret}/ledger/billing-${password}.js'`,
-    `import { c } from './x/billing-${secret}/y.js'`,
-    `import d from 'stripe/${secret}/billing.js'`,
-    `import e from '@stripe/${secret}'`,
-    `fetch('https://${label}.${stripe}/v1/${secret}')`,
-    `fetch('https://api.${stripe}/v1/${secret}')`,
-    '',
-  ].join('\n'))
-  write(dir, `${PLUGIN}/package.json`, JSON.stringify({ name: '@automagik/bots-dsh', dependencies: { [`@stripe/${secret}`]: '1' }, peerDependencies: { stripe: '1' } }))
-  write(dir, `${THIRD}/package.json`, JSON.stringify({ name: `@stripe/${password}` }))
-  write(dir, `${THIRD}/data.json`, [
-    `{"a":"https://gateway.${ownHost}/v1?token=${secret}",`,
-    ` "b":"https://api.${ownHost}/gateway/quote?key=${secret}",`,
-    ` "c":"wss://eu.gateway-a.cloud.${ownHost}/${secret}",`,
-    ` "d":"https://${label}.gateway.${ownHost}/billing/${secret}/ledger"}`,
-    '',
-  ].join('\n'))
-  const found = scanTree(dir, undefined, []).hits
-  const shown = (rule) => found.filter((hit) => hit.rule === rule).map((hit) => hit.match).sort()
-  assert.deepEqual(shown('gateway-address'), [
-    'gateway default https://***', 'gateway default https://***', 'gateway default https://***', 'gateway default wss://***',
-    'own gateway host https://***', 'own gateway host https://***', 'own gateway host https://***', 'own gateway host wss://***',
-  ])
-  assert.deepEqual(shown('gateway-credential'), ['gateway credential ***'])
-  assert.deepEqual(shown('token-url'), ['http://***?token=***', 'https://***?token=***', 'https://***?token=***', 'https://***?token=***'])
-  assert.ok(found.some((hit) => hit.rule === 'token-url' && hit.raw.includes(`svc:${secret}@`)))
-  assert.deepEqual(shown('billing-route'), [
-    '/***/billing/***', '/***/billing/***', '/***/billing/***', '/***/billing/***',
-    '/***/ledger/***', '/***/ledger/***', '/***/ledger/***',
-  ])
-  assert.deepEqual(shown('billing-import'), ['***/billing/***', '***/billing/***', '***/billing/***', '***/ledger/***'].map((text) => `import ${text}`))
-  assert.deepEqual(shown('stripe-sdk'), ['dependencies @stripe/***', 'import @stripe/***', 'import stripe', 'package @stripe/***', 'peerDependencies stripe'])
-  assert.deepEqual(shown('stripe-client'), [`***.${stripe}`, `api.${stripe}`])
-  // The raw match is still what an exact allowlist entry and the hash are made from.
-  assert.ok(found.some((hit) => hit.rule === 'gateway-address' && hit.raw.includes(secret)))
-  assert.ok(found.some((hit) => hit.rule === 'billing-route' && hit.raw.includes(secret)))
-  for (const hit of found) for (const part of parts) assert.ok(!hit.match.includes(part), `${hit.rule}: ${hit.match}`)
+  // Built, not written: the repository's privacy grep reads this file too.
+  const dashes = '-'.repeat(5)
+  const pem = (body) => [`${dashes}BEGIN PRIVATE ${'KEY'}${dashes}`, body, `${dashes}END PRIVATE ${'KEY'}${dashes}`, ''].join('\n')
 
-  // The CLI, as the workflow runs it: nothing printed and nothing in the uploaded inventory.
-  const inventory = join(temp(), 'inventory')
-  const run = spawnSync(process.execPath, [join(HERE, '..', 'secrecy.mjs'), '--rootfs', dir, '--inventory', inventory], { encoding: 'utf8' })
-  assert.equal(run.status, 1)
-  assert.match(run.stderr, /: gateway-address: gateway default https:\/\/\*\*\* rawSha256=/)
-  assert.match(run.stderr, /: billing-route: \/\*\*\*\/ledger\/\*\*\* rawSha256=/)
-  assert.match(run.stderr, /: token-url: https:\/\/\*\*\*\?token=\*\*\* rawSha256=/)
-  const names = readdirSync(inventory)
-  assert.ok(names.includes('secrecy.txt') && names.includes('secrecy-hits.json'))
-  const written = names.map((name) => readFileSync(join(inventory, name), 'utf8')).join('\n')
-  assert.match(written, /: gateway-address: /)
-  assert.match(written, /: billing-route: /)
-  for (const part of parts) {
-    assert.ok(!run.stderr.includes(part), 'stderr holds part of a credential')
-    assert.ok(!run.stdout.includes(part), 'stdout holds part of a credential')
-    assert.ok(!written.includes(part), 'the inventory holds part of a credential')
+  // [what is planted, the file, its content, the rules it must raise]
+  const OWN = `${PLUGIN}/planted`
+  const DEP = `${THIRD}/planted`
+  const rows = [
+    ['a provider key', `${DEP}/key-sk.txt`, `K=sk-${synth(40)}\n`, ['key', 'secret']],
+    ['a GitHub token', `${DEP}/key-gh.txt`, `K=ghp_${synth(36)}\n`, ['key', 'secret']],
+    ['a GitHub fine-grained token', `${DEP}/key-pat.txt`, `K=github_pat_${synth(44)}\n`, ['key', 'secret']],
+    ['an AWS key id', `${DEP}/key-akia.txt`, `K=AKIA${synth(16, upper)}\n`, ['key', 'secret']],
+    ['a Slack token', `${DEP}/key-xox.txt`, `K=xoxb-${synth(24)}\n`, ['key', 'secret']],
+    ['a private-key body', `${DEP}/key-pem.txt`, pem(synth(64)), ['private-key', 'secret']],
+    ['a private path', `${DEP}/path.txt`, `at /mnt/ai/${synth(24)}/x\n`, ['private-path']],
+    ['a home path', `${DEP}/home.txt`, `at ${['', 'home', synth(24)].join('/')}/x\n`, ['home-path']],
+    ['a home path in a binary', `${DEP}/home.bin`, Buffer.concat([Buffer.from([0]), Buffer.from(`${['', 'home', synth(24)].join('/')}\0`)]), ['home-path']],
+    ['a token=', `${DEP}/token.txt`, `x?token=${synth(32)}\n`, ['token']],
+    ['a token URL: userinfo, host, path, query, fragment', `${DEP}/token-url.txt`, `https://${synth(12)}:${synth(24)}@${synth(12, lower)}.host.invalid/${synth(24)}?a=${synth(24)}&token=${synth(32)}#${synth(24)}\n`, ['token-url', 'git-credentials']],
+    ['a JSON token field', `${DEP}/token.json`, `{"api_token": "${synth(40)}"}\n`, ['token-json']],
+    ['a credential URL', `${DEP}/cred.txt`, `ssh://${synth(12)}:${synth(24)}@host.invalid/x.git\n`, ['git-credentials']],
+    ['a Stripe secret key', `${DEP}/stripe-sk.txt`, `${['sk', 'live', synth(28)].join('_')}\n`, ['stripe-key']],
+    ['a Stripe restricted key', `${DEP}/stripe-rk.txt`, `${['rk', 'test', synth(28)].join('_')}\n`, ['stripe-key']],
+    ['a Stripe webhook secret', `${DEP}/stripe-wh.txt`, `${['whsec', synth(32)].join('_')}\n`, ['stripe-key']],
+    ...['price', 'prod', 'acct', 'cus', 'sub', 'plan', 'pk_live', 'pk_test'].map((prefix) => [`a Stripe ${prefix} id`, `${DEP}/stripe-${prefix}.json`, `{"id":"${[prefix, synth(24)].join('_')}"}\n`, ['stripe-id']]),
+    ['a Stripe host label and path', `${DEP}/stripe-host.js`, `fetch('https://${synth(16, lower)}.${stripe}/v1/${synth(24)}')\nfetch('https://api.${stripe}/v1/${synth(24)}')\n`, ['stripe-client']],
+    ['a Stripe package name', `${DEP}/a/package.json`, JSON.stringify({ name: `@stripe/${synth(24)}` }), ['stripe-sdk']],
+    ['a Stripe dependency name', `${OWN}/b/package.json`, JSON.stringify({ name: 'x', dependencies: { [`@stripe/${synth(24)}`]: synth(24) }, bundledDependencies: [`stripe/${synth(24)}`] }), ['stripe-sdk']],
+    ['a Stripe import path', `${DEP}/stripe-import.js`, `import a from 'stripe/${synth(24)}/x.js'\nimport b from '@stripe/${synth(24)}'\nconst c = require("@stripe/x/${synth(24)}")\n`, ['stripe-sdk']],
+    ['a billing import: before, in, between, after, query', `${OWN}/imports.js`, [
+      `import a from './${synth(24)}/billing/${synth(24)}/ledger/${synth(24)}.js?t=${synth(24)}'`,
+      `import b from './x/billing-${synth(24)}.mjs'`,
+      `const c = await import('./ledger/${synth(24)}/billing/index.js#${synth(24)}')`,
+      '',
+    ].join('\n'), ['billing-import']],
+    ['a billing route: before, between, after, query', `${OWN}/routes.js`, [
+      `r.get('/${synth(24)}/billing/${synth(24)}/ledger/${synth(24)}/billing/${synth(24)}?k=${synth(24)}', h)`,
+      `r.get('/api/billing/${synth(24)}/ledger/events', h)`,
+      `r.get('/api/ledger/${synth(24)}/billing', h)`,
+      `r.get('/billing/${synth(24)}/billing', h)`,
+      `r.get('/${synth(24)}/ledger', h)`,
+      '',
+    ].join('\n'), ['billing-route']],
+    ['a gateway default: key, userinfo, host, path, query, fragment', `${OWN}/gateway.js`, [
+      `const gateway_${synth(20)} = 'https://${synth(12)}:${synth(24)}@${synth(12, lower)}.${vendor}:8443/${synth(24)}?k=${synth(24)}#${synth(24)}'`,
+      `const url = env.GATEWAY_${synth(20, upper)} ?? "wss://${synth(12, lower)}.${vendor}/${synth(24)}"`,
+      '',
+    ].join('\n'), ['gateway-address']],
+    ['a gateway credential: key and value', `${OWN}/gateway-credential.js`, `const gateway_${synth(12)}_token = '${synth(32)}'\n`, ['gateway-credential']],
+    ['an own gateway host: label, path, query', `${DEP}/own.json`, [
+      `{"a":"https://${synth(12, lower)}.gateway.${ownHost}/${synth(24)}?k=${synth(24)}",`,
+      ` "b":"wss://api.${ownHost}/${synth(24)}/gateway/${synth(24)}"}`,
+      '',
+    ].join('\n'), ['gateway-address']],
+    ['a private name', `${DEP}/name.txt`, `${shortName}\n`, ['private-name']],
+  ]
+  const dir = rootfs()
+  for (const [, file, content] of rows) write(dir, file, content)
+  // The image config: a secret in a variable's name and in its value, and in a label.
+  const config = JSON.stringify({
+    Env: [
+      'PATH=/usr/bin',
+      `GATEWAY_${synth(20, upper)}=enabled`,
+      `BILLING_${synth(20, upper)}=enabled`,
+      `STRIPE_${synth(20, upper)}=${synth(24)}`,
+      `LEDGER_MODE_${synth(20, upper)}=${synth(24)}`,
+      `GATEWAY_TOKEN_${synth(20, upper)}=enabled`,
+      `API_SECRET_${synth(20, upper)}=${synth(24)}`,
+      `MODELS=https://${synth(12)}:${synth(24)}@${synth(12, lower)}.gateway.${ownHost}/${synth(24)}?token=${synth(32)}`,
+    ],
+    Labels: { note: ['sk', 'test', synth(28)].join('_') },
+  })
+  const configRules = ['env-secret', 'gateway-address', 'billing-config', 'token-url', 'git-credentials', 'stripe-key']
+
+  // A stand-in docker: it answers the inspect, create, export and rm the scan makes, from this
+  // rootfs and config. `save` fails, as the scan allows. Nothing is built or run.
+  const bin = temp()
+  const fake = join(bin, 'docker')
+  writeFileSync(join(bin, 'config.json'), config)
+  writeFileSync(fake, [
+    `#!${process.execPath}`,
+    "const { execFileSync } = require('node:child_process')",
+    "const { readFileSync } = require('node:fs')",
+    "const { join } = require('node:path')",
+    'const args = process.argv.slice(2)',
+    "const format = args[args.indexOf('--format') + 1] ?? ''",
+    "if (args[0] === 'image' && args[1] === 'inspect') {",
+    "  if (format.includes('.Config')) process.stdout.write(readFileSync(join(__dirname, 'config.json'), 'utf8'))",
+    "  else if (format.includes('.RootFS')) process.stdout.write('[\"sha256:layer\"]')",
+    "  else process.stdout.write('sha256:image')",
+    "} else if (args[0] === 'export') {",
+    `  execFileSync('tar', ['-cf', args[args.indexOf('--output') + 1], '-C', ${JSON.stringify(dir)}, '.'])`,
+    "} else if (args[0] === 'save') process.exit(1)",
+    '',
+  ].join('\n'), { mode: 0o755 })
+
+  const labels = new Set(Object.values(LABELS))
+  const parts = made.flatMap((value) => [value, value.slice(0, 8), value.slice(-8), value.slice(4, 12)])
+  assert.ok(made.length > 80, String(made.length))
+  assert.equal(new Set(made).size, made.length)
+  const script = join(HERE, '..', 'secrecy.mjs')
+  const modes = [
+    ['rootfs', ['--rootfs', dir], []],
+    ['image', ['automagik-fake:test'], configRules],
+  ]
+  for (const [mode, args, extra] of modes) {
+    const inventory = join(temp(), 'inventory')
+    const run = spawnSync(process.execPath, [script, ...args, '--inventory', inventory], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, GITHUB_STEP_SUMMARY: join(bin, `summary-${mode}.md`) },
+    })
+    assert.equal(run.status, 1, `${mode}: ${run.stderr.slice(-400)}`)
+    const names = readdirSync(inventory)
+    for (const name of ['secrecy.txt', 'secrecy-hits.json', 'image-files.txt', 'image-layers.txt', 'image.txt']) assert.ok(names.includes(name), `${mode}: ${name}`)
+    const written = [...names.map((name) => readFileSync(join(inventory, name), 'utf8')), readFileSync(join(bin, `summary-${mode}.md`), 'utf8')].join('\n')
+    for (const part of parts) {
+      assert.ok(!run.stderr.includes(part), `${mode}: stderr holds part of a planted value`)
+      assert.ok(!run.stdout.includes(part), `${mode}: stdout holds part of a planted value`)
+      assert.ok(!written.includes(part), `${mode}: the inventory holds part of a planted value`)
+    }
+    // Every finding line, as written and as printed, ends in a constant of the table.
+    const lines = readFileSync(join(inventory, 'secrecy.txt'), 'utf8').trim().split('\n')
+    const findings = lines.map((line) => /^(.+?):(\d+): ([a-z-]+): (.*)$/.exec(line))
+    for (const [index, found] of findings.entries()) assert.ok(found && labels.has(found[4]), `${mode}: ${lines[index]}`)
+    const printed = run.stderr.trim().split('\n').filter((line) => !line.startsWith('[secrecy]'))
+    assert.equal(printed.length, lines.length, mode)
+    for (const line of printed) {
+      const found = /^(.+?):(\d+): ([a-z-]+): (.*) rawSha256=[0-9a-f]{64} fileSha256=(?:[0-9a-f]{64}|-)$/.exec(line)
+      assert.ok(found && labels.has(found[4]), `${mode}: a printed finding is not a table label`)
+    }
+    // Every planted field was read: each row raised its rules, in its own file.
+    for (const [label, file, , rules] of rows) {
+      for (const rule of rules) assert.ok(findings.some((found) => found[1] === file && found[3] === rule), `${mode}: ${label}: no ${rule}`)
+    }
+    for (const rule of extra) assert.ok(findings.some((found) => found[1] === 'image-config' && found[3] === rule), `${mode}: image-config: no ${rule}`)
+    assert.equal(findings.some((found) => found[1] === 'image-config'), extra.length > 0, mode)
   }
 
-  // The image config goes through the same masks.
-  const config = JSON.stringify({ Env: [`MODELS=https://gateway.${ownHost}/${secret}`], Labels: {} })
-  for (const hit of configHits(config, { deny: [], allow: [] })) assert.ok(!hit.match.includes(secret), hit.match)
+  // --repo, the third way in: the same table.
+  const repo = temp()
+  write(repo, 'a.md', `${['sk', 'live', synth(28)].join('_')} ${['price', synth(24)].join('_')}\n`)
+  const repoRun = spawnSync(process.execPath, [script, '--repo', repo], { encoding: 'utf8', env: { ...process.env, GIT_DIR: join(repo, 'none') } })
+  assert.equal(repoRun.status, 1)
+  for (const value of made.slice(-2)) assert.ok(!repoRun.stderr.includes(value.slice(0, 8)) && !repoRun.stdout.includes(value.slice(0, 8)))
+})
 
-  assert.equal(maskAddress(`https://user:pw@${label}.h.example:8443/p?q=1#f`), 'https://***')
-  assert.equal(maskRoute(`'/api/billing/${secret}/ledger/events'`), '/***/billing/***')
-  assert.equal(maskRoute(`'/api/ledger/${secret}/billing'`), '/***/ledger/***')
-  assert.equal(maskRoute("'/billing'"), '/***/billing/***')
-  assert.equal(maskSpecifier(`./${secret}/ledger/billing.js`), '***/ledger/***')
-  assert.equal(maskStripePackage('stripe/lib/x.js'), 'stripe')
-  assert.equal(maskStripePackage(`@stripe/${secret}`), '@stripe/***')
+test('a finding takes its text from the label table or is refused', () => {
+  for (const text of Object.values(LABELS)) assert.equal(typeof text, 'string')
+  assert.ok(Object.isFrozen(LABELS))
+  // The one constructor refuses a text that is not a key of the table, and does not repeat it.
+  const planted = `tk${'4Lm2'.repeat(8)}`
+  assert.deepEqual(hitOf('f', 1, 'key', planted, 'key-sk'), { file: 'f', line: 1, rule: 'key', raw: planted, match: 'sk-***' })
+  for (const label of [planted, undefined, 'toString', 'constructor', LABELS['key-sk'], () => 'key-sk']) {
+    assert.throws(() => hitOf('f', 1, 'key', planted, label), (error) => error.message === 'a key finding has no label in the table')
+  }
+  // Every hit of a scan is a table constant, and the raw text is kept beside it.
+  const dir = rootfs()
+  const value = `tk${'9xQ7'.repeat(8)}`
+  write(dir, `${PLUGIN}/x.js`, `const gatewayUrl = 'ftp-not://x'\nconst gatewayUrl2 = 'https://h.invalid.${['vendor', 'net'].join('.')}/${value}'\n`)
+  const found = scanTree(dir, undefined, []).hits
+  assert.deepEqual(found.map((hit) => [hit.rule, hit.match]), [['gateway-address', 'gateway default https://***']])
+  assert.ok(found[0].raw.includes(value))
+  // An image config that is not JSON: the parser's message, which quotes its input, is not passed on.
+  assert.throws(() => configHits(`{"Env": [${value}`, { deny: [], allow: [] }), (error) => error.message === 'the image config is not JSON')
 })

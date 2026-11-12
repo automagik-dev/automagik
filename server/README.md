@@ -373,10 +373,14 @@ the installer put it; a dependency under another `node_modules` folder is third-
 provider preset's third-party address (a user-chosen model provider) is not a built-in gateway.
 A billing hit in our own code or the config may never be allowlisted, nor may `stripe-sdk`,
 `gateway-credential` or `billing-config` anywhere; another dependency's hit needs an exact entry.
-A billing finding shows fixed words only (a URL's scheme, which of `billing` or `ledger` a route
-or import names, `stripe` or `@stripe/***`): nothing is copied from a host, path, query, package
-name or key, so a credential carried in one never reaches the log or the inventory. The file,
-the line and the raw match's sha256 place it.
+Every finding, billing or not, prints one constant from a fixed table in `secrecy.mjs`
+(`LABELS`): `sk-***`, `a home path`, `gateway default https://***`, `/***/billing/***`. Nothing
+is copied from what was scanned: not a matched string, a URL's userinfo, host, path or query, a
+route, an import, a package name, a setting's key, an environment variable's name or value, or
+the privacy grep's own text. So a credential carried in any of them never reaches the log or
+the uploaded inventory. The file, the line and the raw match's sha256 (`rawSha256`) place a
+finding; an allowlist entry for it uses that `sha256`. The inventory still lists every file path
+and symlink target in the image, by design.
 The rules are shapes: this repository writes no Stripe key, price or account id, and
 `node server/secrecy.mjs --repo .` (CI's `privacy` job) fails on one in any tracked file. A price
 written as a plain amount is not a shape a scan can know; that stays a review rule.

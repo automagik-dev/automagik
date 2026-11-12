@@ -62,32 +62,32 @@ const usage = 'usage: node server/secrecy.mjs <image> [--inventory <dir>] [--kee
   + '       node server/secrecy.mjs --repo <dir>'
 
 /**
- * High-confidence live-secret shapes, applied to every file. `mask` keeps the value out of the
- * log: a finding names the rule and the file, never the credential.
+ * High-confidence live-secret shapes, applied to every file. `label` is a key of LABELS (or
+ * picks one): a finding names the rule and the file, never the credential.
  */
 export const SECRET_RULES = [
-  { rule: 'key', re: /\bsk-(?:ant-)?[A-Za-z0-9_-]{16,}\b/g, mask: () => 'sk-***' },
-  { rule: 'key', re: /\bgh[pousr]_[A-Za-z0-9]{30,}\b/g, mask: () => 'gh***' },
-  { rule: 'key', re: /\bgithub_pat_[A-Za-z0-9_]{40,}\b/g, mask: () => 'github_pat_***' },
-  { rule: 'key', re: /\bAKIA[0-9A-Z]{16}\b/g, mask: () => 'AKIA***' },
-  { rule: 'key', re: /\bxox[abprs]-[A-Za-z0-9-]{10,}\b/g, mask: () => 'xox***' },
+  { rule: 'key', re: /\bsk-(?:ant-)?[A-Za-z0-9_-]{16,}\b/g, label: 'key-sk' },
+  { rule: 'key', re: /\bgh[pousr]_[A-Za-z0-9]{30,}\b/g, label: 'key-gh' },
+  { rule: 'key', re: /\bgithub_pat_[A-Za-z0-9_]{40,}\b/g, label: 'key-github-pat' },
+  { rule: 'key', re: /\bAKIA[0-9A-Z]{16}\b/g, label: 'key-akia' },
+  { rule: 'key', re: /\bxox[abprs]-[A-Za-z0-9-]{10,}\b/g, label: 'key-xox' },
   // A real block: a header, at least one body element (a base64 line of any length, including a
   // short final line, a Proc-Type/DEK-Info header, or the blank line after it), and a footer. A
   // bare BEGIN/END label constant is not a key.
-  { rule: 'private-key', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\r\n]+(?:(?:Proc-Type|DEK-Info):[^\r\n]*[\r\n]+|[\r\n]+|[A-Za-z0-9+/=]+[\r\n]+)+-----END [A-Z ]*PRIVATE KEY-----/g, mask: () => 'PRIVATE KEY block' },
-  { rule: 'private-path', re: /\/mnt\/ai(?:\/|\b)/g, mask: () => '/mnt/ai' },
+  { rule: 'private-key', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\r\n]+(?:(?:Proc-Type|DEK-Info):[^\r\n]*[\r\n]+|[\r\n]+|[A-Za-z0-9+/=]+[\r\n]+)+-----END [A-Z ]*PRIVATE KEY-----/g, label: 'private-key' },
+  { rule: 'private-path', re: /\/mnt\/ai(?:\/|\b)/g, label: 'private-path' },
 ]
 /**
  * A token URL shows its scheme only: its userinfo, host, path and other parameters can each
  * carry a second credential beside the token.
  */
 export const TOKEN_RULES = [
-  { rule: 'token', re: /(?<![A-Za-z0-9_])token=[A-Za-z0-9_.~+\/-]{24,}/g, mask: () => 'token=***' },
-  { rule: 'token-url', re: /https?:\/\/[^\s"'<>]*[?&]token=[^&\s"'<>]+/g, mask: (m) => `${m.slice(0, m.indexOf(':')).toLowerCase()}://***?token=***` },
-  { rule: 'token-json', re: /["'](?:access_?|refresh_?|api_?|launch_?)?token["']\s*:\s*["'](?=[A-Za-z0-9_.~+\/-]{32,}["'])(?=[A-Za-z0-9_.~+\/-]*\d)[A-Za-z0-9_.~+\/-]+["']/gi, mask: () => 'token: ***' },
+  { rule: 'token', re: /(?<![A-Za-z0-9_])token=[A-Za-z0-9_.~+\/-]{24,}/g, label: 'token' },
+  { rule: 'token-url', re: /https?:\/\/[^\s"'<>]*[?&]token=[^&\s"'<>]+/g, label: (m) => `token-url-${m.slice(0, m.indexOf(':')).toLowerCase()}` },
+  { rule: 'token-json', re: /["'](?:access_?|refresh_?|api_?|launch_?)?token["']\s*:\s*["'](?=[A-Za-z0-9_.~+\/-]{32,}["'])(?=[A-Za-z0-9_.~+\/-]*\d)[A-Za-z0-9_.~+\/-]+["']/gi, label: 'token-json' },
 ]
 export const CREDENTIAL_RULES = [
-  { rule: 'git-credentials', re: /(?:https?|ssh):\/\/[^\s/:@]+:[^\s/@]+@/g, mask: () => '***:***@' },
+  { rule: 'git-credentials', re: /(?:https?|ssh):\/\/[^\s/:@]+:[^\s/@]+@/g, label: 'credential-url' },
 ]
 export const SERVER_RULES = [...SECRET_RULES, ...TOKEN_RULES, ...CREDENTIAL_RULES]
 
@@ -98,9 +98,9 @@ export const SERVER_RULES = [...SECRET_RULES, ...TOKEN_RULES, ...CREDENTIAL_RULE
  * These are also what `--repo` refuses in the repository's tracked files.
  */
 export const STRIPE_VALUE_RULES = [
-  { rule: 'stripe-key', re: /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b/g, mask: (m) => `${m.slice(0, 7)}_***` },
-  { rule: 'stripe-key', re: /\bwhsec_[A-Za-z0-9]{24,}\b/g, mask: () => 'whsec_***' },
-  { rule: 'stripe-id', re: /\b(?:price|prod|acct|cus|sub|plan|pk_live|pk_test)_(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Z])[A-Za-z0-9]{14,}\b/g, mask: (m) => `${m.slice(0, m.lastIndexOf('_'))}_***` },
+  { rule: 'stripe-key', re: /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b/g, label: (m) => `stripe-key-${m.slice(0, 7)}` },
+  { rule: 'stripe-key', re: /\bwhsec_[A-Za-z0-9]{24,}\b/g, label: 'stripe-key-whsec' },
+  { rule: 'stripe-id', re: /\b(?:price|prod|acct|cus|sub|plan|pk_live|pk_test)_(?=[A-Za-z0-9]*\d)(?=[A-Za-z0-9]*[A-Z])[A-Za-z0-9]{14,}\b/g, label: (m) => `stripe-id-${m.slice(0, m.lastIndexOf('_'))}` },
 ]
 /** A Stripe host: the API, the checkout or the browser script. Only a Stripe client names one. */
 const STRIPE_HOST = /\b[a-z0-9-]+\.stripe\.com\b/g
@@ -206,23 +206,99 @@ export function applyAllowlist(hits, entries = []) {
   }
 }
 
-const hitOf = (file, line, rule, raw, match = raw) => ({ file, line, rule, raw, match })
+const SCHEMES = ['http', 'https', 'ws', 'wss']
+const STRIPE_ID_PREFIXES = ['price', 'prod', 'acct', 'cus', 'sub', 'plan', 'pk_live', 'pk_test']
+/** The Stripe hosts a finding may name; any other label is shown as `***`. */
+const STRIPE_LABELS = ['api', 'js', 'checkout', 'connect', 'files', 'hooks', 'm', 'dashboard', 'billing', 'buy', 'invoice']
+/**
+ * Every text a finding may show. A finding's public text (`hit.match`: stdout, stderr, the
+ * inventory) is one of these constants and nothing else. It is never built from what was
+ * scanned: not a matched string, a URL's userinfo, host, path or query, a route, an import, a
+ * package name, a setting's key, an environment variable's name or value, or what the
+ * repository's privacy grep printed, because any of them can carry a credential. The scanned
+ * text stays in `hit.raw`, which is only hashed (rawSha256) and compared with an exact
+ * allowlist entry. The file and line place the finding.
+ */
+export const LABELS = Object.freeze({
+  'key-sk': 'sk-***',
+  'key-gh': 'gh***',
+  'key-github-pat': 'github_pat_***',
+  'key-akia': 'AKIA***',
+  'key-xox': 'xox***',
+  'private-key': 'PRIVATE KEY block',
+  'private-path': '/mnt/ai',
+  token: 'token=***',
+  'token-json': 'token: ***',
+  'credential-url': '***:***@',
+  'launch-url': 'a launch-url file',
+  dotenv: 'a .env file',
+  'credential-file': 'a credentials file',
+  archive: 'an archive',
+  'data-state': 'state under /data',
+  unreadable: 'an unreadable file',
+  'home-path': 'a home path',
+  'private-name': 'a private name',
+  secret: 'a secret',
+  'db-file': 'a database file',
+  privacy: 'a privacy finding',
+  'stripe-folder': 'a Stripe SDK folder',
+  'stripe-package': 'package stripe',
+  'stripe-package-scope': 'package @stripe/***',
+  'stripe-dependency': 'dependency stripe',
+  'stripe-dependency-scope': 'dependency @stripe/***',
+  'stripe-import': 'import stripe',
+  'stripe-import-scope': 'import @stripe/***',
+  'stripe-key-sk_live': 'sk_live_***',
+  'stripe-key-sk_test': 'sk_test_***',
+  'stripe-key-rk_live': 'rk_live_***',
+  'stripe-key-rk_test': 'rk_test_***',
+  'stripe-key-whsec': 'whsec_***',
+  'stripe-host': '***.stripe.com',
+  'gateway-own': 'own gateway host ***',
+  'gateway-default': 'gateway default ***',
+  'gateway-credential': 'gateway credential ***',
+  'route-billing': '/***/billing/***',
+  'route-ledger': '/***/ledger/***',
+  'import-billing': 'import ***/billing/***',
+  'import-ledger': 'import ***/ledger/***',
+  'env-secret': 'an environment variable named like a secret',
+  'env-gateway': 'a gateway environment variable',
+  'env-billing': 'a Stripe, billing or ledger environment variable',
+  ...Object.fromEntries(SCHEMES.filter((scheme) => scheme.startsWith('http')).map((scheme) => [`token-url-${scheme}`, `${scheme}://***?token=***`])),
+  ...Object.fromEntries(SCHEMES.map((scheme) => [`gateway-own-${scheme}`, `own gateway host ${scheme}://***`])),
+  ...Object.fromEntries(SCHEMES.map((scheme) => [`gateway-default-${scheme}`, `gateway default ${scheme}://***`])),
+  ...Object.fromEntries(STRIPE_ID_PREFIXES.map((prefix) => [`stripe-id-${prefix}`, `${prefix}_***`])),
+  ...Object.fromEntries(STRIPE_LABELS.map((label) => [`stripe-host-${label}`, `${label}.stripe.com`])),
+})
+/** A label key that is in the table, else the fallback (itself a key). */
+const known = (key, fallback) => (Object.hasOwn(LABELS, key) ? key : fallback)
+const labelOf = (label, text) => (typeof label === 'function' ? label(text) : label)
+
+/**
+ * One finding. `label` is a key of LABELS and the only source of the public text; `raw` is the
+ * scanned text, kept for the hash and the exact allowlist. A key that is not in the table is
+ * refused, with a message that does not repeat it.
+ */
+export function hitOf(file, line, rule, raw, label) {
+  if (typeof label !== 'string' || !Object.hasOwn(LABELS, label)) throw new Error(`a ${rule} finding has no label in the table`)
+  return { file, line, rule, raw, match: LABELS[label] }
+}
 
 /** Whether a file name alone is a finding. */
 export function nameHits(file, kind = 'file') {
   const base = basename(file)
   const hits = []
-  if (kind !== 'dir' && base === 'launch-url') hits.push(hitOf(file, 0, 'launch-url', file))
-  if (kind !== 'dir' && /^\.env(?:\.|$)/.test(base) && base !== ENV_EXAMPLE) hits.push(hitOf(file, 0, 'dotenv', file))
+  if (kind !== 'dir' && base === 'launch-url') hits.push(hitOf(file, 0, 'launch-url', file, 'launch-url'))
+  if (kind !== 'dir' && /^\.env(?:\.|$)/.test(base) && base !== ENV_EXAMPLE) hits.push(hitOf(file, 0, 'dotenv', file, 'dotenv'))
   if (kind !== 'dir' && (base === '.git-credentials' || base === '.netrc' || base === 'netrc')) {
-    hits.push(hitOf(file, 0, 'git-credentials', file))
+    hits.push(hitOf(file, 0, 'git-credentials', file, 'credential-file'))
   }
-  if (kind === 'file' && ARCHIVE.test(base)) hits.push(hitOf(file, 0, 'archive', file))
-  if (STRIPE_FOLDER.test(file)) hits.push(hitOf(file, 0, 'stripe-sdk', file))
+  if (kind === 'file' && ARCHIVE.test(base)) hits.push(hitOf(file, 0, 'archive', file, 'archive'))
+  if (STRIPE_FOLDER.test(file)) hits.push(hitOf(file, 0, 'stripe-sdk', file, 'stripe-folder'))
   if (kind === 'dir') {
-    if ((file === 'data' || file.startsWith('data/')) && !DATA_DIRS.has(file)) hits.push(hitOf(file, 0, 'data-state', file))
+    if ((file === 'data' || file.startsWith('data/')) && !DATA_DIRS.has(file)) hits.push(hitOf(file, 0, 'data-state', file, 'data-state'))
   } else if (file.startsWith('data/')) {
-    hits.push(hitOf(file, 0, 'data-state', file))
+    hits.push(hitOf(file, 0, 'data-state', file, 'data-state'))
   }
   return hits
 }
@@ -236,38 +312,27 @@ export function textHits(file, text, list, denied = denyMatcher(list.deny), { pr
   const hits = []
   if (privacy) {
     for (const found of scan(file, text, list, denied)) {
-      if (found.rule !== 'email') hits.push(hitOf(file, found.line, found.rule, found.match))
+      if (found.rule !== 'email') hits.push(hitOf(file, found.line, found.rule, found.match, known(found.rule, 'privacy')))
     }
   }
-  for (const { rule, re, mask } of SERVER_RULES) {
-    for (const match of text.matchAll(re)) hits.push(hitOf(file, lineOf(text, match.index), rule, match[0], mask(match[0])))
+  for (const { rule, re, label } of SERVER_RULES) {
+    for (const match of text.matchAll(re)) hits.push(hitOf(file, lineOf(text, match.index), rule, match[0], labelOf(label, match[0])))
   }
   return hits
 }
 
-/**
- * What a billing finding may show: fixed words only. Nothing is copied from a URL's userinfo,
- * host, path, query or fragment, from a route's or a specifier's segments, from a package's
- * scoped name or from a setting's key, because any of them can carry a credential (a token
- * between two billing segments, in a subdomain label, in a key name). So no pattern boundary
- * decides what is printed. The file and line place the finding; the raw match stays on the hit
- * for hashing and the exact allowlist only, and is never printed or written to the inventory.
- */
-const word = (text, re, fallback) => (re.exec(String(text))?.[1] ?? fallback).toLowerCase()
-/** A URL: its scheme. */
-export const maskAddress = (text) => `${word(text, /\b(https?|wss?):\/\//i, 'url')}://***`
-/** A route: which of the two words its first such segment is. */
-export const maskRoute = (text) => `/***/${word(text, /\/(billing|ledger)(?![A-Za-z0-9_.:-])/i, 'billing')}/***`
-/** A billing or ledger specifier: which word it names first. */
-export const maskSpecifier = (specifier) => `***/${word(specifier, /(billing|ledger)/i, 'billing')}/***`
-/** The SDK's package: `stripe`, or the scope without the name under it. */
-export const maskStripePackage = (name) => (/^stripe(?:\/|$)/.test(String(name)) ? 'stripe' : '@stripe/***')
-/** A Stripe host: its first label only when it is one of the public ones. */
-const STRIPE_LABELS = new Set(['api', 'js', 'checkout', 'connect', 'files', 'hooks', 'm', 'dashboard', 'billing', 'buy', 'invoice'])
-export const maskStripeHost = (host) => {
-  const label = String(host).split('.')[0].toLowerCase()
-  return `${STRIPE_LABELS.has(label) ? label : '***'}.stripe.com`
-}
+/** The first captured word, lowercased: only ever used to pick a key of LABELS. */
+const word = (text, re) => (re.exec(String(text))?.[1] ?? '').toLowerCase()
+/** A URL finding's key: the kind and the URL's scheme. */
+const addressLabel = (kind, text) => known(`${kind}-${word(text, /\b(https?|wss?):\/\//i)}`, kind)
+/** A route's key: which of the two words its first such segment is. */
+const routeLabel = (text) => known(`route-${word(text, /\/(billing|ledger)(?![A-Za-z0-9_.:-])/i)}`, 'route-billing')
+/** A billing or ledger specifier's key: which word it names first. */
+const specifierLabel = (specifier) => known(`import-${word(specifier, /(billing|ledger)/i)}`, 'import-billing')
+/** The SDK's key: `stripe`, or the scope without the name under it. */
+const stripeLabel = (kind, name) => (/^stripe(?:\/|$)/.test(String(name)) ? `stripe-${kind}` : `stripe-${kind}-scope`)
+/** A Stripe host's key: its first label only when it is one of the public ones. */
+const stripeHostLabel = (host) => known(`stripe-host-${String(host).split('.')[0].toLowerCase()}`, 'stripe-host')
 
 /** The dependency maps a package installs: a development dependency is not in the image. */
 const DEPENDENCY_FIELDS = ['dependencies', 'optionalDependencies', 'peerDependencies', 'bundledDependencies', 'bundleDependencies']
@@ -278,12 +343,12 @@ function manifestHits(file, text) {
   try { manifest = JSON.parse(text) } catch { return [] }
   if (!manifest || typeof manifest !== 'object') return []
   const hits = []
-  if (typeof manifest.name === 'string' && STRIPE_PACKAGE.test(manifest.name)) hits.push(hitOf(file, 0, 'stripe-sdk', manifest.name, `package ${maskStripePackage(manifest.name)}`))
+  if (typeof manifest.name === 'string' && STRIPE_PACKAGE.test(manifest.name)) hits.push(hitOf(file, 0, 'stripe-sdk', manifest.name, stripeLabel('package', manifest.name)))
   for (const field of DEPENDENCY_FIELDS) {
     const value = manifest[field]
     const names = Array.isArray(value) ? value : Object.keys(value && typeof value === 'object' ? value : {})
     for (const name of names) {
-      if (typeof name === 'string' && STRIPE_PACKAGE.test(name)) hits.push(hitOf(file, 0, 'stripe-sdk', name, `${field} ${maskStripePackage(name)}`))
+      if (typeof name === 'string' && STRIPE_PACKAGE.test(name)) hits.push(hitOf(file, 0, 'stripe-sdk', name, stripeLabel('dependency', name)))
     }
   }
   return hits
@@ -297,28 +362,28 @@ function manifestHits(file, text) {
  */
 export function billingHits(file, text) {
   const hits = []
-  const add = (rule, match, masked) => hits.push(hitOf(file, lineOf(text, match.index), rule, match[0], masked))
+  const add = (rule, match, label) => hits.push(hitOf(file, lineOf(text, match.index), rule, match[0], label))
   const own = ownCode(file)
-  for (const { rule, re, mask } of STRIPE_VALUE_RULES) {
-    for (const match of text.matchAll(re)) add(rule, match, mask(match[0]))
+  for (const { rule, re, label } of STRIPE_VALUE_RULES) {
+    for (const match of text.matchAll(re)) add(rule, match, labelOf(label, match[0]))
   }
-  for (const match of text.matchAll(STRIPE_HOST)) add('stripe-client', match, maskStripeHost(match[0]))
+  for (const match of text.matchAll(STRIPE_HOST)) add('stripe-client', match, stripeHostLabel(match[0]))
   for (const re of OWN_GATEWAY) {
-    for (const match of text.matchAll(re)) add('gateway-address', match, `own gateway host ${maskAddress(match[0])}`)
+    for (const match of text.matchAll(re)) add('gateway-address', match, addressLabel('gateway-own', match[0]))
   }
   if (basename(file) === 'package.json') hits.push(...manifestHits(file, text))
   if (SOURCE.test(file)) {
     for (const match of text.matchAll(SPECIFIER)) {
-      if (STRIPE_PACKAGE.test(match[2])) add('stripe-sdk', match, `import ${maskStripePackage(match[2])}`)
-      else if (own && billingSpecifier(match[2])) add('billing-import', match, `import ${maskSpecifier(match[2])}`)
+      if (STRIPE_PACKAGE.test(match[2])) add('stripe-sdk', match, stripeLabel('import', match[2]))
+      else if (own && billingSpecifier(match[2])) add('billing-import', match, specifierLabel(match[2]))
     }
   }
   if (own) {
-    for (const match of text.matchAll(BILLING_ROUTE)) add('billing-route', match, maskRoute(match[0]))
+    for (const match of text.matchAll(BILLING_ROUTE)) add('billing-route', match, routeLabel(match[0]))
     for (const match of text.matchAll(GATEWAY_DEFAULT)) {
-      if (!EXAMPLE_HOST.test(match[0])) add('gateway-address', match, `gateway default ${maskAddress(match[0])}`)
+      if (!EXAMPLE_HOST.test(match[0])) add('gateway-address', match, addressLabel('gateway-default', match[0]))
     }
-    for (const match of text.matchAll(GATEWAY_CREDENTIAL)) add('gateway-credential', match, 'gateway credential ***')
+    for (const match of text.matchAll(GATEWAY_CREDENTIAL)) add('gateway-credential', match, 'gateway-credential')
   }
   return hits
 }
@@ -327,7 +392,7 @@ export function billingHits(file, text) {
 export function homeHits(file, text) {
   const hits = []
   for (const line of text.split('\n')) {
-    for (const match of line.matchAll(HOME)) hits.push(hitOf(file, 0, 'home-path', match[0]))
+    for (const match of line.matchAll(HOME)) hits.push(hitOf(file, 0, 'home-path', match[0], 'home-path'))
   }
   return hits
 }
@@ -384,7 +449,7 @@ export function scanTree(root, list = JSON.parse(readFileSync(LIST, 'utf8')), al
     try {
       buf = readFileSync(join(root, entry.file))
     } catch (error) {
-      raw.push(hitOf(entry.file, 0, 'unreadable', error.code ?? 'read failed'))
+      raw.push(hitOf(entry.file, 0, 'unreadable', error.code ?? 'read failed', 'unreadable'))
       continue
     }
     const digest = sha256Bytes(buf)
@@ -413,13 +478,16 @@ export function scanImageConfig(image, list, denied = denyMatcher(list.deny)) {
  */
 export function configHits(raw, list, denied = denyMatcher(list.deny)) {
   const hits = [...textHits('image-config', raw, list, denied), ...billingHits('image-config', raw)]
-  for (const line of JSON.parse(raw)?.Env ?? []) {
+  let config
+  // The parser's own message quotes its input, so it is not passed on.
+  try { config = JSON.parse(raw) } catch { throw new Error('the image config is not JSON') }
+  for (const line of config?.Env ?? []) {
     const [name, ...rest] = line.split('=')
     const value = rest.join('=')
     if (!value) continue
-    if (/(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)/i.test(name)) hits.push(hitOf('image-config', 0, 'env-secret', name))
-    if (/GATEWAY/i.test(name)) hits.push(hitOf('image-config', 0, 'gateway-address', name))
-    else if (/(?:STRIPE|BILLING|LEDGER)/i.test(name)) hits.push(hitOf('image-config', 0, 'billing-config', name))
+    if (/(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)/i.test(name)) hits.push(hitOf('image-config', 0, 'env-secret', name, 'env-secret'))
+    if (/GATEWAY/i.test(name)) hits.push(hitOf('image-config', 0, 'gateway-address', name, 'env-gateway'))
+    else if (/(?:STRIPE|BILLING|LEDGER)/i.test(name)) hits.push(hitOf('image-config', 0, 'billing-config', name, 'env-billing'))
   }
   return hits
 }
@@ -439,8 +507,8 @@ export function scanRepo(root, files = execFileSync('git', ['-C', root, 'ls-file
     if (buf.includes(0)) continue
     checked += 1
     const text = buf.toString('utf8')
-    for (const { rule, re, mask } of STRIPE_VALUE_RULES) {
-      for (const match of text.matchAll(re)) hits.push(hitOf(file, lineOf(text, match.index), rule, match[0], mask(match[0])))
+    for (const { rule, re, label } of STRIPE_VALUE_RULES) {
+      for (const match of text.matchAll(re)) hits.push(hitOf(file, lineOf(text, match.index), rule, match[0], labelOf(label, match[0])))
     }
   }
   return { hits, checked }
