@@ -216,8 +216,10 @@ const STRIPE_LABELS = ['api', 'js', 'checkout', 'connect', 'files', 'hooks', 'm'
  * scanned: not a matched string, a URL's userinfo, host, path or query, a route, an import, a
  * package name, a setting's key, an environment variable's name or value, or what the
  * repository's privacy grep printed, because any of them can carry a credential. The scanned
- * text stays in `hit.raw`, which is only hashed (rawSha256) and compared with an exact
- * allowlist entry. The file and line place the finding.
+ * text stays in `hit.raw`, and the file's digest in `hit.fileSha256`: both are compared in memory
+ * with an exact allowlist entry and never written. No hash of either is printed or put in the
+ * inventory: an unkeyed sha256 of a short match or a small file can be guessed offline, so it
+ * would hand back the very value the label hides. The file and line place the finding.
  */
 export const LABELS = Object.freeze({
   'key-sk': 'sk-***',
@@ -562,12 +564,12 @@ export function writeInventory(dir, { image, layers, blobs, entries, hits, allow
   writeFileSync(join(dir, 'secrecy.txt'), hits.length
     ? `${hits.map((hit) => `${hit.file}:${hit.line}: ${hit.rule}: ${hit.match}`).join('\n')}\n`
     : 'clean\n')
+  // The findings as data: where, which rule, and the label. No hash of the match or of the file.
   writeFileSync(join(dir, 'secrecy-hits.json'), `${JSON.stringify(hits.map((hit) => ({
     file: hit.file,
     line: hit.line,
     rule: hit.rule,
-    rawSha256: sha256(hit.raw ?? ''),
-    fileSha256: hit.fileSha256 ?? null,
+    match: hit.match,
   })), null, 2)}\n`)
   writeFileSync(join(dir, 'allowlist-used.txt'), allowed.length
     ? `${allowed.map((entry) => `${entry.file}: ${entry.rule} (${entry.count}): ${entry.reason}`).join('\n')}\n`
@@ -603,7 +605,7 @@ function report({ image, layers, blobs, entries, hits, allowed, unused, bytes, e
   for (const entry of allowed) console.log(`[secrecy] allowed: ${entry.file} ${entry.rule} (${entry.count}): ${entry.reason}`)
   if (hits.length) {
     for (const hit of hits) {
-      console.error(`${hit.file}:${hit.line}: ${hit.rule}: ${hit.match} rawSha256=${sha256(hit.raw ?? '')} fileSha256=${hit.fileSha256 ?? '-'}`)
+      console.error(`${hit.file}:${hit.line}: ${hit.rule}: ${hit.match}`)
     }
     console.error(`[secrecy] ${hits.length} finding(s): the image must not be pushed`)
     return false

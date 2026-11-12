@@ -451,6 +451,7 @@ test('no finding prints what it scanned: every field, through the real CLI, in b
   const stripe = ['stripe', 'com'].join('.')
   // Built, not written: the repository's privacy grep reads this file too.
   const dashes = '-'.repeat(5)
+  const pin = String(1000 + (randomBytes(2).readUInt16BE() % 9000))
   const pem = (body) => [`${dashes}BEGIN PRIVATE ${'KEY'}${dashes}`, body, `${dashes}END PRIVATE ${'KEY'}${dashes}`, ''].join('\n')
 
   // [what is planted, the file, its content, the rules it must raise]
@@ -504,6 +505,9 @@ test('no finding prints what it scanned: every field, through the real CLI, in b
       '',
     ].join('\n'), ['gateway-address']],
     ['a private name', `${DEP}/name.txt`, `${shortName}\n`, ['private-name']],
+    // Low entropy: four digits. A hash of the match, or of this small file, is guessable offline.
+    ['a four-digit token in a URL', `${DEP}/pin.txt`, `https://host.invalid/x?token=${pin}\n`, ['token-url']],
+    ['a four-digit gateway default', `${OWN}/pin.js`, `const gatewayUrl = 'https://${vendor}/${pin}'\n`, ['gateway-address']],
   ]
   const dir = rootfs()
   for (const [, file, content] of rows) write(dir, file, content)
@@ -512,6 +516,7 @@ test('no finding prints what it scanned: every field, through the real CLI, in b
     Env: [
       'PATH=/usr/bin',
       `GATEWAY_${synth(20, upper)}=enabled`,
+      `GATEWAY_PIN=${pin}`,
       `BILLING_${synth(20, upper)}=enabled`,
       `STRIPE_${synth(20, upper)}=${synth(24)}`,
       `LEDGER_MODE_${synth(20, upper)}=${synth(24)}`,
@@ -528,15 +533,17 @@ test('no finding prints what it scanned: every field, through the real CLI, in b
   const bin = temp()
   const fake = join(bin, 'docker')
   writeFileSync(join(bin, 'config.json'), config)
+  // Its own package.json: the stand-in is an ES module wherever the temp folder is, a checkout
+  // whose package.json says otherwise included.
+  writeFileSync(join(bin, 'package.json'), '{"type":"module"}\n')
   writeFileSync(fake, [
     `#!${process.execPath}`,
-    "const { execFileSync } = require('node:child_process')",
-    "const { readFileSync } = require('node:fs')",
-    "const { join } = require('node:path')",
+    "import { execFileSync } from 'node:child_process'",
+    "import { readFileSync } from 'node:fs'",
     'const args = process.argv.slice(2)',
     "const format = args[args.indexOf('--format') + 1] ?? ''",
     "if (args[0] === 'image' && args[1] === 'inspect') {",
-    "  if (format.includes('.Config')) process.stdout.write(readFileSync(join(__dirname, 'config.json'), 'utf8'))",
+    `  if (format.includes('.Config')) process.stdout.write(readFileSync(${JSON.stringify(join(bin, 'config.json'))}, 'utf8'))`,
     "  else if (format.includes('.RootFS')) process.stdout.write('[\"sha256:layer\"]')",
     "  else process.stdout.write('sha256:image')",
     "} else if (args[0] === 'export') {",
@@ -546,6 +553,19 @@ test('no finding prints what it scanned: every field, through the real CLI, in b
   ].join('\n'), { mode: 0o755 })
 
   const labels = new Set(Object.values(LABELS))
+  // Every digest a hit carries, taken here in memory: of each raw match, of each flagged file's
+  // bytes, of every planted file and of the config's bytes. None may be written anywhere.
+  const list = { deny: [shortName], allow: [] }
+  const hitsHere = [...scanTree(dir, undefined, []).hits, ...configHits(config, list)]
+  const digests = new Set([
+    ...hitsHere.map((hit) => sha256(hit.raw ?? '')),
+    ...hitsHere.map((hit) => hit.fileSha256).filter(Boolean),
+    ...rows.map(([, , content]) => sha256Bytes(Buffer.from(content))),
+    sha256Bytes(Buffer.from(config)), sha256(config), sha256(pin), sha256(`token=${pin}`),
+  ])
+  assert.ok(digests.size > 100, String(digests.size))
+  assert.ok(digests.has(sha256(`https://host.invalid/x?token=${pin}`)) && digests.has(sha256Bytes(Buffer.from(`https://host.invalid/x?token=${pin}\n`))))
+  assert.ok(digests.has(sha256('GATEWAY_PIN')))
   const parts = made.flatMap((value) => [value, value.slice(0, 8), value.slice(-8), value.slice(4, 12)])
   assert.ok(made.length > 80, String(made.length))
   assert.equal(new Set(made).size, made.length)
@@ -569,6 +589,19 @@ test('no finding prints what it scanned: every field, through the real CLI, in b
       assert.ok(!run.stdout.includes(part), `${mode}: stdout holds part of a planted value`)
       assert.ok(!written.includes(part), `${mode}: the inventory holds part of a planted value`)
     }
+    // UNKEYED_HASH_IN_OUTPUT: no digest of a match or of a flagged file, in full or cut short.
+    for (const digest of digests) {
+      for (const [where, text] of [['stderr', run.stderr], ['stdout', run.stdout], ['the inventory', written]]) {
+        assert.ok(!text.includes(digest) && !text.includes(digest.slice(0, 16)) && !text.includes(digest.slice(-16)), `${mode}: ${where} holds a digest of a match or a file`)
+      }
+    }
+    const hitsJson = JSON.parse(readFileSync(join(inventory, 'secrecy-hits.json'), 'utf8'))
+    assert.ok(hitsJson.length > 0)
+    for (const item of hitsJson) {
+      assert.deepEqual(Object.keys(item), ['file', 'line', 'rule', 'match'])
+      assert.ok(labels.has(item.match))
+    }
+    assert.ok(!/[0-9a-f]{64}/.test(run.stderr) && !/[0-9a-f]{64}/.test(readFileSync(join(inventory, 'secrecy.txt'), 'utf8')), `${mode}: a 64-hex value is printed`)
     // Every finding line, as written and as printed, ends in a constant of the table.
     const lines = readFileSync(join(inventory, 'secrecy.txt'), 'utf8').trim().split('\n')
     const findings = lines.map((line) => /^(.+?):(\d+): ([a-z-]+): (.*)$/.exec(line))
@@ -576,7 +609,7 @@ test('no finding prints what it scanned: every field, through the real CLI, in b
     const printed = run.stderr.trim().split('\n').filter((line) => !line.startsWith('[secrecy]'))
     assert.equal(printed.length, lines.length, mode)
     for (const line of printed) {
-      const found = /^(.+?):(\d+): ([a-z-]+): (.*) rawSha256=[0-9a-f]{64} fileSha256=(?:[0-9a-f]{64}|-)$/.exec(line)
+      const found = /^(.+?):(\d+): ([a-z-]+): (.*)$/.exec(line)
       assert.ok(found && labels.has(found[4]), `${mode}: a printed finding is not a table label`)
     }
     // Every planted field was read: each row raised its rules, in its own file.
