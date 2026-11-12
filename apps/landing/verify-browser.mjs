@@ -334,8 +334,8 @@ try {
     console.log(`PASS menus ${label}: click, keyboard, Escape and focus return, hover, one panel at a time, active page, links, phone sheet`)
   }
   // The logo in the header and the footer: the kit's lockup for small sizes, the triskle in
-  // colour with ink letters on the light page and cream ones on the dark page, drawn at its
-  // own proportions. The triskle (222 of the file's 264 in height) keeps the size and the
+  // colour with ink letters on the light page and cream ones on the dark page (read from the
+  // name's drawn colour, not only from the file's name), drawn at its own proportions. The triskle (222 of the file's 264 in height) keeps the size and the
   // centred place it had, nothing in the header is pushed aside, and the browser's icons
   // load from the site.
   for (const colorScheme of ['light', 'dark']) for (const [width, header, footer] of [[1440, 32, 40], [1024, 32, 40], [390, 26, 34], [320, 23, 34]]) {
@@ -347,10 +347,18 @@ try {
       await page.goto(origin + '/', { waitUntil: 'load' })
       await page.evaluate(() => Promise.all([...document.images].map(image => { image.loading = 'eager'; return image.decode() })).then(() => document.fonts.ready))
       const logo = await page.evaluate(async () => {
+        // The colour the name is drawn in: the commonest solid pixel to the right of the triskle.
+        const word = image => {
+          const canvas = document.createElement('canvas'); canvas.width = 816; canvas.height = 132
+          const pen = canvas.getContext('2d'); pen.drawImage(image, 0, 0, canvas.width, canvas.height)
+          const from = Math.ceil(canvas.width * 300 / 1632.34), pixels = pen.getImageData(from, 0, canvas.width - from, canvas.height).data, seen = new Map()
+          for (let at = 0; at < pixels.length; at += 4) if (pixels[at + 3] === 255) { const colour = `${pixels[at]},${pixels[at + 1]},${pixels[at + 2]}`; seen.set(colour, (seen.get(colour) || 0) + 1) }
+          return [...seen].sort((one, other) => other[1] - one[1])[0]?.[0].split(',').map(Number) ?? null
+        }
         const place = scope => {
           const link = document.querySelector(`${scope} .brand`), image = link.querySelector('img'), box = image.getBoundingClientRect(), frame = link.getBoundingClientRect()
           return {
-            size: [box.width, box.height], top: box.top, hang: box.bottom - frame.bottom, right: box.right, file: image.currentSrc.split('/').pop(), drawn: image.naturalWidth > 0,
+            size: [box.width, box.height], top: box.top, hang: box.bottom - frame.bottom, right: box.right, file: image.currentSrc.split('/').pop(), drawn: image.naturalWidth > 0, word: word(image),
             effects: [link, image].map(node => { const style = getComputedStyle(node); return [style.filter, style.opacity, style.transform, style.mixBlendMode].join(' ') }),
           }
         }
@@ -359,6 +367,7 @@ try {
         const tabs = [...document.querySelectorAll('link[rel="icon"], link[rel="apple-touch-icon"], link[rel="manifest"]')].map(link => new URL(link.href).pathname)
         return {
           top: place('.top'), foot: place('.footer-brand'), rowMiddle: row.top + row.height / 2, tabs,
+          ground: getComputedStyle(document.body).backgroundColor.match(/\d+/g).slice(0, 3).map(Number),
           apart: shown.every((box, index) => index === 0 || box.left >= shown[index - 1].right), inside: shown.at(-1).right <= innerWidth && shown[0].left >= 0,
           column: document.querySelector('.footer-brand').getBoundingClientRect().right, over: document.documentElement.scrollWidth - innerWidth,
         }
@@ -366,6 +375,10 @@ try {
       for (const [name, spot, mark] of [['header', logo.top, header], ['footer', logo.foot, footer]]) {
         const unit = mark / 222, near = (value, wanted) => Math.abs(value - wanted) <= 0.6
         assert.equal(spot.file, `automagik-lockup-three-colours-${colorScheme === 'dark' ? 'cream' : 'ink'}-header.svg`, `The logo's file follows the theme: ${name} ${label}`)
+        // The file's name is not enough: the name must be drawn dark on the light page and light on the dark one.
+        const light = colour => colour.map(value => value / 255).map(value => value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index], 0)
+        const against = spot.word && (Math.max(light(spot.word), light(logo.ground)) + 0.05) / (Math.min(light(spot.word), light(logo.ground)) + 0.05)
+        assert.ok(against >= 7, `The name is drawn in the theme's colour, clear against the page: ${name} ${label} ${JSON.stringify([spot.word, logo.ground, against])}`)
         assert.ok(spot.drawn && near(spot.size[1], 264 * unit) && near(spot.size[0], 1632.34 * unit), `The logo's size, unstretched: ${name} ${label} ${spot.size}`)
         assert.ok(near(spot.hang, name === 'header' ? 42 * unit : 0), `The g's tail hangs under the header's link and inside the footer's: ${name} ${label} ${spot.hang}`)
         assert.deepEqual([...new Set(spot.effects)], ['none 1 none normal'], `Nothing is drawn over the logo: ${name} ${label}`)
@@ -381,7 +394,7 @@ try {
       const ring = await page.evaluate(() => { const link = document.activeElement, style = getComputedStyle(link), box = link.getBoundingClientRect(), word = link.querySelector('img')?.getBoundingClientRect(); return { link: link.className, clears: word && box.bottom + parseFloat(style.outlineOffset) >= word.bottom, style: style.outlineStyle } })
       assert.deepEqual(ring, { link: 'brand', clears: true, style: 'solid' }, `The focus ring goes round the whole logo: ${label} ${JSON.stringify(ring)}`)
       assert.deepEqual(outside, [], `No outside request: ${label}`)
-      console.log(`PASS logo ${label}: the kit's file for the theme at its own proportions, header and footer in place, icons load`)
+      console.log(`PASS logo ${label}: the kit's file for the theme, its name drawn in the theme's colour, at its own proportions, header and footer in place, icons load`)
     } finally { await context.close() }
   }
   // The triskle alone is the kit's drawing for the size shown, drawn and square: the 32 px
