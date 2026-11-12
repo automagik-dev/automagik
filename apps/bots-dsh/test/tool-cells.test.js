@@ -1413,6 +1413,9 @@ test('a reply with a canvas keeps the host rendering when it folds', () => {
   const out = bubbleOf([start], { whole: { length: 90_000, load: async () => undefined } })
   assert.equal(copyOf(out).length, 0)
   assert.equal(findAll(out, item => item.props?.className === 'bt-fold-block').length, 0)
+  // The lines the fold kept are still drawn, by the Markdown the bubble hands on: with
+  // no block of its own to hold them, taking them out of that text would lose them.
+  assert.ok(markdownTexts.some(text => text.includes('line 1')), 'the cut fence stays in the Markdown')
   effects = []
 })
 
