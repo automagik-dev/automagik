@@ -58,6 +58,7 @@ function contentOf(node) {
 // flex_1().min_h(0).overflow_y_scrollbar() body of 40 rows, drew its header alone as a popup
 // (height 0.6) and filled the same spec opened as a window. Only boxes sized by their content
 // take it; in a set height such a box is a flex item as any other (place() below).
+// popup-layout.test.mjs holds the rule to those observations, case by case.
 function outerInContentSized(node) {
   const s = style(node);
   if (s.h !== undefined) return clamp(s.h, s);
