@@ -57,20 +57,29 @@ button,input{font:inherit;color:inherit}
 .node-pink{fill:var(--node-pink)}
 
 .shell{position:relative;display:flex;flex-direction:column;align-items:center;min-height:100vh;min-height:100dvh;padding:max(22px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(18px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
+/* On a phone the host and the card start a short, fixed step under the logo, so they stay
+   put from one state to the next; the step gives way first when a tall card needs the room.
+   A wide window centres them instead (below). */
 .column{flex:1;display:flex;flex-direction:column;width:min(100%,416px)}
-.middle{position:relative;margin-block:auto;padding-block:10px 5vh}
-.brand{display:flex;justify-content:center}
+.column::before{content:"";flex:0 1 clamp(12px,5vh,44px)}
+.middle{position:relative;margin-block:0 auto;padding-block:10px 5vh}
+.brand{order:-1;display:flex;justify-content:center}
 .brand img{width:138px}
 
 /* The hosts. Genie says what is going on; Omni takes over for WhatsApp. One sheet each, seven
-   faces in a row: calm, glad, delighted, set, wink, serene, sorry. The face follows the mood
-   on the scene; the host sits on the card's top edge, so the two read as one thing. */
+   poses in a row: calm, glad, delighted, set, beaming, serene, sorry. The pose follows the
+   mood on the scene; the host sits on the card's top edge, so the two read as one thing.
+   Genie is the whole figure, so it is drawn a little larger than Omni's head and in front
+   of the card: the tip of its tail ends over the card's edge. Its cell has empty sides,
+   which the bubble may use. */
 .host{position:relative;z-index:1;display:grid;grid-template-columns:auto minmax(0,1fr);align-items:end;gap:8px;min-height:118px;margin:0 2px -12px;padding-left:4px}
 .pet-spot{position:relative;display:grid;place-items:center}
 .pet-spot::before{content:"";position:absolute;inset:-18% -30% 0;border-radius:50%;background:radial-gradient(closest-side,var(--spot),transparent);pointer-events:none}
 .pet,.pal{background:0 0/700% 100% no-repeat}
 .pet{position:relative;z-index:1;width:112px;aspect-ratio:192/208;transform-origin:50% 100%}
 [data-who="genie"] .pet,[data-who="omni"] .pal{aspect-ratio:192/208;background-image:url("/assets/genie-faces.webp")}
+[data-who="genie"] .host{z-index:2}
+[data-who="genie"] .pet{width:132px;margin-inline:-10px}
 [data-who="omni"] .pet,[data-who="genie"] .pal{aspect-ratio:192/192;background-image:url("/assets/omni-faces.webp")}
 [data-mood="wave"] .pet{background-position-x:16.6667%}
 [data-mood="jump"] .pet,[data-mood="jump"] .pal{background-position-x:33.3333%}
@@ -124,7 +133,11 @@ h1:focus-visible{outline:0}
 
 /* WhatsApp: the message that is ready to send, the code to scan on a desk, and the steps. */
 .proof{display:grid;gap:14px}
-.proof.with-qr{grid-template-columns:auto minmax(0,1fr);align-items:center}
+.proof.with-qr{grid-template-columns:auto minmax(0,1fr);align-items:center;gap:12px}
+/* Beside the QR code the letter is narrow: its label is set a touch tighter so it stays on
+   one line. Under 480 px the letter goes under the code instead. */
+.proof.with-qr .letter{padding-inline:12px}
+.proof.with-qr .letter-label{font-size:.64rem;letter-spacing:.06em}
 .qr{width:148px;height:148px;padding:10px;border-radius:16px;background:var(--qr-light);border:1px solid var(--line-2);box-shadow:0 1px 0 rgba(91,59,34,.06)}
 .qr svg{display:block;width:100%;height:100%;shape-rendering:crispEdges}
 .qr-dark{fill:var(--qr-dark)}
@@ -160,23 +173,29 @@ noscript p{margin-top:16px;color:var(--muted)}
   .card{padding:24px 16px 16px;border-radius:22px}
   .host{gap:4px;margin-inline:0;padding-left:0;min-height:100px}
   .pet{width:92px}
+  [data-who="genie"] .pet{width:108px}
   .bubble{padding:10px 13px;font-size:.88rem}
   .brand img{width:124px}
   .button{padding-inline:10px;gap:8px;font-size:.94rem}
   .button svg{width:20px;height:20px}
   .link{font-size:.88rem;padding-inline:4px}
-  .proof.with-qr{grid-template-columns:minmax(0,1fr);justify-items:center}
-  .proof.with-qr .letter{justify-self:stretch}
   .letter-text strong{font-size:1.5rem}
+}
+@media (max-width:479px){
+  .proof.with-qr{grid-template-columns:minmax(0,1fr);justify-items:center;gap:14px}
+  .proof.with-qr .letter{justify-self:stretch;padding-inline:16px}
+  .proof.with-qr .letter-label{font-size:.68rem;letter-spacing:.14em}
 }
 /* Room to breathe: the same column, centred on the stage. */
 @media (min-width:700px) and (min-height:640px){
   .shell{padding-block:34px 26px}
   .column{width:468px}
-  .middle{padding-bottom:7vh}
+  .column::before{content:none}
+  .middle{margin-block:auto;padding-bottom:7vh}
   .brand img{width:156px}
   .host{min-height:136px;gap:12px;padding-left:16px;margin-bottom:-14px}
   .pet{width:128px}
+  [data-who="genie"] .pet{width:150px}
   .bubble{max-width:31ch;font-size:1rem;padding:14px 18px;margin-bottom:28px}
   .card{padding:40px 36px 32px;border-radius:28px}
   h1{font-size:2.1rem}

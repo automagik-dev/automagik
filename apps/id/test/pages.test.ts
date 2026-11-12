@@ -21,7 +21,7 @@ import { Miniflare } from 'miniflare';
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer } from 'node:net';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { clientSeedSQL } from '../scripts/client-seed';
 
@@ -83,6 +83,27 @@ describe('pages: files', () => {
   });
 
   // Without this the browser layers below skip in CI and nobody notices.
+  test('Genie is the approved whole figure, and no head-only Genie file is left', async () => {
+    const strip = await readFile(resolve('pages/assets/genie-faces.webp'));
+    const approved = '9df7083cca4a14afc804875b87d9f9cdd18c032f725084f2424434e502bac926';
+    expect(createHash('sha256').update(strip).digest('hex')).toBe(approved);
+    // Seven cells of 192 x 208 side by side; a lossless WebP holds its size in its header.
+    expect(strip.toString('latin1', 0, 4) + strip.toString('latin1', 8, 16)).toBe('RIFFWEBPVP8L');
+    const bits = strip.readUInt32LE(21);
+    expect([(bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1]).toEqual([7 * 192, 208]);
+    // The folder holds this one Genie file and nothing else that could be an older one.
+    expect((await readdir(resolve('pages/assets'))).sort()).toEqual([
+      'LICENSES.md', 'OFL-DMSans.txt', 'OFL-Manrope.txt', 'dm-sans-latin.woff2', 'genie-faces.webp', 'icon.png',
+      'manrope-latin.woff2', 'omni-faces.webp', 'wordmark.webp',
+    ]);
+    const notes = await read('assets/LICENSES.md');
+    expect(notes).toContain(`SHA-256 \`${approved}\``);
+    expect(notes).toContain('The earlier head-only Genie is retired and no file of it is left here.');
+    const css = await read('id.css');
+    expect(css).toContain('[data-who="genie"] .pet,[data-who="omni"] .pal{aspect-ratio:192/208;background-image:url("/assets/genie-faces.webp")}');
+    expect([...css.matchAll(/genie[\w-]*\.(?:webp|png|svg)/g)].map(match => match[0])).toEqual(['genie-faces.webp']);
+  });
+
   test('the CI job runs the browser tests', async () => {
     const workflow = await readFile(resolve('..', '..', '.github', 'workflows', 'ci.yml'), 'utf8');
     const job = workflow.slice(workflow.indexOf('\n  id:\n'), workflow.indexOf('\n  privacy:\n'));
@@ -1168,6 +1189,65 @@ describe('pages: every state', () => {
       await context.close();
     }
   }, 600000);
+
+  test('layout: the letter\'s label on one line beside the code, a fixed step under the logo on a phone, the whole Genie in front of the card', async ({ skip }) => {
+    if (!(await chromium())) return skip();
+    const { origin } = await world();
+    const named = (name: string) => scenes.find(scene => scene.name === name)!;
+    const host = `(() => {
+      const logo = document.querySelector('.brand').getBoundingClientRect(), scene = document.querySelector('#scene');
+      const pet = document.querySelector('#pet').getBoundingClientRect(), card = document.querySelector('#card').getBoundingClientRect();
+      const front = document.elementFromPoint(pet.left + pet.width / 2, card.top + 2);
+      return {
+        step: scene.getBoundingClientRect().top - logo.bottom, who: scene.dataset.who, art: getComputedStyle(document.querySelector('#pet')).backgroundImage,
+        pet: [Math.round(pet.width), Math.round(pet.height)], over: pet.bottom - card.top, clear: pet.top >= logo.bottom, front: front ? front.id : '',
+      };
+    })()`;
+    // A desk browser: the code to scan with the letter beside it, the label on one line; in
+    // a window too narrow for the pair, the letter goes under the code.
+    // No motion here: the host's breathing would change the sizes measured.
+    const desk = await browser.newContext({ viewport: { width: 1440, height: 900 }, reducedMotion: 'reduce' });
+    const waiting = await stage(desk, origin, named('sign-in-20-whatsapp-waiting-for-the-message'));
+    for (const [width, beside] of [[1440, true], [700, true], [480, true], [479, false], [390, false]] as const) {
+      await waiting.page.setViewportSize({ width, height: 900 });
+      const letter = await waiting.page.evaluate(`(() => {
+        const label = document.querySelector('.letter-label'), range = document.createRange(); range.selectNodeContents(label);
+        const code = document.querySelector('#qr').getBoundingClientRect(), box = document.querySelector('.letter').getBoundingClientRect();
+        return {
+          lines: new Set([...range.getClientRects()].map(rect => Math.round(rect.top))).size, shown: code.width >= 148,
+          beside: box.left >= code.right && box.top < code.bottom && box.bottom > code.top, under: box.top >= code.bottom,
+        };
+      })()`);
+      expect(letter, `the letter at ${width}`).toEqual({ lines: 1, shown: true, beside, under: !beside });
+    }
+    await waiting.page.close();
+    // There Genie is centred with the card; it is the whole figure, in front of the card.
+    const wide = await stage(desk, origin, named('sign-in-02-passkey'));
+    const centred = await wide.page.evaluate(host) as any;
+    expect([centred.who, centred.pet, centred.front, centred.clear]).toEqual(['genie', [150, 163], 'pet', true]);
+    expect(centred.art).toContain('/assets/genie-faces.webp');
+    expect(centred.step).toBeGreaterThan(44);
+    await wide.page.close();
+    await desk.close();
+    // A phone: the host and the card start the same short step under the logo in every
+    // state that fits the screen, and Genie's tail ends over the card's edge, in front.
+    const phone = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, reducedMotion: 'reduce' });
+    const steps: number[] = [];
+    for (const name of ['sign-in-01-loading', 'sign-in-02-passkey', 'sign-in-06-passkey-failed', 'consent-02-ask']) {
+      const { page } = await stage(phone, origin, named(name), true);
+      const place = await page.evaluate(host) as any;
+      expect([place.who, place.pet, place.front, place.clear], name).toEqual(['genie', [132, 143], 'pet', true]);
+      expect(place.art, name).toContain('/assets/genie-faces.webp');
+      expect(place.over, name).toBeGreaterThan(0);
+      expect(place.over, name).toBeLessThanOrEqual(14);
+      expect(place.step, name).toBeGreaterThanOrEqual(12);
+      expect(place.step, name).toBeLessThanOrEqual(44);
+      steps.push(place.step);
+      await page.close();
+    }
+    for (const step of steps) expect(step).toBeCloseTo(steps[0], 1);
+    await phone.close();
+  }, 120000);
 
   test('a framed page shows nothing and calls nothing', async ({ skip }) => {
     if (!(await chromium())) return skip();
