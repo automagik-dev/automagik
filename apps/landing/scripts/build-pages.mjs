@@ -43,6 +43,42 @@ const arcaMark = place => `<span class="arca-mark at-${place}"><picture><source 
 // the hero, the favicon or a share picture.
 const lockup = '/assets/brand/automagik/automagik-lockup-oi'
 const licensing = 'Automagik, Genie and Omni are free and open source (Apache-2.0). Cloud will be a private, paid service; its contracts are public.'
+// "Things that made our stack possible": the open projects the products are built on, as one
+// row on the home. Each is its own project's mark, an unchanged copy of the official file
+// (assets/brand/LICENSES.md lists every source), with the name set in this site's type and
+// a link to the project's own site. mark: [file on a light page, file on a dark page or null
+// when one file serves both, the file's width, its height]; shown: the height it is drawn at;
+// inset: empty space inside the file's own box, taken back in the layout; alt: for a mark
+// that carries the words itself, or whose owner asks for a trademark sign at first use.
+export const used = [
+  { name: 'DeepSeek Harness', href: 'https://deepseek.com/harness', mark: ['deepseek-harness/favicon.svg', null, 50, 50], shown: 30 },
+  { name: 'Herdr', href: 'https://herdr.dev', mark: ['herdr/herdr.png', null, 160, 160], shown: 30 },
+  { name: 'Agent Client Protocol', href: 'https://agentclientprotocol.com', mark: ['agent-client-protocol/light.svg', 'agent-client-protocol/dark.svg', 160, 61], shown: 22 },
+  { name: 'Model Context Protocol', href: 'https://modelcontextprotocol.io', mark: ['model-context-protocol/favicon.svg', null, 180, 180], shown: 30 },
+  { name: 'A2A', href: 'https://a2a-protocol.org', mark: ['a2a/a2a_icon_color.svg', 'a2a/a2a_icon_white.svg', 199.067, 198.437], shown: 32 },
+  { name: 'Hermes Agent', href: 'https://hermes-agent.nousresearch.com', mark: ['hermes-agent/Square44x44Logo.scale-200.png', null, 88, 88], shown: 30 },
+  { name: 'Oh My Pi', href: 'https://omp.sh', mark: ['oh-my-pi/favicon.svg', null, 64, 64], shown: 30 },
+  { name: 'Pi', href: 'https://pi.dev', mark: ['pi/logo.svg', null, 800, 800], shown: 52, inset: true },
+  { name: 'NATS', href: 'https://nats.io', mark: ['nats/nats-icon-color.svg', 'nats/nats-icon-white.svg', 280.4, 289.9], shown: 30, alt: 'NATS™, open source messaging' },
+  { name: 'iroh', href: 'https://www.iroh.computer', mark: ['iroh/iroh-wordmark-dark.svg', 'iroh/iroh-wordmark-purple.svg', 93.26, 32], shown: 24, alt: 'iroh, direct connections between devices', wordmark: true },
+  { name: 'Better Auth', href: 'https://better-auth.com', mark: ['better-auth/better-auth-mark-dark.svg', 'better-auth/better-auth-mark-light.svg', 400, 300], shown: 24 },
+]
+export const usedCredit = 'Each name and logo belongs to its project; none endorses Automagik.'
+export const trademarks = 'DeepSeek Harness is a trademark of DeepSeek; NATS™ is a trademark of The Linux Foundation.'
+const usedItem = ({ name, href, mark: [light, dark, width, height], shown, inset, alt, wordmark }) => {
+  // A mark beside its name is decoration. A mark with its own alt text speaks for the item, so the name beside it is not read twice.
+  const image = `<img${inset ? ' class="used-inset"' : ''} src="/assets/brand/used/${light}" width="${Math.round(shown * width / height)}" height="${shown}" ${alt ? `alt="${alt}"` : 'alt="" aria-hidden="true"'} loading="lazy" decoding="async">`
+  const picture = dark ? `<picture><source media="(prefers-color-scheme: dark)" srcset="/assets/brand/used/${dark}">${image}</picture>` : image
+  return `<li><a class="used" href="${href}">${picture}${wordmark ? '' : `<span${alt ? ' aria-hidden="true"' : ''}>${name}</span>`}</a></li>`
+}
+// The row is written twice: the second copy only fills the gap while the row drifts, and is
+// out of reach of the keyboard and of assistive technology.
+const usedRow = () => {
+  const items = used.map(usedItem).join('')
+  return `<section class="we-use" aria-labelledby="we-use-title"><h2 id="we-use-title" class="we-use-title">Things that made our stack possible</h2>
+<div class="we-use-track"><ul class="we-use-list">${items}</ul><ul class="we-use-list we-use-copy" aria-hidden="true" inert>${items}</ul></div>
+<p class="we-use-note wrap">${usedCredit}</p></section>`
+}
 const arrow = '<span aria-hidden="true">→</span>'
 const down = '<span aria-hidden="true">↓</span>'
 const out = '<span aria-hidden="true">↗</span>'
@@ -220,7 +256,7 @@ function header(route) {
 function footer(route) {
   const column = (label, items) => `<nav aria-label="${label}"><p class="footer-head">${label}</p>${items.map(({ href, name, external }) => `<a href="${href}"${href === route ? ' aria-current="page"' : ''}>${name}${external ? ` ${out}` : ''}</a>`).join('')}</nav>`
   // The one link to the repository on a page is the quiet one at the end of the footer.
-  return `<footer class="site-footer"><div id="sitemap" class="wrap footer-grid"><div class="footer-brand">${brand}<p>Open building blocks of superintelligence.</p><p class="footer-part">${partOf()}</p></div>${column('Products', products)}${column('Resources', resources)}${column('Company', company)}<div class="footer-end"><p class="footer-license">${licensing} <a href="${repo}">Source code ${out}</a></p><a class="oi-tag" href="${weUnfold.url}">${oiTag}</a></div></div></footer>`
+  return `<footer class="site-footer"><div id="sitemap" class="wrap footer-grid"><div class="footer-brand">${brand}<p>Open building blocks of superintelligence.</p><p class="footer-part">${partOf()}</p></div>${column('Products', products)}${column('Resources', resources)}${column('Company', company)}<div class="footer-end"><p class="footer-license">${licensing} ${trademarks} <a href="${repo}">Source code ${out}</a></p><a class="oi-tag" href="${weUnfold.url}">${oiTag}</a></div></div></footer>`
 }
 // Every product page says where it is and leads back to all products.
 function crumbs(route) {
@@ -258,6 +294,7 @@ export function pages() {
 
   const home = `<section class="hero home-hero">${constellation()}<div class="wrap home-hero-inner"><div class="hero-heading center">${heading('Automagik', 'Open building blocks of <span class="ink-grad">superintelligence.</span>', 'Tools that put your own agents to work. Use one, or bring them together.')}${getHook('/', 'Get Automagik for')}<p class="hero-also"><a href="#blocks">Or see every block ${down}</a></p></div>
 <div class="scene"><div class="cast">${art('genie', 'Genie, Automagik’s clay character: a dark round face with a swirl of magenta hair.', { cls: 'scene-genie', eager: true })}<p class="bubble">A team of AI helpers that lives in your chats.</p>${art('omni', 'Omni, Automagik’s clay octopus, smiling.', { cls: 'scene-omni', eager: true })}</div><figure class="window scene-window">${art('team-chat', 'The real Automagik app: a fictional team’s chat. Pip, who leads the team, passes a request for a CSV export on to Genie and reports that it is running.', { dark: true, narrow: 'team-chat-phone', sizes: '(max-width: 700px) 94vw, (max-width: 1140px) 92vw, 1040px', eager: true })}</figure></div></div></div></section>
+${usedRow()}
 <section id="blocks" class="blocks wrap" aria-labelledby="blocks-title"><div class="section-heading"><p class="eyebrow">Choose a building block</p><h2 id="blocks-title">Start where your work is.</h2><p class="lede">Open a block to see what it does and how to use it.</p></div>
 <div class="bento">
 <article class="product-card" data-block="desktop"><div class="tile-copy"><p class="tile-tag">Mac and Linux</p><h3><a href="/desktop/">Automagik Desktop</a></h3><p>Your agent team, in your chats. A place to talk, hand work over and review what comes back.</p><span class="detail-link" aria-hidden="true">Download or install →</span></div><div class="tile-art window">${art('app-review-crop', 'The Automagik app: the team in the sidebar, and a finished wish’s report with the files it changed.', { dark: true, sizes: '(max-width: 700px) 640px, (max-width: 1100px) 92vw, 760px' })}</div></article>

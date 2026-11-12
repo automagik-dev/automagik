@@ -6,7 +6,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
-import { routes, rootFiles, platforms, offered } from './scripts/build-pages.mjs'
+import { routes, rootFiles, platforms, offered, used } from './scripts/build-pages.mjs'
 import { fixture } from './waitlist/d1-fixture.mjs'
 import { onRequest as waitlist } from './functions/api/waitlist.js'
 import { onRequest as emailLink } from './functions/api/waitlist/email-confirm.js'
@@ -33,6 +33,8 @@ const server = createServer(async (req, res) => {
     res.writeHead(200, { 'Content-Type': types[extname(path)] ?? 'application/octet-stream' }).end(body)
   } catch { res.writeHead(404).end() }
 })
+// The projects row's files for a dark page, as each project names them.
+const rowDark = used.flatMap(({ mark: [, dark] }) => dark ? [`/assets/brand/used/${dark}`] : [])
 let browser
 const reports = []
 // Layout shift, as the browser itself scores it (shifts right after a click or key do not
@@ -137,7 +139,7 @@ try {
       assert.ok(layout.tag.holds.length === 1 && layout.tag.holds[0] === 'svg' && layout.tag.href === 'https://weunfold.ai/', `The tag's link holds nothing but the tag: ${label} ${JSON.stringify(layout.tag.holds)}`)
       assert.ok(width > 700 ? layout.tag.right === 0 && layout.tag.beside : layout.tag.left === 0 && layout.tag.under, `The tag ends the footer's last row on a wide screen and sits under it, at the left, on a phone: ${label} ${JSON.stringify(layout.tag)}`)
       assert.ok(layout.tag.logo * 676 / 902 >= layout.tag.width, `The tag is never bigger than the logo's word: ${label} ${layout.tag.logo}`)
-      assert.deepEqual(layout.themed.filter(source => /(?:-dark(?:-2x)?\.webp|\/arca-icon-ivory\.svg|\/automagik-lockup-oi-cream\.svg)$/.test(source) !== (colorScheme === 'dark')), [], `App pictures follow the theme: ${label}`)
+      assert.deepEqual(layout.themed.filter(source => (/(?:-dark(?:-2x)?\.webp|\/arca-icon-ivory\.svg|\/automagik-lockup-oi-cream\.svg)$/.test(source) || rowDark.some(file => source.endsWith(file))) !== (colorScheme === 'dark')), [], `App pictures follow the theme: ${label}`)
       if (route === '/') {
         assert.ok(layout.themed.length >= 4, `The home's app pictures have dark captures: ${label}`)
         assert.ok(layout.bubble.bottom <= layout.heroWindow.top && layout.bubble.left >= 0 && layout.bubble.right <= width, `The speech bubble stays off the app window: ${label} ${JSON.stringify([layout.bubble, layout.heroWindow])}`)
@@ -444,6 +446,72 @@ try {
     } finally { await context.close() }
   }
   console.log('PASS download hook motion: the sheet eases in for visitors who allow motion, appears at once otherwise, and ends in place')
+  // The projects row. Every mark is the project's own file at its own proportions, the dark
+  // file on a dark page. For a visitor who allows motion it is one line that drifts (slower on
+  // a phone, where every name is whole on screen as it passes), stops under the pointer and
+  // turns into the still list for the keyboard; with reduced motion it is the still, wrapped
+  // list. The copy that fills the gap is never reached.
+  const drift = {}
+  for (const colorScheme of ['light', 'dark']) for (const [width, height] of [[1440, 900], [390, 844]]) for (const reducedMotion of ['no-preference', 'reduce']) {
+    const label = `${width}px ${colorScheme} ${reducedMotion}`
+    const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, colorScheme, reducedMotion })
+    try {
+      const outside = await guard(context), page = await context.newPage()
+      await page.goto(origin + '/', { waitUntil: 'load' })
+      await page.locator('.we-use').scrollIntoViewIfNeeded()
+      await page.evaluate(() => Promise.all([...document.querySelectorAll('.we-use-list:not(.we-use-copy) img')].map(image => { image.loading = 'eager'; return image.decode().catch(() => {}) })))
+      const row = () => page.evaluate(() => {
+        const track = document.querySelector('.we-use-track'), [list, copy] = track.querySelectorAll('.we-use-list'), style = getComputedStyle(list)
+        const edge = parseFloat(getComputedStyle(track).getPropertyValue('--edge')) || 0
+        return {
+          items: [...list.children].map(item => { const box = item.getBoundingClientRect(), image = item.querySelector('img'), drawn = image.getBoundingClientRect(); return { left: box.left, right: box.right, middle: Math.round(box.top + box.height / 2), width: box.width, file: new URL(image.currentSrc).pathname, loaded: image.naturalWidth > 0, ratio: image.naturalWidth / image.naturalHeight, drawn: [drawn.width, drawn.height], link: item.querySelector('a').getBoundingClientRect().height } }),
+          wraps: style.flexWrap, copy: getComputedStyle(copy).display, running: list.getAnimations().map(animation => [animation.animationName, animation.playState]),
+          lap: parseFloat(style.animationDuration), length: list.getBoundingClientRect().width, clear: track.clientWidth * (1 - 2 * edge / 100), overflow: document.documentElement.scrollWidth - innerWidth,
+        }
+      })
+      let state = await row()
+      assert.equal(state.overflow, 0, `The row never widens the page: ${label}`)
+      used.forEach(({ name, mark: [light, dark, markWidth, markHeight], shown }, index) => {
+        const item = state.items[index]
+        assert.ok(item.loaded && item.file === `/assets/brand/used/${colorScheme === 'dark' && dark ? dark : light}`, `${name} shows its own file for the theme: ${label} ${item.file}`)
+        assert.ok(Math.abs(item.drawn[1] - shown) < 0.5 && Math.abs(item.drawn[0] / item.drawn[1] - markWidth / markHeight) < 0.03 && Math.abs(item.ratio - markWidth / markHeight) < 0.03, `${name} is drawn at its own proportions: ${label} ${JSON.stringify(item.drawn)}`)
+        assert.ok(item.link >= 44, `${name} is a 44px target: ${label}`)
+      })
+      if (reducedMotion === 'reduce') {
+        assert.deepEqual([state.wraps, state.copy, state.running], ['wrap', 'none', []], `Reduced motion: the still, wrapped list: ${label}`)
+        for (const item of state.items) assert.ok(item.left >= 0 && item.right <= width, `Every item is on screen: ${label}`)
+      } else {
+        assert.deepEqual([state.wraps, state.copy, state.running], ['nowrap', 'flex', [['we-use-drift', 'running']]], `The row is one drifting line: ${label} ${JSON.stringify(state.running)}`)
+        assert.equal(new Set(state.items.map(item => item.middle)).size, 1, `Every item sits on one centre line: ${label}`)
+        // Slow enough to read: the widest item fits whole between the faded edges, with time to spare.
+        const speed = state.length / state.lap, widest = Math.max(...state.items.map(item => item.width))
+        drift[width] = speed
+        assert.ok(widest < state.clear && (state.clear - widest) / speed >= 4, `Each name is whole on screen for seconds as it passes: ${label} ${speed.toFixed(1)}px/s`)
+        if (width === 1440) {
+          const band = await page.locator('.we-use-track').boundingBox()
+          await page.mouse.move(band.x + band.width / 2, band.y + band.height / 2)
+          assert.deepEqual((await row()).running, [['we-use-drift', 'paused']], `The row stops under the pointer: ${label}`)
+          await page.mouse.move(0, 0)
+        }
+      }
+      await page.screenshot({ path: join(evidence, `we-use-${width}-${colorScheme}-${reducedMotion === 'reduce' ? 'still' : 'drifting'}.png`) })
+      // The keyboard reaches the eleven links once, in order, and the row holds still while it is in it.
+      await page.locator('.we-use-title').evaluate(node => { node.tabIndex = -1; node.focus() })
+      const reached = []
+      for (const { href } of used) {
+        await page.keyboard.press('Tab')
+        reached.push(await page.evaluate(() => { const active = document.activeElement, box = active.getBoundingClientRect(); return [active.getAttribute('href'), Boolean(active.closest('.we-use-copy')), box.left >= 0 && box.right <= innerWidth] }))
+      }
+      assert.deepEqual(reached, used.map(({ href }) => [href, false, true]), `Tab walks the row once, each link on screen: ${label}`)
+      state = await row()
+      assert.deepEqual([state.wraps, state.copy, state.running], ['wrap', 'none', []], `With the keyboard in it the row is the still list: ${label}`)
+      await page.keyboard.press('Tab')
+      assert.equal(await page.evaluate(() => Boolean(document.activeElement.closest('.we-use'))), false, `The copy is never reached: ${label}`)
+      assert.deepEqual(outside, [], `The row asks nothing of another site: ${label}`)
+    } finally { await context.close() }
+  }
+  assert.ok(drift[390] < drift[1440] && drift[390] <= 16, `The phone drift is the slower one: ${JSON.stringify(drift)}`)
+  console.log('PASS projects row: own files per theme at their proportions, one drifting line that stops for pointer and keyboard, readable phone drift, still wrapped list with reduced motion, copy out of reach, no outside request')
   // Motion, for a visitor who allows it. Every page is scrolled from top to bottom at desktop
   // and phone width: something moves, nothing shifts the layout (the browser's own layout-shift
   // score stays 0), nothing overflows, and everything that rises into view ends fully shown,
