@@ -9,6 +9,7 @@ import { HermesTransport, RemoteChat, LOST, HERMES_DEADLINES, INVALID_FRAME } fr
 import { remoteApproval, RemoteChatAdapter } from '../src/host/remote-chat-adapter.js'
 import { Context } from '@deepseek-ai/cordis'
 import { UserQuestionService } from '@deepseek-ai/dsh-user-questions'
+import { Session } from '@deepseek-ai/dsh-session'
 import { install } from '../src/host/hermes-remote.js'
 import { fallbackFor } from '../src/host/fallback.js'
 import { routeOf, selectorRouteOf, crossesHarness } from '../src/shared/routes.js'
@@ -247,15 +248,43 @@ test('no chat level answers a Hermes question for the person: an asking level us
   }
 })
 
+test('a failed Hermes chat question is denied and diagnosed without logging remote data', async () => {
+  const secret = randomUUID()
+  for (const [error, code] of [
+    [new TypeError(secret), 'TypeError'],
+    [Object.assign(Error(secret), { code: 'NO_PROVIDER' }), 'NO_PROVIDER'],
+    [Object.assign(Error(secret), { name: secret, code: secret }), 'Error'],
+  ]) {
+    const warnings = []
+    const ctx = {
+      get: name => name === 'userQuestions' ? { ask: async () => { throw error } } : undefined,
+      logger: { warn: (...args) => warnings.push(args) },
+    }
+    assert.equal(await remoteApproval(ctx, { session: { header: {} } }, { command: secret }), 'deny')
+    assert.deepEqual(warnings, [['ds-bot: Remote Hermes question failed (%s); the remote tool was denied.', code]])
+    assert.ok(!JSON.stringify(warnings).includes(secret), 'arbitrary error text and codes cannot echo remote data')
+  }
+  const ctx = { get: name => name === 'userQuestions' ? { ask: async () => { throw Error(secret) } } : undefined, logger: { warn() { throw Error('Sample logger failure') } } }
+  assert.equal(await remoteApproval(ctx, { session: { header: {} } }, { command: secret }), 'deny', 'a broken logger cannot turn a denial into an uncaught error')
+})
+
 test('at a never-ask level Hermes’s question passes DSH’s real question service, and the person’s answer goes back', async t => {
-  const ctx = new Context(), agent = { id: 'sample-agent', session: {} }, requests = []
+  const ctx = new Context(), agent = { id: 'sample-agent', session: Session.create('sample-agent') }, requests = []
   let answer
-  await ctx.plugin({ name: 'sample-agents', apply(child) { child.provide('agents'); child.set('agents', { get: id => id === agent.id ? agent : undefined, roots: () => [agent] }) } })
+  await ctx.plugin({ name: 'sample-agents', apply(child) { child.provide('agents'); child.set('agents', { get: id => id === agent.id ? agent : undefined, list: () => [agent], roots: () => [agent] }) } })
   await ctx.plugin(UserQuestionService)
   ctx.provide('approval'); ctx.set('approval', { effectivePolicy: () => 'never', request: async () => assert.fail('a never-ask level has no approval card') })
   ctx.on('user-questions/request', request => { requests.push(request); return answer(request) })
-  const f = fixture(t, { question: (params, withdrawn) => remoteApproval(ctx, agent, params, withdrawn) })
-  await f.wire.connect(); await f.run.prepare()
+  const f = fixture(t)
+  const adapter = new RemoteChatAdapter({ ctx }, {
+    enabled: () => true, models: () => [{ id: 'sample:model', model: 'model', provider: 'sample' }],
+    identity: () => f.identity, save: async () => {},
+    open: async options => { await f.wire.connect(); return new RemoteChat(f.wire, options) },
+  })
+  t.after(() => adapter.dispose())
+  const stream = adapter.stream(markAgentLoopRequest({ provider: 'hermes-remote', model: 'sample:model', sessionId: agent.session.id, messages: [{ role: 'user', content: 'Sample' }] }))
+  const first = stream.next()
+  await until(() => f.sent.some(frame => frame.method === 'prompt.submit'), 'the adapter to submit', first)
   const question = id => ({ jsonrpc: '2.0', id, method: 'approval', params: { session_id: f.identity.runtimeSessionId, request_id: `approval-${id}`, command: 'rm sample.txt', description: 'Delete sample.txt' } })
   const settle = async () => { for (let turn = 0; turn < 6; turn++) await new Promise(resolve => setImmediate(resolve)) }
   for (const [id, label, choice] of [['srq-yes', 'Allow once', 'once'], ['srq-no', 'Deny', 'deny']]) {
@@ -265,6 +294,8 @@ test('at a never-ask level Hermes’s question passes DSH’s real question serv
   }
   // The real service took the request as an approval question: one question, two fixed answers.
   assert.equal(requests.length, 2)
+  assert.equal(requests[0].agent, agent, 'the adapter passes the exact live registry agent, including its Session header')
+  assert.equal(requests[0].agent.session.header, agent.session.header)
   assert.equal(requests[0].questions[0].intent.kind, 'approval')
   assert.equal(requests[0].questions[0].detail, 'Delete sample.txt')
   // A question Hermes withdraws closes in the chat, and a late answer is not sent.
@@ -276,6 +307,10 @@ test('at a never-ask level Hermes’s question passes DSH’s real question serv
   assert.equal(late.signal.aborted, true)
   late.resolve({ answers: [{ id: 'approval-srq-late', selected: ['Allow once'] }] }); await settle()
   assert.deepEqual(f.sent.filter(frame => frame.id === 'srq-late'), [])
+  f.socket().event('message.complete', { text: 'Done' })
+  await first
+  const chunks = await Array.fromAsync(stream)
+  assert.equal(chunks.at(-1).reason.kind, 'stop')
 })
 
 test('a Hermes approval question waits for the person: no deadline answers for them, and the answer goes back once', async t => {
