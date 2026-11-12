@@ -6,13 +6,13 @@ sessions or prompt text. Token counts are raw counts; times are UTC.
 
 | Delivery | Check (the RFC's words) | Conclusion |
 |---|---|---|
-| 7 | a machine that took the pack release runs a meter whose `query --by bot` answers | Met under the reading in "How the meter reached this machine"; the owner and the checker judge that reading |
-| 8 | `actor_unattributed` falls for the backfilled hours; rows before the ledger stay unknown | **Not met**: both halves of the Check hold, but the backfill changed the store's rollup totals by 0.70% |
+| 7 | a machine that took the pack release runs a meter whose `query --by bot` answers (the wording when this was taken) | **Met**: the owner accepted the reading in "How the meter reached this machine" on 2026-11-12, and the RFC's Check now names the signed meter lane |
+| 8 | `actor_unattributed` falls for the backfilled hours; rows before the ledger stay unknown | **Not met**: both halves of the Check hold, but the backfill changed the store's rollup totals by 0.70%; open until #1114 explains it |
 
 ## How the meter reached this machine
 
-The RFC's exit line for delivery 7 is "a machine that took the pack release". This document does
-not reword it. What happened here, plainly:
+When this evidence was taken, the RFC's exit line for delivery 7 was "a machine that took the
+pack release". What happened here, plainly:
 
 - The pack is **not installed** on the build host. `am update --check --json` reports the pack as
   `not-installed` before and after, so there is no installed `am-sidebar/VERSION` to record.
@@ -20,7 +20,8 @@ not reword it. What happened here, plainly:
   took am from 3.108.21 to 3.117.2 (from the signed am-lane), and
   `automagik-herdr meter install --local` installed usagemeter from the signed `meter-lane`
   pointer, checksum verified. It did not arrive inside a pack install.
-- Whether that counts as "took the pack release" is for the owner and the checker.
+- Whether that counts as "took the pack release" was for the owner. Ruled 2026-11-12: it does;
+  the RFC's Check is amended in the same pull request to name the signed meter lane.
 
 ## Versions
 
@@ -66,8 +67,8 @@ The rows after the backfill are seats and workers on Claude Code and dsh-tui, al
 `measured`. Before it the answer was well formed but empty: every token of the window was
 `before_evidence`.
 
-**Conclusion: met**, on a released meter, under the reading above (signed meter lane through am,
-no pack install).
+**Conclusion: met**, on a released meter that came through the signed meter lane by way of am,
+with no pack install; accepted by the owner on 2026-11-12.
 
 ## Delivery 8
 
