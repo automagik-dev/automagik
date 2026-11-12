@@ -1102,6 +1102,41 @@ test("#1142 the CLI says what a Codex launch withheld once per launch, counting 
   }
 });
 
+/** scene() whose seat t1 runs a compliant Codex seat template, the agent row naming an --add-dir through a dangling link. */
+function templateSeat(t, env = {}) {
+  const out = realpathSync(scratchRoot(t, "hb-1142-tpl-"));
+  symlinkSync(join(out, "nowhere"), join(out, "dangling"));
+  symlinkSync(join(out, "nowhere"), join(out, "gp"));
+  const s = scene(t, { programs: { codex: { run: ["codex", "--add-dir", join(out, "dangling/x")] } },
+    templates: [{ name: "codex-seat", command: "codex -m x" }], env: typeof env === "function" ? env(out) : env });
+  s.setState((st) => { Object.assign(st.terminals[0], { template: "codex-seat", argv: ["sh", "-c", 'codex -m x "$@"'],
+    foreground: { ...st.terminals[0].foreground, argv: ["codex", "-m", "x"] } }); });
+  const restart = () => {
+    const r = s.cli(["restart", "Dev", "--fresh", "--force", "--json"], { from: null });
+    assert.equal(r.code, 0, r.err);
+    const argv = launched(s.runs().at(-1));
+    assert.deepEqual(argv.slice(0, 4), ["sh", "-c", 'codex -m x "$@"', "sh"], "the seat's template, kept");
+    assert.equal(argv.join(" ").includes(join(out, "dangling")), false, "the agent row's --add-dir is no part of this launch");
+    return { r, argv };
+  };
+  return { ...s, out, restart };
+}
+
+test("#1142 a restarted Codex seat template's warning counts its own launch: no warning when every derived folder is proved, whatever the agent row names", (t) => {
+  const s = templateSeat(t);
+  const { r, argv } = s.restart();
+  assert.deepEqual(addDirs(argv), s.grants, "every derived folder proved and granted");
+  assert.equal(r.err.includes("Codex extra folders withheld"), false, `nothing this launch would pass was withheld: ${r.err}`);
+});
+
+test("#1142 a restarted Codex seat template with one derived folder withheld: exactly one warning, counting that folder only", (t) => {
+  const s = templateSeat(t, (out) => ({ GOPATH: join(out, "gp") }));
+  const { r, argv } = s.restart();
+  assert.deepEqual(addDirs(argv), s.grants, "the proved ones still granted");
+  assert.equal(r.err.split("Codex extra folders withheld").length - 1, 1, `one warning for the launch: ${r.err}`);
+  assert.equal(r.err.split(`Dev: ${someWithheld(1)}`).length - 1, 1, `the module cache under the dangling GOPATH, alone: ${r.err}`);
+});
+
 test("#1142 a Codex seat on a linked machine: its --add-dir words and derived folders are weighed by that machine's home and app home", (t) => {
   const root = realpathSync(scratchRoot(t, "hb-1142-vm-"));
   const bin = join(root, "bin"), home = join(root, "home"), app = join(root, "app"), vm = join(root, "vm"), vmBin = join(root, "vm-bin");

@@ -4758,7 +4758,9 @@ async function cmdRestart(opts, [ref]) {
   // #1125: a Codex seat's template set aside for its agent row, by name and flag names.
   if (plan.templateNote) say(`${bot.name}: ${plan.templateNote}.`);
   // A seat template carried the grants (#1142): its launch's withheld folders are said here, once.
-  const templateWithheld = plan.granted && codexPlan ? localCodexWarning(sourceRun, codexPlan) : null;
+  // Its launch is the template's command and the pack's grants, never the agent row's words (the
+  // template's own --add-dir words were proved exact before it was kept): only the grants count.
+  const templateWithheld = plan.granted && codexPlan ? localCodexWarning([], codexPlan) : null;
   if (templateWithheld) say(`${bot.name}: ${templateWithheld}`);
   if (movedFrom && movedFrom !== wanted && plan.mode === "resume" && plan.agent !== "claude") {
     say(`${seat.terminal} runs in ${wanted}, not ${movedFrom}: ${plan.agent} finds its last conversation by folder${resumeId ? "" : ", so it may not find it there"}.`);
