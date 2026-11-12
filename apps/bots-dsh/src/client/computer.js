@@ -244,7 +244,7 @@ export function PendingComputerHandoff({ sessionId, bot, hold, actions, inline }
   const answer = outcome => run(() => actions.computerHoldAnswer(bot.id, { callId: hold.callId ?? hold.id, outcome }), true)
   const takeOver = () => run(async () => {
     await actions.computerTakeover(bot.id)
-    actions.openDetails?.(sessionId, 'computer')
+    actions.showDetails?.(sessionId, 'computer')
   }, false)
   return h('div', {
     className: inline ? 'bt-q-inline' : 'bt-q-dock',

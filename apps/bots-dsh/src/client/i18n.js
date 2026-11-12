@@ -1583,6 +1583,7 @@ const ZH = {
   // Group goals
   Goal: '目标',
   'Set a goal': '设定目标',
+  'The group works toward it in stages': '群会分阶段完成它',
   'This group has no admin': '这个群没有管理员',
   'What should this group achieve?': '这个群要达成什么？',
   Resume: '继续',
@@ -2407,6 +2408,7 @@ const ZH = {
   'community': '社区',
   'Waiting for sign-in…': '等待登录…',
   'This service needs an app client ID': '该服务需要应用 Client ID',
+  'NOT SET UP': '未设置',
   'Open the sign-in page': '打开登录页',
   'Paste the address you land on': '粘贴跳转后的地址',
   'Or paste the address you land on': '或粘贴跳转后的地址',
