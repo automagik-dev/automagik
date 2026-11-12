@@ -1,5 +1,5 @@
 // Materialize local install inputs from the image's scanned, unpacked plugin files.
-// Archives exist only in the writable staging profile, never in the image being scanned.
+// Archives stay in the writable profile for later installs, never in the image being scanned.
 import { createHash } from 'node:crypto'
 import { lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'

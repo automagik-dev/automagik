@@ -188,7 +188,28 @@ test('fresh seed records its package hash; a newer image installs in staging aft
   assert.ok(Object.values(installedPlugins(f.target)).every(v => v === '3.93.0'))
   assert.equal(readFileSync(join(f.target, 'cordis.patch.yml'), 'utf8'), 'owner settings\n')
   assert.equal(JSON.parse(readFileSync(join(f.target, SEED_MARKER), 'utf8')).packageSha256, packageHash(f.target))
-  assert.equal(existsSync(join(f.target, 'vendor')), false)
+  assertInstallInputs(f.target)
+})
+
+function assertInstallInputs(profile) {
+  const manifest = JSON.parse(readFileSync(join(profile, 'package.json'), 'utf8'))
+  const lock = readFileSync(join(profile, 'pnpm-lock.yaml'), 'utf8')
+  for (const name of PLUGINS) {
+    const bytes = readFileSync(join(profile, manifest.dependencies[name].slice(5)))
+    assert.ok(gunzipSync(bytes).includes(Buffer.from('package/package.json')))
+    assert.ok(lock.includes(`integrity: sha512-${createHash('sha512').update(bytes).digest('base64')}, tarball: ${manifest.dependencies[name]}`))
+  }
+}
+
+test('fresh and legacy matching seeds retain valid inputs for subsequent plugin installs', async t => {
+  const f = fixture(t)
+  await prepare(f)
+  assertInstallInputs(f.target)
+  assert.equal(existsSync(join(f.old.source, 'vendor')), false, 'the scanned image stays archive-free')
+  rmSync(join(f.target, 'vendor'), { recursive: true })
+  cpSync(join(f.old.source, 'pnpm-lock.yaml'), join(f.target, 'pnpm-lock.yaml'))
+  assert.equal((await prepare(f)).result, 'matching-image')
+  assertInstallInputs(f.target)
 })
 
 test('a missing or legacy marker is adopted only for the complete canonical image seed shape', async t => {

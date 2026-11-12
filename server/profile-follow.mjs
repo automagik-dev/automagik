@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, rmdirSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync } from 'node:fs'
 import { cp } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
@@ -63,6 +63,7 @@ async function followImageUnlocked({ dshHome, source, store, build, dshBin, inst
     if (!validBuild(build)) throw new Error('Invalid image metadata for first seed')
     const seeded = await seedProfile({ dshHome, source, release: build.automagik })
     if (seeded.seeded) {
+      materializePlugins({ source, target })
       pinStore(target, dshHome)
       record(dshHome, target, build, 'seeded')
       return { ...seeded, result: 'seeded', ...profileState({ profile: target, source, build, dshHome }) }
@@ -85,7 +86,16 @@ async function followImageUnlocked({ dshHome, source, store, build, dshBin, inst
   const plugins = installedPlugins(target)
   if (PLUGINS.some(name => plugins[name] === null)) return done('missing-plugins')
   if (PLUGINS.some(name => compareRelease(plugins[name], build.automagik) > 0) || compareRelease(own.release, build.automagik) > 0) return done('newer-than-image')
-  if (PLUGINS.every(name => plugins[name] === build.plugins[name])) { pinStore(target, dshHome); return done('matching-image') }
+  if (PLUGINS.every(name => plugins[name] === build.plugins[name])) {
+    // Repair seeds made by older images too. These inputs must survive every later
+    // `dsh plugin install`, which resolves all direct dependencies again.
+    const manifest = JSON.parse(readFileSync(join(source, 'package.json'), 'utf8'))
+    if (PLUGINS.some(name => !existsSync(join(target, manifest.dependencies[name].slice(5))))) {
+      materializePlugins({ source, target })
+    }
+    pinStore(target, dshHome)
+    return done('matching-image')
+  }
   if (compareRelease(build.automagik, own.release) <= 0) return done('update-required')
 
   let staging
@@ -109,9 +119,7 @@ async function followImageUnlocked({ dshHome, source, store, build, dshBin, inst
     await install({ dshBin, profile, dshHome: staging })
     if (!PLUGINS.every(name => installedPlugins(profile)[name] === build.plugins[name])) throw new Error('Image plugin install did not converge')
     if (packageHash(target) !== own.packageSha256) return done('owner-managed')
-    const manifest = JSON.parse(readFileSync(join(source, 'package.json'), 'utf8'))
-    for (const name of PLUGINS) rmSync(join(profile, manifest.dependencies[name].slice(5)), { force: true })
-    try { rmdirSync(join(profile, 'vendor')) } catch (error) { if (error.code !== 'ENOTEMPTY') throw error }
+    // Keep the materialized inputs on the data volume for subsequent plugin installs.
     markSeed(profile, build.automagik)
     renameSync(target, previous)
     try { renameSync(profile, target) }
