@@ -376,6 +376,18 @@ describe('the plugin lane', () => {
     expect(kindOf([...landing, 'apps/desktop/src/main.js'], none)).toBe('full');
   });
 
+  test('Automagik ID is deployed independently and never changes a release lane', () => {
+    const none = () => false;
+    const id = ['apps/id/src/index.ts', 'apps/id/src/auth.ts', 'apps/id/bun.lock',
+      'apps/id/migrations/0001_auth.sql', 'apps/id/clients.json', 'apps/id/pages/sign-in.html'];
+    expect(ships(id, none)).toBe(false);
+    expect(herdrShips(id)).toBe(false);
+    expect(pocketShips(id)).toBe(false);
+    expect(meterShips(id)).toBe(false);
+    expect(kindOf([...id, 'apps/bots-dsh/src/host/turns.js'], none)).toBe('plugins');
+    expect(kindOf([...id, 'apps/desktop/src/main.js'], none)).toBe('full');
+  });
+
   test('no Unfold folder ships: the removal\'s deleted folders, or one that came back, cut no release', () => {
     const none = () => false;
     // The paths the removal (RFC 0020) deletes count as changed since the last release.

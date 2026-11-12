@@ -606,3 +606,295 @@ test('#844: a refused adopt reaches the toast after the native view moved on', a
   assert.ok(noted, 'the browser error keeps the refusal code')
   assert.equal(noted.text, `bot-session-adopt: ${hostRefusal.message}`)
 })
+
+// #877: two follow-ups. A read-only host refuses an adopt under its own code, and a refusal that
+// follows the preset selection says "Nothing was changed" of the team and names the selection.
+const READ_ONLY = 'The Bot team in /team is open in another dsh (Web or Desktop, pid 7). This window shows the team but cannot change it; close the other one and reload.'
+const PRESET_SET = 'For the Bot team: Nothing was changed; try again. The native preset of Session picked was set to "cordis" before this refusal.'
+
+// The bench's select, with `after` run once the first selection is in.
+function afterSelection(bench, after) {
+  const select = bench.presets.select
+  let first = true
+  bench.presets.select = async (live, preset) => {
+    await select(live, preset)
+    if (first) { first = false; await after() }
+  }
+}
+
+test('#877: a host that turns read-only during the adopt is refused as bot/adopt-read-only', async t => {
+  for (const [when, arm] of [
+    // Another dsh takes the team while the Session resolves.
+    ['resolving', (bench) => {
+      const resolveAgent = bench.rt.resolveAgent
+      bench.rt.resolveAgent = async (id) => {
+        const live = await resolveAgent(id)
+        if (id === 'picked') bench.rt.readOnly = () => READ_ONLY
+        return live
+      }
+      return () => { bench.rt.resolveAgent = resolveAgent }
+    }],
+    // Or after the Bot's preset was selected on it.
+    ['selected', (bench) => { afterSelection(bench, () => { bench.rt.readOnly = () => READ_ONLY }); return () => {} }],
+  ]) {
+    const bench = await adoptBench(t)
+    const before = teamState(bench.rt)
+    const readOnly = bench.rt.readOnly
+    const undo = arm(bench)
+    let noted
+    try {
+      const result = await bench.adopt()
+      noted = await assertRefused(bench, result, {
+        code: 'bot/adopt-read-only',
+        reason: /cannot change the Bot team now/,
+        parts: ['Bot "Brain"', 'Session picked', 'is open in another dsh', 'close the other one and reload.'],
+        where: 'bot-session-adopt (Session picked)',
+        diagnosticsBot: 'Brain',
+      })
+    } finally { undo(); bench.rt.readOnly = readOnly }
+    assert.equal(noted.text, `Session picked cannot join Bot "Brain" because this window cannot change the Bot team now. ${READ_ONLY}`, when)
+    unchanged(bench, before, 'a read-only refusal changes nothing')
+    assert.deepEqual(bench.selected, when === 'selected' ? [['picked', 'cordis']] : [], when)
+  }
+})
+
+test('#877: the adopt\'s own first check names a read-only host too, and the endpoint\'s refusal is as it was', async t => {
+  const bench = await adoptBench(t)
+  const before = teamState(bench.rt)
+  const readOnly = bench.rt.readOnly
+  bench.rt.readOnly = () => READ_ONLY
+  try {
+    // The endpoint refuses before the adopt starts, under the code every write shares.
+    const result = await bench.adopt()
+    assert.equal(result.ok, false)
+    assert.equal(result.error.code, 'bot/read-only')
+    assert.equal(result.error.message, READ_ONLY)
+    // Called past the endpoint (a host that turned read-only after that check), the adopt itself
+    // refuses first of all, under its own code and with a diagnostics entry.
+    await assert.rejects(() => bench.rt.adoptBotSession(bench.botId, 'picked', bench.botId), (error) => {
+      assert.equal(error.code, 'bot/adopt-read-only')
+      assert.equal(error.message, `Session picked cannot join Bot "Brain" because this window cannot change the Bot team now. ${READ_ONLY}`)
+      return true
+    })
+    // Also before the Bot is looked up: read-only comes first, as it did.
+    await assert.rejects(() => bench.rt.adoptBotSession('no-such-bot', 'picked', 'no-such-bot'), error => error.code === 'bot/adopt-read-only')
+  } finally { bench.rt.readOnly = readOnly }
+  const noted = (await bench.rt.diagnostics.entries()).filter(entry => entry.code === 'bot/adopt-read-only')
+  assert.equal(noted.length, 2)
+  assert.equal(noted[0].source, 'api')
+  assert.equal(noted[0].bot, 'Brain')
+  assert.equal(noted[0].stack, undefined)
+  unchanged(bench, before, 'a read-only refusal changes nothing')
+  assert.deepEqual(bench.selected, [])
+})
+
+test('#877: a Bot changed after the preset was selected: the team is unchanged and the selection is named', async t => {
+  const bench = await adoptBench(t)
+  const before = teamState(bench.rt)
+  const chatOf = bench.rt.chatOf
+  afterSelection(bench, () => { bench.rt.chatOf = () => 'edited-elsewhere' })
+  let result
+  try { result = await bench.adopt() } finally { bench.rt.chatOf = chatOf }
+  await assertRefused(bench, result, {
+    code: 'bot/adopt-changed',
+    reason: /changed while Session picked was joining it/,
+    parts: ['Bot "Brain"', 'Session picked', PRESET_SET],
+    where: 'bot-session-adopt (Session picked)',
+    diagnosticsBot: 'Brain',
+  })
+  assert.equal(result.error.message, `Bot "Brain" changed while Session picked was joining it (another window or an edit). ${PRESET_SET}`)
+  unchanged(bench, before, 'a changed registration changes nothing of the team')
+  // The flow is as it was: one selection, left on the Session, and now said.
+  assert.deepEqual(bench.selected, [['picked', 'cordis']])
+  assert.equal(bench.target.preset, 'cordis')
+})
+
+// The Bot's registration edited by another window right after this adopt's save.
+function editedWhilePersisting(bench) {
+  const original = bench.rt.state.agents[bench.entry.id]
+  const profile = original.profile
+  const save = bench.rt.save
+  let armed = true
+  bench.rt.save = async (options) => {
+    const value = await save(options)
+    if (armed) { armed = false; original.profile = 'edited-during-persist' }
+    return value
+  }
+  return () => { bench.rt.save = save; original.profile = profile }
+}
+
+test('#877: a Bot changed while persisting names the preset selection left on the Session', async t => {
+  const bench = await adoptBench(t)
+  const before = teamState(bench.rt)
+  const undo = editedWhilePersisting(bench)
+  let result
+  try { result = await bench.adopt() } finally { undo() }
+  await assertRefused(bench, result, {
+    code: 'bot/adopt-changed-persisting',
+    reason: /changed while Session picked was being saved/,
+    parts: ['Bot "Brain"', 'Session picked', PRESET_SET],
+    where: 'bot-session-adopt (Session picked)',
+    diagnosticsBot: 'Brain',
+  })
+  assert.equal(result.error.message, `Bot "Brain" changed while Session picked was being saved. ${PRESET_SET}`)
+  unchanged(bench, before, 'a failed persistence is rolled back')
+  assert.deepEqual(bench.selected, [['picked', 'cordis']])
+  assert.equal(bench.target.preset, 'cordis')
+})
+
+test('#877: with no preset selected, or the Session back on the preset it had, the refusal says only "Nothing was changed"', async t => {
+  // Changed before any selection.
+  const early = await adoptBench(t)
+  const resolveAgent = early.rt.resolveAgent
+  const chatOf = early.rt.chatOf
+  early.rt.resolveAgent = async (id) => {
+    const live = await resolveAgent(id)
+    if (id === 'picked') early.rt.chatOf = () => 'edited-elsewhere'
+    return live
+  }
+  let result
+  try { result = await early.adopt() } finally { early.rt.resolveAgent = resolveAgent; early.rt.chatOf = chatOf }
+  assert.equal(result.error.message, 'Bot "Brain" changed while Session picked was joining it (another window or an edit). Nothing was changed; try again.')
+
+  // The Session already on the Bot's preset: nothing is selected, so nothing is named.
+  const same = await adoptBench(t)
+  same.target.preset = 'cordis'
+  const undo = editedWhilePersisting(same)
+  try { result = await same.adopt() } finally { undo() }
+  assert.equal(result.error.message, 'Bot "Brain" changed while Session picked was being saved. Nothing was changed; try again.')
+  assert.deepEqual(same.selected, [])
+
+  // Selected, then back on its own preset by the time of the refusal (another hand undid it).
+  const back = await adoptBench(t)
+  const backChatOf = back.rt.chatOf
+  afterSelection(back, () => { back.target.preset = 'standard'; back.rt.chatOf = () => 'edited-elsewhere' })
+  try { result = await back.adopt() } finally { back.rt.chatOf = backChatOf }
+  assert.equal(result.error.code, 'bot/adopt-changed')
+  assert.equal(result.error.message, 'Bot "Brain" changed while Session picked was joining it (another window or an edit). Nothing was changed; try again.')
+})
+
+test('#877: a Session whose preset cannot be read is not said to be unchanged after a selection', async t => {
+  const bench = await adoptBench(t)
+  // DSH reads no preset for the Session before the selection, and the Bot's after it.
+  let read
+  bench.presets.presetForSession = session => (session?.id === 'picked' ? read : undefined)
+  const select = bench.presets.select
+  const chatOf = bench.rt.chatOf
+  bench.presets.select = async (live, preset) => { await select(live, preset); read = undefined; bench.rt.chatOf = () => 'edited-elsewhere' }
+  let result
+  try { result = await bench.adopt() } finally { bench.rt.chatOf = chatOf }
+  assert.equal(result.error.code, 'bot/adopt-changed')
+  assert.equal(result.error.message, `Bot "Brain" changed while Session picked was joining it (another window or an edit). ${PRESET_SET}`)
+})
+
+test('#877: a successful adopt is as it was', async t => {
+  const bench = await adoptBench(t)
+  const result = await bench.adopt()
+  assert.equal(result.ok, true, result.error?.message)
+  assert.deepEqual(bench.selected, [['picked', 'cordis']])
+  assert.equal(bench.target.preset, 'cordis')
+  assert.equal(bench.rt.chatOf(bench.botId), 'picked')
+  assert.equal((await bench.rt.diagnostics.entries()).filter(entry => String(entry.code).startsWith('bot/adopt-')).length, 0)
+})
+
+test('#877: a save that fails because the host lost the team is the read-only refusal; another failed save is not', async t => {
+  // Another dsh takes the team after the last check: only the save notices, before its write
+  // (an uncoded error) or during it (the store's ELOCKLOST).
+  for (const failure of [
+    () => new Error(`This host cannot save the Bot team: ${READ_ONLY}`),
+    () => Object.assign(new Error('the team lock was lost during the write'), { code: 'ELOCKLOST' }),
+  ]) {
+    const lost = await adoptBench(t)
+    const before = teamState(lost.rt)
+    const save = lost.rt.save
+    const readOnly = lost.rt.readOnly
+    let armed = true
+    lost.rt.save = async (options) => {
+      if (!armed) return save(options)
+      armed = false
+      lost.rt.readOnly = () => READ_ONLY
+      throw failure()
+    }
+    try {
+      const result = await lost.adopt()
+      await assertRefused(lost, result, {
+        code: 'bot/adopt-read-only',
+        reason: /cannot change the Bot team now/,
+        parts: ['Bot "Brain"', 'Session picked', 'close the other one and reload.'],
+        where: 'bot-session-adopt (Session picked)',
+        diagnosticsBot: 'Brain',
+      })
+    } finally { lost.rt.save = save; lost.rt.readOnly = readOnly }
+    unchanged(lost, before, 'the tentative ownership is undone')
+  }
+
+  // A disk that fails while this host still holds the team stays the error it was.
+  const disk = await adoptBench(t)
+  const beforeDisk = teamState(disk.rt)
+  const diskSave = disk.rt.save
+  let fail = true
+  disk.rt.save = async (options) => {
+    if (!fail) return diskSave(options)
+    fail = false
+    throw new Error('ENOSPC: no space left on device')
+  }
+  t.mock.method(console, 'error', () => {})
+  t.mock.method(console, 'warn', () => {})
+  let result
+  try { result = await disk.adopt() } finally { disk.rt.save = diskSave }
+  assert.equal(result.ok, false)
+  assert.equal(String(result.error.code).startsWith('bot/adopt-'), false, result.error.code)
+  assert.equal((await disk.rt.diagnostics.entries()).filter(entry => entry.code === 'bot/adopt-read-only').length, 0)
+  unchanged(disk, beforeDisk, 'the tentative ownership is undone')
+})
+
+test('#877: the preset is read for the picked Session itself, before and after the selection', async t => {
+  const bench = await adoptBench(t)
+  const asked = []
+  const presetForSession = bench.presets.presetForSession
+  bench.presets.presetForSession = (session) => { asked.push(session); return presetForSession(session) }
+  const chatOf = bench.rt.chatOf
+  afterSelection(bench, () => { bench.rt.chatOf = () => 'edited-elsewhere' })
+  let result
+  try { result = await bench.adopt() } finally { bench.rt.chatOf = chatOf }
+  assert.equal(result.error.code, 'bot/adopt-changed')
+  assert.ok(asked.length >= 3)
+  for (const session of asked) assert.equal(session, bench.target.session)
+})
+
+test('#877: a refusal of this adopt during a read-only moment keeps its own code, and a preset that sorts before the Bot\'s is still named', async t => {
+  // The Bot edited while persisting, on a host that turned read-only at the same moment: the
+  // refusal already thrown is the one answered.
+  const bench = await adoptBench(t)
+  const readOnly = bench.rt.readOnly
+  const original = bench.rt.state.agents[bench.entry.id]
+  const profile = original.profile
+  const save = bench.rt.save
+  let armed = true
+  bench.rt.save = async (options) => {
+    const value = await save(options)
+    if (armed) { armed = false; original.profile = 'edited-during-persist'; bench.rt.readOnly = () => READ_ONLY }
+    return value
+  }
+  let result
+  try { result = await bench.adopt() } finally { bench.rt.save = save; bench.rt.readOnly = readOnly; original.profile = profile }
+  assert.equal(result.error.code, 'bot/adopt-changed-persisting')
+
+  // The preset the Session had is compared by equality, whatever its name.
+  const early = await adoptBench(t)
+  early.target.preset = 'alpha'
+  const undo = editedWhilePersisting(early)
+  try { result = await early.adopt() } finally { undo() }
+  assert.equal(result.error.message, `Bot "Brain" changed while Session picked was being saved. ${PRESET_SET}`)
+})
+
+test('#877: a preset service gone after the selection still ends in the named refusal', async t => {
+  const bench = await adoptBench(t)
+  const chatOf = bench.rt.chatOf
+  // DSH's preset service no longer reads a Session's preset once the selection is in.
+  afterSelection(bench, () => { delete bench.presets.presetForSession; bench.rt.chatOf = () => 'edited-elsewhere' })
+  let result
+  try { result = await bench.adopt() } finally { bench.rt.chatOf = chatOf }
+  assert.equal(result.error.code, 'bot/adopt-changed')
+  assert.equal(result.error.message, `Bot "Brain" changed while Session picked was joining it (another window or an edit). ${PRESET_SET}`)
+})

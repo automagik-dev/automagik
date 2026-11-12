@@ -34,6 +34,7 @@ export const EXTRA = [
   [`${SOURCE}/hcPane.mjs`, `${TARGET}/hcPane.mjs`],
   [`${SOURCE}/hcProxy.mjs`, `${TARGET}/hcProxy.mjs`],
   [`${SOURCE}/guard/hc`, `${TARGET}/guard/hc`],
+  [`${SOURCE}/hc-kill/hc`, `${TARGET}/hc-kill/hc`],
   [`${SOURCE}/hcGuard.mjs`, `${TARGET}/hcGuard.mjs`],
   [`${SOURCE}/pack-keys.json`, `${TARGET}/pack-keys.json`],
   [`${SOURCE}/meter-keys.json`, `${TARGET}/meter-keys.json`],
@@ -59,10 +60,11 @@ export function closure(dir, roots = ROOTS) {
   return [...seen].map((f) => relative(dir, f)).sort();
 }
 
-/** Every copy as [from, to], repository paths. */
+/** Every copy as [from, to], repository paths: once each, when an EXTRA is also imported (hcGuard.mjs). */
 export function copies(root = ROOT) {
   const inside = closure(join(root, SOURCE)).map((p) => [`${SOURCE}/${p}`, `${TARGET}/${p}`]);
-  return [...inside, ...EXTRA].sort((a, b) => a[1].localeCompare(b[1]));
+  const imported = new Set(inside.map(([, to]) => to));
+  return [...inside, ...EXTRA.filter(([, to]) => !imported.has(to))].sort((a, b) => a[1].localeCompare(b[1]));
 }
 
 const recorded = (root) => { try { return JSON.parse(readFileSync(join(root, RECORD), "utf8")).files ?? []; } catch { return []; } };

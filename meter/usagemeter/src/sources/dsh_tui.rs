@@ -26,6 +26,12 @@
 //!   under the parent's session. Read from a fork, a copy counts only when the parent's file is
 //!   gone or unreadable, and is then unlinked, never the fork's. A copy is a call at or before the
 //!   fork's `createdAt` (with none recorded: before its first inherited `session/end-seed`).
+//! - The first line may name the terminal the session runs in ([`SESSION_TERMINAL_KEY`], RFC 0023
+//!   section 4 and RFC 0026 (d)): hc's `HC_TERMINAL_ID`, the pane's bare local address, absent for
+//!   a session started outside hc. It is kept in the file context with `createdAt`, the session's
+//!   start, and the resolver matches it to the launch on that terminal. Anything that is no bare
+//!   local address (empty, not a string, a linked machine's `/` view, a control character) is no
+//!   record at all ([`terminal_address`]); a session file without the field reads as before.
 //! - Two line types carry `data.usage` = {inputTokens, outputTokens, cacheReadTokens,
 //!   cacheWriteTokens, totalTokens}; `inputTokens` is already uncached (`totalTokens` is the sum of
 //!   the other four):
@@ -57,6 +63,33 @@ pub const HARNESS: &str = "dsh-tui";
 pub const FILE_NAMES: [&str; 2] = ["session.v4.jsonl.zstd", "session.v4.jsonl"];
 /// The format generation read.
 const GENERATION: u32 = 4;
+/// The optional field on the session start line (`type: "session"`) that names the terminal the
+/// session runs in. DSH owns the name (RFC 0023 section 4): it is read here and nowhere else, so
+/// a rename is this one line, and the tests build their headers from it.
+pub const SESSION_TERMINAL_KEY: &str = "terminal";
+/// The longest terminal address taken from a header: a longer one is no address, never cut short
+/// (a cut one could be another terminal's).
+const TERMINAL_BYTES: usize = 128;
+
+/// A header's terminal when it is a bare local address: the pane's own address on the machine
+/// that ran the session. None for an empty or over-long one, one with a `/` (hc's view of a
+/// linked machine's pane, such as `/peer/t1`: the starting machine's view is never used, RFC 0026
+/// (d)), a control character, or a character the store's launch records cannot hold.
+pub fn terminal_address(t: &str) -> Option<&str> {
+    let bare = !t.is_empty()
+        && t.len() <= TERMINAL_BYTES
+        && !t.contains('/')
+        && !t.chars().any(char::is_control)
+        && crate::ledger::column_safe(t);
+    bare.then_some(t)
+}
+
+/// The terminal a session start line names, read on its own so the field's type can never cost
+/// the header its other fields: anything but a string that is a bare local address is None.
+fn header_terminal(line: &[u8]) -> Option<String> {
+    let row: serde_json::Map<String, serde_json::Value> = from_line(line)?;
+    terminal_address(row.get(SESSION_TERMINAL_KEY)?.as_str()?).map(str::to_owned)
+}
 
 /// The format generation of a session file name: `session.v<N>.jsonl` or `….jsonl.zstd`.
 fn generation_of(name: &str) -> Option<u32> {
@@ -224,6 +257,7 @@ pub fn parse_line(line: &[u8], ctx: &mut FileCtx, out: &mut Vec<UsageEvent>) -> 
                 .created_at
                 .filter(|t| t.is_finite() && *t > 0.0)
                 .map(|t| t as i64);
+            ctx.terminal = header_terminal(line);
         }
         return Line::Ignored;
     };
@@ -503,6 +537,82 @@ mod tests {
         let mut ctx = FileCtx::default();
         let (_, ev) = run(&[HEADER, &at(0, 1_000), &marker(1, "{}")], &mut ctx);
         assert!(!ev[0].copied && !ctx.seed_cut);
+    }
+
+    /// [`HEADER`] with the terminal field holding `value` (JSON), built from the field's one name.
+    fn header_with_terminal(value: &str) -> String {
+        HEADER.replacen(
+            r#""cwd""#,
+            &format!(r#""{SESSION_TERMINAL_KEY}":{value},"cwd""#),
+            1,
+        )
+    }
+
+    // RFC 0026 (d), T4: the header's terminal is carried on the session with its start; a header
+    // without the field reads as it always did.
+    #[test]
+    fn the_headers_terminal_is_kept_with_the_sessions_start() {
+        let mut ctx = FileCtx::default();
+        run(&[&header_with_terminal(r#""t7""#)], &mut ctx);
+        assert_eq!(ctx.terminal.as_deref(), Some("t7"));
+        assert_eq!(ctx.created_at, Some(1_767_261_600_000));
+        assert_eq!(ctx.session.as_deref(), Some("sess-a"));
+        // It survives the file context's round trip (a read resumed mid-file), and a context an
+        // older meter wrote, with no such field, still reads.
+        let kept: FileCtx = serde_json::from_str(&serde_json::to_string(&ctx).unwrap()).unwrap();
+        assert_eq!(kept, ctx);
+        let mut plain = FileCtx::default();
+        run(&[HEADER], &mut plain);
+        assert_eq!(plain.terminal, None);
+        assert!(!serde_json::to_string(&plain).unwrap().contains("terminal"));
+        let old: FileCtx = serde_json::from_str(r#"{"session":"sess-a"}"#).unwrap();
+        assert_eq!(old.terminal, None);
+    }
+
+    // A value that is no bare local address is no record: a linked machine's view (the starting
+    // machine's `/` address is never used), an empty or over-long one, a control character, a
+    // separator the launch records cannot hold, or anything that is not a string. The header's
+    // other fields are read all the same.
+    #[test]
+    fn a_terminal_that_is_no_bare_local_address_is_ignored() {
+        let long = format!(r#""{}""#, "t".repeat(TERMINAL_BYTES + 1));
+        for value in [
+            r#""/peer/t1""#,
+            r#""peer/t1""#,
+            r#""""#,
+            r#""t1\u0007""#,
+            r#""t1\nt2""#,
+            r#""t1;t2""#,
+            r#""t1:9""#,
+            "7",
+            "null",
+            r#"{"address":"t1"}"#,
+            r#"["t1"]"#,
+            long.as_str(),
+        ] {
+            let mut ctx = FileCtx::default();
+            let (r, _) = run(&[&header_with_terminal(value)], &mut ctx);
+            assert_eq!(r, [Line::Ignored], "{value}");
+            assert_eq!(ctx.terminal, None, "{value}");
+            assert_eq!(ctx.session.as_deref(), Some("sess-a"), "{value}");
+            assert_eq!(ctx.cwd.as_deref(), Some("/work/app"), "{value}");
+            assert_eq!(ctx.created_at, Some(1_767_261_600_000), "{value}");
+        }
+        let at_cap = format!(r#""{}""#, "t".repeat(TERMINAL_BYTES));
+        let mut ctx = FileCtx::default();
+        run(&[&header_with_terminal(&at_cap)], &mut ctx);
+        assert_eq!(ctx.terminal.map(|t| t.len()), Some(TERMINAL_BYTES));
+        // The calls of a session with the field are counted as any other's.
+        let mut ctx = FileCtx::default();
+        let (r, ev) = run(
+            &[
+                &header_with_terminal(r#""t7""#),
+                &msg(0, r#"{"inputTokens":3,"totalTokens":3}"#),
+            ],
+            &mut ctx,
+        );
+        assert_eq!(r, [Line::Ignored, Line::Usage]);
+        assert_eq!(ev[0].session.as_deref(), Some("sess-a"));
     }
 
     #[test]

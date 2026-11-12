@@ -581,7 +581,6 @@ export function install(rt) {
   const associations = new Set()
   const associationTargets = new Set()
   async function adoptBotSession(botId, sessionId, sourceSessionId) {
-    writeCheck()
     const bot = rt.own(state.bots, botId)
     const original = rt.own(state.agents, bot?.dshAgentId)
     // Every refusal names the Bot and the Session in the message the person sees, and its
@@ -608,6 +607,14 @@ export function install(rt) {
       })
       throw refusal(message, { code, cause })
     }
+    // A read-only host is the first refusal, under its own code like the others (#877): the
+    // store's reason names who holds the team and what to do. The endpoint refuses a host that
+    // already was read-only; this one became so since (another dsh took the team).
+    const writable = () => {
+      const readOnly = rt.readOnly()
+      if (readOnly !== undefined) refuse('bot/adopt-read-only', `${sessionLabel} cannot join ${botLabel} because this window cannot change the Bot team now. ${readOnly}`)
+    }
+    writable()
     if (bot?.kind !== DSH_BOT || original?.kind !== DSH_BOT || original.adoptedBotId !== botId) {
       refuse('bot/adopt-unknown', `${botLabel} is not an adopted DSH Bot, so ${sessionLabel} cannot join it. Open the Bot from the team list and try again.`)
     }
@@ -620,12 +627,21 @@ export function install(rt) {
     }
     const before = JSON.stringify(bot)
     const registration = JSON.stringify(original)
+    // The native preset this adopt selected on the picked Session, once it has. A later refusal
+    // leaves it there, so "Nothing was changed" is said of the team and the selection is named
+    // (#877), unless the Session reads the preset it had before.
+    let selected
+    const untouched = () => {
+      const now = selected === undefined ? undefined : ctx.get('agentPresets')?.presetForSession?.(selected.session)
+      if (selected === undefined || (selected.from !== undefined && now === selected.from)) return 'Nothing was changed; try again.'
+      return `For the Bot team: Nothing was changed; try again. The native preset of ${sessionLabel} was set to "${selected.to}" before this refusal.`
+    }
     const validate = () => {
-      writeCheck()
+      writable()
       if (state.bots[botId] !== bot || state.agents[bot.dshAgentId] !== original
         || JSON.stringify(bot) !== before || JSON.stringify(original) !== registration
         || rt.chatOf(botId) !== sourceSessionId) {
-        refuse('bot/adopt-changed', `${botLabel} changed while ${sessionLabel} was joining it (another window or an edit). Nothing was changed; try again.`)
+        refuse('bot/adopt-changed', `${botLabel} changed while ${sessionLabel} was joining it (another window or an edit). ${untouched()}`)
       }
       if (rt.selfOf(sessionId) !== undefined || rt.botOf(sessionId) !== undefined
         || rt.roomOf(sessionId) !== undefined || agentOf(sessionId) !== undefined
@@ -670,7 +686,9 @@ export function install(rt) {
         if (typeof presets?.select !== 'function') {
           refuse('bot/adopt-preset-unavailable', `${botLabel} needs the native preset "${preset}" for ${sessionLabel}, but native preset selection is unavailable in this DSH. Update DSH or pick a Session already on that preset.`)
         }
+        const from = presets.presetForSession?.(session)
         await presets.select(live, preset)
+        selected = { session, from, to: preset }
         await ctx.sessions.flush(session)
       }
       validate()
@@ -686,7 +704,7 @@ export function install(rt) {
         await rt.save({ required: true })
         if (state.bots[botId] !== bot || bot.sessionId !== sessionId || state.agents[bot.dshAgentId] !== original
           || JSON.stringify(original) !== registration) {
-          refuse('bot/adopt-changed-persisting', `${botLabel} changed while ${sessionLabel} was being saved. Nothing was changed; try again.`)
+          refuse('bot/adopt-changed-persisting', `${botLabel} changed while ${sessionLabel} was being saved. ${untouched()}`)
         }
       } catch (error) {
         // Undo only this operation's tentative ownership; do not erase a successor.
@@ -698,6 +716,10 @@ export function install(rt) {
           rt.indexSessions()
           await rt.save({ required: true }).catch(() => {})
         }
+        // A save that failed because this host lost the team meanwhile (refused before the
+        // write, or the store's ELOCKLOST during it) is the read-only refusal, not an unnamed
+        // error; this adopt's own refusals and any other failed save stay as they were.
+        if (!String(error?.code ?? '').startsWith('bot/')) writable()
         throw error
       }
       return sessionId
@@ -789,15 +811,19 @@ export function install(rt) {
   // A task thinks with the model of the Bot that asked, as that Bot's own chat does, not
   // with DSH's default: the default may be a route this machine has no key for. Before the
   // first message, so the first turn already runs on it.
+  // It answers false when the Bot's model was to be selected and was not: the task is still
+  // on the model DSH made its Session with.
   async function askersModel(sessionId, bot) {
-    if (bot === undefined) return
+    if (bot === undefined) return true
     try {
-      const ref = await rt.desiredModel(bot)
-      if (ref === undefined) return
+      const ref = await rt.desiredModel(bot, { sessionId })
+      if (ref === undefined) return true
       const effort = await rt.desiredEffort(bot, ref)
       await rt.selectSessionModel(sessionId, { ...splitRef(ref), ...(effort === undefined ? {} : { reasoningEffort: effort }) })
+      return true
     } catch (error) {
       rt.warn('ds-bot: the task keeps the default model, %s\'s was not applied: %s', bot.name, error?.message ?? error)
+      return false
     }
   }
 
@@ -809,12 +835,31 @@ export function install(rt) {
   // Without one, a task started inside a group Session's tool call keeps that group as
   // `levelRoomId`, which can only narrow its level (permissions.js); the report still goes
   // to the Bot's own chat.
-  async function startTask({ title, text, from, cwd, agentPreset, roomId }) {
+  // Started from inside a task Session's tool call, it keeps that task as `levelTaskId` and
+  // never runs wider than it (permissions.js, #1030), with a `roomId` too; without one it
+  // also takes the group that task takes its level from.
+  // The task's Session is flagged as starting from the moment it is a task until this
+  // returns or throws, whatever fails on the way (permissions.js startingSession).
+  async function startTask(args) {
+    let started
+    try {
+      return await startFlagged(args, (sessionId) => { started = rt.startingSession?.(sessionId) })
+    } finally {
+      started?.()
+    }
+  }
+  async function startFlagged({ title, text, from, cwd, agentPreset, roomId }, starting) {
     // Read before the first await: the tool call this runs in may return before the rest.
-    const levelRoomId = roomId || from === undefined ? undefined : rt.callerGroup?.()
+    const levelTaskId = rt.callerTask?.()
+    const parent = levelTaskId === undefined ? undefined : state.tasks?.[levelTaskId]
+    if (levelTaskId !== undefined) rt.assertTaskDepth(levelTaskId)
+    const levelRoomId = roomId || from === undefined ? undefined : rt.callerGroup?.() ?? parent?.levelRoomId ?? parent?.roomId
     const caller = state.bots?.[from]
     const sessionId = await createTaskSession(title, { cwd: cwd ?? caller?.workDir, agentPreset: agentPreset ?? caller?.profile })
-    tasks()[sessionId] = { title: String(title).slice(0, AGENT_SESSION_TITLE_MAX), from, at: Date.now(), status: 'working', ...(roomId ? { roomId } : {}), ...(levelRoomId ? { levelRoomId } : {}) }
+    // Until its start is decided: a re-apply DSH asks for meanwhile must not lower the task
+    // in place of the refusal a saved level that is no longer offered gets (permissions.js).
+    starting(sessionId)
+    tasks()[sessionId] = { title: String(title).slice(0, AGENT_SESSION_TITLE_MAX), from, at: Date.now(), status: 'working', ...(roomId ? { roomId } : {}), ...(levelRoomId ? { levelRoomId } : {}), ...(levelTaskId ? { levelTaskId } : {}) }
     // Only TASKS_KEPT ended tasks are remembered for their reports. The ended ones go first,
     // the one that ended longest ago first: a long task that just ended is fresh news.
     // A working record is never evicted, whatever its age or whether DSH still holds its
@@ -824,12 +869,15 @@ export function install(rt) {
     const all = Object.entries(tasks())
     const ended = all.filter(([, task]) => task.status !== 'working').sort(([, a], [, b]) => endOf(a) - endOf(b))
     // The level each forgotten task ran at is read while it is still a task.
-    const forgotten = ended.slice(0, Math.max(0, all.length - TASKS_KEPT))
-      .map(([id]) => [id, rt.taskLevelOf(id)])
+    // An ended task a working task descends from is kept past the cap while that one works:
+    // its level bounds the working one, read live. The next oldest go in its place. At most
+    // a chain's depth per working task, and they go as any other once it has ended.
+    const held = rt.taskForebears?.() ?? new Set()
+    const picked = ended.filter(([id]) => !held.has(id)).slice(0, Math.max(0, all.length - TASKS_KEPT)).map(([id]) => id)
     // A fresh-Session task armed by an ended task's Session has that record as its only
     // team lineage; a restricted Bot's such tasks are paused before the record goes
     // (#584, L5). Without a schedule service this is a no-op.
-    for (const [id] of forgotten) {
+    for (const id of picked) {
       const from = tasks()[id]?.from
       const bot = from === undefined ? undefined : state.bots?.[from]
       if (!Array.isArray(bot?.denyTools) || bot.denyTools.length === 0) continue
@@ -839,18 +887,36 @@ export function install(rt) {
         rt.warn('ds-bot: the fresh-Session tasks of %s were not paused: %s', bot.name, error)
       }
     }
+    // Looked at again after the waits above, with nothing awaited before the delete: a task
+    // started meanwhile from one of them keeps it.
+    const needed = rt.taskForebears?.() ?? new Set()
+    const forgotten = picked.filter(id => tasks()[id] !== undefined && tasks()[id].status !== 'working' && !needed.has(id))
+      .map(id => [id, rt.taskLevelOf(id)])
     for (const [id] of forgotten) delete tasks()[id]
     await rt.save()
     for (const [id, ranAt] of forgotten) {
       await rt.forgetTaskPermission(id, ranAt)
         .catch(error => rt.warn('ds-bot: the old task %s keeps its permission, the default was not applied: %s', id, error?.message ?? error))
     }
-    await askersModel(sessionId, state.bots?.[from])
+    const selected = await askersModel(sessionId, state.bots?.[from])
     const live = await rt.resolveAgent(sessionId)
     // And at its Bot's permission level: DSH announced the Session before it was a task,
     // so its session/created listener could not. Before the first turn, as the model is.
-    await rt.applyTaskPermission(sessionId, live.session)
-      .catch(error => rt.warn('ds-bot: the task keeps the default permission, %s\'s was not applied: %s', caller?.name ?? from, error?.message ?? error))
+    // A task whose level did not hold takes no turn: the default it would run at may be
+    // wider. It ends as failed, so nothing resumes it, and its Session is archived, so
+    // nothing is typed into it at that default either.
+    try {
+      await rt.applyTaskPermission(sessionId, live.session, { start: true })
+      // At Full access with its Bot's coding CLI not served, or not selected just above: not
+      // started on another model.
+      await rt.assertNotOffCli(state.bots?.[from], sessionId, live.session, { unselected: !selected })
+    } catch (error) {
+      Object.assign(tasks()[sessionId] ?? {}, { status: 'failed', endedAt: Date.now(), summary: String(error?.message ?? error).slice(0, TASK_SUMMARY_MAX) })
+      await rt.save().catch(failure => rt.warn('ds-bot: saving a task failed: %s', failure))
+      await ctx.workspaceRegistry.archiveSession(sessionId, { stopActivity: true })
+        .catch(failure => rt.warn('ds-bot: the task %s that did not start was not archived: %s', sessionId, failure))
+      throw error
+    }
     // The Session existed before this task record did, so the tool deny list could not be
     // resolved then (a task is a task only once it is written down). Apply it now, before
     // the first turn, to the same agent the turn will use.

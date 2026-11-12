@@ -37,7 +37,7 @@ import { dataPathsOf, PRODUCT } from './identity.js'
 import { LOOK_EVERY_MS, readBusy } from './idle.js'
 import { appMenuTemplate } from './menu.js'
 import { sendPaneClose } from './pane-close.js'
-import { createQuitGuard, quitPrompt, requestQuit } from './quit-guard.js'
+import { closeAfterFade, createQuitGuard, liveBusy, quitPrompt, requestQuit, surfaceWindow } from './quit-guard.js'
 import { applyNow, applyStaged, appStopped, causeOf, changesOf, stillIdle, readAutoApply, settingsFileOf, writeAutoApply } from './auto-apply.js'
 import { readChoices, writeOverlay } from './privacy.js'
 import { draftsFileOf, PAGE_DRAFTS, saveDrafts, takeDrafts } from './drafts.js'
@@ -100,15 +100,21 @@ const started = steps('start', { write: startLog, since: Date.now() - process.up
 let leaving = null
 const leave = (kind) => (leaving ??= steps(kind, { write: startLog, since: Date.now() }))
 // A quit while the welcome says a bot runs (busy.json) asks first; a missing file is an older
-// welcome or no dsh, and quits as it always has. The clean stop behind a confirmed quit is
-// stopAndQuit(), below.
+// welcome or no dsh, and quits as it always has, as does a file this run's dsh did not write
+// (a crash's leftover, liveBusy). The clean stop behind a confirmed quit is stopAndQuit(), below.
+const quitLog = line => startLog(`${new Date().toISOString()} ${line}\n`)
 const quitGuard = createQuitGuard({
-  busy: () => readBusy(busyFileOf(home)),
-  prompt: ({ running, parent }) => dialog.showMessageBox(
-    parent ?? window ?? undefined,
-    quitPrompt({ product: PRODUCT, running }),
-  ),
-  log: line => startLog(`${new Date().toISOString()} ${line}\n`),
+  busy: () => liveBusy(readBusy(busyFileOf(home)), { child: dshProcess.child, since: dshProcess.since }),
+  // The question is a sheet on the window, so the window comes where the person sees it first:
+  // minimized, hidden or behind a hidden app, the sheet would wait unseen and hold every quit.
+  prompt: ({ running, parent }) => {
+    if (process.platform === 'darwin') app.show()
+    const sheet = surfaceWindow(parent ?? window)
+    app.focus({ steal: true })
+    const question = quitPrompt({ product: PRODUCT, running })
+    return sheet ? dialog.showMessageBox(sheet, question) : dialog.showMessageBox(question)
+  },
+  log: quitLog,
 })
 // dsh's origin, from the port it is started on; Bot pages never reach it.
 let dshOrigin
@@ -227,9 +233,13 @@ function appMenu() {
 }
 
 // Cmd+W's path: the dsh page closes its focused pane/tab, or does nothing when there is none.
-// The window and the app are never touched here (pane-close.js).
+// With the keyboard in a Bot view, the pane under that view is the one meant, not the page's
+// last focus. The window and the app are never touched here (pane-close.js).
 function closeFocusedPane() {
-  if (page) sendPaneClose(page.webContents)
+  if (!page) return
+  const at = botViews.focusedPoint()
+  if (at) sendPaneClose(page.webContents, { at })
+  else sendPaneClose(page.webContents)
 }
 
 async function launch() {
@@ -975,19 +985,32 @@ function openWindow() {
     void fade(window, { to: 1, reduced: lessMotion() })
   })
   // Closing fades the window out first; 'closed' and quitting follow. A running bot is asked
-  // about first (quitGuard): Cancel keeps the window and dsh exactly as they are.
+  // about first (quitGuard): Cancel keeps the window and dsh exactly as they are. The fade and
+  // the question go one after the other (closeAfterFade): a bot that starts while the window
+  // fades brings it back and is asked about, and a close with nothing to ask is settled before
+  // the window goes, so the quit behind it never asks with no window left.
   window.on('close', (event) => {
     if (closing || quitting) return
+    const askToQuit = () => requestQuit({ guard: quitGuard, parent: window, beginQuit: stopAndQuit })
     if (quitGuard.needs()) {
       event.preventDefault()
-      void requestQuit({ guard: quitGuard, parent: window, beginQuit: stopAndQuit })
+      void askToQuit()
       return
     }
-    if (process.platform === 'linux') return
+    // No fade on Linux: the window closes now, on the answer just read.
+    if (process.platform === 'linux') { quitGuard.settle(); return }
     event.preventDefault()
     closing = true
     const out = leave('quit')
-    void fade(window, { to: 0, reduced: lessMotion() }).finally(() => { out.mark('window gone'); window?.destroy() })
+    void closeAfterFade({
+      guard: quitGuard,
+      fadeOut: () => fade(window, { to: 0, reduced: lessMotion() }),
+      fadeIn: () => { closing = false; leaving = null; return fade(window, { to: 1, reduced: lessMotion() }) },
+      reveal: () => { window?.setOpacity(1); window?.show() },
+      ask: askToQuit,
+      destroy: () => { out.mark('window gone'); window?.destroy() },
+      log: quitLog,
+    })
   })
   for (const change of ['resize', 'maximize', 'unmaximize', 'enter-full-screen', 'leave-full-screen']) window.on(change, layout)
   window.on('closed', () => { window = null; page = null })

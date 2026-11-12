@@ -1,17 +1,55 @@
 import { createElement as h, Fragment, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { AUTO } from '../shared/permission-levels.js'
 import { Segmented } from './motion.js'
 import { CheckIcon } from './icons.js'
+import { CLI_NAMES, cliProviderOf } from './cli-login-model.js'
+import { Caret, useAnchoredMenu } from './model-menu.js'
 import { t } from './i18n.js'
 
 const LABELS = { 'read-only': 'Read only', 'workspace-write': 'Workspace', 'danger-full-access': 'Full access', [AUTO]: 'Auto review' }
 const DANGER = new Set(['danger-full-access'])
 
 export const presetDanger = value => DANGER.has(value)
+
+// A Bot whose model runs on a coding CLI (Claude Code, Codex): there Full access is the CLI's
+// own no-ask mode, explained by the CLI's name. `mode` is the CLI's own word for that mode.
+// The stored level is the same one (danger-full-access): only the explanation differs, and
+// only for such a Bot. Both the model saved for the Bot and the one last applied to its
+// Sessions must be on that CLI: a Bot saved on Codex that answers on another
+// model (its CLI not served, a move not applied yet) runs DSH's own tools there, so "the CLI
+// decides" would be false. Undefined for any other Bot.
+const CLI_MODES = { 'acp-claude': 'bypass permissions', 'acp-codex': 'full access' }
+export const cliOfBot = (bot) => {
+  const id = cliProviderOf(bot?.model)
+  if (id === undefined || cliProviderOf(bot.appliedModel) !== id) return undefined
+  return { id, name: CLI_NAMES[id], mode: CLI_MODES[id] }
+}
+const CLI_TEXT = '{cli} decides by itself and runs commands and changes files anywhere without asking you. Automagik asks it for its own "{mode}" mode, and does not review or ask. This holds while the Bot runs on {cli}.'
+const CLI_CONFIRM = '{cli} will decide by itself and run without asking you. Automagik will ask it for its own "{mode}" mode, and will not review or ask. This holds while the Bot runs on {cli}.'
+const cliWords = cli => ({ cli: cli.name, mode: cli.mode })
+export const cliAuto = (value, cli) => cli !== undefined && presetDanger(value)
+export const cliConfirmText = cli => t(CLI_CONFIRM, cliWords(cli))
+
 export const presetName = (value, catalog) => (LABELS[value] ? t(LABELS[value]) : catalog?.options?.find(option => option.value === value)?.name ?? value)
 
 // A saved Auto that runs as workspace-write where Auto cannot hold (`permissionFallback`).
-export const PermissionFallback = ({ fallback }) => (fallback ? h('div', { className: 'bt-note' }, t('Runs as Workspace here')) : null)
+// `owner.permissionNotOffered`: the saved level is one DeepSeek Harness no longer offers
+// (#1001). The level stays saved and is not among the choices, so these lines name it,
+// say what the Bot's conversation runs as now when the host knows (`permissionRuns`), and
+// how it is settled. They only tell: nothing here saves or changes a level.
+export function PermissionFallback({ fallback, owner, catalog }) {
+  if (owner?.permissionNotOffered === true && typeof owner.permission === 'string') {
+    const runs = typeof owner.permissionRuns === 'string' ? owner.permissionRuns : undefined
+    return h(Fragment, null,
+      h('div', { className: 'bt-note' }, t('Saved level: {level}. DeepSeek Harness no longer offers it.', { level: presetName(owner.permission, catalog) })),
+      h('div', { className: 'bt-note' }, runs === undefined
+        ? t('Each conversation keeps the level it has now, or a narrower one. Settings → Feedback lists them.')
+        : t('This conversation runs as {level} now.', { level: presetName(runs, catalog) })),
+      h('div', { className: 'bt-note' }, t('Pick a level to settle it. If DeepSeek Harness offers the saved level again, it is used again by itself.')))
+  }
+  return fallback ? h('div', { className: 'bt-note' }, t('Runs as Workspace here')) : null
+}
 
 // What each level really does, in plain words. DSH's `ask` does not ask before each action: a
 // confined call runs at once, and the person is asked only when the Bot wants one action with
@@ -23,7 +61,7 @@ const TEXTS = {
   [AUTO]: 'A model reviews each action first. You are asked only about the ones it stops. The rest run with full access, and it can let a wrong one through.',
   'danger-full-access': 'Runs commands and changes files anywhere without asking you. Choose it only when you trust what you asked for.',
 }
-export const presetText = (value, catalog) => (Object.hasOwn(TEXTS, value) ? t(TEXTS[value]) : String(catalog?.options?.find(option => option.value === value)?.description ?? ''))
+export const presetText = (value, catalog, cli) => (cliAuto(value, cli) ? t(CLI_TEXT, cliWords(cli)) : Object.hasOwn(TEXTS, value) ? t(TEXTS[value]) : String(catalog?.options?.find(option => option.value === value)?.description ?? ''))
 
 // A pick shows at once and holds until the saved value catches up, or falls back when
 // `onPick` resolves false. `repick` lets the shown preset be picked again. Auto review is
@@ -60,15 +98,23 @@ export function usePermissionPick({ saved, onPick, repick = false, confirmFull =
     if (flight.current.value !== undefined) { flight.current.latest = value; return }
     send(value)
   }
-  return { current, pick, confirming, cancel: () => setConfirming(false) }
+  return { current, pick, confirming, asks, cancel: () => setConfirming(false) }
 }
 
 // The question asked before Auto review or Full access is sent; `name` is the Bot it is for.
-function PermissionConfirm({ value, name, onConfirm, onCancel }) {
+function PermissionConfirm({ value, name, cli, onConfirm, onCancel }) {
   if (value === AUTO) {
     return h('div', { className: 'bt-perm-confirm', role: 'alert' },
       h('span', { className: 'bt-note' }, t('Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.')),
       h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: onConfirm }, t('Use Auto review')),
+      h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: onCancel }, t('Cancel')))
+  }
+  // A Bot on a coding CLI: the same question, in the words of what that CLI does there.
+  if (cliAuto(value, cli)) {
+    return h('div', { className: 'bt-perm-confirm', role: 'alert' },
+      h('span', { className: 'bt-note' }, h('span', { className: 'bt-danger' }, name === undefined ? cliConfirmText(cli)
+        : `${t('Give {name} full access?', { name })} ${cliConfirmText(cli)}`)),
+      h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: onConfirm }, t('Give full access')),
       h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: onCancel }, t('Cancel')))
   }
   return h('div', { className: 'bt-perm-confirm', role: 'alert' },
@@ -95,11 +141,12 @@ export function PermissionPicker({ catalog, saved, onPick, repick = false, confi
 
 // Every level the catalog offers, in its order, each with what it does: the current one
 // marked, Full access in the danger ink. No letter keys: a stray key never moves a level.
-export function PermissionOptions({ catalog, current, onPick, disabled = false }) {
+// `cli`: the Bot's coding CLI (cliOfBot), when it runs on one.
+export function PermissionOptions({ catalog, current, onPick, disabled = false, cli }) {
   return h('div', { className: 'bt-q-list', role: 'group', 'aria-label': t('Permissions') },
     catalog.options.map((option) => {
       const danger = presetDanger(option.value) ? ' bt-danger' : ''
-      const text = presetText(option.value, catalog)
+      const text = presetText(option.value, catalog, cli)
       return h('button', {
         key: option.value, type: 'button', className: 'bt-q-opt', disabled,
         'aria-pressed': option.value === current, 'data-permission': option.value,
@@ -114,11 +161,76 @@ export function PermissionOptions({ catalog, current, onPick, disabled = false }
 
 // The explained list as the picker itself (Details): a click saves, as a segment did, through
 // the same one-save-at-a-time path; Auto review and Full access ask once first.
-export function PermissionList({ catalog, saved, onPick, repick = false, disabled = false, name }) {
+export function PermissionList({ catalog, saved, onPick, repick = false, disabled = false, name, cli }) {
   const { current, pick, confirming, cancel } = usePermissionPick({ saved, onPick, repick, confirmFull: true })
   return h(Fragment, null,
-    h(PermissionOptions, { catalog, current, onPick: value => pick(value), disabled }),
-    confirming && !disabled ? h(PermissionConfirm, { value: confirming, name, onConfirm: () => pick(confirming, true), onCancel: cancel }) : null)
+    h(PermissionOptions, { catalog, current, onPick: value => pick(value), disabled, cli }),
+    confirming && !disabled ? h(PermissionConfirm, { value: confirming, name, cli, onConfirm: (event) => { if (event?.detail > 1) return; pick(confirming, true) }, onCancel: cancel }) : null)
+}
+
+// Details keeps the pick and its save queue mounted while the explained menu opens and closes.
+export function PermissionSelect({ catalog, saved, onPick, repick = false, disabled = false, name, cli }) {
+  const { current, pick, confirming, asks, cancel } = usePermissionPick({ saved, onPick, repick, confirmFull: true })
+  const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu({ minWidth: Math.min(380, window.innerWidth - 24) })
+  useEffect(() => {
+    if (!isOpen && menu.current?.contains(document.activeElement)) button.current?.focus({ preventScroll: true })
+    if (confirming && (!isOpen || disabled)) cancel()
+  }, [isOpen, disabled, confirming])
+  useEffect(() => {
+    if (!isOpen) return
+    const target = (!repick && !disabled && menu.current?.querySelector('.bt-q-opt[aria-pressed="true"]:not(:disabled)')) || menu.current
+    target?.focus()
+  }, [isOpen])
+  useEffect(() => {
+    if (isOpen && disabled) menu.current?.focus()
+  }, [isOpen, disabled])
+  const catalogValues = catalog.options.map(option => option.value).join(',')
+  useEffect(() => {
+    if (isOpen && document.activeElement === document.body) menu.current?.focus()
+  }, [isOpen, catalogValues])
+  useEffect(() => {
+    if (isOpen && confirming) menu.current?.querySelector('.bt-perm-confirm')?.scrollIntoView?.({ block: 'nearest' })
+  }, [isOpen, confirming])
+  const finish = () => { close(); button.current?.focus({ preventScroll: true }) }
+  const choose = (value) => {
+    if (disabled) return
+    if (value === current && !repick) { finish(); return }
+    pick(value)
+    if (!asks(value)) finish()
+  }
+  const onConfirm = (event) => { if (event?.detail > 1) return; pick(confirming, true); finish() }
+  const onCancel = () => {
+    const row = menu.current?.querySelector(`.bt-q-opt[data-permission="${confirming}"]:not(:disabled)`)
+    cancel()
+    ;(row ?? menu.current)?.focus()
+  }
+  const onKeyDown = (event) => {
+    if (event.key !== 'Tab') return
+    const buttons = [...menu.current.querySelectorAll('button:not(:disabled)')]
+    const first = buttons[0]
+    const last = buttons.at(-1)
+    const active = document.activeElement
+    if (!first || (event.shiftKey ? active === first || active === menu.current : active === last)) {
+      event.preventDefault()
+      ;(event.shiftKey ? last ?? menu.current : first ?? menu.current).focus()
+    }
+  }
+  const level = presetName(current, catalog)
+  const text = catalog.options.some(option => option.value === current) ? presetText(current, catalog, cli) : ''
+  const danger = presetDanger(current)
+  return h(Fragment, null,
+    h('button', {
+      ref: button, className: 'bt-model-trigger', 'data-wide': true, type: 'button',
+      'aria-haspopup': 'dialog', 'aria-expanded': isOpen, 'aria-label': t('Permissions: {level}', { level }),
+      onClick: () => { if (isOpen) finish(); else open() },
+    }, h('span', { className: 'bt-model-copy' }, h('span', { className: `bt-model-name${danger ? ' bt-danger' : ''}` }, level)), h(Caret)),
+    text ? h('div', { className: 'bt-note' }, danger ? h('span', { className: 'bt-danger' }, text) : text) : null,
+    shownPlace ? createPortal(h('div', {
+      ref: menu, className: `bt-menu bt-permission-menu${shownPlace.bottom !== undefined ? ' bt-menu-up' : ''}`,
+      role: 'dialog', 'aria-label': t('Permissions'), tabIndex: -1, style: shownPlace, 'data-leaving': leaving || undefined, onKeyDown,
+      onClickCapture: (event) => { if (event.detail > 1 && event.target.closest('.bt-q-opt')) event.stopPropagation() },
+    }, h(PermissionOptions, { catalog, current, onPick: choose, disabled, cli }),
+    confirming && !disabled ? h(PermissionConfirm, { value: confirming, name, cli, onConfirm, onCancel }) : null), document.body) : null)
 }
 
 // What every offered level does, as plain lines: for the places that keep the segmented choice.

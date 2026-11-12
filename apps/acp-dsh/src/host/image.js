@@ -36,7 +36,7 @@
 // see or turn off.
 import { execFile } from 'node:child_process'
 import { statSync } from 'node:fs'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AgentRun } from './acp.js'
@@ -176,7 +176,10 @@ function codexCli(launch, args, { run = execFile, timeoutMs = MCP_LIST_TIMEOUT_M
     }
     const onAbort = () => { kill(); end(reject, stoppedCheck()) }
     try {
-      const env = { ...process.env, ...launch.env, NO_COLOR: '1', DISABLE_UPDATES: '1' }
+      const env = {
+        ...(launch.env?.AUTOMAGIK_BOT_CLI_HOME ? launch.env : { ...process.env, ...launch.env }),
+        NO_COLOR: '1', DISABLE_UPDATES: '1',
+      }
       signal?.addEventListener('abort', onAbort, { once: true })
       timer = setTimeout(() => { kill(); end(reject, checkError('unreadable', `${what} could not be read in time`, { passing: true })) }, timeoutMs)
       child = run(...batchSafe(launch.command, [...(launch.args ?? []), 'cli', ...args], { env, cwd, maxBuffer: 8 << 20, windowsHide: true, detached: process.platform !== 'win32' }), (error, stdout, stderr) => {
@@ -419,6 +422,10 @@ export function checkOffered({ tools, nested }) {
  * @param {{ command: string, args?: string[], env?: Record<string, string> }} launch
  */
 export async function imageSetup(launch, { run = execFile, timeoutMs = MCP_LIST_TIMEOUT_MS, deadlineMs = IMAGE_CHECKS_TIMEOUT_MS, now = Date.now, cwd, signal, listServers = mcpServerNames, required = IMAGE_FEATURES_OFF, also = IMAGE_FEATURES_ALSO_OFF } = {}) {
+  // Codex resolves a folder before it matches it against `projects`, while codex-acp keys the
+  // session's trust by the cwd it is given. Resolve once, so the checks, the trust entry and the
+  // session name the same folder (the macOS temp folder is reached through a symlink).
+  const project = cwd === undefined ? undefined : await realpath(cwd)
   const until = now() + deadlineMs
   // What one more check may take: never past the deadline, and none once the draw is stopped.
   const left = () => {
@@ -428,8 +435,8 @@ export async function imageSetup(launch, { run = execFile, timeoutMs = MCP_LIST_
     return ms
   }
   // The person's own MCP servers, each turned off for this run.
-  const servers = await listServers(launch, { run, timeoutMs: left(), cwd, signal })
-  const cli = (args, what) => codexCli(launch, args, { run, timeoutMs: left(), cwd, signal, what, refusal: 'unsupported' })
+  const servers = await listServers(launch, { run, timeoutMs: left(), cwd: project, signal })
+  const cli = (args, what) => codexCli(launch, args, { run, timeoutMs: left(), cwd: project, signal, what, refusal: 'unsupported' })
   // The features, read with the required switches set: the list answers the effective values.
   const rows = readFeatures(await cli(['features', 'list', ...configArgs({ features: { [IMAGE_FEATURE_ON]: true, ...off(required) } })], 'the feature list'))
   const extras = checkFeatures(rows, { required, also })
@@ -437,7 +444,7 @@ export async function imageSetup(launch, { run = execFile, timeoutMs = MCP_LIST_
   // skills; they are turned off by name and the tools are read again under that config.
   let skills = []
   for (let pass = 0; ; pass += 1) {
-    const overrides = imageOverrides({ servers, extras, skills, project: cwd })
+    const overrides = imageOverrides({ servers, extras, skills, project })
     const offered = readOffered(await cli(['debug', 'prompt-input', ...configArgs(overrides)], 'the offered tools'))
     checkOffered(offered)
     const more = offered.skills.filter(name => !skills.includes(name))
@@ -579,7 +586,7 @@ const CHECK_TEXT = {
  * `log` is told, in one line with no private content, why a check stopped the draw.
  * @param {{ spawn: () => { command: string, args?: string[], env?: Record<string, string> }, prompt: string, size?: string, quality?: string, background?: string, signal?: AbortSignal, timeoutMs?: number, checkTimeoutMs?: number, name?: string, scratch?: () => Promise<string>, Run?: typeof AgentRun, listServers?: typeof mcpServerNames, log?: (line: string) => void }} request
  */
-export async function drawImage({ spawn, prompt, size, quality, background, signal, timeoutMs = IMAGE_TIMEOUT_MS, checkTimeoutMs = MCP_LIST_TIMEOUT_MS, name = 'Codex', scratch = () => mkdtemp(join(tmpdir(), 'automagik-image-')), Run = ImageRun, listServers = mcpServerNames, log }) {
+export async function drawImage({ spawn, prompt, size, quality, background, signal, timeoutMs = IMAGE_TIMEOUT_MS, checkTimeoutMs = MCP_LIST_TIMEOUT_MS, name = 'Codex', scratch = async () => realpath(await mkdtemp(join(tmpdir(), 'automagik-image-'))), Run = ImageRun, listServers = mcpServerNames, log }) {
   if (signal?.aborted) throw imageRefusal(STOPPED, 'The image was stopped before it was started.')
   // The draw holds the event loop from start to cleanup: the run lets go of it once a turn ends,
   // and its close and cancel guards must not be cut short by a process with nothing else alive.

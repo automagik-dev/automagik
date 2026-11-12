@@ -27,6 +27,60 @@ const storeOf = (records) => ({
   resolve: async () => undefined,
 })
 const sse = events => new Response(events.map(([event, data]) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`).join(''), { headers: { 'content-type': 'text/event-stream' } })
+// Legacy compatibility tests require a host positively declaring consented shared scope.
+const sharedHost = () => ({ authScope: 'shared', imageAccess: async () => ({ ready: false }),
+  generateImage: async () => assert.fail('the signed-out shared host cannot draw') })
+
+test('an isolated signed-out Bot never draws with an older ChatGPT grant', async t => {
+  const store = storeOf({ [CODEX_RECORD]: { kind: 'grant', payload: {
+    access: tokenFor('old-account'), accountId: 'old-account',
+  } } })
+  let calls = 0
+  const images = createImageGen({ credentials: () => store,
+    codex: () => ({ authScope: 'isolated', imageAccess: async () => ({ ready: false }),
+      generateImage() { calls++ } }),
+    folder: () => folderOf(t), fetch: async () => { calls++; throw new Error('unexpected') },
+  })
+  assert.equal(await images.access(), null)
+  await assert.rejects(images.generate({ prompt: 'a fox' }))
+  assert.equal(calls, 0)
+})
+
+test('image generation carries the selected Bot account ticket, including generation zero',
+  async t => {
+    const calls = []
+    const codex = { authScope: 'isolated',
+      imageAccess: async () => ({ ready: true, accountGeneration: 0 }),
+      generateImage: async request => { calls.push(request); return { base64: PNG } },
+    }
+    const images = createImageGen({ credentials: () => storeOf({}), codex: () => codex,
+      folder: () => folderOf(t) })
+    await images.generate({ prompt: 'a fox' })
+    assert.equal(calls[0].accountGeneration, 0)
+  })
+
+test('missing or unreadable ACP cannot authorize legacy image billing on reload', async t => {
+  const dir = folderOf(t)
+  const grant = { [CODEX_RECORD]: { kind: 'grant', payload: {
+    access: tokenFor('old-account'), refresh: 'invented-refresh', expires: 1,
+  } } }
+  for (const codex of [() => undefined, () => ({}), () => { throw new Error('unavailable') },
+    () => ({ authScope: 'isolated', generateImage() {} }),
+    () => ({ imageAccess: async () => { throw new Error('unreadable') }, generateImage() {} }),
+    () => ({ authScope: 'shared',
+      imageAccess: async () => { throw new Error('unreadable') }, generateImage() {} })]) {
+    const store = storeOf(grant)
+    const read = store.readRecord
+    store.readRecord = async key => {
+      assert.notEqual(key, CODEX_RECORD, 'no legacy credential is even read')
+      return read(key)
+    }
+    const images = createImageGen({ credentials: () => store, codex, folder: () => dir,
+      fetch: async () => assert.fail('no legacy refresh or image request') })
+    assert.equal(await images.access(), null)
+    await assert.rejects(images.generate({ prompt: 'a fox' }))
+  }
+})
 
 test('server-sent events are read whole across chunks', async () => {
   const text = 'event: a\ndata: {"x":1}\n\nevent: b\r\ndata: plain\r\n\r\n'
@@ -78,7 +132,8 @@ test('a ChatGPT sign-in that ran out is renewed in its own record, then draws on
     // This backend answers in one piece, without partials.
     return Response.json({ data: [{ b64_json: PNG }] })
   }
-  const images = createImageGen({ credentials: () => store, folder: () => dir, fetch, now: () => 5_000_000 })
+  const images = createImageGen({ credentials: () => store, codex: sharedHost,
+    folder: () => dir, fetch, now: () => 5_000_000 })
   const made = await images.generate({ prompt: 'A lamp', callId: 'call-2' })
   const refresh = new URLSearchParams(asked[0].init.body)
   assert.equal(refresh.get('grant_type'), 'refresh_token')
@@ -101,7 +156,8 @@ test('a backend that will not stream is asked again whole, and not asked to stre
     return Response.json({ data: [{ b64_json: PNG }] })
   }
   const store = storeOf({ [CODEX_RECORD]: { kind: 'grant', payload: { access: tokenFor('acct'), refresh: 'r', expires: 9e15 } } })
-  const images = createImageGen({ credentials: () => store, folder: () => dir, fetch })
+  const images = createImageGen({ credentials: () => store, codex: sharedHost,
+    folder: () => dir, fetch })
   await images.generate({ prompt: 'One', callId: 'a' })
   await images.generate({ prompt: 'Two', callId: 'b' })
   assert.deepEqual(bodies.map(body => body.stream === true), [true, false, false])
@@ -123,6 +179,7 @@ const codexOf = ({ ready = true, unsupported, reason = unsupported ? 'unsupporte
   const calls = []
   return {
     calls,
+    authScope: 'shared',
     imageAccess: async () => ({ ready, ...(reason ? { signedIn: true, reason } : {}), ...(unsupported ? { unsupported: true } : {}) }),
     generateImage: async (request) => {
       calls.push(request)

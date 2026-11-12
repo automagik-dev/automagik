@@ -40,3 +40,62 @@ test('a model access refusal and a switch DSH turned down are worded with the va
   // Without a language pack the message stays as sent.
   assert.equal(hostText('Sign in to Codex (acp-codex) before using this model.'), 'Sign in to Codex (acp-codex) before using this model.')
 })
+
+// #877: the adopt refusals that carry values (a Session id, a Bot, a preset, the store's own
+// read-only reason) are worded with them, in a pack's language and in Chinese.
+test('#877: an adopt refused read-only or after its preset selection is worded with its values', () => {
+  const reason = 'The Bot team in /team is open in another dsh (Web or Desktop, pid 7). This window shows the team but cannot change it; close the other one and reload.'
+  const session = 'session-d203042b-3ccf-4bf2-b67e-3c4e2079774f'
+  const readOnly = `Session ${session} cannot join Bot "Brain" because this window cannot change the Bot team now. ${reason}`
+  const joining = `Bot "Brain" changed while Session ${session} was joining it (another window or an edit). For the Bot team: Nothing was changed; try again. The native preset of Session ${session} was set to "cordis" before this refusal.`
+  const saving = `Bot "Brain" changed while Session ${session} was being saved. For the Bot team: Nothing was changed; try again. The native preset of Session ${session} was set to "cordis" before this refusal.`
+  // Without a language pack each stays as sent.
+  for (const message of [readOnly, joining, saving]) assert.equal(hostText(message), message)
+
+  const dicts = {}
+  const zh = installLocale({
+    register: (ns, lang, dict) => { if (lang.startsWith('zh')) dicts.zh = dict; return () => {} },
+    bind: () => (key, params) => (dicts.zh?.[key] ?? key).replace(/\{(\w+)\}/g, (match, name) => params?.[name] ?? match),
+    getLocale: () => ({ active: 'zh-CN' }),
+  })
+  try {
+    // The reason inside keeps its own Chinese wording.
+    const worded = hostText(reason)
+    assert.notEqual(worded, reason)
+    assert.equal(hostText(readOnly), `会话 ${session} 无法加入 Bot "Brain"，因为这个窗口现在不能修改 Bot 团队。${worded}`)
+    assert.equal(hostText(joining), `Bot "Brain" 在会话 ${session} 加入时发生了变化（另一个窗口或一次编辑）。Bot 团队没有任何改动，请重试。在这次拒绝之前，会话 ${session} 的原生预设已被设为「cordis」。`)
+    assert.equal(hostText(saving), `Bot "Brain" 在保存会话 ${session} 时发生了变化。Bot 团队没有任何改动，请重试。在这次拒绝之前，会话 ${session} 的原生预设已被设为「cordis」。`)
+    // The refusals that name no preset are as they were: no pattern, sent as they are.
+    const plain = `Bot "Brain" changed while Session ${session} was being saved. Nothing was changed; try again.`
+    assert.equal(hostText(plain), plain)
+  } finally { zh() }
+
+  const words = {
+    'Session {session} cannot join {bot} because this window cannot change the Bot team now. {reason}': 'A Sessão {session} não pode entrar em {bot}. {reason}',
+    '{bot} changed while Session {session} was being saved. For the Bot team: Nothing was changed; try again. The native preset of Session {session} was set to "{preset}" before this refusal.': '{bot} mudou; Sessão {session}; predefinição "{preset}".',
+  }
+  const fill = (key, params) => (words[key] ?? key).replace(/\{(\w+)\}/g, (match, name) => params?.[name] ?? match)
+  const pt = installLocale({ register: () => () => {}, bind: () => fill, getLocale: () => ({ active: 'pt-BR' }) })
+  try {
+    // The pack words the sentence; the reason it has no entry for stays as sent.
+    assert.equal(hostText(readOnly), `A Sessão ${session} não pode entrar em Bot "Brain". ${reason}`)
+    assert.equal(hostText(saving), `Bot "Brain" mudou; Sessão ${session}; predefinição "cordis".`)
+    assert.equal(hostText(joining), joining)
+  } finally { pt() }
+})
+
+test('#877: only a value a template marks as a host message is worded in turn', () => {
+  const dicts = {}
+  const zh = installLocale({
+    register: (ns, lang, dict) => { if (lang.startsWith('zh')) dicts.zh = dict; return () => {} },
+    bind: () => (key, params) => (dicts.zh?.[key] ?? key).replace(/\{(\w+)\}/g, (match, name) => params?.[name] ?? match),
+    getLocale: () => ({ active: 'zh-CN' }),
+  })
+  try {
+    // "Model" has a Chinese entry of its own; as a Bot's name in a refusal it stays a name.
+    assert.equal(hostText('Model'), '模型')
+    assert.equal(hostText('Model could not switch to acp-codex/default. It stays on deepseek/v4.'), 'Model 无法切换到 acp-codex/default，仍使用 deepseek/v4。')
+    // Nor is a Session id beside a marked value: only the reason is read as a host message.
+    assert.equal(hostText('Session Model cannot join Bot "Model" because this window cannot change the Bot team now. Model'), '会话 Model 无法加入 Bot "Model"，因为这个窗口现在不能修改 Bot 团队。模型')
+  } finally { zh() }
+})

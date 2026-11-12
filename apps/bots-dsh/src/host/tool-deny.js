@@ -304,6 +304,8 @@ export function install(rt) {
   // The last line: a call that reaches the executor for a name this Bot denies is refused,
   // whatever put the tool on the surface.
   ctx.on('tools/execute', async (exec, next) => {
+    // And none at all on a Session whose permission level was not set (permissions.js).
+    await rt.levelHolds?.(exec)
     const name = typeof exec?.name === 'string' ? exec.name : ''
     if (name === '' || exec?.agent === undefined) return next()
     const bot = botOfSession(exec.agent?.id ?? exec.agent?.session?.id, exec.agent)

@@ -6,6 +6,7 @@
 // DSH's and from other plugins'.
 import { cpSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { selectorRoutePolicy } from './src/shared/routes.js'
 import * as diagnostics from './src/host/diagnostics.js'
 import * as extend from './src/host/extend.js'
 import * as store from './src/host/store.js'
@@ -18,6 +19,7 @@ import * as acpAdoption from './src/host/acp-adoption.js'
 import * as subscriptionMove from './src/host/subscription-move.js'
 import * as providers from './src/host/providers.js'
 import * as permissions from './src/host/permissions.js'
+import * as permissionDiagnostics from './src/host/permission-diagnostics.js'
 import * as turns from './src/host/turns.js'
 import * as handoffs from './src/host/handoffs.js'
 import * as requests from './src/host/requests.js'
@@ -50,6 +52,7 @@ import * as dshUpdate from './src/host/dsh-update.js'
 import * as thinking from './src/host/thinking.js'
 import * as fallback from './src/host/fallback.js'
 import * as channel from './src/host/channel.js'
+import * as agentSpace from './src/host/agent-space.js'
 import * as feed from './src/host/feed.js'
 import * as appManifest from './src/host/app-manifest.js'
 import * as pocketChat from './src/host/pocket-chat.js'
@@ -64,11 +67,11 @@ export const inject = ['llm', 'tools', 'systemPrompt', 'sessionController', 'ses
 // install. Listeners run and tools are listed in registration order, so this order holds:
 // usage meters model requests after every listener that rewrites them.
 const MODULES = [
-  diagnostics, extend, store, addressPolicy, models, acpAdoption, subscriptionMove, providers, permissions,
+  diagnostics, extend, store, addressPolicy, models, acpAdoption, subscriptionMove, providers, permissions, permissionDiagnostics,
   turns, handoffs, requests, delivery, roster, folders, agents, toolDeny, prompt, timeContext,
   tools, chatIndex, groups, approvals, resume, memory, parts, fallback, modelState, modelAccessHooks, cliLogin, images, imagegen,
   avatarLibrary, secrets, connectors, capabilities, schedules, browser, browserPlugins, usage,
-  update, dshUpdate, thinking, feed, channel, appManifest, pocketChat,
+  update, dshUpdate, thinking, agentSpace, feed, channel, appManifest, pocketChat,
 ]
 
 // Other Omni plugins inject the runtime as `omniTeam` and add to it through rt.hooks
@@ -94,6 +97,7 @@ export function createRuntime(ctx, config = {}) {
   const rt = {
     ctx,
     config,
+    routePolicy: selectorRoutePolicy(config.routePolicy),
     dshHome,
     home,
     statePath: join(home, 'state.json'),

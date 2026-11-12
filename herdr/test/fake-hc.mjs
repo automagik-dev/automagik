@@ -311,6 +311,16 @@ switch (words[0]) {
     out({ address });
     break;
   }
+  case "send": {
+    // The text typed into a terminal, kept in state.sent ([{ to, text }]); state.failSend: terminals that refuse it.
+    const t = find(words[1]);
+    if (!t || t.state !== "live") fail(JSON.stringify({ error: { kind: "not_found", message: `no terminal ${words[1]}` } }), 3);
+    if ((state.failSend ?? []).includes(t.address)) fail(JSON.stringify({ error: { kind: "blocked", message: `${t.address} is blocked` } }), 9);
+    state.sent = [...(state.sent ?? []), { to: t.address, text: words.slice(2).join(" ") }];
+    save();
+    out({ address: t.address });
+    break;
+  }
   case "kill": {
     const t = find(words[1]);
     if (!t) fail(`no terminal ${words[1]}`);
@@ -362,13 +372,14 @@ switch (words[0]) {
     // Its login shell is fake-login-shell, never the host's, and never reads a real profile:
     // m.login { path, noise, exit }, the PATH it has (default: the one hc runs programs with).
     // m.paths { [remotePath]: diskPath } maps a linked machine's path to its scratch disk folder.
+    // m.env { K: V }: that machine's own environment, over the one hc runs programs with.
     const toDisk = (s) => (typeof s === "string" && m.paths ? Object.entries(m.paths).reduce((acc, [from, to]) => acc.replaceAll(from, to), s) : s);
     const fromDisk = (s) => (typeof s === "string" && m.paths ? Object.entries(m.paths).reduce((acc, [from, to]) => acc.replaceAll(to, from), s) : s);
     const mapped = argv.map(toDisk);
     const r = spawnSync(mapped[0], mapped.slice(1), { cwd: toDisk(cwd) ?? m.home, encoding: "utf8",
       env: { ...process.env, HOME: m.home, PATH: `${m.path ? `${m.path}:` : ""}/usr/bin:/bin:/usr/sbin:/sbin`,
         SHELL: new URL("./fake-login-shell", import.meta.url).pathname, FAKE_LOGIN_PATH: m.login?.path ?? "",
-        FAKE_LOGIN_NOISE: m.login?.noise ?? "", FAKE_LOGIN_EXIT: m.login?.exit ?? "" } });
+        FAKE_LOGIN_NOISE: m.login?.noise ?? "", FAKE_LOGIN_EXIT: m.login?.exit ?? "", ...(m.env ?? {}) } });
     // state.loseExecAnswer: a program (by name) ran there, then the link dropped: unavailable, as hc says.
     if (state.loseExecAnswer && state.loseExecAnswer === argv[0]) { delete state.loseExecAnswer; save(); fail(JSON.stringify({ error: { kind: "unavailable", message: `${on} stopped answering` } })); }
     out({ code: r.status ?? -1, stdout: b64(fromDisk(r.stdout)), stderr: b64(fromDisk(r.stderr)), timed_out: false });

@@ -59,3 +59,20 @@ test('whereOf: the desktop app first, then the address, then SSH and the two OSe
   for (const [name, input, expected] of cases) assert.deepEqual(whereOf(input), expected, name)
   assert.deepEqual(whereOf({ scope: undefined }), { at: 'unknown' })
 })
+
+test('a Mac browser never supplies the workspace OS; desktop supplies its own platform', () => {
+  const navigator = { platform: 'MacIntel', userAgentData: { platform: 'macOS' } }
+  for (const hostname of ['workspace.example', 'localhost']) {
+    const scope = page(hostname, navigator)
+    assert.deepEqual(whereOf({ machine: { os: 'linux' }, scope }),
+      { at: 'remote', os: 'linux' })
+    assert.deepEqual(whereOf({ scope }),
+      hostname === 'localhost' ? { at: 'unknown' } : { at: 'remote', os: 'other' })
+  }
+  assert.deepEqual(whereOf({ machine: { os: 'macos' }, scope: page('localhost', navigator) }),
+    { at: 'here', os: 'macos' })
+  // A conflicting browser hint cannot override the desktop bridge, even without host data.
+  assert.deepEqual(whereOf({ scope: {
+    ...page('localhost', { platform: 'Win32' }), omniDesktop: { platform: 'darwin' },
+  } }), { at: 'here', os: 'macos' })
+})

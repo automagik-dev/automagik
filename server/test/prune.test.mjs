@@ -23,7 +23,7 @@ test('test/spec files are recognized, ordinary names are not', () => {
   for (const name of ['string.test.ts', 'equal.test.js', 'common_test.py', 'foo.spec.js']) {
     assert.ok(PRUNE_EXTRA_FILE.test(name), name)
   }
-  for (const name of ['testimony.js', 'latest.js', 'contest.js', 'index.js']) {
+  for (const name of ['testimony.js', 'latest.js', 'contest.js', 'index.js', 'install-spec.js']) {
     assert.ok(!PRUNE_EXTRA_FILE.test(name), name)
   }
 })

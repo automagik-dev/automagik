@@ -78,7 +78,7 @@
   },
   {
     "patch": "acp-bridge-tool-lifecycle.patch",
-    "about": "Session format v4: a tool call that a bridged (ACP) tool recorded out of band has no assistant/message advertisement in sessions written before the bridge always wrote one (#842), and the loader refused the whole session with SessionFormatError \"tool/call <id> has no advertised tool lifecycle\". The loader now treats such a tool/call as its own advertisement: its tool/result must still close it, an orphan result or a repeated call (before or after its result) still fails, no event is rewritten or discarded, and one stderr line reports how many calls were tolerated. The worker's copy of the same validation is patched too, so migration verification agrees. Delete it in the DSH release that tolerates the shape itself.",
+    "about": "Session format v4: a tool call that a bridged (ACP) tool recorded out of band has no assistant/message advertisement in sessions written before the bridge always wrote one (#842), and the loader refused the whole session with SessionFormatError \"tool/call <id> has no advertised tool lifecycle\". The loader now treats such a tool/call as its own advertisement: its tool/result closes it (since #957 the end of its step or turn also closes it, as superseded, when no result came: see below), an orphan result or a repeated call (before or after its result) still fails, no event is rewritten or discarded, and one stderr line reports how many calls were tolerated. A bridged call also runs out of band, so sessions written before the bridge closed its calls itself can hold a step/end or turn/end with a bridged call still open, that call's one late result stamped with its ended step, and the bridge's empty replacement of its advertisement stamped the same way (#957, SessionFormatError \"step/end leaves unresolved tool call <id>\"). The loader closes such a call as superseded at the boundary and matches one late result (the call's own turn and step) to it where it stands; the same holds for a bridged call that was advertised but whose tool/call row was never written (the error then names an id with no tool/call row), with or without a result; a second late result, a late result for a call that is not bridged and any other unresolved call still fail, and a second stderr line reports the counts. The worker's copy of the same validation is patched too, so migration verification agrees. Delete it in the DSH release that tolerates the shape itself.",
     "dsh": "0.2.2-rc.1",
     "files": [
       {
@@ -86,20 +86,20 @@
         "version": "0.2.2-rc.1",
         "file": "lib/index.js",
         "before": "2f7ba42e79072b2674be9f28d051665e006732fa6cc5de474f783b823bdfb0a9",
-        "after": "0260e5141007711d26b3bfdc414c811480ee7845973cbe96868cbd2663ef8e94"
+        "after": "0fbda0a768c705684ef6072ee0a519c80ae566e6c4de282099bb957c98900aad"
       },
       {
         "package": "@deepseek-ai/dsh-session-persistence-jsonl",
         "version": "0.2.2-rc.1",
         "file": "lib/worker.cjs",
         "before": "c5c8ccb7a661ef343e9d0c792d8d5cba376ed783ea48c6489fe90eab264ae321",
-        "after": "1ce9ef61e1c8b7390eb821dde804b22cbd95c5911bb7bacb39f8fadf9820d01f"
+        "after": "e2426d6532363bcc0fdfc89353f192a1d0d0759a573183bb1575db015aa481a3"
       }
     ]
   },
   {
     "patch": "session-scan-tolerance.patch",
-    "about": "Session listing: one bad folder in the sessions tree aborted the whole scan, so a backup copy of a session (a sibling folder carrying the original header, e.g. <session>.backup-<timestamp>), a misnamed folder or a stray .jsonl file left the desktop on its startup screen and none of the registered workspaces started (#861). The listing (list(), through listGenerations and listArtifacts) now reports each skipped path once with console.warn and goes on, for named cases only: a flat session file; a project or session folder that is gone or not readable (ENOENT, ENOTDIR, EACCES, EPERM); a header that is an unsupported format, a corrupt log, or does not identify its path (the identity check's plain \"corrupt session log \\\"<path>\\\": ...\" Error); and a duplicate session id, which keeps the copy first in sorted sourcePath order (code-unit order, not readdir order) and reports the others. Any other failure (EIO, EMFILE, an abort) still fails the listing. The root encoding check stays strict: a session of the other compression still throws its encoding mismatch, as does any folder it cannot read; only a flat file is left to the listing. The migration child catalog (prepareStoredMigration's children()) lists strictly, as upstream, so a child cannot drop out of a catalog. A backend instance prints at most 20 skip lines and then one summary line per listing with the count of the rest, so a tree with many bad folders cannot flood the log. A backup-shaped skip says session backups belong outside the sessions tree, in the app home's session-backups/ directory. The valid sessions still list, the root itself still fails closed, and the scan stays read-only: no event, header or file is rewritten, moved or deleted. Delete it in the DSH release whose listing tolerates a bad folder.",
+    "about": "Session listing: one bad folder in the sessions tree aborted the whole scan, so a backup copy of a session (a sibling folder carrying the original header, e.g. <session>.backup-<timestamp>), a misnamed folder or a stray .jsonl file left the desktop on its startup screen and none of the registered workspaces started (#861). The listing (list(), through listGenerations and listArtifacts) now reports each skipped path once with console.warn and goes on, for named cases only: a flat session file; a project or session folder that is gone or not readable (ENOENT, ENOTDIR, EACCES, EPERM); a header that is an unsupported format, a corrupt log, or does not identify its path (the identity check's plain \"corrupt session log \\\"<path>\\\": ...\" Error); and a duplicate session id, which keeps the copy first in sorted sourcePath order (code-unit order, not readdir order) and reports the others. Any other failure (EIO, EMFILE, an abort) still fails the listing. The root encoding check stays fail-closed: a session of the other compression still throws its encoding mismatch and an unreadable root still fails, and a flat file is left to the listing. A project or session folder the check cannot read (gone or not readable, the same four codes) is reported and skipped there too, so the registry activates (#885), but a pass that skipped a folder is never cached: every later call checks the root again, and the folder fails the root with the mismatch once it is readable and holds the other compression. One rule for files and folders: an unreadable log and an unreadable folder are both skipped and reported from the first listing on, so a session behind one is not listed (and not known to the workspace registry) until it is readable; the skip line is the record of that storage fault. The migration child catalog (prepareStoredMigration's children()) lists strictly, as upstream, so a child cannot drop out of a catalog. A backend instance prints at most 20 skip lines and then one summary line per listing with the count of the rest, so a tree with many bad folders cannot flood the log. A backup-shaped skip says session backups belong outside the sessions tree, in the app home's session-backups/ directory. The valid sessions still list, the root itself still fails closed, and the scan stays read-only: no event, header or file is rewritten, moved or deleted. Delete it in the DSH release whose listing tolerates a bad folder.",
     "dsh": "0.2.2-rc.1",
     "files": [
       {
@@ -107,7 +107,7 @@
         "version": "0.2.2-rc.1",
         "file": "lib/index.js",
         "before": "69efef5f84dddf947032bc1425067878fa610416c8885acde2ded9b01230c9b7",
-        "after": "c8663b1fc8e6783ef70d3c24340bdacb8790033ca529ab25b7f9fe667d274ad0"
+        "after": "fae8a417cfa075e3cab004add29a3fe010270fdf925f75b7fafe02775aee51a0"
       }
     ]
   }

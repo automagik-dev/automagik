@@ -1,8 +1,8 @@
 // Where the machine DSH runs on is, seen from whoever reads the welcome: here (the person sits at
 // it) or remote (they reach it from another machine), and its OS family. The copy that names it
-// ("Omni on this Mac", "Omni on your Linux server") describes DSH's machine, so its OS comes from
-// the host (state's `machine`, src/host/host.js). The viewer's own OS is only ever compared with
-// the host's, never used to name it.
+// ("Omni on this Mac") describes DSH's machine, so its OS comes from the host (state's `machine`,
+// src/host/host.js). Remote or uncertain locations use workspace wording instead. The viewer's
+// own OS is only ever compared with the host's, never used to name it.
 
 const DESKTOP_OS = { darwin: 'macos', linux: 'linux', win32: 'windows' }
 const OS_FAMILIES = new Set(['macos', 'linux', 'windows', 'other'])

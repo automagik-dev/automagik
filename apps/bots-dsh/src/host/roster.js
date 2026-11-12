@@ -6,6 +6,7 @@ import { MAX_AVATAR_IMAGE, ROOM_MAX_MEMBERS, ROOM_MODES, ROOM_NAME_MAX, ROOM_NOT
 import { currentColor, isColor, normalize, unquote } from './text.js'
 import { nameProblem } from '../shared/mentions.js'
 import { contextPatch } from '../shared/context-policy.js'
+import { crossesHarness } from '../shared/routes.js'
 import { cleanPetId } from './pets.js'
 import { cleanDenyTools } from './tool-deny.js'
 
@@ -282,8 +283,17 @@ export function install(rt) {
         await rt.save()
         return bot
       }
-      await rt.applyPermission(bot, id)
-        .catch(error => rt.warn('ds-bot: permission for %s not applied: %s', cleanName, error))
+      // A Bot about to greet whose level did not hold is not kept: the catch below takes
+      // it back, so it never greets on a level wider than the one it was given. One whose
+      // greeting waits for a model starts nothing yet (the first Main Bot, which the team
+      // view needs, or a copy whose model is not served): its level is checked when the
+      // greeting is let go.
+      if (modelRef === undefined) {
+        await rt.applyPermission(bot, id)
+          .catch(error => rt.warn('ds-bot: permission for %s not applied: %s', cleanName, error))
+      } else {
+        await rt.applyPermission(bot, id, undefined, undefined, { start: true })
+      }
       if (denyTools) {
         await rt.applyToolDeny(bot)
           .catch(error => rt.warn('ds-bot: the denied tools of %s not applied: %s', cleanName, error))
@@ -296,8 +306,14 @@ export function install(rt) {
       await rt.save()
       // The greeting runs on the Bot's own model, once its provider is registered.
       void rt.waitForModel(bot)
-        .then(() => rt.applyModel(bot).catch(error => rt.warn('ds-bot: model for %s not applied: %s', cleanName, error)))
-        .then(() => sendKickoff(bot, { text, from: createdBy }))
+        .then(() => rt.applyModel(bot).then(() => false, (error) => {
+          rt.warn('ds-bot: model for %s not applied: %s', cleanName, error)
+          return true
+        }))
+        // At Full access with its coding CLI model not served, or not selected just above: no
+        // greeting on another model.
+        .then(unselected => rt.assertNotOffCli(bot, rt.chatOf(bot.id), undefined, { unselected }))
+        .then(() => sendKickoff(bot, { text, from: createdBy }), error => rt.warn('ds-bot: %s does not greet: %s', cleanName, error?.message ?? error))
       return bot
     } catch (error) {
       // The Bot's Session was already made: archive it instead of leaving an orphan.
@@ -387,6 +403,25 @@ export function install(rt) {
     const modelRef = patch.model === undefined ? undefined
       : patch.model === null || patch.model === '' ? null
       : await rt.resolveModel(patch.model, { checkAccess: true, remember: false, keep: bot.model })
+    // A model on another route, or another ACP agent, is a new conversation with a handoff
+    // note (RFC 0030, Decided 6 and 10). The menu uses switchRoute for it; a direct update-bot
+    // is the same person's pick, so it takes that path too rather than silently carrying the
+    // old conversation across the harness. Other fields cannot ride along: the switch is its
+    // own step, and the caller can update them after it.
+    const currentModel = bot.model ?? bot.appliedModel
+    if (modelRef !== undefined && modelRef !== null && currentModel !== undefined && crossesHarness(currentModel, modelRef)) {
+      // A host-owned Session has no DSH agent with `whenIdle`, so no fresh part can be
+      // started here: its host owns the conversation, and the host's in-place move stands.
+      // A DSH agent, pinned included, takes the new-conversation path; the pinned check in
+      // switchRoute refuses it rather than carrying the Session across the harness.
+      const agent = await rt.resolveAgent(rt.chatOf(bot.id)).catch(() => undefined)
+      if (typeof agent?.whenIdle === 'function') {
+        const extra = Object.keys(patch).filter(key => key !== 'id' && key !== 'model' && key !== 'effort')
+        if (extra.length > 0) throw refusal(`${bot.name} needs a new conversation for that route, so change only its model in this step.`)
+        await rt.switchRoute(bot.id, modelRef, patch.effort)
+        return bot
+      }
+    }
     // A new level resolves against the model the Bot will run on: the new one, the
     // model it keeps, or — the model cleared — the one it last ran on.
     const effortRef = modelRef === undefined ? bot.model ?? bot.appliedModel : modelRef ?? bot.appliedModel
@@ -417,6 +452,7 @@ export function install(rt) {
     if (modelChanged) await switchModel(bot, patch, modelRef, effortId)
     const roleBefore = bot.role
     const instructionsBefore = bot.instructions
+    let unapplied
     try {
       if (nextName !== undefined) {
         bot.name = nextName
@@ -435,7 +471,14 @@ export function install(rt) {
         if (avatar) bot.avatar = avatar
         else delete bot.avatar
       }
-      if (patch.permission !== undefined) await rt.setPermission(bot, patch.permission)
+      if (patch.permission !== undefined) {
+        // A level that was kept but did not reach every Session: the update goes on, and
+        // the person is told last.
+        await rt.setPermission(bot, patch.permission).catch((error) => {
+          if (error?.levelNotApplied !== true) throw error
+          unapplied = error
+        })
+      }
     } catch (error) {
       // A step after the switch still failed (the title, the level's apply): the model goes
       // back too, on the record and on its Sessions, so the refused update leaves it as it was.
@@ -492,11 +535,21 @@ export function install(rt) {
     }
     if (moved) void rt.followFolder(bot.id)
     if (!policyOnly && bot.model && bot.kickoff !== undefined) {
+      // The held greeting is the Bot's first turn: not sent on a level that did not hold.
+      // It stays held then, and the next change to the Bot tries again.
+      const ready = await rt.applyPermission(bot, rt.chatOf(bot.id), undefined, undefined, { start: true })
+        .then(() => true, (error) => {
+          rt.warn('ds-bot: the greeting of %s stays held: %s', bot.name, error?.message ?? error)
+          return false
+        })
       const held = bot.kickoff
-      delete bot.kickoff
-      await rt.save()
-      sendKickoff(bot, held)
+      if (ready && held !== undefined) {
+        delete bot.kickoff
+        await rt.save()
+        sendKickoff(bot, held)
+      }
     }
+    if (unapplied !== undefined) throw unapplied
     return bot
   }
 
@@ -757,8 +810,16 @@ export function install(rt) {
       }
     }
     if (!room.named) room.name = autoRoomName(room.members)
-    // The preset is written before its first await; the members' Sessions follow it.
-    if (permission !== undefined && await rt.setRoomPermission(room, permission)) {
+    // The preset is written before its first await; the members' Sessions follow it. One
+    // that was kept but did not reach every Session: the update goes on, and the person is
+    // told last.
+    let unapplied
+    const releveled = permission !== undefined && await rt.setRoomPermission(room, permission).catch((error) => {
+      if (error?.levelNotApplied !== true) throw error
+      unapplied = error
+      return true
+    })
+    if (releveled) {
       changes.push(permission ? `every member now works with the ${permission} permissions here` : 'every member uses its own permissions again')
     }
     if (room.name !== before) {
@@ -770,6 +831,7 @@ export function install(rt) {
     // awaits above has left it again, so it is not reported as added.
     const kept = added.filter(member => room.members.includes(member) && isLive(member))
     if (kept.length < added.length) changes.splice(addedAt, 1, ...(kept.length > 0 ? [`added ${names(kept)}`] : []))
+    if (unapplied !== undefined) throw unapplied
     return { room, changes }
   }
 

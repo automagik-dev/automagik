@@ -9,11 +9,13 @@ use crate::event::{Precision, Tokens, UsageEvent};
 use crate::evidence::{self, Actor, Dim, Evidence, SessionKey};
 use crate::hc::Hc;
 use crate::ledger::{Call, Resolver};
+use crate::outcomes::record;
 use crate::paths;
 use crate::prices::PriceTable;
 use crate::scan::{self, Candidate, Plan, ReadLimits, ReadOutcome};
 use crate::sources::Source;
 use crate::sources::codex::{self, State};
+use crate::sources::tool_error::ToolError;
 use crate::store::{Attributed, FileState, Health, SCHEMA_VERSION, Store};
 use crate::summary::{self, SourceHealth};
 use crate::time::{DAY_MS, HOUR_MS, day_start};
@@ -117,6 +119,9 @@ pub struct Options {
     /// Look for project app homes only inside this folder (tests: their temp folder).
     #[doc(hidden)]
     pub walk_within: Option<PathBuf>,
+    /// What hc's list of finished terminals would answer, when `use_hc` is off (tests).
+    #[doc(hidden)]
+    pub ends: Option<Vec<crate::hc::TerminalEnd>>,
     /// Make putting a generation back fail once the failed store is moved aside (tests).
     #[doc(hidden)]
     pub fail_restore: bool,
@@ -180,6 +185,7 @@ impl Options {
             fail_writes_after: None,
             snapshot: None,
             walk_within: None,
+            ends: None,
             fail_restore: false,
         }
     }
@@ -389,9 +395,26 @@ impl Attributor {
         let mut a = Actor::derive(&r, harness, branch);
         if matches!(r, crate::ledger::Resolution::Unlinked) {
             let elsewhere = !copied && self.resolver.elsewhere(&call);
-            a.reason = Some(evidence::unlinked_reason(harness, copied, elsewhere).into());
+            let witnessed = !copied && self.resolver.witnessed(&call);
+            a.reason =
+                Some(evidence::unlinked_reason(harness, copied, elsewhere, witnessed).into());
         }
         a
+    }
+
+    /// Hands the resolver a dsh-tui session's own start record, when its header named the
+    /// terminal it runs in (RFC 0026 (d)): the session hashed as its calls are, the terminal and
+    /// the session's start. Called with a file's context before its calls are attributed, so the
+    /// first call of a new log already finds its launch.
+    fn witness(&mut self, source: Source, ctx: &crate::sources::FileCtx) {
+        if source != Source::DshTui {
+            return;
+        }
+        if let (Some(session), Some(terminal)) = (ctx.session.as_deref(), ctx.terminal.as_deref()) {
+            let scope = evidence::scope(source.harness());
+            self.resolver
+                .witness(&self.key.hex(scope, session), terminal, ctx.created_at);
+        }
     }
 
     /// A stored call's attribution, as the resolver gives it now.
@@ -409,6 +432,82 @@ impl Attributor {
             c.copied,
             c.dim.branch.as_deref(),
         )
+    }
+
+    /// A stored tool failure's attribution, as the resolver gives it now.
+    fn rederive_error(&mut self, e: &record::Stored) -> Actor {
+        let session = e.session.as_deref().map(crate::event::hex);
+        let parent = e.parent.as_deref().map(crate::event::hex);
+        let harness = e.harness.clone();
+        self.actor(
+            &harness,
+            session.as_deref(),
+            parent.as_deref(),
+            e.cwd.as_deref(),
+            e.session_cwd.as_deref(),
+            e.ts_ms,
+            false,
+            e.branch.as_deref(),
+        )
+    }
+
+    /// A chunk's tool failures (issue 899), each attributed as a call of the same session, folder
+    /// and moment is: through the same links, to the same launch. One before the window, or
+    /// before the evidence's day bound, is not kept.
+    fn attribute_errors(
+        &mut self,
+        store: &Store,
+        errors: Vec<ToolError>,
+        from_ms: i64,
+    ) -> rusqlite::Result<Vec<record::ErrorRow>> {
+        let floor = from_ms.max(evidence::retention_cut(self.now_ms));
+        let mut out = Vec::with_capacity(errors.len());
+        for e in errors {
+            if e.ts_ms < floor {
+                continue;
+            }
+            let repo = match &e.repo {
+                Some(r) => Some(r.clone()),
+                None => self.repo(store, e.cwd.as_deref())?,
+            };
+            let scope = evidence::scope(e.harness);
+            let session = e.session.as_deref().map(|s| self.key.hash(scope, s));
+            let parent = e.parent_session.as_deref().map(|s| self.key.hash(scope, s));
+            let (sh, ph) = (
+                session.map(|b| crate::event::hex(&b)),
+                parent.map(|b| crate::event::hex(&b)),
+            );
+            let actor = self.actor(
+                e.harness,
+                sh.as_deref(),
+                ph.as_deref(),
+                e.cwd.as_deref(),
+                e.session_cwd.as_deref(),
+                e.ts_ms,
+                false,
+                e.branch.as_deref(),
+            );
+            out.push(record::ErrorRow {
+                ts_ms: e.ts_ms,
+                kind: e.kind,
+                // A failure has no model and no precision: it is not usage.
+                dim: Dim {
+                    harness: e.harness.to_string(),
+                    model: String::new(),
+                    machine: self.machine.clone(),
+                    repo,
+                    branch: e.branch,
+                    precision: String::new(),
+                },
+                actor,
+                session,
+                parent,
+                cwd: e.cwd,
+                session_cwd: e.session_cwd,
+                ident: self.key.hash("err", &e.ident),
+            });
+        }
+        Ok(out)
     }
 
     fn attribute(
@@ -896,7 +995,6 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
             }
             None => stored.unwrap_or(wanted),
         };
-
         // A run that migrated or re-keyed always goes on: it reports that and its generation.
         if !opts.force && !reimported && !migrate && !rekey {
             let last = store.meta_i64("last_success_ms")?;
@@ -909,6 +1007,9 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
                 return Ok(Outcome::Fresh { age_ms: now - last });
             }
         }
+        // Before any log is read: the tables `usagemeter outcomes` reads, and where the recorded
+        // tool failures start (issue 899). A read never makes them.
+        record::ensure(&mut store.conn, now, counted_from)?;
 
         trace.mark("open");
         let mut hc = if opts.use_hc {
@@ -931,7 +1032,9 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
             None => store.meta("machine")?,
         };
         let key = store.session_key()?;
+        let this_core = core.clone();
         let snap = Snapshot::of(&store, core.as_deref(), &snapshot, answered, now)?;
+        let headers = dsh_headers(&store)?;
         let mut attr = Attributor {
             machine: machine.clone(),
             resolver: resolver(opts, core, snapshot, key.clone(), &snap, &store)?,
@@ -941,6 +1044,9 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
             key,
             fail_writes_after: opts.fail_writes_after.map(std::cell::Cell::new),
         };
+        for ctx in &headers {
+            attr.witness(Source::DshTui, ctx);
+        }
 
         trace.mark("hc");
         let mut report = Report {
@@ -1119,6 +1225,35 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
         let cwds = evidence::cwds(&store.conn)?;
         attr.resolver.look_above(cwds.iter().map(String::as_str));
         links_pass(&mut store, &mut attr, &snap, now, &mut report)?;
+        // How each launch's terminal ended (hc's list of finished terminals first, then what an
+        // `end` row copied) and the pull requests the ledgers record (issue 899).
+        let hc_ends = if record::ends_wanted(&store.conn)? {
+            match hc.as_mut() {
+                Some(h) => h.ends(),
+                None => opts.ends.clone(),
+            }
+        } else {
+            None
+        };
+        let mut ends: Vec<record::End> = hc_ends.iter().flatten().map(record::End::of_hc).collect();
+        ends.extend(
+            attr.resolver
+                .end_details()
+                .iter()
+                .map(record::End::of_ledger),
+        );
+        let prs = attr.resolver.pr_rows().to_vec();
+        let mut pr_repos = Vec::with_capacity(prs.len());
+        for p in &prs {
+            // The repo of the project folder, as a call's cwd gets it: never an address from a row.
+            pr_repos.push((p, attr.repo(&store, Some(&p.project))?));
+        }
+        {
+            let tx = store.conn.transaction()?;
+            record::record_ends(&tx, this_core.as_deref(), &ends)?;
+            record::fold_prs(&tx, &pr_repos, now)?;
+            tx.commit()?;
+        }
         let (moved, refused, left) = recompute(&mut store, &mut attr, deadline, now)?;
         report.calls_moved = moved;
         report.calls_refused = refused;
@@ -1132,6 +1267,7 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
         {
             let tx = store.conn.transaction()?;
             let p = evidence::prune(&tx, now, evidence::EVIDENCE_DAYS, evidence::EVIDENCE_BYTES)?;
+            record::prune(&tx, now)?;
             tx.commit()?;
             report.evidence_pruned = p.evidence;
         }
@@ -1161,6 +1297,7 @@ pub fn run(opts: &Options) -> Result<Outcome, Error> {
             );
         }
         store.set_meta("last_run_ms", &now.to_string())?;
+        record::stamp(&store.conn, now)?;
         store.set_meta("last_pending_bytes", &report.pending_bytes.to_string())?;
         store.set_meta("last_pending_files", &report.pending_files.to_string())?;
         // A harness whose log folder does not exist is absent on this machine: nothing to count, and
@@ -1397,7 +1534,8 @@ fn resolver(
     let mut r = Resolver::new(core, snapshot)
         .walk(opts.project_ledgers)
         .walk_within(opts.walk_within.clone())
-        .keyed(key);
+        .keyed(key)
+        .at(opts.now_ms);
     if let Some(home) = &opts.app_home {
         r.load_app_home(home);
     }
@@ -1414,7 +1552,29 @@ fn resolver(
         &evidence::label_history(&store.conn)?,
         &snap.gone_at,
     );
+    r.add_session_links(&evidence::session_links(&store.conn)?);
     Ok(r)
+}
+
+/// The file context of every dsh-tui session log read so far whose header named a terminal (RFC
+/// 0026 (d)): the header's record as the last read left it in the store, so a sync that reads
+/// nothing new of a log still knows which terminal its session started in. A recompute then
+/// keeps a session whose terminal no launch covers at `no_record`, and links it once a later
+/// sync learns that launch, with no log re-read.
+fn dsh_headers(store: &Store) -> rusqlite::Result<Vec<crate::sources::FileCtx>> {
+    let mut st = store
+        .conn
+        .prepare("SELECT ctx FROM files WHERE source = ?1 ORDER BY path")?;
+    let rows = st.query_map([Source::DshTui.harness()], |r| r.get::<_, String>(0))?;
+    let mut out = Vec::new();
+    for ctx in rows {
+        if let Ok(ctx) = serde_json::from_str::<crate::sources::FileCtx>(&ctx?)
+            && ctx.terminal.is_some()
+        {
+            out.push(ctx);
+        }
+    }
+    Ok(out)
 }
 
 /// What this sync's hc snapshot says about the launches earlier syncs saw.
@@ -1491,6 +1651,54 @@ impl Snapshot {
 /// The `meta` key of the last attribution inputs' fingerprint.
 const INPUTS_META: &str = "attribution_inputs";
 
+/// The derivation's version, the fingerprint's first input: a sync compares its inputs against the
+/// stored fingerprint, so changing what a launch's tags or a session's links are derived from
+/// (RFC 0026 delivery 3 added the label claims; delivery 4b made a dsh-tui session label a
+/// `session` link) revisits every launch and link once, on the first sync after the upgrade,
+/// instead of waiting for a ledger or the snapshot to change.
+const DERIVATION: &[u8] = b"dsh-seat-v1\x1e";
+
+/// The fingerprint of what the launches and links are derived from: the derivation's version,
+/// what hc showed, each ledger read (its path, size, modification time and first bytes), the
+/// project app homes found, and the dsh-tui header records known (`witnesses`,
+/// [`Resolver::witness_print`]: empty for none). The last makes a sync whose only news is a
+/// dsh-tui log write that session's link.
+fn inputs_print(
+    derivation: &[u8],
+    snapshot: &str,
+    files: &[PathBuf],
+    homes: &[String],
+    witnesses: &str,
+) -> String {
+    use sha2::Digest;
+    let mut print = sha2::Sha256::new();
+    print.update(derivation);
+    print.update(snapshot.as_bytes());
+    for f in files {
+        print.update(f.to_string_lossy().as_bytes());
+        if let Ok(m) = f.metadata() {
+            let mtime = m
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map_or(0, |d| d.as_nanos());
+            print.update(format!("\x1f{}\x1f{mtime}", m.len()));
+        }
+        if let Ok(mut fh) = std::fs::File::open(f) {
+            use std::io::Read;
+            let mut head = [0u8; 4096];
+            let n = fh.read(&mut head).unwrap_or(0);
+            print.update(&head[..n]);
+        }
+        print.update([0x1e]);
+    }
+    for h in homes {
+        print.update(h.as_bytes());
+    }
+    print.update(witnesses.as_bytes());
+    crate::event::hex(&print.finalize())
+}
+
 /// Writes the launches and links this sync derived and queues the calls they change (RFC 0021
 /// (b)), in one transaction. When no ledger changed (its size, modification time and first bytes)
 /// and hc showed the same terminals, the diff is skipped: only what the snapshot saw is touched.
@@ -1501,37 +1709,19 @@ fn links_pass(
     now: i64,
     report: &mut Report,
 ) -> Result<(), Error> {
-    use sha2::Digest;
-    let mut print = sha2::Sha256::new();
-    print.update(snap.print.as_bytes());
-    for f in attr.resolver.files() {
-        print.update(f.to_string_lossy().as_bytes());
-        if let Ok(m) = f.metadata() {
-            let mtime = m
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map_or(0, |d| d.as_nanos());
-            print.update(format!("\x1f{}\x1f{mtime}", m.len()));
-        }
-        if let Ok(mut fh) = std::fs::File::open(&f) {
-            use std::io::Read;
-            let mut head = [0u8; 4096];
-            let n = fh.read(&mut head).unwrap_or(0);
-            print.update(&head[..n]);
-        }
-        print.update([0x1e]);
-    }
     let homes: Vec<String> = attr
         .resolver
         .homes()
         .iter()
         .map(|h| h.to_string_lossy().into_owned())
         .collect();
-    for h in &homes {
-        print.update(h.as_bytes());
-    }
-    let print = crate::event::hex(&print.finalize());
+    let print = inputs_print(
+        DERIVATION,
+        &snap.print,
+        &attr.resolver.files(),
+        &homes,
+        &attr.resolver.witness_print(),
+    );
     let same = store.meta(INPUTS_META)?.as_deref() == Some(print.as_str());
     let tx = store.conn.transaction()?;
     if same {
@@ -1579,6 +1769,9 @@ fn recompute(
         }
         let mut done = std::collections::HashSet::new();
         let mut changes = Vec::new();
+        // The tool failures of the same sessions and folders move with their calls.
+        let mut errors_done = std::collections::HashSet::new();
+        let mut error_changes = Vec::new();
         for k in &keys {
             for c in evidence::calls_of(&store.conn, k)? {
                 if !done.insert(c.id) {
@@ -1589,6 +1782,15 @@ fn recompute(
                     changes.push((c, to));
                 }
             }
+            for e in record::errors_of(&store.conn, k)? {
+                if !errors_done.insert(e.id) {
+                    continue;
+                }
+                let to = attr.rederive_error(&e);
+                if to != e.actor {
+                    error_changes.push((e.id, to));
+                }
+            }
         }
         let r = (|| -> rusqlite::Result<u64> {
             let tx = store.conn.transaction()?;
@@ -1597,6 +1799,9 @@ fn recompute(
                 if evidence::reattribute(&tx, &mut store.intern, c, to, now)? {
                     n += 1;
                 }
+            }
+            for (id, to) in &error_changes {
+                record::reattribute(&tx, &mut store.intern, *id, to)?;
             }
             {
                 let mut del = tx.prepare_cached("DELETE FROM ev_dirty WHERE k = ?1")?;
@@ -1694,7 +1899,10 @@ fn evidence_backfill(
                 state.offset = offset as u64;
                 state.ctx = serde_json::from_str(&ctx).unwrap_or_default();
             }
-            let read = scan::read_file(&mut state, c.source, limits, |st, events, _| {
+            // The tool failures of these lines are not recorded here: they are older than
+            // `errors_from`, and the failures never move back with the evidence.
+            let read = scan::read_file(&mut state, c.source, limits, |st, events, _, _| {
+                attr.witness(c.source, &st.ctx);
                 let calls = attr
                     .attribute(store, events, from)
                     .map_err(io::Error::other)?;
@@ -1913,13 +2121,17 @@ fn read_into_store(
         state,
         source,
         limits,
-        |st: &FileState, events, mut health| {
+        |st: &FileState, events, errors, mut health| {
             if first && rewritten {
                 health.rewrites += 1;
             }
             first = false;
+            attr.witness(source, &st.ctx);
             let attributed = attr
                 .attribute(store, events, counted_from)
+                .map_err(store_write)?;
+            let errors = attr
+                .attribute_errors(store, errors, counted_from)
                 .map_err(store_write)?;
             if let Some(n) = &attr.fail_writes_after {
                 if n.get() == 0 {
@@ -1931,7 +2143,7 @@ fn read_into_store(
                 n.set(n.get() - 1);
             }
             let applied = store
-                .apply_chunk(st, &attributed, health, now)
+                .apply_chunk_with(st, &attributed, &errors, health, now)
                 .map_err(store_write)?;
             report.health.add(&applied);
             Ok(())
@@ -2132,3 +2344,6 @@ fn codex_pass(
     )?;
     Ok(true)
 }
+
+#[cfg(test)]
+mod tests;

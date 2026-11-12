@@ -179,20 +179,30 @@ export function mirrorTool(host) {
       if (isImageCall(tool)) {
         try { host.images?.()?.start?.({ callId: exec.callId, sessionId: exec.agent?.session?.id, via: live.name }) } catch {}
       }
-      for (;;) {
-        if (exec.signal?.aborted) {
-          tool.permission?.answer({ outcome: { outcome: 'cancelled' } })
-          await live.run.cancel()
-          break
+      try {
+        for (;;) {
+          if (exec.signal?.aborted) {
+            tool.permission?.answer({ outcome: { outcome: 'cancelled' } })
+            // The agent may ignore the cancel: the host gives its prompt a bounded time to end.
+            host.cancelled?.(exec.agent?.session?.id, live)
+            await live.run.cancel()
+            break
+          }
+          const permission = tool.permission
+          if (permission && !permission.asked) {
+            permission.asked = true
+            permission.answer(optionFor(await ask(host, live, tool, exec), permission.options))
+            continue
+          }
+          if (isTerminal(tool) || !live.run.busy) break
+          await changed(tool, exec.signal)
         }
-        const permission = tool.permission
-        if (permission && !permission.asked) {
-          permission.asked = true
-          permission.answer(optionFor(await ask(host, live, tool, exec), permission.options))
-          continue
-        }
-        if (isTerminal(tool) || !live.run.busy) break
-        await changed(tool, exec.signal)
+      } finally {
+        // The card's body is done asking, however it left: a question that comes for the call
+        // now has nobody to ask it, and the agent's run answers it as cancelled (acp.js
+        // onPermission). One still stored when the body failed is withdrawn the same way.
+        tool.mirrored = true
+        tool.permission?.answer({ outcome: { outcome: 'cancelled' } })
       }
       // Only an image-generation call is answered as a kept image; any other call that answers
       // with an image (a Read, a screenshot) keeps its own result, image blocks included.

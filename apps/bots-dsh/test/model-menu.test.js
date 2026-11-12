@@ -35,7 +35,7 @@ runInNewContext(bundle.outputFiles[0].text, {
     return platform[name]
   },
 })
-const { groupModels, greetingOnly, ModelChoiceDock, ModelLine, ModelLineTail, ModelMenu, effortRows, offeredModels } = module.exports
+const { groupModels, greetingOnly, ModelChoiceDock, ModelLine, ModelLineTail, ModelMenu, RouteConfirm, effortRows, offeredModels } = module.exports
 
 // ModelMenu picks the menu a Bot gets (DSH's models, or its plugin's): draw the one it picked.
 const drawMenu = (props) => {
@@ -49,10 +49,10 @@ function nodes(tree, match) {
 }
 
 // `harness`: the window has DSH's own settings to send the user to, as the plugin does.
-function dock(models, { model, ready = true, harness = true } = {}) {
+function dock(models, { model, ready = true, harness = true, routePolicy } = {}) {
   const picked = []
   const bot = { id: 'chief', name: 'Omni', model }
-  const roster = { ready, byId: { chief: bot }, models, defaultModel: models[0]?.ref }
+  const roster = { ready, byId: { chief: bot }, models, defaultModel: models[0]?.ref, ...(routePolicy ? { routePolicy } : {}) }
   const tree = ModelChoiceDock({
     sessionId: bot.id, useRoster: select => select(roster),
     actions: {
@@ -87,7 +87,7 @@ test('the model line names the model and its provider, and "change" opens the mo
   const bot = { id: 'chief', name: 'Pip', model: 'anthropic/claude-opus-5-5' }
   const roster = { models: [{ ref: 'anthropic/claude-opus-5-5', provider: 'anthropic', providerName: 'Anthropic', name: 'Claude Opus 5.5' }, ...models] }
   const line = ModelLine({ bot, roster, actions: {}, run: () => {} })
-  assert.equal(nodes(line, node => node.props.className === 'bt-model-line-text')[0].children[0], 'Using Claude Opus 5.5 · Anthropic')
+  assert.equal(nodes(line, node => node.props.className === 'bt-model-line-text')[0].children[0], 'Using Claude Opus 5.5 · Native · Anthropic')
   const [menu] = nodes(line, node => node.type === ModelMenu)
   assert.equal(menu.props.link, true)
   // Closed, the trigger is the "change" link.
@@ -95,7 +95,7 @@ test('the model line names the model and its provider, and "change" opens the mo
   const [trigger] = nodes(closed, node => node.type === 'button')
   assert.equal(trigger.children[0], 'change')
   assert.equal(trigger.props['aria-haspopup'], 'menu')
-  // Open, the menu lists the connections and leads to the providers.
+  // Open, the menu starts on the route and reaches the providers from there.
   menuOpen = true
   try {
     const open = drawMenu({ ...menu.props, actions: { openHarnessSettings: () => {} } })
@@ -103,7 +103,10 @@ test('the model line names the model and its provider, and "change" opens the mo
     assert.equal(steps.props.current, 'anthropic/claude-opus-5-5')
     const drawn = steps.type(steps.props)
     const items = nodes(drawn, node => node.type === 'button').map(button => nodes(button, n => n.props.className === 'bt-menu-label')[0]?.children[0] ?? '')
-    assert.deepEqual(items, ['Anthropic', 'DeepSeek', 'Ollama', 'Models and providers…'])
+    assert.deepEqual(items, ['Native', 'ACP', 'Herdr', 'Models and providers…'])
+    // Native's own models stay one list under their provider.
+    const native = steps.type({ ...steps.props, view: { step: 'models', route: 'native' } })
+    assert.deepEqual(nodes(native, node => node.props.className === 'bt-model-group').map(group => group.children[0]), ['Anthropic', 'DeepSeek', 'Ollama'])
   } finally {
     menuOpen = false
   }
@@ -161,6 +164,13 @@ test('an unavailable model offers the provider groups, each model route, and a w
   buttons[1][0].props.onClick()
   assert.deepEqual(picked, [['chief', 'local/flash']])
   assert.equal(nodes(tree, node => node.type === 'button' && node.children.includes('Manage models')).length, 1)
+})
+
+test('a route the bot type hides is no choice in the first-model dock either', () => {
+  const acp = { ref: 'acp-claude/default', provider: 'acp-claude', providerName: 'Claude Code', name: 'Default' }
+  const { tree } = dock([...models, acp], { model: 'gone/flash', routePolicy: { default: ['native'] } })
+  assert.deepEqual(nodes(tree, node => node.props.className === 'bt-model-choice-group').map(group => group.props['aria-label']), ['DeepSeek', 'Ollama'])
+  assert.equal(nodes(tree, node => node.props.className === 'bt-model-choice-provider').some(node => node.children[0].includes('ACP')), false)
 })
 
 test('an empty catalog offers setup choices, Connect an AI first, and a ready model needs no choice dock', () => {
@@ -376,7 +386,7 @@ test('the menu offers only what is set up, and never the same model twice', () =
   assert.deepEqual(groups('gone/model')[0], ['gone', ['gone/model']])
 })
 
-test('the Bot\'s model that cannot run is marked in the menu, its trigger and its hint', () => {
+test('a model that cannot run is marked in the route, the agent, the model row and the trigger', () => {
   const { modelHint } = module.exports
   const bot = { id: 'b1', name: 'Ops', model: 'acp-claude/default', appliedModel: 'acp-claude/default' }
   const roster = { ready: true, byId: { b1: bot }, models: lineup, defaultModel: 'deepseek/flash' }
@@ -384,35 +394,62 @@ test('the Bot\'s model that cannot run is marked in the menu, its trigger and it
   const trigger = drawMenu(props)
   const button = nodes(trigger, node => node.props.className === 'bt-model-trigger')[0]
   assert.equal(button.props['data-missing'], '')
-  assert.equal(nodes(button, node => node.props.className === 'bt-model-provider')[0].children[0], 'Claude Code · not available')
+  assert.equal(button.props['data-route'], 'acp')
+  assert.equal(nodes(button, node => node.props.className === 'bt-model-provider')[0].children[0], 'ACP · Claude Code · not available')
   assert.equal(modelHint(bot, roster, undefined), 'Claude Code needs a sign-in before it can answer.')
   menuOpen = true
   try {
     const open = drawMenu(props)
     const steps = nodes(open, node => node.type?.name === 'ModelSteps')[0]
-    // Step 1: the set-up connections, and the Bot's own one, which says it cannot run.
-    const first = nodes(steps.type(steps.props), node => node.props.role === 'menuitem' && node.props['aria-haspopup'] === 'menu')
     const hint = row => nodes(row, node => node.props.className === 'bt-menu-hint')[0]?.children[0]
     const label = row => nodes(row, node => node.props.className === 'bt-menu-label')[0].children[0]
+    // Step 1: the three routes in order, the Bot's own marked; its agent opens the next step.
+    const first = nodes(steps.type(steps.props), node => node.props.role === 'menuitem' && node.props['aria-haspopup'] === 'menu')
     assert.deepEqual(first.map(row => [label(row), hint(row) ?? null]), [
-      ['DeepSeek', null], ['Anthropic · API key', null], ['Codex', null], ['Claude Code', 'Default · Not available'],
+      ['Native', 'DSH harness'], ['ACP', 'Claude Code'], ['Herdr', 'Not available yet'],
     ])
-    assert.equal(first.at(-1).props['aria-label'], 'Claude Code, current model Default · Not available')
-    // Step 2: that connection's models; the agent's own default is no second "Claude Code".
-    const second = steps.type({ ...steps.props, view: { step: 'models', provider: 'acp-claude' } })
+    assert.equal(first[1].props['aria-label'], 'ACP, current model Claude Code')
+    assert.equal(first[1].props.title, 'Agent Client Protocol')
+    // Step 2: ACP's agents, the current one marked.
+    const agents = nodes(steps.type({ ...steps.props, view: { step: 'agents', route: 'acp' } }), node => node.props.role === 'menuitem' && node.props['aria-haspopup'] === 'menu')
+    assert.deepEqual(agents.map(row => [label(row), hint(row) ?? null, row.props['data-current'] ?? null]), [
+      ['Claude Code', 'Needs a sign-in', ''], ['Codex', null, null],
+      ['Hermes', 'Not available yet', null], ['Antigravity', 'Not available yet', null], ['omp', 'Not available yet', null],
+    ])
+    assert.equal(agents[0].props['aria-label'], 'Claude Code, current model Default')
+    assert.equal(nodes(steps.type({ ...steps.props, view: { step: 'agents', route: 'acp' } }), node => node.props.className === 'bt-model-back')[0].props['aria-label'], 'Back to routes')
+    // Step 3: that agent's models; the row says why the Bot cannot run on it.
+    const second = steps.type({ ...steps.props, view: { step: 'models', route: 'acp', provider: 'acp-claude' } })
     const rows = nodes(second, node => node.props.role === 'menuitemradio')
-    assert.deepEqual(rows.map(row => [row.props.title, label(row), hint(row) ?? null]), [['acp-claude/default', 'Default', 'Not available']])
-    assert.equal(rows[0].props['aria-label'], 'Default · Not available')
-    const deepseek = nodes(steps.type({ ...steps.props, view: { step: 'models', provider: 'deepseek' } }), node => node.props.role === 'menuitemradio')
+    assert.deepEqual(rows.map(row => [row.props.title, label(row), hint(row) ?? null]), [['acp-claude/default', 'Default', 'Needs a sign-in']])
+    assert.equal(rows[0].props['aria-label'], 'Default · Needs a sign-in')
+    assert.equal(nodes(second, node => node.props.className === 'bt-model-back')[0].props['aria-label'], 'Back to Claude Code')
+    // Native's models are one list under their provider, with a way back to the routes.
+    const native = steps.type({ ...steps.props, view: { step: 'models', route: 'native' } })
+    const deepseek = nodes(native, node => node.props.role === 'menuitemradio' && String(node.props.title).startsWith('deepseek/'))
     assert.deepEqual(deepseek.map(row => [row.props.title, hint(row)]), [['deepseek/flash', 'Default']])
+    assert.equal(nodes(native, node => node.props.className === 'bt-model-back')[0].props['aria-label'], 'Back to routes')
   } finally {
     menuOpen = false
   }
-  // Set up: the trigger names the connection, nothing is marked.
+  // Set up: the trigger names the route and the connection, nothing is marked.
   const fine = { ...bot, model: 'anthropic/claude-opus-5-5', appliedModel: 'anthropic/claude-opus-5-5' }
   const ok = nodes(drawMenu({ ...props, bot: fine, roster: { ...roster, byId: { b1: fine } } }), node => node.props.className === 'bt-model-trigger')[0]
   assert.equal(ok.props['data-missing'], undefined)
-  assert.equal(nodes(ok, node => node.props.className === 'bt-model-provider')[0].children[0], 'Anthropic · API key')
+  assert.equal(nodes(ok, node => node.props.className === 'bt-model-provider')[0].children[0], 'Native · Anthropic · API key')
+})
+
+test('the composer bar is one plain line: route mark, model, effort, no provider line', () => {
+  const bot = { id: 'b1', name: 'Ops', model: 'deepseek/pro', appliedModel: 'deepseek/pro', effort: 'high' }
+  const roster = { ready: true, byId: { b1: bot }, models: cascade, defaultModel: 'deepseek/flash' }
+  const trigger = nodes(drawMenu({ bot, roster, actions: { updateBot: () => Promise.resolve() }, run: promise => promise, bar: true }), node => String(node.props.className ?? '').includes('bt-model-trigger'))[0]
+  assert.match(trigger.props.className, /bt-model-bar-trigger/)
+  assert.equal(trigger.props['data-bar'], true)
+  assert.equal(nodes(trigger, node => node.props.className === 'bt-model-bar-name')[0].children[0], 'DeepSeek Pro')
+  assert.equal(nodes(trigger, node => node.props.className === 'bt-model-bar-effort')[0].children[0], 'High')
+  assert.equal(nodes(trigger, node => node.props.className === 'bt-model-bar-route').length, 1)
+  // The route and provider stay in the menu, never in the bar.
+  assert.equal(nodes(trigger, node => node.props.className === 'bt-model-provider').length, 0)
 })
 
 test('the dock offers only what is set up, and a missing sign-in never asks for a key', () => {
@@ -428,8 +465,8 @@ test('the dock offers only what is set up, and a missing sign-in never asks for 
   assert.deepEqual(buttons(bare), ['Connect an AI: ChatGPT, Claude, Kimi or an API key', 'Enter a DeepSeek API key'])
 })
 
-// The menu goes in steps (connection, then model, then level): the connections set up with the
-// current one marked, a connection's models, and a model's levels when it has them.
+// The menu goes route, then (ACP and Herdr) agent, then that route's and agent's models,
+// then a model's levels. The route is always the first step, so the harness is never hidden.
 const levels = { efforts: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }], defaultEffort: 'low' }
 const cascade = [
   { ref: 'deepseek/flash', provider: 'deepseek', providerName: 'DeepSeek', name: 'DeepSeek Flash' },
@@ -438,21 +475,23 @@ const cascade = [
   { ref: 'acp-codex/gpt-6.1-sol', id: 'gpt-6.1-sol', provider: 'acp-codex', providerName: 'Codex', via: 'cli', name: '6.1 Sol' },
 ]
 
-function openMenu({ bot = { id: 'b1', name: 'Ops', model: 'acp-codex/default', appliedModel: 'acp-codex/default', effort: 'high' }, chat = false, onPick, onPickEffort } = {}) {
+function openMenu({ bot = { id: 'b1', name: 'Ops', model: 'acp-codex/default', appliedModel: 'acp-codex/default', effort: 'high' }, chat = false, onPick, onPickEffort, routePolicy } = {}) {
   const updates = []
   const chosen = []
+  const switched = []
   const actions = {
     updateBot: (id, patch) => { updates.push([id, { ...patch }]); return Promise.resolve() },
     chooseModelInChat: (id, ref, patch) => { chosen.push([id, ref, { ...patch }]); return Promise.resolve() },
+    switchRoute: (id, ref, patch) => { switched.push([id, ref, { ...patch }]); return Promise.resolve() },
     openHarnessSettings: () => {},
   }
-  const roster = { ready: true, byId: { [bot.id]: bot }, models: cascade, defaultModel: 'deepseek/flash' }
+  const roster = { ready: true, byId: { [bot.id]: bot }, models: cascade, defaultModel: 'deepseek/flash', ...(routePolicy ? { routePolicy } : {}) }
   menuOpen = true
   try {
     const open = drawMenu({ bot, roster, actions, run: promise => promise, chat, onPick, onPickEffort })
     const steps = nodes(open, node => node.type?.name === 'ModelSteps')[0]
     const step = view => steps.type({ ...steps.props, view: view ?? steps.props.view })
-    return { steps, step, updates, chosen, open }
+    return { steps, step, updates, chosen, switched, open, roster, bot }
   } finally {
     menuOpen = false
   }
@@ -460,27 +499,50 @@ function openMenu({ bot = { id: 'b1', name: 'Ops', model: 'acp-codex/default', a
 const labelOf = row => nodes(row, node => node.props.className === 'bt-menu-label')[0].children[0]
 const hintOf = row => nodes(row, node => node.props.className === 'bt-menu-hint')[0]?.children[0] ?? null
 
-test('step 1 lists the connections, marks the current one with its model and level, and ends on the providers', () => {
+test('step 1 lists the three routes in order, marks the one the Bot is on, and ends on the providers', () => {
   const { step, steps } = openMenu()
-  assert.equal(steps.props.view.step, 'connections')
+  assert.equal(steps.props.view.step, 'routes')
   const tree = step()
   const rows = nodes(tree, node => node.type === 'button')
   assert.deepEqual(rows.map(row => [labelOf(row), hintOf(row)]), [
-    ['DeepSeek', null], ['Codex', 'Default (6.1 Sol) · High'], ['Models and providers…', null],
+    ['Native', 'DSH harness'], ['ACP', 'Codex · High'], ['Herdr', 'Not available yet'], ['Models and providers…', null],
   ])
-  assert.deepEqual(rows.slice(0, 2).map(row => [row.props.role, row.props['aria-haspopup'], row.props['data-current'] ?? null]), [['menuitem', 'menu', null], ['menuitem', 'menu', '']])
-  assert.equal(rows[1].props['aria-label'], 'Codex, current model Default (6.1 Sol) · High')
-  // The current connection carries the tick; no model row and no level row on this step.
-  assert.deepEqual(rows.slice(0, 2).map(row => nodes(row, node => node.type?.name === 'Tick')[0].props.on), [false, true])
+  assert.deepEqual(rows.slice(0, 3).map(row => [row.props.role, row.props['aria-haspopup'], row.props['data-current'] ?? null]),
+    [['menuitem', 'menu', null], ['menuitem', 'menu', ''], ['menuitem', 'menu', null]])
+  assert.equal(rows[1].props['aria-label'], 'ACP, current model Codex · High')
+  // The current route carries the tick; no model row and no level row on this step.
+  assert.deepEqual(rows.slice(0, 3).map(row => nodes(row, node => node.type?.name === 'Tick')[0].props.on), [false, true, false])
   assert.equal(nodes(tree, node => node.props.role === 'menuitemradio').length, 0)
+  // The ACP expansion is on the row itself, not only in a tooltip.
+  assert.equal(rows[1].props.title, 'Agent Client Protocol')
+  assert.equal(rows[1].props['data-route'], 'acp')
 })
 
-test('step 2 is one connection\'s models with a way back; a model with levels says another step follows', () => {
+test('only the routes the bot type allows are offered (a route can be hidden, RFC 0030 Q13)', () => {
+  const hidden = openMenu({ routePolicy: { dsh: ['native'], default: ['native', 'acp'] } })
+  assert.deepEqual(nodes(hidden.step(), node => node.type === 'button').map(labelOf), ['Native', 'ACP', 'Models and providers…'])
+  const kinds = openMenu({ bot: { id: 'b1', name: 'Ops', kind: 'dsh', model: 'deepseek/flash' }, routePolicy: { dsh: ['native'] } })
+  assert.deepEqual(nodes(kinds.step(), node => node.type === 'button').map(labelOf), ['Native', 'Models and providers…'])
+  const none = openMenu({ routePolicy: { default: [] } })
+  const empty = none.step()
+  assert.deepEqual(nodes(empty, node => node.type === 'button').map(labelOf), ['Models and providers…'])
+  assert.ok(nodes(empty, node => node.props.className === 'bt-model-none').some(node => node.children[0] === 'No route is available for this Bot.'))
+})
+
+test('choosing ACP shows its agents, then that agent\'s models with a way back; a model with levels says another step follows', () => {
   const { step } = openMenu()
-  const tree = step({ step: 'models', provider: 'acp-codex' })
-  const [backRow] = nodes(tree, node => node.props.className === 'bt-model-back')
-  assert.equal(backRow.props['aria-label'], 'Back to connections')
-  assert.equal(labelOf(backRow), 'Codex')
+  const agents = step({ step: 'agents', route: 'acp' })
+  const [backRow] = nodes(agents, node => node.props.className === 'bt-model-back')
+  assert.equal(backRow.props['aria-label'], 'Back to routes')
+  const agentRows = nodes(agents, node => node.props.role === 'menuitem' && node.props['aria-haspopup'] === 'menu')
+  assert.deepEqual(agentRows.map(row => [labelOf(row), row.props['data-current'] ?? null]), [
+    ['Claude Code', null], ['Codex', ''], ['Hermes', null], ['Antigravity', null], ['omp', null],
+  ])
+  assert.equal(agentRows[0].props['aria-label'], 'Claude Code · Not available yet')
+  assert.equal(agentRows[1].props['aria-label'], 'Codex, current model Default (6.1 Sol)')
+  const tree = step({ step: 'models', route: 'acp', provider: 'acp-codex' })
+  const [modelsBack] = nodes(tree, node => node.props.className === 'bt-model-back')
+  assert.equal(modelsBack.props['aria-label'], 'Back to Codex')
   const rows = nodes(tree, node => node.props.role === 'menuitemradio')
   // The agent's own default names what it runs on, not "Codex" under "Codex".
   assert.deepEqual(rows.map(row => [labelOf(row), row.props['aria-checked'], row.props['aria-haspopup'] ?? null]), [
@@ -491,43 +553,45 @@ test('step 2 is one connection\'s models with a way back; a model with levels sa
   assert.equal(modelLabel({ ...cascade[2], resolvesTo: undefined }), 'Default')
   assert.equal(modelLabel({ ref: 'acp-claude/default', id: 'default', provider: 'acp-claude', providerName: 'Claude Code', name: 'Default (recommended)' }), 'Default (recommended)')
   assert.equal(modelLabel(cascade[0]), 'DeepSeek Flash')
-  // An unknown connection (a refreshed list dropped it) falls back to step 1.
-  assert.equal(nodes(step({ step: 'models', provider: 'gone' }), node => node.props['aria-label'] === 'Back to connections').length, 0)
+  // An unknown agent (a refreshed list dropped it) says so, with a way back.
+  const gone = step({ step: 'models', route: 'acp', provider: 'gone' })
+  assert.equal(nodes(gone, node => node.props.className === 'bt-model-back')[0].props['aria-label'], 'Back to ACP')
+  assert.ok(nodes(gone, node => node.props.className === 'bt-model-none').some(node => node.children[0] === 'No models are set up for this route yet.'))
 })
 
 test('step 3 is a model\'s levels with Default first; the Bot\'s level is ticked only on its own model', () => {
   const { step } = openMenu()
-  const own = step({ step: 'levels', provider: 'acp-codex', ref: 'acp-codex/default' })
+  const own = step({ step: 'levels', route: 'acp', provider: 'acp-codex', ref: 'acp-codex/default' })
   assert.equal(nodes(own, node => node.props.className === 'bt-model-back')[0].props['aria-label'], 'Back to Codex')
   const rows = nodes(own, node => node.props.role === 'menuitemradio')
   assert.deepEqual(rows.map(row => [labelOf(row), row.props['aria-checked']]), [['Default', false], ['Low', false], ['High', true]])
-  const other = nodes(step({ step: 'levels', provider: 'deepseek', ref: 'deepseek/pro' }), node => node.props.role === 'menuitemradio')
+  const other = nodes(step({ step: 'levels', route: 'native', provider: 'deepseek', ref: 'deepseek/pro' }), node => node.props.role === 'menuitemradio')
   assert.deepEqual(other.map(row => row.props['aria-checked']), [false, false, false])
-  // A model with no levels has no level step: its connection's models show instead.
-  assert.ok(nodes(step({ step: 'levels', provider: 'deepseek', ref: 'deepseek/flash' }), node => node.props['aria-label'] === 'Back to connections').length === 1)
+  // A model with no levels has no level step: its route's models show instead.
+  assert.equal(nodes(step({ step: 'levels', route: 'native', ref: 'deepseek/flash' }), node => node.props['aria-label'] === 'Back to routes').length, 1)
 })
 
 test('a model without levels applies at once; a level applies with its model in one update', async () => {
-  const { steps, updates } = openMenu()
-  steps.props.onModel(cascade[0])
+  const { steps, updates } = openMenu({ bot: { id: 'b1', name: 'Ops', model: 'deepseek/flash', appliedModel: 'deepseek/flash' } })
+  steps.props.onModel(cascade[0], 'native')
   // A model with levels opens its level step, saving nothing yet.
-  steps.props.onModel(cascade[1])
+  steps.props.onModel(cascade[1], 'native')
   await Promise.resolve()
-  assert.deepEqual(updates, [['b1', { model: 'deepseek/flash' }]])
+  assert.deepEqual(updates, [])
   steps.props.onLevel(cascade[1], 'high')
   steps.props.onLevel(cascade[1], undefined)
-  // On the Bot's own model a level changes the level only, and the one it runs on changes nothing.
-  steps.props.onLevel(cascade[2], 'low')
-  steps.props.onLevel(cascade[2], 'high')
-  assert.deepEqual(updates.slice(1), [
+  assert.deepEqual(updates, [
     ['b1', { model: 'deepseek/pro', effort: 'high' }],
     ['b1', { model: 'deepseek/pro', effort: null }],
-    ['b1', { effort: 'low' }],
   ])
+  // On the Bot's own model a level changes the level only.
+  const own = openMenu({ bot: { id: 'b1', name: 'Ops', model: 'deepseek/pro', appliedModel: 'deepseek/pro', effort: 'high' } })
+  own.steps.props.onLevel(cascade[1], 'low')
+  assert.deepEqual(own.updates, [['b1', { effort: 'low' }]])
 })
 
 test('in a Bot\'s chat the level goes with the model through the chat pick, and a new Bot keeps both', async () => {
-  const inChat = openMenu({ chat: true })
+  const inChat = openMenu({ chat: true, bot: { id: 'b1', name: 'Ops', model: 'deepseek/flash' } })
   inChat.steps.props.onLevel(cascade[1], 'low')
   assert.deepEqual(inChat.chosen, [['b1', 'deepseek/pro', { effort: 'low' }]])
   const picks = []
@@ -536,6 +600,59 @@ test('in a Bot\'s chat the level goes with the model through the chat pick, and 
   await new Promise(resolve => setTimeout(resolve, 0))
   assert.deepEqual(picks, [['model', 'deepseek/pro'], ['effort', 'high']])
   assert.deepEqual(fresh.updates, [])
+})
+
+test('crossing a route asks first and only then switches; crossing an ACP agent does too', () => {
+  const { RouteConfirm } = module.exports
+  const bot = { id: 'b1', name: 'Ops', model: 'acp-codex/default' }
+  const roster = { models: cascade, byId: { b1: bot } }
+  const asked = []
+  const route = RouteConfirm({
+    bot, roster, current: 'acp-codex/default', target: { ref: 'deepseek/flash' },
+    onCancel: () => asked.push('cancel'), onConfirm: () => asked.push('confirm'),
+  })
+  const text = node => nodes(node, n => n.props.className?.startsWith('bt-model-confirm'))[0]
+  assert.equal(text(route).children[0], 'Start a new conversation?')
+  assert.equal(nodes(route, node => node.props.className === 'bt-model-confirm-move')[0].children.join(''), 'ACP · Codex → Native · DeepSeek')
+  assert.equal(nodes(route, node => node.props.className === 'bt-model-confirm-text')[0].children[0],
+    'Changing the route starts a new conversation. Ops writes a handoff note first.')
+  const buttons = nodes(route, node => node.type === 'button')
+  assert.deepEqual(buttons.map(button => button.children[0]), ['Keep this conversation', 'Change route'])
+  buttons[0].props.onClick()
+  buttons[1].props.onClick()
+  assert.deepEqual(asked, ['cancel', 'confirm'])
+  // Another agent inside ACP is another harness: same warning, different word.
+  const agent = RouteConfirm({ bot, roster, current: 'acp-codex/default', target: { ref: 'acp-claude/default' }, onCancel: () => {}, onConfirm: () => {} })
+  assert.equal(nodes(agent, node => node.props.className === 'bt-model-confirm-text')[0].children[0],
+    'Changing the agent starts a new conversation. Ops writes a handoff note first.')
+  assert.deepEqual(nodes(agent, node => node.type === 'button').map(button => button.children[0]), ['Keep this conversation', 'Change agent'])
+})
+
+test('a route crossing reaches the host switch, not the in-place model update', async () => {
+  const { steps, updates, switched } = openMenu()
+  steps.props.onModel(cascade[0], 'native')
+  await new Promise(resolve => setTimeout(resolve, 0))
+  // The menu asks before it applies: with the confirmation still open, nothing was saved.
+  assert.deepEqual(updates, [])
+  assert.deepEqual(switched, [])
+})
+
+test('Herdr is offered, named unavailable, and lists its agents and models until #1007 wires it', () => {
+  const { steps, step, updates, switched } = openMenu()
+  const root = nodes(step(), node => node.props.role === 'menuitem' && node.props['aria-haspopup'] === 'menu')
+  assert.deepEqual(root.map(labelOf), ['Native', 'ACP', 'Herdr'])
+  assert.equal(hintOf(root[2]), 'Not available yet')
+  const agents = step({ step: 'agents', route: 'herdr' })
+  const rows = nodes(agents, node => node.props.role === 'menuitem' && node.props['aria-haspopup'] === 'menu')
+  assert.deepEqual(rows.map(labelOf), ['Claude Code', 'Codex', 'Hermes', 'Antigravity', 'omp'])
+  assert.deepEqual(rows.map(hintOf), ['Not available yet', 'Not available yet', 'Not available yet', 'Not available yet', 'Not available yet'])
+  const models = step({ step: 'models', route: 'herdr', agent: 'claude' })
+  const rowsOf = nodes(models, node => node.props.role === 'menuitemradio')
+  assert.deepEqual(rowsOf.map(labelOf), ['Default', 'Opus', 'Sonnet', 'Haiku'])
+  assert.deepEqual(rowsOf.map(hintOf), ['Not available yet', 'Not available yet', 'Not available yet', 'Not available yet'])
+  steps.props.onModel({ id: 'opus' }, 'herdr')
+  assert.deepEqual(updates, [])
+  assert.deepEqual(switched, [])
 })
 
 test('a Bot kept on a plan route until its CLI can take it says so, not that its model is unavailable (#868)', () => {
@@ -549,4 +666,19 @@ test('a Bot kept on a plan route until its CLI can take it says so, not that its
   assert.equal(modelHint(bot, waiting('checking'), undefined), 'This Bot stays on 5.6 Sol until Codex is ready.')
   // Another route's wait says nothing about this Bot.
   assert.equal(modelHint(bot, { ...roster, subscriptionWaiting: { anthropic: { to: 'acp-claude', cli: 'Claude Code', reason: 'sign-in' } } }, undefined), 'This model is not available now. Pick another one.')
+})
+
+test('the crossing says what Full access means on the route it moves to, only for a Full access Bot', () => {
+  const roster = { ready: true, models: cascade, defaultModel: 'deepseek/flash' }
+  const line = (bot, current, target) => nodes(RouteConfirm({
+    bot, roster, current, target: { ref: target }, onCancel: () => {}, onConfirm: () => {},
+  }), node => node.props.className === 'bt-model-confirm-access')[0]?.children[0]
+  assert.equal(line({ name: 'Ops', permission: 'danger-full-access' }, 'acp-codex/default', 'deepseek/flash'), "Full access: DSH's own tools run without asking.")
+  assert.equal(line({ name: 'Ops', permission: 'danger-full-access' }, 'deepseek/flash', 'acp-codex/default'), "Full access: the CLI's own no-ask mode.")
+  const withAgent = { ready: true, models: [...cascade, { ref: 'acp-gemini/pro', provider: 'acp-gemini', providerName: 'Gemini', name: 'Pro' }], defaultModel: 'deepseek/flash' }
+  assert.equal(nodes(RouteConfirm({
+    bot: { name: 'Ops', permission: 'danger-full-access' }, roster: withAgent, current: 'deepseek/flash', target: { ref: 'acp-gemini/pro' }, onCancel: () => {}, onConfirm: () => {},
+  }), node => node.props.className === 'bt-model-confirm-access')[0]?.children[0], "Full access: the agent's actions run without asking.")
+  assert.equal(line({ name: 'Ops', permission: 'workspace-write' }, 'deepseek/flash', 'acp-codex/default'), undefined)
+  assert.equal(line({ name: 'Ops' }, 'deepseek/flash', 'acp-codex/default'), undefined)
 })
