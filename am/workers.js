@@ -896,17 +896,23 @@ export const reapRow = ({ worktree, result, why, at }) => ({ worktree, result, w
  * `last`: the newest cleanup row for it since then ({ result, why, at }), else null. A path
  * already removed or gone is left out; one only ever given (`created: false`: --worktree, a
  * branch's existing worktree) is never in the list.
+ * `ownerOf`: a caller's canonical repository identity for each project. Missing or conflicting
+ * ownership in a later start row makes `project` null, so the caller retains that worktree.
  */
-export function reapCandidates(rows, reaps = []) {
+export function reapCandidates(rows, reaps = [], ownerOf = (project) => orNull(project)) {
   const by = new Map();
   for (const r of rows) {
     if (r?.event !== "start" || typeof r.worktree !== "string" || !r.worktree) continue;
     if (r.kind === "worker" && r.created === true) {
       const branch = orNull("branch" in r ? r.branch : r.task);
       by.delete(r.worktree);
-      by.set(r.worktree, { worktree: r.worktree, project: orNull(r.project), branch, terminals: [], since: String(r.at ?? ""), last: null });
+      const owner = ownerOf(r.project);
+      by.set(r.worktree, { worktree: r.worktree, project: owner ? orNull(r.project) : null,
+        owner, branch, terminals: [], since: String(r.at ?? ""), last: null });
     }
     const c = by.get(r.worktree);
+    // A later row with missing or conflicting ownership makes removal unsafe.
+    if (c && (!c.owner || ownerOf(r.project) !== c.owner)) c.project = null;
     if (c && typeof r.terminal === "string" && r.terminal) c.terminals.push(r.terminal);
   }
   for (const r of reaps) {
@@ -914,20 +920,23 @@ export function reapCandidates(rows, reaps = []) {
     if (c && String(r.at ?? "") >= c.since) c.last = { result: r.result, why: r.why ?? null, at: r.at ?? null };
   }
   return [...by.values()].filter((c) => c.last?.result !== "removed" && c.last?.result !== "gone")
-    .reverse().map(({ since, ...c }) => c);
+    .reverse().map(({ since, owner, ...c }) => c);
 }
 
 /**
  * Why a worktree with no live worker is kept, or null when it may go: `changes`, the lines of
  * `git status --porcelain`; `unpushed`, the commits on no remote branch; `branch`, the branch
  * checked out (null: a detached HEAD); `expected`, the worker's branch from the ledger; `prs`,
- * the branch's pull requests as gh lists them ([{ state }]), or null when gh couldn't say. A
- * worktree no longer on the worker's branch is kept (the folder may be another tree now); a
+ * the branch's pull requests as gh lists them ([{ state, headRefOid }]), or null on failure.
+ * `head`: the exact current commit. A worktree no longer on the worker's branch is kept
+ * (the folder may be another tree now); a
  * detached HEAD with commits on no remote is kept whatever its branch's pull requests say. Commits
- * on no remote keep it unless the branch has pull requests and every one is MERGED or CLOSED (a
- * squash merge leaves its commits on no remote once the branch is deleted).
+ * on no remote keep it unless a MERGED pull request names that exact head (a squash merge
+ * leaves its commits on no remote once the branch is deleted). CLOSED or an older merge is
+ * no proof that the current work is preserved.
  */
-export function workLeft({ changes, unpushed, prs = null, branch = null, expected = null }) {
+export function workLeft({ changes, unpushed, prs = null, head = null,
+  branch = null, expected = null }) {
   if (changes > 0) return "uncommitted changes";
   if (!branch) {
     return unpushed > 0 ? `HEAD is detached with ${unpushed} ${unpushed === 1 ? "commit" : "commits"} on no remote`
@@ -935,11 +944,16 @@ export function workLeft({ changes, unpushed, prs = null, branch = null, expecte
   }
   if (!expected) return `on ${branch}, and the workers ledger names no branch for it`;
   if (branch !== expected) return `on ${branch}, not the worker's branch ${expected}`;
+  if (!Number.isSafeInteger(unpushed) || unpushed < 0) {
+    return "can't prove HEAD is pushed or merged";
+  }
   if (unpushed > 0) {
-    if (Array.isArray(prs) && prs.length && prs.every((p) => p?.state === "MERGED" || p?.state === "CLOSED")) return null;
+    if (/^[0-9a-f]{40,64}$/.test(head ?? "") && Array.isArray(prs)
+      && prs.some((p) => p?.state === "MERGED" && p.headRefOid === head)) return null;
     const commits = `${unpushed} ${unpushed === 1 ? "commit" : "commits"} on no remote`;
-    if (prs === null) return `${commits}; gh couldn't tell whether ${branch} has a merged or closed pull request`;
-    return prs.length ? `${commits}; ${branch} has an open pull request` : `${commits}; ${branch} has no pull request`;
+    if (prs === null) return `${commits}; gh couldn't prove ${branch}'s current HEAD is merged`;
+    if (!prs.length) return `${commits}; ${branch} has no pull request`;
+    return `${commits}; no merged pull request proves ${branch}'s current HEAD is preserved`;
   }
   return null;
 }

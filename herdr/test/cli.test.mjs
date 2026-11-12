@@ -4661,7 +4661,8 @@ test("reap #899: a finished launch's end row and its branch's pr rows reach work
   writeFileSync(ledgerPath(s.app), `${JSON.stringify(start)}\n`, { mode: 0o600 });
   const first = s.cli(["reap"]);
   assert.equal(first.code, 0, first.err);
-  assert.equal(first.out.trim(), "No finished worker's worktree to remove.");
+  assert.equal(first.out.trim(), `kept ${start.worktree}: `
+    + "can't verify missing worktree repository ownership");
   const open = { event: "pr", project: s.project, branch: "fix/213", task: "gh-213", pr: 12, state: "open", first_commit_at: "2026-02-03T04:05:06.000Z",
     opened_at: "2026-02-03T05:00:00.000Z", merged_at: null, closed_at: null, core: "fakecore0000" };
   const at = (rows) => rows.map(({ at: _at, ...row }) => row);
