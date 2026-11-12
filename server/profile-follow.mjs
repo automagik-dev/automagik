@@ -1,11 +1,12 @@
 import { execFileSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync } from 'node:fs'
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync } from 'node:fs'
 import { cp } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import { pinStore, profileDirOf, PROFILE, seedProfile } from './lib.mjs'
-import { FOLLOW_STATUS, installedPlugins, markSeed, ownership, packageHash, profileState, compareRelease, validBuild, writeJson } from './profile-state.mjs'
+import { FOLLOW_STATUS, installedPlugins, markSeed, ownership, packageHash, profileState, compareRelease, validBuild, writeJson, readJson } from './profile-state.mjs'
 import { materializePlugins, PLUGINS } from './plugin-payload.mjs'
+import { mergeImageProfile, readLock } from './profile-lock.mjs'
 import { withVolumeLock } from './volume-lock.mjs'
 
 /** Copy cache files by rename: an existing store file may be hard-linked by the old profile. */
@@ -19,6 +20,26 @@ async function overlayStore(source, target) {
       cpSync(from, fresh)
       renameSync(fresh, to)
     } else throw new Error('Unsupported offline store entry')
+  }
+}
+
+/**
+ * pnpm indexes a package the lock holds no integrity for (a git-hosted one, such as Omni's
+ * plugins the welcome adds) by whether its scripts ran: DSH's own installs write
+ * `integrity.json`, and the update's --ignore-scripts install reads `integrity-not-built.json`.
+ * Give the update the index of the files the workspace already installed, so it stays offline
+ * and installs exactly those. An index pnpm already wrote is never replaced.
+ */
+export function reuseInstalledIndexes(store) {
+  const root = join(store, 'v10')
+  if (!existsSync(root)) return
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue
+    const built = join(root, entry.name, 'integrity.json'), plain = join(root, entry.name, 'integrity-not-built.json')
+    if (!existsSync(built) || !lstatSync(built).isFile() || existsSync(plain)) continue
+    const fresh = `${plain}.${process.pid}.tmp`
+    cpSync(built, fresh)
+    renameSync(fresh, plain)
   }
 }
 
@@ -90,8 +111,10 @@ async function followImageUnlocked({ dshHome, source, store, build, dshBin, inst
     // Repair seeds made by older images too. These inputs must survive every later
     // `dsh plugin install`, which resolves all direct dependencies again.
     // Rebuild the lock too: a stopped seed may have written the archives but not
-    // yet their new integrity. This branch only handles an unchanged image manifest.
-    materializePlugins({ source, target })
+    // yet their new integrity. The workspace's own lock keeps what the welcome added; one
+    // that cannot be read falls back to the image's, so a broken lock never stops the server.
+    try { materializePlugins({ source, target, lock: readLock(target) }) }
+    catch { materializePlugins({ source, target }) }
     pinStore(target, dshHome)
     return done('matching-image')
   }
@@ -100,6 +123,9 @@ async function followImageUnlocked({ dshHome, source, store, build, dshBin, inst
   let staging
   const previous = `${target}.image-previous`
   try {
+    const extras = Object.keys(readJson(join(target, 'package.json')).dependencies).filter(name => !PLUGINS.includes(name))
+    const addedVersions = Object.fromEntries(extras.map(name => [name, readJson(join(target, 'node_modules', name, 'package.json'))?.version]))
+    if (Object.values(addedVersions).some(version => typeof version !== 'string')) throw new Error('Missing added plugin')
     const stamp = `${now().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`
     const backup = join(dshHome, 'backups', stamp)
     mkdirSync(dirname(backup), { recursive: true, mode: 0o700 })
@@ -111,15 +137,17 @@ async function followImageUnlocked({ dshHome, source, store, build, dshBin, inst
     mkdirSync(dirname(profile), { recursive: true })
     await cp(target, profile, { recursive: true, verbatimSymlinks: true })
     rmSync(join(profile, 'node_modules'), { recursive: true, force: true })
-    cpSync(join(source, 'package.json'), join(profile, 'package.json'))
-    materializePlugins({ source, target: profile })
+    const lock = mergeImageProfile({ source, target: profile })
+    materializePlugins({ source, target: profile, lock })
     await overlayStore(store, join(dshHome, 'pnpm-store'))
+    reuseInstalledIndexes(join(dshHome, 'pnpm-store'))
     pinStore(profile, dshHome)
     await install({ dshBin, profile, dshHome: staging })
     if (!PLUGINS.every(name => installedPlugins(profile)[name] === build.plugins[name])) throw new Error('Image plugin install did not converge')
+    if (!extras.every(name => readJson(join(profile, 'node_modules', name, 'package.json'))?.version === addedVersions[name])) throw new Error('Added plugin did not survive image update')
     if (packageHash(target) !== own.packageSha256) return done('owner-managed')
     // Keep the materialized inputs on the data volume for subsequent plugin installs.
-    markSeed(profile, build.automagik)
+    markSeed(profile, build.automagik, undefined, readJson(join(source, 'package.json')))
     renameSync(target, previous)
     try { renameSync(profile, target) }
     catch (error) { renameSync(previous, target); throw error }
