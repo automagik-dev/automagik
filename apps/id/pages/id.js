@@ -32,7 +32,7 @@
     cannot: 'This device can’t make a passkey here. Try another one.',
     unsupported: 'This browser can’t use passkeys.',
     unsupportedNote: 'Open this page in an up-to-date Safari, Chrome, Edge or Firefox.',
-    unsupportedPhone: 'This browser can’t use passkeys. Use a phone code.',
+    unsupportedWhatsApp: 'This browser can’t use passkeys. Use WhatsApp.',
     saved: 'Passkey saved. You’re in!',
     in: 'You’re in!',
     here: 'You’re already signed in on this browser.',
@@ -42,18 +42,19 @@
     backPlain: 'Taking you back…',
     returned: name => `All set. You can go back to ${name}.`,
     close: 'You can close this page.',
-    phone: 'We’ll send a 6-digit code on WhatsApp.',
-    phoneHint: 'With the country code, starting with +.',
-    phoneHintPasskey: 'With the country code, starting with +. Your passkey may show up here too.',
-    phoneBad: 'Use the full number with the country code, like +55 11 91234 5678.',
-    sending: 'Sending…',
-    sent: number => `Code sent to ${number}. It can take a moment.`,
-    codeShort: 'Enter the 6 digits.',
-    codeWrong: 'That code isn’t right. Check it and try again.',
-    codeExpired: 'That code expired. Send a new one.',
-    codeLocked: 'Too many wrong codes. Send a new code to keep going.',
-    sendAgain: 'Send again',
-    sendAgainIn: left => `Send again in ${left} s`,
+    useWhatsApp: 'Use WhatsApp',
+    startAgain: 'Start again',
+    waStarting: 'Getting your message ready…',
+    waStart: 'Starting…',
+    waOpen: 'Open WhatsApp and press send. I’ll wait right here.',
+    waScan: 'Scan the code with your phone, then press send in WhatsApp. I’ll wait right here.',
+    waStepOpen: 'Open WhatsApp with the button below.',
+    waStepScan: 'Scan the code with your phone’s camera.',
+    waOpenHere: 'Open WhatsApp on this computer',
+    waLeft: time => `Waiting for your message · ${time}`,
+    waStill: 'Waiting for your message…',
+    waSlow: 'Checking a little slower for a moment.',
+    waExpired: 'That code ran out. Start again for a new one.',
     rate: 'Too many tries. Take a short break.',
     tryIn: left => `Try again in ${left} s`,
     offline: 'Can’t reach Automagik. Check your connection.',
@@ -79,19 +80,23 @@
   };
 
   const $ = id => document.getElementById(id);
+  const scene = $('scene');
   const pet = $('pet');
   const bubble = $('say');
   const card = $('card');
   let product = '';
   let acting = false;
 
-  // ---- The host: the pet's mood and what it says -------------------------------------
-  const THEN = { wave: 'idle', jump: 'idle' };
-  function mood(name) { if (pet.dataset.mood !== name) pet.dataset.mood = name; }
-  pet.addEventListener('animationend', (event) => {
-    const next = THEN[pet.dataset.mood];
-    if (next && event.animationName.startsWith('pet-')) pet.dataset.mood = next;
-  });
+  // ---- The hosts: who speaks, the face they make and what they say -------------------
+  function mood(name) {
+    if (scene.dataset.mood === name) return;
+    scene.dataset.mood = name;
+    pet.classList.remove('start');
+    void pet.offsetWidth;
+    pet.classList.add('start');
+  }
+  pet.addEventListener('animationend', () => pet.classList.remove('start'));
+  function who(name) { if (scene.dataset.who !== name) scene.dataset.who = name; }
   function say(text, tone) {
     bubble.textContent = text;
     if (tone) bubble.dataset.tone = tone; else delete bubble.dataset.tone;
@@ -286,11 +291,9 @@
   const webauthn = window.isSecureContext && typeof window.PublicKeyCredential === 'function' &&
     !!navigator.credentials && typeof navigator.credentials.get === 'function' &&
     typeof navigator.credentials.create === 'function';
-  let phoneOn = false;
+  let whatsappOn = false;
   let signedIn = false;
-  let phoneNumber = '';
-  let wrongCodes = 0;
-  let conditional = null;
+  let proof = null;
 
   const bytes = text => Uint8Array.from(atob(text.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
   const text64 = buffer => btoa(String.fromCharCode(...new Uint8Array(buffer)))
@@ -372,15 +375,16 @@
       create.prepend(use.querySelector('svg'));
       use.before(create);
     }
-    $('phone-offer').hidden = !phoneOn;
+    $('whatsapp-offer').hidden = !whatsappOn;
+    who('genie');
     say(line || T.passkey, tone);
     show('passkey');
   }
   function passkeyTrouble(error, creating) {
-    const controls = [$('use-passkey'), $('create-passkey'), $('use-phone')];
+    const controls = [$('use-passkey'), $('create-passkey'), $('use-whatsapp')];
     if (error.kind) return trouble(error, 'passkey-wait', controls);
     const name = error && error.name;
-    if (name === 'NotAllowedError' || name === 'AbortError') { mood('idle'); return say(T.cancelled); }
+    if (name === 'NotAllowedError' || name === 'AbortError') { mood('hmm'); return say(T.cancelled); }
     mood('fail');
     if (creating && name === 'InvalidStateError') return say(T.already, 'oops');
     if (name === 'NotSupportedError' || name === 'SecurityError' || name === 'ConstraintError') {
@@ -394,12 +398,7 @@
     mood('fail');
     say(creating ? T.failedSave : T.failedUse, 'oops');
   }
-  function stopConditional() {
-    if (conditional) { conditional.abort(); conditional = null; }
-  }
-
   function usePasskey() {
-    stopConditional();
     return act($('use-passkey'), T.waiting, async () => {
       mood('wait');
       say(T.prompt);
@@ -418,7 +417,6 @@
     });
   }
   function createPasskey() {
-    stopConditional();
     return act($('create-passkey'), T.waiting, async () => {
       mood('wait');
       say(T.promptSave);
@@ -476,149 +474,284 @@
     });
   }
 
-  // ---- Phone code: only when the service has it on -------------------------------------
-  function phone(line, tone) {
-    $('back-to-passkey').hidden = !webauthn;
-    $('phone-hint').textContent = T.phoneHint;
-    delete $('phone-hint').dataset.tone;
-    $('phone').removeAttribute('aria-invalid');
-    mood('idle');
-    say(line || T.phone, tone);
-    show('phone', $('phone'));
-    waitForPasskeyInField();
+  // ---- WhatsApp: only when the service has it on ---------------------------------------
+  // The person sends one message from their own WhatsApp; nothing is sent to them and no
+  // number or code is typed here. The page shows the message, waits and asks the service.
+  function stopWhatsApp() {
+    if (!proof) return;
+    proof.stopped = true;
+    clearTimeout(proof.timer);
+    clearInterval(proof.clock);
+    proof = null;
   }
-  // Conditional mediation: a saved passkey can be offered from the number field. The pending
-  // request is aborted before any other ceremony starts.
-  async function waitForPasskeyInField() {
-    if (conditional || !webauthn || typeof PublicKeyCredential.isConditionalMediationAvailable !== 'function') return;
-    const abort = new AbortController();
-    conditional = abort;
-    let credential;
-    try {
-      if (!(await PublicKeyCredential.isConditionalMediationAvailable())) return;
-      const options = await call('/api/auth/passkey/generate-authenticate-options');
-      if (abort.signal.aborted) return;
-      $('phone-hint').textContent = T.phoneHintPasskey;
-      credential = await navigator.credentials.get({
-        publicKey: requestOptions(options), mediation: 'conditional', signal: abort.signal,
-      });
-    } catch {
-      return; // aborted or not offered: the number field works without it
-    } finally {
-      if (conditional === abort) conditional = null;
-    }
-    act($('send-code'), T.checking, async () => {
+  // WhatsApp is the way in on offer: the only one on this browser, or after a code ran out.
+  function offer(line, tone, again) {
+    stopWhatsApp();
+    title(mustCreate ? 'Create your account for' : 'Sign in to', product || 'Automagik');
+    $('start-whatsapp').querySelector('[data-label]').textContent = again ? T.startAgain : T.useWhatsApp;
+    $('offer-passkey').hidden = !webauthn;
+    who('omni');
+    mood(again ? 'hmm' : 'idle');
+    say(line, tone);
+    show('offer', again ? $('start-whatsapp') : undefined);
+  }
+  function startWhatsApp(button) {
+    const first = button.id === 'use-whatsapp';
+    return act(button, T.waStart, async () => {
       mood('work');
-      say(T.checking);
-      try {
-        const result = await call('/api/auth/passkey/verify-authentication', {
-          response: credentialJSON(credential), ...(hasRequest ? { oauth_query: oauthQuery } : {}),
-        });
-        await entered(result, false, false);
-      } catch (error) {
-        await refused(error, false);
-      }
-    });
-  }
-  async function sendCode(button) {
-    const input = $('phone');
-    const hint = $('phone-hint');
-    const number = input.value.replace(/[\s().-]/g, '');
-    if (!/^\+[1-9]\d{7,14}$/.test(number)) {
-      input.setAttribute('aria-invalid', 'true');
-      hint.textContent = T.phoneBad;
-      hint.dataset.tone = 'oops';
-      input.focus();
-      return;
-    }
-    input.removeAttribute('aria-invalid');
-    const shown = input.value.trim();
-    await act(button, T.sending, async () => {
-      try {
-        await call('/api/auth/phone-number/send-otp', { phoneNumber: number });
-      } catch (error) {
-        const first = button.id === 'send-code';
-        if (error.kind !== 'refused') {
-          return trouble(error, first ? 'phone-wait' : 'code-wait', first ? [button] : [button, $('check-code')]);
-        }
-        mood('fail');
-        if (error.code !== 'INVALID_PHONE_NUMBER') return (await requestEnded()) ? ended() : say(T.broken, 'oops');
-        if (!first) return say(T.phoneBad, 'oops');
-        input.setAttribute('aria-invalid', 'true');
-        hint.textContent = T.phoneBad;
-        hint.dataset.tone = 'oops';
-        return undefined;
-      }
-      phoneNumber = number;
-      stopConditional();
-      code(shown);
-    });
-  }
-  function code(shown) {
-    const input = $('code');
-    release('locked');
-    wrongCodes = 0;
-    input.value = '';
-    input.removeAttribute('aria-invalid');
-    $('code-hint').textContent = '';
-    delete $('code-hint').dataset.tone;
-    mood('wait');
-    say(T.sent(shown.replace(/ /g, '\u00a0')));
-    show('code', input);
-    const resend = $('resend');
-    hold('resend', 30, [resend], (left) => { resend.textContent = T.sendAgainIn(left); },
-      () => { resend.textContent = T.sendAgain; });
-  }
-  function codeTrouble(line, locked) {
-    const input = $('code');
-    mood('fail');
-    say(line, 'oops');
-    input.setAttribute('aria-invalid', 'true');
-    $('code-hint').textContent = '';
-    if (locked) {
-      // A locked code cannot be tried again: only a new send goes on. No count is promised.
-      const locks = [input, $('check-code')];
-      for (const control of locks) { control.disabled = true; control.setAttribute('data-hold', ''); }
-      holds.set('locked', { timer: 0, controls: locks });
-      release('resend');
-    } else {
-      input.select();
-    }
-  }
-  async function checkCode() {
-    const input = $('code');
-    const digits = input.value.replace(/\D/g, '');
-    if (digits.length !== 6) {
-      input.setAttribute('aria-invalid', 'true');
-      $('code-hint').textContent = T.codeShort;
-      $('code-hint').dataset.tone = 'oops';
-      input.focus();
-      return;
-    }
-    await act($('check-code'), T.checking, async () => {
-      mood('work');
+      say(T.waStarting);
+      // Asked to create: the new account's sign-in is reported with `created`, not the query.
       const omitted = mustCreate;
+      let started;
       try {
         if (omitted && signedIn) { await call('/api/auth/sign-out', {}); signedIn = false; }
-        const result = await call('/api/auth/phone-number/verify', {
-          phoneNumber, code: digits, ...(hasRequest && !omitted ? { oauth_query: oauthQuery } : {}),
-        });
-        await entered(result, false, omitted);
+        started = await call('/api/auth/whatsapp/start', hasRequest && !omitted ? { oauth_query: oauthQuery } : {});
       } catch (error) {
-        if (error.kind !== 'refused') return trouble(error, 'code-wait', [$('check-code'), $('resend')]);
-        if (error.code === 'TOO_MANY_ATTEMPTS' || error.status === 403) return codeTrouble(T.codeLocked, true);
-        if (error.code === 'OTP_EXPIRED' || error.code === 'OTP_NOT_FOUND') return codeTrouble(T.codeExpired, false);
-        // The service locks a code after three wrong answers and only says so on the next
-        // try, so the page keeps that count itself. It never shows how many are left.
-        if (error.code === 'INVALID_OTP') {
-          wrongCodes += 1;
-          return wrongCodes >= 3 ? codeTrouble(T.codeLocked, true) : codeTrouble(T.codeWrong, false);
+        if (error.kind !== 'refused') {
+          return trouble(error, first ? 'passkey-wait' : 'offer-wait',
+            first ? [$('use-passkey'), $('create-passkey'), button] : [button]);
         }
-        if (await requestEnded()) return ended();
-        codeTrouble(T.codeWrong, false);
+        if (error.status === 403 || await requestEnded()) return ended();
+        mood('fail');
+        return say(T.broken, 'oops');
       }
+      let link = null;
+      try { link = new URL(String(started && started.url)); } catch { link = null; }
+      const code = started && typeof started.code === 'string' ? started.code : '';
+      if (!link || link.protocol !== 'https:' || !/^[A-Za-z0-9]{4,12}$/.test(code)) {
+        mood('fail');
+        return say(T.broken, 'oops');
+      }
+      waiting(link, code, Number(started.expiresAt), omitted);
     });
-    if (!input.disabled && input.getAttribute('aria-invalid') === 'true') input.focus();
+  }
+  function waiting(link, code, expiresAt, omitted) {
+    stopWhatsApp();
+    const run = { stopped: false, asking: false, held: false, timer: 0, clock: 0 };
+    proof = run;
+    // On a phone the button opens WhatsApp; on a desk the phone scans the same link.
+    const onPhone = window.matchMedia('(hover: none) and (pointer: coarse)').matches;
+    const words = link.searchParams.get('text') || '';
+    $('wa-words').textContent = words.endsWith(code) ? words.slice(0, -code.length).trim() : '';
+    $('wa-code').textContent = code;
+    const drawn = !onPhone && drawCode($('qr-code'), link.href);
+    $('qr').hidden = !drawn;
+    $('proof').classList.toggle('with-qr', drawn);
+    $('wa-step-open').textContent = drawn ? T.waStepScan : T.waStepOpen;
+    const open = $('open-whatsapp');
+    open.href = link.href;
+    open.className = drawn ? 'button secondary' : 'button primary';
+    open.querySelector('[data-label]').textContent = drawn ? T.waOpenHere : 'Open WhatsApp';
+    $('leave-whatsapp').hidden = !webauthn;
+    const line = drawn ? T.waScan : T.waOpen;
+    title(mustCreate ? 'Create your account for' : 'Sign in to', product || 'Automagik');
+    who('omni');
+    mood('wait');
+    say(line);
+    show('whatsapp', $('title'));
+
+    const until = Math.min(Number.isFinite(expiresAt) ? expiresAt : Infinity, Date.now() + 300000);
+    const paint = () => {
+      const left = Math.max(0, Math.ceil((until - Date.now()) / 1000));
+      $('wa-left').textContent = left ? T.waLeft(`${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`) : T.waStill;
+    };
+    paint();
+    run.clock = setInterval(paint, 1000);
+    let steady = true;
+    const next = (wait) => { run.asking = false; if (!run.stopped) run.timer = setTimeout(ask, wait); };
+    async function ask() {
+      if (run.stopped || run.asking) return;
+      run.asking = true;
+      run.held = false;
+      let result;
+      try {
+        result = await call('/api/auth/whatsapp/status');
+      } catch (error) {
+        if (run.stopped) return;
+        steady = false;
+        if (error.kind === 'rate') { mood('hmm'); say(T.waSlow); run.held = true; return next(error.wait * 1000); }
+        if (error.kind === 'refused') {
+          stopWhatsApp();
+          return error.status === 403 || await requestEnded() ? ended() : offer(T.waExpired, '', true);
+        }
+        mood('fail');
+        say(error.kind === 'network' ? T.offline : T.broken, 'oops');
+        return next(2000);
+      }
+      if (run.stopped) return;
+      const status = result && typeof result === 'object' ? result.status : '';
+      if (status === 'verified' || (result && result.redirect === true)) {
+        stopWhatsApp();
+        return entered(result, false, omitted);
+      }
+      if (status !== 'pending') return offer(T.waExpired, '', true);
+      if (!steady) { steady = true; mood('wait'); say(line); }
+      next(2000);
+    }
+    // Back from WhatsApp: ask at once instead of waiting for the next turn.
+    run.now = () => { if (!run.held) { clearTimeout(run.timer); ask(); } };
+    next(2000);
+  }
+  function leaveWhatsApp() {
+    stopWhatsApp();
+    mood('idle');
+    passkeys();
+  }
+
+  // A QR code for the WhatsApp link, drawn here so nothing leaves this origin. Byte mode,
+  // error correction M, versions 1 to 10 (up to 213 bytes): [codewords, check words per block,
+  // blocks] and the centres of the alignment marks.
+  const QR = [null, [26, 10, 1, []], [44, 16, 1, [6, 18]], [70, 26, 1, [6, 22]], [100, 18, 2, [6, 26]],
+    [134, 24, 2, [6, 30]], [172, 16, 4, [6, 34]], [196, 18, 4, [6, 22, 38]], [242, 22, 4, [6, 24, 42]],
+    [292, 22, 5, [6, 26, 46]], [346, 26, 5, [6, 28, 50]]];
+  function codeMatrix(text) {
+    const data = [...new TextEncoder().encode(text)];
+    let version = 1;
+    const room = v => QR[v][0] - QR[v][1] * QR[v][2];
+    while (version <= 10 && 4 + (version < 10 ? 8 : 16) + data.length * 8 > room(version) * 8) version++;
+    if (version > 10) return null;
+    const [total, checks, count, marks] = QR[version];
+    // The message: mode, length, bytes, an end mark, then padding to the version's room.
+    const bits = [];
+    const put = (value, length) => { for (let i = length - 1; i >= 0; i--) bits.push((value >>> i) & 1); };
+    put(4, 4);
+    put(data.length, version < 10 ? 8 : 16);
+    for (const byte of data) put(byte, 8);
+    put(0, Math.min(4, room(version) * 8 - bits.length));
+    put(0, (8 - bits.length % 8) % 8);
+    for (let pad = 0xec; bits.length < room(version) * 8; pad ^= 0xec ^ 0x11) put(pad, 8);
+    const words = [];
+    for (let i = 0; i < bits.length; i += 8) words.push(bits.slice(i, i + 8).reduce((byte, bit) => byte << 1 | bit, 0));
+    // Check words (Reed-Solomon over GF(256)), block by block, then interleaved.
+    const times = (x, y) => { let z = 0; for (let i = 7; i >= 0; i--) { z = (z << 1) ^ ((z >>> 7) * 0x11d); z ^= ((y >>> i) & 1) * x; } return z; };
+    const divisor = new Array(checks).fill(0);
+    divisor[checks - 1] = 1;
+    for (let i = 0, root = 1; i < checks; i++, root = times(root, 2)) {
+      for (let j = 0; j < checks; j++) { divisor[j] = times(divisor[j], root); if (j + 1 < checks) divisor[j] ^= divisor[j + 1]; }
+    }
+    const short = count - total % count;
+    const length = Math.floor(total / count);
+    const blocks = [];
+    for (let i = 0, at = 0; i < count; i++) {
+      const part = words.slice(at, at + length - checks + (i < short ? 0 : 1));
+      at += part.length;
+      const rest = new Array(checks).fill(0);
+      for (const byte of part) {
+        const factor = byte ^ rest.shift();
+        rest.push(0);
+        divisor.forEach((value, j) => { rest[j] ^= times(value, factor); });
+      }
+      if (i < short) part.push(0);
+      blocks.push(part.concat(rest));
+    }
+    const stream = [];
+    for (let i = 0; i < blocks[0].length; i++) {
+      blocks.forEach((block, j) => { if (i !== length - checks || j >= short) stream.push(block[i]); });
+    }
+    // The grid: the fixed marks first, then the message in its zigzag.
+    const size = version * 4 + 17;
+    const grid = Array.from({ length: size }, () => new Array(size).fill(false));
+    const fixed = Array.from({ length: size }, () => new Array(size).fill(false));
+    const mark = (x, y, dark) => { if (x >= 0 && x < size && y >= 0 && y < size) { grid[y][x] = dark; fixed[y][x] = true; } };
+    for (let i = 0; i < size; i++) { mark(6, i, i % 2 === 0); mark(i, 6, i % 2 === 0); }
+    for (const [cx, cy] of [[3, 3], [size - 4, 3], [3, size - 4]]) {
+      for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) {
+        const ring = Math.max(Math.abs(dx), Math.abs(dy));
+        mark(cx + dx, cy + dy, ring !== 2 && ring !== 4);
+      }
+    }
+    const last = marks.length - 1;
+    marks.forEach((cx, i) => marks.forEach((cy, j) => {
+      if ((i === 0 && j === 0) || (i === 0 && j === last) || (i === last && j === 0)) return;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) mark(cx + dx, cy + dy, Math.max(Math.abs(dx), Math.abs(dy)) !== 1);
+    }));
+    const format = (mask) => {
+      let rest = mask;
+      for (let i = 0; i < 10; i++) rest = (rest << 1) ^ ((rest >>> 9) * 0x537);
+      const value = (mask << 10 | rest) ^ 0x5412;
+      const bit = i => ((value >>> i) & 1) !== 0;
+      for (let i = 0; i <= 5; i++) mark(8, i, bit(i));
+      mark(8, 7, bit(6)); mark(8, 8, bit(7)); mark(7, 8, bit(8));
+      for (let i = 9; i < 15; i++) mark(14 - i, 8, bit(i));
+      for (let i = 0; i < 8; i++) mark(size - 1 - i, 8, bit(i));
+      for (let i = 8; i < 15; i++) mark(8, size - 15 + i, bit(i));
+      mark(8, size - 8, true);
+    };
+    format(0);
+    if (version >= 7) {
+      let rest = version;
+      for (let i = 0; i < 12; i++) rest = (rest << 1) ^ ((rest >>> 11) * 0x1f25);
+      const value = version << 12 | rest;
+      for (let i = 0; i < 18; i++) {
+        const dark = ((value >>> i) & 1) !== 0;
+        mark(size - 11 + i % 3, Math.floor(i / 3), dark);
+        mark(Math.floor(i / 3), size - 11 + i % 3, dark);
+      }
+    }
+    let placed = 0;
+    for (let right = size - 1; right >= 1; right -= 2) {
+      if (right === 6) right = 5;
+      for (let step = 0; step < size; step++) for (let j = 0; j < 2; j++) {
+        const x = right - j;
+        const y = ((right + 1) & 2) === 0 ? size - 1 - step : step;
+        if (fixed[y][x] || placed >= stream.length * 8) continue;
+        grid[y][x] = ((stream[placed >>> 3] >>> (7 - (placed & 7))) & 1) !== 0;
+        placed++;
+      }
+    }
+    // The mask that leaves the calmest pattern, by the standard's four penalties.
+    const MASKS = [(x, y) => (x + y) % 2 === 0, (x, y) => y % 2 === 0, x => x % 3 === 0, (x, y) => (x + y) % 3 === 0,
+      (x, y) => (Math.floor(x / 3) + Math.floor(y / 2)) % 2 === 0, (x, y) => x * y % 2 + x * y % 3 === 0,
+      (x, y) => (x * y % 2 + x * y % 3) % 2 === 0, (x, y) => ((x + y) % 2 + x * y % 3) % 2 === 0];
+    const flip = (mask) => {
+      for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) if (!fixed[y][x] && MASKS[mask](x, y)) grid[y][x] = !grid[y][x];
+    };
+    const penalty = () => {
+      let score = 0;
+      let dark = 0;
+      const lines = [];
+      for (let i = 0; i < size; i++) {
+        lines.push(grid[i].map(cell => (cell ? '1' : '0')).join(''));
+        lines.push(grid.map(row => (row[i] ? '1' : '0')).join(''));
+      }
+      for (const line of lines) {
+        for (const run of line.match(/0{5,}|1{5,}/g) || []) score += run.length - 2;
+        for (const pattern of ['10111010000', '00001011101']) {
+          for (let at = line.indexOf(pattern); at >= 0; at = line.indexOf(pattern, at + 1)) score += 40;
+        }
+      }
+      for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+        if (grid[y][x]) dark++;
+        if (x + 1 < size && y + 1 < size && grid[y][x] === grid[y][x + 1] &&
+            grid[y][x] === grid[y + 1][x] && grid[y][x] === grid[y + 1][x + 1]) score += 3;
+      }
+      return score + Math.floor(Math.abs(dark * 20 - size * size * 10) / (size * size)) * 10;
+    };
+    let best = 0;
+    let least = Infinity;
+    for (let mask = 0; mask < 8; mask++) {
+      flip(mask);
+      format(mask);
+      const score = penalty();
+      if (score < least) { least = score; best = mask; }
+      flip(mask);
+    }
+    flip(best);
+    format(best);
+    return grid;
+  }
+  function drawCode(svg, text) {
+    const grid = codeMatrix(text);
+    if (!grid) return false;
+    const quiet = 2;
+    let path = '';
+    grid.forEach((row, y) => row.forEach((dark, x) => { if (dark) path += `M${x + quiet} ${y + quiet}h1v1h-1z`; }));
+    const shape = document.createElementNS(svg.namespaceURI, 'path');
+    shape.setAttribute('class', 'qr-dark');
+    shape.setAttribute('d', path);
+    svg.setAttribute('viewBox', `0 0 ${grid.length + quiet * 2} ${grid.length + quiet * 2}`);
+    svg.replaceChildren(shape);
+    return true;
   }
 
   async function signIn() {
@@ -633,13 +766,13 @@
       return name.reason.kind === 'refused' ? ended() : retry(name.reason, signIn);
     }
     product = name.value;
-    // A config failure leaves passkeys usable and the phone option hidden.
-    phoneOn = config.status === 'fulfilled' && !!config.value && config.value.phoneEnabled === true;
+    // A config failure leaves passkeys usable and the WhatsApp option hidden.
+    whatsappOn = config.status === 'fulfilled' && !!config.value && config.value.whatsappEnabled === true;
     signedIn = current.status === 'fulfilled' && !!current.value && !!current.value.session;
     if (signedIn && !mustCreate && !hasRequest) return done(false);
     if (signedIn && !mustCreate && !mustBeFresh) return session();
     if (!webauthn) {
-      if (phoneOn) { title('Sign in to', product || 'Automagik'); return phone(T.unsupportedPhone, 'oops'); }
+      if (whatsappOn) return offer(T.unsupportedWhatsApp);
       return stop('Sign in to', product || 'Automagik', T.unsupported, T.unsupportedNote);
     }
     mood('wave');
@@ -736,24 +869,19 @@
   const on = (id, event, handler) => { const node = $(id); if (node) node.addEventListener(event, handler); };
   on('use-passkey', 'click', usePasskey);
   on('create-passkey', 'click', createPasskey);
-  on('use-phone', 'click', () => { stopConditional(); phone(); });
-  on('back-to-passkey', 'click', () => { stopConditional(); mood('idle'); passkeys(); });
+  on('use-whatsapp', 'click', () => startWhatsApp($('use-whatsapp')));
+  on('start-whatsapp', 'click', () => startWhatsApp($('start-whatsapp')));
+  on('offer-passkey', 'click', leaveWhatsApp);
+  on('leave-whatsapp', 'click', leaveWhatsApp);
   on('continue', 'click', carryOn);
   on('switch', 'click', () => signOut($('switch')));
   on('sign-out', 'click', () => signOut($('sign-out')));
-  on('phone-form', 'submit', (event) => { event.preventDefault(); sendCode($('send-code')); });
-  on('code-form', 'submit', (event) => { event.preventDefault(); checkCode(); });
-  on('resend', 'click', () => sendCode($('resend')));
-  on('change-number', 'click', () => { release('resend'); release('locked'); phone(); });
-  on('code', 'input', () => {
-    const input = $('code');
-    input.value = input.value.replace(/\D/g, '').slice(0, 6);
-    input.removeAttribute('aria-invalid');
-    if (input.value.length === 6 && !acting) checkCode();
-  });
   on('allow', 'click', () => decide(true));
   on('deny', 'click', () => decide(false));
   on('sign-in-again', 'click', () => { window.location.assign(`/sign-in?${oauthQuery}`); });
+  // Leaving stops the asking; coming back from WhatsApp asks at once.
+  window.addEventListener('pagehide', stopWhatsApp);
+  document.addEventListener('visibilitychange', () => { if (proof && document.visibilityState === 'visible') proof.now(); });
   // Back from the product: start clean instead of showing a finished state.
   window.addEventListener('pageshow', (event) => { if (event.persisted) window.location.reload(); });
 

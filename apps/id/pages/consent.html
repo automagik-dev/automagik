@@ -12,21 +12,25 @@
 <title>Allow access · Automagik ID</title>
 <link rel="icon" type="image/png" href="/assets/icon.png">
 <link rel="preload" href="/assets/manrope-latin.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="preload" href="/assets/pet.webp" as="image" type="image/webp">
+<link rel="preload" href="/assets/genie-faces.webp" as="image" type="image/webp">
 <link rel="stylesheet" href="/id.css">
 <script src="/id.js" defer></script>
 </head>
 <body data-page="consent">
-<div class="stage" aria-hidden="true"></div>
+<div class="stage" aria-hidden="true">
+<svg class="sky sky-left" viewBox="0 0 360 520" focusable="false"><path class="sky-line" d="M34 96 150 212 60 318M150 212l150 60"/><path class="sky-arc" d="M96 36c92 60 132 150 118 262"/><circle class="node node-cyan" cx="34" cy="96" r="7"/><circle class="node node-lilac" cx="150" cy="212" r="15"/><circle class="node node-pink" cx="60" cy="318" r="8"/><circle class="node node-cyan" cx="300" cy="272" r="6"/></svg>
+<svg class="sky sky-right" viewBox="0 0 360 520" focusable="false"><path class="sky-line" d="M326 120 214 196l72 132M214 196 70 150"/><path class="sky-arc" d="M300 470C190 430 120 350 110 250"/><circle class="node node-pink" cx="326" cy="120" r="9"/><circle class="node node-cyan" cx="214" cy="196" r="13"/><circle class="node node-lilac" cx="286" cy="328" r="8"/><circle class="node node-pink" cx="70" cy="150" r="5"/></svg>
+</div>
 <main class="shell">
 <div class="column">
   <header class="brand"><img src="/assets/wordmark.webp" width="471" height="96" alt="Automagik"></header>
 
-  <div class="middle">
+  <div class="middle" id="scene" data-who="genie" data-mood="work">
   <div class="host">
-    <div class="pet-spot" aria-hidden="true"><div class="pet" id="pet" data-mood="work"></div></div>
+    <div class="pet-spot" aria-hidden="true"><div class="pet" id="pet"></div></div>
     <p class="bubble" id="say" role="status">One moment…</p>
   </div>
+  <div class="pal" aria-hidden="true"></div>
 
   <section class="card" id="card" aria-labelledby="title" aria-busy="true">
     <h1 id="title" tabindex="-1"><span id="lead">Allow access</span> <span class="product" id="product" hidden></span></h1>

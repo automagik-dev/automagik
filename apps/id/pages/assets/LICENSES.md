@@ -6,11 +6,11 @@ loaded from another origin.
 - `wordmark.webp`: the Automagik wordmark, copied unchanged from
   `apps/bots-dsh/src/client/art/wordmark.webp`. Apache-2.0, Namastex Labs and the Automagik
   contributors.
-- `pet.webp`: the Automagik pet. Six rows of the app's own sprite sheet
-  (`apps/bots-dsh/src/host/pets/automagik/spritesheet.webp`), cropped, never redrawn: idle,
-  waving, jumping, failed, waiting and running (rows 0, 3, 4, 5, 6 and 7; each cell is
-  192 x 208). Apache-2.0; the Bots' art carries the DS Bot and Automagik notices of
-  `apps/bots-dsh/NOTICE`.
+- `genie-faces.webp` and `omni-faces.webp`: the faces of Genie and Omni, the two hosts of
+  these pages. Copied unchanged from `apps/bots-dsh/src/client/art/genie-expressions.webp`
+  and `apps/bots-dsh/src/client/art/omni-expressions.webp`: seven faces side by side in each
+  (Genie's cells are 192 x 208, Omni's 192 x 192). The pages show one cell at a time and
+  never redraw them. Apache-2.0, Namastex Labs and the Automagik contributors.
 - `icon.png`: the Automagik app icon, `apps/desktop/assets/icon.png` scaled to 192 x 192.
   Apache-2.0.
 - `manrope-latin.woff2`: Manrope, Copyright 2018 The Manrope Project Authors. SIL Open Font
@@ -20,6 +20,3 @@ loaded from another origin.
 
 The fonts and their licence texts are copied unchanged from
 `apps/bots-dsh/src/client/art/fonts/`.
-
-The pet sheet is built with ffmpeg (libwebp, quality 84): each row is a 1536 x 208 crop of
-the source at y = 0, 624, 832, 1040, 1248 and 1456, stacked top to bottom in that order.

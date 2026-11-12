@@ -12,21 +12,25 @@
 <title>Sign in · Automagik ID</title>
 <link rel="icon" type="image/png" href="/assets/icon.png">
 <link rel="preload" href="/assets/manrope-latin.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="preload" href="/assets/pet.webp" as="image" type="image/webp">
+<link rel="preload" href="/assets/genie-faces.webp" as="image" type="image/webp">
 <link rel="stylesheet" href="/id.css">
 <script src="/id.js" defer></script>
 </head>
 <body data-page="sign-in">
-<div class="stage" aria-hidden="true"></div>
+<div class="stage" aria-hidden="true">
+<svg class="sky sky-left" viewBox="0 0 360 520" focusable="false"><path class="sky-line" d="M34 96 150 212 60 318M150 212l150 60"/><path class="sky-arc" d="M96 36c92 60 132 150 118 262"/><circle class="node node-cyan" cx="34" cy="96" r="7"/><circle class="node node-lilac" cx="150" cy="212" r="15"/><circle class="node node-pink" cx="60" cy="318" r="8"/><circle class="node node-cyan" cx="300" cy="272" r="6"/></svg>
+<svg class="sky sky-right" viewBox="0 0 360 520" focusable="false"><path class="sky-line" d="M326 120 214 196l72 132M214 196 70 150"/><path class="sky-arc" d="M300 470C190 430 120 350 110 250"/><circle class="node node-pink" cx="326" cy="120" r="9"/><circle class="node node-cyan" cx="214" cy="196" r="13"/><circle class="node node-lilac" cx="286" cy="328" r="8"/><circle class="node node-pink" cx="70" cy="150" r="5"/></svg>
+</div>
 <main class="shell">
 <div class="column">
   <header class="brand"><img src="/assets/wordmark.webp" width="471" height="96" alt="Automagik"></header>
 
-  <div class="middle">
+  <div class="middle" id="scene" data-who="genie" data-mood="work">
   <div class="host">
-    <div class="pet-spot" aria-hidden="true"><div class="pet" id="pet" data-mood="work"></div></div>
+    <div class="pet-spot" aria-hidden="true"><div class="pet" id="pet"></div></div>
     <p class="bubble" id="say" role="status">One moment…</p>
   </div>
+  <div class="pal" aria-hidden="true"></div>
 
   <section class="card" id="card" aria-labelledby="title" aria-busy="true">
     <h1 id="title" tabindex="-1"><span id="lead">Sign in</span> <span class="product" id="product" hidden></span></h1>
@@ -46,9 +50,15 @@
           <span data-label><span class="aside">New here?</span> Create a passkey</span>
         </button>
       </div>
-      <div id="phone-offer" hidden>
+      <!-- WhatsApp: shown only when the service has it on. -->
+      <div id="whatsapp-offer" hidden>
         <p class="or">or</p>
-        <button class="link" id="use-phone" type="button">Use a phone code</button>
+        <div class="stack">
+          <button class="button secondary" id="use-whatsapp" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a8.5 8.5 0 0 0-7.3 12.8L3.5 20.5l4.3-1.1A8.5 8.5 0 1 0 12 3.5z"/><path d="M9 9.2c.2 2.6 2.2 4.8 4.9 5.4l1.4-1.4"/></svg>
+            <span data-label>Use WhatsApp</span>
+          </button>
+        </div>
       </div>
       <p class="wait" id="passkey-wait" hidden></p>
     </div>
@@ -62,35 +72,41 @@
       <p class="wait" id="session-wait" hidden></p>
     </div>
 
-    <!-- Phone code: shown only when the service has it on. -->
-    <form class="view" data-view="phone" id="phone-form" novalidate hidden>
-      <div class="field">
-        <label for="phone">Phone number</label>
-        <input class="input" id="phone" name="phone" type="tel" inputmode="tel" autocomplete="username webauthn" autocapitalize="off" spellcheck="false" placeholder="+55 11 91234 5678" maxlength="24" aria-describedby="phone-hint">
-        <p class="hint" id="phone-hint">With the country code, starting with +.</p>
-      </div>
+    <!-- WhatsApp is the only way in on this browser, or the last code ran out. -->
+    <div class="view" data-view="offer" hidden>
       <div class="stack">
-        <button class="button primary" id="send-code" type="submit"><span data-label>Send code</span></button>
+        <button class="button primary" id="start-whatsapp" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a8.5 8.5 0 0 0-7.3 12.8L3.5 20.5l4.3-1.1A8.5 8.5 0 1 0 12 3.5z"/><path d="M9 9.2c.2 2.6 2.2 4.8 4.9 5.4l1.4-1.4"/></svg>
+          <span data-label>Use WhatsApp</span>
+        </button>
       </div>
-      <p class="wait" id="phone-wait" hidden></p>
-      <button class="link" id="back-to-passkey" type="button">Use a passkey</button>
-    </form>
+      <p class="wait" id="offer-wait" hidden></p>
+      <button class="link" id="offer-passkey" type="button">Use a passkey</button>
+    </div>
 
-    <form class="view" data-view="code" id="code-form" novalidate hidden>
-      <div class="field">
-        <label for="code">6-digit code</label>
-        <input class="input code" id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*" maxlength="6" spellcheck="false" aria-describedby="code-hint say">
-        <p class="hint" id="code-hint"></p>
+    <!-- WhatsApp: the message is ready. The person sends it; this page waits and signs in. -->
+    <div class="view" data-view="whatsapp" hidden>
+      <div class="proof" id="proof">
+        <div class="qr" id="qr" hidden><svg id="qr-code" role="img" aria-label="QR code: opens WhatsApp on your phone with the message ready" focusable="false"></svg></div>
+        <div class="letter">
+          <p class="letter-label">Your message, ready to send</p>
+          <p class="letter-text"><span id="wa-words"></span> <strong id="wa-code"></strong></p>
+        </div>
       </div>
+      <ol class="steps">
+        <li id="wa-step-open"></li>
+        <li>Press send. Nothing is sent for you.</li>
+        <li>Come back here. This page signs you in.</li>
+      </ol>
       <div class="stack">
-        <button class="button primary" id="check-code" type="submit"><span data-label>Continue</span></button>
+        <a class="button primary" id="open-whatsapp" target="_blank" rel="noopener noreferrer">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5a8.5 8.5 0 0 0-7.3 12.8L3.5 20.5l4.3-1.1A8.5 8.5 0 1 0 12 3.5z"/><path d="M9 9.2c.2 2.6 2.2 4.8 4.9 5.4l1.4-1.4"/></svg>
+          <span data-label>Open WhatsApp</span>
+        </a>
       </div>
-      <p class="wait" id="code-wait" hidden></p>
-      <div class="links">
-        <button class="link" id="resend" type="button">Send again</button>
-        <button class="link" id="change-number" type="button">Change number</button>
-      </div>
-    </form>
+      <p class="wait waiting" id="wa-wait"><span class="spin" aria-hidden="true"></span><span id="wa-left"></span></p>
+      <button class="link" id="leave-whatsapp" type="button">Use a passkey</button>
+    </div>
 
     <!-- Signed in, on the way back to the product. -->
     <div class="view" data-view="going" hidden>
