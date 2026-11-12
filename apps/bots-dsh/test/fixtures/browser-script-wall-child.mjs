@@ -101,6 +101,13 @@ const checks = {
   })),
   folder: async ({ path }) => answer({ cwd: process.cwd(), ...await attempt({ chdir: () => process.chdir(path) }) }),
   env: () => answer(Object.keys(process.env)),
+  // Fills this process's own heap, a few megabytes at a time, up to `megabytes`. With no
+  // cap on that heap it gets there and says so.
+  heap: ({ megabytes }) => {
+    const kept = []
+    while (process.memoryUsage().heapUsed < megabytes * 1024 * 1024) kept.push(Array.from({ length: 100_000 }, (_, at) => ({ at })))
+    answer({ filled: megabytes, chunks: kept.length })
+  },
   // A process that handles the polite stop and so outlives it.
   ignoreStop: () => {
     process.on('SIGTERM', () => {})

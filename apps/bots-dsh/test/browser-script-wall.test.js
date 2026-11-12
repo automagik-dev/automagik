@@ -177,6 +177,17 @@ for (const runtime of RUNTIMES) {
     assert.equal(names.includes('ELECTRON_RUN_AS_NODE'), Boolean(runtime.electron))
   })
 
+  test(`${runtime.name}: the script's process dies when its own heap passes the cap`, async (t) => {
+    // Three times script-runner.js's --max-old-space-size: with no cap the check gets
+    // there and answers. The deadline is far off, so it is not what ends the run.
+    const result = await check(t, runtime, { check: 'heap', megabytes: 384, timeout: 20_000 })
+    if (!result) return
+    assert.equal(result.answer, undefined)
+    assert.doesNotMatch(result.error, /longer than/)
+    assert.notEqual(result.exit, 'survived')
+    assert.notDeepEqual(result.exit, { code: 0, signal: null })
+  })
+
   test(`${runtime.name}: a process that ignores the polite stop is gone at the deadline`, async (t) => {
     const result = await check(t, runtime, { check: 'ignoreStop', timeout: 300 })
     if (!result) return
