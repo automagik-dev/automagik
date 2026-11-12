@@ -43,7 +43,7 @@ code{font:500 .88em/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;background:v
 a.detail-link:hover{text-decoration:underline}
 
 /* Controls: flat ink primary with the app's clay press, paper secondary */
-.actions,.distribution{display:flex;flex-wrap:wrap;align-items:center;gap:12px 14px;margin-top:30px}
+.actions{display:flex;flex-wrap:wrap;align-items:center;gap:12px 14px;margin-top:30px}
 .actions.center{justify-content:center}
 .button{display:inline-flex;justify-content:center;align-items:center;gap:12px;min-height:52px;padding:13px 24px;border-radius:14px;text-decoration:none;font:700 .98rem/1.3 var(--head);letter-spacing:-.005em;border:1px solid transparent;transition:transform .16s ease,box-shadow .16s ease,background-color .16s ease}
 .button.primary{background:var(--text);color:var(--bg);box-shadow:inset 0 1px 0 rgba(255,255,255,.18),0 2px 0 rgba(0,0,0,.18),0 12px 24px -12px rgba(60,48,73,.7)}
@@ -51,9 +51,53 @@ a.detail-link:hover{text-decoration:underline}
 .button.secondary{background:var(--paper);color:var(--text);border-color:var(--line-2);box-shadow:0 1px 0 rgba(91,59,34,.06)}
 .button.secondary:hover{color:var(--text);border-color:var(--ring)}
 .button.small{min-height:40px;padding:8px 16px;border-radius:12px;font-size:.88rem}
-.unavailable{display:inline-flex;gap:10px;align-items:center;min-height:52px;padding:0 6px;font-size:.92rem;color:var(--muted)}
-.unavailable strong{font-weight:600}
-.unavailable span,.soon-pill,.tile-tag.soon{display:inline-block;padding:3px 10px;border-radius:999px;background:var(--st-lilac);color:var(--st-lilac-ink);font:800 .7rem/1.5 var(--head);letter-spacing:.12em;text-transform:uppercase}
+/* Get Automagik: a tray of platforms. A live one is a button that opens its sheet; Windows
+   and iPhone are named and marked Soon, and are not controls. */
+.get{margin-top:26px}
+.get-label{margin-bottom:10px;font:800 .72rem/1.5 var(--head);letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+.get-row{display:inline-grid;grid-auto-flow:column;grid-auto-columns:minmax(0,88px);gap:6px;max-width:100%;padding:7px;border-radius:22px;background:var(--st-tag);border:1px solid var(--line);box-shadow:0 1px 0 rgba(91,59,34,.05),0 18px 34px -22px var(--st-cast)}
+.get-row>li{display:grid;min-width:0}
+.get-chip{appearance:none;display:grid;justify-items:center;align-content:center;gap:6px;width:100%;min-height:86px;padding:12px 4px 10px;border:1px solid transparent;border-radius:16px;background:none;color:var(--text);font:700 .84rem/1.2 var(--head);letter-spacing:-.005em;text-decoration:none;cursor:pointer;transition:transform .16s ease,background-color .16s ease,border-color .16s ease,box-shadow .16s ease}
+.platform-sign{width:26px;height:26px;fill:currentColor}
+.get-kind{font:600 .68rem/18px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted)}
+button.get-chip:hover,a.get-chip:hover{background:var(--paper);border-color:var(--line-2);color:var(--text);box-shadow:var(--st-lift);transform:translateY(-2px)}
+button.get-chip:active{transform:translateY(0)}
+.get-chip.soon{cursor:default;color:var(--muted)}
+.get-chip.soon .platform-sign{opacity:.5}
+.get-chip.soon .get-kind{padding:0 7px;border-radius:999px;background:var(--st-lilac);color:var(--st-lilac-ink);font:800 .58rem/18px var(--head);letter-spacing:.12em;text-transform:uppercase}
+.get-fallback{display:none}
+/* The sheet: what you get, the exact file, how to install it. A popover in the middle of
+   the window on a wide screen, rising from the bottom edge on a phone. */
+.sheet{position:fixed;inset:0;margin:auto;width:min(580px,calc(100vw - 2 * var(--gutter)));height:fit-content;max-height:calc(100dvh - 48px);overflow:auto;overscroll-behavior:contain;padding:clamp(22px,3vw,30px);border:1px solid var(--line-2);border-radius:var(--st-r-dialog);background:var(--paper);color:var(--text);box-shadow:var(--shadow-window)}
+.sheet::backdrop{background:color-mix(in srgb,#17121c 58%,transparent);backdrop-filter:blur(3px)}
+.sheet-head{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:16px}
+.sheet-sign{display:grid;place-items:center;width:56px;height:56px;border-radius:17px;background:var(--st-cyan);color:var(--st-cyan-ink);box-shadow:var(--st-clay)}
+.sheet-sign .platform-sign{width:28px;height:28px}
+.sheet-kicker{font:800 .7rem/1.5 var(--head);letter-spacing:.16em;text-transform:uppercase;color:var(--ring)}
+.sheet h2{font-size:clamp(1.5rem,1.3rem + .8vw,1.9rem);letter-spacing:-.03em;outline:0}
+.sheet-close{appearance:none;display:grid;place-items:center;width:44px;height:44px;border:0;border-radius:14px;background:var(--bt-hover);color:var(--text);cursor:pointer}
+.sheet-close:hover{background:var(--bt-active)}
+.sheet-close svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}
+.sheet-gets{margin-top:18px;font-size:1.02rem;line-height:1.55;color:color-mix(in srgb,var(--text) 88%,transparent)}
+.sheet-facts{display:grid;gap:1px;margin-top:18px;border-radius:16px;overflow:hidden;border:1px solid var(--line);background:var(--line)}
+.sheet-facts>div{display:grid;grid-template-columns:86px minmax(0,1fr);gap:12px;align-items:baseline;padding:11px 16px;background:var(--raised)}
+.sheet-facts dt{font:800 .68rem/1.6 var(--head);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+.sheet-facts dd{margin:0;font-size:.94rem;min-width:0}
+.sheet-facts .sum{display:inline;font-size:.74em;line-height:1.5;border:0;padding:0;background:none;overflow-wrap:normal}
+.sheet-how{margin:22px 0 14px;font:800 .7rem/1.5 var(--head);letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+.sheet .steps{gap:12px;font-size:.96rem}
+.sheet code{display:inline-block;max-width:100%;overflow-wrap:anywhere;vertical-align:baseline}
+.sheet-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px 22px;margin-top:24px}
+.sheet-actions .detail-link{margin-top:0;min-height:44px}
+.sheet-more{margin-top:18px;padding-top:16px;border-top:1px solid var(--line);font:600 .9rem/1.4 var(--head)}
+.sheet-more a{color:var(--muted);text-decoration:none}
+.sheet-more a:hover{color:var(--accent)}
+html:has(.sheet:popover-open) :is(.top,main,.site-footer,.skip){interactivity:inert}
+@supports not selector(:popover-open){
+  button.get-chip,.sheet{display:none !important}
+  .get-fallback{display:grid}
+}
+.soon-pill,.tile-tag.soon{display:inline-block;padding:3px 10px;border-radius:999px;background:var(--st-lilac);color:var(--st-lilac-ink);font:800 .7rem/1.5 var(--head);letter-spacing:.12em;text-transform:uppercase}
 .soon-pill{font-size:.72rem}
 
 /* Header: a real site's menus. Each button opens its panel through the browser's popover
@@ -245,7 +289,14 @@ body:has(.drawer:popover-open) :is(main,.site-footer,.skip){visibility:hidden}
 .hero-visual{position:relative;isolation:isolate;overflow:clip;min-width:0;min-height:clamp(320px,38vw,500px);border-radius:36px;background:var(--st-stage);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;padding:clamp(24px,4vw,48px)}
 .desktop-hero .split{grid-template-columns:minmax(0,1fr)}
 .desktop-hero .hero-heading{max-width:820px;margin-inline:auto;text-align:center}
-.desktop-hero .eyebrow,.desktop-hero .distribution{justify-content:center}
+.desktop-hero .eyebrow{justify-content:center}
+.home-hero .get,.desktop-hero .get{text-align:center}
+/* The hero has one action, the downloads. The way down to the blocks is a quiet line under it. */
+.home-hero .get{margin-top:34px}
+.hero-also{margin-top:16px;text-align:center;font:600 .92rem/1.4 var(--head)}
+.hero-also a{display:inline-flex;align-items:center;gap:6px;min-height:44px;padding-inline:10px;color:var(--muted);text-decoration:none;border-radius:999px}
+.hero-also a:hover{color:var(--text)}
+.hero-also svg{width:16px;height:16px;flex:none}
 .desktop-hero .intro,.desktop-hero .fine,.desktop-hero .hero-icon{margin-inline:auto}
 .desktop-hero .caption{text-align:center}
 .stage-frame{position:relative;isolation:isolate;margin-top:clamp(40px,5vw,64px)}
@@ -264,22 +315,14 @@ body:has(.drawer:popover-open) :is(main,.site-footer,.skip){visibility:hidden}
 .hero-pet{position:absolute;right:12%;bottom:12%;width:clamp(64px,7vw,96px);filter:drop-shadow(0 14px 16px rgba(60,48,73,.3));animation:float 6s ease-in-out infinite}
 .command{font-size:.95em;padding:.2em .55em}
 
-/* Desktop: channels, principles, steps */
-.channels,.principles-section,.first-steps,.flow,.omni-story,.omni-canvas,.pair{padding-block:clamp(48px,6vw,96px)}
-.channel-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
-.channel{display:flex;flex-direction:column;border-radius:var(--radius);overflow:clip;border:1px solid var(--line);min-width:0}
-.channel-copy{padding:clamp(24px,3vw,40px) clamp(24px,3vw,40px) 0}
-.channel h2{font-size:clamp(1.4rem,1.1rem + .9vw,1.8rem);letter-spacing:-.025em}
-.channel p{color:var(--muted);margin-top:12px;max-width:52ch}
-.channel-art{margin-top:auto;padding:28px clamp(24px,3vw,40px) 0;display:flex;justify-content:center}
-.channel-art img{border-radius:16px 16px 0 0;box-shadow:var(--shadow-window)}
-.channel.code{background:var(--code-bg);border-color:transparent}
-.channel.code h2{color:#f3e9dd}
-.channel.code p{color:#cfc3d8}
-.channel.code .detail-link{color:#8fe3f3}
-.channel.code .channel-art img{width:min(100%,361px);border-radius:14px 14px 0 0;box-shadow:0 0 0 1px rgba(255,255,255,.08),0 -10px 40px -10px rgba(92,200,220,.25)}
-.channel.team{background:var(--tile-lilac)}
-.channel.team .channel-art img{width:min(100%,400px)}
+/* Desktop: two more ways in, principles, steps */
+.ways,.principles-section,.first-steps,.flow,.omni-story,.omni-canvas,.pair{padding-block:clamp(48px,6vw,96px)}
+.way-list{display:grid;gap:1px;border-radius:var(--radius);overflow:hidden;border:1px solid var(--line);background:var(--line)}
+.way-list>li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:8px 22px;padding:clamp(20px,2.4vw,30px) clamp(20px,2.6vw,34px);background:var(--raised)}
+.way-list .glyph-chip{grid-row:auto}
+.way-copy h3{font-size:clamp(1.2rem,1.05rem + .5vw,1.4rem);letter-spacing:-.02em}
+.way-copy p{margin-top:6px;color:var(--muted);max-width:64ch}
+.way-list .detail-link{margin-top:0;white-space:nowrap}
 .principles{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:clamp(28px,4vw,48px) clamp(28px,5vw,72px)}
 .principles article{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:18px;align-content:start}
 .principles h3,.principles p{grid-column:2}
@@ -450,7 +493,7 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:var(--ring);box-s
   .pair-notes{padding:24px 0 0;border-left:0;border-top:1px solid var(--line)}
   .form-intro{position:static}
   .film-still{justify-self:start}
-  .channel-grid,.install-grid,.principles{grid-template-columns:minmax(0,1fr)}
+  .install-grid,.principles{grid-template-columns:minmax(0,1fr)}
   .flow-steps{grid-template-columns:minmax(0,1fr);max-width:560px}
   [data-block="omni"],[data-block="genie"]{grid-column:span 6;grid-template-columns:minmax(0,1.2fr) minmax(0,.8fr)}
 }
@@ -493,11 +536,20 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:var(--ring);box-s
   .stage-frame .constellation{border-radius:24px 24px 0 0;left:calc(var(--gutter) - 8px);width:calc(100% - 2 * var(--gutter) + 16px)}
   .wide-window{width:calc(100% - 16px);border-radius:12px}
   .field-row{grid-template-columns:minmax(0,1fr)}
-  .hero .actions .button,.hero .distribution .button{flex:1 1 100%}
-  .desktop-hero .unavailable,.mobile-hero .unavailable{flex:1 1 100%;justify-content:center}
-  .mobile-hero .unavailable{justify-content:flex-start}
+  .hero .actions .button{flex:1 1 100%}
+  .get-row{display:grid;grid-auto-columns:minmax(0,1fr);width:100%;gap:4px;padding:6px}
+  .mobile-hero .get-row{width:auto;display:inline-grid;grid-auto-columns:minmax(0,88px)}
+  .get-chip{min-height:80px;padding-inline:2px;font-size:.78rem}
+  .way-list>li{grid-template-columns:auto minmax(0,1fr)}
+  .way-list .detail-link{grid-column:2}
+  .sheet{inset:auto 0 0;width:100%;max-width:none;max-height:calc(100dvh - 40px);margin:0;padding:22px var(--gutter) max(26px,env(safe-area-inset-bottom));border-width:1px 0 0;border-radius:26px 26px 0 0}
+  /* On a phone the page stays put behind the sheet. A wide window keeps its scrollbar, so nothing jumps. */
+  html:has(.sheet:popover-open){overflow:hidden}
+  .sheet-facts>div{grid-template-columns:minmax(0,1fr);gap:2px}
+  .sheet code{font-size:.74rem}
+  .sheet-facts .sum{font-size:.74rem}
+  .sheet-actions .button{flex:1 1 100%}
   .footer-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .channel-art{padding-inline:20px}
 }
 @media (max-width:480px){
   .top-cta{display:none}
@@ -532,7 +584,11 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:var(--ring);box-s
   .drawer-group:nth-child(2){transition-delay:.05s}
   .drawer-group:nth-child(3){transition-delay:.1s}
   .drawer-foot{transition-delay:.15s}
+  .sheet{transition:opacity .2s ease,translate .32s cubic-bezier(.2,.8,.2,1)}
+  .sheet::backdrop{transition:opacity .24s ease}
   @starting-style{
+    .sheet:popover-open{opacity:0;translate:0 22px}
+    .sheet:popover-open::backdrop{opacity:0}
     .menu-card{opacity:0;translate:0 -10px}
     .drawer{opacity:0;translate:0 14px}
     .drawer-group,.drawer-foot{opacity:0;translate:0 18px}
@@ -555,8 +611,8 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:var(--ring);box-s
   .bento .product-card:hover :is(.tile-omni,.tile-genie,.tile-pet,.tile-phone){scale:1.05}
   @supports (animation-timeline:view()){
     /* Sections and cards rise into place as they come onto the screen; neighbours follow in turn. */
-    :is(.section-heading,.bento>.product-card,.also,.open-copy,.made-copy,.film-still,.channel,.principles>article,.install-grid>article,.flow-steps>li,.close-copy,.close-phones,.pair-card,.story-copy,.story-art,.canvas-card,.wide-window,.genie-faces,.more-title,.more-list>li,.pager){animation:rise linear both;animation-timeline:view();animation-range:entry 0% entry 240px}
-    :is(.bento>.product-card,.principles>article):nth-child(2n),:is(.channel,.install-grid>article,.flow-steps>li,.more-list>li):nth-child(2){animation-range:entry 60px entry 300px}
+    :is(.section-heading,.bento>.product-card,.also,.open-copy,.made-copy,.film-still,.way-list,.principles>article,.install-grid>article,.flow-steps>li,.close-copy,.close-phones,.pair-card,.story-copy,.story-art,.canvas-card,.wide-window,.genie-faces,.more-title,.more-list>li,.pager){animation:rise linear both;animation-timeline:view();animation-range:entry 0% entry 240px}
+    :is(.bento>.product-card,.principles>article):nth-child(2n),:is(.install-grid>article,.flow-steps>li,.more-list>li):nth-child(2){animation-range:entry 60px entry 300px}
     :is(.flow-steps>li,.more-list>li):nth-child(3){animation-range:entry 110px entry 350px}
     .more-list>li:nth-child(4){animation-range:entry 150px entry 390px}
     .more-list>li:nth-child(5){animation-range:entry 190px entry 430px}

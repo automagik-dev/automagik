@@ -420,6 +420,19 @@ the meter ties to more than one checkout of the repo is never summed: its row is
 evidence-backed, so the branch row stays the total. A window with no task labels is an `ok`
 answer with `rows: []` and the branch answer unchanged: a reader falls back to it.
 
+## Fleet roll-ups
+
+```sh
+usagemeter fleet usage --json machine-a1b2c3.json machine-d4e5f6.json
+usagemeter fleet outcomes --json --missing machine-z9y8x7:unreachable:ssh_timeout machine-a1b2c3.json
+```
+
+The fleet reducer reads local per-machine query or outcomes JSON files. Collection belongs to
+its caller. It opens no store and makes no network calls. Missing machines make the answer
+partial, unknown counters and prices stay null, and overlapping PR details are counted once.
+The [fleet v1 contracts](../schema/fleet/v1/README.md) document compatibility checks, merge
+rules, list caps and synthetic examples. Exit codes: 0 ok or partial, 2 bad request, 1 error.
+
 ## Coverage
 
 ```sh
