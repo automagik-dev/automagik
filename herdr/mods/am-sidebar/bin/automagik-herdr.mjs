@@ -13,7 +13,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { accessSync, chmodSync, closeSync, constants, existsSync, fchmodSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync,
   renameSync, statSync, unlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { homedir, uptime } from "node:os";
-import { dirname, join, resolve as resolvePath } from "node:path";
+import { dirname, isAbsolute, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { hermesPairEnv } from "../hermesPair.js";
@@ -1342,19 +1342,19 @@ Usage: automagik-herdr <command> [options]      (every command takes --json and 
                                 id, and --lead (default: this bot; a reviewer or fixer must
                                 pass it) is the task's lead bot. A bot with a worker.swap
                                 runs it on about one task in three, by rule. Each call then
-                                removes up to 5 worktrees this command made whose workers
-                                have all ended (reap)
+                                removes up to 5 ended workers' worktrees made by this command
+                                in the launching repository, keeping unknown ownership or work
   worker kill <pane>            from a bot's pane: end one worker that bot started (its
                                 worker.of label names the calling bot) once its turn is over.
                                 Any other pane -- a bot's seat, another bot's worker, your own
                                 pane, a worker still working -- is refused. hc kill itself is
                                 for a project's main bot only
-  reap                          remove every worktree a worker call made whose workers have
-                                all ended (killed or done), then git worktree prune. Kept, with
-                                one line naming the path and why: uncommitted changes, or
-                                commits on no remote unless gh lists the branch's pull
-                                requests as merged or closed. A worktree only given to a worker
-                                (--worktree, a branch's existing one) is never removed
+  reap                          explicitly check all ended workers' created worktrees, across
+                                repositories. Remove only with verified ownership and current
+                                HEAD pushed or proven merged, including squash merges. Keep
+                                unknown ownership, missing checkouts, dirty work or uncertain
+                                proof, with a reason. No broad prune. A worktree only given to
+                                a worker (--worktree, a branch's existing one) is never removed
   update [--check | --rollback] install the latest release (checksum verified), only report
                                 current and latest (--check), or put the replaced pack back;
                                 an update then runs meter install where you agreed to it
@@ -5614,10 +5614,13 @@ const firstLine = (r) => (r.stderr || r.stdout || `exit ${r.code}`).trim().split
  * baseRefName }]), or null when gh is missing or fails. Only what the cleanup's check and a
  * `pr` row need is asked for: never a title, an author, a text or an address.
  */
-async function pullRequestsOf(branch, cwd) {
+async function pullRequestsOf(branch, cwd, { cleanup = false } = {}) {
   const gh = programPath("gh");
   if (!gh || !branch) return null;
-  const r = await runProgram(gh, ["pr", "list", "--head", branch, "--state", "all", "--json", "number,state,createdAt,mergedAt,closedAt,baseRefName", "--limit", "20"],
+  const fields = "number,state,createdAt,mergedAt,closedAt,baseRefName"
+    + (cleanup ? ",headRefOid" : "");
+  const r = await runProgram(gh,
+    ["pr", "list", "--head", branch, "--state", "all", "--json", fields, "--limit", "20"],
     { cwd, timeout: GH_TIMEOUT });
   if (r.code !== 0) return null;
   try { const list = JSON.parse(r.stdout); return Array.isArray(list) ? list : null; } catch { return null; }
@@ -5733,22 +5736,58 @@ async function recordPullRequests({ asked, start, budget, every, lines }) {
   } catch { /* asked again sooner */ }
 }
 
+/** A canonical repository identity, never a walk-up guess for missing or relative ownership. */
+async function reapRepository(path) {
+  if (typeof path !== "string" || !isAbsolute(path) || !isDir(path)) return null;
+  const common = (await git(
+    ["rev-parse", "--path-format=absolute", "--git-common-dir"], path))?.trim();
+  return common ? nativeDir(common) : null;
+}
+
+/** Canonicalize ledger owners for conflict detection without changing the stored rows. */
+async function ownedReapCandidates(rows) {
+  const projects = [...new Set(rows.filter((r) => r?.event === "start").map((r) => r.project))];
+  const owners = new Map(await Promise.all(projects
+    .map(async (p) => [p, await reapRepository(p)])));
+  return { owners, candidates: reapCandidates(rows, reapRows(), (p) => owners.get(p) ?? null) };
+}
+
+/** Ledger owner, launching scope and the actual checkout must all name one repository. */
+async function reapOwnership(c, project = null) {
+  const owner = await reapRepository(c.project);
+  if (!owner) return "workers ledger has no unambiguous repository owner";
+  if (project !== null && await reapRepository(project) !== owner) {
+    return "worktree belongs to another launching repository";
+  }
+  if (await reapRepository(c.worktree) !== owner) {
+    return "can't verify worktree repository ownership";
+  }
+  const listed = await git(["worktree", "list", "--porcelain"], c.project);
+  const real = nativeDir(c.worktree);
+  if (listed === null || !real || !parseWorktrees(listed).some((w) => nativeDir(w.path) === real)) {
+    return "worktree is not registered in its recorded repository";
+  }
+  return null;
+}
+
 /**
- * One candidate, under its worktree's lock: looked at again for a live terminal (a worker
- * started in it since the sweep's hc ls), then checked for work (workLeft), looked at for a live
- * terminal once more, and removed with git worktree remove (no --force), then git worktree prune. Never throws: { result, why }, result
- * "waiting" (left for a later sweep, nothing recorded), "kept", "failed" or "removed". Any git
- * or hc failure keeps it (fails closed). What gh answered for its branch is left in `asked`, by
- * branch (prBranchKey), for the sweep's `pr` rows.
+ * One candidate, under its worktree's lock: checked for ownership, live terminals and work,
+ * then rechecked after preservation proof. git worktree remove (no --force) also removes
+ * its registration; no broad prune. Any unreadable proof keeps it. `asked` caches gh's answer
+ * for the sweep's separate PR rows. Returns waiting, kept, failed or removed.
  */
-async function reapOne(c, asked = new Map()) {
+async function reapOne(c, asked = new Map(), project = null) {
   const path = c.worktree;
+  const ownership = await reapOwnership(c, project);
+  if (ownership) return { result: "kept", why: ownership };
+  const ownerAtStart = await reapRepository(c.project);
+  const realAtStart = nativeDir(path);
   const now = await hcTerminals(false);
   if (!now) return { result: "waiting" };
   if (liveIn(now, path).length) return { result: "waiting" };
-  const common = await runProgram("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], { cwd: path });
-  if (common.code !== 0) return { result: "kept", why: `git can't read it: ${firstLine(common)}` };
-  const main = c.project && isDir(c.project) ? c.project : dirname(common.stdout.trim());
+  const main = c.project;
+  const head = (await git(["rev-parse", "--verify", "HEAD"], path))?.trim();
+  if (!/^[0-9a-f]{40,64}$/.test(head ?? "")) return { result: "kept", why: "can't read HEAD" };
   const status = await runProgram("git", ["status", "--porcelain", "--untracked-files=normal"], { cwd: path });
   if (status.code !== 0) return { result: "kept", why: `git status failed: ${firstLine(status)}` };
   const changes = status.stdout.split("\n").filter(Boolean).length;
@@ -5758,22 +5797,53 @@ async function reapOne(c, asked = new Map()) {
   if (!changes) {
     const count = await runProgram("git", ["rev-list", "--count", "HEAD", "--not", "--remotes"], { cwd: path });
     unpushed = Number(count.stdout.trim());
-    if (count.code !== 0 || !Number.isSafeInteger(unpushed)) return { result: "kept", why: `git rev-list failed: ${firstLine(count)}` };
+    if (count.code !== 0 || !/^\d+$/.test(count.stdout.trim())
+      || !Number.isSafeInteger(unpushed)) {
+      return { result: "kept", why: `git rev-list failed: ${firstLine(count)}` };
+    }
     branch = (await git(["symbolic-ref", "--short", "-q", "HEAD"], path))?.trim() || null;
     if (unpushed > 0 && branch && branch === c.branch) {
-      prs = await pullRequestsOf(branch, main);
+      prs = await pullRequestsOf(branch, main, { cleanup: true });
       if (c.project) asked.set(prBranchKey({ project: c.project, branch }), prs);
     }
   }
-  const why = workLeft({ changes, unpushed, prs, branch, expected: c.branch });
+  const why = workLeft({ changes, unpushed, prs, head, branch, expected: c.branch });
   if (why) return { result: "kept", why };
+  // Re-read the ledger and repository after proof: a newer owner, commit or branch
+  // must not inherit the earlier snapshot's permission to remove this checkout.
+  const fresh = (await ownedReapCandidates(workerLedgerRows())).candidates
+    .find((x) => x.worktree === path);
+  if (!fresh || fresh.branch !== c.branch || !fresh.project
+    || JSON.stringify(fresh.terminals) !== JSON.stringify(c.terminals)) {
+    return { result: "kept", why: "workers ledger changed during cleanup" };
+  }
+  const finalOwner = await reapOwnership(fresh, project);
+  if (finalOwner || !ownerAtStart || await reapRepository(fresh.project) !== ownerAtStart
+    || nativeDir(path) !== realAtStart) {
+    return { result: "kept", why: finalOwner ?? "repository owner changed during cleanup" };
+  }
+  const finalHead = (await git(["rev-parse", "--verify", "HEAD"], path))?.trim();
+  const finalBranch = (await git(["symbolic-ref", "--short", "-q", "HEAD"], path))?.trim();
+  if (finalHead !== head || finalBranch !== branch) {
+    return { result: "kept", why: "HEAD or branch changed during cleanup" };
+  }
+  const finalStatus = await git(["status", "--porcelain", "--untracked-files=normal"], path);
+  if (finalStatus === null || finalStatus.trim()) {
+    return { result: "kept",
+      why: finalStatus === null ? "git status failed" : "uncommitted changes" };
+  }
+  const finalCount = (await git(["rev-list", "--count", "HEAD", "--not", "--remotes"], path))
+    ?.trim();
+  const finalProof = /^\d+$/.test(finalCount ?? "")
+    ? workLeft({ changes: 0, unpushed: Number(finalCount), prs, head, branch, expected: c.branch })
+    : "can't prove HEAD is pushed or merged";
+  if (finalProof) return { result: "kept", why: finalProof };
   // Looked at once more just before the remove: a pane started in it without the worktree lock
   // (a hand-made one, hc run) since the first look. No --force: git itself refuses a tree that
   // has gained changes since the status above.
   const last = await hcTerminals(false);
   if (!last || liveIn(last, path).length) return { result: "waiting" };
   const rm = await runProgram("git", ["worktree", "remove", path], { cwd: main, timeout: REMOVE_TIMEOUT });
-  await runProgram("git", ["worktree", "prune"], { cwd: main });
   if (rm.code !== 0) return { result: "failed", why: `git worktree remove failed: ${firstLine(rm)}` };
   return { result: "removed", why: null };
 }
@@ -5792,11 +5862,18 @@ async function reapOne(c, asked = new Map()) {
  * in the workers ledger (#899, recordPullRequests), whether or not a worktree is left to remove.
  * Never throws: { removed, kept, failed, waiting, more, lines }.
  */
-async function reapWorktrees({ max = REAP_MAX, budget = REAP_BUDGET_MS, every = false } = {}) {
+async function reapWorktrees({ max = REAP_MAX, budget = REAP_BUDGET_MS,
+  every = false, project = null } = {}) {
   const out = { removed: [], kept: [], failed: [], waiting: 0, more: 0, lines: [] };
   try {
     const ledger = workerLedgerRows();
-    const candidates = reapCandidates(ledger, reapRows());
+    const owned = await ownedReapCandidates(ledger);
+    const launching = project !== null ? await reapRepository(project) : null;
+    // Completion observation remains global. Only deletion eligibility is scoped
+    // to the launching repository; explicit reap deliberately considers every repo.
+    const candidates = owned.candidates;
+    const eligible = new Set(project === null ? candidates : candidates.filter((c) =>
+      launching && c.project && owned.owners.get(c.project) === launching));
     if (!candidates.length && !prBranches(ledger).some((w) => w.followed)) return out;
     const lockDir = dirname(ledgerPath(appHome()));
     mkdirSync(lockDir, { recursive: true });
@@ -5813,21 +5890,31 @@ async function reapWorktrees({ max = REAP_MAX, budget = REAP_BUDGET_MS, every = 
       // What gh answered for a candidate's branch: its pull requests' rows, after the loop.
       const asked = new Map();
       for (const c of candidates) {
-        if (!every && c.last?.result === "kept" && Date.now() - Date.parse(c.last.at) > REAP_QUIET_MS) continue;
-        if (c.terminals.some((t) => terms.some((x) => x?.address === t && x.state !== "finished"))) { out.waiting += 1; continue; }
-        if (out.removed.length >= max || Date.now() - start > budget) { out.more += 1; continue; }
+        const cleanup = eligible.has(c) && !(!every && c.last?.result === "kept"
+          && Date.now() - Date.parse(c.last.at) > REAP_QUIET_MS);
+        const live = c.terminals.some((t) => terms.some((x) =>
+          x?.address === t && x.state !== "finished"));
+        if (live) { if (cleanup) out.waiting += 1; continue; }
+        if (Date.now() - start > budget) { if (cleanup) out.more += 1; continue; }
+        // This read and the end rows it feeds do not authorize removal. Foreign,
+        // unknown-owner and quiet candidates still get their completion observed.
+        const ready = await settled(c.terminals, terms, gets);
+        if (!cleanup) continue;
+        if (out.removed.length >= max) { out.more += 1; continue; }
         const path = c.worktree;
         let done;
-        if (!(await settled(c.terminals, terms, gets))) {
+        if (!ready) {
           done = { result: "waiting" };
         } else if (!isDir(path)) {
-          if (c.project && isDir(c.project)) await runProgram("git", ["worktree", "prune"], { cwd: c.project });
-          done = { result: "gone", why: null };
+          // A missing checkout cannot prove its actual repository. Keep its
+          // registration; a repository-wide prune could remove unrelated records.
+          done = { result: "kept", why: "can't verify missing worktree repository ownership" };
         } else if (liveIn(terms, path).length) {
           done = { result: "waiting" };
         } else {
           try {
-            done = await withLockAsync(worktreeLock(lockDir, path), () => reapOne(c, asked), { wait: 0 });
+            done = await withLockAsync(worktreeLock(lockDir, path),
+              () => reapOne(c, asked, project), { wait: 0 });
           } catch { done = { result: "waiting" }; }
         }
         if (done.result === "waiting") { out.waiting += 1; continue; }
@@ -6163,7 +6250,7 @@ async function cmdWorker(opts, rest) {
   }
   // The worktrees earlier workers made, once they have all ended (#567): after this worker
   // started, outside its locks, capped, and never failing the call.
-  warnings.push(...(await reapWorktrees()).lines);
+  warnings.push(...(await reapWorktrees({ project: project.key })).lines);
   report(warnings);
   const out = { terminal, bot: bot.id, role, parent: me.address, worktree: place.worktree, branch: place.branch, created: place.created,
     base: place.base, template: plan.template, agent: plan.agent, model: plan.model, effort: plan.effort, agyMode: plan.agyMode, pid,
