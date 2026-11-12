@@ -16,7 +16,8 @@ Usage:
   usagemeter status
   usagemeter query --repo HOST/OWNER/REPO --branch B [--branch B ...] --json
                    [--repo-alias <host/owner/repo>]...
-                   [--window d1|d7|d30] [--contract 1] [--stale-after SECONDS]
+                   [--window d1|d7|d30|d90 | --since <rfc3339> --until <rfc3339>]
+                   [--contract 1] [--stale-after SECONDS]
   usagemeter query --repo HOST/OWNER/REPO --by bot [--branch B ...] --json [...]
   usagemeter query --repo HOST/OWNER/REPO --by task [--branch B ...] --json [...]
   usagemeter coverage [--window d1|d7|d30 ...] [--repo HOST/OWNER/REPO ...] [--json]

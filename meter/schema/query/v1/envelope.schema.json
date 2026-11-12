@@ -127,7 +127,7 @@
           "additionalProperties": false,
           "required": ["name", "requested_start", "start", "end", "clipped"],
           "properties": {
-            "name": { "enum": ["d1", "d7", "d30"] },
+            "name": { "enum": ["d1", "d7", "d30", "d90", "custom"] },
             "requested_start": { "$ref": "#/$defs/time" },
             "start": { "$ref": "#/$defs/time" },
             "end": { "$ref": "#/$defs/time" },
@@ -204,6 +204,9 @@
           "type": "object",
           "additionalProperties": false,
           "required": ["repo", "window", "branch_count", "branches", "branches_complete", "request_sha256"],
+          "if": { "properties": { "window": { "const": "custom" } } },
+          "then": { "required": ["since", "until"] },
+          "else": { "properties": { "since": false, "until": false } },
           "properties": {
             "repo": { "$ref": "#/$defs/repo" },
             "repo_complete": {
@@ -214,7 +217,9 @@
               "type": "array", "minItems": 1, "maxItems": 16,
               "items": { "$ref": "#/$defs/repo" }
             },
-            "window": { "enum": ["d1", "d7", "d30"] },
+            "window": { "enum": ["d1", "d7", "d30", "d90", "custom"] },
+            "since": { "$ref": "#/$defs/time" },
+            "until": { "$ref": "#/$defs/time" },
             "by": {
               "enum": ["bot", "task"],
               "description": "What a row is keyed by, when the request passed --by with a value other than branch, the default: bot gives bot rows (RFC 0021 (d)), and task gives task rows keyed by repo and task id (RFC 0018 M3, RFC 0021 D4). A bot with no row is 0 only when actor_unattributed.absent_bot_is_zero is true, else unknown. Absent for branch rows, whether or not --by branch was passed. A bot or task query may name no branch: the branches named are then a filter. A reader that does not ask for a value never meets its rows."
@@ -230,7 +235,7 @@
             "request_sha256": {
               "type": "string",
               "pattern": "^[0-9a-f]{64}$",
-              "description": "sha256 of the UTF-8 of repo, then each `alias <repo>` line in repo_aliases order, then window, then, only when by is present, the line `by <by>`, then each branch in order, each followed by a line feed. The prefixed lines contain a space, which no window or branch holds, so they are unambiguous. With no aliases the request hashes identically to before aliases existed."
+              "description": "sha256 of the UTF-8 of repo, then each `alias <repo>` line in repo_aliases order, then window, then for custom windows the lines `since <UTC timestamp>` and `until <UTC timestamp>`, then, only when by is present, the line `by <by>`, then each branch in order, each followed by a line feed. The prefixed lines contain a space, which no window or branch holds, so they are unambiguous. With no aliases the request hashes identically to before aliases existed."
             }
           }
         }
@@ -641,7 +646,7 @@
         "state": { "enum": ["measured", "zero", "missing", "stale", "unsupported"] },
         "reason": {
           "enum": [
-            null, "repo_not_seen", "window_before_counted_from", "backlog", "source_incomplete",
+            null, "repo_not_seen", "before_evidence", "window_before_counted_from", "backlog", "source_incomplete",
             "branch_unattributed", "ingestion_stale", "source_unsupported"
           ]
         },
@@ -740,7 +745,7 @@
           "then": {
             "properties": {
               "reason": {
-                "enum": ["repo_not_seen", "window_before_counted_from", "backlog", "source_incomplete", "branch_unattributed"]
+                "enum": ["repo_not_seen", "before_evidence", "window_before_counted_from", "backlog", "source_incomplete", "branch_unattributed"]
               }
             }
           }

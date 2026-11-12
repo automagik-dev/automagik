@@ -118,6 +118,7 @@ pub(crate) enum Window {
     D1,
     D7,
     D30,
+    D90,
 }
 
 impl Window {
@@ -129,6 +130,7 @@ impl Window {
             Window::D1 => "d1",
             Window::D7 => "d7",
             Window::D30 => "d30",
+            Window::D90 => "d90",
         }
     }
 
@@ -137,6 +139,7 @@ impl Window {
             Window::D1 => 1,
             Window::D7 => 7,
             Window::D30 => 30,
+            Window::D90 => 90,
         }
     }
 
@@ -146,6 +149,7 @@ impl Window {
             Window::D1 => 0,
             Window::D7 => 1,
             Window::D30 => 2,
+            Window::D90 => 3,
         }
     }
 }
@@ -180,10 +184,27 @@ struct Request {
     repo: String,
     repo_aliases: Vec<String>,
     window: Window,
+    interval: Option<(i64, i64)>,
     /// What a row is keyed by: the branch (default), the bot, or the task.
     by: By,
     branches: Vec<String>,
     stale_after_s: i64,
+}
+
+impl Request {
+    fn bounds(&self, meta: &BTreeMap<String, String>, now_ms: i64) -> Bounds {
+        let Some((since, until)) = self.interval else {
+            return bounds(meta, self.window, now_ms);
+        };
+        let counted = meta_i64(meta, "counted_from_ms").unwrap_or(since);
+        let evidence = meta_i64(meta, crate::evidence::FROM_META);
+        Bounds {
+            requested_start: since,
+            start: evidence.map_or(until, |ev| since.max(counted.max(ev)).min(until)),
+            end: until,
+            clipped: since < counted || evidence.is_none_or(|ev| since < ev),
+        }
+    }
 }
 
 /// What the answer's rows are keyed by (RFC 0018 (a); `--by bot` is RFC 0021 D1, `--by task` is
@@ -375,6 +396,10 @@ struct Echo {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     repo_aliases: Vec<String>,
     window: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    since: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    until: Option<String>,
     /// `bot` for a `--by bot` request; absent for branch rows.
     #[serde(skip_serializing_if = "Option::is_none")]
     by: Option<&'static str>,
@@ -705,21 +730,31 @@ pub fn repo_ok(r: &str) -> bool {
             .all(|s| !s.is_empty() && !s.chars().any(|c| c.is_whitespace() || c == '\u{feff}'))
 }
 
-/// The request's hash: repo, each `alias <repo>` line, window, optional `by <by>`, then each
-/// branch, each followed by a line feed. The prefixed lines hold a space, which no window or
+/// The request's hash: repo, each `alias <repo>` line, window, custom interval bounds,
+/// optional `by <by>`, then each branch, each followed by a line feed. The prefixed lines hold a space, which no window or
 /// branch can, so they are unambiguous. No aliases preserves the original hash.
 fn request_sha256(
     repo: &str,
     aliases: &[String],
     window: &str,
+    interval: Option<(i64, i64)>,
     by: By,
     branches: &[String],
 ) -> String {
     let mut h = Sha256::new();
     let aliases: Vec<String> = aliases.iter().map(|a| format!("alias {a}")).collect();
+    let interval_lines: Vec<String> = interval
+        .map(|(since, until)| {
+            vec![
+                format!("since {}", format_rfc3339(since)),
+                format!("until {}", format_rfc3339(until)),
+            ]
+        })
+        .unwrap_or_default();
     for part in std::iter::once(repo)
         .chain(aliases.iter().map(String::as_str))
         .chain(std::iter::once(window))
+        .chain(interval_lines.iter().map(String::as_str))
         .chain(by.hash_line())
         .chain(branches.iter().map(String::as_str))
     {
@@ -735,6 +770,7 @@ fn echo(
     repo: &str,
     aliases: &[String],
     window: Window,
+    interval: Option<(i64, i64)>,
     by: By,
     branches: &[String],
     capped: bool,
@@ -764,16 +800,23 @@ fn echo(
     } else {
         (repo.to_string(), None)
     };
+    let name = if interval.is_some() {
+        "custom"
+    } else {
+        window.name()
+    };
     Echo {
         repo: repo_echo,
         repo_complete,
         repo_aliases: aliases.to_vec(),
-        window: window.name(),
+        window: name,
+        since: interval.map(|(s, _)| format_rfc3339(s)),
+        until: interval.map(|(_, u)| format_rfc3339(u)),
         by: by.echo(),
         branch_count: branches.len(),
         branches_complete: kept.len() == branches.len(),
         branches: kept,
-        request_sha256: request_sha256(repo, aliases, window.name(), by, branches),
+        request_sha256: request_sha256(repo, aliases, name, interval, by, branches),
     }
 }
 
@@ -795,6 +838,8 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
     let mut repo: Option<String> = None;
     let mut repo_aliases: Vec<String> = Vec::new();
     let mut window: Option<Window> = None;
+    let mut since = None;
+    let mut until = None;
     let mut contract: Option<u64> = None;
     let mut stale: Option<i64> = None;
     let mut by: Option<By> = None;
@@ -844,15 +889,27 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
                     return Err(Box::new(Refusal::usage("--by is given twice")));
                 }
             }
+            "--since" | "--until" => {
+                let v = value(a, it.next())?;
+                let slot = if a == "--since" {
+                    &mut since
+                } else {
+                    &mut until
+                };
+                if slot.replace(v).is_some() {
+                    return Err(Box::new(Refusal::usage(format!("{a} is given twice"))));
+                }
+            }
             "--window" => {
                 let v = value("--window", it.next())?;
                 let w = match v.as_str() {
                     "d1" => Window::D1,
                     "d7" => Window::D7,
                     "d30" => Window::D30,
+                    "d90" => Window::D90,
                     _ => {
                         return Err(Box::new(Refusal::usage(format!(
-                            "--window takes d1, d7 or d30, not {}",
+                            "--window takes d1, d7, d30 or d90, not {}",
                             quoted(&v)
                         ))));
                     }
@@ -917,6 +974,39 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
             i + 1
         ))));
     }
+    if window.is_some() && (since.is_some() || until.is_some()) {
+        return Err(Box::new(Refusal::usage(
+            "--window cannot be combined with --since and --until",
+        )));
+    }
+    let interval = match (since, until) {
+        (None, None) => None,
+        (Some(s), Some(u)) => {
+            let since_ms = crate::time::parse_rfc3339(&s).ok_or_else(|| {
+                Refusal::usage(format!(
+                    "--since takes an RFC 3339 timestamp, not {}",
+                    quoted(&s)
+                ))
+            })?;
+            let until_ms = crate::time::parse_rfc3339(&u).ok_or_else(|| {
+                Refusal::usage(format!(
+                    "--until takes an RFC 3339 timestamp, not {}",
+                    quoted(&u)
+                ))
+            })?;
+            if since_ms >= until_ms {
+                return Err(Box::new(Refusal::usage(
+                    "--since must be earlier than --until",
+                )));
+            }
+            Some((since_ms, until_ms))
+        }
+        _ => {
+            return Err(Box::new(Refusal::usage(
+                "--since and --until must be given together",
+            )));
+        }
+    };
     let window = window.unwrap_or(Window::D30);
     if !repo_ok(&repo) {
         return Err(Box::new(Refusal::usage(format!(
@@ -930,7 +1020,7 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
     for alias in &repo_aliases {
         if alias.len() > MAX_REPO_BYTES {
             return Err(Box::new(too_large_request(
-                echo(&repo, &[], window, by, &branches, true),
+                echo(&repo, &[], window, interval, by, &branches, true),
                 format!(
                     "--repo-alias takes {} bytes; the most it takes is {MAX_REPO_BYTES}",
                     alias.len()
@@ -949,7 +1039,7 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
         // The defined refusal, echoed: its repo cut to fit (`repo_complete: false`), the request
         // still matched by its count and sha256.
         return Err(Box::new(too_large_request(
-            echo(&repo, &repo_aliases, window, by, &branches, true),
+            echo(&repo, &repo_aliases, window, interval, by, &branches, true),
             format!(
                 "--repo takes {} bytes; the most it takes is {MAX_REPO_BYTES}",
                 repo.len()
@@ -964,14 +1054,22 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
             branches.len()
         ));
         r.error.code = "too_many_branches";
-        r.echo = Some(echo(&repo, &repo_aliases, window, by, &branches, true));
+        r.echo = Some(echo(
+            &repo,
+            &repo_aliases,
+            window,
+            interval,
+            by,
+            &branches,
+            true,
+        ));
         return Err(Box::new(r));
     }
     if let Some(long) = branches.iter().map(String::len).max()
         && long > MAX_BRANCH_BYTES
     {
         return Err(Box::new(too_large_request(
-            echo(&repo, &repo_aliases, window, by, &branches, true),
+            echo(&repo, &repo_aliases, window, interval, by, &branches, true),
             format!("a branch name takes {long} bytes; the most one takes is {MAX_BRANCH_BYTES}"),
             MAX_BRANCH_BYTES,
             long,
@@ -980,7 +1078,7 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
     let names: usize = branches.iter().map(String::len).sum();
     if names > MAX_NAMES_BYTES {
         return Err(Box::new(too_large_request(
-            echo(&repo, &repo_aliases, window, by, &branches, true),
+            echo(&repo, &repo_aliases, window, interval, by, &branches, true),
             format!(
                 "the branch names take {names} bytes; the most one call takes is \
                  {MAX_NAMES_BYTES}"
@@ -1000,7 +1098,15 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
             code: exit::UNSUPPORTED_CONTRACT,
             status: "unsupported_contract",
             error: e,
-            echo: Some(echo(&repo, &repo_aliases, window, by, &branches, true)),
+            echo: Some(echo(
+                &repo,
+                &repo_aliases,
+                window,
+                interval,
+                by,
+                &branches,
+                true,
+            )),
             store: None,
             machine: None,
         }));
@@ -1009,6 +1115,7 @@ fn parse(args: &[String]) -> Result<Request, Box<Refusal>> {
         repo,
         repo_aliases,
         window,
+        interval,
         by,
         branches,
         stale_after_s: stale.unwrap_or(DEFAULT_STALE_AFTER_S),
@@ -1163,7 +1270,7 @@ pub(crate) fn is_busy(e: &rusqlite::Error) -> bool {
 // ---------------------------------------------------------------------------------------------
 // Reading the snapshot.
 
-/// One hourly usage row of the repo, as the query reads it.
+/// One hourly usage row or exact evidence call of the repo, as the query reads it.
 pub(crate) struct UsageRead {
     /// The row's repo: null for a folder that is not a checkout with a remote.
     pub(crate) repo: Option<String>,
@@ -1670,9 +1777,7 @@ fn read_task_calls(
 /// Reads everything the answer needs in one read transaction, so it is one snapshot.
 fn read(
     c: &Connection,
-    repo: &str,
-    aliases: &[String],
-    by: By,
+    req: &Request,
     start: impl Fn(&BTreeMap<String, String>) -> (i64, i64),
 ) -> rusqlite::Result<Read> {
     c.execute_batch("BEGIN")?;
@@ -1711,12 +1816,35 @@ fn read(
     // Every row of the repo in the window, through `usage_repo_branch`: branch rows read the
     // branches named, and the actor counts (`actor_unattributed`, bot rows) the whole repo.
     let mut rows = Vec::new();
-    let repos: Vec<&str> = std::iter::once(repo)
-        .chain(aliases.iter().map(String::as_str))
+    let repos: Vec<&str> = std::iter::once(req.repo.as_str())
+        .chain(req.repo_aliases.iter().map(String::as_str))
         .collect();
-    scan_usage(c, Some(&repos), from, to, evidence_from, &mut |r| {
-        rows.push(r);
-    })?;
+    if let Some((since, until)) = req.interval {
+        scan_evidence(c, &repos, from, to, evidence_from, &mut |r| rows.push(r))?;
+        // Hourly history cannot be sliced exactly. Report it only as before-evidence
+        // actor totals, never as exact branch or bot usage in the custom interval.
+        if evidence_from.is_none_or(|ev| since < ev) {
+            let counted = meta_i64(&meta, "counted_from_ms").unwrap_or(since);
+            scan_usage(
+                c,
+                Some(&repos),
+                hour_start(since).max(counted),
+                evidence_from.unwrap_or(until).min(until),
+                evidence_from,
+                &mut |mut r| {
+                    r.class = Class::Before;
+                    r.branch = None;
+                    r.branch_basis = BranchBasis::None;
+                    r.bot = None;
+                    rows.push(r);
+                },
+            )?;
+        }
+    } else {
+        scan_usage(c, Some(&repos), from, to, evidence_from, &mut |r| {
+            rows.push(r);
+        })?;
+    }
     let repo_seen = rows.iter().any(|r| r.tokens.total > 0)
         || c.query_row(
             &format!(
@@ -1727,7 +1855,7 @@ fn read(
             |r| r.get::<_, bool>(0),
         )?;
     // The task rows read per-call evidence (RFC 0018 M3): the hourly rollups carry no task.
-    let task_calls = if by == By::Task {
+    let task_calls = if req.by == By::Task {
         task_calls(c, &repos, from, to)?
     } else {
         Vec::new()
@@ -1862,6 +1990,109 @@ pub(crate) fn scan_usage(
             events: nonneg(r.get(23)?).max(1),
             hour_ms,
             tokens: t,
+            total_only: r.get::<_, String>(12)? == "total_only",
+            reported_usd: r
+                .get::<_, Option<f64>>(13)?
+                .filter(|u| u.is_finite() && *u >= 0.0),
+            class,
+            branch_basis,
+            bot,
+            tagged,
+        });
+    }
+    Ok(())
+}
+
+/// Exact calls for custom intervals; hourly rollups cannot resolve sub-hour boundaries.
+fn scan_evidence(
+    c: &Connection,
+    repos: &[&str],
+    from: i64,
+    to: i64,
+    evidence_from: Option<i64>,
+    f: &mut dyn FnMut(UsageRead),
+) -> rusqlite::Result<()> {
+    let mut values: Vec<rusqlite::types::Value> = vec![from.into(), to.into()];
+    values.extend(
+        repos
+            .iter()
+            .map(|r| rusqlite::types::Value::Text((*r).into())),
+    );
+    let sql = format!(
+        "SELECT d.repo, d.branch, d.harness, d.model, e.ts_ms, e.input_uncached, e.cache_read,
+           e.cache_write_5m, e.cache_write_1h, e.output, e.reasoning, e.unsplit, d.precision,
+           e.reported_usd, a.state, a.basis, a.reason, a.bot, a.kind, a.role, a.squad,
+           a.unrecorded, a.filled_branch
+         FROM evidence e JOIN ev_dim d ON d.id = e.dim JOIN ev_actor a ON a.id = e.actor
+         WHERE e.ts_ms >= ?1 AND e.ts_ms < ?2 AND d.repo IN ({})",
+        placeholders(3, repos.len())
+    );
+    let mut st = c.prepare(&sql)?;
+    let mut q = st.query(rusqlite::params_from_iter(values))?;
+    while let Some(r) = q.next()? {
+        let harness: String = r.get(2)?;
+        let mut tokens = TokensOut {
+            input: nonneg(r.get(5)?),
+            cache_read: nonneg(r.get(6)?),
+            cache_write_5m: nonneg(r.get(7)?),
+            cache_write_1h: nonneg(r.get(8)?),
+            output: nonneg(r.get(9)?),
+            reasoning: Source::from_harness(&harness)
+                .filter(|s| s.logs_reasoning())
+                .map(|_| nonneg(r.get(10).ok().flatten())),
+            unsplit: nonneg(r.get(11)?),
+            total: 0,
+        };
+        tokens.total = split_total(&tokens).saturating_add(tokens.unsplit);
+        if tokens.total == 0 {
+            continue;
+        }
+        let hour_ms = hour_start(r.get(4)?);
+        let logged = r.get::<_, Option<String>>(1)?.filter(|b| !b.is_empty());
+        let filled = r.get::<_, Option<String>>(22)?.filter(|b| !b.is_empty());
+        let branch_basis = if logged.is_some() {
+            BranchBasis::Log
+        } else if filled.is_some() {
+            BranchBasis::Ledger
+        } else {
+            BranchBasis::None
+        };
+        let state: Option<String> = r.get(14)?;
+        let basis: Option<String> = r.get(15)?;
+        let reason: Option<String> = r.get(16)?;
+        let class = classify(
+            evidence_from,
+            hour_ms,
+            state.as_deref(),
+            basis.as_deref(),
+            reason.as_deref(),
+        );
+        let stored_bot: Option<String> = r.get(17)?;
+        let tagged = stored_bot.as_deref().is_some_and(|b| !b.is_empty());
+        let bot = if matches!(class, Class::Attributed(_)) {
+            bot_key(
+                stored_bot,
+                r.get(18)?,
+                r.get(19)?,
+                r.get(20)?,
+                r.get(21)?,
+                &harness,
+            )
+        } else {
+            None
+        };
+        let class = match (class, &bot) {
+            (Class::Attributed(_), None) => Class::Ambiguous,
+            _ => class,
+        };
+        f(UsageRead {
+            repo: r.get(0)?,
+            branch: logged.or(filled),
+            harness,
+            model: r.get(3)?,
+            events: 1,
+            hour_ms,
+            tokens,
             total_only: r.get::<_, String>(12)? == "total_only",
             reported_usd: r
                 .get::<_, Option<f64>>(13)?
@@ -2274,6 +2505,7 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
             &req.repo,
             &req.repo_aliases,
             req.window,
+            req.interval,
             req.by,
             &req.branches,
             true,
@@ -2360,10 +2592,10 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
     };
     let stale_ms = req.stale_after_s * 1000;
     let window_of = |meta: &BTreeMap<String, String>| -> (i64, i64) {
-        let b = bounds(meta, req.window, ctx.now_ms);
+        let b = req.bounds(meta, ctx.now_ms);
         (b.start, b.end)
     };
-    let snap = match read(&conn, &req.repo, &req.repo_aliases, req.by, window_of) {
+    let snap = match read(&conn, &req, window_of) {
         Ok(Read::Snapshot(s)) => s,
         Ok(Read::Absent) => return refuse(absent(failure)),
         Ok(Read::Version(v)) => {
@@ -2426,10 +2658,17 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
     let meta = &snap.meta;
     let w = watermark(meta);
     let counted_from = meta_i64(meta, "counted_from_ms").unwrap_or(0);
-    let b = bounds(meta, req.window, ctx.now_ms);
+    let b = req.bounds(meta, ctx.now_ms);
     let clipped = b.clipped;
+    let clipped_by_evidence = req
+        .interval
+        .is_some_and(|(s, _)| snap.evidence_from.is_none_or(|ev| s < ev));
     let window_info = WindowInfo {
-        name: req.window.name(),
+        name: if req.interval.is_some() {
+            "custom"
+        } else {
+            req.window.name()
+        },
         requested_start: format_rfc3339(b.requested_start),
         start: format_rfc3339(b.start),
         end: format_rfc3339(b.end),
@@ -2645,6 +2884,7 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
                 stale,
                 complete,
                 clipped,
+                clipped_by_evidence,
                 all_vouch,
                 any_unsupported,
                 repo_seen: snap.repo_seen,
@@ -2687,6 +2927,7 @@ pub fn run(args: &[String], ctx: &Ctx) -> Answer {
             &req.repo,
             &req.repo_aliases,
             req.window,
+            req.interval,
             req.by,
             &req.branches,
             false,
@@ -2742,6 +2983,7 @@ struct BranchCtx<'a> {
     stale: bool,
     complete: bool,
     clipped: bool,
+    clipped_by_evidence: bool,
     all_vouch: bool,
     any_unsupported: bool,
     repo_seen: bool,
@@ -2766,6 +3008,8 @@ fn branch_rows(req: &Request, by_branch: &BTreeMap<&str, Acc>, c: &BranchCtx<'_>
             let found = acc.tokens.total > 0;
             let missing_reason = if !c.repo_seen {
                 Some("repo_not_seen")
+            } else if c.clipped_by_evidence {
+                Some("before_evidence")
             } else if c.clipped {
                 Some("window_before_counted_from")
             } else if !c.complete {
