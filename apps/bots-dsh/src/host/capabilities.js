@@ -169,6 +169,19 @@ export function install(rt) {
     await rt.save()
     return true
   }
+  // Called after the Bot leaves the team. The shared library belongs to the user:
+  // only an attached, unapproved local MCP this Bot created and nobody else uses goes.
+  // A pack keeps its members even when no Bot currently has that pack attached.
+  const dropOrphanCapabilities = (bot) => {
+    const items = library()
+    const packed = name => Object.values(items).some(item => item.kind === 'pack' && (item.items ?? []).includes(name))
+    for (const name of bot.capabilities ?? []) {
+      const item = own(items, name)
+      if (item === undefined || item.kind !== 'mcp' || item.transport !== 'stdio' || item.approved === true) continue
+      if (item.createdBy !== bot.id || usedByOthers(name, bot.id) || packed(name)) continue
+      delete items[item.name]
+    }
+  }
   const changeAttachment = async (endpoint, { name, bot: targetRef }, callerId) => {
     await rt.load()
     writeCheck()
@@ -613,6 +626,7 @@ export function install(rt) {
   Object.assign(rt, {
     capabilitySave,
     capabilityDelete,
+    dropOrphanCapabilities,
     capabilityEndpoint,
     capabilityLibraryView: libraryView,
     capabilityStatusesView,
