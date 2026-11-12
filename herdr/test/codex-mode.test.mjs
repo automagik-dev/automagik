@@ -103,6 +103,9 @@ test("--no-daemon and the network word survive every restart shape, the worker p
   };
   for (const [name, p] of Object.entries(shapes)) {
     assert.deepEqual(p.argv.slice(1, 1 + MODE.length), MODE, name);
+    // Spelled out, not read from the table: hc requires --no-daemon (hc --skill), and the network word with it.
+    assert.equal(count(p.argv, "--no-daemon"), 1, `${name}: --no-daemon`);
+    assert.equal(p.argv.includes("sandbox_workspace_write.network_access=true"), true, `${name}: network on`);
     assert.deepEqual(p.argv.filter((w) => BYPASS.includes(w)), [], name);
   }
   assert.deepEqual(shapes.resume.argv.slice(1 + MODE.length), ["resume", "s-1", "--model", "gpt-6"]);
@@ -110,12 +113,14 @@ test("--no-daemon and the network word survive every restart shape, the worker p
 
 // ---- the folders a launch may write (codexGrants, withCodexGrants) ----
 
-test("codexGrants: the git common dir, herdr-core's state and data folders and the tool caches, from the environment, only when there", () => {
+test("codexGrants: the git dirs, herdr-core's state and data folders and the tool caches, from the environment, only when there", () => {
   const home = "/home/u";
-  const there = new Set(["/r/.git", "/x/state/herdr-core", "/home/u/.local/share/herdr-core", "/home/u/go/pkg/mod", "/home/u/.cache/go-build",
+  const there = new Set(["/r/.git/worktrees/w", "/r/.git", "/x/state/herdr-core", "/home/u/.local/share/herdr-core", "/home/u/go/pkg/mod", "/home/u/.cache/go-build",
     "/home/u/.npm", "/home/u/.local/share/pnpm/store", "/home/u/.cache/pnpm", "/home/u/.bun/install/cache"]);
   const env = { XDG_STATE_HOME: "/x/state" };
-  assert.deepEqual(codexGrants({ home, env, gitCommonDir: "/r/.git", isDir: (d) => there.has(d) }), [...there]);
+  assert.deepEqual(codexGrants({ home, env, gitDir: "/r/.git/worktrees/w", gitCommonDir: "/r/.git", isDir: (d) => there.has(d) }), [...there]);
+  // A main checkout's git dir is its common dir: granted once.
+  assert.deepEqual(codexGrants({ home, env, gitDir: "/r/.git", gitCommonDir: "/r/.git", isDir: (d) => d === "/r/.git" }), ["/r/.git"]);
   // Only what is there; no git dir when there is none.
   assert.deepEqual(codexGrants({ home, env: {}, gitCommonDir: null, isDir: (d) => d === "/home/u/.npm" }), ["/home/u/.npm"]);
   // The environment names each cache; a relative or `..` path is not a path to grant.
@@ -128,7 +133,7 @@ test("codexGrants never grants the root, the home folder, a folder above it, or 
   const home = "/home/u";
   const wide = { GOMODCACHE: home, GOCACHE: "/", npm_config_cache: "/home", BUN_INSTALL_CACHE_DIR: `${home}/.cache`,
     XDG_STATE_HOME: home, XDG_DATA_HOME: "/", GOPATH: `${home}/.local` };
-  const got = codexGrants({ home, env: wide, gitCommonDir: "/", isDir: () => true });
+  const got = codexGrants({ home, env: wide, gitDir: home, gitCommonDir: "/", isDir: () => true });
   for (const d of got) {
     assert.equal(homeWide(d, home), false, d);
     for (const general of [`${home}/.cache`, `${home}/.local`, `${home}/.local/share`, `${home}/.local/state`, `${home}/.config`, `${home}/go`, `${home}/.bun`]) {
@@ -291,7 +296,7 @@ test("a Codex seat's start: the launch mode, its source's bypass words left out 
   assert.equal(r.err.includes("danger-full-access"), false, "no value printed");
 });
 
-test("a Codex worker in a linked worktree may write the main checkout's .git (its common dir); a template keeps hc's template form", (t) => {
+test("a Codex worker in a linked worktree may write its own git dir and the main checkout's .git (its common dir); a template keeps hc's template form", (t) => {
   const s = scene(t, { templates: [
     { name: "old-codex", command: "codex --sandbox workspace-write --ask-for-approval never -c sandbox_workspace_write.network_access=true" },
     { name: "mac-dev", command: "codex --no-daemon --dangerously-bypass-approvals-and-sandbox -m gpt-6.1-sol" }] });
@@ -301,7 +306,10 @@ test("a Codex worker in a linked worktree may write the main checkout's .git (it
   assert.deepEqual(argv.slice(0, 1 + MODE.length), ["codex", ...MODE]);
   const worktree = realpathSync(join(s.project, ".claude/worktrees/fix-1125-a"));
   assert.equal(git(worktree, "rev-parse", "--path-format=absolute", "--git-common-dir").trim(), realpathSync(join(s.project, ".git")));
-  assert.deepEqual(addDirs(argv), s.grants, "the common dir, never the worktree's own .git file");
+  // Its own git dir (Codex keeps it read-only beside the common dir: a commit there failed in the e2e without it), then the common dir.
+  const own = git(worktree, "rev-parse", "--path-format=absolute", "--git-dir").trim();
+  assert.equal(own, join(realpathSync(join(s.project, ".git")), "worktrees/fix-1125-a"));
+  assert.deepEqual(addDirs(argv), [own, ...s.grants], "never the worktree's own .git file");
   assert.equal(argv.at(-1), "fix the thing");
   // A template without --no-daemon: started in hc's template form (its instructions kept), one warning with the fix.
   const old = s.cli(["worker", "task two", "--branch", "fix/1125-b", "--template", "old-codex", "--json"]);

@@ -3262,14 +3262,15 @@ async function restartOnMachine(opts, project, bot, entry) {
 
 /**
  * The folders a Codex launch in `cwd` on this computer may write besides it (#1125,
- * models.js codexGrants): `cwd`'s git common dir (its main checkout's .git for a linked
- * worktree), herdr-core's state and data folders and the tool caches, from this process's
- * environment, each only when it is a folder here. Never fails: a folder git can't answer for
- * just has no git grant.
+ * models.js codexGrants): `cwd`'s own git dir and its git common dir (a linked worktree's
+ * `.git/worktrees/<name>` and its main checkout's .git), herdr-core's state and data folders
+ * and the tool caches, from this process's environment, each only when it is a folder here.
+ * Never fails: a folder git can't answer for just has no git grant.
  */
 async function localCodexGrants(cwd) {
-  const common = cwd ? (await git(["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd))?.trim() : null;
-  return codexGrants({ home: home(), env: process.env, gitCommonDir: common || null, isDir });
+  const out = cwd ? await git(["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], cwd) : null;
+  const [gitDir, gitCommonDir] = (out ?? "").split("\n").map((l) => l.trim());
+  return codexGrants({ home: home(), env: process.env, gitDir: gitDir || null, gitCommonDir: gitCommonDir || null, isDir });
 }
 
 // The environment words codexGrants reads, printed on a linked machine one per line as NAME=value
@@ -3277,6 +3278,7 @@ async function localCodexGrants(cwd) {
 const GRANT_VARS = ["HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "GOPATH", "GOMODCACHE", "GOCACHE",
   "npm_config_cache", "NPM_CONFIG_CACHE", "BUN_INSTALL", "BUN_INSTALL_CACHE_DIR"];
 const GRANT_PROBE = `for k in ${GRANT_VARS.join(" ")}; do v=$(printenv "$k") && printf '%s=%s\\n' "$k" "$v"; done; `
+  + `g=$(git rev-parse --path-format=absolute --git-dir 2>/dev/null) && printf 'GIT_DIR=%s\\n' "$g"; `
   + `g=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && printf 'GIT_COMMON_DIR=%s\\n' "$g"; true`;
 
 /**
@@ -3292,7 +3294,7 @@ async function codexGrantsOn(machine, cwd) {
     const eq = line.indexOf("=");
     if (eq > 0) env[line.slice(0, eq)] = line.slice(eq + 1);
   }
-  const candidates = codexGrants({ home: env.HOME ?? null, env, gitCommonDir: env.GIT_COMMON_DIR ?? null, isDir: () => true });
+  const candidates = codexGrants({ home: env.HOME ?? null, env, gitDir: env.GIT_DIR ?? null, gitCommonDir: env.GIT_COMMON_DIR ?? null, isDir: () => true });
   if (!candidates.length) return { dirs: [], warning: null };
   const there = await remoteIo.exec("sh", ["-c", 'for d do [ -d "$d" ] && printf "%s\\n" "$d"; done; true', "sh", ...candidates], machine);
   if (there.code !== 0) return away(there.code === -1 ? "no answer" : `exit ${there.code}`);

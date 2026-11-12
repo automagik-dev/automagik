@@ -532,15 +532,17 @@ export function codexCleanNote(run, home = null, where = "programs.json's Codex 
 /**
  * The folders a Codex launch may write besides its working folder (#1125): each one only when it
  * is a folder there (`isDir`), absolute, and never the root, `home` or a folder above it, nor a
- * whole XDG or cache folder. `gitCommonDir`: the launch checkout's git common dir (its own .git,
- * or the main checkout's for a linked worktree; Codex keeps a working folder's .git read-only).
+ * whole XDG or cache folder. `gitDir`: the launch checkout's own git dir (a linked worktree's
+ * `.git/worktrees/<name>`, which Codex keeps read-only even beside its common dir), and
+ * `gitCommonDir`: its git common dir (its own .git, or the main checkout's for a linked
+ * worktree; Codex keeps a working folder's .git read-only).
  * Then herdr-core's state and data folders (XDG_STATE_HOME, XDG_DATA_HOME, else under `home`),
  * which hc needs to reach its core, and the tool caches a build here writes: Go's module and
  * build caches (GOMODCACHE, GOCACHE, else GOPATH's), npm's (npm_config_cache), pnpm's store and
  * cache, and Bun's install cache (BUN_INSTALL_CACHE_DIR, BUN_INSTALL). `env` is the launch's
  * environment (process.env here, or the linked machine's). Pure: `isDir` answers for the machine.
  */
-export function codexGrants({ home = null, env = {}, gitCommonDir = null, isDir = () => false }) {
+export function codexGrants({ home = null, env = {}, gitDir = null, gitCommonDir = null, isDir = () => false }) {
   const h = typeof home === "string" && home.startsWith("/") ? home.replace(/\/+$/, "") : null;
   const abs = (p) => (typeof p === "string" && p.startsWith("/") && !p.split("/").includes("..") ? p.replace(/\/+$/, "") || "/" : null);
   const at = (base, rest) => (base ? `${base}/${rest}` : null);
@@ -551,7 +553,7 @@ export function codexGrants({ home = null, env = {}, gitCommonDir = null, isDir 
   const bun = abs(env.BUN_INSTALL) ?? at(h, ".bun");
   // Never a whole XDG folder, nor ~/.local, nor GOPATH or Bun's own folder.
   const general = new Set([state, data, cache, config, at(h, ".local"), gopath, bun].filter(Boolean));
-  const candidates = [abs(gitCommonDir), at(state, "herdr-core"), at(data, "herdr-core"),
+  const candidates = [abs(gitDir), abs(gitCommonDir), at(state, "herdr-core"), at(data, "herdr-core"),
     abs(env.GOMODCACHE) ?? at(gopath, "pkg/mod"), abs(env.GOCACHE) ?? at(cache, "go-build"),
     abs(env.npm_config_cache) ?? abs(env.NPM_CONFIG_CACHE) ?? at(h, ".npm"),
     at(data, "pnpm/store"), at(cache, "pnpm"),
