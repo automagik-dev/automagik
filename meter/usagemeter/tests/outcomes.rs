@@ -14,7 +14,7 @@ use std::path::Path;
 use std::process::Output;
 use std::time::Duration;
 
-use common::serial;
+use common::{schema::Schema, serial};
 use meter::hc::TerminalEnd;
 use meter::outcomes;
 use meter::paths::StateDirs;
@@ -26,6 +26,20 @@ use scenes::{MACHINE, REPO, ROOT, SYNCED, Scene, Start, t, worker, wt};
 
 const MIGRATED: &str = "2026-10-01T00:00:00Z";
 const SQUAD: &str = "b-squad";
+
+fn v1() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../schema/outcomes/v1")
+}
+
+fn schema() -> Schema {
+    let text = fs::read_to_string(v1().join("envelope.schema.json")).unwrap();
+    Schema::new(serde_json::from_str(&text).unwrap())
+}
+
+fn example(name: &str) -> Value {
+    let text = fs::read_to_string(v1().join("examples").join(format!("{name}.json"))).unwrap();
+    serde_json::from_str(&text).unwrap()
+}
 
 fn args(v: &[&str]) -> Vec<String> {
     v.iter().map(|s| s.to_string()).collect()
@@ -52,7 +66,10 @@ fn report(s: &Scene, a: &[&str]) -> Value {
     assert_eq!(r.code, 0, "{}", r.stderr.unwrap_or_default());
     assert!(r.stdout.ends_with('\n') && !r.stdout[..r.stdout.len() - 1].contains('\n'));
     assert!(r.stdout.len() <= outcomes::OUTPUT_CAP);
-    serde_json::from_str(&r.stdout).unwrap()
+    let v = serde_json::from_str(&r.stdout).unwrap();
+    let errors = schema().errors(&v);
+    assert!(errors.is_empty(), "{errors:#?}");
+    v
 }
 
 fn text(s: &Scene, a: &[&str]) -> String {
@@ -1933,4 +1950,163 @@ fn outcomes_ceiling() {
         d30["errors"]
     );
     assert_eq!(v["truncated"], true);
+}
+
+#[test]
+fn the_outcomes_schema_accepts_every_example_and_refuses_bad_records() {
+    let s = schema();
+    let mut examples = 0;
+    for entry in fs::read_dir(v1().join("examples")).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|ext| ext == "json") {
+            let v = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+            let errors = s.errors(&v);
+            assert!(errors.is_empty(), "{}: {errors:#?}", path.display());
+            examples += 1;
+        }
+    }
+    assert!(examples >= 3, "the example directory must not be empty");
+
+    for (name, pointer, value, what) in [
+        ("recorded", "/v", json!(2), "a different record version"),
+        (
+            "recorded",
+            "/windows/0/run_ends",
+            Value::Null,
+            "ok without run ends",
+        ),
+        (
+            "recorded",
+            "/windows/1/run_ends",
+            Value::Null,
+            "partial without run ends",
+        ),
+        (
+            "not-recorded",
+            "/windows/0/errors/tool_error/count",
+            json!(0),
+            "not_recorded counted as zero",
+        ),
+        (
+            "no-data",
+            "/windows/0/errors/api_error/count",
+            json!(0),
+            "no_data counted as zero",
+        ),
+        (
+            "recorded",
+            "/windows/0/errors/tool_error/count",
+            Value::Null,
+            "full without a count",
+        ),
+        (
+            "recorded",
+            "/windows/1/errors/tool_error/count",
+            Value::Null,
+            "partial without a count",
+        ),
+        (
+            "recorded",
+            "/windows/0/errors/tool_error/count",
+            json!(-1),
+            "a negative failure count",
+        ),
+        (
+            "recorded",
+            "/windows/0/errors/tool_error/count",
+            json!(0.5),
+            "a fractional failure count",
+        ),
+        (
+            "not-recorded",
+            "/windows/0/run_ends",
+            example("recorded")["windows"][0]["run_ends"].clone(),
+            "not_recorded with run ends",
+        ),
+        (
+            "no-data",
+            "/windows/0/run_ends",
+            example("recorded")["windows"][0]["run_ends"].clone(),
+            "no_data with run ends",
+        ),
+        (
+            "not-recorded",
+            "/windows/0/time_to_pr/state",
+            json!("no_data"),
+            "not_recorded with mismatched time state",
+        ),
+        (
+            "no-data",
+            "/windows/0/time_to_pr/state",
+            json!("not_recorded"),
+            "no_data with mismatched time state",
+        ),
+        (
+            "no-data",
+            "/windows/0/time_to_pr/all/to_open_s/p50_s",
+            json!(0),
+            "zero samples with a median",
+        ),
+        (
+            "no-data",
+            "/windows/0/time_to_pr/all/to_open_s/p90_s",
+            json!(0),
+            "zero samples with p90",
+        ),
+        (
+            "recorded",
+            "/windows/0/time_to_pr/all/to_open_s/p50_s",
+            Value::Null,
+            "samples without a median",
+        ),
+        (
+            "recorded",
+            "/windows/0/time_to_pr/all/to_open_s/p90_s",
+            Value::Null,
+            "samples without p90",
+        ),
+        (
+            "recorded",
+            "/windows/0/time_to_pr/all/to_open_s/p50_s",
+            json!(-1),
+            "negative seconds",
+        ),
+        (
+            "recorded",
+            "/error_kinds/tool_error/markers/claude-code",
+            json!(7),
+            "a non-string marker value",
+        ),
+    ] {
+        let mut v = example(name);
+        *v.pointer_mut(pointer).unwrap() = value;
+        assert!(!s.valid(&v), "the schema accepts {what}");
+    }
+
+    for pointer in [
+        "",
+        "/windows/0",
+        "/windows/0/errors",
+        "/windows/0/time_to_pr/all/to_open_s",
+    ] {
+        let mut v = example("recorded");
+        v.pointer_mut(pointer)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .insert("unknown".into(), json!(true));
+        assert!(
+            !s.valid(&v),
+            "the schema accepts an unknown property at {pointer}"
+        );
+    }
+    let mut v = example("recorded");
+    v.as_object_mut().unwrap().remove("recorded");
+    assert!(!s.valid(&v), "recorded is required");
+    let mut v = example("recorded");
+    v["windows"][0]["time_to_pr"]["all"]["to_open_s"]
+        .as_object_mut()
+        .unwrap()
+        .remove("p90_s");
+    assert!(!s.valid(&v), "p90_s is required even when null");
 }

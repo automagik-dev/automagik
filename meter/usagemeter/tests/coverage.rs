@@ -16,7 +16,7 @@ use std::path::Path;
 use std::process::Output;
 use std::time::Duration;
 
-use common::serial;
+use common::{schema::Schema, serial};
 use meter::coverage;
 use meter::paths::StateDirs;
 use meter::query::{self, Ctx};
@@ -26,6 +26,20 @@ use scenes::{
     COUNTED_FROM, Frozen, H, MACHINE, OTHER_CORE, REPO, ROOT, SYNCED, Scene, Start, Usage, at, t,
     worker, wt,
 };
+
+fn v1() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../schema/coverage/v1")
+}
+
+fn schema() -> Schema {
+    let text = fs::read_to_string(v1().join("envelope.schema.json")).unwrap();
+    Schema::new(serde_json::from_str(&text).unwrap())
+}
+
+fn example(name: &str) -> Value {
+    let text = fs::read_to_string(v1().join("examples").join(format!("{name}.json"))).unwrap();
+    serde_json::from_str(&text).unwrap()
+}
 
 fn args(v: &[&str]) -> Vec<String> {
     v.iter().map(|s| s.to_string()).collect()
@@ -49,7 +63,10 @@ fn report(s: &Scene, a: &[&str]) -> Value {
     let r = coverage::run(&args(a), &ctx(s));
     assert_eq!(r.code, 0, "{}", r.stderr.unwrap_or_default());
     assert!(r.stdout.ends_with('\n') && !r.stdout[..r.stdout.len() - 1].contains('\n'));
-    serde_json::from_str(&r.stdout).unwrap()
+    let v = serde_json::from_str(&r.stdout).unwrap();
+    let errors = schema().errors(&v);
+    assert!(errors.is_empty(), "{errors:#?}");
+    v
 }
 
 /// Runs the report in memory at a chosen clock (for the stale case).
@@ -58,7 +75,10 @@ fn report_at(s: &Scene, a: &[&str], now: &str) -> Value {
     c.now_ms = t(now);
     let r = coverage::run(&args(a), &c);
     assert_eq!(r.code, 0, "{}", r.stderr.unwrap_or_default());
-    serde_json::from_str(&r.stdout).unwrap()
+    let v = serde_json::from_str(&r.stdout).unwrap();
+    let errors = schema().errors(&v);
+    assert!(errors.is_empty(), "{errors:#?}");
+    v
 }
 
 /// One synthetic usage row, for the cases a log cannot easily make: a window edge, usage with no
@@ -1619,4 +1639,151 @@ fn coverage_ceiling() {
         times[times.len() - 1],
         warm.stdout.len()
     );
+}
+
+#[test]
+fn the_coverage_schema_accepts_every_example_and_refuses_bad_records() {
+    let s = schema();
+    let mut examples = 0;
+    for entry in fs::read_dir(v1().join("examples")).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().is_some_and(|ext| ext == "json") {
+            let v = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+            let errors = s.errors(&v);
+            assert!(errors.is_empty(), "{}: {errors:#?}", path.display());
+            examples += 1;
+        }
+    }
+    assert!(examples >= 2, "the example directory must not be empty");
+
+    for (name, pointer, value, what) in [
+        ("coverage", "/v", json!(2), "a different record version"),
+        (
+            "coverage",
+            "/windows/0/bot_coverage",
+            json!(0.0),
+            "empty usage with zero coverage",
+        ),
+        (
+            "coverage",
+            "/windows/0/inspected",
+            json!(0.0),
+            "empty usage with zero inspected",
+        ),
+        (
+            "coverage",
+            "/windows/1/bot_coverage",
+            Value::Null,
+            "counted usage without coverage",
+        ),
+        (
+            "coverage",
+            "/windows/1/bot_coverage",
+            json!(1.01),
+            "coverage above one",
+        ),
+        (
+            "coverage",
+            "/windows/1/bot_coverage",
+            json!(-0.01),
+            "negative coverage",
+        ),
+        (
+            "coverage",
+            "/windows/1/inspected",
+            json!(1.01),
+            "inspected above one",
+        ),
+        (
+            "coverage",
+            "/windows/1/parts/0/share",
+            json!(1.01),
+            "a part share above one",
+        ),
+        (
+            "coverage",
+            "/windows/1/bots/0/share",
+            json!(1.01),
+            "a bot share above one",
+        ),
+        (
+            "coverage",
+            "/windows/1/totals/total",
+            json!(-1),
+            "negative tokens",
+        ),
+        (
+            "coverage",
+            "/windows/1/parts/0/state",
+            json!("unlinked"),
+            "a reason with the wrong state",
+        ),
+        (
+            "truncated",
+            "/windows/0/repos_other",
+            Value::Null,
+            "omitted repos without other",
+        ),
+        (
+            "truncated",
+            "/windows/0/repos_other/state",
+            json!("measured"),
+            "omitted repos with the wrong state",
+        ),
+        (
+            "truncated",
+            "/windows/0/bots_other",
+            Value::Null,
+            "omitted bots without other",
+        ),
+        (
+            "truncated",
+            "/windows/0/bots_other/lower_bound",
+            json!(false),
+            "omitted bots without lower_bound",
+        ),
+        (
+            "truncated",
+            "/windows/0/repos_omitted",
+            json!(0),
+            "repos_other without omitted repos",
+        ),
+        (
+            "truncated",
+            "/windows/0/bots_omitted",
+            json!(0),
+            "bots_other without omitted bots",
+        ),
+    ] {
+        let mut v = example(name);
+        *v.pointer_mut(pointer).unwrap() = value;
+        assert!(!s.valid(&v), "the schema accepts {what}");
+    }
+
+    for pointer in [
+        "",
+        "/windows/0",
+        "/windows/0/totals",
+        "/windows/1/bots/0/tokens_by_basis",
+    ] {
+        let mut v = example("coverage");
+        v.pointer_mut(pointer)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .insert("unknown".into(), json!(true));
+        assert!(
+            !s.valid(&v),
+            "the schema accepts an unknown property at {pointer}"
+        );
+    }
+    for len in [4, 6] {
+        let mut v = example("coverage");
+        let parts = v["windows"][0]["parts"].as_array_mut().unwrap();
+        parts.resize(len, parts[0].clone());
+        assert!(!s.valid(&v), "the schema accepts {len} parts");
+    }
+    let mut v = example("coverage");
+    v["windows"][0].as_object_mut().unwrap().remove("inspected");
+    assert!(!s.valid(&v), "inspected is required even when null");
 }
