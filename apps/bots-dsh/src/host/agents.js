@@ -850,6 +850,7 @@ export function install(rt) {
   }
   async function startFlagged({ title, text, from, cwd, agentPreset, roomId }, starting) {
     // Read before the first await: the tool call this runs in may return before the rest.
+    const opener = from === undefined ? undefined : rt.callerLevel?.()
     const levelTaskId = rt.callerTask?.()
     const parent = levelTaskId === undefined ? undefined : state.tasks?.[levelTaskId]
     if (levelTaskId !== undefined) rt.assertTaskDepth(levelTaskId)
@@ -860,6 +861,7 @@ export function install(rt) {
     // in place of the refusal a saved level that is no longer offered gets (permissions.js).
     starting(sessionId)
     tasks()[sessionId] = { title: String(title).slice(0, AGENT_SESSION_TITLE_MAX), from, at: Date.now(), status: 'working', ...(roomId ? { roomId } : {}), ...(levelRoomId ? { levelRoomId } : {}), ...(levelTaskId ? { levelTaskId } : {}) }
+    rt.capTaskByOpener?.(tasks()[sessionId], opener)
     // Only TASKS_KEPT ended tasks are remembered for their reports. The ended ones go first,
     // the one that ended longest ago first: a long task that just ended is fresh news.
     // A working record is never evicted, whatever its age or whether DSH still holds its
@@ -1022,7 +1024,8 @@ export function install(rt) {
       const roomId = rt.groupOwners.get(exec.agent?.id)?.roomId
       try {
         const sessionId = await startTask({ title, text, from: self, roomId })
-        return `Started task "${title.slice(0, AGENT_SESSION_TITLE_MAX)}" (${sessionId}) under your row. Its result comes back to you as a message; do not wait or poll.`
+        const cap = state.tasks?.[sessionId]?.permissionCap
+        return `Started task "${title.slice(0, AGENT_SESSION_TITLE_MAX)}" (${sessionId}) under your row.${cap ? ` It runs at the ${cap} permission level, no wider than this conversation.` : ''} Its result comes back to you as a message; do not wait or poll.`
       } catch (error) {
         return `The task did not start: ${error?.message ?? error}`
       }

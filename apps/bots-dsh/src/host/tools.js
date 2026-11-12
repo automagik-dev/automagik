@@ -360,8 +360,11 @@ export function install(rt) {
           ...(denyTools === undefined ? {} : { denyTools }),
         })
         // A level taken from the creator is said, so the creator knows what the Bot may do.
-        const inherited = creator && rt.permissionCatalog() && bot.permission ? ` Permission inherited from ${creator.name} (${bot.permission}).` : ''
-        return `Created ${bot.name}${workDir ? `, working in ${workDir}` : ''}.${inherited} It is greeting the user now.`
+        const inherited = creator && rt.permissionCatalog() && bot.permission
+          ? ` Permission inherited from ${creator.name} (${bot.permission})${bot.permission === (creator.permission ?? rt.permissionCatalog()?.defaultPreset) ? '.' : ', no wider than this conversation.'}` : ''
+        const denied = Array.isArray(creator?.denyTools) && creator.denyTools.length > 0
+          ? ` It never gets the tools ${creator.name} does not have: ${creator.denyTools.join(', ')}.` : ''
+        return `Created ${bot.name}${workDir ? `, working in ${workDir}` : ''}.${inherited}${denied} It is greeting the user now.`
       } catch (error) {
         return `Could not create the Bot: ${error.message}`
       }

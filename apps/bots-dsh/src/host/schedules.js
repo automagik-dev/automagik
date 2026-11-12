@@ -9,7 +9,10 @@
 const MAX_TITLE = 120
 const TIME = /^([01]\d|2[0-3]):[0-5]\d$/
 // The targets whose delivery opens a Session of its own: no subagent lineage, no task
-// record, so no Bot's restriction can bind it (#584, L5).
+// record, so no Bot's tool restriction can bind it (#584, L5). Their first delivery
+// lowers the fresh Session to the arming Bot's level, including its Session lineage.
+// Anonymous `new` deliveries can only be narrowed when every candidate task has a Bot:
+// DSH hides their reserved Session ids, so a person's own task must keep its level.
 const NEW_TARGETS = new Set(['new', 'new_once'])
 // How often a pause the schedule store refused is retried while it stays refused.
 const PAUSE_RETRY_MS = 15_000
@@ -138,22 +141,25 @@ export function install(rt) {
   // The Bot an involved Session speaks for: its own chat, a group Session, an earlier part,
   // a task run, or a subagent child (through its parent lineage). DSH records every Session
   // involved in a task, the creating one included.
-  const botOfTaskSession = async (sessionId) => {
+  const lineageOf = async (sessionId) => {
     let current = sessionId
+    const ids = []
     for (let depth = 0; typeof current === 'string' && current !== '' && depth < 32; depth += 1) {
+      ids.push(current)
       const direct = rt.botOf(current)
-      if (direct !== undefined) return direct
+      if (direct !== undefined) return { bot: direct, ids }
       const owner = rt.selfOf?.(current) ?? rt.state?.tasks?.[current]?.from
       if (owner !== undefined) {
         const bot = rt.botOf(owner)
-        if (bot !== undefined) return bot
+        if (bot !== undefined) return { bot, ids }
       }
       const header = await headerOf(current)
-      if (header?.origin !== 'subagent' || header.parentSession === undefined) return undefined
+      if (header?.origin !== 'subagent' || header.parentSession === undefined) return { ids }
       current = header.parentSession
     }
-    return undefined
+    return { ids }
   }
+  const botOfTaskSession = async sessionId => (await lineageOf(sessionId)).bot
   const restricted = bot => Array.isArray(bot?.denyTools) && bot.denyTools.length > 0
   // Every Session a Bot speaks from now, plus the ones a caller already has.
   const sessionsOf = (bot, extra = []) => {
@@ -368,15 +374,55 @@ export function install(rt) {
     // back to "some unsafe fresh task exists".
     return exact ? false : freshUnsafe
   }
+  // This waterfall reads the catalog only: a write would wait on its own delivery.
+  // A Session a task already delivered to keeps the level it got then. That covers a
+  // `session` target and the Session in a task's last delivery, which DSH activates again
+  // on each later drive to recover a reminder still queued there. A first delivery, or
+  // its retry, is in no receipt yet.
+  const openedLevel = async (sessionId, agent) => {
+    if (service === null || agent?.session === undefined || rt.permissionCatalog?.() === undefined || await botOfTaskSession(sessionId) !== undefined) return agent
+    const entries = await service.catalog()
+    if (entries.some(entry => (entry.target?.kind === 'session' && entry.target.sessionId === sessionId) || entry.lastDelivery?.targetSessionId === sessionId)) return agent
+    let armed = entries.filter(entry => entry.target?.kind === 'new_once' && entry.target.sessionId === sessionId)
+    if (armed.length === 0) {
+      // Run-now may deliver a paused or not-yet-due task. Neither status nor an
+      // execution slot singles out a `new` target, so every such entry is a candidate.
+      armed = entries.filter(entry => entry.target?.kind === 'new')
+      for (const entry of armed) {
+        let hasBot = false
+        for (const id of entry.involvedSessionIds ?? []) {
+          if ((await lineageOf(id)).bot !== undefined) { hasBot = true; break }
+        }
+        if (!hasBot) {
+          rt.warn('ds-bot: the fresh scheduled Session %s keeps its level: a task no Bot armed may be the one it is for', sessionId)
+          return agent
+        }
+      }
+    }
+    const levels = []
+    for (const entry of armed) {
+      for (const id of entry.involvedSessionIds ?? []) {
+        const { bot, ids } = await lineageOf(id)
+        if (bot !== undefined) levels.push(...(rt.armedLevels?.(ids, bot) ?? []))
+      }
+    }
+    try {
+      await rt.lowerScheduledSession?.(agent.session, levels)
+    } catch (cause) {
+      rt.warn('ds-bot: the fresh Session %s of a scheduled task was not lowered to its Bot\'s level: %s', sessionId, cause)
+      throw new Error('ds-bot: a scheduled delivery is held until its Session runs no wider than its Bot\'s permission level', { cause })
+    }
+    return agent
+  }
   // The last line for a delivery: if the check has not run yet, or a task could not be
   // paused, a Session no Bot binds must not be activated for a task a restricted Bot is in.
   // DSH drives deliveries through this waterfall, before the prompt runs. It must never
   // await a management write: that would queue behind the delivery's own serialized drive.
   ctx.on('schedule/resolve-agent', async (sessionId, next) => {
-    if (swept && stuck.size === 0) return next()
+    if (swept && stuck.size === 0) return openedLevel(sessionId, await next())
     if (await botOfTaskSession(sessionId) !== undefined) return next()
     const unsafe = teamLoaded ? await unsafeDelivery(sessionId) : true
-    if (!unsafe) return next()
+    if (!unsafe) return openedLevel(sessionId, await next())
     void revokeNewSchedules()
       .catch(error => rt.warn('ds-bot: fresh-Session tasks were not checked: %s', error))
     throw new Error('ds-bot: a scheduled delivery is blocked until its task can be paused')
