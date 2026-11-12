@@ -1405,6 +1405,29 @@ a worker and a Restart --tree helper:
   the home folder both. A linked machine's folders are read and resolved there (its environment,
   git and realpaths, through `hc exec`), never against this computer. Anything else the sandbox
   blocks goes to Codex's reviewer, which may refuse it.
+- One inventory (#1142): the same environment words (`HOME`, `HERDR_APP_HOME`, the four XDG
+  folders, `GOPATH`, `GOMODCACHE`, `GOCACHE`, `npm_config_cache`, `NPM_CONFIG_CACHE`,
+  `BUN_INSTALL`, `BUN_INSTALL_CACHE_DIR`) name the folders a linked machine is asked about, the
+  folders granted and the assignments a seat's template may not make (below), and the folders are
+  derived once, from the home folder as the launch spells it, then resolved. An XDG, cache or
+  `GOPATH` value that isn't an absolute path is ignored and its default used, as the XDG spec says.
+- A protected root that can't be resolved where the launch runs (an empty or relative `HOME` or
+  app home, one the machine doesn't answer for, a resolver error) is never guessed: that launch
+  gets no `--add-dir` and no derived folder, its own included, and one note says so. A general
+  folder (a whole XDG, cache, `GOPATH` or Bun folder) that can't be resolved there can't be kept
+  out either, so nothing is derived and a warning names how many; a source `--add-dir` still
+  stands on its own. A cache folder named at or above a general folder (`GOCACHE` set to the XDG
+  cache's parent, say) is no cache and is not granted.
+- Besides the canonical paths, each folder is weighed by object identity, for an alias the paths
+  don't show: here by `stat` (device and inode), on a linked machine by `test -ef`, after the
+  probe has shown `test -ef` works there on the home folder itself. A folder may not be the same
+  object as the home folder, an app home, a general folder or any folder above one, nor have an
+  app home among itself and the folders above it. An answer that isn't a clear "different" (a
+  missing pair, an error, a dangling link, a shell without `test -ef`) counts as the same, and a
+  machine that can't run the probe gets no `--add-dir` and no derived folder. Only folders that
+  are there can be told apart. That is the mechanism only: bind mounts and case-insensitive
+  disks are not tested; on them the pack relies on the identity answer and refuses when it
+  can't get one.
 
 A source that picks its own approvals or sandbox loses those words, named in one warning with
 flag names only (never a value): a `programs.json` Codex run naming the bypass flag or `--yolo`,
@@ -1438,7 +1461,15 @@ joined by `;`, `&&` or a newline, then one Codex run (optionally behind `exec`) 
 literals, with exactly one `"$@"`, its own or the one the pack appends, and no `--` (a quoted
 `'--'` included). Anything else (`set --`, `shift`, `eval`, `.`, a function, `cd` or any other
 program before Codex, a pipe, a subshell, a redirection, a substitution, `$*`, a variable in a
-Codex word) proves nothing. Then the mode words it lacks and the folders go after it; any other is
+Codex word) proves nothing. Nor does an assignment that could move the launch's folders or its
+program (`HOME`, `PATH`, `HERDR_APP_HOME`, `GOPATH`, `GOMODCACHE`, `GOCACHE`, any `XDG_`,
+`CODEX_`, `npm_config_` or `BUN_INSTALL` word): the folders were weighed for the pane's own. And
+every Codex word before and after `"$@"` must be one of Codex's options of known arity with its
+value in place: a flag that takes none (`--oss`, `--search`, the mode words), or one that takes a
+value, given joined (`--model=x`, `-mx`) or as the next word, which may not be `"$@"` or start
+with `-`, and may not be missing at the end. A subcommand (`exec`, `resume`), a prompt word or an
+unknown flag proves nothing. That reads Codex 0.167's options as the pack lists them; it is not a
+proof by Codex's own parser. Then the mode words it lacks and the folders go after it; any other is
 set aside for the agent row, and the restart says which template and why, by flag name.
 
 Migration: nothing restarts on its own and a running pane keeps its launch. A Codex seat gets the

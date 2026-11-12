@@ -29,7 +29,7 @@ import { addressOf, attachKey, attachLine, attachPath, attachRow, closingRow, co
 import { PANE_ENV_PATH, agentOnMachine, interpreterPath, paneEnvOf } from "../agentPath.mjs";
 import { briefingFilePath, installHook, launchBriefingText, screenTail, stableBriefingPath, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
-import { AGENTS, AGY_MODE_DEFAULT, AGY_MODES, AUTO_MODE, AUTO_MODE_NONE, agentKeyOfArgv, agyGuarded, agyModeArgs, agyModeOf, agyModeProblem, agyModeWarning, agyPermissionPlan, agyRuleProblem, agySandbox, agySettingsArgs, agySettingsDir, agySettingsPlan, autoModeArgs, codexCleanNote, codexGrantPaths, codexGrants, codexKeepDirs, codexWhere, codexWhereThere, absPath, cleanPath, withCodexGrants, choosesSession, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, launchRun, modelArgs, modelRefusal, ownPromptIn, ownsSession, resolveAgent, resumeAfterTurn, resumesById,
+import { AGENTS, AGY_MODE_DEFAULT, AGY_MODES, AUTO_MODE, AUTO_MODE_NONE, agentKeyOfArgv, agyGuarded, agyModeArgs, agyModeOf, agyModeProblem, agyModeWarning, agyPermissionPlan, agyRuleProblem, agySandbox, agySettingsArgs, agySettingsDir, agySettingsPlan, autoModeArgs, codexCleanNote, CODEX_DIR_VARS, codexGrantPaths, codexGrantPlan, codexKeepDirs, codexWhere, codexWhereThere, absPath, cleanPath, withCodexGrants, choosesSession, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, launchRun, modelArgs, modelRefusal, ownPromptIn, ownsSession, resolveAgent, resumeAfterTurn, resumesById,
   promptByMessage, sessionIdArgs, shownModel, withAgySettings, withBriefing, withOverrides } from "../models.js";
 import { AG_MODELS_TIMEOUT_MS, agModelsSpawnResult, refreshAgModelsSync } from "../modelCache.js";
 import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, WORKTREES_EXCLUDE,
@@ -3303,8 +3303,23 @@ export function canonHere(p) {
   }
 }
 
-/** This computer's Codex launch rules (models.js codexWhere): its home folder and app home, resolved here. */
-const localWhere = () => codexWhere({ home: home(), appHome: appHome(), resolve: canonHere });
+/**
+ * Whether paths `a` and `b` are one object on this computer (#1142): their device and inode
+ * (bigint, exact), symlinks followed. False when either isn't there (nothing is the same object as
+ * a missing path), null when it can't be told (another error).
+ */
+export function sameHere(a, b) {
+  const id = (p) => {
+    try { const s = statSync(p, { bigint: true }); return `${s.dev}:${s.ino}`; }
+    catch (e) { return e?.code === "ENOENT" || e?.code === "ENOTDIR" ? "" : null; }
+  };
+  const x = id(a), y = id(b);
+  if (x === null || y === null) return null;
+  return x !== "" && x === y;
+}
+
+/** This computer's Codex launch rules (models.js codexWhere): its home folder and app home, resolved here, objects told apart here. */
+const localWhere = () => codexWhere({ home: home(), appHome: appHome(), resolve: canonHere, same: sameHere });
 
 /**
  * The folders a Codex launch in `cwd` on this computer may write besides it (#1125,
@@ -3316,13 +3331,18 @@ const localWhere = () => codexWhere({ home: home(), appHome: appHome(), resolve:
 async function localCodexGrants(cwd) {
   const out = cwd ? await git(["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], cwd) : null;
   const [gitDir, gitCommonDir] = (out ?? "").split("\n").map((l) => l.trim());
-  return codexGrants({ where: localWhere(), env: process.env, gitDir: gitDir || null, gitCommonDir: gitCommonDir || null, isDir });
+  const where = localWhere();
+  const plan = codexGrantPlan({ where, home: home(), env: process.env, gitDir: gitDir || null, gitCommonDir: gitCommonDir || null, isDir });
+  // #1142: an exclusion that can't be resolved withholds every derived folder; said once (unproved roots: codexCleanNote).
+  if (plan.withheld.length && !where.unproved.length) {
+    report([`Codex's derived folders were withheld: ${plan.withheld.length} folder(s) they must stay out of can't be resolved here (#1142).`]);
+  }
+  return plan.dirs;
 }
 
 // The environment words codexGrantPaths reads, printed on a linked machine one per line as NAME=value
 // (printenv per name: never the whole environment), then its git dirs for the launch folder.
-const GRANT_VARS = ["HOME", "HERDR_APP_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "GOPATH",
-  "GOMODCACHE", "GOCACHE", "npm_config_cache", "NPM_CONFIG_CACHE", "BUN_INSTALL", "BUN_INSTALL_CACHE_DIR"];
+const GRANT_VARS = CODEX_DIR_VARS;
 const GRANT_PROBE = `for k in ${GRANT_VARS.join(" ")}; do v=$(printenv "$k") && printf '%s=%s\\n' "$k" "$v"; done; `
   + `g=$(git rev-parse --path-format=absolute --git-dir 2>/dev/null) && printf 'GIT_DIR=%s\\n' "$g"; `
   + `g=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && printf 'GIT_COMMON_DIR=%s\\n' "$g"; true`;
@@ -3347,6 +3367,26 @@ export function resolvedThere(stdout) {
     if (c && dir === "1") dirs.add(c);
   }
   return { resolve: (p) => canon.get(p) ?? null, isDir: (p) => dirs.has(p) };
+}
+
+// Whether pairs of paths are one object on that machine (#1142): the first argument is a folder
+// known to be there, the rest are pairs. It first proves test -ef works on that folder itself
+// ("unsupported" otherwise); then per pair 1 (one object), 0 (two, or one isn't there) or ? (a
+// dangling link, an error): never a failed test read as "different".
+export const IDENTITY_PROBE = 'h=$1; shift; if [ -d "$h" ] && [ "$h" -ef "$h" ] 2>/dev/null; then :; else echo unsupported; exit 0; fi; '
+  + 'while [ $# -ge 2 ]; do a=$1; b=$2; shift 2; '
+  + 'if { [ -L "$a" ] && [ ! -e "$a" ]; } || { [ -L "$b" ] && [ ! -e "$b" ]; }; then s="?"; '
+  + 'elif [ ! -e "$a" ] || [ ! -e "$b" ]; then s=0; '
+  + 'else [ "$a" -ef "$b" ] 2>/dev/null; case $? in 0) s=1;; 1) s=0;; *) s="?";; esac; fi; printf "%s\\n" "$s"; done; true';
+
+/** IDENTITY_PROBE's answer for `pairs` as `same(a, b)`: true, false, or null (unsupported, unanswered, unknown). */
+export function sameThere(stdout, pairs) {
+  const lines = String(stdout ?? "").split("\n").filter(Boolean);
+  const known = new Map();
+  if (lines[0] !== "unsupported" && lines.length === pairs.length) {
+    pairs.forEach(([a, b], i) => { if (lines[i] === "1" || lines[i] === "0") known.set(`${a}\0${b}`, lines[i] === "1"); });
+  }
+  return (a, b) => (a === b ? true : known.get(`${a}\0${b}`) ?? null);
 }
 
 /** The values of a Codex argv's `--add-dir` words, before any `--`. */
@@ -3380,20 +3420,43 @@ async function codexOn(machine, cwd, paneEnv, argv) {
   }
   if (!absPath(env.HOME)) return away("no home folder");
   const appHomes = [paneEnv?.appHome, env.HERDR_APP_HOME].filter(Boolean);
-  const { candidates, general } = codexGrantPaths({ home: env.HOME, env, gitDir: env.GIT_DIR ?? null, gitCommonDir: env.GIT_COMMON_DIR ?? null });
+  // One inventory (#1142): the paths probed here are the paths codexGrantPlan weighs.
+  const inventory = codexGrantPaths({ home: env.HOME, env, gitDir: env.GIT_DIR ?? null, gitCommonDir: env.GIT_COMMON_DIR ?? null });
   // Sent as cleanPath leaves them, `..` included: that machine resolves each (#1142).
-  const paths = [...new Set([env.HOME, `${env.HOME}/.config/herdr-app`, ...appHomes, ...candidates, ...general, ...addDirValues(argv)]
+  const paths = [...new Set([env.HOME, `${env.HOME}/.config/herdr-app`, ...appHomes, ...inventory.candidates, ...inventory.general, ...addDirValues(argv)]
     .map(cleanPath).filter(Boolean))];
   const there = await remoteIo.exec("sh", ["-c", RESOLVE_PROBE, "sh", ...paths], machine);
   if (there.code !== 0) return away(there.code === -1 ? "no answer" : `exit ${there.code}`);
   const { resolve, isDir: dirThere } = resolvedThere(there.stdout);
-  const where = codexWhere({ home: env.HOME, appHome: appHomes, resolve });
-  if (!where.home) return away("its home folder doesn't resolve there");
+  const plain = codexWhere({ home: env.HOME, appHome: appHomes, resolve });
+  if (plain.unproved.length) return away(`${plain.unproved.join(" and ")} can't be resolved there`);
+  // Object identity there (#1142): each folder weighed, and each folder above it, against the
+  // protected roots, the general folders and the folders above them.
+  const whole = inventory.general.map((g) => plain.canon(g)).filter(Boolean);
+  const weighed = [...new Set([...inventory.candidates, ...addDirValues(argv)].map((p) => plain.canon(p)).filter(Boolean))];
+  const protectedDirs = [...new Set([plain.home, ...plain.appHomes, ...whole].flatMap(chainOf))];
+  const pairs = [];
+  for (const c of weighed) {
+    for (const p of protectedDirs) if (c !== p) pairs.push([c, p]);
+    for (const x of chainOf(c)) for (const a of plain.appHomes) if (x !== a) pairs.push([x, a]);
+  }
+  const ids = await remoteIo.exec("sh", ["-c", IDENTITY_PROBE, "sh", plain.home, ...pairs.flat()], machine);
+  if (ids.code !== 0 || String(ids.stdout ?? "").startsWith("unsupported")) return away("it can't tell its folders apart there (test -ef)");
+  const where = codexWhere({ home: env.HOME, appHome: appHomes, resolve, same: sameThere(ids.stdout, pairs) });
   const kept = codexKeepDirs(argv, where);
-  const dirs = codexGrants({ where, env, gitDir: env.GIT_DIR ?? null, gitCommonDir: env.GIT_COMMON_DIR ?? null, isDir: dirThere });
-  return { argv: kept.argv, dirs, warning: kept.dropped
-    ? `${machine}: an --add-dir in Codex's command names the home folder, an app home or a folder whose place there can't be proved: left out (#1142).` : null };
+  const plan = codexGrantPlan({ where, env, isDir: dirThere, paths: inventory });
+  const warnings = [kept.dropped
+    ? `${machine}: an --add-dir in Codex's command names the home folder, an app home or a folder whose place there can't be proved: left out (#1142).` : null,
+  plan.withheld.length ? `${machine}: Codex's derived folders were withheld: ${plan.withheld.length} folder(s) they must stay out of can't be resolved there (#1142).`
+    : null].filter(Boolean);
+  return { argv: kept.argv, dirs: plan.dirs, warning: warnings.length ? warnings.join(" ") : null };
 }
+
+/** Canonical `p` and each folder above it, up to the root. */
+const chainOf = (p) => {
+  const out = [];
+  for (let c = p; ; c = c.slice(0, c.lastIndexOf("/")) || "/") { out.push(c); if (c === "/") return out; }
+};
 
 /** The agent a bot starts on, from Herdr's table: refused when it isn't one, or isn't installed. */
 function startableAgent(bot, agentKey = bot.agent) {

@@ -5,7 +5,7 @@
 // usagemeter reads. Pure: no `herdr`, `gpui-*` or `fs`, so `node --test`, the CLI and the
 // briefing hook share it. Apache-2.0.
 
-import { AGENTS, AGY_MODE_DEFAULT, CODEX_NETWORK, agyModeArgs, agyModeOf, agyModeProblem, agyGuarded, agySettingsArgs, codexClean, codexCleanNote, codexDirsExact, effortArgs,
+import { AGENTS, AGY_MODE_DEFAULT, CODEX_NETWORK, agyModeArgs, agyModeOf, agyModeProblem, agyGuarded, agySettingsArgs, codexClean, codexCleanNote, codexDirVar, codexDirsExact, codexOptionArity, effortArgs,
   hasEffortFlag, launchRun, modelArgs, modelRefusal, promptArgs, resolveAgent } from "./models.js";
 import { TEMPLATE_SHAPE } from "./model.js";
 import { envWords } from "./logins.js";
@@ -562,7 +562,12 @@ const decoded = (raw) => raw.replace(/'([^']*)'|"([^"]*)"/g, (_, single, double)
  * so no expansion can move, drop or end the words; "$@" is the only one. Anything else (set,
  * shift, eval, ., source, a function, an alias, cd or any other program before Codex, a
  * conditional, a pipe, a subshell, a group, `&`, a redirection, a substitution, $*, an unquoted
- * $@, "${@}", a variable or ~ in a word, a glob, a comment) proves nothing.
+ * $@, "${@}", a variable or ~ in a word, a glob, a comment) proves nothing. Nor does an assignment
+ * to a word that places the launch's folders or program (models.js codexDirVar: HOME, PATH, XDG_*,
+ * CODEX_*, the cache words), or a Codex word that isn't an option of known arity with its value in
+ * place (models.js codexOptionArity: a subcommand, a prompt, an unknown flag, a flag whose value
+ * would be a forwarded word). This proves where the words land against Codex's flags as the pack
+ * lists them, not Codex's own parser.
  */
 export function codexForwards(command, agents = AGENTS) {
   const text = String(command ?? "");
@@ -585,7 +590,9 @@ export function codexForwards(command, agents = AGENTS) {
     i += m[0].length;
   }
   if (commands.some((c) => c.length === 0)) return false;
-  const assignment = (w) => !w.args && NAME_ASSIGNMENT.test(w.raw);
+  // #1142: an assignment that could move the launch's folders or its program (HOME, PATH, XDG_*, a
+  // cache word...; models.js codexDirVar) proves nothing: the folders were weighed for the pane's own.
+  const assignment = (w) => !w.args && NAME_ASSIGNMENT.test(w.raw) && !codexDirVar(w.raw.slice(0, w.raw.indexOf("=")));
   const setup = commands.slice(0, -1).every((c) => {
     const words = c[0].raw === "export" ? c.slice(1) : c;
     return words.length > 0 && words.every(assignment);
@@ -598,7 +605,18 @@ export function codexForwards(command, agents = AGENTS) {
   const program = run[i];
   if (!program || program.args || program.raw !== program.value || agentOfProgram(shellBase(program.value), agents) !== "codex") return false;
   const words = run.slice(i + 1);
-  return commands.flat().filter((w) => w.args).length === 1 && words.some((w) => w.args) && words.every((w) => w.args || w.value !== "--");
+  if (commands.flat().filter((w) => w.args).length !== 1 || !words.some((w) => w.args) || !words.every((w) => w.args || w.value !== "--")) return false;
+  // #1142: every Codex word around "$@" is an option of known arity with its value in place, so
+  // none can take a forwarded word as its value or turn the rest into a subcommand's or a prompt.
+  let pending = false;
+  for (const w of words) {
+    if (w.args) { if (pending) return false; continue; }
+    if (pending) { if (w.value.startsWith("-")) return false; pending = false; continue; }
+    const arity = codexOptionArity(w.value);
+    if (arity === null) return false;
+    pending = arity === "value";
+  }
+  return !pending;
 }
 
 /**

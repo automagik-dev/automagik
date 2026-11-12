@@ -455,6 +455,31 @@ const CODEX_CONFIG_KEYS = ["sandbox_mode", "approval_policy", "approvals_reviewe
 // Codex's other flags that take a value: the word after one is never read as a flag here.
 const CODEX_TAKES_VALUE = new Set(["-m", "--model", "-p", "--profile", "-C", "--cd", "-i", "--image", "--enable", "--disable",
   "--local-provider", "--add-dir"]);
+// #1142: every Codex option of known arity, as the pack lists Codex 0.167's: these take a value,
+// these take none. Anything else is of unknown arity.
+const CODEX_VALUE_FLAGS = new Set([...CODEX_TAKES_VALUE, "-c", "--config", ...CODEX_VALUED.flat().filter(Boolean)]);
+const CODEX_PLAIN_FLAGS = new Set(["--approve-for-me", "--no-daemon", "--oss", "--search"]);
+
+/**
+ * A Codex word's arity (#1142): "flag" (takes no value), "value" (its value is the next word),
+ * "joined" (its value is in it: --model=x, -mx), or null (a subcommand, a prompt, an unknown flag).
+ */
+export function codexOptionArity(w) {
+  if (CODEX_PLAIN_FLAGS.has(w)) return "flag";
+  if (CODEX_VALUE_FLAGS.has(w)) return "value";
+  if (w.startsWith("--")) return w.includes("=") && CODEX_VALUE_FLAGS.has(w.slice(0, w.indexOf("="))) ? "joined" : null;
+  return /^-[A-Za-z]./.test(w) && CODEX_VALUE_FLAGS.has(w.slice(0, 2)) ? "joined" : null;
+}
+
+/**
+ * The environment words that place a Codex launch's folders (#1142): one list for the linked
+ * probe (codexOn), the folders derived from them (codexGrantPaths) and the shell forms a template
+ * may not set (codexForwards, with PATH and every CODEX_, XDG_, npm_config_ and BUN_INSTALL word).
+ */
+export const CODEX_DIR_VARS = ["HOME", "HERDR_APP_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "GOPATH",
+  "GOMODCACHE", "GOCACHE", "npm_config_cache", "NPM_CONFIG_CACHE", "BUN_INSTALL", "BUN_INSTALL_CACHE_DIR"];
+/** Whether a shell assignment to `name` could move a Codex launch's folders or its program (#1142). */
+export const codexDirVar = (name) => CODEX_DIR_VARS.includes(name) || name === "PATH" || /^(XDG_|CODEX_|npm_config_|BUN_INSTALL)/i.test(name);
 
 /** `-c`/`--config`'s key=value at `words[i]` in any form: { key, span } (span: words it takes), or null. */
 function codexConfigAt(words, i) {
@@ -523,8 +548,8 @@ const within = (a, b) => a === b || b === "/" || a.startsWith(`${b}/`);
  * `..` proves nothing (null). `appHome`: the launch's effective app home (one path or several);
  * the default one under `home` is always protected too.
  */
-export function codexWhere({ home = null, appHome = null, resolve = null } = {}) {
-  const canon = (p) => {
+export function codexWhere({ home = null, appHome = null, resolve = null, same = null } = {}) {
+  const resolved = (p) => {
     const a = cleanPath(p);
     if (!a) return null;
     if (!resolve) return hasParent(a) ? null : a;
@@ -532,12 +557,19 @@ export function codexWhere({ home = null, appHome = null, resolve = null } = {})
     try { r = cleanPath(resolve(a)); } catch { return null; }
     return r && !hasParent(r) ? r : null;
   };
-  // A root that can't be resolved is still protected as written: the rules only ever widen what is kept out.
-  const root = (p) => canon(p) ?? absPath(p);
-  const h = home ? root(home) : null;
-  const raw = [...(Array.isArray(appHome) ? appHome : [appHome]), home ? `${home}/.config/herdr-app` : null];
-  const appHomes = [...new Set(raw.filter(Boolean).map(root).filter(Boolean))];
-  return { home: h, appHomes, canon };
+  // #1142: a protected root that is given but can't be resolved there (empty, relative, not
+  // answered, a resolver error) is never dropped or guessed: `unproved` names it, and then `canon`
+  // proves nothing and codexDirAllowed allows nothing (no --add-dir, no derived folder).
+  const given = (p) => typeof p === "string";
+  const unproved = [];
+  const h = given(home) ? resolved(home) : null;
+  if (given(home) && !h) unproved.push("its home folder (HOME)");
+  const appHomes = [];
+  for (const a of [...(Array.isArray(appHome) ? appHome : [appHome]).filter(given), ...(given(home) ? [`${home}/.config/herdr-app`] : [])]) {
+    const c = resolved(a);
+    if (c) { if (!appHomes.includes(c)) appHomes.push(c); } else if (!unproved.includes("an app home")) unproved.push("an app home");
+  }
+  return { home: h, appHomes, canon: unproved.length ? () => null : resolved, same: typeof same === "function" ? same : null, unproved };
 }
 
 /**
@@ -545,10 +577,35 @@ export function codexWhere({ home = null, appHome = null, resolve = null } = {})
  * the home folder or a folder above it, nor an app home (its attach binding, locks and ledgers stay
  * with Codex's reviewer), a folder inside one or above one.
  */
-export function codexDirAllowed(dir, where = {}) {
+export function codexDirAllowed(dir, where = {}, general = []) {
   if (typeof dir !== "string" || !dir.startsWith("/") || dir === "/") return false;
+  if (where.unproved?.length) return false;
   if (where.home && within(where.home, dir)) return false;
-  return !(where.appHomes ?? []).some((app) => within(dir, app) || within(app, dir));
+  if ((where.appHomes ?? []).some((app) => within(dir, app) || within(app, dir))) return false;
+  // #1142: a derived folder at or above a whole general folder (`general`, canonical) is no narrow grant.
+  if (general.some((g) => within(g, dir))) return false;
+  return where.same ? sameAllowed(dir, where, general) : true;
+}
+
+/** Canonical `p` and each folder above it, up to the root. */
+const chain = (p) => {
+  const out = [];
+  for (let c = p; ; c = c.slice(0, c.lastIndexOf("/")) || "/") { out.push(c); if (c === "/") return out; }
+};
+
+/**
+ * The same rules by object identity (#1142), for an alias the paths don't show (a bind mount,
+ * another spelling on a case-insensitive disk): `where.same(a, b)` answers true, false, or null
+ * when it can't tell, and anything but false counts as the same. `dir` may not be the home folder
+ * or a folder above it, an app home or above one, a general folder or above one, nor have an app
+ * home among itself and the folders above it. Only existing objects can be told apart: a path
+ * that isn't there is weighed by the folders above it that are.
+ */
+function sameAllowed(dir, where, general) {
+  const same = (a, b) => where.same(a, b) !== false;
+  const above = new Set([...(where.home ? chain(where.home) : []), ...(where.appHomes ?? []).flatMap(chain), ...general.flatMap(chain)]);
+  if ([...above].some((p) => same(dir, p))) return false;
+  return !chain(dir).some((x) => (where.appHomes ?? []).some((app) => same(x, app)));
 }
 
 /** `where` as codexWhere gives it, from one: a codexWhere result, a home folder (compared as written), or nothing. */
@@ -656,7 +713,12 @@ export function codexClean(run, where = null) {
 
 /** One line naming what codexClean left out of `run` (flag names only), or null when nothing. */
 export function codexCleanNote(run, where = null, source = "programs.json's Codex command") {
-  const { dropped } = codexClean(run, where);
+  const w = whereOf(where);
+  if (w.unproved?.length) {
+    return `Codex's folders can't be weighed: ${w.unproved.join(" and ")} can't be resolved, so it starts with its working folder only: `
+      + "no --add-dir and no derived folder (#1142).";
+  }
+  const { dropped } = codexClean(run, w);
   return dropped.length ? `${source} names ${dropped.join(", ")}: left out. Every Codex seat and worker runs in auto mode `
     + "(--approve-for-me) with its sandbox on (#1125)." : null;
 }
@@ -700,19 +762,32 @@ export function codexGrantPaths({ home = null, env = {}, gitDir = null, gitCommo
  * codexWhere result; without one, `home` and `appHome` build it with paths compared as written.
  * Pure: `where.canon` and `isDir` answer for the launch's machine.
  */
-export function codexGrants({ where = null, home = null, appHome = null, env = {}, gitDir = null, gitCommonDir = null, isDir = () => false }) {
+export function codexGrants(opts) {
+  return codexGrantPlan(opts).dirs;
+}
+
+/**
+ * codexGrants with what it withheld: { dirs, withheld }. One inventory (#1142): `paths`, the
+ * codexGrantPaths result the resolver was asked about (codexOn passes the one it probed), else one
+ * built from `home` as the launch spells it, else where.home: never rebuilt from another spelling.
+ * A general folder that can't be resolved there can't be kept out, so nothing is derived
+ * (`withheld` names those folders): never a wider grant.
+ */
+export function codexGrantPlan({ where = null, home = null, appHome = null, env = {}, gitDir = null, gitCommonDir = null, isDir = () => false,
+  paths = null }) {
   const w = where ?? codexWhere({ home, appHome });
-  const { candidates, general } = codexGrantPaths({ home: w.home ?? home, env, gitDir, gitCommonDir });
-  const whole = new Set(general.map((g) => w.canon(g)).filter(Boolean));
+  const { candidates, general } = paths ?? codexGrantPaths({ home: home ?? w.home, env, gitDir, gitCommonDir });
+  const whole = general.map((g) => w.canon(g));
+  if (whole.some((g) => g === null)) return { dirs: [], withheld: general.filter((_, i) => whole[i] === null) };
   const out = [];
   for (const raw of candidates) {
     const dir = w.canon(raw);
-    if (!dir || out.includes(dir) || !codexDirAllowed(dir, w) || whole.has(dir)) continue;
+    if (!dir || out.includes(dir) || !codexDirAllowed(dir, w, whole)) continue;
     let there = false;
     try { there = isDir(dir) === true; } catch { there = false; }
     if (there) out.push(dir);
   }
-  return out;
+  return { dirs: out, withheld: [] };
 }
 
 /**

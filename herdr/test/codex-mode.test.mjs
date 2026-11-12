@@ -13,11 +13,11 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { AGENTS, CODEX_MODE_ARGS, CODEX_NETWORK, absPath, cleanPath, codexClean, codexCleanNote, codexDirAllowed, codexGrants, codexKeepDirs, codexWhere,
+import { AGENTS, CODEX_MODE_ARGS, CODEX_NETWORK, absPath, cleanPath, codexClean, codexGrantPlan, codexGrantPaths, codexCleanNote, codexDirAllowed, codexGrants, codexKeepDirs, codexWhere,
   homeWide, launchRun, withCodexGrants, withoutBriefing } from "../mods/am-sidebar/models.js";
 import { helperPlan, restartPlan } from "../mods/am-sidebar/restart.js";
 import { codexCommandCheck, codexForwards, codexTemplateRefusal, codexTemplateWarning, workerPlan } from "../mods/am-sidebar/workers.js";
-import { RESOLVE_PROBE, canonHere, resolvedThere } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
+import { IDENTITY_PROBE, RESOLVE_PROBE, canonHere, resolvedThere, sameHere, sameThere } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 import { readJsonLines } from "./log-lines.mjs";
 import { scratchProject, scratchRoot } from "./scratch-project.mjs";
 
@@ -124,10 +124,12 @@ test("codexGrants: the git dirs, herdr-core's state and data folders and the too
   assert.deepEqual(codexGrants({ home, env, gitDir: "/r/.git", gitCommonDir: "/r/.git", isDir: (d) => d === "/r/.git" }), ["/r/.git"]);
   // Only what is there; no git dir when there is none.
   assert.deepEqual(codexGrants({ home, env: {}, gitCommonDir: null, isDir: (d) => d === "/home/u/.npm" }), ["/home/u/.npm"]);
-  // The environment names each cache; a relative or `..` path is not a path to grant.
-  assert.deepEqual(codexGrants({ home, env: { GOMODCACHE: "/m", GOCACHE: "/b", npm_config_cache: "/n", BUN_INSTALL_CACHE_DIR: "/c",
-    XDG_DATA_HOME: "rel", XDG_CACHE_HOME: "/q/../q" }, isDir: () => true }).filter((d) => !d.includes("herdr-core") && !d.includes("pnpm")),
-  ["/m", "/b", "/n", "/c"]);
+  // The environment names each cache; a relative XDG value is ignored for its default (the XDG rule).
+  const named = { GOMODCACHE: "/m", GOCACHE: "/b", npm_config_cache: "/n", BUN_INSTALL_CACHE_DIR: "/c", XDG_DATA_HOME: "rel" };
+  assert.deepEqual(codexGrants({ home, env: named, isDir: () => true }).filter((d) => !d.includes("herdr-core") && !d.includes("pnpm")),
+    ["/m", "/b", "/n", "/c"]);
+  // #1142: a general folder whose place can't be proved (a .. with no resolver) can't be kept out: nothing is derived.
+  assert.deepEqual(codexGrantPlan({ home, env: { ...named, XDG_CACHE_HOME: "/q/../q" }, isDir: () => true }), { dirs: [], withheld: ["/q/../q"] });
 });
 
 test("codexGrants never grants the root, the home folder, a folder above it, or a whole XDG, cache, GOPATH or Bun folder", () => {
@@ -395,7 +397,7 @@ function linkTree(t) {
   return { root, home, app, S, up };
 }
 /** This computer's resolver, as canonHere answers it: the realpath of the exact form (kernel semantics), null when it isn't there. */
-const realHere = (p) => realpathSync.native(p);
+const realHere = (p) => canonHere(p);
 const isDirHere = (p) => { try { return statSync(p).isDirectory(); } catch { return false; } };
 
 test("#1142 a symlink's .. is resolved the filesystem's way, never as text; each --add-dir passed is the value checked (source, probe, grants)", (t) => {
@@ -499,7 +501,12 @@ test("#1142 a template's words are proved to reach Codex only for one literal sh
     'f() { shift; }; f; codex "$@"', 'trap "" HUP; codex "$@"', 'if true; then codex "$@"; fi', 'true | codex "$@"', '( codex "$@" )', '{ codex "$@"; }',
     'codex "$@" &', 'codex "$@" >/dev/null', 'cd "$(pwd)"; codex "$@"', 'cd `pwd`; codex "$@"', 'codex "$*"', "codex $@", 'codex "${@}"',
     'codex -m $M "$@"', 'X=--; codex $X "$@"', "codex '--' \"$@\"", 'exec -a x codex "$@"', 'env A=b codex "$@"', 'cd /tmp && codex "$@"',
-    'git status; codex "$@"', 'codex "$@" "$@"', 'codex ~/x "$@"', 'codex * "$@"', "codex\n", 'codex "$@" || true', 'codex -m x # note'];
+    'git status; codex "$@"', 'codex "$@" "$@"', 'codex ~/x "$@"', 'codex * "$@"', "codex\n", 'codex "$@" || true', 'codex -m x # note',
+    // #1142: an assignment that moves the launch's folders or program; a Codex word of unknown arity or without its value.
+    'HOME=/tmp/x codex "$@"', 'export CODEX_HOME=/tmp/x; codex "$@"', "XDG_CONFIG_HOME=/tmp/x codex", 'PATH=/tmp/x codex "$@"',
+    'npm_config_cache=/tmp/x codex "$@"', 'export GOPATH=/tmp/x; codex "$@"', "HERDR_APP_HOME=/tmp/x codex", "codex -m", 'codex -m "$@"',
+    'codex --profile "$@"', 'codex -c "$@"', 'codex --add-dir "$@"', 'codex exec "$@"', "codex resume", 'codex review "$@"', 'codex --foo "$@"',
+    'codex "$@" exec', 'codex "$@" -m', 'codex -m -x "$@"'];
   for (const command of unproved) {
     assert.equal(codexForwards(command), false, command);
     const p = plan(command);
@@ -511,7 +518,7 @@ test("#1142 a template's words are proved to reach Codex only for one literal sh
   }
   // Proved: a literal Codex run with the template's own "$@" or the one the pack appends, after literal assignments or export.
   for (const command of ['codex "$@"', "codex -m x", 'A=1 exec codex -m m "$@"', 'export A=b; codex "$@"', "A=b; codex -m 'o \"3\"'",
-    'codex "$@" -m x', "A=b && codex -m x"]) {
+    'codex "$@" -m x', "A=b && codex -m x", 'codex --model=x "$@"', 'codex -mx "$@"', 'codex --oss "$@"', 'codex "$@" --search']) {
     assert.equal(codexForwards(command), true, command);
     const p = plan(command);
     assert.deepEqual([p.template, p.granted, p.templateNote], ["seat-tpl", true, null], command);
@@ -524,6 +531,134 @@ test("#1142 a template's words are proved to reach Codex only for one literal sh
   }
   // Codex named by its path is the same run (read only here: no path to a real Codex is ever executed by a test).
   assert.equal(codexForwards('/opt/tools/codex "$@" -m x'), true);
+});
+
+/** A home folder H with both herdr-core folders, caches, a repo and a cache root inside a data folder; spellings of it. */
+function homeTree(t) {
+  const root = realpathSync(scratchRoot(t, "hb-1142-h-"));
+  const H = join(root, "home");
+  for (const d of [".local/state/herdr-core", ".local/share/herdr-core", ".npm", "go-mod", "proj/.git", "data/cache", "plain"]) mkdirSync(join(H, d), { recursive: true });
+  mkdirSync(join(root, "x"));
+  symlinkSync(H, join(root, "alias"));
+  symlinkSync(root, join(root, "up"));
+  symlinkSync(join(root, "nowhere"), join(H, "gp"));
+  // H as written, through a symlink, through a .., and under a symlinked folder above it.
+  return { root, H, spellings: [H, join(root, "alias"), `${root}/x/../home`, join(root, "up", "home")] };
+}
+/** codexOn's pipeline for a machine whose HOME is spelled `home`: one inventory, probed by a real sh, weighed by codexGrantPlan. */
+const linkedGrants = (home, env, extra = {}) => {
+  const inventory = codexGrantPaths({ home, env, ...extra });
+  const there = probe([home, `${home}/.config/herdr-app`, ...inventory.candidates, ...inventory.general]);
+  return codexGrantPlan({ where: codexWhere({ home, resolve: there.resolve }), env, isDir: there.isDir, paths: inventory });
+};
+const localGrants = (home, env, extra = {}) => codexGrantPlan({ where: codexWhere({ home, resolve: canonHere, same: sameHere }), home, env, isDir: isDirHere, ...extra });
+
+test("#1142 one inventory: a HOME spelled through a symlink, a .. or a linked folder keeps both core folders and every general folder out, here and there", (t) => {
+  const { H, spellings } = homeTree(t);
+  const core = [join(H, ".local/state/herdr-core"), join(H, ".local/share/herdr-core")];
+  for (const home of spellings) {
+    const cases = [
+      [{}, { gitDir: `${home}/proj/.git` }, [join(H, "proj/.git"), ...core, join(H, ".npm")]],
+      [{ npm_config_cache: `${home}/.local` }, {}, core],
+      [{ XDG_STATE_HOME: `${home}/.local/state`, GOMODCACHE: `${home}/go-mod` }, {}, [...core, join(H, "go-mod"), join(H, ".npm")]],
+      // A cache folder named above a general folder (GOCACHE above XDG_CACHE_HOME) is no cache.
+      [{ XDG_CACHE_HOME: `${home}/data/cache`, GOCACHE: `${home}/data` }, {}, [...core, join(H, ".npm")]],
+    ];
+    for (const [env, extra, want] of cases) {
+      for (const [name, plan] of [["there", linkedGrants(home, env, extra)], ["here", localGrants(home, env, extra)]]) {
+        assert.deepEqual(plan, { dirs: want, withheld: [] }, `${name} ${home} ${JSON.stringify(env)}`);
+      }
+    }
+    // A general folder that can't be resolved (a dangling GOPATH) can't be kept out: nothing is derived.
+    for (const plan of [linkedGrants(home, { GOPATH: `${home}/gp` }), localGrants(home, { GOPATH: `${home}/gp` })]) {
+      assert.deepEqual(plan.dirs, [], home);
+      assert.equal(plan.withheld.length, 1, home);
+    }
+  }
+});
+
+test("#1142 a protected root that can't be resolved withholds every --add-dir and every derived folder, with a note; resolved roots keep the narrow ones", (t) => {
+  const { H } = homeTree(t);
+  const narrow = ["codex", "--add-dir", join(H, "plain")];
+  for (const [label, opts] of [["a relative HOME", { home: "rel/home" }], ["an empty HOME", { home: "" }], ["a relative app home", { home: H, appHome: "rel/app" }],
+    ["a resolver error", { home: H, resolve: () => { throw new Error("no"); } }]]) {
+    const where = codexWhere({ resolve: canonHere, same: sameHere, ...opts });
+    assert.ok(where.unproved.length, label);
+    assert.deepEqual(codexClean(narrow, where).argv, ["codex"], `${label}: even a narrow folder`);
+    assert.deepEqual(codexGrantPlan({ where, home: opts.home, env: {}, isDir: isDirHere }).dirs, [], label);
+    assert.match(codexCleanNote(["codex"], where), /can't be resolved, so it starts with its working folder only: no --add-dir and no derived folder/, label);
+  }
+  const ok = codexWhere({ home: H, resolve: canonHere, same: sameHere });
+  assert.deepEqual(ok.unproved, []);
+  assert.deepEqual(codexClean(narrow, ok).argv, narrow, "the narrow folder stays");
+  assert.equal(codexCleanNote(narrow, ok), null);
+});
+
+test("#1142 by object identity: an alias the paths don't show is refused, here (stat) and there (test -ef); an unknown answer refuses", (t) => {
+  const { root, home, app } = tree(t);
+  mkdirSync(join(home, ".local"));
+  for (const [link, to] of [["h-alias", home], ["a-alias", app], ["above-app", join(home, ".config")], ["l-alias", join(home, ".local")]]) symlinkSync(to, join(root, link));
+  const weighed = ["h-alias", "a-alias", "a-alias/sub", "above-app", "l-alias", "shared"].map((d) => join(root, d));
+  const general = [join(home, ".local")];
+  // Paths compared as written (no resolver): only identity can see these aliases.
+  const chainOf = (p) => { const out = []; for (let c = p; ; c = c.slice(0, c.lastIndexOf("/")) || "/") { out.push(c); if (c === "/") return out; } };
+  const apps = codexWhere({ home, appHome: app }).appHomes;
+  const protectedDirs = [...new Set([home, ...apps, ...general].flatMap(chainOf))];
+  const pairs = weighed.flatMap((c) => [...protectedDirs.filter((p) => p !== c).map((p) => [c, p]), ...chainOf(c).flatMap((x) => apps.filter((a) => a !== x).map((a) => [x, a]))]);
+  const r = spawnSync("sh", ["-c", IDENTITY_PROBE, "sh", home, ...pairs.flat()], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  for (const [name, same] of [["here", sameHere], ["there", sameThere(r.stdout, pairs)]]) {
+    const where = codexWhere({ home, appHome: app, same });
+    for (const d of ["h-alias", "a-alias", "a-alias/sub", "above-app"]) assert.equal(codexDirAllowed(join(root, d), where), false, `${name} ${d}`);
+    assert.equal(codexDirAllowed(join(root, "l-alias"), where, general), false, `${name}: a general folder, for a derived one`);
+    assert.equal(codexDirAllowed(join(root, "l-alias"), where), true, `${name}: an --add-dir may name it`);
+    assert.equal(codexDirAllowed(join(root, "shared"), where, general), true, `${name}: an ordinary folder`);
+  }
+  assert.equal(codexDirAllowed(join(root, "shared"), codexWhere({ home, appHome: app, same: () => null })), false, "an unknown answer refuses");
+  // The probe proves test -ef first, and never reads a failed test as "different".
+  assert.equal(sameThere("unsupported\n", pairs)(join(root, "shared"), home), null);
+  assert.equal(sameThere("1\n", pairs)(join(root, "shared"), home), null, "an answer that doesn't cover every pair proves nothing");
+  const odd = spawnSync("sh", ["-c", IDENTITY_PROBE, "sh", join(root, "nowhere"), join(root, "shared"), home], { encoding: "utf8" });
+  assert.equal(odd.stdout.trim(), "unsupported", "no folder to prove test -ef on");
+});
+
+test("#1142 a Codex seat on a linked machine whose HOME is an alias: both core folders and the caches it names are granted as canonical values, .local stays out, start and restart", (t) => {
+  const root = realpathSync(scratchRoot(t, "hb-1142-va-"));
+  const bin = join(root, "bin"), home = join(root, "home"), app = join(root, "app"), vm = join(root, "vm"), vmBin = join(root, "vm-bin"), alias = join(root, "vm-alias");
+  for (const d of [bin, home, app, vmBin, join(vm, ".local/state/herdr-core"), join(vm, ".local/share/herdr-core"), join(vm, "go-mod")]) mkdirSync(d, { recursive: true });
+  symlinkSync(vm, alias);
+  symlinkSync(join(root, "nowhere"), join(vm, "gp"));
+  exe(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
+  exe(join(bin, "herdr-app"), "#!/bin/sh\nexit 1\n");
+  exe(join(vmBin, "codex"), "#!/bin/sh\nexit 0\n");
+  exe(join(vmBin, "uname"), "#!/bin/sh\necho Linux\n");
+  const project = scratchProject(vm, "proj", { commit: true, bots: { version: 1, categories: [], bots: [
+    { id: ID.dev, name: "Dev", kind: "main", agent: "codex", look: { character: "star", colour: "blue" }, role: "r", instructions: "i" }] } });
+  const statePath = join(root, "hc.json"), logPath = join(root, "hc.log");
+  const blank = Object.fromEntries(["HERDR_APP_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "GOPATH", "GOMODCACHE",
+    "GOCACHE", "npm_config_cache", "NPM_CONFIG_CACHE", "BUN_INSTALL", "BUN_INSTALL_CACHE_DIR"].map((k) => [k, ""]));
+  const machine = (env) => writeFileSync(statePath, JSON.stringify({ next: 100, terminals: [],
+    machines: [{ name: "vm", id: "core-of-vm", state: "connected", uname: "Linux x86_64", home: alias, path: vmBin, env: { ...blank, ...env } }] }));
+  const env = { PATH: `${bin}:/usr/bin:/bin`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath, LANG: "C",
+    GIT_CEILING_DIRECTORIES: root, XDG_DATA_HOME: "", AUTOMAGIK_HERDR_TAB_WAIT_MS: "0" };
+  const cli = (...args) => {
+    writeFileSync(logPath, "");
+    const r = spawnSync(process.execPath, [CLI, ...args, "--machine", "vm", "--project", project, "--json"], { cwd: root, env, encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    return { r, argv: launched(readJsonLines(logPath).find((c) => c[0] === "run")) };
+  };
+  machine({ npm_config_cache: `${alias}/.local`, GOMODCACHE: `${alias}/go-mod` });
+  const want = [realpathSync(join(project, ".git")), join(vm, ".local/state/herdr-core"), join(vm, ".local/share/herdr-core"), join(vm, "go-mod")];
+  const start = cli("start", "Dev");
+  assert.deepEqual(addDirs(start.argv), want, "both core folders and the named cache, canonical; never the whole .local");
+  modeAsOptions(start.argv.slice(1), "the linked seat");
+  const again = cli("restart", "Dev", "--fresh", "--force");
+  assert.deepEqual(addDirs(again.argv), want, "its restart: the same");
+  // A general folder there that can't be resolved (a dangling GOPATH): nothing derived, said once.
+  machine({ GOPATH: `${alias}/gp` });
+  const held = cli("start", "Dev");
+  assert.deepEqual(addDirs(held.argv), []);
+  assert.match(held.r.stderr, /vm: Codex's derived folders were withheld: 1 folder\(s\) they must stay out of can't be resolved there/);
 });
 
 test("#1142 a template worker keeps the owner's command as written, never with the pack's folders; a Codex option after its -- is refused", (t) => {
