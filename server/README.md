@@ -373,6 +373,8 @@ the installer put it; a dependency under another `node_modules` folder is third-
 provider preset's third-party address (a user-chosen model provider) is not a built-in gateway.
 A billing hit in our own code or the config may never be allowlisted, nor may `stripe-sdk`,
 `gateway-credential` or `billing-config` anywhere; another dependency's hit needs an exact entry.
+A finding shows a URL's scheme and host only, a route up to its billing segment and an import
+without its query, so a credential carried in one never reaches the log or the inventory.
 The rules are shapes: this repository writes no Stripe key, price or account id, and
 `node server/secrecy.mjs --repo .` (CI's `privacy` job) fails on one in any tracked file. A price
 written as a plain amount is not a shape a scan can know; that stays a review rule.

@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import test, { after } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import {
-  applyAllowlist, BILLING_RULES, configHits, DATA_DIRS, loadAllowlist, nameHits, ownCode, scanRepo, scanTree, sha256,
+  applyAllowlist, BILLING_RULES, configHits, DATA_DIRS, loadAllowlist, maskAddress, maskRoute, nameHits, ownCode, scanRepo, scanTree, sha256,
   sha256Bytes, walk,
 } from '../secrecy.mjs'
 
@@ -425,4 +425,59 @@ test('--repo refuses a Stripe key, price or account id in a tracked file, and th
   const repo = scanRepo(root, tracked)
   assert.ok(repo.checked > 100)
   assert.deepEqual(repo.hits.map((hit) => `${hit.file}:${hit.line}: ${hit.rule}`), [])
+})
+
+// MASK_RAW_URL (PR 976 review): a billing finding on a URL, a route or an import once printed
+// its whole match, so a credential in the query or userinfo reached stderr and the inventory.
+test('a billing finding never prints a credential carried in its URL, route or import', () => {
+  const secret = `tk${'9xQ7'.repeat(8)}`
+  const password = `pw${'4Lm2'.repeat(6)}`
+  const parts = [secret, password].flatMap((value) => [value, value.slice(0, 8), value.slice(8, 16), value.slice(-8)])
+  const vendor = ['gateway', 'vendor', 'net'].join('.')
+  const dir = rootfs()
+  write(dir, `${PLUGIN}/models.js`, [
+    `const gatewayUrl = 'https://${vendor}/v1?token=${secret}'`,
+    `const gatewayStream = 'wss://svc:${password}@${vendor}:8443/stream#${secret}'`,
+    `ctx.server.get('/api/billing/portal?token=${secret}', handler)`,
+    `ctx.server.get('/cloud/ledger/${secret}', handler)`,
+    `import { charge } from './billing.mjs?token=${secret}'`,
+    '',
+  ].join('\n'))
+  write(dir, `${THIRD}/data.json`, [
+    `{"a":"https://gateway.${ownHost}/v1?token=${secret}",`,
+    ` "b":"https://api.${ownHost}/gateway/quote?key=${secret}",`,
+    ` "c":"wss://eu.gateway-a.cloud.${ownHost}/${secret}"}`,
+    '',
+  ].join('\n'))
+  const found = scanTree(dir, undefined, []).hits
+  const shown = (rule) => found.filter((hit) => hit.rule === rule).map((hit) => hit.match).sort()
+  assert.deepEqual(shown('gateway-address'), [
+    `gatewayStream = 'wss://${vendor}/***`,
+    `gatewayUrl = 'https://${vendor}/***`,
+    `https://api.${ownHost}/***`,
+    `https://gateway.${ownHost}/***`,
+    `wss://eu.gateway-a.cloud.${ownHost}/***`,
+  ])
+  assert.deepEqual(shown('billing-route'), ["'/api/billing/***'", "'/cloud/ledger/***'"])
+  assert.deepEqual(shown('billing-import'), ['import ./billing.mjs?***'])
+  // The raw match is still what an exact allowlist entry and the hash are made from.
+  assert.ok(found.some((hit) => hit.rule === 'gateway-address' && hit.raw.includes(secret)))
+  for (const hit of found) for (const part of parts) assert.ok(!hit.match.includes(part), `${hit.rule}: ${hit.match}`)
+
+  // The CLI, as the workflow runs it: nothing printed and nothing in the uploaded inventory.
+  const inventory = join(temp(), 'inventory')
+  const run = spawnSync(process.execPath, [join(HERE, '..', 'secrecy.mjs'), '--rootfs', dir, '--inventory', inventory], { encoding: 'utf8' })
+  assert.equal(run.status, 1)
+  assert.match(run.stderr, /gateway-address: gatewayUrl = 'https:\/\/[a-z.]+\/\*\*\* rawSha256=/)
+  const written = readdirSync(inventory).map((name) => readFileSync(join(inventory, name), 'utf8')).join('\n')
+  assert.match(written, /: gateway-address: /)
+  for (const part of parts) {
+    assert.ok(!run.stderr.includes(part), 'stderr holds part of a credential')
+    assert.ok(!run.stdout.includes(part), 'stdout holds part of a credential')
+    assert.ok(!written.includes(part), 'the inventory holds part of a credential')
+  }
+
+  assert.equal(maskAddress('https://user:pw@h.example:8443/p?q=1#f'), 'https://h.example/***')
+  assert.equal(maskAddress('wss://[2001:db8::1]:443/x'), 'wss://[2001:db8::1]/***')
+  assert.equal(maskRoute("'/billing'"), "'/billing/***'")
 })

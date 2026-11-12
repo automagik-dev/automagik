@@ -241,6 +241,17 @@ export function textHits(file, text, list, denied = denyMatcher(list.deny), { pr
   return hits
 }
 
+/**
+ * What a billing finding may show. A URL keeps its scheme and host only: its userinfo, path,
+ * query and fragment can carry a credential. A route keeps its path up to the billing segment,
+ * and a module specifier loses its query. The raw match stays on the hit for hashing and the
+ * exact allowlist only; it is never printed or written to the inventory.
+ */
+const URL_SHOWN = /((?:https?|wss?):\/\/)(?:[^\s\/?#"'`]*@)?([A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])?(?::\d+)?[^\s"'`<>)\\]*/gi
+export const maskAddress = (text) => String(text).replace(URL_SHOWN, (_, scheme, host) => `${scheme}${host ?? ''}/***`)
+export const maskRoute = (text) => String(text).replace(/^(["'`])(\/(?:[A-Za-z0-9_.:-]+\/)*(?:billing|ledger))(?:[\/?#].*)?\1$/i, '$1$2/***$1')
+export const maskSpecifier = (specifier) => String(specifier).replace(/[?#].*$/, '?***')
+
 /** The dependency maps a package installs: a development dependency is not in the image. */
 const DEPENDENCY_FIELDS = ['dependencies', 'optionalDependencies', 'peerDependencies', 'bundledDependencies', 'bundleDependencies']
 
@@ -269,26 +280,26 @@ function manifestHits(file, text) {
  */
 export function billingHits(file, text) {
   const hits = []
-  const add = (rule, match, masked = match[0]) => hits.push(hitOf(file, lineOf(text, match.index), rule, match[0], masked))
+  const add = (rule, match, masked) => hits.push(hitOf(file, lineOf(text, match.index), rule, match[0], masked))
   const own = ownCode(file)
   for (const { rule, re, mask } of STRIPE_VALUE_RULES) {
     for (const match of text.matchAll(re)) add(rule, match, mask(match[0]))
   }
-  for (const match of text.matchAll(STRIPE_HOST)) add('stripe-client', match)
+  for (const match of text.matchAll(STRIPE_HOST)) add('stripe-client', match, match[0])
   for (const re of OWN_GATEWAY) {
-    for (const match of text.matchAll(re)) add('gateway-address', match)
+    for (const match of text.matchAll(re)) add('gateway-address', match, maskAddress(match[0]))
   }
   if (basename(file) === 'package.json') hits.push(...manifestHits(file, text))
   if (SOURCE.test(file)) {
     for (const match of text.matchAll(SPECIFIER)) {
-      if (STRIPE_PACKAGE.test(match[2])) add('stripe-sdk', match, `import ${match[2]}`)
-      else if (own && billingSpecifier(match[2])) add('billing-import', match, `import ${match[2]}`)
+      if (STRIPE_PACKAGE.test(match[2])) add('stripe-sdk', match, `import ${maskSpecifier(match[2])}`)
+      else if (own && billingSpecifier(match[2])) add('billing-import', match, `import ${maskSpecifier(match[2])}`)
     }
   }
   if (own) {
-    for (const match of text.matchAll(BILLING_ROUTE)) add('billing-route', match)
+    for (const match of text.matchAll(BILLING_ROUTE)) add('billing-route', match, maskRoute(match[0]))
     for (const match of text.matchAll(GATEWAY_DEFAULT)) {
-      if (!EXAMPLE_HOST.test(match[0])) add('gateway-address', match)
+      if (!EXAMPLE_HOST.test(match[0])) add('gateway-address', match, maskAddress(match[0]))
     }
     for (const match of text.matchAll(GATEWAY_CREDENTIAL)) add('gateway-credential', match, `${match[0].split(/[:=?|]/)[0].trim()} ***`)
   }
