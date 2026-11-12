@@ -135,7 +135,7 @@ export function restartPlan({ bot, run, runningAgent = null, session = null, fre
     const argv = run.length === 1 ? [...run, ...pair] : run;
     if (JSON.stringify(argv.slice(1)) !== JSON.stringify(pair)) throw new Error("The paired Hermes launch does not match its stored binding.");
     return { mode: "resume", agent: "hermes", model: null, resume: ["--continue", "Bot Chat"], argv,
-      source: argv, template: null, agySettings: null, sessionId: null, note: "paired Bot Chat, resolved by exact title" };
+      source: argv, template: null, agySettings: null, sessionId: null, canonicalBot: true, note: "paired Bot Chat, resolved by exact title" };
   }
   const swap = agent !== undefined || model !== undefined;
   const key = agent ?? bot.agent;
@@ -635,6 +635,7 @@ export function maskedArgv(argv, id = null) {
 
 /** One line for the owner: what the replacement does with the conversation. The session id itself is never shown. */
 export function planText(plan, session) {
+  if (plan.canonicalBot) return "resuming its paired Hermes Bot Chat (exact profile and title)";
   if (plan.mode === "swap") return `on ${plan.agent}${plan.model ? ` (${plan.model})` : ""}, a new conversation`;
   if (plan.mode === "fresh") return plan.note ? `a new conversation (${plan.note})` : "a new conversation";
   if (plan.agent === "claude") return session ? "resuming its session by id" : "resuming the latest conversation in its folder (--continue)";

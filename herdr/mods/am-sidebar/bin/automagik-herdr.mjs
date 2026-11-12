@@ -3130,7 +3130,7 @@ async function restartOnMachine(opts, project, bot, entry) {
   const oldLaunch = old ? paneCommand(old) : null;
   const planned = {
     bot, run: launchRun(agentKey, run, bot), runningAgent: old ? agentKeyOfArgv(unwrapKeep(old.foreground?.argv), agentTable()) : null, session: label,
-    fresh: opts.fresh || !old, agent: entry ? entry.agent : undefined, model: entry ? (entry.model ?? "") : undefined,
+    fresh: opts.fresh || (!old && !bot.hermes), agent: entry ? entry.agent : undefined, model: entry ? (entry.model ?? "") : undefined,
     // A new conversation there starts on an id chosen here too (RFC 0026 (e)), as cmdRestart's does.
     newSession: newSessionId(),
   };
@@ -3151,7 +3151,7 @@ async function restartOnMachine(opts, project, bot, entry) {
   // With no session id, a resume takes the workspace's latest conversation, which may be one
   // someone started there by hand: refused unless --force, and even then while any other live
   // pane on that machine runs the same agent in that folder (bot or not: hc ls, not the ledger).
-  if (plan.mode === "resume" && !session) {
+  if (plan.mode === "resume" && !session && !plan.canonicalBot) {
     if (!opts.force) {
       throw new CliError(`${old.address} carries no session id, so ${plan.agent} would resume the latest conversation in ${cwd}, `
         + `which may not be ${bot.name}'s (one started there by hand, say). Nothing was restarted. Restart with --fresh for a new `
@@ -4404,7 +4404,7 @@ async function cmdRestart(opts, [ref]) {
   const planned = {
     bot, run: launchRun(entry?.agent ?? bot.agent, startableAgent(bot, entry?.agent ?? bot.agent).run, bot),
     runningAgent, session: known?.session ?? null,
-    fresh: opts.fresh || !was, agent: entry ? entry.agent : undefined, model: entry ? (entry.model ?? "") : undefined,
+    fresh: opts.fresh || (!was && !bot.hermes), agent: entry ? entry.agent : undefined, model: entry ? (entry.model ?? "") : undefined,
     template: oldTemplate?.command ? { name: oldTemplate.name, command: oldTemplate.command } : null,
     agy: { appHomeDir: appHome(), folder: cwd, realpath: realDir, homeDir: home() },
     // A new conversation on Claude runs on an id chosen here (RFC 0021 (f) 2); a resume keeps its own.
@@ -4429,7 +4429,7 @@ async function cmdRestart(opts, [ref]) {
   // --last), for every agent: beside another bot on that agent there, a new conversation, and
   // why (#328: an omp --continue picked up a teammate's). Alone there, the resume as before.
   let sharedNote = null;
-  if (plan.mode === "resume" && !resumeId) {
+  if (plan.mode === "resume" && !resumeId && !plan.canonicalBot) {
     const anywhere = continuesAnywhere(plan.agent);
     const sharers = await sharersOf({ view, cwd, botId: bot.id, file, agentKey: plan.agent, ledger, old, anywhere });
     const note = sharedFresh({ name: bot.name, old: was, cwd, sharers, agent: agentName(plan.agent), words: plan.resume.join(" "), anywhere });
@@ -4598,7 +4598,7 @@ async function cmdRestart(opts, [ref]) {
   }
   // A helper --tree couldn't run again: the command fails (the bot did restart; its line says how).
   if (rerun.some((h) => h.error)) exitAfter.code = 1;
-  if (plan.mode === "resume" && !resumeId) {
+  if (plan.mode === "resume" && !resumeId && !plan.canonicalBot) {
     const name = agentName(plan.agent);
     say(`No ${name} session id was known for ${was.address}, so ${seat.terminal} resumes the latest conversation in ${cwd} (${plan.resume.join(" ")}). `
       + `No other bot's ${name} runs there; if it isn't ${bot.name}'s, restart again with --fresh.`);

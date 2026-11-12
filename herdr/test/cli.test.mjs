@@ -179,6 +179,26 @@ const labelCalls = (calls) => calls.filter((c) => c[0] === "label");
 
 // ---- create ----
 
+test("paired Hermes restart resumes when stopped or beside a different paired bot", (t) => {
+  for (const live of [false, true]) {
+    const s = scene(t);
+    exe(join(s.root, "bin/hermes"), "#!/bin/sh\nexit 0\n");
+    s.seed(team({ bots: [
+      bot(ID.main, "main", { name: "Research", agent: "hermes", hermes: { home: "/srv/research", profile: "default" } }),
+      bot(ID.cap, "member", { name: "Other", agent: "hermes", hermes: { home: "/srv/other", profile: "default" } }),
+    ] }));
+    const terminals = [term("t2", { bot: ID.cap, argv: ["hermes"], cwd: s.project, app: "hermes" }),
+      ...(live ? [term("t1", { bot: ID.main, argv: ["hermes"], cwd: s.project, app: "hermes" })] : [])];
+    writeFileSync(s.env.HC_FAKE_STATE, JSON.stringify({ terminals, next: 100 }));
+    const result = s.cli(["restart", "Research", "--json"]);
+    assert.equal(result.code, 0, result.err);
+    const launch = runCall(s.calls());
+    assert.deepEqual(agentWords(launch), ["hermes", "--profile", "default", "--tui", "--continue", "Bot Chat"]);
+    assert.ok(agentParts(launch).env.includes("HERMES_HOME=/srv/research"));
+    assert.doesNotMatch(result.err, /latest conversation|restart again with --fresh/);
+  }
+});
+
 test("create: the first bot must be main; then the main bot is written with an id, a default look and the agent", (t) => {
   const s = scene(t);
   const refused = s.cli(["create", "--name", "Dev", "--agent", "claude", "--kind", "member"]);
