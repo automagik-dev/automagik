@@ -116,7 +116,7 @@ test('the saved column reads back, and anything unknown falls back to the open d
   assert.deepEqual(readSidebar(storage), { pref: 'hidden', shown: 'rail', width: 350 })
   writeSidebar({ pref: 'odd', shown: 'odd', width: 9999 }, storage)
   assert.deepEqual(readSidebar(storage), { pref: 'open', shown: 'open', width: SIDEBAR_MAX })
-  store.set('ds-bot:sidebar', 'rail')
+  store.set('omni-ui:sidebar', 'rail')
   assert.deepEqual(readSidebar(storage), { pref: 'open', shown: 'open', width: FALLBACK_SIDEBAR_WIDTH })
 })
 

@@ -51,7 +51,7 @@ async function start() {
     { question: 'Which name?', options: [{ label: 'Lookout' }, { label: 'Scout' }] },
     { agent: { id: sessionId }, callId, concludeTurn() {} },
   )
-  const questions = async () => (await (await route.fetch(new Request('http://localhost/api/bot', {
+  const questions = async () => (await (await route.fetch(new Request('http://localhost/api/omni-ui', {
     method: 'POST', body: JSON.stringify({ endpoint: 'state', payload: {} }),
   }))).json()).value.questions
   // Loading once fills the Session-owner indexes turns.js filters events by.

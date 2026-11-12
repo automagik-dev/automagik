@@ -53,7 +53,7 @@ function start(team = TEAM) {
   ctx.connection.fetch.register = (options) => { route = options; return register(options) }
   rt = createRuntime(ctx, { home })
   const tool = (name, args, sessionId) => rt.teamTools.find(d => d.name === name).execute(args, { agent: { id: sessionId } })
-  const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/bot', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))).json()
+  const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/omni-ui', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))).json()
   const state = () => JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'))
   const stop = async () => {
     await ctx.dispose()

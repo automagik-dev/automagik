@@ -139,7 +139,7 @@ test('a state from a newer version remains untouched', async (t) => {
   const original = JSON.stringify({ version: 999, revision: 77, recoveryMarker: 'keep' })
   const { rt, statePath } = runtime(t, original)
   await rt.load()
-  assert.match(rt.readOnly(), /saved by a newer DS Bot; update DS Bot/)
+  assert.match(rt.readOnly(), /saved by a newer Omni; update Omni/)
   rt.state.prefs.marker = 'not saved'
   await rt.save()
   assert.equal(fs.readFileSync(statePath, 'utf8'), original)
@@ -319,7 +319,7 @@ test('a save writes the unsaved change when the lock went away but the file did 
   }
 })
 
-test('a save writes nothing after adopting a file from a newer DS Bot', async (t) => {
+test('a save writes nothing after adopting a file from a newer Omni', async (t) => {
   const { rt, home, statePath } = runtime(t)
   await rt.load()
   rt.state.prefs.marker = 'ours'
@@ -329,7 +329,7 @@ test('a save writes nothing after adopting a file from a newer DS Bot', async (t
   fs.rmSync(join(home, 'state.lock'))
   rt.state.prefs.after = 'not saved'
   await rt.save()
-  assert.match(rt.readOnly(), /saved by a newer DS Bot/)
+  assert.match(rt.readOnly(), /saved by a newer Omni/)
   assert.equal(fs.readFileSync(statePath, 'utf8'), future)
   // The outside edit was still kept aside before it was adopted.
   const backups = fs.readdirSync(home).filter(name => name.startsWith('state.json.replaced-'))

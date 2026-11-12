@@ -72,7 +72,7 @@ async function team(t, archived) {
   ctx.connection.fetch.register = (route) => { ctx.route = route; return register(route) }
   const rt = createRuntime(ctx, { home })
   t.after(async () => { await ctx.dispose(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }) })
-  const call = async (endpoint, payload = {}) => (await ctx.route.fetch(new Request('http://localhost/api/bot', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))).json()
+  const call = async (endpoint, payload = {}) => (await ctx.route.fetch(new Request('http://localhost/api/omni-ui', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))).json()
   return { home, registry, call, rt }
 }
 

@@ -238,7 +238,7 @@ export function install(rt) {
   }
 
   // A local agent's model, by its full ref only, so a short name never moves a Bot onto
-  // a CLI. Its CLI is asked only when DS Bot does not know the model yet.
+  // a CLI. Its CLI is asked only when Omni does not know the model yet.
   async function resolveLocalModel(ref) {
     const { provider, model } = splitRef(ref)
     const known = await ctx.llm.listModels(provider).catch(() => [])
@@ -324,7 +324,7 @@ export function install(rt) {
       })
       const saved = result?.selected ?? { provider, model, ...(reasoningEffort === undefined ? {} : { reasoningEffort }) }
       if (before?.provider && before?.model && !sameSelection(before, saved)) {
-        await defaults.saveSelection(before).catch(error => rt.warn('ds-bot: the default model was not restored: %s', error))
+        await defaults.saveSelection(before).catch(error => rt.warn('omni-ui: the default model was not restored: %s', error))
       }
       sessionSelections.set(sessionId, { provider, model, reasoningEffort })
       return result
@@ -348,7 +348,7 @@ export function install(rt) {
       const applied = sessionSelections.get(sessionId)
       if (!force && applied !== undefined && sameSelection(applied, route)) continue
       await selectSessionModel(sessionId, route)
-        .catch(error => rt.warn('ds-bot: model for %s in a group not applied: %s', bot.name, error))
+        .catch(error => rt.warn('omni-ui: model for %s in a group not applied: %s', bot.name, error))
     }
     if (!ownChanged) return ref
     bot.appliedModel = ref
@@ -385,7 +385,7 @@ export function install(rt) {
   }
   async function syncAll() {
     for (const bot of Object.values(state.bots)) {
-      await applyModel(bot).catch(error => rt.warn('ds-bot: model for %s not applied: %s', bot.name, error))
+      await applyModel(bot).catch(error => rt.warn('omni-ui: model for %s not applied: %s', bot.name, error))
     }
   }
 
@@ -397,7 +397,7 @@ export function install(rt) {
     const served = await servedModels(ref)
     if (!refused.has(ref)) {
       refused.set(ref, served)
-      rt.warn('ds-bot: %s is not a model endpoint, so it is not chosen again', ref)
+      rt.warn('omni-ui: %s is not a model endpoint, so it is not chosen again', ref)
       const entries = await catalog()
       const pinned = Object.values(state.bots).filter(other => other.model === ref || other.appliedModel === ref)
       for (const other of pinned) {
@@ -406,14 +406,14 @@ export function install(rt) {
       }
       await rt.save()
       for (const other of pinned) {
-        if (other !== bot) await applyModel(other, { force: true }).catch(error => rt.warn('ds-bot: model for %s not applied: %s', other.name, error))
+        if (other !== bot) await applyModel(other, { force: true }).catch(error => rt.warn('omni-ui: model for %s not applied: %s', other.name, error))
       }
     }
     if (bot !== undefined) await applyModel(bot, { force: true })
   }
 
   const lifetime = new AbortController()
-  ctx.effect?.(() => () => { lifetime.abort() }, 'ds-bot: auxiliary llm retry')
+  ctx.effect?.(() => () => { lifetime.abort() }, 'omni-ui: auxiliary llm retry')
   const assembleLlm = options => assembleLlmStream(ctx, options, { signal: lifetime.signal, backoff: rt.config?.llmRetryBackoff })
 
   Object.assign(rt, {

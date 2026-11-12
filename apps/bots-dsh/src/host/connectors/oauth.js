@@ -16,7 +16,7 @@ import {
 const TIMEOUT_MS = 20_000
 // The loopback port the client-metadata document at this address may name.
 export const FIXED_CALLBACK_PORT = 38517
-export const CIMD_CLIENT_ID = 'https://dsbot.app/oauth/client.json'
+export const CIMD_CLIENT_ID = process.env.AUTOMAGIK_OAUTH_CLIENT_METADATA_URL?.trim() || undefined
 
 const timed = (request = fetch) => (url, init) => request(url, { ...init, signal: init?.signal ?? AbortSignal.timeout(TIMEOUT_MS) })
 
@@ -66,17 +66,17 @@ export async function resolveClient(entry, discovery, redirectUri, fixedPort, st
     const expired = Number.isFinite(stored.secretExpiresAt) && stored.secretExpiresAt * 1000 <= Date.now()
     const uriMissing = Array.isArray(stored.redirectUris) && !stored.redirectUris.includes(redirectUri)
     // A stored CIMD client still needs the fixed port its document names.
-    if (!expired && !uriMissing && stored.via === 'cimd' && fixedPort) return { via: 'cimd', clientInformation: { client_id: stored.clientId } }
+    if (!expired && !uriMissing && stored.via === 'cimd' && fixedPort && CIMD_CLIENT_ID && stored.clientId === CIMD_CLIENT_ID) return { via: 'cimd', clientInformation: { client_id: stored.clientId } }
     if (!expired && !uriMissing && stored.via !== 'dcr' && stored.via !== 'cimd') return { via: stored.via, clientInformation: { client_id: stored.clientId } }
     if (!expired && !uriMissing && stored.via === 'dcr') return { via: 'dcr', clientInformation: { client_id: stored.clientId, ...(stored.clientSecret ? { client_secret: stored.clientSecret } : {}) } }
   }
   const metadata = discovery.metadata
-  if (metadata?.client_id_metadata_document_supported === true && fixedPort) {
+  if (metadata?.client_id_metadata_document_supported === true && fixedPort && CIMD_CLIENT_ID) {
     return { via: 'cimd', clientInformation: { client_id: CIMD_CLIENT_ID } }
   }
   if (typeof metadata?.registration_endpoint === 'string') {
     const clientMetadata = {
-      client_name: 'DS Bot',
+      client_name: 'Omni',
       redirect_uris: [redirectUri],
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],
@@ -161,6 +161,7 @@ const post = async (send, url, params) => {
 }
 
 export async function deviceBegin(clientId, scope, { fetch: request = fetch, endpoints } = {}) {
+  if (!clientId) throw new Error('NOT SET UP: configure an Automagik GitHub sign-in app')
   const send = timed(request)
   const codeUrl = endpoints?.deviceCode ?? 'https://github.com/login/device/code'
   const { status, body } = await post(send, codeUrl, { client_id: clientId, ...(scope ? { scope } : {}) })

@@ -19,7 +19,7 @@ function start(state, { config = {}, services } = {}) {
   }
   rt = createRuntime(ctx, { home, ...config })
   const call = async (endpoint, payload) => {
-    const response = await route.fetch(new Request('http://localhost/api/bot', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))
+    const response = await route.fetch(new Request('http://localhost/api/omni-ui', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))
     return response.json()
   }
   const stop = async () => {
@@ -35,14 +35,14 @@ test('apply registers listeners and effects in a fixed order', (t) => {
   const { ctx, stop } = start()
   t.after(stop)
   assert.deepEqual(ctx.calls, [
-    'effect ds-bot: diagnostics log',
-    'effect ds-bot: state lock',
-    'effect ds-bot: ledger',
+    'effect omni-ui: diagnostics log',
+    'effect omni-ui: state lock',
+    'effect omni-ui: ledger',
     'on llm/adapters-updated',
     'on credentials/reference-updated',
     'on credentials/record-updated',
     'on settings/document-updated',
-    'effect ds-bot: auxiliary llm retry',
+    'effect omni-ui: auxiliary llm retry',
     'on subagent/start',
     'on subagent/end',
     'on session/event',
@@ -50,41 +50,41 @@ test('apply registers listeners and effects in a fixed order', (t) => {
     'on subagent/end',
     'on tools/result',
     'on session/event',
-    'effect ds-bot: lost hand-offs',
+    'effect omni-ui: lost hand-offs',
     'on tools/execute',
-    'effect ds-bot: identity section',
+    'effect omni-ui: identity section',
     'prompt bot-identity 640',
     'on agent/pre-step (prepend)',
     'on tools/execute',
-    'effect ds-bot: scoped team tools',
+    'effect omni-ui: scoped team tools',
     'on tools/change',
     'tools guard',
     'on agent/created',
     'on system-prompt/assemble',
     'on session/event',
-    'effect ds-bot: chat index',
-    'effect ds-bot: group rounds',
-    'effect ds-bot: group step lines',
+    'effect omni-ui: chat index',
+    'effect omni-ui: group rounds',
+    'effect omni-ui: group step lines',
     'on llm/stream',
     'on approval/request (prepend)',
     'on agent/inbox/discarded',
     'on session/event',
-    'effect ds-bot: resume interrupted turns',
-    'effect ds-bot: memory recovery',
-    'effect ds-bot: memory section',
+    'effect omni-ui: resume interrupted turns',
+    'effect omni-ui: memory recovery',
+    'effect omni-ui: memory section',
     'prompt bot-memory 645',
     'on agent/pre-step',
     'on agent/status',
-    'effect ds-bot: memory review',
-    'effect ds-bot: memory tidy',
-    'effect ds-bot: Bot compaction',
+    'effect omni-ui: memory review',
+    'effect omni-ui: memory tidy',
+    'effect omni-ui: Bot compaction',
     'on agent/created',
-    'effect ds-bot: wake parts that wait for their run mode',
+    'effect omni-ui: wake parts that wait for their run mode',
     'on agent/pre-step (prepend)',
     'on system-prompt/assemble (prepend)',
     'on agent/request-error (prepend)',
     'on agent/request-error (prepend)',
-    'effect ds-bot: hand on input kept in earlier parts',
+    'effect omni-ui: hand on input kept in earlier parts',
     'on workspace/session-stop',
     'on workspace/session-activity',
     'on agent/status',
@@ -94,13 +94,13 @@ test('apply registers listeners and effects in a fixed order', (t) => {
     'on agent/status',
     'on tools/execute',
     'on llm/stream',
-    'effect ds-bot: load secrets',
+    'effect omni-ui: load secrets',
     'on tools/change',
-    'effect ds-bot: connectors',
+    'effect omni-ui: connectors',
     'on agent/created',
-    'effect ds-bot: capabilities',
+    'effect omni-ui: capabilities',
     'on agent/status',
-    'effect ds-bot: learning',
+    'effect omni-ui: learning',
     'on tools/pre-execute',
     'on tools/execute',
     'on agent/created',
@@ -109,28 +109,28 @@ test('apply registers listeners and effects in a fixed order', (t) => {
     'on tools/pre-execute',
     'on tools/execute',
     'on session/event',
-    'effect ds-bot: computer use section',
+    'effect omni-ui: computer use section',
     'prompt computer-use:ds-bot 0',
-    'effect ds-bot: computer use',
-    'effect ds-bot: usage ledger',
+    'effect omni-ui: computer use',
+    'effect omni-ui: usage ledger',
     'on llm/stream',
-    'effect ds-bot: update check',
-    'effect ds-bot: dsh update install',
+    'effect omni-ui: update check',
+    'effect omni-ui: dsh update install',
     'on session/event',
-    'effect ds-bot: mobile room signals',
+    'effect omni-ui: mobile room signals',
     'on agent/status',
     'on session/event',
     'on agent/assistant-stream',
-    'effect ds-bot: live feed route',
-    'route GET /api/bot/feed',
-    'effect ds-bot: live feed',
+    'effect omni-ui: live feed route',
+    'route GET /api/omni-ui/feed',
+    'effect omni-ui: live feed',
     'on session/event',
-    'effect ds-bot: im',
-    'effect ds-bot: phone link',
-    'effect ds-bot: api route',
-    'route POST /api/bot',
-    'effect ds-bot: load state',
-    'effect ds-bot: local agents',
+    'effect omni-ui: im',
+    'effect omni-ui: phone link',
+    'effect omni-ui: api route',
+    'route POST /api/omni-ui',
+    'effect omni-ui: load state',
+    'effect omni-ui: local agents',
   ])
 })
 
@@ -218,7 +218,7 @@ test('in the Desktop profile read_browser is the last tool and reads through the
   const { ctx, call, stop } = start(TEAM, { services: { profileContext: { name: 'desktop' } } })
   t.after(stop)
   assert.equal(rt.teamTools.at(-1).name, 'read_browser')
-  assert.ok(ctx.calls.indexOf('effect ds-bot: browser channel') < ctx.calls.indexOf('effect ds-bot: api route'))
+  assert.ok(ctx.calls.indexOf('effect omni-ui: browser channel') < ctx.calls.indexOf('effect omni-ui: api route'))
   const read = args => rt.teamTools.find(d => d.name === 'read_browser').execute(args, { agent: { id: 'b2' } })
 
   assert.match(await read({}), /browser panel is not open/)
@@ -280,7 +280,7 @@ test('a custom agent keeps the local agents adapter live after install', async (
 })
 
 // Local-agent routes have their own prefix (#1059): a Bot on DSH's own OpenCode
-// provider stays there, and DS Bot never registers a name another provider has.
+// provider stays there, and Omni never registers a name another provider has.
 test('a Bot on DSH\'s opencode provider is not taken for a local agent', async (t) => {
   const bot = { id: 'b1', name: 'Zen', model: 'opencode/glm-5', appliedModel: 'opencode/glm-5' }
   const { ctx, stop, rt } = start({ version: 1, bots: { b1: bot }, localAgents: { custom: [], sessions: {} } })
@@ -289,7 +289,7 @@ test('a Bot on DSH\'s opencode provider is not taken for a local agent', async (
   assert.equal(rt.state.bots.b1.model, 'opencode/glm-5')
   assert.equal(rt.isLocalAgentRef('opencode/glm-5'), false)
   const routes = (ctx.adapters ?? []).flatMap(entry => entry.routes)
-  assert.ok(!routes.includes('opencode'), 'DS Bot does not register the name DSH\'s provider uses')
+  assert.ok(!routes.includes('opencode'), 'Omni does not register the name DSH\'s provider uses')
 })
 
 test('a Bot saved on an old local-agent route moves to the prefixed one', async (t) => {

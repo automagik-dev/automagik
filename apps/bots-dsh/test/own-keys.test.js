@@ -67,7 +67,7 @@ function start() {
   const register = ctx.connection.fetch.register
   ctx.connection.fetch.register = (route) => { ctx.route = route; return register(route) }
   rt = createRuntime(ctx, { home })
-  const call = async (endpoint, payload) => (await ctx.route.fetch(new Request('http://localhost/api/bot', {
+  const call = async (endpoint, payload) => (await ctx.route.fetch(new Request('http://localhost/api/omni-ui', {
     method: 'POST', body: JSON.stringify({ endpoint, payload }),
   }))).json()
   const tool = (name, args, sessionId) => rt.teamTools.find(d => d.name === name).execute(args, { agent: { id: sessionId } })

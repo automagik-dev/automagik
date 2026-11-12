@@ -33,12 +33,12 @@ const capitalize = word => word[0].toUpperCase() + word.slice(1)
 
 // Settings dialog: a 198px page list beside the page. Bots and group chats each list
 // their members, and one opens on its own settings form. Usage widens the dialog.
-// DS Bot's pages come first; below a rule, the pages DSH and other plugins register
+// Omni's pages come first; below a rule, the pages DSH and other plugins register
 // (`settings.section`), then Feedback and About. DSH's General rows join General, and
-// its Models page opens from DS Bot's Models page as the advanced settings.
-const SETTINGS_PAGES = [['general', 'General'], ['models', 'Models'], ['local-agents', 'Local agents'], ['bots', 'Bots'], ['groups', 'Group chats'], ['connectors', 'Connectors'], ['im', 'IM'], ['phone', 'Phone'], ['capabilities', 'Capabilities'], ['browser', 'Browser'], ['computer', 'Computer use'], ['schedules', 'Scheduled tasks'], ['usage', 'Usage'], ['secrets', 'Secrets'], ['feedback', 'Feedback'], ['about', 'About DS Bot']]
+// its Models page opens from Omni's Models page as the advanced settings.
+const SETTINGS_PAGES = [['general', 'General'], ['models', 'Models'], ['local-agents', 'Local agents'], ['bots', 'Bots'], ['groups', 'Group chats'], ['connectors', 'Connectors'], ['im', 'IM'], ['phone', 'Phone'], ['capabilities', 'Capabilities'], ['browser', 'Browser'], ['computer', 'Computer use'], ['schedules', 'Scheduled tasks'], ['usage', 'Usage'], ['secrets', 'Secrets'], ['feedback', 'Feedback'], ['about', 'About Omni']]
 const LAST_PAGES = new Set(['feedback', 'about'])
-// DSH sections DS Bot's own pages already hold.
+// DSH sections Omni's own pages already hold.
 const MERGED_SECTIONS = new Set(['general', 'models'])
 // DSH General rows that sit under Appearance; the rest go under More.
 const LOOK_ITEMS = ['appearance', 'font-size']
@@ -294,7 +294,7 @@ class PageBoundary extends Component {
   state = { failed: false }
   static getDerivedStateFromError() { return { failed: true } }
   componentDidUpdate(previous) { if (this.state.failed && previous.reset !== this.props.reset) this.setState({ failed: false }) }
-  componentDidCatch(error) { console.error('ds-bot: a settings page failed', error) }
+  componentDidCatch(error) { console.error('omni-ui: a settings page failed', error) }
   render() { return this.state.failed ? h('div', { className: 'bt-error', role: 'alert' }, t('This page could not be shown.')) : this.props.children }
 }
 

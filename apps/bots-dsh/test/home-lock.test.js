@@ -133,7 +133,7 @@ function start(t, home) {
   }
   rt = createRuntime(ctx, { home })
   t.after(() => ctx.dispose())
-  const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/bot', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))).json()
+  const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/omni-ui', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))).json()
   call.ctx = ctx
   return call
 }

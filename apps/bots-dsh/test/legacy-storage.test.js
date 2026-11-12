@@ -24,12 +24,12 @@ test('values saved under the dsh-bot keys move to the ds-bot keys', () => {
   })
   migrateStorage(storage)
   assert.deepEqual(Object.fromEntries(storage.map), {
-    'ds-bot:unread': '{"a":true}',
-    'ds-bot:reactions': '{"t1":"👍"}',
-    'ds-bot:seen': '{"a":1}',
-    'ds-bot:prefs': '{"theme":"paper"}',
-    'ds-bot:browser-width': '600',
-    'ds-bot.browser.v2': '{"a":{"tabs":[{"id":"v1-a","url":"https://example.com/","title":""}],"active":"v1-a"}}',
+    'omni-ui:unread': '{"a":true}',
+    'omni-ui:reactions': '{"t1":"👍"}',
+    'omni-ui:seen': '{"a":1}',
+    'omni-ui:prefs': '{"theme":"paper"}',
+    'omni-ui:browser-width': '600',
+    'omni-ui.browser.v2': '{"a":{"tabs":[{"id":"v1-a","url":"https://example.com/","title":""}],"active":"v1-a"}}',
     'other:key': 'kept',
   })
 })
@@ -43,7 +43,7 @@ test('the dsh-bot-team keys move too, and the newer name wins', () => {
 })
 
 test('a value already under the current key is never overwritten', () => {
-  const storage = memoryStorage({ 'ds-bot:seen': 'current', 'dsh-bot:seen': 'old' })
+  const storage = memoryStorage({ 'omni-ui:seen': 'current', 'dsh-bot:seen': 'old' })
   migrateStorage(storage)
   assert.equal(storage.getItem(STORAGE.seen), 'current')
   assert.equal(storage.getItem('dsh-bot:seen'), null)
@@ -61,5 +61,5 @@ test('a saved legacy grok theme becomes the mono theme', () => {
   const storage = memoryStorage({ 'dsh-bot:prefs': '{"theme":"grok","accent":"#123456"}' })
   migrateStorage(storage)
   assert.deepEqual(JSON.parse(storage.getItem(STORAGE.prefs)), { theme: 'mono', accent: '#123456' })
-  migrateStorage(memoryStorage({ 'ds-bot:prefs': 'not json' }))
+  migrateStorage(memoryStorage({ 'omni-ui:prefs': 'not json' }))
 })

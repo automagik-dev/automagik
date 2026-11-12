@@ -81,14 +81,14 @@ export function install(rt) {
         else {
           bot.permission = request.applied
           // The restored preset goes back on every Session the change left behind.
-          const warnFail = error => rt.warn('ds-bot: permission for %s not restored: %s', bot.name, error)
+          const warnFail = error => rt.warn('omni-ui: permission for %s not restored: %s', bot.name, error)
           await applyTo(rt.chatOf(bot.id)).catch(warnFail)
           await groups(warnFail)
         }
       }
       throw error
     }
-    await groups(error => rt.warn('ds-bot: permission for %s in a group not applied: %s', bot.name, error))
+    await groups(error => rt.warn('omni-ui: permission for %s in a group not applied: %s', bot.name, error))
   }
 
   // A group's preset, or null when each member uses its own.
@@ -108,7 +108,7 @@ export function install(rt) {
       if (bot === undefined) continue
       // A member without a preset of its own goes back to the default its Session started on.
       await setPreset(sessionId, () => room.permission ?? bot.permission ?? service.catalog().defaultPreset)
-        .catch(error => rt.warn('ds-bot: permission for %s in %s not applied: %s', bot.name, room.name, error))
+        .catch(error => rt.warn('omni-ui: permission for %s in %s not applied: %s', bot.name, room.name, error))
     }
     return true
   }

@@ -69,9 +69,9 @@ function capture(ctx) {
   ctx.connection.fetch.register = (route) => { ctx.route = route; return register(route) }
 }
 
-// Calls the /api/bot route the way the client does.
+// Calls the /api/omni-ui route the way the client does.
 async function call(ctx, endpoint, payload) {
-  const response = await ctx.route.fetch(new Request('http://localhost/api/bot', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))
+  const response = await ctx.route.fetch(new Request('http://localhost/api/omni-ui', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))
   return response.json()
 }
 

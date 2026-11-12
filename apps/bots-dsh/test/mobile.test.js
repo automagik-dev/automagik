@@ -64,7 +64,7 @@ function start() {
   }
   const rt = createRuntime(ctx, { home })
   const call = async (endpoint, payload) => {
-    const response = await routes['/api/bot'].fetch(new Request('http://localhost/api/bot', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))
+    const response = await routes['/api/omni-ui'].fetch(new Request('http://localhost/api/omni-ui', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))
     return response.json()
   }
   const emit = async (sessionId, event) => {
@@ -192,7 +192,7 @@ test('a group round logs notices a returning client reads back, and the feed say
   const { boot } = (await call('hello', {})).value
   const abort = new AbortController()
   t.after(() => abort.abort())
-  const next = reader(await routes['/api/bot/feed'].fetch(new Request('http://localhost/api/bot/feed', { signal: abort.signal })))
+  const next = reader(await routes['/api/omni-ui/feed'].fetch(new Request('http://localhost/api/omni-ui/feed', { signal: abort.signal })))
   const hello = await next()
   assert.equal(hello.event, 'hello')
   assert.equal(hello.data.api, API_VERSION)
@@ -356,7 +356,7 @@ test('a phone stages photos one by one, then send puts them in one message with 
   const { call, sent, stop } = start()
   const { chief } = await team(call)
   const pixel = Buffer.from('ffd8ffe000104a464946', 'hex').toString('base64')
-  assert.deepEqual(await call('stage-image', { mediaType: 'text/html', data: pixel }), { ok: false, error: { code: 'bot/invalid', message: 'This is not a photo DS Bot can send', details: {} } })
+  assert.deepEqual(await call('stage-image', { mediaType: 'text/html', data: pixel }), { ok: false, error: { code: 'bot/invalid', message: 'This is not a photo Omni can send', details: {} } })
   const first = (await call('stage-image', { mediaType: 'image/jpeg', data: pixel })).value.id
   const second = (await call('stage-image', { mediaType: 'image/png', data: pixel })).value.id
   const before = sent.length
@@ -497,7 +497,7 @@ test('room-chat reads the current part after a group chat moves to a fresh part,
 
   const abort = new AbortController()
   t.after(() => abort.abort())
-  const next = reader(await routes['/api/bot/feed'].fetch(new Request('http://localhost/api/bot/feed', { signal: abort.signal })))
+  const next = reader(await routes['/api/omni-ui/feed'].fetch(new Request('http://localhost/api/omni-ui/feed', { signal: abort.signal })))
   assert.equal((await next()).event, 'hello')
   await emit('s-room-2', user(2, 'Another message in part 2', 40))
   const event = await next()

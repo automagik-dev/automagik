@@ -90,7 +90,7 @@ function setup(services = {}) {
   const register = ctx.connection.fetch.register
   ctx.connection.fetch.register = (route) => { ctx.route = route; return register(route) }
   const rt = createRuntime(ctx, { home })
-  const call = async (endpoint, payload) => (await ctx.route.fetch(new Request('http://localhost/api/bot', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))).json()
+  const call = async (endpoint, payload) => (await ctx.route.fetch(new Request('http://localhost/api/omni-ui', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))).json()
   return { ctx, home, call, rt }
 }
 

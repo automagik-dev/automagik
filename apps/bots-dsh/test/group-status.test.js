@@ -72,7 +72,7 @@ async function start() {
     }
   }
   const tool = (name, args, sessionId, exec = {}) => rt.teamTools.find(d => d.name === name).execute(args, { agent: { id: sessionId }, ...exec })
-  const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/bot', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))).json()
+  const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/omni-ui', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))).json()
   const askApproval = (sessionId, extra = {}, next = () => 'from-dsh') => ctx.listeners.get('approval/request')[0]({ agent: { session: { id: sessionId } }, toolName: 'pwsh', reason: 'escalate sandbox', ...extra }, next)
   const stop = async () => { await ctx.dispose(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }) }
   await tool('list_bots', {}, 'a')
@@ -144,11 +144,11 @@ test('an own chat\'s approval races DSH\'s card and is listed while it waits', a
   assert.deepEqual([approval.botId, approval.roomId, approval.answerable], ['a', undefined, true])
   assert.equal((await host.call('approval-answer', { id: approval.id, choice: 'allow' })).ok, true)
   assert.equal(await outcome, 'allowed-once')
-  // DSH's card answering late is ignored once DS Bot settled the race.
+  // DSH's card answering late is ignored once Omni settled the race.
   release('rejected')
   assert.equal((await host.call('approval-answer', { id: approval.id, choice: 'allow' })).error.code, 'bot/stale')
   assert.deepEqual((await host.call('state', {})).value.work.approvals, [])
-  // Sessions off the team are not DS Bot's to answer.
+  // Sessions off the team are not Omni's to answer.
   assert.equal(await host.askApproval('elsewhere'), 'from-dsh')
 })
 

@@ -67,7 +67,7 @@ async function start({ services = {}, privateBot = true, archives, memberPick = 
     }
     return agents.get(sessionId)
   }
-  const registry = new Map([['w1', { id: 'w1', path: team, title: 'DS Bot' }]])
+  const registry = new Map([['w1', { id: 'w1', path: team, title: 'Omni' }]])
   let created = 0
   Object.assign(ctx, {
     llm: { listProviders: () => [], listModels: async () => [], resolveModelInfo: async () => ({}) },
@@ -76,7 +76,7 @@ async function start({ services = {}, privateBot = true, archives, memberPick = 
       list: () => [...registry.values()],
       resolveByPath: async path => [...registry.values()].find(workspace => workspace.path === path),
       create: async (path) => {
-        const workspace = { id: 'w-new', path, title: 'DS Bot' }
+        const workspace = { id: 'w-new', path, title: 'Omni' }
         registry.set(workspace.id, workspace)
         return workspace
       },
@@ -99,7 +99,7 @@ async function start({ services = {}, privateBot = true, archives, memberPick = 
     return register(options)
   }
   rt = createRuntime(ctx, { home, github: false, diagnosticsFile: false })
-  const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/bot', {
+  const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/omni-ui', {
     method: 'POST', body: JSON.stringify({ endpoint, payload }),
   }))).json()
   const state = () => JSON.parse(readFileSync(join(home, 'state.json'), 'utf8'))

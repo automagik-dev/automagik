@@ -26,7 +26,7 @@ const seed = () => ({
   revision: 0,
 })
 
-// One DS Bot host on `home`; a second start on the same home is a restart.
+// One Omni host on `home`; a second start on the same home is a restart.
 // Hosts by home: a home is removed only after its hosts stopped and their writes landed.
 let rt
 const started = new Map()
@@ -72,7 +72,7 @@ async function start(home, logs, inspect) {
   }
   const tool = (name, args, sessionId, exec = {}) => rt.teamTools.find(d => d.name === name).execute(args, { agent: { id: sessionId }, ...exec })
   const askApproval = sessionId => ctx.listeners.get('approval/request')[0]({ agent: { session: { id: sessionId } }, toolName: 'pwsh', reason: 'escalate sandbox' }, () => 'from-dsh')
-  const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/bot', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))).json()
+  const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/omni-ui', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))).json()
   await tool('list_bots', {}, 'a')
   const host = { ctx, agentOf, emit, tool, call, askApproval, stop: () => ctx.dispose() }
   started.set(home, [...(started.get(home) ?? []), host])
@@ -202,7 +202,7 @@ test('a request cut off by a restart goes on under the same exchange; own-chat w
   assert.equal(state.exchanges.length, 0)
 })
 
-test('when only DS Bot restarts, a turn still running or finished meanwhile is not picked up', async (t) => {
+test('when only Omni restarts, a turn still running or finished meanwhile is not picked up', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const home = freshHome(t)
   const first = await start(home)
@@ -278,14 +278,14 @@ for (const role of ['reply', 'report', 'resume']) {
   })
 }
 
-test('an answer a turn produced while DS Bot was not watching goes to the Bot that waits for it, once', async (t) => {
+test('an answer a turn produced while Omni was not watching goes to the Bot that waits for it, once', async (t) => {
   t.mock.timers.enable({ apis: ['setTimeout'] })
   const home = freshHome(t)
   const logs = new Map()
   const first = await start(home, logs)
   const request = await askWriter(first, home)
   const exchangeId = request.source.exchangeId
-  // Writer answers, and DS Bot restarts before it sees the end of that turn.
+  // Writer answers, and Omni restarts before it sees the end of that turn.
   logs.set('b', writerLog(request, 'The plan is ready.'))
   await first.stop()
 
@@ -555,7 +555,7 @@ test('a message a shutdown cancelled is sent again once; one still waiting, take
   await send('Read the notes')
   await send('Never mind')
   const [plan, numbers, notesMessage, withdrawn] = first.agentOf('b').calls
-  // Taken up by a turn, or withdrawn while DS Bot runs (the user stopped the Bot).
+  // Taken up by a turn, or withdrawn while Omni runs (the user stopped the Bot).
   first.emit('b', 'user/message', { content: notesMessage.content, source: notesMessage.source })
   for (const listener of first.ctx.listeners.get('agent/inbox/discarded')) listener({ message: withdrawn })
   await settle(() => (notes(home).queued.b ?? []).length === 2)

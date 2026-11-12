@@ -76,7 +76,7 @@ async function start(t, room, services, extraRooms) {
     }
   }
   const tool = (name, args, sessionId, exec = {}) => (rt.teamTools.find(d => d.name === name) ?? ctx.registeredTools.get(name)).execute(args, { agent: { id: sessionId }, ...exec })
-  const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/bot', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))).json()
+  const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/omni-ui', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))).json()
   const begin = (sessionId) => {
     const message = agentOf(sessionId).calls.at(-1)
     agentOf(sessionId).inbox.nextTurn.length = 0
@@ -327,7 +327,7 @@ test('an idle round wakes the admin for a goal check; [PASS] waits for the user'
   await settle(() => host.agentOf('ga').calls.length === 2)
   const prompt = text(host.agentOf('ga').calls[1])
   assert.match(prompt, /goal check/)
-  assert.match(prompt, /Goal check from DS Bot/)
+  assert.match(prompt, /Goal check from Omni/)
   host.begin('ga')
   host.finish('ga', '[PASS]')
   await settle(() => check() !== undefined)

@@ -105,7 +105,7 @@ async function startHost(home, team) {
     for (const listener of ctx.listeners.get(name) ?? []) listener.call(carrier, ...args)
   }
   const tool = (name, args, sessionId) => rt.teamTools.find(d => d.name === name).execute(args, { agent: { id: sessionId } })
-  const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/bot', {
+  const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/omni-ui', {
     method: 'POST', body: JSON.stringify({ endpoint, payload }),
   }))).json()
   // Loading once fills the Session-owner indexes turns.js filters events by.

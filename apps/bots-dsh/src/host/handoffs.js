@@ -51,7 +51,7 @@ export function install(rt) {
       renameSync(temp, path)
       return name
     } catch (error) {
-      rt.warn('ds-bot: result of work %s not kept whole: %s', id, error)
+      rt.warn('omni-ui: result of work %s not kept whole: %s', id, error)
       try {
         rmSync(temp, { force: true })
       } catch {}
@@ -170,7 +170,7 @@ export function install(rt) {
     void rt.deliver({
       fromName: late.name ?? 'the subagent', toId: waiting, text: LATE_ANSWER + text, role: 'reply',
       exchangeId: randomUUID(), recordExchange: false,
-    }).catch(error => rt.warn('ds-bot: the late result of %s did not reach %s: %s', late.name ?? 'a subagent', waiting, error))
+    }).catch(error => rt.warn('omni-ui: the late result of %s did not reach %s: %s', late.name ?? 'a subagent', waiting, error))
   }
   // A fast child can settle before its tool result identifies the call that made it.
   const nameSubWork = (id, name) => {
@@ -347,7 +347,7 @@ export function install(rt) {
         fromId: work.to !== undefined && rt.botOf(work.to) !== undefined ? work.to : undefined,
         fromName: name, toId: waitingBot, text: said, role: 'reply', replyTo: id,
         exchangeId: randomUUID(), work: work.parent, abandoned: true, recordExchange: false,
-      }).catch(error => rt.warn('ds-bot: giving up the wait for %s was not delivered: %s', waitingBot, error))
+      }).catch(error => rt.warn('omni-ui: giving up the wait for %s was not delivered: %s', waitingBot, error))
     }
     return true
   }
@@ -373,10 +373,10 @@ export function install(rt) {
   // is installed before the ones that load it.
   ctx?.effect?.(() => {
     const timer = setTimeout(() => {
-      void rt.load().then(() => reconcileLostWorks()).catch(error => rt.warn('ds-bot: lost waits not settled: %s', error))
+      void rt.load().then(() => reconcileLostWorks()).catch(error => rt.warn('omni-ui: lost waits not settled: %s', error))
     }, 0)
     return () => clearTimeout(timer)
-  }, 'ds-bot: lost hand-offs')
+  }, 'omni-ui: lost hand-offs')
 
   // A deleted Bot answers no more work and waits for none.
   function forgetBot(botId) {

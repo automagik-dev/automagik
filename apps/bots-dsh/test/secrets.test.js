@@ -115,7 +115,7 @@ function start({ home = mkdtempSync(join(tmpdir(), 'ds-bot-secrets-')) } = {}) {
   ctx.connection.fetch.register = (options) => { route = options; return () => {} }
   rt = createRuntime(ctx, { home })
   const call = async (endpoint, payload) => {
-    const response = await route.fetch(new Request('http://localhost/api/bot', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))
+    const response = await route.fetch(new Request('http://localhost/api/omni-ui', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))
     return response.json()
   }
   const tool = (name, args, agentId, extra = {}) => {
@@ -182,7 +182,7 @@ test('a card saves a key the Bot never sees, and the shell gets it', async (t) =
   const live = bench.contributors.filter(entry => entry.live)
   assert.equal(live.length, 1)
   assert.deepEqual(Object.keys(live[0].variables), ['DSH_SECRET_DEMO_TOKEN'])
-  assert.equal(live[0].variables.DSH_SECRET_DEMO_TOKEN.description, 'DS Bot secret DEMO_TOKEN: 测试')
+  assert.equal(live[0].variables.DSH_SECRET_DEMO_TOKEN.description, 'Omni secret DEMO_TOKEN: 测试')
 
   // Asking again only names the variable.
   const again = await bench.tool('request_secret', { name: 'DEMO_TOKEN', purpose: 'x' }, 'b2')
@@ -379,7 +379,7 @@ test('a secrets file that cannot be read blocks every write instead of being ove
   const file = join(home, 'secrets.json')
   const denied = await bench.call('secret-set', { name: 'TEST_TOKEN', value: '12345678' })
   assert.equal(denied.ok, false)
-  assert.match(denied.error.message, /secrets\.json could not be read \(EISDIR\)\. DS Bot does not change it/)
+  assert.match(denied.error.message, /secrets\.json could not be read \(EISDIR\)\. Omni does not change it/)
   assert.ok(statSync(file).isDirectory())
   // While it stays unreadable, nothing is written; once it is gone, saving works.
   rmSync(file, { recursive: true })

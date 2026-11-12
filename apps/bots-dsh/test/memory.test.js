@@ -174,7 +174,7 @@ function start({ home = mkdtempSync(join(tmpdir(), 'ds-bot-memory-')), replies =
   }
   rt = createRuntime(ctx, { home, ...config })
   const call = async (endpoint, payload) => {
-    const response = await route.fetch(new Request('http://localhost/api/bot', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))
+    const response = await route.fetch(new Request('http://localhost/api/omni-ui', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))
     return response.json()
   }
   const tool = (name, args, sessionId) => rt.teamTools.find(d => d.name === name).execute(args, { agent: { id: sessionId } })
@@ -970,7 +970,7 @@ test('a memory file that cannot be read is left alone, and the section says so',
   t.after(() => stop())
   // A directory reads as EISDIR on every platform; no chmod games needed.
   mkdirSync(join(home, 'memory', 'bots', 'b2', 'MEMORY.md'), { recursive: true })
-  await assert.rejects(tool('remember', { text: 'Likes tea' }, 'b2'), /Memory file .*MEMORY\.md could not be read \(EISDIR\)\. DS Bot leaves it as it is/)
+  await assert.rejects(tool('remember', { text: 'Likes tea' }, 'b2'), /Memory file .*MEMORY\.md could not be read \(EISDIR\)\. Omni leaves it as it is/)
   assert.deepEqual(readdirSync(join(home, 'memory', 'bots', 'b2')), ['MEMORY.md'])
   // The prompt shows the failure instead of looking empty, and nothing is frozen.
   assert.match(section('b2'), /\(this memory could not be read: EISDIR\)/)

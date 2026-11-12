@@ -103,7 +103,7 @@ export function createGateway({ credential, readOnly, onUnauthorized, log = () =
         // before the handler starts consuming it.
         upstream.on('error', reject)
         // GET 405 is the normal answer from servers without a standalone stream.
-        if (upstream.statusCode >= 400 && !(method === 'GET' && upstream.statusCode === 405)) log('ds-bot: connector %s upstream %s HTTP %s (session: %s)', id, method, upstream.statusCode, headers['mcp-session-id'] !== undefined)
+        if (upstream.statusCode >= 400 && !(method === 'GET' && upstream.statusCode === 405)) log('omni-ui: connector %s upstream %s HTTP %s (session: %s)', id, method, upstream.statusCode, headers['mcp-session-id'] !== undefined)
         resolve(upstream)
       })
       req.on('error', reject)
@@ -191,7 +191,7 @@ export function createGateway({ credential, readOnly, onUnauthorized, log = () =
       }
       if (upstream.errored) throw upstream.errored
     } catch (error) {
-      log('ds-bot: connector gateway %s: %s', id, error?.message ?? error)
+      log('omni-ui: connector gateway %s: %s', id, error?.message ?? error)
       res.writeHead(502, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ error: 'connector upstream failed' }))
       return
@@ -206,7 +206,7 @@ export function createGateway({ credential, readOnly, onUnauthorized, log = () =
       res.on('close', close)
       upstream.on('end', () => res.off('close', close))
       upstream.on('error', () => {
-        log('ds-bot: connector %s upstream %s stream failed', id, req.method)
+        log('omni-ui: connector %s upstream %s stream failed', id, req.method)
         res.destroy()
       })
       res.writeHead(upstream.statusCode ?? 502, heads)
@@ -242,12 +242,12 @@ export function createGateway({ credential, readOnly, onUnauthorized, log = () =
           return
         }
         handle(found[1], req, res).catch((error) => {
-          log('ds-bot: connector gateway: %s', error?.message ?? error)
+          log('omni-ui: connector gateway: %s', error?.message ?? error)
           if (res.headersSent) res.destroy()
           else { res.writeHead(502); res.end() }
         })
       })
-      server.on('error', error => log('ds-bot: connector gateway server failed: %s', error?.code ?? 'error'))
+      server.on('error', error => log('omni-ui: connector gateway server failed: %s', error?.code ?? 'error'))
       await new Promise((resolve, reject) => {
         server.once('error', reject)
         server.listen(0, '127.0.0.1', resolve)

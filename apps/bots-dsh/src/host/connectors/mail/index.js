@@ -55,8 +55,8 @@ export function install(rt, host) {
   }
 
   const googleClient = () => ({
-    id: process.env.DS_BOT_GOOGLE_OAUTH_CLIENT_ID,
-    secret: process.env.DS_BOT_GOOGLE_OAUTH_CLIENT_SECRET,
+    id: process.env.AUTOMAGIK_GOOGLE_OAUTH_CLIENT_ID,
+    secret: process.env.AUTOMAGIK_GOOGLE_OAUTH_CLIENT_SECRET,
   })
   const googleReady = () => Boolean(googleClient().id && googleClient().secret)
 
@@ -115,11 +115,11 @@ export function install(rt, host) {
       if (typeof tokens.refresh_token === 'string' && tokens.refresh_token !== '') {
         await host.secrets.writeSecret(mailSecretName(account.address, 'REFRESH'), tokens.refresh_token, `Mailbox ${account.address}`).catch(() => {})
       }
-      rt.warn('ds-bot: connector mail token refresh succeeded (client: manual/Google)')
+      rt.warn('omni-ui: connector mail token refresh succeeded (client: manual/Google)')
       return true
     } catch (error) {
       if (invalidGrant(error)) account.error = 'Sign in again'
-      rt.warn('ds-bot: connector mail token refresh failed (client: manual/Google; %s)', invalidGrant(error) ? 'invalid_grant' : 'refresh error')
+      rt.warn('omni-ui: connector mail token refresh failed (client: manual/Google; %s)', invalidGrant(error) ? 'invalid_grant' : 'refresh error')
       return false
     }
   }
@@ -326,7 +326,7 @@ export function install(rt, host) {
 
   const tell = async (botId, text) => {
     if (rt.botOf(botId) === undefined) return
-    await rt.deliver({ toId: botId, role: 'mail', text }).catch(error => rt.warn('ds-bot: mail note to %s failed: %s', botId, error))
+    await rt.deliver({ toId: botId, role: 'mail', text }).catch(error => rt.warn('omni-ui: mail note to %s failed: %s', botId, error))
   }
 
   const applyRules = (patch) => {
@@ -518,15 +518,15 @@ export function install(rt, host) {
       if (url.pathname !== '/callback') { res.writeHead(404); res.end(); return }
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
       if (!url.searchParams.get('code')) {
-        res.end('<p style="font-family:sans-serif">Google sign-in did not finish — go back to DS Bot and try again.</p>')
-        rt.warn('ds-bot: mail Google sign-in failed: %s', url.searchParams.get('error') ?? 'no code')
+        res.end('<p style="font-family:sans-serif">Google sign-in did not finish — go back to Omni and try again.</p>')
+        rt.warn('omni-ui: mail Google sign-in failed: %s', url.searchParams.get('error') ?? 'no code')
         return
       }
       res.end('<p style="font-family:sans-serif">Signed in — you can close this tab.</p>')
-      void googleCode({ address, input: url.toString() }).catch(error => rt.warn('ds-bot: mail Google sign-in failed: %s', host.reason(error)))
+      void googleCode({ address, input: url.toString() }).catch(error => rt.warn('omni-ui: mail Google sign-in failed: %s', host.reason(error)))
     })
     listener.on('error', error => {
-      if (listener.listening) rt.warn('ds-bot: mail Google sign-in listener failed: %s', error?.code ?? 'error')
+      if (listener.listening) rt.warn('omni-ui: mail Google sign-in listener failed: %s', error?.code ?? 'error')
     })
     await new Promise((resolve, reject) => { listener.once('error', reject); listener.listen(0, '127.0.0.1', resolve) })
     pending.listener = listener

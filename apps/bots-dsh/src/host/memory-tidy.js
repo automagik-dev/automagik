@@ -70,7 +70,7 @@ export function installTidy(rt, memory) {
       const max = Math.max(1, Math.floor(offered.length / SHARE_MAX))
       const reply = await botShot(job.keeper, tidySystem({ who: job.who, max }), tidyRequest({ entries: open, language: languageNow() }), { sessionId: job.scope.kind === 'bot' ? rt.chatOf(job.keeper.id) : job.scope.kind === 'group' ? job.scope.roomId : rt.chatOf(job.keeper.id), kind: 'memory' })
       const parsed = parseTidy(reply)
-      if (parsed === undefined) rt.warn('ds-bot: the memory tidy of %s got no list of changes from the model', key)
+      if (parsed === undefined) rt.warn('omni-ui: the memory tidy of %s got no list of changes from the model', key)
       else changes = parsed
     }
     await queued(async () => {
@@ -241,7 +241,7 @@ export function installTidy(rt, memory) {
       const job = jobs().find(due)
       if (job !== undefined) await tidy(job)
     } catch (error) {
-      rt.warn('ds-bot: the memory tidy failed: %s', error?.message ?? error)
+      rt.warn('omni-ui: the memory tidy failed: %s', error?.message ?? error)
     } finally {
       running = false
     }
@@ -252,7 +252,7 @@ export function installTidy(rt, memory) {
       const timer = setInterval(() => void tick(), config.memoryTidyEveryMs ?? EVERY_MS)
       timer.unref?.()
       return () => clearInterval(timer)
-    }, 'ds-bot: memory tidy')
+    }, 'omni-ui: memory tidy')
   }
 
   const tidyNow = async (key) => {

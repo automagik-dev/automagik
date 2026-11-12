@@ -736,7 +736,7 @@ test('163 and 126 presets send the IMAP ID identity', () => {
   for (const domain of ['163.com', '126.com']) {
     const options = imapOptions({ address: `${'me'}@${domain}`, imap: { host: `imap.${domain}`, port: 993, secure: true } }, { password: 'x' })
     assert.deepEqual(options.id, IMAP_ID)
-    assert.equal(options.id.vendor, 'DS Bot')
+    assert.equal(options.id.vendor, 'Omni')
   }
 })
 

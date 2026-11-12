@@ -61,7 +61,7 @@ import { agentSessionToReuse, singleFlight } from './agent-new.js'
 export const inject = ['sessions', 'uiWorkspace', 'uiConversation', 'slots', 'theme', 'layout']
 
 export function apply(ctx) {
-  ctx.effect(() => installLocale(ctx.get('locale')), 'ds-bot: interface copy')
+  ctx.effect(() => installLocale(ctx.get('locale')), 'omni-ui: interface copy')
   migrateStorage()
   // The window's cached prefs stand in until the first pull answers: a saved
   // `enterToSend: false` then already holds, instead of Enter sending meanwhile.
@@ -87,7 +87,7 @@ export function apply(ctx) {
   // style so the shell's own interface returns. `plain` stays false until a Bot-mode
   // view hosts a plain session, which drops only the conversation replacements.
   const surface = createSource({ mode: readMode(), plain: false })
-  // Whether DS Bot holds the settings seat; Overlays draws the Settings dialog while it does not.
+  // Whether Omni holds the settings seat; Overlays draws the Settings dialog while it does not.
   const settingsShellHeld = createSource(false)
   let settingsShell = null
   // DSH Agent Session ids from the last pull, so a reload already knows the main
@@ -122,7 +122,7 @@ export function apply(ctx) {
     const onPageHide = () => leaveVisits(Object.keys(ui.getSnapshot().visits ?? {}))
     window.addEventListener('pagehide', onPageHide)
     return () => window.removeEventListener('pagehide', onPageHide)
-  }, 'ds-bot: remember visits on page hide')
+  }, 'omni-ui: remember visits on page hide')
   // Unread marks, reactions and visits are shared by every window; one saved elsewhere
   // shows here at once. A `null` key is a cleared storage.
   ctx.effect(() => {
@@ -134,7 +134,7 @@ export function apply(ctx) {
     }
     window.addEventListener('storage', onStorage)
     return () => window.removeEventListener('storage', onStorage)
-  }, 'ds-bot: follow other windows')
+  }, 'omni-ui: follow other windows')
   const activity = createSource({})
   // Per Bot, the turn it runs and its tool; and the approvals waiting for the user.
   const work = createSource({ bots: {}, approvals: [] })
@@ -266,7 +266,7 @@ export function apply(ctx) {
     document.addEventListener('visibilitychange', wake)
     void loop()
     return () => { stopped = true; clearTimeout(timer); document.removeEventListener('visibilitychange', wake) }
-  }, 'ds-bot: roster poll')
+  }, 'omni-ui: roster poll')
 
   // Plugin updates: every window that opens asks the host once (the host keeps its
   // answer for a while), again each hour, and every two seconds while installing.
@@ -286,7 +286,7 @@ export function apply(ctx) {
     wakeUpdate = loop
     void loop()
     return () => { stopped = true; clearTimeout(timer); wakeUpdate = () => {} }
-  }, 'ds-bot: update check')
+  }, 'omni-ui: update check')
 
   // A packaged DSH updates through its own updater; what that updater found is
   // kept beside the host's answer so the card can match it to the verified DSH.
@@ -298,10 +298,10 @@ export function apply(ctx) {
       void appUpdates.status().then(take, () => {})
       const unsubscribe = appUpdates.subscribe(take)
       return () => { stopped = true; unsubscribe?.() }
-    }, 'ds-bot: app update status')
+    }, 'omni-ui: app update status')
   }
 
-  // The DS Bot app's own updater; its state goes beside the host's answer as ownApp,
+  // The Omni app's own updater; its state goes beside the host's answer as ownApp,
   // which the About row turns into the app's update state and buttons.
   const ownAppUpdates = globalThis.dsBotApp?.updates ?? null
   if (ownAppUpdates?.state && ownAppUpdates.subscribe) {
@@ -311,7 +311,7 @@ export function apply(ctx) {
       void ownAppUpdates.state().then(take, () => {})
       const unsubscribe = ownAppUpdates.subscribe(take)
       return () => { stopped = true; unsubscribe?.() }
-    }, 'ds-bot: own app update state')
+    }, 'omni-ui: own app update state')
   }
 
   // Bot browsers need a webview bridge: DSH Desktop's, or the desktop app's of the
@@ -336,10 +336,10 @@ export function apply(ctx) {
       sync()
       const offRoster = roster.subscribe(sync)
       return () => { offRoster(); stopReads?.(); browsers.dispose() }
-    }, 'ds-bot: Bot browsers')
+    }, 'omni-ui: Bot browsers')
   }
 
-  ctx.effect(() => () => { markupCache.clear() }, 'ds-bot: character markup')
+  ctx.effect(() => () => { markupCache.clear() }, 'omni-ui: character markup')
 
   // Mentions wear each Bot's color and character silhouette (or its photo). A message
   // DSH still draws itself, while it waits to be sent or to join a running turn, shows
@@ -427,9 +427,9 @@ export function apply(ctx) {
       if (window.dshBot === hub) delete window.dshBot
       delete window.dshBotQueue
     }
-  }, 'ds-bot: registry')
+  }, 'omni-ui: registry')
 
-  ctx.inject(['shortcuts'], scope => { scope.effect(() => holdShellShortcuts(scope.shortcuts), 'ds-bot: settings shortcut') })
+  ctx.inject(['shortcuts'], scope => { scope.effect(() => holdShellShortcuts(scope.shortcuts), 'omni-ui: settings shortcut') })
 
   const after = promise => promise.then(async (value) => { await pull().catch(() => {}); return value })
   // A Bot id or a group chat id, or any part of either's chat, opens the current part.
@@ -736,7 +736,7 @@ export function apply(ctx) {
     update.set(previous => ({ ...previous, ...value }))
     wakeUpdate()
   }
-  // The DSH the newest released DS Bot verified installs the same way.
+  // The DSH the newest released Omni verified installs the same way.
   actions.installDshUpdate = async () => {
     const dsh = await call('dsh-update-install')
     update.set(previous => ({ ...previous, dsh }))
@@ -791,7 +791,7 @@ export function apply(ctx) {
       }
       sync()
       return computer.subscribe(sync)
-    }, 'ds-bot: computer indicator')
+    }, 'omni-ui: computer indicator')
   }
   if (typeof appComputer?.computerCursor === 'function') {
     ctx.effect(() => {
@@ -817,7 +817,7 @@ export function apply(ctx) {
       }
       void run()
       return () => { dead = true }
-    }, 'ds-bot: computer cursor')
+    }, 'omni-ui: computer cursor')
   }
   if (typeof appComputer?.idleSeconds === 'function') {
     ctx.effect(() => {
@@ -829,7 +829,7 @@ export function apply(ctx) {
       }
       const timer = setInterval(push, 2000)
       return () => { clearInterval(timer) }
-    }, 'ds-bot: computer user active')
+    }, 'omni-ui: computer user active')
   }
   if (typeof appComputer?.onComputerAction === 'function') {
     appComputer.onComputerAction(({ kind, botId }) => {
@@ -839,13 +839,13 @@ export function apply(ctx) {
     })
   }
   const face = () => ({ actions, hooks: { roster, ui, activity, work, memoryNews, registry, turnClock, live, computer, cards, heldCards, browserPages, browserTabs, browserHolds, surface, update, frame, sidebarPref, settingsShellHeld } })
-  // DS Bot holds the settings seat in every mode, Agent mode included: the bundle patch
-  // turns DSH's own shell off, and this one draws DSH's settings pages in DS Bot's dialog.
+  // Omni holds the settings seat in every mode, Agent mode included: the bundle patch
+  // turns DSH's own shell off, and this one draws DSH's settings pages in Omni's dialog.
   ctx.effect(() => {
     const offStyles = installCompiledStyles(SETTINGS_SHELL_CSS, 'settings-shell')
     settingsShell = installSettingsShell(ctx, { face, actions, ui, held: settingsShellHeld })
     return () => { settingsShell?.dispose(); settingsShell = null; offStyles() }
-  }, 'ds-bot: settings shell')
+  }, 'omni-ui: settings shell')
   // The queue dock's per-session verbs, supplied the way the shell's own dock
   // injects them (the session facade and the conversation service).
   const queueFace = (sessionId) => ({
@@ -858,20 +858,20 @@ export function apply(ctx) {
     roster,
     shownSession: () => Object.values(ctx.sessions.list.getSnapshot().byId ?? {}).find(session => (session?.retainedBy?.mainView ?? 0) > 0)?.id,
     openSession: id => actions.openSession(id),
-  }), 'ds-bot: approval notifications')
+  }), 'omni-ui: approval notifications')
   const assistantFace = (sessionId) => {
     const binding = ctx.sessions.binding(sessionId)
-    if (binding === undefined) throw new Error(`ds-bot: unknown session "${sessionId}"`)
+    if (binding === undefined) throw new Error(`omni-ui: unknown session "${sessionId}"`)
     const chat = ctx.uiConversation.binding(binding).target('chat')
     return { ...face(), keyedHooks: {
       turnSteps: (turn) => {
         const snapshot = chat.getSnapshot()
-        if (snapshot === undefined) throw new Error('ds-bot: Chat target is unavailable')
+        if (snapshot === undefined) throw new Error('omni-ui: Chat target is unavailable')
         return snapshot.nodes.turnDataSource(Number(turn), 'assistant-step')
       },
       turnContext: (turn) => {
         const snapshot = chat.getSnapshot()
-        if (snapshot === undefined) throw new Error('ds-bot: Chat target is unavailable')
+        if (snapshot === undefined) throw new Error('omni-ui: Chat target is unavailable')
         return snapshot.nodes.turnDataSource(Number(turn), 'context')
       },
     } }
@@ -973,7 +973,7 @@ export function apply(ctx) {
       drawer = next
     })
     return () => { observer.disconnect(); offMounted(); offUi() }
-  }, 'ds-bot: one right panel')
+  }, 'omni-ui: one right panel')
 
   // A Bot surface owns the cells it shadows. It starts far below the -10 that plugins
   // commonly use and goes below whatever already holds the cell, so a plugin that
@@ -1005,7 +1005,7 @@ export function apply(ctx) {
           atMenu = null
           for (const off of offs) off()
         }
-      }, 'ds-bot: @ menu')
+      }, 'omni-ui: @ menu')
     })
     return () => fiber.dispose()
   }
@@ -1064,7 +1064,7 @@ export function apply(ctx) {
     [SIDE_CSS, 'side'],
     [BROWSER_CSS, 'browser'],
   ]
-  // Settings outside Bot mode (Agent mode) brings DS Bot's own rules and colors while it
+  // Settings outside Bot mode (Agent mode) brings Omni's own rules and colors while it
   // shows; the shell overrides and DSH's tokens stay as Agent mode has them.
   let shellSheets = 0
   actions.holdSettingsLook = () => {
@@ -1157,8 +1157,8 @@ export function apply(ctx) {
     () => shadow('conversation.input.dock', { id: 'queue', order: 20, priority: BOT_PRIORITY, inject: queueFace }, QueueDock),
   ]
   // The return button belongs to neither group: it renders only in Agent mode.
-  ctx.effect(() => installCompiledStyles(RETURN_TOKENS + RETURN_CSS, 'return'), 'ds-bot: return styles')
-  ctx.effect(() => installCompiledStyles(COMPUTER_CSS, 'computer'), 'ds-bot: computer styles')
+  ctx.effect(() => installCompiledStyles(RETURN_TOKENS + RETURN_CSS, 'return'), 'omni-ui: return styles')
+  ctx.effect(() => installCompiledStyles(COMPUTER_CSS, 'computer'), 'omni-ui: computer styles')
   shadow('sidebar.footer.action', { id: 'bot-return', order: -300, inject: face }, BotReturn)
 
   // The main view decides `plain`: a DSH Agent Session keeps the Bot shell but
@@ -1219,7 +1219,7 @@ export function apply(ctx) {
     const offRoster = roster.subscribe(sync)
     sync()
     return () => { offList(); offRoster() }
-  }, 'ds-bot: agent surface')
+  }, 'omni-ui: agent surface')
 
   ctx.effect(() => {
     const groups = surfaceGroups({ shell: installShell, conversation: installConversation }, {
@@ -1271,5 +1271,5 @@ export function apply(ctx) {
       clearTimeout(verifyTimer)
       groups.dispose()
     }
-  }, 'ds-bot: surface')
+  }, 'omni-ui: surface')
 }

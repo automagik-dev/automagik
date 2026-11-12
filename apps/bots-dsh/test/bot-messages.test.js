@@ -107,7 +107,7 @@ async function start(seed) {
   // Runs every registered waterfall listener; `next` settles the chain.
   const fire = (name, payload) => Promise.all((ctx.listeners.get(name) ?? []).map(listener => listener(payload, () => Promise.resolve(undefined))))
   const tool = (name, args, sessionId) => rt.teamTools.find(d => d.name === name).execute(args, { agent: { id: sessionId } })
-  const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/bot', {
+  const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/omni-ui', {
     method: 'POST', body: JSON.stringify({ endpoint, payload }),
   }))).json()
   const exchanges = async () => (await call('exchange', { a: 'a', b: 'b' })).value ?? []
@@ -880,7 +880,7 @@ test('one turn keeps its identity across two earlier pages', async (t) => {
     await ctx.dispose()
     rmSync(home, { recursive: true, force: true, maxRetries: 5 })
   })
-  const call = async (payload) => (await route.fetch(new Request('http://localhost/api/bot', { method: 'POST', body: JSON.stringify({ endpoint: 'chat', payload }) }))).json()
+  const call = async (payload) => (await route.fetch(new Request('http://localhost/api/omni-ui', { method: 'POST', body: JSON.stringify({ endpoint: 'chat', payload }) }))).json()
   const newer = (await call({ botId: 'b' })).value
   const older = (await call({ botId: 'b', cursor: newer.cursor })).value
   assert.equal(newer.items.length, 60)
@@ -899,7 +899,7 @@ test('an image offload failure moves the Bot on, without its latest messages the
   t.after(stop)
   let made = 0
   ctx.sessionController.create = async () => ({ sessionId: `s${++made}` })
-  // Per Session, the events DS Bot reads back; only the previous turn's end matters.
+  // Per Session, the events Omni reads back; only the previous turn's end matters.
   const ends = new Map()
   const endedWith = (id, code) => ends.set(id, { 9: { type: 'turn/end', data: { reason: { kind: 'error', error: { code } } } } })
   const failTurn = async (id, code) => {

@@ -2,21 +2,21 @@
 // move to the current keys once, so a renamed install keeps its unread marks, reactions,
 // visits, theme, panel width and Bot browser tabs.
 export const STORAGE = {
-  unread: 'ds-bot:unread',
-  reactions: 'ds-bot:reactions',
-  seen: 'ds-bot:seen',
-  prefs: 'ds-bot:prefs',
-  surface: 'ds-bot:surface',
-  agentSessions: 'ds-bot:agent-sessions',
-  browserWidth: 'ds-bot:browser-width',
-  sidebar: 'ds-bot:sidebar',
-  browsers: 'ds-bot.browser.v2',
+  unread: 'omni-ui:unread',
+  reactions: 'omni-ui:reactions',
+  seen: 'omni-ui:seen',
+  prefs: 'omni-ui:prefs',
+  surface: 'omni-ui:surface',
+  agentSessions: 'omni-ui:agent-sessions',
+  browserWidth: 'omni-ui:browser-width',
+  sidebar: 'omni-ui:sidebar',
+  browsers: 'omni-ui.browser.v2',
 }
 
 // Newest legacy name first: when both exist, the more recent value wins.
 const LEGACY_PREFIXES = ['dsh-bot:', 'dsh-bot-team:']
 // The v1 store kept one page per Bot; v2 keeps a tab strip per Bot.
-const LEGACY_BROWSER_KEYS = ['ds-bot.browser.v1', 'dsh-bot.browser.v1']
+const LEGACY_BROWSER_KEYS = ['omni-ui.browser.v1', 'dsh-bot.browser.v1']
 // The saved theme only paints the first frame before the team loads; it follows the
 // host's rename of the theme ids.
 const LEGACY_THEMES = { grok: 'mono' }

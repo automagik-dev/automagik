@@ -132,7 +132,7 @@ export function install(rt) {
         secrets.clear()
       } else {
         blocked = reason(error)
-        rt.warn('ds-bot: unreadable secrets file %s (%s)', path, blocked)
+        rt.warn('omni-ui: unreadable secrets file %s (%s)', path, blocked)
       }
       changed()
       return
@@ -151,10 +151,10 @@ export function install(rt) {
         copyFileSync(path, backup)
         blocked = undefined
         secrets.clear()
-        rt.warn('ds-bot: unreadable secrets file %s; backed up as %s', path, backup)
+        rt.warn('omni-ui: unreadable secrets file %s; backed up as %s', path, backup)
       } catch (error) {
         blocked = reason(error)
-        rt.warn('ds-bot: unreadable secrets file %s; backup failed: %s', path, error)
+        rt.warn('omni-ui: unreadable secrets file %s; backup failed: %s', path, error)
       }
       changed()
       return
@@ -180,7 +180,7 @@ export function install(rt) {
 
   // Resolves once secrets.json holds the current map; rejects when the write failed.
   const persist = () => {
-    if (blocked !== undefined) return Promise.reject(new Error(`The secrets file ${path} could not be read (${blocked}). DS Bot does not change it; fix or move the file and reload.`))
+    if (blocked !== undefined) return Promise.reject(new Error(`The secrets file ${path} could not be read (${blocked}). Omni does not change it; fix or move the file and reload.`))
     const readOnly = rt.readOnly()
     if (readOnly !== undefined) return Promise.reject(new Error(readOnly))
     const snapshot = JSON.stringify({ version: 1, secrets: [...secrets.values()] }, null, 2)
@@ -196,7 +196,7 @@ export function install(rt) {
         throw error
       }
     })
-    writing = job.catch(error => rt.warn('ds-bot: secrets write failed (%s)', reason(error)))
+    writing = job.catch(error => rt.warn('omni-ui: secrets write failed (%s)', reason(error)))
     return job
   }
 
@@ -243,7 +243,7 @@ export function install(rt) {
   async function tell(botId, text) {
     if (rt.botOf(botId) === undefined) return
     await rt.deliver({ toId: botId, role: 'secret', text })
-      .catch(error => rt.warn('ds-bot: secret note to %s failed: %s', botId, error))
+      .catch(error => rt.warn('omni-ui: secret note to %s failed: %s', botId, error))
   }
   const savedNote = (name, lead) => [
     `${lead} Use it as ${usage(name)}.`,
@@ -547,12 +547,12 @@ export function install(rt) {
       try {
         unregister = sub.shellEnv.register({
           name: 'ds-bot-secrets',
-          variables: Object.fromEntries(list.map(secret => [envName(secret.name), { description: `DS Bot secret ${secret.name}${secret.purpose ? `: ${secret.purpose}` : ''}` }])),
+          variables: Object.fromEntries(list.map(secret => [envName(secret.name), { description: `Omni secret ${secret.name}${secret.purpose ? `: ${secret.purpose}` : ''}` }])),
           resolve: resolveEnv,
         })
       } catch (error) {
         declared = ''
-        rt.warn('ds-bot: secrets not offered to the shell: %s', error?.message ?? error)
+        rt.warn('omni-ui: secrets not offered to the shell: %s', error?.message ?? error)
       }
     }
     refreshEnv()
@@ -561,7 +561,7 @@ export function install(rt) {
       unregister = null
       declared = ''
       refreshEnv = () => {}
-    }, 'ds-bot: secrets shell env')
+    }, 'omni-ui: secrets shell env')
   }
   if (typeof ctx.inject === 'function') {
     ctx.inject(['shellEnv'], sub => attachShellEnv(sub))
@@ -572,7 +572,7 @@ export function install(rt) {
   ctx.effect(() => {
     void loadSecrets()
     return () => { if (usedTimer !== null) clearTimeout(usedTimer) }
-  }, 'ds-bot: load secrets')
+  }, 'omni-ui: load secrets')
 
   Object.assign(rt, {
     secretsView,

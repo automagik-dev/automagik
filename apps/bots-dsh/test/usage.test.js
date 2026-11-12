@@ -103,7 +103,7 @@ function start(home, { listedExtra, logsExtra, subagentsExtra } = {}) {
   ctx.connection.fetch.register = (options) => { route = options; return () => {} }
   apply(ctx, { home })
   const call = async (endpoint, payload) => {
-    const response = await route.fetch(new Request('http://localhost/api/bot', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))
+    const response = await route.fetch(new Request('http://localhost/api/omni-ui', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))
     return response.json()
   }
   const meter = ctx.listeners.get('llm/stream').at(-1)

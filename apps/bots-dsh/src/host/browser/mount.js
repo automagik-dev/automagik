@@ -57,7 +57,7 @@ async function saveShot(ctx, value) {
       })
       return { text: value.text, attachment }
     } catch (error) {
-      ctx.logger?.warn?.('ds-bot: screenshot could not be stored: %s', error?.message ?? error)
+      ctx.logger?.warn?.('omni-ui: screenshot could not be stored: %s', error?.message ?? error)
     }
   }
   return { text: `${value.text ?? ''} (The screenshot could not be attached.)` }
@@ -111,7 +111,7 @@ export function mountBrowserPlugin(ctx, { toolDefs, defineTool, keyOf, profileRo
     const open = [...sessions.values()]
     sessions.clear()
     await Promise.all(open.map(session => Promise.resolve(session).then(opened => opened.close(), () => {})))
-  }, 'ds-bot: browser plugin')
+  }, 'omni-ui: browser plugin')
 
   // Closes a Bot's browser and removes its profile directory; used when the Bot is deleted.
   async function drop(botId) {

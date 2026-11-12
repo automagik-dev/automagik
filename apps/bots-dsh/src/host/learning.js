@@ -316,7 +316,7 @@ export function install(rt) {
     try {
       saved = JSON.parse(readFileSync(path, 'utf8'))
     } catch (error) {
-      if (error?.code !== 'ENOENT') rt.warn('ds-bot: unreadable learning state %s: %s', path, error?.message ?? error)
+      if (error?.code !== 'ENOENT') rt.warn('omni-ui: unreadable learning state %s: %s', path, error?.message ?? error)
       saved = {}
     }
     saved.pending ??= {}
@@ -338,7 +338,7 @@ export function install(rt) {
       const temp = `${path}.${process.pid}.tmp`
       await writeFile(temp, text, 'utf8')
       await replaceFile(temp, path)
-    }).catch(error => rt.warn('ds-bot: saving the learning state failed: %s', error?.message ?? error))
+    }).catch(error => rt.warn('omni-ui: saving the learning state failed: %s', error?.message ?? error))
     return writing
   }
 
@@ -419,12 +419,12 @@ export function install(rt) {
       const value = proposal?.[key]
       return typeof value === 'string' && rt.redactSecrets(value) !== value
     })) {
-      rt.warn('ds-bot: the skill review of %s proposed content containing a saved secret', bot.name)
+      rt.warn('omni-ui: the skill review of %s proposed content containing a saved secret', bot.name)
       return undefined
     }
     const problem = skillProblem(proposal, { skills, learned, limit: settings.learnedMax })
     if (problem !== undefined) {
-      rt.warn('ds-bot: the skill review of %s proposed nothing usable: %s', bot.name, problem)
+      rt.warn('omni-ui: the skill review of %s proposed nothing usable: %s', bot.name, problem)
       return undefined
     }
     if (proposal.action === 'none') return undefined
@@ -454,12 +454,12 @@ export function install(rt) {
     const answer = agentsAnswer(reply, current)
     if (answer === undefined || answer === null || typeof answer !== 'object') throw new Error('the answer is not a JSON object')
     if (Array.isArray(answer.edits) && answer.edits.some(edit => [edit?.text, edit?.why].some(value => typeof value === 'string' && rt.redactSecrets(value) !== value))) {
-      rt.warn('ds-bot: the AGENTS.md review of %s proposed content containing a saved secret', bot.name)
+      rt.warn('omni-ui: the AGENTS.md review of %s proposed content containing a saved secret', bot.name)
       return undefined
     }
     const problem = agentsProblem(answer, current)
     if (problem !== undefined) {
-      if (answer?.action !== 'none') rt.warn('ds-bot: the AGENTS.md review of %s proposed nothing usable: %s', bot.name, problem)
+      if (answer?.action !== 'none') rt.warn('omni-ui: the AGENTS.md review of %s proposed nothing usable: %s', bot.name, problem)
       return undefined
     }
     if (answer.action === 'none') return undefined
@@ -561,7 +561,7 @@ export function install(rt) {
                 if (!await exists(join(folder, '.git')) && !await exists(join(folder, 'AGENTS.md'))) continue
                 queueAgentsWork(folder, bot, entry.work ?? [])
               } catch (error) {
-                rt.warn('ds-bot: the AGENTS.md folder lookup for %s failed: %s', entry.sessionId, error?.message ?? error)
+                rt.warn('omni-ui: the AGENTS.md folder lookup for %s failed: %s', entry.sessionId, error?.message ?? error)
               }
             }
           }
@@ -571,7 +571,7 @@ export function install(rt) {
           if (remaining.length === 0) delete store.pending[botId]
           else store.pending[botId] = remaining
         } catch (error) {
-          rt.warn('ds-bot: the learning review of %s failed: %s', bot.name, error?.message ?? error)
+          rt.warn('omni-ui: the learning review of %s failed: %s', bot.name, error?.message ?? error)
           continue
         }
       }
@@ -624,7 +624,7 @@ export function install(rt) {
               if (queue.records.length === 0) delete store.agentsPending[folder]
             }
           } catch (error) {
-            rt.warn('ds-bot: the AGENTS.md review of %s failed: %s', folder, error?.message ?? error)
+            rt.warn('omni-ui: the AGENTS.md review of %s failed: %s', folder, error?.message ?? error)
           }
         }
       }
@@ -645,7 +645,7 @@ export function install(rt) {
   }
   ctx.effect(() => {
     const timer = setInterval(() => {
-      if (due()) void run().catch(error => rt.warn('ds-bot: learning pass failed: %s', error?.message ?? error))
+      if (due()) void run().catch(error => rt.warn('omni-ui: learning pass failed: %s', error?.message ?? error))
     }, settings.tickMs)
     timer.unref?.()
     return () => {
@@ -654,7 +654,7 @@ export function install(rt) {
       // A new host may take over after disposal; finish only writes already queued.
       return writing
     }
-  }, 'ds-bot: learning')
+  }, 'omni-ui: learning')
 
   // The user's answer to a card.
   async function answer({ id, approve }) {

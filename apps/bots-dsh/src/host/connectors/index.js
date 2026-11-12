@@ -1,7 +1,7 @@
 // Connectors: outside services every Bot can use. One engine mounts each
 // connected service's MCP server on the plugin context through the local
 // gateway (gateway.js), so every Bot gets mcp__<id>__* tools while credentials
-// stay DS Bot secrets that never reach the mcp-client config. OAuth sign-in is
+// stay Omni secrets that never reach the mcp-client config. OAuth sign-in is
 // in oauth.js, the service list in catalog.js, mail in mail/.
 import { randomBytes, randomUUID } from 'node:crypto'
 import { createServer } from 'node:http'
@@ -197,7 +197,7 @@ export function install(rt) {
       await unmount(id)
       mounts.set(id, { fp })
       statuses.set(id, { state: 'error', error: reason(error) })
-      rt.warn('ds-bot: connector %s failed: %s', id, statuses.get(id).error)
+      rt.warn('omni-ui: connector %s failed: %s', id, statuses.get(id).error)
     }
   }
 
@@ -214,7 +214,7 @@ export function install(rt) {
     queue = queue.then(async () => {
       if (force) { for (const id of mounts.keys()) await unmount(id) }
       await reconcile()
-    }).catch(error => rt.warn('ds-bot: connectors: %s', reason(error)))
+    }).catch(error => rt.warn('omni-ui: connectors: %s', reason(error)))
     return queue
   }
 
@@ -276,11 +276,11 @@ export function install(rt) {
       try { url = new URL(req.url ?? '/', 'http://127.0.0.1') } catch { res.writeHead(400); res.end(); return }
       if (url.pathname !== '/callback') { res.writeHead(404); res.end(); return }
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
-      res.end('<!doctype html><title>Signed in</title><p style="font-family:sans-serif;margin:3em;text-align:center">Signed in — you can close this tab and go back to DS Bot.</p>')
-      void ready({ code: url.searchParams.get('code'), state: url.searchParams.get('state'), iss: url.searchParams.get('iss'), error: url.searchParams.get('error'), errorDescription: url.searchParams.get('error_description') }).catch(error => rt.warn('ds-bot: connector sign-in callback failed: %s', reason(error)))
+      res.end('<!doctype html><title>Signed in</title><p style="font-family:sans-serif;margin:3em;text-align:center">Signed in — you can close this tab and go back to Omni.</p>')
+      void ready({ code: url.searchParams.get('code'), state: url.searchParams.get('state'), iss: url.searchParams.get('iss'), error: url.searchParams.get('error'), errorDescription: url.searchParams.get('error_description') }).catch(error => rt.warn('omni-ui: connector sign-in callback failed: %s', reason(error)))
     })
     listener.on('error', error => {
-      if (listener.listening) rt.warn('ds-bot: connector sign-in listener failed: %s', error?.code ?? 'error')
+      if (listener.listening) rt.warn('omni-ui: connector sign-in listener failed: %s', error?.code ?? 'error')
     })
     const listen = port => new Promise((resolve, reject) => {
       const onError = error => { listener.off('listening', onOk); reject(error) }
@@ -310,7 +310,7 @@ export function install(rt) {
     const resolved = await oauth.resolveClient(entry, pending.discovery, redirectUri, fixed, saved?.client ? { ...saved.client, clientSecret: rt.secretValue(clientSecretOf(id)) } : undefined, { persist })
     if (resolved === null) {
       pendings.set(id, { ...pending, listener, redirectUri })
-      statuses.set(id, { state: 'needs-client' })
+      statuses.set(id, { state: 'needs-client', error: 'NOT SET UP: configure an Automagik sign-in app' })
       return
     }
     // Refresh needs to know which client signed in; DCR already persisted its result.
@@ -381,6 +381,10 @@ export function install(rt) {
   async function beginSignIn(id) {
     const entry = known(id)
     if (entry.auth.kind !== 'oauth') throw new Error('This connector does not sign in')
+    if (entry.auth.client?.deviceFlow && !entry.auth.client.id) {
+      statuses.set(id, { state: 'needs-client', error: 'NOT SET UP: configure an Automagik sign-in app' })
+      return
+    }
     if (rt.readOnly() !== undefined) throw new Error(rt.readOnly())
     await rt.loadSecrets()
     if (pendings.has(id)) await endPending(id)
@@ -419,7 +423,7 @@ export function install(rt) {
       let path = saved?.client?.via ?? 'inferred'
       if (refresh === undefined || saved?.oauth === undefined) {
         statuses.set(id, { state: 'needs-sign-in' })
-        rt.warn('ds-bot: connector %s token refresh failed (client: %s; missing refresh token or OAuth metadata)', id, path)
+        rt.warn('omni-ui: connector %s token refresh failed (client: %s; missing refresh token or OAuth metadata)', id, path)
         return false
       }
       try {
@@ -434,9 +438,9 @@ export function install(rt) {
           : saved.client?.clientId ?? (discovery.metadata?.client_id_metadata_document_supported === true ? oauth.CIMD_CLIENT_ID : undefined)
         const clientVia = via ?? (saved.client?.clientId ? 'manual' : 'cimd')
         if (via === undefined && clientId !== undefined) path = `inferred/${clientVia}`
-        if (clientId === undefined) {
+        if (!clientId) {
           statuses.set(id, { state: 'needs-sign-in' })
-          rt.warn('ds-bot: connector %s token refresh failed (client: %s; no OAuth client)', id, path)
+          rt.warn('omni-ui: connector %s token refresh failed (client: %s; no OAuth client)', id, path)
           return false
         }
         const secret = rt.secretValue(clientSecretOf(id))
@@ -453,12 +457,12 @@ export function install(rt) {
           tokenExpiresAt: Number.isFinite(tokens.expires_in) ? Date.now() + tokens.expires_in * 1000 : undefined,
         })
         statuses.delete(id)
-        rt.warn('ds-bot: connector %s token refresh succeeded (client: %s)', id, path)
+        rt.warn('omni-ui: connector %s token refresh succeeded (client: %s)', id, path)
         return true
       } catch (error) {
         if (oauth.invalidGrant(error)) statuses.set(id, { state: 'needs-sign-in', error: 'Sign in again' })
         else statuses.set(id, { state: 'error', error: reason(error) })
-        rt.warn('ds-bot: connector %s token refresh failed (client: %s; %s)', id, path, oauth.invalidGrant(error) ? 'invalid_grant' : 'refresh error')
+        rt.warn('omni-ui: connector %s token refresh failed (client: %s; %s)', id, path, oauth.invalidGrant(error) ? 'invalid_grant' : 'refresh error')
         return false
       }
     })().finally(() => refreshes.delete(id))
@@ -487,7 +491,7 @@ export function install(rt) {
     if (notes.length === 0) return
     await rt.save()
     for (const [botId, text] of notes) {
-      await rt.deliver({ toId: botId, role: 'connector', text }).catch(error => rt.warn('ds-bot: connector note to %s failed: %s', botId, error))
+      await rt.deliver({ toId: botId, role: 'connector', text }).catch(error => rt.warn('omni-ui: connector note to %s failed: %s', botId, error))
     }
   }
 
@@ -613,7 +617,7 @@ export function install(rt) {
 
   const rowFor = (entry) => {
     const saved = state.connectors?.[entry.id]
-    const status = statuses.get(entry.id)
+    const status = statuses.get(entry.id) ?? (entry.auth.client?.deviceFlow && !entry.auth.client.id && !hasCredential(entry.id) ? { state: 'needs-client', error: 'NOT SET UP: configure an Automagik sign-in app' } : undefined)
     const connected = hasCredential(entry.id)
     const remote = entry.custom === undefined || entry.custom.url !== undefined
     const state_ = status?.state ?? (connected && mounts.has(entry.id) ? 'ready' : connected ? 'connecting' : 'off')
@@ -673,7 +677,7 @@ export function install(rt) {
         await sync()
         return connectorsView()
       }
-      if (entry.id === 'github' && (entry.auth.client?.id ?? '') === '') throw new Error('Paste a token first')
+      if (entry.id === 'github' && (entry.auth.client?.id ?? '') === '') throw new Error('NOT SET UP: configure an Automagik sign-in app or paste a token')
       await beginSignIn(entry.id)
       return connectorsView()
     },
@@ -842,7 +846,7 @@ export function install(rt) {
       gateways.gw = null
       return Promise.all([...closing, gw?.close(), mailApi.dispose()])
     }
-  }, 'ds-bot: connectors')
+  }, 'omni-ui: connectors')
 
   Object.assign(rt, {
     connectorsView,

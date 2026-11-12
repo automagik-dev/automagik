@@ -1,4 +1,4 @@
-// Client channel: the team view the browser renders, and the POST /api/bot endpoints.
+// Client channel: the team view the browser renders, and the POST /api/omni-ui endpoints.
 import { randomUUID } from 'node:crypto'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { install as installBtw } from './btw.js'
@@ -26,7 +26,7 @@ const LANGUAGES = {
 const RUN_STATS = ['sessionStats', 'tokenUsage', 'contextPressure']
 
 const invalid = message => Object.assign(new Error(message), { code: 'bot/invalid' })
-// Programming and file system errors are DS Bot's own faults, logged with their stack;
+// Programming and file system errors are Omni's own faults, logged with their stack;
 // any other error is a refusal whose message is meant for the user.
 const isInternal = error => error instanceof TypeError || error instanceof ReferenceError || error instanceof RangeError
   || error instanceof SyntaxError || (typeof error?.code === 'string' && /^E[A-Z_]+$/.test(error.code))
@@ -389,7 +389,7 @@ export function install(rt) {
         case 'create-room': {
           await rt.load()
           const room = await rt.createRoom({ members: Array.isArray(body.members) ? body.members : [], name: body.name, section: body.section, sectionId: body.sectionId, ...(typeof body.admin === 'string' ? { admin: body.admin } : {}) })
-          if (body.greet === true) await rt.greetRoom(room.id).catch(error => rt.warn('ds-bot: greeting in %s failed: %s', room.name, error))
+          if (body.greet === true) await rt.greetRoom(room.id).catch(error => rt.warn('omni-ui: greeting in %s failed: %s', room.name, error))
           return ok(room)
         }
         case 'update-room': {
@@ -602,7 +602,7 @@ export function install(rt) {
         case 'stage-image': {
           const mediaType = String(body.mediaType ?? '')
           const data = typeof body.data === 'string' ? body.data : ''
-          if (!STAGED_TYPES.has(mediaType) || data === '' || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)) return fail('This is not a photo DS Bot can send', 'bot/invalid')
+          if (!STAGED_TYPES.has(mediaType) || data === '' || !/^[A-Za-z0-9+/]+={0,2}$/.test(data)) return fail('This is not a photo Omni can send', 'bot/invalid')
           const now = Date.now()
           for (const [id, entry] of staged) if (entry.at < now - STAGED_MS) staged.delete(id)
           const id = randomUUID()
@@ -852,7 +852,7 @@ export function install(rt) {
       const result = await handle(String(body?.endpoint ?? ''), body?.payload, request.signal)
       return new Response(JSON.stringify(result), { status: 200, headers: { 'content-type': 'application/json' } })
     },
-  }), 'ds-bot: api route')
+  }), 'omni-ui: api route')
 
   ctx.effect(() => {
     void rt.load()
@@ -860,5 +860,5 @@ export function install(rt) {
     // In-flight side questions abort here; their entries stay answering for the
     // next owner.
     return () => Promise.all([rt.btwDispose?.(), rt.sideDispose?.()])
-  }, 'ds-bot: load state')
+  }, 'omni-ui: load state')
 }

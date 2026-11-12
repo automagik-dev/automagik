@@ -17,7 +17,7 @@ export function install(rt) {
   const attachJobs = (sub) => {
     const own = sub.jobs
     jobs = own
-    sub.effect(() => () => { if (jobs === own) jobs = undefined }, 'ds-bot: jobs service')
+    sub.effect(() => () => { if (jobs === own) jobs = undefined }, 'omni-ui: jobs service')
   }
   if (typeof ctx.inject === 'function') ctx.inject(['jobs'], attachJobs)
   else if (ctx.get?.('jobs') !== undefined) attachJobs({ jobs: ctx.get('jobs'), effect: (execute, label) => ctx.effect(execute, label) })
@@ -79,7 +79,7 @@ export function install(rt) {
   const noticeOf = (name, command, text) => createUserMessage({
     content: [{ type: 'text', text }],
     // Same source as DSH's job-completion notice so every chat renders it the
-    // same way, and DS Bot's routing ignores it.
+    // same way, and Omni's routing ignores it.
     source: { kind: 'tool-jobs', form: 'notice', summary: boundContextSummary(`${name} ${command} …`) },
   })
 
@@ -128,7 +128,7 @@ export function install(rt) {
       || promoted?.properties?.timeoutMs === undefined || promoted?.properties?.output === undefined) {
       if (!formatWarned.has(name)) {
         formatWarned.add(name)
-        rt.warn('ds-bot: %s has no promoted result format; its calls keep the step boundary', name)
+        rt.warn('omni-ui: %s has no promoted result format; its calls keep the step boundary', name)
       }
       return
     }
@@ -207,7 +207,7 @@ export function install(rt) {
         const lift = shadowShell(agent, name)
         if (typeof lift === 'function') disposers.push(lift)
       } catch (error) {
-        rt.warn('ds-bot: shadowing %s failed: %s', name, error)
+        rt.warn('omni-ui: shadowing %s failed: %s', name, error)
       }
     }
     return disposers

@@ -60,7 +60,7 @@ test('warnings are kept, cleaned, written to the log, and read back after a rest
   const error = Object.assign(new Error(`cannot open ${homedir()}/x with sk-abcdefghij`), { code: 'EACCES' })
   const quiet = t.mock.method(console, 'error', () => {})
   const rt = host(home)
-  rt.warn('ds-bot: state write failed: %s', error)
+  rt.warn('omni-ui: state write failed: %s', error)
   rt.noteFailure({ source: 'turn', text: 'Rate limited', code: 'RATE_LIMIT', status: 429, bot: 'Chief', where: 'own chat' })
   const [first, second] = await rt.diagnostics.entries()
   assert.equal(first.level, 'warn')
@@ -70,7 +70,7 @@ test('warnings are kept, cleaned, written to the log, and read back after a rest
   assert.equal(second.code, 'RATE_LIMIT')
 
   const report = await rt.diagnostics.report({ client: { surface: 'Web', language: 'zh-CN', userAgent: 'Test/1' }, clientErrors: [{ time: 1, text: 'state: HTTP 502' }] })
-  assert.match(report.markdown, /\| DS Bot \| \d+\.\d+\.\d+ \|/)
+  assert.match(report.markdown, /\| Omni \| \d+\.\d+\.\d+ \|/)
   assert.match(report.markdown, /\| Surface \| Web \|/)
   assert.match(report.markdown, /\| Models \| deepseek\/deepseek-chat \|/)
   assert.match(report.markdown, /WARN host \[EACCES\] state write failed/)
@@ -102,7 +102,7 @@ test('warnings send only cleaned text to the logger and stderr', (t) => {
   const quiet = t.mock.method(console, 'error', (...args) => stderr.push(args.join(' ')))
   const rt = host(home, { config: { diagnosticsFile: false } })
   rt.ctx.logger.warn = (...args) => warnings.push(args)
-  rt.warn('ds-bot: warning: %s', error)
+  rt.warn('omni-ui: warning: %s', error)
   quiet.mock.restore()
 
   assert.equal(warnings[0][0], '%s')
@@ -163,7 +163,7 @@ test('a stop waits for the log writes queued before it, and nothing is written a
     syncBuiltinESMExports()
   })
   const rt = host(home)
-  rt.warn('ds-bot: before the stop')
+  rt.warn('omni-ui: before the stop')
   await appending
   let stopped = false
   const stopping = rt.stop().then(() => { stopped = true })
@@ -173,7 +173,7 @@ test('a stop waits for the log writes queued before it, and nothing is written a
   await stopping
   assert.match(readFileSync(log, 'utf8'), /before the stop/)
 
-  rt.warn('ds-bot: after the stop')
+  rt.warn('omni-ui: after the stop')
   await rt.diagnostics.clear()
   // A write queued after the stop would be part of what a second stop waits for.
   await rt.stop()
@@ -189,7 +189,7 @@ test('reportMarkdown says when nothing went wrong', () => {
   assert.doesNotMatch(text, /DSH \|/)
 })
 
-test('errorCode tells refusals from DS Bot faults', () => {
+test('errorCode tells refusals from Omni faults', () => {
   assert.equal(errorCode(new Error('Unknown Bot')), 'bot/refused')
   assert.equal(errorCode(new TypeError('x is undefined')), 'bot/internal')
   assert.equal(errorCode(Object.assign(new Error('no'), { code: 'ENOENT' })), 'bot/internal')
@@ -411,19 +411,19 @@ test('a turn refused for not being a model endpoint refuses that route', () => {
 test('issueUrl fills the issue form, keeps the versions when the errors are too long, and falls back to the clipboard', async () => {
   const { issueUrl } = await import('../src/client/diagnostics.js')
   const base = 'https://github.com/Fei2411/DS-Bot/issues/new'
-  const short = issueUrl(base, { what: 'Writer failed\nin the group', diagnostics: '| DS Bot | 0.1.0 |' })
+  const short = issueUrl(base, { what: 'Writer failed\nin the group', diagnostics: '| Omni | 0.1.0 |' })
   assert.equal(short.inline, true)
   const params = new URL(short.url).searchParams
   assert.equal(params.get('template'), 'bug.yml')
   assert.equal(params.get('title'), 'Writer failed')
   assert.equal(params.get('what'), 'Writer failed\nin the group')
-  assert.equal(params.get('diagnostics'), '| DS Bot | 0.1.0 |')
+  assert.equal(params.get('diagnostics'), '| Omni | 0.1.0 |')
   const long = issueUrl(base, { diagnostics: '错误'.repeat(2000) })
   assert.equal(long.inline, false)
   assert.ok(long.url.length < 7000)
   assert.match(new URL(long.url).searchParams.get('diagnostics'), /clipboard/)
   assert.equal(new URL(long.url).searchParams.has('title'), false)
-  const table = '| | |\n|---|---|\n| DS Bot | 0.1.2 |\n| DSH | 0.2.0 |'
+  const table = '| | |\n|---|---|\n| Omni | 0.1.2 |\n| DSH | 0.2.0 |'
   const errors = issueUrl(base, { what: 'Writer failed', diagnostics: `${table}\n\nRecent host errors:\n${'错误'.repeat(2000)}` })
   assert.equal(errors.inline, false)
   assert.ok(errors.url.length < 7000)

@@ -1,5 +1,5 @@
 // IM: talk to Bots from chat apps. A connection is one IM bot account bound to a Bot;
-// direct chats reach that Bot, platform group chats can be bound to a DS Bot group.
+// direct chats reach that Bot, platform group chats can be bound to a Omni group.
 // The platform adapters (im/platforms/) own the wire; this module owns pairing,
 // routing, cards and the send queues. Only the dsh holding the team lock connects.
 import { randomBytes, randomUUID } from 'node:crypto'
@@ -36,9 +36,9 @@ export function install(rt) {
     const lang = langKey()
     const table = {
       en: {
-        requested: 'A connection request was sent to DS Bot; allow it in Settings → IM on the computer.',
-        unbound: 'This IM bot is not bound to a Bot yet; pick one in DS Bot Settings → IM.',
-        unboundGroup: 'This group is not bound yet; pick a group or a Bot for it in DS Bot Settings → IM.',
+        requested: 'A connection request was sent to Omni; allow it in Settings → IM on the computer.',
+        unbound: 'This IM bot is not bound to a Bot yet; pick one in Omni Settings → IM.',
+        unboundGroup: 'This group is not bound yet; pick a group or a Bot for it in Omni Settings → IM.',
         connected: `Connected — you can talk to ${values.target} now.`,
         stopped: 'Stopped.',
         idle: 'Nothing is running.',
@@ -56,9 +56,9 @@ export function install(rt) {
         reject: 'Reject',
       },
       zh: {
-        requested: '已向 DS Bot 发出连接请求，请在电脑上的 DS Bot 设置 → IM 里允许。',
-        unbound: '这个 IM 机器人还没绑定 Bot，请在 DS Bot 设置 → IM 里选一个。',
-        unboundGroup: '这个群还没绑定，请在 DS Bot 设置 → IM 里给它选一个群或 Bot。',
+        requested: '已向 Omni 发出连接请求，请在电脑上的 Omni 设置 → IM 里允许。',
+        unbound: '这个 IM 机器人还没绑定 Bot，请在 Omni 设置 → IM 里选一个。',
+        unboundGroup: '这个群还没绑定，请在 Omni 设置 → IM 里给它选一个群或 Bot。',
         connected: `已连接，现在可以和 ${values.target} 说话了。`,
         stopped: '已停下。',
         idle: '现在没有在做的活。',
@@ -76,9 +76,9 @@ export function install(rt) {
         reject: '拒绝',
       },
       'zh-TW': {
-        requested: '已向 DS Bot 發出連線請求，請在電腦上的 DS Bot 設定 → IM 裡允許。',
-        unbound: '這個 IM 機器人還沒綁定 Bot，請在 DS Bot 設定 → IM 裡選一個。',
-        unboundGroup: '這個群還沒綁定，請在 DS Bot 設定 → IM 裡給它選一個群或 Bot。',
+        requested: '已向 Omni 發出連線請求，請在電腦上的 Omni 設定 → IM 裡允許。',
+        unbound: '這個 IM 機器人還沒綁定 Bot，請在 Omni 設定 → IM 裡選一個。',
+        unboundGroup: '這個群還沒綁定，請在 Omni 設定 → IM 裡給它選一個群或 Bot。',
         connected: `已連線，現在可以和 ${values.target} 說話了。`,
         stopped: '已停下。',
         idle: '現在沒有在做的活。',
@@ -96,9 +96,9 @@ export function install(rt) {
         reject: '拒絕',
       },
       ja: {
-        requested: 'DS Bot に接続リクエストを送信しました。PC の DS Bot 設定 → IM で許可してください。',
-        unbound: 'この IM ボットはまだ Bot に紐付けられていません。DS Bot 設定 → IM で選択してください。',
-        unboundGroup: 'このグループはまだ紐付けられていません。DS Bot 設定 → IM でグループまたは Bot を選択してください。',
+        requested: 'Omni に接続リクエストを送信しました。PC の Omni 設定 → IM で許可してください。',
+        unbound: 'この IM ボットはまだ Bot に紐付けられていません。Omni 設定 → IM で選択してください。',
+        unboundGroup: 'このグループはまだ紐付けられていません。Omni 設定 → IM でグループまたは Bot を選択してください。',
         connected: `接続しました。${values.target} と話せます。`,
         stopped: '停止しました。',
         idle: '実行中のタスクはありません。',
@@ -116,9 +116,9 @@ export function install(rt) {
         reject: '拒否',
       },
       ko: {
-        requested: 'DS Bot에 연결 요청을 보냈습니다. 컴퓨터의 DS Bot 설정 → IM에서 허용해 주세요.',
-        unbound: '이 IM 봇은 아직 Bot에 연결되지 않았습니다. DS Bot 설정 → IM에서 선택해 주세요.',
-        unboundGroup: '이 그룹은 아직 연결되지 않았습니다. DS Bot 설정 → IM에서 그룹이나 Bot을 선택해 주세요.',
+        requested: 'Omni에 연결 요청을 보냈습니다. 컴퓨터의 Omni 설정 → IM에서 허용해 주세요.',
+        unbound: '이 IM 봇은 아직 Bot에 연결되지 않았습니다. Omni 설정 → IM에서 선택해 주세요.',
+        unboundGroup: '이 그룹은 아직 연결되지 않았습니다. Omni 설정 → IM에서 그룹이나 Bot을 선택해 주세요.',
         connected: `연결되었습니다. 이제 ${values.target}와(과) 대화할 수 있습니다.`,
         stopped: '중지되었습니다.',
         idle: '진행 중인 작업이 없습니다.',
@@ -136,9 +136,9 @@ export function install(rt) {
         reject: '거부',
       },
       es: {
-        requested: 'Se envió una solicitud de conexión a DS Bot; permítela en Ajustes → IM en el ordenador.',
-        unbound: 'Este bot de IM aún no está vinculado a un Bot; elige uno en Ajustes de DS Bot → IM.',
-        unboundGroup: 'Este grupo aún no está vinculado; elige un grupo o un Bot en Ajustes de DS Bot → IM.',
+        requested: 'Se envió una solicitud de conexión a Omni; permítela en Ajustes → IM en el ordenador.',
+        unbound: 'Este bot de IM aún no está vinculado a un Bot; elige uno en Ajustes de Omni → IM.',
+        unboundGroup: 'Este grupo aún no está vinculado; elige un grupo o un Bot en Ajustes de Omni → IM.',
         connected: `Conectado — ya puedes hablar con ${values.target}.`,
         stopped: 'Detenido.',
         idle: 'No hay nada en curso.',
@@ -156,9 +156,9 @@ export function install(rt) {
         reject: 'Rechazar',
       },
       fr: {
-        requested: 'Une demande de connexion a été envoyée à DS Bot ; autorisez-la dans Paramètres → IM sur l’ordinateur.',
-        unbound: 'Ce bot IM n’est pas encore lié à un Bot ; choisissez-en un dans Paramètres DS Bot → IM.',
-        unboundGroup: 'Ce groupe n’est pas encore lié ; choisissez un groupe ou un Bot dans Paramètres DS Bot → IM.',
+        requested: 'Une demande de connexion a été envoyée à Omni ; autorisez-la dans Paramètres → IM sur l’ordinateur.',
+        unbound: 'Ce bot IM n’est pas encore lié à un Bot ; choisissez-en un dans Paramètres Omni → IM.',
+        unboundGroup: 'Ce groupe n’est pas encore lié ; choisissez un groupe ou un Bot dans Paramètres Omni → IM.',
         connected: `Connecté — vous pouvez maintenant parler à ${values.target}.`,
         stopped: 'Arrêté.',
         idle: 'Rien n’est en cours.',
@@ -176,9 +176,9 @@ export function install(rt) {
         reject: 'Refuser',
       },
       de: {
-        requested: 'Eine Verbindungsanfrage wurde an DS Bot gesendet; erlaube sie am Computer unter Einstellungen → IM.',
-        unbound: 'Dieser IM-Bot ist noch keinem Bot zugewiesen; wähle einen in den DS Bot-Einstellungen → IM.',
-        unboundGroup: 'Diese Gruppe ist noch nicht zugewiesen; wähle eine Gruppe oder einen Bot in den DS Bot-Einstellungen → IM.',
+        requested: 'Eine Verbindungsanfrage wurde an Omni gesendet; erlaube sie am Computer unter Einstellungen → IM.',
+        unbound: 'Dieser IM-Bot ist noch keinem Bot zugewiesen; wähle einen in den Omni-Einstellungen → IM.',
+        unboundGroup: 'Diese Gruppe ist noch nicht zugewiesen; wähle eine Gruppe oder einen Bot in den Omni-Einstellungen → IM.',
         connected: `Verbunden — du kannst jetzt mit ${values.target} sprechen.`,
         stopped: 'Gestoppt.',
         idle: 'Aktuell läuft nichts.',
@@ -223,7 +223,7 @@ export function install(rt) {
     if (held === undefined || held.timer !== undefined) return
     held.timer = setTimeout(() => {
       held.timer = undefined
-      void writeRuntime(id).catch(error => rt.warn('ds-bot: im runtime %s not saved: %s', id, error))
+      void writeRuntime(id).catch(error => rt.warn('omni-ui: im runtime %s not saved: %s', id, error))
     }, RUNTIME_SAVE_MS)
     held.timer.unref?.()
   }
@@ -712,11 +712,11 @@ export function install(rt) {
       const handle = adapter.connect(fieldsOf(conn), env, {
         onMessage: (msg) => {
           const current = fresh(conn.id)
-          return current === undefined ? undefined : onMessage(current)(msg).catch(error => rt.warn('ds-bot: im message failed: %s', error))
+          return current === undefined ? undefined : onMessage(current)(msg).catch(error => rt.warn('omni-ui: im message failed: %s', error))
         },
         onAction: (action) => {
           const current = fresh(conn.id)
-          return current === undefined ? undefined : onAction(current)(action).catch(error => rt.warn('ds-bot: im action failed: %s', error))
+          return current === undefined ? undefined : onAction(current)(action).catch(error => rt.warn('omni-ui: im action failed: %s', error))
         },
         onStatus: onStatus(conn.id),
       })
@@ -1056,7 +1056,7 @@ export function install(rt) {
           const buttons = imPlatform(conn.platform)?.buttons === true ? cardButtons.approval(data.id) : undefined
           await sendCard(conn, `a:${data.id}`, targets, cardText.approval(bot?.name ?? '?', data), buttons)
         }
-      })().catch(error => rt.warn('ds-bot: im approval card failed: %s', error))
+      })().catch(error => rt.warn('omni-ui: im approval card failed: %s', error))
       return
     }
     void (async () => {
@@ -1087,7 +1087,7 @@ export function install(rt) {
         await Promise.all([...runtimes.keys()].map(writeRuntime)).catch(() => {})
       })
     }
-  }, 'ds-bot: im')
+  }, 'omni-ui: im')
 
   const imView = () => ({ connections: Object.values(connections()).map(viewOf), platforms: IM_PLATFORMS.filter(platform => adaptersFor().includes(platform.id)).map(platform => platform.id) })
   const imStatusView = () => Object.fromEntries([...statuses.entries()].map(([id, status]) => [id, { state: status.state, ...(status.error !== undefined ? { error: status.error } : {}), at: status.at }]))

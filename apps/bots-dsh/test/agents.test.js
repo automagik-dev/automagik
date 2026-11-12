@@ -71,7 +71,7 @@ function start(team, { config = {} } = {}) {
   }
   rt = createRuntime(ctx, { home, ...config })
   const call = async (endpoint, payload) => {
-    const response = await route.fetch(new Request('http://localhost/api/bot', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))
+    const response = await route.fetch(new Request('http://localhost/api/omni-ui', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))
     return response.json()
   }
   const createdAgents = payload => (ctx.listeners.get('agent/created') ?? []).map(listener => listener(payload))
@@ -93,7 +93,7 @@ const TEAM = {
   questions: {},
 }
 
-test('add-agent creates one record with a first Session in the DS Bot workspace', async (t) => {
+test('add-agent creates one record with a first Session in the Omni workspace', async (t) => {
   const { call, stop, created } = start(TEAM)
   t.after(stop)
   await call('state', {})

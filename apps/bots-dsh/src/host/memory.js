@@ -134,8 +134,8 @@ export function install(rt) {
   // An unreadable memory is not an empty one: callers that change it fail instead of
   // writing over what could not be read, the way store.js treats a broken state.json.
   const unreadable = (path, error) => {
-    rt.warn('ds-bot: unreadable memory file %s: %s', path, error)
-    throw Object.assign(new Error(`Memory file ${path} could not be read (${error?.code ?? error?.message}). DS Bot leaves it as it is; fix or move the file.`), { code: 'memory/unreadable' })
+    rt.warn('omni-ui: unreadable memory file %s: %s', path, error)
+    throw Object.assign(new Error(`Memory file ${path} could not be read (${error?.code ?? error?.message}). Omni leaves it as it is; fix or move the file.`), { code: 'memory/unreadable' })
   }
   const readText = (path) => {
     try {
@@ -343,7 +343,7 @@ export function install(rt) {
       await journalRow(record.row)
       await unlink(pendingPath(root)).catch(error => { if (error?.code !== 'ENOENT') throw error })
     } catch (error) {
-      rt.warn('ds-bot: memory change %s is pending: %s', id, error)
+      rt.warn('omni-ui: memory change %s is pending: %s', id, error)
       throw error
     }
   }
@@ -371,8 +371,8 @@ export function install(rt) {
 
   // A change that was interrupted is finished when the host starts.
   ctx.effect(() => {
-    void rt.load().then(() => recover()).catch(error => rt.warn('ds-bot: memory recovery failed: %s', error?.message ?? error))
-  }, 'ds-bot: memory recovery')
+    void rt.load().then(() => recover()).catch(error => rt.warn('omni-ui: memory recovery failed: %s', error?.message ?? error))
+  }, 'omni-ui: memory recovery')
 
   // Checked when the write runs: a Bot or group chat deleted after the write was
   // queued has its memory archived already, and writing would bring the folder back;
@@ -642,9 +642,9 @@ export function install(rt) {
       // The memory is in the archive from here: a log row that cannot be written must not
       // hide where it went, which the privacy guard needs to keep a private archive closed.
       await journalRow({ id: randomUUID(), time: new Date().toISOString(), op: 'archive', scope: scopeKey(ownScope(botId)), actor: 'user', actorName: 'user', botName: bot?.name, to: `archive/${name}` })
-        .catch(error => rt.warn('ds-bot: archive of the memory of %s not logged: %s', bot?.name ?? botId, error))
+        .catch(error => rt.warn('omni-ui: archive of the memory of %s not logged: %s', bot?.name ?? botId, error))
       return join(root, 'archive', name)
-    }).catch(error => rt.warn('ds-bot: memory of %s not archived: %s', bot?.name ?? botId, error))
+    }).catch(error => rt.warn('omni-ui: memory of %s not archived: %s', bot?.name ?? botId, error))
   }
 
   // A deleted group chat's memory moves to the archive, whole. Called before the
@@ -665,7 +665,7 @@ export function install(rt) {
       await mkdir(join(root, 'archive'), { recursive: true })
       await rename(dir, join(root, 'archive', name))
       await journalRow({ id: randomUUID(), time: new Date().toISOString(), op: 'archive', scope: scopeKey(groupScope(room.id)), actor: 'user', actorName: 'user', groupName: room.name, to: `archive/${name}` })
-    }).catch(error => rt.warn('ds-bot: memory of group %s not archived: %s', room.name, error))
+    }).catch(error => rt.warn('omni-ui: memory of group %s not archived: %s', room.name, error))
   }
 
   // ---------------------------------------------------------------------------
@@ -716,7 +716,7 @@ export function install(rt) {
       return { text: readFileSync(path, 'utf8') }
     } catch (error) {
       if (error?.code === 'ENOENT') return { text: '' }
-      rt.warn('ds-bot: unreadable memory file %s: %s', path, error)
+      rt.warn('omni-ui: unreadable memory file %s: %s', path, error)
       return { text: '', failed: `(this memory could not be read: ${error?.code ?? error?.name ?? 'error'})` }
     }
   }
@@ -764,7 +764,7 @@ export function install(rt) {
     try {
       return { pending: readPending(root) !== undefined }
     } catch (error) {
-      rt.warn('ds-bot: %s', error?.message ?? error)
+      rt.warn('omni-ui: %s', error?.message ?? error)
       return { failed: true }
     }
   }
@@ -792,7 +792,7 @@ export function install(rt) {
       mkdirSync(dirname(seenPath(sessionId)), { recursive: true })
       writeFileSync(seenPath(sessionId), time, 'utf8')
     } catch (error) {
-      rt.warn('ds-bot: memory place for %s not saved: %s', sessionId, error)
+      rt.warn('omni-ui: memory place for %s not saved: %s', sessionId, error)
     }
   }
 
@@ -813,7 +813,7 @@ export function install(rt) {
     const path = snapshotPath(sessionId)
     const snap = existsSync(path) ? sectionRead(path) : { text: '' }
     if (pending.pending === true || pending.failed === true) {
-      if (pending.pending === true) void recover().catch(error => rt.warn('ds-bot: memory recovery failed: %s', error?.message ?? error))
+      if (pending.pending === true) void recover().catch(error => rt.warn('omni-ui: memory recovery failed: %s', error?.message ?? error))
       // Only a previously committed snapshot is safe while files may be half-written.
       if (snap.text !== '' && holds(snap.text)) return snap.text
       return ['# Your memory', memoryRules(reviewOn), ...marks, '', 'Memory is unavailable until its pending change has been recovered. Use recall after recovery.'].join('\n')
@@ -834,7 +834,7 @@ export function install(rt) {
           renameSync(`${path}.tmp`, path)
           markSeen(sessionId, new Date().toISOString())
         } catch (error) {
-          rt.warn('ds-bot: memory snapshot for %s not saved: %s', bot.name, error)
+          rt.warn('omni-ui: memory snapshot for %s not saved: %s', bot.name, error)
         }
       }
     }
@@ -855,7 +855,7 @@ export function install(rt) {
     order: 645,
     interpolate: false,
     text: context => sectionFor(context?.agent?.id),
-  }), 'ds-bot: memory section')
+  }), 'omni-ui: memory section')
 
   // A group Session reads its group's memory from a snapshot message, put in before
   // its first step and again once a checkpoint has condensed it away, so the memory
@@ -899,7 +899,7 @@ export function install(rt) {
     try {
       topicEntries = scopes.flatMap(scope => allEntries(loadScope(scope).slice(1)).map(entry => ({ ...entry, tag: tagOf(scope, bot.id) })))
     } catch (error) {
-      rt.warn('ds-bot: memory recall for %s not read: %s', bot.name, error?.message ?? error)
+      rt.warn('omni-ui: memory recall for %s not read: %s', bot.name, error?.message ?? error)
       return undefined
     }
     const open = topicEntries.filter(entry => !isExpired(entry, today()) && !shown.has(entryId(entry)))
@@ -947,7 +947,7 @@ export function install(rt) {
     try {
       for (const path of new Set([journalPath, journalFor(scopeKey(own), 'read').path])) readTail(path)
     } catch (error) {
-      rt.warn('ds-bot: memory update for %s not read: %s', bot.name, error?.message ?? error)
+      rt.warn('omni-ui: memory update for %s not read: %s', bot.name, error?.message ?? error)
       return undefined
     }
     const changes = recentRows
@@ -1361,7 +1361,7 @@ export function install(rt) {
       if (rt.readOnly() === undefined) await writeText(summaryPath(panel.id), JSON.stringify(value, null, 2))
     })().catch((error) => {
       summaryFailures.set(panel.id, { hash, model, message: error?.message ?? String(error) })
-      rt.warn('ds-bot: memory summary for %s failed: %s', panel.name, error)
+      rt.warn('omni-ui: memory summary for %s failed: %s', panel.name, error)
     }).finally(() => summarizing.delete(panel.id))
     summarizing.set(panel.id, job)
   }

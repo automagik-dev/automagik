@@ -180,7 +180,7 @@ async function setup({ state = team(), scripts = [], gate = false, messages, seq
   rt.stateSaved = () => { notices += 1; saved?.() }
   await rt.load()
   const callEndpoint = async (endpoint, payload) => {
-    const response = await route.fetch(new Request('http://localhost/api/bot', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))
+    const response = await route.fetch(new Request('http://localhost/api/omni-ui', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))
     return response.json()
   }
   const stopRuntime = async () => {
@@ -488,7 +488,7 @@ test('a restart marks an entry that was still answering as failed', async (t) =>
   t.after(() => env.stop())
   const [live, old] = chatOf(env.rt, 'chat').entries
   assert.equal(live.status, 'failed')
-  assert.equal(live.error, 'DS Bot restarted before this answer finished.')
+  assert.equal(live.error, 'Omni restarted before this answer finished.')
   assert.equal(typeof live.finishedAt, 'number')
   assert.equal(old.status, 'done')
   const file = chatsFile(env.home)

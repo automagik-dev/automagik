@@ -1,4 +1,4 @@
-// Delivery: how one Bot, the user, or DS Bot itself puts a message into a Bot Session.
+// Delivery: how one Bot, the user, or Omni itself puts a message into a Bot Session.
 import { randomUUID } from 'node:crypto'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { HISTORY_TIMEOUT_MS, LONG_HEAD, MESSAGE_INLINE_MAX, READ_LINE_MAX, SOURCE_KIND, TEXT_KEPT, TEXT_SHOW_MAX } from './constants.js'
@@ -168,7 +168,7 @@ export function install(rt) {
         return { text: headOf(text, TEXT_SHOW_MAX), whole: text.length <= TEXT_SHOW_MAX }
       }
     } catch (error) {
-      rt.warn('ds-bot: message %s not read back: %s', entry.id, error)
+      rt.warn('omni-ui: message %s not read back: %s', entry.id, error)
     }
     return { text: entry.text, whole: false }
   }
@@ -186,7 +186,7 @@ export function install(rt) {
       const note = `[A long message: ${text.length} characters. Its start is below; all of it is in the attached file. Read the file before you act on it.${wide ? ` Some lines are longer than the ${READ_LINE_MAX} characters the read tool shows of a line; read those with a shell command.` : ''}]`
       return { text: `${note}\n${headOf(text, LONG_HEAD)}…`, files: [file], length: text.length }
     } catch (error) {
-      rt.warn('ds-bot: long message not stored as a file: %s', error)
+      rt.warn('omni-ui: long message not stored as a file: %s', error)
       return undefined
     }
   }
@@ -203,7 +203,7 @@ export function install(rt) {
         if (text.length > TEXT_SHOW_MAX) return { text: headOf(text, TEXT_SHOW_MAX), whole: false }
       }
     } catch (error) {
-      rt.warn('ds-bot: file %s not read: %s', file?.name, error)
+      rt.warn('omni-ui: file %s not read: %s', file?.name, error)
       return undefined
     }
     text += decoder.decode()

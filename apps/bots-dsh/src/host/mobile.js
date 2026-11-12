@@ -231,7 +231,7 @@ export function install(rt) {
   ctx.effect(() => () => {
     for (const timer of roomTimers.values()) clearTimeout(timer)
     roomTimers.clear()
-  }, 'ds-bot: mobile room signals')
+  }, 'omni-ui: mobile room signals')
 
   rt.apiVersion = API_VERSION
   rt.noticeCursor = () => ({ boot, seq })

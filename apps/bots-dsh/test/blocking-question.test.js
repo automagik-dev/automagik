@@ -288,7 +288,7 @@ test('Bot Sessions filter the hidden tools and their guidance out of the prompt 
   for (const id of ['chief', 'room-writer', 'plain']) await agentFor(id)
   const filters = scopedListeners.filter(record => record.event === 'system-prompt/assemble')
   // Bot Sessions get the hidden-tools filter and the computer-use filter. The room's own
-  // Session and a plain Agent get neither while DS Bot has mounted no provider.
+  // Session and a plain Agent get neither while Omni has mounted no provider.
   assert.deepEqual(filters.map(record => record.sessionId), ['chief', 'chief', 'room-writer', 'room-writer'])
   // Resolving the same Agent again adds no listener.
   await rt.resolveAgent('chief')

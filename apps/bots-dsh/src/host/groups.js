@@ -287,7 +287,7 @@ export function install(rt) {
     if (!memberLine(record)) return record
     room.log = [...room.log, cutLine(record)].slice(-ROOM_LOG_MAX)
     for (const listener of roomLineListeners) {
-      try { listener(room, record) } catch (error) { rt.warn('ds-bot: room line listener failed: %s', error) }
+      try { listener(room, record) } catch (error) { rt.warn('omni-ui: room line listener failed: %s', error) }
     }
     return record
   }
@@ -365,14 +365,14 @@ export function install(rt) {
   // the round is.
   const noteFailure = (room, member, failure) => {
     const { code, status, message } = failure
-    say(room, { who: 'DS Bot', kind: 'notice', reason: 'failed', names: [member.name], about: member.id, detail: failureLine(failure), code, ...(status ? { status } : {}), message })
+    say(room, { who: 'Omni', kind: 'notice', reason: 'failed', names: [member.name], about: member.id, detail: failureLine(failure), code, ...(status ? { status } : {}), message })
   }
 
   async function roomFolderNotice(roomId, folder) {
     const room = rt.roomOf(roomId)
     if (room === undefined || folder === undefined || room.workDir !== folder || room.folderNotice === folder) return
     room.folderNotice = folder
-    say(room, { who: 'DS Bot', kind: 'notice', reason: 'folder', path: folder })
+    say(room, { who: 'Omni', kind: 'notice', reason: 'folder', path: folder })
     await rt.save()
   }
   rt.roomFolderNotice = roomFolderNotice
@@ -394,7 +394,7 @@ export function install(rt) {
     const gone = rt.roomOf(room.id) !== room || !room.members.includes(member.id) || rt.botOf(member.id) === undefined
     if (gone || room.sessions?.[member.id] !== undefined) {
       void ctx.workspaceRegistry.archiveSession(id, { stopActivity: true })
-        .catch(error => rt.warn('ds-bot: unused group Session of %s in %s not archived: %s', member.name, room.name, error))
+        .catch(error => rt.warn('omni-ui: unused group Session of %s in %s not archived: %s', member.name, room.name, error))
       return gone ? undefined : groupSessionFor(room, member)
     }
     room.sessions[member.id] = id
@@ -404,14 +404,14 @@ export function install(rt) {
     if (ref !== undefined) {
       const effort = await rt.desiredEffort(member, ref)
       await rt.selectSessionModel(id, { ...splitRef(ref), ...(effort === undefined ? {} : { reasoningEffort: effort }) })
-        .catch(error => rt.warn('ds-bot: model for %s in %s not applied: %s', member.name, room.name, error))
+        .catch(error => rt.warn('omni-ui: model for %s in %s not applied: %s', member.name, room.name, error))
     }
     await rt.applyPermission(member, id, room)
-      .catch(error => rt.warn('ds-bot: permission for %s in %s not applied: %s', member.name, room.name, error))
+      .catch(error => rt.warn('omni-ui: permission for %s in %s not applied: %s', member.name, room.name, error))
     await rt.save()
     // The Session was resolved before the group owned it, so its scoped tools land now.
     await rt.resolveAgent(id)
-      .catch(error => rt.warn('ds-bot: scoped tools for %s in %s not applied: %s', member.name, room.name, error))
+      .catch(error => rt.warn('omni-ui: scoped tools for %s in %s not applied: %s', member.name, room.name, error))
     await rt.ensureCapabilities(id)
     return { id, brief: await rt.ownChatBrief(member) }
   }
@@ -610,7 +610,7 @@ export function install(rt) {
     pruneBatchPending(room, batch)
     if (batch.pending.length === 0) {
       if (!keep) delete batches()[batch.key]
-      void rt.goalSettled?.(room).catch(error => rt.warn('ds-bot: goal settle in %s failed: %s', room.name, error))
+      void rt.goalSettled?.(room).catch(error => rt.warn('omni-ui: goal settle in %s failed: %s', room.name, error))
     }
     saveSoon()
   }
@@ -662,7 +662,7 @@ export function install(rt) {
       await postToRoom(room, last, '', { late: true, done: true, askedBy: batch.by, batch: batch.key, batchEnd: true })
         .catch((error) => {
           delete batches()[batch.key]
-          rt.warn('ds-bot: a batch in %s left by a restart did not wake its caller: %s', room.name, error)
+          rt.warn('omni-ui: a batch in %s left by a restart did not wake its caller: %s', room.name, error)
         })
     }
     if (changed) saveSoon()
@@ -746,7 +746,7 @@ export function install(rt) {
       // Still at earlier work: the call steers it at its next step; the round goes on.
       else if (busy) rt.roomWaiters.get(exchangeId)?.resolve({ working: true })
     } catch (error) {
-      rt.warn('ds-bot: group delivery to %s failed: %s', member.name, error)
+      rt.warn('omni-ui: group delivery to %s failed: %s', member.name, error)
       // A delivery that failed is not a pass: the round shows it. Nothing here can
       // repair a lost Session, so the member's next turn in the group starts a new one.
       const lost = lostSession(error)
@@ -951,7 +951,7 @@ export function install(rt) {
     if (room.idlePaused === undefined || room.idlePaused.noticed === true) return
     room.idlePaused.noticed = true
     const names = callees.map(peer => peer.name)
-    say(room, { who: 'DS Bot', kind: 'notice', reason: 'paused', idle: true, from: member.name, about: member.id, count: room.idlePaused.count ?? ROOM_IDLE_RELAY_LIMIT, limit: ROOM_IDLE_RELAY_LIMIT, names })
+    say(room, { who: 'Omni', kind: 'notice', reason: 'paused', idle: true, from: member.name, about: member.id, count: room.idlePaused.count ?? ROOM_IDLE_RELAY_LIMIT, limit: ROOM_IDLE_RELAY_LIMIT, names })
     void rt.save().catch(() => {})
   }
 
@@ -1009,7 +1009,7 @@ export function install(rt) {
       for (const slot of round.slots) {
         if (!startable(round, slot)) continue
         const turn = memberTurn(room, round, slot, signal)
-          .catch(error => rt.warn('ds-bot: group turn of %s in %s failed: %s', slot.name, room.name, error))
+          .catch(error => rt.warn('omni-ui: group turn of %s in %s failed: %s', slot.name, room.name, error))
           .finally(() => { turns.delete(turn); round.nudge() })
         turns.add(turn)
       }
@@ -1024,7 +1024,7 @@ export function install(rt) {
     // An answer that came, or is still coming, means the round is not left silent.
     const answered = round.slots.some(slot => ['posted', 'working', 'waiting-approval'].includes(slot.status))
     if (alone && !answered) {
-      say(room, { who: 'DS Bot', kind: 'notice', reason: 'admin-passed', names: [round.soleAdmin.name], about: round.soleAdmin.id })
+      say(room, { who: 'Omni', kind: 'notice', reason: 'admin-passed', names: [round.soleAdmin.name], about: round.soleAdmin.id })
       await rt.save()
     }
   }
@@ -1044,7 +1044,7 @@ export function install(rt) {
     try {
       session = await groupSessionFor(room, member)
     } catch (error) {
-      rt.warn('ds-bot: group Session for %s in %s failed: %s', member.name, room.name, error)
+      rt.warn('omni-ui: group Session for %s in %s failed: %s', member.name, room.name, error)
       slot.status = 'failed'
       const own = batchOfSlot(room.id, slot)
       if (own !== undefined) leaveBatch(room, own, member.id)
@@ -1119,7 +1119,7 @@ export function install(rt) {
         // The round moved on without this member: the log shows the call and then
         // silence, which reads as a lost message. The group is told the baton was
         // dropped, and what brings the member back.
-        say(room, { who: 'DS Bot', kind: 'notice', reason: 'missed', names: [member.name], about: member.id, minutes: Math.round(ROOM_REPLY_TIMEOUT_MS / 60000) })
+        say(room, { who: 'Omni', kind: 'notice', reason: 'missed', names: [member.name], about: member.id, minutes: Math.round(ROOM_REPLY_TIMEOUT_MS / 60000) })
       }
     }
     // A result the admin asked for reports its goal task; a failed model call puts it back.
@@ -1151,7 +1151,7 @@ export function install(rt) {
     }
   }
 
-  // A round runs in DS Bot, not inside the group_relay call that opened it: the call ends
+  // A round runs in Omni, not inside the group_relay call that opened it: the call ends
   // at once, so DSH neither cuts a long round short (PTC) nor holds the group's Session.
   // One round runs in a group at a time; what comes in meanwhile joins it (joinRound) or
   // waits for the next one (laterPosts).
@@ -1226,7 +1226,7 @@ export function install(rt) {
   ctx.effect(() => () => {
     disposed = true
     for (const round of rt.roomProgress.values()) round.abort?.abort()
-  }, 'ds-bot: group rounds')
+  }, 'omni-ui: group rounds')
 
   function startRound(room, queued, agent, key = randomUUID()) {
     const controller = new AbortController()
@@ -1235,7 +1235,7 @@ export function install(rt) {
     holder.ready = new Promise((resolve) => { holder.settle = resolve })
     rt.roomProgress.set(key, holder)
     const run = runRoundFrom(room, queued, agent, key, controller.signal, holder)
-      .catch(error => rt.warn('ds-bot: group round in %s failed: %s', room.name, error))
+      .catch(error => rt.warn('omni-ui: group round in %s failed: %s', room.name, error))
       .finally(() => {
         holder.settle(undefined)
         if (rt.roomProgress.get(key) === holder) rt.roomProgress.delete(key)
@@ -1385,7 +1385,7 @@ export function install(rt) {
     try {
       await runRound(room, round, signal, agent)
     } catch (error) {
-      rt.warn('ds-bot: group round in %s stopped: %s', room.name, error)
+      rt.warn('omni-ui: group round in %s stopped: %s', room.name, error)
     } finally {
       finalizing.add(room.id)
       rt.roomProgress.delete(key)
@@ -1397,14 +1397,14 @@ export function install(rt) {
       if (signal.aborted) {
         for (const turn of round.started) {
           void rt.stopRoomTurn?.(room.sessions?.[turn.botId] ?? turn.sessionId, turn.exchangeId)
-            ?.catch(error => rt.warn('ds-bot: stopping a turn of the round in %s failed: %s', room.name, error))
+            ?.catch(error => rt.warn('omni-ui: stopping a turn of the round in %s failed: %s', room.name, error))
         }
       } else if (rt.goalDrive !== undefined) {
         // A round that ends with an active goal and nothing running may wake the admin.
         try {
           await rt.goalDrive(room, round)
         } catch (error) {
-          rt.warn('ds-bot: goal check in %s failed: %s', room.name, error)
+          rt.warn('omni-ui: goal check in %s failed: %s', room.name, error)
         }
       }
       await rt.save()
@@ -1669,7 +1669,7 @@ export function install(rt) {
       if (!isPass(text)) {
         const calls = callsIn(room, member, text)
         await postToRoom(room, member, text, { progress: true, ...(!calls ? { quiet: true } : {}) })
-          .catch(error => rt.warn('ds-bot: subagent progress from %s failed: %s', member.name, error))
+          .catch(error => rt.warn('omni-ui: subagent progress from %s failed: %s', member.name, error))
       }
       return
     }
@@ -1697,7 +1697,7 @@ export function install(rt) {
     const post = (body, extra) => postToRoom(room, member, body, { late: true, ...extra, ...inBatch })
       .catch((error) => {
         if (batch !== undefined) closeBatch(batch.key)
-        rt.warn('ds-bot: late group reply from %s failed: %s', member.name, error)
+        rt.warn('omni-ui: late group reply from %s failed: %s', member.name, error)
       })
     if (waitingPeers && named.length === 0) {
       if (!isPass(text)) await post(text, { quiet: true })
@@ -1750,7 +1750,7 @@ export function install(rt) {
   // for and a line that calls a member go at once; lines still held when the turn ends
   // open its result. Per group Session.
   const held = new Map()
-  ctx.effect(() => () => { for (const entry of held.values()) clearTimeout(entry.timer) }, 'ds-bot: group step lines')
+  ctx.effect(() => () => { for (const entry of held.values()) clearTimeout(entry.timer) }, 'omni-ui: group step lines')
   const flushSteps = (sessionId) => {
     const entry = held.get(sessionId)
     clearTimeout(entry.timer)
@@ -1769,7 +1769,7 @@ export function install(rt) {
     entry.info = info
     entry.lines.push(text)
     if ((first && info?.role === 'room') || callsIn(room, member, text) || Date.now() - entry.last >= ROOM_STEP_GAP_MS) return flushSteps(sessionId)
-    entry.timer ??= setTimeout(() => void flushSteps(sessionId)?.catch(error => rt.warn('ds-bot: step lines from %s not posted: %s', member.name, error)), entry.last + ROOM_STEP_GAP_MS - Date.now())
+    entry.timer ??= setTimeout(() => void flushSteps(sessionId)?.catch(error => rt.warn('omni-ui: step lines from %s not posted: %s', member.name, error)), entry.last + ROOM_STEP_GAP_MS - Date.now())
   }
   rt.takeRoomSteps = (sessionId) => {
     const entry = held.get(sessionId)
@@ -1818,7 +1818,7 @@ export function install(rt) {
       try {
         return await work()
       } catch (error) {
-        rt.warn('ds-bot: stopping work in %s failed: %s', room.name, error)
+        rt.warn('omni-ui: stopping work in %s failed: %s', room.name, error)
         failures.push(error)
         return false
       }
@@ -1859,7 +1859,7 @@ export function install(rt) {
       failed: { code, ...(status ? { status } : {}), message },
     }).catch((error) => {
       if (woken !== undefined) closeBatch(woken.key)
-      rt.warn('ds-bot: late group failure from %s failed: %s', member.name, error)
+      rt.warn('omni-ui: late group failure from %s failed: %s', member.name, error)
     })
   }
   rt.lateRoomFailure = lateRoomFailure
@@ -1898,12 +1898,12 @@ export function install(rt) {
     // Session in that group when the post came from one, else the own chat.
     const back = rt.roomOf(post.fromRoomId)?.sessions?.[post.botId]
     await rt.deliver({ toId: post.botId, ...(back ? { sessionId: back } : {}), role: 'report', roomId: room.id, text: body, ...(work ? { work, replyTo: post.sub } : {}) })
-      .catch(error => rt.warn('ds-bot: group report to %s failed: %s', post.name, error))
+      .catch(error => rt.warn('omni-ui: group report to %s failed: %s', post.name, error))
   }
 
   // A group chat's own Session never consults the model: models drift from "only call
   // group_relay" (they message one member directly when the user names it), so the
-  // relay step is synthesized here. Auxiliary calls such as titles, and DS Bot's own
+  // relay step is synthesized here. Auxiliary calls such as titles, and Omni's own
   // calls for the room such as image readings, still reach the model.
   ctx.on('llm/stream', (options, next) => {
     if (options.sessionId === undefined || options.purpose !== undefined || rt.ownRequest(options)) return next()
@@ -1930,8 +1930,8 @@ export function install(rt) {
       // unseen. The assemble scope keeps this unreachable; if it is reached the
       // step ends with a line the user can read instead.
       if (!declared.has('group_relay') && !declared.has('run_code')) {
-        rt.warn('ds-bot: group %s cannot relay: group_relay is not available in its Session', room.name)
-        const text = 'This group could not pass the message on: its relay tool is not available. Restart DS Bot; if it keeps happening, report it.'
+        rt.warn('omni-ui: group %s cannot relay: group_relay is not available in its Session', room.name)
+        const text = 'This group could not pass the message on: its relay tool is not available. Restart Omni; if it keeps happening, report it.'
         yield { type: 'block-start', index: 0, blockType: 'text' }
         yield { type: 'text-delta', index: 0, text }
         yield { type: 'block-end', index: 0, block: { type: 'text', text } }

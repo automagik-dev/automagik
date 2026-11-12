@@ -48,7 +48,7 @@ const { parse } = harnessRequire('yaml')
 const packageFile = (name, file) => harnessRequire.resolve(`${name}/package.json`).replace(/package\.json$/, file)
 
 // DSH's own settings shell, run as its browser module would: the child slots its
-// `sidebar.settings` entry and its General section declare are the ones DS Bot's seat
+// `sidebar.settings` entry and its General section declare are the ones Omni's seat
 // must declare in its place.
 function dshShellDeclarations() {
   const source = readFileSync(packageFile('@deepseek-ai/dsh-client-ui-settings-general', 'lib/client.js'), 'utf8')
@@ -68,7 +68,7 @@ function dshShellDeclarations() {
   return children
 }
 
-// Slots a newer DSH's shell declares than the oldest DSH DS Bot runs on. Declaring one
+// Slots a newer DSH's shell declares than the oldest DSH Omni runs on. Declaring one
 // an older shell lacks is harmless: nothing registers into it there.
 const NEWER_SLOTS = new Set(['settings.section.icon'])
 
@@ -109,7 +109,7 @@ test('the coordinator runs first-run steps on a blank main view, and a requested
   assert.equal(shell.pickStep({ steps, requested: 'a', active: false, completed: new Set(['a']) }).id, 'a')
 })
 
-test('a step\'s openSection lands on DS Bot\'s page for that section', () => {
+test('a step\'s openSection lands on Omni\'s page for that section', () => {
   assert.deepEqual([...shell.settingsPlace('models')], ['models'])
   assert.deepEqual([...shell.settingsPlace('general')], ['general'])
   assert.deepEqual([...shell.settingsPlace('plugins')], ['dsh', 'plugins'])
@@ -164,10 +164,10 @@ function dialog({ page = 'general', id = null, sections, items = [], actions = {
 }
 const navLabels = tree => walk(walk(tree, node => node.type === 'nav')[0], node => node.type === 'button').map(textOf)
 
-test('one Settings: DS Bot\'s pages, then DSH\'s, then Feedback and About; no Harness settings', () => {
+test('one Settings: Omni\'s pages, then DSH\'s, then Feedback and About; no Harness settings', () => {
   const labels = navLabels(dialog().tree)
   assert.ok(!labels.includes('Harness settings'))
-  assert.deepEqual(labels.slice(-5), ['Account', 'Plugins', 'Agent presets', 'Feedback', 'About DS Bot'])
+  assert.deepEqual(labels.slice(-5), ['Account', 'Plugins', 'Agent presets', 'Feedback', 'About Omni'])
   assert.equal(labels.filter(label => label === 'General').length, 1)
   assert.equal(labels.filter(label => label === 'Models').length, 1)
 })
@@ -225,10 +225,10 @@ test('General settings keeps the Classic Agent mode switch', () => {
   assert.deepEqual(calls, ['agent'])
 })
 
-// Settings in Agent mode carries DS Bot's own rules only: the DSH page around it keeps its look.
+// Settings in Agent mode carries Omni's own rules only: the DSH page around it keeps its look.
 const styles = load(await bundle("export { botOwnCss, SHELL_CSS } from './src/client/styles.js'"))
 
-test('the Agent-mode sheet keeps DS Bot\'s own rules and drops the shell overrides', () => {
+test('the Agent-mode sheet keeps Omni\'s own rules and drops the shell overrides', () => {
   const css = `body{--bt-ink:#111;-webkit-tap-highlight-color:transparent}
 [class*="_footArea"]{display:grid}
 .bt-row,[class*="_trigger"] span{color:red}

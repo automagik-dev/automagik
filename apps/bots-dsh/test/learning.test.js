@@ -94,7 +94,7 @@ function start({ replies = [], config = {}, history = {}, seed = TEAM, learningS
   }
   const rt = createRuntime(ctx, { home, ...settings })
   const call = async (endpoint, payload = {}) => {
-    const response = await route.fetch(new Request('http://localhost/api/bot', {
+    const response = await route.fetch(new Request('http://localhost/api/omni-ui', {
       method: 'POST',
       body: JSON.stringify({ endpoint, payload }),
     }))

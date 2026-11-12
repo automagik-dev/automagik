@@ -11,9 +11,9 @@
 // `headers` are extra static headers; `whoami` reads the account name after
 // sign-in for the row.
 
-// The OAuth client id DS Bot is registered as on GitHub. Filled in at release;
+// The OAuth client id Omni is registered as on GitHub. Filled in at release;
 // overridable for development. Empty keeps the pasted-token form only.
-export const GITHUB_CLIENT_ID = process.env.DS_BOT_GITHUB_OAUTH_CLIENT_ID ?? 'Ov23liin4waZGLSJJgn5'
+export const GITHUB_CLIENT_ID = process.env.AUTOMAGIK_GITHUB_OAUTH_CLIENT_ID?.trim() ?? ''
 
 const oauth = url => ({ remote: { url }, auth: { kind: 'oauth' } })
 

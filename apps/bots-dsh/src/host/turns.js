@@ -59,7 +59,7 @@ export function answerSender(rt, id, source, text, long) {
     exchangeId,
     ...(work ? { work } : {}),
   }).catch((error) => {
-    rt.warn('ds-bot: reply delivery failed: %s', error)
+    rt.warn('omni-ui: reply delivery failed: %s', error)
     // The reply never reached the asker: its note goes — the notice below carries
     // what it answered — the result kept with the work is marked, and the failure
     // reaches the asker the way the reply would have, so the work goes on and its
@@ -76,7 +76,7 @@ export function answerSender(rt, id, source, text, long) {
       role: 'reply',
       replyTo: source.exchangeId,
       ...(work ? { work } : {}),
-    }).catch(again => rt.warn('ds-bot: reply failure notice not delivered: %s', again))
+    }).catch(again => rt.warn('omni-ui: reply failure notice not delivered: %s', again))
   })
 }
 
@@ -416,7 +416,7 @@ export function install(rt) {
     if (entry.suppressedSubagent || !speaksInGroup(id, info) || (info?.role === 'room' && stoppedRoomTurns.has(info.exchangeId))) return
     for (; entry.shown < upTo; entry.shown += 1) {
       const text = stripWrittenCalls(entry.texts[entry.shown])
-      if (text !== '') void rt.roomStepText?.(id, info, text, entry.shown === 0)?.catch(error => rt.warn('ds-bot: step text from %s not posted: %s', id, error))
+      if (text !== '') void rt.roomStepText?.(id, info, text, entry.shown === 0)?.catch(error => rt.warn('omni-ui: step text from %s not posted: %s', id, error))
     }
   }
 
@@ -673,7 +673,7 @@ export function install(rt) {
     if (lifted.length === 0) return
     for (const bot of lifted) delete bot.blocked
     void rt.save().catch(() => {})
-    for (const bot of lifted) void rt.releaseKickoff(bot).catch(error => rt.warn('ds-bot: greeting of %s not sent again: %s', bot.name, error))
+    for (const bot of lifted) void rt.releaseKickoff(bot).catch(error => rt.warn('omni-ui: greeting of %s not sent again: %s', bot.name, error))
   }
 
   // The repair card's Retry. A greeting that failed goes out again; otherwise the Bot
@@ -699,7 +699,7 @@ export function install(rt) {
   })
   ctx.on?.('subagent/end', (info) => {
     noteSubagentEnd(info?.id)
-    if (rt.groupOwners.has(info?.id)) void rt.goalSettled?.(rt.roomOf(rt.groupOwners.get(info.id).roomId)).catch(error => rt.warn('ds-bot: goal settle failed: %s', error))
+    if (rt.groupOwners.has(info?.id)) void rt.goalSettled?.(rt.roomOf(rt.groupOwners.get(info.id).roomId)).catch(error => rt.warn('omni-ui: goal settle failed: %s', error))
   })
 
   ctx.on('session/event', (session, event) => {
@@ -796,7 +796,7 @@ export function install(rt) {
         if (source?.kind === 'subagent-settled' || source?.kind === 'agent-message') {
           if (typeof source.senderSessionId === 'string') {
             noteSubagentEnd(source.senderSessionId)
-            if (rt.groupOwners.has(id)) void rt.goalSettled?.(rt.roomOf(rt.groupOwners.get(id).roomId)).catch(error => rt.warn('ds-bot: goal settle failed: %s', error))
+            if (rt.groupOwners.has(id)) void rt.goalSettled?.(rt.roomOf(rt.groupOwners.get(id).roomId)).catch(error => rt.warn('omni-ui: goal settle failed: %s', error))
           }
           if (stoppedSubagentParents.has(id) || (typeof source.senderSessionId === 'string' && stoppedSubagents.has(source.senderSessionId))) {
             entry.suppressedSubagent = true
@@ -1028,7 +1028,7 @@ export function install(rt) {
             work: result.info.work,
             ...(result.info.roomId ? { roomId: result.info.roomId } : {}),
             deferred: true,
-          }).catch(error => rt.warn('ds-bot: handing back a result failed: %s', error))
+          }).catch(error => rt.warn('omni-ui: handing back a result failed: %s', error))
         }
         const reason = event.data?.reason
         const failure = reason?.kind === 'error' && !switched ? turnFailure(reason.error) : undefined
@@ -1038,7 +1038,7 @@ export function install(rt) {
         if (failure?.code === 'HOSTED_ENGINE_ROUTE') {
           const config = session.requestHeader?.()?.config
           const ref = config?.provider && config?.model ? `${config.provider}/${config.model}` : undefined
-          if (ref !== undefined) void rt.routeRefused(ref, rt.botOf(rt.selfOf(id))).catch(error => rt.warn('ds-bot: %s still failing: %s', ref, error))
+          if (ref !== undefined) void rt.routeRefused(ref, rt.botOf(rt.selfOf(id))).catch(error => rt.warn('omni-ui: %s still failing: %s', ref, error))
         }
         const held = rt.groupOwners.has(id) ? rt.takeRoomSteps?.(id) ?? '' : ''
         if (switched) break
@@ -1075,9 +1075,9 @@ export function install(rt) {
               void rt.roomStepText?.(id, info, opening, !shown)?.catch(() => {})
             }
             roomWaiters.get(info.exchangeId)?.touch()
-            void retryPromisedWork(id, info).catch(error => rt.warn('ds-bot: asking %s to run its promised work failed: %s', id, error))
+            void retryPromisedWork(id, info).catch(error => rt.warn('omni-ui: asking %s to run its promised work failed: %s', id, error))
           } else {
-            void retryWrittenCall(id, info).catch(error => rt.warn('ds-bot: asking %s to run its written tool call failed: %s', id, error))
+            void retryWrittenCall(id, info).catch(error => rt.warn('omni-ui: asking %s to run its written tool call failed: %s', id, error))
           }
         }
         const replyText = () => {
@@ -1115,7 +1115,7 @@ export function install(rt) {
           if (text.length <= MESSAGE_INLINE_MAX) return tellSender(id, asker, text)
           void rt.attachLong(text, `Answer from ${name}.txt`)
             .then(long => tellSender(id, asker, text, long))
-            .catch(error => rt.warn('ds-bot: answer from %s not sent: %s', name, error))
+            .catch(error => rt.warn('omni-ui: answer from %s not sent: %s', name, error))
         }
         // A retried turn answers the same waiter or sender, so this one passes nothing on.
         if (!retry && info?.role === 'room') {
@@ -1159,9 +1159,9 @@ export function install(rt) {
             ...(request.info.role === 'room' ? { roomId: request.info.roomId, askedBy: request.info.askedBy, note: 'you read this call during your last task; answer it now' } : {}),
             ...(request.info.senderRoomId ? { fromRoomId: request.info.senderRoomId } : {}),
             deferred: true,
-          }).catch(error => rt.warn('ds-bot: deferred request delivery failed: %s', error))
+          }).catch(error => rt.warn('omni-ui: deferred request delivery failed: %s', error))
         }
-        if (rt.groupOwners.has(id)) void rt.goalSettled?.(rt.roomOf(rt.groupOwners.get(id).roomId)).catch(error => rt.warn('ds-bot: goal settle in %s failed: %s', id, error))
+        if (rt.groupOwners.has(id)) void rt.goalSettled?.(rt.roomOf(rt.groupOwners.get(id).roomId)).catch(error => rt.warn('omni-ui: goal settle in %s failed: %s', id, error))
         break
       }
     }
@@ -1237,7 +1237,7 @@ export function install(rt) {
     ctx.effect(() => {
       controller.prompt = admitted
       return () => { if (controller.prompt === admitted) controller.prompt = prompt }
-    }, 'ds-bot: prompt rejection reasons')
+    }, 'omni-ui: prompt rejection reasons')
   }
 
   Object.assign(rt, { live, liveOf, roomWaiters, roomProgress, roomInbox, activityView, workView, roomWorkView, turnsView, steeredView, callDetail, doingOf, stopRoomTurn, stopChat, releaseBot, unblockBots, resumeBot, markSteerCut, hasSubagents, stopSubagents, adoptLiveWork })

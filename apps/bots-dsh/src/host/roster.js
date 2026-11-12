@@ -50,10 +50,10 @@ export function install(rt) {
 
   let bootstrapping = null
 
-  // The team folder is DS Bot's own: deleted, it is made again before a Session needs it.
+  // The team folder is Omni's own: deleted, it is made again before a Session needs it.
   async function keepTeamFolder() {
     const team = rt.teamFolder()
-    if (team !== undefined) await mkdir(team, { recursive: true }).catch(error => rt.warn('ds-bot: team folder %s not made again: %s', team, error))
+    if (team !== undefined) await mkdir(team, { recursive: true }).catch(error => rt.warn('omni-ui: team folder %s not made again: %s', team, error))
     return team
   }
 
@@ -64,7 +64,7 @@ export function install(rt) {
     }
     const path = rt.defaultTeamFolder()
     await mkdir(path, { recursive: true })
-    const workspace = await ctx.workspaceRegistry.resolveByPath(path) ?? await ctx.workspaceRegistry.create(path, 'DS Bot')
+    const workspace = await ctx.workspaceRegistry.resolveByPath(path) ?? await ctx.workspaceRegistry.create(path, 'Omni')
     state.workspaceId = workspace.id
     await rt.save()
     return workspace.id
@@ -89,7 +89,7 @@ export function install(rt) {
     const readOnly = rt.readOnly()
     if (readOnly !== undefined) throw new Error(readOnly)
     const usable = dir !== undefined && await rt.isFolder(dir)
-    if (dir !== undefined && !usable) rt.warn('ds-bot: the working folder %s is gone; %s starts in the team workspace', dir, title)
+    if (dir !== undefined && !usable) rt.warn('omni-ui: the working folder %s is gone; %s starts in the team workspace', dir, title)
     const known = usable ? await ctx.workspaceRegistry.resolveByPath(dir) : undefined
     const place = known !== undefined ? { workspaceId: known.id } : usable ? { cwd: dir } : { workspaceId: await ensureWorkspace() }
     const { sessionId } = await ctx.sessionController.create({ ...place, ...await botPreset() })
@@ -239,7 +239,7 @@ export function install(rt) {
       const greeting = { text, from: createdBy ?? null, ...(main ? { main: true } : {}) }
       // The Bot is saved by now; a failure here must not archive it in the catch below.
       const scopeTools = () => rt.resolveAgent(id)
-        .catch(error => rt.warn('ds-bot: scoped tools for %s not applied: %s', cleanName, error))
+        .catch(error => rt.warn('omni-ui: scoped tools for %s not applied: %s', cleanName, error))
       if (modelRef === undefined) {
         bot.kickoff = greeting
         await rt.save()
@@ -251,7 +251,7 @@ export function install(rt) {
       await scopeTools()
       // The greeting runs on the Bot's own model, once its provider is registered.
       void rt.waitForModel(bot)
-        .then(() => rt.applyModel(bot).catch(error => rt.warn('ds-bot: model for %s not applied: %s', cleanName, error)))
+        .then(() => rt.applyModel(bot).catch(error => rt.warn('omni-ui: model for %s not applied: %s', cleanName, error)))
         .then(() => sendKickoff(bot, greeting))
       return bot
     } catch (error) {
@@ -263,7 +263,7 @@ export function install(rt) {
       // one writes the team without it.
       void rt.save().catch(() => {})
       await ctx.workspaceRegistry.archiveSession(id)
-        .catch(archiveError => rt.warn('ds-bot: archiving the Session for %s failed: %s', cleanName, archiveError))
+        .catch(archiveError => rt.warn('omni-ui: archiving the Session for %s failed: %s', cleanName, archiveError))
       throw error
     }
   }
@@ -275,7 +275,7 @@ export function install(rt) {
     sentKickoffs.set(bot.id, greeting)
     const text = greeting.afterUser ? `${AFTER_USER} ${writeIn(rt.uiLanguage?.())}\n${OWN_RULES}` : greeting.text
     void rt.deliver({ fromId: greeting.from ?? undefined, toId: bot.id, text, role: 'kickoff' })
-      .catch(error => rt.warn('ds-bot: kickoff failed: %s', error))
+      .catch(error => rt.warn('omni-ui: kickoff failed: %s', error))
   }
 
   // A held greeting goes out once its Bot has a model, on that model once its provider
@@ -382,7 +382,7 @@ export function install(rt) {
       : await rt.resolveModel(patch.model)
     // What a Bot runs on changes only from its settings, after the user confirmed: every
     // conversation of the Bot starts a new part for it. A Bot without a model runs on the
-    // one it last ran on, and one that never ran runs on DS Bot's models.
+    // one it last ran on, and one that never ran runs on Omni's models.
     const engineBefore = rt.engineOf === undefined ? undefined : rt.engineOfBot(bot) ?? 'model'
     if (modelRef === null && engineBefore !== undefined && engineBefore !== 'model') throw new Error(`${bot.name} runs on a local agent and keeps a model of it`)
     const engineChanged = !!modelRef && engineBefore !== undefined && rt.engineOf(modelRef) !== engineBefore
@@ -471,7 +471,7 @@ export function install(rt) {
     const selfEditInChat = actorId === bot.id && fromSessionId === rt.chatOf(bot.id)
     if (notes.length > 0 && bot.kickoff === undefined && !selfEditInChat) {
       void rt.deliver({ toId: bot.id, text: notes.join('\n'), role: 'update' })
-        .catch(error => rt.warn('ds-bot: profile update for %s not delivered: %s', bot.name, error?.message ?? error))
+        .catch(error => rt.warn('omni-ui: profile update for %s not delivered: %s', bot.name, error?.message ?? error))
     }
     if (modelChanged) await rt.applyModel(bot, { force: true })
     if (engineChanged) void rt.followEngine(bot.id)
@@ -599,7 +599,7 @@ export function install(rt) {
       const agent = await rt.resolveAgent(rt.sessionOfRoom(room))
       await ctx.sessionTitle.rename(agent.session, room.name)
     } catch (error) {
-      rt.warn('ds-bot: group title for %s not updated: %s', room.name, error)
+      rt.warn('omni-ui: group title for %s not updated: %s', room.name, error)
     }
   }
 
@@ -671,7 +671,7 @@ export function install(rt) {
       delete state.rooms[id]
       void rt.save().catch(() => {})
       await ctx.workspaceRegistry.archiveSession(id)
-        .catch(archiveError => rt.warn('ds-bot: archiving the Session for %s failed: %s', title, archiveError))
+        .catch(archiveError => rt.warn('omni-ui: archiving the Session for %s failed: %s', title, archiveError))
       throw error
     }
   }
@@ -818,7 +818,7 @@ export function install(rt) {
     // Armed scheduled tasks refuse a plain archive and would keep delivering into
     // the deleted group; the session-stop that stopActivity runs removes them.
     await ctx.workspaceRegistry.archiveSession(rt.sessionOfRoom(room), { stopActivity: true })
-      .catch(error => rt.warn('ds-bot: group chat %s not archived: %s', room.name, error))
+      .catch(error => rt.warn('omni-ui: group chat %s not archived: %s', room.name, error))
     if (failed !== undefined) throw failed
   }
 
@@ -908,7 +908,7 @@ export function install(rt) {
     // which otherwise stays armed and invisible. Already-archived ids are a no-op.
     for (const part of parts) {
       await ctx.workspaceRegistry.archiveSession(part, { stopActivity: true })
-        .catch(error => rt.warn('ds-bot: Bot %s not archived: %s', bot.name, error))
+        .catch(error => rt.warn('omni-ui: Bot %s not archived: %s', bot.name, error))
     }
     if (failed !== undefined) throw failed
   }

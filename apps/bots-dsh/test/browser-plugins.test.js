@@ -41,7 +41,7 @@ function start(config, { services = {}, team = TEAM } = {}) {
     ctx,
     rt,
     call: async (endpoint, payload) => {
-      const response = await route.fetch(new Request('http://localhost/api/bot', {
+      const response = await route.fetch(new Request('http://localhost/api/omni-ui', {
         method: 'POST',
         body: JSON.stringify({ endpoint, payload }),
       }))
@@ -104,7 +104,7 @@ test('app browser endpoint carries download roots for the Bot resolved from the 
     request = message
     callback?.()
     queueMicrotask(() => process.emit('message', {
-      type: 'ds-bot:browser-endpoint-response',
+      type: 'omni-ui:browser-endpoint-response',
       id: message.id,
       url: 'ws://127.0.0.1:1234/devtools/browser/token',
     }))
@@ -141,7 +141,7 @@ test('app browser endpoint carries download roots for the Bot resolved from the 
     })
     const result = await tools.get('browser_open').execute({ botId: 'other' }, { agent: { id: 'b2' } })
     assert.deepEqual(request, {
-      type: 'ds-bot:browser-endpoint',
+      type: 'omni-ui:browser-endpoint',
       id: request.id,
       botId: 'b2',
       downloadRoots: roots,
@@ -281,7 +281,7 @@ test('user takeover refuses a browser call before opening or connecting', async 
 test('no browser plugin is mounted unless one is selected for the team', (t) => {
   const { ctx, stop } = start({})
   t.after(stop)
-  assert.equal(ctx.calls.includes('effect ds-bot: browser plugin'), false)
+  assert.equal(ctx.calls.includes('effect omni-ui: browser plugin'), false)
   assert.equal(rt.teamTools.some(d => d.name === 'browser_open'), false)
   assert.equal(rt.teamTools.some(d => d.name === 'browser_exec'), false)
   assert.equal(rt.teamTools.some(d => d.name === 'browser_task'), false)
@@ -393,7 +393,7 @@ test('the selected plugin is the same for every Bot, and profiles stay apart', a
     },
   })
   t.after(stop)
-  assert.ok(ctx.calls.includes('effect ds-bot: browser plugin'))
+  assert.ok(ctx.calls.includes('effect omni-ui: browser plugin'))
   const tool = rt.teamTools.find(d => d.name === 'browser_snapshot')
   const writer = await tool.execute({}, { agent: { id: 'b2' } })
   const chief = await tool.execute({}, { agent: { id: 'm1' } })

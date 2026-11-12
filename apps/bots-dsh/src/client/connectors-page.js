@@ -41,7 +41,7 @@ function tileStatus(app) {
   if (app.state === 'ready') return app.account ?? null
   if (app.state === 'connecting') return app.pending ? t('Waiting for sign-in…') : t('Connecting…')
   if (app.state === 'needs-sign-in') return t('Sign in again')
-  if (app.state === 'needs-client') return t('This service needs an app client ID')
+  if (app.state === 'needs-client') return t('NOT SET UP')
   if (app.state === 'error') return t('Could not connect: {error}', { error: hostText(app.error ?? '') })
   return null
 }

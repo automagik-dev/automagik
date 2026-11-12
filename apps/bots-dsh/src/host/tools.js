@@ -14,7 +14,7 @@ import { checkShownView, showViewDescription, showViewParameters } from 'deep-vi
 export const output = { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: String(value) }] }
 export const GROUP_REF = { type: 'string', required: true, description: 'Exact group chat name from list_bots' }
 const BLOCKING_QUESTION_TOOL = 'ask_user_question'
-// DS Bot has its own group goals; DSH's session goal still does not survive conversation parts.
+// Omni has its own group goals; DSH's session goal still does not survive conversation parts.
 const GOAL_TOOLS = ['create_goal', 'update_goal', 'get_goal']
 // DSH's delegation tools start child agents the user cannot watch or stop, and they
 // end with the conversation part that started them; Bots hand work to other Bots.
@@ -30,7 +30,7 @@ const HIDDEN_TOOLS = HIDDEN_TOOL_GROUPS.flat()
 const HIDDEN_SECTIONS = new Set([...HIDDEN_TOOLS.map(name => `tool:${name}`), 'tool:goal', 'team:policy'])
 const GOAL_REFUSAL = 'Bot chats do not run /goal. To give a group a goal, use Set a goal in its + menu.'
 // DSH 0.2.2's schedule tools can deliver to a new Session, which is outside the team and
-// has no Bot; a Bot's tasks deliver to its own chat, which DS Bot moves on with each part.
+// has no Bot; a Bot's tasks deliver to its own chat, which Omni moves on with each part.
 const SCHEDULE_TARGET_TOOLS = ['schedule_create', 'schedule_edit']
 const SCHEDULE_TARGET_REFUSAL = 'A Bot’s scheduled tasks run in its own chat. Use target "this_session".'
 const DELEGATION_REFUSAL = 'Bots do not start subagents, teammates or workflows. Do the work yourself, or hand it to another Bot with message_bot.'
@@ -213,7 +213,7 @@ export function install(rt) {
       const answer = (outcome) => {
         if (outcome.status === 'replay') return outcome.receipt
         if (outcome.status === 'conflict') refuse(`Not sent: request_id "${name}" was already used for a different request. A request_id names one request; send this one under a new name.`)
-        if (outcome.status === 'uncertain') refuse(`Not sent again: the outcome of request_id "${name}" is not known (the delivery failed, or DS Bot restarted while it was in flight), so it was not sent again. Check whether ${target.name} got it before sending it under a new name.`)
+        if (outcome.status === 'uncertain') refuse(`Not sent again: the outcome of request_id "${name}" is not known (the delivery failed, or Omni restarted while it was in flight), so it was not sent again. Check whether ${target.name} got it before sending it under a new name.`)
         if (outcome.status === 'expired') return `Nothing was sent again: request_id "${name}" was admitted before, but its receipt is no longer kept, so only the fact that it was sent is left. Send the work under a new request_id if it must be done again.`
         if (outcome.status === 'readonly') refuse(`Not sent: this window cannot save the Bot team, so it cannot record the request_id "${name}". Send it from the window that owns the team, or leave the request_id out.`)
         return outcome.receipt
@@ -329,7 +329,7 @@ export function install(rt) {
       role: { type: 'string', required: true, description: 'Two-to-four character role label shown under the name' },
       instructions: { type: 'string', required: true, description: 'What this Bot is responsible for and how it should work' },
       brief: { type: 'string', description: 'Why the user wants it, passed to the new Bot as its first context' },
-      model: { type: 'string', description: 'Model the Bot runs on, as provider/model or a model id. Only when the user names one; otherwise the team default model from DS Bot settings, or the model you run on.' },
+      model: { type: 'string', description: 'Model the Bot runs on, as provider/model or a model id. Only when the user names one; otherwise the team default model from Omni settings, or the model you run on.' },
       effort: { type: 'string', description: 'Thinking level for the model, as list_bot_models shows it. Only when the user names one.' },
       work_dir: WORK_DIR_PARAM,
       section: SECTION_PARAM,
@@ -369,7 +369,7 @@ export function install(rt) {
       instructions: { type: 'string', description: 'Replacement instructions' },
       color: { type: 'string', description: `One of ${[...COLORS, ...EXTRA_COLORS].join(', ')}` },
       avatar: { ...AVATAR_PARAM, description: `${AVATAR_PARAM.description} An empty string removes the photo and shows the Bot's character again.` },
-      model: { type: 'string', description: 'Move the Bot to another model, as provider/model or a model id. It stays on what it runs on: only the user moves a Bot between DS Bot models and a local agent CLI, or between two CLIs, in its settings.' },
+      model: { type: 'string', description: 'Move the Bot to another model, as provider/model or a model id. It stays on what it runs on: only the user moves a Bot between Omni models and a local agent CLI, or between two CLIs, in its settings.' },
       effort: { type: 'string', description: 'Thinking level for the Bot\'s model, as list_bot_models shows; an empty string returns to the model\'s default' },
       work_dir: { ...WORK_DIR_PARAM, description: `${WORK_DIR_PARAM.description}; an empty string returns it to the team workspace` },
       section: { ...SECTION_PARAM, description: `${SECTION_PARAM.description}; an empty string removes the Bot from its section (Main Bot only)` },
@@ -777,7 +777,7 @@ export function install(rt) {
       try {
         dispose()
       } catch (error) {
-        rt.warn('ds-bot: a scoped tool of %s was not removed: %s', id, error)
+        rt.warn('omni-ui: a scoped tool of %s was not removed: %s', id, error)
       }
     }
   }
@@ -792,7 +792,7 @@ export function install(rt) {
     // Session that stays unowned, and nothing twice for one already scoped.
     for (const agent of ctx.get?.('agents')?.list?.() ?? []) hideBotUnusedTools(agent)
   }
-  ctx.effect(() => () => { for (const id of scoped.keys()) unscope(id) }, 'ds-bot: scoped team tools')
+  ctx.effect(() => () => { for (const id of scoped.keys()) unscope(id) }, 'omni-ui: scoped team tools')
 
   // A wanted Session whose Agent cannot take scoped tools yet is warned about
   // once; held.tools stays unset, so the next step's check tries again.
@@ -842,7 +842,7 @@ export function install(rt) {
           if (/already registered/i.test(String(error?.message ?? error))) continue
           if (held.missed?.has(def.name) === true) continue
           ;(held.missed ??= new Set()).add(def.name)
-          rt.warn('ds-bot: team tool %s not added to %s: %s', def.name, id, error)
+          rt.warn('omni-ui: team tool %s not added to %s: %s', def.name, id, error)
         }
       }
       return
@@ -850,7 +850,7 @@ export function install(rt) {
     if (typeof agent.ctx?.tools?.register !== 'function') {
       if (!registerless.has(agent)) {
         registerless.add(agent)
-        rt.warn('ds-bot: %s needs the team tools but its Agent cannot register them yet', id)
+        rt.warn('omni-ui: %s needs the team tools but its Agent cannot register them yet', id)
       }
       return
     }
@@ -884,7 +884,7 @@ export function install(rt) {
     // A scope made outside creation never reached a collected tool list; the
     // assemble adds the pending names to the step's list once, then clears them.
     for (const name of registered) held.unlisted.add(name)
-    if (failed.length > 0) rt.warn('ds-bot: team tools not served to %s: %s', id, failed.join('; '))
+    if (failed.length > 0) rt.warn('omni-ui: team tools not served to %s: %s', id, failed.join('; '))
   }
 
   // The standard preset registers `subagent` (model selection) in each Agent's own
@@ -960,7 +960,7 @@ export function install(rt) {
   const reapplyToolMasks = () => {
     for (const held of scoped.values()) {
       if (held.agent === undefined) continue
-      try { maskConnectorTools(held.agent, held) } catch (error) { rt.warn('ds-bot: connector mask failed: %s', error) }
+      try { maskConnectorTools(held.agent, held) } catch (error) { rt.warn('omni-ui: connector mask failed: %s', error) }
     }
   }
 
@@ -1039,7 +1039,7 @@ export function install(rt) {
       // names just registered will already be in it; nothing stays pending.
       scoped.get(agent?.session?.id)?.unlisted?.clear()
     } catch (error) {
-      rt.warn('ds-bot: hiding %s on agent/created failed: %s', HIDDEN_TOOLS.join(', '), error)
+      rt.warn('omni-ui: hiding %s on agent/created failed: %s', HIDDEN_TOOLS.join(', '), error)
     }
   })
 
@@ -1056,7 +1056,7 @@ export function install(rt) {
       await rt.load()
       hideBotUnusedTools(agent)
     } catch (error) {
-      rt.warn('ds-bot: scoping the tools of %s failed: %s', agent.session?.id ?? agent.id, error)
+      rt.warn('omni-ui: scoping the tools of %s failed: %s', agent.session?.id ?? agent.id, error)
     }
     const assembled = await next()
     const held = scoped.get(agent.session?.id)
@@ -1090,7 +1090,7 @@ export function install(rt) {
       }
       return changed ? { ...assembled, tools } : assembled
     } catch (error) {
-      rt.warn('ds-bot: listing the scoped tools of %s failed: %s', agent.session?.id ?? agent.id, error)
+      rt.warn('omni-ui: listing the scoped tools of %s failed: %s', agent.session?.id ?? agent.id, error)
       return assembled
     }
   })
@@ -1101,7 +1101,7 @@ export function install(rt) {
   const attachGoals = (sub) => {
     const own = sub.goals
     goals = own
-    sub.effect(() => () => { if (goals === own) goals = null }, 'ds-bot: goal service')
+    sub.effect(() => () => { if (goals === own) goals = null }, 'omni-ui: goal service')
   }
   if (typeof ctx.inject === 'function') ctx.inject(['goals'], attachGoals)
   else if (ctx.get?.('goals') !== undefined) attachGoals({ goals: ctx.get('goals'), effect: (execute, label) => ctx.effect(execute, label) })
@@ -1114,7 +1114,7 @@ export function install(rt) {
       if (goal?.phase !== 'active') return
       service.block(agent, { id: goal.id, revision: goal.revision }, { code: 'not-supported', message: GOAL_REFUSAL })
     } catch (error) {
-      rt.warn('ds-bot: blocking the goal in %s failed: %s', sessionId, error)
+      rt.warn('omni-ui: blocking the goal in %s failed: %s', sessionId, error)
     }
   }
   ctx.on('session/event', (session, event) => {
@@ -1173,7 +1173,7 @@ export function install(rt) {
       try {
         const item = await rt.capabilitySave(args, { botId: self })
         const approval = item.kind === 'mcp' && item.transport === 'stdio' && !item.approved
-          ? ' The user must allow this MCP server in DS Bot settings before it can work.'
+          ? ' The user must allow this MCP server in Omni settings before it can work.'
           : ''
         return `Saved ${item.name}. Bots with it attached use the change from their next message.${approval}`
       } catch (error) { return error.message }
@@ -1215,7 +1215,7 @@ export function install(rt) {
             : attached ? [attached] : []
           const approvals = members
             .filter(item => item.kind === 'mcp' && item.transport === 'stdio' && item.approved !== true)
-            .map(item => ` The user must allow ${item.name} in DS Bot settings before it can work.`)
+            .map(item => ` The user must allow ${item.name} in Omni settings before it can work.`)
             .join('')
           return `${verb} ${args.name} ${args.bot ? `to ${result.bot}` : 'to yourself'}. Changes apply from ${result.bot}'s next message.${endpoint === 'attach' ? approvals : ''}`
         } catch (error) { return error.message }

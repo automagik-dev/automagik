@@ -17,7 +17,7 @@ function start() {
   }
   const rt = createRuntime(ctx, { home })
   const call = async (endpoint, payload) => {
-    const response = await routes['/api/bot'].fetch(new Request('http://localhost/api/bot', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))
+    const response = await routes['/api/omni-ui'].fetch(new Request('http://localhost/api/omni-ui', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))
     return response.json()
   }
   return { rt, call, stop: () => rmSync(home, { recursive: true, force: true }) }

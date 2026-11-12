@@ -66,7 +66,7 @@ export function reportMarkdown({ facts, client = {}, entries = [], clientEntries
   const lines = [
     '| | |',
     '|---|---|',
-    row('DS Bot', facts.botVersion),
+    row('Omni', facts.botVersion),
     row('DSH', facts.dshVersion),
     row('Surface', client.surface),
     row('OS', facts.os),
@@ -125,7 +125,7 @@ export function install(rt) {
   ctx.effect(() => () => {
     stopped = true
     return writing
-  }, 'ds-bot: diagnostics log')
+  }, 'omni-ui: diagnostics log')
 
   const clean = text => cleanText(text, { redact: rt.redactSecrets })
 
@@ -180,7 +180,7 @@ export function install(rt) {
     note({
       level: 'warn',
       source: 'host',
-      text: line.replace(/^ds-bot: /, ''),
+      text: line.replace(/^omni-ui: /, ''),
       code: typeof error?.code === 'string' ? error.code : undefined,
       stack: error?.stack,
     })

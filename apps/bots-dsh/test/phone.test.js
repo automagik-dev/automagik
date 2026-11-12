@@ -28,7 +28,7 @@ function open(home) {
   const register = ctx.connection.fetch.register
   ctx.connection.fetch.register = (route) => { ctx.route = route; return register(route) }
   apply(ctx, { home, github: false })
-  const call = async (endpoint, payload) => (await (await ctx.route.fetch(new Request('http://localhost/api/bot', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))).json())
+  const call = async (endpoint, payload) => (await (await ctx.route.fetch(new Request('http://localhost/api/omni-ui', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))).json())
   return { ctx, call }
 }
 
@@ -151,7 +151,7 @@ test('a bare Server host means the link path; a dead Server shows why', async (t
   const state = await until(() => desk.call('state', {}), next => next.value.phone.status === 'offline')
   assert.equal(typeof state.value.phone.error, 'string')
 
-  // Turned off and cleared, the address falls back to the DS Bot relay (off, so nothing dials it).
+  // Turned off and cleared, the address falls back to the Omni relay (off, so nothing dials it).
   await desk.call('phone-set', { on: false })
   await desk.call('phone-set', { server: '' })
   assert.equal((await desk.call('state', {})).value.phone.server, DEFAULT_SERVER)

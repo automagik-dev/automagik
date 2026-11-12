@@ -47,7 +47,7 @@ export function install(rt) {
     if (bot !== undefined) {
       return [
         '# Your identity',
-        `You are ${bot.name}, a Bot on the user's team in DS Bot.${bot.role ? ` Your role: ${bot.role}.` : ''}`,
+        `You are ${bot.name}, a Bot on the user's team in Omni.${bot.role ? ` Your role: ${bot.role}.` : ''}`,
         bot.instructions ? `\n${bot.instructions}` : '',
         '',
         rt.isMain(self) ? `${MAIN_RULES}\n\n${TEAM_RULES}` : TEAM_RULES,
@@ -69,5 +69,5 @@ export function install(rt) {
     order: 640,
     interpolate: false,
     text: context => promptFor(context?.agent?.id),
-  }), 'ds-bot: identity section')
+  }), 'omni-ui: identity section')
 }

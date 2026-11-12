@@ -19,15 +19,15 @@ export function appBrowserEndpoint(botId, downloadRoots) {
       reject(new Error('The app browser relay did not respond.'))
     }, 10_000)
     const receive = message => {
-      if (message?.type !== 'ds-bot:browser-endpoint-response' || message.id !== id) return
+      if (message?.type !== 'omni-ui:browser-endpoint-response' || message.id !== id) return
       clearTimeout(timeout)
       process.off('message', receive)
       if (typeof message.url === 'string') resolve(message.url)
       else reject(new Error(message.error || 'The app browser relay is unavailable.'))
     }
     process.on('message', receive)
-    process.send({ type: 'ds-bot:browser-endpoint', id, botId, downloadRoots }, error => {
-      if (error) receive({ type: 'ds-bot:browser-endpoint-response', id, error: error.message })
+    process.send({ type: 'omni-ui:browser-endpoint', id, botId, downloadRoots }, error => {
+      if (error) receive({ type: 'omni-ui:browser-endpoint-response', id, error: error.message })
     })
   })
 }

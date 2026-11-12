@@ -10,7 +10,7 @@ const QUIET = 4
 function statusText(phone) {
   if (phone.error) return phone.error
   if (!phone.on) return t('Off. Phones cannot reach this computer.')
-  if (phone.status === 'online') return t('On. Paired phones can use DS Bot here.')
+  if (phone.status === 'online') return t('On. Paired phones can use Omni here.')
   if (phone.status === 'offline') return t('Cannot reach the Server. Trying again…')
   return t('Connecting…')
 }
@@ -34,10 +34,10 @@ function minutesLeft(until) {
   return Math.max(0, Math.ceil((until - Date.now()) / 60_000))
 }
 
-// The phone app ships with each DS Bot release, as the release's Android APK.
+// The phone app ships with each Omni release, as the release's Android APK.
 const APP_DOWNLOAD = 'https://github.com/Fei2411/DS-Bot/releases/latest'
 
-// Settings → Phone: the DS Bot phone app reaches this computer through a Relay Server.
+// Settings → Phone: the Omni phone app reaches this computer through a Relay Server.
 export function PhonePage({ roster, actions, Section, Row }) {
   const phone = roster.phone ?? OFF
   const [server, setServer] = useState(phone.server)
@@ -66,7 +66,7 @@ export function PhonePage({ roster, actions, Section, Row }) {
         h(Switch, { on: phone.on, label: t('Phone access'), disabled: busy, onChange: on => void run(actions.phoneSet({ on })) })),
       h(Row, { label: t('Server'), hint: t('The Relay Server that passes encrypted messages between your phone and this computer. It cannot read them.') }),
       h('div', { className: 'bt-set-row bt-phone-server' },
-        h('input', { className: 'bt-input', value: server, placeholder: 'wss://relay.dsbot.app/v1/link', spellCheck: false, 'aria-label': t('Server'), onChange: event => setServer(event.target.value), onKeyDown: event => { if (event.key === 'Enter') saveServer() } }),
+        h('input', { className: 'bt-input', value: server, placeholder: 'wss://your-relay.example/v1/link', spellCheck: false, 'aria-label': t('Server'), onChange: event => setServer(event.target.value), onKeyDown: event => { if (event.key === 'Enter') saveServer() } }),
         h('button', { type: 'button', className: 'bt-soft bt-soft-sm', disabled: busy || server.trim() === phone.server, onClick: saveServer }, t('Save')))),
     error ? h('div', { className: 'bt-connector-error bt-phone-error', role: 'alert' }, error) : null,
     h(Section, { title: t('Phone app') },
@@ -76,7 +76,7 @@ export function PhonePage({ roster, actions, Section, Row }) {
       ? h('div', { className: 'bt-phone-pair' },
         h(QrCode, { text: phone.pairing.uri }),
         h('div', { className: 'bt-phone-pair-copy' },
-          h('span', null, t('Scan this code with the DS Bot app on your phone.')),
+          h('span', null, t('Scan this code with the Omni app on your phone.')),
           h('span', { className: 'bt-set-hint' }, t('The code works once. It stops working in {count} min.', { count: minutesLeft(phone.pairing.expiresAt) })),
           h('div', null, h('button', { type: 'button', className: 'bt-soft bt-soft-sm', disabled: busy, onClick: () => void run(actions.phonePairCancel()) }, t('Cancel')))))
       : h(Row, { label: t('Show a QR code'), hint: online ? t('Your phone scans it once. After that it connects by itself.') : t('Turn on phone access first') },

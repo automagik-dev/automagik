@@ -3,7 +3,7 @@
 // A call that a Session logs (one assistant settlement per attempt) is read from that
 // log, so calls made before this ledger existed count too. A call outside every log (a
 // checkpoint, a handoff note, the steward, an image reading, DSH titles and compaction)
-// is metered while it streams, from the time DS Bot runs. Rows go to usage.sqlite; like
+// is metered while it streams, from the time Omni runs. Rows go to usage.sqlite; like
 // the chat index it is derived from the logs, and deleting it loses only the metered
 // calls and the names of deleted Bots.
 //
@@ -14,7 +14,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 
-const LEDGER_VERSION = 3
+const LEDGER_VERSION = 4
 const PAGE_MESSAGES = 400
 const PAGE_TIMEOUT_MS = 20_000
 const SCAN_TIMEOUT_MS = 180_000
@@ -143,33 +143,27 @@ function sqliteLedger(DatabaseSync, path) {
     // briefly, and the timeout must be armed before the WAL pragma can block.
     db.exec('PRAGMA busy_timeout = 5000')
     db.exec('PRAGMA journal_mode = WAL')
-    const version = db.prepare('PRAGMA user_version').get().user_version
-    // Version 2 lacks only the seal's watermark, so its rows are kept and gain the column.
-    // Desktop and Web may open it at once: the version is read again under the write lock.
-    if (version === 2) {
-      db.exec('BEGIN IMMEDIATE')
-      try {
-        if (db.prepare('PRAGMA user_version').get().user_version === 2) {
-          db.exec(`ALTER TABLE marks ADD COLUMN listed INTEGER;
-            PRAGMA user_version = ${LEDGER_VERSION};`)
-        }
-        db.exec('COMMIT')
-      } catch (error) {
-        db.exec('ROLLBACK')
-        throw error
-      }
-    } else if (version !== LEDGER_VERSION) {
+    // Both prior products used version 3 with different columns. Upgrade by shape,
+    // under one write lock, preserving live rows and Automagik's usage_details.
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      const version = db.prepare('PRAGMA user_version').get().user_version
+      if (version > LEDGER_VERSION) throw new Error(`unsupported usage ledger version ${version}`)
       db.exec(`
-        DROP TABLE IF EXISTS calls;
-        DROP TABLE IF EXISTS marks;
-        DROP TABLE IF EXISTS owners;
-        DROP TABLE IF EXISTS kinds;
-        CREATE TABLE calls (key TEXT PRIMARY KEY, session TEXT NOT NULL, time INTEGER NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, kind TEXT NOT NULL, live INTEGER NOT NULL, input INTEGER NOT NULL, cache_read INTEGER NOT NULL, cache_write INTEGER NOT NULL, output INTEGER NOT NULL);
-        CREATE INDEX calls_session ON calls (session);
-        CREATE TABLE marks (session TEXT PRIMARY KEY, through INTEGER NOT NULL, fold TEXT NOT NULL, sealed INTEGER NOT NULL, listed INTEGER);
-        CREATE TABLE owners (session TEXT PRIMARY KEY, owner TEXT NOT NULL, name TEXT NOT NULL);
-        CREATE TABLE kinds (session TEXT PRIMARY KEY, kind TEXT NOT NULL);
-        PRAGMA user_version = ${LEDGER_VERSION};`)
+        CREATE TABLE IF NOT EXISTS calls (key TEXT PRIMARY KEY, session TEXT NOT NULL, time INTEGER NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL, kind TEXT NOT NULL, live INTEGER NOT NULL, input INTEGER NOT NULL, cache_read INTEGER NOT NULL, cache_write INTEGER NOT NULL, output INTEGER NOT NULL);
+        CREATE INDEX IF NOT EXISTS calls_session ON calls (session);
+        CREATE TABLE IF NOT EXISTS marks (session TEXT PRIMARY KEY, through INTEGER NOT NULL, fold TEXT NOT NULL, sealed INTEGER NOT NULL, listed INTEGER);
+        CREATE TABLE IF NOT EXISTS owners (session TEXT PRIMARY KEY, owner TEXT NOT NULL, name TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS kinds (session TEXT PRIMARY KEY, kind TEXT NOT NULL);`)
+      if (!db.prepare('PRAGMA table_info(marks)').all().some(column => column.name === 'listed')) {
+        db.exec('ALTER TABLE marks ADD COLUMN listed INTEGER')
+      }
+      if (version < LEDGER_VERSION) db.exec("UPDATE marks SET through = -1, fold = '{}', sealed = 0")
+      db.exec(`PRAGMA user_version = ${LEDGER_VERSION}`)
+      db.exec('COMMIT')
+    } catch (error) {
+      db.exec('ROLLBACK')
+      throw error
     }
     const put = db.prepare('INSERT OR REPLACE INTO calls (key, session, time, provider, model, kind, live, input, cache_read, cache_write, output) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
     const dropLogged = db.prepare('DELETE FROM calls WHERE session = ? AND live = 0')
@@ -261,7 +255,7 @@ export function install(rt) {
         ({ DatabaseSync } = await import('node:sqlite'))
         await mkdir(home, { recursive: true })
       } catch (error) {
-        rt.warn('ds-bot: usage is kept in memory only: %s', error)
+        rt.warn('omni-ui: usage is kept in memory only: %s', error)
         return memoryLedger()
       }
       // Only proven damage warrants a rebuild: Desktop and Web share this file,
@@ -274,7 +268,7 @@ export function install(rt) {
           return sqliteLedger(DatabaseSync, path)
         } catch (error) {
           if (fresh || !damaged(error)) {
-            rt.warn('ds-bot: usage is kept in memory only: %s', error)
+            rt.warn('omni-ui: usage is kept in memory only: %s', error)
             return memoryLedger()
           }
         }
@@ -295,7 +289,7 @@ export function install(rt) {
     ledger?.close()
     ledger = undefined
     opening = undefined
-  }, 'ds-bot: usage ledger')
+  }, 'omni-ui: usage ledger')
 
   // Who each Session's calls belong to, from the team as it is now. Sessions forked or
   // spawned under one belong to the same owner, and a parent the team has lost
@@ -410,7 +404,7 @@ export function install(rt) {
       try {
         listed = (await ctx.sessionController.list({}, signal)).items ?? []
       } catch (error) {
-        rt.warn('ds-bot: usage could not list the Sessions: %s', error)
+        rt.warn('omni-ui: usage could not list the Sessions: %s', error)
       }
       const stored = ledger.owners()
       const owners = liveOwners(listed, stored)
@@ -473,7 +467,7 @@ export function install(rt) {
       // One line for the whole scan, not one per Session it could not read.
       const missed = failed.length + cut
       if (missed > 0) {
-        rt.warn('ds-bot: usage could not read %d Session%s%s%s', missed, missed === 1 ? '' : 's',
+        rt.warn('omni-ui: usage could not read %d Session%s%s%s', missed, missed === 1 ? '' : 's',
           cut > 0 ? ' before the scan ran out of time' : '',
           failed.length > 0 ? `: ${failed.map(([sessionId]) => sessionId).join(', ')} (first error: ${failed[0][1]})` : '')
       }
@@ -487,7 +481,7 @@ export function install(rt) {
 
   // Tokens per hour, owner, model, and use, for the browser to sum by day, week, or month.
   async function usageView({ timeZone } = {}) {
-    const job = scan().catch(error => rt.warn('ds-bot: usage scan failed: %s', error))
+    const job = scan().catch(error => rt.warn('omni-ui: usage scan failed: %s', error))
     let timer
     await Promise.race([job, new Promise((resolve) => { timer = setTimeout(resolve, VIEW_WAIT_MS) })])
     clearTimeout(timer)
@@ -569,7 +563,7 @@ export function install(rt) {
     }
   }
 
-  // DS Bot tags the requests it makes outside a Session with the Session they serve.
+  // Omni tags the requests it makes outside a Session with the Session they serve.
   const tags = new WeakMap()
   const tagUsage = (messages, tag) => {
     if (messages !== null && typeof messages === 'object') tags.set(messages, tag)
@@ -579,7 +573,7 @@ export function install(rt) {
     const tag = from !== null && typeof from === 'object' ? tags.get(from) : undefined
     if (tag !== undefined) tagUsage(to, tag)
   }
-  // DS Bot's own requests name the Session they serve, as some routes require, so
+  // Omni's own requests name the Session they serve, as some routes require, so
   // `sessionId` alone does not make a request that Session's own round; the tag does.
   const ownRequest = options => tags.has(options?.messages)
   // Owner and group use are journaled with the call itself: a Bot or room that
@@ -609,14 +603,14 @@ export function install(rt) {
       await rt.load()
       const book = ledger ?? await openLedger().catch(() => undefined)
       if (book === undefined) return
-      try { journal(book, sessionId) } catch (error) { rt.warn('ds-bot: usage could not journal %s: %s', sessionId, error) }
+      try { journal(book, sessionId) } catch (error) { rt.warn('omni-ui: usage could not journal %s: %s', sessionId, error) }
     })()
   }
   function record({ sessionId, kind, provider, model, usage }) {
     noteSession(sessionId)
     const row = { key: `live:${randomUUID()}`, session: sessionId ?? '', time: Date.now(), provider: provider ?? '', model: model ?? '', kind, ...tokensOf(usage) }
     if (ledger !== undefined) {
-      try { ledger.add(row) } catch (error) { rt.warn('ds-bot: usage could not record a call: %s', error) }
+      try { ledger.add(row) } catch (error) { rt.warn('omni-ui: usage could not record a call: %s', error) }
       return
     }
     early.push(row)

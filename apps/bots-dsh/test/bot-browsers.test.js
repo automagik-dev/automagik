@@ -162,7 +162,7 @@ test('a navigation before the guest is ready waits for dom-ready, and the addres
 
 test('the v1 one-page store migrates to one tab per Bot', async () => {
   const desktop = fakeDesktop()
-  desktop.storage.setItem('ds-bot.browser.v1', JSON.stringify({ a: { url: 'https://example.com/', title: 'Example' } }))
+  desktop.storage.setItem('omni-ui.browser.v1', JSON.stringify({ a: { url: 'https://example.com/', title: 'Example' } }))
   migrateStorage(desktop.storage)
   const browsers = createBotBrowsers({ bridge: desktop.bridge, createSource, storage: desktop.storage, document: desktop.doc })
   browsers.ensureTabs('a')
@@ -170,7 +170,7 @@ test('the v1 one-page store migrates to one tab per Bot', async () => {
   assert.equal(state.ids.length, 1)
   assert.equal(state.active, state.ids[0])
   assert.equal(browsers.pages.getSnapshot()[state.ids[0]].url, 'https://example.com/')
-  assert.equal(desktop.storage.getItem('ds-bot.browser.v1'), null)
+  assert.equal(desktop.storage.getItem('omni-ui.browser.v1'), null)
 })
 
 test('a read reaches the Bot’s active tab', async () => {

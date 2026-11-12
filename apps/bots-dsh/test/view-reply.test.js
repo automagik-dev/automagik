@@ -69,7 +69,7 @@ async function start() {
     })
     return { text, concluded }
   }
-  const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/bot', {
+  const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/omni-ui', {
     method: 'POST', body: JSON.stringify({ endpoint, payload }),
   }))).json()
   const team = async () => (await call('state', {})).value
@@ -318,7 +318,7 @@ test('a card carried from an earlier part records its close on the part that ask
   ctx.connection.fetch.register = (options) => { route = options; return register(options) }
   const host = createRuntime(ctx, { home })
   t.after(async () => { await ctx.dispose(); rmSync(home, { recursive: true, force: true, maxRetries: 5 }) })
-  const call = async (endpoint, payload = {}) => (await route.fetch(new Request('http://localhost/api/bot', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))).json()
+  const call = async (endpoint, payload = {}) => (await route.fetch(new Request('http://localhost/api/omni-ui', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))).json()
   let open = (await call('state')).value
   assert.equal(open.closedViews, undefined)
   assert.equal('closedViews' in host.state, false)

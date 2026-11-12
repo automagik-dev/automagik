@@ -83,7 +83,7 @@ async function start(t, room, services, extraRooms, bots, llm, top, files = {}) 
     }
   }
   const tool = (name, args, sessionId, exec = {}) => rt.teamTools.find(d => d.name === name).execute(args, { agent: { id: sessionId }, ...exec })
-  const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/bot', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))).json()
+  const call = async (endpoint, payload) => (await route.fetch(new Request('http://localhost/api/omni-ui', { method: 'POST', body: JSON.stringify({ endpoint, payload }) }))).json()
   // A Session takes up the newest message it was sent, as a new turn.
   const begin = (sessionId) => {
     const message = agentOf(sessionId).calls.at(-1)
@@ -1047,7 +1047,7 @@ test('the user stops a member\'s work in a group, and the group shows it', async
 })
 
 // #592: stopping only the round left a member the round moved on from working. The round
-// runs in DS Bot, not in the group's Session, so the Session has nothing to cancel.
+// runs in Omni, not in the group's Session, so the Session has nothing to cancel.
 test('one press stops the group\'s round and every member at work there, and nothing elsewhere', async (t) => {
   const host = await start(t)
   assert.equal((await host.call('stop-room-work', { roomId: 'r1' })).value, false)
@@ -2275,7 +2275,7 @@ test('after a restart a batch nobody finished is dropped without waking anyone',
   assert.equal(host.agentOf('r1').calls.length, 0)
 })
 
-// The round runs in DS Bot, not inside the group_relay call: the call returns at once, so
+// The round runs in Omni, not inside the group_relay call: the call returns at once, so
 // the group's Session is free and DSH cuts nothing short.
 test('the relay call returns at once and the round goes on without it', async (t) => {
   const host = await start(t)

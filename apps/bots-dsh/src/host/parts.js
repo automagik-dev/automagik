@@ -196,7 +196,7 @@ export function install(rt) {
   const STEWARD_TIMEOUT_MS = 120_000
   const STEWARD_LINES = 40
   const FOLDER_RETRY_MS = 300_000
-  const PAUSE_NOTE = 'DS Bot paused your turn for a context check. Go on with it now from where you stopped.'
+  const PAUSE_NOTE = 'Omni paused your turn for a context check. Go on with it now from where you stopped.'
 
   // A broken provider adapter must not crash every turn; estimate from the
   // derived messages instead, with one warning.
@@ -207,7 +207,7 @@ export function install(rt) {
     } catch (error) {
       if (!measureWarned) {
         measureWarned = true
-        rt.warn('ds-bot: token measure failed; context sizes are estimated: %s', error)
+        rt.warn('omni-ui: token measure failed; context sizes are estimated: %s', error)
       }
     }
     try {
@@ -263,15 +263,15 @@ export function install(rt) {
 
   // The backend's own entry points leave Bot Sessions alone, earlier parts and group
   // records included: automatic pressure and overflow compaction do nothing, and
-  // /compact is refused. Only DS Bot condenses a Bot Session, when the steward says so,
-  // and then the summary is DS Bot's checkpoint. An explicit range is different: with
+  // /compact is refused. Only Omni condenses a Bot Session, when the steward says so,
+  // and then the summary is Omni's checkpoint. An explicit range is different: with
   // those entry points closed, the only range DSH still asks of a Bot Session is the one
   // a model switch needs to fit the new model's window, and a refusal there ended the
-  // switch itself (MODEL_SWITCH_COMPACTION_FAILED). So DS Bot condenses that range as its
+  // switch itself (MODEL_SWITCH_COMPACTION_FAILED). So Omni condenses that range as its
   // own checkpoint instead. Each preset mount has its own compaction backend. Every other
   // Session, subagents included, is as it was.
   const adoptedEngines = new Set()
-  // Sessions DS Bot itself is condensing right now.
+  // Sessions Omni itself is condensing right now.
   const condensing = new Set()
   // The range of a Bot Session DSH is condensing for a model switch, where the route the
   // Session used last is the one being switched away from.
@@ -283,8 +283,8 @@ export function install(rt) {
     return id !== undefined && (rt.selfOf(id) !== undefined || rt.roomOf(id) !== undefined)
   }
   const ownedByBot = target => isBotTarget(target) && !condensing.has(target.session.id)
-  // Condenses a range of a Bot Session the way DS Bot condenses its own parts: the
-  // session counts as condensing, so the summary hook writes DS Bot's checkpoint rather
+  // Condenses a range of a Bot Session the way Omni condenses its own parts: the
+  // session counts as condensing, so the summary hook writes Omni's checkpoint rather
   // than the backend writing one of its own.
   async function condenseRange(target, run, { forSwitch = false } = {}) {
     const sessionId = target.session.id
@@ -297,7 +297,7 @@ export function install(rt) {
       if (forSwitch) switchRanges.delete(sessionId)
     }
   }
-  // The engine that serves this agent, when DS Bot can condense through it.
+  // The engine that serves this agent, when Omni can condense through it.
   const engineOf = agent => [ctx.get('agentPresets')?.serviceFor(agent, 'compaction'), ctx.get('compaction')]
     .find(engine => typeof engine?.[ORIGINAL_COMPACT]?.summarize === 'function')
   // The wrapper decides per call, so it can go on before the Session is a Bot's.
@@ -347,7 +347,7 @@ export function install(rt) {
       delete engine[ORIGINAL_COMPACT]
     }
     adoptedEngines.clear()
-  }, 'ds-bot: Bot compaction')
+  }, 'omni-ui: Bot compaction')
   ctx.on('agent/created', ({ agent }) => { adoptCompaction(agent) })
 
   // A Bot's own chat, or its Session in one group, or the group's own Session
@@ -430,7 +430,7 @@ export function install(rt) {
       // The latest messages matter most; what could not be read is only noted.
       if (recent.length === 0) throw error
       complete = false
-      rt.warn('ds-bot: reading %s for its handoff stopped early: %s', sessionId, error)
+      rt.warn('omni-ui: reading %s for its handoff stopped early: %s', sessionId, error)
     }
     // `whole`: every message of the part is in `recent`.
     return { recent: recent.reverse(), earlier: earlier.reverse(), unlisted, complete, whole: complete && !full }
@@ -448,7 +448,7 @@ export function install(rt) {
     ['Where to look', 'details this note leaves out that you may need again, each with a few words copied exactly from the message that holds it, for read_own_chat to search'],
   ]
   const handoffPrompt = why => [
-    `You are now writing a handoff note to yourself. This request comes from DS Bot, not from the user: do not answer or continue the messages above. ${why}, so it moves on to a fresh conversation now. The fresh one starts with this note and your latest messages word for word; everything else leaves your working context. The full record stays saved, and you can search it later with read_own_chat. Write the note that lets you carry on as the same Bot without losing anything that matters.`,
+    `You are now writing a handoff note to yourself. This request comes from Omni, not from the user: do not answer or continue the messages above. ${why}, so it moves on to a fresh conversation now. The fresh one starts with this note and your latest messages word for word; everything else leaves your working context. The full record stays saved, and you can search it later with read_own_chat. Write the note that lets you carry on as the same Bot without losing anything that matters.`,
     '',
     'Output EXACTLY the Markdown structure below: every heading as written, in English and in this order. Write the content in the language the user writes in, as terse bullets. Write "(none)" under a heading with nothing to say.',
     '',
@@ -523,7 +523,7 @@ export function install(rt) {
       } else {
         return { note, attempts: attempt, finish: finish.kind, usage: assembler.usage }
       }
-      rt.warn('ds-bot: handoff note attempt %d of %d for %s on %s/%s not used: %s (finish %s, output %s tokens)', attempt, NOTE_ATTEMPTS, session.id, route.provider, route.model, problem, finish.kind, assembler.usage?.outputTokens ?? 'unknown')
+      rt.warn('omni-ui: handoff note attempt %d of %d for %s on %s/%s not used: %s (finish %s, output %s tokens)', attempt, NOTE_ATTEMPTS, session.id, route.provider, route.model, problem, finish.kind, assembler.usage?.outputTokens ?? 'unknown')
     }
     return { problem }
   }
@@ -565,7 +565,7 @@ export function install(rt) {
     return { kept: kept.reverse(), more }
   }
 
-  // DS Bot's summary for a Bot Session, in place of the backend's. Like the backend's
+  // Omni's summary for a Bot Session, in place of the backend's. Like the backend's
   // own, it is one request on the conversation's own prefix, so the provider serves
   // that from cache.
   async function writeCheckpoint(input, agent, signal) {
@@ -644,10 +644,10 @@ export function install(rt) {
         // A cancelled request is the caller's own decision, not a route that cannot answer.
         if (!forSwitch || signal?.aborted) throw error
         last = error
-        rt.warn('ds-bot: no checkpoint from %s/%s for %s: %s', one.provider, one.model, session.id, error?.message ?? error)
+        rt.warn('omni-ui: no checkpoint from %s/%s for %s: %s', one.provider, one.model, session.id, error?.message ?? error)
       }
     }
-    rt.warn('ds-bot: the checkpoint for %s carries no summary; the switch goes ahead without one: %s', session.id, last?.message ?? last)
+    rt.warn('omni-ui: the checkpoint for %s carries no summary; the switch goes ahead without one: %s', session.id, last?.message ?? last)
     return undefined
   }
 
@@ -690,9 +690,9 @@ export function install(rt) {
     try {
       const action = await askSteward(agent, { midTurn })
       if (action !== undefined) return action
-      rt.warn('ds-bot: the context steward gave no usable answer for %s; moving on to a fresh part', agent.id)
+      rt.warn('omni-ui: the context steward gave no usable answer for %s; moving on to a fresh part', agent.id)
     } catch (error) {
-      rt.warn('ds-bot: the context steward failed for %s; moving on to a fresh part: %s', agent.id, error)
+      rt.warn('omni-ui: the context steward failed for %s; moving on to a fresh part: %s', agent.id, error)
     }
     return 'switch'
   }
@@ -708,7 +708,7 @@ export function install(rt) {
     const sessionId = agent.session.id
     condensing.add(sessionId)
     try {
-      // Through the service itself, past DS Bot's own wrapper: only a call on the
+      // Through the service itself, past Omni's own wrapper: only a call on the
       // service gives the engine its own context, with the services it injects.
       const result = inTurn
         ? await engine.compactIfNeeded(agent, 'context-overflow', signal)
@@ -716,7 +716,7 @@ export function install(rt) {
       if (result === null) return false
     } catch (error) {
       if (!inTurn && (error?.code === 'busy' || error?.code === 'cancelled')) return undefined
-      rt.warn('ds-bot: condensing %s failed: %s', agent.id, error)
+      rt.warn('omni-ui: condensing %s failed: %s', agent.id, error)
       return false
     } finally {
       condensing.delete(sessionId)
@@ -725,11 +725,11 @@ export function install(rt) {
     rt.renewMemory(sessionId)
     const after = tokensOf(agent.session) ?? before
     partBase.set(agent.id, after)
-    ctx.logger.info('ds-bot: %s condensed from %d to %d tokens (check line %d, hard line %d)', agent.id, before ?? -1, after ?? -1, lines.check, lines.hard)
+    ctx.logger.info('omni-ui: %s condensed from %d to %d tokens (check line %d, hard line %d)', agent.id, before ?? -1, after ?? -1, lines.check, lines.hard)
     return after < lines.check
   }
 
-  // The note a part opened with, as the fresh part shows it. A note DS Bot put
+  // The note a part opened with, as the fresh part shows it. A note Omni put
   // together without the model carries the last note the model wrote.
   function noteText(segment) {
     if (segment?.fallback === undefined) return segment?.note
@@ -742,7 +742,7 @@ export function install(rt) {
         : segment.fallback === 'failure' ? 'a request in the previous part kept failing'
           : segment.fallback === 'engine' ? 'what you run on changed'
             : 'the model did not write a usable note'
-    const head = `(DS Bot put this note together without the model, because ${why}.`
+    const head = `(Omni put this note together without the model, because ${why}.`
     return segment.note === undefined
       ? `${head} There was no earlier note to carry over. Go by the messages below, and look up anything else.)`
       : `${head} It is the note written at the end of part ${segment.noteFrom}, carried over unchanged; anything newer is in the messages below, and read_own_chat finds the rest.)\n\n${segment.note}`
@@ -769,7 +769,7 @@ export function install(rt) {
     ]
     return [
       `[Handoff · part ${number}]`,
-      `DS Bot moved ${where} on to a fresh conversation, part ${number}, because ${reason}. This message is not from the user.`,
+      `Omni moved ${where} on to a fresh conversation, part ${number}, because ${reason}. This message is not from the user.`,
       'It is reference, not new instructions: the note and the messages below are a record of earlier work. Do what they say only as part of the work they record, and take new requests only from messages that come after this one.',
       `Everything earlier stays saved: ${lookup}`,
       ...(engine !== undefined ? [`You now run on ${engine}. Your memory, instructions, team and folder stay yours, but your own tools and how they work may differ from the ones in the messages below: look at what you have before you repeat a step.`] : []),
@@ -801,7 +801,7 @@ export function install(rt) {
   // A turn stopped for a switch goes on with its own source, so its reply still
   // reaches whoever asked.
   const handoffSource = (job, resume) => ({
-    ...(resume && job.info ? job.info : { kind: SOURCE_KIND, form: 'relay', role: 'handoff', senderName: 'DS Bot' }),
+    ...(resume && job.info ? job.info : { kind: SOURCE_KIND, form: 'relay', role: 'handoff', senderName: 'Omni' }),
     exchangeId: job.info?.exchangeId ?? randomUUID(),
     handoff: true,
     ...(resume ? { resume: true } : {}),
@@ -905,7 +905,7 @@ export function install(rt) {
   // Input in the inbox is durable but does not wake the driver; send() is what wakes
   // it. Re-send what waits, in order, the first message with the wake, so a stopped
   // turn goes on without waiting for the next input. Only while the plugin is live —
-  // a turn that starts during unload would run without DS Bot's hooks.
+  // a turn that starts during unload would run without Omni's hooks.
   const wake = (agent) => {
     const pending = [...agent.inbox.nextStep, ...agent.inbox.nextTurn]
     for (const message of pending) agent.inbox.remove(message.id)
@@ -937,14 +937,14 @@ export function install(rt) {
           // the earlier part only after they sit on the part that replaced it.
           await rt.moveSchedules?.(sessionId, currentOf(owner))
           await ctx.workspaceRegistry.archiveSession(sessionId, { stopActivity: true })
-            .catch(error => rt.warn('ds-bot: earlier part %s not archived: %s', sessionId, error))
+            .catch(error => rt.warn('omni-ui: earlier part %s not archived: %s', sessionId, error))
         } else {
-          try { wake(agent) } catch (error) { rt.warn('ds-bot: part %s could not be woken for its kept input: %s', sessionId, error) }
+          try { wake(agent) } catch (error) { rt.warn('omni-ui: part %s could not be woken for its kept input: %s', sessionId, error) }
         }
         delete state.switching[sessionId]
         await rt.save()
       } catch (error) {
-        rt.warn('ds-bot: input kept in part %s was not handed on: %s', sessionId, error)
+        rt.warn('omni-ui: input kept in part %s was not handed on: %s', sessionId, error)
       }
     }
   }
@@ -962,8 +962,8 @@ export function install(rt) {
     void runSwitch(agent, job)
       .catch(error => {
         const name = rt.botOf(job.botId)?.name ?? rt.roomOf(job.roomId)?.name ?? agent.id
-        if (unloaded(error)) return noteInfo('ds-bot: plugin unloaded while %s switched parts; input kept in part %s', name, agent.id)
-        rt.warn('ds-bot: %s did not move on to a fresh part: %s', name, error)
+        if (unloaded(error)) return noteInfo('omni-ui: plugin unloaded while %s switched parts; input kept in part %s', name, agent.id)
+        rt.warn('omni-ui: %s did not move on to a fresh part: %s', name, error)
       })
       .finally(async () => {
         switches.delete(agent.id)
@@ -991,7 +991,7 @@ export function install(rt) {
           const carried = job.joined?.length ? { joined: job.joined } : {}
           back.unshift(createUserMessage({
             content: [{ type: 'text', text: PAUSE_NOTE }],
-            source: job.info ? { ...job.info, ...carried } : { kind: SOURCE_KIND, form: 'relay', role: 'resume', exchangeId: randomUUID(), senderName: 'DS Bot', ...carried },
+            source: job.info ? { ...job.info, ...carried } : { kind: SOURCE_KIND, form: 'relay', role: 'resume', exchangeId: randomUUID(), senderName: 'Omni', ...carried },
           }))
         }
         await forward(job, back).then(() => {
@@ -999,8 +999,8 @@ export function install(rt) {
         }).catch((error) => {
           job.kept = true
           try { restore(agent, back) } catch {}
-          if (unloaded(error)) return noteInfo('ds-bot: plugin unloaded during the switch of %s; input kept in part %s', agent.id, agent.id)
-          rt.warn('ds-bot: input for %s was not handed on: %s', agent.id, error)
+          if (unloaded(error)) return noteInfo('omni-ui: plugin unloaded during the switch of %s; input kept in part %s', agent.id, agent.id)
+          rt.warn('omni-ui: input for %s was not handed on: %s', agent.id, error)
           // The input is back where it was; the turn that owns it goes on at once.
           try { wake(agent) } catch {}
         })
@@ -1008,7 +1008,7 @@ export function install(rt) {
       })
       // A state write that fails here (full disk, a file another program holds, a lost lock)
       // must not end up as an unhandled rejection, which stops the whole host.
-      .catch(error => rt.warn('ds-bot: the switch of %s did not finish: %s', agent.id, error))
+      .catch(error => rt.warn('omni-ui: the switch of %s did not finish: %s', agent.id, error))
   }
 
   async function runSwitch(agent, job) {
@@ -1030,7 +1030,7 @@ export function install(rt) {
     }
     if (job.moved) {
       rt.renewMemory(agent.id)
-      await rt.closeLocalAgentSession?.(agent.id)?.catch(error => rt.warn('ds-bot: the local agent of earlier part %s did not stop: %s', agent.id, error))
+      await rt.closeLocalAgentSession?.(agent.id)?.catch(error => rt.warn('omni-ui: the local agent of earlier part %s did not stop: %s', agent.id, error))
       try {
         await rt.moveSchedules(agent.id, currentOf(job))
       } catch (error) {
@@ -1039,7 +1039,7 @@ export function install(rt) {
         throw error
       }
       await ctx.workspaceRegistry.archiveSession(agent.id, { stopActivity: true })
-        .catch(error => rt.warn('ds-bot: earlier part %s not archived: %s', agent.id, error))
+        .catch(error => rt.warn('omni-ui: earlier part %s not archived: %s', agent.id, error))
     }
   }
 
@@ -1055,7 +1055,7 @@ export function install(rt) {
   }
   const selectRoute = (named, sessionId, { ref, effort }) => rt.selectSessionModel(sessionId, { ...splitRef(ref), ...(effort === undefined ? {} : { reasoningEffort: effort }) })
     .then(() => true, (error) => {
-      rt.warn('ds-bot: model for the fresh part of %s not applied: %s', named.name, error)
+      rt.warn('omni-ui: model for the fresh part of %s not applied: %s', named.name, error)
       return false
     })
 
@@ -1076,14 +1076,14 @@ export function install(rt) {
   // its input goes back into its inbox and waits for the next try.
   function holdStep(agent, payload) {
     restore(agent, payload.messages)
-    rt.warn('ds-bot: %s waits for a part on what it runs on now; its input is kept', rt.botOf(placeOf(agent.id)?.botId)?.name ?? agent.id)
+    rt.warn('omni-ui: %s waits for a part on what it runs on now; its input is kept', rt.botOf(placeOf(agent.id)?.botId)?.name ?? agent.id)
     if (!readOnly() && !engineWakes.has(agent.id)) {
       const place = placeOf(agent.id)
       const timer = setTimeout(() => {
         engineWakes.delete(agent.id)
         // A part that moved on meanwhile handed its input on with the rest.
         if (place === undefined || currentOf(place) !== agent.id) return
-        try { wake(agent) } catch (error) { rt.warn('ds-bot: part %s could not be woken for its kept input: %s', agent.id, error) }
+        try { wake(agent) } catch (error) { rt.warn('omni-ui: part %s could not be woken for its kept input: %s', agent.id, error) }
       }, Math.max(0, (engineRetry.get(agent.id) ?? 0) - Date.now()))
       timer.unref?.()
       engineWakes.set(agent.id, timer)
@@ -1093,7 +1093,7 @@ export function install(rt) {
   ctx.effect(() => () => {
     for (const timer of engineWakes.values()) clearTimeout(timer)
     engineWakes.clear()
-  }, 'ds-bot: wake parts that wait for their run mode')
+  }, 'omni-ui: wake parts that wait for their run mode')
 
   async function moveOn(agent, job, signal) {
     job.started = true
@@ -1135,10 +1135,10 @@ export function install(rt) {
       const wait = NOTE_COOLDOWN_MS[Math.min(count, NOTE_COOLDOWN_MS.length) - 1]
       noteFailures.set(agent.id, { count, until: Date.now() + wait })
       job.noteFailed = true
-      rt.warn('ds-bot: handoff note for %s failed (%d in a row); part %d goes on, next try in %ds: %s', name, count, number, wait / 1000, failure)
+      rt.warn('omni-ui: handoff note for %s failed (%d in a row); part %d goes on, next try in %ds: %s', name, count, number, wait / 1000, failure)
       return
     }
-    if (failure !== undefined) rt.warn('ds-bot: handoff note for %s failed past the hard line; moving on with the earlier note: %s', name, failure)
+    if (failure !== undefined) rt.warn('omni-ui: handoff note for %s failed past the hard line; moving on with the earlier note: %s', name, failure)
     const previous = parts.at(-2)
     const earlierNote = previous?.note ? { note: previous.note, noteFrom: previous.noteFrom ?? previous.number } : {}
     const noted = written !== undefined ? { note: written.note }
@@ -1153,7 +1153,7 @@ export function install(rt) {
     const picked = await freshRoute(bot, session)
     if (picked !== undefined && !await selectRoute({ name }, freshId, picked) && job.engine) engineRetry.set(freshId, Date.now() + FOLDER_RETRY_MS)
     if (bot !== undefined) await rt.applyPermission(bot, freshId, room)
-      .catch(error => rt.warn('ds-bot: permission for the fresh part of %s not applied: %s', name, error))
+      .catch(error => rt.warn('omni-ui: permission for the fresh part of %s not applied: %s', name, error))
     // The fresh part took several awaits: a Bot or group deleted meanwhile, a member that
     // left, or a part that is no longer the current one gets no fresh part.
     const current = bot === undefined ? rt.sessionOfRoom(room) : room === undefined ? rt.chatOf(bot.id) : room.sessions?.[bot.id]
@@ -1161,7 +1161,7 @@ export function install(rt) {
       : rt.botOf(bot.id) === undefined || (room !== undefined && (rt.roomOf(room.id) !== room || !room.members.includes(bot.id)))
     if (gone || current !== agent.id) {
       await ctx.workspaceRegistry.archiveSession(freshId, { stopActivity: true })
-        .catch(error => rt.warn('ds-bot: unused fresh part of %s not archived: %s', name, error))
+        .catch(error => rt.warn('omni-ui: unused fresh part of %s not archived: %s', name, error))
       return
     }
     const segment = { sessionId: agent.id, endedAt: Date.now(), ...(tokens !== undefined ? { tokens } : {}), ...noted }
@@ -1209,7 +1209,7 @@ export function install(rt) {
       // A fresh part that is not where it was made for would move on at every step.
       if (intended !== undefined && cwd !== undefined && cwd !== intended) {
         folderRetry.set(freshId, Date.now() + FOLDER_RETRY_MS)
-        rt.warn('ds-bot: the fresh part of %s did not start in %s; it works in %s', name, intended, cwd)
+        rt.warn('omni-ui: the fresh part of %s did not start in %s; it works in %s', name, intended, cwd)
       }
       const engine = job.engine ? rt.engineNameOf?.(bot.model ?? bot.appliedModel) : undefined
       const text = handoffPackage({ room, self: bot === undefined, segment, lines: carried, number: number + 1, resume, overflow: job.overflow, cutoff: job.cutoff === true, failed: job.failed, bare: job.bare, folder, manual: job.manual, engine })
@@ -1232,12 +1232,12 @@ export function install(rt) {
         throw error
       })
     }
-    ctx.logger.info('ds-bot: %s%s moved on to part %d at %d tokens (check line %d, hard line %d); %s; %d latest and %d earlier messages carried%s', name, bot !== undefined && room !== undefined ? ` in ${room.name}` : '', number + 1, tokens ?? -1, lines?.check ?? -1, lines?.hard ?? -1,
-      written !== undefined ? `note written in ${written.attempts} attempt(s)` : `note put together by DS Bot (${noted.fallback}${noted.note ? `, carries part ${noted.noteFrom}'s` : ', nothing to carry'})`,
+    ctx.logger.info('omni-ui: %s%s moved on to part %d at %d tokens (check line %d, hard line %d); %s; %d latest and %d earlier messages carried%s', name, bot !== undefined && room !== undefined ? ` in ${room.name}` : '', number + 1, tokens ?? -1, lines?.check ?? -1, lines?.hard ?? -1,
+      written !== undefined ? `note written in ${written.attempts} attempt(s)` : `note put together by Omni (${noted.fallback}${noted.note ? `, carries part ${noted.noteFrom}'s` : ', nothing to carry'})`,
       carried.recent.length, carried.earlier.length, folder === undefined ? '' : `; now works in ${folder}`)
   }
 
-  // Ends a step DS Bot takes over. Before a turn's first step an empty batch ends the
+  // Ends a step Omni takes over. Before a turn's first step an empty batch ends the
   // turn as completed, where a reject ends it as blocked, which other listeners read as
   // a failure. Later in a turn an empty batch would run another model step, and a turn
   // carried through a steer cut keeps its reject, since a completed turn reads as answered.
@@ -1253,7 +1253,7 @@ export function install(rt) {
     const { agent } = payload
     const past = rt.pastOwners.get(agent.id)
     if (past !== undefined && !rt.isBotSession(agent.id)) {
-      await forward(past, payload.messages).catch(error => rt.warn('ds-bot: input for %s was not handed on: %s', agent.id, error))
+      await forward(past, payload.messages).catch(error => rt.warn('omni-ui: input for %s was not handed on: %s', agent.id, error))
       return takeOverStep(agent, payload)
     }
     const place = placeOf(agent.id)
@@ -1322,7 +1322,7 @@ export function install(rt) {
 
   // DSH 0.2.1 checks a Session's folder as it puts each model request together, before
   // agent/pre-step, and fails the turn when both the folder and the one the Session was
-  // made in are gone. The team folder is DS Bot's own, so it is made again; a Bot whose
+  // made in are gone. The team folder is Omni's own, so it is made again; a Bot whose
   // own folder went away first changes to the folder it would move to, through DSH's
   // documented way out (`workingDirectory.set`), and the pre-step then moves it to a
   // fresh part there, as on DSH 0.2.0.
@@ -1343,7 +1343,7 @@ export function install(rt) {
       // Already at the team path, it was only gone and is now made again.
       if (current !== team) {
         await folders.set(agent, team, context.signal)
-          .catch(error => rt.warn('ds-bot: the group chat works in %s and could not change to %s: %s', current, team, error))
+          .catch(error => rt.warn('omni-ui: the group chat works in %s and could not change to %s: %s', current, team, error))
       }
       return next()
     }
@@ -1361,7 +1361,7 @@ export function install(rt) {
     const target = usable ? wanted : team
     if (target !== undefined) {
       await folders.set(agent, target, context.signal)
-        .catch(error => rt.warn('ds-bot: %s works in %s, which is gone, and could not change to %s: %s', rt.botOf(place?.botId)?.name ?? agent.id, current, target, error))
+        .catch(error => rt.warn('omni-ui: %s works in %s, which is gone, and could not change to %s: %s', rt.botOf(place?.botId)?.name ?? agent.id, current, target, error))
     }
     return next()
   }, { prepend: true })
@@ -1376,7 +1376,7 @@ export function install(rt) {
       const agent = await rt.resolveAgent(sessionId)
       if (agent.status === 'idle' && await folderMove(agent) !== undefined) startSwitch(agent, { folder: true })
     } catch (error) {
-      rt.warn('ds-bot: %s did not move to its working folder: %s', owner.botId === undefined ? rt.roomOf(owner.roomId)?.name ?? owner.roomId : rt.botOf(owner.botId)?.name ?? owner.botId, error)
+      rt.warn('omni-ui: %s did not move to its working folder: %s', owner.botId === undefined ? rt.roomOf(owner.roomId)?.name ?? owner.roomId : rt.botOf(owner.botId)?.name ?? owner.botId, error)
     }
   }
 
@@ -1390,7 +1390,7 @@ export function install(rt) {
         const agent = await rt.resolveAgent(sessionId)
         if (agent.status === 'idle' && engineMoved(agent, placeOf(sessionId))) startSwitch(agent, { engine: true })
       } catch (error) {
-        rt.warn('ds-bot: %s did not follow its run mode in %s: %s', rt.botOf(botId)?.name ?? botId, sessionId, error)
+        rt.warn('omni-ui: %s did not follow its run mode in %s: %s', rt.botOf(botId)?.name ?? botId, sessionId, error)
       }
     }
   }
@@ -1475,10 +1475,10 @@ export function install(rt) {
   }
 
   ctx.effect(() => {
-    const timer = setTimeout(() => void heldBack().catch(error => rt.warn('ds-bot: handing on input kept in earlier parts failed: %s', error)), RESUME_DELAY_MS)
+    const timer = setTimeout(() => void heldBack().catch(error => rt.warn('omni-ui: handing on input kept in earlier parts failed: %s', error)), RESUME_DELAY_MS)
     timer.unref?.()
     return () => clearTimeout(timer)
-  }, 'ds-bot: hand on input kept in earlier parts')
+  }, 'omni-ui: hand on input kept in earlier parts')
 
   // An archive from DSH's own Session list while the team runs: DSH asks for the
   // Session's activity (plain archive) or stops it (stopActivity) inside the archive,
@@ -1487,7 +1487,7 @@ export function install(rt) {
   const keepCurrent = ({ sessionId }) => {
     if (readOnly() || !(rt.isBotSession(sessionId) || rt.roomOwners.has(sessionId))) return
     void ctx.workspaceRegistry.unarchiveSession(sessionId)
-      .catch(error => rt.warn('ds-bot: current Session %s is archived in DSH and could not be taken out: %s', sessionId, error))
+      .catch(error => rt.warn('omni-ui: current Session %s is archived in DSH and could not be taken out: %s', sessionId, error))
   }
   ctx.on('workspace/session-stop', keepCurrent)
   ctx.on('workspace/session-activity', (request, next) => {
@@ -1498,7 +1498,7 @@ export function install(rt) {
   ctx.on('agent/status', ({ agent, status }) => {
     if (status === 'idle' && rt.isBotSession(agent.id)) {
       releaseRescued(agent)
-      void checkContext(agent).catch(error => rt.warn('ds-bot: context check for %s failed: %s', agent.id, error))
+      void checkContext(agent).catch(error => rt.warn('omni-ui: context check for %s failed: %s', agent.id, error))
     }
   })
 
@@ -1844,7 +1844,7 @@ export function install(rt) {
     // Marked as a switch until its tasks sit on the opened part and it is archived, so
     // the restart pass (handOnHeld) finishes a move that fails here.
     state.switching[current] = { botId }
-    await rt.applyModel(bot, { force: true }).catch(error => rt.warn('ds-bot: model for %s not applied: %s', bot.name, error))
+    await rt.applyModel(bot, { force: true }).catch(error => rt.warn('omni-ui: model for %s not applied: %s', bot.name, error))
     const room = undefined
     await rt.applyPermission(bot, partId, room).catch(() => {})
     await rt.save()
@@ -1855,7 +1855,7 @@ export function install(rt) {
       delete state.switching[current]
       await rt.save()
     } catch (error) {
-      rt.warn('ds-bot: earlier part %s not archived: %s', current, error)
+      rt.warn('omni-ui: earlier part %s not archived: %s', current, error)
     }
     return true
   }

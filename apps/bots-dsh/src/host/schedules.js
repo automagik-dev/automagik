@@ -92,7 +92,7 @@ export function install(rt) {
   const attach = (sub) => {
     const own = sub.schedule
     service = own
-    sub.effect(() => () => { if (service === own) service = null }, 'ds-bot: schedule service')
+    sub.effect(() => () => { if (service === own) service = null }, 'omni-ui: schedule service')
   }
   if (typeof ctx.inject === 'function') ctx.inject(['schedule'], attach)
   else if (ctx.get?.('schedule') !== undefined) attach({ schedule: ctx.get('schedule'), effect: (execute, label) => ctx.effect(execute, label) })
@@ -183,7 +183,7 @@ export function install(rt) {
         await service.delete({ sessionId: fromId, id: record.id })
       } catch (error) {
         // The copy is safe; archiving the earlier part will remove its old task.
-        rt.warn('ds-bot: earlier copy of task %s not removed: %s', record.title, error?.message ?? error)
+        rt.warn('omni-ui: earlier copy of task %s not removed: %s', record.title, error?.message ?? error)
       }
     }
   }

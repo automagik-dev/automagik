@@ -365,7 +365,7 @@ export function install(rt) {
       const sessionId = agent.session.id
       if (stopped || agents.get(sessionId)?.deref() !== agent) return
       await reconcileAgent(agent, botOfSession(sessionId))
-    }).catch(error => rt.warn('ds-bot: capability reconcile for %s failed: %s', agent.session?.id, error))
+    }).catch(error => rt.warn('omni-ui: capability reconcile for %s failed: %s', agent.session?.id, error))
     chains.set(agent, run)
     return run
   }
@@ -397,7 +397,7 @@ export function install(rt) {
     if (!scheduled) {
       scheduled = new Promise(resolve => queueMicrotask(() => {
         scheduled = null
-        resolve(reconcile().catch(error => rt.warn('ds-bot: capability reconcile failed: %s', error)))
+        resolve(reconcile().catch(error => rt.warn('omni-ui: capability reconcile failed: %s', error)))
       }))
     }
     return scheduled
@@ -407,7 +407,7 @@ export function install(rt) {
   const stalled = new WeakSet()
   const prepare = async (agent, sessionId) => {
     const run = loadInputs().then(() => reconcileOne(agent)).then(() => true, error => {
-      rt.warn('ds-bot: capability mount for %s failed: %s', sessionId, error)
+      rt.warn('omni-ui: capability mount for %s failed: %s', sessionId, error)
       return true
     })
     if (stalled.has(agent)) return
@@ -418,7 +418,7 @@ export function install(rt) {
     if (completed) return
     stalled.add(agent)
     void run.then(() => stalled.delete(agent))
-    rt.warn('ds-bot: capability mount for %s did not finish within %dms; continuing', sessionId, timeoutMs)
+    rt.warn('omni-ui: capability mount for %s did not finish within %dms; continuing', sessionId, timeoutMs)
   }
   async function ensureCapabilities(sessionId) {
     await rt.load()
@@ -429,7 +429,7 @@ export function install(rt) {
     try {
       agent = await rt.resolveAgent(sessionId)
     } catch (error) {
-      rt.warn('ds-bot: capability Agent for %s could not be resolved: %s', sessionId, rt.redactSecrets(String(error)))
+      rt.warn('omni-ui: capability Agent for %s could not be resolved: %s', sessionId, rt.redactSecrets(String(error)))
       return
     }
     trackAgent(agent)
@@ -445,7 +445,7 @@ export function install(rt) {
       clearSession(sessionId)
       for (const mount of mounts.get(agent)?.values() ?? []) void disposeMount(mount)
       mounts.delete(agent)
-    }, `ds-bot: capabilities ${sessionId}`)
+    }, `omni-ui: capabilities ${sessionId}`)
   }
   const trackBotAgents = async bot => {
     const sessionIds = new Set()
@@ -453,20 +453,20 @@ export function install(rt) {
       const sessionId = rt.chatOf(bot.id)
       if (typeof sessionId === 'string') sessionIds.add(sessionId)
     } catch (error) {
-      rt.warn('ds-bot: capability chat session for %s could not be read: %s', bot.id, error)
+      rt.warn('omni-ui: capability chat session for %s could not be read: %s', bot.id, error)
     }
     try {
       for (const sessionId of rt.groupSessionsOf(bot.id) ?? []) {
         if (typeof sessionId === 'string') sessionIds.add(sessionId)
       }
     } catch (error) {
-      rt.warn('ds-bot: capability group sessions for %s could not be read: %s', bot.id, error)
+      rt.warn('omni-ui: capability group sessions for %s could not be read: %s', bot.id, error)
     }
     for (const sessionId of sessionIds) {
       try {
         trackAgent(await rt.resolveAgent(sessionId))
       } catch (error) {
-        rt.warn('ds-bot: capability Agent for %s could not be resolved: %s', sessionId, error)
+        rt.warn('omni-ui: capability Agent for %s could not be resolved: %s', sessionId, error)
       }
     }
   }
@@ -510,7 +510,7 @@ export function install(rt) {
       const bot = botOfSession(agent.session.id)
       if ((bot?.capabilities ?? []).length > 0) await prepare(agent, agent.session.id)
     } catch (error) {
-      rt.warn('ds-bot: capability load failed: %s', error)
+      rt.warn('omni-ui: capability load failed: %s', error)
     }
   })
   ctx.effect(() => {
@@ -519,7 +519,7 @@ export function install(rt) {
         if ((bot.capabilities ?? []).length > 0) await trackBotAgents(bot)
       }
       await scheduleReconcile()
-    }).catch(error => rt.warn('ds-bot: capability startup failed: %s', error))
+    }).catch(error => rt.warn('omni-ui: capability startup failed: %s', error))
     return async () => {
       stopped = true
       const live = [...mounts.values()]
@@ -528,7 +528,7 @@ export function install(rt) {
       sessionStatuses.clear()
       await Promise.all(live.flatMap(agentMounts => [...agentMounts.values()].map(disposeMount)))
     }
-  }, 'ds-bot: capabilities')
+  }, 'omni-ui: capabilities')
   Object.assign(rt, {
     capabilitySave,
     capabilityDelete,

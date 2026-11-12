@@ -1,4 +1,4 @@
-// The ledger: what is said in a conversation between Bots, kept by DS Bot itself. Each
+// The ledger: what is said in a conversation between Bots, kept by Omni itself. Each
 // conversation has one book, a file that is only ever appended to, one record per line,
 // oldest first. A record is written to its book before anything reads or delivers it; a
 // change to it (delivered, answered) is a record of its own, so no line is rewritten.
@@ -72,7 +72,7 @@ export function install(rt) {
       text = readFileSync(pathOf(book), 'utf8')
       size = Buffer.byteLength(text)
     } catch (error) {
-      if (error?.code !== 'ENOENT') rt.warn('ds-bot: ledger %s could not be read: %s', book, error?.message ?? error)
+      if (error?.code !== 'ENOENT') rt.warn('omni-ui: ledger %s could not be read: %s', book, error?.message ?? error)
     }
     let records = text === undefined ? [] : parseBook(text)
     if (text === undefined) {
@@ -88,7 +88,7 @@ export function install(rt) {
             renameSync(temp, pathOf(book))
             size = sizeOf(book)
           } catch (error) {
-            rt.warn('ds-bot: ledger %s could not be started from earlier messages: %s', book, error?.message ?? error)
+            rt.warn('omni-ui: ledger %s could not be started from earlier messages: %s', book, error?.message ?? error)
           }
         }
       }
@@ -115,7 +115,7 @@ export function install(rt) {
     })
     lastWrite.set(book, run)
     writing.set(book, run.catch((error) => {
-      rt.warn('ds-bot: a record of %s was not written: %s', book, error?.message ?? error)
+      rt.warn('omni-ui: a record of %s was not written: %s', book, error?.message ?? error)
       // Memory holds only what the disk has, so a record that did not land is written again
       // when it is sent again. Part of its line may have landed: the next one starts anew.
       if (books.get(book) !== entry) return
@@ -171,5 +171,5 @@ export function install(rt) {
   }
   rt.ledger = ledger
   // What is still on its way to disk lands before the plugin goes.
-  rt.ctx?.effect?.(() => () => flush(), 'ds-bot: ledger')
+  rt.ctx?.effect?.(() => () => flush(), 'omni-ui: ledger')
 }
