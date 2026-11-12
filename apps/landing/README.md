@@ -42,7 +42,7 @@ everywhere; it is the `products` list in `scripts/build-pages.mjs`.
 ## The family drawer
 
 The menu button and the drawer it opens are the product family's shared piece: Arca's
-drawer package, issue 11, approved by the owner on 2026-11-12, as issue 11b gives it (the
+drawer package, issue 11, approved by the owner on 2026-11-12, as issue 11c gives it (the
 same piece, with the case where the host is Automagik answered). `assets/family/` holds the
 piece as it was given (`family.html`, `header-button.html`, `family.css`, `family.js`) and
 its art, all byte copies; `assets/family/SOURCE.md` lists each file's source and SHA-256,
@@ -195,8 +195,18 @@ put their digests in `LICENSES.md`; no page, style or test names what the files 
 
 ## Arca's logo
 
-Wherever Arca stands (the Products menu, the home card, the heading of `/arca/`) the pages carry
-Arca's own icon from Arca's logo kit: `assets/brand/arca/svg/arca-icon-ink.svg` and
+Arca's logo is the ark with its word, in one colour, the text colour (the owner's decision,
+handed over in the family package's issue 11c). The heading of the stand-in page `/arca/`
+is that logo, and so is Arca's row in the family drawer: `assets/family/arca-logo-b.svg`,
+a byte copy from the package, written into the page so it takes the text colour. It is never
+coloured.
+
+The arch is Arca's earlier logo, and no other site should use it. It still stands here in
+two places, as a small square icon beside the name: the Products menu and the home card.
+Those change to the ark alone when Arca hands that file over (asked); the logo with its
+word does not fit a small square beside the name. Add no other place for the arch. Until
+then those two carry
+Arca's icon from Arca's logo kit: `assets/brand/arca/svg/arca-icon-ink.svg` and
 `arca-icon-ivory.svg`, copied unchanged under the kit's own names. A newer kit replaces the
 files at the same paths; never edit a copy. Ink on Arca's sand ground in light, ivory on its
 night ground in dark. Arca's rules hold here: one colour, never redrawn or tinted, never

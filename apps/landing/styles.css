@@ -442,14 +442,15 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:var(--ring);box-s
 .install-line p{margin-top:14px;color:var(--muted);font-size:.95rem}
 .install-line h2{margin-bottom:14px;font:var(--weight-title) .74rem/1.4 var(--head);letter-spacing:.18em;text-transform:uppercase;color:var(--eyebrow,var(--ring))}
 .install-line+.actions{margin-top:26px}
-/* Arca's logo: its kit's icon on Arca's own two grounds, ink on sand in light and ivory on
-   night in dark, with no effect on it. */
+/* Arca's logo is the ark with its word, in the text colour: the heading of its stand-in
+   page. The small square icon (Arca's earlier logo, from its kit, on Arca's own two grounds)
+   stays in the Products menu and on the home card only until Arca hands over the ark alone. */
+h1.arca-logo svg{display:block;width:auto;max-width:100%;height:min(78px,15vw);margin:8px auto 0}
 .arca-mark{display:block;flex:none;aspect-ratio:1;border-radius:26%;background:#e6d3b3}
 .arca-mark img{width:100%;height:100%}
 .arca-mark.at-menu{width:44px}
 .menu-icon:has(.arca-mark){border:0;background:none}
 .arca-mark.at-card{width:56px;margin-bottom:18px}
-.arca-mark.at-hero{width:112px;margin:0 auto 28px}
 @media (prefers-color-scheme:dark){.arca-mark{background:#0b0d12}}
 .coming-mark{width:120px;margin:0 auto 28px;filter:drop-shadow(0 18px 22px rgba(60,48,73,.28))}
 
@@ -660,7 +661,7 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:var(--ring);box-s
     .menu-card{opacity:0;translate:0 -10px}
   }
   /* A page arrives: the heading's lines rise in turn, then its picture. Arca's logo is never moved. */
-  .hero-heading>:not(.arca-mark){animation:rise-in .7s cubic-bezier(.2,.7,.2,1) backwards}
+  .hero-heading>:not(.arca-logo){animation:rise-in .7s cubic-bezier(.2,.7,.2,1) backwards}
   .hero-heading>:nth-child(2){animation-delay:.07s}
   .hero-heading>:nth-child(3){animation-delay:.14s}
   .hero-heading>:nth-child(4){animation-delay:.21s}

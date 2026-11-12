@@ -60,7 +60,10 @@ used. No customer marks or new drawings are included.
   Copyright 2026 Namastex Labs and the Omni contributors (the Bots and welcome NOTICEs).
   These are brand accents, never substitutes for product captures.
 - `arca/svg/arca-icon-ink.svg`, `arca/svg/arca-icon-ivory.svg`: Arca's icon, from Arca's logo
-  kit (draft 3), copied unchanged under the kit's file names. Arca's mark belongs to Arca;
+  kit (draft 3), copied unchanged under the kit's file names. It is Arca's earlier logo (the
+  arch); Arca's logo is now the ark (`assets/family/arca-logo-b.svg`, above), and these two
+  files stay only for the Products menu and the home card until the ark alone is handed
+  over. Arca's mark belongs to Arca;
   it is shown here for Arca with Arca's agreement, by its kit's rules, and is not covered by
   this site's Apache-2.0 grant. A newer kit replaces these files at the same paths.
 - `open-intelligence/open-intelligence-tag.svg`: we unfold's horizontal Open Intelligence

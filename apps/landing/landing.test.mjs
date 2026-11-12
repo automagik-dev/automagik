@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { fileText, scan } from '../../herdr/scripts/privacy-check.mjs'
 import { htmlPage, supportPrivacy } from './waitlist/lib/ui.js'
 import { themeCss, titleFace, brandFonts, statusNames } from './scripts/sync-theme.mjs'
-import { pages, routes, rootFiles, weUnfold, arca, oiTag, platforms, offered, used, usedCredit, trademarks, brand as siteLogo, icons, manifest as webManifest, family, familyArt, familyButton, familyHost, familyLinks } from './scripts/build-pages.mjs'
+import { pages, routes, rootFiles, weUnfold, arca, arcaLogo, oiTag, platforms, offered, used, usedCredit, trademarks, brand as siteLogo, icons, manifest as webManifest, family, familyArt, familyButton, familyHost, familyLinks } from './scripts/build-pages.mjs'
 import { BOX, GEOMETRY, LOGO, TONES, logoInner, tagInner } from './scripts/build-lockup.mjs'
 
 // The width of each name's lockup in the kit's own units; all are 264 high.
@@ -491,9 +491,10 @@ test('motion: only for visitors who allow it, only transform and opacity, and ne
     for (const part of list.replace(/\([^)]*\)/g, '').split(',')) assert.match(part.trim(), /^(?:opacity|translate|scale|rotate|transform|box-shadow|border-color|background|color|none)\b/, `transition: ${part}`)
   }
   // Arca's rule: its logo is never animated here. No motion rule names it, and the heading's
-  // entrance skips it.
-  assert.ok(motion.includes('.hero-heading>:not(.arca-mark){animation:'))
-  assert.equal(motion.split('arca-mark').length, 2)
+  // entrance skips it (the stand-in's heading is the logo).
+  assert.ok(motion.includes('.hero-heading>:not(.arca-logo){animation:'))
+  assert.equal(motion.split('arca-logo').length, 2)
+  assert.doesNotMatch(motion, /arca-mark/)
 })
 
 test('all landing files pass privacy; no tracking or preview URL is committed', () => {
@@ -517,8 +518,9 @@ test('Arca has exactly one stand-in page here; home links to its same-tab canoni
   assert.deepEqual(readdirSync(resolve(root, 'arca')), ['index.html'])
   assert.deepEqual(routes.filter(route => route.startsWith('/arca')), ['/arca/'])
   const page = htmlAt('/arca/')
-  assert.match(page, /<h1>Arca<\/h1><p class="intro">([^<]+)<\/p>/)
-  assert.equal(page.match(/<h1>Arca<\/h1><p class="intro">([^<]+)<\/p>/)[1], arca.line)
+  // The heading is Arca's logo, which carries its name, then the owner's line.
+  assert.ok(page.includes(`<p class="eyebrow">An Automagik building block</p><h1 class="arca-logo">${arcaLogo}</h1><p class="intro">${arca.line}</p>`))
+  assert.match(arcaLogo, / role="img" aria-label="arca">/)
   // The owner's own line, exactly, wherever Arca is described: the page, the home block,
   // and the Products menu on every page.
   assert.equal(arca.line, 'Be your own cloud. Infrastructure for AI agents.')
@@ -538,9 +540,11 @@ test('Arca has exactly one stand-in page here; home links to its same-tab canoni
   assert.ok(card?.includes(`<h3><a href="/arca/">Arca</a></h3><p>${arca.line}</p><span class="detail-link" aria-hidden="true">Get Arca →</span>`))
   // The card says only Arca's name and the owner's line: no tag of guessed wording.
   assert.doesNotMatch(card, /tile-tag/)
-  // Arca's own logo stands wherever Arca does, never another product's mark: its kit's icon,
-  // ink in light and ivory in dark. The Products menu, the home card and the page's heading
-  // each carry one; nothing else does, and it never stands with the Open Intelligence tag.
+  // Arca's small square icon, from its kit, ink in light and ivory in dark: the Products menu
+  // and the home card each carry one, and nothing else does. It is Arca's earlier logo (the
+  // arch) and stays in those two places only until Arca hands over the ark alone; the
+  // stand-in page's heading has none (the next test). Never another product's mark beside
+  // Arca, and never the Open Intelligence tag.
   const slot = /<span class="arca-mark at-(\w+)"><picture><source media="\(prefers-color-scheme: dark\)" srcset="\/assets\/brand\/arca\/svg\/arca-icon-ivory\.svg"><img src="\/assets\/brand\/arca\/svg\/arca-icon-ink\.svg" width="64" height="64" alt="" aria-hidden="true" decoding="async"><\/picture><\/span>/g
   // The kit's files, never redrawn here: one colour each, Arca's ink and Arca's ivory.
   for (const [tone, colour] of [['ink', '#2a1d12'], ['ivory', '#ebe6da']]) {
@@ -551,7 +555,7 @@ test('Arca has exactly one stand-in page here; home links to its same-tab canoni
   assert.deepEqual(readdirSync(resolve(root, 'assets/brand/arca/svg')).sort(), ['arca-icon-ink.svg', 'arca-icon-ivory.svg'])
   for (const [route, html] of generated) {
     const places = [...html.matchAll(slot)].map(match => match[1])
-    assert.deepEqual(places, ['menu', ...(route === '/' ? ['card'] : route === '/arca/' ? ['hero'] : [])], route)
+    assert.deepEqual(places, ['menu', ...(route === '/' ? ['card'] : [])], route)
     assert.equal((html.match(/arca-mark/g) ?? []).length, places.length, route)
     for (const [item] of html.matchAll(/<a class="menu-item" href="\/arca\/"[\s\S]*?<\/a>/g)) assert.doesNotMatch(item, /<img[^>]*\/assets\/(?:art|brand\/(?:mark|lockup))/, route)
     assert.doesNotMatch(html.slice(html.indexOf('<div class="footer-end">'), html.indexOf('</footer>')), /arca-mark|<img/, route)
@@ -676,8 +680,8 @@ test('the family drawer: the piece and its art are byte copies of the package, a
   for (const [file, sum] of Object.entries(familyFiles)) assert.equal(digest(`assets/family/${file}`), sum, `${file} is not the package's file`)
   // The note names the issue, the package's own checksum list and every file's digest.
   const note = read('assets/family/SOURCE.md')
-  assert.match(note, /issue 11b/)
-  assert.ok(note.includes('`61c4b94c8ce6c9b21a37ac2c751a2977b57f18c7e7b4172dd86ed9c86f39c8cf`'))
+  assert.match(note, /issue 11c/)
+  assert.ok(note.includes('`d6bad6bedcad6009aac2b8b91275e1bc93d00496712af3de4d7cadfdf150fb52`'))
   const listed = Object.fromEntries([...note.matchAll(/^\| `([^`]+)` \| `(?:piece|art)\/[^`]+` \| `([0-9a-f]{64})` \|$/gm)].map(([, file, sum]) => [file, sum]))
   assert.deepEqual(listed, familyFiles)
   // The three words are the brand folder's files: Omni's and Genie's were there, and the
@@ -935,6 +939,34 @@ test('navigation: menus, footer sitemap, breadcrumb and previous/next on every p
     assert.ok(html.includes(`rel="prev" href="${step(-1)}"`) && html.includes(`rel="next" href="${step(1)}"`), route)
     assert.match(html, /<a class="pager-all" href="\/#blocks">All products<\/a>/, route)
   }
+})
+
+// ARCA'S LOGO IS THE ARK (the family package's issue 11c): the ark with "arca", in one
+// colour, the text colour. The arch is Arca's earlier logo and no other site should use it.
+// So the stand-in page shows no arch: its heading is the ark logo, the package's file.
+test('Arca\'s stand-in page shows the ark, the package\'s logo, and no arch', () => {
+  const page = htmlAt('/arca/'), main = page.match(/<main[\s\S]*<\/main>/)[0]
+  // No arch anywhere in the page's own content: no icon tile, no kit icon file.
+  assert.doesNotMatch(main, /arca-mark|arca-icon|assets\/brand\/arca\//, 'the stand-in page shows no arch')
+  // The only arch left on the page is the Products menu's small icon, in the header.
+  assert.equal(page.split('arca-icon-ink.svg').length, 2)
+  assert.ok(page.indexOf('arca-icon-ink.svg') < page.indexOf('<main'))
+  // The heading is the ark logo: the package's file, byte for byte, written into the page
+  // once in the content (and once more in the drawer's row), in the text colour.
+  const logo = read('assets/family/arca-logo-b.svg')
+  assert.equal(arcaLogo, logo.trim())
+  assert.equal(main.split(arcaLogo).length, 2, 'the heading holds the package\'s ark logo')
+  assert.equal(main.split('<h1').length, 2)
+  assert.ok(main.includes(`<h1 class="arca-logo">${arcaLogo}</h1>`))
+  assert.match(logo, / fill="currentColor" /); assert.doesNotMatch(logo, /#[0-9a-f]{3,8}\b|rgb|gradient|style=/i, 'one colour, the text colour, never coloured')
+  assert.equal(page.split(arcaLogo).length, 3)
+  // Drawn as a heading: centred, at one size, in the heading's own colour, and never moved.
+  const css = read('styles.css')
+  assert.ok(css.includes('\nh1.arca-logo svg{display:block;width:auto;max-width:100%;height:min(78px,15vw);margin:8px auto 0}\n'))
+  assert.doesNotMatch(css, /arca-mark\.at-hero/)
+  assert.doesNotMatch(css.replace('.hero-heading>:not(.arca-logo){animation:', ''), /arca-logo[^{]*\{[^}]*(?:fill|color|filter|animation|transition|transform)/)
+  // No other page gains an arch: the menu's icon on every page, the card on the home page.
+  for (const [route, html] of generated) assert.equal(html.split('arca-icon-ink.svg').length - 1, route === '/' ? 2 : 1, route)
 })
 
 test('root discovery files allow every crawler including training and preserve Arca lines', () => {

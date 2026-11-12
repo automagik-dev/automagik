@@ -34,10 +34,13 @@ export const arca = {
   install: 'curl -fsSL https://get.automagik.si/arca | sh',
   needs: 'Today it needs a Linux machine (x86_64) with Incus, and a person comfortable with a terminal.',
 }
-// ARCA'S LOGO: Arca's own mark stands wherever Arca does, from Arca's kit, copied unchanged
-// into assets/brand/arca/svg/ under the kit's own file names (a newer kit replaces the files
-// at the same paths). Arca's rules: one colour (ink on its sand ground in light, ivory on
-// its night ground in dark), never redrawn, tinted, animated or locked up with another mark.
+// ARCA'S LOGO is the ark with its word, in one colour, the text colour (the owner's decision;
+// the family package's issue 11c). The stand-in page's heading is that logo: the package's
+// arca-logo-b.svg, written into the page (see arcaLogo, by the family drawer, which shows
+// the same file in Arca's row). The arch is Arca's earlier logo and no other site should use
+// it. It still stands as the small square icon in the Products menu and on the home card,
+// from Arca's kit under the kit's own file names in assets/brand/arca/svg/, only until Arca
+// hands over the ark alone; never add another place for it.
 const arcaMark = place => `<span class="arca-mark at-${place}"><picture><source media="(prefers-color-scheme: dark)" srcset="/assets/brand/arca/svg/arca-icon-ivory.svg"><img src="/assets/brand/arca/svg/arca-icon-ink.svg" width="64" height="64" alt="" aria-hidden="true" decoding="async"></picture></span>`
 // THE OFFICIAL LOCKUP: shown once, on the home page's brand block, never in the header,
 // the hero, the favicon or a share picture.
@@ -267,6 +270,9 @@ export const oiTag = readFileSync(new URL('../assets/brand/open-intelligence/ope
 // into that block, right under the link and above the list of pages; and Products lists
 // Arca first, by its own logo, then omni, genie and mykes.
 const familyFile = name => readFileSync(new URL(`../assets/family/${name}`, import.meta.url), 'utf8')
+// Arca's logo, the ark with its word: the package's file as it is, to write into a page so it
+// takes the text colour. It carries its own name ("arca") for assistive technology.
+export const arcaLogo = familyFile('arca-logo-b.svg').trim()
 const once = (text, from, to, times = 1) => {
   assert.equal(text.split(from).length - 1, times, `the family piece holds ${from} ${times} time(s)`)
   return text.replaceAll(from, to)
@@ -300,7 +306,7 @@ export function family(route) {
   arcaRow = once(arcaRow, 'class="fam-item is-here"', 'class="fam-item is-logo"')
   arcaRow = once(arcaRow, ' aria-current="page"', '')
   arcaRow = once(arcaRow, '<span class="fam-here">You are here</span>', '')
-  arcaRow = once(arcaRow, '__FAM_ARCA__', familyFile('arca-logo-b.svg').trim())
+  arcaRow = once(arcaRow, '__FAM_ARCA__', arcaLogo)
   html = once(html, '__FAM_ARCA__', once(lockup, 'alt=""', `alt="${familyHost.name}"`, 2))
   html = once(html, 'href="https://automagik.si/arca/" data-family-product="Arca"', `href="/" data-family-product="${familyHost.name}"`)
   html = once(html, familyHost.arcaLine, familyHost.line, 2)
@@ -436,7 +442,7 @@ ${usedRow()}
   const coming = name => `<section class="hero coming"><div class="wrap"><div class="coming-card">${constellation()}<div class="hero-heading center">${triskle('coming-mark')}${heading('An Automagik building block', name, 'Coming soon.')}</div></div></div></section>${more('/mykes/')}`
 
   // Arca: one stand-in page until Arca's own site is served at this address.
-  const arcaPage = `<section class="hero coming"><div class="wrap"><div class="coming-card">${constellation()}<div class="hero-heading center">${arcaMark('hero')}${heading('An Automagik building block', 'Arca', arca.line)}<div class="install-line"><h2 id="get">Get Arca</h2><pre><code>${arca.install}</code></pre><p>${arca.needs}</p></div><div class="actions center"><a class="button secondary" href="/#blocks">All products ${arrow}</a></div></div></div></div></section>${more('/arca/')}`
+  const arcaPage = `<section class="hero coming"><div class="wrap"><div class="coming-card">${constellation()}<div class="hero-heading center"><p class="eyebrow">An Automagik building block</p><h1 class="arca-logo">${arcaLogo}</h1><p class="intro">${arca.line}</p><div class="install-line"><h2 id="get">Get Arca</h2><pre><code>${arca.install}</code></pre><p>${arca.needs}</p></div><div class="actions center"><a class="button secondary" href="/#blocks">All products ${arrow}</a></div></div></div></div></section>${more('/arca/')}`
 
   return new Map([
     ['/', frame('/', 'Open building blocks of superintelligence', home)],

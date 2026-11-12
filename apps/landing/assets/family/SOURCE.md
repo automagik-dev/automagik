@@ -1,17 +1,19 @@
 # The family drawer: where these files come from
 
 Every file in this folder is a byte copy from one package: **the menu drawer and its button,
-issue 11b**, written by Arca's designer on 2026-11-12. Issue 11 ("the right names in the
+issue 11c**, written by Arca's designer on 2026-11-12. Issue 11 ("the right names in the
 drawer") was approved by the owner that day ("thats better now, approved. coming soon under
-mykes"). Issue 11b is the same piece with one answer added, asked from this site: what the
-drawer holds when the host is Automagik (below).
+mykes"). Issues 11b and 11c are the same piece with answers added, asked from this site: what
+the drawer holds when the host is Automagik, who the host is on a page, and which Arca logo
+another site uses (all below).
 
 - The package's own `SHA256SUMS` has the sha256
-  `61c4b94c8ce6c9b21a37ac2c751a2977b57f18c7e7b4172dd86ed9c86f39c8cf`.
-- Issue 11's list had `6dcfbe6f8e6d0737019320ddb883cb85986abe738a68c726b2104f816844bad8`. Between
-  the two issues only the package's `README.md`, its `SHA256SUMS` and one new picture
+  `d6bad6bedcad6009aac2b8b91275e1bc93d00496712af3de4d7cadfdf150fb52`.
+- Issue 11's list had `6dcfbe6f8e6d0737019320ddb883cb85986abe738a68c726b2104f816844bad8` and
+  issue 11b's `61c4b94c8ce6c9b21a37ac2c751a2977b57f18c7e7b4172dd86ed9c86f39c8cf`. Across the
+  three issues only the package's `README.md`, its `SHA256SUMS` and one new picture
   (`shots/case-host-is-automagik.jpg`) changed: every file taken here has the same digest in
-  both.
+  all three.
 - Nothing here is edited. A change is asked of the piece's author and arrives as a new issue:
   replace the files, put the new digests in this table and in `landing.test.mjs`.
 - `scripts/build-pages.mjs` reads `family.html` and `header-button.html` and writes the
@@ -57,6 +59,16 @@ Automagik lockup, one under the other. The package's rule, which the builder fol
   .fam-here-block .fam-apps { padding: var(--space-8) var(--space-13) 0; }
   .fam-item.is-logo .fam-words > span:last-child { padding-left: calc(var(--lock) * 321.34 / 264); }
   ```
+
+**Who the host is (issue 11c): whoever's logo stands in that page's header.** Every page of
+this site wears Automagik's header, the product pages and the stand-in `/arca/` included, so
+Automagik is the host on all of them and each product stays a row in Products. A product
+moves to the top block only on a page in its own world, with its own logo in the header.
+
+**Which Arca logo (issue 11c): the ark.** Arca's logo is the ark with "arca", in one colour
+(it takes the text colour and is never coloured): `arca-logo-b.svg`. The arch is Arca's
+earlier logo, and no other site should use it. So the same file is also the heading of this
+site's stand-in page for Arca (`arcaLogo` in `scripts/build-pages.mjs`).
 
 The package's picture of this case is a mock on Arca's draft page; its line and section names
 are stand-ins. The line here is this site's own ("Open building blocks of

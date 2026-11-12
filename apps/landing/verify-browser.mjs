@@ -890,7 +890,7 @@ try {
         if (route === '/') assert.ok(seen.timed > 0, `The home's stage moves on its own: ${label}`)
         assert.equal(await page.evaluate(() => window.__shift), 0, `No layout shift with motion: ${label}`)
         // Arca's logo is never animated.
-        assert.deepEqual(await page.evaluate(() => document.getAnimations().map(animation => animation.effect.target).filter(element => element.closest?.('.arca-mark')).length), 0, `Arca's logo stays still: ${label}`)
+        assert.deepEqual(await page.evaluate(() => document.getAnimations().map(animation => animation.effect.target).filter(element => element.closest?.('.arca-mark, .arca-logo')).length), 0, `Arca's logo stays still: ${label}`)
       }
       // Page to page: the browser's cross-document transition runs to its end (a name used
       // twice on a page would skip it), and the character named on both pages is one of a kind.
