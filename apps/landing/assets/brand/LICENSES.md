@@ -13,10 +13,15 @@ used. No customer marks or new drawings are included.
   is always shown in colour; only the letters change, ink on the light page and cream on
   the dark one. The lockups with `-header` are the kit's drawings for small sizes: the
   header and the footer show them. The large lockups are set inside the official lockup
-  below. The triskle alone is the kit's large drawing and its 32 px drawing, each shown
-  near its own size. The icons sit at the site's root (paths below are from
-  `apps/landing`); `site.webmanifest` names the two large ones. Never recolour, stretch or
-  redraw these files; a newer kit replaces them at the same paths, with new digests here.
+  below. Genie's and Omni's lockups are the same kit's: the same triskle, each name in
+  the same lettering, the sparkle on the i in the product's colour (Automagik violet,
+  Genie pink, Omni cyan). Their large drawings are the headings of `/genie/` and `/omni/`;
+  their drawings for small sizes title the two product cards on the home page (Genie's
+  card is dark in both themes, so only its cream one is kept). The triskle alone is the
+  kit's large drawing and its 32 px drawing, each shown near its own size. The icons sit
+  at the site's root (paths below are from `apps/landing`); `site.webmanifest` names the
+  two large ones. Never recolour, stretch or redraw these files; a newer kit replaces them
+  at the same paths, with new digests here.
 
 | File | In the kit | SHA-256 |
 | --- | --- | --- |
@@ -24,6 +29,13 @@ used. No customer marks or new drawings are included.
 | `assets/brand/automagik-lockup-three-colours-cream-header.svg` | `lockups/svg/automagik-lockup-three-colours-cream-header.svg` | `e8dd0d21e42d7b2722386738972d46432f083895fb2bf00a990ee7588d3561f7` |
 | `assets/brand/automagik-lockup-three-colours-ink.svg` | `lockups/svg/automagik-lockup-three-colours-ink.svg` | `86cecf0da06bb2d3dcea22c4fcfbe4cc8a8bef0c9422c6af339be72edb326a14` |
 | `assets/brand/automagik-lockup-three-colours-cream.svg` | `lockups/svg/automagik-lockup-three-colours-cream.svg` | `33288af6de838023da4e9170103b80f247d31dfa8d08241ad425222e23a1db1e` |
+| `assets/brand/genie-lockup-three-colours-ink.svg` | `lockups/svg/genie-lockup-three-colours-ink.svg` | `1ae076c6a649c781d51b3b6cd6de6338441984a61e08ed91c6a05756571d53e4` |
+| `assets/brand/genie-lockup-three-colours-cream.svg` | `lockups/svg/genie-lockup-three-colours-cream.svg` | `a7204ae8d1709fb9f3166c7fdd2cfbc64958cec25678dce74ac38c370955ee69` |
+| `assets/brand/genie-lockup-three-colours-cream-header.svg` | `lockups/svg/genie-lockup-three-colours-cream-header.svg` | `726737ed38d35d5ea2ef9ab87f23527c738fc7b89b4f09ea7db660be9e69189c` |
+| `assets/brand/omni-lockup-three-colours-ink.svg` | `lockups/svg/omni-lockup-three-colours-ink.svg` | `29b13de7467f6cd38e918be22148e6fe48ac5b93b0c8810ef92e5ed866592601` |
+| `assets/brand/omni-lockup-three-colours-cream.svg` | `lockups/svg/omni-lockup-three-colours-cream.svg` | `4bcc10bb523c8014f721cc9caf9676cee45aba4a267d7d96aaa21b2bb760c722` |
+| `assets/brand/omni-lockup-three-colours-ink-header.svg` | `lockups/svg/omni-lockup-three-colours-ink-header.svg` | `04a4b973a92c2f57dd4e0911ae68931e8fc6403b79b28c7d8aca3acccc265c69` |
+| `assets/brand/omni-lockup-three-colours-cream-header.svg` | `lockups/svg/omni-lockup-three-colours-cream-header.svg` | `74cadeae1ba0a439dfb16a9dbeb42f3e36475e120bd5c563a7f25117f060e2b8` |
 | `assets/brand/triskle-three-colours.svg` | `svg/triskle-three-colours.svg` | `bc9fd54124f5d3cfdd0461c5ab6ac6860254c14bfdedf46a11cc5ca433e01a72` |
 | `assets/brand/triskle-three-colours-32.svg` | `svg/triskle-three-colours-32.svg` | `3ce36573385e5c18116e894b77b2aea39594a2763cfd911c553265d7b09abbf9` |
 | `favicon.ico` | `favicon/favicon.ico` | `5a99c83b69d9e3a34483fbc4df15770da82d722e8f2b0ced16cb2cd2a7502a2b` |
