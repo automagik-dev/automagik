@@ -39,7 +39,8 @@ test('approved umbrella map, one h1 per page, generated sources current, no clie
     assert.equal(html, generated.get(route), `Regenerate ${route}`)
     assert.equal((html.match(/<h1\b/g) ?? []).length, 1, route)
     assert.match(html, /<html lang="en">/)
-    assert.match(html, /name="robots" content="noindex, nofollow"/)
+    // Production is indexable: no page asks a search engine or an AI crawler to stay away.
+    assert.doesNotMatch(html, /<meta[^>]*name="robots"|noindex|nofollow/i, route)
     assert.match(html, /href="\/theme.css"/)
     // The docs site is the one automagik.dev address the pages name, and only as a link.
     assert.doesNotMatch(html.replaceAll(`href="${docs}"`, ''), /<(?:script|iframe)\b|\bon\w+\s*=|javascript:|automagik\.dev|automagik-dev|\.pages\.dev/i)
@@ -214,7 +215,8 @@ test('all landing files pass privacy; no tracking or preview URL is committed', 
   }
   walk('')
   for (const html of generated.values()) assert.doesNotMatch(html, /(?:gtag|googletagmanager|google-analytics|plausible\.io)/i)
-  assert.match(read('_headers'), /X-Robots-Tag: noindex, nofollow/)
+  // The site's own headers never keep a crawler out; previews get Cloudflare Pages' own header.
+  assert.equal(read('_headers'), '/*\n  X-Content-Type-Options: nosniff\n  Referrer-Policy: no-referrer\n')
 })
 
 
@@ -361,7 +363,8 @@ test('root discovery files allow every crawler including training and preserve A
   assert.ok(!existsSync(resolve(root, 'arca/llms.txt')) && !existsSync(resolve(root, 'arca/index.md')))
   assert.ok(sitemap.includes('<url><loc>https://automagik.si/arca/</loc></url> <url><loc>https://automagik.si/arca/llms.txt</loc></url> <url><loc>https://automagik.si/arca/index.md</loc></url>'))
   for (const line of ['- [Automagik Arca, the page](https://automagik.si/arca/)', '- [Automagik Arca, for an assistant](https://automagik.si/arca/llms.txt)']) assert.ok(read('llms.txt').split('\n').includes(line))
-  assert.match(read('_headers'), /X-Robots-Tag: noindex, nofollow/)
+  assert.doesNotMatch(read('_headers'), /X-Robots-Tag|noindex|nofollow/i)
+  assert.doesNotMatch(read('llms.txt'), /noindex/i)
 })
 
 test('WhatsApp remains visible with the English and Portuguese delay notice', () => {

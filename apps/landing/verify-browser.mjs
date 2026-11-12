@@ -30,7 +30,7 @@ const server = createServer(async (req, res) => {
     const path = resolve(root, `.${pathname.endsWith('/') ? pathname + 'index.html' : pathname}`)
     if (!path.startsWith(root + sep)) return res.writeHead(403).end()
     const body = await readFile(path)
-    res.writeHead(200, { 'Content-Type': types[extname(path)] ?? 'application/octet-stream', 'X-Robots-Tag': 'noindex, nofollow' }).end(body)
+    res.writeHead(200, { 'Content-Type': types[extname(path)] ?? 'application/octet-stream' }).end(body)
   } catch { res.writeHead(404).end() }
 })
 let browser
@@ -54,9 +54,9 @@ try {
     const response = await fetch(`${origin}/${path}`)
     assert.equal(response.status, 200, path)
     assert.equal(await response.text(), text, path)
-    assert.match(response.headers.get('x-robots-tag'), /noindex/)
+    assert.equal(response.headers.get('x-robots-tag'), null, `${path} is indexable`)
   }
-  console.log('PASS root discovery files: 200, generated content, preview noindex')
+  console.log('PASS root discovery files: 200, generated content, indexable')
   browser = await chromium.launch({ executablePath: process.env.LANDING_CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true })
   for (const route of routes) for (const colorScheme of ['light', 'dark']) for (const width of [1440, 1024, 390, 320]) {
     const context = await browser.newContext({ viewport: { width, height: 900 }, deviceScaleFactor: 1, colorScheme, reducedMotion: 'reduce' })
@@ -146,7 +146,7 @@ try {
       // still must decode, and every image request must return 200.
       assert.ok(report.images.every(image => image.ok), `Every image decodes: ${label}`)
       assert.ok(report.fonts, `Both bundled fonts loaded: ${label}`)
-      assert.equal(report.robots, 'noindex, nofollow'); assert.equal(report.h1, 1)
+      assert.equal(report.robots, undefined, `No robots meta, the page is indexable: ${label}`); assert.equal(report.h1, 1)
       // Reduced motion: nothing runs, nothing is held back from view, and nothing shifts.
       assert.ok(report.reducedMotion)
       assert.equal(await page.evaluate(() => document.getAnimations().length), 0, `Reduced motion runs no animation: ${label}`)

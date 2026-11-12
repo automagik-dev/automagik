@@ -15,5 +15,4 @@
 
 ## Crawling
 
-All crawlers are allowed, including AI training crawlers. Preview responses remain noindex;
-production becomes indexable only after the owner's approval.
+All crawlers are allowed, including AI training crawlers, and every page may be indexed.

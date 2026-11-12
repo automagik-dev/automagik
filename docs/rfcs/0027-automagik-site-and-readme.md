@@ -354,9 +354,11 @@ Arca's supplied assistant-index lines are included verbatim:
 
 The owner allows every crawler, AI training crawlers included, across the entire site. The
 root robots policy is `User-agent: *`, `Allow: /`, with explicit `Allow: /arca`. This settles
-the earlier pending rule for the rest of the site. Preview retains noindex headers and meta;
-production becomes indexable only after the owner's preview OK. These discovery files do
-not attach a domain, alter account settings or remove the preview gate.
+the earlier pending rule for the rest of the site. Since the owner's OK on 2026-11-12 the
+production site is indexable: the pages carry no robots meta and the site sends no
+`X-Robots-Tag`. Previews stay out of search through Cloudflare Pages' own preview header, and
+the waitlist API's responses keep their own noindex. These discovery files do not attach a
+domain or alter account settings.
 
 ### WhatsApp visibility and delayed processing
 

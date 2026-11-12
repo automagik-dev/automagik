@@ -141,10 +141,12 @@ Pocket's rolling release manifest. Its verified URL/digest/date are in `assets/r
 refresh from that manifest before publishing. Windows and iPhone are soon text without links.
 
 Owner's Cloudflare Pages settings: root `apps/landing`, no build, output `.`. The root must
-include `functions/` for the confirmation routes to compile. Preview is unlisted and noindex
-through meta and `X-Robots-Tag`; account-level access control is the owner's. No preview URL,
-account ID, zone ID, database ID or key belongs in the repository. D4 removes indexing
-restrictions and attaches the production domain after the owner's OK. No agent changes DNS.
+include `functions/` for the confirmation routes to compile. The production site is indexable
+(the owner's OK, 2026-11-12): the pages carry no robots meta and `_headers` sends no
+`X-Robots-Tag`. Previews stay out of search through Cloudflare Pages' own preview header, not
+through anything here; the waitlist API's responses keep their own noindex. Account-level
+access control is the owner's. No preview URL, account ID, zone ID, database ID or key belongs
+in the repository. No agent changes DNS.
 
 See [waitlist setup](waitlist/README.md) for the exact binding, secrets, plain variables,
 schema, EU jurisdiction, Resend sender and the v2 event-envelope contract called by our
@@ -169,8 +171,7 @@ account or API key; provider terms apply. Code mode needs Herdr and the Automagi
 
 `robots.txt`, `sitemap.xml` and `llms.txt` live at this Pages root and are generated with the
 HTML. The owner allows all crawlers, including AI training crawlers: `User-agent: *`,
-`Allow: /`, and explicit `Allow: /arca`. This crawling rule does not remove preview noindex
-headers/meta; production becomes indexable only after the owner's preview OK.
+`Allow: /`, and explicit `Allow: /arca`. Search engines and AI crawlers may index every page.
 
 The root sitemap and assistant index include Arca's supplied lines verbatim. The home card,
 the Products menu and the footer link to `/arca/` in the same tab. Until Arca's own site is

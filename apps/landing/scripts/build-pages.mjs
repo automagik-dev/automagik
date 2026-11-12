@@ -155,7 +155,7 @@ function crumbs(route) {
 }
 function frame(route, title, body) {
   return `<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>${title} · Automagik</title><meta name="description" content="Automagik: open building blocks of superintelligence. Desktop, Mobile, Omni, Genie, Cloud, Arca and Mykes."><meta name="robots" content="noindex, nofollow"><meta name="theme-color" content="#f6eee2" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#1e1923" media="(prefers-color-scheme: dark)"><link rel="canonical" href="https://automagik.si${route}"><link rel="icon" type="image/png" href="/assets/brand/app-icon.png"><link rel="preload" href="/assets/brand/manrope-latin.woff2" as="font" type="font/woff2" crossorigin><link rel="preload" href="/assets/brand/dm-sans-latin.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="/theme.css"><link rel="stylesheet" href="/styles.css"></head>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>${title} · Automagik</title><meta name="description" content="Automagik: open building blocks of superintelligence. Desktop, Mobile, Omni, Genie, Cloud, Arca and Mykes."><meta name="theme-color" content="#f6eee2" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#1e1923" media="(prefers-color-scheme: dark)"><link rel="canonical" href="https://automagik.si${route}"><link rel="icon" type="image/png" href="/assets/brand/app-icon.png"><link rel="preload" href="/assets/brand/manrope-latin.woff2" as="font" type="font/woff2" crossorigin><link rel="preload" href="/assets/brand/dm-sans-latin.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="/theme.css"><link rel="stylesheet" href="/styles.css"></head>
 <body><a class="skip" href="#main">Skip to content</a>${header(route)}
 <main id="main">${route === '/' ? '' : crumbs(route)}${body}</main>
 ${footer(route)}</body></html>\n`
@@ -256,8 +256,7 @@ ${arcaSitemap}
 
 ## Crawling
 
-All crawlers are allowed, including AI training crawlers. Preview responses remain noindex;
-production becomes indexable only after the owner's approval.
+All crawlers are allowed, including AI training crawlers, and every page may be indexed.
 `],
   ])
 }
