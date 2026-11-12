@@ -354,7 +354,13 @@ export function install(rt) {
       return () => roomLineListeners.delete(listener)
     },
     // The group's own log, for the memory review and read_group_chat: every line, whole.
-    groupLinesAfter: async (roomId, since) => rt.ledger.after(bookOf(roomId), since).filter(memberLine),
+    // Reconcile the room's trimmed state log before taking the append-only ledger
+    // snapshot. Memory review can therefore recover evidence older than room.log.
+    groupLinesAfter: async (roomId, since) => {
+      const room = rt.roomOf(roomId)
+      if (room !== undefined) ensureRoomLog(room)
+      return [...rt.ledger.after(bookOf(roomId), since).filter(memberLine)]
+    },
     groupLine: async (roomId, seq) => {
       const record = rt.ledger.record(bookOf(roomId), seq)
       return memberLine(record) ? record : undefined
