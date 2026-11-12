@@ -12,6 +12,10 @@ new drawings are included.
   from DS Bot, Copyright 2026 Fei2411 and the DS Bot contributors, and Automagik,
   Copyright 2026 Namastex Labs and the Omni contributors (the Bots and welcome NOTICEs).
   These are brand accents, never substitutes for product captures.
+- `arca/svg/arca-icon-ink.svg`, `arca/svg/arca-icon-ivory.svg`: Arca's icon, from Arca's logo
+  kit (draft 3), copied unchanged under the kit's file names. Arca's mark belongs to Arca;
+  it is shown here for Arca with Arca's agreement, by its kit's rules, and is not covered by
+  this site's Apache-2.0 grant. A newer kit replaces these files at the same paths.
 - `manrope-latin.woff2`: Manrope, Copyright 2018 The Manrope Project Authors.
   SIL Open Font License 1.1, reproduced in `OFL-Manrope.txt`.
 - `dm-sans-latin.woff2`: DM Sans, Copyright 2014 The DM Sans Project Authors.

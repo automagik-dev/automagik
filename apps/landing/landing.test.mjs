@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { fileText, scan } from '../../herdr/scripts/privacy-check.mjs'
 import { supportPrivacy } from './waitlist/lib/ui.js'
 import { themeCss } from './scripts/sync-theme.mjs'
-import { pages, routes, rootFiles, weUnfold, arca, arcaKit } from './scripts/build-pages.mjs'
+import { pages, routes, rootFiles, weUnfold, arca } from './scripts/build-pages.mjs'
 
 const root = resolve(fileURLToPath(new URL('.', import.meta.url)))
 const read = path => readFileSync(resolve(root, path), 'utf8')
@@ -94,8 +94,8 @@ test('every href/action points locally or to an exact reviewed destination', () 
 })
 
 test('images are reviewed brand assets, unchanged captures or recorded crops of them', () => {
-  // Arca's icon files count only once Arca's kit is published into assets/brand/arca.
-  const brand = new Set(['/assets/brand/lockup.webp', '/assets/brand/mark.webp', '/assets/brand/omni-pleased.png', ...(arcaKit ? ['ink', 'ivory'].map(tone => `/assets/brand/arca/arca-icon-${tone}.svg`) : [])])
+  // Arca's two icon files are its kit's, under the kit's own names.
+  const brand = new Set(['/assets/brand/lockup.webp', '/assets/brand/mark.webp', '/assets/brand/omni-pleased.png', '/assets/brand/arca/svg/arca-icon-ink.svg', '/assets/brand/arca/svg/arca-icon-ivory.svg'])
   for (const html of generated.values()) {
     for (const [, value] of html.matchAll(/(?:src|srcset|poster)="([^"]+)"/g)) {
       for (const source of value.split(',').map(candidate => candidate.trim().split(/\s+/)[0])) {
@@ -245,10 +245,17 @@ test('Arca has exactly one stand-in page here; home links to its same-tab canoni
   assert.ok(card?.includes(`<h3><a href="/arca/">Arca</a></h3><p>${arca.line}</p><span class="detail-link" aria-hidden="true">Get Arca →</span>`))
   // The card says only Arca's name and the owner's line: no tag of guessed wording.
   assert.doesNotMatch(card, /tile-tag/)
-  // Arca's own logo stands wherever Arca does, never another product's mark: its kit's icon
-  // once published here, an empty placeholder until then. The two menus, the home card and
-  // the page's heading each carry one; nothing else does, and the stamp never holds it.
-  const slot = arcaKit ? /<span class="arca-mark at-(\w+)" data-arca-logo="kit"><picture><source media="\(prefers-color-scheme: dark\)" srcset="\/assets\/brand\/arca\/arca-icon-ivory\.svg"><img src="\/assets\/brand\/arca\/arca-icon-ink\.svg" width="64" height="64" alt="" aria-hidden="true" decoding="async"><\/picture><\/span>/g : /<span class="arca-mark at-(\w+)" data-arca-logo="placeholder" aria-hidden="true"><\/span>/g
+  // Arca's own logo stands wherever Arca does, never another product's mark: its kit's icon,
+  // ink in light and ivory in dark. The two menus, the home card and the page's heading
+  // each carry one; nothing else does, and the stamp never holds it.
+  const slot = /<span class="arca-mark at-(\w+)"><picture><source media="\(prefers-color-scheme: dark\)" srcset="\/assets\/brand\/arca\/svg\/arca-icon-ivory\.svg"><img src="\/assets\/brand\/arca\/svg\/arca-icon-ink\.svg" width="64" height="64" alt="" aria-hidden="true" decoding="async"><\/picture><\/span>/g
+  // The kit's files, never redrawn here: one colour each, Arca's ink and Arca's ivory.
+  for (const [tone, colour] of [['ink', '#2a1d12'], ['ivory', '#ebe6da']]) {
+    const icon = readFileSync(resolve(root, `assets/brand/arca/svg/arca-icon-${tone}.svg`), 'utf8')
+    assert.deepEqual([...new Set([...icon.matchAll(/#[0-9a-f]{3,8}\b/gi)].map(match => match[0].toLowerCase()))], [colour], tone)
+    assert.doesNotMatch(icon, /gradient|filter|<animate|<script|<image|href=/i, tone)
+  }
+  assert.deepEqual(readdirSync(resolve(root, 'assets/brand/arca/svg')).sort(), ['arca-icon-ink.svg', 'arca-icon-ivory.svg'])
   for (const [route, html] of generated) {
     const places = [...html.matchAll(slot)].map(match => match[1])
     assert.deepEqual(places, ['menu', 'menu', ...(route === '/' ? ['card'] : route === '/arca/' ? ['hero'] : [])], route)

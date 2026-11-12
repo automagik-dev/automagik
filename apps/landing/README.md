@@ -59,14 +59,14 @@ repository.
 
 ## Arca's logo
 
-Arca's logo kit is not published yet. Wherever Arca's logo belongs (the two menus, the home
-card, the heading of `/arca/`) the committed pages show an empty dashed placeholder. When
-Arca's kit is published, its icon files go in `assets/brand/arca/` (`arca-icon-ink.svg`,
-`arca-icon-ivory.svg`), the pages are regenerated and they carry the icon: ink on sand in
-light, ivory on night in dark. Arca's rules hold here: one colour, never redrawn or tinted,
-never animated by this site, never inside the Open Intelligence stamp, no tagline locked to
-it. Name any retina file `name-2x`, since the privacy check reads the usual at-sign form as
-an address.
+Wherever Arca stands (the two menus, the home card, the heading of `/arca/`) the pages carry
+Arca's own icon from Arca's logo kit: `assets/brand/arca/svg/arca-icon-ink.svg` and
+`arca-icon-ivory.svg`, copied unchanged under the kit's own names. A newer kit replaces the
+files at the same paths; never edit a copy. Ink on Arca's sand ground in light, ivory on its
+night ground in dark. Arca's rules hold here: one colour, never redrawn or tinted, never
+animated by this site, never inside the Open Intelligence stamp, no tagline locked to it,
+and the small cut for any size under 24 px (no place here is that small). Name any retina
+file `name-2x`, since the privacy check reads the usual at-sign form as an address.
 
 ## Motion
 

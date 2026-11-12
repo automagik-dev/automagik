@@ -1,6 +1,5 @@
 // Static multi-page source. No build step is needed on Pages; generated HTML is committed.
 import assert from 'node:assert/strict'
-import { existsSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { waitlistForm, privacyNote } from '../waitlist/lib/ui.js'
@@ -33,15 +32,11 @@ export const arca = {
   install: 'curl -fsSL https://get.automagik.si/arca | sh',
   needs: 'Today it needs a Linux machine (x86_64) with Incus, and a person comfortable with a terminal.',
 }
-// ARCA'S LOGO, A SLOT: Arca's logo kit is not published yet, so the committed pages show a
-// plain placeholder wherever Arca's logo belongs. Once the kit's icon files are in
-// assets/brand/arca/, the pages use them in place of the placeholder. Arca's rules: one
-// colour (ink on a light ground, ivory on a dark one), never redrawn, tinted, animated or
-// locked up with another mark.
-export const arcaKit = existsSync(new URL('../assets/brand/arca/arca-icon-ink.svg', import.meta.url))
-const arcaMark = cls => arcaKit
-  ? `<span class="arca-mark at-${cls}" data-arca-logo="kit"><picture><source media="(prefers-color-scheme: dark)" srcset="/assets/brand/arca/arca-icon-ivory.svg"><img src="/assets/brand/arca/arca-icon-ink.svg" width="64" height="64" alt="" aria-hidden="true" decoding="async"></picture></span>`
-  : `<span class="arca-mark at-${cls}" data-arca-logo="placeholder" aria-hidden="true"></span>`
+// ARCA'S LOGO: Arca's own mark stands wherever Arca does, from Arca's kit, copied unchanged
+// into assets/brand/arca/svg/ under the kit's own file names (a newer kit replaces the files
+// at the same paths). Arca's rules: one colour (ink on its sand ground in light, ivory on
+// its night ground in dark), never redrawn, tinted, animated or locked up with another mark.
+const arcaMark = place => `<span class="arca-mark at-${place}"><picture><source media="(prefers-color-scheme: dark)" srcset="/assets/brand/arca/svg/arca-icon-ivory.svg"><img src="/assets/brand/arca/svg/arca-icon-ink.svg" width="64" height="64" alt="" aria-hidden="true" decoding="async"></picture></span>`
 const licensing = 'Automagik, Genie and Omni are free and open source (Apache-2.0). Cloud will be a private, paid service; its contracts are public.'
 const arrow = '<span aria-hidden="true">→</span>'
 const down = '<span aria-hidden="true">↓</span>'

@@ -331,9 +331,9 @@ page. The owner approves the two lines before the site goes live.
 The owner on the next preview. The Open Intelligence line gets a designed stamp that carries
 the we unfold link: a seal on the home page and a tag in every footer. Guides and help link
 to `https://docs.automagik.dev`; GitHub is linked for the downloads and once in the footer;
-no page links to an RFC. Arca's own logo stands wherever Arca does; until Arca's kit is
-published the pages hold a placeholder slot. The public copy is shortened without changing
-its meaning; approved copy is untouched. The pages move: scroll-driven reveals, page
+no page links to an RFC. Arca's own logo stands wherever Arca does: the icon from Arca's
+logo kit, published here with the owner's and Arca's agreement on 2026-11-12. The public
+copy is shortened without changing its meaning; approved copy is untouched. The pages move: scroll-driven reveals, page
 transitions and menu entrances, in CSS only, off for reduced motion, with no layout shift.
 
 Arca's supplied sitemap entries are included verbatim:
