@@ -20,16 +20,12 @@ export function NewChat({ mode, sectionId = null, paneLeft, roster, actions }) {
   const [error, setError] = useState('')
   const [cursor, setCursor] = useState(0)
   // The Create Bot form, opened straight from 'create' mode or from the list.
-<<<<<<< HEAD
-  const [draft, setDraft] = useState(mode === 'create' ? { name: '', fromList: false } : null)
+  const [draft, setDraft] = useState(mode === 'create' ? { name: '', fromList: false, sectionId } : null)
   // A new Genie, while Genie runs here (genie-dsh adds genie to the team view).
   const [genieDraft, setGenieDraft] = useState(false)
   // A DSH bot: 'dsh-bot' makes one, 'dsh-bot:<id>' edits that one, and the list can open the form.
   const editing = mode.startsWith('dsh-bot:') ? roster.agentsById?.[mode.slice('dsh-bot:'.length)] : undefined
   const [dshDraft, setDshDraft] = useState(mode === 'dsh-bot' || editing !== undefined ? { fromList: false } : null)
-=======
-  const [draft, setDraft] = useState(mode === 'create' ? { name: '', fromList: false, sectionId } : null)
->>>>>>> vendor/ds-bot-0.3.6-prepared
   const inputRef = useRef(null)
   const close = () => actions.closeOverlay()
   useEscape(close)

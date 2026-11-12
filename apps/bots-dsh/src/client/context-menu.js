@@ -2,19 +2,20 @@ import { createElement as h, Fragment, useEffect, useLayoutEffect, useMemo, useR
 import { inkFill } from './inks.js'
 import { isMainOf } from './sources.js'
 import { currentPart } from './text.js'
-<<<<<<< HEAD
-import { GearIcon, PinIcon, UnreadIcon, PencilIcon, StarLineIcon, CopyIcon, HideIcon, TrashIcon, DuplicateIcon, PlusIcon, PeopleIcon } from './icons.js'
-=======
 import { GearIcon, PinIcon, UnreadIcon, PencilIcon, StarLineIcon, CopyIcon, HideIcon, TrashIcon, DuplicateIcon, FolderIcon, PlusIcon, CheckIcon, PeopleIcon, SignOutIcon } from './icons.js'
 import { BotMark, RoomAvatar } from './mark.js'
->>>>>>> vendor/ds-bot-0.3.6-prepared
 import { useEscape } from './overlay-hooks.js'
 import { stepMenuFocus, useViewport, viewBottom } from './motion.js'
 import { t } from './i18n.js'
 
 const SECTION_COLORS = ['blue', 'orange', 'green', 'violet', 'rose']
+// Sections are kept as data, and our own bar does not draw them yet (that is its own piece
+// of work). Until it does, no menu makes or fills one: a section nobody can see would only
+// lose the chat it holds.
+export const SECTIONS_IN_BAR = false
 
 function sectionMoveItems(entry, roster, actions) {
+  if (!SECTIONS_IN_BAR) return []
   const sections = roster.sections ?? []
   return [
     ...sections.map(sec => [
@@ -91,16 +92,12 @@ export function ContextMenu({ menu, roster, actions, useWork, leaving = false })
       bot && !isMainBot ? [t('Make Main Bot'), StarLineIcon, () => actions.setMain(bot.id, true)] : null,
       bot && isMainBot && mainCount > 1 ? [t('Remove Main Bot role'), StarLineIcon, () => actions.setMain(bot.id, false)] : null,
     ],
-<<<<<<< HEAD
     [
       // The Bot goes on in a fresh conversation; earlier parts stay readable.
       bot ? [t('New conversation'), PlusIcon, () => actions.freshConversation(bot.id)] : null,
       [t('Copy conversation ID'), CopyIcon, () => navigator.clipboard?.writeText(bot ? currentPart(bot) : menu.id)],
     ],
-=======
-    [[t('Copy conversation ID'), CopyIcon, () => navigator.clipboard?.writeText(bot ? currentPart(bot) : menu.id)]],
     bot ? (waits?.waits ?? []).map(item => [t('Give up waiting for {name}', { name: item.name ?? t('a Bot') }), SignOutIcon, () => actions.abandonWork(item.id)]) : [],
->>>>>>> vendor/ds-bot-0.3.6-prepared
     [
       isMainBot ? null : [t('Hide from sidebar'), HideIcon, () => actions.setFlags(menu.id, { hidden: true })],
       isMainBot || adopted ? null : [room ? t('Delete group') : t('Delete'), TrashIcon, () => (bot ? actions.deleteBot(bot.id) : actions.deleteRoom(menu.id)), true],
@@ -109,28 +106,21 @@ export function ContextMenu({ menu, roster, actions, useWork, leaving = false })
         const warning = t('Roll back this adoption? This deletes the Bot record and any settings changed after adoption; the original DSH bot and its session return.')
         if (typeof window.confirm !== 'function' || !window.confirm(warning)) return
         return actions.rollbackAdoption(bot.dshAgentId)
-      }, false, 'bt-menu-note'] : null,
+      }, false, false, 'bt-menu-note'] : null,
     ],
   ].map(group => group.filter(Boolean)).filter(group => group.length > 0)
   return h('div', { ref, className: 'bt-menu', role: 'menu', 'aria-label': t('{name} actions', { name: bot?.name ?? room.name }), style: place, 'data-leaving': leaving || undefined },
     groups.map((group, index) => h(Fragment, { key: index },
       index > 0 ? h('div', { className: 'bt-menu-sep', role: 'separator' }) : null,
-<<<<<<< HEAD
-      group.map(([label, Icon, run, danger, describedBy]) => h('button', {
-=======
-      group.map(([label, Icon, run, danger, checked]) => h('button', {
->>>>>>> vendor/ds-bot-0.3.6-prepared
+      group.map(([label, Icon, run, danger, checked, describedBy]) => h('button', {
         key: label, type: 'button', role: 'menuitem', className: danger ? 'bt-danger' : undefined,
         'aria-describedby': describedBy,
         onClick: () => { actions.closeMenu(); void Promise.resolve(run()).catch(error => actions.reportError(error, 'menu')) },
-<<<<<<< HEAD
-      }, h(Icon), label)))),
+      }, h(Icon), h('span', { className: 'bt-menu-label' }, label), checked ? h('span', { className: 'bt-menu-check' }, h(CheckIcon)) : null)))),
     adopted ? h('div', { className: 'bt-menu-note', id: 'bt-menu-note', role: 'presentation' },
       rollbackBlocked !== undefined
         ? t('Rollback is unavailable until this Bot leaves all groups, is not a Main Bot, and has no tasks or new team history. Delete is also unavailable for an adopted original.')
         : t('Rolling back removes this Bot and any settings changed after adoption; the original DSH bot and its session return. A confirmation is required.')) : null)
-=======
-      }, h(Icon), h('span', { className: 'bt-menu-label' }, label), checked ? h('span', { className: 'bt-menu-check' }, h(CheckIcon)) : null)))))
 }
 
 function SectionMenu({ menu, roster, actions, leaving }) {
@@ -222,7 +212,6 @@ function SectionMenu({ menu, roster, actions, leaving }) {
       type: 'button', role: 'menuitem', className: 'bt-danger',
       onClick: () => { actions.closeMenu(); void Promise.resolve(actions.deleteSection(sec.id)).catch(error => actions.reportError(error, 'menu')) },
     }, h(TrashIcon), h('span', { className: 'bt-menu-label' }, t('Ungroup section'))))
->>>>>>> vendor/ds-bot-0.3.6-prepared
 }
 
 // Menus for a DSH bot row (or the tasks row) and its Sessions; none of the Bot entries apply.
@@ -269,11 +258,6 @@ function AgentMenu({ menu, roster, actions, leaving }) {
       index > 0 ? h('div', { className: 'bt-menu-sep', role: 'separator' }) : null,
       group.map(([label, Icon, run, danger, checked]) => h('button', {
         key: label, type: 'button', role: 'menuitem', className: danger ? 'bt-danger' : undefined,
-<<<<<<< HEAD
         onClick: () => { actions.closeMenu(); void Promise.resolve(run()).catch(error => actions.reportError(error, 'menu')) },
-      }, h(Icon), label)))))
-=======
-        onClick: () => { actions.closeMenu(); void Promise.resolve(run()).catch(error => console.warn('[ds-bot]', error)) },
       }, h(Icon), h('span', { className: 'bt-menu-label' }, label), checked ? h('span', { className: 'bt-menu-check' }, h(CheckIcon)) : null)))))
->>>>>>> vendor/ds-bot-0.3.6-prepared
 }

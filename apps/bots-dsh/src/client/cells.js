@@ -4,37 +4,24 @@ import { createPortal } from 'react-dom'
 import { MarkdownText, writeClipboard } from './dsh-primitives.js'
 import { inkText } from './inks.js'
 import { linkMentions, mentionTarget, dayLabel, contentText, stripHeader, isHiddenTurn, isRelayContext, relaysBefore, relayPart, commRunOf, toolName, toolArgs, reminderPrompts, elapsedLabel, clockLabel, messageClock } from './text.js'
-<<<<<<< HEAD
-import { SmileIcon, ReplyIcon, DotsIcon, CheckIcon, DownloadIcon, CopyIcon, MemoryIcon, TasksIcon } from './icons.js'
-=======
-import { SmileIcon, ReplyIcon, DotsIcon, CheckIcon, DownloadIcon, CopyIcon, GoalIcon, MemoryIcon } from './icons.js'
+import { SmileIcon, ReplyIcon, DotsIcon, CheckIcon, DownloadIcon, CopyIcon, GoalIcon, MemoryIcon, TasksIcon } from './icons.js'
 import { goalEventText } from './goal.js'
->>>>>>> vendor/ds-bot-0.3.6-prepared
 import { colorOf, toolState, BotMark, RoomAvatar } from './mark.js'
 import { CellEmpty } from './cell-empty.js'
 import { sendsOnEnter } from './enter-key.js'
 import { SettledQuestion, PendingQuestion } from './questions.js'
 import { AnsweredReply, ClosedView, WidgetCell } from './widget-cell.js'
 import { SecretToolCell } from './secret-card.js'
-<<<<<<< HEAD
 import { agentPromptOf, ImageCell, isAgentImageCall } from './image-cell.js'
-import { HandoffCall } from './handoff-card.js'
-import { dateLocale, t } from './i18n.js'
-import { call } from './api.js'
-import { failureLabel } from './diagnostics.js'
-import { turnReasoning, thinkingStep, opensReply } from './turn-reasoning.js'
-import { FOLD_AT, FOLD_HUGE, NEVER, stripLongNote, useFold } from './fold.js'
-=======
 import { ConnectorToolCell, MailToolCell } from './connectors.js'
 import { HandoffCall } from './handoff-card.js'
 import { AppAccessCall, ComputerCallRow, ComputerHandoffCall } from './computer.js'
-import { t } from './i18n.js'
+import { dateLocale, t } from './i18n.js'
 import { call } from './api.js'
 import { failureLabel } from './diagnostics.js'
 import { turnReasoning, thinkingStep, opensReply, stepActivity } from './turn-reasoning.js'
-import { parseReplies, relayRange, stackReplies } from '../shared/group-replies.js'
-import { FOLD_AT, FOLD_HUGE, stripLongNote, useFold } from './fold.js'
->>>>>>> vendor/ds-bot-0.3.6-prepared
+import { parseReplies, relayRange } from '../shared/group-replies.js'
+import { FOLD_AT, FOLD_HUGE, NEVER, stripLongNote, useFold } from './fold.js'
 import { noHover, useViewport, viewBottom } from './motion.js'
 import { heldCardKey } from './sources.js'
 import { BtwCardView } from './btw.js'
@@ -114,18 +101,12 @@ const foldArea = (body, code, codeHead, actions) => (code === undefined ? body
     h(FoldCodeCopy, { code, actions })))
 
 function Bubble({ text, index, roster, selfId, actions, sessionId, msgKey, mentions, fold, picked, live, lead, whole }) {
-<<<<<<< HEAD
   // A reply with a canvas is never folded: a cut would split the canvas from its source.
   const canvas = hasCanvas(text)
-  const { shown, folded, control } = useFold(text, { limit: canvas ? NEVER : fold, whole, live })
+  const { shown, folded, control, code, codeHead } = useFold(text, { limit: canvas ? NEVER : fold, whole, live })
   const key = msgKey ? `${msgKey}:${index}` : undefined
   const markdown = value => h(MarkdownText, { text: linkMentions(value, roster.bots, selfId), streaming: live, labels: mdLabels(), variant: 'compact', fileMentions: mentions })
-  const body = canvas ? null : markdown(shown)
-=======
-  const { shown, folded, control, code, codeHead } = useFold(text, { limit: fold, whole, live })
-  const key = msgKey ? `${msgKey}:${index}` : undefined
-  const body = shown === '' ? null : h(MarkdownText, { text: linkMentions(shown, roster.bots, selfId), streaming: live, labels: mdLabels(), variant: 'compact', fileMentions: mentions })
->>>>>>> vendor/ds-bot-0.3.6-prepared
+  const body = canvas || shown === '' ? null : markdown(shown)
   const row = useRef(null)
   // Touch has no hover: a tap on the bubble opens its tools, a tap elsewhere
   // closes them. Interactive targets keep their own meaning.
@@ -135,7 +116,6 @@ function Bubble({ text, index, roster, selfId, actions, sessionId, msgKey, menti
     if (!noHover() || event.target instanceof Element && event.target.closest('a,button,input,textarea,select,pre,code,[role=button],[role=link]')) return
     setToolsOpen(value => !value)
   }
-<<<<<<< HEAD
   const tools = live ? null : h(MessageTools, { text: folded ? text : shown, name: roster.byId[selfId]?.name ?? t('Bot'), sessionId, react: key ? emoji => actions.toggleReaction(msgKey, index, emoji) : undefined, actions, open: toolsOpen })
   // Text stays in bubbles; each canvas sits between them at full width, and its buttons
   // ask the Bot in this same chat.
@@ -144,9 +124,7 @@ function Bubble({ text, index, roster, selfId, actions, sessionId, msgKey, menti
       ? h('div', { key: at, className: 'bt-canvas-line' }, h(CanvasSlot, { program: part.program, complete: part.complete, onAsk: message => message && actions.send(sessionId ?? selfId, message) }))
       : h('div', { key: at, className: 'bt-msg-line' }, at === 0 ? lead : null, h('div', { className: 'bt-bubble' }, markdown(part.text)), at === parts.length - 1 ? tools : null)))
     : null
-=======
   const area = foldArea(body, code, codeHead, actions)
->>>>>>> vendor/ds-bot-0.3.6-prepared
   return h('div', { ref: row, className: 'bt-msg', onClick: tapTools },
     lines ?? h('div', { className: 'bt-msg-line' },
       lead,
@@ -434,7 +412,6 @@ function GroupMessage({ bot, text, texts = [text], room, roster, actions, msgKey
     h(Bubbles, { texts, roster, selfId: bot.id, actions, sessionId: room?.id, msgKey, useUi, lead: flat ? null : lead, whole }))
 }
 
-<<<<<<< HEAD
 // A member's messages in a row, as one block under its name: what it says while it
 // works comes one message at a time. A block carries the last message's time and run.
 export function stackReplies(replies) {
@@ -452,8 +429,6 @@ export function stackReplies(replies) {
   return items
 }
 
-=======
->>>>>>> vendor/ds-bot-0.3.6-prepared
 // A centered event line that names a group chat and opens it.
 function GroupEvent({ prefix, room, name, roster, actions }) {
   return h('div', { className: 'bt-event' },
@@ -1015,6 +990,10 @@ function useLiveNote(actions, sessionId, id, entry) {
 // for a reply that is not a member's message or the user's own line. `bot` is the
 // resolved member the reply names.
 function RelayEvent({ reply, bot, sessionId, actions }) {
+  if (reply.kind === 'permission-stop') {
+    return h('div', { className: 'bt-event bt-event-error', role: 'status', title: reply.why },
+      t('{name} stopped on a permission: {why}', { name: bot.name, why: whyText(reply.why) }))
+  }
   if (reply.kind === 'failed') {
     return h('div', { className: 'bt-event bt-event-error', role: 'status', title: [reply.code, reply.status, reply.text].filter(Boolean).join(' · ') },
       t('{name} stopped: {reason}. Switch its model or ask it to go on.', { name: bot.name, reason: failureLabel(reply.code, reply.text) }))
@@ -1088,13 +1067,6 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
     void tick()
     return () => { stop = true; clearTimeout(timer) }
   }, [done, sessionId, callId])
-<<<<<<< HEAD
-  let replies = cleanReplies(live.replies)
-  let broken = false
-  if (done) {
-    const parsed = parseReplies(contentText(content))
-    replies = parsed.replies.length ? cleanReplies(parsed.replies) : cleanReplies(live.replies)
-=======
   // A settled round names where its rows are in the group's book; one from before
   // the ledger carries them in its result.
   const resultText = done ? contentText(content) : ''
@@ -1126,14 +1098,13 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
     void tick()
     return () => { stop = true; clearTimeout(timer) }
   }, [rowsKey, quietKey])
-  let replies = live.replies
+  let replies = cleanReplies(live.replies)
   let broken = false
   if (range !== undefined) {
-    replies = view?.rows ?? live.replies
+    replies = cleanReplies(view?.rows ?? live.replies)
   } else if (done) {
     const parsed = parseReplies(resultText)
-    replies = parsed.replies.length ? parsed.replies : live.replies
->>>>>>> vendor/ds-bot-0.3.6-prepared
+    replies = parsed.replies.length ? cleanReplies(parsed.replies) : cleanReplies(live.replies)
     broken = parsed.broken
   }
   // Every member answering in the round is typing; what each is doing comes as text,
@@ -1157,22 +1128,13 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
           h('div', { className: 'bt-ububble' }, h(MarkdownText, { text: reply.text, labels: mdLabels(), variant: 'compact' })),
           (reply.via !== undefined || Number.isFinite(time)) ? h('div', { className: 'bt-utime', title: clockLabel(time) }, ...(reply.via !== undefined ? [h(ViaTag, { key: 'via', via: reply.via })] : []), Number.isFinite(time) ? messageClock(time) : null) : null)
       }
-<<<<<<< HEAD
-      if (reply.kind === 'permission-stop') {
-        return h('div', { key: `${reply.botId}-${index}`, className: 'bt-event bt-event-error', role: 'status', title: reply.why },
-          t('{name} stopped on a permission: {why}', { name: bot.name, why: whyText(reply.why) }))
-      }
-      if (reply.kind === 'failed') {
-        return h('div', { key: `${reply.botId}-${index}`, className: 'bt-event bt-event-error', role: 'status', title: [reply.code, reply.status, reply.text].filter(Boolean).join(' · ') },
-          t('{name} could not answer: {reason}', { name: bot.name, reason: failureLabel(reply.code, reply.text) }))
-=======
-      if (reply.kind !== undefined) {
-        return h(RelayEvent, { key: `${reply.botId ?? reply.kind}-${index}`, reply, bot, sessionId, actions })
->>>>>>> vendor/ds-bot-0.3.6-prepared
-      }
+      // The group's goal line comes before the other round notices, which RelayEvent draws.
       if (reply.kind === 'goal') {
         return h('div', { key: `goal-${index}`, className: 'bt-event', title: reply.text || undefined },
           h('span', { className: 'bt-event-ico', 'aria-hidden': true }, h(GoalIcon)), goalEventText(reply))
+      }
+      if (reply.kind !== undefined) {
+        return h(RelayEvent, { key: `${reply.botId ?? reply.kind}-${index}`, reply, bot, sessionId, actions })
       }
       return h(GroupMessage, { key: `${reply.botId}-${index}`, bot, texts, room, roster, actions, msgKey: callId ? `${sessionId}:${callId}:${index}` : undefined, useUi, time, duration })
     }),
@@ -1188,19 +1150,13 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
 
 // The calls ToolCell draws. A PTC program (`run_code`) dispatches the real tools as
 // its sub-calls, so a call draws by its own name wherever it sits in the tree.
-<<<<<<< HEAD
 // Another Omni plugin's tools draw when they register a card (extend.js).
-const DRAWN = new Set(['start_task', 'message_bot', 'stop_bot', 'create_bot', 'update_bot', 'delete_bot', 'group_relay', 'create_group', 'update_group', 'delete_group', 'post_to_group', 'ask_user', 'request_secret', 'ask_user_question', 'read_group_chat', 'remember', 'forget', 'show_view', 'browser_handoff', 'generate_image'])
-// Calls whose card a dock above the composer carries when the call is not drawn.
-const CARDS = new Set(['ask_user', 'request_secret', 'show_view', 'browser_handoff'])
-// An image an agent makes with its own tool draws as the image card (image-cell.js).
-const agentImage = call => isAgentImageCall({ name: toolName(call), image: toolArgs(call).value('image'), done: call.kind === 'tool-result', content: call.kind === 'tool-result' ? contentText(call.content) : '' })
-=======
 const isComputerCall = name => name === 'cua' || name?.startsWith('cua_driver_native__') === true
-const DRAWN = new Set(['message_bot', 'stop_bot', 'create_bot', 'update_bot', 'group_relay', 'create_group', 'update_group', 'delete_group', 'post_to_group', 'ask_user', 'request_secret', 'request_connector', 'mail_send', 'ask_user_question', 'show_view', 'browser_handoff', 'read_group_chat', 'remember', 'forget'])
+const DRAWN = new Set(['start_task', 'message_bot', 'stop_bot', 'create_bot', 'update_bot', 'delete_bot', 'group_relay', 'create_group', 'update_group', 'delete_group', 'post_to_group', 'ask_user', 'request_secret', 'request_connector', 'mail_send', 'ask_user_question', 'show_view', 'browser_handoff', 'read_group_chat', 'remember', 'forget', 'generate_image'])
 // Calls whose card a dock above the composer carries when the call is not drawn.
 const CARDS = new Set(['ask_user', 'request_secret', 'request_connector', 'mail_send', 'show_view', 'browser_handoff', 'computer_handoff'])
->>>>>>> vendor/ds-bot-0.3.6-prepared
+// An image an agent makes with its own tool draws as the image card (image-cell.js).
+const agentImage = call => isAgentImageCall({ name: toolName(call), image: toolArgs(call).value('image'), done: call.kind === 'tool-result', content: call.kind === 'tool-result' ? contentText(call.content) : '' })
 
 // The root and its sub-calls in dispatch order, each call once.
 export function callTree(root) {
@@ -1270,7 +1226,7 @@ function renderCall(call, { sessionId, roster, actions, useUi, useWork, useSessi
       // The Bot is gone from the roster once the call settles, so its name comes from the call,
       // and there is no chat left to open.
       const name = arg('bot') ?? '…'
-      if (!done) return null
+      if (!done) return h(CellEmpty)
       if (call.isError) return h('div', { className: 'bt-event' }, t("Couldn't delete {name}", { name }))
       return h('div', { className: 'bt-event' }, h('span', null, t('Deleted')), h('span', null, name))
     }
@@ -1316,7 +1272,7 @@ function renderCall(call, { sessionId, roster, actions, useUi, useWork, useSessi
     case 'acp_tool':
       return agentImage(call)
         ? h(ImageCell, { bot: self, callId: call.callId, prompt: agentPromptOf(argValue('input')), done, content: done ? contentText(call.content) : '', isError: call.isError, onAsk: askHere })
-        : null
+        : h(CellEmpty)
     case 'request_secret':
       return h(SecretToolCell, { sessionId, callId: call.callId, name: arg('name'), done, content: call.content, roster, actions, heldCards })
     case 'request_connector':
@@ -1354,54 +1310,38 @@ function renderCall(call, { sessionId, roster, actions, useUi, useWork, useSessi
   }
 }
 
-<<<<<<< HEAD
-export function ToolCell({ node, sessionId, useRoster, useUi, useWork, useSessionStatus, useHeldCards, useBrowserHolds, useBrowserTabs, useBrowserPages, actions }) {
-=======
-export function ToolCell({ node, sessionId, useRoster, useUi, useWork, useHeldCards, useBrowserHolds, useBrowserTabs, useBrowserPages, useComputer, actions }) {
->>>>>>> vendor/ds-bot-0.3.6-prepared
+export function ToolCell({ node, sessionId, useRoster, useUi, useWork, useSessionStatus, useHeldCards, useBrowserHolds, useBrowserTabs, useBrowserPages, useComputer, actions }) {
   const roster = useRoster(value => value)
   const heldCards = useHeldCards?.(state => state[sessionId])
   const root = node.data.root
   const turn = node.location?.turn?.turn ?? root.turn
   const hidden = isHiddenTurn(roster, sessionId, turn)
   const findBot = nameOrId => roster.byId[nameOrId] ?? roster.bots.find(bot => bot.name.toLowerCase() === String(nameOrId ?? '').toLowerCase())
-<<<<<<< HEAD
   // A plugin that loads after the transcript drew still gets its cards drawn.
   useSyncExternalStore(toolCards.source.subscribe, toolCards.source.getSnapshot)
-  const calls = hidden ? [] : callTree(root)
-  const stopKeys = useWork ? useWork(work => JSON.stringify(calls.flatMap(call => {
-    const entry = stopOfCall(work.stops, sessionId, call.callId)
-    return entry ? [[call.callId, stopLine(entry), entry.why]] : []
-  }))) : '[]'
-  const stops = new Map(JSON.parse(stopKeys).map(([id, line, why]) => [id, { line, why }]))
-  const drawn = calls.filter(call => DRAWN.has(toolName(call)) || toolCards.renderer(toolName(call)) || agentImage(call) || stops.has(call.callId))
-=======
   const closed = roster.closedCards?.[sessionId]
   // Hidden Bot-to-Bot turns keep their own calls out of the chat, except a question
   // or view card the user dismissed or answered by message, which settles here.
   const calls = hidden
     ? callTree(root).filter(call => (toolName(call) === 'ask_user' || toolName(call) === 'show_view') && call.callId && closed?.[call.callId] !== undefined)
     : callTree(root)
-  const drawn = calls.filter(call => DRAWN.has(toolName(call)) || isComputerCall(toolName(call)))
->>>>>>> vendor/ds-bot-0.3.6-prepared
+  const stopKeys = useWork ? useWork(work => JSON.stringify(calls.flatMap(call => {
+    const entry = stopOfCall(work.stops, sessionId, call.callId)
+    return entry ? [[call.callId, stopLine(entry), entry.why]] : []
+  }))) : '[]'
+  const stops = new Map(JSON.parse(stopKeys).map(([id, line, why]) => [id, { line, why }]))
+  const drawn = calls.filter(call => DRAWN.has(toolName(call)) || isComputerCall(toolName(call)) || toolCards.renderer(toolName(call)) || agentImage(call) || stops.has(call.callId))
   // The newest call still running names the work, so a program reads as the tool it is in.
   const running = root.kind === 'tool-result' ? undefined : calls.findLast(call => call.kind !== 'tool-result')
   const note = running ? toolActivity(toolName(running), toolArgs(running).text, findBot, roster.byId[sessionId]) : null
   // A running tool shows only as the activity row's phrase.
   useLiveNote(actions, sessionId, `tool:${root.callId ?? node.key}`, note)
-<<<<<<< HEAD
-  useShownCards(actions, sessionId, drawn.filter(call => (CARDS.has(toolName(call)) || toolCards.asks(toolName(call))) && call.callId).map(call => call.callId))
-  if (drawn.length === 0) return null
-  const env = { sessionId, roster, actions, useUi, useWork, useSessionStatus, findBot, heldCards, hooks: { useBrowserHolds, useBrowserTabs, useBrowserPages } }
+  useShownCards(actions, sessionId, drawn.filter(call => (CARDS.has(toolName(call)) || isComputerCall(toolName(call)) || toolCards.asks(toolName(call))) && call.callId).map(call => call.callId))
+  if (drawn.length === 0) return h(CellEmpty)
+  const env = { sessionId, roster, actions, useUi, useWork, useSessionStatus, findBot, heldCards, hooks: { useBrowserHolds, useBrowserTabs, useBrowserPages, useComputer } }
   return h(Fragment, null, drawn.map((call, index) => {
     const stop = stops.get(call.callId)
     return h(Fragment, { key: call.callId ?? index }, renderCall(call, env),
       stop ? h('div', { className: 'bt-event bt-event-error', role: 'status', title: stop.why }, stop.line) : null)
   }))
-=======
-  useShownCards(actions, sessionId, drawn.filter(call => (CARDS.has(toolName(call)) || isComputerCall(toolName(call))) && call.callId).map(call => call.callId))
-  if (drawn.length === 0) return h(CellEmpty)
-  const env = { sessionId, roster, actions, useUi, useWork, findBot, heldCards, hooks: { useBrowserHolds, useBrowserTabs, useBrowserPages, useComputer } }
-  return h(Fragment, null, drawn.map((call, index) => h(Fragment, { key: call.callId ?? index }, renderCall(call, env))))
->>>>>>> vendor/ds-bot-0.3.6-prepared
 }

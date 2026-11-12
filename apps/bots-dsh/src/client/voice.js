@@ -6,12 +6,8 @@ import { speechApi, useDictation } from './composer.js'
 import { Shimmer } from './cells.js'
 import { useEscape } from './overlay-hooks.js'
 import { t } from './i18n.js'
-<<<<<<< HEAD
 import { speakWith } from './voice-settings.js'
-import { openCapture, speechCatalog, transcribeWave, turnDetector } from './speech.js'
-=======
 import { openCapture, preparationStep, speechCatalog, transcribeWave, turnDetector } from './speech.js'
->>>>>>> vendor/ds-bot-0.3.6-prepared
 
 // Voice chat: listen, send what the user said, read the Bot's answer aloud, listen
 // again. With DSH's Voice Input plugin on, its recognizer hears the user: one
@@ -205,23 +201,6 @@ export function VoiceMode({ sessionId, paneLeft, roster, actions, useSessions, u
     }
   }, [speech, catalog, listen, cycle])
   useEffect(() => {
-<<<<<<< HEAD
-    if (phase !== 'thinking' || running || waiting.current === null) return
-    const [count, text] = [lastReply.slice(0, lastReply.indexOf('|')), lastReply.slice(lastReply.indexOf('|') + 1)]
-    if (count === waiting.current || !text.trim()) return
-    waiting.current = null
-    const spoken = plainSpeech(text)
-    setSaid(spoken)
-    setHeard('')
-    if (!window.speechSynthesis || !spoken) { setPhase('listening'); return }
-    // The voice and speed chosen in Settings → General → Voice chat (voice-settings.js).
-    const utterance = speakWith(spoken, /[\u3400-\u9fff]/.test(spoken) ? 'zh-CN' : 'en-US')
-    utterance.onend = () => setPhase(current => (current === 'speaking' ? 'listening' : current))
-    utterance.onerror = utterance.onend
-    setPhase('speaking')
-    window.speechSynthesis.cancel()
-    window.speechSynthesis.speak(utterance)
-=======
     if (phase !== 'thinking' || running || waiting.current === null) return undefined
     const count = lastReply.slice(0, lastReply.indexOf('|'))
     const turn = Number(lastReply.slice(lastReply.indexOf('|') + 1))
@@ -232,8 +211,8 @@ export function VoiceMode({ sessionId, paneLeft, roster, actions, useSessions, u
       setSaid(spoken)
       setHeard('')
       if (!window.speechSynthesis || !spoken) { setPhase('listening'); return }
-      const utterance = new SpeechSynthesisUtterance(spoken)
-      utterance.lang = /[\u3400-\u9fff]/.test(spoken) ? 'zh-CN' : 'en-US'
+      // The voice and speed chosen in Settings → General → Voice chat (voice-settings.js).
+      const utterance = speakWith(spoken, /[\u3400-\u9fff]/.test(spoken) ? 'zh-CN' : 'en-US')
       utterance.onend = () => setPhase(current => (current === 'speaking' ? 'listening' : current))
       utterance.onerror = utterance.onend
       setPhase('speaking')
@@ -250,7 +229,6 @@ export function VoiceMode({ sessionId, paneLeft, roster, actions, useSessions, u
         if (text === null) { waiting.current = null; setPhase('listening'); return }
         speak(text)
       })
->>>>>>> vendor/ds-bot-0.3.6-prepared
   }, [phase, running, lastReply])
   useEffect(() => () => window.speechSynthesis?.cancel(), [])
   const micLevel = useMicLevel(!speech && phase === 'listening' && dictation.listening)

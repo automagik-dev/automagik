@@ -6,8 +6,7 @@ import { CLI_NAMES, cliLoginBotOf, cliProviderOf } from './cli-login-model.js'
 // source), requests to the host, and the notes the transcript keeps. The shell around the
 // views adds navigation and its own panels. `after` reads the team again once a request
 // is done; `partFor` maps a Bot id, or any part of its chat, to its current part.
-<<<<<<< HEAD
-export function teamActions({ call, after, partFor, roster, ui, live, cards, heldCards, turnClock, openSession, loginState }) {
+export function teamActions({ call, after, partFor, roster, ui, live, cards, heldCards, turnClock, openSession, loginState, panelFolded }) {
   // The sign-in row of a Bot's chat (cli-login.js): an explicit entry opens that Bot's chat and
   // its row; `ref` is the model the person chose, applied by the host once signed in.
   const openCliLogin = (botId, provider, ref) => {
@@ -19,9 +18,6 @@ export function teamActions({ call, after, partFor, roster, ui, live, cards, hel
     return true
   }
   const loginPayload = (botId, provider, extra = {}) => ({ botId, provider, ...extra })
-=======
-export function teamActions({ call, after, partFor, roster, ui, live, cards, heldCards, turnClock, panelFolded }) {
->>>>>>> vendor/ds-bot-0.3.6-prepared
   // A memory is a Bot's or a group chat's; both are opened by id.
   const memoryOf = id => (roster.getSnapshot().roomsById[id] ? { roomId: id } : { botId: id })
   // An action that shows the panel lands the yield with it: when a folded
@@ -46,17 +42,13 @@ export function teamActions({ call, after, partFor, roster, ui, live, cards, hel
     closeVoice: () => { ui.set(state => (state.voice ? { ...state, voice: null } : state)) },
     toggleDetails: (id, force) => {
       ui.set((state) => {
-<<<<<<< HEAD
         // Any part of the open Bot closes it, as its header shows it expanded.
         const snap = roster?.getSnapshot?.()
         const same = state.details != null && detailsSubject(snap, state.details) === detailsSubject(snap, id)
         const details = force || !same || state.view !== 'details' ? id : null
-=======
-        const details = force || state.details !== id || state.view !== 'details' ? id : null
         // A folded panel is open but not shown: its opener then means "show it"
-        // (the column yields it room), not "close it".
+        // (it takes the room it needs), not "close it".
         if (details === null && panelFolded?.('details') === true) return { ...state, renaming: false, tab: null, details: id, view: 'details', panelYield: true }
->>>>>>> vendor/ds-bot-0.3.6-prepared
         return { ...state, renaming: false, tab: null, details, view: 'details' }
       })
     },
@@ -129,7 +121,6 @@ export function teamActions({ call, after, partFor, roster, ui, live, cards, hel
     createRoom: (members, options = {}) => after(call('create-room', { members, ...options })),
     setBotAuto: (id, rev) => after(call('set-bot-auto', { id, rev })),
     updateBot: (id, patch) => after(call('update-bot', { id, ...patch })),
-<<<<<<< HEAD
     // A model on another route: the host starts a new conversation with a handoff note
     // (parts.js). `patch` carries the thinking level picked with it.
     switchRoute: (id, ref, patch = {}) => after(call('switch-route', { id, ...patch, model: ref })),
@@ -174,10 +165,8 @@ export function teamActions({ call, after, partFor, roster, ui, live, cards, hel
     memoryReviewStatus: botId => call('memory-review-status', { botId }),
     // Do not remap the expected Session: the backend must reject a stale snapshot.
     checkpointBot: (botId, sessionId) => after(call('checkpoint-bot', { botId, sessionId })),
-=======
     // Give up one wait the Bot has on a hand-off that will not come back.
     abandonWork: id => after(call('abandon-work', { id })),
->>>>>>> vendor/ds-bot-0.3.6-prepared
     refreshModels: () => after(call('models')).catch(() => {}),
     // One local agent's models: the first look starts its CLI, later ones read what it said.
     agentModels: route => after(call('local-agent-models', { route })).catch(() => {}),
@@ -195,11 +184,8 @@ export function teamActions({ call, after, partFor, roster, ui, live, cards, hel
     folderList: path => call('folder-list', { path: path ?? '' }),
     setTeamWorkspace: path => after(call('team-workspace', { path })),
     deleteBot: id => after(call('delete-bot', { id })),
-<<<<<<< HEAD
     rollbackAdoption: agentId => after(call('agent-bot-rollback', { agentId })),
-=======
     releasePrivate: id => after(call('private-release', { id })),
->>>>>>> vendor/ds-bot-0.3.6-prepared
     duplicateBot: id => after(call('duplicate-bot', { id })),
     setPrefs: prefs => after(call('set-prefs', prefs)),
     setMain: (id, main = true, options = {}) => after(call('set-main', { id, main, ...options })),

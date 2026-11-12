@@ -1,22 +1,15 @@
 import { createElement as h, Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-<<<<<<< HEAD
-import { ChatsIcon, ClockIcon, MicIcon, PaperclipIcon, PeopleIcon, PlusIcon, ShieldIcon, WaveIcon } from './icons.js'
-=======
-import { ChatsIcon, ClockIcon, GoalIcon, MicIcon, PaperclipIcon, PeopleIcon, PlusIcon, WaveIcon } from './icons.js'
+import { ChatsIcon, ClockIcon, GoalIcon, MicIcon, PaperclipIcon, PeopleIcon, PlusIcon, ShieldIcon, WaveIcon } from './icons.js'
 import { canSetGoal } from './goal.js'
->>>>>>> vendor/ds-bot-0.3.6-prepared
 import { BotMark } from './mark.js'
 import { stepMenuFocus, useLinger, useViewport, viewBottom } from './motion.js'
 import { t } from './i18n.js'
-<<<<<<< HEAD
 import { useAnchoredMenu } from './model-menu.js'
 import { remoteOfBot, cliOfBot, PermissionList, PermissionFallback, savedLevelOf, levelsOf, pickLevel, presetName } from './permission-picker.js'
 import { currentPart } from './text.js'
-=======
 import { insertComposerNewline, sendsOnEnter } from './enter-key.js'
 import { enterSteers, steerable } from './enter-steer.js'
->>>>>>> vendor/ds-bot-0.3.6-prepared
 
 // -------------------------------------------------------------------------
 // Composer: dictation mic and the voice-chat button. The shell's send
@@ -131,7 +124,6 @@ export function menuIcons(roster) {
 // menu, whose plan, permission, model and compact rows reach past what Omni keeps
 // for its Bots; "/" still opens that menu. Files go through the shell's own file
 // input beside it.
-<<<<<<< HEAD
 // The permission level in the composer's one row: a shield and the level's name in the
 // accent ink, always visible. It opens the same explained levels the Details list uses and
 // saves through the same updateBot, with the one confirm step for Auto and Full access.
@@ -164,10 +156,7 @@ export function ComposerPermission({ sessionId, useRoster, actions }) {
     }, h(PermissionList, { judge: { ...bot.autoJudge, agent: String(bot.model ?? '').split('/')[0] }, catalog, saved, onPick: pick, name: bot.name, cli, remote: remoteOfBot(bot), askedOf: () => ({ id: bot.id, rev: bot.permissionRev ?? 0 }), replaced: presetName(bot.permission ?? catalog.defaultPreset, catalog) }), bot.permissionAuto ? h(PermissionFallback, { fallback: bot.permissionFallback, owner: bot, catalog }) : null), document.body) : null)
 }
 
-export function ComposerPlus({ sessionId, inputActions, useRoster, actions }) {
-=======
 export function ComposerPlus({ sessionId, inputActions, useInput, useRoster, actions }) {
->>>>>>> vendor/ds-bot-0.3.6-prepared
   const roster = useRoster(value => value)
   const [open, setOpen] = useState(null)
   const [shown, leaving] = useLinger(open, 120)
@@ -263,14 +252,8 @@ export function ComposerPlus({ sessionId, inputActions, useInput, useRoster, act
       ref: menu, className: 'bt-menu bt-menu-up bt-plus-menu', role: 'menu', 'aria-label': t('Add'),
       style: place ?? {}, 'data-leaving': leaving || undefined,
     },
-<<<<<<< HEAD
     shown.files ? plusRow(PaperclipIcon, t('Add photos & files'), t('Upload from computer'), attach) : null,
     canReference ? plusRow(ChatsIcon, t('Reference a chat'), t('Continue in another conversation'), reference, keepComposerFocus) : null,
+    canSetGoal(room, roster) ? plusRow(GoalIcon, t('Set a goal'), t('The group works toward it in stages'), goal) : null,
     plusRow(ClockIcon, t('Scheduled task'), t('Run this chat later'), schedule)), document.body) : null)
-=======
-    shown.files ? h('button', { type: 'button', role: 'menuitem', onClick: attach }, h(PaperclipIcon), h('span', { className: 'bt-menu-label' }, t('Add files'))) : null,
-    canReference ? h('button', { type: 'button', role: 'menuitem', onMouseDown: keepComposerFocus, onClick: reference }, h(ChatsIcon), h('span', { className: 'bt-menu-label' }, t('Reference a chat'))) : null,
-    canSetGoal(room, roster) ? h('button', { type: 'button', role: 'menuitem', onClick: goal }, h(GoalIcon), h('span', { className: 'bt-menu-label' }, t('Set a goal'))) : null,
-    h('button', { type: 'button', role: 'menuitem', onClick: schedule }, h(ClockIcon), h('span', { className: 'bt-menu-label' }, t('Scheduled task')))), document.body) : null)
->>>>>>> vendor/ds-bot-0.3.6-prepared
 }

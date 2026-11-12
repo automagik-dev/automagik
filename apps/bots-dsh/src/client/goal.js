@@ -309,8 +309,8 @@ export const GOAL_CSS = `
 .bt-pill-swap>*{grid-area:1/1;min-width:0;transition:opacity .18s ease,filter .18s ease}
 .bt-pill-goal{display:flex;align-items:center;gap:6px;min-width:0}
 .bt-pill-swap>.bt-pill-name{opacity:0;filter:blur(4px)}
-.bt-pill:hover .bt-pill-swap>.bt-pill-goal,.bt-pill:focus-visible .bt-pill-swap>.bt-pill-goal,.bt-pill[aria-expanded=true] .bt-pill-swap>.bt-pill-goal{opacity:0;filter:blur(4px)}
-.bt-pill:hover .bt-pill-swap>.bt-pill-name,.bt-pill:focus-visible .bt-pill-swap>.bt-pill-name,.bt-pill[aria-expanded=true] .bt-pill-swap>.bt-pill-name{opacity:1;filter:none}
+.bt-pill:hover .bt-pill-swap>.bt-pill-goal,.bt-pill:focus-visible .bt-pill-swap>.bt-pill-goal,.bt-pill[data-expanded=true] .bt-pill-swap>.bt-pill-goal{opacity:0;filter:blur(4px)}
+.bt-pill:hover .bt-pill-swap>.bt-pill-name,.bt-pill:focus-visible .bt-pill-swap>.bt-pill-name,.bt-pill[data-expanded=true] .bt-pill-swap>.bt-pill-name{opacity:1;filter:none}
 .bt-pill-ico{flex:none;display:inline-flex;width:14px;height:14px;color:var(--bt-accent)}
 .bt-pill-ico svg{width:14px;height:14px}
 .bt-pill-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}

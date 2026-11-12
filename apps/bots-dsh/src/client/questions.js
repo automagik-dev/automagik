@@ -1,12 +1,8 @@
 import { createElement as h, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react'
 import { CloseIcon, CheckIcon } from './icons.js'
-<<<<<<< HEAD
-import { hostText, t } from './i18n.js'
-=======
 import { CellEmpty } from './cell-empty.js'
 import { sendsOnEnter } from './enter-key.js'
-import { t } from './i18n.js'
->>>>>>> vendor/ds-bot-0.3.6-prepared
+import { hostText, t } from './i18n.js'
 import { useDockHold } from './card-hold.js'
 import { createSource, heldCardKey } from './sources.js'
 
@@ -160,26 +156,7 @@ export const closedLabel = closed => t(closed === 'replied' ? 'Answered by messa
 // answer (`closed`, or no answer) keeps only the question and a badge.
 export function SettledQuestion({ question, answer, closed }) {
   const options = optionsOf(question)
-<<<<<<< HEAD
   const wording = wordingOf(question), prompt = wording.prompt
-  const chosen = [...(answer.selected ?? []), ...(answer.custom ? [answer.custom] : [])]
-  if (chosen.length === 0) {
-    return h('div', { className: 'bt-q bt-q-settled bt-q-dismissed', role: 'group', 'aria-label': prompt },
-      h('div', { className: 'bt-q-head' },
-        h('div', { className: 'bt-q-text' }, h('p', { className: 'bt-q-title' }, prompt)),
-        h('span', { className: 'bt-q-badge' }, t('Dismissed'))))
-  }
-  return h('div', { className: 'bt-q bt-q-settled', role: 'group', 'aria-label': prompt },
-    prompt ? h('div', { className: 'bt-q-head' }, h('div', { className: 'bt-q-text' }, h('p', { className: 'bt-q-title' }, prompt))) : null,
-    h('div', { className: 'bt-q-list', role: 'group', 'aria-label': t('Your answer') }, chosen.map((label, index) => {
-      const optionIndex = options.findIndex(option => option.label === label)
-      return h('div', { key: `${label}-${index}`, className: 'bt-q-opt' },
-        optionIndex >= 0 ? h('span', { className: 'bt-key', 'aria-hidden': true }, keyLetter(optionIndex)) : null,
-        h('span', { className: 'bt-q-body' }, h('span', { className: 'bt-q-label' }, wording.label(label))),
-        h('span', { className: 'bt-q-check', title: t('Selected') }, h(CheckIcon)))
-    })))
-=======
-  const prompt = question?.question ?? ''
   const selected = Array.isArray(answer?.selected) ? answer.selected : []
   const custom = typeof answer?.custom === 'string' ? answer.custom.trim() : ''
   const answered = closed === undefined && (selected.length > 0 || custom !== '')
@@ -194,8 +171,7 @@ export function SettledQuestion({ question, answer, closed }) {
     chosen.length > 0 ? h('div', { className: 'bt-q-list', role: 'group', 'aria-label': t('Your answer') }, chosen.map(({ label, at }, index) =>
       h('div', { key: `${label}-${index}`, className: 'bt-q-opt', title: t('Selected') },
         at >= 0 ? h('span', { className: 'bt-key', 'aria-hidden': true }, keyLetter(at)) : null,
-        h('span', { className: 'bt-q-body' }, h('span', { className: 'bt-q-label' }, label))))) : null)
->>>>>>> vendor/ds-bot-0.3.6-prepared
+        h('span', { className: 'bt-q-body' }, h('span', { className: 'bt-q-label' }, at >= 0 && at < options.length ? wording.label(label) : label))))) : null)
 }
 
 export function QuestionCard({ matched }) {

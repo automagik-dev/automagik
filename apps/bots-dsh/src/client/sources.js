@@ -16,11 +16,7 @@ export function createSource(initial) {
   }
 }
 
-<<<<<<< HEAD
-export const EMPTY_ROSTER = { revision: -1, mainBotId: null, mainBotIds: [], bots: [], rooms: [], agents: [], exchangeTurns: {}, questions: {}, btwCards: {}, sideChats: {}, secrets: [], capabilities: [], capabilityStatuses: {}, secretRequests: {}, models: [], defaultModel: null, backgroundModel: null, modelsKey: null, prefs: {}, byId: {}, roomsById: {}, agentsById: {}, agentOf: {}, ready: false }
-=======
-export const EMPTY_ROSTER = { revision: -1, mainBotId: null, mainBotIds: [], bots: [], rooms: [], agents: [], sections: [], exchangeTurns: {}, questions: {}, btwCards: {}, sideChats: {}, learning: {}, secrets: [], capabilities: [], capabilityStatuses: {}, phone: null, secretRequests: {}, models: [], defaultModel: null, modelsKey: null, prefs: {}, byId: {}, roomsById: {}, agentsById: {}, agentOf: {}, ready: false }
->>>>>>> vendor/ds-bot-0.3.6-prepared
+export const EMPTY_ROSTER = { revision: -1, mainBotId: null, mainBotIds: [], bots: [], rooms: [], agents: [], sections: [], exchangeTurns: {}, questions: {}, btwCards: {}, sideChats: {}, learning: {}, secrets: [], capabilities: [], capabilityStatuses: {}, secretRequests: {}, models: [], defaultModel: null, backgroundModel: null, modelsKey: null, prefs: {}, byId: {}, roomsById: {}, agentsById: {}, agentOf: {}, ready: false }
 // Any Main Bot holds the Main Bot powers; `mainBotId`, the first one, is the sidebar tile.
 export const isMainOf = (roster, id) => id !== undefined && (roster.mainBotIds ?? []).includes(id)
 
@@ -33,17 +29,12 @@ export function indexRoster(value) {
     for (const id of [...(bot.parts ?? []), bot.sessionId ?? bot.id, bot.id]) byId[id] = bot
   }
   const roomsById = {}
-<<<<<<< HEAD
-  for (const room of value.rooms) roomsById[room.id] = room
-  // DSH bots are not Bots: each indexes by its own id and by each Session it owns.
-=======
   // A group's own Session is a chain of parts like a Bot's chat: `room.id` is its
   // first part's id and `sessionId` its current one; every part id finds the room.
   for (const room of value.rooms) {
     for (const id of [room.id, room.sessionId, ...(room.ownParts ?? [])]) roomsById[id] = room
   }
-  // The DSH Agent is not a Bot: it indexes by its own id and by each Session it owns.
->>>>>>> vendor/ds-bot-0.3.6-prepared
+  // DSH bots are not Bots: each indexes by its own id and by each Session it owns.
   const agentsById = {}
   const agentOf = {}
   for (const agent of value.agents ?? []) {

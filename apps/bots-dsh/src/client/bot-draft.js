@@ -10,21 +10,13 @@ export function freshBotName(roster, base = 'New Bot') {
   return `${base} ${index}`
 }
 
-<<<<<<< HEAD
-// The form starts on the DSH default model when it is served, else the first one that is set
-// up (a key, a sign-in or a signed-in agent; never a route a CLI covers). With
-// none set up the form starts on no model.
+// The form starts on the team default model from settings when it is served and set up, then
+// the DSH default, else the first one that is set up (a key, a sign-in or a signed-in agent;
+// never a route a CLI covers). With none set up the form starts on no model.
 const setUp = model => !model.needsKey && !model.needsSignIn && !model.covered && !model.needsAccount
 export function startModel(roster) {
-  const models = (roster.models ?? []).filter(setUp)
-  return (models.find(model => model.ref === roster.defaultModel) ?? models.find(model => model.superseded !== true) ?? models[0])?.ref ?? ''
-=======
-// The form starts on the team default model from settings when it is served, then
-// the DSH default, else the first one. A local agent is never a start: it is chosen.
-export function startModel(roster) {
-  const usable = modelsFor(roster.models).filter(model => model.needsKey !== true)
-  return (usable.find(model => model.ref === roster.prefs?.defaultBotModel) ?? usable.find(model => model.ref === roster.defaultModel) ?? usable[0])?.ref ?? ''
->>>>>>> vendor/ds-bot-0.3.6-prepared
+  const models = modelsFor(roster.models).filter(setUp)
+  return (models.find(model => model.ref === roster.prefs?.defaultBotModel) ?? models.find(model => model.ref === roster.defaultModel) ?? models.find(model => model.superseded !== true) ?? models[0])?.ref ?? ''
 }
 
 // A chosen model is always sent: the host fixes it on the Bot at creation.

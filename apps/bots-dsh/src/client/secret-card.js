@@ -10,11 +10,8 @@ import { dateLocale, t } from './i18n.js'
 import { SPRING_POP, SPRING_SHAPE, spring } from './motion.js'
 import { useDockHold } from './card-hold.js'
 import { heldCardKey } from './sources.js'
-<<<<<<< HEAD
 import { GITHUB_FIELDS, githubPermissions, githubTokenUrl } from '../shared/github-token.js'
-=======
 import { CellEmpty } from './cell-empty.js'
->>>>>>> vendor/ds-bot-0.3.6-prepared
 
 const MIN_VALUE = 4
 const NONE = {}
@@ -355,16 +352,12 @@ export const SECRET_CSS = `
 @keyframes bt-secret-in{from{opacity:0;transform:translateY(-2px)}}
 .bt-secret-saved{display:flex;align-items:center;gap:6px;font-size:13px;line-height:18px;color:var(--bt-ink-2)}
 .bt-secret-note{font-size:12px;line-height:17px;color:var(--bt-ink-3)}
-<<<<<<< HEAD
 .bt-secret-steps{font-size:12.5px;line-height:18px;color:var(--bt-ink-2)}
 .bt-secret-steps ol{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:3px}
 .bt-secret-steps ul{margin:2px 0 0;padding-left:16px}
 .bt-secret-steps a{color:inherit;text-decoration:underline;text-underline-offset:2px}
 .bt-secret-steps code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
-.bt-secret-note code,.bt-secret-about code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px}
-=======
 .bt-secret-note code,.bt-secret-about code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px}
->>>>>>> vendor/ds-bot-0.3.6-prepared
 .bt-secret-warn{display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:8px;font-size:12px;line-height:16px;color:#b25e09;background:color-mix(in srgb,#f59e0b 12%,transparent)}
 .bt-secret-error{font-size:12px;line-height:16px;color:var(--bt-danger)}
 .bt-secret .bt-q-btn:disabled{opacity:.5;cursor:default}

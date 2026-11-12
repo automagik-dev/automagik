@@ -1,9 +1,5 @@
-<<<<<<< HEAD
-import { createElement as h, useEffect, useState } from 'react'
-import { extractSecrets, mcpRequest } from './mcp-paste.js'
-=======
 import { createElement as h, Fragment, useEffect, useState } from 'react'
->>>>>>> vendor/ds-bot-0.3.6-prepared
+import { extractSecrets, mcpRequest } from './mcp-paste.js'
 import { t } from './i18n.js'
 
 const blank = () => ({ name: '', kind: 'mcp', description: '', transport: 'stdio', command: '', argsText: '', envText: '{}', url: '', headersText: '{}', content: '', items: [] })
@@ -102,14 +98,9 @@ function CapabilityForm({ draft, setDraft, items, actions, onClose }) {
         : available.map(item => h('label', { key: item.name, className: 'bt-set-row bt-bs-row' },
           h('span', { className: 'bt-set-copy' }, h('span', { className: 'bt-bs-label' }, item.name)),
           h('input', { type: 'checkbox', checked: draft.items.includes(item.name), onChange: event => set('items', event.target.checked ? [...draft.items, item.name] : draft.items.filter(name => name !== item.name)) })))) : null,
-<<<<<<< HEAD
-    error ? h('div', { className: 'bt-connector-error', role: 'alert' }, error) : null,
-    h('div', { className: 'bt-connector-form-row' },
-      unverified ? h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: saveUnverified }, t('Save unverified')) : null,
-=======
     error ? h('div', { className: 'bt-set-row' }, h('span', { className: 'bt-danger bt-set-hint', role: 'alert' }, error)) : null,
     h('div', { className: 'bt-set-row bt-task-foot' },
->>>>>>> vendor/ds-bot-0.3.6-prepared
+      unverified ? h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: saveUnverified }, t('Save unverified')) : null,
       h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: onClose }, t('Cancel')),
       h('button', { type: 'submit', className: 'bt-send bt-soft-sm' }, draft.originalName ? t('Save changes') : t('Add capability'))))
 }
@@ -207,14 +198,7 @@ export function CapabilitiesPage({ roster, actions, run }) {
   }
   return h('section', { className: 'bt-set-section' },
     h('h3', null, t('Shared capabilities')),
-<<<<<<< HEAD
     draft ? h(CapabilityForm, { draft, setDraft, items, actions, onClose: () => setDraft(null) }) : h(PasteHelper, { roster, actions, onByHand: startNew }),
-=======
-    draft
-      ? h(CapabilityForm, { draft, setDraft, items, actions, onClose: () => setDraft(null) })
-      : h('div', { className: 'bt-actions' },
-          h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: startNew }, t('Add capability'))),
->>>>>>> vendor/ds-bot-0.3.6-prepared
     h('div', { className: 'bt-set-card bt-connectors-card' },
       items.length === 0 ? h('div', { className: 'bt-set-row' }, h('span', { className: 'bt-set-hint' }, t('No capabilities saved')))
         : items.map(item => h(CapabilityRow, {

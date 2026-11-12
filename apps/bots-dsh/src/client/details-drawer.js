@@ -3,11 +3,8 @@ import { isMainOf } from './sources.js'
 import { HEADER, currentPart, runStatsOf, stripHeader, usageOf } from './text.js'
 import { PlusIcon, ShareIcon, CloseIcon, ChevronLeftIcon, GearIcon } from './icons.js'
 import { botState, BotMark, BotAvatar } from './mark.js'
-<<<<<<< HEAD
 import { useApproval } from './approvals.js'
-=======
 import { call } from './api.js'
->>>>>>> vendor/ds-bot-0.3.6-prepared
 import { GlobeIcon, Favicon, PanelMenu, menuItemFor } from './browser-pane.js'
 import { drawerMenuKeys } from './side-model.js'
 import { useEscape } from './overlay-hooks.js'
@@ -18,17 +15,12 @@ import { FolderMenu } from './folder-menu.js'
 import { MemoryRow } from './memory-panel.js'
 import { ScheduleSummary } from './schedules.js'
 import { useGlide, useMorph } from './motion.js'
-<<<<<<< HEAD
-import { MemberApprovals, MemberState, StopMemberWork, useMemberWork, workState } from './member-status.js'
-import { remoteOfBot, savedLevelOf, levelsOf, pickLevel, cliOfBot, PermissionFallback, PermissionSelect, presetDanger, presetName, presetText } from './permission-picker.js'
-import { reopenPermissionChoice } from './permission-card.js'
-=======
 import { MemberApprovals, MemberState, StopMemberWork, StopRoomWork, useMemberWork, workState } from './member-status.js'
 import { canSetGoal, goalView, hasGoalAdmin } from './goal.js'
-import { PermissionPicker, presetDanger, presetName } from './permission-picker.js'
+import { remoteOfBot, savedLevelOf, levelsOf, pickLevel, cliOfBot, PermissionFallback, PermissionSelect, presetDanger, presetName, presetText } from './permission-picker.js'
+import { reopenPermissionChoice } from './permission-card.js'
 import { BotConnectors } from './connectors.js'
 import { ComputerView } from './computer.js'
->>>>>>> vendor/ds-bot-0.3.6-prepared
 import { t } from './i18n.js'
 import { BotPills } from './capability-pills.js'
 
@@ -97,11 +89,7 @@ function BrowserCards({ bot, sessionId, roster, actions, useBrowserTabs, useBrow
   const pages = useBrowserPages(map => map)
   useEffect(() => { actions.browserEnsure?.(bot.id) }, [bot.id])
   if (roster.browser !== true || !actions.browserShow) {
-<<<<<<< HEAD
     return h('div', { className: 'bt-muted' }, t('The browser is in DSH Desktop and the Automagik app.'))
-=======
-    return h('div', { className: 'bt-muted' }, t('The browser is in DSH Desktop and the Omni app.'))
->>>>>>> vendor/ds-bot-0.3.6-prepared
   }
   if (state.ids.length === 0) {
     return h('div', { className: 'bt-browser-empty-mark' },
@@ -364,13 +352,8 @@ export function DetailsDrawer({ sessionId, startRenaming, startTab, hasStrip, ro
         h('div', { key: 'model', className: 'bt-drawer-model' },
           h('div', { className: 'bt-section-title' }, t('Model')),
           h(ModelMenu, { bot, roster, actions, run, wide: true }),
-<<<<<<< HEAD
           needsModelPick(bot, roster) ? h('div', { className: 'bt-note' }, t('Pick a model and {name} can start.', { name: bot.name })) : null),
-=======
-          modelOf(bot, roster) ? null : h('div', { className: 'bt-note' }, t('Pick a model and {name} can start.', { name: bot.name })),
-        ),
         bot.engine ? h(AgentSessions, { key: 'sessions', bot, part, run, useSessions }) : null,
->>>>>>> vendor/ds-bot-0.3.6-prepared
         h(PermissionRow, { key: 'permission', bot, roster, actions, run }),
         h(BotConnectors, { key: 'connectors', bot, roster, actions, run }),
         h('div', { key: 'folder', className: 'bt-drawer-model' },

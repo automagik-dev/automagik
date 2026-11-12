@@ -66,15 +66,11 @@ export function timingText(task) {
       return `${text}${zone}`
     }
     case 'cron': return `${t('On the schedule {expression}', { expression: task.expression })}${zone}`
-<<<<<<< HEAD
     case 'rrule': {
       // The Bot's own tasks are rrules: show the rule line, not the DTSTART header.
       const rule = String(task.rrule ?? '').split('\n').find(line => line.startsWith('RRULE:')) ?? task.rrule ?? ''
       return t('On the schedule {expression}', { expression: rule.replace(/^RRULE:/, '') })
     }
-=======
-    case 'rrule': return t('Custom schedule')
->>>>>>> vendor/ds-bot-0.3.6-prepared
     default: return ''
   }
 }

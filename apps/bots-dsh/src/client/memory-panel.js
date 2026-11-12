@@ -7,12 +7,8 @@ import { useEscape } from './overlay-hooks.js'
 import { ArrowUpIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, CloseIcon, DotsIcon, MemoryIcon, MoveIcon, PinIcon, TrashIcon } from './icons.js'
 import { dateLocale, hostText, t } from './i18n.js'
 import { summaryBlocks } from './text.js'
-<<<<<<< HEAD
-import { useLinger } from './motion.js'
-import { Lamp } from './lamp.js'
-=======
 import { stepMenuFocus, useLinger } from './motion.js'
->>>>>>> vendor/ds-bot-0.3.6-prepared
+import { Lamp } from './lamp.js'
 
 const POLL_MS = 1500
 const MENU_EXIT_MS = 120
