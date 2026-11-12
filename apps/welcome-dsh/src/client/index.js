@@ -7,6 +7,7 @@ import { STAGE_CSS } from './octopus.js'
 import { announceStep } from './stage.js'
 import { TERMINAL_CSS } from './terminal.js'
 import { CLAY_ART_CSS } from './vendor/clay-art.js'
+import { PRODUCT_LOCKUP_CSS } from './product-lockup.js'
 import { installVeil } from './veil.js'
 import { installLocale } from './i18n.js'
 import { ACP_CSS, installAcpSection } from './acp-agents.js'
@@ -30,7 +31,7 @@ export const inject = ['slots', 'locale']
 function installStyles() {
   const style = document.createElement('style')
   style.dataset.omniAi = ''
-  style.textContent = STAGE_CSS + ONBOARD_CSS + INK_CSS + CLAY_ART_CSS + TERMINAL_CSS + ACP_CSS
+  style.textContent = STAGE_CSS + ONBOARD_CSS + INK_CSS + CLAY_ART_CSS + PRODUCT_LOCKUP_CSS + TERMINAL_CSS + ACP_CSS
   document.head.append(style)
   return () => style.remove()
 }
