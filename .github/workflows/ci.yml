@@ -1291,8 +1291,14 @@ jobs:
         if: matrix.app == 'bots-dsh'
         working-directory: apps/desktop
         run: |
+          set -euo pipefail
           npm ci --no-fund --no-audit
-          echo "ELECTRON_BIN=$(node -p "require('electron')")" >> "$GITHUB_ENV"
+          # The package fetches its binary on first use, checked against its own checksums,
+          # and says so on stdout: fetch first, then ask for the path alone.
+          node node_modules/electron/install.js
+          bin="$(node -p "require('electron')")"
+          test -x "${bin}"
+          echo "ELECTRON_BIN=${bin}" >> "$GITHUB_ENV"
 
       - name: Generated files are current
         # A package with no browser half has no client to build.
