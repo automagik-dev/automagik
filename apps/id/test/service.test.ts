@@ -438,6 +438,24 @@ describe('Worker + D1 identity', () => {
     expect(await (await request('/style.css', undefined, { mf: pages })).text()).toBe('owner asset fixture');
   });
 
+  test('direct .html paths answer 404, so a page is only ever served with its headers', async () => {
+    const pages = await instance(false, undefined, true);
+    for (const path of ['/sign-in.html', '/consent.html', '/sign-in.html?state=opaque', '/sign-in.html/',
+      '/SIGN-IN.HTML', '/sign-in%2Ehtml', '/sign-in.htm', '/assets/other.html', '/%ff.html']) {
+      for (const method of ['GET', 'HEAD', 'POST']) {
+        const response = await request(path, undefined, { mf: pages, method });
+        expect(response.status, `${method} ${path}`).toBe(404);
+        expect(await response.text(), `${method} ${path}`).not.toContain('owner page fixture');
+      }
+    }
+    // The page's own address and its files are untouched.
+    const page = await request('/sign-in', undefined, { mf: pages });
+    expect(page.status).toBe(200);
+    expect(page.headers.get('x-frame-options')).toBe('DENY');
+    expect(page.headers.get('cache-control')).toBe('no-store');
+    expect((await request('/style.css', undefined, { mf: pages })).status).toBe(200);
+  });
+
   test('D1 rate limit survives a second isolated runtime sharing the database', async () => {
     for (let i = 0; i < 60; i++) {
       expect((await request('/api/auth/get-session', undefined, { ip: '192.0.2.201' })).status).toBe(200);

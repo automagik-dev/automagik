@@ -26,6 +26,16 @@ const mutations = [
     test: 'D1 rate limit survives',
     edits: [['src/auth.ts', "storage: 'database'", "storage: 'memory'"]],
   },
+  {
+    name: 'serve a page file directly as .html',
+    test: 'direct .html paths answer 404',
+    edits: [['src/index.ts', 'if (directPage(url.pathname)) return', 'if (false) return']],
+  },
+  {
+    name: 'let CI skip the page browser tests',
+    test: 'the CI job runs the browser tests',
+    edits: [['../../.github/workflows/ci.yml', 'ID_PAGES_BROWSER: required', 'ID_PAGES_BROWSER: optional']],
+  },
 ];
 
 const reportTo = process.argv[2];

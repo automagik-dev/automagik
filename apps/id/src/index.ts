@@ -13,6 +13,16 @@ function publicData(value: unknown): unknown {
   return value;
 }
 
+// The pages answer only at /sign-in and /consent, where the Worker adds their headers.
+// A direct .html path, however it is spelled, is not a page.
+function directPage(pathname: string): boolean {
+  try {
+    return /\.html?$/i.test(decodeURIComponent(pathname).replace(/\/+$/, ''));
+  } catch {
+    return true;
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
@@ -30,6 +40,7 @@ export default {
       }
       return new Response('page not built yet', { status: 501 });
     }
+    if (directPage(url.pathname)) return new Response('Not found', { status: 404 });
     if (url.pathname === '/api/id/config') {
       return Response.json({ phoneEnabled: Boolean(env.OMNI_OTP_URL) });
     }

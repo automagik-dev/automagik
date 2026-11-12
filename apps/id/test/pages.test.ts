@@ -8,8 +8,9 @@
 //  3. Every state of both pages with the service's answers scripted, each checked for its
 //     words, console errors, the calls it made and sideways overflow at 390 and 320 wide.
 //
-// Layers 2 and 3 need playwright-core (the repository root's) and a Chromium; without them
-// they are skipped, unless ID_PAGES_BROWSER=required. ID_PAGES_CHROME names another Chromium.
+// Layers 2 and 3 need playwright-core (a dev dependency here) and a Chromium
+// (`node node_modules/playwright-core/cli.js install chromium`); without one they are skipped,
+// unless ID_PAGES_BROWSER=required, as CI sets it. ID_PAGES_CHROME names another Chromium.
 // ID_PAGES_SHOTS=<folder> also writes a picture of every state at 1440 and 390, light and
 // dark (and at 320, light), with an INDEX.md; ID_PAGES_ONLY=<text,text> keeps the states whose name holds one.
 import { afterAll, describe, expect, test } from 'vitest';
@@ -76,6 +77,16 @@ describe('pages: files', () => {
       expect(existsSync(resolve('pages', path.slice(1))), path).toBe(true);
     }
   });
+
+  // Without this the browser layers below skip in CI and nobody notices.
+  test('the CI job runs the browser tests', async () => {
+    const workflow = await readFile(resolve('..', '..', '.github', 'workflows', 'ci.yml'), 'utf8');
+    const job = workflow.slice(workflow.indexOf('\n  id:\n'), workflow.indexOf('\n  privacy:\n'));
+    expect(job).toContain('working-directory: apps/id');
+    expect(job).toMatch(/\n {6}ID_PAGES_BROWSER: required\n/);
+    expect(job).toMatch(/playwright-core\/cli\.js install --with-deps chromium/);
+    expect(job.indexOf('install --with-deps chromium')).toBeLessThan(job.indexOf('bun run test'));
+  });
 });
 
 // ---- A browser and a local service ---------------------------------------------------
@@ -84,12 +95,16 @@ const shots = process.env.ID_PAGES_SHOTS ? resolve(process.env.ID_PAGES_SHOTS) :
 const only = (process.env.ID_PAGES_ONLY ?? '').split(',').filter(Boolean);
 let browser: any;
 let browserTried = false;
+let browserError: unknown;
 let root = '';
 let bundle = '';
 const worlds: Miniflare[] = [];
 
 async function chromium(): Promise<any> {
-  if (browserTried) return browser;
+  if (browserTried) {
+    if (required && browserError) throw browserError;
+    return browser;
+  }
   browserTried = true;
   try {
     const library = 'playwright-core';
@@ -99,6 +114,7 @@ async function chromium(): Promise<any> {
       args: ['--no-sandbox'],
     });
   } catch (error) {
+    browserError = error;
     if (required) throw error;
     browser = null;
   }
@@ -213,6 +229,29 @@ function expectErrors(seen: { errors: string[] }, refusedCalls = 0) {
 const heading = (page: any) => page.locator('#title').innerText().then((text: string) => text.replace(/\s+/g, ' ').trim());
 const said = (page: any) => page.locator('#say').innerText().then((text: string) => text.replace(/\u00a0/g, ' '));
 const view = (page: any) => page.locator('#card [data-view]:not([hidden])').getAttribute('data-view');
+
+describe('pages: the real Worker and its static files', () => {
+  test('a page answers only at its own address; its .html file is never served directly', async () => {
+    const { origin } = await world();
+    for (const page of PAGES) {
+      const served = await fetch(`${origin}/${page}?state=opaque`);
+      expect(served.status, page).toBe(200);
+      expect(await served.text(), page).toBe(await read(`${page}.html`));
+      expect(served.headers.get('x-frame-options'), page).toBe('DENY');
+      expect(served.headers.get('referrer-policy'), page).toBe('no-referrer');
+      expect(served.headers.get('cache-control'), page).toBe('no-store');
+      for (const direct of [`/${page}.html`, `/${page}.html?state=opaque`, `/${page}%2Ehtml`,
+        `/${page}.HTML`, `/${page}.html/`]) {
+        const response = await fetch(`${origin}${direct}`, { redirect: 'manual' });
+        expect(response.status, direct).toBe(404);
+        expect(await response.text(), direct).toBe('Not found');
+      }
+    }
+    for (const file of ['/id.css', '/id.js', '/assets/pet.webp', '/assets/manrope-latin.woff2']) {
+      expect((await fetch(`${origin}${file}`)).status, file).toBe(200);
+    }
+  });
+});
 
 describe('pages: a real browser on the real Worker', () => {
   const authorize = (origin: string, overrides: Record<string, string> = {}) => `${origin}/api/auth/oauth2/authorize?` +
@@ -766,15 +805,34 @@ describe('pages: every state', () => {
     const context = await browser.newContext();
     const page = await context.newPage();
     const seen = watch(page);
+    // The Worker's own answer says DENY, so the browser refuses to frame it. A host that
+    // lost that header is played here by the same files without it: the script hides them.
+    for (const name of PAGES) {
+      const body = await read(`${name}.html`);
+      await page.route(`${origin}/bare/${name}?*`, (route: any) => route.fulfill({ contentType: 'text/html', body }));
+    }
     await page.route(`${origin}/host`, (route: any) => route.fulfill({
-      contentType: 'text/html', body: `<iframe src="/consent.html?${cloud}"></iframe><iframe src="/sign-in.html?${cloud}"></iframe>`,
+      contentType: 'text/html',
+      body: PAGES.map(name => `<iframe src="/${name}?${cloud}"></iframe><iframe src="/bare/${name}?${cloud}"></iframe>`).join(''),
     }));
     await page.goto(`${origin}/host`);
     await page.waitForLoadState('networkidle');
-    for (const frame of page.frames().slice(1)) {
-      expect(await frame.evaluate('document.documentElement.hidden')).toBe(true);
+    const frames = page.frames().slice(1);
+    expect(frames).toHaveLength(4);
+    let refused = 0;
+    let hidden = 0;
+    for (const frame of frames) {
+      if (new URL(frame.url()).pathname.startsWith('/bare/')) {
+        expect(await frame.locator('#card').count(), frame.url()).toBe(1);
+        expect(await frame.evaluate('document.documentElement.hidden'), frame.url()).toBe(true);
+        hidden++;
+      } else {
+        expect(await frame.locator('#card').count(), frame.url()).toBe(0);
+        refused++;
+      }
     }
-    expect(page.frames()).toHaveLength(3);
+    expect([refused, hidden]).toEqual([2, 2]);
+    expect(seen.requests.filter(entry => entry.includes(`${origin}/id.js`))).toHaveLength(2);
     expect(seen.requests.filter(entry => entry.includes('/api/'))).toEqual([]);
     await context.close();
   }, 60000);

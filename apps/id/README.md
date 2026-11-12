@@ -40,8 +40,18 @@ IP loopback URI while preserving its scheme, host, path and query. No origin
 wildcard is configured. Consent is skipped only on the two first-party entries;
 future third-party entries must keep `skipConsent: false`.
 
-The owner supplies the sign-in and consent pages. See [PAGES-CONTRACT.md](PAGES-CONTRACT.md).
-Until HTML exists in `pages/`, both routes answer plain text `501 page not built yet`.
+The sign-in and consent pages live in `pages/` and follow [PAGES-CONTRACT.md](PAGES-CONTRACT.md):
+`sign-in.html`, `consent.html`, one stylesheet (`id.css`), one script (`id.js`) and
+`assets/` (fonts, wordmark, the pet, their licences). They are plain files with no
+build step; nothing is loaded from another origin, and a meta Content-Security-Policy
+allows same-origin files only. Passkey is the main action; the phone code shows only
+when `/api/id/config` reports it on. Copy is English only, in one table in `id.js`.
+
+The Worker serves a page only at `/sign-in` and `/consent`, where it adds
+`referrer-policy`, `cache-control: no-store` and `x-frame-options`. Any direct
+`.html` path answers 404, so a page never arrives without those headers. Other
+files in `pages/` are served as they are. A Worker running without the `PAGES`
+binding answers plain text `501 page not built yet` on both routes.
 
 From this directory:
 
@@ -57,8 +67,22 @@ local persistent D1 and a software WebAuthn authenticator. Outbound requests are
 denied except for fake Omni delivery and local dispatch of the provider's own
 JWKS lookup for logout verification. No Cloudflare credentials are needed.
 The cross-runtime limiter test uses two independent workerd runtimes sharing D1.
-Mutation checks disable PKCE, relax redirects, enable public registration and
-move rate limits to memory, one at a time. Each must fail its targeted test;
+
+`test/pages.test.ts` covers the pages in three layers. The files: only the
+contract's endpoints, nothing stored or logged, no inline code. A real Chromium
+on the real Worker with a virtual authenticator: create a passkey, sign in,
+allow, cancel, phone codes. Then every state of both pages with the service's
+answers scripted, checked for its words, console errors, the calls it made and
+sideways overflow at 390 and 320 wide. The browser layers need a Chromium
+(`node node_modules/playwright-core/cli.js install chromium`, or `ID_PAGES_CHROME`
+naming one) and skip without it; CI sets `ID_PAGES_BROWSER=required`, which makes
+a missing browser a failure. `ID_PAGES_SHOTS=<folder> bun run test -- pages` also
+writes a picture of every state (1440 and 390 wide, light and dark; 320 light)
+with an `INDEX.md`.
+
+Mutation checks disable PKCE, relax redirects, enable public registration,
+move rate limits to memory, serve a page file directly as `.html` and let CI
+skip the page browser tests, one at a time. Each must fail its targeted test;
 source files are restored afterward. An optional terminal argument sends each
 mutation's name through `hc send` before it runs.
 `bun scripts/generate-migration.ts` regenerates the initial schema for review;
