@@ -10,14 +10,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { AGENTS, CODEX_MODE_ARGS, CODEX_NETWORK, absPath, codexClean, codexCleanNote, codexDirAllowed, codexGrants, codexKeepDirs, codexWhere,
+import { AGENTS, CODEX_MODE_ARGS, CODEX_NETWORK, absPath, cleanPath, codexClean, codexCleanNote, codexDirAllowed, codexGrants, codexKeepDirs, codexWhere,
   homeWide, launchRun, withCodexGrants, withoutBriefing } from "../mods/am-sidebar/models.js";
 import { helperPlan, restartPlan } from "../mods/am-sidebar/restart.js";
-import { codexCommandCheck, codexTemplateRefusal, codexTemplateWarning, workerPlan } from "../mods/am-sidebar/workers.js";
-import { RESOLVE_PROBE, resolvedThere } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
+import { codexCommandCheck, codexForwards, codexTemplateRefusal, codexTemplateWarning, workerPlan } from "../mods/am-sidebar/workers.js";
+import { RESOLVE_PROBE, canonHere, resolvedThere } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 import { readJsonLines } from "./log-lines.mjs";
 import { scratchProject, scratchRoot } from "./scratch-project.mjs";
 
@@ -160,7 +160,9 @@ test("withCodexGrants puts each --add-dir right after the mode words: before res
 test("codexCommandCheck reads a template's Codex words; the --no-daemon warning names the template and the fix", () => {
   const full = `codex --approve-for-me --disable hooks --no-daemon -c ${CODEX_NETWORK} -m x`;
   assert.deepEqual(codexCommandCheck(full), { conflicts: [], missing: [], lost: [], forwards: true, single: true });
-  assert.deepEqual(codexCommandCheck("env A=1 codex -m x"), { conflicts: [], missing: MODE, lost: [], forwards: true, single: true });
+  assert.deepEqual(codexCommandCheck("A=1 codex -m x"), { conflicts: [], missing: MODE, lost: [], forwards: true, single: true });
+  // #1142: env is a program run before Codex, not one of the forms codexForwards proves.
+  assert.equal(codexCommandCheck("env A=1 codex -m x").forwards, false);
   assert.deepEqual(codexCommandCheck("codex --no-daemon --dangerously-bypass-approvals-and-sandbox -a never").conflicts,
     ["--dangerously-bypass-approvals-and-sandbox", "-a"]);
   assert.equal(codexCommandCheck('sh -c "codex --approve-for-me"').single, false, "words after an outer sh -c never reach codex");
@@ -249,9 +251,9 @@ function tree(t) {
   writeFileSync(join(root, "file"), "x");
   return { root, home, app };
 }
-/** RESOLVE_PROBE run by a real sh over `paths`, read back by resolvedThere: how that machine resolves each. */
+/** RESOLVE_PROBE run by a real sh over `paths` (as codexOn sends them: cleanPath), read back by resolvedThere: how that machine resolves each. */
 const probe = (paths) => {
-  const r = spawnSync("sh", ["-c", RESOLVE_PROBE, "sh", ...[...new Set(paths.map(absPath).filter(Boolean))]], { encoding: "utf8" });
+  const r = spawnSync("sh", ["-c", RESOLVE_PROBE, "sh", ...[...new Set(paths.map(cleanPath).filter(Boolean))]], { encoding: "utf8" });
   assert.equal(r.status, 0, r.stderr);
   return resolvedThere(r.stdout);
 };
@@ -267,7 +269,9 @@ test("#1142 an --add-dir naming the home folder or an app home by any alias (dot
     join(root, "shared")];
   const where = whereOn([...blocked, ...allowed], home, app);
   const { argv, dropped } = codexClean(["codex", ...[...blocked, ...allowed].flatMap((d) => ["--add-dir", d]), "-m", "x"], where);
-  assert.deepEqual(addDirs(argv), allowed, "positive controls: a project folder, an app home's sibling, a cache, a path through a link, a new folder");
+  // Each kept one is passed as the canonical value it was checked as (#1142): the path through a link as its target.
+  assert.deepEqual(addDirs(argv), allowed.map((d) => (d === join(root, "to-home", "work") ? join(home, "work") : d)),
+    "positive controls: a project folder, an app home's sibling, a cache, a path through a link, a new folder");
   assert.deepEqual(dropped, ["--add-dir"], "named by flag, never by value");
   assert.deepEqual(codexClean(["codex", `--add-dir=${home}/.`, `--add-dir=${join(home, "work")}`], where).argv, ["codex", `--add-dir=${join(home, "work")}`]);
   // launchRun the same way; a word after -- is no option and stays as written.
@@ -334,7 +338,7 @@ test("#1142 a seat's Codex template is kept only when Codex provably gets the pa
   const plan = (command, extra = {}) => restartPlan({ bot, run, runningAgent: "codex", session: "s-1", template: { name: "seat-tpl", command },
     grants: ["/r/.git"], ...extra });
   // Proven: Codex runs last and is the only taker of "$@" (its own, or the one the pack adds).
-  for (const command of ["codex -m x", 'codex -m x "$@"', 'env A=1 codex -m x "$@"']) {
+  for (const command of ["codex -m x", 'codex -m x "$@"', 'A=1 exec codex -m x "$@"', 'export A=b; codex -m x']) {
     const p = plan(command);
     assert.deepEqual([p.template, p.granted, p.templateNote], ["seat-tpl", true, null], command);
     const got = codexReceives(t, p.argv);
@@ -344,6 +348,7 @@ test("#1142 a seat's Codex template is kept only when Codex provably gets the pa
   // Not proven: an earlier "$@" or $* takes the words; a -- makes them prompt text. The agent row, said by name.
   for (const [command, why] of [['printf "" "$@"; codex', /can't pass the pack's Codex words to Codex as options/],
     [`printf '%s' "$*"; codex -m x`, /can't pass/], ["codex --", /can't pass/], ['codex -m x -- "$@"', /can't pass/],
+    ['env A=1 codex -m x "$@"', /can't pass/],
     ["codex -- --no-daemon", /puts --no-daemon after its --, where Codex reads them as prompt text/]]) {
     const p = plan(command);
     assert.deepEqual([p.template, p.granted], [null, false], command);
@@ -377,6 +382,148 @@ test("#1142 a Restart --tree helper's shell command runs again only when Codex p
   }
   const home = helper("codex --add-dir /home/u/.", { where: codexWhere({ home: "/home/u" }) });
   assert.match(home.error, /h7 can't be run again: its command runs Codex with --add-dir/);
+});
+
+/** tree() plus a shared folder holding a link to a child of the home folder, one to a child of the app home, and a real folder. */
+function linkTree(t) {
+  const { root, home, app } = tree(t);
+  const S = join(root, "shared");
+  mkdirSync(join(S, "real"));
+  symlinkSync(join(home, "work"), join(S, "home-link"));
+  symlinkSync(join(app, "sub"), join(S, "app-link"));
+  const up = (name) => `${join(S, name)}/..`;
+  return { root, home, app, S, up };
+}
+/** This computer's resolver, as canonHere answers it: the realpath of the exact form (kernel semantics), null when it isn't there. */
+const realHere = (p) => realpathSync.native(p);
+const isDirHere = (p) => { try { return statSync(p).isDirectory(); } catch { return false; } };
+
+test("#1142 a symlink's .. is resolved the filesystem's way, never as text; each --add-dir passed is the value checked (source, probe, grants)", (t) => {
+  const { home, app, S, up } = linkTree(t);
+  // As text each says S; the filesystem says the home folder and the app home.
+  assert.equal(realpathSync.native(up("home-link")), home);
+  assert.equal(realpathSync.native(up("app-link")), app);
+  assert.equal(cleanPath(`${up("home-link")}/./`), up("home-link"), "cleanPath keeps a .. for the filesystem");
+  assert.equal(codexWhere({ home }).canon(up("real")), null, "without a resolver a .. proves nothing");
+  const there = probe([up("home-link"), up("app-link"), `${join(S, "missing")}/..`, `${join(S, "missing")}/../real`]);
+  assert.equal(there.resolve(up("home-link")), home, "the probe's cd -P: the parent of the link's target");
+  assert.equal(there.resolve(up("app-link")), app);
+  assert.equal(there.resolve(`${join(S, "missing")}/..`), null, "a .. after a part that isn't there proves nothing");
+  assert.equal(there.resolve(`${join(S, "missing")}/../real`), null);
+  // This computer's resolver (a seat's start here) answers the same way.
+  assert.equal(canonHere(up("home-link")), home);
+  assert.equal(canonHere(up("app-link")), app);
+  assert.equal(canonHere(`${join(S, "missing")}/..`), null, "a .. after a part that isn't there proves nothing here either");
+  assert.equal(canonHere(`${join(S, "missing")}/../real`), null);
+  assert.equal(canonHere(join(S, "missing", "x")), join(S, "missing", "x"), "a missing tail without ..: its nearest folder's place");
+  // A resolver's answer is used only when it is canonical itself.
+  assert.equal(codexWhere({ home, resolve: () => `${S}/real/..` }).canon(S), null);
+  const words = ["codex", "--add-dir", up("home-link"), "--add-dir", up("app-link"), "--add-dir", up("real"), "--add-dir", join(S, "home-link"),
+    `--add-dir=${up("app-link")}`, `--add-dir=${up("real")}`, "-m", "x"];
+  const local = codexWhere({ home, appHome: app, resolve: realHere });
+  const remote = whereOn([...words.slice(1)].map((w) => w.replace(/^--add-dir=/, "")).filter((w) => w.startsWith("/")), home, app);
+  for (const [name, where] of [["here", local], ["through the probe", remote]]) {
+    const { argv, dropped } = codexClean(words, where);
+    // S/real/.. is passed as S and the link as its target; the two whose .. reaches the home folder or the app home go.
+    assert.deepEqual(argv, ["codex", "--add-dir", S, "--add-dir", join(home, "work"), `--add-dir=${S}`, "-m", "x"], name);
+    assert.deepEqual(dropped, ["--add-dir"], name);
+    for (const v of [...addDirs(argv), S]) assert.equal(realpathSync.native(v), v, `${name}: passed as its canonical value`);
+    assert.deepEqual(addDirs(launchRun("codex", words, {}, where)), [S, join(home, "work")], name);
+    assert.deepEqual(codexKeepDirs(words, where), { argv, dropped: true }, name);
+  }
+  // A derived folder whose .. leads to the home folder or the app home is never granted; one whose .. leads to S is, as S.
+  const env = { GOCACHE: up("home-link"), XDG_CACHE_HOME: up("app-link"), GOMODCACHE: up("real") };
+  const grants = codexGrants({ where: local, env, isDir: isDirHere });
+  assert.deepEqual(grants, [S, join(home, ".npm")]);
+  for (const g of grants) assert.ok(![home, app].includes(realpathSync.native(g)), g);
+});
+
+test("#1142 a template's --add-dir is kept only when written as the canonical value it is checked as: the seat falls back, the helper is refused", (t) => {
+  const { root, home, app, S, up } = linkTree(t);
+  const where = codexWhere({ home, appHome: app, resolve: realHere });
+  const bot = { agent: "codex" };
+  const run = launchRun("codex", ["codex"], bot, where);
+  const plan = (command) => restartPlan({ bot, run, runningAgent: "codex", session: "s-1", template: { name: "seat-tpl", command }, grants: [], where });
+  const helper = (command) => helperPlan({ agents: AGENTS, bot, grants: [], where, get: { address: "t7", name: "h7", cwd: root, labels: {},
+    argv: ["sh", "-c", command], foreground: { argv: ["codex"], cwd: root } } });
+  // To home, to the app home, and three safe folders whose text isn't their canonical value: none is rewritten in a template.
+  for (const value of [up("home-link"), up("app-link"), up("real"), join(S, "home-link"), `${S}/./real`, `${S}/real/`]) {
+    const command = `codex --add-dir ${value} "$@"`;
+    const p = plan(command);
+    assert.deepEqual([p.template, p.granted], [null, false], value);
+    assert.match(p.templateNote, /template seat-tpl names --add-dir, so it started from its agent row/, value);
+    const got = codexReceives(t, p.argv);
+    modeAsOptions(got, value);
+    assert.equal(got.includes(value), false, `${value}: the template's own value never reaches Codex`);
+    const h = helper(command);
+    assert.match(h.error ?? "", /h7 can't be run again: its command runs Codex with --add-dir/, value);
+    assert.equal(h.argv, undefined, value);
+  }
+  // Positive control: written as its canonical value, kept, granted and passed byte for byte, by the seat and the helper.
+  const command = `codex --add-dir ${join(S, "real")} "$@"`;
+  const p = plan(command);
+  assert.deepEqual([p.template, p.granted, p.templateNote], ["seat-tpl", true, null]);
+  for (const argv of [p.argv, helper(command).argv]) {
+    const got = codexReceives(t, argv);
+    modeAsOptions(got, command);
+    assert.deepEqual(addDirs(got), [join(S, "real")]);
+  }
+});
+
+test("#1142 a template's words are proved to reach Codex only for one literal shape; set --, shift and every other form fall back or are refused", (t) => {
+  const bot = { agent: "codex" };
+  const run = launchRun("codex", ["codex"], bot);
+  const plan = (command) => restartPlan({ bot, run, runningAgent: "codex", session: "s-1", template: { name: "seat-tpl", command }, grants: ["/r/.git"] });
+  const helper = (command) => helperPlan({ agents: AGENTS, bot, grants: ["/r/.git"], get: { address: "t7", name: "h7", cwd: "/w", labels: {},
+    argv: ["sh", "-c", command], foreground: { argv: ["codex"], cwd: "/w" } } });
+  // What Codex receives holds the mode words exactly once each, in their order, as options: all before any --.
+  const intact = (got, name) => {
+    const at = got.indexOf(MODE[0]);
+    assert.deepEqual(got.slice(at, at + MODE.length), MODE, `${name}: ${JSON.stringify(got)}`);
+    for (const m of MODE) assert.equal(count(got, m), 1, `${name}: ${m} once: ${JSON.stringify(got)}`);
+    const cut = got.indexOf("--");
+    assert.ok(at >= 0 && (cut < 0 || at + MODE.length <= cut), `${name}: before any --: ${JSON.stringify(got)}`);
+  };
+  // At a9492cb5, set -- gave Codex none of them and shift dropped --approve-for-me, with the template kept and granted.
+  for (const command of ['set --; codex "$@"', 'shift; codex "$@"']) {
+    const p = plan(command);
+    assert.deepEqual([p.template, p.granted], [null, false], command);
+    assert.match(p.templateNote, /its template seat-tpl can't pass the pack's Codex words to Codex as options, so it started from its agent row/, command);
+    assert.equal(p.argv[0], "codex", command);
+    intact(codexReceives(t, p.argv), command);
+    const h = helper(command);
+    assert.match(h.error ?? "", /h7 can't be run again: its command runs Codex but can't pass the pack's Codex words to Codex as options/, command);
+    assert.equal(h.argv, undefined, command);
+  }
+  const unproved = ['set -- a; codex "$@"', 'eval shift; codex "$@"', '. /dev/null; codex "$@"', 'source /dev/null; codex "$@"', 'command shift; codex "$@"',
+    'f() { shift; }; f; codex "$@"', 'trap "" HUP; codex "$@"', 'if true; then codex "$@"; fi', 'true | codex "$@"', '( codex "$@" )', '{ codex "$@"; }',
+    'codex "$@" &', 'codex "$@" >/dev/null', 'cd "$(pwd)"; codex "$@"', 'cd `pwd`; codex "$@"', 'codex "$*"', "codex $@", 'codex "${@}"',
+    'codex -m $M "$@"', 'X=--; codex $X "$@"', "codex '--' \"$@\"", 'exec -a x codex "$@"', 'env A=b codex "$@"', 'cd /tmp && codex "$@"',
+    'git status; codex "$@"', 'codex "$@" "$@"', 'codex ~/x "$@"', 'codex * "$@"', "codex\n", 'codex "$@" || true', 'codex -m x # note'];
+  for (const command of unproved) {
+    assert.equal(codexForwards(command), false, command);
+    const p = plan(command);
+    assert.deepEqual([p.template, p.granted], [null, false], command);
+    intact(codexReceives(t, p.argv), command);
+    const h = helper(command);
+    assert.match(h.error ?? "", /h7 can't be run again/, command);
+    assert.equal(h.argv, undefined, command);
+  }
+  // Proved: a literal Codex run with the template's own "$@" or the one the pack appends, after literal assignments or export.
+  for (const command of ['codex "$@"', "codex -m x", 'A=1 exec codex -m m "$@"', 'export A=b; codex "$@"', "A=b; codex -m 'o \"3\"'",
+    'codex "$@" -m x', "A=b && codex -m x"]) {
+    assert.equal(codexForwards(command), true, command);
+    const p = plan(command);
+    assert.deepEqual([p.template, p.granted, p.templateNote], ["seat-tpl", true, null], command);
+    const got = codexReceives(t, p.argv);
+    intact(got, command);
+    assert.deepEqual(addDirs(got), ["/r/.git"], command);
+    const h = helper(command);
+    assert.equal(h.error, undefined, command);
+    intact(codexReceives(t, h.argv), command);
+  }
+  // Codex named by its path is the same run (read only here: no path to a real Codex is ever executed by a test).
+  assert.equal(codexForwards('/opt/tools/codex "$@" -m x'), true);
 });
 
 test("#1142 a template worker keeps the owner's command as written, never with the pack's folders; a Codex option after its -- is refused", (t) => {
@@ -531,15 +678,21 @@ test("#1142 a Codex seat's start resolves programs.json's --add-dir here: a syml
   const s = scene(t);
   symlinkSync(s.home, join(s.root, "to-home"));
   symlinkSync(join(s.root, "nowhere"), join(s.root, "dangling"));
-  mkdirSync(join(s.root, "shared"));
+  mkdirSync(join(s.root, "shared/real"), { recursive: true });
   const app = join(s.root, "app");
+  // #1142: a link to a child of the home folder or of the app home, then .., is that folder, not shared/.
+  for (const d of [join(s.home, "child"), join(app, "child")]) mkdirSync(d, { recursive: true });
+  symlinkSync(join(s.home, "child"), join(s.root, "shared/home-link"));
+  symlinkSync(join(app, "child"), join(s.root, "shared/app-link"));
   writeFileSync(join(app, "programs.json"), `${JSON.stringify({ programs: { codex: { run: ["codex", "--add-dir", join(s.root, "to-home"),
     "--add-dir", join(app, "x"), "--add-dir", join(s.home, ".config"), "--add-dir", `${s.home}/work/..`, "--add-dir", join(s.root, "dangling", "x"),
-    "--add-dir", join(s.root, "shared")] } } })}\n`);
+    "--add-dir", join(s.root, "shared"), "--add-dir", `${s.root}/shared/home-link/..`, "--add-dir", `${s.root}/shared/app-link/..`,
+    "--add-dir", `${s.root}/shared/real/../real`] } } })}\n`);
   s.setState((st) => { st.terminals = []; });
   const r = s.cli(["start", "Dev", "--json"], { from: null });
   assert.equal(r.code, 0, r.err);
-  assert.deepEqual(addDirs(launched(s.runs()[0])), [join(s.root, "shared"), ...s.grants], "an ordinary folder stays, before the derived ones");
+  assert.deepEqual(addDirs(launched(s.runs()[0])), [join(s.root, "shared"), join(s.root, "shared/real"), ...s.grants],
+    "ordinary folders stay, each as its canonical value, before the derived ones");
   assert.match(r.err, /programs\.json's Codex command names --add-dir: left out/);
 });
 
@@ -567,18 +720,24 @@ test("#1142 a Codex seat on a linked machine: its --add-dir words and derived fo
     mkdirSync(d, { recursive: true });
   }
   symlinkSync(vm, join(vm, "link-home"));
+  // #1142: links there to a child of that machine's home and of its app home, then ..: that folder, resolved there.
+  for (const d of [join(vm, "child"), join(vm, ".config/herdr-app/child"), join(vm, "shared/real")]) mkdirSync(d, { recursive: true });
+  symlinkSync(join(vm, "child"), join(vm, "shared/home-link"));
+  symlinkSync(join(vm, ".config/herdr-app/child"), join(vm, "shared/app-link"));
   exe(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
   exe(join(bin, "herdr-app"), "#!/bin/sh\nexit 1\n");
   exe(join(vmBin, "codex"), "#!/bin/sh\nexit 0\n");
   exe(join(vmBin, "uname"), "#!/bin/sh\necho Linux\n");
   // This computer's rules alone would keep every one of these: none is under its home or app home.
   writeFileSync(join(app, "programs.json"), `${JSON.stringify({ programs: { codex: { run: ["codex", "--add-dir", `${vm}/.`,
-    "--add-dir", join(vm, "link-home"), "--add-dir", join(vm, ".config/herdr-app/x"), "--add-dir", join(vm, ".config"), "--add-dir", join(vm, "shared")] } } })}\n`);
+    "--add-dir", join(vm, "link-home"), "--add-dir", join(vm, ".config/herdr-app/x"), "--add-dir", join(vm, ".config"), "--add-dir", join(vm, "shared"),
+    "--add-dir", `${vm}/shared/home-link/..`, "--add-dir", `${vm}/shared/app-link/..`, "--add-dir", `${vm}/shared/real/../real`] } } })}\n`);
   const project = scratchProject(vm, "proj", { commit: true, bots: { version: 1, categories: [], bots: [
     { id: ID.dev, name: "Dev", kind: "main", agent: "codex", look: { character: "star", colour: "blue" }, role: "r", instructions: "i" }] } });
   const statePath = join(root, "hc.json"), logPath = join(root, "hc.log");
   const blank = Object.fromEntries(["HERDR_APP_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "GOPATH", "GOMODCACHE",
     "GOCACHE", "npm_config_cache", "NPM_CONFIG_CACHE", "BUN_INSTALL", "BUN_INSTALL_CACHE_DIR"].map((k) => [k, ""]));
+  blank.GOCACHE = `${vm}/shared/app-link/..`; // that machine's app home, through a link and ..: never granted
   writeFileSync(statePath, JSON.stringify({ next: 100, terminals: [],
     machines: [{ name: "vm", id: "core-of-vm", state: "connected", uname: "Linux x86_64", home: vm, path: vmBin, env: blank }] }));
   writeFileSync(logPath, "");
@@ -589,9 +748,18 @@ test("#1142 a Codex seat on a linked machine: its --add-dir words and derived fo
   const call = readJsonLines(logPath).find((c) => c[0] === "run");
   const argv = launched(call);
   assert.deepEqual(argv.slice(0, 1), ["codex"]);
-  assert.deepEqual(addDirs(argv), [join(vm, "shared"), realpathSync(join(project, ".git")), join(vm, ".local/state/herdr-core"), join(vm, ".npm")]);
+  assert.deepEqual(addDirs(argv), [join(vm, "shared"), join(vm, "shared/real"), realpathSync(join(project, ".git")), join(vm, ".local/state/herdr-core"),
+    join(vm, ".npm")]);
   modeAsOptions(argv.slice(1), "the linked seat");
   assert.match(r.stderr, /vm: an --add-dir in Codex's command names the home folder, an app home or a folder whose place there can't be proved: left out/);
   assert.ok(readJsonLines(logPath).some((c) => c[0] === "exec" && c.includes("vm") && c.some((w) => typeof w === "string" && w.includes("pwd -P"))),
     "resolved there, through hc exec");
+  // Its restart there weighs the same words there: the same folders, each as its canonical value.
+  writeFileSync(logPath, "");
+  const again = spawnSync(process.execPath, [CLI, "restart", "Dev", "--machine", "vm", "--project", project, "--fresh", "--force", "--json"],
+    { cwd: root, env, encoding: "utf8" });
+  assert.equal(again.status, 0, again.stderr);
+  const rerun = readJsonLines(logPath).find((c) => c[0] === "run");
+  assert.deepEqual(addDirs(launched(rerun)), addDirs(argv), "the restart's folders");
+  modeAsOptions(launched(rerun).slice(1), "the linked restart");
 });

@@ -5,7 +5,7 @@
 // usagemeter reads. Pure: no `herdr`, `gpui-*` or `fs`, so `node --test`, the CLI and the
 // briefing hook share it. Apache-2.0.
 
-import { AGENTS, AGY_MODE_DEFAULT, CODEX_NETWORK, agyModeArgs, agyModeOf, agyModeProblem, agyGuarded, agySettingsArgs, codexClean, codexCleanNote, effortArgs,
+import { AGENTS, AGY_MODE_DEFAULT, CODEX_NETWORK, agyModeArgs, agyModeOf, agyModeProblem, agyGuarded, agySettingsArgs, codexClean, codexCleanNote, codexDirsExact, effortArgs,
   hasEffortFlag, launchRun, modelArgs, modelRefusal, promptArgs, resolveAgent } from "./models.js";
 import { TEMPLATE_SHAPE } from "./model.js";
 import { envWords } from "./logins.js";
@@ -541,18 +541,80 @@ const optionName = (w) => (w.startsWith("--") ? w.split("=")[0] : w.startsWith("
 const POSITIONAL = /\$(?:[@*]|\{[@*])/g;
 const isPositional = (w) => /^\$(?:[@*]|\{[@*]\})$/.test(w);
 
+// #1142, codexForwards: the words commandArgv passes a shell command land where its "$@" is (it
+// appends one when the command has none). A literal word is unquoted letters, digits and
+// `_@%+=:,./-`, '…', or "…" without $, ` or a backslash; its decoded value is what counts.
+const QUOTED_ARGS = '"$@"';
+const LITERAL = /^(?:[A-Za-z0-9_@%+=:,./-]|'[^']*'|"[^"$`\\]*")+/;
+const WORD_END = /[ \t;\n&]/;
+const NAME_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+const decoded = (raw) => raw.replace(/'([^']*)'|"([^"]*)"/g, (_, single, double) => single ?? double);
+
+/**
+ * Whether shell command `command`, run the way commandArgv runs it, provably hands the words
+ * after it to Codex as options (#1142). It is matched against one shape, never interpreted:
+ * setup commands, each only literal assignments (NAME=word ...) or `export` of them, joined by
+ * `;`, `&&` or a newline, then one Codex run: literal assignments, an optional `exec`, an unquoted
+ * word naming Codex and literal words, with exactly one "$@" among them (the command's own, or
+ * the one commandArgv appends) and no `--` (decoded: a quoted '--' ends Codex's options too).
+ * An assignment and `export` (a POSIX special built-in, found before any function) only set
+ * variables: no code runs and the positional parameters stay as passed. Every word is literal,
+ * so no expansion can move, drop or end the words; "$@" is the only one. Anything else (set,
+ * shift, eval, ., source, a function, an alias, cd or any other program before Codex, a
+ * conditional, a pipe, a subshell, a group, `&`, a redirection, a substitution, $*, an unquoted
+ * $@, "${@}", a variable or ~ in a word, a glob, a comment) proves nothing.
+ */
+export function codexForwards(command, agents = AGENTS) {
+  const text = String(command ?? "");
+  const effective = (text.includes(QUOTED_ARGS) ? text : `${text} ${QUOTED_ARGS}`).replace(/^[ \t\n]+|[ \t\n]+$/g, "");
+  const commands = [[]];
+  const ends = (n) => n === effective.length || WORD_END.test(effective[n]);
+  for (let i = 0; i < effective.length;) {
+    const ch = effective[i];
+    if (ch === " " || ch === "\t") { i += 1; continue; }
+    if (ch === ";" || ch === "\n") { commands.push([]); i += 1; continue; }
+    if (effective.startsWith("&&", i)) { commands.push([]); i += 2; continue; }
+    if (effective.startsWith(QUOTED_ARGS, i) && ends(i + QUOTED_ARGS.length)) {
+      commands.at(-1).push({ args: true });
+      i += QUOTED_ARGS.length;
+      continue;
+    }
+    const m = LITERAL.exec(effective.slice(i));
+    if (!m || !ends(i + m[0].length)) return false;
+    commands.at(-1).push({ raw: m[0], value: decoded(m[0]) });
+    i += m[0].length;
+  }
+  if (commands.some((c) => c.length === 0)) return false;
+  const assignment = (w) => !w.args && NAME_ASSIGNMENT.test(w.raw);
+  const setup = commands.slice(0, -1).every((c) => {
+    const words = c[0].raw === "export" ? c.slice(1) : c;
+    return words.length > 0 && words.every(assignment);
+  });
+  if (!setup) return false;
+  const run = commands.at(-1);
+  let i = 0;
+  while (i < run.length && assignment(run[i])) i += 1;
+  if (run[i] && !run[i].args && run[i].raw === "exec") i += 1;
+  const program = run[i];
+  if (!program || program.args || program.raw !== program.value || agentOfProgram(shellBase(program.value), agents) !== "codex") return false;
+  const words = run.slice(i + 1);
+  return commands.flat().filter((w) => w.args).length === 1 && words.some((w) => w.args) && words.every((w) => w.args || w.value !== "--");
+}
+
 /**
  * What a shell command that runs Codex (an hc template's, a helper's) says about the pack's
  * Codex launch mode (#1125), read from its words, never changed: null when it runs no Codex
  * (or another agent too). Only a Codex run's words before its `--` are options (#1142).
  * `conflicts`: the flags among them that pick Codex's approvals or sandbox, or an `--add-dir`
  * `where` doesn't allow (models.js codexClean, by name: bypass, -a, -s, the -c keys, --remote,
- * --add-dir); `missing`: the pack mode words they lack, in the order the mode has them
+ * --add-dir) or that isn't written as the canonical value it is checked as (codexDirsExact,
+ * #1142: the text is never rewritten); `missing`: the pack mode words they lack, in the order the mode has them
  * (`--approve-for-me`, `--disable hooks`, `--no-daemon`, network on); `lost`: Codex options
  * written after a run's `--`, by name (prompt text to Codex); `forwards`: words after the
  * command provably reach Codex as options: Codex runs once, as the top-level last simple
- * command, with no `--`, and the command expands no positional parameter ($@, $*) except as
- * that run's own word (an earlier "$@" takes them all, and commandArgv then adds none).
+ * command, with no `--`, the command expands no positional parameter ($@, $*) except as that
+ * run's own word (an earlier "$@" takes them all, and commandArgv then adds none), and the
+ * whole command has the one shape codexForwards proves (#1142: set --, shift and the rest don't).
  */
 export function codexCommandCheck(command, agents = AGENTS, where = null) {
   const text = String(command ?? "");
@@ -568,11 +630,13 @@ export function codexCommandCheck(command, agents = AGENTS, where = null) {
   if (!all((a) => pair(a, "--disable", "hooks") || config(a, "features.hooks=false"))) missing.push("--disable", "hooks");
   if (!all((a) => a.includes("--no-daemon"))) missing.push("--no-daemon");
   if (!all((a) => config(a, CODEX_NETWORK))) missing.push("-c", CODEX_NETWORK);
-  const conflicts = [...new Set(options.flatMap((a) => codexClean(["codex", ...a], where).dropped))];
+  const inexact = options.some((a) => !codexDirsExact(a, where)) ? ["--add-dir"] : [];
+  const conflicts = [...new Set([...options.flatMap((a) => codexClean(["codex", ...a], where).dropped), ...inexact])];
   const lost = [...new Set(runs.flatMap((r) => split(r.args)[1].map(optionName).filter((n) => CODEX_LOST_OPTIONS.has(n))))];
   const only = runs.length === 1 && runs[0].last ? runs[0] : null;
   const expansions = (text.match(POSITIONAL) ?? []).length;
-  const forwards = Boolean(only) && !only.args.includes("--") && expansions === only.args.filter(isPositional).length;
+  const forwards = Boolean(only) && !only.args.includes("--") && expansions === only.args.filter(isPositional).length
+    && codexForwards(text, agents);
   return { conflicts, missing, lost, forwards, single: runs.length === 1 && runs[0].last };
 }
 

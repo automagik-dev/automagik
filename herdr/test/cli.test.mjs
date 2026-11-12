@@ -3630,11 +3630,12 @@ test("restart --tree #453: a Claude helper's by-hand line under a bad record car
 // ---- restart --tree: shared folders and failure paths (#256 review) ----
 
 /** Genie's t5 with six codex helpers of one template in one folder (as t2p6's integrators), each with `labels(n)`. */
-function sixScene(t, labels = () => ({})) {
+// #1142: a literal Codex run, the one shape whose words are proved to reach Codex as options.
+const SIX_CMD = "codex --no-daemon -m gpt-6.1-sol -c model_reasoning_effort=high";
+function sixScene(t, labels = () => ({}), cmd = SIX_CMD) {
   const s = restartScene(t);
   const wt = join(s.root, "proj.worktrees", "integration");
   mkdirSync(wt, { recursive: true });
-  const cmd = 'env PATH="$HOME/.bun/bin:$PATH" codex --no-daemon -m gpt-6.1-sol -c model_reasoning_effort=high';
   const names = ["acc-262", "acc-261b", "acc-218", "acc-264b", "acc-265", "e8-v16b"];
   const st = s.hcState();
   names.forEach((name, n) => st.terminals.push({ ...term(`t${20 + n}`, { argv: ["codex", "--no-daemon", "-m", "gpt-6.1-sol"], app: "codex", cwd: wt, parent: "t5" }),
@@ -3671,6 +3672,17 @@ test("restart --tree: six codex helpers in one folder resume each its own sessio
   assert.ok(runs(bare).slice(1).every((w) => JSON.stringify(codexWords(agentWords(w))) === JSON.stringify(["sh", "-c", `${cmd} "$@"`, "sh", ...lacking])),
     JSON.stringify(runs(bare).slice(1).map(agentWords)));
   assert.equal(s.cli(["restart", "Genie", "--fresh-shared"]).code, 2, "--fresh-shared goes with --tree");
+  // #1142: the fixture's old command, behind an env PATH wrapper, is no shape the pack proves passes the words: each helper
+  // is refused by name before anything starts, never run again as written.
+  const wrapped = sixScene(t, (n) => ({ "revive.agent": "codex", "revive.session": idOf(n), "revive.cwd": "x" }),
+    `env PATH="$HOME/.bun/bin:$PATH" ${SIX_CMD}`).s;
+  const no = wrapped.cli(["restart", "Genie", "--tree"]);
+  assert.equal(no.code, 1);
+  for (const name of names) {
+    assert.match(no.err, new RegExp(`${name} can't be run again: its command runs Codex but can't pass the pack's Codex words to Codex as options`));
+  }
+  assert.equal(runCall(wrapped.calls()), undefined, "nothing started");
+  assert.equal(at(wrapped.calls(), "kill"), -1, "nothing ended");
 });
 
 /** The resume line --tree printed (its hc run line), checked to parse as sh, then run as sh would split it. */

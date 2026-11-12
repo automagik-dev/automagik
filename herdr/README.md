@@ -1395,9 +1395,12 @@ a worker and a Restart --tree helper:
   pnpm's store and cache, and Bun's install cache (`BUN_INSTALL_CACHE_DIR`). Never the root, the
   home folder, a folder above it, the app home (its attach binding, locks and ledgers), a folder
   inside it or above it, or a whole XDG, cache, `GOPATH` or Bun folder. Each folder is weighed in
-  its canonical form where the launch runs (#1142): `.` and `..` resolved, and symlinks through the
-  nearest folder that is there, so an alias of the home folder or the app home goes too; a path
-  whose place can't be proved (a dangling link, a file in the way) goes as well. The app home is
+  its canonical form where the launch runs (#1142), resolved the filesystem's way: symlinks
+  followed through the nearest folder that is there, then each `..` from where they led (never
+  as text: `link/..` is the parent of the link's target), so an alias of the home folder or the app
+  home goes too; a path whose place can't be proved (a dangling link, a file in the way, a `..`
+  after a part that isn't there) goes as well. Codex is passed that canonical value, the one
+  checked, never the path as written. The app home is
   the launch's effective one (`HERDR_APP_HOME`, a linked project's pane-env) and the default under
   the home folder both. A linked machine's folders are read and resolved there (its environment,
   git and realpaths, through `hc exec`), never against this computer. Anything else the sandbox
@@ -1424,13 +1427,19 @@ by name (#1142): Codex would read that option as prompt text, so the launch it m
 proved. Restart --tree keeps that exception, and that refusal, only for a pane with the
 `worker.template` label (or a ledger row naming its template); any other Codex helper runs the
 launch mode, and one whose shell command picks its own approvals, names a refused `--add-dir`
-or can't be shown to pass words to Codex as options is refused by name. A bot's seat never runs
-a template's bypass: a Codex seat's template is kept (a seat's template has run through `sh -c`
-with words after it through `"$@"` since #213) only when it names no approval, sandbox or
-refused `--add-dir` word of its own and Codex provably gets words after it as options: Codex runs
-once, as the last command, with no `--`, and nothing before it expands `"$@"` or `$*`. Then the
-mode words it lacks and the folders go after it; any other is set aside for the agent row, and
-the restart says which template and why, by flag name.
+or can't be shown to pass words to Codex as options is refused by name, as is a Codex pane whose
+command runs Codex where the pack can't read it (inside an `if` or a group, say). A bot's seat
+never runs a template's bypass: a Codex seat's template is kept (a seat's template has run through
+`sh -c` with words after it through `"$@"` since #213) only when it names no approval, sandbox or
+refused `--add-dir` word of its own, writes each `--add-dir` as the canonical value it is checked
+as (a template's text is never rewritten), and Codex provably gets words after it as options.
+That proof reads one shape only (#1142): literal assignments (`NAME=value`) or `export` of them,
+joined by `;`, `&&` or a newline, then one Codex run (optionally behind `exec`) whose words are
+literals, with exactly one `"$@"`, its own or the one the pack appends, and no `--` (a quoted
+`'--'` included). Anything else (`set --`, `shift`, `eval`, `.`, a function, `cd` or any other
+program before Codex, a pipe, a subshell, a redirection, a substitution, `$*`, a variable in a
+Codex word) proves nothing. Then the mode words it lacks and the folders go after it; any other is
+set aside for the agent row, and the restart says which template and why, by flag name.
 
 Migration: nothing restarts on its own and a running pane keeps its launch. A Codex seat gets the
 mode at its next start or restart; a `programs.json` Codex run with its own approval words gets

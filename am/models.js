@@ -496,6 +496,20 @@ export function absPath(p) {
   return `/${out.join("/")}`;
 }
 
+/**
+ * `p` as one absolute path without its empty and `.` segments or a trailing slash, its `..`
+ * segments KEPT (#1142): what a `..` names depends on the symlinks before it, so only the
+ * filesystem where the path is used can say (`link/..` is the parent of the link's target, not
+ * the folder holding the link). Null when it isn't absolute.
+ */
+export function cleanPath(p) {
+  if (typeof p !== "string" || !p.startsWith("/") || /[\x00-\x1f\x7f]/.test(p)) return null;
+  return `/${p.split("/").filter((s) => s && s !== ".").join("/")}`;
+}
+
+/** Whether absolute `p` has a `..` segment. */
+const hasParent = (p) => p.split("/").includes("..");
+
 /** Whether canonical `a` is canonical `b` or inside it. */
 const within = (a, b) => a === b || b === "/" || a.startsWith(`${b}/`);
 
@@ -503,16 +517,20 @@ const within = (a, b) => a === b || b === "/" || a.startsWith(`${b}/`);
  * Where a Codex launch runs, for its folder rules (#1125, #1142): `{ home, appHomes, canon }`,
  * each root canonical there. `canon(p)`: an absolute path as that machine resolves it, or null
  * when its narrowness can't be proved (not absolute, or `resolve` couldn't tell). `resolve` answers
- * for the launch's own machine (realpath through the nearest folder that is there: symlinks
- * followed); without one, paths compare as written (absPath). `appHome`: the launch's effective app
- * home (one path or several); the default one under `home` is always protected too.
+ * for the launch's own machine with filesystem semantics: it gets the path as cleanPath leaves it,
+ * `..` included, and gives its realpath through the nearest folder that is there (symlinks
+ * followed, then each `..`). Without one, paths compare as written (cleanPath), and one with a
+ * `..` proves nothing (null). `appHome`: the launch's effective app home (one path or several);
+ * the default one under `home` is always protected too.
  */
 export function codexWhere({ home = null, appHome = null, resolve = null } = {}) {
   const canon = (p) => {
-    const a = absPath(p);
+    const a = cleanPath(p);
     if (!a) return null;
-    if (!resolve) return a;
-    try { return absPath(resolve(a)) ?? null; } catch { return null; }
+    if (!resolve) return hasParent(a) ? null : a;
+    let r = null;
+    try { r = cleanPath(resolve(a)); } catch { return null; }
+    return r && !hasParent(r) ? r : null;
   };
   // A root that can't be resolved is still protected as written: the rules only ever widen what is kept out.
   const root = (p) => canon(p) ?? absPath(p);
@@ -537,16 +555,25 @@ export function codexDirAllowed(dir, where = {}) {
 const whereOf = (where) => (where && typeof where === "object" && typeof where.canon === "function" ? where
   : codexWhere({ home: typeof where === "string" ? where : null }));
 
-/** Whether an `--add-dir` value may stay under `where`: absolute and allowed once canonical there. */
-const addDirAllowed = (value, where) => {
+/**
+ * The rules for a launch built here to run on another machine (seatOnMachine, #1142): every
+ * absolute `--add-dir` stays as cleanPath leaves it, `..` included, because only that machine can
+ * resolve it; codexOn weighs each there and passes that machine's canonical value.
+ */
+export const codexWhereThere = () => ({ home: null, appHomes: [], canon: cleanPath });
+
+/** An `--add-dir` value's canonical form under `where` when it is allowed there, else null: the value a launch passes (#1142). */
+const allowedDir = (value, where) => {
   const c = where.canon(value);
-  return c !== null && codexDirAllowed(c, where);
+  return c !== null && codexDirAllowed(c, where) ? c : null;
 };
 
 /**
- * A Codex argv's `--add-dir` words (before any `--`) that `where` doesn't allow, left out:
- * { argv, dropped } (dropped: true when one went). For a launch whose folders are known only
- * where it runs (a linked machine: seatOnMachine), after the argv is built.
+ * A Codex argv's `--add-dir` words (before any `--`) under `where`: each one `where` allows is
+ * passed as its canonical value there, the one the rules checked (#1142: so a `link/..` can't
+ * be checked as one folder and reach Codex as another); each other one is left out: { argv,
+ * dropped } (dropped: true when one went). For a launch whose folders are known only where it
+ * runs (a linked machine: seatOnMachine), after the argv is built.
  */
 export function codexKeepDirs(argv, where) {
   const w = whereOf(where);
@@ -557,11 +584,25 @@ export function codexKeepDirs(argv, where) {
     const x = words[i];
     if (x === "--") { out.push(...words.slice(i)); break; }
     const value = x === "--add-dir" ? words[i + 1] : x.startsWith("--add-dir=") ? x.slice("--add-dir=".length) : undefined;
-    if (value !== undefined && !addDirAllowed(value, w)) { dropped = true; if (x === "--add-dir") i += 1; continue; }
-    out.push(x);
-    if (x === "--add-dir" && i + 1 < words.length) out.push(words[++i]);
+    if (value === undefined) { out.push(x); continue; }
+    const c = allowedDir(value, w);
+    if (c === null) { dropped = true; if (x === "--add-dir") i += 1; continue; }
+    if (x === "--add-dir") { out.push(x, c); i += 1; } else out.push(`--add-dir=${c}`);
   }
   return { argv: out, dropped };
+}
+
+/**
+ * Whether each `--add-dir` in Codex words `args` (before any `--`) is already the canonical value
+ * `where` allows, byte for byte (#1142): a template's text is never rewritten, so a value it
+ * passes is the one checked only when it is written that way.
+ */
+export function codexDirsExact(args, where) {
+  const words = ["codex", ...(Array.isArray(args) ? args.map(String) : [])];
+  const cut = words.indexOf("--");
+  const options = cut < 0 ? words : words.slice(0, cut);
+  const kept = codexKeepDirs(options, where);
+  return !kept.dropped && kept.argv.length === options.length && kept.argv.every((w, i) => w === options[i]);
 }
 
 /**
@@ -571,7 +612,8 @@ export function codexKeepDirs(argv, where) {
  * any key under one), --remote (another app server: outside the pane, #1125), and an --add-dir
  * `where` doesn't allow (codexWhere, codexDirAllowed: canonical where the launch runs, so a dot,
  * parent or symlink alias of the home folder or the app home goes too, as does a relative one:
- * its narrowness can't be proved, #1142). `where` may also be a home folder, compared as written.
+ * its narrowness can't be proved, #1142); one it allows is passed as that canonical value, the
+ * one checked. `where` may also be a home folder, compared as written.
  * The pack's own --approve-for-me, --no-daemon and network word go quietly (launchRun puts them
  * back once). Every other word stays as it is, after a `--` too.
  * Returns { argv, dropped } (`dropped`: the flags left out, by name, `-c sandbox_mode` style:
@@ -600,7 +642,12 @@ export function codexClean(run, where = null) {
       continue;
     }
     const addDir = w === "--add-dir" ? words[i + 1] : w.startsWith("--add-dir=") ? w.slice("--add-dir=".length) : undefined;
-    if (addDir !== undefined && !addDirAllowed(addDir, at)) { drop("--add-dir"); if (w === "--add-dir") i += 1; continue; }
+    if (addDir !== undefined) {
+      const c = allowedDir(addDir, at);
+      if (c === null) { drop("--add-dir"); if (w === "--add-dir") i += 1; continue; }
+      if (w === "--add-dir") { argv.push(w, c); i += 1; } else argv.push(`--add-dir=${c}`);
+      continue;
+    }
     argv.push(w);
     if (CODEX_TAKES_VALUE.has(w) && i + 1 < words.length) argv.push(words[++i]);
   }
@@ -615,7 +662,8 @@ export function codexCleanNote(run, where = null, source = "programs.json's Code
 }
 
 /**
- * The paths codexGrants weighs for a launch, as written (absPath), before any is resolved:
+ * The paths codexGrants weighs for a launch, as written (cleanPath: a `..` kept for the
+ * filesystem to resolve, #1142), before any is resolved:
  * { candidates, general }. `candidates`, in order: `gitDir`, the launch checkout's own git dir (a
  * linked worktree's `.git/worktrees/<name>`, which Codex keeps read-only even beside its common
  * dir), and `gitCommonDir`, its git common dir (its own .git, or the main checkout's); then
@@ -626,9 +674,9 @@ export function codexCleanNote(run, where = null, source = "programs.json's Code
  * (each XDG folder, ~/.local, GOPATH and Bun's own). `env` is the launch's environment.
  */
 export function codexGrantPaths({ home = null, env = {}, gitDir = null, gitCommonDir = null }) {
-  const h = absPath(home);
-  const abs = (p) => absPath(p);
-  const at = (base, rest) => (base ? absPath(`${base}/${rest}`) : null);
+  const h = cleanPath(home);
+  const abs = (p) => cleanPath(p);
+  const at = (base, rest) => (base ? cleanPath(`${base}/${rest}`) : null);
   const xdg = (name, fallback) => abs(env[name]) ?? at(h, fallback);
   const state = xdg("XDG_STATE_HOME", ".local/state"), data = xdg("XDG_DATA_HOME", ".local/share");
   const cache = xdg("XDG_CACHE_HOME", ".cache"), config = xdg("XDG_CONFIG_HOME", ".config");

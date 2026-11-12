@@ -29,7 +29,7 @@ import { addressOf, attachKey, attachLine, attachPath, attachRow, closingRow, co
 import { PANE_ENV_PATH, agentOnMachine, interpreterPath, paneEnvOf } from "../agentPath.mjs";
 import { briefingFilePath, installHook, launchBriefingText, screenTail, stableBriefingPath, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
-import { AGENTS, AGY_MODE_DEFAULT, AGY_MODES, AUTO_MODE, AUTO_MODE_NONE, agentKeyOfArgv, agyGuarded, agyModeArgs, agyModeOf, agyModeProblem, agyModeWarning, agyPermissionPlan, agyRuleProblem, agySandbox, agySettingsArgs, agySettingsDir, agySettingsPlan, autoModeArgs, codexCleanNote, codexGrantPaths, codexGrants, codexKeepDirs, codexWhere, absPath, withCodexGrants, choosesSession, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, launchRun, modelArgs, modelRefusal, ownPromptIn, ownsSession, resolveAgent, resumeAfterTurn, resumesById,
+import { AGENTS, AGY_MODE_DEFAULT, AGY_MODES, AUTO_MODE, AUTO_MODE_NONE, agentKeyOfArgv, agyGuarded, agyModeArgs, agyModeOf, agyModeProblem, agyModeWarning, agyPermissionPlan, agyRuleProblem, agySandbox, agySettingsArgs, agySettingsDir, agySettingsPlan, autoModeArgs, codexCleanNote, codexGrantPaths, codexGrants, codexKeepDirs, codexWhere, codexWhereThere, absPath, cleanPath, withCodexGrants, choosesSession, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, launchRun, modelArgs, modelRefusal, ownPromptIn, ownsSession, resolveAgent, resumeAfterTurn, resumesById,
   promptByMessage, sessionIdArgs, shownModel, withAgySettings, withBriefing, withOverrides } from "../models.js";
 import { AG_MODELS_TIMEOUT_MS, agModelsSpawnResult, refreshAgModelsSync } from "../modelCache.js";
 import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, WORKTREES_EXCLUDE,
@@ -2991,7 +2991,8 @@ async function seatOnMachine(project, bot, over = {}) {
   // does (launchSeat; RFC 0026 (e)): the pane's agent.session label is that machine's own record
   // of the seat's session. A command that picks its own session keeps it; a restart's plan
   // (over.argv) brings its own id, in its argv and its carried label.
-  const source = over.argv ?? [...launchRun(agentKey, agent.run, bot), ...agyModeArgs(agentKey, agyMode), ...modelArgs(bot.agent, bot.model)];
+  // A Codex --add-dir is left for that machine to weigh (codexOn, #1142): only it can resolve it.
+  const source = over.argv ?? [...launchRun(agentKey, agent.run, bot, codexWhereThere()), ...agyModeArgs(agentKey, agyMode), ...modelArgs(bot.agent, bot.model)];
   const chosen = !over.argv && choosesSession(agentKey) && !ownsSession(source) ? newSessionId() : null;
   const command = agyGuarded(agentKey, withAgySettings(agentKey, chosen ? [...source, ...sessionIdArgs(agentKey, chosen)] : source, agySettings?.path));
   // #612: a local absolute override that isn't there falls back to the shipped run when that is.
@@ -3026,7 +3027,7 @@ async function seatOnMachine(project, bot, over = {}) {
   // --add-dir words are weighed there too (#1142: resolved on that machine, never this one).
   const codexHere = agentKey === "codex" ? await codexOn(machine, over.cwd ?? key, paneEnv, briefed.argv) : null;
   const argv = codexHere ? withCodexGrants(codexHere.argv, codexHere.dirs) : briefed.argv;
-  const codexNotes = [codexHere?.warning, agentKey === "codex" ? codexCleanNote(agent.run) : null].filter(Boolean);
+  const codexNotes = [codexHere?.warning, agentKey === "codex" ? codexCleanNote(agent.run, codexWhereThere()) : null].filter(Boolean);
   // The hook goes in before the session starts, so Claude Code reads it at startup.
   const hook = briefingHook(agentKey) && briefingHome.dir ? await briefingHookOn(machine, bot, over.cwd ?? key, briefingHome.dir)
     : { written: false, warnings: [] };
@@ -3157,7 +3158,9 @@ async function restartOnMachine(opts, project, bot, entry) {
   // The old pane's launch, only to say when it differs from what the source launches now (#597).
   const oldLaunch = old ? paneCommand(old) : null;
   const planned = {
-    bot, run: launchRun(agentKey, run, bot), runningAgent: old ? agentKeyOfArgv(unwrapKeep(old.foreground?.argv), agentTable()) : null, session: label,
+    // #1142: its Codex --add-dir words are weighed there (codexOn): only that machine resolves them.
+    bot, run: launchRun(agentKey, run, bot, codexWhereThere()),
+    runningAgent: old ? agentKeyOfArgv(unwrapKeep(old.foreground?.argv), agentTable()) : null, session: label,
     fresh: opts.fresh || (!old && !bot.hermes), agent: entry ? entry.agent : undefined, model: entry ? (entry.model ?? "") : undefined,
     // A new conversation there starts on an id chosen here too (RFC 0026 (e)), as cmdRestart's does.
     newSession: newSessionId(),
@@ -3276,11 +3279,12 @@ async function restartOnMachine(opts, project, bot, entry) {
 }
 
 /**
- * Absolute path `p` as this computer resolves it (#1142): the realpath of its nearest folder
- * that is there, then the rest of `p` (no symlink can hide in a part that isn't there). Null when
- * that can't be proved: a part that is a file, or a symlink that points nowhere.
+ * Absolute path `p` as this computer resolves it (#1142), with filesystem semantics: the realpath
+ * of its nearest part that is there (the kernel follows each symlink, then each `..` from where
+ * it led), then the rest of `p` (no symlink can hide in a part that isn't there). Null when that
+ * can't be proved: a part that is a file, a symlink that points nowhere, or a `..` in the rest.
  */
-function canonHere(p) {
+export function canonHere(p) {
   let base = p, rest = "";
   for (;;) {
     try {
@@ -3293,6 +3297,7 @@ function canonHere(p) {
     }
     if (base === "/") return null;
     const i = base.lastIndexOf("/");
+    if (base.slice(i + 1) === "..") return null;
     rest = `${base.slice(i)}${rest}`;
     base = base.slice(0, i) || "/";
   }
@@ -3321,12 +3326,13 @@ const GRANT_VARS = ["HOME", "HERDR_APP_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME",
 const GRANT_PROBE = `for k in ${GRANT_VARS.join(" ")}; do v=$(printenv "$k") && printf '%s=%s\\n' "$k" "$v"; done; `
   + `g=$(git rev-parse --path-format=absolute --git-dir 2>/dev/null) && printf 'GIT_DIR=%s\\n' "$g"; `
   + `g=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null) && printf 'GIT_COMMON_DIR=%s\\n' "$g"; true`;
-// Each path argument as that machine resolves it (#1142): path, TAB, its canonical form (the nearest
-// folder there through cd and pwd -P, then the rest; "-" when a part is a file or a dangling
-// link), TAB, 1 when the path itself is a folder there.
+// Each path argument as that machine resolves it (#1142), with filesystem semantics: path, TAB,
+// its canonical form (the nearest part there through cd -P and pwd -P, which follow each symlink
+// and then each `..` physically, then the rest; "-" when a part is a file or a dangling link, or a
+// `..` falls in the rest), TAB, 1 when the path itself is a folder there.
 export const RESOLVE_PROBE = 'for p do b=$p; r=; out=; while :; do '
-  + 'if [ -d "$b" ]; then c=$(cd "$b" 2>/dev/null && pwd -P) && { out=${c%/}$r; [ -n "$out" ] || out=/; }; break; fi; '
-  + 'if [ -e "$b" ] || [ -L "$b" ]; then break; fi; [ "$b" = / ] && break; '
+  + 'if [ -d "$b" ]; then c=$(cd -P "$b" 2>/dev/null && pwd -P) && { out=${c%/}$r; [ -n "$out" ] || out=/; }; break; fi; '
+  + 'if [ -e "$b" ] || [ -L "$b" ]; then break; fi; [ "$b" = / ] && break; [ "${b##*/}" = .. ] && break; '
   + 'r=/${b##*/}$r; b=${b%/*}; [ -n "$b" ] || b=/; done; '
   + 'd=0; [ -n "$out" ] && [ -z "$r" ] && d=1; printf "%s\\t%s\\t%s\\n" "$p" "${out:--}" "$d"; done; true';
 
@@ -3336,7 +3342,7 @@ export function resolvedThere(stdout) {
   for (const line of String(stdout ?? "").split("\n")) {
     const [path, real, dir] = line.split("\t");
     if (!path || real === undefined) continue;
-    const c = real === "-" ? null : absPath(real);
+    const c = real === "-" ? null : cleanPath(real);
     canon.set(path, c);
     if (c && dir === "1") dirs.add(c);
   }
@@ -3375,8 +3381,9 @@ async function codexOn(machine, cwd, paneEnv, argv) {
   if (!absPath(env.HOME)) return away("no home folder");
   const appHomes = [paneEnv?.appHome, env.HERDR_APP_HOME].filter(Boolean);
   const { candidates, general } = codexGrantPaths({ home: env.HOME, env, gitDir: env.GIT_DIR ?? null, gitCommonDir: env.GIT_COMMON_DIR ?? null });
+  // Sent as cleanPath leaves them, `..` included: that machine resolves each (#1142).
   const paths = [...new Set([env.HOME, `${env.HOME}/.config/herdr-app`, ...appHomes, ...candidates, ...general, ...addDirValues(argv)]
-    .map(absPath).filter(Boolean))];
+    .map(cleanPath).filter(Boolean))];
   const there = await remoteIo.exec("sh", ["-c", RESOLVE_PROBE, "sh", ...paths], machine);
   if (there.code !== 0) return away(there.code === -1 ? "no answer" : `exit ${there.code}`);
   const { resolve, isDir: dirThere } = resolvedThere(there.stdout);

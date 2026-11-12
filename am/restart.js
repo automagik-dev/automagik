@@ -588,7 +588,16 @@ export function helperPlan({ get, worker = null, session = null, agents, fresh =
       }
       command = launch;
       codexWords = [...check.missing, ...grants.flatMap((d) => ["--add-dir", d])];
-    } else if (launch?.shell !== undefined) command = launch;
+    } else if (launch?.shell !== undefined) {
+      // #1142: a Codex pane whose shell command runs Codex where the pack can't read it (inside an
+      // if, a group, behind exec -a ...) can't be given the launch mode: refused, never run as written.
+      // A template worker keeps the owner's exception: its command runs as written.
+      if (agent === "codex" && !templateWorker) {
+        return { name, replaced, error: `${who} can't be run again: it runs Codex, but its command runs it in a form this pack can't read, `
+          + "so it can't be given Codex's launch mode (#1125)" };
+      }
+      command = launch;
+    }
     else if (launch && agent && agentKeyOfArgv(launch.argv, agents) === agent) {
       const own = withoutPrompt(withoutResume(agent, launch.argv));
       if (agent === "codex") {
