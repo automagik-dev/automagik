@@ -706,7 +706,10 @@ export function install(rt) {
       try {
         await levelHolds({ agent })
       } catch (error) {
-        if (error?.code === 'bot/refused') return error.message
+        if (error?.code === 'bot/refused') {
+          rt.noteStop?.(agent?.id ?? agent?.session?.id, { why: 'level' }, agent)
+          return error.message
+        }
         throw error
       }
       return undefined

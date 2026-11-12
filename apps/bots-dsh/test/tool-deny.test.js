@@ -230,6 +230,9 @@ test('a call that reaches the executor for a denied tool is refused', async (t) 
     () => guard({ name: 'bash', agent: { id: bot.id } }, async () => 'ran'),
     /does not have the bash tool/,
   )
+  assert.equal(rt.stopsView().length, 1)
+  assert.equal(rt.stopsView()[0].why, 'tool')
+  assert.equal(rt.stopsView()[0].botId, bot.id)
   assert.equal(await guard({ name: 'omni_messages', agent: { id: bot.id } }, async () => 'ran'), 'ran')
 
   const other = await rt.createBot({ name: 'Free', pickModel: true, instructions: 'Free.' })

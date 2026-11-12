@@ -213,7 +213,8 @@ async function fetchHarness(lists) {
   await ctx.plugin(SystemPrompt)
   await ctx.plugin(ToolRuntime)
   await ctx.plugin({ apply: applyToolExecutor, inject: toolExecutorInject })
-  const rt = { ctx, state: { prefs: {} }, load: async () => {} }
+  const stops = []
+  const rt = { ctx, state: { prefs: {} }, load: async () => {}, noteStop: (...args) => stops.push(args) }
   installAddressPolicy(rt)
   let calls = 0
   ctx.tools.register(defineTool({
@@ -237,6 +238,7 @@ async function fetchHarness(lists) {
   return {
     ctx,
     calls: () => calls,
+    stops,
     set,
     run: url => runTool(ctx, 'web_fetch', { url }),
     async close() { await ctx.fiber.dispose() },
@@ -248,12 +250,16 @@ test('web_fetch uses the same default, lists and deny-wins rule', async t => {
   t.after(h.close)
   const open = await h.run('http://127.0.0.1:3000/')
   assert.equal(open.isError, false, open.error?.message)
+  assert.equal(h.stops.length, 0)
   assert.equal(h.calls(), 1)
 
   h.set([], ['127.0.0.1'])
   const denied = await h.run('http://127.0.0.1:3000/')
   assert.equal(denied.isError, true)
   assert.match(denied.error.message, /denied by this profile's address list/u)
+  assert.equal(h.stops.length, 1)
+  assert.equal(h.stops[0][1].why, 'address')
+  assert.equal(h.stops[0][1].tool, 'web_fetch')
   assert.equal(h.calls(), 1)
 
   h.set(['127.0.0.0/8'], ['127.0.0.1'])

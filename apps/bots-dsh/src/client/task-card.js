@@ -1,3 +1,4 @@
+import { openStops, stopLine } from './stops.js'
 import { createElement as h, Fragment, useEffect, useState } from 'react'
 import { t } from './i18n.js'
 
@@ -82,6 +83,10 @@ export function TaskCard({ sessionId, title, task, onOpen, useSessionStatus, use
   const pending = useSessionStatus && sessionId ? useSessionStatus(map => map.get(sessionId)?.pendingInteraction) : undefined
   const ask = pending?.kind === 'approval' && typeof pending.answer === 'function' ? pending : undefined
   const approval = useWork && sessionId ? useWork(work => approvalFor(work, sessionId)) : false
+  const stop = useWork && sessionId ? useWork(work => {
+    const entry = openStops(work).filter(item => item.taskId === sessionId).sort((a, b) => b.at - a.at)[0]
+    return entry ? stopLine(entry) : ''
+  }) : ''
   const waiting = asked || approval
   const status = taskState(task, waiting)
   const working = status === 'working' || status === 'waiting'
@@ -116,7 +121,7 @@ export function TaskCard({ sessionId, title, task, onOpen, useSessionStatus, use
           : h('div', { className: 'op-task-live' }, h('span', { className: 'op-task-said' }, t('It asks for your OK. Open it to answer.')))
         : working ? h(Fragment, null,
           h('div', { className: 'op-task-live' },
-            task?.said ? h('span', { key: task.said, className: 'op-task-said' }, task.said)
+            stop || task?.said ? h('span', { key: stop || task.said, className: 'op-task-said' }, stop || task.said)
               : h('span', { className: 'op-task-said op-task-quiet' }, t('Getting started…')),
             task?.steps ? h('span', { className: 'op-task-steps' }, t('step {count}', { count: task.steps })) : null),
           h('div', { className: 'op-task-bar', 'aria-hidden': true }, h('i')))

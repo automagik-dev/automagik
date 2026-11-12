@@ -32,7 +32,10 @@ export function install(rt) {
       if (typeof url !== 'string') return next()
       await rt.load?.()
       const decision = await check(url, 'fetch')
-      if (!decision.allowed) return { kind: 'deny', reason: decision.message }
+      if (!decision.allowed) {
+        rt.noteStop?.(exec.agent?.id ?? exec.agent?.session?.id, { why: 'address', tool: 'web_fetch', callId: exec.callId }, exec.agent)
+        return { kind: 'deny', reason: decision.message }
+      }
       return next()
     })
   }
