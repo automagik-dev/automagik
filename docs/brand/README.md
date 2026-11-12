@@ -25,7 +25,8 @@ It is documentation. No build, app or release reads this folder.
 | `logo/wordmark/` | The name alone |
 | `favicon/` | The browser tab and home screen set |
 | `genie/` | The one Genie |
-| `tokens/` | The site's colours in both themes, type, radius, shadow and layout values, as `tokens.json` and `tokens.css` |
+| `tokens/` | The colours in both themes, type, radius, shadow and layout values, as `tokens.json` and `tokens.css` |
+| `fonts/` | Fredoka, the title face, with its licence and where it came from |
 | `components/` | The site's components: their stylesheet, a note and a preview page each |
 | `export-png.mjs` | Makes a PNG from any SVG here |
 
@@ -86,12 +87,14 @@ node docs/brand/export-png.mjs docs/brand/logo/lockups/automagik-lockup-three-co
 
 ## Type
 
-- Two families. **Manrope** for headings, labels and buttons, at weights 600 to 800 with tight tracking. **DM Sans** for running text at weight 400.
-- Headings are large and heavy; the line under them is light and calm. Eyebrows and small labels are capitals with wide tracking.
+- Two families. **Fredoka** for titles, labels and buttons. **DM Sans** for running text at weight 400. The logo's letters are their own drawing, not a font: never set a logo in Fredoka.
+- Fredoka is round, with one even stroke, like the logo's letters. It is set at the logo's weight: the logo's stroke is 26.5% of its small letters' height, and Fredoka has that at weight 536. That is `weight-title`. Buttons, links and card titles use `weight-strong` (469); menu items use `weight-label` (402). Use these three weights only: a heavier Fredoka is heavier than the logo.
+- Titles have a little negative letter spacing (`-0.02em` for the page title, `-0.016em` for section titles, `-0.01em` for card titles). Fredoka is drawn tight; do not tighten it more. Its word space is wide already: titles take no extra word spacing.
+- Titles are large; the line under them is light and calm. Eyebrows and small labels are capitals with wide tracking.
 - The page title, section titles and the intro line are fluid on the site. The styles here record their largest size; each note gives the full rule.
 - Code uses the reader's own monospace face.
 
-The two faces are the site's files, `apps/landing/assets/brand/dm-sans-latin.woff2` and `manrope-latin.woff2`. `tokens/tokens.css` loads them from there; this folder holds no copy.
+Fredoka's file is `fonts/fredoka-latin.woff2`, with its licence beside it (SIL Open Font License 1.1) and its source in `fonts/README.md`. Serve that file yourself; do not load the face from a font service. Its `@font-face` rule carries `size-adjust:105%`, which keeps its lines as long as those of the face it replaced, so titles break where they did; copy the rule from `tokens/tokens.css`. DM Sans is the site's file, `apps/landing/assets/brand/dm-sans-latin.woff2`; `tokens/tokens.css` loads it from there.
 
 ## Shape, depth and space
 
@@ -109,7 +112,7 @@ Genie is a character, not a logo. There is one Genie: the full-body clay figure,
 
 ## Tokens
 
-`tokens/tokens.json` is the record; `tokens/tokens.css` is the same values as CSS custom properties, light and dark. The values were read from the site's own files, `apps/landing/theme.css` and `apps/landing/styles.css`, at `dev@1b53c19c`. The site's files are the source: when the theme changes there, these files are made again from it.
+`tokens/tokens.json` is the record; `tokens/tokens.css` is the same values as CSS custom properties, light and dark. The colours, shadows, radii and sizes were read from the site's own files, `apps/landing/theme.css` and `apps/landing/styles.css`, at `dev@90e9f85f`; when the theme changes there, these files are made again from it. The title face goes the other way: its family, its three weights and its font file are set here, and the site takes them from this folder (`node apps/landing/scripts/sync-theme.mjs` writes the site's theme and copies the font; its `--check` fails when they differ).
 
 Setting `data-theme="light"` or `data-theme="dark"` on the root picks a theme. With neither, the reader's system setting picks.
 
