@@ -214,6 +214,8 @@ test('Arca has exactly one stand-in page here; home links to its same-tab canoni
   assert.doesNotMatch(page, /Coming soon\.<\/p><p class="lede">/)
   const card = htmlAt('/').match(/<article class="product-card" data-block="arca">[\s\S]*?<\/article>/)?.[0]
   assert.ok(card?.includes(`<h3><a href="/arca/">Arca</a></h3><p>${arca.line}</p>`))
+  // The card says only Arca's name and the owner's line: no tag of guessed wording.
+  assert.doesNotMatch(card, /tile-tag/)
   for (const html of generated.values()) for (const [link] of html.matchAll(/<a\b[^>]*href="\/arca\/"[^>]*>/g)) assert.doesNotMatch(link, /target=/)
   // The root sitemap lists Arca only through Arca's own supplied line.
   assert.equal(read('sitemap.xml').split('https://automagik.si/arca/</loc>').length, 2)
