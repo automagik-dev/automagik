@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { readdirSync, readFileSync } from 'node:fs'
 import { test } from 'node:test'
 
 // The status colours are the brand's. docs/brand/tokens/tokens.json records them, chosen so that
@@ -108,4 +108,26 @@ test('the texts on coloured, selected and lifted grounds read the strong shade',
   assert.ok(source('bot-settings.js').includes(`.bt-bs-danger .bt-bs-label{${strong}}`))
   assert.ok(source('secret-card.js').includes(`.bt-secret-danger{${strong};`))
   assert.ok(source('model-menu.js').includes(`.bt-model-trigger[data-missing] .bt-model-provider{${strong}}`))
+})
+
+test('every red text reads the strong shade, so a card never shows two text reds', () => {
+  // Dots, fills and tints keep the brand's red. A `color` that reads the red is text, and reads
+  // the strong shade first; the two marks that are icons, not text, are named here.
+  const marks = ['.bt-hw-failed .bt-hw-result-icon', '.bt-mem-changes li svg']
+  const red = /var\(--(?:bt-danger|st-bad|clay-bad)(?![-\w])/
+  const plain = []
+  let strong = 0
+  for (const name of readdirSync(new URL('../src/client/', import.meta.url)).filter(name => name.endsWith('.js'))) {
+    const text = readFileSync(new URL(`../src/client/${name}`, import.meta.url), 'utf8').replace(/\$\{[^}]*\}/g, '')
+    for (const [, selector, body] of text.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      for (const line of body.split(';')) {
+        const value = /^\s*color:(.*)$/s.exec(line)?.[1]
+        if (!value || !red.test(value) || marks.includes(selector.trim())) continue
+        if (value.includes('var(--st-bad-strong,var(--bt-danger')) strong += 1
+        else plain.push(`${name}: ${selector.trim()}`)
+      }
+    }
+  }
+  assert.deepEqual(plain, [], 'these texts read the plain red; read var(--st-bad-strong,var(--bt-danger)) instead')
+  assert.ok(strong >= 25, `the scan found only ${strong} red texts; it no longer reads the sheets`)
 })

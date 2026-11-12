@@ -355,7 +355,7 @@ button.bt-q-opt:active{background:var(--bt-active)}
 @media (prefers-reduced-motion:reduce){.bt-create-card,.bt-create-pop{animation:none}}
 .bt-send{height:40px;min-width:40px;border-radius:999px;border:0;background:var(--bt-accent);color:var(--bt-accent-ink,#fff);font-size:14px;padding:0 14px;cursor:pointer;flex:none;white-space:nowrap}
 .bt-send:disabled{opacity:.35;cursor:default}
-.bt-error{padding:0 14px 10px;color:var(--bt-danger);font-size:12px}
+.bt-error{padding:0 14px 10px;color:var(--st-bad-strong,var(--bt-danger));font-size:12px}
 
 /* Side panels keep their content clear of the Windows caption buttons. A host may set the
    chrome top to 0 so that dialog masks also cover the caption band; the panel then reaches
@@ -433,7 +433,7 @@ html[data-windows-titlebar]:not([data-fullscreen]) :is(.bt-pane,.bt-panel)::befo
 .bt-link-btn{border:0;background:none;padding:0;color:var(--bt-ink-2);font:inherit;font-size:12.5px;cursor:pointer;white-space:nowrap}
 .bt-link-btn:hover{color:var(--bt-ink);text-decoration:underline}
 .bt-paste-go{white-space:nowrap}
-.bt-paste-error{color:var(--bt-danger)}
+.bt-paste-error{color:var(--st-bad-strong,var(--bt-danger))}
 .bt-actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .bt-kv{display:flex;justify-content:space-between;gap:8px;font-size:12px;line-height:20px;color:var(--bt-ink-2)}
 .bt-kv span:last-child{color:var(--bt-ink);font-variant-numeric:tabular-nums}
@@ -582,12 +582,12 @@ font:12px/17px ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre;overf
 .bt-connector-name{font-size:14px;line-height:20px;font-weight:500}
 .bt-connector-status{font-size:12px;line-height:16px;color:var(--bt-ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .bt-connector[data-state=ready] .bt-connector-status{color:var(--bt-ink-2)}
-.bt-connector[data-state=error] .bt-connector-status{color:var(--bt-danger);white-space:normal}
+.bt-connector[data-state=error] .bt-connector-status{color:var(--st-bad-strong,var(--bt-danger));white-space:normal}
 .bt-connector-actions{flex:none;display:flex;gap:6px}
 .bt-connector-form{display:flex;flex-direction:column;gap:8px;padding-left:48px;animation:bt-q-in ${SPRING_SHAPE.duration}ms ${SPRING_SHAPE.easing},bt-veil-in .2s ease-out}
 .bt-connector-form-row{display:flex;align-items:center;gap:6px}
 .bt-connector-link{flex:1;font-size:12px;color:var(--bt-ink-2)}
-.bt-connector-error{padding-left:48px;font-size:12px;line-height:16px;color:var(--bt-danger)}
+.bt-connector-error{padding-left:48px;font-size:12px;line-height:16px;color:var(--st-bad-strong,var(--bt-danger))}
 
 /* Shell chrome reshaped for the team view. Selectors use stable data attributes where the
    shell offers them and CSS-module name suffixes elsewhere. */
@@ -624,7 +624,7 @@ html:not([data-windows-titlebar]) [class*="_footArea"],:not([class*="_collapsed"
 .bt-voice-name{font-size:16px;line-height:22px;font-weight:500}
 .bt-voice-status{font-size:13px;line-height:18px;color:var(--bt-ink-2);min-height:18px}
 .bt-voice-caption{min-height:44px;font-size:15px;line-height:22px;color:var(--bt-ink);animation:bt-blur-in .25s ease-out;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
-.bt-voice-note{font-size:12px;color:var(--bt-danger)}
+.bt-voice-note{font-size:12px;color:var(--st-bad-strong,var(--bt-danger))}
 .bt-voice-setup{height:32px;padding:0 14px;border-radius:16px;border:0;background:var(--bt-hover);color:var(--bt-ink);font:inherit;font-size:13px;cursor:pointer;transition:background-color .15s ease}
 .bt-voice-setup:hover{background:var(--bt-active)}
 .bt-voice-bar{display:flex;gap:16px;padding:0 0 32px}
@@ -1223,7 +1223,7 @@ div:has(> nav [class*="_marks"]){display:none!important}
 .bt-btw-body{margin-top:6px}
 .bt-btw-answer{font-size:14px;line-height:20px}
 .bt-btw-answer p{margin:0}
-.bt-btw-fail{margin:0 0 6px;color:var(--bt-danger);font-size:13px;line-height:18px}
+.bt-btw-fail{margin:0 0 6px;color:var(--st-bad-strong,var(--bt-danger));font-size:13px;line-height:18px}
 @media (prefers-reduced-motion:reduce){.bt-btw-chevron{transition:none}}
 `
 
