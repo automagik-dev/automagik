@@ -16,7 +16,7 @@ export const HERMES_MINIMUM = JSON.parse(readFileSync(new URL('./hermes-contract
 // One kind per stage that can stop an SSH connection. A kind names what the person can
 // do next; `unknown` is only what none of them explains.
 const messages = Object.freeze({
-  'host-key-unknown': 'This computer has not connected to this SSH host before. Check its host key and trust it before testing again.',
+  'host-key-unknown': 'This computer has not connected to this SSH host before. Check its host key and trust it before connecting again.',
   'host-key-changed': 'The SSH host key has changed. Verify the host in a terminal before trying again.',
   'auth-failed': 'SSH key authentication failed. Check the SSH alias or identity file and load your key into your SSH agent.',
   'interactive-auth': 'SSH requires an interactive check. Complete it once in a terminal, then try this connection again.',
@@ -598,7 +598,7 @@ export async function trustHermesSshHostKey(ssh, expected, {
   const stop = (kind, text, detail) => named(Object.assign(failure(kind, text, detail), { sshStage: stage }), names)
   let config
   try { config = destination(ssh) } catch (error) { throw Object.assign(error, { sshStage: 'details' }) }
-  if (!KEY_TYPE.test(expected?.keyType ?? '') || !FINGERPRINT.test(expected?.fingerprint ?? '')) throw stop('invalid-details', 'This host key cannot be trusted from here. Test the connection again.')
+  if (!KEY_TYPE.test(expected?.keyType ?? '') || !FINGERPRINT.test(expected?.fingerprint ?? '')) throw stop('invalid-details', 'This host key cannot be trusted from here. Connect again.')
   const limits = { ...HERMES_DEADLINES, ...deadlines }
   const options = { env, signal, ms: limits.control }
   // Where this host's own config keeps the person's known hosts.

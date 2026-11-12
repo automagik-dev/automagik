@@ -71,16 +71,17 @@ const TEXTS = {
   'danger-full-access': 'Runs commands and changes files anywhere without asking you. Choose it only when you trust what you asked for.',
 }
 const REMOTE_ASK = 'Automagik asks you before answering each Hermes approval question.'
-const REMOTE_FULL = 'Automagik answers yes to each Hermes approval question once, without asking you.'
+const REMOTE_FULL = 'Automagik still asks you before answering each Hermes approval question. Full access does not answer for you.'
 const REMOTE_AUTO = 'Automagik asks you before answering each Hermes approval question. Auto review does not review Hermes approval questions.'
-const REMOTE_CUSTOM = 'Automagik handles Hermes approval questions according to this level.'
+// What Hermes asks is answered by the person at every level, a custom one included.
+const REMOTE_CUSTOM = REMOTE_ASK
 const REMOTE_FILES = 'Read only and Workspace differ only for files on this computer. Remote chats do not use those files.'
 const MIXED_FILES = 'On Remote Hermes, these local file permissions do not apply.'
 const REMOTE_LIMITS = 'Hermes runs tools on the other computer under its own rules. This computer’s file sandbox does not protect that computer.'
 const MIXED_ASK = 'While this chat changes routes, Automagik asks you before answering each Hermes approval question. On a local route, this level’s file rules apply on this computer.'
-const MIXED_FULL = 'While this chat changes routes, Automagik answers yes to each Hermes approval question once without asking you, or lets a local route run commands and change files without asking.'
+const MIXED_FULL = 'While this chat changes routes, Automagik still asks you before answering each Hermes approval question. A local route runs commands and changes files without asking.'
 const MIXED_AUTO = 'While this chat changes routes, Automagik asks you before answering each Hermes approval question. Auto review does not review Hermes approval questions. On a local route, a model reviews each action first, and you decide on the ones it stops.'
-const MIXED_CUSTOM = 'This chat is changing routes. Automagik handles approval questions according to this level on the route still running.'
+const MIXED_CUSTOM = 'This chat is changing routes. Automagik asks you before answering each Hermes approval question. On a local route, this level decides.'
 const MIXED_EXPERIMENTAL = 'On a local route, Auto review is experimental and can allow or stop the wrong action.'
 export const remoteConfirmText = remote => t(remote === 'mixed' ? MIXED_FULL : REMOTE_FULL)
 export const autoConfirmText = (remote = false) => remote === 'mixed'

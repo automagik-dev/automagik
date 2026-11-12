@@ -2,6 +2,7 @@
 import { RUN_CODE_NAME } from '@deepseek-ai/dsh-tools'
 import { hardToUndo, refusalCounter } from './auto-judge.js'
 import { TEAM_LOOKUPS, teamToolOf } from './approvals.js'
+import { REMOTE_TOOL } from './remote-chat-adapter.js'
 
 // Office operations create host-owned output files outside the shell sandbox. Read only
 // declines them. User-terminal observations need Full access: they are outside the Bot
@@ -82,8 +83,10 @@ export function install(rt) {
     if (decision.kind !== 'allow') return decision
     try {
       const tool = teamToolOf(exec.name)
-      // Lookups read their arguments as text; they never execute the steps it describes.
-      if (!exec.agent || outerRun(exec) || tool === 'acp_tool' || TEAM_LOOKUPS.has(tool)
+      // Lookups read their arguments as text; they never execute the steps it describes. A mirror
+      // card runs nothing here: the step ran, or runs, on the other side under its own rules
+      // (the ACP agent's, Remote Hermes's), and what Hermes asks reaches the person as its own question.
+      if (!exec.agent || outerRun(exec) || tool === 'acp_tool' || exec.name === REMOTE_TOOL || TEAM_LOOKUPS.has(tool)
         || !hardToUndo({ tool: exec.name, args: exec.arguments }) || !rt.botOfSession(id, exec.agent)
         || fullHere(session) || outcomes.get(keyOf(id, exec.callId))?.outcome === 'allowed-once') return decision
       const step = stepText(exec)
