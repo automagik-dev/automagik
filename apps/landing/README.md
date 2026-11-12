@@ -157,7 +157,11 @@ a browser without scroll-driven animation, the page is whole and still.
 
 Edit public page copy in `scripts/build-pages.mjs`; shared Cloud form/response copy in
 `waitlist/lib/ui.js`; layout/components in `styles.css`. `theme.css` derives directly from
-`apps/bots-dsh/src/client/stage.js`. Regenerate and commit the HTML and CSS:
+`apps/bots-dsh/src/client/stage.js` and, for the title face, from `docs/brand`: the family, its
+three weights (`--weight-title`, `--weight-strong`, `--weight-label`) and the font file come
+from `docs/brand/tokens/tokens.json` and `docs/brand/fonts/`. In `styles.css`, set anything in
+the title face with one of those three weights, never a number: a heavier Fredoka is heavier
+than the logo. Regenerate and commit the HTML and CSS:
 
 ```sh
 node apps/landing/scripts/sync-theme.mjs

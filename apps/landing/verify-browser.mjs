@@ -74,7 +74,7 @@ try {
       const report = await page.evaluate(() => ({
         scroll: document.documentElement.scrollWidth, viewport: innerWidth,
         images: [...document.images].map(image => ({ src: image.currentSrc.replace(location.origin, ''), ok: image.complete && image.naturalWidth > 0, shown: image.getBoundingClientRect().width })),
-        fonts: ['Manrope', 'DM Sans'].every(family => [...document.fonts].some(font => font.family.replaceAll('"', '') === family && font.status === 'loaded')),
+        fonts: ['Fredoka', 'DM Sans'].every(family => [...document.fonts].some(font => font.family.replaceAll('"', '') === family && font.status === 'loaded')),
         robots: document.querySelector('meta[name="robots"]')?.content,
         h1: document.querySelectorAll('h1').length,
         reducedMotion: [...document.getAnimations()].every(animation => animation.playState !== 'running'),

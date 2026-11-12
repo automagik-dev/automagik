@@ -6,7 +6,7 @@ import { resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { fileText, scan } from '../../herdr/scripts/privacy-check.mjs'
 import { htmlPage, supportPrivacy } from './waitlist/lib/ui.js'
-import { themeCss } from './scripts/sync-theme.mjs'
+import { themeCss, titleFace, brandFonts } from './scripts/sync-theme.mjs'
 import { pages, routes, rootFiles, weUnfold, arca, oiTag, platforms, offered, used, usedCredit, trademarks, brand as siteLogo, icons, manifest as webManifest } from './scripts/build-pages.mjs'
 import { BOX, GEOMETRY, LOGO, TONES, logoInner, tagInner } from './scripts/build-lockup.mjs'
 
@@ -368,6 +368,55 @@ test('theme primitives match the app source, with keyboard and motion support', 
   assert.match(theme, /prefers-color-scheme:dark/)
   assert.match(css, /prefers-reduced-motion:reduce/)
   assert.doesNotMatch(css, /overflow-x:\s*hidden/)
+})
+
+test('the title face is the brand\'s: Fredoka from docs/brand, at its three weights only', () => {
+  const brand = JSON.parse(read('../../docs/brand/tokens/tokens.json')).type
+  // The site serves byte copies of the brand's font and licence, and the font is the recorded build.
+  assert.deepEqual(brandFonts.map(file => file.to.pathname.split('/').pop()), ['fredoka-latin.woff2', 'OFL-Fredoka.txt'])
+  for (const { from, to } of brandFonts) assert.ok(readFileSync(to).equals(readFileSync(from)), to.pathname.split('/').pop())
+  assert.equal(createHash('sha256').update(readFileSync(brandFonts[0].to)).digest('hex'), 'd1ceb16007127919aa1900fb85e4b5d612a4f242404a4068d43f3bc628b2aeca')
+  assert.ok(read('../../docs/brand/fonts/README.md').includes('`d1ceb16007127919aa1900fb85e4b5d612a4f242404a4068d43f3bc628b2aeca`'))
+  // The theme takes the family, the file, the size adjustment and the weights from the brand's tokens.
+  assert.deepEqual({ family: titleFace.family, weight: titleFace.weight, sizeAdjust: titleFace.sizeAdjust }, { family: 'Fredoka', weight: '300 700', sizeAdjust: '105%' })
+  assert.deepEqual(brand.weights.map(weight => [weight.name, weight.value]), [['weight-title', 536], ['weight-strong', 469], ['weight-label', 402]])
+  assert.ok(theme.includes('@font-face{font-family:Fredoka;font-style:normal;font-weight:300 700;font-display:swap;size-adjust:105%;src:url("assets/brand/fredoka-latin.woff2") format("woff2")}\n'))
+  assert.ok(theme.includes(':root{color-scheme:light;--weight-title:536;--weight-strong:469;--weight-label:402;'))
+  assert.deepEqual(theme.match(/--bt-head-font:[^;]+;/g), ['--bt-head-font:Fredoka,"DM Sans",ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;'])
+  assert.ok(css.includes('--head:var(--bt-head-font);'))
+  // Nothing set in the title face carries a weight of its own: a heavier Fredoka is heavier than the logo.
+  assert.equal(css.match(/font:[^;}]*var\(--head\)/g).length, 39)
+  assert.deepEqual(css.match(/font:[^;}]*var\(--head\)/g).filter(rule => !/^font:var\(--weight-(?:title|strong|label)\) /.test(rule)), [])
+  assert.ok(css.includes('\nh1{font-weight:var(--weight-title);font-size:clamp(2.6rem,1.4rem + 4.2vw,4.6rem);line-height:1.02;letter-spacing:-.02em}\n'))
+  assert.ok(css.includes('\nh2{font-weight:var(--weight-title);font-size:clamp(1.85rem,1.15rem + 2.3vw,3.05rem);line-height:1.08;letter-spacing:-.016em}\n'))
+  assert.ok(css.includes('\nh3{font-weight:var(--weight-strong);font-size:1.3rem;line-height:1.25;letter-spacing:-.01em}\n'))
+  // Fredoka's own word space is wide; the extra word spacing the old face needed is gone.
+  assert.doesNotMatch(css, /word-spacing/)
+  // Widths counted in the face's own zero: Fredoka's zero is narrower, so the counts grew to keep the same lines.
+  for (const rule of ['.home-hero h1{font-size:clamp(1.95rem,.62rem + 5.5vw,5.6rem);max-width:16.5ch;', '.open-line{max-width:26.4ch;', 'bottom:clamp(30px,3.6vw,46px);max-width:27.5ch;']) assert.ok(css.includes(rule), rule)
+  // The face it replaced is gone from what the site serves, and every page preloads the new file.
+  for (const file of ['assets/brand/manrope-latin.woff2', 'assets/brand/OFL-Manrope.txt']) assert.equal(existsSync(resolve(root, file)), false, file)
+  assert.doesNotMatch(theme + css + read('scripts/build-pages.mjs') + read('verify-browser.mjs'), /manrope/i)
+  for (const route of routes) {
+    const html = htmlAt(route)
+    assert.equal(html.split('<link rel="preload" href="/assets/brand/fredoka-latin.woff2" as="font" type="font/woff2" crossorigin>').length, 2, route)
+    assert.doesNotMatch(html, /manrope/i, route)
+  }
+})
+
+test('the title face never ships without its licence, in the brand folder and on the site', () => {
+  const places = { 'docs/brand/fonts': resolve(root, '../../docs/brand/fonts'), 'apps/landing/assets/brand': resolve(root, 'assets/brand') }
+  for (const [place, folder] of Object.entries(places)) {
+    assert.ok(existsSync(resolve(folder, 'fredoka-latin.woff2')), `${place} has no title font`)
+    assert.ok(existsSync(resolve(folder, titleFace.license)), `${place} ships the title font without its licence, ${titleFace.license}`)
+    const licence = readFileSync(resolve(folder, titleFace.license))
+    assert.equal(createHash('sha256').update(licence).digest('hex'), '5c9e7eee5c6b25f4b05b8d53b2e470ea4962f9ced742d044a98f7d95d1375bab', `${place}: the licence text changed`)
+    assert.match(licence.toString(), /^Copyright 2016 The Fredoka Project Authors/)
+    assert.match(licence.toString(), /SIL OPEN FONT LICENSE Version 1\.1 - 26 February 2007/)
+  }
+  assert.equal(titleFace.license, 'OFL-Fredoka.txt')
+  assert.ok(read('assets/brand/LICENSES.md').includes('SIL Open Font License 1.1, in `OFL-Fredoka.txt`'))
+  assert.ok(read('../../docs/brand/fonts/README.md').includes('OFL-Fredoka.txt'))
 })
 
 test('motion: only for visitors who allow it, only transform and opacity, and never Arca\'s logo', () => {
