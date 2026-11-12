@@ -49,7 +49,7 @@ test('the child starts without host environment or flags and with a bounded heap
   assert.notEqual(child.pid, process.pid)
   assert.equal(options.env[name], undefined)
   assert.deepEqual(Object.keys(options.env).filter(key => !['SystemRoot', 'ELECTRON_RUN_AS_NODE'].includes(key)), [])
-  assert.deepEqual(options.execArgv, ['--max-old-space-size=128'])
+  assert.deepEqual(options.execArgv, ['--max-old-space-size=128', '--experimental-vm-modules'])
 })
 
 test('browser sessions isolate scripts and keep the source limit and answer contract', async () => {
@@ -155,6 +155,31 @@ test('the script cannot reach Node: process, require, import(), fetch and constr
     assert.ok(answer === 'undefined' || answer === 'blocked', `${name}: got ${answer}`)
   }
   await assert.rejects(runIsolatedScript('await import("node:fs")', {}))
+})
+
+test('import rejection never exposes a Node error constructor, including generated code', async () => {
+  const probes = [
+    'await import("node:fs")',
+    'await import("https://example.com/module.js")',
+    'await eval(\'import("node:fs")\')',
+    'await (0, eval)(\'import("node:fs")\')',
+    'await Function(\'return import("node:fs")\')()',
+    'await (async () => {}).constructor(\'await import("node:fs")\')()',
+    'await import("node:fs", { with: { type: "json" } })',
+    'Error = function () { return {} }; await import("node:fs")',
+  ]
+  for (const probe of probes) {
+    const answer = await runIsolatedScript(`
+      try { ${probe} } catch (error) {
+        try { return typeof error.constructor.constructor('return process')() }
+        catch { return 'blocked' }
+      }
+      return 'import allowed'
+    `, {})
+    assert.equal(answer, 'blocked', probe)
+  }
+  const stack = await runIsolatedScript('try { await import("node:fs") } catch (error) { return error.stack }', {})
+  assert.equal(stack, 'Error: Imports are not available.')
 })
 
 test('a script that never yields is killed at the timeout and the host keeps running', async t => {

@@ -110,7 +110,14 @@ const finish = (answer, error) => {
 const start = ({ body, names, wait }) => {
   waitLimit = wait
   const context = vm.createContext(Object.create(null), { codeGeneration: { strings: true, wasm: false } })
-  const install = new vm.Script(PRELUDE, { filename: 'browser_exec' }).runInContext(context)
+  // Missing-import errors belong to Node, and their constructors can escape the VM.
+  // Reject with a fresh context error, using its original Error even if the script
+  // replaces that global. Never pass the hook's Node referrer into this context.
+  const importError = new vm.Script('(() => { const ErrorOf = Error; return () => new ErrorOf("Imports are not available.") })()').runInContext(context)
+  const install = new vm.Script(PRELUDE, {
+    filename: 'browser_exec',
+    importModuleDynamically: () => { throw importError() },
+  }).runInContext(context)
   install(call, finish, JSON.stringify(names), body)
 }
 

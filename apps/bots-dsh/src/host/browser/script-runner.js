@@ -35,7 +35,9 @@ export function runIsolatedScript(body, helpers, { timeout = SCRIPT_TIMEOUT } = 
     try {
       child = fork(CHILD, [], {
         // The host's flags (loaders, --expose-internals) are not the child's.
-        execArgv: ['--max-old-space-size=128'],
+        // Node requires this flag to invoke the rejecting import hook. Without it,
+        // import() rejects with a Node-realm error whose constructor exposes Node.
+        execArgv: ['--max-old-space-size=128', '--experimental-vm-modules'],
         env: childEnv(),
         stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
         serialization: 'json',
