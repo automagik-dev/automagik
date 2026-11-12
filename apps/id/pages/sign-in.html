@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; form-action 'none'; base-uri 'none'">
+<meta name="robots" content="noindex,nofollow">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#d3eff4" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#173840" media="(prefers-color-scheme: dark)">
+<title>Sign in · Automagik ID</title>
+<link rel="icon" type="image/png" href="/assets/icon.png">
+<link rel="preload" href="/assets/manrope-latin.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/assets/pet.webp" as="image" type="image/webp">
+<link rel="stylesheet" href="/id.css">
+<script src="/id.js" defer></script>
+</head>
+<body data-page="sign-in">
+<div class="stage" aria-hidden="true"></div>
+<main class="shell">
+<div class="column">
+  <header class="brand"><img src="/assets/wordmark.webp" width="471" height="96" alt="Automagik"></header>
+
+  <div class="middle">
+  <div class="host">
+    <div class="pet-spot" aria-hidden="true"><div class="pet" id="pet" data-mood="work"></div></div>
+    <p class="bubble" id="say" role="status">One moment…</p>
+  </div>
+
+  <section class="card" id="card" aria-labelledby="title" aria-busy="true">
+    <h1 id="title" tabindex="-1"><span id="lead">Sign in</span> <span class="product" id="product" hidden></span></h1>
+
+    <div class="view" data-view="loading">
+      <div class="stack" aria-hidden="true"><span class="sk block"></span><span class="sk block"></span></div>
+    </div>
+
+    <!-- Passkey: the main way in. One choice for people who have one, one for people who are new. -->
+    <div class="view" data-view="passkey" hidden>
+      <div class="stack">
+        <button class="button primary" id="use-passkey" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="8" cy="12" r="4.5"/><path d="M12.5 12H21v3.5M17 12v2.6"/></svg>
+          <span data-label>Continue with a passkey</span>
+        </button>
+        <button class="button secondary" id="create-passkey" type="button">
+          <span data-label><span class="aside">New here?</span> Create a passkey</span>
+        </button>
+      </div>
+      <div id="phone-offer" hidden>
+        <p class="or">or</p>
+        <button class="link" id="use-phone" type="button">Use a phone code</button>
+      </div>
+      <p class="wait" id="passkey-wait" hidden></p>
+    </div>
+
+    <!-- Already signed in on this browser. -->
+    <div class="view" data-view="session" hidden>
+      <div class="stack">
+        <button class="button primary" id="continue" type="button"><span data-label>Continue</span></button>
+        <button class="button secondary" id="switch" type="button"><span data-label>Use another account</span></button>
+      </div>
+      <p class="wait" id="session-wait" hidden></p>
+    </div>
+
+    <!-- Phone code: shown only when the service has it on. -->
+    <form class="view" data-view="phone" id="phone-form" novalidate hidden>
+      <div class="field">
+        <label for="phone">Phone number</label>
+        <input class="input" id="phone" name="phone" type="tel" inputmode="tel" autocomplete="username webauthn" autocapitalize="off" spellcheck="false" placeholder="+55 11 91234 5678" maxlength="24" aria-describedby="phone-hint">
+        <p class="hint" id="phone-hint">With the country code, starting with +.</p>
+      </div>
+      <div class="stack">
+        <button class="button primary" id="send-code" type="submit"><span data-label>Send code</span></button>
+      </div>
+      <p class="wait" id="phone-wait" hidden></p>
+      <button class="link" id="back-to-passkey" type="button">Use a passkey</button>
+    </form>
+
+    <form class="view" data-view="code" id="code-form" novalidate hidden>
+      <div class="field">
+        <label for="code">6-digit code</label>
+        <input class="input code" id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]*" maxlength="6" spellcheck="false" aria-describedby="code-hint say">
+        <p class="hint" id="code-hint"></p>
+      </div>
+      <div class="stack">
+        <button class="button primary" id="check-code" type="submit"><span data-label>Continue</span></button>
+      </div>
+      <p class="wait" id="code-wait" hidden></p>
+      <div class="links">
+        <button class="link" id="resend" type="button">Send again</button>
+        <button class="link" id="change-number" type="button">Change number</button>
+      </div>
+    </form>
+
+    <!-- Signed in, on the way back to the product. -->
+    <div class="view" data-view="going" hidden>
+      <p class="going"><span class="spin" aria-hidden="true"></span><span id="going-text">Taking you back…</span></p>
+    </div>
+
+    <!-- Signed in with nowhere to go back to. -->
+    <div class="view" data-view="done" hidden>
+      <p class="note">You can close this page.</p>
+      <div class="stack">
+        <button class="button secondary" id="sign-out" type="button"><span data-label>Sign out</span></button>
+      </div>
+    </div>
+
+    <!-- Could not load: try again. -->
+    <div class="view" data-view="retry" hidden>
+      <div class="stack">
+        <button class="button primary" id="retry" type="button"><span data-label>Try again</span></button>
+      </div>
+      <p class="wait" id="retry-wait" hidden></p>
+    </div>
+
+    <!-- Nothing more to do here. -->
+    <div class="view" data-view="stop" hidden>
+      <p class="note" id="stop-text"></p>
+    </div>
+
+    <noscript><p>Turn on JavaScript to sign in.</p></noscript>
+  </section>
+  </div>
+
+  <p class="foot">Automagik ID</p>
+</div>
+</main>
+</body>
+</html>
