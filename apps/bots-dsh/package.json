@@ -42,7 +42,7 @@
     "NOTICE"
   ],
   "scripts": {
-    "build": "node scripts/build-client.mjs",
+    "build": "node scripts/build-client.mjs && node scripts/build-script-child.mjs",
     "test": "node --import ./test/harness-resolve.mjs --test \"test/*.test.js\"",
     "lint": "node scripts/lint.mjs",
     "harness": "bun install --cwd dev/harness --no-save --no-summary",

@@ -224,7 +224,7 @@ for (const runtime of RUNTIMES) {
       script: `
         const went = await goto('https://example.com/')
         await new Promise(resolve => setTimeout(resolve, 20))
-        const reach = [typeof process, typeof require, typeof fetch, typeof globalThis.constructor.constructor('return typeof process')()]
+        const reach = [typeof process, typeof require, typeof fetch, globalThis.constructor.constructor('return typeof process')()]
         return JSON.stringify({ went, reach, globals: Object.getOwnPropertyNames(globalThis).sort() })
       `,
     })
