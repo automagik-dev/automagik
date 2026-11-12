@@ -10,8 +10,61 @@ import { batchSafe } from './batch-spawn.js'
 // Efforts as DSH lists them, from least to most.
 const efforts = (...ids) => Object.freeze({ efforts: Object.freeze(ids.map(id => Object.freeze({ id, name: id.charAt(0).toUpperCase() + id.slice(1) }))) })
 
+export const CLAUDE_HARD_ASK = Object.freeze([
+  'Bash(rm -r*)',
+  'Bash(rm -R*)',
+  'Bash(rm -fr*)',
+  'Bash(rm -fR*)',
+  'Bash(rm --recursive*)',
+  'Bash(rm * -r*)',
+  'Bash(rm * -R*)',
+  'Bash(rm * -fr*)',
+  'Bash(rm * -fR*)',
+  'Bash(rm * --recursive*)',
+  'Bash(find * -delete*)',
+  'Bash(git push *--force*)',
+  'Bash(git push -f*)',
+  'Bash(git push * -f*)',
+  'Bash(git push * +*)',
+  'Bash(git push *--delete*)',
+  'Bash(git push -d*)',
+  'Bash(git push * -d*)',
+  'Bash(git reset *--hard*)',
+  'Bash(git clean *-*f*)',
+  'Bash(terraform *destroy*)',
+  'Bash(tofu *destroy*)',
+  'Bash(pulumi *destroy*)',
+  'Bash(cdk *destroy*)',
+  'Bash(kubectl *delete*)',
+  'Bash(helm *uninstall*)',
+  'Bash(helm *delete*)',
+  'Bash(docker *prune*)',
+  'Bash(docker volume rm*)',
+  'Bash(dropdb*)',
+  'Bash(*DROP TABLE*)',
+  'Bash(*drop table*)',
+  'Bash(*DROP DATABASE*)',
+  'Bash(*drop database*)',
+  'Bash(*DROP SCHEMA*)',
+  'Bash(*drop schema*)',
+  'Bash(*TRUNCATE TABLE*)',
+  'Bash(*truncate table*)',
+  'Bash(*FLUSHALL*)',
+  'Bash(*flushall*)',
+  'Bash(*FLUSHDB*)',
+  'Bash(*flushdb*)',
+  ...(process.platform === 'win32' ? [
+    'PowerShell(Remove-Item *-Recurse*)', 'PowerShell(git push *--force*)', 'PowerShell(git push * -f*)',
+    'PowerShell(git reset *--hard*)', 'PowerShell(git clean *-*f*)',
+  ] : []),
+])
+
 export const AGENTS = Object.freeze({
   'acp-claude': Object.freeze({
+    // Explicit ask rules apply even in bypassPermissions, so never write them to a CLI home.
+    // claude-agent-acp passes this session's settings to the SDK; lists merge with the person's
+    // settings, and Bash rules check subcommands too, including in auto mode.
+    hardAsk: () => ({ claudeCode: { options: { settings: { permissions: { ask: [...CLAUDE_HARD_ASK] } } } } }),
     // RFC 0031: asked only through acpAgents.ownMode.
     ownMode: 'auto',
     key: 'claude',

@@ -1950,6 +1950,12 @@ const HOST_ZH = {
   'This host cannot save the Bot team.': '这台主机无法保存 Bot 团队。',
   "Only the person turns Auto on, from the Bot's permission choice.": '只有用户本人能在 Bot 的权限选择中开启自动模式。',
 }
+Object.assign(ZH, {
+  "This step is hard to undo: {step}. Allow it once?": "这一步难以撤销：{step}。允许这一次吗？",
+  "{name} was refused {count} times in this turn, the last time on {tool}. Let it keep working?": "{name} 在本轮被拒绝了 {count} 次，最近一次是 {tool}。让它继续工作吗？",
+  "Let it keep working?": "让它继续工作吗？",
+  "Allow once lets it keep working: nothing that was refused runs. Reject stops it here.": "“允许一次”让它继续工作：被拒绝的步骤都不会执行。“拒绝”让它在这里停止。"
+})
 Object.assign(ZH, HOST_ZH)
 
 const fill = (text, params) => (params
@@ -2006,6 +2012,8 @@ export function t(key, params) {
 // a model switch DSH turned down, roster.js): the template is the dictionary key, worded with
 // the values the message carried.
 const HOST_TEMPLATES = [
+  'This step is hard to undo: {step}. Allow it once?',
+  '{name} was refused {count} times in this turn, the last time on {tool}. Let it keep working?',
   'Turn on {connection} in Settings → Claude Code and Codex before using this model.',
   'Wait for {connection} to finish installing, or retry it in Settings → Claude Code and Codex.',
   'Sign in to {connection} before using this model.',
@@ -2030,12 +2038,15 @@ const HOST_TEMPLATES = [
   }).join('')
   return { template, names, host, pattern: new RegExp(`^${source}$`) }
 })
+export function hostTemplateOf(message) {
+  return HOST_TEMPLATES.find(({ pattern }) => pattern.test(message))?.template
+}
 function hostTemplate(message) {
-  for (const { template, names, host, pattern } of HOST_TEMPLATES) {
-    const found = pattern.exec(message)
-    if (found !== null) return t(template, Object.fromEntries(names.map((name, index) => [name, host.includes(name) ? hostText(found[index + 1]) : found[index + 1]])))
-  }
-  return undefined
+  const matched = hostTemplateOf(message)
+  if (matched === undefined) return undefined
+  const { template, names, host, pattern } = HOST_TEMPLATES.find(entry => entry.template === matched)
+  const found = pattern.exec(message)
+  return t(template, Object.fromEntries(names.map((name, index) => [name, host.includes(name) ? hostText(found[index + 1]) : found[index + 1]])))
 }
 
 // A message from the host, in the interface language.

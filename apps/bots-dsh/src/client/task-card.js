@@ -1,6 +1,6 @@
 import { openStops, stopLine } from './stops.js'
 import { createElement as h, Fragment, useEffect, useState } from 'react'
-import { t } from './i18n.js'
+import { t, hostText } from './i18n.js'
 
 // A task a Bot handed on (start_task, agents.js): it shows itself working, where the user
 // can watch, then what it found.
@@ -114,7 +114,7 @@ export function TaskCard({ sessionId, title, task, onOpen, useSessionStatus, use
       status === 'waiting'
         ? ask
           ? h('div', { className: 'op-task-ask' },
-              h('span', { className: 'op-task-ask-text' }, t('Task {title} is waiting for approval: {tool}', { title, tool: ask.toolName || t('a tool') })),
+              h('span', { className: 'op-task-ask-text' }, ask.toolName === 'keep_working' ? hostText(ask.reason) : t('Task {title} is waiting for approval: {tool}', { title, tool: ask.toolName || t('a tool') })),
               h('span', { className: 'op-task-ask-actions' },
                 h('button', { type: 'button', className: 'op-task-ask-btn', disabled: answering || ask.answerable === false, onClick: () => answer('rejected') }, t('Reject')),
                 h('button', { type: 'button', className: 'op-task-ask-allow', disabled: answering || ask.answerable === false, onClick: () => answer('allowed-once') }, t('Allow once'))))

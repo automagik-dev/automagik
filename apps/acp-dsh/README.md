@@ -148,6 +148,18 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
 
 ## Agents
 
+Unbridged Claude Code receives per-session ask rules for recursive deletion, destructive Git,
+infrastructure and database shell commands at every asking level. These explicit rules also
+ask in Claude's auto mode. They are never written to a CLI home and are absent at Full access,
+where explicit ask rules would otherwise still ask. Crossing Full access restarts the unbridged
+Claude session with the chat replayed, adding or removing the rules; staying at a level reuses it.
+Bridged Claude has its built-in tools disabled, so DSH checks its calls instead.
+
+Codex's own tools are excluded: prompt rules under Full access (`approval_policy = never`)
+refuse rather than ask, its session-flags configuration has no rules folder, and in `agent`
+mode prompt rules reach Codex's reviewer rather than the person. Replacing its entire reviewer
+policy or changing codex-acp needs a separate owner decision.
+
 | Route | Agent | Runs | Adapter (newest release) |
 |---|---|---|---|
 | `acp-claude` | Claude Code | managed or existing `claude` (`CLAUDE_CODE_EXECUTABLE`) | `@agentclientprotocol/claude-agent-acp` |

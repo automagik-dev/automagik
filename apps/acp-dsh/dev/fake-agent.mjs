@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // "reviewer denies N" emits reviews; "then text" continues afterward. FAKE_ACP_REVIEW_STOP overrides cancelled.
 // "ask edited" changes input at the ask. FAKE_ACP_ALWAYS_ONLY=1 offers only lasting allows.
+// The new-session trace includes session/new _meta as meta when present.
 // A fake ACP agent for tests. Each prompt: two text chunks, one shell-like tool call that asks
 // permission first, then a line saying whether it ran. A prompt that says "twice" makes two
 // calls; one that says "hang" waits until it is cancelled; one that says "bridge <tool>" calls
@@ -188,7 +189,7 @@ const implementation = {
   async newSession(params) {
     if (AUTH === 'session') throw RequestError.authRequired(undefined, 'run the CLI\'s login first')
     const sessionId = `fake-${++created}`
-    trace({ event: 'new-session', sessionId, servers: (params.mcpServers ?? []).map(server => server.name) })
+    trace({ event: 'new-session', sessionId, ...(params._meta === undefined ? {} : { meta: params._meta }), servers: (params.mcpServers ?? []).map(server => server.name) })
     const session = newSession(sessionId, params.cwd)
     await attach(session, params.mcpServers, sessionId)
     trace({ event: 'new-answer', sessionId, at: Date.now() })

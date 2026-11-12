@@ -956,9 +956,12 @@ export class AcpAdapter extends LlmAdapter {
       // that session has lost DSH's tools for good, and would answer this turn without them.
       // Its session ends here and the turn starts a new one, which the replay carries the chat
       // to, as for an agent that is no longer alive (#969).
+      let full = false
+      try { full = levelOf(this.ctx.get?.('approval'), dshAgent?.session, this.ctx.get?.('sandboxPolicy'), this.ctx.get?.('permissionPresets')).full === true } catch {}
+      const asks = typeof agent.hardAsk === 'function' && !(this.bridgeOn(agent) && agent.disableBuiltInTools === true) && !full
       const bridgeGone = live?.bridge?.closed === true && this.bridgeOn(agent)
       if (bridgeGone) this.warn(`${live.name} lost its ${BRIDGE_NAME} bridge: its session was ended and a new one starts`)
-      if (live !== undefined && (live.provider !== options.provider || !live.run.alive || bridgeGone)) {
+      if (live !== undefined && (live.provider !== options.provider || !live.run.alive || bridgeGone || live.asks !== asks)) {
         this.end(sessionId, live)
         live = undefined
       }
@@ -1005,7 +1008,7 @@ export class AcpAdapter extends LlmAdapter {
       const replaying = this.replayOn()
       if (live === undefined) {
         crossing = replaying && prior !== undefined && prior !== options.provider
-        const state = { provider: options.provider, name: agent.name, run: undefined, calls: new Set(), toolIds: new Map(), open: false, dshAgent, bridge: undefined, replay: undefined, owed: undefined, drifted: false }
+        const state = { provider: options.provider, name: agent.name, asks, run: undefined, calls: new Set(), toolIds: new Map(), open: false, dshAgent, bridge: undefined, replay: undefined, owed: undefined, drifted: false }
         // A connector release that passed its start check is still unproven until it opens a
         // session. One that fails here goes back to the release before it (install.js), and the
         // session start is tried once more on that one: the turn is not lost to a bad release.
@@ -1025,7 +1028,7 @@ export class AcpAdapter extends LlmAdapter {
               mcpServers: state.bridge === undefined ? [] : [this.bridgeServer(state.bridge)],
               ...(this.bridgeOn(agent) && agent.disableBuiltInTools === true
                 ? { sessionMeta: { disableBuiltInTools: true } }
-                : {}),
+                : asks ? { sessionMeta: agent.hardAsk() } : {}),
               dshTools: this.bridgeOn(agent),
               onReady: state.bridge === undefined ? undefined : () => this.ready(agent, state),
               onAsked: () => { if (state.own === true && state.bridge !== undefined) state.bridge.agentAsked = true },

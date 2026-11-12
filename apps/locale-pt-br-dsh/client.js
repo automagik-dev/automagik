@@ -1908,7 +1908,11 @@ const pack = createPack({
     "no background model is available to decide": "nenhum modelo em segundo plano está disponível para decidir",
     "For the last prompt {name} was put in its own mode.": "Na última solicitação, {name} recebeu seu próprio modo.",
     "For the last prompt {name} was put in its strict mode: {why}.": "Na última solicitação, {name} recebeu seu modo estrito: {why}.",
-    "{name} refused its own mode": "{name} recusou seu próprio modo"
+    "{name} refused its own mode": "{name} recusou seu próprio modo",
+    "This step is hard to undo: {step}. Allow it once?": "Este passo é difícil de desfazer: {step}. Permitir uma vez?",
+    "{name} was refused {count} times in this turn, the last time on {tool}. Let it keep working?": "{name} teve {count} passos recusados neste turno, o último em {tool}. Deixar continuar trabalhando?",
+    "Let it keep working?": "Deixar continuar trabalhando?",
+    "Allow once lets it keep working: nothing that was refused runs. Reject stops it here.": "Permitir uma vez deixa continuar trabalhando: nenhum passo recusado é executado. Recusar faz parar aqui."
   }
 })
 return Object.defineProperty({ ...pack }, Symbol.toStringTag, { value: 'Module' })

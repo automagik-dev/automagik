@@ -379,6 +379,7 @@ export function apply(ctx, config = {}, {
     name: spec.name,
     modeFor: spec.modeFor,
     ownMode: spec.ownMode,
+    ...(typeof spec.hardAsk === 'function' ? { hardAsk: spec.hardAsk } : {}),
     // The adapter reads these off the agent object: without them the bridge default would not
     // find Claude's switch, the drift detector would never run and Codex would never fork.
     ...(spec.disableBuiltInTools === true ? { disableBuiltInTools: true } : {}),

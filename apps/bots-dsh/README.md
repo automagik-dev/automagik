@@ -50,6 +50,23 @@ How they fit:
   team default offer no Auto row.
 - **Permission stops**: a stopped step shows in the sidebar and Live rail, beside its tool call or in its group round, and on a working task card. Stops outside the visible conversation get a system notification where notifications are already allowed; a child or late group stop also notifies when that conversation cannot draw it. Pocket shows an English hint at the end of an own-chat turn. Stops live in memory and are lost on restart. The first stop per reason and turn also adds one diagnostics line in Settings → Feedback.
 - **Subagents**: in-process children of Read only, Workspace and Auto review Bots keep that level with approval prompts on, without changing their captured sandbox. Their asks appear above the composer of the Bot's chat or task (open it from the task card), or in the group member card; the sidebar, Live rail and notifications also show that they wait. Children keep DSH's refusal, shown as a permission stop, when their Bot runs at Full access, with approval prompts off, or at a custom or unknown level; when the Bot's level changed while the child was being created; when a resumed child has its prompts off; and when they belong to an automation run, a plugin Session, an earlier part or an ended task. An ask nothing here can answer is cancelled and noted as a stop. The phone does not show child asks.
+- **Hard steps and repeated refusals**: at Read only, Workspace and DSH Auto review,
+  recursive deletes, force pushes, remote branch deletes, hard resets and cleans,
+  infrastructure destroys, database drops, file-tool deletes and deleting a Bot or group
+  ask the person when the existing tool gate allows them. Children follow the same check.
+  Read-only team lookups such as `recall` do not ask just because their arguments mention a hard step.
+  Auto also asks about these steps inside its Workspace boundary; its judge keeps its own counts.
+  After three consecutive automatic refusals or ten in a turn, the next refusal asks
+  “Let it keep working?” Allow once only lets work continue: nothing refused runs.
+  Reject stops the Bot for that turn. If approvals are off or no chat, group seat or working
+  task can show the question, work stops with a reason and an automatic-stop notification
+  when that host hook is available. Full access is unchanged.
+  Unbridged Claude Code gets session-only ask rules for destructive shell commands at every
+  asking level, removed by restarting its session across Full access. Bridged Claude has no
+  Bash of its own: its DSH calls use the checks above. Codex's own tools are excluded:
+  prompt rules under its Full access `never` policy refuse instead of asking, rules have no
+  per-session path, and its `agent` mode sends prompt rules to its reviewer, not the person.
+
 - **Bots work together**: `message_bot` sends a message to another Bot, `create_bot`, `update_bot` and `delete_bot` add, set up and remove Bots (including a profile photo from a local image file or a data URL), and `ask_user` asks you a question without blocking the other Bots. `show_view` draws a card in a Bot's own chat — text, metrics, tables, progress, choices, confirmations and short forms; an interactive card waits for your answer.
 - **Group chats**: members speak one at a time, and each one reads the latest messages first. A message can `@Name` a member to pass the turn on; type `@` to pick one from a list. **+ → Reference a chat** adds another Bot's chat to a message as context, and in a group the members who answer get it. A member with nothing new to add stays quiet (`[PASS]`). Each member has its own hidden Session per group, so a group never reads a Bot's private chat.
 - **Roles and permissions**:
