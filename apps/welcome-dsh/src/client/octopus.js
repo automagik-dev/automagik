@@ -63,8 +63,8 @@ body[data-ds-dark-theme] .oai-overlay::before{background:radial-gradient(1100px 
 .oai-rail li.oai-done{color:var(--oai-cyan-ink);${raised('color-mix(in srgb,var(--oai-cyan) 55%,var(--oai-clay))', 2)}}
 /* The card: a thick slab of cream clay resting on the table. */
 .oai-card{width:100%;border-radius:26px 30px 25px 29px;padding:26px;${raised('var(--oai-card)', 6)}}
-.oai-card h1{font:800 24px/1.2 var(--oai-head);letter-spacing:-.02em;margin:0 0 8px;outline:none}.oai-card p{margin:0 0 14px;color:var(--oai-ink2)}
-.oai-mark{font:800 12px/1 var(--oai-head);letter-spacing:.3em;color:var(--oai-accent-2);margin-bottom:12px}
+.oai-card h1{font:var(--bt-weight-title,800) 24px/1.2 var(--oai-head);letter-spacing:-.02em;margin:0 0 8px;outline:none}.oai-card p{margin:0 0 14px;color:var(--oai-ink2)}
+.oai-mark{font:var(--bt-weight-title,800) 12px/1 var(--oai-head);letter-spacing:.3em;color:var(--oai-accent-2);margin-bottom:12px}
 /* Buttons are clay pieces: they rest on their ledge, rise under the pointer, sink when pressed. */
 .oai-card button{display:block;width:100%;min-height:44px;padding:12px 16px;margin:10px 0 0;border:0;border-radius:var(--oai-r-sm);${raised('var(--oai-clay)', 4)};color:var(--oai-ink);font:inherit;font-weight:600;cursor:pointer;text-align:center;transition:transform .16s cubic-bezier(.3,1.4,.5,1),box-shadow .16s ease,background-color .16s ease}
 .oai-card button:hover:not(:disabled){transform:translateY(-2px)}
@@ -75,7 +75,7 @@ body[data-ds-dark-theme] .oai-overlay::before{background:radial-gradient(1100px 
 .oai-card button:disabled{opacity:.5;cursor:default;transform:none}
 .oai-card button.oai-quiet{background:none;box-shadow:none;color:var(--oai-ink2);font-weight:500}
 .oai-card button.oai-quiet:active:not(:disabled){transform:none;box-shadow:none}
-.oai-group{margin:18px 0 0}.oai-group h2{margin:0 0 4px;font:700 12px/1.4 var(--oai-head);letter-spacing:.12em;text-transform:uppercase;color:var(--oai-accent)}
+.oai-group{margin:18px 0 0}.oai-group h2{margin:0 0 4px;font:var(--bt-weight-title,700) 12px/1.4 var(--oai-head);letter-spacing:.12em;text-transform:uppercase;color:var(--oai-accent)}
 .oai-group .oai-terms{margin:0 0 4px;font-size:12px}
 .oai-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
 .oai-card button.oai-tile{margin:4px 0 0;text-align:left;padding:12px 14px}.oai-tile strong{display:block}.oai-tile span{display:block;font-size:12px;font-weight:400;color:var(--oai-ink2)}
@@ -97,7 +97,7 @@ body[data-ds-dark-theme] .oai-overlay::before{background:radial-gradient(1100px 
 .oai-list{border-radius:var(--oai-r);overflow:hidden;${recessed('var(--oai-niche)')}}
 .oai-ai{border-top:1px solid var(--oai-line)}.oai-ai:first-child{border-top:0}
 .oai-ai-row{display:flex;align-items:center;gap:12px;padding:12px 14px}
-.oai-logo{width:34px;height:34px;flex:none;display:grid;place-items:center;border-radius:11px 12px 10px 12px;${raised('var(--oai-clay)', 2)};font:800 12px/1 var(--oai-head);color:var(--oai-ink)}
+.oai-logo{width:34px;height:34px;flex:none;display:grid;place-items:center;border-radius:11px 12px 10px 12px;${raised('var(--oai-clay)', 2)};font:var(--bt-weight-strong,800) 12px/1 var(--oai-head);color:var(--oai-ink)}
 .oai-ai-on .oai-logo{${raised('var(--oai-cyan)', 2)};color:var(--oai-cyan-ink)}
 .oai-ai-what{flex:1;min-width:0}.oai-ai-what strong{display:block;font-weight:600}.oai-ai-what span{display:block;font-size:12.5px;color:var(--oai-ink2)}
 .oai-found{flex:none;font-style:normal;font-size:11.5px;font-weight:600;padding:3px 9px;border-radius:999px;background:color-mix(in srgb,var(--oai-cyan) 45%,var(--oai-card));color:var(--oai-cyan-ink);white-space:nowrap;max-width:40%;overflow:hidden;text-overflow:ellipsis}
