@@ -592,7 +592,7 @@ export async function trustHermesSshHostKey(ssh, expected, {
   const stop = (kind, text, detail) => named(Object.assign(failure(kind, text, detail), { sshStage: stage }), names)
   let config
   try { config = destination(ssh) } catch (error) { throw Object.assign(error, { sshStage: 'details' }) }
-  if (!KEY_TYPE.test(expected?.keyType ?? '') || !FINGERPRINT.test(expected?.fingerprint ?? '')) throw stop('invalid-details', 'This host key cannot be trusted from here. Test the connection again.')
+  if (!KEY_TYPE.test(expected?.keyType ?? '') || !FINGERPRINT.test(expected?.fingerprint ?? '')) throw stop('invalid-details', 'This host key cannot be trusted from here. Connect again.')
   const limits = { ...HERMES_DEADLINES, ...deadlines }
   const options = { env, signal, ms: limits.control }
   // Where this host's own config keeps the person's known hosts.

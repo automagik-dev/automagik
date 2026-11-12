@@ -253,7 +253,7 @@ export class HermesTransport {
       })
     } catch (error) {
       if (error?.code === 'bot/hermes-auth') throw failure('Remote Hermes authentication expired or was refused. Replace the saved credential.', 'bot/hermes-auth')
-      if (error?.code === 'bot/hermes-timeout') throw failure('Remote Hermes did not answer within the connection deadline. Test the connection again.', 'bot/hermes-timeout')
+      if (error?.code === 'bot/hermes-timeout') throw failure('Remote Hermes did not answer within the connection deadline. Connect again.', 'bot/hermes-timeout')
       throw failure('Remote Hermes could not connect. Check the saved address and that Hermes is running.', 'bot/hermes-connection')
     }
     if (!response.ok) throw response.status === 401 || response.status === 403

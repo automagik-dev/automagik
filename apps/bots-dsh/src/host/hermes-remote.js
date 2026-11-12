@@ -481,7 +481,7 @@ export function install(rt, { transport = options => new HermesTransport(options
     const key = typeof body?.requestId === 'string' ? body.requestId : undefined
     const entry = failureOf(key)
     if (disposed || !entry || entry.view.kind !== 'host-key-unknown' || !entry.view.keyType || !entry.view.fingerprint || entry.view.unsaved) {
-      throw fail('Test the connection again before trusting this host.', 'expired')
+      throw fail('Connect again before trusting this host.', 'expired')
     }
     const started = Date.now()
     failures.delete(key)
@@ -490,7 +490,7 @@ export function install(rt, { transport = options => new HermesTransport(options
       return { trusted: answer?.trusted === true }
     } catch (error) {
       noteSshFailure(key, entry.ssh, error, started)
-      throw Object.hasOwn(CONNECTION_ERRORS, error?.code) ? refusal(CONNECTION_ERRORS[error.code], { code: error.code }) : fail('This host key could not be trusted. Test the connection again.', 'ssh')
+      throw Object.hasOwn(CONNECTION_ERRORS, error?.code) ? refusal(CONNECTION_ERRORS[error.code], { code: error.code }) : fail('This host key could not be trusted. Connect again.', 'ssh')
     }
   }
   async function probe(owned, profile, signal, until) {

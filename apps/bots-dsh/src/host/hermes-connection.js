@@ -82,7 +82,7 @@ export async function prepareHermesConnection(draft, {
   let phase = 'reach'
   const viaSsh = (message, kind) => Object.assign(fail(message, `ssh-${kind}`), { sshError: kind, sshStage: phase })
   const remaining = () => {
-    if (controller.signal.aborted || Date.now() >= until) throw fail('Connection setup was cancelled or timed out. Test the connection again.', 'timeout')
+    if (controller.signal.aborted || Date.now() >= until) throw fail('Connection setup was cancelled or timed out. Connect again.', 'timeout')
     return Math.max(1, Math.min(deadlines.control, until - Date.now()))
   }
   async function request(path, { method = 'GET', body, headers = authHeaders } = {}) {
