@@ -306,7 +306,8 @@ No account routing or redirect is changed by this delivery.
 
 **Stand-in, 2026-11-12.** Arca's own site is not deployed yet and has no date. Until it is
 served at this address, Pages carries exactly one stand-in page at `/arca/` and nothing under
-it: Arca's name, one line taken from this repository's own text about Arca, a Get Arca button
+it: Arca's name, the owner's one line for it ("Be your own cloud. Infrastructure for AI
+agents."), a Get Arca button
 to `https://get.automagik.si/arca`, and the way back to all products. Arca is a product in
 the site's menus, the home blocks and the footer. The root `robots.txt`, `sitemap.xml` and
 `llms.txt` keep Arca's supplied lines unchanged. When Arca's Worker takes the routes above,

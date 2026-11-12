@@ -201,12 +201,19 @@ test('Arca has exactly one stand-in page here; home links to its same-tab canoni
   const page = htmlAt('/arca/')
   assert.match(page, /<h1>Arca<\/h1><p class="intro">([^<]+)<\/p>/)
   assert.equal(page.match(/<h1>Arca<\/h1><p class="intro">([^<]+)<\/p>/)[1], arca.line)
+  // The owner's own line, exactly, wherever Arca is described: the page, the home block,
+  // the Products menu and the phone sheet on every page.
+  assert.equal(arca.line, 'Be your own cloud. Infrastructure for AI agents.')
+  for (const [route, html] of generated) {
+    const said = [...html.matchAll(/<strong>Arca<\/strong><span>([^<]*)<\/span>/g)].map(match => match[1])
+    assert.deepEqual(said, [arca.line, arca.line], `${route}: the menu and the sheet say Arca's line`)
+  }
   assert.equal(arca.get, 'https://get.automagik.si/arca')
   assert.ok(page.includes(`<a class="button primary" href="${arca.get}">Get Arca `))
   assert.match(page, /<a class="button secondary" href="\/#blocks">All products /)
   assert.doesNotMatch(page, /Coming soon\.<\/p><p class="lede">/)
   const card = htmlAt('/').match(/<article class="product-card" data-block="arca">[\s\S]*?<\/article>/)?.[0]
-  assert.ok(card?.includes('<h3><a href="/arca/">Arca</a></h3>'))
+  assert.ok(card?.includes(`<h3><a href="/arca/">Arca</a></h3><p>${arca.line}</p>`))
   for (const html of generated.values()) for (const [link] of html.matchAll(/<a\b[^>]*href="\/arca\/"[^>]*>/g)) assert.doesNotMatch(link, /target=/)
   // The root sitemap lists Arca only through Arca's own supplied line.
   assert.equal(read('sitemap.xml').split('https://automagik.si/arca/</loc>').length, 2)

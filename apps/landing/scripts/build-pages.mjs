@@ -23,10 +23,10 @@ export const weUnfold = {
   partOf: 'Automagik is part of we unfold, the home of the Open Intelligence movement.',
   openIntelligence: 'Open Intelligence: a future more people can understand, question, and shape.',
 }
-// ARCA: a stand-in page until Arca's own site is served at /arca/. Its one line comes from
-// this repository's own text about Arca (RFC 0010 and RFC 0024), nothing more.
+// ARCA: a stand-in page until Arca's own site is served at /arca/. Its one line is the
+// owner's own (2026-11-12), used exactly as given wherever Arca is described.
 export const arca = {
-  line: 'A kernel for Linux hosts, built on Incus.',
+  line: 'Be your own cloud. Infrastructure for AI agents.',
   get: 'https://get.automagik.si/arca',
 }
 const licensing = 'This repository, Genie and Omni: free and open source, Apache-2.0. Cloud: a private, paid service; its contracts are public.'
