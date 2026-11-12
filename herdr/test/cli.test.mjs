@@ -52,6 +52,23 @@ const FAKE_GIT = new URL("./fake-git-trim.mjs", import.meta.url).pathname;
 const REAL_GIT = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
 const ID = { main: "b-aaaaaaaaaa", cap: "b-bbbbbbbbbb", dev: "b-cccccccccc", plan: "b-eeeeeeeeee" };
 
+test("Hermes pairing CLI persists explicit identity, rejects duplicates and unpairs without deleting the Bot", (t) => {
+  const s = scene(t);
+  const made = s.cli(["create", "--name", "Research", "--agent", "hermes", "--hermes-home", "/srv/sample-hermes", "--hermes-profile", "research", "--json"]);
+  assert.equal(made.code, 0, made.err);
+  const file = JSON.parse(readFileSync(join(s.project, ".herdr/bots.json"), "utf8"));
+  const bot = file.bots[0];
+  assert.deepEqual(bot.hermes, { home: "/srv/sample-hermes", profile: "research" });
+  const duplicate = s.cli(["create", "--name", "Twin", "--agent", "hermes", "--hermes-home", "/srv/sample-hermes", "--hermes-profile", "research"]);
+  assert.notEqual(duplicate.code, 0);
+  assert.match(duplicate.err, /already paired/);
+  const cleared = s.cli(["edit", bot.id, "--no-hermes"]);
+  assert.equal(cleared.code, 0, cleared.err);
+  const after = JSON.parse(readFileSync(join(s.project, ".herdr/bots.json"), "utf8"));
+  assert.equal(after.bots.length, 1);
+  assert.equal(after.bots[0].hermes, undefined);
+});
+
 const git = (cwd, ...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, encoding: "utf8" });
 const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755); };
 

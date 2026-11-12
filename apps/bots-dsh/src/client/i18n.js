@@ -5,6 +5,11 @@
 export const NAMESPACE = 'omni-ui'
 
 const ZH = {
+  "Pair Hermes Bot": "配对 Hermes Bot",
+  "Not paired": "未配对",
+  "Uses this profile’s existing Bot Chat. Other bots, groups and tasks cannot use this pairing. Unpair before changing it.": "使用此配置现有的 Bot Chat。其他 Bot、群组和任务不能使用此配对。更改前请先取消配对。",
+  "Hermes home (optional)": "Hermes 数据目录（可选）",
+  "Absolute data folder on the remote computer. Leave empty for its default Hermes home.": "远程电脑上的绝对数据目录。留空以使用默认 Hermes 目录。",
   "Use SSH host {host}": "使用 SSH 主机 {host}",
   "No SSH hosts match your search.": "没有匹配的 SSH 主机。",
   "SSH hosts from your config": "SSH 配置中的主机",

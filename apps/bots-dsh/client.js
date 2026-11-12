@@ -43,6 +43,11 @@ module.exports = __toCommonJS(index_exports);
 // src/client/i18n.js
 var NAMESPACE = "omni-ui";
 var ZH = {
+  "Pair Hermes Bot": "配对 Hermes Bot",
+  "Not paired": "未配对",
+  "Uses this profile’s existing Bot Chat. Other bots, groups and tasks cannot use this pairing. Unpair before changing it.": "使用此配置现有的 Bot Chat。其他 Bot、群组和任务不能使用此配对。更改前请先取消配对。",
+  "Hermes home (optional)": "Hermes 数据目录（可选）",
+  "Absolute data folder on the remote computer. Leave empty for its default Hermes home.": "远程电脑上的绝对数据目录。留空以使用默认 Hermes 目录。",
   "Use SSH host {host}": "使用 SSH 主机 {host}",
   "No SSH hosts match your search.": "没有匹配的 SSH 主机。",
   "SSH hosts from your config": "SSH 配置中的主机",
@@ -5027,7 +5032,7 @@ function usePaneLeft() {
 // src/client/hermes-remote.js
 var import_react14 = require("react");
 var import_react_dom2 = require("react-dom");
-var EMPTY_SSH = { host: "", user: "", port: "", identityFile: "", hermesPath: "" };
+var EMPTY_SSH = { host: "", user: "", port: "", identityFile: "", hermesPath: "", hermesHome: "" };
 var draftOf = (view) => ({ mode: view?.mode === "ssh" ? "ssh" : "remote", address: view?.address ?? "", authMode: view?.authMode === "password" ? "password" : "token", credentialRef: view?.credentialRef ?? "", credential: "", username: view?.username ?? "", password: "", ssh: { ...EMPTY_SSH, ...view?.ssh } });
 var configured = (view) => view?.enabled === true && Boolean(view?.profile);
 var freshSecrets = (draft) => ({ ...draft, credential: "", password: "" });
@@ -5479,7 +5484,8 @@ function HermesRemoteConnect({ onClose, onConnected, edit = false, initialView, 
         (0, import_react14.createElement)(Field, { label: t("SSH host or config name"), value: draft.ssh.host, onChange: (value) => ssh("host", value), hint: t("You can also use a name from your SSH config.") }),
         (0, import_react14.createElement)("div", { className: "bt-hw-two" }, (0, import_react14.createElement)(Field, { label: t("User (optional)"), value: draft.ssh.user, onChange: (value) => ssh("user", value), placeholder: t("From SSH config") }), (0, import_react14.createElement)(Field, { label: t("Port (optional)"), value: draft.ssh.port, onChange: (value) => ssh("port", value), placeholder: t("From SSH config"), type: "text" })),
         (0, import_react14.createElement)("div", { className: "bt-hw-field" }, (0, import_react14.createElement)("span", null, t("SSH key (optional)")), (0, import_react14.createElement)("div", { className: "bt-hw-file-choice" }, (0, import_react14.createElement)("span", null, draft.ssh.identityFile || t("Use SSH agent or SSH config")), (0, import_react14.createElement)(Button, { onClick: () => setChoosingKey((on) => !on) }, t("Choose file…"))), (0, import_react14.createElement)("small", null, t("The key stays on this computer.")), choosingKey ? (0, import_react14.createElement)("div", { className: "bt-hw-key-path" }, (0, import_react14.createElement)(Field, { label: t("Key file path"), value: draft.ssh.identityFile, onChange: (value) => ssh("identityFile", value), placeholder: t("Path on the computer running Automagik"), hint: t("Enter a local path. The key is never uploaded or copied.") }), (0, import_react14.createElement)(Button, { onClick: () => setChoosingKey(false) }, t("Use this path"))) : null),
-        (0, import_react14.createElement)(Field, { label: t("Hermes path (optional)"), value: draft.ssh.hermesPath, onChange: (value) => ssh("hermesPath", value), placeholder: t("Find Hermes automatically"), hint: t("Hermes must already be installed on the other computer.") })
+        (0, import_react14.createElement)(Field, { label: t("Hermes path (optional)"), value: draft.ssh.hermesPath, onChange: (value) => ssh("hermesPath", value), placeholder: t("Find Hermes automatically"), hint: t("Hermes must already be installed on the other computer.") }),
+        (0, import_react14.createElement)(Field, { label: t("Hermes home (optional)"), value: draft.ssh.hermesHome, onChange: (value) => ssh("hermesHome", value), hint: t("Absolute data folder on the remote computer. Leave empty for its default Hermes home.") })
       );
     } else {
       heading = draft.authMode === "password" ? t("Sign in to your Hermes") : t("Connect to your Hermes");
@@ -5602,6 +5608,7 @@ function HermesRemoteConnect({ onClose, onConnected, edit = false, initialView, 
 }
 function HermesRemoteSettings({ run: run2, Section: Section2, actions }) {
   const [view, setView] = (0, import_react14.useState)(null);
+  const [pairing, setPairing] = (0, import_react14.useState)(false);
   const [editing, setEditing] = (0, import_react14.useState)(false);
   const [reconciliation, setReconciliation] = (0, import_react14.useState)(null);
   (0, import_react14.useEffect)(() => {
@@ -5624,6 +5631,26 @@ function HermesRemoteSettings({ run: run2, Section: Section2, actions }) {
       (0, import_react14.createElement)("div", { className: "bt-set-row" }, (0, import_react14.createElement)("div", { className: "bt-set-copy" }, (0, import_react14.createElement)("span", null, t("Chat with a Hermes agent on another computer.")), (0, import_react14.createElement)("span", { className: "bt-set-hint" }, t("Your bots’ team tools (messages to other bots, secrets, memory, schedules) are not available in these chats.")))),
       (0, import_react14.createElement)("div", { className: "bt-set-row" }, (0, import_react14.createElement)("div", { className: "bt-set-copy" }, (0, import_react14.createElement)("span", null, view.profile || t("No connection saved")), (0, import_react14.createElement)("span", { className: "bt-set-hint" }, view.mode === "ssh" ? view.ssh?.host : view.address)), (0, import_react14.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: () => setEditing(true) }, configured(view) ? t("Edit connection") : t("Set up connection"))),
       view.credentialSet ? (0, import_react14.createElement)("div", { className: "bt-set-row" }, (0, import_react14.createElement)("span", { className: "bt-set-hint" }, t("Key saved")), (0, import_react14.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: () => setEditing(true) }, t("Replace"))) : null,
+      configured(view) ? (0, import_react14.createElement)(
+        "div",
+        { className: "bt-set-row" },
+        (0, import_react14.createElement)("label", null, t("Pair Hermes Bot"), (0, import_react14.createElement)(
+          "select",
+          {
+            "aria-label": t("Pair Hermes Bot"),
+            value: view.pairedBotId ?? "",
+            disabled: pairing,
+            onChange: (event) => {
+              const botId = event.target.value;
+              setPairing(true);
+              void run2(call("hermes-remote-pair", { botId }).then((next) => setView(next)).finally(() => setPairing(false)));
+            }
+          },
+          (0, import_react14.createElement)("option", { value: "" }, t("Not paired")),
+          (view.bots ?? []).map((bot) => (0, import_react14.createElement)("option", { key: bot.id, value: bot.id, disabled: Boolean(view.pairedBotId && view.pairedBotId !== bot.id) }, bot.name))
+        )),
+        (0, import_react14.createElement)("span", { className: "bt-set-hint" }, t("Uses this profile’s existing Bot Chat. Other bots, groups and tasks cannot use this pairing. Unpair before changing it."))
+      ) : null,
       configured(view) ? (0, import_react14.createElement)("div", { className: "bt-set-row" }, (0, import_react14.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: () => run2(call("hermes-remote-disconnect").then((next) => {
         if (next) setView(next);
       })) }, t("Disconnect"))) : null,

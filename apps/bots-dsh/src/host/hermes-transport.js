@@ -52,6 +52,7 @@ function snapshotShape(value) {
 function resultShape(method, value) {
   if (!object(value)) return false
   if (['session.create', 'session.resume', 'session.activate'].includes(method)) return snapshotShape(value)
+  if (method === 'session.list') return Array.isArray(value.sessions) && value.sessions.every(row => object(row) && string(row.id) && optional(row.resolved_id, string) && optional(row.title, string))
   if (method === 'client.capabilities') return Array.isArray(value.server_requests) && value.server_requests.every(string)
   if (method === 'session.events.since') return string(value.epoch) && Number.isSafeInteger(value.latest_seq) && value.latest_seq >= 0
     && typeof value.truncated === 'boolean' && Array.isArray(value.events) && value.events.every(eventShape)
@@ -405,6 +406,17 @@ export class HermesTransport {
       const ms = this.startUntil - Date.now()
       if (ms <= 0) throw failure('Remote Hermes did not start within 60 seconds.', 'bot/hermes-timeout')
       return Math.min(ms, this.deadlines.control)
+    }
+    if (identity?.canonicalBot === true) {
+      const listing = await this.request('session.list', { title: 'Bot Chat', include_hidden: true }, remaining())
+      if (listing.sessions.length !== 1 || listing.sessions[0].title !== 'Bot Chat') throw failure('This profile must have exactly one existing Bot Chat. Open it in Hermes before pairing.', 'bot/hermes-pairing')
+      const row = listing.sessions[0], stored = row.resolved_id || row.id
+      if (!stored) throw failure('Hermes did not identify its Bot Chat.', 'bot/hermes-pairing')
+      if ((identity.pendingSubmit || identity.uncertain) && identity.storedSessionId && ![row.id, stored].includes(identity.storedSessionId)) throw failure('Bot Chat changed while a turn was uncertain. Reconcile the original session in Hermes before pairing again.', 'bot/hermes-pairing')
+      const snapshot = await this.approvalSnapshot(await this.request('session.resume', { session_id: stored, inline_images: false, close_on_disconnect: false }, remaining()))
+      if (snapshot.info.profile_name !== this.profile || ![row.id, stored].includes(snapshot.stored_session_id)) throw failure('Hermes returned a different profile or Bot Chat; nothing was submitted.', 'bot/hermes-pairing')
+      // A paired bot owns its model. The Automagik provider selection is transport only.
+      return snapshot
     }
     const snapshot = await this.approvalSnapshot(await this.request(identity?.storedSessionId ? 'session.resume' : 'session.create', identity?.storedSessionId
       ? { session_id: identity.storedSessionId, inline_images: false, close_on_disconnect: false }

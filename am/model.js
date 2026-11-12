@@ -4,6 +4,7 @@
 // Apache-2.0.
 
 import { AGY_MODES, LEGACY_AGENTS, agyRuleProblem, normalizeAgyPermissions } from "./models.js";
+import { hermesPairProblem, hermesPairConflict } from "./hermesPair.js";
 
 /** The hc label key that ties a terminal to a bot; its value is the bot id (A9). */
 export const BOT_LABEL = "bot";
@@ -593,6 +594,11 @@ export function checkBots(file, before = null, { project = null, projects = null
   for (const b of file.bots) {
     if (!isObject(b) || !ID_SHAPE.test(b.id ?? "")) { errors.push(`${b?.id ?? "a bot"}: id is not b- plus 10 base32 characters`); continue; }
     const at = b.id;
+    if (b.hermes !== undefined) {
+      const why = b.agent !== "hermes" ? "Hermes pairing requires the Hermes agent" : hermesPairProblem(b.hermes) ?? hermesPairConflict(file, b);
+      if (why) errors.push(`${at}: ${why}`);
+      if (b.model) errors.push(`${at}: a paired Hermes bot uses its own model; clear the model pin`);
+    }
     if (ids.has(at)) errors.push(`${at}: id used twice`);
     ids.add(at);
     if (!isText(b.name)) errors.push(`${at}: no name`);
@@ -867,6 +873,7 @@ export function applyBotEdit(raw, entry, newCategory = null) {
   }
   const i = out.bots.findIndex((b) => b?.id === bot.id);
   const merged = i >= 0 ? { ...out.bots[i], ...bot } : bot;
+  if (Object.hasOwn(bot, "hermes") && bot.hermes === undefined) delete merged.hermes;
   for (const k of ["planned", "lead", "leadProject", "category", "agent", "model", "agyMode", "agyPermissions"]) {
     if (!(k in bot) || bot[k] === undefined || bot[k] === null || bot[k] === "") delete merged[k];
   }

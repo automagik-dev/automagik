@@ -7,6 +7,7 @@
 
 import { MAX_INSTRUCTIONS, OMNI_LOOK, RANKS, defaultLook, descendantsOf, effectiveLead, mainBotOf, newCategoryId, plannedOf } from "./model.js";
 import { AGY_MODE_DEFAULT, AGY_MODES, LEGACY_AGENTS, defaultModelFrom, knownModelsFrom } from "./models.js";
+import { hermesPairProblem, hermesPairConflict } from "./hermesPair.js";
 
 /** Waves the stepper offers (the mockup's 1..9); a stored later wave stays reachable. */
 export const MAX_WAVE = 9;
@@ -63,6 +64,7 @@ export function formFrom({ mode = "create", bot = null, file = null, id = null, 
       agyMode: AGY_MODES.includes(bot.agyMode) ? bot.agyMode : AGY_MODE_DEFAULT,
       // Kept as stored for the write-back: the form edits no permission rule (#823).
       agyPermissions: bot.agyPermissions,
+      hermesHome: str(bot.hermes?.home), hermesProfile: str(bot.hermes?.profile),
       lead: bot.kind === "main" ? "" : str(bot.lead), category: str(bot.category), catTitle: "", catSub: "",
       rank: str(bot.rank), planned: Boolean(planned), wave: isWave(planned?.wave) ? planned.wave : 1, note: str(planned?.note),
       storedPlanned: planned,
@@ -73,6 +75,7 @@ export function formFrom({ mode = "create", bot = null, file = null, id = null, 
     mode: "create", id, name: "", kind: file && mainBotOf(file) ? "member" : "main",
     character: look.character, colour: look.colour, role: "", instructions: "", agent, pin: "",
     code: true, agyMode: AGY_MODE_DEFAULT,
+    hermesHome: "", hermesProfile: "",
     lead: "", category: "", catTitle: "", catSub: "", rank: "", planned: false, wave: 1, note: "", storedPlanned: null,
   };
 }
@@ -217,6 +220,13 @@ export function countTone(n) {
 export function problemOf(state, { key = null, loadError = null, file = null, info = null } = {}) {
   if (!key) return "Pick the project folder first.";
   if (loadError) return loadError;
+  if (state.hermesHome || state.hermesProfile) {
+    if (state.agent !== "hermes") return "Unpair Hermes before choosing another agent.";
+    if (state.pin) return "A paired Hermes bot uses its own model; clear the model pin.";
+    const hermes = { home: state.hermesHome, profile: state.hermesProfile };
+    const why = hermesPairProblem(hermes) ?? hermesPairConflict(file ?? { bots: [] }, { id: state.id, agent: state.agent, hermes });
+    if (why) return why;
+  }
   const name = state.name.trim();
   if (!name) return "Give the bot a name.";
   const bots = file?.bots ?? [];
@@ -265,6 +275,7 @@ export function entryOf(state, file) {
       role: state.role.trim(), instructions: state.instructions,
       code: state.code === false ? false : undefined,
       agent: state.agent || undefined, model: state.pin || undefined,
+      hermes: state.hermesHome || state.hermesProfile ? { home: state.hermesHome, profile: state.hermesProfile } : undefined,
       // Antigravity's launch mode: the default is applied at launch, so only another one is stored.
       agyMode: state.agyMode && state.agyMode !== AGY_MODE_DEFAULT ? state.agyMode : undefined,
       // The form edits no permission rule: a stored field is written back as it was (#823).
@@ -343,6 +354,10 @@ export function commandOf(state, { key = null, file = null, initial = null, mach
     parts.push(...project);
     if (changed("instructions")) parts.push(opt("instructions", state.instructions));
   }
+  if (changed("hermesHome") || changed("hermesProfile")) {
+    if (state.hermesHome || state.hermesProfile) parts.push(opt("hermes-home", state.hermesHome), opt("hermes-profile", state.hermesProfile));
+    else if (was?.hermesHome || was?.hermesProfile) parts.push("--no-hermes");
+  }
   return [...pre, parts.join(" ")].join(" && ");
 }
 
@@ -350,7 +365,7 @@ export function commandOf(state, { key = null, file = null, initial = null, mach
 export function editChanged(state, initial) {
   if (!initial) return true;
   return ["name", "kind", "character", "colour", "role", "instructions", "code", "agent", "pin", "agyMode", "lead", "category",
-    "catTitle", "catSub", "rank", "planned", "wave", "note"].some((k) => state[k] !== initial[k]);
+    "catTitle", "catSub", "rank", "planned", "wave", "note", "hermesHome", "hermesProfile"].some((k) => state[k] !== initial[k]);
 }
 
 // The mockup's six interface icons (mockup/create-form.dc.html), as whole SVG documents in a
