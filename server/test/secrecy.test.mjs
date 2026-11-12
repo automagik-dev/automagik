@@ -6,7 +6,8 @@ import { dirname, join } from 'node:path'
 import test, { after } from 'node:test'
 import { fileURLToPath } from 'node:url'
 import {
-  applyAllowlist, BILLING_RULES, configHits, DATA_DIRS, loadAllowlist, maskAddress, maskRoute, nameHits, ownCode, scanRepo, scanTree, sha256,
+  applyAllowlist, BILLING_RULES, configHits, DATA_DIRS, loadAllowlist, maskAddress, maskRoute, maskSpecifier, maskStripePackage,
+  nameHits, ownCode, scanRepo, scanTree, sha256,
   sha256Bytes, walk,
 } from '../secrecy.mjs'
 
@@ -427,57 +428,101 @@ test('--repo refuses a Stripe key, price or account id in a tracked file, and th
   assert.deepEqual(repo.hits.map((hit) => `${hit.file}:${hit.line}: ${hit.rule}`), [])
 })
 
-// MASK_RAW_URL (PR 976 review): a billing finding on a URL, a route or an import once printed
-// its whole match, so a credential in the query or userinfo reached stderr and the inventory.
-test('a billing finding never prints a credential carried in its URL, route or import', () => {
+// PR 976 review: a billing finding once printed its whole match (MASK_RAW_URL), then a route
+// through its last billing segment (MASK_GREEDY_ROUTE), and the token-url finding kept the URL
+// around its token (TOKEN_URL_KEEPS_URL), so a credential in a URL, between two segments or in
+// userinfo reached stderr and the inventory. These findings now show fixed words only.
+test('a billing finding never prints a credential carried in its URL, route, import, package or key', () => {
   const secret = `tk${'9xQ7'.repeat(8)}`
   const password = `pw${'4Lm2'.repeat(6)}`
-  const parts = [secret, password].flatMap((value) => [value, value.slice(0, 8), value.slice(8, 16), value.slice(-8)])
+  const label = `lb${'7k3z'.repeat(6)}`
+  const parts = [secret, password, label].flatMap((value) => [value, value.slice(0, 8), value.slice(8, 16), value.slice(-8), value.slice(2, 6)])
   const vendor = ['gateway', 'vendor', 'net'].join('.')
+  const stripe = ['stripe', 'com'].join('.')
   const dir = rootfs()
   write(dir, `${PLUGIN}/models.js`, [
     `const gatewayUrl = 'https://${vendor}/v1?token=${secret}'`,
     `const gatewayStream = 'wss://svc:${password}@${vendor}:8443/stream#${secret}'`,
+    `const gateway_${label} = 'https://${label}.${vendor}/${secret}/v1'`,
+    // Userinfo and a token together: the overlapping token-url finding once kept the userinfo.
+    `const gatewayAuth = 'https://svc:${secret}@${vendor}/v1/${password}?key=${password}&token=${secret}'`,
+    `const other = 'http://${password}@${label}.host.invalid/${secret}?a=${password}&token=${secret}'`,
+    `const gateway_${label}_token = '${secret}'`,
     `ctx.server.get('/api/billing/portal?token=${secret}', handler)`,
     `ctx.server.get('/cloud/ledger/${secret}', handler)`,
+    // Repeated and mixed segments, and a credential before the first one.
+    `ctx.server.get('/api/billing/${secret}/ledger/events', handler)`,
+    `ctx.server.get('/api/ledger/${secret}/billing', handler)`,
+    `ctx.server.get('/billing/${secret}/billing', handler)`,
+    `ctx.server.get('/${secret}/billing/${password}/ledger/${secret}/billing/x', handler)`,
+    `ctx.server.get('/${secret}/ledger', handler)`,
     `import { charge } from './billing.mjs?token=${secret}'`,
+    `import { a } from './billing/${secret}/ledger/${password}/index.js'`,
+    `import { b } from './${secret}/ledger/billing-${password}.js'`,
+    `import { c } from './x/billing-${secret}/y.js'`,
+    `import d from 'stripe/${secret}/billing.js'`,
+    `import e from '@stripe/${secret}'`,
+    `fetch('https://${label}.${stripe}/v1/${secret}')`,
+    `fetch('https://api.${stripe}/v1/${secret}')`,
     '',
   ].join('\n'))
+  write(dir, `${PLUGIN}/package.json`, JSON.stringify({ name: '@automagik/bots-dsh', dependencies: { [`@stripe/${secret}`]: '1' }, peerDependencies: { stripe: '1' } }))
+  write(dir, `${THIRD}/package.json`, JSON.stringify({ name: `@stripe/${password}` }))
   write(dir, `${THIRD}/data.json`, [
     `{"a":"https://gateway.${ownHost}/v1?token=${secret}",`,
     ` "b":"https://api.${ownHost}/gateway/quote?key=${secret}",`,
-    ` "c":"wss://eu.gateway-a.cloud.${ownHost}/${secret}"}`,
+    ` "c":"wss://eu.gateway-a.cloud.${ownHost}/${secret}",`,
+    ` "d":"https://${label}.gateway.${ownHost}/billing/${secret}/ledger"}`,
     '',
   ].join('\n'))
   const found = scanTree(dir, undefined, []).hits
   const shown = (rule) => found.filter((hit) => hit.rule === rule).map((hit) => hit.match).sort()
   assert.deepEqual(shown('gateway-address'), [
-    `gatewayStream = 'wss://${vendor}/***`,
-    `gatewayUrl = 'https://${vendor}/***`,
-    `https://api.${ownHost}/***`,
-    `https://gateway.${ownHost}/***`,
-    `wss://eu.gateway-a.cloud.${ownHost}/***`,
+    'gateway default https://***', 'gateway default https://***', 'gateway default https://***', 'gateway default wss://***',
+    'own gateway host https://***', 'own gateway host https://***', 'own gateway host https://***', 'own gateway host wss://***',
   ])
-  assert.deepEqual(shown('billing-route'), ["'/api/billing/***'", "'/cloud/ledger/***'"])
-  assert.deepEqual(shown('billing-import'), ['import ./billing.mjs?***'])
+  assert.deepEqual(shown('gateway-credential'), ['gateway credential ***'])
+  assert.deepEqual(shown('token-url'), ['http://***?token=***', 'https://***?token=***', 'https://***?token=***', 'https://***?token=***'])
+  assert.ok(found.some((hit) => hit.rule === 'token-url' && hit.raw.includes(`svc:${secret}@`)))
+  assert.deepEqual(shown('billing-route'), [
+    '/***/billing/***', '/***/billing/***', '/***/billing/***', '/***/billing/***',
+    '/***/ledger/***', '/***/ledger/***', '/***/ledger/***',
+  ])
+  assert.deepEqual(shown('billing-import'), ['***/billing/***', '***/billing/***', '***/billing/***', '***/ledger/***'].map((text) => `import ${text}`))
+  assert.deepEqual(shown('stripe-sdk'), ['dependencies @stripe/***', 'import @stripe/***', 'import stripe', 'package @stripe/***', 'peerDependencies stripe'])
+  assert.deepEqual(shown('stripe-client'), [`***.${stripe}`, `api.${stripe}`])
   // The raw match is still what an exact allowlist entry and the hash are made from.
   assert.ok(found.some((hit) => hit.rule === 'gateway-address' && hit.raw.includes(secret)))
+  assert.ok(found.some((hit) => hit.rule === 'billing-route' && hit.raw.includes(secret)))
   for (const hit of found) for (const part of parts) assert.ok(!hit.match.includes(part), `${hit.rule}: ${hit.match}`)
 
   // The CLI, as the workflow runs it: nothing printed and nothing in the uploaded inventory.
   const inventory = join(temp(), 'inventory')
   const run = spawnSync(process.execPath, [join(HERE, '..', 'secrecy.mjs'), '--rootfs', dir, '--inventory', inventory], { encoding: 'utf8' })
   assert.equal(run.status, 1)
-  assert.match(run.stderr, /gateway-address: gatewayUrl = 'https:\/\/[a-z.]+\/\*\*\* rawSha256=/)
-  const written = readdirSync(inventory).map((name) => readFileSync(join(inventory, name), 'utf8')).join('\n')
+  assert.match(run.stderr, /: gateway-address: gateway default https:\/\/\*\*\* rawSha256=/)
+  assert.match(run.stderr, /: billing-route: \/\*\*\*\/ledger\/\*\*\* rawSha256=/)
+  assert.match(run.stderr, /: token-url: https:\/\/\*\*\*\?token=\*\*\* rawSha256=/)
+  const names = readdirSync(inventory)
+  assert.ok(names.includes('secrecy.txt') && names.includes('secrecy-hits.json'))
+  const written = names.map((name) => readFileSync(join(inventory, name), 'utf8')).join('\n')
   assert.match(written, /: gateway-address: /)
+  assert.match(written, /: billing-route: /)
   for (const part of parts) {
     assert.ok(!run.stderr.includes(part), 'stderr holds part of a credential')
     assert.ok(!run.stdout.includes(part), 'stdout holds part of a credential')
     assert.ok(!written.includes(part), 'the inventory holds part of a credential')
   }
 
-  assert.equal(maskAddress('https://user:pw@h.example:8443/p?q=1#f'), 'https://h.example/***')
-  assert.equal(maskAddress('wss://[2001:db8::1]:443/x'), 'wss://[2001:db8::1]/***')
-  assert.equal(maskRoute("'/billing'"), "'/billing/***'")
+  // The image config goes through the same masks.
+  const config = JSON.stringify({ Env: [`MODELS=https://gateway.${ownHost}/${secret}`], Labels: {} })
+  for (const hit of configHits(config, { deny: [], allow: [] })) assert.ok(!hit.match.includes(secret), hit.match)
+
+  assert.equal(maskAddress(`https://user:pw@${label}.h.example:8443/p?q=1#f`), 'https://***')
+  assert.equal(maskRoute(`'/api/billing/${secret}/ledger/events'`), '/***/billing/***')
+  assert.equal(maskRoute(`'/api/ledger/${secret}/billing'`), '/***/ledger/***')
+  assert.equal(maskRoute("'/billing'"), '/***/billing/***')
+  assert.equal(maskSpecifier(`./${secret}/ledger/billing.js`), '***/ledger/***')
+  assert.equal(maskStripePackage('stripe/lib/x.js'), 'stripe')
+  assert.equal(maskStripePackage(`@stripe/${secret}`), '@stripe/***')
 })

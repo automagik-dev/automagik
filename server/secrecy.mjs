@@ -77,9 +77,13 @@ export const SECRET_RULES = [
   { rule: 'private-key', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\r\n]+(?:(?:Proc-Type|DEK-Info):[^\r\n]*[\r\n]+|[\r\n]+|[A-Za-z0-9+/=]+[\r\n]+)+-----END [A-Z ]*PRIVATE KEY-----/g, mask: () => 'PRIVATE KEY block' },
   { rule: 'private-path', re: /\/mnt\/ai(?:\/|\b)/g, mask: () => '/mnt/ai' },
 ]
+/**
+ * A token URL shows its scheme only: its userinfo, host, path and other parameters can each
+ * carry a second credential beside the token.
+ */
 export const TOKEN_RULES = [
   { rule: 'token', re: /(?<![A-Za-z0-9_])token=[A-Za-z0-9_.~+\/-]{24,}/g, mask: () => 'token=***' },
-  { rule: 'token-url', re: /https?:\/\/[^\s"'<>]*[?&]token=[^&\s"'<>]+/g, mask: (m) => m.replace(/token=[^&\s]+/, 'token=***') },
+  { rule: 'token-url', re: /https?:\/\/[^\s"'<>]*[?&]token=[^&\s"'<>]+/g, mask: (m) => `${m.slice(0, m.indexOf(':')).toLowerCase()}://***?token=***` },
   { rule: 'token-json', re: /["'](?:access_?|refresh_?|api_?|launch_?)?token["']\s*:\s*["'](?=[A-Za-z0-9_.~+\/-]{32,}["'])(?=[A-Za-z0-9_.~+\/-]*\d)[A-Za-z0-9_.~+\/-]+["']/gi, mask: () => 'token: ***' },
 ]
 export const CREDENTIAL_RULES = [
@@ -242,15 +246,28 @@ export function textHits(file, text, list, denied = denyMatcher(list.deny), { pr
 }
 
 /**
- * What a billing finding may show. A URL keeps its scheme and host only: its userinfo, path,
- * query and fragment can carry a credential. A route keeps its path up to the billing segment,
- * and a module specifier loses its query. The raw match stays on the hit for hashing and the
- * exact allowlist only; it is never printed or written to the inventory.
+ * What a billing finding may show: fixed words only. Nothing is copied from a URL's userinfo,
+ * host, path, query or fragment, from a route's or a specifier's segments, from a package's
+ * scoped name or from a setting's key, because any of them can carry a credential (a token
+ * between two billing segments, in a subdomain label, in a key name). So no pattern boundary
+ * decides what is printed. The file and line place the finding; the raw match stays on the hit
+ * for hashing and the exact allowlist only, and is never printed or written to the inventory.
  */
-const URL_SHOWN = /((?:https?|wss?):\/\/)(?:[^\s\/?#"'`]*@)?([A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])?(?::\d+)?[^\s"'`<>)\\]*/gi
-export const maskAddress = (text) => String(text).replace(URL_SHOWN, (_, scheme, host) => `${scheme}${host ?? ''}/***`)
-export const maskRoute = (text) => String(text).replace(/^(["'`])(\/(?:[A-Za-z0-9_.:-]+\/)*(?:billing|ledger))(?:[\/?#].*)?\1$/i, '$1$2/***$1')
-export const maskSpecifier = (specifier) => String(specifier).replace(/[?#].*$/, '?***')
+const word = (text, re, fallback) => (re.exec(String(text))?.[1] ?? fallback).toLowerCase()
+/** A URL: its scheme. */
+export const maskAddress = (text) => `${word(text, /\b(https?|wss?):\/\//i, 'url')}://***`
+/** A route: which of the two words its first such segment is. */
+export const maskRoute = (text) => `/***/${word(text, /\/(billing|ledger)(?![A-Za-z0-9_.:-])/i, 'billing')}/***`
+/** A billing or ledger specifier: which word it names first. */
+export const maskSpecifier = (specifier) => `***/${word(specifier, /(billing|ledger)/i, 'billing')}/***`
+/** The SDK's package: `stripe`, or the scope without the name under it. */
+export const maskStripePackage = (name) => (/^stripe(?:\/|$)/.test(String(name)) ? 'stripe' : '@stripe/***')
+/** A Stripe host: its first label only when it is one of the public ones. */
+const STRIPE_LABELS = new Set(['api', 'js', 'checkout', 'connect', 'files', 'hooks', 'm', 'dashboard', 'billing', 'buy', 'invoice'])
+export const maskStripeHost = (host) => {
+  const label = String(host).split('.')[0].toLowerCase()
+  return `${STRIPE_LABELS.has(label) ? label : '***'}.stripe.com`
+}
 
 /** The dependency maps a package installs: a development dependency is not in the image. */
 const DEPENDENCY_FIELDS = ['dependencies', 'optionalDependencies', 'peerDependencies', 'bundledDependencies', 'bundleDependencies']
@@ -261,12 +278,12 @@ function manifestHits(file, text) {
   try { manifest = JSON.parse(text) } catch { return [] }
   if (!manifest || typeof manifest !== 'object') return []
   const hits = []
-  if (typeof manifest.name === 'string' && STRIPE_PACKAGE.test(manifest.name)) hits.push(hitOf(file, 0, 'stripe-sdk', `package ${manifest.name}`))
+  if (typeof manifest.name === 'string' && STRIPE_PACKAGE.test(manifest.name)) hits.push(hitOf(file, 0, 'stripe-sdk', manifest.name, `package ${maskStripePackage(manifest.name)}`))
   for (const field of DEPENDENCY_FIELDS) {
     const value = manifest[field]
     const names = Array.isArray(value) ? value : Object.keys(value && typeof value === 'object' ? value : {})
     for (const name of names) {
-      if (typeof name === 'string' && STRIPE_PACKAGE.test(name)) hits.push(hitOf(file, 0, 'stripe-sdk', `${field} ${name}`))
+      if (typeof name === 'string' && STRIPE_PACKAGE.test(name)) hits.push(hitOf(file, 0, 'stripe-sdk', name, `${field} ${maskStripePackage(name)}`))
     }
   }
   return hits
@@ -285,23 +302,23 @@ export function billingHits(file, text) {
   for (const { rule, re, mask } of STRIPE_VALUE_RULES) {
     for (const match of text.matchAll(re)) add(rule, match, mask(match[0]))
   }
-  for (const match of text.matchAll(STRIPE_HOST)) add('stripe-client', match, match[0])
+  for (const match of text.matchAll(STRIPE_HOST)) add('stripe-client', match, maskStripeHost(match[0]))
   for (const re of OWN_GATEWAY) {
-    for (const match of text.matchAll(re)) add('gateway-address', match, maskAddress(match[0]))
+    for (const match of text.matchAll(re)) add('gateway-address', match, `own gateway host ${maskAddress(match[0])}`)
   }
   if (basename(file) === 'package.json') hits.push(...manifestHits(file, text))
   if (SOURCE.test(file)) {
     for (const match of text.matchAll(SPECIFIER)) {
-      if (STRIPE_PACKAGE.test(match[2])) add('stripe-sdk', match, `import ${maskSpecifier(match[2])}`)
+      if (STRIPE_PACKAGE.test(match[2])) add('stripe-sdk', match, `import ${maskStripePackage(match[2])}`)
       else if (own && billingSpecifier(match[2])) add('billing-import', match, `import ${maskSpecifier(match[2])}`)
     }
   }
   if (own) {
     for (const match of text.matchAll(BILLING_ROUTE)) add('billing-route', match, maskRoute(match[0]))
     for (const match of text.matchAll(GATEWAY_DEFAULT)) {
-      if (!EXAMPLE_HOST.test(match[0])) add('gateway-address', match, maskAddress(match[0]))
+      if (!EXAMPLE_HOST.test(match[0])) add('gateway-address', match, `gateway default ${maskAddress(match[0])}`)
     }
-    for (const match of text.matchAll(GATEWAY_CREDENTIAL)) add('gateway-credential', match, `${match[0].split(/[:=?|]/)[0].trim()} ***`)
+    for (const match of text.matchAll(GATEWAY_CREDENTIAL)) add('gateway-credential', match, 'gateway credential ***')
   }
   return hits
 }
