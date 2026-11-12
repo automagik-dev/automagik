@@ -38,8 +38,8 @@ Each line names where the README says it. When this file and the README differ, 
   them (rule 1, "Which logo file").
 - Genie, Omni and Mykes each show as their word, from `logo/wordmark/`, with no mark beside it,
   until the owner approves a mark. Under Mykes: "Coming soon." in plain words (rule 10).
-- Never draw a mark for Genie, Omni or Mykes. A product's mark, once approved, is flat and one
-  colour, with its word's sparkle as the only colour (rule 9).
+- Never put a mark the owner has not approved beside Genie's, Omni's or Mykes's word. A product's
+  mark, once approved, is flat and one colour, with its word's sparkle as the only colour (rule 9).
 - Automagik's triskle is always in colour. The ink and cream marks are only for places where
   colour cannot be used (rule 2).
 - Pets are never marks. Genie and Omni are characters: never in a header, a favicon or an app icon in

@@ -6,7 +6,7 @@ It is documentation. No build, app or release reads this folder.
 
 ## The rules
 
-1. **The triskle is Automagik's mark, and Automagik's alone.** Genie, Omni and Mykes do not carry it (the owner's decision, add. 231). Automagik has no other logo.
+1. **The triskle is Automagik's mark, and Automagik's alone.** Genie, Omni and Mykes do not carry it (Genie and Omni by the owner's decision, add. 231; Mykes by the owner's approval of the family drawer, 12 November 2026). Automagik has no other logo.
 2. **Automagik's triskle is always in colour.** Cyan, pink and violet, as in the clay. The ink and cream marks are a fallback only, for places where colour cannot be used: one-colour print, engraving, a single-ink stamp.
 3. **Pets are never marks.** Genie and Omni are characters. They never stand in for the logo, in a header, a favicon or an app icon.
 4. **The only Genie is the full-body one.** The head alone is retired.
@@ -15,7 +15,7 @@ It is documentation. No build, app or release reads this folder.
 7. **The dot on the i is a sparkle, one colour per product.** One four-point star with the same area as the round dot it replaced, in one of the mark's three colours: Automagik's is violet, Genie's is pink and Omni's is cyan. The triangle stands for the three products. Mykes's sparkle is not chosen yet.
 8. **Never redraw it.** Do not move, reshape, slim, recolour or outline the mark's pieces, the letters or Genie. Use the files.
 9. **Every mark that is not Automagik's is flat and one colour.** The sparkle of its word is its only colour (the owner's decision, add. 247). Genie's mark is to be a lamp and Omni's an experiment (add. 231). They are future marks: neither is drawn or approved, and no file for them is here.
-10. **Until the owner approves its mark, a product shows as its word.** Genie, Omni and Mykes each appear as the name in the brand's lettering, with no mark beside it, in every place: a header, a menu, a page title, the family drawer (the owner's approval of the family drawer, 12 November 2026). Under Mykes, which is not out yet, the plain words "Coming soon." stand. Do not draw a lamp, an experiment or any other mark for them, and do not put the triskle or a pet beside the word.
+10. **Until the owner approves its mark, a product shows as its word.** Genie, Omni and Mykes each appear as the name in the brand's lettering, with no mark beside it, in every place: a header, a menu, a page title, the family drawer (the owner's approval of the family drawer, 12 November 2026). Under Mykes, which is not out yet, the plain words "Coming soon." stand. Do not put a lamp, an experiment or any other mark the owner has not approved beside the word, and never the triskle or a pet.
 
 ## What is here
 
