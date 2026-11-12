@@ -179,6 +179,22 @@ async function fakeRuntime(f) {
   return executable
 }
 
+test('explicit Hermes home owns the token and backend, without inheriting another profile', async t => {
+  const f = await fixture(t, 'runtime-ready')
+  const hermesPath = await fakeRuntime(f)
+  const hermesHome = join(f.home, 'separate-agent')
+  await (await import('node:fs/promises')).mkdir(hermesHome)
+  await writeFile(join(hermesHome, 'config.yaml'), '{}\n')
+  const connection = await f.open({ ...f.config, hermesPath, hermesHome })
+  try {
+    const runtime = (await f.records()).find(record => record.event === 'runtime-start')
+    assert.equal(runtime.home, hermesHome)
+    assert.equal(runtime.profile, undefined)
+    assert.deepEqual(runtime.args.slice(0, 3), ['--profile', 'default', 'serve'])
+    assert.ok(runtime.args[runtime.args.indexOf('--ssh-session-token-file') + 1].startsWith(join(hermesHome, 'desktop-ssh')))
+  } finally { await connection.close() }
+})
+
 async function waitFor(predicate) {
   const until = Date.now() + 5000
   while (!(await predicate())) {

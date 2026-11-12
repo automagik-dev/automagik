@@ -1,4 +1,9 @@
 {
+  "Pair Hermes Bot": "Parear Bot Hermes",
+  "Not paired": "Não pareado",
+  "Uses this profile’s existing Bot Chat. Other bots, groups and tasks cannot use this pairing. Unpair before changing it.": "Usa o Bot Chat existente deste perfil. Outros bots, grupos e tarefas não podem usar este pareamento. Desfaça o pareamento antes de alterá-lo.",
+  "Hermes home (optional)": "Diretório de dados do Hermes (opcional)",
+  "Absolute data folder on the remote computer. Leave empty for its default Hermes home.": "Caminho absoluto dos dados no computador remoto. Deixe vazio para usar o diretório padrão do Hermes.",
   "Bot sign-in recovery is needed. Reset Bot sign-in to start fresh.": "É preciso recuperar o login do Bot. Redefina o login do Bot para recomeçar.",
   "Reset Bot sign-in": "Redefinir login do Bot",
   "This signs {vendor} out for Bots. Sign in again in the app.": "Isso desconecta {vendor} dos Bots. Entre de novo no app.",

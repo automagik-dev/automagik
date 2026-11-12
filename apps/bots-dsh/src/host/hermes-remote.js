@@ -14,9 +14,10 @@ const CREDENTIAL_REF = 'HERMES_REMOTE_CREDENTIAL'
 const TEST_LIFETIME = 5 * 60_000
 const CHAT_BUSY = 'A chat is still running on this connection; stop it or wait.'
 const fail = (message, kind = 'connection') => refusal(message, { code: `bot/hermes-${kind}` })
-const sshFields = ssh => Object.fromEntries(['host', 'user', 'port', 'identityFile', 'hermesPath'].filter(key => ssh?.[key] !== undefined).map(key => [key, ssh[key]]))
+const sshFields = ssh => Object.fromEntries(['host', 'user', 'port', 'identityFile', 'hermesPath', 'hermesHome'].filter(key => ssh?.[key] !== undefined).map(key => [key, ssh[key]]))
 const CONNECTION_ERRORS = Object.freeze({
   'bot/hermes-busy': CHAT_BUSY,
+  'bot/hermes-pairing': 'The Hermes Bot pairing could not be verified. Check the selected profile and its existing Bot Chat.',
   'bot/hermes-auth': 'Hermes did not accept the saved sign-in. Check the token or sign in again.',
   'bot/hermes-connection': 'Remote Hermes could not connect. Check the connection details and try again.',
   'bot/hermes-profiles': 'Hermes could not open the selected profile. Check its available profiles and try again.',
@@ -112,7 +113,16 @@ export function install(rt, { transport = options => new HermesTransport(options
   const record = () => state.prefs?.hermesRemote ?? { enabled: false, models: [] }
   const sessions = () => state.hermesSessions ??= {}
   const enabled = () => record().enabled === true
-  const identity = id => sessions()[id] ??= { createKey: randomUUID() }
+  const identity = id => {
+    const paired = record().pairedBotId
+    if (paired) {
+      // Only this bot's current own-chat segment may enter its forever-chat. Groups,
+      // tasks and other bots must not leak their context into the paired identity.
+      if (rt.chatOwners?.get(id) !== paired) throw fail('This Hermes profile is paired to another Bot chat.', 'pairing')
+      return sessions()[`bot:${paired}`] ??= { canonicalBot: true }
+    }
+    return sessions()[id] ??= { createKey: randomUUID() }
+  }
   // Identity-only persistence must not queue behind a Stop already awaited by
   // a connection mutation. The store serializes required writes itself.
   const saveState = () => rt.save({ required: true })
@@ -379,6 +389,8 @@ export function install(rt, { transport = options => new HermesTransport(options
   const view = () => ({
     enabled: enabled(), mode: record().mode ?? 'remote', authMode: record().authMode ?? 'token',
     address: record().address ?? '', profile: record().profile ?? '', ssh: record().mode === 'ssh' ? sshFields(record().ssh) : undefined,
+    pairedBotId: record().pairedBotId ?? '',
+    bots: Object.values(state.bots ?? {}).map(bot => ({ id: bot.id, name: bot.name })),
     credentialRef: record().credentialRef ?? '', credentialSet: record().mode === 'ssh' ? Boolean(record().enabled) : Boolean(rt.secretValue?.(record().credentialRef)),
     models: record().models ?? [], limitations: MISSING_TOOLS, minimum: HERMES_MINIMUM,
     modelRef: record().models?.[0] ? `${HERMES_PROVIDER}/${record().models[0].id}` : undefined,
@@ -540,6 +552,10 @@ export function install(rt, { transport = options => new HermesTransport(options
     const profile = entry.lease.connection.profiles.find(profile => profile.id === body.profile)?.id
     if (!profile) throw fail('Choose a profile returned by this Hermes.', 'profiles')
     const next = { ...entry.config, profile, setupVersion: 1, enabled: true }
+    if (record().pairedBotId) {
+      if (connectionKey(next) !== connectionKey(record())) throw fail('Disconnect the paired Bot before changing its Hermes connection or profile.', 'pairing')
+      next.pairedBotId = record().pairedBotId
+    }
     requireReplaceable()
     const models = await probe(entry.lease, profile, signal, startup.until)
     entry.checkSource?.()
@@ -594,6 +610,7 @@ export function install(rt, { transport = options => new HermesTransport(options
   }
   async function configure(body, signal) {
     await rt.load(); await rt.loadSecrets()
+    if (record().pairedBotId) throw fail('Disconnect the paired Bot before replacing its Hermes configuration.', 'pairing')
     if (signal?.aborted) throw fail('Connection setup was cancelled or timed out.', 'timeout')
     if (typeof body.enabled !== 'boolean') throw refusal('Choose whether Remote Hermes is on.')
     const address = body.address ? remoteAddress(body.address) : record().address
@@ -641,6 +658,47 @@ export function install(rt, { transport = options => new HermesTransport(options
     await rt.load(); await rt.loadSecrets()
     if (!enabled()) throw fail('Set up Remote Hermes before connecting.')
     return discover(signal, startup)
+  }
+  async function savePair(botId, signal) {
+    const previous = record(), owner = generation
+    if (signal?.aborted || disposed) throw fail('Pairing was cancelled.', 'pairing')
+    const installed = { ...previous, pairedBotId: botId || undefined }
+    state.prefs.hermesRemote = installed
+    try {
+      await saveState()
+      if (signal?.aborted || disposed || generation !== owner || record() !== installed) throw fail('Pairing was cancelled or changed.', 'pairing')
+    } catch (error) {
+      if (record() === installed && generation === owner) {
+        state.prefs.hermesRemote = previous
+        await saveState()
+      }
+      throw error
+    }
+    generation++
+    publish()
+    return view()
+  }
+  async function pairBot(body, signal) {
+    await rt.load(); await rt.loadSecrets()
+    if (!enabled() || !record().profile) throw fail('Connect a Hermes profile before pairing.', 'pairing')
+    const botId = body?.botId
+    if (botId === '') {
+      requireReplaceable()
+      if (adapter.live.size) throw fail(CHAT_BUSY, 'busy')
+      return savePair('', signal)
+    }
+    if (typeof botId !== 'string' || !Object.hasOwn(state.bots ?? {}, botId)) throw fail('Choose an existing Automagik Bot.', 'pairing')
+    if (!state.bots[botId].model?.startsWith(`${HERMES_PROVIDER}/`)) throw fail('Choose Remote Hermes in this Bot’s chat before pairing it.', 'pairing')
+    if (record().pairedBotId && record().pairedBotId !== botId) throw fail('This Hermes profile is already paired. Unpair it before choosing another Bot.', 'pairing')
+    requireReplaceable()
+    if (adapter.live.size) throw fail(CHAT_BUSY, 'busy')
+    const run = await open({ identity: { canonicalBot: true }, signal })
+    try {
+      await run.prepare()
+      requireReplaceable()
+      if (signal?.aborted) throw fail('Pairing was cancelled.', 'pairing')
+      return await savePair(botId, signal)
+    } finally { run.dispose(); await drain() }
   }
   async function disconnect(body = {}) {
     await cancelTests(body?.testsOnly ? { testId: body.testId, requestId: body.requestId } : undefined)
@@ -722,6 +780,7 @@ export function install(rt, { transport = options => new HermesTransport(options
   rt.hooks.endpoint('hermes-remote-test-profiles', (body, signal) => api.refreshProfiles(body, signal))
   rt.hooks.endpoint('hermes-remote-save', (body, signal) => api.save(body, signal))
   rt.hooks.endpoint('hermes-remote-connect', (_body, signal) => api.connect(signal))
+  rt.hooks.endpoint('hermes-remote-pair', (body, signal) => action(startup => pairBot(body, startup.signal), signal))
   rt.hooks.endpoint('hermes-remote-disconnect', api.disconnect)
   rt.hooks.endpoint('hermes-remote-configure', api.configure)
   rt.hooks.endpoint('hermes-remote-discover', (_body, signal) => api.discover(signal))

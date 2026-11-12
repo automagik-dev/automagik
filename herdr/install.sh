@@ -1506,12 +1506,15 @@ install() {
   # An older release (--version) neither has nor needs them; one whose update.mjs imports
   # layoutSafe.mjs must carry it.
   tar -xzf "$TMP/$TGZ" -C "$TMP/x" "$side/retired.js" </dev/null >/dev/null 2>&1 || :
+  tar -xzf "$TMP/$TGZ" -C "$TMP/x" "$side/hermesPair.js" </dev/null >/dev/null 2>&1 || :
   tar -xzf "$TMP/$TGZ" -C "$TMP/x" "$side/layoutSafe.mjs" </dev/null >/dev/null 2>&1 || :
   # #805: the restore notifier reads the shared attach ledger through attach.js.
   # Old releases do not import it and may omit it.
   tar -xzf "$TMP/$TGZ" -C "$TMP/x" "$side/attach.js" </dev/null >/dev/null 2>&1 || :
-  for f in update.mjs release.js migrate.js migrateHome.mjs migrateHooks.mjs briefingText.mjs model.js models.js retired.js layoutSafe.mjs attach.js; do
+  for f in update.mjs release.js migrate.js migrateHome.mjs migrateHooks.mjs briefingText.mjs model.js models.js retired.js hermesPair.js layoutSafe.mjs attach.js; do
     case $f in
+      hermesPair.js) [ ! -e "$TMP/x/$side/$f" ] && [ ! -L "$TMP/x/$side/$f" ] \
+        && ! grep -q '/hermesPair\.js"' "$TMP/x/$side/model.js" && continue ;;
       retired.js) [ ! -e "$TMP/x/$side/$f" ] && [ ! -L "$TMP/x/$side/$f" ] && continue ;;
       attach.js) [ ! -e "$TMP/x/$side/$f" ] && [ ! -L "$TMP/x/$side/$f" ] \
         && ! grep -q '/attach\.js"' "$TMP/x/$side/update.mjs" && continue ;;

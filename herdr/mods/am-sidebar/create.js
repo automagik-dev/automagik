@@ -58,7 +58,7 @@ const restartKey = ({ agent = null, force = false, fresh = false } = {}) => (age
 const notSaved = (why) => (/^(Not saved|State unknown):/.test(String(why)) ? String(why) : `Not saved: ${why}`);
 
 // The form's text fields, read into the plain state formModel works on.
-const TEXT = ["name", "role", "note", "catTitle", "catSub"];
+const TEXT = ["name", "role", "note", "catTitle", "catSub", "hermesHome", "hermesProfile"];
 
 export class BotForm {
   constructor(p, cx) {
@@ -98,6 +98,7 @@ export class BotForm {
     this.inputs = {
       name: field("Name"), role: field("What it is, in a few words"), note: field("Why it waits"),
       catTitle: field("Category title"), catSub: field("Subtitle (optional)"),
+      hermesHome: field("Absolute Hermes data folder"), hermesProfile: field("Exact profile name (default is explicit)"),
     };
     this.instructions = TextareaState.new({ placeholder: "What it does, how it works, whom it reports to" });
     this.instructions.set_auto_grow(5, 10);
@@ -1051,6 +1052,11 @@ export class BotForm {
     };
     return v_flex().gap(10)
       .child(this.label(t, "Runs on"))
+      .when(state.agent === "hermes", (el) => el.child(v_flex().gap(6)
+        .child(this.label(t, "Pair an existing Hermes Bot"))
+        .child(this.field(t, "bot-hermes-home", this.inputs.hermesHome))
+        .child(this.field(t, "bot-hermes-profile", this.inputs.hermesProfile))
+        .child(div().text_size(11).text_color(t.muted).child("Start and restart open this profile's existing Bot Chat on the selected machine. Leave both empty for an unpaired session. Pairing keeps Hermes's own instructions and model."))))
       .child(v_flex().gap(6).children(rows.length ? rows : [div().text_size(12).text_color(this.agentsError ? t.ansi1 : t.muted)
         .child(this.agentsError ?? (this.agents.length ? "No coding agent is installed on this computer." : "Finding Herdr's coding agents…"))]))
       .child(h_flex().gap(10).px(12).py(10).items_center().rounded(10).border_1().border_color(t.border).bg(t.surface ?? t.background)

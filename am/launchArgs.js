@@ -5,6 +5,7 @@
 import { BOT_LABEL, effectiveCategory, effectiveLead, mainBotOf, projectEntriesOf } from "./model.js";
 import { ENV, guardPathWith, paneArgs, paneGuardOf, stableGuardDir, stableRootOf } from "./workers.js";
 import { envWords } from "./logins.js";
+import { hermesPairProblem, hermesPairConflict } from "./hermesPair.js";
 
 const SHELLS = new Set(["sh", "zsh", "bash", "fish", "dash", "ksh", "tcsh", "csh", "nu", "login"]);
 const base = (p) => String(p ?? "").split("/").pop().replace(/^-/, "");
@@ -36,6 +37,11 @@ export function parentArgs(file, botOrId, liveOf, opts = {}) {
 export function startRefusal(file, botId) {
   const bot = file.bots.find((b) => b.id === botId);
   if (!bot) return `No bot ${botId} in this project.`;
+  if (bot.hermes !== undefined) {
+    const why = bot.agent !== "hermes" ? "Hermes pairing requires the Hermes agent." : hermesPairProblem(bot.hermes) ?? hermesPairConflict(file, bot);
+    if (why) return why;
+    if (bot.model) return "A paired Hermes bot uses its own model; clear the model pin.";
+  }
   if (bot.planned) return `${bot.name} is planned (wave ${bot.planned.wave}); edit it and clear "planned" to start it.`;
   if (!bot.agent) return `${bot.name} has no coding agent; edit it and pick one.`;
   if (bot.kind === "member" && !mainBotOf(file)) return `${bot.name}'s project has no main bot yet; create one first.`;
