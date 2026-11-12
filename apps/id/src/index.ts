@@ -100,7 +100,8 @@ export default {
       const sessionNames = [cookies.sessionToken.name, cookies.sessionData.name];
       const headers = new Headers(request.headers);
       const ceremonyCookies = (headers.get('cookie') ?? '').split(';').filter(part => {
-        const name = part.trim().split('=')[0];
+        // Match Better Call's getSignedCookie parser: trim the name before '='.
+        const name = part.split('=', 1)[0].trim();
         return !sessionNames.some(sessionName => name === sessionName || name.startsWith(`${sessionName}.`));
       }).join(';');
       headers.set('cookie', ceremonyCookies);

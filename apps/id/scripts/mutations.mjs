@@ -3,6 +3,11 @@ import { spawnSync } from 'node:child_process';
 
 const mutations = [
   {
+    name: 'restore the untrimmed registration cookie name',
+    test: 'registration ignores whitespace session cookies',
+    edits: [['src/index.ts', "part.split('=', 1)[0].trim()", "part.trim().split('=')[0]"]],
+  },
+  {
     name: 'drop the sign-out before Create a passkey',
     test: 'signed-in Create a passkey creates a fresh account',
     edits: [['pages/id.js', "if (signedIn) { await call('/api/auth/sign-out', {}); signedIn = false; }", '']],

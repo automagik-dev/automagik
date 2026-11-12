@@ -430,6 +430,65 @@ describe('Worker + D1 identity', () => {
     expect(current.user.id).toBe(second.userId);
   });
 
+  test.each([
+    ['leading space', ' ', ''], ['trailing space', '', ' '], ['spaces around name', ' ', ' '],
+    ['leading tab', '\t', ''], ['trailing tab', '', '\t'], ['tabs around name', '\t', '\t'],
+  ].flatMap(([label, before, after]) => ['options', 'verification', 'both'].map(step => ({
+    label, before, after, step,
+  }))))('registration ignores whitespace session cookies: $label in $step', async ({ before, after, step }) => {
+    const first = await signup();
+    const originalCookie = cookie;
+    const spaced = (value: string) => value.split(';').map(pair => {
+      const at = pair.indexOf('=');
+      return `${before}${pair.slice(0, at).trim()}${after}${pair.slice(at)}`;
+    }).join(';');
+    // Prove that the same spelling authenticates on a route which accepts sessions.
+    expect((await jsonOK(await request('/api/auth/get-session', undefined, {
+      cookie: spaced(originalCookie),
+    }))).user.id).toBe(first.userId);
+    const headers = { aUtHoRiZaTiOn: '\t Bearer unused-session-header \t' };
+    const options = await jsonOK(await request('/api/auth/passkey/generate-register-options', undefined, {
+      cookie: step === 'verification' ? originalCookie : spaced(originalCookie), headers,
+    }));
+    const second = await jsonOK(await request('/api/auth/passkey/verify-registration', {
+      response: new SoftwareAuthenticator().register(options, origin), createSession: true,
+    }, { cookie: step === 'options' ? cookie : spaced(cookie), headers }));
+    expect(second.session.userId).not.toBe(first.userId);
+    const db = await runtime.getD1Database('DB');
+    expect((await db.prepare('SELECT count(*) AS n FROM passkey WHERE userId = ?')
+      .bind(first.userId).first<{ n: number }>())!.n).toBe(1);
+    expect((await db.prepare('SELECT count(*) AS n FROM user').first<{ n: number }>())!.n).toBe(2);
+  });
+
+  test.each(['first', 'second'])('registration strips a session on the $0 Cookie header line', async position => {
+    const first = await signup();
+    const originalCookie = cookie;
+    const duplicateCookie = (value: string) => position === 'first'
+      ? { cookie: value, headers: { Cookie: 'unrelated=kept' } }
+      : { cookie: 'unrelated=kept', headers: { Cookie: value } };
+    expect((await jsonOK(await request('/api/auth/get-session', undefined,
+      duplicateCookie(originalCookie)))).user.id).toBe(first.userId);
+    const options = await jsonOK(await request('/api/auth/passkey/generate-register-options', undefined,
+      duplicateCookie(originalCookie)));
+    const second = await jsonOK(await request('/api/auth/passkey/verify-registration', {
+      response: new SoftwareAuthenticator().register(options, origin), createSession: true,
+    }, duplicateCookie(cookie)));
+    expect(second.session.userId).not.toBe(first.userId);
+  });
+
+  test('session cookie names are case-sensitive in Better Call', async () => {
+    const first = await signup();
+    const differentCase = cookie.replace(/session_token/g, 'SESSION_TOKEN');
+    expect(await jsonOK(await request('/api/auth/get-session', undefined, { cookie: differentCase }))).toBeNull();
+    const options = await jsonOK(await request('/api/auth/passkey/generate-register-options', undefined, {
+      cookie: differentCase,
+    }));
+    const second = await jsonOK(await request('/api/auth/passkey/verify-registration', {
+      response: new SoftwareAuthenticator().register(options, origin), createSession: true,
+    }, { cookie: cookie.replace(/session_token/g, 'SESSION_TOKEN') }));
+    expect(second.session.userId).not.toBe(first.userId);
+  });
+
   test('internal email stays out of response headers and bodies, including encoded JWTs', async () => {
     const { userId } = await signup();
     const db = await runtime.getD1Database('DB');
