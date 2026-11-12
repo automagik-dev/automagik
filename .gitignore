@@ -15,3 +15,7 @@ apps/desktop/dist/
 .herdr/app-home/
 .herdr/bots.json.lock
 .herdr/bots.json.*.tmp
+# Claude Code: only the project skills are tracked. Local settings and the worktrees
+# agents work in live under .claude too, and are never committed.
+/.claude/*
+!/.claude/skills/

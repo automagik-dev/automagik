@@ -507,6 +507,17 @@ describe('the plugin lane', () => {
     expect(kindOf(plan, none)).toBe('plugins');
   });
 
+  test('a Claude Code skill (.claude/skills/) ships nothing: the brand skill and the brand copy tool cut no release', () => {
+    const none = () => false;
+    const brand = ['.claude/skills/automagik-brand/SKILL.md', 'scripts/brand-sync.mjs', 'scripts/brand-sync.test.ts', 'docs/brand/README.md', '.gitignore'];
+    expect(ships(brand, none)).toBe(false);
+    expect(herdrShips(brand)).toBe(false);
+    expect(pocketShips(brand)).toBe(false);
+    // Beside a shipped file, that file's lane decides.
+    expect(ships([...brand, 'apps/bots-dsh/client.js'], none)).toBe(true);
+    expect(kindOf([...brand, 'apps/bots-dsh/client.js'], none)).toBe('plugins');
+  });
+
   test('a scheduler-only change (herdr/scheduler/, vendored) cuts no release and never reaches the pack', () => {
     const none = () => false;
     const scheduler = ['herdr/scheduler/main.go', 'herdr/scheduler/internal/daemon/daemon.go', 'herdr/scheduler/go.mod',
