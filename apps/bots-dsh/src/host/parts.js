@@ -1619,10 +1619,14 @@ export function install(rt) {
     const lines = await contextLines(agent.session).catch(() => undefined)
     const tokens = tokensOf(agent.session)
     if (lines === undefined || tokens === undefined || tokens < lines.hard || !grown(agent.id, tokens, lines) || readOnly()) return next()
-    if (!await canMakeRoom(agent, payload.messages)) return next()
     // A-2': nothing answers beside the agent, so the hard line moves on without a note.
-    if (!await asideReady(agent.session, 'context steward')) return switchBeforeStep(agent, payload, { hard: true, noNote: 'aside' })
+    if (!await asideReady(agent.session, 'context steward')) {
+      if (!await canMakeRoom(agent, payload.messages)) return next()
+      return switchBeforeStep(agent, payload, { hard: true, noNote: 'aside' })
+    }
     if (await decide(agent, { midTurn: payload.step > 1 }) === 'compact' && await condense(agent, lines, { inTurn: true, signal: payload.signal })) return next()
+    // A carried note may not fit another handoff even when compaction can shrink it.
+    if (!await canMakeRoom(agent, payload.messages)) return next()
     return switchBeforeStep(agent, payload, { hard: true })
   }, { prepend: true })
 
@@ -1753,16 +1757,15 @@ export function install(rt) {
     try {
       // A-2': no steward, note or checkpoint beside an agent; past the hard line the part
       // moves on with its latest messages, below it the part stays as it is.
-      if (!await canMakeRoom(agent)) return
       if (!await asideReady(agent.session, 'context steward')) {
-        if (hard && !switches.has(agent.id)) startSwitch(agent, { hard: true, noNote: 'aside' })
+        if (hard && !switches.has(agent.id) && await canMakeRoom(agent)) startSwitch(agent, { hard: true, noNote: 'aside' })
         return
       }
       if (await decide(agent, { midTurn: false }) === 'compact') {
         const condensed = await condense(agent, lines, { inTurn: false })
         if (condensed !== false) return
       }
-      if (switches.has(agent.id)) return
+      if (switches.has(agent.id) || !await canMakeRoom(agent)) return
       startSwitch(agent, { hard: (tokensOf(agent.session) ?? tokens) >= lines.hard })
     } finally {
       checking.delete(agent.id)
