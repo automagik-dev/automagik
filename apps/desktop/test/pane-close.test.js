@@ -143,7 +143,7 @@ test('main.js sends Cmd+W to the pane under a focused Bot view, else to the page
 })
 
 // Issue #882, item 4: the binding Cmd+W sends is DSH's, so it is pinned. The fixture is the
-// `page.close` registration of @deepseek-ai/dsh-client-ui-sidebar-right 0.2.2-rc.1's
+// `page.close` registration of @deepseek-ai/dsh-client-ui-sidebar-right 0.2.2-rc.2's
 // lib/client.js, cut verbatim from the published bundle (MIT; LICENSE beside it).
 const REGISTRATION = readFileSync(new URL('./fixtures/page-close/sidebar-right-page-close.js.txt', import.meta.url), 'utf8')
 
@@ -155,7 +155,7 @@ test("the pinned client still registers page.close on the key Cmd+W sends", () =
   assert.match(script, /code: 'KeyW', metaKey: true, altKey: true/)
   // The runtime the app pins carries that package at the version the fixture was cut from.
   const lock = JSON.parse(readFileSync(new URL('../runtime/package-lock.json', import.meta.url), 'utf8')).packages
-  assert.equal(lock[`node_modules/${PAGE_CLOSE_SOURCE.package}`]?.version, '0.2.2-rc.1',
+  assert.equal(lock[`node_modules/${PAGE_CLOSE_SOURCE.package}`]?.version, '0.2.2-rc.2',
     'the runtime moved: cut the fixture again from the new bundle and check Cmd+W still closes a pane')
 })
 
@@ -164,10 +164,10 @@ test('a renamed command, another key or another binding is named as a mismatch',
     assert.ok(REGISTRATION.includes(from), from)
     return pageCloseMismatch(REGISTRATION.replace(from, to))
   }
-  assert.deepEqual(moved('id: `page.${kind}`', 'id: `pane.${kind}`'), ['the `page.close` command id'])
-  assert.deepEqual(moved('"KeyW"', '"KeyQ"'), ['its key, KeyW'])
-  assert.deepEqual(moved('modifiers: ["primary", "alt"]', 'modifiers: ["primary", "shift"]'), ['its web binding, primary+alt'])
-  assert.deepEqual(moved('{ "web:macos": web }', '{ "web:linux": web }'), ['the web binding on macOS'])
+  assert.deepEqual(moved('id:`page.${kind}`', 'id:`pane.${kind}`'), ['the `page.close` command id'])
+  assert.deepEqual(moved('`KeyW`', '`KeyQ`'), ['its key, KeyW'])
+  assert.deepEqual(moved('modifiers:[`primary`,`alt`]', 'modifiers:[`primary`,`shift`]'), ['its web binding, primary+alt'])
+  assert.deepEqual(moved('{"web:macos":web}', '{"web:linux":web}'), ['the web binding on macOS'])
   assert.equal(pageCloseMismatch('').length, 4)
   assert.equal(pageCloseMismatch(undefined).length, 4)
 })

@@ -1,6 +1,6 @@
 {
   "name": "@automagik/locale-pt-br-dsh",
-  "version": "3.130.0",
+  "version": "3.133.0",
   "description": "Brazilian Portuguese for DeepSeek Harness 0.2.2 and later: the Bot team's own strings (omni-ui), registered under DSH's single Portuguese entry. Adds no language of its own; a pt-BR choice saved by an older pack moves to DSH's pt",
   "keywords": [
     "dsh-plugin",
@@ -43,7 +43,7 @@
     "harness": "bun install --cwd dev/harness --no-save --no-summary"
   },
   "engines": {
-    "dsh": ">=0.2.2-rc.1 <0.3.0-0",
+    "dsh": ">=0.2.2-rc.2 <0.3.0-0",
     "node": ">=24.9"
   },
   "dsh": {

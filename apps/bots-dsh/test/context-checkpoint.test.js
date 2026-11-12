@@ -77,11 +77,12 @@ async function loopPrototype() {
   try { return (await import('context-test:agent-loop')).ContextTestLoop.prototype } finally { hook.deregister() }
 }
 
-for (const mode of ['explicit', 'explicit-failure', 'automatic']) test(`${mode} authority is revoked before a real maintenance wake finishes delayed assembly`, async t => {
+for (const mode of ['explicit', 'explicit-failure', 'automatic']) test(`${mode} authority is revoked before a real maintenance wake finishes delayed assembly`, { timeout: 5000 }, async t => {
   const b = backendBench(); t.after(b.stop)
   Object.setPrototypeOf(b.agent, await loopPrototype())
   delete b.agent.status; delete b.agent.runMaintenance; delete b.agent.send
   b.agent.phase = { kind: 'idle', lastTurn: 0 }
+  b.agent.lifetimeSignal = new AbortController().signal
   b.agent.dispatch = { emit: (name, payload) => b.ctx.emit(name, { agent: b.agent, ...payload }) }
   b.agent.loopCtx = { agents: { withInitiator: (_agent, fn) => fn() } }
   Object.defineProperty(b.agent.inbox, 'hasPending', { get() { return this.nextTurn.length + this.nextStep.length > 0 } })
@@ -1135,4 +1136,25 @@ test('case 8b\': the old part is archived once the fresh part answers', async (t
   assert.deepEqual(b.calls.archived, ['s1'], 'archived after the fresh part\'s first matching answer')
   assert.equal(b.bot.sessionId, 'fresh1')
   assert.equal(b.bot.segments.at(-1).archivePending, undefined, 'the pending mark is cleared')
+})
+
+
+test('an rc.2 retry keeps its next-turn boundary and rpcId through a failed part switch', async t => {
+  const b = await switchBench({ perNode: 170_000, model: 'acp-codex/default' })
+  t.after(b.stop)
+  const retry = createUserMessage({ content: [], source: { kind: 'retry', rpcId: 'retry-switch-probe' } })
+  await b.step('acp-codex', 'default', [retry])
+  await until(() => b.calls.followups.some(entry => entry.id === 'fresh1' && entry.message.source?.rpcId === 'retry-switch-probe'), 1000)
+  const fresh = b.agents.get('fresh1')
+  assert.equal(fresh.inbox.nextTurn.filter(message => message.source?.rpcId === 'retry-switch-probe').length, 1)
+  assert.equal(fresh.inbox.nextStep.filter(message => message.source?.rpcId === 'retry-switch-probe').length, 0)
+  b.firstTurn('fresh1', { answer: false })
+  await until(() => b.bot.sessionId === 's1' && b.calls.archived.length > 0, 1000)
+  const waiting = b.agent.inbox.nextTurn.filter(message => message.source?.rpcId === 'retry-switch-probe')
+  assert.equal(waiting.length, 1)
+  assert.deepEqual(waiting[0].content, [])
+  assert.deepEqual(waiting[0].source, { kind: 'retry', rpcId: 'retry-switch-probe' })
+  assert.equal(b.agent.inbox.nextStep.filter(message => message.source?.rpcId === 'retry-switch-probe').length, 0)
+  assert.deepEqual(b.calls.archived, ['fresh1'])
+  assert.deepEqual(b.streams(), [])
 })

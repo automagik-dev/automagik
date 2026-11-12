@@ -7,7 +7,7 @@ The `automagik-web` DeepSeek Harness profile on a host: dsh's base and web app, 
 or a published release pushes it to `ghcr.io/automagik-dev/automagik-server` as
 `:<content>-<short sha>` and, when allowed, `:latest`. There is no laptop push. Tracked in #620.
 
-Pins: dsh `0.2.2-rc.1` (the desktop runtime's own lock) and the plugins at one release, the
+Pins: dsh `0.2.2-rc.2` (the desktop runtime's own lock) and the plugins at one release, the
 content. A dispatch takes `-f content=<tag>`, a release whose assets include `plugins.json`
 (e.g. `v3.93.0`); empty picks the newest stable release that carries it, within the last 30
 releases. A release event uses its own version as the content. A herdr, Pocket or am patch

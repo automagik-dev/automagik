@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -184,6 +185,101 @@ func TestHCProvisionHandsATemplateItsTask(t *testing.T) {
 	}
 	if got := strings.Join(f.argv, "|"); got != "reviewer|Triage the issues" {
 		t.Fatalf("argv %q", got)
+	}
+}
+
+// Exercise Provision's hc seam without launching an agent or reading local templates.
+func TestHCProvisionLaunchArguments(t *testing.T) {
+	tests := []struct {
+		name string
+		a    config.Automation
+		want []string
+	}{
+		{
+			name: "codex agent default",
+			a:    config.Automation{Agent: "codex"},
+			want: []string{"codex", "--no-daemon", "Task\nwith instructions"},
+		},
+		{
+			name: "codex automatic permissions",
+			a: config.Automation{
+				Agent: "codex", AgentArgs: config.DefaultAgentArgs("codex"),
+			},
+			want: []string{
+				"codex", "--no-daemon", "--dangerously-bypass-approvals-and-sandbox",
+				"Task\nwith instructions",
+			},
+		},
+		{
+			name: "codex custom arguments",
+			a: config.Automation{
+				Agent: "codex", Model: "configured-model", MCPConfig: "/scratch/mcp config.json",
+				AgentArgs: []string{
+					"--ask-for-approval", "on-request", "--sandbox", "workspace-write",
+					"--model", "explicit-model", "-c", "custom_instruction=keep this",
+				},
+			},
+			want: []string{
+				"codex", "--no-daemon", "--mcp-config", "/scratch/mcp config.json",
+				"--model", "configured-model", "--ask-for-approval", "on-request",
+				"--sandbox", "workspace-write", "--model", "explicit-model",
+				"-c", "custom_instruction=keep this", "Task\nwith instructions",
+			},
+		},
+		{
+			name: "codex keeps an explicit no-daemon argument",
+			a: config.Automation{
+				Agent: "codex", AgentArgs: []string{"--no-daemon", "--approve-for-me"},
+			},
+			want: []string{
+				"codex", "--no-daemon", "--approve-for-me",
+				"Task\nwith instructions",
+			},
+		},
+		{
+			name: "template keeps name and task",
+			a: config.Automation{
+				Template: "codex-reviewer", AgentArgs: []string{"--ignored-for-template"},
+			},
+			want: []string{"codex-reviewer", "Task\nwith instructions"},
+		},
+		{
+			name: "claude keeps its permissions",
+			a: config.Automation{
+				Agent: "claude", Model: "sonnet", AgentArgs: config.DefaultAgentArgs("claude"),
+			},
+			want: []string{
+				"claude", "--model", "sonnet", "--dangerously-skip-permissions",
+				"Task\nwith instructions",
+			},
+		},
+		{
+			name: "pi keeps explicit arguments",
+			a: config.Automation{
+				Agent: "pi", AgentArgs: []string{"--provider", "example", "--model", "example"},
+			},
+			want: []string{
+				"pi", "--provider", "example", "--model", "example", "Task\nwith instructions",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := tt.a
+			a.Repo, a.Workspace = t.TempDir(), config.WorkspaceRoot
+			a.Name, a.Prompt = tt.name, "Task\nwith instructions"
+			argsBefore := append([]string(nil), a.AgentArgs...)
+			f := &fakeHC{}
+			if _, err := newHCTest(f).Provision(a); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(f.argv, tt.want) {
+				t.Fatalf("launch arguments = %q, want %q", f.argv, tt.want)
+			}
+			if !reflect.DeepEqual(a.AgentArgs, argsBefore) {
+				t.Fatal("launch mutated configured agent arguments")
+			}
+		})
 	}
 }
 

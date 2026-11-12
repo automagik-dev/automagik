@@ -3,6 +3,8 @@ import {
   oauthProviderOpenIdConfigMetadata,
 } from '@better-auth/oauth-provider';
 import { createAuth, type Env } from './auth';
+import { getCookies } from 'better-auth/cookies';
+import { inbound, readChallenge, whatsappEnabled } from './whatsapp';
 
 function publicData(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(publicData);
@@ -11,6 +13,16 @@ function publicData(value: unknown): unknown {
       .map(([key, entry]) => [key, publicData(entry)]));
   if (typeof value === 'string' && value.endsWith('@id.invalid')) return 'Automagik user';
   return value;
+}
+
+// The pages answer only at /sign-in and /consent, where the Worker adds their headers.
+// A direct .html path, however it is spelled, is not a page.
+function directPage(pathname: string): boolean {
+  try {
+    return /\.html?$/i.test(decodeURIComponent(pathname).replace(/\/+$/, ''));
+  } catch {
+    return true;
+  }
 }
 
 export default {
@@ -30,8 +42,30 @@ export default {
       }
       return new Response('page not built yet', { status: 501 });
     }
+    if (directPage(url.pathname)) return new Response('Not found', { status: 404 });
+    const whatsappOn = whatsappEnabled(env);
     if (url.pathname === '/api/id/config') {
-      return Response.json({ phoneEnabled: Boolean(env.OMNI_OTP_URL) });
+      return Response.json({ phoneEnabled: false, whatsappEnabled: whatsappOn });
+    }
+    if (url.pathname === '/api/omni/inbound') {
+      if (!whatsappOn || request.method !== 'POST') return new Response('Not found', { status: 404 });
+      return inbound(request, env);
+    }
+    if (url.pathname === '/api/auth/whatsapp/status') {
+      if (!whatsappOn || request.method !== 'GET') return new Response('Not found', { status: 404 });
+      const origin = new URL(env.BETTER_AUTH_URL).origin;
+      const suppliedOrigin = request.headers.get('origin');
+      if ((suppliedOrigin && suppliedOrigin !== origin) || request.headers.get('sec-fetch-site') === 'cross-site') {
+        return new Response('Forbidden', { status: 403 });
+      }
+      const challenge = await readChallenge(env, request);
+      const headers = new Headers(request.headers);
+      headers.set('origin', origin);
+      headers.set('content-type', 'application/json');
+      // Only a cookie-bound stored query reaches Better Auth's normal OAuth/session hooks.
+      request = new Request(url, { method: 'POST', headers, body: JSON.stringify({
+        ...(challenge?.state === 'verified' && challenge.oauthQuery ? { oauth_query: challenge.oauthQuery } : {}),
+      }) });
     }
     if (env.PAGES && ['GET', 'HEAD'].includes(request.method) &&
         !url.pathname.startsWith('/api/') && !url.pathname.startsWith('/.well-known/')) {
@@ -54,23 +88,25 @@ export default {
       '/oauth2/authorize', '/oauth2/token', '/oauth2/userinfo', '/oauth2/revoke',
       '/oauth2/end-session', '/oauth2/end-session/confirm', '/oauth2/consent', '/oauth2/continue',
       '/oauth2/public-client-prelogin',
-      ...(env.OMNI_OTP_URL ? ['/phone-number/send-otp', '/phone-number/verify'] : []),
+      ...(whatsappOn ? ['/whatsapp/start', '/whatsapp/status'] : []),
     ]);
     if (!url.pathname.startsWith('/api/auth/') || !allowed.has(path)) {
       return new Response('Not found', { status: 404 });
     }
-    if (path === '/phone-number/verify' && request.method === 'POST') {
-      let body: unknown;
-      try { body = await request.clone().json(); } catch { body = null; }
-      const signInFields = new Set(['phoneNumber', 'code', 'oauth_query']);
-      const isSignInOnly = body !== null && typeof body === 'object' && !Array.isArray(body) &&
-        Object.keys(body).every(key => signInFields.has(key)) && !url.search;
-      if (!isSignInOnly) {
-        return Response.json({
-          code: 'UNSUPPORTED_PHONE_OPERATION',
-          message: 'Phone verification supports sign-in only',
-        }, { status: 400 });
-      }
+    if (path === '/passkey/generate-register-options' || path === '/passkey/verify-registration') {
+      // These routes create an account. Keep the ceremony cookie, but ignore session identity
+      // in both steps so the passkey plugin cannot enroll into the current account.
+      const cookies = getCookies(auth.options);
+      const sessionNames = [cookies.sessionToken.name, cookies.sessionData.name];
+      const headers = new Headers(request.headers);
+      const ceremonyCookies = (headers.get('cookie') ?? '').split(';').filter(part => {
+        // Match Better Call's getSignedCookie parser: trim the name before '='.
+        const name = part.split('=', 1)[0].trim();
+        return !sessionNames.some(sessionName => name === sessionName || name.startsWith(`${sessionName}.`));
+      }).join(';');
+      headers.set('cookie', ceremonyCookies);
+      headers.delete('authorization');
+      request = new Request(request, { headers });
     }
     const response = await auth.handler(request);
     if (response.headers.get('content-type')?.includes('application/json')) {

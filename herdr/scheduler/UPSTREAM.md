@@ -69,8 +69,8 @@ internal/host/agent.go         — patched: herdr blocked grace, rechecked stop;
 internal/host/agent_test.go    — patched: herdr blocked/blips/-1; submit mismatch deadline, attempt limit and pacing; error and unknown status rows
 internal/host/close.go         — added: read and close serialized per workspace within one scheduler process
 internal/host/close_test.go    — added: concurrent closes on two tabs leave the last visible tab
-internal/host/hc.go            — patched: blocked fail-fast ends the blocked terminal; existing runs keep their tab id; close reads a space's terminals first; done, exit 0 and a dialog before the prompt read truly
-internal/host/hc_test.go       — patched: blocked past the grace, a blip, -1; existing close rows including the read/act race; the status rows in both directions
+internal/host/hc.go            — patched: blocked/close/status fixes; Codex --no-daemon (#929)
+internal/host/hc_test.go       — patched: blocked/close/status rows; hc launch arguments (#929)
 internal/host/host.go          — patched: Session carries the run's tab; existing mode asks only for a tab a read says is listed and not last
 internal/host/host_test.go     — patched: own-tab close, last tab, unlisted tab, unreadable list, race row, worktree/root unchanged
 internal/host/ops.go           — patched: tab operations and rechecked AgentStop result in the seam
@@ -85,6 +85,16 @@ main.go                        — patched: put copies blocked_grace_minutes, co
 main_test.go                   — added: the put wire path carries blocked_grace_minutes; existing + on-success accepted; put and a form save write the same file; a command and its bot
 README.md                      — patched: blocked_grace_minutes, and existing mode's own-tab close; run a plain command
 ```
+
+Issue #929 (Refs #498): direct Codex launches under `backend: hc` add `--no-daemon` unless
+already supplied, so execution stays associated with the run's terminal. Permission flags, model,
+MCP config, explicit arguments and prompt keep their order and values. The 6 Nov automation
+permission ruling remains unchanged. Templates still forward exactly their name and task to hc:
+hc supplies the template's command and instructions, including its runtime flags. This patch
+does not read or rewrite local templates; template commands must supply `--no-daemon` themselves.
+The fake-hc regressions cover default, automatic and custom Codex launches, template forwarding,
+and unchanged non-Codex launches. Delivery requires a separate scheduler binary release because
+scheduler source is `NEVER_SHIPPED` in the monorepo lane.
 
 Why: the #498 stopgap, two scheduler changes. An agent that stays `blocked` on a
 dialog longer than `blocked_grace_minutes` on either agent backend (default 2,

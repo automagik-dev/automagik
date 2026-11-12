@@ -30,7 +30,10 @@ binary is missing, a `blocked`-tinted block with one line ("Missing the schedule
 is not on PATH or in ~/.local/bin."), the install command, **Copy** and a solid **Install**; a
 `blocked`-tinted banner with a solid **Start** button while no scheduler holds the lock; a
 `blocked`-tinted line while the backend is `herdr`; and a scrolling body in one of
-three views:
+three views. The footer's Automations tab opens the panel as a popup, which is as tall as its
+content up to 0.6 of the window, so the body is a flex item that takes its rows' height, with a
+scrollbar beside it (am-sidebar's bot-form shape, #239): built with `overflow_y_scrollbar` it
+measured 0 there and the popup showed the header alone (#938). In a layout block it fills.
 
 - **List**: `INBOX` (finished runs not yet seen, with "Mark all read" and "Nothing new."), then
   `AUTOMATIONS` — per entry a dot, the name, `▶`, its schedule and next run, and "agent · model ·
@@ -39,10 +42,10 @@ three views:
   result line or error, else its duration.
 - **Detail**: name, `Run now` / `Pause` / `Edit` / `Delete` (delete asks once), schedule, next, repo,
   where it runs, agent, permissions, the prompt, and `HISTORY` per run with status, the result line,
-  error or duration, and when. A command shows "Runs: a command, as you: no agent, no model", its
-  folder, env names, timeout and the bot it tells, the command in mono, and `LAST RESULT`: status
-  and exit code, the result line, the last lines of stderr when it failed, and what became of the
-  report to its bot.
+  error or duration, and when. A command shows "Runs: a command, as you, no model" (short enough
+  for the panel's width), its folder, env names, timeout and the bot it tells, the command in mono,
+  and `LAST RESULT`: status and exit code, the result line, the last lines of stderr when it
+  failed, and what became of the report to its bot.
 - **Form**: name, schedule pills over a cron field, repo with `Choose…`, "runs in" (new worktree,
   repo root, existing space), an "after a run" close switch (worktree and repo root only), agent
   pills (installed agents plus hc templates), model, `PERMISSIONS`, prompt, timeout, MCP config, and

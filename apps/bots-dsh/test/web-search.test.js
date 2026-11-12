@@ -515,3 +515,10 @@ test('declared search API responses are read by shape, skipping media links and 
   assert.deepEqual(readDeclared({ results: [] }), { ran: true, sources: [] })
   assert.deepEqual(readDeclared({ choices: [{ message: { content: 'see https://a.example/' } }] }), { ran: false, sources: [] })
 })
+
+
+test('the automatic provider has a menu title without changing its public id', () => {
+  const { provider } = harness()
+  assert.equal(provider.id, 'auto')
+  assert.equal(provider.title, 'Auto')
+})

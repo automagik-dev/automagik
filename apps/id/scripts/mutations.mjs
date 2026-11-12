@@ -3,14 +3,48 @@ import { spawnSync } from 'node:child_process';
 
 const mutations = [
   {
+    name: 'restore the untrimmed registration cookie name',
+    test: 'registration ignores whitespace session cookies',
+    edits: [['src/index.ts', "part.split('=', 1)[0].trim()", "part.trim().split('=')[0]"]],
+  },
+  {
+    name: 'drop the sign-out before Create a passkey',
+    test: 'signed-in Create a passkey creates a fresh account',
+    edits: [['pages/id.js', "if (signedIn) { await call('/api/auth/sign-out', {}); signedIn = false; }", '']],
+  },
+  {
+    name: 'drop the inbound bearer check',
+    test: 'WhatsApp bearer check',
+    edits: [['src/whatsapp.ts', 'if (!authorized)', 'if (false)']],
+  },
+  {
+    name: 'drop the message timestamp window',
+    test: 'WhatsApp timestamp window',
+    edits: [['src/whatsapp.ts', 'if (!timestampValid)', 'if (false)']],
+  },
+  {
+    name: 'allow WhatsApp code reuse',
+    test: 'IDs are independently idempotent',
+    edits: [['src/whatsapp.ts', "AND state = 'pending' AND expiresAt > ?", 'AND expiresAt > ?']],
+  },
+  {
+    name: "link to the session's account",
+    test: 'never links the current passkey account',
+    edits: [
+      ['src/whatsapp.ts', 'createAuthEndpoint, APIError', 'createAuthEndpoint, APIError, getSessionFromCtx'],
+      ['src/whatsapp.ts', 'let user = await findPhoneUser();',
+        'let user = (await getSessionFromCtx(ctx))?.user ?? await findPhoneUser();'],
+    ],
+  },
+  {
     name: 'restore the email-bearing session JWT header',
     test: 'internal email stays out',
     edits: [['src/auth.ts', 'disableSettingJwtHeader: true', 'disableSettingJwtHeader: false']],
   },
   {
     name: 'allow phone-number linking flags',
-    test: 'phone linking flags cannot',
-    edits: [['src/index.ts', 'if (!isSignInOnly)', 'if (false)']],
+    test: 'phone linking flags cannot select',
+    edits: [['src/whatsapp.ts', "Object.keys(body).some(key => key !== 'oauth_query')", 'false']],
   },
   {
     name: 'drop PKCE enforcement',
@@ -36,10 +70,25 @@ const mutations = [
     test: 'D1 rate limit survives',
     edits: [['src/auth.ts', "storage: 'database'", "storage: 'memory'"]],
   },
+  {
+    name: 'serve a page file directly as .html',
+    test: 'direct .html paths answer 404',
+    edits: [['src/index.ts', 'if (directPage(url.pathname)) return', 'if (false) return']],
+  },
+  {
+    name: 'let CI skip the page browser tests',
+    test: 'the CI job runs the browser tests',
+    edits: [['../../.github/workflows/ci.yml', 'ID_PAGES_BROWSER: required', 'ID_PAGES_BROWSER: optional']],
+  },
 ];
 
+const selectedMutation = process.env.ID_MUTATION;
+if (selectedMutation && !mutations.some(mutation => mutation.name === selectedMutation)) {
+  throw new Error('Unknown mutation name');
+}
 await mkdir('.wrangler', { recursive: true });
 for (const [index, mutation] of mutations.entries()) {
+  if (selectedMutation && mutation.name !== selectedMutation) continue;
   const announcement = `Mutation check: ${mutation.name}.`;
   process.stdout.write(`${announcement}\n`);
   const originals = new Map();

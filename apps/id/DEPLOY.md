@@ -44,8 +44,9 @@ bun scripts/configure.ts
 
 This writes ignored `wrangler.local.toml` from the tracked template and the
 environment, with a `DB` D1 binding and `BETTER_AUTH_URL`. It refuses a non-workers.dev
-origin. No account, database or zone ID is tracked. Omit `OMNI_OTP_URL` to keep
-phone routes off. A later configured value must be the Omni HTTPS send endpoint.
+origin. No account, database or zone ID is tracked. Omit `WHATSAPP_RECEIVING_NUMBER` and `OMNI_INBOUND_TOKEN` to keep the inbound
+WhatsApp flow off. The receiving number is private runtime configuration; do not
+put its value into a tracked file. This service has no outbound OTP endpoint.
 
 ## Secrets, migration and client seed
 
@@ -59,10 +60,25 @@ openssl rand -base64 48 | bun x --no-install wrangler secret put BETTER_AUTH_SEC
 If Wrangler asks to create the named Worker before its first upload, accept only
 the intended trial Worker. That is an operator action, not part of this delivery.
 Keep this secret stable: it protects sessions and stored signing keys. Rotate only
-with a reviewed session/signing-key plan. When phone rollout is authorized, pass
-the existing Omni credential from its secret store straight into
-`bun x --no-install wrangler secret put OMNI_API_TOKEN --config wrangler.local.toml`.
-No other Worker secret is required. The Cloud confidential-client secret belongs
+with a reviewed session/signing-key plan. For the later authorized WhatsApp
+rollout, provision the same existing shared secret into the Worker with
+`bun x --no-install wrangler secret put OMNI_INBOUND_TOKEN --config wrangler.local.toml`
+and into Omni's private environment through its operator workflow. Pipe the
+secret store's value directly; do not print or pass it as an argument. The token
+must have at least 32 characters. Configure the receiving number through
+`WHATSAPP_RECEIVING_NUMBER`, then rerun `bun scripts/configure.ts`. Remove the
+retired outbound OTP configuration and any obsolete outbound credential.
+
+The Omni automation forwards inbound messages to `/api/omni/inbound` with a
+Bearer token, `X-Omni-Event-Id`, and the original event envelope. The envelope
+contains `payload.content.text`, `payload.from`, `payload.externalId` and a numeric
+millisecond `timestamp`. Forward only messages received from other people.
+When the Worker returns a `reply`, Omni may send that reply to that sender;
+204 means send nothing. The service never initiates a message. The Omni operator
+must prevent answer-mode duplication for matched automation messages. Neither
+the automation's private values nor its operator notes belong in public source.
+
+The Cloud confidential-client secret belongs
 in the Cloud backend's secret store; the identity database receives only its hash.
 
 Apply the checked-in migration before first traffic:
@@ -97,7 +113,9 @@ Only run this after the owner supplies the HTML described in PAGES-CONTRACT.md,
 or explicitly approves a backend-only trial with 501 pages. Test discovery, a real
 passkey, desktop loopback sign-in with S256 and Cloud confidential sign-in on the
 trial origin. Confirm D1 migrations and seed records, secure cookies, correct
-issuer/audience/nonce checks in each client, and phone-disabled behavior. Never
+issuer/audience/nonce checks in each client, and WhatsApp-disabled behavior. Apply both migrations, including
+`0002_whatsapp.sql`, before enabling the new configuration. Existing phone-account
+fields remain intact; the service does not migrate or link identities automatically. Never
 share operational identifiers or current deployment details in public evidence.
 
 To undo a trial, disable its workers.dev publication or remove the trial Worker

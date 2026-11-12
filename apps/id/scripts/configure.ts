@@ -7,11 +7,11 @@ if (origin.protocol !== 'https:' || !origin.hostname.endsWith('.workers.dev') ||
 }
 const databaseId = process.env.ID_DATABASE_ID ?? '';
 if (!/^[0-9a-f-]{36}$/i.test(databaseId)) throw new Error('Set ID_DATABASE_ID');
-const omni = process.env.OMNI_OTP_URL;
-if (omni && new URL(omni).protocol !== 'https:') throw new Error('Omni requires HTTPS');
+const receiving = process.env.WHATSAPP_RECEIVING_NUMBER;
+if (receiving && !/^\+?[1-9]\d{7,14}$/.test(receiving)) throw new Error('Invalid receiving number');
 const template = await readFile('wrangler.toml', 'utf8');
 await writeFile('wrangler.local.toml', template + '\n[vars]\n' +
   `BETTER_AUTH_URL = ${JSON.stringify(origin.origin)}\n` +
-  (omni ? `OMNI_OTP_URL = ${JSON.stringify(omni)}\n` : '') +
+  (receiving ? `WHATSAPP_RECEIVING_NUMBER = ${JSON.stringify(receiving)}\n` : '') +
   '\n[[d1_databases]]\nbinding = "DB"\ndatabase_name = "automagik-id"\n' +
   `database_id = ${JSON.stringify(databaseId)}\nmigrations_dir = "migrations"\n`, { mode: 0o600 });

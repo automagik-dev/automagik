@@ -110,13 +110,13 @@ async function main() {
   check(uid === '1000', `runs as uid ${uid}, not 1000`)
 
   // The pruned runtime must still compose the whole automagik-web tree: the five bundles and
-  // the entries DSH pulls in beside them, office-to-pdf included.
+  // the entries DSH pulls in beside them, office-kit included.
   const config = (await docker(['exec', name, 'dsh', '--profile', 'automagik-web', '--dump-config'])).stdout
   const entries = (config.match(/^- id:/gm) ?? []).length
   check(entries >= 190, `composed only ${entries} entries`)
   // dsh-base is a bundle patch, not an entry: it shows only through the entries it adds.
   for (const plugin of ['@automagik/bots-dsh', '@automagik/welcome-dsh', '@automagik/acp-dsh',
-    '@deepseek-ai/dsh-web-app', '@deepseek-ai/dsh-office-to-pdf']) {
+    '@deepseek-ai/dsh-web-app', '@deepseek-ai/dsh-office-kit']) {
     check(config.includes(`name: '${plugin}'`) || config.includes(`name: "${plugin}"`), `${plugin} is not composed`)
   }
   say(`seeded profile, three plugins, 600 launch URL, uid 1000, ${entries} composed entries`)

@@ -47,7 +47,7 @@ const PROFILE = [
 ].join('\n');
 
 /**
- * The exact bytes @deepseek-ai/dsh-app-boot 0.2.2-rc.1 writes as a fresh profile patch layer
+ * The exact bytes @deepseek-ai/dsh-app-boot 0.2.2-rc.2 writes as a fresh profile patch layer
  * (PROFILE_PATCH_TEMPLATE in lib/index.js). A freshly initialized DSH profile is this file.
  */
 const DSH_TEMPLATE = [

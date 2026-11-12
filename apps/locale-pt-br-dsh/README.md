@@ -2,7 +2,7 @@
 
 Brazilian Portuguese for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH). DSH 0.2.2 ships Portuguese itself, as **Português** (`pt`); this client plugin adds the part DSH does not carry — the Bot team's own `omni-ui` strings — under that same entry. It adds no language: Settings › General › Language keeps exactly **one** Portuguese row, DSH's.
 
-Supported runtime: **DSH 0.2.2-rc.1 or later** (`engines.dsh` is `>=0.2.2-rc.1 <0.3.0-0`). Earlier DSH releases have no `pt` to register under, and DSH refuses the install there.
+Supported runtime: **DSH 0.2.2-rc.2 or later** (`engines.dsh` is `>=0.2.2-rc.2 <0.3.0-0`). Earlier DSH series have no `pt` to register under; this pack requires rc.2 or later.
 
 ## One Portuguese entry
 
@@ -14,11 +14,11 @@ That row is gone. The Language list shows DSH's **Português** alone, and DSH's 
 
 | Namespace | Keys | Why |
 |---|---|---|
-| `omni-ui` | all 1,450 | The Bot team's namespace (`@automagik/bots-dsh`), which DSH does not have; registered under `pt` |
+| `omni-ui` | all | The Bot team's namespace (`@automagik/bots-dsh`), which DSH does not have; registered under `pt` |
 
-`omni-ui` holds all 1,450 Bot team keys. A few keep their English text on purpose: brand and product names (`Omni`, `DSH`, `Automagik`, `DeepSeek`, `Claude`, `Codex`, `ChatGPT`, `OpenAI`, `Anthropic`, `Google`, `GitHub`, `Namastex`, `Kimi`, `MCP`, `API`), code-like strings (`cookies.txt, JSON, storageState`, `MEMORY.md`, `GITHUB_TOKEN`, `~/.codex/pets`, `#rrggbb`, `@Name`, `/side`, `/feedback`), words Brazilian Portuguese uses unchanged (`Chat`, `Bots`, `Plugins`, `Admin`, `Site`, `Terminal`, `Endpoint`, `Feedback`, `Skill`, `status`, `tokens`, `Pets`), and strings that are only a value (`{count}`, `{n}h`, `1 item`). `test/coverage.test.js` requires every Bot key to have an entry and at least 95% of them to differ from the English text.
+`omni-ui` holds every Bot team key. A few keep their English text on purpose: brand and product names (`Omni`, `DSH`, `Automagik`, `DeepSeek`, `Claude`, `Codex`, `ChatGPT`, `OpenAI`, `Anthropic`, `Google`, `GitHub`, `Namastex`, `Kimi`, `MCP`, `API`), code-like strings (`cookies.txt, JSON, storageState`, `MEMORY.md`, `GITHUB_TOKEN`, `~/.codex/pets`, `#rrggbb`, `@Name`, `/side`, `/feedback`), words Brazilian Portuguese uses unchanged (`Chat`, `Bots`, `Plugins`, `Admin`, `Site`, `Terminal`, `Endpoint`, `Feedback`, `Skill`, `status`, `tokens`, `Pets`), and strings that are only a value (`{count}`, `{n}h`, `1 item`). `test/coverage.test.js` requires every Bot key to have an entry and at least 95% of them to differ from the English text.
 
-A plugin can add its own words to `omni-ui` through the Bot team's `addStrings` (Unfold session's model-menu messages, `apps/unfold-session-dsh/src/client/strings.js`); `scripts/copy-check.mjs` lists those modules in `OMNI_PLUGIN_STRINGS`, so their keys are checked and covered like the Bot team's. The Bot team words a host message with any language pack's entry for it.
+A plugin from outside this repository can add its own words to `omni-ui` through the Bot team's `addStrings`. `scripts/copy-check.mjs` lists in `OMNI_PLUGIN_STRINGS` a recorded fixture of the keys each one adds (their English text), under `test/fixtures/`: today `unfold-session-strings.json`, the model-menu messages of Unfold's session plugin, recorded at the hand-over commit when it left with the Unfold plugins (RFC 0020). Those keys are checked and covered like the Bot team's. The Bot team words a host message with any language pack's entry for it.
 
 The welcome (`@automagik/welcome-dsh`) keeps its own copy in its `welcome.team` namespace and registers it under DSH's `pt` as well, so the onboarding reads in Portuguese with this pack installed.
 

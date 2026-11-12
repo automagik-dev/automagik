@@ -11,8 +11,8 @@ Where pets come from in the app:
 - **Automagik's own**, shipped with the plugin in `src/host/pets`: Genie (`genie-clay`), the
   Automagik logo, Unfold and Wisp. All but Wisp carry the sleep strip Automagik adds
   (`sleep.webp`, six cells); Wisp sleeps as a slow idle. A Bot whose builtin pet no longer
-  ships wears Genie (`src/host/store.js`); `genie-cosmic`, the Genie before it, is gone, and
-  the Bots that wore it moved to `genie-clay` once.
+  ships wears Genie (`src/host/store.js`); the Bots that wore the old id `genie-cosmic` moved
+  to `genie-clay` once.
 - **The team's**, in `<team home>/pets`: picked from codex-pets.net in the avatar editor's
   Pets tab, or copied from Codex's own folder. A Bot never needs the network to wear one.
 - **The character catalogue**, baked in the browser from the same art the marks draw
@@ -23,19 +23,12 @@ writing a Bot's look into Codex's folder) is `src/host/pets.js`.
 
 ## Genie
 
-Genie is `genie-clay`, a v1 atlas (1536×1872, nine rows) with its sleep strip, built from the
-owner's clay kit (v4) by `dev/art/clay-kit.py`:
-
-```sh
-uv run --no-project --with 'Pillow>=10' --with numpy --with scipy python -I dev/art/clay-kit.py <kit dir> <out dir>
-```
-
-The kit's motion strips fill the rows (held and played back, never redrawn) and its `asleep`
-still is the sleep strip: six cells (1152×208) of a slow breath at the idle row's scale and
-baseline. The script writes `pet-v1/spritesheet.webp`, `pet-v1/sleep.webp` and `pet-v1/pet.json`
-under the out dir; they are kept in `dev/art/genie-pet-v1` and shipped as
-`src/host/pets/genie-clay`, with what was checked in `dev/art/validation.json`. Its other
-outputs (the expression strips, the lamp) are built into the client separately.
+Genie is `genie-clay`: the full-body figure the owner approved (arms open, a tail of stars), a
+v2 atlas (1536×2288, eleven rows) with its sleep strip, kept byte for byte from the approved
+delivery. `dev/art/genie-approved-v5` records where each file comes from and its SHA-256, and
+builds Genie's faces and the install window's figure from it. The id is the one teams already
+keep; the head-only Genie that wore it before (a v1 atlas from the clay kit) is retired, and a
+Bot that kept that version is read as this one.
 
 ## Baking the catalogue
 
