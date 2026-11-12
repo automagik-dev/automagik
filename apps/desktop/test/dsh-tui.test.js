@@ -28,6 +28,7 @@ const posixOnly = { skip: process.platform === 'win32' ? 'the fake dsh is a sh s
 test('the shipped module is the existing installer and every local module it imports', () => {
   assert.deepEqual([...DSH_TUI_FILES], [
     'dshTui.mjs', 'approved.js', 'workers.js', 'models.js', 'model.js', 'logins.js',
+    'hermesPair.js',
     'retired.js', 'layoutSafe.mjs', 'release.js', 'bin/dsh-sandbox.mjs', 'bin/hc-socket-mask.mjs',
   ])
   for (const file of DSH_TUI_FILES) {
