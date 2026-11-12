@@ -58,6 +58,12 @@ async function fixture(t, { width = 720, height = 900, dark = false } = {}) {
   return page
 }
 
+async function mountPanel(page, options = {}) {
+  await page.evaluate(options => window.mount({ view: 'panel', ...options }), options)
+  await page.locator('.bt-panel').waitFor()
+  await page.locator('.bt-panel').evaluate(node => Promise.all(node.getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {}))))
+}
+
 // What the rows inside `scope` look like: each row's level, whether its explanation is drawn
 // and inside the row, whether the row is inside `scope`, and the inks.
 const measure = (page, scope) => page.evaluate((scope) => {
@@ -91,7 +97,7 @@ const measure = (page, scope) => page.evaluate((scope) => {
   }
 }, scope)
 
-function checkRows(seen, levels, current) {
+function checkRows(seen, levels, current, { explanationInk = true } = {}) {
   assert.deepEqual(seen.rows.map(row => row.level), levels, 'the catalog\'s levels, in its order')
   assert.equal(seen.overflows, false, 'nothing scrolls sideways')
   for (const row of seen.rows) {
@@ -101,9 +107,113 @@ function checkRows(seen, levels, current) {
     assert.equal(row.pressed, String(row.level === current), `${row.level}: marked only when current`)
     const danger = row.level === 'danger-full-access'
     assert.equal(row.labelInk === seen.danger, danger, `${row.level}: name ink`)
-    assert.equal(row.textInk === seen.danger, danger, `${row.level}: explanation ink`)
+    if (explanationInk) assert.equal(row.textInk === seen.danger, danger, `${row.level}: explanation ink`)
   }
 }
+
+const popupFits = page => page.locator('.bt-permission-menu').evaluate((node) => {
+  const rect = node.getBoundingClientRect()
+  return rect.left >= 0 && rect.right <= window.innerWidth && rect.top >= 0 && rect.bottom <= window.innerHeight
+    && node.scrollWidth <= node.clientWidth + 1
+})
+
+const closedUsesNormalInk = section => section.evaluate((node) => {
+  const probe = document.createElement('span')
+  probe.style.color = 'var(--bt-danger)'
+  node.append(probe)
+  const danger = getComputedStyle(probe).color
+  probe.remove()
+  return ['.bt-model-name', '.bt-note'].every(selector => getComputedStyle(node.querySelector(selector)).color !== danger)
+})
+
+const answersFit = popup => popup.locator('.bt-perm-confirm').evaluate((node) => {
+  const menu = node.closest('.bt-permission-menu')
+  const frame = menu.getBoundingClientRect()
+  const buttons = [...node.querySelectorAll('button')]
+  return buttons.length === 2 && buttons.every((button) => {
+    const rect = button.getBoundingClientRect()
+    return rect.left >= frame.left + menu.clientLeft && rect.right <= frame.left + menu.clientLeft + menu.clientWidth
+      && rect.top >= frame.top + menu.clientTop && rect.bottom <= frame.top + menu.clientTop + menu.clientHeight
+  })
+})
+
+for (const [count, levels] of SETS) {
+  test(`Details brings both answers into view in a 700 px high window with ${count} levels`, async (t) => {
+    const page = await fixture(t, { height: 700 })
+    if (!page) return
+    await mountPanel(page, { levels, permission: 'read-only' })
+    await page.locator('.bt-drawer-permission .bt-model-trigger').click()
+    const popup = page.locator('.bt-permission-menu')
+    for (const value of levels.includes('auto') ? ['danger-full-access', 'auto'] : ['danger-full-access']) {
+      await popup.locator(`.bt-q-opt[data-permission="${value}"]`).click()
+      await popup.locator('.bt-perm-confirm').waitFor()
+      assert.ok(await answersFit(popup), `${value}: both answers are visible without test-driven scrolling`)
+      assert.ok(await popupFits(page))
+      await popup.getByRole('button', { name: 'Cancel' }).click()
+    }
+    assert.deepEqual(await page.evaluate(() => window.saves), [])
+  })
+}
+
+test('Details above its trigger never answers Full access on the second press of a double click', async (t) => {
+  const page = await fixture(t, { height: 600 })
+  if (!page) return
+  await mountPanel(page, { permission: 'read-only' })
+  const trigger = page.locator('.bt-drawer-permission .bt-model-trigger')
+  await trigger.click()
+  const popup = page.locator('.bt-permission-menu')
+  await popup.waitFor()
+  // Wait for the popup's entry animation before comparing the two edges.
+  await page.waitForTimeout(150)
+  assert.ok(await popup.evaluate((node) => node.getBoundingClientRect().bottom < document.querySelector('.bt-drawer-permission .bt-model-trigger').getBoundingClientRect().top), 'the popup really opened above the trigger')
+  const row = popup.locator('.bt-q-opt[data-permission="danger-full-access"]')
+  const question = popup.locator('.bt-perm-confirm')
+  const answer = question.getByRole('button', { name: 'Give full access', exact: true })
+  await row.click()
+  await question.waitFor()
+  const answerBox = await answer.boundingBox()
+  assert.ok(answerBox, 'the Full access answer has a box')
+  await question.getByRole('button', { name: 'Cancel', exact: true }).click()
+  await question.waitFor({ state: 'detached' })
+  const rowBox = await row.boundingBox()
+  assert.ok(rowBox, 'the Full access row has a box')
+  const left = Math.max(rowBox.x, answerBox.x)
+  const right = Math.min(rowBox.x + rowBox.width, answerBox.x + answerBox.width)
+  const top = Math.max(rowBox.y, answerBox.y)
+  const bottom = Math.min(rowBox.y + rowBox.height, answerBox.y + answerBox.height)
+  assert.ok(right > left && bottom - top >= 4, 'the viewport no longer makes the dangerous case: the row and Give full access must overlap by at least 4 px vertically')
+  // The first press opens the question; its answer then occupies the same point.
+  await page.mouse.dblclick((left + right) / 2, (top + bottom) / 2)
+  assert.deepEqual(await page.evaluate(() => window.saves), [])
+  await question.waitFor()
+  assert.equal(await answer.isVisible(), true)
+  await answer.click()
+  assert.deepEqual(await page.evaluate(() => window.saves), [{ id: 'omni', patch: { permission: 'danger-full-access' } }])
+  await popup.waitFor({ state: 'detached' })
+})
+
+test('Details above its trigger cancels the question on a double click at the Full access row centre', async (t) => {
+  const page = await fixture(t, { height: 600 })
+  if (!page) return
+  await mountPanel(page, { permission: 'read-only' })
+  await page.locator('.bt-drawer-permission .bt-model-trigger').click()
+  const popup = page.locator('.bt-permission-menu')
+  await popup.waitFor()
+  await page.waitForTimeout(150)
+  await popup.locator('.bt-q-opt[data-permission="danger-full-access"]').dblclick()
+  await popup.locator('.bt-perm-confirm').waitFor({ state: 'detached' })
+  assert.deepEqual(await page.evaluate(() => window.saves), [])
+  assert.equal(await popup.isVisible(), true)
+})
+
+test('Details permission popup fits wholly inside a 360 px window', async (t) => {
+  const page = await fixture(t, { width: 360 })
+  if (!page) return
+  await mountPanel(page, { permission: 'read-only' })
+  await page.locator('.bt-drawer-permission .bt-model-trigger').click()
+  await page.locator('.bt-permission-menu').waitFor()
+  assert.ok(await popupFits(page))
+})
 
 for (const [count, levels] of SETS) {
   for (const [theme, dark] of THEMES) {
@@ -144,26 +254,76 @@ for (const [count, levels] of SETS) {
     for (const [width, panelWidth] of [[1280, 320], [720, 720]]) test(`the Details panel ${panelWidth} px wide in a ${width} px window, ${count} levels, ${theme}`, async (t) => {
       const page = await fixture(t, { dark, width })
       if (!page) return
-      await page.evaluate(levels => window.mount({ view: 'panel', levels, permission: 'workspace-write' }), levels)
-      await page.locator('.bt-drawer-permission .bt-q-opt').first().waitFor()
+      await mountPanel(page, { levels, permission: 'workspace-write' })
+      const section = page.locator('.bt-drawer-permission')
+      const trigger = section.locator('.bt-model-trigger')
+      await trigger.waitFor()
       assert.equal(await page.evaluate(() => Math.round(document.querySelector('.bt-panel').getBoundingClientRect().width)), panelWidth)
-      assert.equal(await page.locator('.bt-drawer-permission .bt-seg').count(), 0, 'no segmented picker in Details')
-      const seen = await measure(page, '.bt-drawer-permission')
-      checkRows(seen, levels, 'workspace-write')
-      await page.locator('.bt-drawer-permission').scrollIntoViewIfNeeded()
+      assert.equal(await section.locator('.bt-seg, .bt-q-opt').count(), 0, 'the select is closed')
+      assert.equal(await trigger.textContent(), 'Workspace')
+      assert.ok(await closedUsesNormalInk(section), 'closed Workspace name and note avoid danger ink')
+      assert.equal(await section.locator('.bt-note').first().textContent(), 'Changes files inside its folder and a temporary folder without asking. For other files it asks you first. It can still run commands and use the network and its other tools.')
+      assert.ok(await section.evaluate((node) => {
+        const frame = node.getBoundingClientRect()
+        return [...node.querySelectorAll('.bt-model-trigger, .bt-note')].every((part) => {
+          const rect = part.getBoundingClientRect()
+          return rect.left >= frame.left && rect.right <= frame.right && part.scrollWidth <= part.clientWidth + 1
+        })
+      }), 'the closed trigger and its explanation fit the section')
+      assert.deepEqual(await page.evaluate(() => window.saves), [])
       await shot(page, `details-${panelWidth}-${count}-${theme}`)
+      await trigger.click()
+      const popup = page.locator('.bt-permission-menu')
+      await popup.waitFor()
+      assert.equal(await trigger.getAttribute('aria-expanded'), 'true')
+      const seen = await measure(page, '.bt-permission-menu')
+      checkRows(seen, levels, 'workspace-write', { explanationInk: false })
+      // This is the popup's look on dev, in the composer too: only the name carries danger ink.
+      assert.equal(seen.rows.find(row => row.level === 'danger-full-access').textInk, seen.rows[0].textInk, 'Full access uses the same explanation ink as the first row')
+      assert.ok(await popupFits(page), 'the popup fits wholly inside the window')
+      assert.ok(seen.rows.every(row => row.visible), 'every explained row is on screen')
+      assert.equal(await page.evaluate(() => document.activeElement?.dataset.permission), 'workspace-write')
+      await shot(page, `details-open-${panelWidth}-${count}-${theme}`)
 
-      await page.locator('.bt-drawer-permission .bt-q-opt[data-permission="danger-full-access"]').click()
+      await popup.locator('.bt-q-opt[data-permission="danger-full-access"]').click()
       assert.deepEqual(await page.evaluate(() => window.saves), [], 'Full access asks first')
-      const confirm = page.locator('.bt-drawer-permission .bt-perm-confirm')
+      const confirm = popup.locator('.bt-perm-confirm')
       await confirm.waitFor()
-      const after = await measure(page, '.bt-drawer-permission')
+      const after = await measure(page, '.bt-permission-menu')
       assert.equal(after.overflows, false)
-      await confirm.scrollIntoViewIfNeeded()
+      assert.ok(await popupFits(page), 'the popup with its question fits wholly inside the window')
+      assert.ok(await confirm.evaluate((node) => {
+        const frame = node.closest('.bt-permission-menu').getBoundingClientRect()
+        return [node, ...node.querySelectorAll('*')].every((part) => {
+          const rect = part.getBoundingClientRect()
+          return rect.left >= frame.left && rect.right <= frame.right && rect.top >= frame.top && rect.bottom <= frame.bottom
+            && part.scrollWidth <= part.clientWidth + 1
+        })
+      }), 'the whole question and its buttons fit inside the popup')
+      assert.notEqual(await page.evaluate(() => document.activeElement?.textContent), 'Give full access')
       await shot(page, `details-confirm-${panelWidth}-${count}-${theme}`)
       await confirm.getByRole('button', { name: 'Cancel' }).click()
-      await page.locator('.bt-drawer-permission .bt-q-opt[data-permission="read-only"]').click()
+      await popup.locator('.bt-q-opt[data-permission="read-only"]').click()
       assert.deepEqual(await page.evaluate(() => window.saves), [{ id: 'omni', patch: { permission: 'read-only' } }])
+      await popup.waitFor({ state: 'detached' })
+      assert.equal(await trigger.evaluate(node => document.activeElement === node), true)
+      assert.equal(await trigger.textContent(), 'Read only')
+      assert.ok(await closedUsesNormalInk(section), 'closed Read only name and note avoid danger ink')
+      await trigger.click()
+      await popup.locator('.bt-q-opt[data-permission="danger-full-access"]').click()
+      await popup.getByRole('button', { name: 'Give full access' }).click()
+      await popup.waitFor({ state: 'detached' })
+      assert.equal(await trigger.textContent(), 'Full access')
+      assert.ok(await section.evaluate((node) => {
+        const name = node.querySelector('.bt-model-name.bt-danger')
+        const text = node.querySelector('.bt-note > .bt-danger')
+        const probe = document.createElement('span')
+        probe.style.color = 'var(--bt-danger)'
+        node.append(probe)
+        const danger = getComputedStyle(probe).color
+        probe.remove()
+        return name && text && getComputedStyle(name).color === danger && getComputedStyle(text).color === danger
+      }), 'the closed Full access name and explanation use danger ink')
     })
   }
 }
@@ -200,8 +360,8 @@ test('the keyboard and a double click on Save never give Full access', async (t)
 test('Details opens the card again in the chat', async (t) => {
   const page = await fixture(t, { width: 1280 })
   if (!page) return
-  await page.evaluate(() => window.mount({ view: 'panel', permission: 'workspace-write' }))
-  await page.locator('.bt-drawer-permission .bt-q-opt').first().waitFor()
+  await mountPanel(page, { permission: 'workspace-write' })
+  await page.locator('.bt-drawer-permission .bt-model-trigger').waitFor()
   assert.equal(await page.locator('form.bt-q').count(), 0, 'a Bot with a level shows no card on its own')
   await page.getByRole('button', { name: 'Choose in the chat' }).click()
   await page.locator('form.bt-q').waitFor()
@@ -215,15 +375,28 @@ test('Details opens the card again in the chat', async (t) => {
 test('a window that can only view the team: no card, and no live row in Details', async (t) => {
   const page = await fixture(t)
   if (!page) return
-  await page.evaluate(() => window.mount({ view: 'panel', readOnly: 'This window can only view the team' }))
-  await page.locator('.bt-drawer-permission .bt-q-opt').first().waitFor()
+  await mountPanel(page, { readOnly: 'This window can only view the team' })
+  const trigger = page.locator('.bt-drawer-permission .bt-model-trigger')
+  await trigger.waitFor()
   assert.equal(await page.locator('form.bt-q').count(), 0)
-  const seen = await measure(page, '.bt-drawer-permission')
+  assert.equal(await page.locator('.bt-drawer-permission button:enabled').count(), 1)
+  assert.equal(await trigger.isEnabled(), true)
+  await trigger.click()
+  const popup = page.locator('.bt-permission-menu')
+  const seen = await measure(page, '.bt-permission-menu')
+  checkRows(seen, THREE, 'read-only', { explanationInk: false })
+  // This is the popup's look on dev, in the composer too: only the name carries danger ink.
+  assert.equal(seen.rows.find(row => row.level === 'danger-full-access').textInk, seen.rows[0].textInk, 'Full access uses the same explanation ink as the first row')
   assert.ok(seen.rows.length === 3 && seen.rows.every(row => row.disabled && row.drawn))
-  assert.equal(await page.locator('.bt-drawer-permission button:not([disabled])').count(), 0)
-  await page.locator('.bt-drawer-permission .bt-q-opt[data-permission="danger-full-access"]').click({ force: true })
+  assert.equal(await popup.evaluate(node => document.activeElement === node && node.tabIndex === -1), true)
+  assert.equal(await popup.locator('button:not([disabled])').count(), 0)
+  await popup.locator('.bt-q-opt[data-permission="danger-full-access"]').click({ force: true })
+  assert.equal(await popup.locator('.bt-perm-confirm').count(), 0)
   assert.deepEqual(await page.evaluate(() => window.saves), [])
   await shot(page, 'details-view-only-light')
+  await page.keyboard.press('Escape')
+  await popup.waitFor({ state: 'detached' })
+  assert.equal(await trigger.evaluate(node => document.activeElement === node), true)
 })
 
 for (const [view, scope] of [['settings', '.bt-drawer-permission'], ['group', '.bt-gs-perm']]) {

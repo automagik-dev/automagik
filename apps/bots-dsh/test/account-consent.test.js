@@ -277,12 +277,43 @@ test('the confirm step comes before any sign-in starts, shows the account, and a
   assert.equal(done.status, 'ready')
   assert.deepEqual(acp.called('accountConfirm'), [['accountConfirm', 'acp-claude', 'ref-work']])
   await until(() => h.saved().bots.chief.model === 'acp-claude/opus', { label: 'the staged model was applied' })
+  // The record is written before the update returns (roster.js saves, then goes on): the
+  // outcome is known only once it has, so the view is read after that.
+  await until(() => h.rt.cliLoginChoice('chief', 'acp-claude')?.state === 'applied', { label: 'the choice\'s outcome is known' })
   assert.deepEqual(h.selected.at(-1), { sessionId: h.rt.chatOf('chief'), provider: 'acp-claude', model: 'opus' })
   assert.deepEqual((await h.call('cli-login-current', { botId: 'chief', provider: 'acp-claude' })).value, { id: 'acp-claude', attempt: null, choice: { ref: 'acp-claude/opus', state: 'applied' } })
   // Only that Bot moved; the account never reached the team file.
   assert.equal(h.saved().bots.coder.model, 'acp-claude/default')
   for (const secret of SECRETS) assert.equal(h.disk().includes(secret), false, secret)
   assert.equal((await h.turn('chief')).reached, true)
+})
+
+test('while the staged model is being applied, the view still shows it as pending (#1039)', async (t) => {
+  const acp = fakeAcp({ 'acp-claude': unconfirmed() })
+  const h = await start(TEAM(), { acp })
+  t.after(h.stop)
+  await h.call('state', {})
+  // The update lands on the record, then holds before it returns, as a slow selection or a
+  // slow write does: the window between the model written and its outcome known.
+  const updateBot = h.rt.updateBot
+  let release
+  const held = new Promise(resolve => { release = resolve })
+  let written = false
+  h.rt.updateBot = async (...args) => {
+    const result = await updateBot(...args)
+    written = true
+    await held
+    return result
+  }
+  await h.call('cli-login-start', { botId: 'chief', provider: 'acp-claude', model: 'acp-claude/opus' })
+  const done = (await h.call('cli-login-confirm', { botId: 'chief', provider: 'acp-claude', ref: 'ref-work', model: 'acp-claude/opus' })).value
+  assert.equal(done.status, 'ready')
+  await until(() => written, { label: 'the staged model was written' })
+  assert.equal(h.saved().bots.chief.model, 'acp-claude/opus')
+  assert.deepEqual((await h.call('cli-login-current', { botId: 'chief', provider: 'acp-claude' })).value, { id: 'acp-claude', attempt: null, choice: { ref: 'acp-claude/opus', state: 'pending' } }, 'the choice never disappears from the view')
+  release()
+  await until(() => h.rt.cliLoginChoice('chief', 'acp-claude')?.state === 'applied', { label: 'the choice was applied' })
+  assert.deepEqual((await h.call('cli-login-current', { botId: 'chief', provider: 'acp-claude' })).value, { id: 'acp-claude', attempt: null, choice: { ref: 'acp-claude/opus', state: 'applied' } })
 })
 
 test('confirm: another account signed in meanwhile, or none, takes nothing and says so by code', async (t) => {

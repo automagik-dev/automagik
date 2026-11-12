@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { readJsonLines } from "./log-lines.mjs";
-import { GUARD_DIR } from "../mods/am-sidebar/workers.js";
+import { GUARD_DIR, KILL_GUARD_DIR } from "../mods/am-sidebar/workers.js";
 import { scratchProject, scratchRoot } from "./scratch-project.mjs";
 
 const CLI = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).pathname;
@@ -66,7 +66,7 @@ function startOne(t, bot, { bots = BOTS, override = null } = {}) {
   const r = spawnSync(process.execPath, [CLI, "start", bot.name, "--json"], { cwd: project, env, encoding: "utf8" });
   assert.equal(r.status, 0, r.stderr);
   // The briefing file's name starts with a hash of the project's folder, a new temp folder each run.
-  const norm = (text) => (text === null ? null : text.split(root).join("<root>").split(GUARD_DIR).join("<guard>")
+  const norm = (text) => (text === null ? null : text.split(root).join("<root>").split(KILL_GUARD_DIR).join("<hc-kill>").split(GUARD_DIR).join("<guard>")
     .replace(/(\/briefings\/)[0-9a-f]{10}-/g, "$1<hash>-")
     // RFC 0021: the session id a fresh Claude start runs on is random; only its place is pinned.
     .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, "<session-id>"));

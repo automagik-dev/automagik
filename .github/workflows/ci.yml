@@ -37,6 +37,30 @@ jobs:
       - run: bun install --frozen-lockfile --ignore-scripts
       - run: bun run check
 
+  id:
+    name: Automagik ID (local Workers runtime)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+    defaults:
+      run:
+        working-directory: apps/id
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24.9
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.4
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: bun run check
+      - run: bun run test
+      - run: node scripts/mutations.mjs
+
   privacy:
     # The whole repository, on every pull request and push, whatever changed: a docs-only or
     # plugin-only change is checked too. The scan root is the git top level
@@ -68,6 +92,8 @@ jobs:
     name: herdr pack (Node ${{ matrix.node }})
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    env:
+      HERDR_CHANGED_PATHS: '^(herdr/|herdr-layout/|\.github/workflows/(ci|release)\.yml$|\.github/scripts/herdr-app-check\.mjs$|scripts/(lane|version)\.ts$)'
     strategy:
       fail-fast: false
       matrix:
@@ -91,11 +117,22 @@ jobs:
           # A push that opens a branch, or a base this checkout lacks, tests the pack anyway.
           if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
             echo "herdr=true" >> "$GITHUB_OUTPUT"
-          elif git diff --name-only "${BASE}...HEAD" | grep -qE '^(herdr/|herdr-layout/|\.github/workflows/(ci|release)\.yml$|\.github/scripts/herdr-app-check\.mjs$|scripts/(lane|version)\.ts$)'; then
-            echo "herdr=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "herdr/ did not change: nothing to test"
+            exit 0
           fi
+          # The diff goes to a file: piped into `grep -q`, git diff dies of SIGPIPE at the first
+          # match, and pipefail reads that as "did not change" (#895).
+          diff_file="${RUNNER_TEMP}/herdr-changed.txt"
+          if ! git diff --name-only "${BASE}...HEAD" > "${diff_file}"; then
+            echo "::error::git diff ${BASE}...HEAD failed"
+            exit 1
+          fi
+          grep_status=0
+          grep -E "${HERDR_CHANGED_PATHS}" "${diff_file}" > /dev/null || grep_status=$?
+          case "${grep_status}" in
+            0) echo "herdr=true" >> "$GITHUB_OUTPUT" ;;
+            1) echo "herdr/ did not change: nothing to test" ;;
+            *) echo "::error::grep over the changed paths failed (${grep_status})"; exit 1 ;;
+          esac
 
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         if: steps.changed.outputs.herdr == 'true'
@@ -121,10 +158,12 @@ jobs:
       # am-quota's Keychain tests run against the stand-in in test/am-quota-keychain.mjs, first on
       # PATH; am-quota-keychain-guard.test.mjs fails any that could reach the real `security`.
       - name: Tests
+        id: tests
         if: steps.changed.outputs.herdr == 'true'
         run: node --test 'test/*.test.mjs'
 
       - name: Syntax
+        id: syntax
         if: steps.changed.outputs.herdr == 'true'
         run: |
           set -euo pipefail
@@ -140,6 +179,7 @@ jobs:
       # `privacy` job above runs herdr/scripts/privacy-check.mjs once, from the repository root.
 
       - name: Catalog
+        id: catalog
         if: steps.changed.outputs.herdr == 'true'
         run: node scripts/catalog.mjs --check
 
@@ -171,6 +211,47 @@ jobs:
         if: steps.changed.outputs.herdr == 'true'
         run: node ../scripts/am-copies.mjs --check
 
+      # The change check and this assertion read the same diff in two independent steps: a skip
+      # in the first one cannot hide a change from the second (#895, as usagemeter's).
+      - name: Assert the steps ran
+        if: always()
+        working-directory: .
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          OUTCOMES: tests=${{ steps.tests.outcome }} syntax=${{ steps.syntax.outcome }} catalog=${{ steps.catalog.outcome }}
+        run: |
+          set -euo pipefail
+          changed=false
+          if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            changed=true
+          else
+            diff_file="${RUNNER_TEMP}/herdr-assert.txt"
+            if ! git diff --name-only "${BASE}...HEAD" > "${diff_file}"; then
+              echo "::error::git diff ${BASE}...HEAD failed"
+              exit 1
+            fi
+            grep_status=0
+            grep -E "${HERDR_CHANGED_PATHS}" "${diff_file}" > /dev/null || grep_status=$?
+            case "${grep_status}" in
+              0) changed=true ;;
+              1) ;;
+              *) echo "::error::grep over the changed paths failed (${grep_status})"; exit 1 ;;
+            esac
+          fi
+          if [[ "${changed}" != true ]]; then
+            echo "herdr/ unchanged: no steps expected"
+            exit 0
+          fi
+          missing=''
+          for outcome in ${OUTCOMES}; do
+            [[ "${outcome#*=}" == success ]] || missing="${missing} ${outcome%%=*}"
+          done
+          if [[ -n "${missing}" ]]; then
+            echo "::error::herdr/ changed but these steps did not succeed:${missing}"
+            exit 1
+          fi
+          echo "ran: ${OUTCOMES}"
+
   scheduler:
     # The vendored scheduler (herdr/scheduler/, DnzzL/herdr-automations v0.12.1, its UPSTREAM.md): Go
     # source the pack never carries. Its binary ships from its own release lane
@@ -180,6 +261,8 @@ jobs:
     name: Scheduler (Go)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    env:
+      SCHEDULER_CHANGED_PATHS: '^(herdr/scheduler/|\.github/workflows/ci\.yml$)'
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -195,11 +278,22 @@ jobs:
           # A push that opens a branch, or a base this checkout lacks, tests the scheduler anyway.
           if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
             echo "scheduler=true" >> "$GITHUB_OUTPUT"
-          elif git diff --name-only "${BASE}...HEAD" | grep -qE '^(herdr/scheduler/|\.github/workflows/ci\.yml$)'; then
-            echo "scheduler=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "herdr/scheduler/ did not change: nothing to test"
+            exit 0
           fi
+          # The diff goes to a file: piped into `grep -q`, git diff dies of SIGPIPE at the first
+          # match, and pipefail reads that as "did not change" (#895).
+          diff_file="${RUNNER_TEMP}/scheduler-changed.txt"
+          if ! git diff --name-only "${BASE}...HEAD" > "${diff_file}"; then
+            echo "::error::git diff ${BASE}...HEAD failed"
+            exit 1
+          fi
+          grep_status=0
+          grep -E "${SCHEDULER_CHANGED_PATHS}" "${diff_file}" > /dev/null || grep_status=$?
+          case "${grep_status}" in
+            0) echo "scheduler=true" >> "$GITHUB_OUTPUT" ;;
+            1) echo "herdr/scheduler/ did not change: nothing to test" ;;
+            *) echo "::error::grep over the changed paths failed (${grep_status})"; exit 1 ;;
+          esac
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         if: steps.changed.outputs.scheduler == 'true'
@@ -208,17 +302,20 @@ jobs:
           cache-dependency-path: herdr/scheduler/go.sum
 
       - name: Vet
+        id: vet
         if: steps.changed.outputs.scheduler == 'true'
         working-directory: herdr/scheduler
         run: go vet ./...
 
       - name: Tests
+        id: tests
         if: steps.changed.outputs.scheduler == 'true'
         working-directory: herdr/scheduler
         run: go test ./...
 
       # The four targets scheduler-release.yml builds: no cgo, so nothing to cross-compile against.
       - name: Cross builds (CGO off)
+        id: builds
         if: steps.changed.outputs.scheduler == 'true'
         working-directory: herdr/scheduler
         run: |
@@ -229,6 +326,46 @@ jobs:
             CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" go build -trimpath -o "${RUNNER_TEMP}/herdr-automations_${goos}_${goarch}" .
           done
 
+      # The change check and this assertion read the same diff in two independent steps: a skip
+      # in the first one cannot hide a change from the second (#895, as usagemeter's).
+      - name: Assert the steps ran
+        if: always()
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          OUTCOMES: vet=${{ steps.vet.outcome }} tests=${{ steps.tests.outcome }} builds=${{ steps.builds.outcome }}
+        run: |
+          set -euo pipefail
+          changed=false
+          if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            changed=true
+          else
+            diff_file="${RUNNER_TEMP}/scheduler-assert.txt"
+            if ! git diff --name-only "${BASE}...HEAD" > "${diff_file}"; then
+              echo "::error::git diff ${BASE}...HEAD failed"
+              exit 1
+            fi
+            grep_status=0
+            grep -E "${SCHEDULER_CHANGED_PATHS}" "${diff_file}" > /dev/null || grep_status=$?
+            case "${grep_status}" in
+              0) changed=true ;;
+              1) ;;
+              *) echo "::error::grep over the changed paths failed (${grep_status})"; exit 1 ;;
+            esac
+          fi
+          if [[ "${changed}" != true ]]; then
+            echo "herdr/scheduler/ unchanged: no steps expected"
+            exit 0
+          fi
+          missing=''
+          for outcome in ${OUTCOMES}; do
+            [[ "${outcome#*=}" == success ]] || missing="${missing} ${outcome%%=*}"
+          done
+          if [[ -n "${missing}" ]]; then
+            echo "::error::herdr/scheduler/ changed but these steps did not succeed:${missing}"
+            exit 1
+          fi
+          echo "ran: ${OUTCOMES}"
+
   am:
     # am, the one command (am/, RFC 0012), which every release carries: its tests, a syntax check,
     # shellcheck on its launchers and its copies of the pack's CLI and briefing. Plain JavaScript
@@ -237,6 +374,8 @@ jobs:
     name: am (Node ${{ matrix.node }})
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    env:
+      AM_CHANGED_PATHS: '^(am/|herdr/mods/am-sidebar/|plugin-lane/keys\.json$|\.github/workflows/(ci|release)\.yml$|scripts/(am-copies\.mjs|am-lane\.ts|lane\.ts|version\.ts)$)'
     strategy:
       fail-fast: false
       matrix:
@@ -259,11 +398,22 @@ jobs:
           set -euo pipefail
           if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
             echo "am=true" >> "$GITHUB_OUTPUT"
-          elif git diff --name-only "${BASE}...HEAD" | grep -qE '^(am/|herdr/mods/am-sidebar/|plugin-lane/keys\.json$|\.github/workflows/(ci|release)\.yml$|scripts/(am-copies\.mjs|am-lane\.ts|lane\.ts|version\.ts)$)'; then
-            echo "am=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "am/ did not change: nothing to test"
+            exit 0
           fi
+          # The diff goes to a file: piped into `grep -q`, git diff dies of SIGPIPE at the first
+          # match, and pipefail reads that as "did not change" (#895).
+          diff_file="${RUNNER_TEMP}/am-changed.txt"
+          if ! git diff --name-only "${BASE}...HEAD" > "${diff_file}"; then
+            echo "::error::git diff ${BASE}...HEAD failed"
+            exit 1
+          fi
+          grep_status=0
+          grep -E "${AM_CHANGED_PATHS}" "${diff_file}" > /dev/null || grep_status=$?
+          case "${grep_status}" in
+            0) echo "am=true" >> "$GITHUB_OUTPUT" ;;
+            1) echo "am/ did not change: nothing to test" ;;
+            *) echo "::error::grep over the changed paths failed (${grep_status})"; exit 1 ;;
+          esac
 
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         if: steps.changed.outputs.am == 'true'
@@ -272,14 +422,17 @@ jobs:
 
       # First, so a herdr change that drifted from am's copies fails here, naming the fix.
       - name: Copies of the pack's CLI and briefing
+        id: copies
         if: steps.changed.outputs.am == 'true'
         run: node ../scripts/am-copies.mjs --check
 
       - name: Tests
+        id: tests
         if: steps.changed.outputs.am == 'true'
         run: node --test 'test/*.test.mjs'
 
       - name: Syntax
+        id: syntax
         if: steps.changed.outputs.am == 'true'
         run: |
           set -euo pipefail
@@ -288,6 +441,47 @@ jobs:
           done
           shellcheck -s sh bin/am bin/run.sh bin/automagik-herdr
 
+      # The change check and this assertion read the same diff in two independent steps: a skip
+      # in the first one cannot hide a change from the second (#895, as usagemeter's).
+      - name: Assert the steps ran
+        if: always()
+        working-directory: .
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          OUTCOMES: copies=${{ steps.copies.outcome }} tests=${{ steps.tests.outcome }} syntax=${{ steps.syntax.outcome }}
+        run: |
+          set -euo pipefail
+          changed=false
+          if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            changed=true
+          else
+            diff_file="${RUNNER_TEMP}/am-assert.txt"
+            if ! git diff --name-only "${BASE}...HEAD" > "${diff_file}"; then
+              echo "::error::git diff ${BASE}...HEAD failed"
+              exit 1
+            fi
+            grep_status=0
+            grep -E "${AM_CHANGED_PATHS}" "${diff_file}" > /dev/null || grep_status=$?
+            case "${grep_status}" in
+              0) changed=true ;;
+              1) ;;
+              *) echo "::error::grep over the changed paths failed (${grep_status})"; exit 1 ;;
+            esac
+          fi
+          if [[ "${changed}" != true ]]; then
+            echo "am/ unchanged: no steps expected"
+            exit 0
+          fi
+          missing=''
+          for outcome in ${OUTCOMES}; do
+            [[ "${outcome#*=}" == success ]] || missing="${missing} ${outcome%%=*}"
+          done
+          if [[ -n "${missing}" ]]; then
+            echo "::error::am/ changed but these steps did not succeed:${missing}"
+            exit 1
+          fi
+          echo "ran: ${OUTCOMES}"
+
   pocket:
     # Pocket's phone app (apps/pocket/, the old automagik-pocket android.yml): the debug APK, the
     # unit tests and lint. Its version is the root package.json's, so a change there builds it too.
@@ -295,6 +489,8 @@ jobs:
     name: Pocket (build, test, lint)
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      POCKET_CHANGED_PATHS: '^(apps/pocket/|apps/bots-dsh/src/host/pets/genie-clay/|apps/bots-dsh/src/client/pet(-poses)?\.js$|package\.json$|\.github/workflows/(ci|release)\.yml$|scripts/(lane|version)\.ts$)'
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -311,11 +507,22 @@ jobs:
           # A push that opens a branch, or a base this checkout lacks, builds the app anyway.
           if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
             echo "pocket=true" >> "$GITHUB_OUTPUT"
-          elif git diff --name-only "${BASE}...HEAD" | grep -qE '^(apps/pocket/|apps/bots-dsh/src/host/pets/genie-clay/|apps/bots-dsh/src/client/pet(-poses)?\.js$|package\.json$|\.github/workflows/(ci|release)\.yml$|scripts/(lane|version)\.ts$)'; then
-            echo "pocket=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "apps/pocket/ did not change: nothing to build"
+            exit 0
           fi
+          # The diff goes to a file: piped into `grep -q`, git diff dies of SIGPIPE at the first
+          # match, and pipefail reads that as "did not change" (#895).
+          diff_file="${RUNNER_TEMP}/pocket-changed.txt"
+          if ! git diff --name-only "${BASE}...HEAD" > "${diff_file}"; then
+            echo "::error::git diff ${BASE}...HEAD failed"
+            exit 1
+          fi
+          grep_status=0
+          grep -E "${POCKET_CHANGED_PATHS}" "${diff_file}" > /dev/null || grep_status=$?
+          case "${grep_status}" in
+            0) echo "pocket=true" >> "$GITHUB_OUTPUT" ;;
+            1) echo "apps/pocket/ did not change: nothing to build" ;;
+            *) echo "::error::grep over the changed paths failed (${grep_status})"; exit 1 ;;
+          esac
 
       - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
         if: steps.changed.outputs.pocket == 'true'
@@ -383,6 +590,7 @@ jobs:
           echo "present=true" >> "$GITHUB_OUTPUT"
 
       - name: Build the debug APK, run the unit tests and lint
+        id: build
         if: steps.changed.outputs.pocket == 'true'
         working-directory: apps/pocket/android
         run: |
@@ -440,12 +648,53 @@ jobs:
           python-version: '3.12'
 
       - name: Terminal page (Playwright)
+        id: terminal
         if: steps.changed.outputs.pocket == 'true'
         run: |
           set -euo pipefail
           python -m pip install playwright
           python -m playwright install --with-deps chromium
           python apps/pocket/android/scripts/test_terminal.py
+
+      # The change check and this assertion read the same diff in two independent steps: a skip
+      # in the first one cannot hide a change from the second (#895, as usagemeter's).
+      - name: Assert the steps ran
+        if: always()
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          OUTCOMES: build=${{ steps.build.outcome }} terminal=${{ steps.terminal.outcome }}
+        run: |
+          set -euo pipefail
+          changed=false
+          if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            changed=true
+          else
+            diff_file="${RUNNER_TEMP}/pocket-assert.txt"
+            if ! git diff --name-only "${BASE}...HEAD" > "${diff_file}"; then
+              echo "::error::git diff ${BASE}...HEAD failed"
+              exit 1
+            fi
+            grep_status=0
+            grep -E "${POCKET_CHANGED_PATHS}" "${diff_file}" > /dev/null || grep_status=$?
+            case "${grep_status}" in
+              0) changed=true ;;
+              1) ;;
+              *) echo "::error::grep over the changed paths failed (${grep_status})"; exit 1 ;;
+            esac
+          fi
+          if [[ "${changed}" != true ]]; then
+            echo "apps/pocket/ unchanged: no steps expected"
+            exit 0
+          fi
+          missing=''
+          for outcome in ${OUTCOMES}; do
+            [[ "${outcome#*=}" == success ]] || missing="${missing} ${outcome%%=*}"
+          done
+          if [[ -n "${missing}" ]]; then
+            echo "::error::apps/pocket/ changed but these steps did not succeed:${missing}"
+            exit 1
+          fi
+          echo "ran: ${OUTCOMES}"
 
   pocket-link:
     # Pocket Link's bridge (herdr/mods/pocket-link, Pocket's, never in the pack): syntax and its
@@ -457,6 +706,8 @@ jobs:
     name: Pocket Link bridge (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
+    env:
+      POCKET_LINK_CHANGED_PATHS: '^(herdr/mods/pocket-link/|herdr/test/fixtures/transcript-folder-rule\.json$|\.github/workflows/ci\.yml$)'
     strategy:
       fail-fast: false
       matrix:
@@ -479,11 +730,22 @@ jobs:
           set -euo pipefail
           if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
             echo "link=true" >> "$GITHUB_OUTPUT"
-          elif git diff --name-only "${BASE}...HEAD" | grep -qE '^(herdr/mods/pocket-link/|herdr/test/fixtures/transcript-folder-rule\.json$|\.github/workflows/ci\.yml$)'; then
-            echo "link=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "herdr/mods/pocket-link/ did not change: nothing to test"
+            exit 0
           fi
+          # The diff goes to a file: piped into `grep -q`, git diff dies of SIGPIPE at the first
+          # match, and pipefail reads that as "did not change" (#895).
+          diff_file="${RUNNER_TEMP}/link-changed.txt"
+          if ! git diff --name-only "${BASE}...HEAD" > "${diff_file}"; then
+            echo "::error::git diff ${BASE}...HEAD failed"
+            exit 1
+          fi
+          grep_status=0
+          grep -E "${POCKET_LINK_CHANGED_PATHS}" "${diff_file}" > /dev/null || grep_status=$?
+          case "${grep_status}" in
+            0) echo "link=true" >> "$GITHUB_OUTPUT" ;;
+            1) echo "herdr/mods/pocket-link/ did not change: nothing to test" ;;
+            *) echo "::error::grep over the changed paths failed (${grep_status})"; exit 1 ;;
+          esac
 
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         if: steps.changed.outputs.link == 'true'
@@ -491,14 +753,57 @@ jobs:
           node-version: '22'
 
       - name: Syntax
+        id: syntax
         if: steps.changed.outputs.link == 'true'
         run: |
           set -euo pipefail
           for f in bridge/*.mjs chat/*.js chat/*.mjs find-node.js main.js; do node --check "$f"; done
 
       - name: Test
+        id: test
         if: steps.changed.outputs.link == 'true'
         run: node --test bridge/*.test.mjs chat/*.test.mjs find-node.test.mjs
+
+      # The change check and this assertion read the same diff in two independent steps: a skip
+      # in the first one cannot hide a change from the second (#895, as usagemeter's).
+      - name: Assert the steps ran
+        if: always()
+        working-directory: .
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          OUTCOMES: syntax=${{ steps.syntax.outcome }} test=${{ steps.test.outcome }}
+        run: |
+          set -euo pipefail
+          changed=false
+          if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            changed=true
+          else
+            diff_file="${RUNNER_TEMP}/link-assert.txt"
+            if ! git diff --name-only "${BASE}...HEAD" > "${diff_file}"; then
+              echo "::error::git diff ${BASE}...HEAD failed"
+              exit 1
+            fi
+            grep_status=0
+            grep -E "${POCKET_LINK_CHANGED_PATHS}" "${diff_file}" > /dev/null || grep_status=$?
+            case "${grep_status}" in
+              0) changed=true ;;
+              1) ;;
+              *) echo "::error::grep over the changed paths failed (${grep_status})"; exit 1 ;;
+            esac
+          fi
+          if [[ "${changed}" != true ]]; then
+            echo "herdr/mods/pocket-link/ unchanged: no steps expected"
+            exit 0
+          fi
+          missing=''
+          for outcome in ${OUTCOMES}; do
+            [[ "${outcome#*=}" == success ]] || missing="${missing} ${outcome%%=*}"
+          done
+          if [[ -n "${missing}" ]]; then
+            echo "::error::herdr/mods/pocket-link/ changed but these steps did not succeed:${missing}"
+            exit 1
+          fi
+          echo "ran: ${OUTCOMES}"
 
   meter:
     # Meter's local tools (meter/statusline: the Claude Code status line and the limits logger that
@@ -508,6 +813,8 @@ jobs:
     name: Meter status line
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    env:
+      METER_CHANGED_PATHS: '^(meter/statusline/|\.github/workflows/ci\.yml$)'
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -522,11 +829,22 @@ jobs:
           set -euo pipefail
           if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
             echo "meter=true" >> "$GITHUB_OUTPUT"
-          elif git diff --name-only "${BASE}...HEAD" | grep -qE '^(meter/statusline/|\.github/workflows/ci\.yml$)'; then
-            echo "meter=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "meter/statusline/ did not change: nothing to test"
+            exit 0
           fi
+          # The diff goes to a file: piped into `grep -q`, git diff dies of SIGPIPE at the first
+          # match, and pipefail reads that as "did not change" (#895).
+          diff_file="${RUNNER_TEMP}/meter-changed.txt"
+          if ! git diff --name-only "${BASE}...HEAD" > "${diff_file}"; then
+            echo "::error::git diff ${BASE}...HEAD failed"
+            exit 1
+          fi
+          grep_status=0
+          grep -E "${METER_CHANGED_PATHS}" "${diff_file}" > /dev/null || grep_status=$?
+          case "${grep_status}" in
+            0) echo "meter=true" >> "$GITHUB_OUTPUT" ;;
+            1) echo "meter/statusline/ did not change: nothing to test" ;;
+            *) echo "::error::grep over the changed paths failed (${grep_status})"; exit 1 ;;
+          esac
 
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         if: steps.changed.outputs.meter == 'true'
@@ -534,11 +852,52 @@ jobs:
           node-version: '22'
 
       - name: Syntax and tests
+        id: tests
         if: steps.changed.outputs.meter == 'true'
         run: |
           set -euo pipefail
           for f in meter/statusline/*.mjs; do node --check "$f"; done
           node --test 'meter/statusline/test/*.test.mjs'
+
+      # The change check and this assertion read the same diff in two independent steps: a skip
+      # in the first one cannot hide a change from the second (#895, as usagemeter's).
+      - name: Assert the steps ran
+        if: always()
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          OUTCOMES: tests=${{ steps.tests.outcome }}
+        run: |
+          set -euo pipefail
+          changed=false
+          if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            changed=true
+          else
+            diff_file="${RUNNER_TEMP}/meter-assert.txt"
+            if ! git diff --name-only "${BASE}...HEAD" > "${diff_file}"; then
+              echo "::error::git diff ${BASE}...HEAD failed"
+              exit 1
+            fi
+            grep_status=0
+            grep -E "${METER_CHANGED_PATHS}" "${diff_file}" > /dev/null || grep_status=$?
+            case "${grep_status}" in
+              0) changed=true ;;
+              1) ;;
+              *) echo "::error::grep over the changed paths failed (${grep_status})"; exit 1 ;;
+            esac
+          fi
+          if [[ "${changed}" != true ]]; then
+            echo "meter/statusline/ unchanged: no steps expected"
+            exit 0
+          fi
+          missing=''
+          for outcome in ${OUTCOMES}; do
+            [[ "${outcome#*=}" == success ]] || missing="${missing} ${outcome%%=*}"
+          done
+          if [[ -n "${missing}" ]]; then
+            echo "::error::meter/statusline/ changed but these steps did not succeed:${missing}"
+            exit 1
+          fi
+          echo "ran: ${OUTCOMES}"
 
   usagemeter:
     # usagemeter, the Rust token meter (meter/usagemeter/, imported with its history by RFC 0017
@@ -696,6 +1055,8 @@ jobs:
     name: dsh-sandbox runner
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    env:
+      SANDBOX_CHANGED_PATHS: '^(apps/dsh-sandbox/|\.github/workflows/ci\.yml$)'
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -708,15 +1069,24 @@ jobs:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
           set -euo pipefail
-          if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] \
-            || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+          if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
             echo "sandbox=true" >> "$GITHUB_OUTPUT"
-          elif git diff --name-only "${BASE}...HEAD" \
-            | grep -qE '^(apps/dsh-sandbox/|\.github/workflows/ci\.yml$)'; then
-            echo "sandbox=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "apps/dsh-sandbox/ did not change: nothing to test"
+            exit 0
           fi
+          # The diff goes to a file: piped into `grep -q`, git diff dies of SIGPIPE at the first
+          # match, and pipefail reads that as "did not change" (#895).
+          diff_file="${RUNNER_TEMP}/sandbox-changed.txt"
+          if ! git diff --name-only "${BASE}...HEAD" > "${diff_file}"; then
+            echo "::error::git diff ${BASE}...HEAD failed"
+            exit 1
+          fi
+          grep_status=0
+          grep -E "${SANDBOX_CHANGED_PATHS}" "${diff_file}" > /dev/null || grep_status=$?
+          case "${grep_status}" in
+            0) echo "sandbox=true" >> "$GITHUB_OUTPUT" ;;
+            1) echo "apps/dsh-sandbox/ did not change: nothing to test" ;;
+            *) echo "::error::grep over the changed paths failed (${grep_status})"; exit 1 ;;
+          esac
 
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         if: steps.changed.outputs.sandbox == 'true'
@@ -724,11 +1094,52 @@ jobs:
           node-version: '22'
 
       - name: Syntax and tests
+        id: tests
         if: steps.changed.outputs.sandbox == 'true'
         run: |
           set -euo pipefail
           for f in apps/dsh-sandbox/bin/*.mjs; do node --check "$f"; done
           node --test 'apps/dsh-sandbox/test/*.test.mjs'
+
+      # The change check and this assertion read the same diff in two independent steps: a skip
+      # in the first one cannot hide a change from the second (#895, as usagemeter's).
+      - name: Assert the steps ran
+        if: always()
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          OUTCOMES: tests=${{ steps.tests.outcome }}
+        run: |
+          set -euo pipefail
+          changed=false
+          if [[ -z "${BASE}" || "${BASE}" =~ ^0+$ ]] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            changed=true
+          else
+            diff_file="${RUNNER_TEMP}/sandbox-assert.txt"
+            if ! git diff --name-only "${BASE}...HEAD" > "${diff_file}"; then
+              echo "::error::git diff ${BASE}...HEAD failed"
+              exit 1
+            fi
+            grep_status=0
+            grep -E "${SANDBOX_CHANGED_PATHS}" "${diff_file}" > /dev/null || grep_status=$?
+            case "${grep_status}" in
+              0) changed=true ;;
+              1) ;;
+              *) echo "::error::grep over the changed paths failed (${grep_status})"; exit 1 ;;
+            esac
+          fi
+          if [[ "${changed}" != true ]]; then
+            echo "apps/dsh-sandbox/ unchanged: no steps expected"
+            exit 0
+          fi
+          missing=''
+          for outcome in ${OUTCOMES}; do
+            [[ "${outcome#*=}" == success ]] || missing="${missing} ${outcome%%=*}"
+          done
+          if [[ -n "${missing}" ]]; then
+            echo "::error::apps/dsh-sandbox/ changed but these steps did not succeed:${missing}"
+            exit 1
+          fi
+          echo "ran: ${OUTCOMES}"
 
   plugin:
     # The Bot team and the welcome run on Node, as DSH does: Bun installs each and the DSH

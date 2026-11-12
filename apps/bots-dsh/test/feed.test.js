@@ -78,7 +78,12 @@ test('the live feed tells a window about saves, new chat entries and the reply b
   t.after(stop)
   await call('state')
   const abort = new AbortController()
-  const response = await routes['/api/omni-ui/feed'].fetch(new Request('http://localhost/api/omni-ui/feed', { signal: abort.signal }))
+  // Held until the window closes, as a host holds the request it is answering: a Request
+  // made with an outside signal follows it only through a weak reference, so once the
+  // Request is garbage collected, aborting the outside signal no longer reaches the feed's
+  // listener on `request.signal`, and the read below waits forever.
+  const request = new Request('http://localhost/api/omni-ui/feed', { signal: abort.signal })
+  const response = await routes['/api/omni-ui/feed'].fetch(request)
   assert.equal(response.headers.get('content-type'), 'text/event-stream; charset=utf-8')
   const next = reader(response)
   assert.equal((await next()).event, 'hello')
@@ -120,6 +125,7 @@ test('the live feed tells a window about saves, new chat entries and the reply b
 
   abort.abort()
   assert.equal(await next(), undefined)
+  assert.equal(request.signal.aborted, true)
 })
 
 test('a window that stops reading the feed is dropped', { timeout: 10_000 }, async (t) => {
@@ -151,6 +157,7 @@ test('the chat endpoint pages a Bot\'s own chat from the newest part back', asyn
   assert.deepEqual(first, {
     sessionId: 'm1c',
     items: [{ kind: 'user', text: 'second', time: 70, seq: 41 }, { kind: 'bot', text: 'reply', time: 71, seq: 42 }],
+    window: { part: 1, beforeSeq: 43 },
     cursor: { part: 1, beforeSeq: 41 },
   })
   // The current part's first message has the line that marks where the part began.

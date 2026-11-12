@@ -56,7 +56,16 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   before the body runs. A denial is `AUTO_REVIEW_DENIED`, a failed reviewer refuses with
   `AUTO_REVIEW_FAILED`, a review past its deadline is `AUTO_REVIEW_TIMEOUT`, and the call never
   runs. A Manual or Full call with no open step is `BRIDGE_NO_STEP`; one whose advertisement or
-  call row cannot be written is `BRIDGE_RECORD_FAILED`, and the call does not run. The reviewer
+  call row cannot be written is `BRIDGE_RECORD_FAILED`, and the call does not run. **A call that
+  outlives its step (#957).** The agent runs its calls in parallel, and the bridge puts no
+  deadline on one (a long wait, a slow command and an open approval dialog are legitimate), so
+  DSH can end the step a call was recorded in while it still runs. The write guard below then
+  closes it before the `step/end` row and drops its late result; the agent still gets the real
+  answer. Each call has its own abort controller: Stop, the end of its turn and a caller that
+  went away (an MCP `notifications/cancelled`, a closed request) stop that call as
+  `BRIDGE_CANCELLED` and keep the bridge. A call whose `tool/call` row cannot be written is
+  answered with DSH's own not-started row, and a bridge revoked with a call in flight keeps
+  the guard until that call is over. The reviewer
   goes to the same non-agent side model as a Session title. Manual asks (one dialog), Full
   access does not. A Session that moves between providers carries its transcript
   redacted at each crossing — the replay out to an agent, and the transcript handed back to a
@@ -105,6 +114,19 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   preset with the same knobs keeps Manual (and the bridge's own approval). Full access lets every
   call through, as it does DSH's own tools. An agent that does not offer the strict mode fails
   the turn instead of running in its own default.
+- **An agent that stops answering never holds the chat.** Its start (`initialize`,
+  `session/new`, the bridge's first list) has 60 seconds, and each request after that and
+  before a prompt (a model, an effort, a mode, a fork, a close) has 15. Past the deadline, or
+  on Stop, the agent's process and its bridge are ended and the turn says what happened. A
+  start that hangs is usually a CLI waiting for the person (a first-run question, a keychain
+  dialog, an update), so that message says to open it once in a terminal. Stop ends the turn
+  at once and gives the agent 5 seconds to end its prompt, because `session/cancel` is only a
+  notification. An agent that ignores it is ended, and the next message starts a new agent
+  session with the chat replayed to it (with `dshTools: false`, the new-session notice
+  instead). A message sent while the agent is still on its last prompt waits those 5 seconds,
+  then gets a new session in the same turn. Ending an agent ends what it started too (the
+  command behind a stuck tool call): the agent leads its own process group, which is asked to
+  end and killed 3 seconds later if any of it is left; on Windows its process tree is killed.
 - **Claude Code keeps the person's own settings.** It loads their Claude Code settings (user,
   project and local) and asks DSH only for what those leave as "ask". A call their allow rules,
   saved "always allow" rules or PreToolUse/PermissionRequest hooks approve runs with no DSH
@@ -116,14 +138,54 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
 |---|---|---|---|
 | `acp-claude` | Claude Code | managed or existing `claude` (`CLAUDE_CODE_EXECUTABLE`) | `@agentclientprotocol/claude-agent-acp` |
 | `acp-codex` | Codex | managed or existing `codex` (`CODEX_PATH`) | `@agentclientprotocol/codex-acp` |
+| `acp-hermes` | Hermes | existing `hermes`, started as `hermes acp` | none: the CLI is the ACP server |
+| `acp-antigravity` | Antigravity | existing `agy`, started as `agy acp` | none: the CLI is the ACP server |
+| `acp-omp` | omp | existing `omp`, started as `omp acp` | none: the CLI is the ACP server |
 | `acp-fake` | `dev/fake-agent.mjs`, set as `fakeAgent` | Node | none; tests only |
 
 An agent is offered when its managed CLI is ready, or an existing CLI is on PATH or where its
-installer puts it (`~/.local/bin`, `/opt/homebrew/bin`, …). The settings `claude: false` or `codex: false` take one away. They are
+installer puts it (`~/.local/bin`, `/opt/homebrew/bin`, …). The settings `claude: false` or `codex: false` take one away;
+`hermes`, `antigravity` and `omp` are off until set to `true` (below). They are
 live settings: switching one (from the welcome's Connect AI, its Settings page *Claude Code and
 Codex*, or the plugin's own settings form) offers or withdraws the agent at once, with no
 restart, and a connector that lands puts its model in the picker the same way
 (`llm/adapters-updated`).
+
+### Native-ACP agents: Hermes, Antigravity, omp
+
+These three speak ACP themselves, so there is no adapter package and nothing is installed for
+them: the plugin starts the CLI it finds with `acp` (`src/host/agents.js`, `launch`). What
+differs from Claude Code and Codex:
+
+- **Off until turned on.** `hermes`, `antigravity` and `omp` are live settings that default to
+  `false`. Turning one on is the person's word that Automagik may use the sign-in that CLI
+  already has on this computer, shared with their terminal. No account is read for them (none
+  of the three has a command that names one), so the account record and its confirm step
+  (below) stay Claude Code's and Codex's.
+- **Never installed by Automagik.** A CLI that is not here is listed as missing with its
+  install page (`cli.state: 'missing'`, `connector.state: 'no-cli'`), never hidden and never
+  "installing". Once found, the connector reads `ready` with `native: true`.
+- **Sign-in in a terminal.** There is no sign-in from a Bot's chat: `loginStart` refuses with
+  `acp-login/terminal` and the command (`hermes acp --setup`, `agy acp --login`, `omp login`),
+  and a signed-out turn fails as `MODEL_ACCESS_REQUIRED` naming the same command. Whether the
+  agent is signed in is what its own ACP session said: `true` when the session the model read
+  opens, `false` on ACP's `auth_required`. That read runs when the CLI changes and once a day,
+  and again when the person asks (`refresh()`) while it is not signed in; no other check opens
+  a session, because each of these agents keeps every session it opens in its own history.
+  A session that opens does not prove a provider key works: a turn that then answers
+  `auth_required` reads as signed out at once.
+- **Models.** Antigravity offers its models and efforts as config options, as the adapters do.
+  Hermes offers them only as the session's own list (`models` in the `session/new` answer,
+  switched with `session/set_model`); the plugin reads that list when the agent has no model
+  option. omp offers no model list over ACP: it is one model, `default`, its own setting.
+- **The level.** Each is put in its own `default` mode before every prompt, whatever the
+  Session's level, and what it asks is answered by DSH's approval under that level. Its own
+  permission settings still decide what it asks about. One that does not offer `default`
+  fails the turn. A table agent with no mode for DSH's level would say so once in the chat.
+- **No DSH tool bridge.** DSH's tools do not reach them, even with `dshTools: true`: their
+  tool naming over ACP is not proven the way Claude Code's was, and an unrecognised bridge
+  call would draw two cards and ask twice. They keep their own tools; the transcript replay on
+  a model switch reaches them like any agent.
 
 `dshTools` (live, no schema default) is the bridge, its DSH approval, the drift detector and live
 switching above. Absent means the per-agent default: `acp-claude` bridges because its adapter can
@@ -178,11 +240,11 @@ A settings page reads the agents through this host service; the plugin stays hos
 
 | Method | Does |
 |---|---|
-| `status()` | Each agent: `{ id, key, name, on, cli: { found, installUrl, state, managed, version?, error?, diagnostic?, logPath?, updating? }, connector: { state, version?, error?, updating? }, signedIn?, consent?, model: { provider, id, name, listed }, restartNeeded }`. CLI state is `missing`, `installing`, `failed` or `ready`; connector state is `off`, `no-cli`, `installing`, `failed` or `ready`. Errors are redacted. Spawns nothing. |
-| `inspect(id)` | One agent's `status()` row with a fresh sign-in check, for a Bot about to be put on it. Asks that CLI's sign-in status only; installs, enables and starts nothing. Simultaneous checks share one probe, and an answer stands for 3 seconds (`refresh()` clears it). Undefined for an id that is no agent here. |
+| `status()` | Each agent: `{ id, key, name, on, cli: { found, installUrl, signInHint?, state, managed, version?, error?, diagnostic?, logPath?, updating? }, connector: { state, native?, version?, error?, diagnostic?, logPath?, updating?, previous?, rolledBack? }, signedIn?, signInCheck?, consent?, model: { provider, id, name, listed }, restartNeeded }`. CLI state is `missing`, `installing`, `failed` or `ready`; connector state is `off`, `no-cli`, `installing`, `failed` or `ready`. `connector.previous` is the release a failed start goes back to, while it is on disk; `connector.rolledBack` is `{ from, to, at, reason }` while a release that failed to start is held back. A failed connector install always carries `error`; `diagnostic` (the end of the installer's output) and `logPath` (the file it was written to, shown from the home folder) are optional, as for a failed CLI install. `signedIn` is absent while the sign-in is unknown; `signInCheck` then says why the last check of the CLI's status command could not tell: `timeout` (the CLI was ended after 8 seconds) or `unreadable` (it could not be run, or answered something this does not read). Neither field: nothing is known of a check (none has run yet, or the agent has no status command: a native agent's sign-in comes from its own ACP session). Errors are redacted. Spawns nothing. |
+| `inspect(id)` | One agent's `status()` row with a fresh sign-in check, for a Bot about to be put on it. Asks that CLI's sign-in status only; installs, enables and starts nothing. Simultaneous checks share one probe. An answer stands for 3 seconds, and a confirmed sign-in for 5 minutes, since the check starts the whole CLI; `refresh()` clears it, and so does the agent itself saying it is signed out (ACP `auth_required`). Undefined for an id that is no agent here. |
 | `refresh()` | Looks for the CLIs again (one installed after DSH started is offered now), then asks each CLI whether it is signed in (`claude auth status --json`, of which only `loggedIn` is read; `codex login status`, by its exit code). No agent turn. |
 | `retry(id)` | Retries the required CLI and its connector, and answers at once. Does not turn its model switch on. |
-| `loginStart(id, { label? })` | Starts the CLI's own sign-in (`src/host/login.js`), or answers the attempt already at work for that agent. Codex: a device code through `codex app-server`; Claude Code: `claude auth login --claudeai`, whose link must ask for the manual code (`code=true`). Only the official authorization pages are relayed. `label` names the view that opened it (a Bot id), for a cancel confirmation; it is not an access check. |
+| `loginStart(id, { label? })` | Starts the CLI's own sign-in (`src/host/login.js`), or answers the attempt already at work for that agent. Codex: a device code through `codex app-server`; Claude Code: `claude auth login --claudeai`, whose link must ask for the manual code (`code=true`). Only the official authorization pages are relayed. `label` names the view that opened it (a Bot id), for a cancel confirmation; it is not an access check. An attempt that fails writes one line to the host log: a fixed class (no CLI found, no sign-in link in time, unsupported sign-in link, the CLI exited, the CLI could not be started, the CLI did not confirm the sign-in, device-code login is not enabled, device sign-in did not start, or unknown), where the attempt stood, how the CLI ended, and the version the CLI had when the attempt started. Never what the CLI printed. |
 | `loginCurrent(id)` | The attempt at work for that agent, from any view, or undefined. Never starts or cancels one. |
 | `loginStatus(id, attemptId)` / `loginAnswer(id, attemptId, value)` / `loginCancel(id, attemptId)` | Reads an attempt (an ended one stays readable for 60 seconds), sends Claude's pasted `code#state` to the CLI (which then has 90 seconds to confirm), or ends it. |
 | `loginTextMatches(text)` | Whether a text carries a Claude sign-in state shown in the last 24 hours. Only a boolean: the states are kept as keyed hashes in memory. |
@@ -193,65 +255,113 @@ A settings page reads the agents through this host service; the plugin stays hos
 | `imageAccess()` | `{ ready, signedIn?, reason?, unsupported? }`: whether Codex can draw an image now, on its own ChatGPT sign-in (Codex on, its CLI found, its connector installed, `codex login status` says signed in; an unknown sign-in is asked once; the person confirmed its account, else `reason: 'account'`; the image run's checks hold for this Codex, else not ready, with `reason`: `unsupported` (and `unsupported: true`), `config` or `unreadable`). Reads no credential and starts no sign-in. |
 | `generateImage({ prompt, size?, quality?, background?, signal?, timeoutMs? })` | Draws one image with the Codex CLI (`src/host/image.js`) and resolves `{ base64, mimeType: 'image/png' }`. Refusals carry an `acp/image-*` code (`signed-out`, `usage-limit`, `timeout`, `unavailable`, `failed`, `stopped`, `refused`) and a message to show as it is. |
 | `keepImages(keeper)` | Where an image an agent makes in a chat is kept, so the chat can show it (`src/host/agent-image.js`). `keeper` is `{ start?({ callId, sessionId, via }), keep({ callId, sessionId, base64, mimeType, via }) -> Promise<{ file }>, fail?({ callId, sessionId, error }) }`; one at a time, and the call returns its disposer. The Bot team registers its images folder. |
+| `holdTurns(gate)` | A veto on agent turns, for a plugin that must keep an agent from acting in a Session (the Bot team: a Session whose permission level could not be set). `gate({ sessionId, agent, provider })` is asked before every model step on an agent's route and again right before a turn's prompt is sent; it answers undefined to let the Session go, or the sentence the step answers with. It can only refuse: a gate that throws, takes longer than ten seconds, or answers anything else holds the Session with a fixed sentence, and a held Session's agent session is ended. Several plugins may register: any refusal wins, and the returned disposer removes only its own gate. With none registered nothing is asked. |
+| `endSession(sessionId, why?)` | Ends one Session's agent session now, a turn under way included: the agent's process is stopped, its bridge credential revoked, and the step answers `why`. The DSH Session and its transcript stay; the next turn starts a fresh agent session, which takes its permission mode again. Answers whether one was live. |
 | `bridge()` | `{ on, probesPass }`: whether `dshTools` is on, and whether a real probe on this machine passes — the per-session bridge gets a fresh credential, answers MCP `initialize` and `tools/list`, and lists at least one tool. A success is cached per installed adapter version; a failure is retried after ten minutes or the next app start. A missing adapter or a failed probe says no. The Bot team reads it before its one-time move of Claude Bots onto `acp-claude`, so no Bot moves onto a route whose bridge cannot work. |
 
-**One sign-in per OS user, used only with the person's word (#869).** A CLI's sign-in belongs to
-the OS user: the plugin sets neither `CLAUDE_CONFIG_DIR` nor `CODEX_HOME`, so Bots, the image
-run, the welcome and the person's terminal share one account per vendor. The app uses that
-account only after the person said so, once per vendor and per account (`src/host/consent.js`):
+**Separate Bot CLI homes (#869).** Claude Code and Codex each use a private home under the
+installation's ACP data, shared by its teams and image runs. Managed and discovered CLIs use
+that same environment for sign-in, status, account reads, adapters, model probes and images.
+`HOME`, Windows profile/app-data directories, XDG directories, `CLAUDE_CONFIG_DIR` and
+`CODEX_HOME` point there. Inherited authentication, provider and config overrides are masked.
+No credential file is read, copied or linked by Automagik; each CLI owns its Bot credentials.
+CLI `--version` probes use this vendor environment too; package installation keeps its separate
+package-manager environment.
 
-- A row of `status()` and `inspect()` carries `consent` for a signed-in agent: `given` (the
-  person confirmed the account, or signed in to it from the app), `carried` (an install made by
-  an earlier version already offered the vendor, and it is signed in; a notice says so once) or
-  `needed`. Signed out or not known, there is no `consent`. A vendor an earlier version offered
-  stays marked to be carried until its CLI is first read signed in: a check that says "signed
-  out" may be a read that failed (a CLI that cannot load its config exits as signed out, a
-  locked keychain), and a Bot that worked before the upgrade never goes silent for it.
-- While it is `needed`, a turn about to open on that agent ends as `MODEL_ACCESS_REQUIRED` before
-  any process starts (never answered by another model), `imageAccess()` is `{ ready: false,
-  signedIn: true, reason: 'account' }`, `generateImage` refuses, and a `loginStart` that finds
-  the CLI already signed in announces nothing. A call that continues a turn is never checked.
-  The turn's text is the Bot team's own (`Confirm the account of <agent> before using this
-  model.`), so its row is translated.
-- The account is read with the sign-in check. The first read of a process, of a CLI or after a
-  sign-out, and every read of an agent that waits for the person, is waited for. For an agent
-  that already has the person's word the answer stands and the account is read behind it, so no
-  status, picker or turn waits on the CLI; `refresh()`, `account()` and `accountConfirm()` wait
-  for it. Known bound: a terminal that moves to another account while the app runs is noticed
-  at the next sign-in check (`SIGNED_IN_TTL_MS`), and the turn that triggers that check still
-  runs; the next one is refused.
-- Who it is comes from the CLI's own status (`src/host/account.js`): Claude Code's
-  `auth status --json` (`email`, `orgId`, `orgName`, `subscriptionType`, or the source of a key)
-  and Codex's app-server `account/read` (`email`, `planType`, or an API key). No token, key or
-  credential file is read. An account the CLI does not show can still be confirmed. A
-  subscription token in the environment (`authMethod: oauth_token`) is shown as a sign-in whose
-  account the CLI does not say, never as an API key. Known limit: a key or a token is told
-  apart only by where it comes from, so another key in the same variable reads as the same
-  account.
-- The record is `accounts.json` beside the adapters, owner-only: per vendor the consent, when,
-  and HMAC-SHA256 digests of what names the account (kind, email, organisation id, key source),
-  under a key made for this install. No email,
-  organisation or plan is stored. It is written before this version installs a connector, so a
-  connector found with no record means an earlier version, and that vendor is carried. While
-  the record cannot be written, no new connector is installed (one already installed is still
-  updated). Several DSH processes may share the home: the file is read again before each read
-  and each write, and a process writes only the vendors it changed.
-- A read that fails changes nothing: an unknown sign-in is the agent's own answer to give, as
-  before, and an account that cannot be read never turns a consented vendor into `needed`. Only
-  another account, read for certain, asks again (a field both reads have differs; a CLI release
-  that starts or stops printing a field is not another account); the first account coming back
-  needs nothing.
-- Not in this version: a separate sign-in for Bots (an isolated CLI home), sign-out and switch
-  account. A sign-in started from the app still replaces the terminal's.
+An upgrade retains Bot models and DSH history, but requires a fresh in-app sign-in. Old shared
+consent is not carried. Signed-out or paused Bot work refuses with `MODEL_ACCESS_REQUIRED`,
+without a fallback model. Codex images do not use a legacy ChatGPT grant while signed out.
+Bot settings label Bot and terminal accounts separately; the terminal comparison is a read-only
+CLI account query; Automagik requests no login, logout or token refresh for that comparison.
+Missing identity is shown as unknown.
+
+`authScope: 'isolated'` identifies the service and Claude/Codex status rows. `accountSignOut(id)`
+and `accountSwitch(id, { label? })` use the Bot environment. They block admission, stop
+starting/live chat, model-probe, image and login processes, wait for termination, then ask the
+CLI to log out and verify it is signed out. Credential-store separation relies on the vendor
+assumptions below. Switch starts a new isolated login afterward.
+Generation checks prevent work delayed across a switch from starting on the next account.
+`imageAccess()` includes `accountGeneration` when ready; callers pass that ticket to
+`generateImage({ accountGeneration, ... })` so even a switch between those two calls refuses
+the old drawing request. A missing/reloading ACP service never authorizes legacy image billing.
+A failed logout stays paused until the owner retries. Authentication changes hold an installation
+lock; close other app instances registered on that vendor home before changing accounts.
+Automatic app-crash recovery is Unix-only and requires proof that the recorded login group
+ended. On Windows, a dead app's login record stays blocked, even if an old Job nonce exists;
+Windows crash recovery is the owner's Reset Bot sign-in action, followed by fresh sign-in.
+Automatic Windows recovery is deferred to
+[follow-up #1076](https://github.com/automagik-si/automagik/issues/1076).
+The normal Windows sign-in and stop path still waits for its live supervisor's empty-Job proof.
+A dead app PID alone never clears ownership. Dead recovery claimants can be reclaimed under
+installation-level serialization after the lock owner and applicable proof are revalidated.
+`accountRecovery(id)` reports `{ required }` per vendor without running its CLI. Cold Bot settings
+keep a recovery row for a blocked vendor while the other vendor remains usable.
+The owner-confirmed `accountReset(id)` pauses admission and stops known work, then selects a
+fresh, empty, uniquely named vendor home and requires fresh in-app sign-in. It never logs out,
+copies credentials from, renames or reuses the previous physical folder. Pending, damaged and
+legacy ownership evidence stays there: even a surviving old process writes only to that old
+generation. Abandoned folders are removed on later starts only after exit evidence is verified;
+unproved folders, including Windows crash records, remain retained. Mutexes and app registrations
+live outside replaceable homes.
+Launches also check the installation's selected generation, so changing an old folder's local
+version or pause marker cannot revive a captured launch. Bot models and DSH history stay intact.
+Bot CLI user settings start empty; project settings still load from the working folder.
+Account details stay on owner-only routes, never in state, transcripts, model calls or logs.
+
+**Credential-store assumptions and missing live checks.** Claude's documented macOS Keychain
+entry is namespaced by `CLAUDE_CONFIG_DIR`; Codex's current OS-keyring implementation derives
+its key from `CODEX_HOME`. Separate directories rely on those namespaces remaining distinct in
+the installed vendor versions. Fake-store/process tests do not prove the live credential paths.
+Two checks remain open on #869:
+
+- Real macOS, two accounts: sign in, switch and sign out inside the app for both vendors, and
+  verify the terminal login remains intact throughout.
+- Codex's OS-keyring-backed auth path, with separate Bot and terminal homes, through the same
+  sign-in/switch/sign-out sequence (not only the `auth.json` file path).
+
+See [Claude authentication](https://code.claude.com/docs/en/authentication) and
+[Codex auth storage](https://github.com/openai/codex/blob/main/codex-rs/login/src/auth/storage.rs)
+for those upstream namespace contracts.
+
+**Settings migration:** terminal user settings, hooks, MCP servers, skills and CLI sessions are
+not automatically imported. Project settings still load in chat work; account/status/login
+commands and catalog probes run in the private home. Configure Bot user settings separately.
+RFC 0003's isolation amendment explicitly supersedes its earlier global-settings promise.
+Native-ACP agents keep their existing opt-in terminal-sharing contract.
+
+The account record in the isolated root stores per-install HMAC digests, never an email,
+organisation, plan, token or key. If it cannot be saved, a new connector waits in `failed`
+state with its reason and Retry; an already installed connector can still update. Account
+identity comes from the CLI's status, not a credential file. A CLI that does not report an
+identity is shown as unknown.
+
+<a id="images-through-codex"></a>
 
 **Images through Codex.** `generateImage` is a one-off codex-acp session that asks Codex's
 built-in image tool for one picture (owner decision D-g): an empty scratch folder as its working
-directory (removed afterwards), the `read-only` mode, no MCP servers and no bridge. The person's
-`config.toml` is never written and `CODEX_HOME` is never set: everything below is set for that
-process only, through codex-acp's `CODEX_CONFIG` override.
+directory (removed afterwards), the `read-only` mode, no MCP servers and no bridge.
+The terminal's `config.toml` is never written. `CODEX_HOME` is the Bot's isolated config;
+everything below is set for that process only, through codex-acp's `CODEX_CONFIG` override.
 
-Codex has no allow-list of tools, and its `read-only` mode can read the disk. So the run rests
-on what can be checked, and does not start when a check does not hold (#870):
+**Security warning (#870): Codex drawing remains enabled with an accepted file disclosure
+risk.** codex-acp's `read-only` mode can read the whole disk wherever the OS user has read
+access. An injected drawing request could read a local file into the returned picture;
+Codex's image tool can use local image files as input. Anyone who sees the picture could see
+that content. An empty working folder, tool checks and permission refusals do not prevent
+this. A passing `imageAccess()` check means drawing is available, not that local reads are
+isolated.
+
+To avoid `generate_image`'s one-off Codex fallback, configure an OpenAI API key for the Images
+API, or turn Codex off in the agent settings. The API receives the prompt without starting a
+local Codex session; keep secrets out of that prompt. A Bot running on Codex can still invoke
+its own image tool even with an API key configured. Use a different Bot model or turn Codex
+off to avoid that route. Avoid forwarding untrusted channel messages or other outside text
+into Codex drawing requests. Reviewing a prompt can reduce exposure, but it cannot enforce a
+file boundary. Narrow sandbox reads remain open in
+[#870](https://github.com/automagik-si/automagik/issues/870); see the security notes below.
+
+Codex has no allow-list of tools. The following checks limit its other tools and refuse a run
+when a check does not hold; they do not close the image tool's local-file input:
 
 - **The checks, before anything starts.** The Codex the run would start is asked, through
   codex-acp's `cli` passthrough and with the run's own overrides: its MCP servers
@@ -270,13 +380,14 @@ on what can be checked, and does not start when a check does not hold (#870):
     does not know stops the draw. So does a tool `exec` reaches that is not written as Codex
     0.167 writes it (one `declare const tools: { name(…) }` block per tool, one tool per block,
     under a heading of its name), and an `exec` that names none.
-  - The safety of the run rests on this offered-tools check, not on feature names: Codex takes
-    a `features.<name>` it does not know without a word, and several names change nothing in the
-    tools a current Codex offers.
+  - The offered-tools check supplements the feature checks: Codex takes a `features.<name>` it
+    does not know without a word, and several names change nothing in the tools a current
+    Codex offers. Neither check establishes read isolation.
 - **What is turned off.** The two features above; the other tool sources the installed Codex
   lists (`IMAGE_FEATURES_ALSO_OFF`: a name it does not list, or lists as removed, is never
   sent); web search; each of the person's own MCP servers by name; Codex's bundled skills and
-  the person's own by name, so nothing invites the agent to open a file.
+  the person's own by name. This reduces tool sources; it does not restrict the image tool's
+  file inputs.
 - **One object.** The session's `CODEX_CONFIG` and the checks' `-c` arguments are built from
   the same overrides (`imageOverrides`, `configArgs`).
 - **During the turn.** Every permission the agent asks is cancelled (codex-acp asks none for
@@ -299,19 +410,20 @@ it does not hold (`reason`: `unsupported`, with `unsupported: true`; `config`; `
 the Bot team goes on to its next image source, or says which it was. Only a check that ran out
 of time leaves Codex ready. A draw always makes its own check.
 
-Residual risk, and what holds it:
+**Security notes: accepted residual risk (#870).**
 
-- **The image tool's own input (open).** Codex's image tool does not only draw: it can take
-  an existing image file as the picture to edit. codex-acp reports the call without its
-  arguments, so the run cannot see whether a call was a fresh drawing, and no feature switch
-  turns that input off. A prompt that asks for it can therefore bring back a picture made from
-  an image file the person can read. Nothing in this run stops that: the wording of the prompt
-  is not a control. What would is a Codex permission profile that limits what the session can
-  read, and codex-acp 2.6 cannot apply one from the run's own config (each turn carries the
-  `read-only` sandbox, and a profile is offered as a mode only when the person's own config
-  defines it). Until that exists, callers should treat a Codex drawing as able to show the
-  person's image files to whoever reads the result; whether Codex draws at all for prompts
-  that come from outside is an owner decision.
+- **The image tool's own input (open; risk accepted).** A prompt injection can ask Codex to
+  use a readable local image file as input and return its contents in a picture shown in chat.
+  codex-acp reports the image call without its arguments, so the run cannot tell a fresh
+  drawing from an edit of a local file. No feature switch disables that input. With
+  codex-acp 2.6.0, selecting `read-only` sends a full-disk `readOnly` sandbox policy on every
+  turn. The session's `CODEX_CONFIG` cannot narrow that policy; custom permission profiles
+  are offered as modes only when defined in the person's own Codex config. The image run
+  selects `read-only`, not one of those profiles. Prompt wording and an `onTool` refusal
+  after a call cannot enforce a read boundary. The owner chose to keep Codex drawing enabled
+  with this risk accepted; #870 remains open. Closing the gap requires an enforceable narrow
+  read policy for the image session, including the image tool's own file inputs, verified
+  on the actual per-turn adapter path before returning any image.
 - **A tool that is offered and not reported.** Codex 0.167 keeps some tools on whatever the
   switches say: its `exec` JavaScript isolate, `wait`, its questions to the person, sub-agents,
   patches (which ask first, and are cancelled) and MCP resource listing (no server is on). Not
@@ -344,8 +456,9 @@ asking Codex for a switch for `exec`.
 `test/image-codex.test.js` runs these checks against a real Codex and codex-acp in a throwaway
 home (never signed in, no model request). It is skipped unless `AUTOMAGIK_TEST_CODEX_ACP`
 (codex-acp's `dist/index.js`) and `AUTOMAGIK_TEST_CODEX` (a Codex executable) are set; CI
-installs neither, so run it by hand when the Codex or codex-acp the app installs changes. A
-Codex it has not been run against fails closed in the app: the draw is refused, not weakened.
+installs neither, so run it by hand when the Codex or codex-acp the app installs changes. At
+runtime, an unknown required feature or an unrecognised offered tool refuses the draw.
+Passing those checks does not prove that an image cannot contain locally read content.
 
 **Images an agent makes in a chat.** A chat on an agent can ask it for a picture, and Codex then
 uses its own image tool (an `other` call titled "Image generation"). The mirror call carries
@@ -368,7 +481,15 @@ the durable attachment and answers the agent's MCP call with ACP image content
 (`{ type: 'image', data, mimeType }`), beside the text it already carried; an inline image block
 passes through as the base64 it already is, never encoded twice, when it is `image/png`,
 `image/jpeg`, `image/gif` or `image/webp` and at most 5 MiB decoded; anything else becomes a
-one-line text placeholder saying why. The agent's own call that answers with an image keeps the
+one-line text placeholder saying why. So does an attachment the store has not read in time:
+the reads of one result have 10 seconds together (after a read of 9, the next has 1), the read
+still running then is aborted and the ones after it are not started. An image nested deeper
+than the result's content (inside a resource, say) is reported with the same placeholder and
+never sent; the search for those reads 16 levels and 20 000 values, plain fields only (never
+bytes, and no field computed on reading is followed), and a result
+it could not read to its end says so in one more line (so does a text-only result that large).
+For a nested image and for an attachment's reference, a placeholder repeats the media type
+only when it is a plain `type/subtype`. The agent's own call that answers with an image keeps the
 same picture in its mirror result, stored once in DSH's attachment store as
 `{ type: 'image', attachment }`, so the chat's card, the stored result and a later replay show it;
 with no attachment store mounted the call keeps its text result rather than writing inline base64
@@ -427,11 +548,38 @@ with the desktop app's own pnpm (`AUTOMAGIK_PNPM`, never the person's) or else n
 `$AUTOMAGIK_HOME/acp/adapters/<package>/<version>`. An install goes to a fresh folder renamed into
 place when complete, without install scripts or optional dependencies (the CLIs the adapters
 bundle); an install that pulls in a bundled CLI's platform package anyway is refused. The
-previous version stays for a Session still on it. Nothing is downloaded when a Session starts.
+version an install replaces stays on disk, for a Session still on it, until the next successful
+check (about a day), whether or not it finds something newer; while it is still the way back
+for an unproven release it stays longer (below). Nothing is downloaded when a Session starts.
+
+npm is asked for a newer release once the last check is 20 hours old, by a timer that runs
+every 4 hours: at least once a day. A new release must start before it replaces the one in
+use. In its fresh folder it is spawned the way a Session would spawn it and asked
+`initialize`, nothing more (`src/host/handshake.js`): it must answer within 20 seconds, on the
+protocol version the library speaks. One that fails is removed, the connector in use stays
+(the last-known-good), and that version is not tried again for 3 days; a newer release is
+tried at once. One that passes is still unproven until it has opened a session: until then the
+release before it stays on disk, and a session start that fails on it (anything but a missing
+sign-in or a missing bridge) goes back to that release and tries the start once more, so the
+turn is not lost. A newer release that lands while the one in use is still unproven keeps the
+same way back: the last release that opened a session stays on disk until a newer one has, and a
+release gone back to is proven only if it had opened a session before. Both cases are logged and recorded in `current.json` (`bad`, `rolledBack`),
+and `status()` shows them while the failed version is held back. A first install has nothing
+to go back to: it is used even when its check fails, and the log says so.
 An install still running when DSH quits is killed with everything it started and its folder
 removed; one a killed DSH left behind is removed at the next start.
 Until the first install lands, the agent lists no model; a Session already on it says the
 adapter is being installed, with the last install error.
+
+**No network at the first start (#970).** The check for the newest release is a request to
+npm. When it gets no answer (a name that does not resolve, a refused or dropped connection,
+the check's own 15-second deadline: a closed list of connection failures) and the connector
+is not installed yet, the install is tried again by itself after 1, 5, 15 and 60 minutes, then
+by the regular check. One failed check is one step, whoever waited on it; a retry installs
+only while the agent is on, its CLI found and its connector still missing. An answer npm did
+give (any status), any other install failure and a connector that is installed are not retried
+sooner. What `status()` and a turn say of the failure is unchanged (the installer's own
+words); a plain sentence for it belongs to the settings page and its translations.
 
 ## Check it
 
@@ -463,6 +611,8 @@ books as the reader. A `step/end` or `turn/end` over a call with no result close
 first (as superseded, or cancelled at a turn's end; DSH's own not-started repair for a call
 that never started) and hides its advertisement; a result for a call that is not open, or
 stamped with a step that has ended, is not written; a call with no advertisement is refused.
+At a step or turn's end the guard also hides an advertisement left by an earlier turn once
+all its calls have results, recording the repair as `advertisement-hidden`.
 Each repair leaves a log line and a `plugin:acp-dsh/write-guard` record in the Session.
 
 `test/sequence-fuzz.test.js` drives random interleavings of calls, results, cancellations,
@@ -475,6 +625,16 @@ latest, and names each adapter that moved past `dev/acp-compat.json`, the record
 adapter versions the suite last passed against (`--record` writes it, after the suite and the
 real-adapter tests passed). The `ACP drift` workflow runs it daily and opens an issue on drift;
 every pull request checks the record against the pin.
+
+The same workflow has two more daily jobs. `adapters` installs the newest adapters and CLIs
+from npm (`node dev/install-adapters.mjs <folder>` does the adapters' half anywhere) and runs
+the suite with the real-adapter tests on and a wider fuzz; a red run opens an issue. `bump-check`
+runs when the pin is behind npm at all: it moves the pin and the lockfile on `dev`, runs lint,
+the suite and the real-adapter tests, and records the versions, with a read-only token and no
+credentials on disk. `bump-push`, which runs no package code, then pushes `bot/acp-sdk-<v>`
+with the pin, that lockfile and that record, and opens or updates an issue that names the
+branch and the results: Actions may not open pull requests in this repository, so a person
+opens it. Any failure opens or comments on one bump issue. It never merges.
 
 `test/real-adapters.test.js` starts the real adapters with this client in a throwaway home
 (never signed in, no model request): the handshake, the session start or its `auth_required`,

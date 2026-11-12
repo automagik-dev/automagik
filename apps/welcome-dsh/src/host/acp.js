@@ -15,7 +15,8 @@ import { parse } from './payloads.js'
 
 export const ACP_SERVICE = 'acpAgents'
 export const ACP_ENTRY = 'acp-dsh'
-export const ACP_IDS = ['acp-claude', 'acp-codex']
+// Claude Code and Codex, then the native-ACP agents (acp-dsh #959): Hermes, Antigravity, omp.
+export const ACP_IDS = ['acp-claude', 'acp-codex', 'acp-hermes', 'acp-antigravity', 'acp-omp']
 
 const AgentId = z.enum(ACP_IDS)
 const RefreshPayload = z.object({ refresh: z.boolean().optional() })
@@ -57,6 +58,9 @@ export function agentView(agent) {
     cli: {
       found: agent.cli?.found === true,
       ...(typeof agent.cli?.installUrl === 'string' && agent.cli.installUrl.startsWith('https://') ? { installUrl: agent.cli.installUrl } : {}),
+      // The terminal command that signs in to a CLI with no sign-in in the app: a plain command
+      // line, nothing else.
+      ...(typeof agent.cli?.signInHint === 'string' && /^[a-z][a-z0-9]{0,23}( [a-z0-9-]{1,24}){0,4}$/.test(agent.cli.signInHint) ? { signInHint: agent.cli.signInHint } : {}),
       ...(['missing', 'installing', 'failed', 'ready'].includes(agent.cli?.state) ? { state: agent.cli.state } : {}),
       ...(typeof agent.cli?.version === 'string' ? { version: shownText(redactText(agent.cli.version)).slice(0, 80) } : {}),
       ...(agent.cli?.updating === true ? { updating: true } : {}),
@@ -66,6 +70,8 @@ export function agentView(agent) {
     },
     connector: {
       state: ['off', 'no-cli', 'installing', 'failed', 'ready'].includes(agent.connector?.state) ? agent.connector.state : 'installing',
+      // A native agent: its CLI is the ACP server, so there is no connector to install or show.
+      ...(agent.connector?.native === true ? { native: true } : {}),
       ...(typeof agent.connector?.version === 'string' ? { version: agent.connector.version } : {}),
       ...(typeof agent.connector?.error === 'string' ? { error: shownText(redactText(agent.connector.error)).slice(0, 300) } : {}),
       // The installer's own output and where it was written, for a failed connector.

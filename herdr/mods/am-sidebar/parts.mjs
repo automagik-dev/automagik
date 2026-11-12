@@ -32,7 +32,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
-import { stableBriefingPath, ENTRY_SOURCE, amPartEntryPath, amPartRunnerPath, hookTargetOf } from "./briefingText.mjs";
+import { stableBriefingPath, ENTRY_SOURCE, hookDoctorLine } from "./briefingText.mjs";
 import { CLI_LINK, hooksRunning, knownProjects, ledgerFolders, removeHooks } from "./migrateHooks.mjs";
 import {
   HELD_FILE, OLD_PACK_NAME, PACK_KEYS, PACK_LAYOUT, PACK_MODS, PACK_NAME, POCKET_LINK, compareVersions, formatMarker,
@@ -519,25 +519,14 @@ export function uninstall(ctx, part, { purge = false } = {}) {
 const amPartStoreOf = (env) => join(amStoreOf(env), "automagik.am");
 
 /**
- * A project's briefing hook, read only (installHook writes it): { file, target, exists } where
- * target is hookTargetOf's ({ kind, script, runner }), null when the file names no briefing hook
- * (or isn't there, exists false); { file, error } when it can't be read or isn't JSON.
+ * A project's settings.local.json, read only (installHook writes its briefing hook): { file, text }
+ * (text null when the file isn't there) or { file, readError } when it can't be read.
  */
-function projectHook(project, appHome) {
+function projectSettings(project) {
   const file = join(project, ".claude", "settings.local.json");
-  let text;
-  try { text = readFileSync(file, "utf8"); } catch (e) { return e.code === "ENOENT" ? { file, exists: false, target: null } : { file, error: `unreadable (${e.message})` }; }
-  let settings;
-  try { settings = JSON.parse(text); } catch (e) { return { file, exists: true, error: `not valid JSON (${e.message})` }; }
-  const list = settings?.hooks?.UserPromptSubmit;
-  for (const group of Array.isArray(list) ? list : []) {
-    for (const h of Array.isArray(group?.hooks) ? group.hooks : []) {
-      if (typeof h?.command !== "string") continue;
-      const target = hookTargetOf(h.command, { appHome });
-      if (target) return { file, exists: true, target };
-    }
+  try { return { file, text: readFileSync(file, "utf8"), readError: null }; } catch (e) {
+    return e.code === "ENOENT" ? { file, text: null, readError: null } : { file, text: null, readError: e.message };
   }
-  return { file, exists: true, target: null };
 }
 
 /**
@@ -589,21 +578,10 @@ export function doctor(ctx, part) {
     else add("briefing-entry", true, packEntry(ctx) ? `${entry} (the pack's)` : `${entry} (not the pack's)`);
     // Which briefing a project's hook runs (installHook writes it): the pack's stable or direct
     // entry, am's own entry on a CLI-only host, or none, said plainly when neither is installed.
-    const store = amPartStoreOf(ctx.env);
-    const amEntry = amPartEntryPath(store), amRunner = amPartRunnerPath(store);
-    const amThere = isFile(amEntry) && isFile(amRunner);
-    const packThere = isFile(entry) || isFile(join(ctx.modsDir, PACK_NAME, "briefing.mjs"));
-    const hook = projectHook(ctx.project, ctx.appHome);
-    if (hook.error) add("briefing-hook", false, `${hook.file} is ${hook.error}`, null);
-    else if (!hook.target) {
-      const neither = packThere || amThere ? "" : `; neither the pack's entry (${entry}) nor am's entry (${amEntry}) is installed`;
-      note("briefing-hook", `none: ${hook.file} has no briefing hook${neither}`);
-    } else {
-      const kind = hook.target.kind === "am-part" ? "am's entry" : hook.target.kind === "pack-stable" ? "the pack's stable entry" : "the pack's direct entry";
-      const ok = hook.target.kind === "am-part" ? isFile(hook.target.script) && isFile(hook.target.runner) : isFile(hook.target.script);
-      add("briefing-hook", ok, ok ? `${kind} (${hook.target.script}) in ${hook.file}` : `${kind} (${hook.target.script}), named in ${hook.file}, is missing`,
-        hook.target.kind === "am-part" ? "am self install" : reinstall);
-    }
+    // hookDoctorLine is am self doctor's too, so the two say it the same way; a settings file
+    // that can't be read is that project's state, reported without failing the pack's doctor.
+    const hook = hookDoctorLine({ ...projectSettings(ctx.project), appHome: ctx.appHome, amStore: amPartStoreOf(ctx.env), isFile });
+    add("briefing-hook", hook.ok, hook.detail, hook.repair === "am" ? "am self install" : reinstall);
   }
 
   if (part.kind === "mod" && part.mod === "am-mods") {

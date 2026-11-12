@@ -92,6 +92,21 @@ function pluginRows({ app, Row }) {
   return rows
 }
 
+// An app from before `check` (v3.120.0) has only `open`, and its `open` puts staged plugins in at
+// once, with DSH restarted, never asking whether an agent is at work (#1029). While that app holds
+// plugins it applies by itself, it is waiting for its own safe moment: Check for updates must not
+// cut it short. So `open` is not asked of that app while it says plugins are staged (in the
+// plugins' own part, or the whole marked as the plugins'), while they are still coming (they are
+// staged a moment later, perhaps before the click is heard), or before it has said anything.
+// What is left: the page reads what the app last said, so plugins staged since are not seen.
+const PLUGINS_COMING = new Set(['ready', 'downloading'])
+function opensIntoPlugins(bridge, state) {
+  if (!bridge || typeof bridge.check === 'function') return false
+  if (state == null) return true
+  if (!splitsPlugins(state) || state.plugins.auto === false) return false
+  return PLUGINS_COMING.has(state.plugins.phase) || (state.kind === 'plugins' && PLUGINS_COMING.has(state.phase))
+}
+
 const linkProps = href => ({ className: 'bt-soft bt-soft-sm bt-about-link', href, target: '_blank', rel: 'noopener noreferrer' })
 
 export function AboutPage({ useUpdate, actions, run, Section, Row }) {
@@ -130,13 +145,18 @@ export function AboutPage({ useUpdate, actions, run, Section, Row }) {
   // A check is only a check (the app's `check`): `open` also restarts into an update that is
   // ready and puts staged plugins in, so it is asked only under the label that says so. An
   // app from before `check` has only `open`.
-  const appCheck = () => { void (typeof app.bridge.check === 'function' ? app.bridge.check() : app.bridge.open()).catch(() => {}) }
+  // That app's `open` is not asked while it would restart DSH under the agents at work (#1029).
+  const held = opensIntoPlugins(app.bridge, app.state)
+  const appCheck = () => {
+    if (held) return
+    void (typeof app.bridge.check === 'function' ? app.bridge.check() : app.bridge.open()).catch(() => {})
+  }
   const botControl = ours
     ? app.bridge && !updatesOff(versions)
       // The app's own button: restart into a downloaded update or open its release, else check.
       ? appPill?.primary
         ? h('button', { type: 'button', className: 'bt-fb-primary', disabled: appBusy, onClick: () => { void app.bridge.open().catch(() => {}) } }, appPill.label)
-        : h('button', { type: 'button', className: 'bt-soft bt-soft-sm', disabled: appBusy, onClick: appCheck }, appBusy ? t('Checking…') : t('Check for updates'))
+        : h('button', { type: 'button', className: 'bt-soft bt-soft-sm', disabled: appBusy || held, onClick: appCheck }, appBusy ? t('Checking…') : t('Check for updates'))
       : null
     : phase === 'installed' || phase === 'updated' ? null
     : update.available || phase === 'installing'

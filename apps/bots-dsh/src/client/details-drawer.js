@@ -15,7 +15,7 @@ import { MemoryRow } from './memory-panel.js'
 import { ScheduleSummary } from './schedules.js'
 import { useGlide, useMorph } from './motion.js'
 import { MemberApprovals, MemberState, StopMemberWork, useMemberWork, workState } from './member-status.js'
-import { PermissionFallback, PermissionList, presetDanger, presetName, presetText } from './permission-picker.js'
+import { cliOfBot, PermissionFallback, PermissionSelect, presetDanger, presetName, presetText } from './permission-picker.js'
 import { reopenPermissionChoice } from './permission-card.js'
 import { t } from './i18n.js'
 import { BotPills } from './capability-pills.js'
@@ -41,13 +41,18 @@ const EMPTY_TABS = { ids: [], active: null }
 // The Bot's permission preset, from the presets DeepSeek Harness offers.
 function PermissionRow({ bot, roster, actions, run }) {
   const catalog = roster.permissions
-  if (!catalog?.options?.length) return null
+  // With no level to choose from, a saved level that is no longer offered is still told.
+  if (!catalog?.options?.length) {
+    return bot.permissionNotOffered === true
+      ? h('div', { className: 'bt-drawer-permission' }, h('div', { className: 'bt-section-title' }, t('Permissions')), h(PermissionFallback, { owner: bot, catalog }))
+      : null
+  }
   return h('div', { className: 'bt-drawer-permission' },
     h('div', { className: 'bt-section-title' }, t('Permissions')),
     // A Bot without its own preset may run on another one set in DSH, so its first pick always applies.
-    // Every level with what it does; a window that can only view the team gets no live rows.
-    h(PermissionList, { catalog, name: bot.name, saved: bot.permission ?? catalog.defaultPreset, repick: bot.permission === undefined, disabled: Boolean(roster.readOnly), onPick: permission => run(actions.updateBot(bot.id, { permission })) }),
-    h(PermissionFallback, { fallback: bot.permissionFallback }),
+    // The select explains the current level; its menu lets even a view-only window read every level.
+    h(PermissionSelect, { catalog, name: bot.name, saved: bot.permission ?? catalog.defaultPreset, repick: bot.permission === undefined, disabled: Boolean(roster.readOnly), cli: cliOfBot(bot), onPick: permission => run(actions.updateBot(bot.id, { permission })) }),
+    h(PermissionFallback, { fallback: bot.permissionFallback, owner: bot, catalog }),
     roster.readOnly ? null : h('button', { type: 'button', className: 'bt-more', onClick: () => reopenPermissionChoice(bot.id) }, t('Choose in the chat')))
 }
 
@@ -173,7 +178,7 @@ function GroupOverview({ room, roster, actions, usage, useWork, openSettings }) 
     room.permission ? h('div', { key: 'permission' }, h('div', { className: 'bt-section-title' }, t('Permissions')),
       h('div', { className: 'bt-kv' }, h('span', { className: presetDanger(room.permission) ? 'bt-perm-danger' : undefined }, presetName(room.permission, roster.permissions))),
       presetText(room.permission, roster.permissions) ? h('div', { className: 'bt-note' }, presetText(room.permission, roster.permissions)) : null,
-      h(PermissionFallback, { fallback: room.permissionFallback })) : null,
+      h(PermissionFallback, { fallback: room.permissionFallback, owner: room, catalog: roster.permissions })) : null,
     roster.memory === false ? null : h(MemoryRow, { key: 'memory', owner: { id: room.id, name: room.name, group: true }, actions }),
     usage ? h('div', { key: 'usage' }, h('div', { className: 'bt-section-title' }, t('Usage')),
       h('div', { className: 'bt-kv' }, h('span', null, room.name), h('span', null, usage))) : null,

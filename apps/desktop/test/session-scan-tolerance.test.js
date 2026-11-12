@@ -14,16 +14,17 @@
 // the same tree; the patched one skips and reports each bad folder, returns the valid snapshot,
 // and the real WorkspaceRegistry activates over that snapshot.
 //
-// What this does NOT cover: a real DSH home or session, the full app startup, the server image
-// build, and directory permissions (a synthetic tree cannot portably make readdir fail as root).
-// Two rows replace one method on the real backend instance to get what a synthetic tree cannot
-// portably make: a header read that fails with EIO or EACCES, and the listing's arrival order.
+// What this does NOT cover: a real DSH home or session, the full app startup and the server image
+// build. Directory permissions are not portable (Windows, or a run as root, reads a mode-000
+// folder), so the rows that need a failing read replace one method on the real backend instance:
+// a header read or a folder read that fails with EIO or EACCES, and the listing's arrival order.
+// One more row takes the read permission away for real where the platform honours it (#885).
 // The stand-ins cover the pinned modules' imports (the catalog reads a synthetic v4 header, and a
 // minimal cordis context constructs the plugin); the listing path and the registry are the real
 // pinned code.
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { realpath } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
@@ -365,7 +366,8 @@ test('patches.json pins the real 0.2.2-rc.1 listing to the desktop runtime', () 
   assert.ok(text.includes('+\tskippedPaths = /* @__PURE__ */ new Set();'), 'the patch adds the per-instance skipped set')
   assert.ok(text.includes('+function warnSkippedSession(kind, path, error) {'), 'the patch adds the one-line reporter')
   assert.ok(text.includes('this.warnSkipped("session folder", dirname(selected.sourcePath), error ?? "no readable session header");'), 'the header stage reports the skipped folder')
-  assert.ok(text.includes('+\t\t}, void 0, { skipFlatFiles: true });'), 'the root encoding check stays strict')
+  assert.ok(text.includes('+\t\t\tskipFlatFiles: true,\n+\t\t\tonUnreadable: () => {'), 'the root encoding check skips only a flat file and an unreadable folder')
+  assert.ok(text.includes('+\t\tif (unreadable) this.rootEncodingCheck = void 0;'), 'a root check that skipped a folder is never cached')
   assert.ok(text.includes('+\t\t\tconst children = async () => (await this.listArtifacts(signal, { strict: true })).filter('), 'the migration child catalog lists strictly')
   assert.ok(text.includes('session backups belong outside the sessions tree, in session-backups/'), 'the skip warning points backups outside the tree')
 })
@@ -495,33 +497,216 @@ test('a session of the other compression still fails the patched listing with th
   assert.deepEqual(warnings, [], 'the mismatch is a refusal, not a skipped folder')
 })
 
-test('the root encoding check still fails on a session folder it cannot read', async (t) => {
+// A folder the backend cannot read: every read of it by the real instance (the root check's
+// encoding probe and the listing's generation lookup) throws `code`, until `unlock()`.
+function lockFolder(persistence, name, code = 'EACCES') {
+  let locked = true
+  const refuse = (dir) => { throw Object.assign(new Error(`${code}: permission denied, scandir '${dir}'`), { code }) }
+  for (const method of ['findOppositeGenerationInDirectory', 'resolveGenerationInDirectory']) {
+    const real = persistence[method].bind(persistence)
+    persistence[method] = async (dir, ...rest) => (locked && dir.includes(name) ? refuse(dir) : real(dir, ...rest))
+  }
+  return { unlock: () => { locked = false } }
+}
+
+test('a session folder the root check cannot read is skipped and reported, and that pass is never cached (#885)', async (t) => {
+  const runtime = makeRuntime(t)
+  const { sessions, cwd } = syntheticTree(runtime)
+  writeSession(sessions, cwd)
+  const lockedDir = writeSession(sessions, cwd, { id: 'locked-one' })
+
+  // Fail-before: the unpatched root check throws on the folder, so nothing lists.
+  const unpatched = await openPersistence(runtime.persist, sessions, 'unpatched')
+  lockFolder(unpatched, 'locked-one')
+  await assert.rejects(() => unpatched.list(), error => error.code === 'EACCES')
+
+  assert.equal(patchRuntime(runtime.modules, runtime.patches)[0].state, 'patched')
+  const persistence = await openPersistence(runtime.persist, sessions, 'patched')
+  const lock = lockFolder(persistence, 'locked-one')
+  const first = await withWarnings(() => persistence.list())
+  assert.deepEqual(first.value.map(snapshot => snapshot.header.id), [SESSION])
+  assert.equal(first.warnings.length, 1, first.warnings.join('\n'))
+  assert.match(first.warnings[0], /^dsh-session: skipped session folder /)
+  assert.ok(first.warnings[0].includes('locked-one') && first.warnings[0].includes('EACCES'), first.warnings[0])
+  assert.ok(!first.warnings[0].includes('session-backups/'), 'an unreadable folder is not backup-shaped')
+  assert.equal(persistence.rootEncodingCheck, undefined, 'a pass that skipped a folder is not cached')
+
+  // The folder is still skipped, and reported only once per backend instance.
+  const again = await withWarnings(() => persistence.list())
+  assert.deepEqual(again.value.map(snapshot => snapshot.header.id), [SESSION])
+  assert.deepEqual(again.warnings, [])
+
+  // The guard stayed armed: the folder turns readable holding the other compression, and the
+  // very next call refuses the root. A cached OK from the skipped pass would have listed it.
+  renameSync(join(lockedDir, 'session.v4.jsonl'), join(lockedDir, 'session.v4.jsonl.zstd'))
+  lock.unlock()
+  const mismatch = error => /uses \.jsonl\.zstd, but this backend is configured for compression "none"/.test(error.message) && error.message.includes('locked-one')
+  await assert.rejects(() => persistence.list(), mismatch)
+  await assert.rejects(() => persistence.list(), mismatch)
+})
+
+test('a clean root check is cached, and a folder that turns unreadable later is skipped by the listing (#885)', async (t) => {
   const runtime = makeRuntime(t)
   const { sessions, cwd } = syntheticTree(runtime)
   writeSession(sessions, cwd)
   writeSession(sessions, cwd, { id: 'locked-one' })
-  // A synthetic tree cannot portably make readdir fail as root, so the real instance's per-folder
-  // encoding probe is wrapped to throw EACCES for one folder; the listing still reads it for real.
-  const locked = async (path, tag) => {
-    const persistence = await openPersistence(path, sessions, tag)
-    const probe = persistence.findOppositeGenerationInDirectory.bind(persistence)
-    persistence.findOppositeGenerationInDirectory = async (dir, ...rest) => {
-      if (dir.includes('locked-one')) throw Object.assign(new Error(`EACCES: permission denied, scandir '${dir}'`), { code: 'EACCES' })
-      return probe(dir, ...rest)
-    }
-    return persistence
+  assert.equal(patchRuntime(runtime.modules, runtime.patches)[0].state, 'patched')
+  const persistence = await openPersistence(runtime.persist, sessions, 'patched-cached')
+  assert.deepEqual((await persistence.list()).map(snapshot => snapshot.header.id).sort(), ['locked-one', SESSION])
+  const cached = persistence.rootEncodingCheck
+  assert.ok(cached instanceof Promise, 'a pass that skipped nothing is cached')
+  lockFolder(persistence, 'locked-one')
+  const { value: listed, warnings } = await withWarnings(() => persistence.list())
+  assert.deepEqual(listed.map(snapshot => snapshot.header.id), [SESSION])
+  assert.equal(warnings.length, 1, warnings.join('\n'))
+  assert.ok(warnings[0].includes('locked-one') && warnings[0].includes('EACCES'), warnings[0])
+  assert.equal(persistence.rootEncodingCheck, cached, 'the cached pass is kept: the listing skipped the folder, not the root check')
+})
+
+test('the root check skips only the four named codes: an EIO folder still fails it, and that refusal stays', async (t) => {
+  const runtime = makeRuntime(t)
+  const { sessions, cwd } = syntheticTree(runtime)
+  writeSession(sessions, cwd)
+  writeSession(sessions, cwd, { id: 'locked-one' })
+  assert.equal(patchRuntime(runtime.modules, runtime.patches)[0].state, 'patched')
+  const persistence = await openPersistence(runtime.persist, sessions, 'patched-eio')
+  lockFolder(persistence, 'locked-one', 'EIO')
+  const { warnings } = await withWarnings(async () => {
+    await assert.rejects(() => persistence.list(), error => error.code === 'EIO')
+    await assert.rejects(() => persistence.list(), error => error.code === 'EIO')
+  })
+  assert.deepEqual(warnings, [], 'an unnamed failure is a refusal, not a skipped folder')
+})
+
+test('the real WorkspaceRegistry activates over a tree with an unreadable session folder (#885)', async (t) => {
+  const runtime = makeRuntime(t)
+  const { sessions, cwd } = syntheticTree(runtime)
+  writeSession(sessions, cwd)
+  writeSession(sessions, cwd, { id: 'locked-one' })
+
+  const unpatched = await openPersistence(runtime.persist, sessions, 'unpatched')
+  lockFolder(unpatched, 'locked-one')
+  await assert.rejects(() => activateWorkspace(runtime, unpatched, 'workspace-unpatched'), error => error.code === 'EACCES')
+
+  assert.equal(patchRuntime(runtime.modules, runtime.patches)[0].state, 'patched')
+  const patched = await openPersistence(runtime.persist, sessions, 'patched')
+  lockFolder(patched, 'locked-one')
+  const { value: activated, warnings } = await withWarnings(() => activateWorkspace(runtime, patched, 'workspace-patched'))
+  assert.deepEqual([...activated.registry.headers.keys()], [SESSION])
+  assert.equal(activated.state().initialized, true)
+  assert.equal(activated.warnings.length, 0)
+  assert.equal(warnings.length, 1, warnings.join('\n'))
+  assert.ok(warnings[0].includes('locked-one') && warnings[0].includes('EACCES'), warnings[0])
+})
+
+// One rule for files and folders (#885): an unreadable log and an unreadable folder are both
+// skipped and reported from the first listing on, so neither session is listed, and the registry
+// does not know either until it is readable. An unnamed fault (EIO) is never a skip: it fails
+// the listing, so sessionKnown() rejects instead of answering "unknown".
+test('an unreadable log and an unreadable folder follow one rule: skipped, reported, not known (#885)', async (t) => {
+  const runtime = makeRuntime(t)
+  const { sessions, cwd } = syntheticTree(runtime)
+  writeSession(sessions, cwd)
+  writeSession(sessions, cwd, { id: 'log-locked' })
+  writeSession(sessions, cwd, { id: 'folder-locked' })
+  assert.equal(patchRuntime(runtime.modules, runtime.patches)[0].state, 'patched')
+  const persistence = await openPersistence(runtime.persist, sessions, 'patched-rule')
+  lockFolder(persistence, 'folder-locked')
+  let code = 'EACCES'
+  const readGenerationHeader = persistence.readGenerationHeader.bind(persistence)
+  persistence.readGenerationHeader = async (selected, ...rest) => {
+    if (selected.sourcePath.includes('log-locked')) throw Object.assign(new Error(`${code}: permission denied, open`), { code })
+    return readGenerationHeader(selected, ...rest)
   }
 
-  const unpatched = await locked(runtime.persist, 'unpatched')
+  const { value: activated, warnings } = await withWarnings(() => activateWorkspace(runtime, persistence, 'workspace-rule'))
+  assert.deepEqual([...activated.registry.headers.keys()], [SESSION])
+  assert.equal(warnings.length, 2, warnings.join('\n'))
+  for (const name of ['log-locked', 'folder-locked']) {
+    const lines = warnings.filter(line => line.includes(name))
+    assert.equal(lines.length, 1, `${name} is reported once`)
+    assert.match(lines[0], /^dsh-session: skipped session folder .*EACCES/)
+  }
+  const known = await withWarnings(async () => ({
+    valid: await activated.registry.sessionKnown(SESSION),
+    log: await activated.registry.sessionKnown('log-locked'),
+    folder: await activated.registry.sessionKnown('folder-locked'),
+  }))
+  assert.deepEqual(known.value, { valid: true, log: false, folder: false })
+  assert.deepEqual(known.warnings, [], 'each skip was already reported')
+
+  code = 'EIO'
+  await assert.rejects(() => activated.registry.sessionKnown('log-locked'), error => error.code === 'EIO')
+})
+
+// Real permissions, where the platform honours them: Windows has no mode bits to take the read
+// away with, and root reads a mode-000 folder.
+const realModes = { skip: process.platform === 'win32' ? 'no POSIX mode bits' : process.getuid?.() === 0 ? 'root reads a mode-000 folder' : false }
+
+test('with real permissions: a mode-000 session folder is skipped, and a mode-000 root still fails closed (#885)', realModes, async (t) => {
+  const runtime = makeRuntime(t)
+  const { sessions, cwd } = syntheticTree(runtime)
+  writeSession(sessions, cwd)
+  const lockedDir = writeSession(sessions, cwd, { id: 'locked-one' })
+  // Registered first, so it runs after makeRuntime's removal is queued and before it: the tree
+  // must be readable again to be removed.
+  t.after(() => { for (const path of [sessions, lockedDir]) { try { chmodSync(path, 0o755) } catch {} } })
+  chmodSync(lockedDir, 0o000)
+
+  const unpatched = await openPersistence(runtime.persist, sessions, 'unpatched')
   await assert.rejects(() => unpatched.list(), error => error.code === 'EACCES')
 
   assert.equal(patchRuntime(runtime.modules, runtime.patches)[0].state, 'patched')
-  const persistence = await locked(runtime.persist, 'patched')
-  const { warnings } = await withWarnings(async () => {
+  const persistence = await openPersistence(runtime.persist, sessions, 'patched')
+  const first = await withWarnings(() => persistence.list())
+  assert.deepEqual(first.value.map(snapshot => snapshot.header.id), [SESSION])
+  assert.equal(first.warnings.length, 1, first.warnings.join('\n'))
+  assert.ok(first.warnings[0].includes('locked-one') && first.warnings[0].includes('EACCES'), first.warnings[0])
+  assert.equal(persistence.rootEncodingCheck, undefined, 'a pass that skipped a folder is not cached')
+
+  // Readable again and clean: this pass skips nothing and is cached. Then the root itself goes
+  // unreadable: the listing refuses, twice, and reports no skipped project.
+  chmodSync(lockedDir, 0o755)
+  assert.deepEqual((await persistence.list()).map(snapshot => snapshot.header.id).sort(), ['locked-one', SESSION])
+  assert.ok(persistence.rootEncodingCheck instanceof Promise)
+  chmodSync(sessions, 0o000)
+  const refused = await withWarnings(async () => {
     await assert.rejects(() => persistence.list(), error => error.code === 'EACCES')
     await assert.rejects(() => persistence.list(), error => error.code === 'EACCES')
   })
-  assert.deepEqual(warnings, [], 'the root check refuses; it does not skip the folder and cache OK')
+  assert.deepEqual(refused.warnings, [], 'an unreadable root is a refusal, not a skipped project')
+  chmodSync(sessions, 0o755)
+  assert.deepEqual((await persistence.list()).map(snapshot => snapshot.header.id).sort(), ['locked-one', SESSION])
+})
+
+// The portable twin of the root row above: the real instance's root read is replaced, so the
+// row runs everywhere. A listing (or a root check) that swallowed a root EACCES would list.
+test('a root that turns unreadable after a cached pass still fails closed, and a later pass is not a cached OK (#885)', async (t) => {
+  const runtime = makeRuntime(t)
+  const { sessions, cwd } = syntheticTree(runtime)
+  writeSession(sessions, cwd)
+  assert.equal(patchRuntime(runtime.modules, runtime.patches)[0].state, 'patched')
+  const persistence = await openPersistence(runtime.persist, sessions, 'patched-root-eacces')
+  assert.deepEqual((await persistence.list()).map(snapshot => snapshot.header.id), [SESSION])
+  assert.ok(persistence.rootEncodingCheck instanceof Promise, 'the first listing cached the passing root check')
+  const listProjectDirs = persistence.listProjectDirs.bind(persistence)
+  let unreadable = true
+  persistence.listProjectDirs = async (...args) => {
+    if (unreadable) throw Object.assign(new Error(`EACCES: permission denied, scandir '${sessions}'`), { code: 'EACCES' })
+    return listProjectDirs(...args)
+  }
+  const refused = await withWarnings(async () => {
+    await assert.rejects(() => persistence.list(), error => error.code === 'EACCES')
+    await assert.rejects(() => persistence.list(), error => error.code === 'EACCES')
+  })
+  assert.deepEqual(refused.warnings, [], 'the root is a refusal, not a skipped project')
+
+  // The same root failing at the root check itself (a backend that never listed) refuses too.
+  const fresh = await openPersistence(runtime.persist, sessions, 'patched-root-eacces-fresh')
+  fresh.listProjectDirs = persistence.listProjectDirs
+  await assert.rejects(() => fresh.list(), error => error.code === 'EACCES')
+  unreadable = false
+  assert.deepEqual((await persistence.list()).map(snapshot => snapshot.header.id), [SESSION])
 })
 
 test('a header read that fails with an unnamed error still fails the patched listing; a named one is skipped', async (t) => {

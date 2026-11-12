@@ -5,8 +5,9 @@ Herdr term, the Herdr meaning wins — this is a plugin, not a peer.
 
 ## The things
 
-**Automation** — one entry in `automations.yaml`: a cron expression, a repo, and
-either a prompt or a workflow to delegate to. The unit the user thinks in. Never
+**Automation** — one entry in `automations.yaml`: a cron expression and one
+piece of work: a prompt or a workflow to delegate to, each with a repo, or a
+command. The unit the user thinks in. Never
 "job", "task" or "schedule".
 
 **Occurrence** — one moment a cron expression comes due. An automation has
@@ -27,9 +28,21 @@ in prose, prefer **Herdr session** for the other one.
 machine. Workspace and pane IDs mean something only inside one. `session:` in
 `automations.yaml` names a Herdr session, never the term above.
 
-**Work** — what a run actually does in its session. Two kinds: an *agent* taking
-a prompt, or an *hwf delegation* handing off to herdr-workflows. Both answer the
-same question — did it work?
+**Work** — what a run actually does. Three kinds: an *agent* taking a prompt, an
+*hwf delegation* handing off to herdr-workflows, or a *command* the scheduler
+runs itself. All answer the same question — did it work? The first two happen
+in a session; a command has none (ADR 0013).
+
+**Command** — a program the scheduler starts directly: argv, a working folder,
+an environment, bounded by the automation's timeout. No pane, no agent, no
+model. Its exit status is the run's status.
+
+**Result line** — a command run in one line: the last line of its stdout when
+it exited 0, else the failure and the last line of its stderr. What history
+keeps, the panel shows and `notify:` sends.
+
+**Report** — the result line sent to the bot `notify:` names, through
+`hc send`. Never "notification": that word is the toast a failure raises.
 
 **Diagnostic** — an entry in `automations.yaml` that did not load, plus the line
 to go and fix. Not an error: the rest of the file still runs.

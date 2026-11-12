@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | In delivery (deliveries 1-4, 6 and 7: #187, #189, #537, #557, #558, #559, #563, #569, #585, #594; 5 (Gemini) open; amended 2026-11-06, 2026-11-08 and 2026-11-09; delivery 7's replay at a harness change to be replaced by [RFC 0030](0030-code-mode-in-the-app.md)'s handoff note, owner 2026-11-10, its Q7) |
+| Status | In delivery (deliveries 1-4, 6 and 7: #187, #189, #537, #557, #558, #559, #563, #569, #585, #594; 5 (Gemini) open; amended 2026-11-06, 2026-11-08, 2026-11-09 and 2026-11-10; delivery 7's replay at a harness change to be replaced by [RFC 0030](0030-code-mode-in-the-app.md)'s handoff note, owner 2026-11-10, its Q7) |
 | Milestone | 2. One message box (route descriptor); 3. Other agents in the same chat (ACP) |
 | Lanes | plugin (3.N.P), desktop (3.N) |
 | Created | 2026-10-30 |
@@ -219,7 +219,11 @@ means the per-agent default (Contracts).
   review of ours. A bad or hijacked publish runs as the person, with what the agent CLI can
   already reach (their files, their sign-ins). What still holds: the exact package names, npm's
   integrity check of every tarball, no install scripts, no optional dependencies, nothing fetched
-  at spawn, and an install that fails leaves the previous adapter in place. The exact names cover
+  at spawn, and an install that fails leaves the previous adapter in place. Since #958 the same
+  holds for a release that installs and then does not start: it is asked `initialize` before it
+  replaces the one in use and is kept out for three days when it fails, and one that fails its
+  first session start goes back to the release before it (`apps/acp-dsh/src/host/install.js`).
+  That covers a release that cannot start, not one that starts and misbehaves. The exact names cover
   only the two adapters: their dependency tree (the agent SDKs, JSON-RPC and process helpers) is
   resolved fresh at each install, with no lockfile. Also new: the adapter
   carries its own copy of the agent's SDK (`claude-agent-acp` pins `@anthropic-ai/claude-agent-sdk`)
@@ -256,8 +260,9 @@ means the per-agent default (Contracts).
    where that route lists its model (adapter installed) and a live per-adapter-version bridge
    probe (a fresh credential, MCP `initialize` and `tools/list`) passes.
    Rollback: revert; the Bot is chat-only on ACP.
-5. **Gemini.** The newest adapter, the person's own CLI. Lane: desktop. Check: one session runs a tool call after
-   approval. Rollback: the next release drops it.
+5. **Gemini.** Native ACP through the person's own Gemini CLI, with no connector adapter.
+   Lane: desktop. Check: one session runs a tool call after approval. Rollback: the next
+   release drops it.
 6. **DSH's tools over the bridge** (amended, 2026-11-06). One stdio MCP bridge per ACP session,
    built from the Session's preset (`standard`, or `cordis` in creator mode) and filtered by the
    Session's level; every DSH tool call is approved by DSH; the agent's built-in tools are off
@@ -583,6 +588,26 @@ before; without one, the Codex CLI on its own ChatGPT sign-in (acp-dsh `generate
 read-only session using Codex's image tool). A ChatGPT grant stored by an earlier version's DSH
 sign-in is read last. CLI auto-updates stay on (D-h).
 
+**Accepted image security risk (owner decision, 2026-11-11; #870).** Codex drawing stays
+enabled. codex-acp's `read-only` mode can read the whole disk wherever the OS user has read
+access, so an injected drawing request could read a local file into the returned picture.
+The image tool itself accepts local image files; its ACP report does not expose the input
+arguments. In codex-acp 2.6.0, the image session's selected `read-only` mode sends a full-disk
+`readOnly` policy on every turn; `CODEX_CONFIG` cannot narrow it. Existing feature and offered
+tool checks remain in place, but do not establish read isolation. Post-call refusals cannot
+undo a read, and prompt wording is not a control.
+
+An OpenAI API key avoids `generate_image`'s one-off Codex fallback by using the Images API;
+the API still receives the prompt. A Bot running on Codex can still invoke its own image
+tool despite that key. Use a different Bot model or turn Codex off to avoid that route.
+Callers should avoid routing untrusted outside text into Codex drawings. This is risk
+acceptance, not a fix: [#870] remains open for an enforceable narrow read policy that also
+covers the image tool's file inputs on the actual per-turn adapter path. See the
+[user warning and security notes][codex-image-security].
+
+[#870]: https://github.com/automagik-si/automagik/issues/870
+[codex-image-security]: ../../apps/acp-dsh/README.md#images-through-codex
+
 ## Amendment: required desktop CLIs (2026-11-08)
 
 Claude Code and Codex are required desktop components. On every activation and after any plugin
@@ -605,6 +630,110 @@ the next check or the existing `retry(id)` service. Shutdown cancels incomplete 
 
 This amends D17's desktop CLI ownership only. Adapter installation, authentication, model
 selection, the conversation UI and the existing model-enable switches keep their own contracts.
+
+## Amendment: native-ACP agents (2026-11-10)
+
+Owner ask (#959): offer the agents that speak ACP themselves beside Claude Code and Codex.
+Hermes (`hermes acp`), Antigravity (`agy acp`) and omp (`omp acp`) each answer ACP `initialize`
+and `session/new` from their own CLI, so the agent table takes a second kind of row: a CLI and
+its ACP arguments instead of an adapter package (`acp-hermes`, `acp-antigravity`, `acp-omp`).
+This amends "The person's own CLI, the newest adapter" for these rows only.
+
+- **Nothing is installed.** No adapter, and the CLI is never one of the required desktop CLIs:
+  an agent whose CLI is missing is listed with its install page, not hidden.
+- **Off by default; the switch is the person's word.** Each has its own live setting
+  (`hermes`, `antigravity`, `omp`), default off. Their sign-in is the CLI's own, shared with the
+  person's terminal, and no command of theirs names one account, so the per-account record of
+  #869 cannot cover them: turning the agent on is the consent. Claude Code and Codex keep
+  their record and confirm step unchanged.
+- **Sign-in is the agent's own answer.** There is no sign-in from a Bot's chat for them; the
+  person signs in in a terminal with the agent's own command, which a signed-out turn and the
+  settings row name. Signed in means the agent's ACP session opened; ACP's `auth_required`
+  means signed out. That is read with the model list (when the CLI changes, daily, and on the
+  person's "check again" while not signed in), never by a check of its own, because these
+  agents keep every session they open in their history.
+- **Models from the agent's session.** Config options when it offers them (Antigravity), else
+  the session's own model list and `session/set_model` (Hermes), else one `default` model (omp).
+- **The level.** Each is put in its `default` mode, the one that asks, and DSH's approval
+  answers under the Session's level. The agent's own permission settings still decide what it
+  asks about. A row with no known mode says once in the chat that the level is not applied.
+- **No DSH tool bridge yet.** `dshTools` does not reach a native row, even set to `true`, until
+  that agent's tool naming over ACP is proven as Claude Code's was in delivery 6.
+
+Open, tracked on #958: the sequence fuzz test and the daily handshake run should cover these
+three CLIs before their switches default to on.
+
+## Amendment: separate Bot CLI accounts (#869)
+
+Owner decision (2026-11-11): **isolate**, option 1 of
+[the design note](https://github.com/automagik-si/automagik/issues/869#issuecomment-6797000812).
+Claude Code and Codex each get their own CLI home per Automagik installation, shared by that
+installation's teams and image runs. A discovered CLI and a managed CLI use the same Bot home.
+Sign-in, status, account reads, adapters, model probes and images use the same environment.
+Neither credentials nor authentication settings are copied from the terminal. CLI updates and
+the public provider ids keep their existing contracts. Native-ACP agents keep their explicit
+opt-in terminal-sharing contract above; this decision covers Claude Code and Codex only.
+
+**Settings amendment.** This supersedes the user-global settings promise in Design and Decided
+for these two agents: terminal user settings, hooks, MCP servers, skills, sessions and environment
+overrides are not automatically imported. A separate home is necessary because authentication
+can also come from helpers, environment variables and stores outside the CLI's main config file.
+Project settings still load for chat work in the Bot's working folder. The person can configure
+the Bot's own user settings separately; Automagik does not copy or link credential-bearing files.
+The DSH tool bridge, approvals and transcript replay contracts stay as described above.
+
+**Upgrade.** Existing Bot models, histories and Sessions stay. Old terminal-account consent is
+not carried into the new home. The person signs in once more inside the app; affected work waits
+with a sign-in action. A signed-out isolated Bot never restores a legacy plan route or uses an
+old ChatGPT image grant to keep working. Explicitly configured image API keys retain their own
+path. Terminal-login preservation relies on the vendor credential-store assumptions below.
+
+**Owner account controls.** Bot settings show the Bot identity and a read-only terminal identity
+when the vendor reports it, clearly labelled as separate. Account data stays on owner-only
+endpoints, never in team state, model calls, transcripts or logs. Switch and Sign out block new
+work, end starting/live chats, images, model probes and login attempts, and wait for process
+termination before the CLI changes credentials in the Bot environment. A failed or unverified
+logout leaves
+work paused until an explicit retry. Installation locks serialize authentication changes; when
+another app instance has registered the same vendor home, close it before changing accounts.
+Launches capture an account generation so delayed work cannot start under a later account.
+
+**Crash recovery and owner Reset.** Automatic app-crash recovery is Unix-only and requires the
+recorded login group's exit proof. Windows app death leaves its login record blocked, even if
+an old Job nonce exists: Windows crash recovery is by owner Reset followed by fresh sign-in.
+Automatic Windows recovery is deferred to
+[follow-up #1076](https://github.com/automagik-si/automagik/issues/1076).
+The normal Windows sign-in and stop path still waits for its live supervisor's empty-Job proof.
+A short installation-level mutex uses unique process claims, so a claimant's own crash does not
+permanently hold recovery. Lock owner and applicable evidence are revalidated under that mutex.
+
+Pending-before-spawn, damaged and legacy evidence cannot supply that proof. Cold owner settings
+show recovery per vendor and offer an explicitly confirmed Reset Bot sign-in. Reset pauses
+admission and stops known work before selecting a fresh empty home generation and forgetting
+old account consent. It requires fresh in-app sign-in, preserves Bot models and history, and
+does not log out or copy the old account. Bot CLI user settings also start empty; project
+settings still load from the workspace. The previous physical folder and its unproved records
+remain at their original path: it is never renamed and reused. A surviving vendor process can
+write only to the abandoned generation. Cleanup removes it later only when exit is proven;
+unproved generations, including Windows crash records, stay retained. Both serialization and
+app registrations sit outside the
+replaceable home. Captured launches check the installation's current-generation pointer as well
+as local version markers; delayed account reads and image tickets are invalidated by Reset.
+
+**Storage assumptions and unfinished live validation.** This design relies on Claude's
+config-directory-namespaced macOS Keychain entry and Codex's `CODEX_HOME`-namespaced OS-keyring
+key. Current vendor documentation/source supports those assumptions; fake stores and process
+tests do not prove the installed CLIs' live credential behavior. #869 remains open for both:
+
+1. A real two-account macOS sign-in/switch/sign-out sequence for Claude and Codex, verifying the
+   terminal login stays intact at every step.
+2. The Codex OS-keyring-backed path with distinct Bot and terminal homes through those actions,
+   in addition to the file-backed `auth.json` path.
+
+Vendor storage contracts:
+[Claude authentication](https://code.claude.com/docs/en/authentication),
+[Codex auth storage](https://github.com/openai/codex/blob/main/codex-rs/login/src/auth/storage.rs)
+(the CLI owns these stores).
 
 ## Tracking
 

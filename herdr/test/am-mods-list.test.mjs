@@ -104,6 +104,28 @@ test("only folders the marker lists are the pack's; without a marker a pack-name
   assert.ok(PACK_MODS.every((m) => none[m].kind !== "pack"));
 });
 
+// #219: the installer and the updater put plain folders under the pack's names and leave a link
+// alone, so a link there (a checkout) is the person's: never listed as the pack's, on or off.
+test("a link under a pack mod's name is the person's, not the pack's, in mods/ and in mods-disabled/ (#219)", async (t) => {
+  const appHome = home(t);
+  const ext = realpathSync(mkdtempSync(join(tmpdir(), "am-mods-checkout-")));
+  t.after(() => rmSync(ext, { recursive: true, force: true }));
+  for (const [m, dir] of [["am-sidebar", "mods"], ["am-tabs", "mods-disabled"]]) {
+    renameSync(join(appHome, dir, m), join(ext, m));
+    symlinkSync(join(ext, m), join(appHome, dir, m));
+  }
+  const mods = byName(await core.listMods(io, { appHome, records: [] }));
+  for (const m of ["am-sidebar", "am-tabs"]) {
+    assert.deepEqual([mods[m].kind, mods[m].pack, mods[m].symlink], ["local", null, true], m);
+    assert.notEqual(core.describeMod(mods[m]).source, core.PACK_SOURCE, m);
+  }
+  assert.equal(mods["am-tabs"].enabled, false);
+  // The pack's plain folders beside them are still the pack's.
+  assert.deepEqual(PACK_MODS.filter((m) => mods[m].kind === "pack"), PACK_MODS.filter((m) => !["am-sidebar", "am-tabs"].includes(m)));
+  const { groups } = core.groupMods(Object.values(mods));
+  assert.ok(groups.find((g) => g.key === "yours").mods.some((m) => m.name === "am-sidebar"), "listed under Yours");
+});
+
 test("a marker from before installed= dates the install by the marker file; no version= reads VERSION",
   { skip: process.platform !== "darwin" && "stat -f %m is the macOS form" }, async (t) => {
     const appHome = home(t, { marker: "mods=am-mods,am-sidebar\nlayout=added\nbefore=none\n" });
@@ -200,7 +222,7 @@ test("packageRemoveLines: no name from Herdr says why, the package, its mods and
   const record = { source: "someone/tools", prefix: "pkgs/scratch", mods: ["scratch", "pane"], layouts: ["scratchy.json"], keys: [] };
   const naming = { scratch: ["scratchy", "work"], pane: ["scratchy"] };
   for (const shown of [undefined, null, ""]) {
-    assert.deepEqual(core.packageRemoveLines({ record, shown, naming }), [
+    assert.deepEqual(core.packageRemoveLines({ record, shown, moved: ["mods/scratch", "mods/pane", "layouts/scratchy.json"], naming }), [
       "removed the package someone/tools/pkgs/scratch without knowing the layout Herdr shows (no layout from Herdr, so the remove"
       + " could not check it; is Herdr running?): moved mods/scratch, mods/pane, layouts/scratchy.json to the backup folder;"
       + " the layouts scratchy, work name scratch; the scratchy layout names pane. If Herdr shows the package's layout or one"
@@ -208,13 +230,109 @@ test("packageRemoveLines: no name from Herdr says why, the package, its mods and
     ], String(shown));
   }
   // No layout names its mods (or none parses): the reason, the package and what moved are still said.
-  assert.deepEqual(core.packageRemoveLines({ record: { source: "someone/scratch", prefix: "", mods: ["scratch"], layouts: [] }, shown: null }), [
+  assert.deepEqual(core.packageRemoveLines({ record: { source: "someone/scratch", prefix: "", mods: ["scratch"], layouts: [] }, shown: null, moved: ["mods/scratch"] }), [
     "removed the package someone/scratch without knowing the layout Herdr shows (no layout from Herdr, so the remove could not"
     + " check it; is Herdr running?): moved mods/scratch to the backup folder. If Herdr shows the package's layout or one naming"
     + " its mods, Herdr drops it (plain Herdr instead): switch layouts (ctrl-shift-l)",
   ]);
-  // A name read: the guards checked it, nothing to say.
-  assert.deepEqual(core.packageRemoveLines({ record, shown: "automagik", naming }), []);
+  // A name and a tree read: the guards checked both, nothing to say.
+  assert.deepEqual(core.packageRemoveLines({ record, shown: "automagik", tree: STOCK_LAYOUT, moved: ["mods/scratch"], naming }), []);
+});
+
+// ---- #512: the guards decide on the shown layout's tree; a name alone reads it from layouts/ ----
+
+const NAMES_SCRATCH = { id: "root", children: [{ id: "p", content: { mod: "scratch" } }] };
+
+test("shownLayout: Herdr's tree as given; a name alone reads layouts/<name>.json; why when that gives none (#512)", async (t) => {
+  const appHome = realpathSync(mkdtempSync(join(tmpdir(), "am-mods-shown-")));
+  t.after(() => rmSync(appHome, { recursive: true, force: true }));
+  write(join(appHome, "layouts", "work.json"), JSON.stringify(NAMES_SCRATCH));
+  write(join(appHome, "layouts", "broken.json"), `${JSON.stringify(NAMES_SCRATCH)},`);
+  write(join(appHome, "layouts", "empty.json"), "{}");
+  const nullIo = { ...io, readText: async (path) => (existsSync(path) ? readFileSync(path, "utf8") : null) };
+  for (const use of [io, nullIo]) {
+    const shown = (given) => core.shownLayout(use, appHome, given);
+    // A tree from Herdr is the tree, named or not; the file is not read.
+    assert.deepEqual(await shown({ name: "broken", tree: NAMES_SCRATCH }), { name: "broken", tree: NAMES_SCRATCH, unread: null });
+    assert.deepEqual(await shown({ name: null, tree: NAMES_SCRATCH }), { name: null, tree: NAMES_SCRATCH, unread: null });
+    // Nothing from Herdr (`layout()` gives nothing, or an empty object): not checked.
+    for (const tree of [undefined, null, {}]) assert.deepEqual(await shown({ name: "", tree }), { name: null, tree: null, unread: null });
+    assert.deepEqual(await core.shownLayout(use, appHome), { name: null, tree: null, unread: null });
+    // The name alone: the tree is the file's.
+    assert.deepEqual(await shown({ name: "work", tree: {} }), { name: "work", tree: NAMES_SCRATCH, unread: null });
+    // Checked, and unreadable: each says why.
+    assert.deepEqual(await shown({ name: "broken", tree: null }), { name: "broken", tree: null,
+      unread: "Herdr shows the broken layout but gave no tree, and layouts/broken.json does not read" });
+    assert.equal((await shown({ name: "empty" })).unread, "Herdr shows the empty layout but gave no tree, and layouts/empty.json does not read");
+    assert.deepEqual(await shown({ name: "gone", tree: {} }), { name: "gone", tree: null,
+      unread: "Herdr shows the gone layout but gave no tree, and layouts/gone.json could not be read" });
+    assert.equal((await shown({ name: "../work" })).unread, "Herdr shows the ../work layout but gave no tree, and its name has a path, so no file in layouts/ was read");
+  }
+});
+
+test("heldRetiredMods holds on the tree, whatever the name, as layoutGuard refuses; no tree holds nothing (#512)", () => {
+  const record = { mods: ["scratch", "pane"], layouts: [] }, plan = { mods: ["other"], layouts: [] };
+  for (const shown of [undefined, null, "", "scratchy"]) {
+    assert.deepEqual(core.heldRetiredMods({ record, plan, shown, tree: NAMES_SCRATCH }), ["scratch"], String(shown));
+    assert.match(core.layoutGuard({ name: shown, tree: NAMES_SCRATCH, mod: "scratch" }).refuse, /^scratch stays on/);
+    for (const tree of [undefined, null, {}]) assert.deepEqual(core.heldRetiredMods({ record, plan, shown, tree }), [], String(shown));
+  }
+});
+
+test("retiredModLines: held names the layout, or the shown one; unread and nothing from Herdr each say their reason (#512)", () => {
+  const retired = ["scratch"], naming = { scratch: ["scratchy"] };
+  const kept = (layout) => [`kept mods/scratch: this update no longer ships it, but ${layout} shows it, and Herdr drops a layout whose mod is gone`
+    + " (plain Herdr instead). Switch layouts (ctrl-shift-l), and the next update moves it aside"];
+  assert.deepEqual(core.retiredModLines({ retired, held: ["scratch"], shown: "scratchy", tree: NAMES_SCRATCH }), kept("the scratchy layout"));
+  assert.deepEqual(core.retiredModLines({ retired, held: ["scratch"], shown: null, tree: NAMES_SCRATCH }), kept("the shown layout"));
+  // A tree read that does not name it: it goes quietly, named or not.
+  for (const shown of [null, "main"]) assert.deepEqual(core.retiredModLines({ retired, held: [], shown, tree: { id: "root" }, naming }), []);
+  const moved = (why) => [`moved mods/scratch to the backup folder without knowing the layout Herdr shows (${why}):`
+    + " this update no longer ships it; the scratchy layout names it, and Herdr drops a layout whose mod is gone (plain Herdr instead)"];
+  // Not checked: nothing came from Herdr.
+  for (const tree of [undefined, null, {}]) assert.deepEqual(core.retiredModLines({ retired, held: [], shown: null, tree, naming }), moved("no layout to read; is Herdr running?"));
+  // Checked, and unreadable: a name with no tree to read is never silent, and never "is Herdr running?".
+  const unread = "Herdr shows the work layout but gave no tree, and layouts/work.json does not read";
+  assert.deepEqual(core.retiredModLines({ retired, held: [], shown: "work", tree: null, unread, naming }), moved(unread));
+});
+
+test("packageRemoveLines: the three reasons, and only what uninstall() moved (#512)", () => {
+  const record = { source: "someone/scratch", prefix: "", mods: ["scratch"], layouts: ["scratchy.json"], keys: [] };
+  const moved = ["mods/scratch", "layouts/scratchy.json"];
+  const tail = " If Herdr shows the package's layout or one naming its mods, Herdr drops it (plain Herdr instead): switch layouts (ctrl-shift-l)";
+  // Not checked.
+  assert.deepEqual(core.packageRemoveLines({ record, shown: null, tree: {}, moved }), [
+    "removed the package someone/scratch without knowing the layout Herdr shows (no layout from Herdr, so the remove could not check it;"
+    + ` is Herdr running?): moved mods/scratch, layouts/scratchy.json to the backup folder.${tail}`]);
+  // Checked, and unreadable: the name was checked, the tree was not.
+  const unread = "Herdr shows the work layout but gave no tree, and layouts/work.json does not read";
+  assert.deepEqual(core.packageRemoveLines({ record, shown: "work", tree: null, unread, moved, naming: { scratch: ["scratchy"] } }), [
+    `removed the package someone/scratch without knowing the layout Herdr shows (${unread}, so the remove checked its name only):`
+    + ` moved mods/scratch, layouts/scratchy.json to the backup folder; the scratchy layout names scratch.${tail}`]);
+  // The tree checked, no name: only the package's own layout that moved may be the shown one.
+  assert.deepEqual(core.packageRemoveLines({ record, shown: null, tree: { id: "root" }, moved }), [
+    "removed the package someone/scratch without knowing the name of the layout Herdr shows (Herdr gave its tree, which the remove checked,"
+    + " but not its name): moved mods/scratch, layouts/scratchy.json to the backup folder. If Herdr shows layouts/scratchy.json, Herdr drops it"
+    + " (plain Herdr instead): switch layouts (ctrl-shift-l)"]);
+  assert.deepEqual(core.packageRemoveLines({ record, shown: null, tree: { id: "root" }, moved: ["mods/scratch"] }), [], "no layout of its own moved: the tree said it all");
+  // A record entry already gone from the disk is not claimed as moved.
+  assert.match(core.packageRemoveLines({ record, shown: null, moved: ["mods/scratch"] })[0], /\): moved mods\/scratch to the backup folder\. If/);
+  assert.match(core.packageRemoveLines({ record, shown: null, moved: [] })[0], /\): nothing of it was left to move\. If/);
+});
+
+test("uninstall returns what it moved: a record entry missing on disk is not in it, and no backup is claimed for it (#512)", async (t) => {
+  const appHome = realpathSync(mkdtempSync(join(tmpdir(), "am-mods-moved-")));
+  t.after(() => rmSync(appHome, { recursive: true, force: true }));
+  write(join(appHome, "mods", "scratch", "mod.json"), "{}");
+  write(join(appHome, "layouts", "kept.json"), "{}");
+  const record = { source: "someone/scratch", prefix: "", mods: ["scratch", "gone"], layouts: ["scratchy.json", "kept.json"], keys: [] };
+  const { moved } = await core.uninstall(io, { appHome, record });
+  assert.deepEqual(moved, ["mods/scratch", "layouts/kept.json"]);
+  const backup = readdirSync(join(appHome, "automagik-herdr", "backup")).map((f) => f.replace(/-\d{4}-.*$/, "")).sort();
+  assert.deepEqual(backup, ["kept.json", "scratch"], "the backup folder holds exactly what it says moved");
+  const [line] = core.packageRemoveLines({ record, shown: null, moved });
+  assert.match(line, /: moved mods\/scratch, layouts\/kept\.json to the backup folder\./);
+  assert.doesNotMatch(line, /mods\/gone|scratchy\.json/);
 });
 
 // ---- #494: a linked mods/ is the person's folder: the manager moves nothing through it ----
@@ -265,4 +383,42 @@ test("switching a mod back on through a linked mods/ is refused with why; it sta
   await assert.rejects(core.setEnabled(io, { appHome: h.appHome, name: "offmod", enabled: true }), (e) => e.message === linkedLine(join(h.appHome, "mods"), h.ext));
   assert.ok(existsSync(join(h.appHome, "mods-disabled", "offmod", "mod.json")), "still off, where it was");
   assert.deepEqual(readdirSync(h.ext), ["scratch"], "nothing went into the linked mods/");
+});
+
+// ---- #511: a linked layouts/ is the person's folder: an update moves and writes no layout through it ----
+
+test("an update through a linked layouts/ leaves the record's layout as it is and adds none; the mods update; said with why (#511)", async (t) => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "am-mods-linked-layouts-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const appHome = join(root, "app"), ext = join(root, "their-layouts"), base = join(root, "repo");
+  write(join(appHome, "mods", "scratch", "main.js"), "// v1\n");
+  write(join(ext, "scratchy.json"), "{\"mine\":true}\n");
+  symlinkSync(ext, join(appHome, "layouts"));
+  assert.equal(await core.linkedLayouts(io, appHome), ext);
+  write(join(base, "mods", "scratch", "main.js"), "// v2\n");
+  write(join(base, "layouts", "scratchy.json"), "{\"theirs\":2}\n");
+  write(join(base, "layouts", "extra.json"), "{}\n");
+  const record = { source: "someone/scratch", prefix: "", mods: ["scratch"], layouts: ["scratchy.json"], keys: [] };
+  const plan = { clashes: [], mods: ["scratch"], layouts: ["scratchy.json", "extra.json"], keyAdds: [], keyConflicts: [], risks: [], base };
+  const rec = await core.applyInstall(io, { appHome, plan, source: "someone/scratch", prefix: "", sha: "abc", record, shown: "main", tree: {} });
+  assert.equal(readFileSync(join(appHome, "mods", "scratch", "main.js"), "utf8"), "// v2\n", "the mod is updated");
+  assert.deepEqual(readdirSync(ext), ["scratchy.json"], "nothing added to the person's folder, nothing taken out");
+  assert.equal(readFileSync(join(ext, "scratchy.json"), "utf8"), "{\"mine\":true}\n");
+  assert.deepEqual(rec.layouts, ["scratchy.json"], "the record keeps its layout, and not the one left out");
+  assert.ok(!readdirSync(join(appHome, "automagik-herdr", "backup")).some((f) => f.startsWith("scratchy.json")), "no layout in the backup folder");
+  assert.deepEqual(core.linkedLayoutsLines({ appHome, target: ext, record, plan }), [
+    `layouts/ (${appHome}/layouts) is a link to ${ext}, your own folder, not one this install made: nothing is moved or written through it, so `
+    + "layouts/scratchy.json stays as it is and layouts/extra.json was not added. Put that folder in the link's place (a plain layouts/), "
+    + "then update again for this commit's layouts",
+  ]);
+  // A first install: the commit's layouts are left out, and the record lists none.
+  write(join(base, "mods", "other", "main.js"), "// v1\n");
+  const fresh = await core.applyInstall(io, { appHome, plan: { ...plan, mods: ["other"] }, source: "someone/other", prefix: "", sha: "abc", record: null });
+  assert.deepEqual(fresh.layouts, []);
+  assert.deepEqual(readdirSync(ext), ["scratchy.json"]);
+  assert.match(core.linkedLayoutsLines({ appHome, target: ext, record: null, plan })[0], /so layouts\/scratchy\.json, layouts\/extra\.json were not added\. /);
+  // A plain layouts/, or a package with no layout: nothing to say.
+  assert.deepEqual(core.linkedLayoutsLines({ appHome, target: null, record, plan }), []);
+  assert.deepEqual(core.linkedLayoutsLines({ appHome, target: ext, record: { ...record, layouts: [] }, plan: { ...plan, layouts: [] } }), []);
+  assert.equal(await core.linkedLayouts(io, join(root, "repo")), null);
 });

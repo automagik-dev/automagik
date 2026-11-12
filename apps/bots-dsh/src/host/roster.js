@@ -6,6 +6,7 @@ import { MAX_AVATAR_IMAGE, ROOM_MAX_MEMBERS, ROOM_MODES, ROOM_NAME_MAX, ROOM_NOT
 import { currentColor, isColor, normalize, unquote } from './text.js'
 import { nameProblem } from '../shared/mentions.js'
 import { contextPatch } from '../shared/context-policy.js'
+import { crossesHarness } from '../shared/routes.js'
 import { cleanPetId } from './pets.js'
 import { cleanDenyTools } from './tool-deny.js'
 
@@ -305,8 +306,14 @@ export function install(rt) {
       await rt.save()
       // The greeting runs on the Bot's own model, once its provider is registered.
       void rt.waitForModel(bot)
-        .then(() => rt.applyModel(bot).catch(error => rt.warn('ds-bot: model for %s not applied: %s', cleanName, error)))
-        .then(() => sendKickoff(bot, { text, from: createdBy }))
+        .then(() => rt.applyModel(bot).then(() => false, (error) => {
+          rt.warn('ds-bot: model for %s not applied: %s', cleanName, error)
+          return true
+        }))
+        // At Full access with its coding CLI model not served, or not selected just above: no
+        // greeting on another model.
+        .then(unselected => rt.assertNotOffCli(bot, rt.chatOf(bot.id), undefined, { unselected }))
+        .then(() => sendKickoff(bot, { text, from: createdBy }), error => rt.warn('ds-bot: %s does not greet: %s', cleanName, error?.message ?? error))
       return bot
     } catch (error) {
       // The Bot's Session was already made: archive it instead of leaving an orphan.
@@ -396,6 +403,25 @@ export function install(rt) {
     const modelRef = patch.model === undefined ? undefined
       : patch.model === null || patch.model === '' ? null
       : await rt.resolveModel(patch.model, { checkAccess: true, remember: false, keep: bot.model })
+    // A model on another route, or another ACP agent, is a new conversation with a handoff
+    // note (RFC 0030, Decided 6 and 10). The menu uses switchRoute for it; a direct update-bot
+    // is the same person's pick, so it takes that path too rather than silently carrying the
+    // old conversation across the harness. Other fields cannot ride along: the switch is its
+    // own step, and the caller can update them after it.
+    const currentModel = bot.model ?? bot.appliedModel
+    if (modelRef !== undefined && modelRef !== null && currentModel !== undefined && crossesHarness(currentModel, modelRef)) {
+      // A host-owned Session has no DSH agent with `whenIdle`, so no fresh part can be
+      // started here: its host owns the conversation, and the host's in-place move stands.
+      // A DSH agent, pinned included, takes the new-conversation path; the pinned check in
+      // switchRoute refuses it rather than carrying the Session across the harness.
+      const agent = await rt.resolveAgent(rt.chatOf(bot.id)).catch(() => undefined)
+      if (typeof agent?.whenIdle === 'function') {
+        const extra = Object.keys(patch).filter(key => key !== 'id' && key !== 'model' && key !== 'effort')
+        if (extra.length > 0) throw refusal(`${bot.name} needs a new conversation for that route, so change only its model in this step.`)
+        await rt.switchRoute(bot.id, modelRef, patch.effort)
+        return bot
+      }
+    }
     // A new level resolves against the model the Bot will run on: the new one, the
     // model it keeps, or — the model cleared — the one it last ran on.
     const effortRef = modelRef === undefined ? bot.model ?? bot.appliedModel : modelRef ?? bot.appliedModel

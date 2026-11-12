@@ -11,7 +11,11 @@ import { HostConnectionService } from '@deepseek-ai/dsh-client-connection'
 import { apply } from '../index.js'
 import { fakeContext } from './fake-ctx.js'
 
-const ENDPOINTS = ['cli-login-start', 'cli-login-current', 'cli-login-status', 'cli-login-answer', 'cli-login-cancel', 'cli-login-connections']
+const ENDPOINTS = [
+  'cli-login-start', 'cli-login-current', 'cli-login-status', 'cli-login-answer',
+  'cli-login-cancel', 'cli-login-connections', 'cli-login-switch', 'cli-login-signout',
+  'cli-login-reset',
+]
 const STATE = 'expected_state_0123456789'
 
 async function fixture(t) {
@@ -69,7 +73,8 @@ test('a first Bot can start a sign-in before it has a model, with no login tool 
 test('a reading host cannot start, answer or cancel, but can read the attempt and the connections', async (t) => {
   const h = await fixture(t)
   h.rt.readOnly = () => 'The team is open in another host.'
-  for (const endpoint of ['cli-login-start', 'cli-login-answer', 'cli-login-cancel']) {
+  for (const endpoint of ['cli-login-start', 'cli-login-answer', 'cli-login-cancel',
+    'cli-login-switch', 'cli-login-signout', 'cli-login-reset']) {
     const { response, result } = await h.call(endpoint, { ...h.payload, attemptId: h.attemptId, value: 'code#state' })
     assert.equal(result.error.code, 'bot/read-only')
     assert.equal(response.headers.get('cache-control'), 'no-store')
@@ -94,6 +99,78 @@ test('a native failure cannot echo the authorization answer or enter the diagnos
   assert.deepEqual(notes, [])
   assert.doesNotMatch(JSON.stringify({ result, state: h.rt.state, logged: h.logged }), /private-authorization-code|expected_state/)
 })
+
+test('owner sign-in and account controls preserve a safe recovery action without native details',
+  async t => {
+    const h = await fixture(t)
+    h.acp.authScope = 'isolated'
+    for (const method of ['loginStart', 'accountSwitch', 'accountSignOut', 'accountReset']) {
+      h.acp[method] = async () => { throw Object.assign(new Error('private-path token-secret'), {
+        code: 'acp-account/unverified-login',
+      }) }
+    }
+    for (const action of ['start', 'switch', 'signout', 'reset']) {
+      const { result } = await h.call(`cli-login-${action}`, h.payload)
+      assert.equal(result.error.code, 'bot/account-recovery')
+      assert.match(result.error.message, /Reset Bot sign-in to start fresh/)
+      assert.doesNotMatch(JSON.stringify({ result, logged: h.logged }),
+        /private-path|token-secret/)
+    }
+  })
+
+for (const evidence of ['pending', 'damaged', 'legacy']) {
+  test(`cold settings preserve the healthy vendor beside ${evidence} recovery`, async t => {
+    const h = await fixture(t)
+    h.acp.authScope = 'isolated'
+    h.acp.status = async () => ({ agents: [] })
+    const inspected = []
+    const unverified = () => Object.assign(new Error(`private-${evidence} token-secret`), {
+      code: 'acp-account/unverified-login',
+    })
+    h.acp.accountRecovery = async id => {
+      if (id !== 'acp-claude') return { required: false }
+      if (evidence === 'legacy') throw unverified()
+      return { required: evidence === 'pending' }
+    }
+    h.acp.account = async id => {
+      inspected.push(id)
+      if (id === 'acp-claude') throw unverified()
+      return { signedIn: true, account: { email: 'healthy@example.test' } }
+    }
+    h.acp.terminalAccount = async () => ({
+      account: { email: 'terminal@example.test', token: 'never-forward' },
+    })
+    const { response, result } = await h.call('cli-login-accounts', {})
+    assert.equal(result.ok, true)
+    assert.equal(response.headers.get('cache-control'), 'no-store')
+    const rows = result.value.accounts
+    assert.equal(rows['acp-claude'].recoveryRequired, true)
+    assert.equal(rows['acp-claude'].signedIn, false)
+    assert.equal(rows['acp-codex'].recoveryRequired, undefined)
+    assert.equal(rows['acp-codex'].account.email, 'healthy@example.test')
+    assert.equal(rows['acp-claude'].terminal.email, 'terminal@example.test')
+    if (evidence === 'pending') assert.deepEqual(inspected, ['acp-codex'])
+    assert.doesNotMatch(JSON.stringify({ result, logged: h.logged }),
+      /private-|token-secret|never-forward/)
+  })
+}
+
+test('reset stays owner-only, uses only the isolated ACP action and preserves Bot history',
+  async t => {
+    const h = await fixture(t)
+    const reset = []
+    h.acp.authScope = 'isolated'
+    h.acp.accountReset = async (...args) => { reset.push(args) }
+    const before = JSON.stringify(h.rt.state)
+    const { result, response } = await h.call('cli-login-reset', h.payload)
+    assert.equal(result.ok, true)
+    assert.equal(response.headers.get('cache-control'), 'no-store')
+    assert.deepEqual(reset, [['acp-codex', { label: 'first' }]])
+    assert.equal(JSON.stringify(h.rt.state), before)
+    h.acp.authScope = 'shared'
+    assert.equal((await h.call('cli-login-reset', h.payload)).result.ok, false)
+    assert.equal(reset.length, 1, 'an older shared host is never used to reset a terminal login')
+  })
 
 test('every send endpoint refuses a text carrying a shown sign-in state before anything is queued', async (t) => {
   const h = await fixture(t)

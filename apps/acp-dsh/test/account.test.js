@@ -113,13 +113,21 @@ test('accountOf asks Codex over a short-lived app-server: one account/read, then
   assert.equal(child.killed, true)
 })
 
-test('accountOf: a Codex read that fails, exits or never answers is unknown, never a throw', async () => {
+test('a Codex account read that fails, exits or never answers is unknown', async (t) => {
   const refusing = fakeServer(message => (message.method === 'initialize' ? { id: message.id, result: {} } : message.method === 'account/read' ? { id: message.id, error: { message: 'no' } } : undefined))
   assert.equal(await accountOf(CODEX, '/opt/tools/codex', { spawn: refusing.spawn }), undefined)
   const exiting = fakeServer((message, child) => { if (message.method === 'initialize') setImmediate(() => child.emit('close', 1)); return undefined })
   assert.equal(await accountOf(CODEX, '/opt/tools/codex', { spawn: exiting.spawn }), undefined)
+  // The fake has no OS process handle to keep the loop alive for the unref'ed deadline.
+  t.mock.timers.enable({ apis: ['setTimeout'] })
   const silent = fakeServer(() => undefined)
-  assert.equal(await accountOf(CODEX, '/opt/tools/codex', { spawn: silent.spawn, timeoutMs: 20 }), undefined)
+  const waiting = accountOf(CODEX, '/opt/tools/codex', {
+    spawn: silent.spawn, timeoutMs: 20,
+  })
+  t.mock.timers.tick(19)
+  assert.equal(silent.children[0].child.killed, false)
+  t.mock.timers.tick(1)
+  assert.equal(await waiting, undefined)
   assert.equal(silent.children[0].child.killed, true)
   assert.equal(await accountOf(CODEX, '/opt/tools/codex', { spawn: () => { throw new Error('spawn failed') } }), undefined)
 })

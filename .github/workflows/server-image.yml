@@ -238,6 +238,13 @@ jobs:
             echo "latest=${latest}"
           } >> "$GITHUB_OUTPUT"
 
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Install locked gate dependencies
+        run: bun install --cwd server --frozen-lockfile --ignore-scripts --linker hoisted
+
       - name: Syntax
         run: |
           set -euo pipefail
@@ -281,6 +288,12 @@ jobs:
         env:
           TAG: ${{ steps.gate.outputs.tag }}
         run: node server/smoke.mjs "automagik-server:${TAG}"
+
+      - name: Plugins follow a newer image on an older release volume (offline)
+        if: steps.gate.outputs.build == 'true'
+        env:
+          TAG: ${{ steps.gate.outputs.tag }}
+        run: node server/follow-smoke.mjs "automagik-server:${TAG}"
 
       # Before this workflow has logged in anywhere: export the image's rootfs, inventory every
       # file, and fail on a secret, a home path, a credential or any baked state. The inventory

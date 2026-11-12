@@ -942,8 +942,14 @@ class PocketViewModel(application: Application, private val initDispatcher: Coro
     }
     fun sendMessage(text: String, confirmed: () -> Unit = {}) {
         val ref = state.value.selected ?: return
-        val c = clients[ref.hostId] ?: return
         if (text.isBlank() || state.value.sending) return
+        val c = clients[ref.hostId]
+        if (c == null) {
+            // The preview has no link and a disconnected machine none either: say so instead of a dead Send.
+            _state.update { it.copy(message = if (state.value.demo) "Preview • this sample terminal does not send. Connect a machine to message the agent."
+                else "Connect this machine to send a message.") }
+            return
+        }
         _state.update { it.copy(sending = true) }
         viewModelScope.launch(Dispatchers.IO) {
             runCatching { c.call("terminal.send", JSONObject().put("terminal", ref.address).put("text", text)) }
@@ -1016,8 +1022,7 @@ class PocketViewModel(application: Application, private val initDispatcher: Coro
         chatRef = ref
         _chat.value = Chat.carry(prior, Chat.State(ref.address, messages = unknown, resuming = resuming, error = if (resuming) Chat.RESUMING else null))
         if (state.value.demo) {
-            _chat.value = if (ref == ChatDemo.ref) ChatDemo.state(ref.address)
-                else Chat.State(ref.address, error = "Chat needs a connected machine.")
+            _chat.value = ChatDemo.stateFor(ref) ?: Chat.State(ref.address, error = "Chat needs a connected machine.")
             return
         }
         chatJob = viewModelScope.launch(Dispatchers.IO) {
@@ -1140,6 +1145,21 @@ class PocketViewModel(application: Application, private val initDispatcher: Coro
         return true
     }
 
+    /** The preview's answer: the card leaves as a real answer would, and the notice says nothing was sent. */
+    private fun previewAnswer(row: Chat.Row): Boolean {
+        if (!state.value.demo) return false
+        chatUpdate(chatGen) { s ->
+            val next = s.copy(
+                approval = s.approval?.takeIf { it.id != row.id },
+                question = s.question?.takeIf { it.id != row.id })
+            // The sample has no bridge to send a status after the last card: leave "blocked" behind.
+            if (next.approval == null && next.question == null)
+                next.copy(status = Chat.Status("working", "sample", "Sample turn finished"), notice = ChatDemo.SAMPLE_ONLY)
+            else next.copy(notice = ChatDemo.SAMPLE_ONLY)
+        }
+        return true
+    }
+
     private fun chatAct(block: suspend (ChatLink, Chat.State, Int) -> Unit) {
         val link = chatLink ?: return
         val s = _chat.value ?: return
@@ -1186,7 +1206,7 @@ class PocketViewModel(application: Application, private val initDispatcher: Coro
     fun chatAnswer(row: Chat.Row, choice: String) {
         val s = _chat.value ?: return
         if (choice !in ChatActions.choices(s, row)) return
-        if (previewChat()) return
+        if (previewAnswer(row)) return
         chatAct { link, st, gen ->
             val notice = runCatching { Chat.answerNotice(link.answer(st.terminal, row.id, choice), st.dsh) }.getOrElse { unconfirmed(st) }
             chatUpdate(gen) { it.copy(notice = notice) }
@@ -1197,7 +1217,7 @@ class PocketViewModel(application: Application, private val initDispatcher: Coro
     fun chatAnswerQuestion(row: Chat.Row, picked: List<Int>, text: String? = null) {
         val s = _chat.value ?: return
         val (choice, typed) = ChatActions.questionAnswer(s, row, picked, text) ?: return
-        if (previewChat()) return
+        if (previewAnswer(row)) return
         chatAct { link, st, gen ->
             val notice = runCatching { Chat.answerNotice(link.answer(st.terminal, row.id, choice, typed), st.dsh) }.getOrElse { unconfirmed(st) }
             chatUpdate(gen) { it.copy(notice = notice) }

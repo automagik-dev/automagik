@@ -9,6 +9,8 @@ import { test } from 'node:test'
 import { signedInOf } from '../src/host/agents.js'
 import { batchSafe, quoteForCmd } from '../src/host/batch-spawn.js'
 import { runInstall } from '../src/host/install.js'
+// This gate runs on Windows without the harness; include the owned login Job regression.
+import './windows-login.check.js'
 
 const windowsOnly = { skip: process.platform === 'win32' ? false : 'needs cmd.exe' }
 

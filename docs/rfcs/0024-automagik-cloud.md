@@ -287,9 +287,22 @@ pinned exact).
 
 **The claim fails closed.**
 
-1. Until it is claimed, the gate serves only on loopback, reached on the host or through an SSH
-   tunnel; it listens on its published address only after the claim. Every route but the claim
-   page answers `401`.
+1. Until claimed, the main gate binds only loopback and listens on its published address only
+   after the claim. A same-namespace connector can still forward remote browsers to loopback,
+   so `AUTOMAGIK_GATE_CLAIM` decides the actual claim boundary. `local` (default) serves the
+   claim page/API only on a separate loopback bootstrap listener, default `127.0.0.1:3083`,
+   configurable through `AUTOMAGIK_GATE_BOOTSTRAP_PORT`, never the main connector port 3082.
+   Operators must never forward bootstrap through a public or tailnet connector; only host
+   access or an operator's private SSH tunnel reaches it. Main-port claims return `404` even
+   with a correct code. `remote` serves claims on the main listener for operators who deliver
+   the code to the authenticated owner out of band: the 128-bit code is then the barrier.
+   Wrong remote codes share at most 64 pending per-attempt delays outside the state queue;
+   excess wrong attempts get `429` immediately without a timer, and disconnects cancel and
+   release their delay. Check the code first: correct codes bypass the penalty limit and delay.
+   Wrong attempts cannot drain a bucket that blocks the correct code. Log a count, never the code.
+   Other unauthenticated workspace routes answer `401`. Host reset remains a `0600` local
+   socket operation in both modes and restores the configured claim boundary, including when
+   a connector continues forwarding the main listener after reset.
 2. On first start the gate makes a claim code: 128 bits, single use, valid 15 minutes, kept only
    as a hash, compared in constant time, rate-limited. It is shown on the host console when the
    gate runs in an interactive terminal, else only written to a `0600` file in the gate's own
@@ -299,7 +312,10 @@ pinned exact).
    command of "Recovery", makes a new one.
 3. The claim page takes the code (posted, never in a URL) and registers a passkey. The first
    claim wins atomically and cannot be replayed; a test pins that two concurrent claims leave
-   exactly one owner.
+   exactly one owner. Every unauthenticated claim, sign-in and recovery ceremony is bound to
+   a short-lived server-side pre-authentication session, carried by an `HttpOnly`, `Secure`,
+   host-only cookie. Verification requires that same browser's session; challenges remain
+   single-use and expire. Another browser cannot finish a copied ceremony id or response.
 4. The claim offers a second passkey at once, and shows one-time recovery codes, stored as slow
    hashes.
 
@@ -516,6 +532,15 @@ release itself recorded, never `:latest` (RFC 0019 notes the published image is 
 the Cloud service rolls releases one workspace first. The Cloud service itself lives in a new
 private repository in the owner's organisation (Decided 17); only its contracts stay public here
 (Decided 25).
+
+**Interim sign-in for the first Cloud workspace.** Until delivery C2.3 (#909) provides
+workspace tokens, an explicitly configured gate may verify Cloudflare Access application JWTs
+and exchange them for its normal owner session. The operator first puts an Access policy for
+the owner's exact e-mail on the public name, then adds the tunnel route to the gate. This is
+owner-only access, with the existing gate session and DSH owner limitations, not Cloud roles or
+membership. It is off without its team domain, audience and exact e-mail allowlist. Workspace
+tokens supersede this interim mode; the private values remain on the host. See
+[the server settings](../../server/README.md#interim-cloudflare-access-sign-in).
 
 **The identity service and the first test workspace VMs** run in a restricted Incus project on
 Arca's own hosting, operated by Arca; no host name is written in this repository.

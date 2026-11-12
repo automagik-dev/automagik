@@ -1,0 +1,462 @@
+{
+  "source": {
+    "agent": "Codex",
+    "cli": "codex-cli 0.167.0",
+    "adapter": "@agentclientprotocol/codex-acp 2.6.0",
+    "captured": "2026-11-10",
+    "how": "A real turn per case through AgentRun (src/host/acp.js); every session/request_permission was answered with reject_once, so no asked-for command ran. The working folder is replaced by /workspace."
+  },
+  "cases": [
+    {
+      "name": "read-only: write a file",
+      "mode": "read-only",
+      "offeredModes": [
+        "read-only",
+        "workspace-write",
+        "agent",
+        "agent-full-access"
+      ],
+      "updates": [
+        {
+          "toolCallId": "exec-05bd7ab9-712f-46a4-953f-e8f89b55e18b",
+          "title": "printf %s hello > note.txt",
+          "kind": "execute",
+          "status": "in_progress",
+          "content": [
+            {
+              "terminalId": "exec-05bd7ab9-712f-46a4-953f-e8f89b55e18b",
+              "type": "terminal"
+            }
+          ],
+          "rawInput": {
+            "command": "printf %s hello > note.txt",
+            "cwd": "/workspace"
+          },
+          "_meta": {
+            "terminal_info": {
+              "cwd": "/workspace",
+              "terminal_id": "exec-05bd7ab9-712f-46a4-953f-e8f89b55e18b"
+            }
+          },
+          "sessionUpdate": "tool_call"
+        },
+        {
+          "toolCallId": "exec-05bd7ab9-712f-46a4-953f-e8f89b55e18b",
+          "status": "failed",
+          "_meta": {
+            "terminal_exit": {
+              "exit_code": null,
+              "signal": null,
+              "terminal_id": "exec-05bd7ab9-712f-46a4-953f-e8f89b55e18b"
+            }
+          },
+          "sessionUpdate": "tool_call_update"
+        }
+      ],
+      "questions": [
+        {
+          "toolCall": {
+            "toolCallId": "exec-05bd7ab9-712f-46a4-953f-e8f89b55e18b",
+            "kind": "execute",
+            "status": "pending",
+            "title": "printf %s hello > note.txt",
+            "rawInput": {
+              "command": "printf %s hello > note.txt",
+              "cwd": "/workspace"
+            }
+          },
+          "options": [
+            {
+              "optionId": "allow_once",
+              "name": "Yes, proceed",
+              "kind": "allow_once"
+            },
+            {
+              "optionId": "accept_execpolicy_amendment",
+              "name": "Yes, and don't ask again for commands that start with `printf %s hello > note.txt`",
+              "kind": "allow_always"
+            },
+            {
+              "optionId": "cancel",
+              "name": "No, and tell Codex what to do differently",
+              "kind": "reject_once"
+            }
+          ]
+        }
+      ],
+      "stopReason": "cancelled"
+    },
+    {
+      "name": "workspace-write: command needing the network",
+      "mode": "workspace-write",
+      "offeredModes": [
+        "read-only",
+        "workspace-write",
+        "agent",
+        "agent-full-access"
+      ],
+      "updates": [
+        {
+          "toolCallId": "exec-cd2aec70-818b-4080-8664-e7aa8fbd30bc",
+          "title": "curl -sS -o /dev/null -w \"%{http_code}\" https://example.com",
+          "name": "exec_command",
+          "kind": "execute",
+          "status": "in_progress",
+          "content": [
+            {
+              "terminalId": "exec-cd2aec70-818b-4080-8664-e7aa8fbd30bc",
+              "type": "terminal"
+            }
+          ],
+          "rawInput": {
+            "command": "curl -sS -o /dev/null -w \"%{http_code}\" https://example.com",
+            "cwd": "/workspace"
+          },
+          "_meta": {
+            "terminal_info": {
+              "cwd": "/workspace",
+              "terminal_id": "exec-cd2aec70-818b-4080-8664-e7aa8fbd30bc"
+            }
+          },
+          "sessionUpdate": "tool_call"
+        },
+        {
+          "toolCallId": "exec-cd2aec70-818b-4080-8664-e7aa8fbd30bc",
+          "status": "failed",
+          "_meta": {
+            "terminal_output_delta": {
+              "data": "curl: (6) Could not resolve host: example.com\n000",
+              "terminal_id": "exec-cd2aec70-818b-4080-8664-e7aa8fbd30bc"
+            },
+            "terminal_exit": {
+              "exit_code": 6,
+              "signal": null,
+              "terminal_id": "exec-cd2aec70-818b-4080-8664-e7aa8fbd30bc"
+            }
+          },
+          "sessionUpdate": "tool_call_update"
+        },
+        {
+          "toolCallId": "exec-5ae0696f-4f6e-402b-bbcc-add7c1356b66",
+          "title": "curl -sS -o /dev/null -w \"%{http_code}\" https://example.com",
+          "kind": "execute",
+          "status": "in_progress",
+          "content": [
+            {
+              "terminalId": "exec-5ae0696f-4f6e-402b-bbcc-add7c1356b66",
+              "type": "terminal"
+            }
+          ],
+          "rawInput": {
+            "command": "curl -sS -o /dev/null -w \"%{http_code}\" https://example.com",
+            "cwd": "/workspace"
+          },
+          "_meta": {
+            "terminal_info": {
+              "cwd": "/workspace",
+              "terminal_id": "exec-5ae0696f-4f6e-402b-bbcc-add7c1356b66"
+            }
+          },
+          "sessionUpdate": "tool_call"
+        },
+        {
+          "toolCallId": "exec-5ae0696f-4f6e-402b-bbcc-add7c1356b66",
+          "status": "failed",
+          "_meta": {
+            "terminal_exit": {
+              "exit_code": null,
+              "signal": null,
+              "terminal_id": "exec-5ae0696f-4f6e-402b-bbcc-add7c1356b66"
+            }
+          },
+          "sessionUpdate": "tool_call_update"
+        }
+      ],
+      "questions": [
+        {
+          "toolCall": {
+            "toolCallId": "exec-5ae0696f-4f6e-402b-bbcc-add7c1356b66",
+            "kind": "execute",
+            "status": "pending",
+            "title": "curl -sS -o /dev/null -w \"%{http_code}\" https://example.com",
+            "rawInput": {
+              "command": "curl -sS -o /dev/null -w \"%{http_code}\" https://example.com",
+              "cwd": "/workspace"
+            }
+          },
+          "options": [
+            {
+              "optionId": "allow_once",
+              "name": "Yes, proceed",
+              "kind": "allow_once"
+            },
+            {
+              "optionId": "accept_execpolicy_amendment",
+              "name": "Yes, and don't ask again for commands that start with `curl -sS -o /dev/null -w '%{http_code}' https://example.com`",
+              "kind": "allow_always"
+            },
+            {
+              "optionId": "cancel",
+              "name": "No, and tell Codex what to do differently",
+              "kind": "reject_once"
+            }
+          ]
+        }
+      ],
+      "stopReason": "cancelled"
+    },
+    {
+      "name": "workspace-write: write outside the workspace",
+      "mode": "workspace-write",
+      "offeredModes": [
+        "read-only",
+        "workspace-write",
+        "agent",
+        "agent-full-access"
+      ],
+      "updates": [
+        {
+          "toolCallId": "exec-8a6eab28-93f9-4bba-aab0-c671490f056c",
+          "title": "touch /var/tmp/acp-a0-probe.txt",
+          "kind": "execute",
+          "status": "in_progress",
+          "content": [
+            {
+              "terminalId": "exec-8a6eab28-93f9-4bba-aab0-c671490f056c",
+              "type": "terminal"
+            }
+          ],
+          "rawInput": {
+            "command": "touch /var/tmp/acp-a0-probe.txt",
+            "cwd": "/workspace"
+          },
+          "_meta": {
+            "terminal_info": {
+              "cwd": "/workspace",
+              "terminal_id": "exec-8a6eab28-93f9-4bba-aab0-c671490f056c"
+            }
+          },
+          "sessionUpdate": "tool_call"
+        },
+        {
+          "toolCallId": "exec-8a6eab28-93f9-4bba-aab0-c671490f056c",
+          "status": "failed",
+          "_meta": {
+            "terminal_exit": {
+              "exit_code": null,
+              "signal": null,
+              "terminal_id": "exec-8a6eab28-93f9-4bba-aab0-c671490f056c"
+            }
+          },
+          "sessionUpdate": "tool_call_update"
+        }
+      ],
+      "questions": [
+        {
+          "toolCall": {
+            "toolCallId": "exec-8a6eab28-93f9-4bba-aab0-c671490f056c",
+            "kind": "execute",
+            "status": "pending",
+            "title": "touch /var/tmp/acp-a0-probe.txt",
+            "rawInput": {
+              "command": "touch /var/tmp/acp-a0-probe.txt",
+              "cwd": "/workspace"
+            }
+          },
+          "options": [
+            {
+              "optionId": "allow_once",
+              "name": "Yes, proceed",
+              "kind": "allow_once"
+            },
+            {
+              "optionId": "accept_execpolicy_amendment",
+              "name": "Yes, and don't ask again for commands that start with `touch /var/tmp/acp-a0-probe.txt`",
+              "kind": "allow_always"
+            },
+            {
+              "optionId": "cancel",
+              "name": "No, and tell Codex what to do differently",
+              "kind": "reject_once"
+            }
+          ]
+        }
+      ],
+      "stopReason": "cancelled"
+    },
+    {
+      "name": "agent: command needing the network",
+      "mode": "agent",
+      "offeredModes": [
+        "read-only",
+        "workspace-write",
+        "agent",
+        "agent-full-access"
+      ],
+      "updates": [
+        {
+          "toolCallId": "exec-b0a8f171-5f4f-49b8-8e42-50695a608f87",
+          "title": "curl -sS -o /dev/null -w \"%{http_code}\" https://example.com",
+          "name": "exec_command",
+          "kind": "execute",
+          "status": "in_progress",
+          "content": [
+            {
+              "terminalId": "exec-b0a8f171-5f4f-49b8-8e42-50695a608f87",
+              "type": "terminal"
+            }
+          ],
+          "rawInput": {
+            "command": "curl -sS -o /dev/null -w \"%{http_code}\" https://example.com",
+            "cwd": "/workspace"
+          },
+          "_meta": {
+            "terminal_info": {
+              "cwd": "/workspace",
+              "terminal_id": "exec-b0a8f171-5f4f-49b8-8e42-50695a608f87"
+            }
+          },
+          "sessionUpdate": "tool_call"
+        },
+        {
+          "toolCallId": "exec-b0a8f171-5f4f-49b8-8e42-50695a608f87",
+          "status": "failed",
+          "_meta": {
+            "terminal_output_delta": {
+              "data": "curl: (6) Could not resolve host: example.com\n000",
+              "terminal_id": "exec-b0a8f171-5f4f-49b8-8e42-50695a608f87"
+            },
+            "terminal_exit": {
+              "exit_code": 6,
+              "signal": null,
+              "terminal_id": "exec-b0a8f171-5f4f-49b8-8e42-50695a608f87"
+            }
+          },
+          "sessionUpdate": "tool_call_update"
+        }
+      ],
+      "questions": [],
+      "stopReason": "end_turn"
+    },
+    {
+      "name": "agent: write outside the workspace",
+      "mode": "agent",
+      "offeredModes": [
+        "read-only",
+        "workspace-write",
+        "agent",
+        "agent-full-access"
+      ],
+      "updates": [
+        {
+          "toolCallId": "exec-090b5c62-1cb0-4479-8092-b551c25706f1",
+          "title": "touch /var/tmp/acp-a0-probe.txt",
+          "kind": "execute",
+          "status": "in_progress",
+          "content": [
+            {
+              "terminalId": "exec-090b5c62-1cb0-4479-8092-b551c25706f1",
+              "type": "terminal"
+            }
+          ],
+          "rawInput": {
+            "command": "/bin/bash -lc 'touch /var/tmp/acp-a0-probe.txt'",
+            "cwd": "/workspace"
+          },
+          "_meta": {
+            "terminal_info": {
+              "cwd": "/workspace",
+              "terminal_id": "exec-090b5c62-1cb0-4479-8092-b551c25706f1"
+            }
+          },
+          "sessionUpdate": "tool_call"
+        },
+        {
+          "toolCallId": "guardian_assessment:298f1b23-0845-4ca7-a457-6e46a7595eb6",
+          "title": "Guardian Review",
+          "kind": "think",
+          "status": "in_progress",
+          "content": [
+            {
+              "content": {
+                "text": "Status: In progress\nAction: exec /bin/bash -lc 'touch /var/tmp/acp-a0-probe.txt'",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "rawInput": {
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+            "startedAtMs": 1000,
+            "reviewId": "298f1b23-0845-4ca7-a457-6e46a7595eb6",
+            "targetItemId": "exec-090b5c62-1cb0-4479-8092-b551c25706f1",
+            "review": {
+              "status": "inProgress",
+              "riskLevel": null,
+              "userAuthorization": null,
+              "rationale": null
+            },
+            "action": {
+              "type": "command",
+              "source": "unifiedExec",
+              "command": "/bin/bash -lc 'touch /var/tmp/acp-a0-probe.txt'",
+              "cwd": "/workspace"
+            }
+          },
+          "sessionUpdate": "tool_call"
+        },
+        {
+          "toolCallId": "guardian_assessment:298f1b23-0845-4ca7-a457-6e46a7595eb6",
+          "status": "completed",
+          "content": [
+            {
+              "content": {
+                "text": "Status: Approved\nAction: exec /bin/bash -lc 'touch /var/tmp/acp-a0-probe.txt'\nRisk: low\nAuthorization: high\nRationale: The user explicitly authorized this exact command, which creates one local file and has no meaningful destructive, credential, or network risk.",
+                "type": "text"
+              },
+              "type": "content"
+            }
+          ],
+          "rawOutput": {
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+            "startedAtMs": 1000,
+            "completedAtMs": 2000,
+            "reviewId": "298f1b23-0845-4ca7-a457-6e46a7595eb6",
+            "targetItemId": "exec-090b5c62-1cb0-4479-8092-b551c25706f1",
+            "decisionSource": "agent",
+            "review": {
+              "status": "approved",
+              "riskLevel": "low",
+              "userAuthorization": "high",
+              "rationale": "The user explicitly authorized this exact command, which creates one local file and has no meaningful destructive, credential, or network risk."
+            },
+            "action": {
+              "type": "command",
+              "source": "unifiedExec",
+              "command": "/bin/bash -lc 'touch /var/tmp/acp-a0-probe.txt'",
+              "cwd": "/workspace"
+            }
+          },
+          "sessionUpdate": "tool_call_update"
+        },
+        {
+          "toolCallId": "exec-090b5c62-1cb0-4479-8092-b551c25706f1",
+          "status": "completed",
+          "name": "exec_command",
+          "_meta": {
+            "terminal_exit": {
+              "exit_code": 0,
+              "signal": null,
+              "terminal_id": "exec-090b5c62-1cb0-4479-8092-b551c25706f1"
+            }
+          },
+          "sessionUpdate": "tool_call_update"
+        }
+      ],
+      "questions": [],
+      "stopReason": "end_turn"
+    }
+  ]
+}

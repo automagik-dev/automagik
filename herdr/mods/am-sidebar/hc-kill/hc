@@ -1,0 +1,20 @@
+#!/usr/bin/env node
+// The `hc kill` shim's executable entry (automagik#955): first on the PATH of every pane the
+// pack starts for an agent other than dsh-tui. The logic is hcGuard.mjs runKillGuard, which
+// the pack's node --check gate covers: `hc kill` is for a project's main bot only; every other
+// call goes to the real hc untouched. Dynamic import works whether this extensionless file
+// loads as CommonJS (an installed pack has no package.json) or as ESM. Apache-2.0.
+"use strict";
+import("../hcGuard.mjs").then(
+  ({ runKillGuard }) => runKillGuard(process.argv.slice(2), process.env),
+  () => {
+    process.stderr.write("hc kill shim: its logic did not load, so this hc call was not run (#955).\n");
+    return 1;
+  },
+).then(
+  (code) => { process.exitCode = Number.isInteger(code) ? code : 1; },
+  () => {
+    process.stderr.write("hc kill shim: internal error, so this hc call was not run (#955).\n");
+    process.exitCode = 1;
+  },
+);

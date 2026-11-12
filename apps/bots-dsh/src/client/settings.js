@@ -16,6 +16,7 @@ import { CapabilitiesPage } from './capability-settings.js'
 import { BrowserPage } from './browser-settings.js'
 import { SchedulesPage } from './schedules.js'
 import { FeedbackIcon, FeedbackPage } from './feedback.js'
+import { AgentAccessPage } from './agent-access.js'
 import { PrivacyPage } from './privacy.js'
 import { VoiceSection } from './voice-settings.js'
 import { ImagesSection } from './image-cell.js'
@@ -32,8 +33,18 @@ const capitalize = word => word[0].toUpperCase() + word.slice(1)
 // Settings dialog: a 198px page list beside the page. Bots and group chats each list
 // their members, and one opens on its own settings form. Usage widens the dialog.
 // Models is there only in a window without DSH's own settings, which carry the providers.
-const SETTINGS_PAGES = [['general', 'General'], ['models', 'Models'], ['bots', 'Bots'], ['groups', 'Group chats'], ['connectors', 'Connectors'], ['capabilities', 'Capabilities'], ['browser', 'Browser'], ['schedules', 'Scheduled tasks'], ['usage', 'Usage'], ['secrets', 'Secrets'], ['privacy', 'Privacy'], ['feedback', 'Feedback'], ['about', 'About Automagik']]
-const PAGE_ICONS = { ...SETTINGS_ICONS, models: SlidersIcon, connectors: ConnectorIcon, capabilities: PlugIcon, browser: ConnectorIcon, schedules: ClockIcon, secrets: KeyIcon, privacy: ShieldIcon, feedback: FeedbackIcon, about: InfoIcon }
+const SETTINGS_PAGES = [
+  ['general', 'General'], ['models', 'Models'], ['bots', 'Bots'], ['groups', 'Group chats'],
+  ['connectors', 'Connectors'], ['capabilities', 'Capabilities'], ['browser', 'Browser'],
+  ['schedules', 'Scheduled tasks'], ['usage', 'Usage'], ['secrets', 'Secrets'],
+  ['agent-access', 'Agent access'], ['privacy', 'Privacy'], ['feedback', 'Feedback'],
+  ['about', 'About Automagik'],
+]
+const PAGE_ICONS = {
+  ...SETTINGS_ICONS, models: SlidersIcon, connectors: ConnectorIcon, capabilities: PlugIcon,
+  browser: ConnectorIcon, schedules: ClockIcon, secrets: KeyIcon, 'agent-access': KeyIcon,
+  privacy: ShieldIcon, feedback: FeedbackIcon, about: InfoIcon,
+}
 
 function SetSection({ title, className = '', children }) {
   return h('section', { className: `bt-set-section ${className}`.trim() }, h('h3', null, title), h('div', { className: 'bt-set-card' }, children))
@@ -339,8 +350,9 @@ export function SettingsDialog({ page, id, roster, actions, useUpdate, leaving =
           shown === 'browser' ? h(BrowserPage, { roster, actions, run, Section: SetSection, Row: SetRow }) : null,
           shown === 'schedules' ? h(SchedulesPage, { roster, actions, start: id ?? undefined }) : null,
           shown === 'secrets' ? h(SecretsPage, { roster, actions, run, Section: SetSection }) : null,
+          shown === 'agent-access' ? h(AgentAccessPage, { roster, actions, run, Section: SetSection }) : null,
           shown === 'privacy' ? h(PrivacyPage, { actions, run, Section: SetSection, Row: SetRow }) : null,
-          shown === 'feedback' ? h(FeedbackPage, { actions, run, Section: SetSection, Row: SetRow }) : null,
+          shown === 'feedback' ? h(FeedbackPage, { actions, run, roster, Section: SetSection, Row: SetRow }) : null,
           shown === 'about' ? h(AboutPage, { useUpdate, actions, run, Section: SetSection, Row: SetRow }) : null,
           // A page another plugin added, drawn as DSH's settings draws it (with `close`).
           pluginPage ? h('div', { className: 'bt-settings-plugin' }, h(pluginPage.Component, { close })) : null),

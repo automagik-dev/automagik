@@ -3,7 +3,7 @@
 // the attach refusal message. Pure: no `herdr`, so `node --test` runs it. Apache-2.0.
 
 import { BOT_LABEL, effectiveCategory, effectiveLead, mainBotOf, projectEntriesOf } from "./model.js";
-import { ENV, GUARD_DIR, guardPathWith, paneArgs, stableGuardDir, stableRootOf } from "./workers.js";
+import { ENV, guardPathWith, paneArgs, paneGuardOf, stableGuardDir, stableRootOf } from "./workers.js";
 import { envWords } from "./logins.js";
 
 const SHELLS = new Set(["sh", "zsh", "bash", "fish", "dash", "ksh", "tcsh", "csh", "nu", "login"]);
@@ -50,9 +50,11 @@ export function startRefusal(file, botId) {
  * variables the agent starts with, after PATH (an agent that takes its briefing that way, models.js).
  * `login`: a Claude launch's login words (logins.js chooseLogin): `-u CLAUDE_CONFIG_DIR` first,
  * or `CLAUDE_CONFIG_DIR=<dir>` last. `agent`: when it is `dsh-tui`, the pack's deny-by-default
- * hc guard folder goes first on the pane PATH (workers.js GUARD_DIR); any other agent's arguments
- * stay byte for byte as before. `guard`: an explicit guard folder for this pane (a linked
- * machine's own guard, resolved there), or null for none; undefined uses the dsh-tui default.
+ * hc guard folder goes first on the pane PATH (workers.js GUARD_DIR); any other named agent gets
+ * the `hc kill` shim's folder there instead (KILL_GUARD_DIR, #955: `hc kill` is for a project's
+ * main bot only); no `agent` leaves the PATH as given. `guard`: an explicit folder for this pane
+ * (a linked machine's own guard or shim, resolved there), or null for none; undefined uses the
+ * agent's default.
  * `sandbox`: a dsh-tui pane runs behind the per-pane hc proxy (hcPane.mjs) before DSH starts;
  * `project` is the folder whose .herdr/bots.json the proxy snapshots (default `cwd`). Any other
  * agent, or no `sandbox`, keeps the argv byte for byte as before. The guard is a guardrail, not
@@ -68,7 +70,7 @@ export function startArgs({ botId, name, cwd, space, tab, parent, argv, labels =
   if (tab) args.push("--label", `herdr.tab=${tab}`);
   const sandboxRoot = sandbox === true && agent === "dsh-tui" ? (stableRoot ?? stableRootOf()) : null;
   const guardDir = sandboxRoot ? stableGuardDir(sandboxRoot)
-    : guard === undefined ? (agent === "dsh-tui" ? GUARD_DIR : null) : guard;
+    : guard === undefined ? paneGuardOf(agent) : guard;
   const vars = envWords([...(path ? [`PATH=${guardPathWith(path, guardDir)}`] : []), ...Object.entries(more ?? {}).map(([k, v]) => `${k}=${v}`)], login);
   const launchArgv = sandboxRoot ? paneArgs(argv, { botId, project, stableRoot: sandboxRoot }) : argv;
   return [...args, ...parent, "--", ...(vars.length ? [ENV, ...vars] : []), ...launchArgv];

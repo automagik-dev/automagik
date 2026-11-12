@@ -203,6 +203,9 @@ export function install(rt) {
       await rt.ensureCapabilities(known)
       return { id: known, brief: undefined }
     }
+    // A saved level DSH no longer offers refuses the member's first turn here before a
+    // Session is made for it.
+    rt.assertLevelOffered?.(room.permission ?? member.permission)
     const id = await rt.createSession(`${member.name} · ${room.name}`, { dir: rt.workDirOf({ botId: member.id, roomId: room.id }), ...(member.kind === 'dsh' ? { profile: member.profile ?? null } : {}) })
     // Its level first, before the Session is the member's: one whose level did not hold is
     // not kept, so the member takes no turn on it and its next turn here makes another.
@@ -228,6 +231,8 @@ export function install(rt) {
     // ran went only to the Sessions the group had then.
     try {
       await rt.applyPermission(member, id, room, undefined, { start: true })
+      // At Full access with the member's coding CLI not served: not started on another model.
+      await rt.assertNotOffCli(member, id)
     } catch (error) {
       if (room.sessions[member.id] === id) delete room.sessions[member.id]
       rt.groupOwners.delete(id)
@@ -240,10 +245,24 @@ export function install(rt) {
     await rt.applyToolDeny(member, [id])
       .catch(error => rt.warn('ds-bot: tool deny for %s in %s not applied: %s', member.name, room.name, error?.message ?? error))
     delete room.seen[member.id]
-    const ref = await rt.desiredModel(member)
+    const ref = await rt.desiredModel(member, { sessionId: id })
     if (ref !== undefined) {
-      await rt.selectSessionModel(id, splitRef(ref))
-        .catch(error => rt.warn('ds-bot: model for %s in %s not applied: %s', member.name, room.name, error))
+      try {
+        await rt.selectSessionModel(id, splitRef(ref))
+      } catch (error) {
+        rt.warn('ds-bot: model for %s in %s not applied: %s', member.name, room.name, error)
+        // The Session is still on the model DSH made it with. At Full access with the member
+        // on a coding CLI it is not kept, as one whose level did not hold is not (above).
+        try {
+          await rt.assertNotOffCli(member, id, undefined, { unselected: true })
+        } catch (refused) {
+          if (room.sessions[member.id] === id) delete room.sessions[member.id]
+          rt.groupOwners.delete(id)
+          void ctx.workspaceRegistry.archiveSession(id, { stopActivity: true })
+            .catch(failure => rt.warn('ds-bot: unused group Session of %s in %s not archived: %s', member.name, room.name, failure))
+          throw refused
+        }
+      }
     }
     await rt.save()
     await rt.ensureCapabilities(id)
