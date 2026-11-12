@@ -77,11 +77,12 @@ async function loopPrototype() {
   try { return (await import('context-test:agent-loop')).ContextTestLoop.prototype } finally { hook.deregister() }
 }
 
-for (const mode of ['explicit', 'explicit-failure', 'automatic']) test(`${mode} authority is revoked before a real maintenance wake finishes delayed assembly`, async t => {
+for (const mode of ['explicit', 'explicit-failure', 'automatic']) test(`${mode} authority is revoked before a real maintenance wake finishes delayed assembly`, { timeout: 5000 }, async t => {
   const b = backendBench(); t.after(b.stop)
   Object.setPrototypeOf(b.agent, await loopPrototype())
   delete b.agent.status; delete b.agent.runMaintenance; delete b.agent.send
   b.agent.phase = { kind: 'idle', lastTurn: 0 }
+  b.agent.lifetimeSignal = new AbortController().signal
   b.agent.dispatch = { emit: (name, payload) => b.ctx.emit(name, { agent: b.agent, ...payload }) }
   b.agent.loopCtx = { agents: { withInitiator: (_agent, fn) => fn() } }
   Object.defineProperty(b.agent.inbox, 'hasPending', { get() { return this.nextTurn.length + this.nextStep.length > 0 } })

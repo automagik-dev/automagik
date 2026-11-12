@@ -19,8 +19,8 @@ const seeds = await build({ stdin: { contents: `${frontend.slice(0, seedFactory.
 // Expose shipped internals in the fixture string only; no installed file changes.
 const nativeBundle = (name, exports) => {
   const text = readFileSync(join(harness, name, 'lib/client.js'), 'utf8')
-  assert.ok(text.includes('return module.exports;'))
-  return text.replace('return module.exports;', `${exports}; return module.exports;`)
+  assert.match(text, /return module\.exports;?/)
+  return text.replace(/return module\.exports;?/, `${exports}; return module.exports;`)
 }
 const scripts = [
   nativeBundle('dsh-client-ui-renderer', 'exports.fixtureCreateRenderer = createSlotRenderer'),

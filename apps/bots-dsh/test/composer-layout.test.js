@@ -1,3 +1,4 @@
+import { nativeCss } from './native-css.js'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { readFileSync } from 'node:fs'
@@ -11,8 +12,7 @@ import { browserGuard } from './browser-guard.js'
 // not a second layout model. This does not inspect or modify the installed GUI.
 const requireHarness = createRequire(new URL('../dev/harness/package.json', import.meta.url))
 const nativeBundle = readFileSync(requireHarness.resolve('@deepseek-ai/dsh-client-ui-conversation/client'), 'utf8')
-const hostCss = [...nativeBundle.matchAll(/const css\$?\w* = ("(?:[^"\\]|\\.)*");/g)]
-  .map(match => JSON.parse(match[1])).find(css => /_card\{/.test(css) && /_placeholder\{/.test(css))
+const hostCss = nativeCss(nativeBundle).find(css => /_card\{/.test(css) && /_placeholder\{/.test(css))
 assert.ok(hostCss, 'supported DSH InputBar CSS must be present')
 const prefix = hostCss.match(/\.([\w]+)_card\{/)[1]
 const { outputFiles } = await build({

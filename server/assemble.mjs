@@ -133,7 +133,7 @@ export function applyRuntimePatches(runtimeDir, patchesDir = PATCHES_SOURCE) {
   return results
 }
 
-export async function assemble({ out, version = '3.90.1', dsh = '0.2.2-rc.1', revision = 'unknown', repository = 'https://github.com/automagik-dev/automagik' }) {
+export async function assemble({ out, version = '3.90.1', dsh = '0.2.2-rc.2', revision = 'unknown', repository = 'https://github.com/automagik-dev/automagik' }) {
   if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error(`not a release version: ${version}`)
   const runtimeDir = join(out, 'runtime')
   const dshHome = join(out, 'dsh-home')
@@ -254,7 +254,7 @@ export async function assemble({ out, version = '3.90.1', dsh = '0.2.2-rc.1', re
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const args = argsOf(process.argv.slice(2))
-    if (!args.out) throw new Error('usage: node assemble.mjs --out <dir> [--version 3.90.1] [--dsh 0.2.2-rc.1] [--repository <url>]')
+    if (!args.out) throw new Error('usage: node assemble.mjs --out <dir> [--version 3.90.1] [--dsh 0.2.2-rc.2] [--repository <url>]')
     const result = await assemble({ out: resolve(args.out), version: args.version, dsh: args.dsh, revision: args.revision, repository: args.repository })
     console.log(`[assemble] ready: dsh ${result.dsh}, automagik ${result.version}`)
   } catch (error) {

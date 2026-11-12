@@ -1,3 +1,4 @@
+import { nativeCss } from './native-css.js'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { readFileSync } from 'node:fs'
@@ -12,8 +13,7 @@ import { browserGuard } from './browser-guard.js'
 // model. This does not inspect or modify the installed GUI.
 const requireHarness = createRequire(new URL('../dev/harness/package.json', import.meta.url))
 // #363: the goal bar (ui-goal), the todo panel and the Bot's side-question (btw) dock join it.
-const sheetsOf = id => [...readFileSync(requireHarness.resolve(id), 'utf8').matchAll(/const css\$?\w* = ("(?:[^"\\]|\\.)*");/g)]
-  .map(match => JSON.parse(match[1]))
+const sheetsOf = id => nativeCss(readFileSync(requireHarness.resolve(id), 'utf8'))
 const sheets = ['@deepseek-ai/dsh-client-ui-conversation/client', '@deepseek-ai/dsh-client-ui-goal/client'].flatMap(sheetsOf)
 const sheet = (name, test) => {
   const css = sheets.find(test)

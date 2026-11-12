@@ -1,3 +1,4 @@
+import { nativeCss } from './native-css.js'
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { readFileSync } from 'node:fs'
@@ -16,14 +17,11 @@ import { browserGuard } from './browser-guard.js'
 // (ConversationRoot and the transcript column), not a second layout model.
 const requireHarness = createRequire(new URL('../dev/harness/package.json', import.meta.url))
 const rootBundle = readFileSync(requireHarness.resolve('@deepseek-ai/dsh-client-ui-conversation/client'), 'utf8')
-const rootCss = [...rootBundle.matchAll(/const css\$?\w* = ("(?:[^"\\]|\\.)*");/g)]
-  .map(match => JSON.parse(match[1])).find(css => css.includes('_headerLeading{'))
+const rootCss = nativeCss(rootBundle).find(css => css.includes('_headerLeading{'))
 assert.ok(rootCss, 'supported DSH ConversationRoot CSS must be present')
 const chatBundle = readFileSync(requireHarness.resolve('@deepseek-ai/dsh-client-ui-chat/client'), 'utf8')
-const flowLine = chatBundle.split('\n').find(line => line.includes('_column{max-width:var(--dsh-chat-content-width)'))
-assert.ok(flowLine, 'supported DSH transcript column CSS must be present')
-// The sheet is an expression that inlines its assets through require.asset.
-const flowCss = new Function('require', `return ${flowLine.slice(flowLine.indexOf('=') + 1).trim().replace(/;$/, '')}`)({ asset: () => '' })
+const flowCss = nativeCss(chatBundle).find(css => /_column\{/.test(css) && css.includes('--dsh-chat-content-width'))
+assert.ok(flowCss, 'supported DSH transcript column CSS must be present')
 const ROOT = rootCss.match(/\.(\w+)_root\{/)[1]
 const FLOW = flowCss.match(/\.(\w+)_column\{/)[1]
 

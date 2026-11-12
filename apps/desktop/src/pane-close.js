@@ -19,10 +19,10 @@ export const PAGE_CLOSE_SOURCE = { package: '@deepseek-ai/dsh-client-ui-sidebar-
 // What this file relies on in that client, each as the pinned bundle spells it: the command's
 // id, its key, and the web binding (primary+alt) on macOS, where the File menu sends it.
 const PAGE_CLOSE_CONTRACT = [
-  ['the `page.close` command id', /for \(const kind of \["close", "refresh"\]\)[^]*?id: `page\.\$\{kind\}`/],
-  ['its key, KeyW', /code: kind === "close" \? "KeyW" : "KeyR",\s*modifiers: \["primary"\]/],
-  ['its web binding, primary+alt', /const web = \{\s*\.\.\.desktop,\s*modifiers: \["primary", "alt"\]\s*\}/],
-  ['the web binding on macOS', /\.\.\.kind === "close" \? \{ "web:macos": web \} : \{\}/],
+  ['the `page.close` command id', /for\s*\(const kind of\s*\[["`]close["`],\s*["`]refresh["`]\]\)[^]*?id:\s*`page\.\$\{kind\}`/],
+  ['its key, KeyW', /code:\s*kind\s*===\s*["`]close["`]\s*\?\s*["`]KeyW["`]\s*:\s*["`]KeyR["`],\s*modifiers:\s*\[["`]primary["`]\]/],
+  ['its web binding, primary+alt', /const web\s*=\s*\{\s*\.\.\.desktop,\s*modifiers:\s*\[["`]primary["`],\s*["`]alt["`]\]\s*\}/],
+  ['the web binding on macOS', /\.\.\.kind\s*===\s*["`]close["`]\s*\?\s*\{\s*"web:macos":\s*web\s*\}\s*:\s*\{\}/],
 ]
 
 /**
