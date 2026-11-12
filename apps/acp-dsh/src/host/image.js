@@ -14,8 +14,9 @@
 //   `features.<name>` without a word;
 // - the same overrides, from the same object, go to the session through codex-acp's
 //   CODEX_CONFIG. CODEX_HOME is the Bot's isolated Codex home, supplied by cli-homes.js;
-// - a fresh permission profile denies reads outside the scratch folder where Codex enforces
-//   profiles. An adapter without that mode falls back to read-only with a warning;
+// - a fresh permission profile requests scratch reads only. Codex's filesystem helper adds
+//   runtime read grants: this is containment, not a scratch-only boundary (README, #870).
+//   An adapter without that mode falls back to read-only with a warning;
 // - the agent starts in an empty scratch folder with no MCP servers. The checks
 //   run in that same folder, trusted the way codex-acp trusts it for the session. Every
 //   permission the agent asks for is cancelled, and one that is not about the image call
@@ -133,7 +134,9 @@ export const IMAGE_MODE = 'read-only'
 // Owner policy: keep drawing on adapters that cannot select the narrow profile.
 const ALLOW_IMAGE_READ_ONLY_FALLBACK = true
 
-/** The scratch project's entire config. No network, inherited profile or minimal roots. */
+// The config omits network, inherited profiles and minimal roots. Codex's filesystem helper
+// still adds :minimal and helper-executable reads; omitting them here cannot deny those reads.
+/** The scratch project's entire config, before Codex adds its runtime grants. */
 export function imageProfile(id = `automagik-image-${randomBytes(16).toString('hex')}`) {
   return {
     id,
@@ -571,6 +574,7 @@ const isImageCall = tool => tool?.title === IMAGE_TITLE
 
 /** The PNG of a finished image call, as base64, from its content or its raw output; never its saved file. */
 export function imageOf(tool) {
+  // Output only: Codex has already read its inputs. No input path passes through this function.
   if (!isImageCall(tool)) return undefined
   for (const item of Array.isArray(tool.content) ? tool.content : []) {
     const block = item?.type === 'content' ? item.content : item
@@ -768,6 +772,7 @@ async function draw({ spawn, prompt, size, quality, background, signal, timeoutM
     if (found !== undefined && ended?.type === 'end' && !signal?.aborted) {
       if (!isPng(found)) throw imageRefusal(FAILED, 'Codex answered with something that is not a PNG image. Try again.')
       if (Math.floor(found.length * 3 / 4) > MAX_IMAGE_BYTES) throw imageRefusal(FAILED, 'Codex answered with an image too large to keep. Try again.')
+      // `isolated` records profile acknowledgement, not proof of scratch-only reads.
       // Internal status stays out of the image payload copied by callers.
       return Object.defineProperty({ base64: found, mimeType: 'image/png' }, 'isolated', { value: isolated })
     }
