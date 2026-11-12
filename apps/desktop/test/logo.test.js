@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
+import { inflateSync } from 'node:zlib'
 import { LOCKUPS, lockupFor, showUpdateSplash, splashFiles } from '../src/splash.js'
 
 // The Automagik logo in the desktop app is the approved set's own files (final-triskle-seam):
@@ -25,6 +26,32 @@ const css = text('src/shell.css')
 const html = text('src/shell.html')
 // A PNG's width and height, from its header.
 const pngSize = data => [data.readUInt32BE(16), data.readUInt32BE(20)]
+// The pixels of an 8-bit RGBA PNG that is not interlaced: answers (x, y) => [r, g, b, a].
+function pngPixels(data) {
+  const [width, height] = pngSize(data)
+  assert.deepEqual([data[24], data[25], data[28]], [8, 6, 0], '8-bit RGBA, not interlaced')
+  const parts = []
+  for (let at = 8; at < data.length;) {
+    const length = data.readUInt32BE(at)
+    if (data.toString('latin1', at + 4, at + 8) === 'IDAT') parts.push(data.subarray(at + 8, at + 8 + length))
+    at += 12 + length
+  }
+  const raw = inflateSync(Buffer.concat(parts))
+  const stride = width * 4
+  const out = Buffer.alloc(stride * height)
+  for (let y = 0; y < height; y += 1) {
+    const filter = raw[y * (stride + 1)]
+    for (let x = 0; x < stride; x += 1) {
+      const left = x >= 4 ? out[y * stride + x - 4] : 0
+      const up = y > 0 ? out[(y - 1) * stride + x] : 0
+      const corner = x >= 4 && y > 0 ? out[(y - 1) * stride + x - 4] : 0
+      const paeth = () => { const p = left + up - corner; const [a, b, c] = [Math.abs(p - left), Math.abs(p - up), Math.abs(p - corner)]; return a <= b && a <= c ? left : b <= c ? up : corner }
+      const base = [0, left, up, (left + up) >> 1, filter === 4 ? paeth() : 0][filter]
+      out[y * stride + x] = (raw[y * (stride + 1) + 1 + x] + base) & 255
+    }
+  }
+  return (x, y) => [...out.subarray((y * width + x) * 4, (y * width + x) * 4 + 4)]
+}
 
 test('every logo file is the approved set\'s, byte for byte', () => {
   for (const [file, hash] of Object.entries(APPROVED)) assert.equal(sha256(bytes(file)), hash, `${file} is not the final set's file`)
@@ -101,8 +128,23 @@ test('the macOS update splash takes the lockup for the system\'s look', (t) => {
   assert.match(text('src/main.js'), /showUpdateSplash\(\{ home, product: PRODUCT, version: update\?\.version, dark: nativeTheme\.shouldUseDarkColors \}\)/)
 })
 
-test('the app icon is drawn from the approved mark', () => {
+test('the app icon is drawn from the approved mark, on the set\'s ink ground', () => {
   const icon = text('assets/icon.svg')
+  // The tile: the set's ink (#1e1923) is its ground, and no cream stop is left.
+  const table = /<linearGradient id="table"[^>]*>([\s\S]*?)<\/linearGradient>/.exec(icon)[1]
+  assert.deepEqual([...table.matchAll(/stop-color="(#[0-9a-f]{6})"/g)].map(match => match[1]), ['#2a2330', '#1e1923', '#16121a'])
+  assert.doesNotMatch(icon, /#fbf5ec|#f6eee2|#ecdfcc/)
+  // The tile keeps its shape: the rounded square, 824 wide with a 186 radius.
+  assert.match(icon, /<rect x="100" y="100" width="824" height="824" rx="186" fill="url\(#table\)"\/>/)
+  // The committed render is that drawing: ink above the mark, the mark in colour, clear corners.
+  const pixel = pngPixels(bytes('assets/icon.png'))
+  const [r, g, b, a] = pixel(512, 150)
+  assert.equal(a, 255)
+  assert.ok(r < 80 && g < 80 && b < 80, `the tile is ink above the mark, not rgb(${r},${g},${b})`)
+  assert.ok(Math.abs(r - 0x24) < 24 && Math.abs(g - 0x1e) < 24 && Math.abs(b - 0x2a) < 24, `the tile is the set's ink, lit a little: rgb(${r},${g},${b})`)
+  const [cr, cg, cb] = pixel(430, 330)
+  assert.ok(cb > 180 && cg > 150 && cr < 110, `the upper arm is cyan, not rgb(${cr},${cg},${cb})`)
+  assert.equal(pixel(4, 4)[3], 0, 'the corners are clear')
   const images = [...icon.matchAll(/<image\b[^>]*>/g)].map(match => match[0])
   assert.equal(images.length, 1)
   assert.match(images[0], / href="triskle-three-colours\.svg" /)
