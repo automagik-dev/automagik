@@ -58,7 +58,7 @@ try {
   }
   console.log('PASS root discovery files: 200, generated content, indexable')
   browser = await chromium.launch({ executablePath: process.env.LANDING_CHROME ?? '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: true })
-  for (const route of routes) for (const colorScheme of ['light', 'dark']) for (const width of [1440, 1024, 390, 320]) {
+  for (const route of routes) for (const colorScheme of ['light', 'dark']) for (const width of [1440, 1024, 880, 390, 320]) {
     const context = await browser.newContext({ viewport: { width, height: 900 }, deviceScaleFactor: 1, colorScheme, reducedMotion: 'reduce' })
     try {
       const outside = await guard(context)
