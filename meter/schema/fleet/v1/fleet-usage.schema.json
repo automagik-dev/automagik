@@ -1,0 +1,2195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://automagik.si/schema/meter/fleet/v1/fleet-usage.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "contract_version",
+    "capability",
+    "meter_version",
+    "status",
+    "error",
+    "generated_at",
+    "machines",
+    "missing",
+    "as_of",
+    "query",
+    "unattributed",
+    "actor_unattributed",
+    "rows"
+  ],
+  "properties": {
+    "contract": {
+      "const": "usagemeter.fleet.usage"
+    },
+    "contract_version": {
+      "const": 1
+    },
+    "capability": {
+      "const": "meter.fleet.usage@1"
+    },
+    "meter_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+([-+][0-9A-Za-z.-]+)?$"
+    },
+    "status": {
+      "enum": [
+        "ok",
+        "partial",
+        "usage",
+        "error"
+      ]
+    },
+    "error": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "type": "string",
+              "minLength": 1
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      ]
+    },
+    "generated_at": {
+      "$ref": "#/$defs/time"
+    },
+    "machines": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "scope",
+          "store_schema_version",
+          "as_of",
+          "complete",
+          "stale",
+          "clipped"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "scope": {
+            "const": "local"
+          },
+          "store_schema_version": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "as_of": {
+            "$ref": "#/$defs/timeOrNull"
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "stale": {
+            "type": "boolean"
+          },
+          "clipped": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "missing": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "machine",
+          "reason",
+          "message"
+        ],
+        "properties": {
+          "machine": {
+            "type": "string",
+            "minLength": 1
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "as_of": {
+      "$ref": "#/$defs/timeOrNull"
+    },
+    "query": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "repo",
+            "window",
+            "branch_count",
+            "branches"
+          ],
+          "properties": {
+            "repo": {
+              "$ref": "#/$defs/repo"
+            },
+            "repo_aliases": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 16,
+              "items": {
+                "$ref": "#/$defs/repo"
+              }
+            },
+            "window": {
+              "enum": [
+                "d1",
+                "d7",
+                "d30",
+                "d90",
+                "custom"
+              ]
+            },
+            "since": {
+              "$ref": "#/$defs/time"
+            },
+            "until": {
+              "$ref": "#/$defs/time"
+            },
+            "by": {
+              "enum": [
+                "bot",
+                "task"
+              ],
+              "description": "What a row is keyed by, when the request passed --by with a value other than branch, the default: bot gives bot rows (RFC 0021 (d)), and task gives task rows keyed by repo and task id (RFC 0018 M3, RFC 0021 D4). A bot with no row is 0 only when actor_unattributed.absent_bot_is_zero is true, else unknown. Absent for branch rows, whether or not --by branch was passed. A bot or task query may name no branch: the branches named are then a filter. A reader that does not ask for a value never meets its rows."
+            },
+            "branch_count": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Branches named, duplicates counted."
+            },
+            "branches": {
+              "type": "array",
+              "maxItems": 500,
+              "description": "As given, duplicates kept. A refusal keeps only the leading names that fit in 4 KiB. With by, a filter that may be empty: bot rows then count only usage whose branch, logged or filled, is one of these.",
+              "items": {
+                "$ref": "#/$defs/branch"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "unattributed": {
+      "description": "Usage in this repo and window with no branch: none logged, and none filled from the start row of a worker launch the call resolves to (branch_basis none; OMP and dsh-tui log no branch, RFC 0021 (a)). It could belong to any branch named, so above 0 no row is complete or zero.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tokens_total",
+            "harnesses"
+          ],
+          "properties": {
+            "tokens_total": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "harnesses": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "actor_unattributed": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/actorUnattributed"
+        }
+      ]
+    },
+    "rows": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/branchRow"
+          },
+          {
+            "$ref": "#/$defs/botRow"
+          },
+          {
+            "$ref": "#/$defs/taskRow"
+          }
+        ]
+      }
+    }
+  },
+  "$defs": {
+    "time": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$"
+    },
+    "timeOrNull": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/time"
+        }
+      ]
+    },
+    "repo": {
+      "description": "host/owner/repo as the meter normalizes a remote: credential-free, host lower-cased, no port, no .git, path case kept.",
+      "type": "string",
+      "pattern": "^[a-z0-9.-]+(/[^/\\s]+)+$",
+      "maxLength": 512
+    },
+    "branch": {
+      "description": "A branch as git records it: no space, no backslash, no control character; at most 255 bytes of UTF-8, which the meter checks (a schema counts characters).",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 255,
+      "pattern": "^[^\\s\\\\\\u0000-\\u001f\\u007f]+$"
+    },
+    "tokens": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "input",
+        "cache_read",
+        "cache_write_5m",
+        "cache_write_1h",
+        "output",
+        "reasoning",
+        "unsplit",
+        "total"
+      ],
+      "properties": {
+        "input": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cache_read": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cache_write_5m": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cache_write_1h": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "output": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reasoning": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "description": "Inside output, never added to total. null when a harness that counted toward the row logs no reasoning split (dsh-tui): unknown, never 0."
+        },
+        "unsplit": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Known only as a total (precision total_only)."
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "input + cache_read + cache_write_5m + cache_write_1h + output + unsplit."
+        }
+      }
+    },
+    "cost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "usd",
+        "usd_reported",
+        "usd_estimated",
+        "tokens_priced",
+        "tokens_reported",
+        "tokens_unpriced",
+        "unpriced_models",
+        "unpriced_models_omitted"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "priced",
+            "partial",
+            "unpriced",
+            "zero"
+          ]
+        },
+        "usd": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "usd_reported": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "usd_estimated": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "tokens_priced": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokens_reported": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokens_unpriced": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unpriced_models": {
+          "type": "array",
+          "maxItems": 8,
+          "description": "At most 8: the models with no price and the most unpriced tokens, ties by name. A name takes at most 40 bytes as JSON, its two quotes and any escapes included; a cut name ends with the 3-byte ellipsis, inside those 40. tokens_unpriced counts every unpriced token, listed or not, and unpriced_models_omitted says how many models the list leaves out.",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        },
+        "unpriced_models_omitted": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How many models with no price unpriced_models leaves out past its 8: none is dropped silently. Always present, 0 when none is left out; above 0, unpriced_models holds all 8."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "unpriced"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "usd": {
+                "type": "null"
+              },
+              "usd_reported": {
+                "type": "null"
+              },
+              "usd_estimated": {
+                "type": "null"
+              },
+              "tokens_priced": {
+                "const": 0
+              },
+              "tokens_reported": {
+                "const": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "priced",
+                  "partial",
+                  "zero"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "usd": {
+                "type": "number"
+              },
+              "usd_reported": {
+                "type": "number"
+              },
+              "usd_estimated": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "unpriced_models_omitted"
+            ],
+            "properties": {
+              "unpriced_models_omitted": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "unpriced_models": {
+                "type": "array",
+                "minItems": 8
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "priced"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "tokens_unpriced": {
+                "const": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "partial"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "tokens_unpriced": {
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "zero"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "usd": {
+                "const": 0
+              },
+              "usd_reported": {
+                "const": 0
+              },
+              "usd_estimated": {
+                "const": 0
+              },
+              "tokens_priced": {
+                "const": 0
+              },
+              "tokens_reported": {
+                "const": 0
+              },
+              "tokens_unpriced": {
+                "const": 0
+              },
+              "unpriced_models": {
+                "type": "array",
+                "maxItems": 0
+              },
+              "unpriced_models_omitted": {
+                "const": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "modelUsage": {
+      "description": "One model's usage on a row (R1b): ordered by tokens.total descending, ties by model name. A model name takes at most 40 bytes as JSON (quotes and escapes included), ending with the 3-byte ellipsis when cut. cost_usd is null when none of the model's tokens on the row is priced or reported (unknown, never 0).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model",
+        "calls",
+        "tokens",
+        "cost_usd"
+      ],
+      "properties": {
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "calls": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "tokens": {
+          "$ref": "#/$defs/tokens",
+          "properties": {
+            "total": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "cost_usd": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
+    },
+    "branchRow": {
+      "description": "A branch row: the repo and branch total over the window (attribution.precision branch_window), whatever --by asks (RFC 0021 D2).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "branch",
+        "requested",
+        "state",
+        "reason",
+        "tokens",
+        "cost",
+        "models",
+        "models_omitted",
+        "token_precision",
+        "attribution",
+        "activity",
+        "incomplete_sources"
+      ],
+      "properties": {
+        "branch": {
+          "$ref": "#/$defs/branch"
+        },
+        "requested": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How many times the call named this branch; above 1, cards share it."
+        },
+        "state": {
+          "enum": [
+            "measured",
+            "zero",
+            "missing",
+            "stale",
+            "unsupported"
+          ]
+        },
+        "reason": {
+          "enum": [
+            null,
+            "repo_not_seen",
+            "before_evidence",
+            "window_before_counted_from",
+            "backlog",
+            "source_incomplete",
+            "branch_unattributed",
+            "ingestion_stale",
+            "source_unsupported"
+          ]
+        },
+        "tokens": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/tokens"
+            }
+          ]
+        },
+        "cost": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/cost"
+            }
+          ]
+        },
+        "models": {
+          "type": "array",
+          "maxItems": 8,
+          "description": "Per-model usage on the row, ordered by tokens.total descending, ties by model name; at most 8, and trimmed further only when needed to keep the row within its 2,304-byte bound.",
+          "items": {
+            "$ref": "#/$defs/modelUsage"
+          }
+        },
+        "models_omitted": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Models with usage on the row left out past the 8-model cap or the 2,304-byte row bound: none is dropped silently."
+        },
+        "token_precision": {
+          "enum": [
+            null,
+            "exact",
+            "mixed",
+            "total_only"
+          ]
+        },
+        "attribution": {
+          "$ref": "#/$defs/attribution",
+          "properties": {
+            "precision": {
+              "const": "branch_window"
+            },
+            "actor": {
+              "properties": {
+                "tokens_by_branch_basis": {
+                  "properties": {
+                    "none": {
+                      "const": 0,
+                      "description": "A branch row holds only usage with that branch, logged or filled."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "activity": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/activity"
+            }
+          ]
+        },
+        "incomplete_sources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "anyOf": [
+              {
+                "properties": {
+                  "state": {
+                    "const": "zero"
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "tokens": {
+                    "type": "null"
+                  }
+                }
+              }
+            ]
+          },
+          "then": {
+            "properties": {
+              "models": {
+                "type": "array",
+                "maxItems": 0
+              },
+              "models_omitted": {
+                "const": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "measured",
+                  "stale"
+                ]
+              },
+              "models": {
+                "maxItems": 0
+              },
+              "tokens": {
+                "type": "object",
+                "properties": {
+                  "total": {
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "models_omitted": {
+                "minimum": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "tokens": {
+                "type": "null"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "attribution": {
+                "properties": {
+                  "actor": false
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "measured",
+                  "zero"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "const": null
+              },
+              "tokens": {
+                "type": "object"
+              },
+              "cost": {
+                "type": "object"
+              },
+              "activity": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "measured"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "tokens": {
+                "type": "object",
+                "properties": {
+                  "total": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              },
+              "cost": {
+                "type": "object",
+                "properties": {
+                  "state": {
+                    "enum": [
+                      "priced",
+                      "partial",
+                      "unpriced"
+                    ]
+                  }
+                }
+              },
+              "token_precision": {
+                "enum": [
+                  "exact",
+                  "mixed",
+                  "total_only"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "zero"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "tokens": {
+                "type": "object",
+                "properties": {
+                  "input": {
+                    "const": 0
+                  },
+                  "cache_read": {
+                    "const": 0
+                  },
+                  "cache_write_5m": {
+                    "const": 0
+                  },
+                  "cache_write_1h": {
+                    "const": 0
+                  },
+                  "output": {
+                    "const": 0
+                  },
+                  "reasoning": {
+                    "const": 0
+                  },
+                  "unsplit": {
+                    "const": 0
+                  },
+                  "total": {
+                    "const": 0
+                  }
+                }
+              },
+              "cost": {
+                "type": "object",
+                "properties": {
+                  "state": {
+                    "const": "zero"
+                  }
+                }
+              },
+              "token_precision": {
+                "const": null
+              },
+              "attribution": {
+                "type": "object",
+                "properties": {
+                  "coverage": {
+                    "const": "complete"
+                  }
+                }
+              },
+              "incomplete_sources": {
+                "type": "array",
+                "maxItems": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "missing",
+                  "unsupported"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "tokens": {
+                "type": "null"
+              },
+              "cost": {
+                "type": "null"
+              },
+              "activity": {
+                "type": "null"
+              },
+              "token_precision": {
+                "const": null
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "missing"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "enum": [
+                  "repo_not_seen",
+                  "before_evidence",
+                  "window_before_counted_from",
+                  "backlog",
+                  "source_incomplete",
+                  "branch_unattributed"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "unsupported"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "const": "source_unsupported"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "stale"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "const": "ingestion_stale"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "activity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "first_hour",
+        "last_hour",
+        "hours",
+        "harnesses"
+      ],
+      "properties": {
+        "first_hour": {
+          "$ref": "#/$defs/timeOrNull"
+        },
+        "last_hour": {
+          "$ref": "#/$defs/timeOrNull"
+        },
+        "hours": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Distinct hours with usage, not elapsed time."
+        },
+        "harnesses": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "attribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "precision",
+        "exclusive",
+        "shared",
+        "coverage"
+      ],
+      "properties": {
+        "precision": {
+          "enum": [
+            "branch_window",
+            "task_interval",
+            "actor_interval"
+          ],
+          "description": "What the row's numbers are. branch_window: a branch row, the repo and branch total over the window (RFC 0018). actor_interval: a bot row (--by bot), only usage tied to a launch that names the bot, at evidence-backed call times (RFC 0021 (d)). task_interval: a task row (--by task), the repo's task-labelled usage in the window, keyed by repo and task id; a task id the meter ties to more than one checkout of the repo is never summed, and its row is missing with the reason task_ambiguous (RFC 0021 D4). It was widened in place from branch_window alone before the first release that shipped the meter; from that release on, a new `--by` value with its row kind and its reasons is additive under RFC 0018's Versioning, so a release that ships the meter keeps contract 1 for this row."
+        },
+        "exclusive": {
+          "const": false
+        },
+        "shared": {
+          "type": "boolean"
+        },
+        "coverage": {
+          "enum": [
+            "complete",
+            "partial"
+          ],
+          "description": "partial when the repo has usage with no branch in the window (envelope unattributed) and the row could be owed some of it: every branch row, and every bot or task row of a --by bot or --by task query that names branches. The row's numbers are then a lower bound. A bot or task row of a query that names no branch counts usage with no branch itself (tokens_by_branch_basis.none), so it is always complete. Separate from source health, from price coverage and from the actor share, which attribution.actor and actor_unattributed report and which never moves this (RFC 0021 D3)."
+        },
+        "actor": {
+          "$ref": "#/$defs/actor"
+        }
+      }
+    },
+    "actor": {
+      "description": "RFC 0021 (d): who the row's tokens belong to. The four counts add up to tokens.total; tokens_by_basis adds up to tokens_attributed; tokens_by_branch_basis adds up to tokens.total (the crate's contract test checks the sums: a schema cannot add). Present on every row with tokens when the meter reports actors, absent otherwise.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tokens_attributed",
+        "tokens_ambiguous",
+        "tokens_unlinked",
+        "tokens_before_evidence",
+        "tokens_by_basis",
+        "tokens_by_branch_basis"
+      ],
+      "properties": {
+        "tokens_attributed": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Tied, at or after evidence_from, to one launch that names a bot, or to several whose tags are equal."
+        },
+        "tokens_ambiguous": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Claimed by two or more launches, or a ledger row and a label, whose tags differ: never given a bot."
+        },
+        "tokens_unlinked": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "At or after evidence_from, tied to no launch that names a bot."
+        },
+        "tokens_before_evidence": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Before evidence_from, or all of it while evidence_from is null: never attributed, even where frozen rollup tags name a bot."
+        },
+        "tokens_by_basis": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "session",
+            "label",
+            "worktree"
+          ],
+          "description": "How tokens_attributed was tied to its launch, strongest first: a start-time session record names the session, an hc label seen at a sync named it, or the call's cwd is the worktree of exactly one logged launch. A tag that a label supplied counts under label, whatever tied the call.",
+          "properties": {
+            "session": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "A start-time session record tied the call: a Herdr session row, or a harness's own record of the terminal its session started in (a dsh-tui session header's terminal, RFC 0026 (d))."
+            },
+            "label": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "worktree": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "tokens_by_branch_basis": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "log",
+            "ledger",
+            "none"
+          ],
+          "description": "Where the branch of tokens.total came from, apart from how the call was tied: the harness logged it, it was filled from the start row of the worker launch the call resolves to (dsh-tui, OMP), or there is none.",
+          "properties": {
+            "log": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "ledger": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "none": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "taskRow": {
+      "description": "A task row (--by task, attribution.precision task_interval, RFC 0018 M3, RFC 0021 D4): the usage in the repo and window attributed to one task id, with the launch tags that did the work (actors). One row per task id. A task id the meter ties to more than one checkout of the repo is never summed: its row is missing with the reason task_ambiguous (RFC 0021 D4), and the meter never prints a checkout path. The branches named are an optional filter, as for --by bot. Its numbers are evidence-backed (task_interval), so the branch row stays the total for a reader that needs one.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "task",
+        "actors",
+        "actors_omitted",
+        "state",
+        "reason",
+        "tokens",
+        "cost",
+        "models",
+        "models_omitted",
+        "token_precision",
+        "attribution",
+        "activity",
+        "incomplete_sources"
+      ],
+      "properties": {
+        "task": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Genie's short task id (gn-42, gh-1415, gl-231), joined with its project. Never inferred from a branch name, and never cut short: an id the contract cannot print is left out of the rows. At most 64 characters and 96 bytes as JSON, its escapes included."
+        },
+        "actors": {
+          "type": "array",
+          "description": "The launch tags that did the task's work, one per (bot, kind, role, squad, unrecorded, harness) with usage, ordered by that key (byte order, null first, unrecorded in its enum's order). A task answered by several bots or roles names them all; it never guesses a single one. The row's numbers are theirs together.",
+          "items": {
+            "$ref": "#/$defs/taskActor"
+          }
+        },
+        "actors_omitted": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Actor keys the row's 2,304-byte bound left out (the trailing ones in key order); above 0, the task had more workers than the row can name, and a reader shows at least."
+        },
+        "state": {
+          "enum": [
+            "measured",
+            "stale",
+            "missing"
+          ]
+        },
+        "reason": {
+          "enum": [
+            null,
+            "task_ambiguous",
+            "ingestion_stale"
+          ]
+        },
+        "tokens": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/tokens"
+            }
+          ]
+        },
+        "cost": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/cost"
+            }
+          ]
+        },
+        "models": {
+          "type": "array",
+          "maxItems": 8,
+          "description": "Per-model usage on the row, ordered by tokens.total descending, ties by model name; at most 8, and trimmed further only when needed to keep the row within its 2,304-byte bound.",
+          "items": {
+            "$ref": "#/$defs/modelUsage"
+          }
+        },
+        "models_omitted": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Models with usage on the row left out past the 8-model cap or the 2,304-byte row bound: none is dropped silently."
+        },
+        "token_precision": {
+          "enum": [
+            null,
+            "exact",
+            "mixed",
+            "total_only"
+          ]
+        },
+        "attribution": {
+          "$ref": "#/$defs/attribution",
+          "properties": {
+            "precision": {
+              "const": "task_interval"
+            },
+            "shared": {
+              "const": false
+            },
+            "actor": {
+              "properties": {
+                "tokens_ambiguous": {
+                  "const": 0
+                },
+                "tokens_unlinked": {
+                  "const": 0
+                },
+                "tokens_before_evidence": {
+                  "const": 0
+                }
+              }
+            }
+          }
+        },
+        "activity": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/activity"
+            }
+          ]
+        },
+        "incomplete_sources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "missing"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "models": {
+                "type": "array",
+                "maxItems": 0
+              },
+              "models_omitted": {
+                "const": 0
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "measured",
+                  "stale"
+                ]
+              },
+              "models": {
+                "maxItems": 0
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "models_omitted": {
+                "minimum": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "measured"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "const": null
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "stale"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "const": "ingestion_stale"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "missing"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "const": "task_ambiguous"
+              },
+              "tokens": {
+                "type": "null"
+              },
+              "cost": {
+                "type": "null"
+              },
+              "activity": {
+                "type": "null"
+              },
+              "token_precision": {
+                "const": null
+              },
+              "actors": {
+                "maxItems": 0
+              },
+              "actors_omitted": {
+                "const": 0
+              },
+              "attribution": {
+                "properties": {
+                  "actor": false
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "measured",
+                  "stale"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "tokens": {
+                "type": "object",
+                "properties": {
+                  "total": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              },
+              "cost": {
+                "type": "object",
+                "properties": {
+                  "state": {
+                    "enum": [
+                      "priced",
+                      "partial",
+                      "unpriced"
+                    ]
+                  }
+                }
+              },
+              "activity": {
+                "type": "object"
+              },
+              "token_precision": {
+                "enum": [
+                  "exact",
+                  "mixed",
+                  "total_only"
+                ]
+              },
+              "attribution": {
+                "required": [
+                  "actor"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "description": "A measured or stale row that names no actor had more than its bound could hold: it says how many it left out, never a silent cut.",
+          "if": {
+            "properties": {
+              "state": {
+                "enum": [
+                  "measured",
+                  "stale"
+                ]
+              },
+              "actors": {
+                "maxItems": 0
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "actors_omitted": {
+                "minimum": 1
+              }
+            }
+          }
+        }
+      ]
+    },
+    "taskActor": {
+      "description": "One launch tag that did part of a task's work: the bot key a bot row is keyed by, without its numbers. kind is always worker: a seat never records a task (RFC 0021 (a)).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bot",
+        "kind",
+        "role",
+        "squad",
+        "unrecorded",
+        "harness"
+      ],
+      "properties": {
+        "bot": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "The bot id the launch recorded. At most 64 characters and 96 bytes as JSON, its escapes included."
+        },
+        "kind": {
+          "const": "worker"
+        },
+        "role": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "The start row's role (dev, test, review or fix). null only when unrecorded names it. At most 64 characters and 96 bytes as JSON, its escapes included: one past either is unrecorded."
+        },
+        "squad": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "The bot heading the launching bot's lead chain, frozen at launch (RFC 0021 (e)). null for the main bot, which heads no squad, or, when unrecorded names it, unknown. At most 64 characters and 96 bytes as JSON, its escapes included: one past either is unrecorded."
+        },
+        "unrecorded": {
+          "enum": [
+            [],
+            [
+              "role"
+            ],
+            [
+              "squad"
+            ],
+            [
+              "role",
+              "squad"
+            ]
+          ],
+          "description": "The key fields the launch's start row did not record (rows written before RFC 0021 delivery 3): each is null, and unknown, never none."
+        },
+        "harness": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "unrecorded": {
+                "enum": [
+                  [],
+                  [
+                    "squad"
+                  ]
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "role": {
+                "type": "string"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "role": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "unrecorded": {
+                "enum": [
+                  [
+                    "squad"
+                  ],
+                  [
+                    "role",
+                    "squad"
+                  ]
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "squad": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "botRow": {
+      "description": "A bot row (--by bot, attribution.precision actor_interval, RFC 0021 (d)): the usage in the repo and window attributed to one bot key, (bot, kind, role, squad, unrecorded, harness): unrecorded is in the key because a null squad is the main bot's when recorded and unknown when not, and the two never share a row. Squad is part of the key because it is frozen per launch: a bot re-led within the window has a row per squad. A row exists only for attributed usage, so a bot with no row is unknown while actor_unattributed is above 0, never 0. While ingestion.complete is false (a sync stopped at its budget, or a re-import, left usage unread), a bot row's numbers are a lower bound and a reader shows \"at least\", as for a branch row (RFC 0018).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bot",
+        "kind",
+        "role",
+        "squad",
+        "unrecorded",
+        "harness",
+        "state",
+        "reason",
+        "tokens",
+        "cost",
+        "models",
+        "models_omitted",
+        "token_precision",
+        "attribution",
+        "activity",
+        "incomplete_sources"
+      ],
+      "properties": {
+        "bot": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "The bot id the launch recorded: the attach ledger's binding for a seat, else the start row's botId. At most 64 characters and 96 bytes as JSON, its escapes included: a bot past either is never printed, and never cut short."
+        },
+        "kind": {
+          "enum": [
+            "worker",
+            "seat"
+          ]
+        },
+        "role": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "The start row's role: dev, test, review or fix for a worker; the pane role for a seat. null only when unrecorded names it. At most 64 characters and 96 bytes as JSON, its escapes included: one past either is unrecorded."
+        },
+        "squad": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "The bot heading the launching bot's lead chain, frozen at launch (RFC 0021 (e)). null for the main bot, which heads no squad, or, when unrecorded names it, unknown. At most 64 characters and 96 bytes as JSON, its escapes included: one past either is unrecorded."
+        },
+        "unrecorded": {
+          "enum": [
+            [],
+            [
+              "role"
+            ],
+            [
+              "squad"
+            ],
+            [
+              "role",
+              "squad"
+            ]
+          ],
+          "description": "The key fields the launch's start row did not record (rows written before RFC 0021 delivery 3): each is null, and unknown, never none."
+        },
+        "harness": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "state": {
+          "enum": [
+            "measured",
+            "stale"
+          ]
+        },
+        "reason": {
+          "enum": [
+            null,
+            "ingestion_stale"
+          ]
+        },
+        "tokens": {
+          "$ref": "#/$defs/tokens"
+        },
+        "cost": {
+          "$ref": "#/$defs/cost"
+        },
+        "models": {
+          "type": "array",
+          "maxItems": 8,
+          "description": "Per-model usage on the row, ordered by tokens.total descending, ties by model name; at most 8, and trimmed further only when needed to keep the row within its 2,304-byte bound.",
+          "items": {
+            "$ref": "#/$defs/modelUsage"
+          }
+        },
+        "models_omitted": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Models with usage on the row left out past the 8-model cap or the 2,304-byte row bound: none is dropped silently."
+        },
+        "token_precision": {
+          "enum": [
+            "exact",
+            "mixed",
+            "total_only"
+          ]
+        },
+        "attribution": {
+          "$ref": "#/$defs/attribution",
+          "required": [
+            "precision",
+            "exclusive",
+            "shared",
+            "coverage",
+            "actor"
+          ],
+          "properties": {
+            "precision": {
+              "const": "actor_interval"
+            },
+            "shared": {
+              "const": false
+            },
+            "actor": {
+              "properties": {
+                "tokens_ambiguous": {
+                  "const": 0
+                },
+                "tokens_unlinked": {
+                  "const": 0
+                },
+                "tokens_before_evidence": {
+                  "const": 0
+                }
+              }
+            }
+          }
+        },
+        "activity": {
+          "$ref": "#/$defs/activity"
+        },
+        "incomplete_sources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "models": {
+                "maxItems": 0
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "models_omitted": {
+                "minimum": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "measured"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "const": null
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "stale"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "reason": {
+                "const": "ingestion_stale"
+              }
+            }
+          }
+        },
+        {
+          "properties": {
+            "tokens": {
+              "properties": {
+                "total": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              }
+            },
+            "cost": {
+              "properties": {
+                "state": {
+                  "enum": [
+                    "priced",
+                    "partial",
+                    "unpriced"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "unrecorded": {
+                "enum": [
+                  [],
+                  [
+                    "squad"
+                  ]
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "role": {
+                "type": "string"
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "role": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "unrecorded": {
+                "enum": [
+                  [
+                    "squad"
+                  ],
+                  [
+                    "role",
+                    "squad"
+                  ]
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "squad": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "actorUnattributed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tokens_total",
+        "tokens_ambiguous",
+        "tokens_unlinked",
+        "tokens_before_evidence",
+        "parts",
+        "absent_bot_is_zero"
+      ],
+      "properties": {
+        "absent_bot_is_zero": {
+          "type": "boolean",
+          "description": "Whether a bot with no row in this answer had no usage in the repo and window (a real 0). Always false unless query.by is bot: only a bot answer has bot rows to be absent from. True only when tokens_total is 0 and RFC 0018's zero conditions hold for the whole answer: ingestion complete and fresh with a watermark, the window not clipped, every source ok or absent (no legacy-store), the repo seen in this store (the meter's own responsibility, which no schema can see, as for a zero branch row), and, under a branch filter, no usage with no branch (unattributed.tokens_total 0), since that usage could be an absent bot's on a branch named. Otherwise false, and a bot with no row is unknown, never 0 (RFC 0021 (d))."
+        },
+        "tokens_total": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "tokens_ambiguous + tokens_unlinked + tokens_before_evidence."
+        },
+        "tokens_ambiguous": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokens_unlinked": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tokens_before_evidence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "parts": {
+          "type": "array",
+          "description": "One per reason with usage, in the order of the reason enum; each part's tokens_total adds up, by state, to the count of that name, so a reader that meets a reason it does not know still knows its state.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "state",
+              "reason",
+              "tokens_total",
+              "harnesses"
+            ],
+            "properties": {
+              "state": {
+                "enum": [
+                  "ambiguous",
+                  "unlinked",
+                  "before_evidence"
+                ]
+              },
+              "reason": {
+                "enum": [
+                  "claimants_differ",
+                  "no_record",
+                  "dsh_tui_seat",
+                  "other_machine",
+                  "before_evidence"
+                ],
+                "description": "claimants_differ: launches, or a ledger row and a label, whose tags differ claim the call; also a claimant whose stored tag cannot be read or is past the tag cap (64 characters, 96 bytes as JSON). no_record: no ledger row, label or worktree ties the call to a launch that names a bot. dsh_tui_seat: a dsh-tui session in a shared checkout (a folder that is no worker launch's worktree, the project root among them) that no session or terminal record ties to a launch (RFC 0026 (d)); one with such a record whose launch names no bot is no_record. other_machine: the call's only launch or session record belongs to another machine's core (a log moved from that machine, for one), so its launch row is in that computer's ledger: unknown until a fleet query (RFC 0021 Decided 6). before_evidence: before evidence_from, or while it is null."
+              },
+              "tokens_total": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "harnesses": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "allOf": [
+              {
+                "if": {
+                  "properties": {
+                    "reason": {
+                      "const": "claimants_differ"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "state": {
+                      "const": "ambiguous"
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "reason": {
+                      "enum": [
+                        "no_record",
+                        "dsh_tui_seat",
+                        "other_machine"
+                      ]
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "state": {
+                      "const": "unlinked"
+                    }
+                  }
+                }
+              },
+              {
+                "if": {
+                  "properties": {
+                    "reason": {
+                      "const": "before_evidence"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "state": {
+                      "const": "before_evidence"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "tokens_total": {
+                "const": 0
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "parts": {
+                "maxItems": 0
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "parts": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "description": "An absent bot is 0 only when no usage is left unattributed.",
+          "if": {
+            "properties": {
+              "absent_bot_is_zero": {
+                "const": true
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "tokens_total": {
+                "const": 0
+              }
+            }
+          }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "ok"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "missing": {
+            "maxItems": 0
+          },
+          "error": {
+            "type": "null"
+          },
+          "machines": {
+            "minItems": 1,
+            "items": {
+              "properties": {
+                "complete": {
+                  "const": true
+                },
+                "stale": {
+                  "const": false
+                },
+                "clipped": {
+                  "const": false
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "missing": {
+            "minItems": 1
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "partial"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "status": {
+            "const": "partial"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "usage",
+              "error"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "type": "string",
+                "minLength": 1
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "machines": {
+            "maxItems": 0
+          },
+          "rows": {
+            "maxItems": 0
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "ok",
+              "partial"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "error": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ]
+}

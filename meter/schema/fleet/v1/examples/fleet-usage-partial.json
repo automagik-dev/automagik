@@ -1,0 +1,251 @@
+{
+  "actor_unattributed": {
+    "absent_bot_is_zero": false,
+    "parts": [
+      {
+        "harnesses": [
+          "claude-code",
+          "codex"
+        ],
+        "reason": "no_record",
+        "state": "unlinked",
+        "tokens_total": 3239000
+      }
+    ],
+    "tokens_ambiguous": 0,
+    "tokens_before_evidence": 0,
+    "tokens_total": 3239000,
+    "tokens_unlinked": 3239000
+  },
+  "as_of": null,
+  "capability": "meter.fleet.usage@1",
+  "contract": "usagemeter.fleet.usage",
+  "contract_version": 1,
+  "error": null,
+  "generated_at": "2026-11-08T20:00:05Z",
+  "machines": [
+    {
+      "as_of": "2026-11-08T19:52:41Z",
+      "clipped": false,
+      "complete": true,
+      "id": "machine-a1b2c3",
+      "scope": "local",
+      "stale": false,
+      "store_schema_version": 3
+    }
+  ],
+  "meter_version": "1.2.3",
+  "missing": [
+    {
+      "machine": "machine-z9y8x7",
+      "message": "ssh_timeout",
+      "reason": "unreachable"
+    }
+  ],
+  "query": {
+    "branch_count": 3,
+    "branches": [
+      "feat/gn-12-cache",
+      "fix/gn-14-retry",
+      "docs/gn-90-readme"
+    ],
+    "repo": "example.com/acme/widgets",
+    "window": "d30"
+  },
+  "rows": [
+    {
+      "activity": null,
+      "attribution": {
+        "coverage": "complete",
+        "exclusive": false,
+        "precision": "branch_window",
+        "shared": false
+      },
+      "branch": "docs/gn-90-readme",
+      "cost": null,
+      "incomplete_sources": [],
+      "models": [],
+      "models_omitted": 0,
+      "reason": "source_incomplete",
+      "requested": 1,
+      "state": "missing",
+      "token_precision": null,
+      "tokens": null
+    },
+    {
+      "activity": {
+        "first_hour": "2026-11-02T09:00:00Z",
+        "harnesses": [
+          "claude-code"
+        ],
+        "hours": 17,
+        "last_hour": "2026-11-08T19:00:00Z"
+      },
+      "attribution": {
+        "actor": {
+          "tokens_ambiguous": 0,
+          "tokens_attributed": 0,
+          "tokens_before_evidence": 0,
+          "tokens_by_basis": {
+            "label": 0,
+            "session": 0,
+            "worktree": 0
+          },
+          "tokens_by_branch_basis": {
+            "ledger": 0,
+            "log": 2764000,
+            "none": 0
+          },
+          "tokens_unlinked": 2764000
+        },
+        "coverage": "complete",
+        "exclusive": false,
+        "precision": "branch_window",
+        "shared": false
+      },
+      "branch": "feat/gn-12-cache",
+      "cost": {
+        "state": "priced",
+        "tokens_priced": 2764000,
+        "tokens_reported": 0,
+        "tokens_unpriced": 0,
+        "unpriced_models": [],
+        "unpriced_models_omitted": 0,
+        "usd": 3.14,
+        "usd_estimated": 3.14,
+        "usd_reported": 0.0
+      },
+      "incomplete_sources": [],
+      "models": [
+        {
+          "calls": 17,
+          "cost_usd": 3.14,
+          "model": "model-0",
+          "tokens": {
+            "cache_read": 2400000,
+            "cache_write_1h": 0,
+            "cache_write_5m": 180000,
+            "input": 120000,
+            "output": 64000,
+            "reasoning": 12000,
+            "total": 2764000,
+            "unsplit": 0
+          }
+        }
+      ],
+      "models_omitted": 0,
+      "reason": null,
+      "requested": 1,
+      "state": "measured",
+      "token_precision": "exact",
+      "tokens": {
+        "cache_read": 2400000,
+        "cache_write_1h": 0,
+        "cache_write_5m": 180000,
+        "input": 120000,
+        "output": 64000,
+        "reasoning": 12000,
+        "total": 2764000,
+        "unsplit": 0
+      }
+    },
+    {
+      "activity": {
+        "first_hour": "2026-11-06T13:00:00Z",
+        "harnesses": [
+          "claude-code",
+          "codex"
+        ],
+        "hours": 6,
+        "last_hour": "2026-11-08T11:00:00Z"
+      },
+      "attribution": {
+        "actor": {
+          "tokens_ambiguous": 0,
+          "tokens_attributed": 0,
+          "tokens_before_evidence": 0,
+          "tokens_by_basis": {
+            "label": 0,
+            "session": 0,
+            "worktree": 0
+          },
+          "tokens_by_branch_basis": {
+            "ledger": 0,
+            "log": 475000,
+            "none": 0
+          },
+          "tokens_unlinked": 475000
+        },
+        "coverage": "complete",
+        "exclusive": false,
+        "precision": "branch_window",
+        "shared": false
+      },
+      "branch": "fix/gn-14-retry",
+      "cost": {
+        "state": "priced",
+        "tokens_priced": 475000,
+        "tokens_reported": 0,
+        "tokens_unpriced": 0,
+        "unpriced_models": [],
+        "unpriced_models_omitted": 0,
+        "usd": 0.6,
+        "usd_estimated": 0.6,
+        "usd_reported": 0.0
+      },
+      "incomplete_sources": [],
+      "models": [
+        {
+          "calls": 5,
+          "cost_usd": 0.52,
+          "model": "model-0",
+          "tokens": {
+            "cache_read": 300000,
+            "cache_write_1h": 10000,
+            "cache_write_5m": 20000,
+            "input": 20000,
+            "output": 10000,
+            "reasoning": 0,
+            "total": 360000,
+            "unsplit": 0
+          }
+        },
+        {
+          "calls": 1,
+          "cost_usd": 0.08,
+          "model": "model-1",
+          "tokens": {
+            "cache_read": 100000,
+            "cache_write_1h": 0,
+            "cache_write_5m": 0,
+            "input": 10000,
+            "output": 5000,
+            "reasoning": 0,
+            "total": 115000,
+            "unsplit": 0
+          }
+        }
+      ],
+      "models_omitted": 0,
+      "reason": null,
+      "requested": 1,
+      "state": "measured",
+      "token_precision": "exact",
+      "tokens": {
+        "cache_read": 400000,
+        "cache_write_1h": 10000,
+        "cache_write_5m": 20000,
+        "input": 30000,
+        "output": 15000,
+        "reasoning": 0,
+        "total": 475000,
+        "unsplit": 0
+      }
+    }
+  ],
+  "status": "partial",
+  "unattributed": {
+    "harnesses": [],
+    "tokens_total": 0
+  }
+}
