@@ -5,10 +5,10 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { fileText, scan } from '../../herdr/scripts/privacy-check.mjs'
-import { supportPrivacy } from './waitlist/lib/ui.js'
+import { htmlPage, supportPrivacy } from './waitlist/lib/ui.js'
 import { themeCss } from './scripts/sync-theme.mjs'
-import { pages, routes, rootFiles, weUnfold, arca, oiTag, platforms, offered, used, usedCredit, trademarks } from './scripts/build-pages.mjs'
-import { GEOMETRY, LOGO, TONES, tagInner } from './scripts/build-lockup.mjs'
+import { pages, routes, rootFiles, weUnfold, arca, oiTag, platforms, offered, used, usedCredit, trademarks, brand as siteLogo, icons, manifest as webManifest } from './scripts/build-pages.mjs'
+import { BOX, GEOMETRY, LOGO, TONES, logoInner, tagInner } from './scripts/build-lockup.mjs'
 
 const root = resolve(fileURLToPath(new URL('.', import.meta.url)))
 const read = path => readFileSync(resolve(root, path), 'utf8')
@@ -149,7 +149,7 @@ test('every href/action points locally or to an exact reviewed destination', () 
 
 test('images are reviewed brand assets, unchanged captures or recorded crops of them', () => {
   // Arca's two icon files are its kit's, under the kit's own names.
-  const brand = new Set(['/assets/brand/triskle.webp', '/assets/brand/automagik-wordmark-ink.svg', '/assets/brand/automagik-wordmark-cream.svg', '/assets/brand/mark.webp', '/assets/brand/omni-pleased.png', '/assets/brand/arca/svg/arca-icon-ink.svg', '/assets/brand/arca/svg/arca-icon-ivory.svg', '/assets/brand/automagik/automagik-lockup-oi-ink.svg', '/assets/brand/automagik/automagik-lockup-oi-cream.svg'])
+  const brand = new Set(['/assets/brand/automagik-lockup-three-colours-ink-header.svg', '/assets/brand/automagik-lockup-three-colours-cream-header.svg', '/assets/brand/triskle-three-colours.svg', '/assets/brand/triskle-three-colours-32.svg', '/assets/brand/omni-pleased.png', '/assets/brand/arca/svg/arca-icon-ink.svg', '/assets/brand/arca/svg/arca-icon-ivory.svg', '/assets/brand/automagik/automagik-lockup-oi-ink.svg', '/assets/brand/automagik/automagik-lockup-oi-cream.svg'])
   for (const { mark: [light, dark] } of used) for (const file of [light, dark]) if (file) brand.add(`/assets/brand/used/${file}`)
   for (const html of generated.values()) {
     for (const [, value] of html.matchAll(/(?:src|srcset|poster)="([^"]+)"/g)) {
@@ -163,7 +163,7 @@ test('images are reviewed brand assets, unchanged captures or recorded crops of 
       // Plain-words alt text, or an explicitly decorative image hidden from assistive technology.
       assert.match(image, /alt="[^"]{20,}"|alt="Automagik"|alt="" aria-hidden="true"/)
       assert.match(image, /\bwidth="\d+" height="\d+"/, image)
-      assert.match(image, /loading="lazy"|fetchpriority="high"|decoding="async"|class="brand-(?:mark|word)"/, image)
+      assert.match(image, /loading="lazy"|fetchpriority="high"|decoding="async"|alt="Automagik"/, image)
     }
   }
   const files = readdirSync(resolve(root, 'assets/screens')).filter(file => file.endsWith('.png')).sort()
@@ -241,46 +241,70 @@ test('the projects row: eleven projects in the approved order, each with its own
   assert.ok(css.includes('.we-use-copy{display:none}') && css.includes('.we-use-track:hover .we-use-list{animation-play-state:paused}') && css.includes('.we-use-track:not(:focus-within) .we-use-list{'))
 })
 
-test('the logo in the header and the footer: the clay triskle and the lowercase wordmark, each file unchanged', () => {
-  const digest = file => createHash('sha256').update(readFileSync(resolve(root, 'assets/brand', file))).digest('hex')
+test('the logo and the icons: the logo kit\'s own files, unchanged, in the header, the footer and the browser tab', async () => {
   const notes = read('assets/brand/LICENSES.md')
-  const logo = '<a class="brand" href="/" aria-label="Automagik home"><img class="brand-mark" src="/assets/brand/triskle.webp" width="225" height="192" alt="" aria-hidden="true"><picture><source media="(prefers-color-scheme: dark)" srcset="/assets/brand/automagik-wordmark-cream.svg"><img class="brand-word" src="/assets/brand/automagik-wordmark-ink.svg" width="1333" height="257" alt="Automagik"></picture></a>'
+  const logo = '<a class="brand" href="/" aria-label="Automagik home"><picture><source media="(prefers-color-scheme: dark)" srcset="/assets/brand/automagik-lockup-three-colours-cream-header.svg"><img src="/assets/brand/automagik-lockup-three-colours-ink-header.svg" width="1632" height="264" alt="Automagik"></picture></a>'
+  assert.equal(siteLogo, logo)
+  const tabs = '<link rel="icon" href="/favicon.ico" sizes="48x48"><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><link rel="manifest" href="/site.webmanifest">'
+  assert.equal(icons, tabs)
   for (const [route, html] of generated) {
-    // Once in the header and once in the footer, and the gradient capitals in neither.
+    // The logo once in the header and once in the footer; the icons once in the head.
     assert.equal(html.split(logo).length, 3, route)
     assert.equal(html.split('class="brand"').length, 3, route)
     assert.ok(html.slice(0, html.indexOf('<main')).includes(`<div class="wrap top-inner">${logo}`), route)
     assert.ok(html.slice(html.indexOf('<footer')).includes(`<div class="footer-brand">${logo}`), route)
-    assert.doesNotMatch(html, /\/assets\/brand\/(?:lockup|wordmark)\.webp/, route)
+    assert.equal(html.slice(0, html.indexOf('</head>')).split(tabs).length, 2, route)
+    assert.deepEqual([...html.matchAll(/<link rel="(?:icon|apple-touch-icon|manifest|shortcut icon)"[^>]*>/g)].map(match => match[0]).join(''), tabs, route)
+    // The retired logo (gradient capitals, the old clay triskle without its seam line) is in no page.
+    assert.doesNotMatch(html, /(?:lockup|wordmark|triskle)\.webp|automagik-wordmark-|\/assets\/art\/mark/, route)
+    // The mark alone is the kit's triskle in three colours, the drawing made for the size
+    // shown: the 32 px drawing in the two menus, the large one in a hero.
+    const marks = [...html.matchAll(/<img[^>]*\/triskle-[^>]*>/g)].map(match => match[0])
+    assert.equal(marks.length, route === '/cloud/' || route === '/mykes/' ? 3 : 2, route)
+    for (const image of marks) assert.match(image, /^<img class="(?:menu-art" src="\/assets\/brand\/triskle-three-colours-32\.svg" width="32" height="32" alt="" aria-hidden="true" loading="lazy"|(?:hero|coming)-mark" src="\/assets\/brand\/triskle-three-colours\.svg" width="300" height="300" alt="[^"]*"(?: aria-hidden="true")? fetchpriority="high") decoding="async">$/, image)
   }
-  // The wordmark: the logo kit's two files under their own names, byte for byte. One set of
-  // outlined letters in the file's one colour (dark for the light page, cream for the dark
-  // one) and the pink dot; no font, text, picture or link inside.
-  const tones = { ink: '#3c3049', cream: '#f3e9dd' }, letters = []
-  for (const [tone, colour] of Object.entries(tones)) {
-    const file = `automagik-wordmark-${tone}.svg`, svg = read(`assets/brand/${file}`)
-    assert.ok(notes.includes(`\`${file}\`: \`${digest(file)}\``), `${file} is not the recorded file`)
-    const shape = svg.match(/^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox="-22 -179 1333 257" role="img" aria-label="automagik" color="(#[0-9a-f]{6})"><path fill="currentColor" d="([^"]+)"\/><circle cx="1145" cy="-158" r="21" fill="#ee5496"\/><\/svg>\n$/)
-    assert.ok(shape, file)
-    assert.equal(shape[1], colour, file)
-    letters.push(shape[2])
+  // The Cloud form's answer pages carry the same logo.
+  const answer = await htmlPage('Checked', '<p>Checked.</p>').text()
+  assert.ok(answer.includes(`<header class="top"><div class="wrap top-inner">${logo}<a href="/cloud/">Cloud</a></div></header>`))
+  // Every file is the kit's, byte for byte: its digest is the one recorded beside its source.
+  const kit = ['assets/brand/automagik-lockup-three-colours-ink-header.svg', 'assets/brand/automagik-lockup-three-colours-cream-header.svg', 'assets/brand/automagik-lockup-three-colours-ink.svg', 'assets/brand/automagik-lockup-three-colours-cream.svg', 'assets/brand/triskle-three-colours.svg', 'assets/brand/triskle-three-colours-32.svg', 'favicon.ico', 'favicon.svg', 'apple-touch-icon.png', 'icon-192.png', 'icon-512.png']
+  const pinned = new Map([...notes.matchAll(/^\| `([^`]+)` \| `([^`]+)` \| `([0-9a-f]{64})` \|$/gm)].map(match => [match[1], match[3]]))
+  assert.deepEqual([...pinned.keys()], kit)
+  for (const file of kit) assert.equal(createHash('sha256').update(readFileSync(resolve(root, file))).digest('hex'), pinned.get(file), `${file} is not the kit's file`)
+  // The lockups: one box for all four, the letters' tone in the file's colour, and nothing
+  // that could load or run: no script, link, picture or text inside. The wordmark's own
+  // drawing is pinned only by the digests above, so a newer kit is a file swap.
+  for (const [tone, colour] of Object.entries(TONES)) for (const size of ['-header', '']) {
+    const file = `automagik-lockup-three-colours-${tone}${size}.svg`, svg = read(`assets/brand/${file}`)
+    assert.ok(svg.startsWith(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -186 1632.34 264" role="img" aria-label="Automagik" color="${colour}">`), file)
+    assert.doesNotMatch(svg, /<script|<foreignObject|<image|<text|href=|url\((?!#)/i, file)
   }
-  assert.equal(letters[0], letters[1], 'the two tones carry the same letters')
-  // The triskle: the clay triskle of the logo the site had, cut out of that file without a
-  // changed pixel (the browser gate compares them) and stored lossless.
-  for (const file of ['triskle.webp', 'lockup.webp']) assert.ok(notes.includes(`\`${file}\`: \`${digest(file)}\``), `${file} is not the recorded file`)
-  const triskle = readFileSync(resolve(root, 'assets/brand/triskle.webp'))
-  assert.equal(triskle.toString('latin1', 0, 4) + triskle.toString('latin1', 8, 16), 'RIFFWEBPVP8L', 'a lossless WebP')
-  const bits = triskle.readUInt32LE(21)
-  assert.deepEqual([(bits & 0x3fff) + 1, ((bits >> 14) & 0x3fff) + 1], [225, 192])
-  // Placed as the kit's lockup places them, in 222nds of the triskle's height; the triskle
-  // keeps the size it had in the header, and no rule draws on either file.
-  assert.ok(css.includes('.brand{--mark:32px;display:flex;align-items:flex-start;flex-shrink:0}\n.brand picture{display:contents}\n.brand:focus-visible{outline-offset:calc(var(--mark)*42/222 + 3px)}\n.brand-mark{width:auto;height:var(--mark)}\n.brand-word{width:auto;max-width:none;height:calc(var(--mark)*257/222);margin:calc(var(--mark)*7/222) 0 calc(var(--mark)*-42/222) calc(var(--mark)*46/222)}\n'))
+  // The mark alone: one square frame for both drawings, in three colours.
+  for (const file of ['triskle-three-colours.svg', 'triskle-three-colours-32.svg']) {
+    const svg = read(`assets/brand/${file}`)
+    assert.ok(svg.startsWith('<svg xmlns="http://www.w3.org/2000/svg" viewBox="72 81 1166 1166" role="img" aria-label="Automagik triskle">'), file)
+    assert.doesNotMatch(svg, /<script|<foreignObject|<image|<text|href=|url\((?!#)/i, file)
+  }
+  // The icons: an .ico of three sizes, a square SVG in the same three colours, and three PNGs.
+  const ico = readFileSync(resolve(root, 'favicon.ico'))
+  assert.deepEqual([ico.readUInt16LE(0), ico.readUInt16LE(2), ico.readUInt16LE(4), ico[6], ico[22], ico[38]], [0, 1, 3, 16, 32, 48])
+  assert.ok(read('favicon.svg').startsWith('<svg xmlns="http://www.w3.org/2000/svg" viewBox="72 81 1166 1166" '))
+  assert.doesNotMatch(read('favicon.svg'), /<script|<foreignObject|<image|<text|href=|url\((?!#)/i)
+  const png = file => { const bytes = readFileSync(resolve(root, file)); return [bytes.readUInt32BE(16), bytes.readUInt32BE(20)] }
+  assert.deepEqual([png('apple-touch-icon.png'), png('icon-192.png'), png('icon-512.png')], [[180, 180], [192, 192], [512, 512]])
+  assert.deepEqual(webManifest, { name: 'Automagik', short_name: 'Automagik', icons: [{ src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any maskable' }, { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' }], theme_color: '#3c3049', background_color: '#3c3049', display: 'browser', start_url: '/' })
+  assert.deepEqual(JSON.parse(read('site.webmanifest')), webManifest)
+  // The files this logo replaced are gone, and nothing the site serves or builds with names them.
+  for (const file of ['assets/lockup.webp', 'assets/brand/lockup.webp', 'assets/brand/mark.webp', 'assets/art/mark.webp', 'assets/art/mark-2x.webp', 'assets/brand/wordmark.webp', 'assets/brand/triskle.webp', 'assets/brand/automagik-wordmark-ink.svg', 'assets/brand/automagik-wordmark-cream.svg']) assert.equal(existsSync(resolve(root, file)), false, file)
+  for (const file of ['styles.css', 'scripts/build-pages.mjs', 'scripts/build-lockup.mjs', 'scripts/build-art.mjs', 'waitlist/lib/ui.js', 'verify-browser.mjs']) assert.doesNotMatch(read(file), /(?:lockup|wordmark|triskle)\.webp|automagik-wordmark-|art\/mark|'mark'/, file)
+  // Sized by the triskle's height (--mark): the file is 264 tall where the triskle is 222,
+  // the g's tail hangs under the link's box, and no rule draws on the logo.
+  assert.ok(css.includes('.brand{--mark:32px;display:block;flex-shrink:0}\n.brand picture{display:contents}\n.brand:focus-visible{outline-offset:calc(var(--mark)*42/222 + 3px)}\n.brand img{width:auto;max-width:none;height:calc(var(--mark)*264/222);margin-bottom:calc(var(--mark)*-42/222)}\n'))
   assert.deepEqual([...css.matchAll(/\n\s*\.brand\{--mark:(\d+)px/g)].map(match => Number(match[1])), [32, 26, 23])
   for (const [rule] of css.matchAll(/[^{}]*\.brand[^{}]*\{[^}]*\}/g)) assert.doesNotMatch(rule, /filter|shadow|stroke|opacity|transform|scale|rotate|animation|transition|background|object-/, rule)
-  // The footer's first column is never narrower than its logo (the triskle, the gap, the word).
+  // The footer's first column is never narrower than its logo.
   const column = Number(css.match(/\.footer-grid\{display:grid;grid-template-columns:minmax\((\d+)px,1\.5fr\)/)[1])
-  assert.ok(column >= 40 * (225 / 192 + (46 + 1333) / 222) && column < 300, `the footer's first column holds the logo: ${column}`)
+  assert.ok(column >= 40 * 1632.34 / 222 && column < 300, `the footer's first column holds the logo: ${column}`)
 })
 
 test('derived art: each file is one recorded rectangle of a hashed source, at 1x and 2x', () => {
@@ -477,7 +501,7 @@ test('Open Intelligence is applied as on Arca\'s site: the horizontal tag in the
     assert.doesNotMatch(html, /<meta[^>]*(?:og:image|twitter:image)/, route)
   }
   const block = htmlAt('/').match(/<section id="brand" class="wrap kit"[\s\S]*?<\/section>/)[0]
-  assert.ok(block.includes('<picture><source media="(prefers-color-scheme: dark)" srcset="/assets/brand/automagik/automagik-lockup-oi-cream.svg"><img src="/assets/brand/automagik/automagik-lockup-oi-ink.svg" width="902" height="340" alt="The Automagik logo, with the Open Intelligence tag under it at the right" loading="lazy" decoding="async"></picture>'))
+  assert.ok(block.includes('<picture><source media="(prefers-color-scheme: dark)" srcset="/assets/brand/automagik/automagik-lockup-oi-cream.svg"><img src="/assets/brand/automagik/automagik-lockup-oi-ink.svg" width="1628" height="529" alt="The Automagik logo, with the Open Intelligence tag under it at the right" loading="lazy" decoding="async"></picture>'))
   assert.deepEqual([...block.matchAll(/href="([^"]+)" download/g)].map(match => match[1]), ['ink.svg', 'ink.png', 'cream.svg', 'cream.png'].map(name => `/assets/brand/automagik/automagik-lockup-oi-${name}`))
   assert.ok(htmlAt('/').indexOf('<section id="brand"') > htmlAt('/').indexOf('<section id="film"'))
   // Size and colour, as Arca's footer: 170 by 32 px in the footer's text colour, never an
@@ -490,19 +514,20 @@ test('Open Intelligence is applied as on Arca\'s site: the horizontal tag in the
   for (const mark of footerMarks) assert.ok(mark * 1325 / 222 >= 170, 'the footer logo\'s word is at least as wide as the tag')
   assert.match(css, /@media \(max-width:700px\)\{\.footer-end\{flex-direction:column;align-items:flex-start\}\}/)
   assert.match(css, /@font-face\{font-family:"IBM Plex Mono";font-style:normal;font-weight:600;font-display:block;src:url\("assets\/brand\/ibm-plex-mono-latin-600\.woff2"\) format\("woff2"\)\}/)
-  // The lockup files: Automagik's logo, unchanged, with the tag under it, right edges
-  // together, the tag 170/275 of the logo's width (Arca's proportion), one colour per ground.
+  // The lockup files: the kit's large lockup, set inside unchanged, with the tag under it,
+  // right edges together, the tag 170/275 of the logo's width (Arca's proportion), one tone
+  // per ground. The logo ends where its letters end: at the k, and under the g's tail.
   assert.deepEqual(readdirSync(resolve(root, 'assets/brand/automagik')).sort(), ['automagik-lockup-oi-cream.png', 'automagik-lockup-oi-cream.svg', 'automagik-lockup-oi-ink.png', 'automagik-lockup-oi-ink.svg'])
   assert.ok(Math.abs(GEOMETRY.scale * 340 / LOGO.width - 170 / 275) < 1e-9 && Math.abs(GEOMETRY.x + 340 * GEOMETRY.scale - LOGO.width) < 1e-9 && GEOMETRY.y > LOGO.height)
-  assert.deepEqual(TONES, { ink: '#3c3049', cream: '#f3e9dd' })
+  assert.deepEqual([TONES, BOX, LOGO], [{ ink: '#3c3049', cream: '#f3e9dd' }, { x: 0, y: -186, width: 1632.34, height: 264 }, { width: 321.34 + 1307, height: 186 + 76 }])
   const font = readFileSync(resolve(root, 'assets/brand/ibm-plex-mono-latin-600.woff2')).toString('base64')
   const size = png => [png.readUInt32BE(16), png.readUInt32BE(20), png[25]]
   for (const [tone, colour] of Object.entries(TONES)) {
-    const svg = read(`assets/brand/automagik/automagik-lockup-oi-${tone}.svg`)
-    assert.ok(svg.startsWith(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 902 340.02" width="902" height="340.02" color="${colour}" role="img" aria-label="Automagik, with the Open Intelligence tag"><style>@font-face{font-family:"IBM Plex Mono";font-weight:600;src:url(data:font/woff2;base64,${font}) format("woff2")}</style><image href="data:image/png;base64,`), tone)
-    assert.ok(svg.endsWith(`" width="902" height="192"/><g transform="translate(344.40 235.06) scale(1.64000)">${tagInner()}</g></svg>\n`), tone)
-    assert.deepEqual(size(Buffer.from(svg.match(/<image href="data:image\/png;base64,([^"]+)"/)[1], 'base64')), [902, 192, 6], tone)
-    assert.deepEqual(size(readFileSync(resolve(root, `assets/brand/automagik/automagik-lockup-oi-${tone}.png`))), [3000, 1131, 6], tone)
+    const svg = read(`assets/brand/automagik/automagik-lockup-oi-${tone}.svg`), kit = read(`assets/brand/automagik-lockup-three-colours-${tone}.svg`)
+    assert.equal(kit, `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -186 1632.34 264" role="img" aria-label="Automagik" color="${colour}">${logoInner(tone)}</svg>\n`, tone)
+    assert.equal(svg, `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1628.34 529.22" width="1628.34" height="529.22" color="${colour}" role="img" aria-label="Automagik, with the Open Intelligence tag"><style>@font-face{font-family:"IBM Plex Mono";font-weight:600;src:url(data:font/woff2;base64,${font}) format("woff2")}</style><svg width="1632.34" height="264" viewBox="0 -186 1632.34 264">${logoInner(tone)}</svg><g transform="translate(621.73 339.74) scale(2.96062)">${tagInner()}</g></svg>\n`, tone)
+    assert.doesNotMatch(svg, /<image|<script|<foreignObject/, tone)
+    assert.deepEqual(size(readFileSync(resolve(root, `assets/brand/automagik/automagik-lockup-oi-${tone}.png`))), [3000, 976, 6], tone)
   }
   assert.equal(oiTag, oiTag.replace(/^(<svg\b[^>]*>)[\s\S]*(<\/svg>)$/, `$1${tagInner()}$2`))
   // Arca's own lockup is not cleared for a public repository: it is never among these files.
