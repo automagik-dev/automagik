@@ -26,7 +26,12 @@ Agents other than DSH's own, as DeepSeek Harness models, over the
   in that agent's scope only. DSH writes the `tool/call` and `tool/result` rows and draws the
   card (a terminal for a command, a diff for an edit, the generic card otherwise). When the agent
   asks permission for the call, `acp_tool` asks DSH's approval service
-  (`approval/asked`, `approval/decided`) and gives the agent DSH's answer.
+  (`approval/asked`, `approval/decided`) and gives the agent DSH's answer. On DSH's Auto
+  review level that answer is the review. A call the reviewer allowed, or that the person
+  allowed in the dialog the reviewer raised, gets `allow_once` for the agent's first question
+  about it, with no second dialog; this holds in a subagent child too. These still ask as before:
+  a later question, a call the agent changed after its review (in its question or after it), an
+  agent that offers no `allow_once`, and a level that changed since the call.
 - **DSH's own tools over the bridge (`dshTools`).** On, the agent gets the Session's preset tool
   set (standard, or cordis in creator mode) over one stdio MCP server per ACP session, named
   `dsh` and spawned by the adapter with that session's arguments. The bridge has no port; it

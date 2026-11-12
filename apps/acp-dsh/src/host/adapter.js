@@ -16,7 +16,7 @@ import { BRIDGE_NAME, CREDENTIAL_ENV, isAuthRequired, MODEL_ACCESS_REQUIRED, SYN
 import { shownText } from './shown-text.js'
 import { agentRoute, answered, boundaryNotice, isHandoff, lastProviderOf, missedBy, replayBlocks, turnStart } from './switch.js'
 import { ImageLinks, savedPathsOf } from './agent-image.js'
-import { callArguments, entered, levelOf, mirrorTool, TOOL_NAME } from './tool.js'
+import { callArguments, entered, levelOf, mirrorTool, reviewed, TOOL_NAME } from './tool.js'
 import { guardSession } from './write-guard.js'
 
 // How long a prompt has to end after it was asked to stop. `session/cancel` is a notification:
@@ -409,6 +409,28 @@ export class AcpAdapter extends LlmAdapter {
     // A mirror call DSH refuses before its body (a gate, a failed review, the person's no, a
     // Stop) leaves the agent's permission question with nobody to answer it.
     this.offResult = this.ctx.on?.('tools/result', exec => this.refusedFirst(exec))
+    // No prepend: this must run after Auto review's prepended gate lets the call through.
+    this.offReviewed = this.ctx.on?.('tools/pre-execute', (exec, next) => this.reviewedGate(exec, next))
+  }
+
+  /**
+   * Remember this adapter's own root mirror execution at Auto, after the review gate. The body
+   * runs only if the whole stage allowed, so recording before next() adds no decision and no
+   * async gap for the remaining gates. A recording failure must not stop the waterfall.
+   */
+  reviewedGate(exec, next) {
+    try {
+      if (exec?.name === TOOL_NAME && exec.parent === undefined) {
+        const session = exec.agent?.session
+        if (this.live.get(session.id)?.calls?.has(exec.callId) === true) {
+          const level = levelOf(this.ctx.get?.('approval'), session, this.ctx.get?.('sandboxPolicy'), this.ctx.get?.('permissionPresets'))
+          if (level.auto === true) reviewed.set(exec, { sandbox: level.sandbox, policy: level.policy })
+        }
+      }
+    } catch (error) {
+      try { this.ctx.logger?.warn?.(`acp-dsh: a reviewed call was not recorded: ${error?.message ?? error}`) } catch {}
+    }
+    return next()
   }
 
   /**
@@ -1218,6 +1240,7 @@ export class AcpAdapter extends LlmAdapter {
 
   dispose() {
     try { this.offResult?.() } catch {}
+    try { this.offReviewed?.() } catch {}
     this.starting.clear()
     for (const agent of this.agents.values()) agent.catalog?.dispose()
     for (const [sessionId, live] of this.live) this.end(sessionId, live)
