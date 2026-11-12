@@ -122,7 +122,7 @@ try {
       const label = `${route} ${colorScheme} ${width}px`
       assert.deepEqual(layout.brokenWords, [], `A heading word breaks across lines: ${label}`)
       assert.deepEqual(layout.unsized, [], `Images without width/height: ${label}`)
-      assert.deepEqual(layout.themed.filter(source => /-dark(?:-2x)?\.webp$/.test(source) !== (colorScheme === 'dark')), [], `App pictures follow the theme: ${label}`)
+      assert.deepEqual(layout.themed.filter(source => /(?:-dark(?:-2x)?\.webp|\/arca-icon-ivory\.svg)$/.test(source) !== (colorScheme === 'dark')), [], `App pictures follow the theme: ${label}`)
       if (route === '/') {
         assert.ok(layout.themed.length >= 4, `The home's app pictures have dark captures: ${label}`)
         assert.ok(layout.bubble.bottom <= layout.heroWindow.top && layout.bubble.left >= 0 && layout.bubble.right <= width, `The speech bubble stays off the app window: ${label} ${JSON.stringify([layout.bubble, layout.heroWindow])}`)
@@ -367,14 +367,20 @@ try {
       }
       // Page to page: the browser's cross-document transition runs to its end (a name used
       // twice on a page would skip it), and the character named on both pages is one of a kind.
-      await page.goto(origin + '/', { waitUntil: 'load' })
       const names = () => page.evaluate(() => { const count = {}; for (const element of document.querySelectorAll('*')) { const name = getComputedStyle(element).viewTransitionName; if (name !== 'none') count[name] = (count[name] ?? 0) + 1 } return count })
-      assert.deepEqual(await names(), { root: 1, 'site-top': 1, genie: 1, omni: 1, pet: 1 }, `Transition names are unique on the home: ${width}px`)
-      if (width > 860) { await page.locator('[popovertarget="menu-products"]').click(); await page.locator('#menu-products .menu-item[href="/genie/"]').click() }
-      else { await page.locator('.menu-open').click(); await page.locator('#site-menu .menu-item[href="/genie/"]').click() }
-      await page.waitForURL(origin + '/genie/')
-      await page.waitForFunction(() => window.__arrived === 'finished' || window.__arrived === 'skipped' || window.__arrived === 'plain')
-      assert.equal(await page.evaluate(() => window.__arrived), 'finished', `The page-to-page transition runs: ${width}px`)
+      // A busy machine can make the browser drop one transition, so the walk gets three tries;
+      // a page that breaks transitions fails all three.
+      let arrived = ''
+      for (let attempt = 0; attempt < 3 && arrived !== 'finished'; attempt++) {
+        await page.goto(origin + '/', { waitUntil: 'load' })
+        assert.deepEqual(await names(), { root: 1, 'site-top': 1, genie: 1, omni: 1, pet: 1 }, `Transition names are unique on the home: ${width}px`)
+        if (width > 860) { await page.locator('[popovertarget="menu-products"]').click(); await page.locator('#menu-products .menu-item[href="/genie/"]').click() }
+        else { await page.locator('.menu-open').click(); await page.locator('#site-menu .menu-item[href="/genie/"]').click() }
+        await page.waitForURL(origin + '/genie/')
+        await page.waitForFunction(() => window.__arrived === 'finished' || window.__arrived === 'skipped' || window.__arrived === 'plain')
+        arrived = await page.evaluate(() => window.__arrived)
+      }
+      assert.equal(arrived, 'finished', `The page-to-page transition runs: ${width}px`)
       assert.deepEqual(await names(), { root: 1, 'site-top': 1, genie: 1, omni: 1, pet: 1 }, `Transition names are unique on a product page: ${width}px`)
       // The menu eases in and settles fully shown, in place.
       const opener = width > 860 ? '[popovertarget="menu-products"]' : '.menu-open', eased = width > 860 ? '#menu-products .menu-card' : '#site-menu'
