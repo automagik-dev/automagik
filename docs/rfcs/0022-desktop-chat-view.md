@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | Queued (answers: Q1-Q8, 2026-11-09: Q2 by the owner, the rest by Chat, Q6 re-decided and Decided 9 (H before phase 1) after review; only the RFC: #847; revised 2026-11-10: Team and Code, the left bar, humanized bots, what ships before #631 and the owner's own instance, (h) to (l), Proposed, Q9-Q17 open for the owner; amends RFC 0024 (f)) |
+| Status | Queued (answers: Q1-Q8, 2026-11-09: Q2 by the owner, the rest by Chat, Q6 re-decided and Decided 9 (H before phase 1) after review; only the RFC: #847; revised 2026-11-10: Team and Code, the left bar, humanized bots, what ships before #631 and the owner's own instance, (h) to (l), Proposed (owner not yet read), Q9-Q17 open for the owner; amends RFC 0024 (f)) |
 | Milestone | none (ships outside the five milestones) |
 | Lanes | none here (docs); plugin (3.N.P) for bots-dsh; desktop (3.N) for the shell; herdr (3.N.P) for the chat engine |
 | Created | 2026-11-09 |
