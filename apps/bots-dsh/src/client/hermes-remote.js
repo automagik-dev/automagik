@@ -6,7 +6,7 @@ import { CheckIcon, CloseIcon, GlobeIcon, ShieldIcon, TerminalIcon } from './ico
 import { useEscape } from './overlay-hooks.js'
 import { t } from './i18n.js'
 
-const EMPTY_SSH = { host: '', user: '', port: '', identityFile: '', hermesPath: '' }
+const EMPTY_SSH = { host: '', user: '', port: '', identityFile: '', hermesPath: '', hermesHome: '' }
 const draftOf = view => ({ mode: view?.mode === 'ssh' ? 'ssh' : 'remote', address: view?.address ?? '', authMode: view?.authMode === 'password' ? 'password' : 'token', credentialRef: view?.credentialRef ?? '', credential: '', username: view?.username ?? '', password: '', ssh: { ...EMPTY_SSH, ...view?.ssh } })
 const configured = view => view?.enabled === true && Boolean(view?.profile)
 const freshSecrets = draft => ({ ...draft, credential: '', password: '' })
@@ -375,7 +375,8 @@ export function HermesRemoteConnect({ onClose, onConnected, edit = false, initia
         h(Field, { label: t('SSH host or config name'), value: draft.ssh.host, onChange: value => ssh('host', value), hint: t('You can also use a name from your SSH config.') }),
         h('div', { className: 'bt-hw-two' }, h(Field, { label: t('User (optional)'), value: draft.ssh.user, onChange: value => ssh('user', value), placeholder: t('From SSH config') }), h(Field, { label: t('Port (optional)'), value: draft.ssh.port, onChange: value => ssh('port', value), placeholder: t('From SSH config'), type: 'text' })),
         h('div', { className: 'bt-hw-field' }, h('span', null, t('SSH key (optional)')), h('div', { className: 'bt-hw-file-choice' }, h('span', null, draft.ssh.identityFile || t('Use SSH agent or SSH config')), h(Button, { onClick: () => setChoosingKey(on => !on) }, t('Choose file…'))), h('small', null, t('The key stays on this computer.')), choosingKey ? h('div', { className: 'bt-hw-key-path' }, h(Field, { label: t('Key file path'), value: draft.ssh.identityFile, onChange: value => ssh('identityFile', value), placeholder: t('Path on the computer running Automagik'), hint: t('Enter a local path. The key is never uploaded or copied.') }), h(Button, { onClick: () => setChoosingKey(false) }, t('Use this path'))) : null),
-        h(Field, { label: t('Hermes path (optional)'), value: draft.ssh.hermesPath, onChange: value => ssh('hermesPath', value), placeholder: t('Find Hermes automatically'), hint: t('Hermes must already be installed on the other computer.') }))
+        h(Field, { label: t('Hermes path (optional)'), value: draft.ssh.hermesPath, onChange: value => ssh('hermesPath', value), placeholder: t('Find Hermes automatically'), hint: t('Hermes must already be installed on the other computer.') }),
+        h(Field, { label: t('Hermes home (optional)'), value: draft.ssh.hermesHome, onChange: value => ssh('hermesHome', value), hint: t('Absolute data folder on the remote computer. Leave empty for its default Hermes home.') }))
     } else {
       heading = draft.authMode === 'password' ? t('Sign in to your Hermes') : t('Connect to your Hermes')
       content = h(Fragment, null, h('p', { className: 'bt-hw-lead' }, draft.authMode === 'password' ? t('Use the sign-in set up on this Hermes instance.') : t('Enter the address of the Hermes you want to use.')),
@@ -447,6 +448,7 @@ export function HermesRemoteConnect({ onClose, onConnected, edit = false, initia
 
 export function HermesRemoteSettings({ run, Section, actions }) {
   const [view, setView] = useState(null)
+  const [pairing, setPairing] = useState(false)
   const [editing, setEditing] = useState(false)
   const [reconciliation, setReconciliation] = useState(null)
   useEffect(() => { let on = true; void run(api('hermes-remote').then(next => { if (on) setView(next) })); return () => { on = false } }, [])
@@ -455,6 +457,15 @@ export function HermesRemoteSettings({ run, Section, actions }) {
     h('div', { className: 'bt-set-row' }, h('div', { className: 'bt-set-copy' }, h('span', null, t('Chat with a Hermes agent on another computer.')), h('span', { className: 'bt-set-hint' }, t('Your bots’ team tools (messages to other bots, secrets, memory, schedules) are not available in these chats.')))),
     h('div', { className: 'bt-set-row' }, h('div', { className: 'bt-set-copy' }, h('span', null, view.profile || t('No connection saved')), h('span', { className: 'bt-set-hint' }, view.mode === 'ssh' ? view.ssh?.host : view.address)), h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: () => setEditing(true) }, configured(view) ? t('Edit connection') : t('Set up connection'))),
     view.credentialSet ? h('div', { className: 'bt-set-row' }, h('span', { className: 'bt-set-hint' }, t('Key saved')), h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: () => setEditing(true) }, t('Replace'))) : null,
+    configured(view) ? h('div', { className: 'bt-set-row' },
+      h('label', null, t('Pair Hermes Bot'), h('select', { 'aria-label': t('Pair Hermes Bot'), value: view.pairedBotId ?? '', disabled: pairing,
+        onChange: event => {
+          const botId = event.target.value
+          setPairing(true)
+          void run(api('hermes-remote-pair', { botId }).then(next => setView(next)).finally(() => setPairing(false)))
+        } }, h('option', { value: '' }, t('Not paired')),
+        (view.bots ?? []).map(bot => h('option', { key: bot.id, value: bot.id, disabled: Boolean(view.pairedBotId && view.pairedBotId !== bot.id) }, bot.name)))),
+      h('span', { className: 'bt-set-hint' }, t('Uses this profile’s existing Bot Chat. Other bots, groups and tasks cannot use this pairing. Unpair before changing it.'))) : null,
     configured(view) ? h('div', { className: 'bt-set-row' }, h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: () => run(api('hermes-remote-disconnect').then(next => { if (next) setView(next) })) }, t('Disconnect'))) : null,
     (view.sessions ?? []).filter(session => session.uncertain || session.pendingSubmit).map(session => h('div', { key: session.sessionId }, h('p', { role: 'status' }, t('Connection lost; remote outcome unknown')), h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: () => run(api('hermes-remote-reconcile', { sessionId: session.sessionId }).then(next => { setView(next); setReconciliation(next.reconciliation) })) }, t('Reconnect and reconcile')))),
     reconciliation ? h('div', { role: 'status', className: 'bt-set-hint' }, reconciliation.unknown ? t('Connection lost; remote outcome unknown') : t('Remote session reconciled. Review the remote transcript before sending again.'), reconciliation.gap ? h('p', null, t('Replay gap: showing a fresh remote snapshot.')) : null, h('pre', null, (reconciliation.messages ?? []).map(message => `${message.role}: ${typeof message.text === 'string' ? message.text : typeof message.content === 'string' ? message.content : ''}`).join('\n')), reconciliation.inflight?.assistant ? h('p', null, reconciliation.inflight.assistant) : null) : null),

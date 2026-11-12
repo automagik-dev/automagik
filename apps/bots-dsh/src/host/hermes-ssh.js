@@ -117,7 +117,8 @@ function destination(input) {
     if (input.identityFile.startsWith('-')) throw failure('invalid-details', 'Enter a valid identity file path.')
     args.push('-i', input.identityFile)
   }
-  return { args, target: user ? `${user}@${host}` : host, hermesPath: input.hermesPath || '' }
+  if (input.hermesHome && (!safeField(input.hermesHome) || !input.hermesHome.startsWith('/') || input.hermesHome.split('/').some(part => part === '..' || part === '.'))) throw failure('invalid-details', 'Hermes home must be an absolute remote folder.')
+  return { args, target: user ? `${user}@${host}` : host, hermesPath: input.hermesPath || '', hermesHome: input.hermesHome || '' }
 }
 
 // This is our POSIX remote supervisor, not upstream code. Its private stdin owns the
@@ -251,7 +252,10 @@ try:
     # Hermes reads its one-shot token only from its own runtime folder, and refuses any
     # other path: ~/.hermes/desktop-ssh/<32 hex>/<16 hex>.token, the folder this user's
     # alone (0700). Hermes removes the token once read; the folder goes with this script.
-    root = os.path.join(os.path.expanduser("~"), ".hermes", "desktop-ssh")
+    home = options.get("hermesHome") or os.path.expanduser("~/.hermes")
+    if not isinstance(home, str) or not os.path.isabs(home): raise Fault("handshake")
+    if options.get("hermesHome") and not os.path.isfile(os.path.join(home, "config.yaml")): raise Fault("hermes-not-found")
+    root = os.path.join(home, "desktop-ssh")
     os.makedirs(root, mode=0o700, exist_ok=True)
     made = os.path.join(root, os.urandom(16).hex())
     os.mkdir(made, 0o700)
@@ -261,11 +265,13 @@ try:
     fd = os.open(token_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
     with os.fdopen(fd, "w") as handle: handle.write(token)
     env = os.environ.copy()
+    env["HERMES_HOME"] = home
+    env.pop("HERMES_PROFILE", None)
     env["HERMES_DESKTOP"] = "1"
     env.pop("HERMES_DESKTOP_DEV_SERVER", None)
     check_input()
     emit("stage", name="hermes-start")
-    child = subprocess.Popen([hermes, "serve", "--isolated", "--host", "127.0.0.1", "--port", "0", "--ssh-session-token-file", token_path, "--ssh-owner-nonce", nonce], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True, env=env)
+    child = subprocess.Popen([hermes, "--profile", "default", "serve", "--isolated", "--host", "127.0.0.1", "--port", "0", "--ssh-session-token-file", token_path, "--ssh-owner-nonce", nonce], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True, env=env)
     output = b""
     ready = False
     output_open = True
@@ -521,7 +527,7 @@ export async function startHermesSsh(ssh, {
     // Hermes's own deadline ends a little before this computer's, so a slow start is
     // reported by the start script, with Hermes's last lines, not by a bare timeout here.
     const startMs = Math.max(1, Math.floor(limits.start - Math.min(limits.control / 2, limits.start * 0.15)))
-    remote.stdin.write(`${JSON.stringify({ nonce, credential, hermesPath: config.hermesPath, minVersion: minimum, startMs, controlMs: limits.control, cancelMs: limits.cancel })}\n`)
+    remote.stdin.write(`${JSON.stringify({ nonce, credential, hermesPath: config.hermesPath, hermesHome: config.hermesHome, minVersion: minimum, startMs, controlMs: limits.control, cancelMs: limits.cancel })}\n`)
     heartbeat = setInterval(() => { if (!stopping) { try { remote.stdin.write('ping\n') } catch { fail(failure('unknown')) } } }, Math.max(10, Math.floor(limits.control / 3)))
     const remotePort = await bounded(ready.promise, until - Date.now())
     const localPort = await bounded(Promise.resolve(allocatePort()), Math.min(limits.control, until - Date.now()))

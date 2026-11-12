@@ -337,7 +337,8 @@ export function workerPlan(bot, pick = {}, agents = AGENTS) {
     warnings.push(`${agents[agent].name} has no effort flag; effort ${effort} left out.`);
     effort = null;
   }
-  const argv = [...launchRun(agent, agents[agent].run, bot), ...agyModeArgs(agent, agyMode), ...modelArgs(agent, model), ...effortArgs(agent, effort)];
+  // A task worker is not its lead's persistent Hermes Bot Chat.
+  const argv = [...launchRun(agent, agents[agent].run, { ...bot, hermes: undefined }), ...agyModeArgs(agent, agyMode), ...modelArgs(agent, model), ...effortArgs(agent, effort)];
   return { template: null, agent, model, effort, agyMode, argv, warnings };
 }
 

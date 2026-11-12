@@ -31,6 +31,7 @@ function fixture(t, overrides = {}) {
       const frame = JSON.parse(text); sent.push(frame)
       if (!frame.method) return
       if (overrides.handle?.(frame, this) === true) return
+      if (frame.method === 'session.list') { this.reply(frame, { sessions: [{ id: snapshot.stored_session_id, title: 'Bot Chat' }] }); return }
       const result = frame.method === 'client.capabilities' ? { server_requests: ['approval'] }
         : ['session.create', 'session.resume', 'session.activate'].includes(frame.method) ? { ...(frame.method === 'session.create' ? snapshot : source.live), ...overrides.snapshot }
           : frame.method === 'session.events.since' ? { events: [], latest_seq: 9, epoch: 'epoch-a', truncated: false, count: 0, open_requests: [], ...overrides.replay }
@@ -315,6 +316,45 @@ test('real adapter signal Stop keeps socket open for interrupt and honours the c
 
 test('an uncertain remote turn never falls back to another model', () => {
   assert.equal(fallbackFor({ failure: { code: 'REMOTE_HERMES', message: LOST }, failed: { provider: 'hermes-remote', model: 'sample' }, fallback: { provider: 'native', model: 'sample' } }), undefined)
+})
+
+test('pairing binds one Bot own-chat across segments without remote creation', async t => {
+  const f = fixture(t)
+  const ctx = fakeContext(), endpoints = new Map()
+  ctx.llm.registerAdapter = () => () => {}
+  const rt = { ctx, state: { bots: { owner: { id: 'owner', name: 'Owner', model: 'hermes-remote/sample:model' }, other: { id: 'other', name: 'Other', model: 'hermes-remote/sample:model' } }, prefs: { hermesRemote: { enabled: true, address: f.wire.address, profile: 'sample', credentialRef: 'SAMPLE', models: [] } } },
+    chatOwners: new Map([['segment-one', 'owner'], ['segment-two', 'owner'], ['other-chat', 'other']]),
+    hooks: { endpoint: (name, fn) => endpoints.set(name, fn) }, load: async () => {}, save: async () => {}, loadSecrets: async () => {}, secretValue: () => f.credential }
+  install(rt, { transport: () => f.wire })
+  t.after(() => ctx.dispose())
+  await endpoints.get('hermes-remote-pair')({ botId: 'owner' })
+  assert.equal(rt.state.prefs.hermesRemote.pairedBotId, 'owner')
+  const adapter = rt.hermesRemote.adapter
+  assert.equal(adapter.identity('segment-one'), adapter.identity('segment-two'))
+  assert.equal(adapter.identity('segment-one').canonicalBot, true)
+  for (const id of ['other-chat', 'group', 'task', 'unknown']) assert.throws(() => adapter.identity(id), /paired/)
+  await assert.rejects(endpoints.get('hermes-remote-pair')({ botId: 'other' }), /already paired/)
+  assert.ok(!f.sent.some(frame => ['session.create', 'config.set', 'prompt.submit'].includes(frame.method)))
+  const same = adapter.identity('segment-one')
+  same.pendingSubmit = true
+  await assert.rejects(endpoints.get('hermes-remote-pair')({ botId: '' }), /running/)
+  same.pendingSubmit = false
+  await endpoints.get('hermes-remote-pair')({ botId: '' })
+  assert.equal(rt.state.prefs.hermesRemote.pairedBotId, undefined)
+  assert.equal(same.canonicalBot, true, 'unpair preserves reconciliation history')
+  rt.state.bots.other.model = 'native/model'
+  await assert.rejects(endpoints.get('hermes-remote-pair')({ botId: 'other' }), /Choose Remote Hermes/)
+  // Cancellation while the durable save is in flight restores the old binding on disk.
+  rt.state.prefs.hermesRemote.pairedBotId = 'owner'
+  const controller = new AbortController(), saved = []
+  rt.save = async () => {
+    saved.push(rt.state.prefs.hermesRemote.pairedBotId)
+    if (saved.length === 1) controller.abort()
+  }
+  await assert.rejects(endpoints.get('hermes-remote-pair')({ botId: '' }, controller.signal))
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(rt.state.prefs.hermesRemote.pairedBotId, 'owner')
+  assert.deepEqual(saved, [undefined, 'owner'])
 })
 
 test('resumed model changes explicitly opt out of profile persistence', async t => {

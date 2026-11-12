@@ -24,7 +24,7 @@ if (args.includes('--version')) {
   // under ~/.hermes/desktop-ssh/<32 hex>/<16 hex>.token, its folder 0700, the file 64 bytes
   // and private; any other path ends serve before it is ready. The token is removed once read.
   const refuse = message => { console.error(message); process.exit(1) }
-  const parts = relative(join(process.env.HOME, '.hermes', 'desktop-ssh'), tokenPath).split(sep)
+  const parts = relative(join(process.env.HERMES_HOME || join(process.env.HOME, '.hermes'), 'desktop-ssh'), tokenPath).split(sep)
   if (!isAbsolute(tokenPath) || parts.length !== 2 || !/^[0-9a-f]{32}$/.test(parts[0])) refuse('--ssh-session-token-file must be under the desktop-ssh directory')
   if (!/^[0-9a-f]{16}\.token$/.test(parts[1])) refuse('--ssh-session-token-file has an invalid filename')
   const folderMode = statSync(dirname(tokenPath)).mode & 0o777, tokenMode = statSync(tokenPath).mode & 0o777
@@ -33,7 +33,7 @@ if (args.includes('--version')) {
   if (statSync(tokenPath).size !== 64) refuse('--ssh-session-token-file contains an invalid token')
   const token = readFileSync(tokenPath, 'utf8')
   unlinkSync(tokenPath)
-  record({ event: 'runtime-start', args, tokenMode, folderMode, tokenHash: createHash('sha256').update(token).digest('hex') })
+  record({ event: 'runtime-start', args, home: process.env.HERMES_HOME, profile: process.env.HERMES_PROFILE, tokenMode, folderMode, tokenHash: createHash('sha256').update(token).digest('hex') })
   // Private child output must be swallowed by the supervisor, not forwarded or logged.
   console.log(`private-output ${token}`)
   if (scenario === 'runtime-exit-early') {

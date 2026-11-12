@@ -52,6 +52,23 @@ const FAKE_GIT = new URL("./fake-git-trim.mjs", import.meta.url).pathname;
 const REAL_GIT = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
 const ID = { main: "b-aaaaaaaaaa", cap: "b-bbbbbbbbbb", dev: "b-cccccccccc", plan: "b-eeeeeeeeee" };
 
+test("Hermes pairing CLI persists explicit identity, rejects duplicates and unpairs without deleting the Bot", (t) => {
+  const s = scene(t);
+  const made = s.cli(["create", "--name", "Research", "--agent", "hermes", "--hermes-home", "/srv/sample-hermes", "--hermes-profile", "research", "--json"]);
+  assert.equal(made.code, 0, made.err);
+  const file = JSON.parse(readFileSync(join(s.project, ".herdr/bots.json"), "utf8"));
+  const bot = file.bots[0];
+  assert.deepEqual(bot.hermes, { home: "/srv/sample-hermes", profile: "research" });
+  const duplicate = s.cli(["create", "--name", "Twin", "--agent", "hermes", "--hermes-home", "/srv/sample-hermes", "--hermes-profile", "research"]);
+  assert.notEqual(duplicate.code, 0);
+  assert.match(duplicate.err, /already paired/);
+  const cleared = s.cli(["edit", bot.id, "--no-hermes"]);
+  assert.equal(cleared.code, 0, cleared.err);
+  const after = JSON.parse(readFileSync(join(s.project, ".herdr/bots.json"), "utf8"));
+  assert.equal(after.bots.length, 1);
+  assert.equal(after.bots[0].hermes, undefined);
+});
+
 const git = (cwd, ...args) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd, encoding: "utf8" });
 const exe = (path, text) => { writeFileSync(path, text); chmodSync(path, 0o755); };
 
@@ -161,6 +178,26 @@ const agentWords = (run) => agentParts(run).words;
 const labelCalls = (calls) => calls.filter((c) => c[0] === "label");
 
 // ---- create ----
+
+test("paired Hermes restart resumes when stopped or beside a different paired bot", (t) => {
+  for (const live of [false, true]) {
+    const s = scene(t);
+    exe(join(s.root, "bin/hermes"), "#!/bin/sh\nexit 0\n");
+    s.seed(team({ bots: [
+      bot(ID.main, "main", { name: "Research", agent: "hermes", hermes: { home: "/srv/research", profile: "default" } }),
+      bot(ID.cap, "member", { name: "Other", agent: "hermes", hermes: { home: "/srv/other", profile: "default" } }),
+    ] }));
+    const terminals = [term("t2", { bot: ID.cap, argv: ["hermes"], cwd: s.project, app: "hermes" }),
+      ...(live ? [term("t1", { bot: ID.main, argv: ["hermes"], cwd: s.project, app: "hermes" })] : [])];
+    writeFileSync(s.env.HC_FAKE_STATE, JSON.stringify({ terminals, next: 100 }));
+    const result = s.cli(["restart", "Research", "--json"]);
+    assert.equal(result.code, 0, result.err);
+    const launch = runCall(s.calls());
+    assert.deepEqual(agentWords(launch), ["hermes", "--profile", "default", "--tui", "--continue", "Bot Chat"]);
+    assert.ok(agentParts(launch).env.includes("HERMES_HOME=/srv/research"));
+    assert.doesNotMatch(result.err, /latest conversation|restart again with --fresh/);
+  }
+});
 
 test("create: the first bot must be main; then the main bot is written with an id, a default look and the agent", (t) => {
   const s = scene(t);
