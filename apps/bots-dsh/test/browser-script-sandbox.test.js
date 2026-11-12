@@ -143,16 +143,20 @@ test('finish takes text or null for each of its two arguments and answers nothin
       finish('answer', null), finish(null, 'failed'), finish(null, null), finish('', ''),
       finish(spy, null), finish(null, spy), finish(1, null), finish(undefined, null), finish('answer'), finish(),
       finish(new String('answer'), null), finish(['answer'], null), finish(Symbol('answer'), null), finish(() => 'answer', null),
+      finish('x'.repeat(${MAX_TEXT} + 1), null), finish(null, 'x'.repeat(${MAX_TEXT} + 1)), finish('x'.repeat(${MAX_TEXT}), null),
     ]
     finish(JSON.stringify({ results: results.map(value => typeof value), ran }), null)
   `)
   const { finishes } = run.seen
-  const notText = [null, 'Script produced an answer that is not text.']
+  const notText = [null, 'Script produced an answer that is not text, or is longer than 4 MB.']
   assert.deepEqual(finishes.slice(0, 14), [
     ['answer', null], [null, 'failed'], [null, null], ['', ''],
     notText, notText, notText, notText, notText, notText, notText, notText, notText, notText,
   ])
-  const { results, ran } = JSON.parse(finishes[14][0])
+  // The longest text it takes, and one character more, as the answer and as the error.
+  assert.deepEqual(finishes.slice(14, 16), [notText, notText])
+  assert.equal(finishes[16][0].length, MAX_TEXT)
+  const { results, ran } = JSON.parse(finishes[17][0])
   assert.deepEqual(results, results.map(() => 'undefined'))
   assert.equal(ran, 0, 'reading an argument ran the script\'s code')
 })

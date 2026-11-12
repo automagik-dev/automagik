@@ -25,7 +25,8 @@ import { newQuickJSWASMModuleFromVariant } from 'quickjs-emscripten-core'
 // in this build, not the total, so the total is capped where it cannot be miscounted: the
 // runner starts this process with a cap on any WebAssembly memory (script-runner.js).
 const STACK_LIMIT = 256 * 1024
-// The longest text `call` takes: the host refuses longer helper arguments.
+// The longest text either function takes: the host refuses longer helper arguments, and
+// an answer goes to a model.
 export const MAX_TEXT = 4_000_000
 
 // Runs inside the interpreter. It keeps its own copies of the built-ins it uses, so a
@@ -136,11 +137,11 @@ export async function openSandbox({ call, finish, prelude = PRELUDE }) {
     return length <= MAX_TEXT ? context.getString(handle) : undefined
   }
   // Text or null out of the interpreter; undefined for anything else, a missing argument
-  // included.
+  // and a text too long included.
   const textOrNull = (handle) => {
     if (handle === undefined) return undefined
     const type = context.typeof(handle)
-    if (type === 'string') return context.getString(handle)
+    if (type === 'string') return text(handle)
     return type === 'object' && context.sameValue(handle, context.null) ? null : undefined
   }
 
@@ -157,7 +158,7 @@ export async function openSandbox({ call, finish, prelude = PRELUDE }) {
     try {
       const answer = textOrNull(answerHandle)
       const error = textOrNull(errorHandle)
-      if (answer === undefined || error === undefined) finish(null, 'Script produced an answer that is not text.')
+      if (answer === undefined || error === undefined) finish(null, 'Script produced an answer that is not text, or is longer than 4 MB.')
       else finish(answer, error)
     } catch {}
     return context.undefined

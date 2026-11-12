@@ -3797,7 +3797,7 @@ async function openSandbox({ call: call2, finish: finish2, prelude = PRELUDE }) 
   const textOrNull = (handle) => {
     if (handle === void 0) return void 0;
     const type = context.typeof(handle);
-    if (type === "string") return context.getString(handle);
+    if (type === "string") return text(handle);
     return type === "object" && context.sameValue(handle, context.null) ? null : void 0;
   };
   const callFunction = context.newFunction("call", (nameHandle, argsHandle) => {
@@ -3814,7 +3814,7 @@ async function openSandbox({ call: call2, finish: finish2, prelude = PRELUDE }) 
     try {
       const answer = textOrNull(answerHandle);
       const error = textOrNull(errorHandle);
-      if (answer === void 0 || error === void 0) finish2(null, "Script produced an answer that is not text.");
+      if (answer === void 0 || error === void 0) finish2(null, "Script produced an answer that is not text, or is longer than 4 MB.");
       else finish2(answer, error);
     } catch {
     }

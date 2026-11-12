@@ -264,6 +264,11 @@ test('an oversized helper argument is refused inside the script', async () => {
   assert.match(answer, /larger than 4 MB/)
 })
 
+test('an answer longer than 4 MB is refused with an error that says so', async () => {
+  await assert.rejects(runIsolatedScript("done('A'.repeat(5 * 1024 * 1024))", {}), /longer than 4 MB/)
+  assert.equal((await runIsolatedScript("done('A'.repeat(4_000_000))", {})).length, 4_000_000)
+})
+
 test('error stacks name the script\'s own frames and no path of the host', async () => {
   const answer = await runIsolatedScript('function inner() { null.x }\ntry { inner() } catch (error) { return error.stack + " | " + new Error("m").stack }', {})
   assert.match(answer, /at inner /)
