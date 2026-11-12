@@ -210,6 +210,10 @@ test('fresh and legacy matching seeds retain valid inputs for subsequent plugin 
   cpSync(join(f.old.source, 'pnpm-lock.yaml'), join(f.target, 'pnpm-lock.yaml'))
   assert.equal((await prepare(f)).result, 'matching-image')
   assertInstallInputs(f.target)
+  // Simulate interruption after archive writes, before the lock receives their integrity.
+  cpSync(join(f.old.source, 'pnpm-lock.yaml'), join(f.target, 'pnpm-lock.yaml'))
+  assert.equal((await prepare(f)).result, 'matching-image')
+  assertInstallInputs(f.target)
 })
 
 test('a missing or legacy marker is adopted only for the complete canonical image seed shape', async t => {

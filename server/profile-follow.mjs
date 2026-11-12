@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync } from 'node:fs'
 import { cp } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
@@ -89,10 +89,9 @@ async function followImageUnlocked({ dshHome, source, store, build, dshBin, inst
   if (PLUGINS.every(name => plugins[name] === build.plugins[name])) {
     // Repair seeds made by older images too. These inputs must survive every later
     // `dsh plugin install`, which resolves all direct dependencies again.
-    const manifest = JSON.parse(readFileSync(join(source, 'package.json'), 'utf8'))
-    if (PLUGINS.some(name => !existsSync(join(target, manifest.dependencies[name].slice(5))))) {
-      materializePlugins({ source, target })
-    }
+    // Rebuild the lock too: a stopped seed may have written the archives but not
+    // yet their new integrity. This branch only handles an unchanged image manifest.
+    materializePlugins({ source, target })
     pinStore(target, dshHome)
     return done('matching-image')
   }
