@@ -1550,7 +1550,11 @@ for (const machine of [null, "vm"]) for (const choice of ["menu-restart-helpers"
     assert.ok(nodes.has("menu-end-helpers-restart"));
     assert.equal(nodes.has("menu-restart-force"), false);
     fakeCli({ terminal: "t100", replaced: "t5" });
-    await click(choice);
+    const press = nodes.get(choice).click;
+    press(null, cx);
+    assert.doesNotThrow(() => press(null, cx), "a repeated click cannot read a cleared retry choice");
+    await cx.settle();
+    assert.equal(args().length, 2, "one initial refusal and only one retry");
     const last = args().at(-1);
     assert.match(last, /--agent codex/);
     assert.match(last, /--force/);
@@ -1562,3 +1566,16 @@ for (const machine of [null, "vm"]) for (const choice of ["menu-restart-helpers"
     assert.deepEqual(state.closed, ["o9"]);
   });
 }
+
+test("a repeated Restart anyway click does not read a cleared retry choice", async () => {
+  seed([MAIN, OMP]);
+  const args = fakeCli({ terminal: "t100" });
+  const { form, cx, draw } = await menu();
+  form.forceable = { project: { key: project }, bot: OMP, agent: null };
+  draw();
+  const press = nodes.get("menu-restart-force").click;
+  press(null, cx);
+  assert.doesNotThrow(() => press(null, cx));
+  await cx.settle();
+  assert.equal(args().length, 1);
+});

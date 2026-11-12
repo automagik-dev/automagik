@@ -765,14 +765,19 @@ export class BotForm {
       .when(items.has("start"), (el) => el.child(item("menu-start", this.busy === "start" ? "Starting…" : "Start", (cx) => this.start(project, bot, cx))))
       .when(items.has("restart"), (el) => el.child(item("menu-restart", this.busy === "restart" ? "Restarting…" : "Restart", (cx) => this.restart(project, bot, cx))))
       .when(Boolean(this.forceable), (el) => el.child(item("menu-restart-force", this.busy === "restart-force" ? "Restarting…" : "Restart anyway (ends what it is doing)",
-        (cx) => this.restart(this.forceable.project, this.forceable.bot, cx, { agent: this.forceable.agent, force: true }))))
+        (cx) => {
+          const next = this.forceable;
+          if (next) this.restart(next.project, next.bot, cx, { agent: next.agent, force: true });
+        })))
       .when(Boolean(this.helperRestart), (el) => el
         .child(item("menu-restart-helpers", "Restart with its helpers", (cx) => {
           const next = this.helperRestart;
+          if (!next) return;
           this.restart(next.project, next.bot, cx, { agent: next.agent, fresh: next.fresh, tree: true, force: true });
         }))
         .child(item("menu-end-helpers-restart", "End helpers and restart", (cx) => {
           const next = this.helperRestart;
+          if (!next) return;
           this.restart(next.project, next.bot, cx, { agent: next.agent, fresh: next.fresh, force: true });
         })))
       .when(Boolean(fresh), (el) => el.child(item("menu-restart-fresh", this.busy === "restart-fresh" ? "Restarting…" : "Restart with a new conversation",
