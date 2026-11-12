@@ -4,7 +4,8 @@
 // the team view can say who is waiting. So does a running task a Bot started
 // (start_task, agents.js): its approval is noted under that Bot with the task's id
 // (`taskId`) and title (`label`), so the Bot shows it needs the user, the parent's chat
-// can say which task waits, and the task's thread waits in amber.
+// can say which task waits, and the task's thread waits in amber. A subagent child's
+// ask is held under its Bot, where the person can answer it.
 import { randomUUID } from 'node:crypto'
 
 const OUTCOMES = { allow: 'allowed-once', reject: 'rejected' }
@@ -16,9 +17,14 @@ const OUTCOMES = { allow: 'allowed-once', reject: 'rejected' }
 export const TEAM_LOOKUPS = new Set(['list_bots', 'list_bot_models', 'list_capabilities', 'read_own_chat', 'read_group_chat', 'recall'])
 export const teamToolOf = name => String(name ?? '').replace(/^mcp__dsh__/, '')
 
+export function answerableOwner(rt, owner) {
+  return owner?.child === true && rt.botOf?.(owner.botId) !== undefined
+    && (owner.kind === 'chat' || owner.kind === 'group' || (owner.kind === 'task' && rt.state?.tasks?.[owner.taskId]?.status === 'working'))
+}
+
 export function install(rt) {
   const { ctx } = rt
-  /** @type {Map<string, {id:string, sessionId:string, botId:string, roomId?:string, taskId?:string, label?:string, tool:string, reason:string, detail:{text?:string, code?:string}, at:number, answer?:(outcome:string)=>void}>} */
+  /** @type {Map<string, {id:string, sessionId:string, botId:string, child?:boolean, ownerSessionId?:string, roomId?:string, taskId?:string, label?:string, tool:string, reason:string, detail:{text?:string, code?:string}, at:number, answer?:(outcome:string)=>void}>} */
   const pending = new Map()
   // A task a Bot of the team started that still runs, by its Session.
   const runningTask = (sessionId) => {
@@ -34,6 +40,7 @@ export function install(rt) {
     const task = sessionId === undefined ? undefined : runningTask(sessionId)
     const chat = sessionId === undefined ? undefined : rt.chatOwners.get(sessionId)
     const run = owner === undefined && chat === undefined && task === undefined ? rt.teamOwnerOf?.(sessionId, request.agent) : undefined
+    if (run?.child === true || rt.asksThroughBot?.(sessionId) === true) return childAsk(request, sessionId, run)
     const runOwner = run?.run === true && run.child !== true ? run : undefined
     const botId = owner?.botId ?? chat ?? task?.from ?? runOwner?.botId
     if (botId === undefined) return next()
@@ -69,8 +76,43 @@ export function install(rt) {
     })
   }, { prepend: true })
 
+  ctx.effect(() => () => {
+    for (const entry of pending.values()) if (entry.child) entry.answer?.('cancelled')
+  }, 'ds-bot: cancel held subagent asks')
+
+  function childAsk(request, sessionId, owner) {
+    // Fail closed: nothing here can ask the person, so this is not their answer.
+    if (!answerableOwner(rt, owner)) {
+      rt.noteStop?.(sessionId, { why: 'unavailable', tool: request.toolName, callId: request.callId }, request.agent)
+      rt.warn('ds-bot: subagent approval has no answerable owner: %s', sessionId)
+      return 'cancelled'
+    }
+    const id = randomUUID()
+    const entry = {
+      id, sessionId, botId: owner.botId, child: true, ownerSessionId: owner.sessionId,
+      ...(owner.kind === 'group' ? { roomId: owner.roomId } : {}),
+      ...(owner.kind === 'task' ? { taskId: owner.taskId, label: String(owner.label ?? '').trim() } : {}),
+      tool: String(request.toolName ?? ''),
+      reason: String(request.reason ?? '').slice(0, 500),
+      detail: rt.callDetail?.(sessionId, request.callId) ?? {},
+      at: Date.now(),
+    }
+    pending.set(id, entry)
+    if (owner.kind === 'group') rt.yieldRoomTurn?.(owner.sessionId)
+    return new Promise(resolve => {
+      const aborted = () => entry.answer('cancelled')
+      entry.answer = outcome => {
+        if (!pending.delete(id)) return
+        request.signal?.removeEventListener('abort', aborted)
+        resolve(outcome)
+      }
+      if (request.signal?.aborted) entry.answer('cancelled')
+      else request.signal?.addEventListener('abort', aborted, { once: true })
+    })
+  }
+
   const approvalsView = () => [...pending.values()].map(({ answer, ...entry }) => ({ ...entry, answerable: answer !== undefined }))
-  const waitsForApproval = sessionId => [...pending.values()].some(entry => entry.sessionId === sessionId)
+  const waitsForApproval = sessionId => [...pending.values()].some(entry => entry.sessionId === sessionId || entry.ownerSessionId === sessionId)
 
   function answerApproval(id, choice) {
     const entry = pending.get(String(id ?? ''))
@@ -83,7 +125,7 @@ export function install(rt) {
   // A group Session that leaves its group has no card left to answer from.
   const cancelApprovals = (sessionId) => {
     for (const entry of pending.values()) {
-      if (entry.sessionId === sessionId) entry.answer?.('cancelled')
+      if (entry.sessionId === sessionId || entry.ownerSessionId === sessionId) entry.answer?.('cancelled')
     }
   }
 

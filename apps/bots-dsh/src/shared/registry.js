@@ -51,7 +51,7 @@ export const HOME_FIELDS = Object.freeze(['projects', 'shown'])
 export const NEVER_FIELDS = Object.freeze([
   'memory', 'rooms', 'schedules', 'secrets', 'secret', 'sessionId', 'segments', 'sessions', 'avatar', 'image',
   'photo', 'permission', 'permissions', 'level', 'capabilities', 'grants', 'browser', 'browserGrants', 'partition',
-  'partitions',
+  'partitions', 'permissionAuto',
 ])
 // Keys that would reach an object's prototype when assigned one by one.
 const UNSAFE_KEYS = Object.freeze(['__proto__', 'constructor', 'prototype'])

@@ -1,8 +1,8 @@
 // A mirrored ACP call through DSH's real tool pipeline: its ToolsService and native executor,
 // the real Auto review plugin and its gate, and this adapter's mirror registered in the agent's
 // own scope, as `registerMirror` does it. Calling the mirror's execute() directly would miss
-// every refusal that comes before its body, which is what this file is about: the agent's
-// permission question must then get its refusal instead of waiting for ever.
+// the refusals before its body and the review that already answered for a call. The agent's
+// question must receive that refusal or that single-use answer, bound to the reviewed call.
 //
 // The harness keeps to what DSH does. The pipeline writes the `tool/call` row itself (the batch
 // is run with `log`), the mirror is admitted by a step's resolved tool set, and the permission
@@ -212,41 +212,239 @@ for (const [name, options, code] of [
   })
 }
 
-// --- P01 and P02: NOT fixed here ----------------------------------------------------------
-// The duplicate approval under Auto is PR A2's (one decision per call, a grant bound to the
-// reviewed execution). These three pin what happens TODAY, so this change provably leaves it
-// alone. PR A2 replaces their expectations (0 extra dialogs; a delegated child is allowed).
+// --- P01 and P02, fixed here --------------------------------------------------------------
 
-test('today (PR A2): Auto asks once more after its reviewer allowed the ACP call', async (t) => {
+test('Auto: a call its reviewer allowed is answered allow_once with no approval request', async (t) => {
   const w = await world(t)
   const c = w.chat('s1')
   assert.equal((await c.execute())[0].isError, false)
   assert.deepEqual(await soon(c.call.permission), picked('yes'))
   assert.equal(w.reviews.length, 1)
-  assert.equal(w.asked.length, 1, 'one extra approval request, from the mirror body')
-  assert.equal(w.asked[0].toolName, TOOL_NAME)
+  assert.equal(w.asked.length, 0)
   assert.deepEqual(c.refusals, [])
+  assert.equal(c.call.answers.length, 1)
 })
 
-test('today (PR A2): a delegated Auto child under never is refused the call its reviewer allowed', async (t) => {
+test('Auto child (auto + never): a step its reviewer allowed runs', async (t) => {
   const w = await world(t, { override: 'never' })
   const c = w.chat('s1')
-  await c.execute()
-  assert.deepEqual(await soon(c.call.permission), picked('no'))
+  assert.equal((await c.execute())[0].isError, false)
+  assert.deepEqual(await soon(c.call.permission), picked('yes'))
   assert.equal(w.reviews.length, 1)
-  assert.equal(w.asked.length, 1, 'the body asks, and the approval service rejects under never')
+  assert.equal(w.asked.length, 0)
   assert.deepEqual(c.refusals, [], 'the body answered; the listener did not')
   assert.equal(c.call.answers.length, 1)
 })
 
-test('today (PR A2): Auto asks twice when its reviewer defers the ACP call to the person', async (t) => {
+test("Auto deny under 'ask': the person is asked exactly once, by the pipeline", async (t) => {
   const w = await world(t, { decision: DENY })
   const c = w.chat('s1')
   assert.equal((await c.execute())[0].isError, false)
   assert.deepEqual(await soon(c.call.permission), picked('yes'))
   assert.equal(w.reviews.length, 1)
-  assert.equal(w.asked.length, 2, "the pipeline's dialog, then the mirror body's")
+  assert.equal(w.asked.length, 1)
+  assert.match(w.asked[0].reason, /^Auto review denied tool "acp_tool"/)
   assert.deepEqual(c.refusals, [])
+})
+
+// custom is Auto's knobs (ask, no sandbox) with no reviewer: the record's policy and sandbox
+// still match it, so only the Auto identity check tells it apart.
+for (const level of ['workspace-write', 'custom']) {
+  test(`Auto: a level changed to ${level} between the gate and the body asks as today`, async (t) => {
+    const w = await world(t)
+    const c = w.chat('s1')
+    w.ctx.on('tools/execute', (exec, next) => { c.setLevel(level); return next() })
+    assert.equal((await c.execute())[0].isError, false)
+    assert.deepEqual(await soon(c.call.permission), picked('yes'))
+    assert.equal(w.reviews.length, 1)
+    assert.equal(w.asked.length, 1)
+    assert.equal(w.asked[0].toolName, TOOL_NAME)
+  })
+}
+
+test('Auto: a call not reviewed at the gate (custom) asks, even when Auto is back by its question', async (t) => {
+  const w = await world(t)
+  const c = w.chat('s1')
+  c.setLevel('custom')
+  w.ctx.on('tools/execute', (exec, next) => { c.setLevel('auto'); return next() })
+  assert.equal((await c.execute())[0].isError, false)
+  assert.deepEqual(await soon(c.call.permission), picked('yes'))
+  assert.equal(w.reviews.length, 0)
+  assert.equal(w.asked.length, 1)
+})
+
+test('Auto: a level changed during the review asks as today', async (t) => {
+  let c
+  const w = await world(t, { decision: () => { c.setLevel('workspace-write'); return ALLOW } })
+  c = w.chat('s1')
+  assert.equal((await c.execute())[0].isError, false)
+  assert.deepEqual(await soon(c.call.permission), picked('yes'))
+  assert.equal(w.asked.length, 1)
+})
+
+// The record's gate is not prepended: it runs after Auto review's prepended gate, so it reads
+// the level the review left, never the one before it.
+test('Auto: a level changed during the review asks, even when Auto is back by the body', async (t) => {
+  let c
+  const w = await world(t, { decision: () => { c.setLevel('workspace-write'); return ALLOW } })
+  c = w.chat('s1')
+  w.ctx.on('tools/execute', (exec, next) => { c.setLevel('auto'); return next() })
+  assert.equal((await c.execute())[0].isError, false)
+  assert.deepEqual(await soon(c.call.permission), picked('yes'))
+  assert.equal(w.reviews.length, 1)
+  assert.equal(w.asked.length, 1)
+})
+
+// Each row DSH writes for a level change ends the review, even one that names the level the
+// Session already has. The fakes read their own map, so only the row scan can stop it.
+for (const [type, data] of [['permission/preset', { preset: 'auto' }], ['sandbox/mode', { mode: 'danger-full-access' }], ['approval/policy', { policy: 'ask' }]]) {
+  test(`Auto: a ${type} row written after the call's own row asks, even when it names the same level`, async (t) => {
+    let c
+    const w = await world(t, { decision: () => { c.session.append(type, data); return ALLOW } })
+    c = w.chat('s1')
+    assert.equal((await c.execute())[0].isError, false)
+    assert.deepEqual(await soon(c.call.permission), picked('yes'))
+    assert.equal(w.asked.length, 1)
+  })
+}
+
+test('Auto: the allow answers one request; a second one for the same call asks', async (t) => {
+  const w = await world(t)
+  const c = w.chat('s1', [{ question: false }])
+  const first = c.call.ask()
+  const running = c.execute()
+  assert.deepEqual(await soon(first), picked('yes'))
+  assert.equal(w.asked.length, 0)
+  const second = c.call.ask()
+  assert.deepEqual(await soon(second), picked('yes'))
+  assert.equal(w.asked.length, 1)
+  c.call.close(await second)
+  assert.equal((await running)[0].isError, false)
+  assert.equal(c.call.answers.length, 2)
+})
+
+test('Auto: a call changed after its review (new input in the question) asks', async (t) => {
+  const w = await world(t)
+  const c = w.chat('s1', [{ question: false }])
+  const changed = c.call.ask(OPTIONS, { rawInput: { path: 'elsewhere.txt' } })
+  const running = c.execute()
+  assert.deepEqual(await soon(changed), picked('yes'))
+  assert.equal(w.asked.length, 1)
+  c.call.close(await changed)
+  assert.equal((await running)[0].isError, false)
+})
+
+// Each field callArguments compares (input, diffs, locations): the question changes it, a later
+// update changes it back, and the person is still asked about what the question showed.
+for (const [what, question, back] of [
+  ['its input', { rawInput: { path: 'elsewhere.txt' } }, { rawInput: { path: 'README.md' } }],
+  ['a diff', { content: [{ type: 'diff', path: 'README.md', oldText: 'a', newText: 'b' }] }, { content: [] }],
+  ['a location', { locations: [{ path: 'elsewhere.txt' }] }, { locations: [] }],
+]) {
+  test(`Auto: a question about a changed call (${what}) asks, even when a later update changes the call back`, async (t) => {
+    const w = await world(t)
+    const c = w.chat('s1', [{ question: false }])
+    const changed = c.call.ask(OPTIONS, question)
+    c.run.changeTool(c.call.tool, back)
+    const running = c.execute()
+    assert.deepEqual(await soon(changed), picked('yes'))
+    assert.equal(w.asked.length, 1)
+    c.call.close(await changed)
+    assert.equal((await running)[0].isError, false)
+  })
+}
+
+test('Auto: a call the agent changed after its question asks', async (t) => {
+  const w = await world(t)
+  const c = w.chat('s1', [{ question: false }])
+  const asking = c.call.ask()
+  c.run.changeTool(c.call.tool, { rawInput: { path: 'elsewhere.txt' } })
+  const running = c.execute()
+  assert.deepEqual(await soon(asking), picked('yes'))
+  assert.equal(w.asked.length, 1)
+  c.call.close(await asking)
+  assert.equal((await running)[0].isError, false)
+})
+
+test('Auto: arguments replaced after the review never stand in for the reviewed call', async (t) => {
+  const w = await world(t)
+  const c = w.chat('s1', [{ question: false }])
+  let changed
+  w.ctx.on('tools/execute', (exec, next) => {
+    exec.arguments = { ...exec.arguments, input: { path: 'elsewhere.txt' } }
+    changed = c.call.ask(OPTIONS, { rawInput: { path: 'elsewhere.txt' } })
+    return next()
+  })
+  const running = c.execute()
+  await until(() => changed !== undefined)
+  assert.deepEqual(await soon(changed), picked('yes'))
+  assert.equal(w.asked.length, 1)
+  c.call.close(await changed)
+  assert.equal((await running)[0].isError, false)
+})
+
+test('Auto: arguments that name another tool never carry the allow to it', async (t) => {
+  const w = await world(t)
+  // Same title and input: only the adapter's own call-to-tool map tells them apart.
+  const c = w.chat('s1', [
+    { callId: 'acp-a', remote: 'remote-a', path: 'same.txt', argumentsId: 'remote-b' },
+    { callId: 'acp-b', remote: 'remote-b', path: 'same.txt' },
+  ])
+  const [a, b] = c.calls
+  assert.equal((await c.execute({ only: [a] }))[0].isError, false)
+  assert.deepEqual(await soon(b.permission), picked('yes'))
+  assert.equal(w.asked.length, 1, "the other call's question went to the person")
+})
+
+test('Auto: an agent that offers no allow_once is asked as today; the allow never becomes allow_always', async (t) => {
+  const w = await world(t)
+  const c = w.chat('s1', [{ question: false }])
+  const asked = c.call.ask([{ kind: 'allow_always', optionId: 'always', name: 'Always' }, { kind: 'reject_once', optionId: 'no', name: 'Reject' }])
+  const running = c.execute()
+  assert.deepEqual(await soon(asked), picked('always'), "the person's answer, mapped as today")
+  assert.equal(w.asked.length, 1)
+  c.call.close(picked('yes'))
+  assert.equal((await running)[0].isError, false)
+})
+
+test('Auto: a question the record check cannot read (a null location) is asked as today', async (t) => {
+  const w = await world(t)
+  const c = w.chat('s1', [{ question: false }])
+  const asking = c.call.ask(OPTIONS, { locations: [null] })
+  const running = c.execute()
+  assert.deepEqual(await soon(asking), picked('yes'))
+  assert.equal(w.asked.length, 1)
+  c.call.close(await asking)
+  assert.equal((await running)[0].isError, false)
+})
+
+test('Auto: two calls, the reviewer allows one and denies the other (never): no allow crosses', async (t) => {
+  const w = await world(t, { override: 'never', decision: options => (JSON.stringify(options.messages.at(-1)).includes('b.txt') ? DENY : ALLOW) })
+  const c = w.chat('s1', [
+    { callId: 'acp-a', remote: 'remote-a', path: 'a.txt' },
+    { callId: 'acp-b', remote: 'remote-b', path: 'b.txt' },
+  ])
+  const [a, b] = c.calls
+  const results = await c.execute()
+  assert.equal(results[0].isError, false)
+  assert.equal(results[1].isError, true)
+  assert.equal(results[1].error.info.code, 'AUTO_REVIEW_DENIED')
+  assert.deepEqual(await soon(a.permission), picked('yes'))
+  assert.deepEqual(await soon(b.permission), picked('no'))
+  assert.equal(w.asked.length, 0)
+  assert.equal(w.reviews.length, 2)
+})
+
+test('Manual: a call another gate asked about is still asked by the body, as today', async (t) => {
+  const w = await world(t, { preset: 'workspace-write' })
+  w.ctx.on('tools/pre-execute', async (exec, next) => {
+    const decision = await next()
+    return exec.name === TOOL_NAME && decision.kind === 'allow' ? { kind: 'ask', reason: 'check' } : decision
+  })
+  const c = w.chat('s1')
+  assert.equal((await c.execute())[0].isError, false)
+  assert.deepEqual(await soon(c.call.permission), picked('yes'))
+  assert.equal(w.asked.length, 2)
 })
 
 // --- the levels that are not Auto behave as today -----------------------------------------
@@ -596,11 +794,14 @@ test('a disposed adapter stops listening', async (t) => {
   denyGate(w.ctx, ['acp-call'])
   const c = w.chat('s1')
   const calls = []
+  const gates = []
   w.adapter.refusedFirst = exec => calls.push(exec)
+  w.adapter.reviewedGate = (exec, next) => { gates.push(exec); return next() }
   w.adapter.dispose()
   assert.equal((await c.execute())[0].isError, true)
   await tick()
   assert.deepEqual(calls, [], 'dispose() took the tools/result listener off')
+  assert.deepEqual(gates, [], 'dispose() took the tools/pre-execute listener off')
 })
 
 // --- more than one question for one call ------------------------------------------------------

@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict'
 import { readdirSync, readFileSync } from 'node:fs'
 import { test } from 'node:test'
-import { DICTIONARY, hostText, installLocale, language, t } from '../src/client/i18n.js'
+import { heldText } from '../src/client/stops.js'
+import { HELD_LINES } from '../src/shared/held.js'
+import { DICTIONARY, hostText, hostTemplateOf, installLocale, language, t } from '../src/client/i18n.js'
 
 function fakeLocale(active) {
   const dicts = new Map()
@@ -57,4 +59,33 @@ test('copy follows the DSH language and stays English without a locale service',
   }
   assert.equal(t('Model'), 'Model')
   assert.equal(hostText('A Bot named Writer already exists'), 'A Bot named Writer already exists')
+})
+
+
+test('D client: host ladder templates translate to Chinese', async () => {
+  const { askText, questionText } = await import('../src/host/ladder.js')
+  const off = installLocale(fakeLocale('zh'))
+  try {
+    assert.equal(hostTemplateOf(askText('bash: rm -rf x')), 'This step is hard to undo: {step}. Allow it once?')
+    assert.equal(hostText(askText('bash: rm -rf x')), '这一步难以撤销：bash: rm -rf x。允许这一次吗？')
+    assert.equal(hostTemplateOf(questionText('ada', 4, 'bash')), '{name} was refused {count} times in this turn, the last time on {tool}. Let it keep working?')
+    assert.equal(hostText(questionText('ada', 4, 'bash')), 'ada 在本轮被拒绝了 4 次，最近一次是 bash。让它继续工作吗？')
+  } finally { off() }
+})
+
+test('only whole held replies translate, with Chinese and Portuguese entries for each', () => {
+  const pt = JSON.parse(readFileSync(new URL('../../locale-pt-br-dsh/src/client/locales/pt-BR/omni-ui.json', import.meta.url), 'utf8'))
+  const off = installLocale(fakeLocale('zh'))
+  try {
+    for (const key of HELD_LINES) {
+      assert.equal(typeof DICTIONARY.zh[key], 'string')
+      assert.equal(typeof pt[key], 'string')
+      assert.notEqual(DICTIONARY.zh[key], key)
+      assert.notEqual(pt[key], key)
+      assert.equal(heldText(key), DICTIONARY.zh[key])
+      assert.equal(heldText(key + ' x'), key + ' x')
+    }
+    assert.equal(heldText('Model'), 'Model')
+    assert.equal(heldText('x'), 'x')
+  } finally { off() }
 })

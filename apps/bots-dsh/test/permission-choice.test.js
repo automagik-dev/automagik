@@ -31,7 +31,7 @@ const tick = () => new Promise(resolve => setTimeout(resolve, 10))
 const act = async (fn = () => {}) => { flushSync(fn); await tick() }
 const { outputFiles } = await build({
   stdin: { contents: [
-    "export { PermissionPicker, PermissionList, PermissionExplanations, presetText } from './src/client/permission-picker.js'",
+    "export { PermissionPicker, PermissionList, PermissionExplanations, presetText, autoQuestion } from './src/client/permission-picker.js'",
     "export { PermissionChoiceDock, reopenPermissionChoice } from './src/client/permission-card.js'",
     "export { ComposerPermission } from './src/client/composer.js'",
     "export { BotPanel } from './src/client/browser-pane.js'",
@@ -1004,4 +1004,35 @@ test('Remote Hermes Details Auto review note matches its row and asks for explic
   assert.deepEqual(saves, [{ id: BOT.id, patch: { permission: 'workspace-write' } }])
   await click(button(popup(), 'Use Auto review'))
   assert.deepEqual(saves, [{ id: BOT.id, patch: { permission: 'workspace-write' } }, { id: BOT.id, patch: { permission: 'auto' } }])
+})
+
+test('Auto question explains the reviewer and retains the revision at opening across renders', async t => {
+  const { document, root, click, PermissionList } = mount(t)
+  const catalog = { ...THREE, options: [READ, WORK, { value: 'workspace-write:auto', name: 'Auto' }, FULL] }
+  const picks = []
+  let rev = 3
+  const render = () => root.render(React.createElement(PermissionList, { catalog, saved: 'read-only', name: 'Ada', replaced: 'Read only', askedOf: () => ({ id: 'ada', rev }), onPick: async (value, asked) => { picks.push([value, asked]); return true } }))
+  await act(render)
+  await click(rowOf(document, 'workspace-write:auto'))
+  for (const words of ['Codex', 'reviewer', 'outside', 'Automagik does not review', 'another Bot', 'schedule', 'Read only']) assert.ok(document.body.textContent.includes(words), words)
+  await click(button(document, 'Cancel'))
+  assert.deepEqual(picks, [])
+  await click(rowOf(document, 'workspace-write:auto'))
+  rev = 9; await act(render)
+  await click(button(document, 'Use Auto'))
+  assert.equal(JSON.stringify(picks), JSON.stringify([['workspace-write:auto', { id: 'ada', rev: 3 }]]))
+})
+
+test('Auto questions explain each route and preserve Codex wording', t => {
+  const w = mount(t)
+  const own = w.autoQuestion('ada', 'Workspace', { by: 'own', model: 'x' }).join(' ')
+  for (const word of ['x', 'separate request', 'sandbox', 'plugin']) assert.ok(own.includes(word))
+  const claude = w.autoQuestion('ada', 'Workspace', { by: 'claude', bridged: true, model: 'x' }).join(' ')
+  for (const word of ['auto mode', 'x', 'sandbox']) assert.ok(claude.includes(word))
+  const team = w.autoQuestion('ada', 'Workspace', { by: 'team', agent: 'acp-hermes', model: 'x' }).join(' ')
+  assert.match(team, /Hermes/); assert.match(team, /x/); assert.doesNotMatch(team, /sandbox/)
+  const codex = w.autoQuestion('ada', 'Workspace')
+  assert.equal(codex.length, 3)
+  assert.match(codex[2], /Codex 0.167.0/)
+  assert.equal(w.autoQuestion('ada', 'Workspace', { by: 'codex', bridged: true, model: 'x' }).length, 5)
 })

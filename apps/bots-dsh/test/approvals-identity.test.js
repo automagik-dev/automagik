@@ -7,19 +7,23 @@ import { install } from '../src/host/approvals.js'
 function bench({ tasks = {}, chats = [], groups = [], runs = [] } = {}) {
   const handlers = []
   const noted = []
+  const disposers = []
+  const stops = []
   const rt = {
-    ctx: { on: (event, handler) => handlers.push({ event, handler }) },
+    ctx: { on: (event, handler) => handlers.push({ event, handler }), effect: fn => disposers.push(fn()) },
     state: { tasks },
     groupOwners: new Map(groups),
     chatOwners: new Map(chats),
-    botOf: id => (['genie', 'writer'].includes(id) ? { id } : undefined),
+    botOf: id => (['genie', 'writer', 'ada'].includes(id) ? { id } : undefined),
     teamOwnerOf: id => new Map(runs).get(id),
+    warn: () => {},
+    noteStop: (...args) => stops.push(args),
     noteApproval: (sessionId, note) => noted.push([sessionId, note]),
     callDetail: () => ({ text: 'bun test', code: 'bun test' }),
     yieldRoomTurn: () => {},
   }
   install(rt)
-  return { rt, handlers, noted }
+  return { rt, handlers, noted, disposers, stops }
 }
 
 const request = (sessionId, toolName = 'bash') => ({ toolName, reason: 'run the tests', agent: { session: { id: sessionId } }, callId: 'c1' })
@@ -89,8 +93,26 @@ test('a run ask is noted without answering, and a run whose Bot left passes unno
   assert.deepEqual(gone.noted, [])
 })
 
-test('a run child is still passed to DSH without an approval note', async () => {
+test('a run child is cancelled with a stop and no approval note', async () => {
   const b = bench({ runs: [['x', { run: true, child: true, botId: 'ada' }]] })
-  assert.equal(await b.handlers[0].handler(request('x'), () => 'cancelled'), 'cancelled')
+  assert.equal(await b.handlers[0].handler(request('x'), () => assert.fail('must not pass to DSH')), 'cancelled')
   assert.deepEqual(b.noted, [])
+  assert.equal(b.stops[0][1].why, 'unavailable')
+})
+
+test('a chat child is held and unload cancels it', async () => {
+  const b = bench({ runs: [['x', { kind: 'chat', child: true, botId: 'ada', sessionId: 'ada-chat' }]] })
+  const answer = b.handlers[0].handler(request('x'), () => assert.fail('must not pass to DSH'))
+  assert.equal(b.rt.approvalsView()[0].answerable, true)
+  assert.deepEqual(b.noted, [])
+  b.disposers[0]()
+  assert.equal(await answer, 'cancelled')
+  assert.deepEqual(b.rt.approvalsView(), [])
+})
+
+test('a chat child whose signal is already aborted is cancelled, not held', async () => {
+  const b = bench({ runs: [['x', { kind: 'chat', child: true, botId: 'ada', sessionId: 'ada-chat' }]] })
+  const answer = b.handlers[0].handler({ ...request('x'), signal: AbortSignal.abort() }, () => assert.fail('must not pass to DSH'))
+  assert.deepEqual(b.rt.approvalsView(), [])
+  assert.equal(await answer, 'cancelled')
 })

@@ -1455,6 +1455,7 @@ export function install(rt) {
     } else {
       ;(bot.segments ??= []).push(segment)
       bot.sessionId = freshId
+      if (bot.permissionAuto) rt.endAuto?.(bot, [agent.id])
       // The card's call stays in the old part, so the fresh part shows it in the
       // composer dock, which takes a card without a call.
       if (state.questions[agent.id] !== undefined) {
@@ -1995,6 +1996,7 @@ export function install(rt) {
     if (bot.sessionPinned === true) throw refused('refused', pinnedText(bot, 'fresh'))
     const current = bot.model ?? bot.appliedModel
     if (typeof current !== 'string' || !crossesHarness(current, model)) throw refused('refused', `${bot.name} is already on that route.`)
+    await rt.clearAuto?.(bot)
     const target = await rt.resolveModel(model, { checkAccess: true, keep: bot.model })
     // A level picked with the crossing belongs to the fresh part. Without one, the Bot's
     // current level travels with it; desiredEffort drops it if the new model lacks it.

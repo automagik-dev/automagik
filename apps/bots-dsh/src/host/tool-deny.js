@@ -321,5 +321,5 @@ export function install(rt) {
   })
 
   // Retries stop on a Session that leaves the team, so a lift is not attempted on a gone agent.
-  Object.assign(rt, { applyToolDeny, cleanDenyTools, unknownDenyTools, assertDenyTools })
+  Object.assign(rt, { botOfSession, applyToolDeny, cleanDenyTools, unknownDenyTools, assertDenyTools })
 }

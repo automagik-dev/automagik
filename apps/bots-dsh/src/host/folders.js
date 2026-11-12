@@ -2,6 +2,7 @@
 // there, else a Bot works in its own folder, else in the team workspace. A Session's
 // folder is fixed when it is made, so a change moves the conversation on to a fresh
 // part (parts.js).
+import { approvalPolicyOf } from './approval-policy.js'
 import { mkdir, realpath, stat } from 'node:fs/promises'
 import { refusal } from './refusal.js'
 import { homedir } from 'node:os'
@@ -156,6 +157,7 @@ export function install(rt) {
     const approval = ctx.get?.('approval')
     const agent = exec.agent
     if (approval === undefined || agent?.session === undefined) throw refusal(`Working in ${path} needs the user's approval, and there is no way to ask for it here, so nothing changed. The user can make this change in the settings.`)
+    const approvalPolicy = approvalPolicyOf(approval, agent.session)
     const outcome = await approval.request({
       agent,
       toolName: exec.name,
@@ -165,7 +167,8 @@ export function install(rt) {
       ...(exec.signal ? { signal: exec.signal } : {}),
     })
     if (outcome === 'allowed-once') return
-    // An approval policy that never asks answers 'rejected' as well.
+    // A never policy refuses without asking anyone; a person's no keeps its own text.
+    if (outcome === 'rejected' && approvalPolicy === 'never') throw refusal(`Working in ${path} needs the person's approval, and nobody was asked: approval prompts are off in this conversation (a subagent, or Full access), so nothing changed. The person can make this change in the settings, or give this Bot a level that asks first, such as Workspace.`)
     throw refusal(outcome === 'rejected' ? `Working in ${path} was not allowed, so nothing changed. The user can make this change in the settings.`
       : outcome === 'cancelled' ? 'The approval was cancelled, so nothing changed.'
         : `Working in ${path} needs the user's approval, and no one could answer, so nothing changed. The user can make this change in the settings.`)

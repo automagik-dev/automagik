@@ -83,7 +83,7 @@ test('a bridged turn fills the record, the service reads it, and it goes with it
     const chunks = await step(w.registered['acp-fake'], said('bridge bash'))
     assert.match(JSON.stringify(chunks), /The bridge said: ran bash/)
     const record = read()
-    assert.equal(record.version, 1)
+    assert.equal(record.version, 2)
     assert.equal(record.agent, 'acp-fake')
     assert.equal(record.active, true)
     assert.deepEqual({ on: record.bridge.on, why: record.bridge.why, open: record.bridge.open }, { on: true, why: 'agent-default', open: true })

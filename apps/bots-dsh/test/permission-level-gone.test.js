@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { apply } from '../index.js'
+import { HELD_NOT_SET } from '../src/shared/held.js'
 import { fakeContext } from './fake-ctx.js'
 
 const FULL = 'danger-full-access'
@@ -212,7 +213,7 @@ test('a narrower level that cannot be set holds the conversation until it can', 
   let ran = false
   await assert.rejects(tool('m1', async () => { ran = true }), refused)
   assert.equal(ran, false)
-  assert.match(await turn('m1'), refused)
+  assert.equal(await turn('m1'), HELD_NOT_SET)
   // A subagent child works under it: held too.
   ctx.sessions.get = id => (id === 'child' ? { header: { origin: 'subagent', parentSession: 'm1' } } : undefined)
   await assert.rejects(tool('child', async () => { ran = true }), refused)
@@ -445,7 +446,7 @@ test('a start refused on a held conversation keeps it held', async (t) => {
   let ran = false
   await assert.rejects(tool('m1', async () => { ran = true }), refused)
   assert.equal(ran, false)
-  assert.match(await turn('m1'), refused)
+  assert.equal(await turn('m1'), HELD_NOT_SET)
   assert.deepEqual(sets('m1'), [])
 })
 

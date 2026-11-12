@@ -89,7 +89,7 @@ Every model entry gets a descriptor `{ harness, connectedBy }`, derived from its
   ACP session mode from the Session's level (its sandbox as DSH's sandbox-policy service resolves
   it, the deployment default included): Claude Code in Manual is Claude Code's `default` mode,
   whatever default mode the person's own Claude Code settings name; Codex in its sandbox matching
-  DSH's (`read-only`, `workspace-write`). DSH's Auto is Claude Code's `auto` and Codex's `agent`.
+  DSH's (`read-only`, `workspace-write`), except for the confirmed Bot Auto mode in the amendment below. DSH's Auto review is Claude Code's `auto` and Codex's `agent`.
   Full access is `bypassPermissions` and `agent-full-access`, and any ask that still comes is
   allowed, as DSH allows its own tools there. An agent that does not offer the strict mode
   (`default`; `read-only` or `workspace-write`) fails the turn; one that lacks a permissive mode
@@ -817,3 +817,34 @@ Ledger pass (2026-11-10): the board links this RFC from its file.
 - Amendment evidence: [acp-dsh-tools-spike.md](../research/acp-dsh-tools-spike.md) (adapters'
   `mcpServers`, `list_changed`, fork); [dsh-022-council.md](../research/dsh-022-council.md) (the
   council behind the 2026-11-06 decision).
+
+## Amendment: Auto on Codex (RFC 0031, 2026-11-11)
+
+A Bot's Auto choice stores Workspace plus `permissionAuto: 'acp-codex'`. Its DSH Sessions
+remain Workspace. Only unbridged Codex may take its own `agent` mode, after two exact,
+bounded `true` answers from the team's sole `acpAgents.ownMode` answerer. Otherwise strict
+`workspace-write` is re-sent and confirmed before the prompt; refusal ends the agent session.
+Auto never maps to `bypassPermissions` or `agent-full-access`, and approvals that Codex asks
+still reach the person. These claims rest on the Codex 0.167.0 capture; later versions may
+review differently. DSH Auto review and every other provider's modes stay as they were.
+
+Every message reaching the Bot's own current chat counts, including another Bot's and a
+schedule's (question 2: b). Ending Auto ends its agent sessions (question 3: yes). A task
+started from that chat while on Auto counts while the opener's mark and revision match;
+a new Bot created there inherits only when the opener actually runs in Codex's own mode.
+This narrows the no-inheritance and unscheduled-tasks statements of RFC 0031. Today own-mode
+Codex has no bridge and no team tools, so these creation paths are unreachable there;
+fake-acp tests cover the inheritance contract, and opened work runs as Workspace.
+
+
+## Amendment: Auto on every route (RFC 0031, 2026-11-11)
+
+Auto runs at Workspace. Codex uses its own reviewer; Claude Code uses its `auto` mode. Both can take their own mode while bridged. API Bots decide sandbox escalations through their own model in a separate, tool-free compaction request. Hermes, Antigravity and omp use the team's background model and require one to offer Auto. A bridged call keeps its dialog or the background model decides it; a CLI permission question sends the remaining bridge calls of that prompt to the person.
+
+API marks bind the exact provider/model; own-mode and team marks bind the agent route. Only the person enables Auto. Current chat ownership or explicit inherited task records, revision, Workspace, and route must still match when a decision returns. Grants bind one call, tool and escalation reason and are consumed once. A failure or missing model asks the person. Model decisions never widen saved permissions or answer as the person.
+
+Automagik's judge asks the person for hard-to-undo steps and after three consecutive or ten total denials in a turn. It reads bounded requests and tool calls, never tool results or file contents, and identifies task instructions as another Bot's requests. Oversized arguments are not truncated into an allow. Mirror decisions use the current permission input and require an actual `allow_once` option; a refusal names the judge in the call's result. Plugin, folder and website asks remain with the person. Background-model identity is logged only in host diagnostics; permission diagnostics expose fixed judge categories.
+
+Codex's reviewer is a single CLI switch; global rules or reviewer policy would also change other Bots. No CLI home is written. Codex review counts can produce a refusal-stop notice, but the actual denial-limit ending and Claude Code auto mode still need captures. The host notice and tool result remain English like their neighbors. The permission questions explain that an allowed API escalation and native-agent tools may change files outside the Bot's folder. Existing Codex wording remains unchanged.
+
+RFC 0031 follow-up: rule 5 is per mark, with exact API models; rule 6 no longer refuses bridges. Questions 4 and 5 are answered by the own model/background model split and explicit failure-to-person behavior. The threat model's bridged-dialog statement gains “or the background model decides it”. “Not scheduled” is narrowed: any request reaching a counting chat may lead to a judged step; schedules themselves are not treated as the person's requests. RFC 0031's text remains for its owner.

@@ -24,7 +24,7 @@ import { AGENTS } from './agents.js'
 import { isBridgeName } from './names.js'
 
 /** The record's shape version: a reader checks it before it reads a field. */
-export const DIAGNOSTICS_VERSION = 1
+export const DIAGNOSTICS_VERSION = 2
 /** How many Sessions keep a record; the one that started longest ago goes first. */
 export const MAX_SESSIONS = 200
 /** How many mode ids of one list are kept. */
@@ -284,6 +284,17 @@ export class PermissionDiagnostics {
     } catch {}
   }
 
+  /** Record the bounded own-mode answer and whether the prompt took it; undefined (a prompt where the own mode was not in question) clears it. */
+  own(sessionId, state, seen) {
+    try {
+      const entry = this.entry(sessionId, state)
+      if (entry === undefined) return
+      if (seen === undefined) { delete entry.ownMode; return }
+      const { answer, taken } = seen
+      entry.ownMode = { answer: pick(new Set(['yes', 'no', 'late', 'none', 'changed', 'refused']), answer), taken: taken === true, at: this.now() }
+    } catch {}
+  }
+
   /**
    * The record of one Session, as a fresh plain copy, or undefined. `active` says whether the
    * agent session it describes is still the Session's live one; the mode the agent is in and
@@ -300,6 +311,7 @@ export class PermissionDiagnostics {
         active = state !== undefined && entry.adapter.deref()?.live?.get(sessionId) === state && state.run?.alive === true
       } catch {}
       const out = { version: DIAGNOSTICS_VERSION, agent: entry.agent, startedAt: entry.startedAt, active }
+      if (entry.ownMode !== undefined) out.ownMode = { ...entry.ownMode }
       if (entry.bridge !== undefined) {
         out.bridge = { ...entry.bridge }
         if (entry.bridge.on) {

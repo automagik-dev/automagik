@@ -28,6 +28,7 @@ export function liveOf(work, roster, now = Date.now()) {
         bot: byId[entry.botId],
         place: entry.roomId ? roomsById[entry.roomId]?.name : task?.title ?? entry.label,
         tool: entry.tool,
+        ...(entry.child ? { line: t('A subagent wants to use {tool}', { tool: entry.tool }) } : {}),
         open: entry.taskId ?? entry.roomId ?? entry.botId,
       }
     })

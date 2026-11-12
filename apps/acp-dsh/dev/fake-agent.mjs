@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+// "reviewer denies N" emits reviews; "then text" continues afterward. FAKE_ACP_REVIEW_STOP overrides cancelled.
+// "ask edited" changes input at the ask. FAKE_ACP_ALWAYS_ONLY=1 offers only lasting allows.
+// The new-session trace includes session/new _meta as meta when present.
 // A fake ACP agent for tests. Each prompt: two text chunks, one shell-like tool call that asks
 // permission first, then a line saying whether it ran. A prompt that says "twice" makes two
 // calls; one that says "hang" waits until it is cancelled; one that says "bridge <tool>" calls
@@ -38,6 +41,7 @@
 // A prompt that says "unasked" runs one of its own tools without asking permission, as an agent
 // does when its mode (or a rule in the person's own CLI settings) lets the call through, and
 // traces `own-tool-ran` with the mode it ran in; "unasked twice" runs two.
+// FAKE_ACP_REFUSE_MODES=a,b refuses those session/set_mode requests with invalidParams.
 // FAKE_ACP_IGNORE_CANCEL=1 makes it ignore `session/cancel`, as a stuck agent would.
 import { spawn } from 'node:child_process'
 import { appendFileSync } from 'node:fs'
@@ -185,7 +189,7 @@ const implementation = {
   async newSession(params) {
     if (AUTH === 'session') throw RequestError.authRequired(undefined, 'run the CLI\'s login first')
     const sessionId = `fake-${++created}`
-    trace({ event: 'new-session', sessionId, servers: (params.mcpServers ?? []).map(server => server.name) })
+    trace({ event: 'new-session', sessionId, ...(params._meta === undefined ? {} : { meta: params._meta }), servers: (params.mcpServers ?? []).map(server => server.name) })
     const session = newSession(sessionId, params.cwd)
     await attach(session, params.mcpServers, sessionId)
     trace({ event: 'new-answer', sessionId, at: Date.now() })
@@ -271,6 +275,16 @@ const implementation = {
     // What the client actually sent this turn (a replayed transcript, for a crossing).
     trace({ event: 'prompt', sessionId, turns: session.turns, text: said })
     const update = u => conn.sessionUpdate({ sessionId, update: u })
+    const denies = /reviewer denies (\d+)/.exec(said)
+    if (denies) {
+      for (let n = 0; n < Number(denies[1]); n++) {
+        const toolCallId = `guardian_assessment:${session.turns}-${n}`
+        await update({ sessionUpdate: 'tool_call', toolCallId, title: 'Guardian Review', kind: 'think', status: 'pending' })
+        await update({ sessionUpdate: 'tool_call_update', toolCallId, status: 'completed', rawOutput: { review: { status: 'denied' } } })
+      }
+      if (/then text/.test(said)) await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Continuing.' } })
+      return { stopReason: process.env.FAKE_ACP_REVIEW_STOP ?? 'cancelled' }
+    }
     if (OFFERS || SESSION_MODELS) await update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: `On ${session.model} at ${session.effort ?? 'no'} effort. ` } })
     await update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'Thinking it over.' } })
     await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `Fake agent, turn ${session.turns}: ` } })
@@ -291,7 +305,7 @@ const implementation = {
       const asked = conn.requestPermission({
         sessionId,
         toolCall: { toolCallId, title: 'Run command?' },
-        options: [{ optionId: 'yes', name: 'Allow', kind: 'allow_once' }, { optionId: 'no', name: 'Reject', kind: 'reject_once' }],
+        options: [{ optionId: 'yes', name: 'Allow', kind: process.env.FAKE_ACP_ALWAYS_ONLY === '1' ? 'allow_always' : 'allow_once' }, { optionId: 'no', name: 'Reject', kind: 'reject_once' }],
       }, { cancellationSignal: controller.signal })
       setTimeout(() => controller.abort(), Number(process.env.FAKE_ACP_WITHDRAW_MS ?? 50))
       const answer = await asked.then(value => value.outcome?.outcome, error => `error ${error?.code}`)
@@ -380,7 +394,7 @@ const implementation = {
           sessionId,
           toolCall,
           options: [
-            { optionId: 'yes', name: 'Allow', kind: 'allow_once' },
+            { optionId: 'yes', name: 'Allow', kind: process.env.FAKE_ACP_ALWAYS_ONLY === '1' ? 'allow_always' : 'allow_once' },
             { optionId: 'no', name: 'Reject', kind: 'reject_once' },
           ],
         })
@@ -434,13 +448,13 @@ const implementation = {
     const calls = /twice/.test(said) ? 2 : 1
     for (let n = 1; n <= calls; n++) {
       const toolCallId = `call-${session.turns}-${n}`
-      const command = `echo hello ${n}`
+      const command = /ask edited/.test(said) ? 'echo first' : `echo hello ${n}`
       await update({ sessionUpdate: 'tool_call', toolCallId, title: `Run ${command}`, kind: 'execute', status: 'pending', rawInput: { command } })
       const answer = await conn.requestPermission({
         sessionId,
-        toolCall: { toolCallId, title: `Run ${command}`, kind: 'execute', rawInput: { command } },
+        toolCall: { toolCallId, title: `Run ${command}`, kind: 'execute', rawInput: { command: /ask edited/.test(said) ? 'echo second' : command } },
         options: [
-          { optionId: 'yes', name: 'Allow', kind: 'allow_once' },
+          { optionId: 'yes', name: 'Allow', kind: process.env.FAKE_ACP_ALWAYS_ONLY === '1' ? 'allow_always' : 'allow_once' },
           { optionId: 'no', name: 'Reject', kind: 'reject_once' },
         ],
       })
@@ -461,6 +475,8 @@ const implementation = {
 // Only a fake that offers modes takes `session/set_mode`; the others answer Method Not Found.
 if (MODES.length > 0) {
   implementation.setSessionMode = async ({ sessionId, modeId }) => {
+    // FAKE_ACP_REFUSE_MODES=a,b refuses those modes for permission tests.
+    if ((process.env.FAKE_ACP_REFUSE_MODES ?? '').split(',').includes(modeId)) throw RequestError.invalidParams(undefined, `Refused mode: ${modeId}`)
     if (!MODES.includes(modeId)) throw RequestError.invalidParams(undefined, `Unknown mode: ${modeId}`)
     const session = sessions.get(sessionId)
     if (session !== undefined) session.mode = modeId

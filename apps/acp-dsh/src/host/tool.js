@@ -4,6 +4,7 @@
 // the tool/call and tool/result rows itself, as for any tool. The body runs nothing: it waits
 // for the agent's call to finish, and when the agent asks permission for it, asks DSH's
 // approval service and hands the agent the answer.
+import { isDeepStrictEqual } from 'node:util'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { contentImages, contentText, isTerminal } from './acp.js'
 import { agentImageOf, isImageCall, isPng, KEPT_TEXT } from './agent-image.js'
@@ -38,7 +39,11 @@ export function callArguments(tool) {
   }
 }
 
+// The text of a call Auto's judge refused (bots-dsh auto-judge.js): it names the judge, never the person.
+const judgedText = tool => `Auto's judge refused ${tool.title}: ${tool.judgeReason}.`.replace(/\s+/g, ' ').slice(0, 300)
+
 function resultText(tool) {
+  if (typeof tool.judgeReason === 'string') return judgedText(tool)
   const text = contentText(tool.content) || tool.output || (tool.rawOutput === undefined ? '' : typeof tool.rawOutput === 'string' ? tool.rawOutput : JSON.stringify(tool.rawOutput))
   return text.length > OUTPUT_LIMIT ? `${text.slice(0, OUTPUT_LIMIT)}…` : text
 }
@@ -103,7 +108,7 @@ async function imageResult(host, live, tool, exec) {
   if (exec.signal?.aborted) return failed('The image was stopped before it was finished.')
   const base64 = agentImageOf(tool)
   if (base64 === undefined) {
-    return failed(tool.status === 'failed'
+    return failed(typeof tool.judgeReason === 'string' ? judgedText(tool) : tool.status === 'failed'
       ? `${live.name} could not make this image. Try again, or describe it differently.`
       : `${live.name} ended without an image. Try again.`)
   }
@@ -132,6 +137,10 @@ const changed = (tool, signal) => new Promise((resolve) => {
 // and to `tools/result`, so the adapter can tell a call that was refused before the body (and
 // whose question from the agent nobody will answer here) from one this body is answering.
 export const entered = new WeakSet()
+
+// The executions Auto review let through, with the level when the gate passed. Only the
+// adapter's reviewedGate sets a record; the body's first answer takes it.
+export const reviewed = new WeakMap()
 
 /**
  * `images()` is the chat's image keeper (acpAgents.keepImages), or undefined. `attachments()` is
@@ -191,7 +200,7 @@ export function mirrorTool(host) {
           const permission = tool.permission
           if (permission && !permission.asked) {
             permission.asked = true
-            permission.answer(optionFor(await ask(host, live, tool, exec), permission.options))
+            permission.answer(optionFor(await ask(host, live, tool, exec, permission), permission.options))
             continue
           }
           if (isTerminal(tool) || !live.run.busy) break
@@ -285,14 +294,65 @@ export function levelOf(approval, session, sandboxPolicy, permissionPresets) {
 // own: DSH's approval service would reject them unasked under its `never` policy.
 export const fullAccess = (approval, session, sandboxPolicy, permissionPresets) => levelOf(approval, session, sandboxPolicy, permissionPresets).full
 
-async function ask(host, live, tool, exec) {
+// The rows backchannel.js's LEVEL_EVENTS watches: any one after the call invalidates its review.
+const LEVEL_ROWS = new Set(['permission/preset', 'sandbox/mode', 'approval/policy'])
+
+// The arguments Auto review read from this call's own logged row, parsed as parseLoggedArguments
+// does there. A level change since that row, even back to Auto, leaves no reviewed call.
+function reviewedArguments(session, callId) {
+  const events = session?.snapshotEvents?.() ?? []
+  for (let i = events.length - 1; i >= 0; i--) {
+    const event = events[i]
+    if (LEVEL_ROWS.has(event?.type)) return undefined
+    if (event?.type === 'tool/call' && event.data?.callId === callId) {
+      const raw = event.data.arguments
+      if (raw === '') return {}
+      try { return JSON.parse(raw) } catch { return raw }
+    }
+  }
+  return undefined
+}
+
+function reviewHolds(host, live, tool, exec, permission, record) {
+  if (record === undefined) return false
+  if (!permission.options.some(option => option.kind === 'allow_once')) return false
+  if (live?.calls?.has(exec.callId) !== true || live.toolIds?.get(exec.callId) !== tool.id) return false
+  const level = levelOf(host.approval(), exec.agent?.session, host.sandboxPolicy?.(), host.permissionPresets?.())
+  if (level.auto !== true || level.policy !== record.policy || level.sandbox !== record.sandbox) return false
+  const args = reviewedArguments(exec.agent.session, exec.callId)
+  if (args === undefined || permission.call === undefined) return false
+  if (!isDeepStrictEqual(JSON.parse(JSON.stringify(callArguments(permission.call))), args)) return false
+  return isDeepStrictEqual(JSON.parse(JSON.stringify(callArguments(tool))), args)
+}
+
+async function ask(host, live, tool, exec, permission) {
+  const record = reviewed.get(exec); reviewed.delete(exec)
   const approval = host.approval()
   if (!approval || !exec.agent) return 'unavailable'
   if (fullAccess(approval, exec.agent.session, host.sandboxPolicy?.(), host.permissionPresets?.())) return 'allowed-once'
+  // At Auto, the reviewer (or the person in its denial dialog) already answered for this
+  // execution. That answer covers only the first question, at the same level, about the call
+  // the reviewer read: both the question's snapshot and the call now must match its logged
+  // arguments. The body's args can have been replaced after review. Never make a standing
+  // allow_always rule from this answer; a missing proof or a throw asks as before.
+  try { if (reviewHolds(host, live, tool, exec, permission, record)) return 'allowed-once' } catch {}
   const asking = tool.permission?.title
   const reason = `${live.name}: ${asking && asking !== tool.title ? `${asking.replace(/\?$/, '')}: ` : ''}${tool.title}`
+  let mirrorCall
   try {
-    return await approval.request({ agent: exec.agent, toolName: TOOL_NAME, callId: exec.callId, reason, displayReason: { en: reason }, signal: exec.signal })
+    const { title, kind, input, locations } = callArguments(tool)
+    // Plain JSON: DSH passes an approval nobody here answers on to its remote approval card only as lossless JSON (dsh-api-gateway
+    // projectRemoteEventRequest), and a member left undefined (`locations` of a call that has none) fails that dispatch: the call
+    // would be cancelled with no card.
+    mirrorCall = JSON.parse(JSON.stringify({ title, kind, input, locations, allowOnce: tool.permission?.options?.some(option => option.kind === 'allow_once') === true }))
+  } catch {
+    // Unreadable call details leave the question for the person.
+  }
+  try {
+    const outcome = await approval.request({ agent: exec.agent, toolName: TOOL_NAME, callId: exec.callId, reason, displayReason: { en: reason }, signal: exec.signal, ...(mirrorCall === undefined ? {} : { mirrorCall }) })
+    // Auto's judge refused it (bots-dsh auto-judge.js sets `mirrorCall.judged`): the call's result says so (section 4).
+    tool.judgeReason = outcome === 'rejected' && typeof mirrorCall?.judged?.reason === 'string' ? mirrorCall.judged.reason : undefined
+    return outcome
   } catch {
     return 'unavailable'
   }

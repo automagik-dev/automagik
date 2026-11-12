@@ -844,3 +844,19 @@ test('set-prefs stores and validates the browser address lists', async t => {
   assert.equal(Object.hasOwn(cleared.value, 'browserAllow'), false)
   assert.equal(Object.hasOwn(cleared.value, 'browserDeny'), false)
 })
+
+test('browser refusals distinguish prompts off, unavailable, and a person’s no', async t => {
+  // DSH reads the policy of the call's own Session, so the never fake answers for that object only.
+  for (const [approvalFor, message] of [
+    [exec => ({ ...fakeApproval('rejected'), overrideOf: s => (s === exec.agent.session ? 'never' : undefined), config: { policy: 'ask' } }), 'Nobody was asked to approve Publish update on shop.example.com: approval prompts are off in this conversation (a subagent, or Full access), so nothing was done. Trying again here is refused the same way. The person can allow it in Settings -> Browser -> Allow an action, or do it themselves.'],
+    [() => fakeApproval('unavailable'), "Publish update on shop.example.com needs the person's approval, but nobody could answer, so nothing was done."],
+    [() => ({ ...fakeApproval('rejected'), config: { policy: 'ask' } }), 'The user did not approve Publish update on shop.example.com. Do not try this action again unless the user asks. Nothing was done.'],
+  ]) {
+    const exec = browserExec()
+    const writer = browserWriter()
+    const { ctx, stop } = start({ browserPlugin: 'refs', browserPluginApi: writer.plugin }, { services: { approval: approvalFor(exec), permissionPresets: permissionService('workspace-write') } })
+    t.after(stop)
+    await assert.rejects(ctx.registeredTools.get('browser_write').execute({}, exec), { message })
+    assert.equal(writer.runs(), 0)
+  }
+})
