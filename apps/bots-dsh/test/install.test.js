@@ -40,6 +40,7 @@ test('apply registers listeners, tools, and effects in a fixed order', (t) => {
     'on llm/adapters-updated',
     'on credentials/reference-updated',
     'on settings/document-updated',
+    'effect ds-bot: auxiliary llm retry',
     'on llm/adapters-updated',
     'on settings/document-updated',
     'on loader/volatile-update',

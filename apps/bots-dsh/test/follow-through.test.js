@@ -890,4 +890,3 @@ test('call tags mixed into the text are stripped, and the readable part still go
   assert.match(reply, /Hi, everyone\./)
   assert.doesNotMatch(reply, /parameter|function|tool_call/)
 })
-

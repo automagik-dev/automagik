@@ -1158,3 +1158,41 @@ test('an rc.2 retry keeps its next-turn boundary and rpcId through a failed part
   assert.deepEqual(b.calls.archived, ['fresh1'])
   assert.deepEqual(b.streams(), [])
 })
+
+test('checkpoint retries a transient stream failure before persisting its complete summary', async t => {
+  const b = backendBench(); t.after(b.stop)
+  let attempts = 0
+  const stream = b.ctx.llm.stream
+  b.ctx.llm.providerRetryPolicy = () => ({ mode: 'normal', maxRetries: 1, retryableCodes: ['TRANSPORT'], initialDelayMs: 1, maxDelayMs: 5, jitterRatio: 0 })
+  b.ctx.llm.stream = async function* (options) {
+    if (++attempts === 1) {
+      yield { type: 'text-delta', index: 0, text: 'broken partial' }
+      yield { type: 'finish', reason: { kind: 'error', failure: { code: 'TRANSPORT', message: 'temporary failure' } } }
+    } else yield* stream(options)
+  }
+  await b.rt.checkpointBot('b1', { sessionId: 's1' })
+  assert.equal(attempts, 2)
+  const summary = b.calls.persisted.find(event => event.type === 'compaction/summary').data.summary[0].text
+  assert.match(summary, /A summary/)
+  assert.doesNotMatch(summary, /broken partial/)
+})
+
+test('the context steward retries a transient failure before choosing compaction', async t => {
+  const b = backendBench(); t.after(b.stop)
+  b.bot.contextCheckRatio = .1
+  let attempts = 0
+  const stream = b.ctx.llm.stream
+  b.ctx.llm.providerRetryPolicy = () => ({ mode: 'normal', maxRetries: 1, retryableCodes: ['TRANSPORT'], initialDelayMs: 1, maxDelayMs: 5, jitterRatio: 0 })
+  b.ctx.llm.stream = async function* (options) {
+    if (options.system === undefined) return yield* stream(options)
+    if (++attempts === 1) {
+      yield { type: 'finish', reason: { kind: 'error', failure: { code: 'TRANSPORT', message: 'temporary failure' } } }
+    } else {
+      yield { type: 'text-delta', index: 0, text: '{"action":"compact","reason":"work remains"}' }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    }
+  }
+  b.ctx.emit('agent/status', { agent: b.agent, status: 'idle' })
+  await until(() => b.calls.persisted?.some(event => event.type === 'compaction/summary'), 2000)
+  assert.equal(attempts, 2)
+})

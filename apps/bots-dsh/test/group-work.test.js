@@ -1096,4 +1096,3 @@ test('read_group_chat reads textless events among messages and keeps seq reads c
     assert.equal(await host.tool('read_group_chat', { group: 'Ops', seq: i + 2 }, 'a'), expected)
   }
 })
-

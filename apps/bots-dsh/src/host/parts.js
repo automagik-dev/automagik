@@ -14,9 +14,10 @@
 // The next part opens with the handoff package: the note, the latest messages word for
 // word, and where the rest is. Input that arrives meanwhile waits and moves along.
 // read_own_chat searches every part, the condensed messages included.
+import { assembleLlmStream } from './models.js'
 import { randomUUID } from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { openTurnAt } from './btw.js'
 import { HANDOFF_ACK, HISTORY_TIMEOUT_MS, REPLY_KIND, SOURCE_KIND } from './constants.js'
 import { CHECKPOINT_PROMPT, STEWARD_SYSTEM, checkpointCount, checkpointTail, checkpointTailNote, checkpointText, linesFor, parseDecision, stewardRequest } from './steward.js'
@@ -680,8 +681,7 @@ export function install(rt) {
     let problem
     for (let attempt = 1; attempt <= NOTE_ATTEMPTS; attempt += 1) {
       const prompt = retry === undefined ? base : `${base}\n\n${retry}`
-      const assembler = new BlockAssembler()
-      for await (const chunk of ctx.llm.stream({
+      const callOptions = {
         provider: route.provider,
         model: route.model,
         ...(route.reasoningEffort ? { reasoningEffort: route.reasoningEffort } : {}),
@@ -692,7 +692,8 @@ export function install(rt) {
         sessionId: session.id,
         purpose: 'compaction',
         signal,
-      })) assembler.push(chunk)
+      }
+      const assembler = await (rt.assembleLlm ? rt.assembleLlm(callOptions) : assembleLlmStream(ctx, callOptions, { backoff: rt.config?.llmRetryBackoff }))
       const finish = assembler.finish
       if (finish.kind === 'error' || finish.kind === 'aborted') throw new Error(finish.failure?.message ?? finish.kind)
       const text = assembler.blocks().filter(block => block.type === 'text').map(block => block.text).join('\n').trim()
@@ -753,8 +754,7 @@ export function install(rt) {
     const head = input.messages
     const tail = checkpointTail(head, session.deriveMessages())
     const prompt = tail.length === 0 ? CHECKPOINT_PROMPT : `${CHECKPOINT_PROMPT}\n\n${checkpointTailNote(tail)}`
-    const assembler = new BlockAssembler()
-    for await (const chunk of ctx.llm.stream({
+    const callOptions = {
       provider: route.provider,
       model: route.model,
       ...(route.reasoningEffort ? { reasoningEffort: route.reasoningEffort } : {}),
@@ -765,11 +765,14 @@ export function install(rt) {
       sessionId: session.id,
       purpose: 'compaction',
       signal,
-    })) {
+    }
+    const check = () => {
       signal?.throwIfAborted()
       if (job !== undefined) assertCheckpoint(job)
-      assembler.push(chunk)
     }
+    const assembler = await (rt.assembleLlm
+      ? rt.assembleLlm(callOptions, { check })
+      : assembleLlmStream(ctx, callOptions, { backoff: rt.config?.llmRetryBackoff, check }))
     const finish = assembler.finish
     if (finish.kind === 'error' || finish.kind === 'aborted') throw new Error(finish.failure?.message ?? finish.kind)
     if (finish.kind === 'max-tokens') throw new Error('the checkpoint was cut off at the output limit')
@@ -814,8 +817,7 @@ export function install(rt) {
     const info = await ctx.llm.resolveModelInfo(route.provider, route.model).catch(() => undefined)
     // The decision needs no long thinking.
     const off = info?.reasoning?.efforts?.some(effort => effort.id === 'off')
-    const assembler = new BlockAssembler()
-    for await (const chunk of ctx.llm.stream({
+    const callOptions = {
       provider: route.provider,
       model: route.model,
       ...(off ? { reasoningEffort: 'off' } : {}),
@@ -825,7 +827,8 @@ export function install(rt) {
       sessionId: session.id,
       purpose: 'compaction',
       signal: AbortSignal.timeout(STEWARD_TIMEOUT_MS),
-    })) assembler.push(chunk)
+    }
+    const assembler = await (rt.assembleLlm ? rt.assembleLlm(callOptions) : assembleLlmStream(ctx, callOptions, { backoff: rt.config?.llmRetryBackoff }))
     const finish = assembler.finish
     if (finish.kind === 'error' || finish.kind === 'aborted') throw new Error(finish.failure?.message ?? finish.kind)
     return parseDecision(assembler.blocks().filter(block => block.type === 'text').map(block => block.text).join('\n'))

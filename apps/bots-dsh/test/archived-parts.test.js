@@ -98,4 +98,3 @@ test('a current Session archived in DSH while the team runs is taken back out', 
   await settled(() => registry.archivedSessionIds.length === 1)
   assert.deepEqual([...registry.archivedSessionIds], ['outside'])
 })
-
