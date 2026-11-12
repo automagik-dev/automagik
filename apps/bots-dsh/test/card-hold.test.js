@@ -5,6 +5,9 @@ import { runInNewContext } from 'node:vm'
 import { build } from 'esbuild'
 import { createSource, heldCardKey } from '../src/client/sources.js'
 import { teamActions } from '../src/client/team-actions.js'
+import { readFileSync } from 'node:fs'
+import { DICTIONARY } from '../src/client/i18n.js'
+import { remoteApproval } from '../src/host/remote-chat-adapter.js'
 
 // Keep each component's hook state across renders. The tool-cell tests cover where
 // these components appear; this harness checks their edits and async lifetimes.
@@ -16,6 +19,7 @@ const { outputFiles } = await build({
       "export { SecretCard } from './src/client/secret-card.js'",
       "export { PendingView, AnsweredReply } from './src/client/widget-cell.js'",
       "export { AnsweredCell } from './src/client/questions.js'",
+      "export { installLocale } from './src/client/i18n.js'",
       "export { HandoffCall, HandoffDock, PendingHandoff, SettledHandoff } from './src/client/handoff-card.js'",
     ].join('\n'),
     resolveDir: fileURLToPath(new URL('..', import.meta.url)),
@@ -61,7 +65,7 @@ runInNewContext(outputFiles[0].text, {
   HTMLInputElement: class {}, HTMLTextAreaElement: class {}, HTMLSelectElement: class {}, HTMLElement: class {},
   URL,
 })
-const { useDockHold, PendingQuestion, QuestionCard, SecretCard, PendingView, AnsweredReply, AnsweredCell, HandoffCall, HandoffDock, PendingHandoff, SettledHandoff } = module.exports
+const { installLocale, useDockHold, PendingQuestion, QuestionCard, SecretCard, PendingView, AnsweredReply, AnsweredCell, HandoffCall, HandoffDock, PendingHandoff, SettledHandoff } = module.exports
 const mount = (Component, props) => {
   const instance = {
     slots: [], effects: [], props,
@@ -201,6 +205,49 @@ test('a permission question offers its fixed answers and nothing to type; any ot
   })
   assert.deepEqual(answers, [{ answers: [{ id: 'sample-question', selected: ['Deny'] }] }])
   ask(undefined, form => assert.ok(field(form), 'a plain question still takes a typed answer'))
+})
+
+test('what Remote Hermes asks reads in the interface language, and the answer still goes back as the host named it', async () => {
+  const zh = DICTIONARY.zh
+  const pt = JSON.parse(readFileSync(new URL('../../locale-pt-br-dsh/src/client/locales/pt-BR/omni-ui.json', import.meta.url), 'utf8'))
+  const written = node => all(node, child => ['bt-q-title', 'bt-q-label', 'bt-q-detail'].includes(child.props?.className)).map(child => [child.props.children].flat(Infinity).join(''))
+  // The question exactly as the host sends it at a level with no approval card.
+  const ask = async (press) => {
+    let seen
+    const userQuestions = { ask: ({ questions }) => new Promise((resolve) => { seen = { questions, answer: resolve } }) }
+    const answer = remoteApproval({ get: name => (name === 'userQuestions' ? userQuestions : undefined) }, { session: { id: 'ada' } }, { request_id: 'approval-1', description: 'Delete the folder build' })
+    const card = mount(QuestionCard, { matched: seen }), shown = card.render(), view = mount(shown.type, shown.props)
+    try { return [await press(view.render(), seen.questions[0]), await answer] } finally { view.unmount(); card.unmount() }
+  }
+  const off = installLocale({
+    register: () => () => {},
+    bind: () => (key, params) => (zh[key] ?? key).replace(/\{(\w+)\}/g, (match, name) => (params && name in params ? String(params[name]) : match)),
+    getLocale: () => ({ active: 'zh' }),
+  })
+  try {
+    const [texts, allowed] = await ask((form, question) => {
+      const texts = written(form)
+      for (const key of [question.question, ...question.options.map(option => option.label)]) {
+        assert.ok(zh[key] && zh[key] !== key, `Chinese words ${key}`)
+        assert.ok(pt[key] && pt[key] !== key, `Brazilian Portuguese words ${key}`)
+        assert.equal(texts.includes(key), false, `${key} is not shown in English`)
+      }
+      options(form)[0].props.onClick()
+      return texts
+    })
+    // Hermes's own words stay as Hermes wrote them.
+    assert.deepEqual(texts, [zh['Remote Hermes asks before it runs this. Allow it?'], 'Delete the folder build', zh['Allow once'], zh.Deny])
+    assert.equal(allowed, 'once', 'the translated Allow once still sends the label the host checks')
+    assert.equal((await ask((form) => { options(form)[1].props.onClick() }))[1], 'deny')
+    // The answered card in the transcript reads the same way.
+    const question = { id: 'approval-1', question: 'Remote Hermes asks before it runs this. Allow it?', options: [{ label: 'Allow once' }, { label: 'Deny' }], intent: { kind: 'approval' } }
+    const card = node => find(node, child => typeof child.type === 'function')
+    const settled = card(AnsweredCell({ node: { data: { questions: [question], answers: [{ id: 'approval-1', selected: ['Deny'] }] } } }))
+    assert.deepEqual(written(settled.type(settled.props)), [zh[question.question], zh.Deny])
+    // A Bot's own question is its own words: nothing in it is translated.
+    const own = card(AnsweredCell({ node: { data: { questions: [{ ...question, intent: undefined }], answers: [{ id: 'approval-1', selected: ['Deny'] }] } } }))
+    assert.deepEqual(written(own.type(own.props)), [question.question, 'Deny'])
+  } finally { off() }
 })
 
 test('keyboard selection owns a dock card and busy questions cannot submit or dismiss twice', async () => {

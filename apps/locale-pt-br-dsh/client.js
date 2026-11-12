@@ -501,6 +501,8 @@ const pack = createPack({
     "in its own chat": "no próprio chat",
     "Reject": "Recusar",
     "Allow once": "Permitir uma vez",
+    "Deny": "Negar",
+    "Remote Hermes asks before it runs this. Allow it?": "O Hermes remoto pergunta antes de executar isto. Permitir?",
     "Couldn't message {name}": "Não foi possível mandar mensagem para {name}",
     "Messaged": "Mandou mensagem para",
     "Couldn't stop {name}": "Não foi possível parar {name}",

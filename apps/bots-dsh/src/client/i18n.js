@@ -1330,6 +1330,8 @@ const ZH = {
   'in its own chat': '在自己的对话里',
   Reject: '拒绝',
   'Allow once': '允许一次',
+  Deny: '拒绝',
+  'Remote Hermes asks before it runs this. Allow it?': '远程 Hermes 在运行此操作前询问。是否允许？',
   "Couldn't message {name}": '没能给 {name} 发消息',
   Messaged: '已发消息给',
   "Couldn't stop {name}": '没能叫停 {name}',

@@ -1375,6 +1375,8 @@ var ZH = {
   "in its own chat": "在自己的对话里",
   Reject: "拒绝",
   "Allow once": "允许一次",
+  Deny: "拒绝",
+  "Remote Hermes asks before it runs this. Allow it?": "远程 Hermes 在运行此操作前询问。是否允许？",
   "Couldn't message {name}": "没能给 {name} 发消息",
   Messaged: "已发消息给",
   "Couldn't stop {name}": "没能叫停 {name}",
@@ -7006,6 +7008,7 @@ var import_dsh_client_ui_primitives = require("@deepseek-ai/dsh-client-ui-primit
 // src/client/questions.js
 var import_react18 = require("react");
 var keyLetter = (index) => String.fromCharCode(65 + index);
+var wordingOf = (question) => question?.intent?.kind === "approval" ? { prompt: hostText(question.question ?? ""), label: (label) => t(label) } : { prompt: question?.question ?? "", label: (label) => label };
 var optionsOf = (question) => (question?.options ?? []).map((option) => typeof option === "string" ? { label: option } : option);
 var isTypingTarget = (node) => node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement || node instanceof HTMLSelectElement || node instanceof HTMLElement && node.isContentEditable;
 var optionKeyCards = createSource(0);
@@ -7044,6 +7047,7 @@ function QuestionView({ question, onAnswer, onDismiss, onInteract, busy = false,
   const ownRef = (0, import_react18.useRef)(null);
   const titleId = (0, import_react18.useId)();
   const options = optionsOf(question);
+  const wording = wordingOf(question);
   const multi = question.multiSelect === true;
   const custom = own.trim();
   const canSubmit = multi ? picked.length > 0 || custom !== "" : custom !== "";
@@ -7103,7 +7107,7 @@ function QuestionView({ question, onAnswer, onDismiss, onInteract, busy = false,
       (0, import_react18.createElement)(
         "span",
         { className: "bt-q-body" },
-        (0, import_react18.createElement)("span", { className: "bt-q-label" }, option.label),
+        (0, import_react18.createElement)("span", { className: "bt-q-label" }, wording.label(option.label)),
         option.description ? (0, import_react18.createElement)("span", { className: "bt-q-desc" }, option.description) : null
       ),
       selected && !raised2 ? (0, import_react18.createElement)("span", { className: "bt-q-check", title: t("Selected") }, (0, import_react18.createElement)(CheckIcon)) : null
@@ -7147,7 +7151,7 @@ function QuestionView({ question, onAnswer, onDismiss, onInteract, busy = false,
       (0, import_react18.createElement)(
         "div",
         { className: "bt-q-text" },
-        (0, import_react18.createElement)("p", { className: "bt-q-title", id: titleId }, question.header ? `${question.header} · ` : "", question.question),
+        (0, import_react18.createElement)("p", { className: "bt-q-title", id: titleId }, question.header ? `${question.header} · ` : "", wording.prompt),
         question.detail ? (0, import_react18.createElement)("div", { className: "bt-q-detail" }, question.detail) : null,
         raised2 && multi ? (0, import_react18.createElement)("div", { className: "bt-q-detail" }, t("Choose all that apply")) : null
       ),
@@ -7165,7 +7169,7 @@ function QuestionView({ question, onAnswer, onDismiss, onInteract, busy = false,
 }
 function SettledQuestion({ question, answer }) {
   const options = optionsOf(question);
-  const prompt = question?.question ?? "";
+  const wording = wordingOf(question), prompt = wording.prompt;
   const chosen = [...answer.selected ?? [], ...answer.custom ? [answer.custom] : []];
   if (chosen.length === 0) {
     return (0, import_react18.createElement)(
@@ -7189,7 +7193,7 @@ function SettledQuestion({ question, answer }) {
         "div",
         { key: `${label}-${index}`, className: "bt-q-opt" },
         optionIndex >= 0 ? (0, import_react18.createElement)("span", { className: "bt-key", "aria-hidden": true }, keyLetter(optionIndex)) : null,
-        (0, import_react18.createElement)("span", { className: "bt-q-body" }, (0, import_react18.createElement)("span", { className: "bt-q-label" }, label)),
+        (0, import_react18.createElement)("span", { className: "bt-q-body" }, (0, import_react18.createElement)("span", { className: "bt-q-label" }, wording.label(label))),
         (0, import_react18.createElement)("span", { className: "bt-q-check", title: t("Selected") }, (0, import_react18.createElement)(CheckIcon))
       );
     }))
