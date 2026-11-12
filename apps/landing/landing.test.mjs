@@ -10,6 +10,9 @@ import { themeCss } from './scripts/sync-theme.mjs'
 import { pages, routes, rootFiles, weUnfold, arca, oiTag, platforms, offered, used, usedCredit, trademarks, brand as siteLogo, icons, manifest as webManifest } from './scripts/build-pages.mjs'
 import { BOX, GEOMETRY, LOGO, TONES, logoInner, tagInner } from './scripts/build-lockup.mjs'
 
+// The width of each name's lockup in the kit's own units; all are 264 high.
+const LOCKUP_BOX = { Automagik: '1632.34', Genie: '976.34', Omni: '916.53' }
+
 const root = resolve(fileURLToPath(new URL('.', import.meta.url)))
 const read = path => readFileSync(resolve(root, path), 'utf8')
 const theme = read('theme.css'), css = read('styles.css')
@@ -149,7 +152,7 @@ test('every href/action points locally or to an exact reviewed destination', () 
 
 test('images are reviewed brand assets, unchanged captures or recorded crops of them', () => {
   // Arca's two icon files are its kit's, under the kit's own names.
-  const brand = new Set(['/assets/brand/automagik-lockup-three-colours-ink-header.svg', '/assets/brand/automagik-lockup-three-colours-cream-header.svg', '/assets/brand/triskle-three-colours.svg', '/assets/brand/triskle-three-colours-32.svg', '/assets/brand/omni-pleased.png', '/assets/brand/arca/svg/arca-icon-ink.svg', '/assets/brand/arca/svg/arca-icon-ivory.svg', '/assets/brand/automagik/automagik-lockup-oi-ink.svg', '/assets/brand/automagik/automagik-lockup-oi-cream.svg'])
+  const brand = new Set(['/assets/brand/automagik-lockup-three-colours-ink-header.svg', '/assets/brand/automagik-lockup-three-colours-cream-header.svg', '/assets/brand/genie-lockup-three-colours-ink.svg', '/assets/brand/genie-lockup-three-colours-cream.svg', '/assets/brand/genie-lockup-three-colours-cream-header.svg', '/assets/brand/omni-lockup-three-colours-ink.svg', '/assets/brand/omni-lockup-three-colours-cream.svg', '/assets/brand/omni-lockup-three-colours-ink-header.svg', '/assets/brand/omni-lockup-three-colours-cream-header.svg', '/assets/brand/triskle-three-colours.svg', '/assets/brand/triskle-three-colours-32.svg', '/assets/brand/omni-pleased.png', '/assets/brand/arca/svg/arca-icon-ink.svg', '/assets/brand/arca/svg/arca-icon-ivory.svg', '/assets/brand/automagik/automagik-lockup-oi-ink.svg', '/assets/brand/automagik/automagik-lockup-oi-cream.svg'])
   for (const { mark: [light, dark] } of used) for (const file of [light, dark]) if (file) brand.add(`/assets/brand/used/${file}`)
   for (const html of generated.values()) {
     for (const [, value] of html.matchAll(/(?:src|srcset|poster)="([^"]+)"/g)) {
@@ -161,7 +164,7 @@ test('images are reviewed brand assets, unchanged captures or recorded crops of 
     }
     for (const [image] of html.matchAll(/<img\b[^>]*>/g)) {
       // Plain-words alt text, or an explicitly decorative image hidden from assistive technology.
-      assert.match(image, /alt="[^"]{20,}"|alt="Automagik"|alt="" aria-hidden="true"/)
+      assert.match(image, /alt="[^"]{20,}"|alt="(?:Automagik|Genie|Omni)"|alt="" aria-hidden="true"/)
       assert.match(image, /\bwidth="\d+" height="\d+"/, image)
       assert.match(image, /loading="lazy"|fetchpriority="high"|decoding="async"|alt="Automagik"/, image)
     }
@@ -274,18 +277,24 @@ test('the logo and the icons: the logo kit\'s own files, unchanged, in the heade
   const answer = await htmlPage('Checked', '<p>Checked.</p>').text()
   assert.ok(answer.includes(`<header class="top"><div class="wrap top-inner">${logo}<a href="/cloud/">Cloud</a></div></header>`))
   // Every file is the kit's, byte for byte: its digest is the one recorded beside its source.
-  const kit = ['assets/brand/automagik-lockup-three-colours-ink-header.svg', 'assets/brand/automagik-lockup-three-colours-cream-header.svg', 'assets/brand/automagik-lockup-three-colours-ink.svg', 'assets/brand/automagik-lockup-three-colours-cream.svg', 'assets/brand/triskle-three-colours.svg', 'assets/brand/triskle-three-colours-32.svg', 'favicon.ico', 'favicon.svg', 'apple-touch-icon.png', 'icon-192.png', 'icon-512.png']
+  const kit = ['assets/brand/automagik-lockup-three-colours-ink-header.svg', 'assets/brand/automagik-lockup-three-colours-cream-header.svg', 'assets/brand/automagik-lockup-three-colours-ink.svg', 'assets/brand/automagik-lockup-three-colours-cream.svg', 'assets/brand/genie-lockup-three-colours-ink.svg', 'assets/brand/genie-lockup-three-colours-cream.svg', 'assets/brand/genie-lockup-three-colours-cream-header.svg', 'assets/brand/omni-lockup-three-colours-ink.svg', 'assets/brand/omni-lockup-three-colours-cream.svg', 'assets/brand/omni-lockup-three-colours-ink-header.svg', 'assets/brand/omni-lockup-three-colours-cream-header.svg', 'assets/brand/triskle-three-colours.svg', 'assets/brand/triskle-three-colours-32.svg', 'favicon.ico', 'favicon.svg', 'apple-touch-icon.png', 'icon-192.png', 'icon-512.png']
   const pinned = new Map([...notes.matchAll(/^\| `([^`]+)` \| `([^`]+)` \| `([0-9a-f]{64})` \|$/gm)].map(match => [match[1], match[3]]))
   assert.deepEqual([...pinned.keys()], kit)
   for (const file of kit) assert.equal(createHash('sha256').update(readFileSync(resolve(root, file))).digest('hex'), pinned.get(file), `${file} is not the kit's file`)
-  // The lockups: one box for all four, the letters' tone in the file's colour, and nothing
-  // that could load or run: no script, link, picture or text inside. The wordmark's own
-  // drawing is pinned only by the digests above, so a newer kit is a file swap.
-  for (const [tone, colour] of Object.entries(TONES)) for (const size of ['-header', '']) {
-    const file = `automagik-lockup-three-colours-${tone}${size}.svg`, svg = read(`assets/brand/${file}`)
-    assert.ok(svg.startsWith(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -186 1632.34 264" role="img" aria-label="Automagik" color="${colour}">`), file)
+  // The lockups: one box for each name's files, the letters' tone in the file's colour, and
+  // nothing that could load or run: no script, link, picture or text inside. The wordmark's
+  // own drawing is pinned only by the digests above, so a newer kit is a file swap. Genie's
+  // small ink drawing is not kept: nothing shows it (its home card is dark in both themes).
+  const lockups = []
+  for (const [name, width] of Object.entries(LOCKUP_BOX)) for (const [tone, colour] of Object.entries(TONES)) for (const size of ['-header', '']) {
+    const file = `${name.toLowerCase()}-lockup-three-colours-${tone}${size}.svg`
+    if (file === 'genie-lockup-three-colours-ink-header.svg') continue
+    const svg = read(`assets/brand/${file}`)
+    assert.ok(svg.startsWith(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 -186 ${width} 264" role="img" aria-label="${name}" color="${colour}">`), file)
     assert.doesNotMatch(svg, /<script|<foreignObject|<image|<text|href=|url\((?!#)/i, file)
+    lockups.push(file)
   }
+  assert.deepEqual(readdirSync(resolve(root, 'assets/brand')).filter(file => /-lockup-/.test(file)).sort(), lockups.sort())
   // The mark alone: one square frame for both drawings, in three colours.
   for (const file of ['triskle-three-colours.svg', 'triskle-three-colours-32.svg']) {
     const svg = read(`assets/brand/${file}`)
@@ -312,6 +321,28 @@ test('the logo and the icons: the logo kit\'s own files, unchanged, in the heade
   // The footer's first column is never narrower than its logo.
   const column = Number(css.match(/\.footer-grid\{display:grid;grid-template-columns:minmax\((\d+)px,1\.5fr\)/)[1])
   assert.ok(column >= 40 * 1632.34 / 222 && column < 300, `the footer's first column holds the logo: ${column}`)
+})
+
+test('Genie and Omni are shown by their own lockups: each page\'s heading and the two home cards', () => {
+  const image = (slug, tone, size, attrs) => `<img class="product-logo" src="/assets/brand/${slug}-lockup-three-colours-${tone}${size}.svg" width="${Math.round(LOCKUP_BOX[{ genie: 'Genie', omni: 'Omni' }[slug]])}" height="264" alt="${{ genie: 'Genie', omni: 'Omni' }[slug]}" ${attrs}>`
+  const themed = (slug, size, attrs) => `<picture><source media="(prefers-color-scheme: dark)" srcset="/assets/brand/${slug}-lockup-three-colours-cream${size}.svg">${image(slug, 'ink', size, attrs)}</picture>`
+  // The heading of each product's page is its lockup, the kit's large drawing: ink letters on
+  // the light page, cream ones on the dark page. The image's text is the name, so the page's
+  // one h1 still reads "Genie" or "Omni".
+  for (const slug of ['genie', 'omni']) assert.ok(generated.get(`/${slug}/`).includes(`<h1>${themed(slug, '', 'fetchpriority="high" decoding="async"')}</h1><p class="intro">`), slug)
+  // The home's two product cards are titled by the drawing for small sizes. Omni's card
+  // follows the theme; Genie's is dark in both themes, so its letters are always cream.
+  const home = generated.get('/')
+  assert.ok(home.includes(`<h3><a href="/omni/">${themed('omni', '-header', 'loading="lazy" decoding="async"')}</a></h3>`))
+  assert.ok(home.includes(`<h3><a href="/genie/">${image('genie', 'cream', '-header', 'loading="lazy" decoding="async"')}</a></h3>`))
+  assert.match(css, /\[data-block="genie"\]\{[^}]*background:radial-gradient\([^;}]*var\(--plum-2\),var\(--plum\) 62%\)[^}]*color:var\(--on-plum\)\}/)
+  for (const [route, html] of generated) assert.equal(html.split('class="product-logo"').length - 1, { '/': 2, '/genie/': 1, '/omni/': 1 }[route] ?? 0, route)
+  // Sized by height only, a share of the window's width that always fits the heading's
+  // column (the browser gate measures it), so no file is stretched; and never filtered.
+  assert.ok(css.includes('h1 .product-logo{display:block;width:auto;height:min(128px,11.8vw);object-fit:contain;object-position:left}'))
+  assert.ok(css.includes('@media (max-width:860px){\n  h1 .product-logo{height:min(128px,23vw)}\n'))
+  assert.ok(css.includes('.product-card h3 .product-logo{display:block;width:auto;height:44px}'))
+  assert.doesNotMatch(css, /product-logo[^{]*\{[^}]*(?:filter|opacity|mix-blend|transform)/)
 })
 
 test('derived art: each file is one recorded rectangle of a hashed source, at 1x and 2x', () => {

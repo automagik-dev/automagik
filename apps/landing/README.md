@@ -118,6 +118,18 @@ copied unchanged, and `LICENSES.md` pins each one's SHA-256 (`landing.test.mjs` 
   it must stand clear of the ground the logo itself stands on, the header's or the footer's
   (a contrast of 7 or more), so the two files cannot be swapped unseen. No colour is named
   there.
+- Genie and Omni have their own lockups in the same kit: the same triskle, the name in the
+  same lettering, and the sparkle on the i in the product's colour (Automagik violet, Genie
+  pink, Omni cyan). The kit's large drawing is the heading of `/genie/` and `/omni/`
+  (`productLogo()` in `scripts/build-pages.mjs`), with ink letters on the light page and
+  cream ones on the dark page; the image's text is the product's name. `styles.css` sizes
+  it by height alone, a share of the window's width that always fits the heading's column,
+  up to 128 px. The drawing for small sizes titles the two product cards on the home page,
+  44 px high. Omni's card follows the theme; Genie's card is dark in both themes, so its
+  letters are always cream, and the kit's small Genie lockup with ink letters is not kept.
+  The browser gate reads each name's drawn colour against the ground it stands on (the
+  page, Omni's card, the lightest part of Genie's card) and measures each lockup at six
+  widths: its own proportions, inside its column.
 - The official lockup with the tag (above) is built from the kit's large lockup.
 - The triskle alone (the Mykes entry in the menus, the Cloud and Mykes heroes) is the kit's
   drawing for the size shown: `triskle-three-colours-32.svg` in a menu,
