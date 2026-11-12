@@ -67,12 +67,14 @@ used. No customer marks or new drawings are included.
 - `ibm-plex-mono-latin-600.woff2`: IBM Plex Mono SemiBold, Latin, Copyright 2017 IBM Corp.,
   from `@fontsource/ibm-plex-mono` 5.3.0, unchanged. SIL Open Font License 1.1, reproduced
   in `OFL-IBMPlexMono.txt`. It sets the tag's words.
-- `manrope-latin.woff2`: Manrope, Copyright 2018 The Manrope Project Authors.
-  SIL Open Font License 1.1, reproduced in `OFL-Manrope.txt`.
+- `fredoka-latin.woff2`: Fredoka, the title face, Copyright 2016 The Fredoka Project Authors.
+  SIL Open Font License 1.1, in `OFL-Fredoka.txt`. Both files are byte copies of
+  `docs/brand/fonts/`, made by `scripts/sync-theme.mjs`; `docs/brand/fonts/README.md` records
+  the font's source, how the web file was made from it and both sha256 sums.
 - `dm-sans-latin.woff2`: DM Sans, Copyright 2014 The DM Sans Project Authors.
   SIL Open Font License 1.1, reproduced in `OFL-DMSans.txt`.
 
-The fonts are copied unchanged from the draft's brand folder; the OFL text is reproduced with
+DM Sans is copied unchanged from the draft's brand folder; its OFL text is reproduced with
 line endings and trailing whitespace normalized. No private
 brief, chat, account information or input directory is part of this site.
 
