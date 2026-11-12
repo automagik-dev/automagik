@@ -1,8 +1,10 @@
 // Native Hermes wire. Its public boundary is rows, questions and durable identities; no ACP SDK.
 export const HERMES_DEADLINES = Object.freeze({ start: 60_000, control: 15_000, cancel: 5000 })
 export const LOST = 'Connection lost; remote outcome unknown'
-export const CONTRACT = 'Remote Hermes requires standalone Desktop contract 8 with server-request approvals.'
-export const CANONICAL = 'Canonical-authority Hermes is not supported. Use a standalone Desktop contract 8 backend.'
+// The oldest Desktop contract this wire speaks. A newer one that still answers is not an error.
+export const OLDEST_CONTRACT = 8
+export const OUTDATED = 'Remote Hermes is too old for this connection. Update Hermes, then connect again.'
+export const CANONICAL = 'This Hermes is run by a gateway that owns its sessions. Connect to a Hermes started with “hermes serve”.'
 const localFailures = new WeakSet()
 const failure = (message, code = 'bot/hermes') => {
   const error = Object.assign(new Error(message), { code })
@@ -151,7 +153,6 @@ export class HermesTransport {
       }
     }
     this.serial = 0
-    this.sessionInfos = new Map()
   }
 
   /** The secrets this connection knows, in each form they are written. */
@@ -239,7 +240,7 @@ export class HermesTransport {
       const response = await this.bounded(this.fetcher(`${this.address}/api/profiles`, { headers: this.authHeaders, redirect: 'error' }), Math.min(this.deadlines.control, 5000), 'Remote Hermes did not answer.')
       if (response?.status === 401 || response?.status === 403) return refused()
     } catch (error) { if (error?.code === 'bot/hermes-auth') return refused() }
-    return failure('Remote Hermes did not open the chat connection. Check that Hermes is running, then test again.', 'bot/hermes-connection')
+    return failure('Remote Hermes did not open the chat connection. Check that Hermes is running, then try again.', 'bot/hermes-connection')
   }
 
   // The single-use ticket a signed-in session (cookies, a bearer) opens its socket with.
@@ -304,8 +305,9 @@ export class HermesTransport {
     await ready
     if (this.closed || controller.signal.aborted) throw failure('Remote Hermes startup was cancelled.')
     this.readyReject = undefined
-    const capabilities = await this.request('client.capabilities', { server_requests: true })
-    if (!capabilities.server_requests?.includes('approval')) throw failure(CONTRACT, 'bot/hermes-unsupported')
+    // Whether this Hermes sends its approval questions here is its own setting: one that
+    // does not ask simply runs its tools.
+    await this.request('client.capabilities', { server_requests: true })
     this.connected = true
   }
 
@@ -318,7 +320,6 @@ export class HermesTransport {
       const params = this.redact(frame.params)
       // Masking one frame would lose the mark its value belongs to; text() masks the stream.
       if (STREAM_TEXT.has(frame.params.type) && typeof frame.params.payload.text === 'string') params.payload.text = frame.params.payload.text
-      if (params.type === 'session.info') this.sessionInfos.set(params.session_id, params.payload)
       for (const listener of this.listeners) listener({ kind: 'event', ...params, epoch: this.epoch })
       return
     }
@@ -368,36 +369,20 @@ export class HermesTransport {
     try { this.ws?.close() } catch {}
   }
 
-  check(snapshot, approvals = true) {
+  /**
+   * A session snapshot this wire can use. Which profile it is and how that profile
+   * approves its tools are Hermes's own settings: nothing here reads or requires them.
+   */
+  check(snapshot) {
     // Create uses stored_session_id; live resume/activate use session_key (plus info's copy).
     const stored = [snapshot?.stored_session_id, snapshot?.session_key, snapshot?.info?.stored_session_id].filter(Boolean)
     if (new Set(stored).size > 1) throw failure('Remote Hermes returned conflicting stored session IDs.')
     snapshot = { ...snapshot, stored_session_id: stored[0] }
     if (snapshot?.session_authority || snapshot?.protocol === 'hermes-gateway-v1') throw failure(CANONICAL, 'bot/hermes-unsupported')
-    if (snapshot?.info?.desktop_contract !== 8) throw failure(CONTRACT, 'bot/hermes-unsupported')
+    const contract = snapshot?.info?.desktop_contract
+    if (!Number.isInteger(contract) || contract < OLDEST_CONTRACT) throw failure(OUTDATED, 'bot/hermes-outdated')
     if (!snapshot.session_id || !snapshot.stored_session_id) throw failure('Remote Hermes did not return both stored and runtime session IDs.')
-    // A remote profile that auto-approves cannot honour a restrictive DSH level. Never alter it.
-    if (approvals && (snapshot.info.yolo !== false || snapshot.info.approval_mode !== 'manual')) throw failure('Set this remote profile to manual approvals in Hermes before connecting. Automagik does not change its global approval setting.', 'bot/hermes-approvals')
     return snapshot
-  }
-
-  async approvalSnapshot(snapshot) {
-    snapshot = this.check(snapshot, false)
-    const complete = info => info && typeof info.yolo === 'boolean' && typeof info.approval_mode === 'string'
-    if (complete(snapshot.info)) return this.check(snapshot)
-    let listener
-    try {
-      const info = await this.bounded(new Promise((resolve, reject) => {
-        listener = event => {
-          if (event.kind === 'lost') reject(failure(event.text ?? LOST))
-          if (event.kind === 'event' && event.type === 'session.info' && event.session_id === snapshot.session_id && complete(event.payload)) resolve(event.payload)
-        }
-        this.listeners.add(listener)
-        const cached = this.sessionInfos.get(snapshot.session_id)
-        if (complete(cached)) resolve(cached)
-      }), Math.max(1, this.startUntil - Date.now()), 'Remote Hermes did not provide approval metadata within 60 seconds.')
-      return this.check({ ...snapshot, info })
-    } finally { this.listeners.delete(listener) }
   }
 
   async session(identity, model) {
@@ -406,7 +391,7 @@ export class HermesTransport {
       if (ms <= 0) throw failure('Remote Hermes did not start within 60 seconds.', 'bot/hermes-timeout')
       return Math.min(ms, this.deadlines.control)
     }
-    const snapshot = await this.approvalSnapshot(await this.request(identity?.storedSessionId ? 'session.resume' : 'session.create', identity?.storedSessionId
+    const snapshot = this.check(await this.request(identity?.storedSessionId ? 'session.resume' : 'session.create', identity?.storedSessionId
       ? { session_id: identity.storedSessionId, inline_images: false, close_on_disconnect: false }
       : { model: model?.model, provider: model?.provider, idempotency_key: identity?.createKey, close_on_disconnect: false, source: 'automagik' }, remaining()))
     if (identity?.storedSessionId && model && (snapshot.info.model !== model.model || snapshot.info.provider !== model.provider)) {
@@ -452,6 +437,7 @@ export class RemoteChat {
     if (event.kind === 'lost') {
       this.identity.uncertain = true
       for (const tool of this.tools.values()) { tool.status = 'unknown'; tool.done?.() }
+      for (const asking of this.questions.values()) asking.abort?.()
       void this.save().catch(() => {})
       this.push({ kind: 'error', text: event.text ?? LOST })
       return
@@ -468,6 +454,7 @@ export class RemoteChat {
     const payload = event.payload ?? {}
     if (event.type === 'request.cancel') {
       this.cancelledQuestions.add(payload.id)
+      this.questions.get(payload.id)?.abort?.()
       this.questions.delete(payload.id)
       return
     }
@@ -532,13 +519,14 @@ export class RemoteChat {
     if (event.method === 'approval' && !this.question) return
     if (event.params?.session_id !== this.identity.runtimeSessionId && event.params?.session_id !== this.identity.storedSessionId) return
     if (this.questions.has(event.id) || this.cancelledQuestions.has(event.id)) return
-    this.questions.set(event.id, true)
+    // Hermes's own question, for the person: it waits as long as they take. Only Hermes
+    // withdrawing it, or this chat stopping, ends the wait without an answer.
+    const asking = new AbortController()
+    this.questions.set(event.id, asking)
     const generation = this.generation
     if (event.method !== 'approval') { this.transport.answer(event.id, undefined, true); return }
     let choice = 'deny'
-    try {
-      choice = await this.transport.bounded(Promise.resolve(this.question(event.params)), this.transport.deadlines.control, 'Approval deadline expired.')
-    } catch {}
+    try { choice = await this.question(event.params, asking.signal) } catch {}
     if (this.reconciling || this.cancelledQuestions.has(event.id) || generation !== this.generation || epoch !== this.transport.epoch
       || (epoch && this.identity.epoch && epoch !== this.identity.epoch)) return
     this.transport.answer(event.id, { choice: choice === 'once' ? 'once' : 'deny' })
@@ -558,6 +546,7 @@ export class RemoteChat {
     this.queue.length = 0
     for (const tool of this.tools.values()) { tool.status = 'unknown'; tool.done?.() }
     this.tools.clear()
+    for (const asking of this.questions.values()) asking.abort?.()
     this.questions.clear()
     this.cancelledQuestions.clear()
     this.streamed = ''
@@ -596,7 +585,7 @@ export class RemoteChat {
       let snapshot
       for (let attempt = 0; attempt < 3; attempt++) {
         const before = snapshotChanges()
-        snapshot = await this.transport.approvalSnapshot(await this.transport.request('session.activate', { session_id: this.identity.runtimeSessionId }))
+        snapshot = this.transport.check(await this.transport.request('session.activate', { session_id: this.identity.runtimeSessionId }))
         if (snapshotChanges() === before) break
         if (attempt === 2) throw failure('Remote session changed while reconciling. Reconnect and reconcile again before sending.')
       }
@@ -659,6 +648,7 @@ export class RemoteChat {
 
   dispose() {
     this.transport.listeners.delete(this.off)
+    for (const asking of this.questions.values()) asking.abort?.()
     for (const tool of this.tools.values()) { if (tool.status === 'running') tool.status = 'unknown'; tool.done?.() }
     this.transport.close()
   }

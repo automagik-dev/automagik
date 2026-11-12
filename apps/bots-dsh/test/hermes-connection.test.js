@@ -102,6 +102,42 @@ test('standalone fallback uses the running current profile, not the sticky CLI a
   assert.equal(c.profiles[0].id, 'sample-profile')
   assert.ok(f.calls.some(call => call.url.endsWith('/api/profiles/active')))
 })
+test('several served profiles default to the one Hermes runs as, then its active one, then the first; one profile asks nothing more', async t => {
+  const several = { status: { gateway_shared_with: ['sample-profile', 'second-profile', 'third-profile'] }, inventory: { profiles: [{ name: 'sample-profile' }, { name: 'second-profile' }, { name: 'third-profile' }] } }
+  for (const [name, active, expected] of [
+    ['the running profile', { active: 'third-profile', current: 'second-profile' }, 'second-profile'],
+    ['the active profile when the running one is not served', { active: 'third-profile', current: 'not-served' }, 'third-profile'],
+    ['the first when Hermes names none that is served', { active: 'not-served', current: 'not-served' }, 'sample-profile'],
+    ['the first when the answer has the wrong shape', { active: 7, current: { name: 'second-profile' } }, 'sample-profile'],
+  ]) await t.test(name, async () => {
+    const f = dashboard({ ...several, active })
+    const c = await prepareHermesConnection(f.token, { fetch: f.fetch, deadlines })
+    assert.deepEqual(c.profiles.map(profile => profile.id), ['sample-profile', 'second-profile', 'third-profile'])
+    assert.equal(c.defaultProfile, expected)
+    await c.close()
+  })
+  await t.test('a Hermes that cannot say its default still connects, on the first profile', async () => {
+    const f = dashboard({ ...several, handle: path => path === '/api/profiles/active' ? response({}, 500) : undefined })
+    const c = await prepareHermesConnection(f.token, { fetch: f.fetch, deadlines })
+    assert.equal(c.defaultProfile, 'sample-profile')
+    await c.close()
+  })
+  await t.test('one served profile is the default and its default is never asked for', async () => {
+    const f = dashboard()
+    const c = await prepareHermesConnection(f.token, { fetch: f.fetch, deadlines })
+    assert.deepEqual(c.profiles.map(profile => profile.id), ['sample-profile'])
+    assert.equal(c.defaultProfile, 'sample-profile')
+    assert.ok(!f.calls.some(call => call.url.endsWith('/api/profiles/active')))
+    await c.close()
+  })
+  await t.test('the connection test hands the page the profiles and that default', async sub => {
+    const f = dashboard({ ...several, active: { active: 'third-profile', current: 'second-profile' } }), h = runtime(sub, f)
+    const answer = await h.endpoints.get('hermes-remote-test')(f.token)
+    assert.deepEqual(Object.keys(answer).sort(), ['defaultProfile', 'profiles', 'status', 'testId'])
+    assert.equal(answer.defaultProfile, 'second-profile')
+    assert.deepEqual(answer.profiles.map(profile => profile.id), ['sample-profile', 'second-profile', 'third-profile'])
+  })
+})
 test('password sign-in selects one supported provider and keeps cookies instead of the password', async () => {
   const f = dashboard(), c = await prepareHermesConnection(f.login, { fetch: f.fetch, deadlines })
   const call = f.calls.find(call => call.url.endsWith('/auth/password-login'))

@@ -175,7 +175,8 @@ export function QuestionCard({ matched }) {
     }
     pending.answer({ answers: next })
   }
-  return h(QuestionView, { key: index, question, onAnswer, onDismiss: () => pending.dismiss(), ownAnswer: true, raised: true })
+  // A permission question has its fixed answers and nothing to type.
+  return h(QuestionView, { key: index, question, onAnswer, onDismiss: () => pending.dismiss(), ownAnswer: question.intent?.kind !== 'approval', raised: true })
 }
 
 export function PendingQuestion({ sessionId, question, actions, inline }) {
