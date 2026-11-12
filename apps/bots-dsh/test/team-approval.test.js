@@ -11,11 +11,12 @@ const bundle = await build({
   external: ['react', 'react-dom', '@deepseek-ai/dsh-client-ui-primitives'],
 })
 const module = { exports: {} }
+const focused = []
 runInNewContext(bundle.outputFiles[0].text, {
   module, exports: module.exports,
   require: (name) => {
     const platform = {
-      react: { createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity) }), useState: initial => [initial, () => {}], useEffect: () => {}, useRef: initial => ({ current: initial }), useLayoutEffect: () => {}, useMemo: fn => fn(), useCallback: fn => fn, useSyncExternalStore: () => undefined, Fragment: 'fragment', forwardRef: fn => fn, memo: fn => fn, createContext: () => ({}), useContext: () => undefined },
+      react: { createElement: (type, props, ...children) => ({ type, props: props ?? {}, children: children.flat(Infinity) }), useState: initial => [initial, () => {}], useEffect: effect => effect(), useRef: () => ({ current: { focus: options => focused.push(options) } }), useLayoutEffect: () => {}, useMemo: fn => fn(), useCallback: fn => fn, useSyncExternalStore: () => undefined, Fragment: 'fragment', forwardRef: fn => fn, memo: fn => fn, createContext: () => ({}), useContext: () => undefined },
       'react-dom': { createPortal: node => node },
       '@deepseek-ai/dsh-client-ui-primitives': {},
     }
@@ -24,7 +25,7 @@ runInNewContext(bundle.outputFiles[0].text, {
   },
   document: undefined, window: undefined, Date, Math, JSON, Intl, setTimeout, clearTimeout,
 })
-const { approvalView, argsOf, isTeamApproval } = module.exports
+const { approvalView, argsOf, isTeamApproval, TeamApproval, ChildApprovalDock } = module.exports
 const plain = value => JSON.parse(JSON.stringify(value))
 
 test('a Claude Code chat\'s delegation reads as a handoff, with the message as a quote', () => {
@@ -57,4 +58,32 @@ test('arguments that are not the bridge\'s JSON give no fields, and nothing show
   const view = approvalView('mcp__dsh__save_capability', { name: 'github', spec: { nested: true }, note: ' ' }, undefined)
   assert.equal(view.title, 'This Bot wants to use save_capability')
   assert.deepEqual(plain(view.rows), [['name', 'github']])
+})
+
+const nodes = node => !node || typeof node !== 'object' ? [] : [node, ...node.children.flatMap(nodes)]
+const content = node => typeof node === 'string' ? node : !node || typeof node !== 'object' ? '' : node.children.map(content).join('')
+test('the child dock selects the oldest answerable child of this Session and shows the operation', () => {
+  const answers = []
+  const useRoster = pick => pick({ byId: { ada: { id: 'ada', name: 'ada' } } })
+  const actions = { answerApproval: (...args) => answers.push(args) }
+  const entry = { id: 'x', child: true, answerable: true, botId: 'ada', sessionId: 'child', ownerSessionId: 'ada-chat', tool: 'bash', reason: 'someone', detail: { code: 'ls x', text: 'x' } }
+  const dock = approvals => ChildApprovalDock({ sessionId: 'ada-chat', useRoster, useWork: pick => pick({ approvals }), actions })
+  const misses = [{ ...entry, child: false }, { ...entry, answerable: false }, { ...entry, ownerSessionId: 'other' }]
+  assert.equal(dock([]), null)
+  assert.equal(dock(misses), null)
+  const rendered = dock([...misses, entry, { ...entry, id: 'later' }])
+  assert.equal(rendered.type, TeamApproval)
+  assert.equal(rendered.props.key, 'x')
+  focused.length = 0
+  const card = rendered.type(rendered.props)
+  assert.equal(focused.length, 0, 'a child card cannot take Enter from the composer')
+  assert.match(content(card), /A subagent is waiting for your approval/)
+  assert.match(content(card), /ada wants to use bash/)
+  assert.equal(content(nodes(card).find(n => n.type === 'blockquote')), 'ls x')
+  assert.equal(content(nodes(card).find(n => n.props.className === 'bt-apr-note')), 'x · someone')
+  nodes(card).find(n => n.type === 'button' && content(n).includes('Allow once')).props.onClick()
+  nodes(card).find(n => n.type === 'button' && content(n).includes('Reject')).props.onClick()
+  assert.deepEqual(answers, [['x', 'allow'], ['x', 'reject']])
+  TeamApproval({ useRoster, matched: { key: 'team', kind: 'approval', sessionId: 'ada', toolName: 'start_task', reason: '{}', answerable: true, answer: () => {} } })
+  assert.equal(focused.length, 1, 'a team-tool card still focuses')
 })

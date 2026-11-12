@@ -108,3 +108,17 @@ test('on-screen stops notify only when their place cannot draw them', () => {
   page.work.set({ stops: [stopEntry()] })
   assert.equal(page.shown.length, 0)
 })
+
+test('child asks notify away from the owner chat, with the subagent in the body', () => {
+  for (const [shown, count] of [['ada-chat', 0], ['someone', 1]]) {
+    const page = windowWith()
+    page.noticeApprovals({ work: page.work, roster: page.roster, shownSession: () => shown, openSession: page.openSession, since: 100 })
+    page.work.set({ approvals: [{ id: 'x', child: true, botId: 'ada', sessionId: 'child', ownerSessionId: 'ada-chat', tool: 'bash', at: 200 }] })
+    assert.equal(page.shown.length, count)
+    if (count) {
+      assert.equal(page.shown[0].body, 'A subagent wants to use bash')
+      page.shown[0].onclick()
+      assert.deepEqual(page.opened, ['ada'])
+    }
+  }
+})

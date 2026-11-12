@@ -1067,6 +1067,8 @@ var ZH = {
   "{first} and {second} are waiting for your approval": "{first}、{second} 等你批准",
   "{first}, {second} and {count} more are waiting for your approval": "{first}、{second} 等 {total} 个等你批准",
   "Waiting for your approval": "等你批准",
+  "A subagent is waiting for your approval": "一个子代理在等你批准",
+  "A subagent wants to use {tool}": "一个子代理想要使用 {tool}",
   "A step stopped on a permission": "一个步骤因权限限制而停止",
   "{name} stopped on a permission": "{name} 因权限限制而停止",
   "{name} stopped on a permission: {why}": "{name} 因权限限制而停止：{why}",
@@ -10941,6 +10943,7 @@ function liveOf(work, roster, now = Date.now()) {
       bot: byId[entry.botId],
       place: entry.roomId ? roomsById[entry.roomId]?.name : task?.title ?? entry.label,
       tool: entry.tool,
+      ...entry.child ? { line: t("A subagent wants to use {tool}", { tool: entry.tool }) } : {},
       open: entry.taskId ?? entry.roomId ?? entry.botId
     };
   });
@@ -19016,8 +19019,10 @@ function TeamApproval({ matched, useRoster }) {
   const roster = useRoster((value) => value);
   const [answered, setAnswered] = (0, import_react49.useState)(false);
   const root = (0, import_react49.useRef)(null);
-  const fromBot = roster.byId?.[pending.sessionId] ?? roster.byId?.[roster.tasks?.[pending.sessionId]?.from];
+  const fromBot = roster.byId?.[pending.botId] ?? roster.byId?.[pending.sessionId] ?? roster.byId?.[roster.tasks?.[pending.sessionId]?.from];
   const view = approvalView(pending.toolName, argsOf(pending.reason), fromBot?.name);
+  const quote = view.quote || (pending.child === true ? pending.detail?.code : "");
+  const note = view.note || (pending.child === true ? [pending.detail?.text, Object.keys(argsOf(pending.reason)).length === 0 ? pending.reason : ""].filter(Boolean).join(" · ") : "");
   const toBot = findBot(roster, view.to);
   const answer = (outcome) => {
     if (answered || !pending.answerable) return;
@@ -19025,8 +19030,8 @@ function TeamApproval({ matched, useRoster }) {
     void Promise.resolve(pending.answer(outcome)).catch(() => setAnswered(false));
   };
   (0, import_react49.useEffect)(() => {
-    root.current?.focus({ preventScroll: true });
-  }, [pending.key]);
+    if (pending.child !== true) root.current?.focus({ preventScroll: true });
+  }, [pending.key, pending.child]);
   const onKeyDown = (event) => {
     if (event.defaultPrevented || event.target.closest?.("input, textarea, [contenteditable]")) return;
     if (event.key === "Escape") {
@@ -19053,13 +19058,13 @@ function TeamApproval({ matched, useRoster }) {
       (0, import_react49.createElement)(
         "div",
         { className: "bt-apr-heading" },
-        (0, import_react49.createElement)("span", { className: "bt-apr-kicker" }, t("Waiting for your approval")),
+        (0, import_react49.createElement)("span", { className: "bt-apr-kicker" }, pending.child === true ? t("A subagent is waiting for your approval") : t("Waiting for your approval")),
         (0, import_react49.createElement)("p", { className: "bt-apr-title" }, view.title)
       )
     ),
-    view.quote ? (0, import_react49.createElement)("blockquote", { className: "bt-apr-quote" }, view.quote) : null,
+    quote ? (0, import_react49.createElement)("blockquote", { className: "bt-apr-quote" }, quote) : null,
     view.rows.length > 0 ? (0, import_react49.createElement)("dl", { className: "bt-apr-rows" }, view.rows.flatMap(([key, value]) => [(0, import_react49.createElement)("dt", { key: `k:${key}` }, key), (0, import_react49.createElement)("dd", { key: `v:${key}` }, value)])) : null,
-    view.note ? (0, import_react49.createElement)("p", { className: "bt-apr-note" }, view.note) : null,
+    note ? (0, import_react49.createElement)("p", { className: "bt-apr-note" }, note) : null,
     (0, import_react49.createElement)(
       "div",
       { className: "bt-apr-actions" },
@@ -19067,6 +19072,22 @@ function TeamApproval({ matched, useRoster }) {
       (0, import_react49.createElement)("button", { type: "button", className: "bt-q-submit", disabled: answered, onClick: () => answer("allowed-once") }, toBot && teamToolOf(pending.toolName) === "message_bot" ? t("Send to {name}", { name: toBot.name }) : t("Allow once"), (0, import_react49.createElement)("kbd", null, "↵"))
     )
   );
+}
+function ChildApprovalDock({ sessionId, useRoster, useWork, actions }) {
+  const entry = useWork((work) => (work.approvals ?? []).find((item) => item.child === true && item.answerable === true && item.ownerSessionId === sessionId));
+  if (!entry) return null;
+  return (0, import_react49.createElement)(TeamApproval, { key: entry.id, useRoster, matched: {
+    key: entry.id,
+    kind: "approval",
+    child: true,
+    botId: entry.botId,
+    sessionId: entry.ownerSessionId,
+    toolName: entry.tool,
+    reason: entry.reason,
+    detail: entry.detail,
+    answerable: true,
+    answer: (outcome) => actions.answerApproval(entry.id, outcome === "allowed-once" ? "allow" : "reject")
+  } });
 }
 var TEAM_APPROVAL_CSS = `
 .bt-apr{display:flex;flex-direction:column;gap:12px;margin:0 auto 12px;max-width:760px;width:100%;box-sizing:border-box;padding:16px 18px;border:1px solid color-mix(in srgb,var(--st-warndot,var(--bt-accent)) 55%,transparent);border-radius:16px;background:var(--bt-card);color:var(--bt-ink);font-family:var(--bt-font);outline:none}
@@ -23724,6 +23745,7 @@ function ApprovalCard({ approval, bot, actions }) {
   return (0, import_react67.createElement)(
     "div",
     { className: "bt-mw-card", role: "group", "aria-label": t("{name} is waiting for your approval", { name: bot.name }) },
+    approval.child ? (0, import_react67.createElement)("div", { className: "bt-mw-text" }, t("A subagent is waiting for your approval")) : null,
     (0, import_react67.createElement)("div", { className: "bt-mw-tool" }, approval.tool),
     approval.detail?.text ? (0, import_react67.createElement)("div", { className: "bt-mw-text" }, approval.detail.text) : null,
     approval.reason ? (0, import_react67.createElement)("div", { className: "bt-mw-reason" }, approval.reason) : null,
@@ -27729,12 +27751,12 @@ function noticeApprovals({ work, roster, shownSession, openSession, since: since
       if (told.has(entry.id)) continue;
       told.add(entry.id);
       if ((entry.at ?? 0) < since2) continue;
-      const place = entry.roomId ?? entry.sessionId;
+      const place = entry.roomId ?? entry.ownerSessionId ?? entry.sessionId;
       if (document.visibilityState === "visible" && shownSession() === place) continue;
       const { byId, roomsById } = roster.getSnapshot();
       const room2 = entry.roomId ? roomsById[entry.roomId] : void 0;
       const note = new Notification(t("{name} is waiting for your approval", { name: byId[entry.botId]?.name ?? t("A Bot") }), {
-        body: [room2?.name, entry.tool].filter(Boolean).join(" · "),
+        body: [room2?.name, entry.child ? t("A subagent wants to use {tool}", { tool: entry.tool }) : entry.tool].filter(Boolean).join(" · "),
         tag: `omni-ui-approval-${entry.id}`
       });
       note.onclick = () => {
@@ -28799,6 +28821,7 @@ function apply(ctx) {
     () => shadow("conversation.input.dock", { id: "bot-permission", order: -108, inject: face }, PermissionChoiceDock),
     // Draws nothing in the dock: it seats a Bot's sign-in row in its transcript (cli-login.js).
     () => shadow("conversation.input.dock", { id: "bot-cli-login", order: -109, inject: face }, CliLoginConversation),
+    () => shadow("conversation.input.dock", { id: "bot-child-approval", order: -102, inject: face }, ChildApprovalDock),
     () => shadow("conversation.input.dock", { id: "bot-question", order: -100, inject: face }, QuestionDock),
     () => shadow("conversation.input.dock", { id: "bot-view", order: -95, inject: face }, WidgetDock),
     () => shadow("conversation.input.dock", { id: "bot-secret", order: -90, inject: face }, SecretDock),

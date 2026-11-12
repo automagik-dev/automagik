@@ -209,3 +209,12 @@ test('open stops use the needs card with an idle face; run approvals keep the al
   assert.equal(cards[0].children[0].children[0].props.state, 'alert')
   assert.equal(cards[1].children[0].children[0].props.state, 'idle')
 })
+
+test('a child ask names the subagent and keeps the waiting face', () => {
+  const team = { byId: { ada: { id: 'ada', name: 'ada' } } }
+  const work = { approvals: [{ id: 'x', child: true, botId: 'ada', tool: 'bash' }] }
+  const item = liveOf(work, team).needs[0]
+  assert.equal(item.line, 'A subagent wants to use bash')
+  assert.equal(item.face ?? 'alert', 'alert')
+  assert.equal(item.open, 'ada')
+})
