@@ -1120,6 +1120,9 @@ var ZH = {
   "Auto review refused it": "自动审查拒绝了它",
   "the sandbox blocked it": "沙箱阻止了它",
   "a rule here refused it": "这里的一条规则拒绝了它",
+  "The permission level of this conversation could not be set, so the agent is not running here. Restarting DeepSeek Harness, or changing the permission level, tries again.": "无法为这个对话设置权限级别，所以代理没有在这里运行。重启 DeepSeek Harness 或更改权限级别会再试一次。",
+  "DeepSeek Harness could not check where this conversation comes from, so the agent is not running here. Send the message again; if this goes on, restart DeepSeek Harness.": "DeepSeek Harness 无法确认这个对话来自哪里，所以代理没有在这里运行。请再发一次消息；如果一直这样，请重启 DeepSeek Harness。",
+  "This conversation is on hold while its permission level is checked, so the agent is not running here. Send the message again in a moment.": "正在检查这个对话的权限级别，所以代理暂时没有在这里运行。请稍后再发一次消息。",
   "A task needs your approval": "有任务等你批准",
   "Task {title} is waiting for approval: {tool}": "任务 {title} 等你批准：{tool}",
   "a tool": "一个工具",
@@ -5805,7 +5808,14 @@ var COMPOSER_PACK_CSS = `
 [data-composer-card] [class*="_trailing"]:has(>[class*="_standardControls"]:not([hidden]) .bt-composer-model),[data-composer-card] [class*="_standardControls"]:has(.bt-composer-model){flex:0 1 auto!important;min-width:0!important}
 `;
 
+// src/shared/held.js
+var HELD_NOT_SET = "The permission level of this conversation could not be set, so the agent is not running here. Restarting DeepSeek Harness, or changing the permission level, tries again.";
+var HELD_UNREAD = "DeepSeek Harness could not check where this conversation comes from, so the agent is not running here. Send the message again; if this goes on, restart DeepSeek Harness.";
+var ACP_HELD_TEXT = "This conversation is on hold while its permission level is checked, so the agent is not running here. Send the message again in a moment.";
+var HELD_LINES = /* @__PURE__ */ new Set([HELD_NOT_SET, HELD_UNREAD, ACP_HELD_TEXT]);
+
 // src/client/stops.js
+var heldText = (text2) => HELD_LINES.has(text2) ? t(text2) : text2;
 function whyText(why) {
   switch (why) {
     case "never":
@@ -10049,7 +10059,7 @@ function AssistantCell({ node, groupPart, sessionId, openFile, fileMentions, use
   const contexts = useTurnContext(String(data.turn));
   const mentions = useFileMentions({ node, openFile, fileMentions, useTurnData });
   const hidden = Boolean(roster.roomsById[sessionId]) || isHiddenTurn(roster, sessionId, data.turn);
-  const texts2 = groupPart === "reasoning" ? [] : data.blocks.filter((block) => block.kind === "text" && block.text.trim() !== "").map((block) => block.text);
+  const texts2 = groupPart === "reasoning" ? [] : data.blocks.filter((block) => block.kind === "text" && block.text.trim() !== "").map((block) => heldText(block.text));
   const running2 = data.status === "running";
   const members = steps.length ? steps : [data];
   const shown = thinkingShown(roster.prefs);

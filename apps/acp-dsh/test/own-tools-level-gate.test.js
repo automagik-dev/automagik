@@ -21,6 +21,7 @@ import { ToolsService } from '@deepseek-ai/dsh-tools'
 import * as native from '@deepseek-ai/dsh-tool-executor-native'
 import { apply } from '../index.js'
 import { AcpAdapter, HELD_TEXT } from '../src/host/adapter.js'
+import { ACP_HELD_TEXT } from '../../bots-dsh/src/shared/held.js'
 import { AGENTS } from '../src/host/agents.js'
 import { Backchannel } from '../src/host/backchannel.js'
 import { TOOL_NAME } from '../src/host/tool.js'
@@ -767,4 +768,8 @@ test('no start is remembered past its step: after a consent refusal, a start fai
   await waitFor(() => w.adapter.starting.has('s2'))
   w.adapter.dispose()
   assert.equal(w.adapter.starting.size, 0)
+})
+
+test('the Bot client carries the ACP held sentence exactly', () => {
+  assert.equal(HELD_TEXT, ACP_HELD_TEXT)
 })

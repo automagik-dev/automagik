@@ -1,4 +1,7 @@
 import { t } from './i18n.js'
+import { HELD_LINES } from '../shared/held.js'
+
+export const heldText = text => (HELD_LINES.has(text) ? t(text) : text)
 
 export function whyText(why) {
   switch (why) {

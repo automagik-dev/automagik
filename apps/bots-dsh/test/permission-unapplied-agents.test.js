@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { apply } from '../index.js'
+import { HELD_NOT_SET, HELD_UNREAD } from '../src/shared/held.js'
 import { fakeContext } from './fake-ctx.js'
 
 const FULL = 'danger-full-access'
@@ -129,9 +130,7 @@ function team(t, { acp = true, auto = true, bots = {}, room = {}, tasks, closed 
   return { ctx, rt, service, call, settle, failing, sets, headers, tool, opens, gates, ended, turn, levelOf: id => presetOf.get(id) }
 }
 
-const sentence = level => `The ${level} permission level could not be set on this conversation, so no tool runs here until it is. Tell the user: restarting DeepSeek Harness, or changing the permission level, tries again.`
-
-test('the team holds an agent\'s turns on a marked Session with the guard\'s own sentence, and ends its agent session when it marks it', async (t) => {
+test('the team holds an agent\'s turns on a marked Session with the person\'s sentence, and ends its agent session when it marks it', async (t) => {
   const { rt, call, settle, failing, sets, gates, ended, turn, tool, levelOf } = team(t, { room: { permission: FULL }, levels: { g1: FULL, g2: FULL } })
   await call('state', {})
   assert.equal(gates.length, 1, 'one gate registered')
@@ -149,9 +148,9 @@ test('the team holds an agent\'s turns on a marked Session with the guard\'s own
   // Marked: its agent session was ended at once, with the sentence a step under way answers.
   // (Every failed apply of it ends it; ending one that is gone does nothing.)
   assert.ok(ended.length >= 1)
-  for (const entry of ended) assert.deepEqual(entry, ['g2', sentence(WRITE)])
-  // And no turn starts there: the same sentence the tool guard refuses with.
-  assert.equal(await turn('g2'), sentence(WRITE))
+  for (const entry of ended) assert.deepEqual(entry, ['g2', HELD_NOT_SET])
+  // And no turn starts there: the person gets the held-turn sentence.
+  assert.equal(await turn('g2'), HELD_NOT_SET)
   assert.deepEqual(rt.stopsView().map(entry => [entry.botId, entry.roomId, entry.why]), [['b2', 'r1', 'level']])
   await assert.rejects(tool('g2'), refused(WRITE))
   // The Session that took the level, and any other, is let go.
@@ -176,7 +175,7 @@ test('a subagent child of a marked Session is held too', async (t) => {
   await settle()
   headers.child = { origin: 'subagent', parentSession: 'g2' }
   headers.other = { origin: 'subagent', parentSession: 'g1' }
-  assert.equal(await turn('child', headers.child), sentence(WRITE))
+  assert.equal(await turn('child', headers.child), HELD_NOT_SET)
   assert.equal(await turn('other', headers.other), undefined)
 })
 
@@ -194,7 +193,7 @@ test('marking a Session ends the agent sessions of its open subagent children to
   await settle()
   const ids = new Set(ended.map(([id]) => id))
   assert.deepEqual([...ids].sort(), ['child', 'g2', 'grandchild'])
-  for (const [, why] of ended) assert.equal(why, sentence(WRITE))
+  for (const [, why] of ended) assert.equal(why, HELD_NOT_SET)
 })
 
 test('a Sessions list that throws still ends the marked Session itself', async (t) => {
@@ -212,9 +211,9 @@ test('a Session marked again by a retry that fails ends its agent session again,
   const { call, failing, ended, turn, opens } = team(t, { room: { permission: WRITE }, levels: { g2: FULL }, failing: ['g2'] })
   await call('state', {})
   await opens('g2')
-  assert.deepEqual(ended.at(-1), ['g2', sentence(WRITE)])
+  assert.deepEqual(ended.at(-1), ['g2', HELD_NOT_SET])
   const count = ended.length
-  assert.equal(await turn('g2'), sentence(WRITE))
+  assert.equal(await turn('g2'), HELD_NOT_SET)
   assert.ok(ended.length > count, 'the failed retry ended it again')
   failing.clear()
   assert.equal(await turn('g2'), undefined)
@@ -249,4 +248,18 @@ test('the gate goes when the team is disposed', async (t) => {
   assert.equal(gates.length, 1)
   await ctx.dispose()
   assert.equal(gates.length, 0)
+})
+
+test('an unreadable chain holds the turn with the person’s sentence and keeps the tool refusal', async t => {
+  const { ctx, call, settle, failing, turn, tool } = team(t, { room: { permission: FULL }, levels: { g1: FULL, g2: FULL } })
+  await call('state', {})
+  failing.add('g2')
+  await call('update-room', { id: 'r1', permission: WRITE })
+  await settle()
+  ctx.sessions.get = () => { throw new Error('x') }
+  assert.equal(await turn('child'), HELD_UNREAD)
+  await assert.rejects(tool('child'), {
+    code: 'bot/refused',
+    message: 'DeepSeek Harness could not read where this conversation comes from while a permission level is not set, so no tool runs here until it can. Try again; if this goes on, tell the user to restart DeepSeek Harness.',
+  })
 })

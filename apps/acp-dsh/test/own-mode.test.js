@@ -507,7 +507,7 @@ for (const always of [false, true]) test(`mirror asks carry current input and on
   assert.match(JSON.stringify(c.messages), /It printed/)
 })
 
-for (const [answer, text] of [['rejected', 'The person rejected bash.'], ['unavailable', 'DSH could not approve bash.']]) test(`plain bridge ${answer} keeps its existing text`, async t => {
+for (const [answer, text] of [['rejected', 'The person rejected bash.'], ['unavailable', 'DSH could not approve bash: nobody could answer its approval request.']]) test(`plain bridge ${answer} keeps its existing text`, async t => {
   const w = await world(t, { level: WRITE, modes: MODES, bridge: true, modeFor: AGENTS['acp-codex'].modeFor, spec: { ownMode: 'agent' }, ownMode: () => true, answer })
   const c = w.chat('ada'); c.say('bridge bash'); await c.step()
   assert.ok(JSON.stringify(c.messages).includes(text))
