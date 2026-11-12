@@ -1386,15 +1386,16 @@ a worker and a Restart --tree helper:
 - `-c sandbox_workspace_write.network_access=true`: the sandbox's own network switch, so `hc`'s
   socket and GitHub (`gh`, git's transport) answer. It is off by default under the auto mode.
 - `--add-dir <folder>`, derived per launch and only for folders that are there: the launch
-  folder's git common dir (`git rev-parse --git-common-dir`: its own `.git`, or the main
-  checkout's for a linked worktree, which Codex otherwise keeps read-only), herdr-core's state and
-  data folders (`$XDG_STATE_HOME/herdr-core`, `$XDG_DATA_HOME/herdr-core`, else under the home
-  folder: `hc` needs them to reach its core), and the tool caches a build writes: Go's module and
-  build caches (`GOMODCACHE`, `GOCACHE`), npm's (`npm_config_cache`, else `~/.npm`), pnpm's store
-  and cache, and Bun's install cache (`BUN_INSTALL_CACHE_DIR`). Never the root, the home folder,
-  a folder above it, or a whole XDG, cache, `GOPATH` or Bun folder. A linked machine's folders are
-  read there (its environment and git, through `hc exec`). Anything else the sandbox blocks goes
-  to Codex's reviewer, which may refuse it.
+  folder's git dirs, which Codex otherwise keeps read-only (`git rev-parse --git-dir
+  --git-common-dir`: a checkout's own `.git`; for a linked worktree its own folder under the main
+  checkout's `.git/worktrees`, where its index and lock live, then that `.git`), herdr-core's
+  state and data folders (`$XDG_STATE_HOME/herdr-core`, `$XDG_DATA_HOME/herdr-core`, else under
+  the home folder: `hc` needs them to reach its core), and the tool caches a build writes: Go's
+  module and build caches (`GOMODCACHE`, `GOCACHE`), npm's (`npm_config_cache`, else `~/.npm`),
+  pnpm's store and cache, and Bun's install cache (`BUN_INSTALL_CACHE_DIR`). Never the root, the
+  home folder, a folder above it, or a whole XDG, cache, `GOPATH` or Bun folder. A linked
+  machine's folders are read there (its environment and git, through `hc exec`). Anything else
+  the sandbox blocks goes to Codex's reviewer, which may refuse it.
 
 A source that picks its own approvals or sandbox loses those words, named in one warning with
 flag names only (never a value): a `programs.json` Codex run naming the bypass flag or `--yolo`,
