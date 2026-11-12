@@ -3170,8 +3170,8 @@ exec "$restart_cli" "$@"`;
 }
 
 /**
- * restart --machine: cmdRestart's rule on the project's linked machine, without --tree (cmdRestart
- * refuses it there, #437). The old pane must say whether its agent is busy: one that reports no
+ * restart --machine without --tree: the controller manages the replacement. Tree restarts
+ * use restartTreeOnMachine instead. The old pane must say whether its agent is busy: one that reports no
  * status to hc (Hermes) is refused unless --force, as is a busy one or one with helpers. The new pane starts in the old one's place and
  * folder, resuming as restartPlan says (an agent's own --continue resumes the folder's latest
  * conversation: refused while another bot's same agent runs in that folder there); the old
