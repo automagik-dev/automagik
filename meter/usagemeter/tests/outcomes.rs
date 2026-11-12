@@ -528,6 +528,405 @@ fn row<'a>(w: &'a Value, bot: &str, error_kind: &str) -> &'a Value {
 // ---------------------------------------------------------------------------------------------
 // Failures.
 
+/// Stored synthetic evidence also exercises shapes not yet emitted by every harness
+/// (notably a branchless harness's filled_branch) and malformed legacy tags.
+fn breakdowns() -> Scene {
+    let mut s = Scene::migrated(MIGRATED, &[]);
+    s.sync();
+    let st = s.store();
+    st.cache_repo(ROOT, Some(REPO), t(SYNCED)).unwrap();
+    st.conn.execute_batch(
+        "INSERT INTO ev_dim(id, harness, model, machine, repo, branch, precision) VALUES
+         (1001, 'claude-code', '', 'machine-a1b2c3', 'example.com/acme/widgets', 'feat/shared', ''),
+         (1002, 'claude-code', '', 'machine-a1b2c3', 'example.com/acme/widgets', 'feat/human', ''),
+         (1003, 'dsh-tui', '', 'machine-a1b2c3', 'example.com/acme/widgets', '', ''),
+         (1004, 'claude-code', '', 'machine-a1b2c3', 'example.com/acme/widgets', 'feat/logged', ''),
+         (1005, 'claude-code', '', 'machine-a1b2c3', 'example.com/acme/widgets', 'bad branch', ''),
+         (1006, 'claude-code', '', 'machine-a1b2c3', 'example.com/acme/gadgets', 'feat/shared', ''),
+         (1007, 'claude-code', '', 'machine-a1b2c3', NULL, 'feat/shared', ''),
+         (1008, 'claude-code', '', 'machine-a1b2c3', 'example.com/acme/widgets', NULL, '');
+         INSERT INTO ev_actor(id, state, reason, bot, kind, task, project, filled_branch) VALUES
+         (1001, 'attributed', NULL, 'otter', 'worker', 'task-widget', '/work/widgets', 'feat/shared'),
+         (1002, 'unlinked', 'no_record', NULL, NULL, 'task-human', '/work/widgets', 'feat/hidden'),
+         (1003, 'attributed', NULL, 'lark', 'worker', 'task-widget', '/work/widgets', 'feat/shared'),
+         (1004, 'attributed', NULL, 'otter', 'seat', 'task-seat', '/work/widgets', NULL),
+         (1005, 'attributed', NULL, 'otter', 'worker', NULL, '/work/widgets', NULL),
+         (1006, 'attributed', NULL, 'otter', 'worker', 'task-no-project', NULL, NULL),
+         (1007, 'attributed', NULL, 'otter', 'worker', 'task-empty-project', '', NULL),
+         (1008, 'attributed', NULL, 'otter', 'worker', '', '/work/widgets', NULL),
+         (1009, 'attributed', NULL, NULL, 'worker', 'task-no-bot', '/work/widgets', 'feat/hidden');"
+    ).unwrap();
+    // Include repeated failures in a group, both kinds, and failures that have no valid branch.
+    for (i, (dim, actor, kind)) in [
+        (1001, 1001, "tool_error"),
+        (1001, 1001, "tool_error"),
+        (1001, 1001, "api_error"),
+        (1001, 1002, "tool_error"),
+        (1001, 1002, "api_error"),
+        (1002, 1002, "tool_error"),
+        (1003, 1003, "tool_error"),
+        (1003, 1003, "api_error"),
+        (1004, 1003, "tool_error"),
+        (1005, 1004, "tool_error"),
+        (1005, 1005, "tool_error"),
+        (1005, 1006, "tool_error"),
+        (1005, 1007, "api_error"),
+        (1005, 1008, "api_error"),
+        (1006, 1001, "tool_error"),
+        (1007, 1001, "tool_error"),
+        (1008, 1002, "tool_error"),
+        (1008, 1009, "tool_error"),
+    ]
+    .iter()
+    .enumerate()
+    {
+        st.conn
+            .execute(
+                "INSERT INTO ev_error(ts_ms, kind, source, dim, actor, ident)
+             VALUES(?1, ?2, 'harness_log', ?3, ?4, ?5)",
+                params![
+                    t("2026-11-08T12:00:00Z"),
+                    kind,
+                    dim,
+                    actor,
+                    (i as i64).to_be_bytes().to_vec()
+                ],
+            )
+            .unwrap();
+    }
+    for (i, (bot, kind, project, branch, task)) in [
+        (
+            Some("otter"),
+            "worker",
+            Some(ROOT),
+            "feat/shared",
+            Some("task-widget"),
+        ),
+        (
+            Some("lark"),
+            "worker",
+            Some(ROOT),
+            "feat/shared",
+            Some("task-widget"),
+        ),
+        (
+            None,
+            "worker",
+            Some(ROOT),
+            "feat/shared",
+            Some("task-human"),
+        ),
+        (
+            Some("otter"),
+            "seat",
+            Some(ROOT),
+            "bad branch",
+            Some("task-seat"),
+        ),
+        (Some("otter"), "worker", Some(ROOT), "bad branch", None),
+        (
+            Some("otter"),
+            "worker",
+            None,
+            "bad branch",
+            Some("task-no-project"),
+        ),
+        (
+            Some("otter"),
+            "worker",
+            Some(""),
+            "bad branch",
+            Some("task-empty-project"),
+        ),
+        (Some("otter"), "worker", Some(ROOT), "bad branch", Some("")),
+        (
+            Some("otter"),
+            "worker",
+            Some(ROOT),
+            "bad branch",
+            Some("bad\ntask"),
+        ),
+    ]
+    .iter()
+    .enumerate()
+    {
+        st.conn.execute(
+            "INSERT INTO launch(lkey, terminal, created_ms, kind, bot, project, branch, task,
+                valid_from, valid_to, ended_ms, end_reason, exit_code, end_source, source, updated_ms)
+             VALUES(?1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?2, ?8, ?8, 'exited', 1,
+                'hc_snapshot', 'ledger', ?8)",
+            params![format!("synthetic-{i}"), t("2026-11-08T10:00:00Z"), kind, bot, project,
+                branch, task, t("2026-11-08T13:00:00Z")],
+        ).unwrap();
+    }
+    s
+}
+
+#[test]
+fn branch_failures_combine_tagged_workers_and_ambient_sessions() {
+    let s = breakdowns();
+    let v = report(&s, &["--window", "d1"]);
+    let e = &window(&v, "d1")["errors"];
+    assert_eq!(
+        e["by_branch"],
+        json!([
+            {"repo": REPO, "branch": "feat/shared", "tool_error": 4, "api_error": 3,
+             "run_failed": 3, "attributed": 7, "unattributed": 3},
+            {"repo": null, "branch": "feat/shared", "tool_error": 1, "api_error": 0,
+             "run_failed": 0, "attributed": 1, "unattributed": 0},
+            {"repo": "example.com/acme/gadgets", "branch": "feat/shared", "tool_error": 1,
+             "api_error": 0, "run_failed": 0, "attributed": 1, "unattributed": 0},
+            {"repo": REPO, "branch": "feat/human", "tool_error": 1, "api_error": 0,
+             "run_failed": 0, "attributed": 0, "unattributed": 1},
+            {"repo": REPO, "branch": "feat/logged", "tool_error": 1, "api_error": 0,
+             "run_failed": 0, "attributed": 1, "unattributed": 0}
+        ])
+    );
+    assert_eq!(e["by_branch_omitted"], 0);
+    assert_eq!(e["by_branch_omitted_count"], 0);
+    s.store()
+        .conn
+        .execute_batch(
+            "UPDATE ev_dim SET branch = NULL WHERE id = 1003;
+         UPDATE ev_actor SET bot = 'lark' WHERE id = 1002;",
+        )
+        .unwrap();
+    let again = report(&s, &["--window", "d1"]);
+    assert_eq!(window(&again, "d1")["errors"]["by_branch"], e["by_branch"]);
+
+    let filtered = report(&s, &["--window", "d1", "--repo", REPO]);
+    let f = &window(&filtered, "d1")["errors"]["by_branch"];
+    assert_eq!(
+        f,
+        &json!([e["by_branch"][0], e["by_branch"][3], e["by_branch"][4]])
+    );
+    let txt = text(&s, &["--window", "d1"]);
+    assert!(txt.contains(&format!(
+        "    branch {REPO} feat/shared: tool_error 4 api_error 3 run_failed 3 (attributed 7, unattributed 3)"
+    )));
+}
+
+#[test]
+fn task_failures_require_attributed_workers_with_project_and_task() {
+    let s = breakdowns();
+    let v = report(&s, &["--window", "d1"]);
+    let e = &window(&v, "d1")["errors"];
+    assert_eq!(
+        e["by_task"],
+        json!([
+            {"repo": REPO, "task": "task-widget", "tool_error": 4, "api_error": 2, "run_failed": 2},
+            {"repo": null, "task": "task-widget", "tool_error": 1, "api_error": 0, "run_failed": 0},
+            {"repo": "example.com/acme/gadgets", "task": "task-widget", "tool_error": 1,
+             "api_error": 0, "run_failed": 0}
+        ])
+    );
+    assert_eq!(e["by_task_omitted"], 0);
+    assert_eq!(e["by_task_omitted_count"], 0);
+    for invalid in [
+        "bad\ntask".to_string(),
+        "bad\u{1b}task".to_string(),
+        "t".repeat(65),
+    ] {
+        s.store()
+            .conn
+            .execute(
+                "UPDATE ev_actor SET task = ?1 WHERE id = 1008",
+                params![invalid],
+            )
+            .unwrap();
+        let again = report(&s, &["--window", "d1"]);
+        assert_eq!(window(&again, "d1")["errors"]["by_task"], e["by_task"]);
+    }
+
+    let filtered = report(&s, &["--window", "d1", "--repo", REPO]);
+    assert_eq!(
+        window(&filtered, "d1")["errors"]["by_task"],
+        json!([e["by_task"][0]])
+    );
+    assert!(text(&s, &["--window", "d1"]).contains(&format!(
+        "    task {REPO} task-widget: tool_error 4 api_error 2 run_failed 2"
+    )));
+}
+
+#[test]
+fn breakdowns_keep_unrecorded_kinds_null_even_with_stored_errors() {
+    let s = breakdowns();
+    s.store()
+        .conn
+        .execute("DELETE FROM meta WHERE k = 'api_errors_from_ms'", [])
+        .unwrap();
+    let v = report(&s, &["--window", "d1"]);
+    assert_eq!(v["api_errors_from"], Value::Null);
+    let e = &window(&v, "d1")["errors"];
+    assert_eq!(e["api_error"]["state"], "not_recorded");
+    for list in ["by_branch", "by_task"] {
+        assert!(!e[list].as_array().unwrap().is_empty());
+        for row in e[list].as_array().unwrap() {
+            assert_eq!(row["api_error"], Value::Null);
+            assert!(row["tool_error"].is_i64());
+        }
+    }
+    assert_eq!(e["by_branch"][0]["attributed"], 5);
+    assert_eq!(e["by_branch"][0]["unattributed"], 2);
+    let txt = text(&s, &["--window", "d1"]);
+    assert!(txt.contains("tool_error 4 api_error null run_failed 2"));
+    s.store()
+        .conn
+        .execute("DELETE FROM meta WHERE k = 'errors_from_ms'", [])
+        .unwrap();
+    let v = report(&s, &["--window", "d1"]);
+    let e = &window(&v, "d1")["errors"];
+    for list in ["by_branch", "by_task"] {
+        assert!(!e[list].as_array().unwrap().is_empty());
+        for row in e[list].as_array().unwrap() {
+            assert_eq!(row["tool_error"], Value::Null);
+            assert_eq!(row["api_error"], Value::Null);
+            assert!(row["run_failed"].as_i64().unwrap() > 0);
+        }
+    }
+}
+
+#[test]
+fn failure_breakdowns_cap_and_shrink_without_losing_omitted_counts() {
+    for branch_len in [0, 1600] {
+        let mut s = Scene::migrated(MIGRATED, &[]);
+        s.sync();
+        let mut expected = Vec::new();
+        {
+            let mut st = s.store();
+            let tx = st.conn.transaction().unwrap();
+            for i in 0..65i64 {
+                let branch = format!("feat/{}-{i:02}", "x".repeat(branch_len));
+                let task = format!("task-{i:02}");
+                let n = i % 3 + 1;
+                expected.push((n + 1, branch.clone(), task.clone()));
+                tx.execute(
+                    "INSERT INTO ev_dim(id, harness, model, machine, repo, branch, precision)
+                     VALUES(?1, 'claude-code', '', ?2, ?3, ?4, '')",
+                    params![1000 + i, MACHINE, REPO, branch],
+                )
+                .unwrap();
+                tx.execute(
+                    "INSERT INTO ev_actor(id, state, bot, kind, task, project)
+                     VALUES(?1, 'attributed', 'otter', 'worker', ?2, ?3)",
+                    params![1000 + i, task, ROOT],
+                )
+                .unwrap();
+                for j in 0..=n {
+                    tx.execute(
+                        "INSERT INTO ev_error(ts_ms, kind, source, dim, actor, ident)
+                         VALUES(?1, ?2, 'harness_log', ?3, ?3, ?4)",
+                        params![
+                            t("2026-11-08T12:00:00Z"),
+                            if j == n { "api_error" } else { "tool_error" },
+                            1000 + i,
+                            (i * 10 + j).to_be_bytes().to_vec()
+                        ],
+                    )
+                    .unwrap();
+                }
+            }
+            tx.commit().unwrap();
+        }
+        expected.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        for args in [vec!["--window", "d1"], vec![]] {
+            let v = report(&s, &args);
+            assert_eq!(v["truncated"], true);
+            for w in v["windows"].as_array().unwrap() {
+                let e = &w["errors"];
+                assert_eq!(e["tool_error"]["count"], 129);
+                assert_eq!(e["api_error"]["count"], 65);
+                for (list, key) in [("by_branch", "branch"), ("by_task", "task")] {
+                    let shown = e[list].as_array().unwrap();
+                    if branch_len == 0 && args.len() == 2 {
+                        assert_eq!(shown.len(), 50);
+                    } else if branch_len > 0 {
+                        assert!(shown.len() < 50, "the output ceiling must shrink {list}");
+                    }
+                    assert_eq!(
+                        shown.len() as u64 + e[format!("{list}_omitted")].as_u64().unwrap(),
+                        65
+                    );
+                    let omitted_count: i64 = expected.iter().skip(shown.len()).map(|v| v.0).sum();
+                    assert_eq!(e[format!("{list}_omitted_count")], omitted_count);
+                    for (row, want) in shown.iter().zip(&expected) {
+                        assert_eq!(
+                            row[key],
+                            if key == "branch" {
+                                want.1.as_str()
+                            } else {
+                                want.2.as_str()
+                            }
+                        );
+                        assert_eq!(
+                            row["tool_error"].as_i64().unwrap()
+                                + row["api_error"].as_i64().unwrap(),
+                            want.0
+                        );
+                    }
+                }
+            }
+            let txt = text(&s, &args);
+            assert!(txt.contains("by_branch_omitted: "));
+            assert!(txt.contains("by_task_omitted: "));
+        }
+    }
+}
+
+#[test]
+fn ambient_human_log_failures_keep_their_logged_branch() {
+    let mut s = Scene::migrated(MIGRATED, &[]);
+    s.store().cache_repo(ROOT, Some(REPO), t(SYNCED)).unwrap();
+    write_claude(
+        &s,
+        "session-human",
+        &[
+            claude_call(
+                "session-human",
+                ROOT,
+                "feat/ambient",
+                "2026-11-08T12:00:00Z",
+                1,
+            ),
+            claude_result(
+                "session-human",
+                ROOT,
+                "feat/ambient",
+                "2026-11-08T12:01:00Z",
+                "tu-human",
+                true,
+            ),
+            claude_api_error(
+                "session-human",
+                ROOT,
+                "feat/ambient",
+                "2026-11-08T12:02:00Z",
+                "api-human",
+                json!(true),
+            ),
+        ],
+    );
+    s.sync();
+    let v = report(&s, &["--window", "d1", "--repo", REPO]);
+    let e = &window(&v, "d1")["errors"];
+    assert_eq!(
+        e["by_branch"],
+        json!([
+            {"repo": REPO, "branch": "feat/ambient", "tool_error": 1, "api_error": 1,
+             "run_failed": 0, "attributed": 0, "unattributed": 2}
+        ])
+    );
+    assert_eq!(e["rows"], json!([]));
+    assert_eq!(e["by_task"], json!([]));
+    assert!(
+        e["unattributed"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|r| { r["state"] == "unlinked" && r["reason"] == "no_record" && r["count"] == 1 })
+    );
+}
+
 #[test]
 fn failures_are_counted_per_window_bot_and_role_with_their_source() {
     let (s, _) = fleet();
@@ -2083,10 +2482,37 @@ fn the_outcomes_schema_accepts_every_example_and_refuses_bad_records() {
         assert!(!s.valid(&v), "the schema accepts {what}");
     }
 
+    for list in ["by_branch", "by_task"] {
+        for kind in ["tool_error", "api_error"] {
+            let mut v = example("recorded");
+            v["windows"][0]["errors"][list][0][kind] = Value::Null;
+            assert!(!s.valid(&v), "recorded {kind} cannot be null in {list}");
+            for other in ["by_branch", "by_task"] {
+                v["windows"][0]["errors"][other][0][kind] = Value::Null;
+            }
+            v["windows"][0]["errors"][kind] = json!({
+                "state": "not_recorded", "source": "harness_log", "count": null
+            });
+            assert!(s.valid(&v), "unrecorded {kind} must be null in {list}");
+            v["windows"][0]["errors"][list][0][kind] = json!(0);
+            assert!(!s.valid(&v), "unrecorded {kind} cannot be zero in {list}");
+        }
+        for suffix in ["", "_omitted", "_omitted_count"] {
+            let mut v = example("recorded");
+            v["windows"][0]["errors"]
+                .as_object_mut()
+                .unwrap()
+                .remove(&format!("{list}{suffix}"));
+            assert!(!s.valid(&v), "{list}{suffix} is required");
+        }
+    }
+
     for pointer in [
         "",
         "/windows/0",
         "/windows/0/errors",
+        "/windows/0/errors/by_branch/0",
+        "/windows/0/errors/by_task/0",
         "/windows/0/time_to_pr/all/to_open_s",
     ] {
         let mut v = example("recorded");

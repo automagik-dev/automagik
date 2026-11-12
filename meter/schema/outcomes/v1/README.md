@@ -14,6 +14,22 @@ Unsupported harnesses have unknown failures, never an implied zero.
   `time_to_pr.state`. `ok` and `partial` windows have a run-ends object.
 - Each kind's `not_recorded` or `no_data` count is null. `full` and `partial`
   counts are nonnegative integers; partial counts are lower bounds.
+- `errors.by_branch` groups failures by `(repo, branch)`, including ambient human
+  sessions that log a git branch. `attributed` counts failures linked to a bot;
+  `unattributed` counts the rest. A logged branch takes precedence over a linked
+  worker's `filled_branch`; only attributed failures may use that fallback.
+- `errors.by_task` groups attributed worker failures by `(repo, task)`. Both a
+  nonempty project and a valid task id must be recorded; seats are excluded.
+  Project paths are never printed. These are additional views of the same
+  failures as `rows` and `unattributed`, so the lists must not be added together.
+- Branch and task rows carry `tool_error`, `api_error`, and `run_failed` counts.
+  Each harness count is null when that window's corresponding kind is
+  `not_recorded`, including when only failed runs are available. Recorded zero
+  is an integer. Rows with no counted failure are omitted.
+- Both breakdowns show at most 50 rows, sorted by total failures descending,
+  then repo and branch/task ascending. `by_branch_omitted` / `by_task_omitted`
+  count omitted rows; their matching `*_omitted_count` fields count failures.
+  The output ceiling can cut these lists further without changing totals.
 - Clock statistics use nearest-rank percentiles in whole seconds. With `n: 0`,
   both percentiles are null; otherwise both are nonnegative integers.
   `n_shared` is optional and appears on bot/role statistics to identify samples

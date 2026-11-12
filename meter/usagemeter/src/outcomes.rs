@@ -310,6 +310,38 @@ struct UnattributedLine {
     count: i64,
 }
 
+#[derive(Serialize, Clone, PartialEq, Eq)]
+struct BranchErrorLine {
+    repo: Option<String>,
+    branch: String,
+    tool_error: Option<i64>,
+    api_error: Option<i64>,
+    run_failed: i64,
+    attributed: i64,
+    unattributed: i64,
+}
+
+impl BranchErrorLine {
+    fn count(&self) -> i64 {
+        self.attributed + self.unattributed
+    }
+}
+
+#[derive(Serialize, Clone, PartialEq, Eq)]
+struct TaskErrorLine {
+    repo: Option<String>,
+    task: String,
+    tool_error: Option<i64>,
+    api_error: Option<i64>,
+    run_failed: i64,
+}
+
+impl TaskErrorLine {
+    fn count(&self) -> i64 {
+        self.tool_error.unwrap_or(0) + self.api_error.unwrap_or(0) + self.run_failed
+    }
+}
+
 #[derive(Serialize)]
 struct ErrorsOut {
     tool_error: KindCount,
@@ -322,6 +354,12 @@ struct ErrorsOut {
     /// The failures the omitted rows hold.
     omitted_count: i64,
     unattributed: Vec<UnattributedLine>,
+    by_branch: Vec<BranchErrorLine>,
+    by_branch_omitted: usize,
+    by_branch_omitted_count: i64,
+    by_task: Vec<TaskErrorLine>,
+    by_task_omitted: usize,
+    by_task_omitted_count: i64,
 }
 
 /// How the launches that ended in the window ended. `unknown`: hc no longer listed the terminal
@@ -456,6 +494,7 @@ struct Launch {
     harness: Option<&'static str>,
     project: Option<String>,
     branch: Option<String>,
+    task: Option<String>,
     repo: Option<String>,
     from: Option<i64>,
     to: Option<i64>,
@@ -485,7 +524,7 @@ fn launches(c: &Connection) -> rusqlite::Result<Vec<Launch>> {
                 l.project, l.branch, l.valid_from, l.valid_to, l.end_reason, l.exit_code,
                 l.signal, l.ended_ms, l.end_source,
                 (SELECT repo FROM cwd_repo WHERE cwd = l.project),
-                (SELECT repo FROM cwd_repo WHERE cwd = l.worktree)
+                (SELECT repo FROM cwd_repo WHERE cwd = l.worktree), l.task
          FROM launch l ORDER BY l.bot IS NULL, l.lkey",
     )?;
     let mut seen: BTreeSet<(String, i64)> = BTreeSet::new();
@@ -518,6 +557,7 @@ fn launches(c: &Connection) -> rusqlite::Result<Vec<Launch>> {
                 .and_then(crate::hc::harness_of),
             project: r.get(8)?,
             branch: r.get(9)?,
+            task: r.get(19)?,
             repo: by_project.or(by_worktree),
             from: r.get(10)?,
             to: r.get(11)?,
@@ -906,9 +946,34 @@ type NoTag = (
 );
 
 #[derive(Default)]
+struct FailureCounts {
+    tool_errors: i64,
+    api_errors: i64,
+    run_failed: i64,
+    attributed: i64,
+    unattributed: i64,
+}
+
+impl FailureCounts {
+    fn add_error(&mut self, kind: &str, n: i64) {
+        if kind == record::TOOL_ERROR {
+            self.tool_errors += n;
+        } else {
+            self.api_errors += n;
+        }
+    }
+
+    fn count(&self) -> i64 {
+        self.tool_errors + self.api_errors + self.run_failed
+    }
+}
+
+#[derive(Default)]
 struct ErrorAcc {
     rows: BTreeMap<Tag, i64>,
     unattributed: BTreeMap<NoTag, i64>,
+    by_branch: BTreeMap<(Option<String>, String), FailureCounts>,
+    by_task: BTreeMap<(Option<String>, String), FailureCounts>,
     tool_errors: i64,
     api_errors: i64,
     run_failed: i64,
@@ -963,7 +1028,7 @@ fn tool_errors(
 ) -> rusqlite::Result<()> {
     let mut st = c.prepare_cached(
         "SELECT d.harness, d.repo, a.state, a.reason, a.bot, a.kind, a.role, a.squad, e.kind,
-                e.source, count(*)
+                e.source, count(*), d.branch, a.filled_branch, a.task, a.project
          FROM ev_error e JOIN ev_dim d ON d.id = e.dim JOIN ev_actor a ON a.id = e.actor
          WHERE e.ts_ms >= ?1 AND e.ts_ms < ?2
          GROUP BY e.dim, e.actor, e.kind, e.source",
@@ -989,6 +1054,34 @@ fn tool_errors(
         let state: String = r.get(2)?;
         let bot: Option<String> = r.get(4)?;
         let n: i64 = r.get(10)?;
+        let attributed = state == "attributed" && bot.is_some();
+        let branch: Option<String> = r.get(11)?;
+        let filled_branch: Option<String> = r.get(12)?;
+        let task: Option<String> = r.get(13)?;
+        let project: Option<String> = r.get(14)?;
+        let actor_kind: Option<String> = r.get(5)?;
+        let branch = branch
+            .filter(|b| !b.is_empty())
+            .or_else(|| filled_branch.filter(|b| attributed && !b.is_empty()));
+        if let Some(branch) = branch.filter(|b| query::branch_ok(b)) {
+            let entry = acc.by_branch.entry((repo.clone(), branch)).or_default();
+            entry.add_error(error_kind, n);
+            if attributed {
+                entry.attributed += n;
+            } else {
+                entry.unattributed += n;
+            }
+        }
+        if attributed
+            && actor_kind.as_deref() == Some("worker")
+            && project.as_deref().is_some_and(|p| !p.is_empty())
+            && let Some(task) = task.filter(|t| query::task_id_fits(t))
+        {
+            acc.by_task
+                .entry((repo, task))
+                .or_default()
+                .add_error(error_kind, n);
+        }
         if error_kind == record::TOOL_ERROR {
             acc.tool_errors += n;
         } else {
@@ -999,7 +1092,7 @@ fn tool_errors(
                 *acc.rows
                     .entry((
                         bot,
-                        r.get(5)?,
+                        actor_kind,
                         r.get(6)?,
                         r.get(7)?,
                         harness,
@@ -1086,6 +1179,28 @@ fn run_ends(
                 ends.failed += 1;
                 acc.run_failed += 1;
                 acc.failed_from.add(end_source(l));
+                if let Some(branch) = l.branch.as_ref().filter(|b| query::branch_ok(b)) {
+                    let entry = acc
+                        .by_branch
+                        .entry((l.repo.clone(), branch.clone()))
+                        .or_default();
+                    entry.run_failed += 1;
+                    if l.bot.is_some() {
+                        entry.attributed += 1;
+                    } else {
+                        entry.unattributed += 1;
+                    }
+                }
+                if l.worker
+                    && l.bot.is_some()
+                    && l.project.as_deref().is_some_and(|p| !p.is_empty())
+                    && let Some(task) = l.task.as_ref().filter(|t| query::task_id_fits(t))
+                {
+                    acc.by_task
+                        .entry((l.repo.clone(), task.clone()))
+                        .or_default()
+                        .run_failed += 1;
+                }
                 match &l.bot {
                     Some(bot) => {
                         *acc.rows
@@ -1173,6 +1288,12 @@ fn not_recorded(window: Window, b: &query::Bounds, state: &'static str) -> Windo
             rows_omitted: 0,
             omitted_count: 0,
             unattributed: Vec::new(),
+            by_branch: Vec::new(),
+            by_branch_omitted: 0,
+            by_branch_omitted_count: 0,
+            by_task: Vec::new(),
+            by_task_omitted: 0,
+            by_task_omitted_count: 0,
         },
         run_ends: None,
         time_to_pr: empty_time_to_pr(state),
@@ -1256,6 +1377,56 @@ fn window_out(
             },
         )
         .collect();
+    let mut by_branch: Vec<BranchErrorLine> = acc
+        .by_branch
+        .into_iter()
+        .filter(|(_, v)| v.count() > 0)
+        .map(|((repo, branch), v)| BranchErrorLine {
+            repo,
+            branch,
+            tool_error: (tool != "not_recorded").then_some(v.tool_errors),
+            api_error: (api != "not_recorded").then_some(v.api_errors),
+            run_failed: v.run_failed,
+            attributed: v.attributed,
+            unattributed: v.unattributed,
+        })
+        .collect();
+    by_branch.sort_by(|a, b| {
+        b.count()
+            .cmp(&a.count())
+            .then_with(|| (&a.repo, &a.branch).cmp(&(&b.repo, &b.branch)))
+    });
+    let by_branch_omitted = by_branch.len().saturating_sub(MAX_ROWS);
+    let by_branch_omitted_count = by_branch
+        .iter()
+        .skip(MAX_ROWS)
+        .map(BranchErrorLine::count)
+        .sum();
+    by_branch.truncate(MAX_ROWS);
+    let mut by_task: Vec<(i64, TaskErrorLine)> = acc
+        .by_task
+        .into_iter()
+        .filter(|(_, v)| v.count() > 0)
+        .map(|((repo, task), v)| {
+            (
+                v.count(),
+                TaskErrorLine {
+                    repo,
+                    task,
+                    tool_error: (tool != "not_recorded").then_some(v.tool_errors),
+                    api_error: (api != "not_recorded").then_some(v.api_errors),
+                    run_failed: v.run_failed,
+                },
+            )
+        })
+        .collect();
+    by_task.sort_by(|a, b| {
+        b.0.cmp(&a.0)
+            .then_with(|| (&a.1.repo, &a.1.task).cmp(&(&b.1.repo, &b.1.task)))
+    });
+    let by_task_omitted = by_task.len().saturating_sub(MAX_ROWS);
+    let by_task_omitted_count = by_task.iter().skip(MAX_ROWS).map(|(n, _)| n).sum();
+    by_task.truncate(MAX_ROWS);
     let state = if tool != "full" || api != "full" || run_state != "full" {
         "partial"
     } else {
@@ -1292,6 +1463,12 @@ fn window_out(
             rows_omitted: omitted.len(),
             omitted_count: omitted.iter().map(|r| r.count).sum(),
             unattributed,
+            by_branch,
+            by_branch_omitted,
+            by_branch_omitted_count,
+            by_task: by_task.into_iter().map(|(_, l)| l).collect(),
+            by_task_omitted,
+            by_task_omitted_count,
         },
         run_ends: Some(ends),
         time_to_pr: ttp,
@@ -1379,6 +1556,8 @@ fn report(
     c.execute_batch("COMMIT").map_err(Failure::sql)?;
     let truncated = windows.iter().any(|w| {
         w.errors.rows_omitted > 0
+            || w.errors.by_branch_omitted > 0
+            || w.errors.by_task_omitted > 0
             || w.time_to_pr.branches_omitted > 0
             || w.time_to_pr.repos_omitted > 0
             || w.time_to_pr.bots_omitted > 0
@@ -1453,11 +1632,21 @@ fn shrink(r: &mut Record) -> bool {
     if !cut {
         for w in &mut r.windows {
             let t = &mut w.time_to_pr;
-            if !t.bots.is_empty() || !t.repos.is_empty() || !w.errors.rows.is_empty() {
+            let e = &mut w.errors;
+            if !t.bots.is_empty()
+                || !t.repos.is_empty()
+                || !e.rows.is_empty()
+                || !e.by_branch.is_empty()
+                || !e.by_task.is_empty()
+            {
                 halve(&mut t.bots, &mut t.bots_omitted);
                 halve(&mut t.repos, &mut t.repos_omitted);
-                let gone = halve(&mut w.errors.rows, &mut w.errors.rows_omitted);
-                w.errors.omitted_count += gone.iter().map(|l| l.count).sum::<i64>();
+                let gone = halve(&mut e.rows, &mut e.rows_omitted);
+                e.omitted_count += gone.iter().map(|l| l.count).sum::<i64>();
+                let gone = halve(&mut e.by_branch, &mut e.by_branch_omitted);
+                e.by_branch_omitted_count += gone.iter().map(BranchErrorLine::count).sum::<i64>();
+                let gone = halve(&mut e.by_task, &mut e.by_task_omitted);
+                e.by_task_omitted_count += gone.iter().map(TaskErrorLine::count).sum::<i64>();
                 cut = true;
             }
         }
@@ -1712,6 +1901,44 @@ fn text(r: &Record) -> String {
                 l.count
             );
         }
+        for l in &e.by_branch {
+            let _ = writeln!(
+                o,
+                "    branch {} {}: tool_error {} api_error {} run_failed {} (attributed {}, unattributed {})",
+                opt_name(&l.repo),
+                name(&l.branch),
+                num(l.tool_error),
+                num(l.api_error),
+                l.run_failed,
+                l.attributed,
+                l.unattributed
+            );
+        }
+        if e.by_branch_omitted > 0 {
+            let _ = writeln!(
+                o,
+                "    by_branch_omitted: {} (holding {} failures)",
+                e.by_branch_omitted, e.by_branch_omitted_count
+            );
+        }
+        for l in &e.by_task {
+            let _ = writeln!(
+                o,
+                "    task {} {}: tool_error {} api_error {} run_failed {}",
+                opt_name(&l.repo),
+                name(&l.task),
+                num(l.tool_error),
+                num(l.api_error),
+                l.run_failed
+            );
+        }
+        if e.by_task_omitted > 0 {
+            let _ = writeln!(
+                o,
+                "    by_task_omitted: {} (holding {} failures)",
+                e.by_task_omitted, e.by_task_omitted_count
+            );
+        }
         match &w.run_ends {
             Some(n) => {
                 let _ = writeln!(
@@ -1829,6 +2056,7 @@ mod tests {
             harness: None,
             project: None,
             branch: None,
+            task: None,
             repo: None,
             from: None,
             to: None,

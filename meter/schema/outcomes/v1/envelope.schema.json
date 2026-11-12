@@ -709,7 +709,13 @@
         "rows",
         "rows_omitted",
         "omitted_count",
-        "unattributed"
+        "unattributed",
+        "by_branch",
+        "by_branch_omitted",
+        "by_branch_omitted_count",
+        "by_task",
+        "by_task_omitted",
+        "by_task_omitted_count"
       ],
       "properties": {
         "tool_error": {
@@ -753,8 +759,158 @@
           "items": {
             "$ref": "#/$defs/unattributedLine"
           }
+        },
+        "by_branch": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/branchErrorLine"
+          },
+          "maxItems": 50
+        },
+        "by_branch_omitted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "by_branch_omitted_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "by_task": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/taskErrorLine"
+          },
+          "maxItems": 50
+        },
+        "by_task_omitted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "by_task_omitted_count": {
+          "type": "integer",
+          "minimum": 0
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "tool_error": {
+                "properties": {
+                  "state": {
+                    "const": "not_recorded"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "by_branch": {
+                "items": {
+                  "properties": {
+                    "tool_error": {
+                      "type": "null"
+                    }
+                  }
+                }
+              },
+              "by_task": {
+                "items": {
+                  "properties": {
+                    "tool_error": {
+                      "type": "null"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "by_branch": {
+                "items": {
+                  "properties": {
+                    "tool_error": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              },
+              "by_task": {
+                "items": {
+                  "properties": {
+                    "tool_error": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "api_error": {
+                "properties": {
+                  "state": {
+                    "const": "not_recorded"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "by_branch": {
+                "items": {
+                  "properties": {
+                    "api_error": {
+                      "type": "null"
+                    }
+                  }
+                }
+              },
+              "by_task": {
+                "items": {
+                  "properties": {
+                    "api_error": {
+                      "type": "null"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "by_branch": {
+                "items": {
+                  "properties": {
+                    "api_error": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              },
+              "by_task": {
+                "items": {
+                  "properties": {
+                    "api_error": {
+                      "type": "integer",
+                      "minimum": 0
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
     },
     "runEnds": {
       "type": "object",
@@ -989,6 +1145,122 @@
         },
         "run_failed": {
           "$ref": "#/$defs/runFailedDef"
+        }
+      }
+    },
+    "branchErrorLine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repo",
+        "branch",
+        "tool_error",
+        "api_error",
+        "run_failed",
+        "attributed",
+        "unattributed"
+      ],
+      "properties": {
+        "repo": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/repo"
+            }
+          ]
+        },
+        "branch": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tool_error": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "api_error": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "run_failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "attributed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unattributed": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "taskErrorLine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repo",
+        "task",
+        "tool_error",
+        "api_error",
+        "run_failed"
+      ],
+      "properties": {
+        "repo": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/repo"
+            }
+          ]
+        },
+        "task": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tool_error": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "api_error": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "integer",
+              "minimum": 0
+            }
+          ]
+        },
+        "run_failed": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     }

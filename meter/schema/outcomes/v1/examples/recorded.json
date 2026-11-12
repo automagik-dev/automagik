@@ -106,7 +106,31 @@
             "source": "hc_snapshot",
             "count": 1
           }
-        ]
+        ],
+        "by_branch": [
+          {
+            "repo": "example.com/acme/widgets",
+            "branch": "feat/widgets",
+            "tool_error": 2,
+            "api_error": 0,
+            "run_failed": 1,
+            "attributed": 2,
+            "unattributed": 1
+          }
+        ],
+        "by_branch_omitted": 0,
+        "by_branch_omitted_count": 0,
+        "by_task": [
+          {
+            "repo": "example.com/acme/widgets",
+            "task": "task-widgets",
+            "tool_error": 2,
+            "api_error": 0,
+            "run_failed": 0
+          }
+        ],
+        "by_task_omitted": 0,
+        "by_task_omitted_count": 0
       },
       "run_ends": {
         "exited_ok": 1,
@@ -295,7 +319,31 @@
             "source": "hc_snapshot",
             "count": 1
           }
-        ]
+        ],
+        "by_branch": [
+          {
+            "repo": "example.com/acme/widgets",
+            "branch": "feat/widgets",
+            "tool_error": 2,
+            "api_error": 0,
+            "run_failed": 1,
+            "attributed": 2,
+            "unattributed": 1
+          }
+        ],
+        "by_branch_omitted": 0,
+        "by_branch_omitted_count": 0,
+        "by_task": [
+          {
+            "repo": "example.com/acme/widgets",
+            "task": "task-widgets",
+            "tool_error": 2,
+            "api_error": 0,
+            "run_failed": 0
+          }
+        ],
+        "by_task_omitted": 0,
+        "by_task_omitted_count": 0
       },
       "run_ends": {
         "exited_ok": 1,
