@@ -569,7 +569,9 @@ export function codexWhere({ home = null, appHome = null, resolve = null, same =
     const c = resolved(a);
     if (c) { if (!appHomes.includes(c)) appHomes.push(c); } else if (!unproved.includes("an app home")) unproved.push("an app home");
   }
-  return { home: h, appHomes, canon: unproved.length ? () => null : resolved, same: typeof same === "function" ? same : null, unproved };
+  // `spelled`: the home folder as the launch spells it, the form its paths were derived and resolved from.
+  return { home: h, spelled: given(home) ? home : null, appHomes, canon: unproved.length ? () => null : resolved,
+    same: typeof same === "function" ? same : null, unproved };
 }
 
 /**
@@ -769,14 +771,15 @@ export function codexGrants(opts) {
 /**
  * codexGrants with what it withheld: { dirs, withheld }. One inventory (#1142): `paths`, the
  * codexGrantPaths result the resolver was asked about (codexOn passes the one it probed), else one
- * built from `home` as the launch spells it, else where.home: never rebuilt from another spelling.
+ * built from `home` as the launch spells it, else from where.spelled (codexWhere keeps the home as
+ * given): never rebuilt from the canonical home, whose paths a resolver may not have been asked about.
  * A general folder that can't be resolved there can't be kept out, so nothing is derived
  * (`withheld` names those folders): never a wider grant.
  */
 export function codexGrantPlan({ where = null, home = null, appHome = null, env = {}, gitDir = null, gitCommonDir = null, isDir = () => false,
   paths = null }) {
   const w = where ?? codexWhere({ home, appHome });
-  const { candidates, general } = paths ?? codexGrantPaths({ home: home ?? w.home, env, gitDir, gitCommonDir });
+  const { candidates, general } = paths ?? codexGrantPaths({ home: home ?? w.spelled ?? w.home, env, gitDir, gitCommonDir });
   const whole = general.map((g) => w.canon(g));
   if (whole.some((g) => g === null)) return { dirs: [], withheld: general.filter((_, i) => whole[i] === null) };
   const out = [];

@@ -565,7 +565,11 @@ test("#1142 one inventory: a HOME spelled through a symlink, a .. or a linked fo
       [{ XDG_CACHE_HOME: `${home}/data/cache`, GOCACHE: `${home}/data` }, {}, [...core, join(H, ".npm")]],
     ];
     for (const [env, extra, want] of cases) {
-      for (const [name, plan] of [["there", linkedGrants(home, env, extra)], ["here", localGrants(home, env, extra)]]) {
+      // "there, where only": the rules and no inventory, as a direct call gives them; built from the home as spelled (where.spelled).
+      const inventory = codexGrantPaths({ home, env, ...extra });
+      const asked = probe([home, `${home}/.config/herdr-app`, ...inventory.candidates, ...inventory.general]);
+      const whereOnly = codexGrantPlan({ where: codexWhere({ home, resolve: asked.resolve }), env, isDir: asked.isDir, ...extra });
+      for (const [name, plan] of [["there", linkedGrants(home, env, extra)], ["here", localGrants(home, env, extra)], ["there, where only", whereOnly]]) {
         assert.deepEqual(plan, { dirs: want, withheld: [] }, `${name} ${home} ${JSON.stringify(env)}`);
       }
     }
