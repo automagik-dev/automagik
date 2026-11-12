@@ -370,7 +370,7 @@ try {
             every: [...drawer.querySelectorAll('img, source')].map(node => node.getAttribute('src') ?? node.getAttribute('srcset')),
             rows: [...drawer.querySelectorAll('.fam-list > li')].map(row => row.innerText.trim()), here: drawer.querySelector('[data-family-here] .fam-item').textContent.trim(), hereCurrent: drawer.querySelector('[data-family-here] .fam-item').getAttribute('aria-current'),
             links: [...drawer.querySelectorAll('[data-family-links] a')].filter(link => link.getClientRects().length).map(link => link.getAttribute('href')),
-            current: [...drawer.querySelectorAll('[aria-current="page"]')].filter(node => !node.closest('[data-family-here]')).map(node => node.getAttribute('href')),
+            current: [...drawer.querySelectorAll('[aria-current="page"]')].filter(node => !node.matches('.is-here')).map(node => node.getAttribute('href')),
             inside: drawer.scrollWidth - drawer.clientWidth,
           }
         })
@@ -516,7 +516,10 @@ try {
       const tabs = []
       for (const path of logo.tabs) { const answer = await context.request.get(origin + path); tabs.push([path, answer.status(), (await answer.body()).length > 0]) }
       assert.deepEqual(tabs, [['/favicon.ico', 200, true], ['/favicon.svg', 200, true], ['/apple-touch-icon.png', 200, true], ['/site.webmanifest', 200, true]], `The browser's icons load: ${label}`)
+      // The keyboard's order in the header: the skip link, the family's menu button, the logo.
       await page.keyboard.press('Tab'); await page.keyboard.press('Tab')
+      assert.equal(await page.evaluate(() => document.activeElement.className), 'fam-btn', `The menu button is the header's first stop: ${label}`)
+      await page.keyboard.press('Tab')
       const ring = await page.evaluate(() => { const link = document.activeElement, style = getComputedStyle(link), box = link.getBoundingClientRect(), word = link.querySelector('img')?.getBoundingClientRect(); return { link: link.className, clears: word && box.bottom + parseFloat(style.outlineOffset) >= word.bottom, style: style.outlineStyle } })
       assert.deepEqual(ring, { link: 'brand', clears: true, style: 'solid' }, `The focus ring goes round the whole logo: ${label} ${JSON.stringify(ring)}`)
       assert.deepEqual(outside, [], `No outside request: ${label}`)
