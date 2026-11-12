@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -283,7 +284,12 @@ func hcArgv(a config.Automation) ([]string, error) {
 	if !config.KindTakesPromptArg(a.Agent) {
 		return nil, fmt.Errorf("agent %q cannot take its prompt under backend: hc yet", a.Agent)
 	}
-	argv := append([]string{a.Agent}, agentArgs(a)...)
+	argv := []string{a.Agent}
+	if a.Agent == "codex" && !slices.Contains(a.AgentArgs, "--no-daemon") {
+		// Keep execution in this hc terminal; configured permissions stay as supplied.
+		argv = append(argv, "--no-daemon")
+	}
+	argv = append(argv, agentArgs(a)...)
 	return append(argv, config.PromptArgs(a.Agent, a.Prompt)...), nil
 }
 
