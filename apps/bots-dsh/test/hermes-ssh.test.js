@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict'
-import { randomBytes, randomInt, randomUUID } from 'node:crypto'
-import { mkdtemp, readFile, writeFile, rm, access } from 'node:fs/promises'
+import { createHash, randomBytes, randomInt, randomUUID } from 'node:crypto'
+import { mkdir, mkdtemp, readdir, readFile, stat, writeFile, rm, access } from 'node:fs/promises'
 import { watch } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, delimiter, dirname } from 'node:path'
 import { test } from 'node:test'
-import { startHermesSsh } from '../src/host/hermes-ssh.js'
+import { redactSshText, startHermesSsh, trustHermesSshHostKey } from '../src/host/hermes-ssh.js'
+
+// A sample host key: random bytes in a public key's wire shape, never a real key.
+const sampleKey = () => Buffer.concat([Buffer.from([0, 0, 0, 11]), Buffer.from('ssh-ed25519'), Buffer.from([0, 0, 0, 32]), randomBytes(32)]).toString('base64')
+const fingerprintOf = blob => `SHA256:${createHash('sha256').update(Buffer.from(blob, 'base64')).digest('base64').replace(/=+$/, '')}`
 
 async function fixture(t, scenario = 'ready') {
   const home = await mkdtemp(join(tmpdir(), 'hermes-ssh-'))
@@ -15,7 +19,9 @@ async function fixture(t, scenario = 'ready') {
   const credential = randomBytes(32).toString('hex')
   const remotePort = randomInt(1024, 65536), localPort = randomInt(1024, 65536)
   const config = { host: `${randomUUID()}.invalid`, user: `sample-${randomUUID()}`, port: randomInt(1024, 65536), identityFile: join(home, randomUUID()), hermesPath: `/sample/${randomUUID()}/hermes` }
-  const options = { env: { ...process.env, PATH: `${dirname(process.execPath)}${delimiter}${home}${delimiter}${process.env.PATH}`, HERMES_SSH_RECORD: record, HERMES_SSH_SCENARIO: scenario, HERMES_SSH_REMOTE_PORT: String(remotePort) }, allocatePort: async () => localPort,
+  // HOME is the test's own folder: the start script and the trust step write under it only.
+  const hostKey = sampleKey(), knownHosts = join(home, '.ssh', 'known_hosts')
+  const options = { env: { ...process.env, HOME: home, PATH: `${dirname(process.execPath)}${delimiter}${home}${delimiter}${process.env.PATH}`, HERMES_SSH_RECORD: record, HERMES_SSH_SCENARIO: scenario, HERMES_SSH_REMOTE_PORT: String(remotePort), HERMES_SSH_HOST_KEY: hostKey, HERMES_SSH_KNOWN_HOSTS: knownHosts }, allocatePort: async () => localPort,
     deadlines: { start: 5000, control: 3000, cancel: 250 }, randomBytes: size => size === 32 ? Buffer.from(credential, 'hex') : randomBytes(size) }
   const connections = []
   const records = async () => (await readFile(record, 'utf8')).trim().split('\n').map(line => JSON.parse(line))
@@ -33,7 +39,8 @@ async function fixture(t, scenario = 'ready') {
   })
   const open = async (ssh = config, overrides = {}) => { const connection = await startHermesSsh(ssh, { ...options, ...overrides }); connections.push(connection); return connection }
   t.after(async () => { for (const connection of connections) await connection.close().catch(error => error.localClosed); await rm(home, { recursive: true, force: true }) })
-  return { home, config, options, open, credential, localPort, remotePort, records, untilRecord }
+  const trust = (expected, overrides = {}) => trustHermesSshHostKey(config, expected, { env: options.env, home, temp: home, deadlines: options.deadlines, ...overrides })
+  return { home, config, options, open, trust, credential, localPort, remotePort, records, untilRecord, hostKey, knownHosts }
 }
 
 test('system ssh respects config/key arguments, enforces known-host key-only auth and tunnels numeric loopback', async t => {
@@ -52,6 +59,10 @@ test('system ssh respects config/key arguments, enforces known-host key-only aut
   }
   const tunnel = starts.find(record => record.role === 'tunnel')
   assert.equal(tunnel.args[tunnel.args.indexOf('-L') + 1], `127.0.0.1:${f.localPort}:127.0.0.1:${f.remotePort}`)
+  // The start connection takes none of the host's own configured forwards; the tunnel
+  // cannot clear them without losing its own.
+  assert.ok(starts.find(record => record.role === 'supervisor').args.includes('ClearAllForwardings=yes'))
+  assert.ok(!tunnel.args.includes('ClearAllForwardings=yes'))
   assert.ok(starts.find(record => record.role === 'supervisor').args.at(-1).startsWith('exec python3 -u -c '))
   assert.equal(records.find(record => record.event === 'input').hermesPath, f.config.hermesPath)
   assert.ok(!JSON.stringify(records).includes(f.credential))
@@ -76,11 +87,26 @@ test('SSH aliases and blank optional fields retain system configuration and remo
 })
 
 test('unknown/changed host keys and key authentication failures are fixed actionable errors with no raw output', async t => {
-  for (const [scenario, kind] of [['host-key', 'host-key-changed'], ['changed-key', 'host-key-changed'], ['auth', 'auth-failed'], ['auth-delayed', 'auth-failed'], ['interactive', 'interactive-auth'], ['unreachable', 'unreachable'], ['python-missing', 'unsupported-platform']]) {
+  const codes = { 'host-key-unknown': 'bot/hermes-ssh-host-key-unknown', 'host-key-changed': 'bot/hermes-ssh-host-key', 'auth-failed': 'bot/hermes-ssh-auth', 'interactive-auth': 'bot/hermes-ssh-interactive', unreachable: 'bot/hermes-ssh-unreachable', 'unsupported-platform': 'bot/hermes-ssh-platform' }
+  for (const [scenario, kind] of [['host-key', 'host-key-unknown'], ['changed-key', 'host-key-changed'], ['auth', 'auth-failed'], ['auth-delayed', 'auth-failed'], ['interactive', 'interactive-auth'], ['unreachable', 'unreachable'], ['python-missing', 'unsupported-platform']]) {
     const f = await fixture(t, scenario)
-    await assert.rejects(f.open(), error => error.code === ({ 'host-key-changed': 'bot/hermes-ssh-host-key', 'auth-failed': 'bot/hermes-ssh-auth', 'interactive-auth': 'bot/hermes-ssh-interactive', unreachable: 'bot/hermes-ssh-unreachable', 'unsupported-platform': 'bot/hermes-ssh-platform' }[kind] ?? 'bot/hermes-ssh') && error.sshError === kind && !error.stack.includes(f.config.host) && !error.stack.includes(f.config.identityFile) && !error.stack.includes(f.credential))
+    let failure
+    await assert.rejects(f.open(), error => { failure = error; return error.code === codes[kind] && error.sshError === kind && !error.stack.includes(f.config.host) && !error.stack.includes(f.config.identityFile) && !error.stack.includes(f.credential) })
+    assert.equal(failure.sshStage, 'ssh-sign-in', scenario)
+    assert.ok(!failure.cleanupUnknown, `${scenario}: no start script ran, so no cleanup is owed`)
     assert.equal((await f.records()).filter(record => record.event === 'spawn').length, 1)
+    // A new host's key is named for the trust step; a changed key never is.
+    if (scenario === 'host-key') assert.deepEqual({ keyType: failure.sshDetail.keyType, fingerprint: failure.sshDetail.fingerprint }, { keyType: 'ssh-ed25519', fingerprint: fingerprintOf(f.hostKey) })
+    else assert.ok(!failure.sshDetail?.fingerprint && !failure.sshDetail?.keyType, scenario)
+    // The identity files SSH offered, by name only; a key from the agent is only counted.
+    if (kind === 'auth-failed') assert.deepEqual({ identities: failure.sshDetail.identities, agentKeys: failure.sshDetail.agentKeys }, { identities: ['id_sample', 'id_other'], agentKeys: 1 })
+    assert.ok(!JSON.stringify(failure.sshDetail ?? {}).includes('/sample/home'), 'no path of an identity file is kept')
   }
+})
+
+test('the start script is the only source of its kinds: a remote cannot claim a host-key verdict', async t => {
+  const f = await fixture(t, 'frame-host-key')
+  await assert.rejects(f.open(), error => error.code === 'bot/hermes-ssh-handshake' && error.sshError === 'handshake' && !error.sshDetail?.fingerprint)
 })
 
 test('missing Hermes and unsupported ownership flags stop before a tunnel and clean the supervisor', async t => {
@@ -97,7 +123,7 @@ test('startup timeout is bounded and failed forwarding closes the remote supervi
   await assert.rejects(f.open(undefined, { deadlines: { start: 150, control: 100, cancel: 200 } }), error => error.sshError === 'timeout' && error.code === 'bot/hermes-ssh-timeout')
   assert.equal((await f.records()).filter(record => record.event === 'spawn').length, 1)
   const broken = await fixture(t, 'tunnel-failure')
-  await assert.rejects(broken.open(), error => error.code === 'bot/hermes-ssh' && !error.cleanupUnknown)
+  await assert.rejects(broken.open(), error => error.code === 'bot/hermes-ssh-tunnel' && error.sshError === 'tunnel' && error.sshStage === 'tunnel' && !error.cleanupUnknown)
   assert.ok((await broken.records()).some(record => record.role === 'supervisor' && record.event === 'closed'))
 })
 
@@ -124,7 +150,7 @@ test('abort interrupts a pending port allocation instead of waiting for a contro
 test('malformed supervisor records are bounded and never leak transient credentials', async t => {
   for (const scenario of ['wrong-nonce', 'bad-frame', 'oversized']) {
     const f = await fixture(t, scenario)
-    await assert.rejects(f.open(), error => error.code === 'bot/hermes-ssh' && !error.stack.includes(f.credential) && !error.stack.includes(f.config.host))
+    await assert.rejects(f.open(), error => error.code === 'bot/hermes-ssh-handshake' && error.sshError === 'handshake' && !error.stack.includes(f.credential) && !error.stack.includes(f.config.host) && !JSON.stringify(error.sshDetail ?? {}).includes(f.credential))
     assert.ok(!JSON.stringify(await f.records()).includes(f.credential))
   }
 })
@@ -142,7 +168,7 @@ test('close reports unconfirmed remote cleanup and still terminates local childr
 test('invalid SSH fields are rejected before any executable can be started', async () => {
   let spawned = false
   for (const ssh of [{ host: '-option' }, { host: 'sample;command' }, { host: 'sample', user: '-option' }, { host: 'sample', port: '1;command' }, { host: 'sample', identityFile: '-option' }, { host: 'sample', hermesPath: 'sample\ncommand' }]) {
-    await assert.rejects(startHermesSsh(ssh, { spawn: () => { spawned = true } }), error => error.code === 'bot/hermes-ssh')
+    await assert.rejects(startHermesSsh(ssh, { spawn: () => { spawned = true } }), error => error.code === 'bot/hermes-ssh-details' && error.sshError === 'invalid-details' && error.sshStage === 'details')
   }
   assert.equal(spawned, false)
 })
@@ -171,12 +197,19 @@ test('our remote supervisor runs only the fake Hermes, sends the token through a
   assert.equal(runtime.args[runtime.args.indexOf('--host') + 1], '127.0.0.1')
   assert.equal(runtime.args[runtime.args.indexOf('--port') + 1], '0')
   assert.equal(runtime.tokenMode, 0o600)
+  // Where Hermes itself requires its token: ~/.hermes/desktop-ssh/<32 hex>/<nonce>.token,
+  // the folder private. Any other path makes serve exit before it is ready.
+  const tokenPath = runtime.args[runtime.args.indexOf('--ssh-session-token-file') + 1], nonce = runtime.args[runtime.args.indexOf('--ssh-owner-nonce') + 1]
+  assert.match(tokenPath.slice(join(f.home, '.hermes', 'desktop-ssh').length), /^\/[0-9a-f]{32}\/[0-9a-f]{16}\.token$/)
+  assert.ok(tokenPath.startsWith(join(f.home, '.hermes', 'desktop-ssh')) && tokenPath.endsWith(`/${nonce}.token`))
+  assert.equal(runtime.folderMode, 0o700)
   assert.equal(runtime.tokenHash, (await import('node:crypto')).createHash('sha256').update(f.credential).digest('hex'))
   assert.ok(!JSON.stringify(await f.records()).includes(f.credential))
   await connection.close()
   assert.throws(() => process.kill(runtime.pid, 0), { code: 'ESRCH' })
   assert.ok((await f.records()).some(record => record.event === 'runtime-stop'))
-  await assert.rejects(access(runtime.args[runtime.args.indexOf('--ssh-session-token-file') + 1]))
+  await assert.rejects(access(tokenPath))
+  assert.deepEqual(await readdir(join(f.home, '.hermes', 'desktop-ssh')), [], 'the token folder goes with the start script')
 })
 
 test('our supervisor checks actual fake capability output before starting a child', async t => {
@@ -307,4 +340,150 @@ test('the actual supervisor refuses an unsupported platform before launching a r
   const hermesPath = await fakeRuntime(f)
   await assert.rejects(f.open({ ...f.config, hermesPath }), error => error.code === 'bot/hermes-ssh-platform' && error.sshError === 'unsupported-platform' && !error.cleanupUnknown)
   assert.ok(!(await f.records()).some(record => record.event === 'runtime-start'))
+})
+
+test('a Hermes that exits early is its own kind, with its exit code and last lines cleaned', async t => {
+  const f = await fixture(t, 'runtime-exit-early')
+  const hermesPath = await fakeRuntime(f)
+  let failure
+  await assert.rejects(f.open({ ...f.config, hermesPath }), error => { failure = error; return error.code === 'bot/hermes-ssh-exited' && error.sshError === 'hermes-exited' && !error.cleanupUnknown })
+  assert.equal(failure.sshStage, 'hermes-start')
+  assert.equal(failure.sshDetail.exit, 3)
+  const said = failure.sshDetail.hermes.join('\n')
+  assert.match(said, /sample start failure/)
+  assert.match(said, /could not read ~\/\.hermes\/config\.yaml/, 'the file is still named, without the home it is in')
+  assert.match(said, /sample cache at ~\/\.cache\/sample/, 'the remote script shortens the home it runs in')
+  for (const secret of [f.credential, '/home/sample-person', f.home, '\u001b']) assert.ok(!JSON.stringify(failure.sshDetail).includes(secret) && !failure.stack.includes(secret), secret)
+  const nonce = (await f.records()).find(record => record.event === 'runtime-start').args.at(-1)
+  assert.match(nonce, /^[0-9a-f]{16}$/)
+  assert.ok(!JSON.stringify(failure.sshDetail).includes(nonce), 'the owner nonce is not kept either')
+  assert.equal((await f.records()).filter(record => record.event === 'spawn').length, 1, 'no tunnel is opened to a Hermes that stopped')
+})
+
+test('a Hermes that never says ready, or reports no usable port, is named by the start script', async t => {
+  const slow = await fixture(t, 'runtime-never-ready')
+  let failure
+  await assert.rejects(slow.open({ ...slow.config, hermesPath: await fakeRuntime(slow) }, { deadlines: { start: 1500, control: 600, cancel: 800 } }), error => { failure = error; return error.code === 'bot/hermes-ssh-not-ready' && error.sshError === 'not-ready' })
+  assert.equal(failure.sshStage, 'hermes-start')
+  assert.match(failure.sshDetail.hermes.join('\n'), /sample server still loading/)
+  assert.ok(!JSON.stringify(failure.sshDetail).includes(slow.credential))
+  const started = (await slow.records()).find(record => record.event === 'runtime-start')
+  assert.throws(() => process.kill(started.pid, 0), { code: 'ESRCH' }, 'the Hermes that was not ready is stopped')
+
+  const port = await fixture(t, 'runtime-bad-port')
+  await assert.rejects(port.open({ ...port.config, hermesPath: await fakeRuntime(port) }), error => error.code === 'bot/hermes-ssh-port' && error.sshError === 'port-missing' && error.sshStage === 'hermes-start' && !error.cleanupUnknown)
+  assert.equal((await port.records()).filter(record => record.event === 'spawn').length, 1)
+})
+
+test('a token of the wrong shape and a fault inside the start script are their own kinds', async t => {
+  const token = await fixture(t, 'runtime-bad-token')
+  await assert.rejects(token.open({ ...token.config, hermesPath: await fakeRuntime(token) }), error => error.code === 'bot/hermes-ssh-handshake' && error.sshError === 'handshake' && !error.cleanupUnknown)
+  assert.ok(!(await token.records()).some(record => record.event === 'runtime-start'), 'no Hermes is started on a refused handshake')
+
+  const fault = await fixture(t, 'runtime-script-fault')
+  let failure
+  await assert.rejects(fault.open({ ...fault.config, hermesPath: await fakeRuntime(fault) }), error => { failure = error; return error.code === 'bot/hermes-ssh-script' && error.sshError === 'remote-script' && !error.cleanupUnknown })
+  // The fault's class and line only: never its message.
+  assert.equal(failure.sshDetail.fault, 'TypeError')
+  assert.ok(Number.isSafeInteger(failure.sshDetail.line) && failure.sshDetail.line > 0)
+  assert.ok(!(await fault.records()).some(record => record.event === 'runtime-start'))
+})
+
+test('a stall is reported with the stage the start script had reached', async t => {
+  const f = await fixture(t, 'stalled-start')
+  await assert.rejects(f.open(undefined, { deadlines: { start: 200, control: 100, cancel: 200 } }), error => error.code === 'bot/hermes-ssh-timeout' && error.sshStage === 'hermes-start')
+})
+
+test('a tunnel that never listens and a busy forward from the host’s own config are told apart', async t => {
+  const silent = await fixture(t, 'tunnel-silent')
+  await assert.rejects(silent.open(undefined, { deadlines: { start: 3000, control: 200, cancel: 250 } }), error => error.code === 'bot/hermes-ssh-tunnel' && error.sshError === 'tunnel' && error.sshStage === 'tunnel' && !error.cleanupUnknown)
+  const busy = await fixture(t, 'forward-conflict')
+  let failure
+  await assert.rejects(busy.open(), error => { failure = error; return error.code === 'bot/hermes-ssh-forward' && error.sshError === 'forward-conflict' && !error.cleanupUnknown })
+  assert.equal(failure.sshDetail.port, 8080)
+  assert.notEqual(busy.localPort, 8080)
+  assert.match(failure.sshDetail.ssh.join('\n'), /Could not request local forwarding/)
+})
+
+test('what SSH itself said is kept without its trace, key names or home paths', async t => {
+  const f = await fixture(t, 'unclassified')
+  let failure
+  await assert.rejects(f.open(), error => { failure = error; return error.code === 'bot/hermes-ssh' && error.sshError === 'unknown' })
+  assert.ok(!failure.cleanupUnknown, 'SSH gave up before it sent the command: nothing remote is left to clean')
+  assert.deepEqual(failure.sshDetail.ssh, ['A sample line SSH said, with ~/.ssh/[hidden] in it'])
+  assert.ok(!JSON.stringify(failure.sshDetail).includes('debug1'))
+})
+
+test('the redaction removes tokens, nonces, key material and home paths, and keeps the rest', () => {
+  const token = randomBytes(32).toString('hex'), nonce = randomBytes(8).toString('hex'), key = sampleKey()
+  const planted = [
+    `token ${token} nonce ${nonce}`, `Authorization: Bearer ${randomUUID()}${randomUUID()}`, `OPENAI_API_KEY=sk-${randomUUID().replaceAll('-', '')}`,
+    `debug1: Server host key: ssh-ed25519 ${fingerprintOf(key)}`, `ssh-ed25519 ${key} sample@example.invalid`,
+    '-----BEGIN OPENSSH PRIVATE KEY-----\nsampleSampleSample\n-----END OPENSSH PRIVATE KEY-----',
+    'Traceback: /home/sample-person/.hermes/hermes-agent/run.py line 4', 'identity file /Users/sample-person/.ssh/id_sample_work type 3', 'cwd /root/.hermes/logs',
+  ].join('\n')
+  const cleaned = redactSshText(planted, [token, nonce])
+  for (const secret of [token, nonce, key, fingerprintOf(key).slice(7), 'sample-person', 'id_sample_work', 'sampleSampleSample', '/root']) assert.ok(!cleaned.includes(secret), secret)
+  assert.ok(!/sk-[0-9a-f]{8}/.test(cleaned) && !/Bearer [0-9a-f]{8}/.test(cleaned))
+  for (const kept of ['Traceback: ~/.hermes/hermes-agent/run.py line 4', 'identity file ~/.ssh/[hidden] type 3', 'cwd ~/.hermes/logs', 'debug1: Server host key: ssh-ed25519 SHA256:[hidden]']) assert.ok(cleaned.includes(kept), kept)
+  assert.equal(redactSshText('Hermes could not bind 127.0.0.1: address in use (errno 98)', [token]), 'Hermes could not bind 127.0.0.1: address in use (errno 98)')
+  // The line that says where a changed key is saved stays useful; a key file's name never does.
+  assert.equal(redactSshText('Offending ED25519 key in /home/sample-person/.ssh/known_hosts:12'), 'Offending ED25519 key in ~/.ssh/known_hosts:12')
+  assert.equal(redactSshText('Bad owner or permissions on /Users/sample-person/.ssh/config'), 'Bad owner or permissions on ~/.ssh/config')
+  for (const named of ['known_hosts.d/sample-work', 'config.d/sample-work', 'known_hosts_sample-work', 'id_sample_work.pub']) assert.equal(redactSshText(`read /home/sample-person/.ssh/${named}: failed`), 'read ~/.ssh/[hidden]: failed')
+})
+
+test('a new host key is saved only by the trust step, and only the key that was shown', async t => {
+  const f = await fixture(t, 'host-key')
+  let failure
+  await assert.rejects(f.open(), error => { failure = error; return error.sshError === 'host-key-unknown' })
+  // The failed test trusted nothing: strict checking, no accept-new, no known-hosts file.
+  await assert.rejects(access(f.knownHosts))
+  assert.ok((await f.records()).every(record => !record.args?.includes('StrictHostKeyChecking=accept-new')))
+  assert.ok((await f.records()).filter(record => record.event === 'spawn').every(record => record.args.includes('StrictHostKeyChecking=yes')))
+
+  const shown = { keyType: failure.sshDetail.keyType, fingerprint: failure.sshDetail.fingerprint }
+  assert.deepEqual(await f.trust(shown), { trusted: true, added: 1 })
+  assert.equal(await readFile(f.knownHosts, 'utf8'), `${f.config.user}@${f.config.host} ssh-ed25519 ${f.hostKey}\n`)
+  assert.equal((await stat(f.knownHosts)).mode & 0o777, 0o600)
+  const probe = (await f.records()).find(record => record.role === 'trust')
+  // The trust probe signs in nowhere and still lists the person's own file, so SSH
+  // itself refuses a host whose saved key differs.
+  for (const option of ['PubkeyAuthentication=no', 'PasswordAuthentication=no', 'KbdInteractiveAuthentication=no', 'BatchMode=yes', 'ClearAllForwardings=yes']) assert.ok(probe.args.includes(option), option)
+  assert.ok(probe.args.find(arg => arg.startsWith('UserKnownHostsFile=')).endsWith(` ${f.knownHosts}`))
+  assert.equal(probe.args.at(-1), 'true')
+  // Trusting again adds nothing: the key is known now.
+  assert.deepEqual(await f.trust(shown), { trusted: true, added: 0 })
+  assert.equal((await readFile(f.knownHosts, 'utf8')).trim().split('\n').length, 1)
+  assert.deepEqual((await readdir(f.home)).filter(name => name.startsWith('automagik-host-key-')), [], 'the throwaway file is removed')
+})
+
+test('a changed host key is refused by the trust step and nothing is written', async t => {
+  const f = await fixture(t, 'host-key')
+  const saved = `${f.config.user}@${f.config.host} ssh-ed25519 ${sampleKey()}\n`
+  await mkdir(dirname(f.knownHosts), { recursive: true })
+  await writeFile(f.knownHosts, saved)
+  await assert.rejects(f.trust({ keyType: 'ssh-ed25519', fingerprint: fingerprintOf(f.hostKey) }), error => error.code === 'bot/hermes-ssh-host-key' && error.sshError === 'host-key-changed' && error.sshStage === 'host-key')
+  assert.equal(await readFile(f.knownHosts, 'utf8'), saved, 'the saved key is untouched and the new one is not added')
+})
+
+test('a host that presents another key than the one shown is refused and nothing is written', async t => {
+  const f = await fixture(t, 'trust-swapped')
+  const swapped = sampleKey()
+  const env = { ...f.options.env, HERMES_SSH_SWAPPED_KEY: swapped }
+  let failure
+  await assert.rejects(f.trust({ keyType: 'ssh-ed25519', fingerprint: fingerprintOf(f.hostKey) }, { env }), error => { failure = error; return error.code === 'bot/hermes-ssh-host-key' && error.sshError === 'host-key-changed' })
+  assert.equal(failure.sshDetail.mismatch, true)
+  await assert.rejects(access(f.knownHosts))
+  // A key type or fingerprint that is not one is refused before any SSH runs.
+  const before = (await f.records()).length
+  for (const expected of [{ keyType: 'ssh-ed25519', fingerprint: 'SHA256:short' }, { keyType: '-o', fingerprint: fingerprintOf(f.hostKey) }, {}]) await assert.rejects(f.trust(expected, { env }), error => error.code === 'bot/hermes-ssh-details')
+  assert.equal((await f.records()).length, before)
+})
+
+test('a host whose config discards host keys cannot be trusted from here', async t => {
+  const f = await fixture(t, 'host-key')
+  const env = { ...f.options.env, HERMES_SSH_KNOWN_HOSTS: '/dev/null' }
+  await assert.rejects(f.trust({ keyType: 'ssh-ed25519', fingerprint: fingerprintOf(f.hostKey) }, { env }), error => error.code === 'bot/hermes-ssh-host-key-unknown' && error.sshDetail.unsaved === true)
+  assert.ok(!(await f.records()).some(record => record.role === 'trust'))
 })

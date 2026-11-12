@@ -10,6 +10,11 @@ have connected to” list. Choosing an alias fills the host, user and port; the 
 connection target. The probe also exercised search, opening the secondary list, choosing a
 previous host, and typing a new host before restoring the shown sample alias.
 
+Frames 04d and 04e show the SSH sign-in and host-key screens as they were at the source commit
+below. Since then each SSH failure has its own screen and an unknown host key has a trust step;
+those screens were captured and reviewed outside the repository (1440 and 390 wide, light and
+dark) and are not added to this temporary folder.
+
 | State | Light | Dark |
 | --- | --- | --- |
 | Route selector | [Light](light-00-route-selector.png) | [Dark](dark-00-route-selector.png) |

@@ -33,15 +33,63 @@ const CONNECTION_ERRORS = Object.freeze({
   'bot/hermes-ssh-timeout': 'SSH did not answer in time. Check the connection and test again.',
   'bot/hermes-ssh-unreachable': 'SSH could not reach the other computer. Check the host and connection.',
   'bot/hermes-ssh-cleanup': 'The SSH connection could not confirm remote cleanup. Check the remote Hermes before reconnecting.',
+  'bot/hermes-ssh-host-key-unknown': 'This computer has not connected to this SSH host before. Check its host key and trust it before testing again.',
+  'bot/hermes-ssh-exited': 'Hermes stopped on the other computer before it was ready.',
+  'bot/hermes-ssh-not-ready': 'Hermes started on the other computer but was not ready in time.',
+  'bot/hermes-ssh-port': 'Hermes started on the other computer but did not report its port.',
+  'bot/hermes-ssh-handshake': 'The private start handshake with the other computer failed.',
+  'bot/hermes-ssh-tunnel': 'The SSH tunnel to the remote Hermes did not start.',
+  'bot/hermes-ssh-forward': 'A port forward from this host’s own SSH config could not start.',
+  'bot/hermes-ssh-script': 'The start script stopped on the other computer.',
+  'bot/hermes-ssh-details': 'Enter valid SSH details.',
 })
+const FAILURE_LIFETIME = 10 * 60_000
+const text = (value, max) => typeof value === 'string' && value.length > 0 && value.length <= max && !/[\x00-\x1f\x7f]/.test(value) ? value : undefined
+const lines = value => Array.isArray(value) ? value.filter(line => typeof line === 'string').slice(-8).map(line => line.slice(0, 240)) : []
+// What the person's own screen may show of one failed SSH connection. Every line was
+// already cleaned of this connection's secrets where SSH and Hermes said it.
+function failureView(error, alias, elapsedMs, stage) {
+  const detail = error?.sshDetail ?? {}, code = typeof error?.code === 'string' ? error.code : 'bot/refused'
+  const view = { code, kind: text(error?.sshError, 40) ?? (code.replace(/^bot\/(?:hermes-?)?/, '') || 'unknown'), stage, alias, elapsedMs }
+  if (Number.isSafeInteger(detail.exit)) view.exit = detail.exit
+  for (const key of ['ssh', 'hermes']) if (lines(detail[key]).length) view[key] = lines(detail[key])
+  for (const key of ['keyType', 'fingerprint', 'fault']) if (text(detail[key], 100)) view[key] = detail[key]
+  if (Array.isArray(detail.identities)) view.identities = detail.identities.filter(name => text(name, 64)).slice(0, 6)
+  for (const key of ['agentKeys', 'port', 'errno', 'line']) if (Number.isSafeInteger(detail[key]) && detail[key] > 0) view[key] = detail[key]
+  for (const key of ['unsaved', 'mismatch']) if (detail[key] === true) view[key] = true
+  return view
+}
+// The one diagnostics line of a failed SSH connection. No identity file name and no
+// host key: the person's screen has those, a report does not need them.
+const failureLine = view => [`Remote Hermes SSH failed: alias=${view.alias} stage=${view.stage} kind=${view.kind} elapsed=${view.elapsedMs}ms`,
+  view.exit !== undefined ? `exit=${view.exit}` : '', view.fault ? `fault=${view.fault}${view.errno ? `/${view.errno}` : ''}${view.line ? `@${view.line}` : ''}` : '', view.port ? `port=${view.port}` : '',
+  view.ssh ? `ssh=${JSON.stringify(view.ssh.join(' | '))}` : '', view.hermes ? `hermes=${JSON.stringify(view.hermes.join(' | '))}` : ''].filter(Boolean).join(' ')
 const connectionFailure = (error, native = false) => error?.cleanupUnknown === true
   ? refusal(CONNECTION_ERRORS['bot/hermes-ssh-cleanup'], { code: 'bot/hermes-ssh-cleanup' })
   : Object.hasOwn(CONNECTION_ERRORS, error?.code)
   ? refusal(CONNECTION_ERRORS[error.code], { code: error.code })
   : refusal(native && error?.code === 'bot/hermes' ? error.message : 'Remote Hermes could not connect.')
 
-export function install(rt, { transport = options => new HermesTransport(options), fetch: fetcher = globalThis.fetch, startSsh, sshHosts = discoverSshHosts, now = Date.now, deadlines = HERMES_DEADLINES, testLifetime = TEST_LIFETIME } = {}) {
+export function install(rt, { transport = options => new HermesTransport(options), fetch: fetcher = globalThis.fetch, startSsh, trustSsh = async (...args) => (await import('./hermes-ssh.js')).trustHermesSshHostKey(...args), sshHosts = discoverSshHosts, now = Date.now, deadlines = HERMES_DEADLINES, testLifetime = TEST_LIFETIME } = {}) {
   const { ctx, state } = rt
+  // The last failed SSH connection of each wizard request, kept in memory for its own
+  // screen (the stage, SSH's and Hermes's last lines, a new host key to trust).
+  const failures = new Map()
+  function noteSshFailure(key, ssh, error, started) {
+    const alias = text(typeof ssh?.host === 'string' ? ssh.host.trim() : '', 255) ?? '(none)'
+    const view = failureView(error, alias, Math.max(0, Date.now() - started), text(error?.sshStage ?? error?.hermesStage, 40) ?? 'connection')
+    rt.noteFailure?.({ source: 'host', where: 'Remote Hermes', code: view.code, text: failureLine(view) })
+    if (typeof key !== 'string' || !key || key.length > 100) return view
+    failures.delete(key)
+    failures.set(key, { view, ssh: sshFields(ssh), expires: Date.now() + FAILURE_LIFETIME })
+    while (failures.size > 8) failures.delete(failures.keys().next().value)
+    return view
+  }
+  const failureOf = key => {
+    const entry = typeof key === 'string' ? failures.get(key) : undefined
+    if (entry && entry.expires <= Date.now()) { failures.delete(key); return undefined }
+    return entry
+  }
   const record = () => state.prefs?.hermesRemote ?? { enabled: false, models: [] }
   const sessions = () => state.hermesSessions ??= {}
   const enabled = () => record().enabled === true
@@ -234,6 +282,7 @@ export function install(rt, { transport = options => new HermesTransport(options
   async function open(options = {}) {
     const startup = options.startup ?? budget(options.signal)
     const ownsStartup = !options.startup || options.finishOnPrepare === true
+    const started = Date.now()
     try {
       await rt.load(); await rt.loadSecrets()
       const config = record(), owner = generation
@@ -302,6 +351,7 @@ export function install(rt, { transport = options => new HermesTransport(options
       }
     } catch (error) {
       if (ownsStartup) startup.finish()
+      if (record().mode === 'ssh' && record().enabled && !startup.signal.aborted && !options.signal?.aborted) noteSshFailure('connect', record().ssh, error, started)
       throw error?.code === 'bot/refused' && error.cleanupUnknown !== true ? error : connectionFailure(error)
     }
   }
@@ -350,7 +400,7 @@ export function install(rt, { transport = options => new HermesTransport(options
   }
   async function testDraft(draft, signal, startup = budget(signal)) {
     if (disposed) throw fail('Connection setup is no longer available.')
-    const cancelling = cancelTests(), owner = testGeneration
+    const cancelling = cancelTests(), owner = testGeneration, started = Date.now()
     const controller = startup.controller
     const pending = { controller, requestId: typeof draft?.requestId === 'string' && draft.requestId.length <= 100 ? draft.requestId : undefined, stage: 'reach' }
     pendingTest = pending
@@ -376,7 +426,7 @@ export function install(rt, { transport = options => new HermesTransport(options
         await probe(entry.lease, connection.profiles[0].id, controller.signal, startup.until)
         entry.checkSource?.()
         if (disposed || owner !== testGeneration || controller.signal.aborted) throw fail('Connection setup was cancelled.')
-      } catch (error) { await entry.lease.close(); throw error }
+      } catch (error) { if (error && typeof error === 'object') error.hermesStage ??= 'chat'; await entry.lease.close(); throw error }
       // Keep only connection references and ephemeral session material, never the submitted password/user.
       entry.config = { mode: connection.mode, authMode: connection.authMode, address: connection.mode === 'remote' ? connection.address : '', ...(connection.mode === 'ssh' ? { ssh: sshFields(connection.ssh) } : {}) }
       entry.timer = setTimeout(() => { entry.controller.abort(); void mutate(async () => { if (tested === entry) { tested = undefined; await entry.lease.close() } }).catch(() => {}) }, testLifetime)
@@ -385,11 +435,36 @@ export function install(rt, { transport = options => new HermesTransport(options
       pending.stage = 'connected'
       return { testId: entry.id, profiles: connection.profiles, status: 'connected' }
     })()
-    try { return await pending.task }
-    catch (error) { throw error?.cleanupUnknown === true ? connectionFailure(error) : error }
-    finally {
+    try {
+      const answer = await pending.task
+      if (pending.requestId) failures.delete(pending.requestId)
+      return answer
+    } catch (error) {
+      // A test the person replaced or closed is not a failure to report.
+      const shown = error?.cleanupUnknown === true ? connectionFailure(error) : error
+      if (draft?.mode === 'ssh' && owner === testGeneration && !disposed) noteSshFailure(pending.requestId, draft.ssh, error?.cleanupUnknown === true ? Object.assign(shown, { sshStage: error.sshStage, sshDetail: error.sshDetail, sshError: 'cleanup' }) : error, started)
+      throw shown
+    } finally {
       startup.finish()
       if (pendingTest === pending) pendingTest = undefined
+    }
+  }
+  // Trust the one new host key the failed test showed: the host kept its type and
+  // fingerprint, so the browser names only its own request, never a key.
+  async function trustHostKey(body, signal) {
+    const key = typeof body?.requestId === 'string' ? body.requestId : undefined
+    const entry = failureOf(key)
+    if (disposed || !entry || entry.view.kind !== 'host-key-unknown' || !entry.view.keyType || !entry.view.fingerprint || entry.view.unsaved) {
+      throw fail('Test the connection again before trusting this host.', 'expired')
+    }
+    const started = Date.now()
+    failures.delete(key)
+    try {
+      const answer = await trustSsh(entry.ssh, { keyType: entry.view.keyType, fingerprint: entry.view.fingerprint }, { signal, deadlines })
+      return { trusted: answer?.trusted === true }
+    } catch (error) {
+      noteSshFailure(key, entry.ssh, error, started)
+      throw Object.hasOwn(CONNECTION_ERRORS, error?.code) ? refusal(CONNECTION_ERRORS[error.code], { code: error.code }) : fail('This host key could not be trusted. Test the connection again.', 'ssh')
     }
   }
   async function probe(owned, profile, signal, until) {
@@ -612,8 +687,12 @@ export function install(rt, { transport = options => new HermesTransport(options
     } catch { return { aliases: [], knownHosts: [] } }
   }, { read: true })
   rt.hooks.endpoint('hermes-remote-test', (body, signal) => api.test(body, signal))
-  rt.hooks.endpoint('hermes-remote-test-status', body => ({ stage: pendingTest?.requestId && pendingTest.requestId === body?.requestId
-    ? pendingTest.stage : tested?.requestId && tested.requestId === body?.requestId ? 'connected' : 'reach' }), { read: true })
+  rt.hooks.endpoint('hermes-remote-test-status', body => {
+    const failure = failureOf(body?.connect === true ? 'connect' : body?.requestId)?.view
+    return { stage: pendingTest?.requestId && pendingTest.requestId === body?.requestId
+      ? pendingTest.stage : tested?.requestId && tested.requestId === body?.requestId ? 'connected' : 'reach', ...(failure ? { failure } : {}) }
+  }, { read: true })
+  rt.hooks.endpoint('hermes-remote-ssh-trust', (body, signal) => trustHostKey(body, signal))
   rt.hooks.endpoint('hermes-remote-test-profiles', (body, signal) => api.refreshProfiles(body, signal))
   rt.hooks.endpoint('hermes-remote-save', (body, signal) => api.save(body, signal))
   rt.hooks.endpoint('hermes-remote-connect', (_body, signal) => api.connect(signal))

@@ -77,6 +77,10 @@ export async function prepareHermesConnection(draft, {
     for (const value of [authHeaders.Cookie, ...jar.values()]) addCookieSecret(value)
     await onAuthUpdate?.(persisted)
   }
+  // In SSH mode the address is this computer's own tunnel: a request that gets no
+  // answer is the tunnel's failure, and a refused token is the start handshake's.
+  let phase = 'reach'
+  const viaSsh = (message, kind) => Object.assign(fail(message, `ssh-${kind}`), { sshError: kind, sshStage: phase })
   const remaining = () => {
     if (controller.signal.aborted || Date.now() >= until) throw fail('Connection setup was cancelled or timed out. Test the connection again.', 'timeout')
     return Math.max(1, Math.min(deadlines.control, until - Date.now()))
@@ -94,8 +98,9 @@ export async function prepareHermesConnection(draft, {
         const response = await fetcher(`${address}${path}`, {
           method, headers: { ...headers, ...(body ? { 'Content-Type': 'application/json' } : {}) },
           ...(body ? { body: JSON.stringify(body) } : {}), redirect: 'manual', signal: requestController.signal,
-        })
+        }).catch(error => { throw owned && !requestController.signal.aborted ? viaSsh('The SSH tunnel is open, but Hermes did not answer through it.', 'tunnel') : error })
         if (response.status >= 300 && response.status < 400) throw fail('Hermes redirected this request. Enter its final address and test again.')
+        if (owned && (response.status === 401 || response.status === 403)) throw viaSsh('The remote Hermes did not accept this connection’s private token.', 'handshake')
         if (!response.ok) throw fail(response.status === 401 || response.status === 403
           ? 'Hermes did not accept the sign-in. Check the token, user or password.' : 'Hermes could not complete this request. Try again.', response.status === 401 || response.status === 403 ? 'auth' : 'connection')
         await captureCookies(response)
@@ -124,7 +129,9 @@ export async function prepareHermesConnection(draft, {
       if (!object(draft.ssh) || !clean(draft.ssh.host, 4096)) throw fail('Enter an SSH host or config name.', 'ssh')
       for (const name of ['user', 'identityFile', 'hermesPath']) if (draft.ssh[name] !== undefined && draft.ssh[name] !== '' && !clean(draft.ssh[name], 4096)) throw fail('Enter valid optional SSH details.', 'ssh')
       const ssh = Object.fromEntries(['host', 'user', 'port', 'identityFile', 'hermesPath'].filter(name => draft.ssh[name] !== undefined).map(name => [name, draft.ssh[name]]))
+      phase = 'ssh'
       owned = await startSsh(ssh, { signal: controller.signal, deadlines })
+      phase = 'token'
       remaining()
       address = remoteAddress(owned.address, { allowLoopback: true })
       if (!clean(owned.credential)) throw fail('SSH did not return a usable Hermes credential.')
@@ -177,6 +184,7 @@ export async function prepareHermesConnection(draft, {
     if (discover) {
       const { value: status } = await request('/api/status')
       onProgress('sign-in')
+      phase = 'profiles'
       const { value: inventory } = await request('/api/profiles')
       if (!Array.isArray(inventory.profiles)) throw fail('Hermes did not return its profiles.', 'profiles')
       let served
@@ -207,6 +215,7 @@ export async function prepareHermesConnection(draft, {
     }
   } catch (error) {
     controller.abort()
+    if (error && typeof error === 'object' && draft.mode === 'ssh') error.hermesStage ??= phase
     await owned?.close()
     if (error?.code?.startsWith('bot/')) throw error
     throw fail('Hermes could not connect. Check the connection details and try again.')

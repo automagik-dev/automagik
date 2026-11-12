@@ -196,10 +196,11 @@ test('real SSH adapter failures reach wizard actions for update, platform, timeo
   t.after(() => rm(home, { recursive: true, force: true }))
   await writeFile(join(home, 'ssh'), `#!${process.execPath}\n${readFileSync(new URL('./fixtures/hermes-fake-ssh.mjs', import.meta.url), 'utf8')}`, { mode: 0o700 })
   for (const [scenario, expected, advice] of [
-    ['old-contract', 'Hermes needs an update', 'Update Hermes on the other computer'],
+    ['old-contract', 'Hermes needs an update', 'Update Hermes on example.invalid'],
     ['python-missing', 'This computer cannot run the SSH connection yet', 'Check the remote system and Python'],
     ['timeout', 'The connection timed out', 'The other computer did not become ready in time'],
-    ['host-key', 'SSH couldn’t sign in', 'Confirm this computer’s SSH host key'],
+    ['host-key', 'Trust this SSH host?', 'example.invalid is new to this computer'],
+    ['changed-key', 'This host’s key has changed', 'The key for example.invalid is not the one this computer saved'],
   ]) {
     await t.test(scenario, async child => {
       let actual
@@ -216,7 +217,9 @@ test('real SSH adapter failures reach wizard actions for update, platform, timeo
       assert.ok(actual?.code.startsWith('bot/hermes-ssh-'))
       assert.ok(render.document.body.textContent.includes(expected))
       assert.ok(render.document.body.textContent.includes(advice))
-      if (scenario !== 'host-key') assert.ok(!render.document.body.textContent.includes('Check the SSH user and key'))
+      assert.ok(!render.document.body.textContent.includes('Check the SSH user and key'))
+      // Without the key the host kept for this request, nothing can be trusted from the page.
+      assert.ok(![...render.document.querySelectorAll('button')].some(button => button.textContent.includes('Trust this host')))
     })
   }
 })
@@ -319,8 +322,9 @@ test('SSH uses optional config defaults and a path reference, with clear strict 
   await render.click('Use this path')
   await render.click('Test SSH connection')
   await waitFor(() => render.document.querySelector('[data-status=error]'), 'SSH host-key error frame')
-  assert.match(render.document.body.textContent, /Connect to this host once in a terminal/)
-  assert.match(render.document.body.textContent, /A changed key must be checked/)
+  assert.match(render.document.body.textContent, /The key for example\.invalid is not the one this computer saved/)
+  assert.match(render.document.body.textContent, /cannot trust the new key for you/)
+  assert.ok(![...render.document.querySelectorAll('button')].some(button => button.textContent.includes('Trust this host')), 'a changed key has no trust button')
   const payload = render.calls.find(call => call.endpoint === 'hermes-remote-test').payload
   assert.equal(payload.mode, 'ssh')
   assert.equal(payload.ssh.host, 'example.invalid')
@@ -625,7 +629,7 @@ test('wizard error strips give the action for the actual failure, not another er
     ['ssh', 'token', 'bot/hermes-ssh-host-key', 'Connect once in a terminal to verify the SSH host key, then test again.'],
     ['ssh', 'token', 'bot/hermes-ssh-missing', 'Hermes must already be installed on the other computer.'],
     ['ssh', 'token', 'bot/hermes-ssh-auth', 'Check the SSH user and key, then test again.'],
-    ['ssh', 'token', 'bot/hermes-ssh', 'Check the connection details without changing host-key protection.'],
+    ['ssh', 'token', 'bot/hermes-ssh', 'Run “ssh example.invalid” in a terminal to see the full error. Fix it there, then test again.'],
     ['remote', 'token', 'bot/hermes', 'Check the Hermes version and this profile’s approval settings, then test again.'],
     ['ssh', 'token', 'bot/hermes-unsupported', 'Check the Hermes version and this profile’s approval settings, then test again.'],
     ['remote', 'token', 'bot/hermes-profiles', 'Check the profile on the other computer, then test again.'],
@@ -782,4 +786,166 @@ test('switching away from SSH or unmounting aborts the optional list without ret
   flushSync(() => render.root.unmount())
   assert.equal(signals[1].aborted, true)
   lists[1].resolve(hostInventory())
+})
+
+// One failed SSH test as the host reports it: its code on the refusal, its facts by request.
+async function failedSshTest(t, code, failure, overrides = {}) {
+  const render = await startWizard(t, {
+    'hermes-remote-test': () => { throw Object.assign(Error('Fake refusal'), { code }) },
+    'hermes-remote-test-status': payload => ({ stage: 'open', ...(failure && payload?.requestId ? { failure: { code, ...failure } } : {}) }),
+    ...overrides,
+  })
+  await render.click('Through SSH'); await render.click('Continue')
+  await render.fill('SSH host or config name', 'sample-box')
+  await render.click('Test SSH connection')
+  await waitFor(() => render.document.querySelector('[data-status=error]'), `${code} screen`)
+  const text = selector => render.document.querySelector(selector)?.textContent ?? ''
+  const rows = Object.fromEntries([...render.document.querySelectorAll('.bt-hw-facts .bt-hw-pair')].map(row => [row.querySelector('span').textContent, row.querySelector('strong').textContent]))
+  return { ...render, text, rows, buttons: () => [...render.document.querySelectorAll('.bt-hw-foot button')].map(button => button.textContent.replace(/[→←]/g, '').trim()) }
+}
+const GENERIC = 'The SSH connection could not start'
+const fingerprint = 'SHA256:sampleSampleSampleSampleSampleSampleSample1'
+
+test('every SSH failure kind has its own screen, naming the host and the next step', async t => {
+  const cases = [
+    ['bot/hermes-ssh-exited', { kind: 'hermes-exited', stage: 'hermes-start', exit: 3, hermes: ['sample start failure', 'could not read ~/.hermes/config.yaml'] },
+      'Hermes stopped while starting', 'Hermes on sample-box stopped before it was ready', 'SSH signed in and started Hermes, but Hermes exited with code 3.', 'Run “hermes serve” on sample-box to see the full error, fix it there, then test again.'],
+    ['bot/hermes-ssh-exited', { kind: 'hermes-exited', stage: 'hermes-start' },
+      'Hermes stopped while starting', 'Hermes on sample-box stopped before it was ready', 'SSH signed in and started Hermes, but Hermes stopped right away.', 'Run “hermes serve” on sample-box to see the full error, fix it there, then test again.'],
+    ['bot/hermes-ssh-not-ready', { kind: 'not-ready', stage: 'hermes-start', hermes: ['sample server still loading'] },
+      'Hermes took too long to start', 'Hermes on sample-box was not ready in time', 'SSH signed in and started Hermes, but Hermes did not say it was ready before the deadline.', 'Check that Hermes starts normally on sample-box, then test again.'],
+    ['bot/hermes-ssh-port', { kind: 'port-missing', stage: 'hermes-start' },
+      'Hermes did not report its port', 'Hermes on sample-box started without a port', 'Hermes is running there, but it never said which port it listens on, so there is nothing to connect to.', 'Update Hermes on sample-box, then test again.'],
+    ['bot/hermes-ssh-handshake', { kind: 'handshake', stage: 'token' },
+      'The one-time token was not accepted', 'Automagik and sample-box could not agree on this connection', 'The start script or Hermes on sample-box did not accept the one-time token made for this connection.', 'Test again. If it keeps failing, update Hermes on sample-box and check that signing in there prints no extra text.'],
+    ['bot/hermes-ssh-tunnel', { kind: 'tunnel', stage: 'tunnel', ssh: ['sample tunnel line'] },
+      'The tunnel did not open', 'SSH could not open a tunnel to Hermes on sample-box', 'Hermes started, but the SSH tunnel from this computer to it did not start listening, or carried no answer.', 'Check that sample-box allows port forwarding, then test again.'],
+    ['bot/hermes-ssh-forward', { kind: 'forward-conflict', stage: 'tunnel', port: 8080 },
+      'A port from your SSH config is in use', 'Port 8080 from the SSH config for sample-box is busy', 'The SSH config entry for sample-box forwards its own ports.', 'Close the other SSH session to sample-box, or remove the forward from its config entry, then test again.'],
+    ['bot/hermes-ssh-script', { kind: 'remote-script', stage: 'remote-start', fault: 'PermissionError', errno: 13, line: 92 },
+      'The start script stopped', 'Automagik’s start script failed on sample-box', 'SSH signed in, but the small script that finds and starts Hermes stopped with an error.', 'Check that Python 3 works on sample-box and that this user can run Hermes, then test again.'],
+    ['bot/hermes-ssh-details', { kind: 'invalid-details', stage: 'details' },
+      'Check the SSH details', 'These SSH details can’t be used', 'The host, user, port, key path or Hermes path has characters SSH does not accept.', 'Edit the SSH details, then test again.'],
+    ['bot/hermes-ssh-update', { kind: 'update-required', stage: 'remote-start' },
+      'Hermes needs an update', 'Update Hermes on sample-box', 'This Hermes installation lacks the server ownership options needed for an SSH connection.', 'Update Hermes, then test the SSH connection again.'],
+    ['bot/hermes-ssh-cleanup', { kind: 'cleanup', stage: 'hermes-start' },
+      'Connection cleanup is unconfirmed', 'Check sample-box before reconnecting', 'Automagik could not confirm that the owned Hermes process group stopped.', 'Check the remote Hermes process before testing or connecting again.'],
+    ['bot/hermes-ssh-host-key', { kind: 'host-key-changed', stage: 'ssh-sign-in' },
+      'This host’s key has changed', 'The key for sample-box is not the one this computer saved', 'Automagik will not connect and cannot trust the new key for you.', 'Connect once in a terminal to verify the SSH host key, then test again.'],
+    ['bot/hermes-ssh-auth', { kind: 'auth-failed', stage: 'ssh-sign-in', identities: ['id_sample', 'id_other'], agentKeys: 2 },
+      'SSH couldn’t sign in', 'sample-box refused your SSH key', 'SSH offered id_sample, id_other, 2 keys from your SSH agent, and sample-box accepted none of them.', 'Check the SSH user and key, then test again.'],
+    ['bot/hermes-connection', { kind: 'connection', stage: 'chat' },
+      'Hermes did not answer', 'Hermes on sample-box started but did not answer correctly', 'SSH signed in and the tunnel opened, but Hermes did not complete the connection check.', 'Check that Hermes works on sample-box, then test again.'],
+  ]
+  for (const [code, failure, heading, title, text, hint] of cases) await t.test(`${code} ${failure.exit ?? ''}`, async sub => {
+    const render = await failedSshTest(sub, code, failure)
+    assert.equal(render.text('.bt-hw-content h2'), heading)
+    assert.equal(render.text('.bt-hw-failed h3'), title)
+    assert.ok(render.text('.bt-hw-failed p').includes(text), render.text('.bt-hw-failed p'))
+    assert.equal(render.text('.bt-hw-error-note'), hint)
+    // A known kind never shows the generic screen, and never a trust button.
+    assert.ok(!render.document.body.textContent.includes(GENERIC))
+    assert.deepEqual(render.buttons(), ['Test again', 'Edit SSH details'])
+    assert.equal(render.rows['SSH host'], 'sample-box', 'the host the person picked is named')
+    assert.doesNotMatch(render.document.body.textContent, /Fake refusal/)
+  })
+})
+
+test('a failure screen shows the stage, the exit code and the last lines the host kept', async t => {
+  const render = await failedSshTest(t, 'bot/hermes-ssh-exited', { kind: 'hermes-exited', stage: 'hermes-start', exit: 3, hermes: ['sample start failure', 'could not read ~/.hermes/config.yaml'], ssh: ['sample SSH line'] })
+  assert.deepEqual(render.rows, { 'SSH host': 'sample-box', 'Stopped while': 'Starting Hermes', 'Exit code': '3' })
+  const blocks = [...render.document.querySelectorAll('.bt-hw-lines')].map(block => [block.querySelector('span').textContent, block.querySelector('pre').textContent])
+  assert.deepEqual(blocks, [['Last lines from Hermes', 'sample start failure\ncould not read ~/.hermes/config.yaml'], ['Last lines from SSH', 'sample SSH line']])
+  assert.match(render.document.body.textContent, /Settings → Feedback keeps a line about this test for a report\./)
+
+  const script = await failedSshTest(t, 'bot/hermes-ssh-script', { kind: 'remote-script', stage: 'remote-start', fault: 'PermissionError', errno: 13, line: 92 })
+  assert.equal(script.rows.Error, 'PermissionError (13) · line 92')
+  assert.equal(script.rows['Stopped while'], 'Finding Hermes')
+
+  // A fact of the wrong shape is dropped, never rendered.
+  const shaped = await failedSshTest(t, 'bot/hermes-ssh-exited', { kind: 'hermes-exited', stage: '<b>stage</b>', exit: 'three', fault: 'not a class name', hermes: ['kept line', { not: 'a line' }, 'x'.repeat(400)], identities: ['../../etc'] })
+  assert.deepEqual(shaped.rows, { 'SSH host': 'sample-box' })
+  assert.equal(shaped.document.querySelector('.bt-hw-lines pre').textContent, 'kept line')
+})
+
+test('only an unknown kind shows the generic SSH screen, with the host and what SSH said', async t => {
+  const render = await failedSshTest(t, 'bot/hermes-ssh', { kind: 'unknown', stage: 'ssh-sign-in', ssh: ['A sample line SSH said'] })
+  assert.equal(render.text('.bt-hw-content h2'), GENERIC)
+  assert.equal(render.text('.bt-hw-failed h3'), 'SSH to sample-box stopped with an unexpected error')
+  assert.equal(render.text('.bt-hw-failed p'), 'This is not one of the failures Automagik knows. What SSH said is shown below.')
+  assert.equal(render.text('.bt-hw-error-note'), 'Run “ssh sample-box” in a terminal to see the full error. Fix it there, then test again.')
+  assert.deepEqual(render.rows, { 'SSH host': 'sample-box', 'Stopped while': 'Signing in with SSH' })
+  assert.equal(render.document.querySelector('.bt-hw-lines pre').textContent, 'A sample line SSH said')
+  const silent = await failedSshTest(t, 'bot/hermes-ssh', { kind: 'unknown', stage: 'ssh-sign-in' })
+  assert.equal(silent.text('.bt-hw-failed p'), 'This is not one of the failures Automagik knows, and SSH said nothing more.')
+  assert.equal(silent.document.querySelector('.bt-hw-lines'), null)
+})
+
+test('a new host shows its key and is trusted only by the button, then tested again', async t => {
+  let tests = 0
+  const trusts = []
+  const render = await failedSshTest(t, 'bot/hermes-ssh-host-key-unknown', { kind: 'host-key-unknown', stage: 'ssh-sign-in', keyType: 'ssh-ed25519', fingerprint }, {
+    'hermes-remote-test': () => { if (tests++ === 0) throw Object.assign(Error('Fake refusal'), { code: 'bot/hermes-ssh-host-key-unknown' }); return testView() },
+    'hermes-remote-ssh-trust': payload => { trusts.push(payload); return { trusted: true } },
+  })
+  assert.equal(render.text('.bt-hw-content h2'), 'Trust this SSH host?')
+  assert.equal(render.text('.bt-hw-ask h3'), 'sample-box is new to this computer')
+  assert.equal(render.document.querySelector('.bt-hw-failed'), null, 'a new host is a question, not a fault')
+  assert.deepEqual(render.rows, { 'SSH host': 'sample-box', 'Key type': 'ssh-ed25519', Fingerprint: fingerprint }, 'a question shows the key, not a failed step')
+  assert.match(render.text('.bt-hw-note'), /Only this exact key is saved to your known hosts\. If sample-box ever shows a different key, the connection is refused\./)
+  assert.deepEqual(render.buttons(), ['Edit SSH details', 'Trust this host'])
+  // Nothing was trusted by showing the screen.
+  assert.equal(trusts.length, 0)
+  assert.equal(render.calls.filter(call => call.endpoint === 'hermes-remote-test').length, 1)
+  await render.click('Trust this host')
+  await waitFor(() => render.document.querySelector('[data-status=connected]'), 'the test after trusting')
+  // The page names its own failed request, never a key.
+  const request = render.calls.find(call => call.endpoint === 'hermes-remote-test').payload.requestId
+  assert.deepEqual(trusts, [{ requestId: request }])
+  assert.equal(render.calls.filter(call => call.endpoint === 'hermes-remote-test').length, 2)
+  assert.match(render.document.body.textContent, /Connection works/)
+})
+
+test('a changed key, or a host that swaps its key at the trust step, never gets a trust button', async t => {
+  const changed = await failedSshTest(t, 'bot/hermes-ssh-host-key', { kind: 'host-key-changed', stage: 'ssh-sign-in', keyType: 'ssh-ed25519', fingerprint })
+  assert.deepEqual(changed.buttons(), ['Test again', 'Edit SSH details'])
+  assert.equal(changed.rows.Fingerprint, undefined, 'a changed key is not shown as one to trust')
+  assert.ok(!changed.calls.some(call => call.endpoint === 'hermes-remote-ssh-trust'))
+
+  let asked = 0
+  const swapped = await failedSshTest(t, 'bot/hermes-ssh-host-key-unknown', undefined, {
+    'hermes-remote-test-status': () => asked++ === 0 ? { stage: 'open', failure: { code: 'bot/hermes-ssh-host-key-unknown', kind: 'host-key-unknown', stage: 'ssh-sign-in', keyType: 'ssh-ed25519', fingerprint } }
+      : { stage: 'open', failure: { code: 'bot/hermes-ssh-host-key', kind: 'host-key-changed', stage: 'host-key', mismatch: true } },
+    'hermes-remote-ssh-trust': () => { throw Object.assign(Error('Fake refusal'), { code: 'bot/hermes-ssh-host-key' }) },
+  })
+  await swapped.click('Trust this host')
+  await waitFor(() => swapped.document.querySelector('.bt-hw-failed'), 'the refused trust')
+  assert.equal(swapped.document.querySelector('.bt-hw-content h2').textContent, 'This host’s key has changed')
+  assert.ok(![...swapped.document.querySelectorAll('button')].some(button => button.textContent.includes('Trust this host')))
+  assert.equal(swapped.calls.filter(call => call.endpoint === 'hermes-remote-test').length, 1, 'a refused trust does not test again by itself')
+
+  // A new host whose key the host could not read, or whose config discards keys: no button.
+  for (const [failure, hint] of [[{ kind: 'host-key-unknown', stage: 'ssh-sign-in' }, 'Connect to sample-box once in a terminal and accept its key, then test again.'],
+    [{ kind: 'host-key-unknown', stage: 'host-key', keyType: 'ssh-ed25519', fingerprint, unsaved: true }, 'The SSH config for sample-box does not keep host keys. Change that config entry, then test again.']]) {
+    const render = await failedSshTest(t, 'bot/hermes-ssh-host-key-unknown', failure)
+    assert.equal(render.text('.bt-hw-error-note'), hint)
+    assert.deepEqual(render.buttons(), ['Test again', 'Edit SSH details'])
+  }
+})
+
+test('the failure screens read the same in English, Chinese and Brazilian Portuguese', async () => {
+  const source = readFileSync(new URL('../src/client/hermes-remote.js', import.meta.url), 'utf8')
+  const start = source.indexOf('const STAGES = {'), end = source.indexOf('// Route entry and Settings share the same wizard.')
+  const keys = [...source.slice(start, end).matchAll(/\bt\(\s*'((?:\\.|[^'\\])*)'/g)].map(match => match[1].replace(/\\'/g, "'"))
+  assert.ok(keys.length > 80, 'the failure screens carry their copy here')
+  const { DICTIONARY } = await import('../src/client/i18n.js')
+  const pt = JSON.parse(readFileSync(new URL('../../locale-pt-br-dsh/src/client/locales/pt-BR/omni-ui.json', import.meta.url), 'utf8'))
+  const names = text => [...text.matchAll(/\{(\w+)\}/g)].map(match => match[1]).sort().join(',')
+  for (const key of new Set(keys)) {
+    for (const [language, text] of [['zh', DICTIONARY.zh[key]], ['pt-BR', pt[key]]]) {
+      assert.ok(typeof text === 'string' && text.trim(), `${language}: ${key}`)
+      assert.notEqual(text, key, `${language} leaves this in English: ${key}`)
+      assert.equal(names(text), names(key), `${language} keeps the same names: ${key}`)
+    }
+  }
 })

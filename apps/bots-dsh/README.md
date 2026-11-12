@@ -472,10 +472,18 @@ The wizard follows **Connection → Details → Test → Profile → Ready**:
 - **Through SSH** uses the system SSH client and the user's SSH config/agent. Enter a host or
   config alias; user, port, identity-file path and Hermes executable path are optional overrides.
   A blank Hermes path enables remote auto-detection. Key authentication must already work;
-  SSH passwords and interactive key passphrases are not accepted. An unknown or changed host
-  key stops setup and asks the user to connect once in a terminal. Host-key checks are never
-  weakened, and private keys are never uploaded, copied or stored by the plugin.
-- **Test** checks the connection with visible progress and actionable sign-in/SSH errors.
+  SSH passwords and interactive key passphrases are not accepted. A host this computer has
+  never seen stops setup and shows its key type and SHA256 fingerprint; **Trust this host**
+  saves exactly that key to the user's known hosts (as `accept-new` would) and tests again. A
+  changed host key is always refused: the user checks it in a terminal. Host-key checks are
+  never weakened, and private keys are never uploaded, copied or stored by the plugin.
+- **Test** checks the connection with visible progress. Each SSH failure has its own screen,
+  naming the host and the step that stopped: sign-in, host key, the start script, Hermes
+  exiting early (its exit code and last lines), Hermes not ready in time, no port, the one-time
+  token, the tunnel, a busy forward from the SSH config, an old Hermes, or unconfirmed cleanup.
+  A failed test also leaves one line in the diagnostics log (Settings → Feedback): the host as
+  typed, the step, the kind, the time it took and the last SSH and Hermes lines, with tokens,
+  key material, fingerprints and home folders removed.
   **Profile** lists profiles available from that instance; choose one before saving.
   **Ready** remembers that connection and profile for later clicks. Cancel closes pending test
   resources. Editing a draft does not silently disconnect an unrelated active chat.
@@ -496,7 +504,9 @@ bytes are never persisted. Test credentials stay in a bounded transient draft un
 The transport mints a one-use ticket at `POST /api/auth/ws-ticket`, then offers
 `hermes-gateway-ticket.<ticket>` beside the stable `hermes-gateway-v1` WebSocket subprotocol.
 Standing credentials and tickets never enter URLs, command arguments, prompts or diagnostics.
-The SSH-generated session credential travels over the encrypted channel, not SSH's argv.
+The SSH-generated session credential travels over the encrypted channel, not SSH's argv. On
+the remote computer it is written once, mode 0600, to the folder `hermes serve` reads it from
+(`~/.hermes/desktop-ssh/<random>/`, mode 0700), and Hermes removes it after reading.
 
 Only **standalone Desktop contract 8 with server-request approvals** is accepted. Canonical
 authority is refused. The remote profile must already use manual approvals: DSH never changes
