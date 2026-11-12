@@ -649,7 +649,7 @@ const pack = createPack({
     "Sign in to DeepSeek": "Entrar no DeepSeek",
     "Enter a DeepSeek API key": "Informe uma chave de API do DeepSeek",
     "Open settings to set up a custom model": "Abra as configurações para configurar um modelo personalizado",
-    "Omni": "Omni",
+    "Back to Automagik": "Voltar ao Automagik",
     "Details": "Detalhes",
     "Browser": "Navegador",
     "Browser access": "Acesso ao navegador",

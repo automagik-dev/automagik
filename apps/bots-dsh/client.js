@@ -768,7 +768,7 @@ var ZH = {
   "Sign in to DeepSeek": "登录 DeepSeek 账号",
   "Enter a DeepSeek API key": "填入 DeepSeek API key",
   "Open settings to set up a custom model": "打开设置配置自定义模型",
-  "Omni": "Omni",
+  "Back to Automagik": "返回 Automagik",
   // Header
   "Message {name}": "给 {name} 发消息",
   Message: "发消息",
@@ -15152,9 +15152,9 @@ function BotReturn({ wide, useSurface, actions }) {
   if (mode !== "agent") return null;
   return (0, import_react33.createElement)(
     "button",
-    { type: "button", className: "bt-return", "aria-label": t("Omni"), title: t("Omni"), onClick: () => actions.setSurface("bot") },
+    { type: "button", className: "bt-return", "aria-label": t("Back to Automagik"), title: t("Back to Automagik"), onClick: () => actions.setSurface("bot") },
     (0, import_react33.createElement)(OmniMark, { size: 20 }),
-    wide ? (0, import_react33.createElement)("span", { className: "bt-return-name" }, t("Omni")) : null
+    wide ? (0, import_react33.createElement)("span", { className: "bt-return-name" }, t("Automagik")) : null
   );
 }
 var RETURN_CSS = `
@@ -23521,7 +23521,8 @@ function entrySummary(entry) {
   if (entry.source === "turn") return failureLabel(entry.code, entry.text);
   return entry.text;
 }
-var SOURCES = { turn: "Model call", host: "Omni", api: "Omni", browser: "This window" };
+var SOURCES = { turn: "Model call", host: "Automagik", api: "Automagik", browser: "This window" };
+var sourceName = (source) => SOURCES[source] ?? "Automagik";
 function issueWindow() {
   if (window.dshDesktop !== void 0) return { go: (url) => {
     window.open(url, "_blank");
@@ -23626,7 +23627,7 @@ function FeedbackPage({ actions, run: run2, Section: Section2, Row: Row3, roster
           "div",
           { className: "bt-set-copy" },
           (0, import_react64.createElement)("span", { className: "bt-fb-text" }, entrySummary(entry)),
-          (0, import_react64.createElement)("span", { className: "bt-set-hint" }, [whenText(entry.time), entry.bot, entry.where, t(SOURCES[entry.source] ?? "Omni")].filter(Boolean).join(" · "))
+          (0, import_react64.createElement)("span", { className: "bt-set-hint" }, [whenText(entry.time), entry.bot, entry.where, t(sourceName(entry.source))].filter(Boolean).join(" · "))
         ),
         entry.code ? (0, import_react64.createElement)("span", { className: "bt-tag bt-fb-code" }, entry.status ? `${entry.code} ${entry.status}` : entry.code) : null
       )),
