@@ -1,7 +1,7 @@
 import { heldText, stopOfCall, stopLine, whyText } from './stops.js'
 import { createElement as h, Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
-import { MarkdownText } from './dsh-primitives.js'
+import { MarkdownText, writeClipboard } from './dsh-primitives.js'
 import { inkText } from './inks.js'
 import { linkMentions, mentionTarget, dayLabel, contentText, stripHeader, isHiddenTurn, isRelayContext, relaysBefore, relayPart, commRunOf, toolName, toolArgs, reminderPrompts, elapsedLabel, clockLabel, messageClock } from './text.js'
 import { SmileIcon, ReplyIcon, DotsIcon, CheckIcon, DownloadIcon, CopyIcon, MemoryIcon, TasksIcon } from './icons.js'
@@ -60,13 +60,45 @@ export function Bubbles({ texts, roster, selfId, actions, streaming, sessionId, 
     }))
 }
 
+// A folded message's last code block shows only its start. The host's Markdown would
+// give that part a copy control holding just the part, so the block is drawn here,
+// with a copy bound to the whole block: `code` is its text, or a function that reads
+// it when the message is kept as a file.
+function FoldCodeCopy({ code, actions }) {
+  const [copied, setCopied] = useState(false)
+  const copy = async () => {
+    try {
+      if (typeof code === 'function' && typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+        // Safari needs the clipboard write inside the click, before the file loads.
+        const text = Promise.resolve().then(code).then(value => new Blob([value], { type: 'text/plain' }))
+        await navigator.clipboard.write([new ClipboardItem({ 'text/plain': text })])
+      } else {
+        const text = typeof code === 'function' ? await code() : code
+        if (!await writeClipboard(text)) throw new Error('Could not copy the code block')
+      }
+      setCopied(true); setTimeout(() => setCopied(false), 1000)
+    } catch (error) { actions?.reportError?.(error, 'copy') }
+  }
+  return h('button', { type: 'button', className: 'bt-fold-copy', onClick: copy }, copied ? t('Copied') : t('Copy'))
+}
+
+// `body` is the Markdown before the cut block (null when the message opens with it).
+// The block is drawn as the host draws a code block, its copy in the same place, so a
+// folded message reads the same as before.
+const foldArea = (body, code, codeHead, actions) => (code === undefined ? body
+  : h('div', { className: 'bt-fold-code' },
+    body,
+    h('div', { className: 'bt-fold-block' },
+      h('div', { className: 'bt-fold-bar' }, h(FoldCodeCopy, { code, actions })),
+      h('pre', { className: 'bt-fold-pre' }, h('code', null, codeHead)))))
+
 function Bubble({ text, index, roster, selfId, actions, sessionId, msgKey, mentions, fold, picked, live, lead, whole }) {
   // A reply with a canvas is never folded: a cut would split the canvas from its source.
   const canvas = hasCanvas(text)
-  const { shown, folded, control } = useFold(text, { limit: canvas ? NEVER : fold, whole, live })
+  const { shown, folded, control, code, codeHead } = useFold(text, { limit: canvas ? NEVER : fold, whole, live, ownCode: !canvas })
   const key = msgKey ? `${msgKey}:${index}` : undefined
   const markdown = value => h(MarkdownText, { text: linkMentions(value, roster.bots, selfId), streaming: live, labels: mdLabels(), variant: 'compact', fileMentions: mentions })
-  const body = canvas ? null : markdown(shown)
+  const body = canvas ? null : foldArea(shown === '' ? null : markdown(shown), code, codeHead, actions)
   const row = useRef(null)
   // Touch has no hover: a tap on the bubble opens its tools, a tap elsewhere
   // closes them. Interactive targets keep their own meaning.
@@ -427,9 +459,9 @@ const scrollParent = (node) => {
   return null
 }
 
-function EarlierUser({ row }) {
-  const { shown, folded, control } = useFold(row.text ?? '')
-  const body = row.text ? h(MarkdownText, { text: shown, labels: mdLabels(), variant: 'compact' }) : null
+function EarlierUser({ row, actions }) {
+  const { shown, folded, control, code, codeHead } = useFold(row.text ?? '')
+  const body = foldArea(row.text && shown !== '' ? h(MarkdownText, { text: shown, labels: mdLabels(), variant: 'compact' }) : null, code, codeHead, actions)
   return h('div', { className: 'bt-urow' }, h('div', { className: 'bt-ububble', 'data-folded': folded || undefined },
     control ? h('div', { className: 'bt-fold-body' }, body) : body,
     control,
@@ -545,7 +577,7 @@ export function ChatRows({ items, sessionId, roster, actions, useUi, clock = fal
 function chatRow(row, key, { sessionId, selfId, roster, actions, useUi, onBtwDelete }) {
   switch (row.kind) {
     case 'divider': return h(PartLine, { key, time: row.time })
-    case 'user': return h(EarlierUser, { key, row })
+    case 'user': return h(EarlierUser, { key, row, actions })
     case 'answer': return h(AnsweredReply, { key, node: { data: row } })
     // A display-only view replays from the blueprint the host kept on the call.
     case 'view': return h(WidgetCell, { key, sessionId, callId: row.callId, args: { text: name => name === 'title' ? row.title : undefined, value: name => name === 'view' ? row.view : undefined }, done: true, isError: false, roster, actions })

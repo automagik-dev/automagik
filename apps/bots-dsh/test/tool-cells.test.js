@@ -9,7 +9,7 @@ import { build } from 'esbuild'
 const { outputFiles } = await build({
   stdin: {
     contents: [
-      "export { ToolCell, TriggerCell, TurnProcessCell, callTree, stackReplies, CellEmpty } from './src/client/cells.js'",
+      "export { ToolCell, TriggerCell, TurnProcessCell, callTree, stackReplies, CellEmpty, Bubbles, ChatRows } from './src/client/cells.js'",
       "export { toolCards } from './src/client/extend.js'",
       "export { QuestionDock } from './src/client/questions.js'",
       "export { SecretDock } from './src/client/secret-card.js'",
@@ -44,20 +44,35 @@ class FakeObserver {
   observe() {}
   disconnect() { this.off = true }
 }
+// The Markdown the host's renderer is given, and what this plugin's copy controls write.
+const markdownTexts = []
+const copiedTexts = []
+const clipboard = {}
+class ClipboardItem {
+  constructor(items) { this.getType = type => Promise.resolve(items[type]) }
+}
 const module = { exports: {} }
-runInNewContext(outputFiles[0].text, {
+// The page's globals; a test that needs ClipboardItem puts it here for its own run.
+const page = {
   module, exports: module.exports,
   document: { hidden: false }, TextEncoder, MutationObserver: FakeObserver,
+  navigator: { clipboard }, Blob,
   setTimeout: (fn) => { const timer = { fn }; timers.add(timer); return timer },
   clearTimeout: timer => timers.delete(timer),
   require: (name) => {
     if (name === 'react') return react
     if (name === 'react-dom') return { createPortal: node => node }
-    if (name === '@deepseek-ai/dsh-client-ui-primitives') return { MarkdownText: ({ text }) => text }
+    if (name === '@deepseek-ai/dsh-client-ui-primitives') {
+      return {
+        MarkdownText: ({ text }) => { markdownTexts.push(text); return text },
+        writeClipboard: (text) => { copiedTexts.push(text); return Promise.resolve(clipboard.refuse !== true) },
+      }
+    }
     throw new Error(`Unexpected platform module ${name}`)
   },
-})
-const { ToolCell, TriggerCell, TurnProcessCell, callTree, stackReplies, CellEmpty, toolCards, QuestionDock, SecretDock, countCards, ViewMenuList, WidgetView } = module.exports
+}
+runInNewContext(outputFiles[0].text, page)
+const { ToolCell, TriggerCell, TurnProcessCell, callTree, stackReplies, CellEmpty, Bubbles, ChatRows, toolCards, QuestionDock, SecretDock, countCards, ViewMenuList, WidgetView } = module.exports
 
 // Runs the effects collected since the last render; returns the cleanups.
 const mount = () => {
@@ -1311,4 +1326,138 @@ test('a permission-stop group reply draws the round reason', () => {
   const lines = findAll(tree, node => node.props?.className === 'bt-event bt-event-error')
   assert.equal(lines.length, 1)
   assert.equal(text(lines[0]), 'ada stopped on a permission: Auto review refused it')
+})
+
+// A folded message's cut code block is drawn by the cell, so no copy control exists that
+// holds only the part shown; the cell's own is bound to the whole block, and a short
+// block keeps the host's normal rendering and copy.
+const codeLines = count => Array.from({ length: count }, (_, index) => `line ${index + 1}`).join('\n')
+const copyOf = node => findAll(node, item => item.type === 'button' && item.props?.className === 'bt-fold-copy')
+const bubbleOf = (texts, extra = {}) => expand(Bubbles({
+  texts, roster: team(), selfId: chief.id, sessionId: chief.id, actions: {},
+  useUi: select => select({ reactions: {} }), ...extra,
+}))
+
+test('a folded code block leaves no copy of only its shown part', async () => {
+  const inner = codeLines(40)
+  markdownTexts.length = 0
+  copiedTexts.length = 0
+  const out = bubbleOf([`Here:\n\`\`\`js\n${inner}\n\`\`\``])
+  // The Markdown the host renders holds no fence, so it can draw no copy of the part.
+  assert.deepEqual(markdownTexts, ['Here:'])
+  // The cell draws the part the preview keeps, and its copy holds the whole block.
+  assert.equal(text(find(out, item => item.type === 'pre')), codeLines(8))
+  const [copy] = copyOf(out)
+  assert.equal(copyOf(out).length, 1)
+  assert.equal(text(copy), 'Copy')
+  sets.length = 0
+  await copy.props.onClick()
+  assert.deepEqual(copiedTexts, [inner])
+  assert.deepEqual(sets.splice(0), [true], 'the control says Copied')
+
+  // A message that opens with the block gives the host nothing to render.
+  markdownTexts.length = 0
+  const bare = bubbleOf([`\`\`\`js\n${inner}\n\`\`\``])
+  assert.deepEqual(markdownTexts, [])
+  assert.equal(copyOf(bare).length, 1)
+
+  // A short block goes to the host whole, with the host's own copy and none of ours.
+  markdownTexts.length = 0
+  copiedTexts.length = 0
+  const short = bubbleOf(['```js\none\n```'])
+  assert.deepEqual(markdownTexts, ['```js\none\n```'])
+  assert.equal(copyOf(short).length, 0)
+  // So does a long message whose fold cuts no code block.
+  markdownTexts.length = 0
+  assert.equal(copyOf(bubbleOf([`\`\`\`js\none\n\`\`\`\n${codeLines(40)}`])).length, 0)
+  assert.ok(markdownTexts[0].startsWith('```js\none\n```'))
+  effects = []
+})
+
+test('a copy the clipboard refuses is reported, and the control does not say Copied', async () => {
+  const errors = []
+  copiedTexts.length = 0
+  sets.length = 0
+  clipboard.refuse = true
+  try {
+    const out = bubbleOf([`\`\`\`js\n${codeLines(40)}\n\`\`\``], { actions: { reportError: (error, where) => errors.push([error.message, where]) } })
+    await copyOf(out)[0].props.onClick()
+  } finally {
+    delete clipboard.refuse
+  }
+  assert.deepEqual(errors, [['Could not copy the code block', 'copy']])
+  assert.deepEqual(sets.splice(0), [])
+  effects = []
+})
+
+test('an earlier user message folded on a code block copies the whole block too', async () => {
+  const inner = codeLines(40)
+  copiedTexts.length = 0
+  markdownTexts.length = 0
+  const rows = expand(ChatRows({
+    items: [{ kind: 'user', text: `Run this:\n\`\`\`sh\n${inner}\n\`\`\`` }],
+    sessionId: chief.id, roster: team(), actions: {},
+  }))
+  assert.deepEqual(markdownTexts, ['Run this:'])
+  await copyOf(rows)[0].props.onClick()
+  assert.deepEqual(copiedTexts, [inner])
+  sets.length = 0
+  effects = []
+})
+
+test('a reply with a canvas keeps the host rendering when it folds', () => {
+  // A canvas reply never folds by length; kept only in part it does, and its cut fence
+  // stays in the Markdown the bubble hands on, as before.
+  const start = `Chart:\n\`\`\`openui-lang\n${codeLines(20)}`
+  markdownTexts.length = 0
+  const out = bubbleOf([start], { whole: { length: 90_000, load: async () => undefined } })
+  assert.equal(copyOf(out).length, 0)
+  assert.equal(findAll(out, item => item.props?.className === 'bt-fold-block').length, 0)
+  effects = []
+})
+
+test('a preview of a message kept as a file copies its full code and never writes a partial read', async () => {
+  const inner = codeLines(4000)
+  const full = `\`\`\`js\n${inner}\n\`\`\``
+  let whole = true
+  const errors = []
+  const bubble = () => bubbleOf([full.slice(0, 1000)], {
+    actions: { reportError: error => errors.push(error.message) },
+    whole: { length: full.length, load: async () => ({ text: full, whole }) },
+  })
+  markdownTexts.length = 0
+  copiedTexts.length = 0
+  await copyOf(bubble())[0].props.onClick()
+  assert.deepEqual(copiedTexts, [inner])
+  assert.ok(markdownTexts.every(given => !given.includes('```')))
+  copiedTexts.length = 0
+  whole = false
+  await copyOf(bubble())[0].props.onClick()
+  assert.deepEqual(copiedTexts, [])
+  assert.deepEqual(errors, ['Could not read the whole code block'])
+  sets.length = 0
+  effects = []
+})
+
+test('a message kept as a file starts the clipboard write inside its click, before the text loads', async (t) => {
+  const inner = codeLines(4000)
+  const full = `\`\`\`js\n${inner}\n\`\`\``
+  let release
+  const loaded = new Promise((resolve) => { release = resolve })
+  let writing = false
+  clipboard.write = async (items) => {
+    writing = true
+    const blob = await items[0].getType('text/plain')
+    copiedTexts.push(await blob.text())
+  }
+  page.ClipboardItem = ClipboardItem
+  t.after(() => { delete clipboard.write; delete page.ClipboardItem; effects = []; sets.length = 0 })
+  const out = bubbleOf([full.slice(0, 1000)], { whole: { length: full.length, load: () => loaded } })
+  copiedTexts.length = 0
+  const copying = copyOf(out)[0].props.onClick()
+  assert.equal(writing, true, 'write is called synchronously in the gesture')
+  assert.deepEqual(copiedTexts, [], 'nothing is written before the full read')
+  release({ text: full, whole: true })
+  await copying
+  assert.deepEqual(copiedTexts, [inner])
 })

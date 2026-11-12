@@ -376,6 +376,16 @@ html[data-windows-titlebar]:not([data-fullscreen]) :is(.bt-pane,.bt-panel)::befo
 .bt-exchange .bt-dialog-log{max-width:none;margin:0;padding:39px max(16px,calc((100% - 960px)/2)) 116px;scrollbar-width:thin}
 .bt-exchange .bt-tools{display:none}
 .bt-fold{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 10px;margin-top:4px;white-space:normal}
+/* The part of a cut code block the preview keeps, drawn here so the host's Markdown
+   draws no copy control of its own for it (cells.js foldArea). It wears the host's code
+   block tokens, banner and copy place, so a folded message looks as it did. */
+.bt-fold-block{color:var(--dsw-alias-label-primary,inherit);background:var(--dsw-alias-markdown-code-block,color-mix(in srgb,currentColor 6%,transparent));border-radius:var(--dsw-radius-lg,16px)}
+.bt-fold-code>*+.bt-fold-block{margin-top:4px}
+.bt-fold-bar{display:flex;justify-content:flex-end;align-items:center;padding:9px 14px;font:11px/18px var(--dsw-font-family,inherit);background:var(--dsw-alias-markdown-code-block-banner,transparent);border-radius:var(--dsw-radius-lg,16px) var(--dsw-radius-lg,16px) 0 0}
+.bt-fold-copy{border:0;margin:-6px -8px;padding:6px 8px;border-radius:8px;background:none;color:inherit;font:inherit;cursor:pointer}
+.bt-fold-copy:focus-visible{outline:2px solid var(--bt-accent);outline-offset:-2px}
+.bt-fold-pre{margin:0;padding:16px;font:var(--dsw-font-markdown-code-block,11px/19px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace);white-space:pre-wrap;word-break:break-all;overflow-x:auto}
+.bt-fold-pre code{font:inherit}
 .bt-fold-note{font-size:12px;line-height:16px;color:var(--bt-ink-3)}
 [data-folded] .bt-fold-body{-webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 40px),transparent);mask-image:linear-gradient(to bottom,#000 calc(100% - 40px),transparent)}
 .bt-ubody .bt-fold .bt-more,.bt-ububble .bt-fold .bt-more,.bt-ubody .bt-fold-note,.bt-ububble .bt-fold-note{color:inherit;opacity:.7}
