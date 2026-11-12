@@ -6587,13 +6587,28 @@ function ModelLineTail({ turn, sessionId, useRoster, useSessions, actions }) {
     error ? (0, import_react15.createElement)("div", { className: "bt-secret-error", role: "alert" }, error) : null
   );
 }
-function ModelChoiceDock({ sessionId, useRoster, actions }) {
+var lastTurnOf = (outline) => Array.isArray(outline) && outline.length > 0 ? outline.at(-1)?.turn ?? null : null;
+function ModelChoiceDock({ sessionId, useRoster, useSessions, actions }) {
+  const seated = useSessions ? useSessions((list) => lastTurnOf(outlineOf(list, sessionId)) !== null) : false;
+  const card = useModelChoice({ sessionId, useRoster, actions }, seated);
+  return seated ? null : card;
+}
+function ModelChoiceTail({ turn, sessionId, useRoster, useSessions, actions }) {
+  const last = useSessions((list) => lastTurnOf(outlineOf(list, sessionId)));
+  if (last === null || last !== turn?.turn) return null;
+  return (0, import_react15.createElement)(ModelChoiceSeat, { sessionId, useRoster, actions });
+}
+function ModelChoiceSeat(props) {
+  const card = useModelChoice(props, false);
+  return card ? (0, import_react15.createElement)("div", { className: "bt-model-seat" }, card) : null;
+}
+function useModelChoice({ sessionId, useRoster, actions }, idle) {
   const roster = useRoster((value) => value);
   const bot = roster.byId[sessionId];
   const [busy, setBusy] = (0, import_react15.useState)("");
   const [error, setError] = (0, import_react15.useState)("");
   const hosted = roster.hostModels?.[bot?.id] !== void 0;
-  const shown = Boolean(bot) && currentPart(bot) === sessionId && roster.ready && !hosted;
+  const shown = Boolean(bot) && currentPart(bot) === sessionId && roster.ready && !hosted && !idle;
   (0, import_react15.useEffect)(() => {
     if (shown) void actions.refreshModels?.();
   }, [shown, sessionId]);
@@ -6780,6 +6795,10 @@ var MODEL_CSS = `${HERMES_MARK_CSS}
 .bt-host-model-status{padding:2px 8px 6px;font-size:12px;line-height:16px;color:var(--bt-ink-2)}
 .bt-host-model-confirm{flex:none;color:var(--bt-accent);font-size:12px;font-weight:600}
 .bt-model-dock{width:100%;max-width:var(--dsh-chat-content-width,748px);margin:0 auto;display:flex;flex-direction:column;align-items:flex-start;gap:8px;padding:0 0 10px;box-sizing:border-box;animation:bt-model-in ${SPRING_POP.duration}ms ${SPRING_POP.easing} backwards}
+/* After the last turn of a transcript the card is one more message: the column's width, and
+   the room a message has above it. */
+.bt-model-seat{margin:6px 0 4px}
+.bt-model-seat>.bt-model-dock{max-width:none;margin:0;padding:0}
 .bt-model-chips{display:flex;flex-wrap:wrap;gap:6px;margin-left:30px;max-width:min(560px,calc(100% - 30px));max-height:min(240px,36vh);max-height:min(240px,36dvh);overflow-y:auto;scrollbar-width:thin}
 .bt-model-choice-group{display:flex;flex-direction:column;gap:6px;width:100%;min-width:0}
 .bt-model-choice-provider{padding-top:4px;font-size:12px;line-height:16px;font-weight:500;color:var(--bt-ink-2);overflow-wrap:anywhere}
@@ -13777,6 +13796,14 @@ div:has(> nav [class*="_marks"]){display:none!important}
 [class*="_toBottomSlot"]>button svg{display:none}
 [class*="_toBottomSlot"]>button::before{content:"";width:20px;height:20px;background:currentColor;-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 4v12M5 11l5 5 5-5'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 4v12M5 11l5 5 5-5'/%3E%3C/svg%3E") center/contain no-repeat}
 @keyframes bt-tobottom-in{from{translate:0 8px;scale:.8}}
+/* The arrow (and the "new messages" pill that takes its place) stands over the transcript. A
+   band of the page's own colour comes with it, from above the arrow down to the end of the
+   composer's seat, fading out at its top: the messages pass under the band, so the arrow is
+   never on a message's text, and none shows through the open parts of the seat below it (the
+   suggestion chips, the gaps of the stack) (issue 1138). The seat is drawn over the band, and the
+   band is there only while the arrow is: at the latest message nothing is under it. It ends
+   where the transcript's own box ends, so it adds nothing to the chat's scroll range. */
+[class*="_toBottomSlot"]::before{content:"";position:absolute;z-index:-1;left:0;right:0;bottom:calc(0px - var(--dsh-composer-height,152px));height:calc(var(--dsh-composer-height,152px) + 64px);background:linear-gradient(to bottom,transparent,var(--bt-main) 24px);pointer-events:none;animation:bt-veil-in .16s ease-out}
 [data-bt-news] [class*="_toBottomSlot"]>button{visibility:hidden!important;pointer-events:none!important}
 .bt-news{position:fixed;z-index:30;transform:translateX(-50%);display:inline-flex;align-items:center;overflow:hidden;border-radius:999px;background:var(--bt-accent);color:var(--bt-accent-ink);box-shadow:inset 0 0 0 1px rgba(20,20,20,.05),0 1px 3px 0 rgba(0,0,0,.12);font-family:var(--bt-font);animation:bt-news-in ${SPRING_TAP.duration}ms ${SPRING_TAP.easing},bt-veil-in .16s ease-out}
 @keyframes bt-news-in{from{translate:0 8px;scale:.9}}
@@ -13788,7 +13815,7 @@ div:has(> nav [class*="_marks"]){display:none!important}
 .bt-news-x{position:absolute;right:4px;top:50%;z-index:1;transform:translateY(-50%);width:20px;height:20px;padding:0;border:0;border-radius:999px;background:transparent;color:inherit;opacity:.75;display:inline-flex;align-items:center;justify-content:center;cursor:pointer}
 .bt-news-x svg{width:12px;height:12px}
 .bt-news-x:hover{opacity:1;background:rgba(20,20,20,.5)}
-@media (prefers-reduced-motion:reduce){.bt-news,[class*="_toBottomSlot"]>button{animation:none}}
+@media (prefers-reduced-motion:reduce){.bt-news,[class*="_toBottomSlot"]>button,[class*="_toBottomSlot"]::before{animation:none}}
 .bt-new-sep{display:flex;align-items:center;gap:8px;margin:14px 0 8px;padding:2px 0;font-size:11px;line-height:14px;font-weight:500;letter-spacing:.02em;text-transform:uppercase;color:var(--bt-accent);font-family:var(--bt-font)}
 .bt-new-sep::before,.bt-new-sep::after{content:"";flex:1;height:1px;background:color-mix(in srgb,var(--bt-accent) 20%,transparent)}
 .bt-open-new{display:flex;flex-direction:column}
@@ -30003,6 +30030,9 @@ function apply(ctx) {
     () => shadow("conversation.chat.turnTail", { id: "bot-btw", order: 800, priority: BOT_PRIORITY, inject: face }, BtwTurnTail),
     // While a Bot's chat holds only its greeting, the line under it names its model.
     () => shadow("conversation.chat.turnTail", { id: "bot-model-line", order: 900, priority: BOT_PRIORITY, inject: face }, ModelLineTail),
+    // A Bot with no model in a chat that already holds turns asks for one after the last
+    // of them, below that turn's time; a chat with no turn yet asks in the dock (bot-model).
+    () => shadow("conversation.chat.turnTail", { id: "bot-model-choice", order: 1100, priority: BOT_PRIORITY, inject: face }, ModelChoiceTail),
     // A Bot condenses its conversation without telling anyone; the chat keeps showing
     // every message.
     () => shadow("conversation.chat.node", { key: "question-reply", priority: BOT_PRIORITY, locale: "chat" }, AnsweredReply),
