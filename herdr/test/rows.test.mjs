@@ -33,7 +33,7 @@ const NOW = 1_800_000_000_000;
 test("a blocked chip names a permission only when herdr-core's report says blocked with kind permission", () => {
   const permission = { app: "claude-code", state: "blocked", kind: "permission", msg: "x" };
   assert.equal(NEEDS_YOU, "Needs you");
-  assert.equal(NEEDS_YOU_PERMISSION, "Needs you: permission");
+  assert.equal(NEEDS_YOU_PERMISSION, "Permission");
   assert.equal(waitsOnPermission(permission), true);
   assert.equal(needsYouText(permission), NEEDS_YOU_PERMISSION);
   for (const report of [null, undefined, "blocked", {}, { state: "blocked" },

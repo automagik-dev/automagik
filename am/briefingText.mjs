@@ -50,7 +50,7 @@ const STATUS_WORDS = {
   blocked: "stuck (blocked: needs a person)",
   error: "error",
 };
-export const PERMISSION_WORD = "stuck (waiting for a permission answer)";
+export const PERMISSION_WORD = "stuck (needs a person to answer a permission)";
 
 /**
  * A status word for a bot's pane: hc's state, "not running" when it has no pane, or

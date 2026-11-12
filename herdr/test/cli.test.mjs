@@ -1677,7 +1677,7 @@ test("brief: a member blocked on a permission reads 'stuck (waiting for a permis
   s.seed(team());
   const r = s.cli(["brief", "Captain"]);
   assert.equal(r.code, 0, r.err);
-  assert.match(r.out, /^- Dev .*: stuck \(waiting for a permission answer\) at t3\.$/m);
+  assert.match(r.out, /^- Dev .*: stuck \(needs a person to answer a permission\) at t3\.$/m);
 });
 
 test("brief prints the bot's briefing: a lead sees its members' status and reports; planned bots get none", (t) => {

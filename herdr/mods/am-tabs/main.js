@@ -15,7 +15,7 @@ function find(node, id) {
 // Copies of am-sidebar rows.js's words and launchArgs.js's predicate; am-tabs.test.mjs
 // holds them equal without importing another mod's file here.
 export const NEEDS_YOU = "Needs you";
-export const NEEDS_YOU_PERMISSION = "Needs you: permission";
+export const NEEDS_YOU_PERMISSION = "Permission";
 export const waitsOnPermission = (report) => report?.state === "blocked" && report?.kind === "permission";
 export function needsText(tabId, paneList, byAddress) {
   return paneList.some((p) => p.tab === tabId && p.terminal && waitsOnPermission(byAddress.get(p.terminal)?.report))

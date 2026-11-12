@@ -35,11 +35,11 @@ test("the sidebar's blocked chips name a permission on agent, sub-agent, bot and
   index(s.render({ notify() {} }));
   for (const id of ["ag-t1", "sub-t3", `row-b:${bot}`, "row-h:t5"]) {
     assert.ok(nodes.has(id), id);
-    assert.match(textOf(nodes.get(id)), /Needs you: permission/, id);
+    assert.match(textOf(nodes.get(id)), /Permission/, id);
   }
   assert.ok(nodes.has("ag-t2"));
   assert.match(textOf(nodes.get("ag-t2")), /Needs you/);
-  assert.doesNotMatch(textOf(nodes.get("ag-t2")), /permission/);
+  assert.doesNotMatch(textOf(nodes.get("ag-t2")), /Permission/);
 
   snap.agents[0].status = "working";
   snap.terminals[0].status = "working";

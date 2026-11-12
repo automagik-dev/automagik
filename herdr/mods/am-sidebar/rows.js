@@ -175,7 +175,7 @@ export function poseOf(live, now) {
 
 // The blocked chip's words, drawn by main.js status().
 export const NEEDS_YOU = "Needs you";
-export const NEEDS_YOU_PERMISSION = "Needs you: permission";
+export const NEEDS_YOU_PERMISSION = "Permission";
 export const needsYouText = (report) => (waitsOnPermission(report) ? NEEDS_YOU_PERMISSION : NEEDS_YOU);
 
 /** When the next idle bot turns asleep (ms since the epoch), or null: the view's one wake-up. */

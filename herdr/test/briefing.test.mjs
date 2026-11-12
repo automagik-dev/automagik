@@ -59,7 +59,7 @@ const byId = (f, id) => f.bots.find((b) => b.id === id);
 // ---- pure ----
 
 test("statusWord: a pane blocked on a permission says so; nothing else changes", () => {
-  assert.equal(PERMISSION_WORD, "stuck (waiting for a permission answer)");
+  assert.equal(PERMISSION_WORD, "stuck (needs a person to answer a permission)");
   assert.equal(statusWord("blocked", true, false, true), PERMISSION_WORD);
   assert.equal(statusWord("blocked", true), "stuck (blocked: needs a person)");
   assert.equal(statusWord("blocked", true, false, "permission"), "stuck (blocked: needs a person)");
@@ -79,10 +79,10 @@ test("a lead's briefing names the member, its lead and a helper waiting on a per
     ],
     helpers: [{ status: "blocked", permission: true }, { status: "blocked" }, { status: "working" }],
   });
-  assert.match(text, /^- Dev .*: stuck \(waiting for a permission answer\) at t3\.$/m);
+  assert.match(text, /^- Dev .*: stuck \(needs a person to answer a permission\) at t3\.$/m);
   assert.match(text, /^- Tester .*: stuck \(blocked: needs a person\) at t4\.$/m);
-  assert.match(text, /^Your lead: Genie .*stuck \(waiting for a permission answer\)\.$/m);
-  assert.match(text, /^Your helpers .*: 3: 1 stuck \(waiting for a permission answer\), 1 stuck \(blocked: needs a person\), 1 working\.$/m);
+  assert.match(text, /^Your lead: Genie .*stuck \(needs a person to answer a permission\)\.$/m);
+  assert.match(text, /^Your helpers .*: 3: 1 stuck \(needs a person to answer a permission\), 1 stuck \(blocked: needs a person\), 1 working\.$/m);
 });
 
 test("gatherBriefing: a helper's permission wait comes from its own hc get, state and kind together", async () => {
@@ -90,7 +90,7 @@ test("gatherBriefing: a helper's permission wait comes from its own hc get, stat
   const main = { ...byId(file, ID.main), name: "ada" };
   file.bots = [main];
   for (const [rowState, getState, word] of [
-    ["working", "blocked", "stuck (waiting for a permission answer)"],
+    ["working", "blocked", "stuck (needs a person to answer a permission)"],
     ["blocked", "working", "stuck (blocked: needs a person)"],
   ]) {
     const calls = [];
@@ -764,15 +764,15 @@ test("briefing.mjs: a member, a lead and a helper herdr-core reports blocked on 
   writeFileSync(fixture, JSON.stringify(fx));
   const captain = await brief({ HC_TERMINAL_ID: "t2", CLAUDE_PROJECT_DIR: main });
   const dev = captain.stdout.split("\n").find((line) => line.startsWith("- Dev "));
-  assert.match(dev, /stuck \(waiting for a permission answer\) at t3\.$/);
-  assert.doesNotMatch(dev, /needs a person/);
+  assert.match(dev, /stuck \(needs a person to answer a permission\) at t3\.$/);
+  assert.doesNotMatch(dev, /blocked: needs a person/);
 
   fx.terminals.t2.status = { state: "blocked", kind: "permission" };
   fx.terminals.t5.status = { state: "blocked", kind: "permission" };
   writeFileSync(fixture, JSON.stringify(fx));
   const member = await brief({ HC_TERMINAL_ID: "t3", CLAUDE_PROJECT_DIR: join(main, ".herdr") });
-  assert.match(member.stdout, /^Your lead: Captain \(bot b-bbbbbbbbbb\), stuck \(waiting for a permission answer\)\.$/m);
-  assert.match(member.stdout, /^Your helpers \(terminals you started that are not bots\): 1: 1 stuck \(waiting for a permission answer\)\.$/m);
+  assert.match(member.stdout, /^Your lead: Captain \(bot b-bbbbbbbbbb\), stuck \(needs a person to answer a permission\)\.$/m);
+  assert.match(member.stdout, /^Your helpers \(terminals you started that are not bots\): 1: 1 stuck \(needs a person to answer a permission\)\.$/m);
 });
 
 test("briefing.mjs: the captain sees its lead's address, its members (a stuck one's screen tail), never its old pane", async (t) => {

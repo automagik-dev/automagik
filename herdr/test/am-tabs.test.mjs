@@ -38,14 +38,14 @@ function chip(id) {
   const tab = nodes.get(`tab-${id}`);
   assert.ok(tab, id);
   return tab.kids.flatMap(all).find((n) => n.kids.length === 1
-    && typeof n.kids[0] === "string" && n.kids[0].startsWith("Needs you"))?.kids[0];
+    && typeof n.kids[0] === "string" && ["Needs you", "Permission"].includes(n.kids[0]))?.kids[0];
 }
 
 test("the tab chip names a permission only from herdr-core's report, per tab", () => {
   index(scene().render());
-  assert.equal(chip("permission"), "Needs you: permission");
+  assert.equal(chip("permission"), "Permission");
   assert.equal(chip("question"), "Needs you");
-  assert.equal(chip("mixed"), "Needs you: permission");
+  assert.equal(chip("mixed"), "Permission");
   assert.equal(chip("missing"), "Needs you");
   assert.equal(chip("working"), undefined);
   assert.equal(chip("remote"), "Needs you");
