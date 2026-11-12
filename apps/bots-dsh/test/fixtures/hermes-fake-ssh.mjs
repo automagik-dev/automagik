@@ -46,7 +46,10 @@ if (role === 'trust') {
   }
   process.exit(255)
 }
-if (['host-key', 'changed-key', 'auth', 'auth-delayed', 'interactive', 'unreachable', 'python-missing', 'unclassified'].includes(scenario)) {
+// What a -v trace says of where and as whom SSH connects: sample names and the
+// documentation address ranges only.
+const whoTrace = "debug1: Connecting to sample-remote.example.invalid [192.0.2.44] port 22.\ndebug1: Authenticating to sample-remote.example.invalid:22 as 'sample-user'\n"
+if (['host-key', 'changed-key', 'auth', 'auth-delayed', 'interactive', 'unreachable', 'python-missing', 'unclassified', 'named-tail'].includes(scenario)) {
   // SSH's own lines, as its -v trace gives them: the trace of every sign-in names
   // "keyboard-interactive" and a timeout, which no verdict may be read from.
   const trace = `debug1: Server host key: ssh-ed25519 ${fingerprint(hostKey)}\ndebug1: Authentications that can continue: publickey,keyboard-interactive\ndebug1: ServerAliveInterval timeout 5\n`
@@ -57,6 +60,8 @@ if (['host-key', 'changed-key', 'auth', 'auth-delayed', 'interactive', 'unreacha
     auth: `${trace}${offered}sample@${target}: Permission denied (publickey).\n`, 'auth-delayed': `${trace}${offered}sample@${target}: Permission denied (publickey).\n`,
     interactive: `${trace}interactive verification required\n`, unreachable: 'ssh: Could not resolve hostname\n', 'python-missing': `${trace}zsh:1: command not found: python3\n`,
     unclassified: `${trace}A sample line SSH said, with /home/sample-person/.ssh/id_sample in it\n`,
+    // Last lines that name the user, the resolved host, both address families and the alias.
+    'named-tail': `${trace}${whoTrace}Warning: Permanently added the ED25519 host key for IP address '2001:db8::7:1' to the list of known hosts.\nsample-user reached sample-remote.example.invalid through ${target} at 192.0.2.44 and [2001:db8::7:2]:22\nsample-user@sample-remote.example.invalid: Connection closed by 192.0.2.44 port 22\n`,
   }[scenario])
   if (scenario === 'auth-delayed') { process.stdin.destroy(); setTimeout(() => process.exit(255), 50) }
   else process.exit(scenario === 'python-missing' ? 127 : 255)
@@ -110,6 +115,7 @@ if (role === 'tunnel') {
         if (scenario === 'oversized') { process.stdout.write(options.credential.repeat(2048)); return }
         if (scenario === 'stalled-start') { emit({ type: 'stage', name: 'remote-start' }); emit({ type: 'stage', name: 'hermes-start' }); return }
         if (scenario === 'frame-exit') { emit({ type: 'error', code: 'hermes-exited', exit: 2, tail: ['sample start failure', `echoed ${options.credential} ${options.nonce}`, 'config at /home/sample-person/.hermes/config.yaml'] }); finish(); return }
+        if (scenario === 'frame-exit-named') { process.stderr.write(whoTrace); emit({ type: 'error', code: 'hermes-exited', exit: 2, tail: ['serving sample-user on sample-remote.example.invalid', `bound 192.0.2.44:8642 and [2001:db8::7:1]:8642 for ${target}`] }); finish(); return }
         if (scenario === 'frame-host-key') { emit({ type: 'error', code: 'host-key-unknown', keyType: 'ssh-ed25519', fingerprint: fingerprint(hostKey) }); return }
         if (scenario !== 'timeout') {
           // A login banner may be valid JSON without being a record: a number, a word.

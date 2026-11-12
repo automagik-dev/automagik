@@ -6,6 +6,7 @@ import { homedir, tmpdir } from 'node:os'
 import { dirname, isAbsolute, join } from 'node:path'
 import { HERMES_DEADLINES } from './hermes-transport.js'
 import { redactText } from './redact.js'
+import { sshNames } from './hermes-ssh-names.js'
 
 // One kind per stage that can stop an SSH connection. A kind names what the person can
 // do next; `unknown` is only what none of them explains.
@@ -72,6 +73,9 @@ const sshTail = (stderr, secrets) => {
   const plain = plainLines(stderr)
   return lineList(plain.length ? plain : String(stderr ?? '').split(/\r?\n/).filter(line => line.trim() && !/Sending command:/.test(line)).slice(-2), secrets, 3)
 }
+// The host and user of a failed connection stay on the error, host side only and never
+// on its detail: they are what a stored diagnostics line must not repeat.
+const named = (error, names) => Object.defineProperty(error, 'sshNames', { value: names, enumerable: false, configurable: true })
 const deferred = () => {
   let resolve, reject
   const promise = new Promise((yes, no) => { resolve = yes; reject = no })
@@ -515,6 +519,7 @@ export async function startHermesSsh(ssh, {
     const said = ['tunnel', 'forward-conflict'].includes(safe.sshError) && tunnelEntry ? tunnelEntry.stderr : remoteEntry?.stderr
     const lines = sshTail(said, secrets)
     safe.sshDetail = { ...safe.sshDetail, ...(lines.length ? { ssh: lines } : {}) }
+    named(safe, sshNames(`${remoteEntry?.stderr ?? ''}\n${tunnelEntry?.stderr ?? ''}`))
     if (cleanupError) { safe.message += ` ${cleanupMessage}`; safe.cleanupUnknown = true; safe.localClosed = cleanupError.localClosed }
     throw safe
   }
@@ -556,7 +561,9 @@ export async function trustHermesSshHostKey(ssh, expected, {
   signal, deadlines = HERMES_DEADLINES, spawn = spawnChild, sshCommand = 'ssh', env = process.env, home = homedir(), temp = tmpdir(),
 } = {}) {
   const stage = 'host-key'
-  const stop = (kind, text, detail) => Object.assign(failure(kind, text, detail), { sshStage: stage })
+  // Filled as SSH names them: its config's host and user, then its trace's.
+  const names = { hosts: [], users: [] }
+  const stop = (kind, text, detail) => named(Object.assign(failure(kind, text, detail), { sshStage: stage }), names)
   let config
   try { config = destination(ssh) } catch (error) { throw Object.assign(error, { sshStage: 'details' }) }
   if (!KEY_TYPE.test(expected?.keyType ?? '') || !FINGERPRINT.test(expected?.fingerprint ?? '')) throw stop('invalid-details', 'This host key cannot be trusted from here. Test the connection again.')
@@ -564,6 +571,7 @@ export async function trustHermesSshHostKey(ssh, expected, {
   const options = { env, signal, ms: limits.control }
   // Where this host's own config keeps the person's known hosts.
   const shown = await collect(spawn, sshCommand, ['-G', ...config.args, '--', config.target], options)
+  Object.assign(names, sshNames('', shown.stdout))
   const listed = /^userknownhostsfile\s+(.+)$/im.exec(shown.stdout)?.[1].trim().split(/\s+/) ?? []
   const files = (listed.length ? listed : ['~/.ssh/known_hosts', '~/.ssh/known_hosts2']).map(path => path.replace(/^~(?=\/|$)/, home).replaceAll('%d', home))
   if (files.some(path => /^(?:none|\/dev\/null)$/i.test(path))) throw stop('host-key-unknown', undefined, { unsaved: true })
@@ -579,6 +587,8 @@ export async function trustHermesSshHostKey(ssh, expected, {
       '-o', 'ClearAllForwardings=yes', '-o', 'ControlMaster=no', '-o', 'ControlPath=none', '-o', 'ControlPersist=no', '-o', 'ConnectionAttempts=1',
       '-o', `ConnectTimeout=${Math.max(1, Math.ceil(limits.control / 1000))}`, ...config.args, '--', config.target, 'true'], options)
     const detail = { ssh: sshTail(probe.stderr, []) }
+    const traced = sshNames(probe.stderr)
+    Object.assign(names, { hosts: [...names.hosts, ...traced.hosts], users: [...names.users, ...traced.users] })
     const plain = plainLines(probe.stderr).join('\n')
     if (CHANGED.test(plain)) throw stop('host-key-changed', undefined, detail)
     const text = await readFile(scratch, 'utf8').catch(() => '')
@@ -598,7 +608,7 @@ export async function trustHermesSshHostKey(ssh, expected, {
       // the key is already known, trusted meanwhile; anything else is its own failure.
       const error = sshFailure(probe.stderr)
       if (probe.code === 0 || error.sshError === 'auth-failed') return { trusted: true, added: 0 }
-      throw Object.assign(error, { sshStage: stage, sshDetail: { ...error.sshDetail, ...detail } })
+      throw named(Object.assign(error, { sshStage: stage, sshDetail: { ...error.sshDetail, ...detail } }), names)
     }
     const target = files[0]
     await mkdir(dirname(target), { recursive: true, mode: 0o700 })

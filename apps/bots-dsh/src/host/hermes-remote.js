@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { HermesTransport, RemoteChat, remoteAddress, HERMES_DEADLINES } from './hermes-transport.js'
 import { prepareHermesConnection, refreshHermesProfiles } from './hermes-connection.js'
 import { discoverSshHosts } from './hermes-ssh-hosts.js'
+import { redactSshNames } from './hermes-ssh-names.js'
 import { MISSING_TOOLS, RemoteChatAdapter } from './remote-chat-adapter.js'
 import { refusal } from './refusal.js'
 
@@ -45,6 +46,8 @@ const CONNECTION_ERRORS = Object.freeze({
 })
 const FAILURE_LIFETIME = 10 * 60_000
 const text = (value, max) => typeof value === 'string' && value.length > 0 && value.length <= max && !/[\x00-\x1f\x7f]/.test(value) ? value : undefined
+const NO_ALIAS = '(none)'
+const strings = value => Array.isArray(value) ? value.filter(name => typeof name === 'string' && name.length > 0 && name.length <= 255).slice(0, 16) : []
 const lines = value => Array.isArray(value) ? value.filter(line => typeof line === 'string').slice(-8).map(line => line.slice(0, 240)) : []
 // What the person's own screen may show of one failed SSH connection. Every line was
 // already cleaned of this connection's secrets where SSH and Hermes said it.
@@ -60,10 +63,19 @@ function failureView(error, alias, elapsedMs, stage) {
   return view
 }
 // The one diagnostics line of a failed SSH connection. No identity file name and no
-// host key: the person's screen has those, a report does not need them.
+// host key: the person's screen has those, a report does not need them. The line may be
+// attached to a report, so it names no one: `storedView` is what it is made from.
 const failureLine = view => [`Remote Hermes SSH failed: alias=${view.alias} stage=${view.stage} kind=${view.kind} elapsed=${view.elapsedMs}ms`,
   view.exit !== undefined ? `exit=${view.exit}` : '', view.fault ? `fault=${view.fault}${view.errno ? `/${view.errno}` : ''}${view.line ? `@${view.line}` : ''}` : '', view.port ? `port=${view.port}` : '',
   view.ssh ? `ssh=${JSON.stringify(view.ssh.join(' | '))}` : '', view.hermes ? `hermes=${JSON.stringify(view.hermes.join(' | '))}` : ''].filter(Boolean).join(' ')
+// The view as a stored line may show it: the alias the person typed, the remote user,
+// the host and every address become placeholders. The screen keeps the view itself.
+function storedView(view, ssh, error) {
+  const names = { alias: view.alias === NO_ALIAS ? undefined : view.alias, hosts: strings(error?.sshNames?.hosts), users: [...strings(error?.sshNames?.users), ...strings([ssh?.user])] }
+  const stored = { ...view, alias: names.alias ? '<alias>' : NO_ALIAS }
+  for (const key of ['ssh', 'hermes']) if (view[key]) stored[key] = view[key].map(line => redactSshNames(line, names))
+  return stored
+}
 const connectionFailure = (error, native = false) => error?.cleanupUnknown === true
   ? refusal(CONNECTION_ERRORS['bot/hermes-ssh-cleanup'], { code: 'bot/hermes-ssh-cleanup' })
   : Object.hasOwn(CONNECTION_ERRORS, error?.code)
@@ -76,9 +88,9 @@ export function install(rt, { transport = options => new HermesTransport(options
   // screen (the stage, SSH's and Hermes's last lines, a new host key to trust).
   const failures = new Map()
   function noteSshFailure(key, ssh, error, started) {
-    const alias = text(typeof ssh?.host === 'string' ? ssh.host.trim() : '', 255) ?? '(none)'
+    const alias = text(typeof ssh?.host === 'string' ? ssh.host.trim() : '', 255) ?? NO_ALIAS
     const view = failureView(error, alias, Math.max(0, Date.now() - started), text(error?.sshStage ?? error?.hermesStage, 40) ?? 'connection')
-    rt.noteFailure?.({ source: 'host', where: 'Remote Hermes', code: view.code, text: failureLine(view) })
+    rt.noteFailure?.({ source: 'host', where: 'Remote Hermes', code: view.code, text: failureLine(storedView(view, ssh, error)) })
     if (typeof key !== 'string' || !key || key.length > 100) return view
     failures.delete(key)
     failures.set(key, { view, ssh: sshFields(ssh), expires: Date.now() + FAILURE_LIFETIME })

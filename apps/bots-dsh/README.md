@@ -481,9 +481,11 @@ The wizard follows **Connection → Details → Test → Profile → Ready**:
   naming the host and the step that stopped: sign-in, host key, the start script, Hermes
   exiting early (its exit code and last lines), Hermes not ready in time, no port, the one-time
   token, the tunnel, a busy forward from the SSH config, an old Hermes, or unconfirmed cleanup.
-  A failed test also leaves one line in the diagnostics log (Settings → Feedback): the host as
-  typed, the step, the kind, the time it took and the last SSH and Hermes lines, with tokens,
-  key material, fingerprints and home folders removed.
+  A failed test also leaves one line in the diagnostics log (Settings → Feedback): the step,
+  the kind, the time it took and the last SSH and Hermes lines. The line names no one: the
+  host as typed, the remote user, the host name and every IP address are replaced by
+  `<alias>`, `<user>`, `<host>` and `<ip>`, and tokens, key material, fingerprints and home
+  folders are removed. Only the wizard's own screen shows the host and what SSH said.
   **Profile** lists profiles available from that instance; choose one before saving.
   **Ready** remembers that connection and profile for later clicks. Cancel closes pending test
   resources. Editing a draft does not silently disconnect an unrelated active chat.
