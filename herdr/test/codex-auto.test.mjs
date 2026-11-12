@@ -30,7 +30,7 @@ const MAIN = { id: ID, name: "Genie", kind: "main", agent: "codex", look: { char
 function scene(t, bots = [MAIN]) {
   const root = scratchRoot(t, "hb-codex-");
   const bin = join(root, "bin"), home = join(root, "home"), app = join(root, "app");
-  for (const d of [bin, home, join(app, "mods/am-sidebar")]) mkdirSync(d, { recursive: true });
+  for (const d of [bin, home, join(home, ".config/herdr-app"), join(app, "mods/am-sidebar")]) mkdirSync(d, { recursive: true });
   // No template: a runner's own init.templateDir can't change the exclude file a start writes.
   const project = scratchProject(root, "proj", { template: "" });
   exe(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);

@@ -68,6 +68,7 @@ function scene(t, { file = team(), branch = "main", briefing = true, templates =
     + `if [ -f "${join(root, "gh.json")}" ]; then cat "${join(root, "gh.json")}"; exit 0; fi\necho "fake gh: no answer" >&2\nexit 1\n`);
   const home = join(root, "home");
   mkdirSync(join(home, ".claude"), { recursive: true });
+  mkdirSync(join(home, ".config/herdr-app"), { recursive: true });
   const app = join(root, "app");
   mkdirSync(join(app, "mods/am-sidebar"), { recursive: true });
   if (briefing) writeFileSync(join(app, "mods/am-sidebar/briefing.mjs"), "// stand-in\n");

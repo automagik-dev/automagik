@@ -29,7 +29,7 @@ import { addressOf, attachKey, attachLine, attachPath, attachRow, closingRow, co
 import { PANE_ENV_PATH, agentOnMachine, interpreterPath, paneEnvOf } from "../agentPath.mjs";
 import { briefingFilePath, installHook, launchBriefingText, screenTail, stableBriefingPath, withExclude } from "../briefingText.mjs";
 import { gatherBriefing } from "../briefing.mjs";
-import { AGENTS, AGY_MODE_DEFAULT, AGY_MODES, AUTO_MODE, AUTO_MODE_NONE, agentKeyOfArgv, agyGuarded, agyModeArgs, agyModeOf, agyModeProblem, agyModeWarning, agyPermissionPlan, agyRuleProblem, agySandbox, agySettingsArgs, agySettingsDir, agySettingsPlan, autoModeArgs, codexCleanNote, CODEX_DIR_VARS, codexGrantPaths, codexGrantPlan, codexKeepDirs, codexWhere, codexWhereThere, absPath, cleanPath, withCodexGrants, choosesSession, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, launchRun, modelArgs, modelRefusal, ownPromptIn, ownsSession, resolveAgent, resumeAfterTurn, resumesById,
+import { AGENTS, AGY_MODE_DEFAULT, AGY_MODES, AUTO_MODE, AUTO_MODE_NONE, agentKeyOfArgv, agyGuarded, agyModeArgs, agyModeOf, agyModeProblem, agyModeWarning, agyPermissionPlan, agyRuleProblem, agySandbox, agySettingsArgs, agySettingsDir, agySettingsPlan, autoModeArgs, codexClean, codexCleanNote, CODEX_DIR_VARS, codexGrantPaths, codexGrantPlan, codexWithheldWarning, codexKeepDirs, codexWhere, codexWhereThere, absPath, cleanPath, withCodexGrants, choosesSession, continuesAnywhere, briefingHook, briefingLaunch, briefingOwnConfig, briefingWay, configPaths, defaultModel, detectModel, knownModels, launchRun, modelArgs, modelRefusal, ownPromptIn, ownsSession, resolveAgent, resumeAfterTurn, resumesById,
   promptByMessage, sessionIdArgs, shownModel, withAgySettings, withBriefing, withOverrides } from "../models.js";
 import { AG_MODELS_TIMEOUT_MS, agModelsSpawnResult, refreshAgModelsSync } from "../modelCache.js";
 import { EFFORT_SHAPE, HC_NAME_MAX, LEAD_RANKS, LEAD_SHAPE, LEDGER_FILE, ROLES, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, WORKTREES_EXCLUDE,
@@ -3304,40 +3304,52 @@ export function canonHere(p) {
 }
 
 /**
- * Whether paths `a` and `b` are one object on this computer (#1142): their device and inode
- * (bigint, exact), symlinks followed. False when either isn't there (nothing is the same object as
- * a missing path), null when it can't be told (another error).
+ * A path's identity on this computer (#1142): "dev:ino" (bigint, exact), symlinks followed, or
+ * null when it can't be observed: any stat failure (a missing path, EACCES, a loop) is unknown.
  */
-export function sameHere(a, b) {
-  const id = (p) => {
-    try { const s = statSync(p, { bigint: true }); return `${s.dev}:${s.ino}`; }
-    catch (e) { return e?.code === "ENOENT" || e?.code === "ENOTDIR" ? "" : null; }
-  };
-  const x = id(a), y = id(b);
-  if (x === null || y === null) return null;
-  return x !== "" && x === y;
+export function idHere(p) {
+  try {
+    const st = statSync(p, { bigint: true });
+    return `${st.dev}:${st.ino}`;
+  } catch {
+    return null;
+  }
 }
 
 /** This computer's Codex launch rules (models.js codexWhere): its home folder and app home, resolved here, objects told apart here. */
-const localWhere = () => codexWhere({ home: home(), appHome: appHome(), resolve: canonHere, same: sameHere });
+const localWhere = () => codexWhere({ home: home(), appHome: appHome(), resolve: canonHere, id: idHere });
 
 /**
  * The folders a Codex launch in `cwd` on this computer may write besides it (#1125,
- * models.js codexGrants): `cwd`'s own git dir and its git common dir (a linked worktree's
+ * models.js codexGrantPlan): `cwd`'s own git dir and its git common dir (a linked worktree's
  * `.git/worktrees/<name>` and its main checkout's .git), herdr-core's state and data folders
- * and the tool caches, from this process's environment, each resolved here (#1142) and only when
- * it is a folder here. Never fails: a folder git can't answer for just has no git grant.
+ * and the tool caches, from this process's environment, each resolved and observed here (#1142)
+ * and only when it is a folder here: { dirs, unproved }. Never fails: a folder git can't answer
+ * for just has no git grant.
  */
-async function localCodexGrants(cwd) {
+async function localCodexGrantPlan(cwd) {
   const out = cwd ? await git(["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"], cwd) : null;
   const [gitDir, gitCommonDir] = (out ?? "").split("\n").map((l) => l.trim());
-  const where = localWhere();
-  const plan = codexGrantPlan({ where, home: home(), env: process.env, gitDir: gitDir || null, gitCommonDir: gitCommonDir || null, isDir });
-  // #1142: an exclusion that can't be resolved withholds every derived folder; said once (unproved roots: codexCleanNote).
-  if (plan.withheld.length && !where.unproved.length) {
-    report([`Codex's derived folders were withheld: ${plan.withheld.length} folder(s) they must stay out of can't be resolved here (#1142).`]);
+  return codexGrantPlan({ where: localWhere(), home: home(), env: process.env, gitDir: gitDir || null, gitCommonDir: gitCommonDir || null, isDir: dirHere });
+}
+
+/** codexGrantPlan's isDir here (#1142): true, false when it isn't there (or isn't a folder), null when stat fails otherwise. */
+export function dirHere(p) {
+  try {
+    return statSync(p).isDirectory();
+  } catch (e) {
+    return e?.code === "ENOENT" || e?.code === "ENOTDIR" ? false : null;
   }
-  return plan.dirs;
+}
+
+/**
+ * The one withheld-folders warning of a Codex launch here (#1142, models.js codexWithheldWarning):
+ * its source's own --add-dir words (`run`, weighed as launchRun weighs them) and `plan`'s derived
+ * folders, each withheld or passed folder counted once. Null when nothing was withheld.
+ */
+function localCodexWarning(run, plan) {
+  const source = codexClean(run ?? [], localWhere());
+  return codexWithheldWarning(new Set([...source.unproved, ...plan.unproved]).size, new Set([...addDirValues(source.argv), ...plan.dirs]).size);
 }
 
 // The environment words codexGrantPaths reads, printed on a linked machine one per line as NAME=value
@@ -3369,24 +3381,25 @@ export function resolvedThere(stdout) {
   return { resolve: (p) => canon.get(p) ?? null, isDir: (p) => dirs.has(p) };
 }
 
-// Whether pairs of paths are one object on that machine (#1142): the first argument is a folder
-// known to be there, the rest are pairs. It first proves test -ef works on that folder itself
-// ("unsupported" otherwise); then per pair 1 (one object), 0 (two, or one isn't there) or ? (a
-// dangling link, an error): never a failed test read as "different".
-export const IDENTITY_PROBE = 'h=$1; shift; if [ -d "$h" ] && [ "$h" -ef "$h" ] 2>/dev/null; then :; else echo unsupported; exit 0; fi; '
-  + 'while [ $# -ge 2 ]; do a=$1; b=$2; shift 2; '
-  + 'if { [ -L "$a" ] && [ ! -e "$a" ]; } || { [ -L "$b" ] && [ ! -e "$b" ]; }; then s="?"; '
-  + 'elif [ ! -e "$a" ] || [ ! -e "$b" ]; then s=0; '
-  + 'else [ "$a" -ef "$b" ] 2>/dev/null; case $? in 0) s=1;; 1) s=0;; *) s="?";; esac; fi; printf "%s\\n" "$s"; done; true';
+// Each path's identity on that machine (#1142): the first argument is the home folder, the rest
+// the paths to observe. It picks stat -L's GNU (-c) or BSD (-f) form on the home folder first
+// ("unsupported" when neither prints dev:ino there), prints ok, then per path its dev:ino, or ?
+// when that stat fails or prints anything else: a failed observation is never an identity.
+export const IDENTITY_PROBE = 'h=$1; shift; f=; '
+  + 'for g in c f; do i=$(stat -L -$g %d:%i "$h" 2>/dev/null) || continue; case $i in *[!0-9:]*|*:*:*) ;; [0-9]*:[0-9]*) f=$g; break;; esac; done; '
+  + 'if [ -z "$f" ]; then echo unsupported; exit 0; fi; echo ok; '
+  + 'for p do i=$(stat -L -$f %d:%i "$p" 2>/dev/null) || i="?"; '
+  + 'case $i in *[!0-9:]*|*:*:*) i="?";; [0-9]*:[0-9]*) ;; *) i="?";; esac; printf "%s\\n" "$i"; done; true';
 
-/** IDENTITY_PROBE's answer for `pairs` as `same(a, b)`: true, false, or null (unsupported, unanswered, unknown). */
-export function sameThere(stdout, pairs) {
-  const lines = String(stdout ?? "").split("\n").filter(Boolean);
+/** IDENTITY_PROBE's answer for `paths` as `id(p)`: "dev:ino", or null (unsupported, short or malformed output, a failed stat). */
+export function idsThere(stdout, paths) {
+  const lines = String(stdout ?? "").split("\n");
+  if (lines.at(-1) === "") lines.pop();
   const known = new Map();
-  if (lines[0] !== "unsupported" && lines.length === pairs.length) {
-    pairs.forEach(([a, b], i) => { if (lines[i] === "1" || lines[i] === "0") known.set(`${a}\0${b}`, lines[i] === "1"); });
+  if (lines[0] === "ok" && lines.length === paths.length + 1) {
+    paths.forEach((p, i) => { if (/^\d+:\d+$/.test(lines[i + 1])) known.set(p, lines[i + 1]); });
   }
-  return (a, b) => (a === b ? true : known.get(`${a}\0${b}`) ?? null);
+  return (p) => known.get(p) ?? null;
 }
 
 /** The values of a Codex argv's `--add-dir` words, before any `--`. */
@@ -3410,7 +3423,7 @@ const addDirValues = (argv) => {
 async function codexOn(machine, cwd, paneEnv, argv) {
   const blind = { home: null, appHomes: [], canon: () => null };
   const away = (why) => ({ argv: codexKeepDirs(argv, blind).argv, dirs: [],
-    warning: `Codex's folders on ${machine} couldn't be resolved there (${why}): it starts with its working folder only.` });
+    warning: `${machine}: Codex's folders couldn't be read there (${why}). ${codexWithheldWarning(1, 0)}` });
   const r = await remoteIo.exec("sh", ["-c", GRANT_PROBE], machine, { cwd });
   if (r.code !== 0) return away(r.code === -1 ? "no answer" : `exit ${r.code}`);
   const env = {};
@@ -3430,25 +3443,19 @@ async function codexOn(machine, cwd, paneEnv, argv) {
   const { resolve, isDir: dirThere } = resolvedThere(there.stdout);
   const plain = codexWhere({ home: env.HOME, appHome: appHomes, resolve });
   if (plain.unproved.length) return away(`${plain.unproved.join(" and ")} can't be resolved there`);
-  // Object identity there (#1142): each folder weighed, and each folder above it, against the
-  // protected roots, the general folders and the folders above them.
+  // Identity there (#1142): each folder weighed, the home folder, each app home and each general
+  // folder, with every folder above them, observed by that machine's stat (codexDirVerdict).
   const whole = inventory.general.map((g) => plain.canon(g)).filter(Boolean);
   const weighed = [...new Set([...inventory.candidates, ...addDirValues(argv)].map((p) => plain.canon(p)).filter(Boolean))];
-  const protectedDirs = [...new Set([plain.home, ...plain.appHomes, ...whole].flatMap(chainOf))];
-  const pairs = [];
-  for (const c of weighed) {
-    for (const p of protectedDirs) if (c !== p) pairs.push([c, p]);
-    for (const x of chainOf(c)) for (const a of plain.appHomes) if (x !== a) pairs.push([x, a]);
-  }
-  const ids = await remoteIo.exec("sh", ["-c", IDENTITY_PROBE, "sh", plain.home, ...pairs.flat()], machine);
-  if (ids.code !== 0 || String(ids.stdout ?? "").startsWith("unsupported")) return away("it can't tell its folders apart there (test -ef)");
-  const where = codexWhere({ home: env.HOME, appHome: appHomes, resolve, same: sameThere(ids.stdout, pairs) });
+  const observed = [...new Set([plain.home, ...plain.appHomes, ...whole, ...weighed].flatMap(chainOf))];
+  const ids = await remoteIo.exec("sh", ["-c", IDENTITY_PROBE, "sh", plain.home, ...observed], machine);
+  const where = codexWhere({ home: env.HOME, appHome: appHomes, resolve, id: idsThere(ids.code === 0 ? ids.stdout : "", observed) });
   const kept = codexKeepDirs(argv, where);
   const plan = codexGrantPlan({ where, env, isDir: dirThere, paths: inventory });
+  const withheld = codexWithheldWarning(new Set([...kept.unproved, ...plan.unproved]).size, new Set([...addDirValues(kept.argv), ...plan.dirs]).size);
   const warnings = [kept.dropped
-    ? `${machine}: an --add-dir in Codex's command names the home folder, an app home or a folder whose place there can't be proved: left out (#1142).` : null,
-  plan.withheld.length ? `${machine}: Codex's derived folders were withheld: ${plan.withheld.length} folder(s) they must stay out of can't be resolved there (#1142).`
-    : null].filter(Boolean);
+    ? `${machine}: an --add-dir in Codex's command names the home folder, an app home, a folder above one or a relative path: left out (#1142).` : null,
+  withheld ? `${machine}: ${withheld}` : null].filter(Boolean);
   return { argv: kept.argv, dirs: plan.dirs, warning: warnings.length ? warnings.join(" ") : null };
 }
 
@@ -3534,7 +3541,10 @@ async function launchSeat(project, bot, over = {}) {
   // programs.json run's own approval and sandbox words were left out, and that is said.
   const cleaned = agentKey === "codex" ? codexCleanNote(agent.run, localWhere()) : null;
   if (cleaned) briefed.warnings.push(cleaned);
-  const argv = agentKey === "codex" && !over.granted ? withCodexGrants(briefed.argv, await localCodexGrants(cwd)) : briefed.argv;
+  const codexPlan = agentKey === "codex" && !over.granted ? await localCodexGrantPlan(cwd) : null;
+  const codexWithheld = codexPlan ? localCodexWarning(agent.run, codexPlan) : null;
+  if (codexWithheld) briefed.warnings.push(codexWithheld);
+  const argv = codexPlan ? withCodexGrants(briefed.argv, codexPlan.dirs) : briefed.argv;
   // As a worker (cmdWorker): the pane gets this PATH, with an npm agent's (#!/usr/bin/env node,
   // like codex) interpreter folder first when it lacks it (#56); start and restart both come
   // here. Always passed (#213): without it the pane has herdr-core's PATH, which may lack node.
@@ -4261,7 +4271,7 @@ async function treePlans({ project, bot, old, helpers, view, ledger, agents, kno
   const grantsAt = new Map();
   for (const h of doomed) {
     const cwd = helperCwd({ get: h, worker: workerRowOf(ledger, h.address), realpath: realDir });
-    if (cwd && !grantsAt.has(cwd)) grantsAt.set(cwd, await localCodexGrants(cwd));
+    if (cwd && !grantsAt.has(cwd)) grantsAt.set(cwd, await localCodexGrantPlan(cwd));
   }
   const planOf = (h, fresh = null) => {
     const worker = workerRowOf(ledger, h.address);
@@ -4280,14 +4290,24 @@ async function treePlans({ project, bot, old, helpers, view, ledger, agents, kno
       ?? project.file.bots.find((b) => b.id === bot.id) ?? bot;
     for (const k of ["agent.session", "revive.session"]) holdId(h.labels?.[k]);
     holdId(knownSession(h, agentKey)?.session);
-    return { ...helperPlan({ get: h, worker, session: knownSession(h, agentKey)?.session ?? null,
+    const grantPlan = grantsAt.get(helperCwd({ get: h, worker, realpath: realDir })) ?? null;
+    const planned = helperPlan({ get: h, worker, session: knownSession(h, agentKey)?.session ?? null,
       agents, fresh, bot: agyBot, agy: { appHomeDir: appHome(), bot: agyBot, realpath: realDir, homeDir: home() },
-      launchAgent: revive && isBareShell(h), grants: grantsAt.get(helperCwd({ get: h, worker, realpath: realDir })) ?? [], where: localWhere() }),
+      launchAgent: revive && isBareShell(h), grants: grantPlan?.dirs ?? [], where: localWhere() });
+    // #1142: a Codex helper run in the launch mode says what its launch withheld; a template
+    // worker runs its own command as written and gets nothing of the pack's.
+    const templateWorker = Boolean(worker?.template || h.labels?.[WORKER_TEMPLATE_LABEL]);
+    const codexWithheld = agentKey === "codex" && !planned.error && !templateWorker && grantPlan
+      ? localCodexWarning(worker || h.labels?.[WORKER_OF_LABEL] ? agents.codex?.run : paneCommand(h)?.argv, grantPlan) : null;
+    return { ...planned, codexWithheld,
       worker, binding, proxyIdentity,
       createdMs: Number.isSafeInteger(h.created_ms) ? h.created_ms : null };
   };
   let tree = doomed.map((h) => planOf(h));
-  for (const p of tree) if (p.warning) treeWarnings.push(p.warning);
+  for (const p of tree) {
+    if (p.warning) treeWarnings.push(p.warning);
+    if (p.codexWithheld) treeWarnings.push(`${p.name ?? p.replaced}: ${p.codexWithheld}`);
+  }
   const broken = tree.filter((p) => p.error).map((p) => p.error);
   const gone = tree.filter((p) => !p.error && !isDir(p.cwd)).map((p) => `${p.replaced}'s folder ${p.cwd} isn't there`);
   if (broken.length || gone.length) {
@@ -4634,12 +4654,14 @@ async function cmdRestart(opts, [ref]) {
   // permission file (#884) trusts this folder, not the project, and a symlinked one by realpath.
   const oldCwd = old?.foreground?.cwd ?? old?.cwd ?? ghost?.cwd ?? null;
   const cwd = wanted ?? (oldCwd && isDir(oldCwd) ? (realDir(oldCwd) ?? oldCwd) : key);
+  const sourceRun = startableAgent(bot, entry?.agent ?? bot.agent).run;
+  // #1125: the folders a Codex seat in `cwd` may write, for a template plan's words (launchSeat
+  // adds them to an agent row's, and says what it withheld then).
+  const codexPlan = (entry?.agent ?? bot.agent) === "codex" ? await localCodexGrantPlan(cwd) : null;
   const planned = {
-    bot, run: launchRun(entry?.agent ?? bot.agent, startableAgent(bot, entry?.agent ?? bot.agent).run, bot, localWhere()), where: localWhere(),
+    bot, run: launchRun(entry?.agent ?? bot.agent, sourceRun, bot, localWhere()), where: localWhere(),
     runningAgent, session: known?.session ?? null,
-    // #1125: the folders a Codex seat in `cwd` may write, for a template plan's words (launchSeat
-    // adds them to an agent row's).
-    grants: (entry?.agent ?? bot.agent) === "codex" ? await localCodexGrants(cwd) : [],
+    grants: codexPlan?.dirs ?? [],
     fresh: opts.fresh || (!was && !bot.hermes), agent: entry ? entry.agent : undefined, model: entry ? (entry.model ?? "") : undefined,
     template: oldTemplate?.command ? { name: oldTemplate.name, command: oldTemplate.command } : null,
     agy: { appHomeDir: appHome(), folder: cwd, realpath: realDir, homeDir: home() },
@@ -4735,6 +4757,9 @@ async function cmdRestart(opts, [ref]) {
   if (sharedNote) warnings.push(`${bot.name} starts on a new conversation: ${sharedNote}.`);
   // #1125: a Codex seat's template set aside for its agent row, by name and flag names.
   if (plan.templateNote) say(`${bot.name}: ${plan.templateNote}.`);
+  // A seat template carried the grants (#1142): its launch's withheld folders are said here, once.
+  const templateWithheld = plan.granted && codexPlan ? localCodexWarning(sourceRun, codexPlan) : null;
+  if (templateWithheld) say(`${bot.name}: ${templateWithheld}`);
   if (movedFrom && movedFrom !== wanted && plan.mode === "resume" && plan.agent !== "claude") {
     say(`${seat.terminal} runs in ${wanted}, not ${movedFrom}: ${plan.agent} finds its last conversation by folder${resumeId ? "" : ", so it may not find it there"}.`);
   }
@@ -6472,7 +6497,11 @@ async function cmdWorker(opts, rest) {
         + `folders (git dirs, herdr-core's, tool caches; #1125): the proxy starts only the approved command. A write there `
         + `goes to Codex's reviewer, and the proxy's own sandbox may still refuse it.`);
     }
-    workerArgv = plan.agent === "codex" && !grantless ? withCodexGrants(launchArgv, await localCodexGrants(place.worktree)) : launchArgv;
+    const codexPlan = plan.agent === "codex" && !grantless ? await localCodexGrantPlan(place.worktree) : null;
+    // #1142: what the launch withheld, said once; a template worker runs its own command and gets nothing of the pack's.
+    const codexWithheld = codexPlan && !plan.template ? localCodexWarning(agents.codex?.run, codexPlan) : null;
+    if (codexWithheld) warnings.push(codexWithheld);
+    workerArgv = codexPlan ? withCodexGrants(launchArgv, codexPlan.dirs) : launchArgv;
     const args = workerArgs({ botId: bot.id, branch: place.branch, role, name, cwd: place.worktree, parent: me.address, space,
       agent: plan.agent, model: plan.model, effort: plan.effort, agyMode: plan.agyMode, argv: workerArgv, session, task, template: plan.template,
       templateArgv,

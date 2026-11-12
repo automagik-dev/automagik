@@ -548,7 +548,7 @@ const within = (a, b) => a === b || b === "/" || a.startsWith(`${b}/`);
  * `..` proves nothing (null). `appHome`: the launch's effective app home (one path or several);
  * the default one under `home` is always protected too.
  */
-export function codexWhere({ home = null, appHome = null, resolve = null, same = null } = {}) {
+export function codexWhere({ home = null, appHome = null, resolve = null, id = null } = {}) {
   const resolved = (p) => {
     const a = cleanPath(p);
     if (!a) return null;
@@ -570,24 +570,39 @@ export function codexWhere({ home = null, appHome = null, resolve = null, same =
     if (c) { if (!appHomes.includes(c)) appHomes.push(c); } else if (!unproved.includes("an app home")) unproved.push("an app home");
   }
   // `spelled`: the home folder as the launch spells it, the form its paths were derived and resolved from.
+  // `id`: the launch machine's identity observation (idHere, idsThere): "dev:ino" of a path, symlinks followed, or null.
   return { home: h, spelled: given(home) ? home : null, appHomes, canon: unproved.length ? () => null : resolved,
-    same: typeof same === "function" ? same : null, unproved };
+    id: typeof id === "function" ? id : null, unproved };
 }
 
 /**
- * Whether a Codex launch may be granted canonical `dir` under `where` (codexWhere): never the root,
- * the home folder or a folder above it, nor an app home (its attach binding, locks and ledgers stay
- * with Codex's reviewer), a folder inside one or above one.
+ * Whether a Codex launch may be granted canonical `dir` under `where` (codexWhere): "ok",
+ * "refused" (a rule proves it protected: the root, the home folder or a folder above it, an app
+ * home, a folder inside one or above one, a whole general folder or above one), or "unproved" (an
+ * observation it needs failed: it is withheld). Paths first, then (#1142) the launch machine's
+ * identity observations (`where.id`): `dir` and every folder above it, the home folder and every
+ * folder above it, and each app home and every folder above it must all be observed, and none may
+ * make `dir` the home folder or above it, an app home or above one, or a folder inside one. Any
+ * failed observation withholds: `dir`'s own only `dir`; the home folder's or an app home's (an
+ * absent default app home included) every folder. A general folder (or a folder above it) that
+ * can be observed refuses `dir` by identity too; one that can't (an absent optional cache, say)
+ * is not granted itself and withholds nothing. A where without observations never grants, except
+ * codexWhereThere's (deferred: the destination weighs those words). This is not a proof against a
+ * bind mount that shows the app home under another path (#1151, an accepted limit).
  */
-export function codexDirAllowed(dir, where = {}, general = []) {
-  if (typeof dir !== "string" || !dir.startsWith("/") || dir === "/") return false;
-  if (where.unproved?.length) return false;
-  if (where.home && within(where.home, dir)) return false;
-  if ((where.appHomes ?? []).some((app) => within(dir, app) || within(app, dir))) return false;
+export function codexDirVerdict(dir, where = {}, general = []) {
+  if (typeof dir !== "string" || !dir.startsWith("/") || dir === "/") return "refused";
+  if (where.unproved?.length) return "unproved";
+  if (where.home && within(where.home, dir)) return "refused";
+  if ((where.appHomes ?? []).some((app) => within(dir, app) || within(app, dir))) return "refused";
   // #1142: a derived folder at or above a whole general folder (`general`, canonical) is no narrow grant.
-  if (general.some((g) => within(g, dir))) return false;
-  return where.same ? sameAllowed(dir, where, general) : true;
+  if (general.some((g) => within(g, dir))) return "refused";
+  if (where.deferred) return "ok";
+  return typeof where.id === "function" && where.home ? idVerdict(dir, where, general) : "unproved";
 }
+
+/** codexDirVerdict's "ok": whether `dir` may be granted. */
+export const codexDirAllowed = (dir, where = {}, general = []) => codexDirVerdict(dir, where, general) === "ok";
 
 /** Canonical `p` and each folder above it, up to the root. */
 const chain = (p) => {
@@ -595,19 +610,39 @@ const chain = (p) => {
   for (let c = p; ; c = c.slice(0, c.lastIndexOf("/")) || "/") { out.push(c); if (c === "/") return out; }
 };
 
+const DEV_INO = /^\d+:\d+$/;
+
+/** codexDirVerdict's identity walk (#1142): every observation it needs, or "unproved". */
+function idVerdict(dir, where, general) {
+  const id = (p) => {
+    let v = null;
+    try { v = where.id(p); } catch { v = null; }
+    return typeof v === "string" && DEV_INO.test(v) ? v : null;
+  };
+  const walk = (p) => chain(p).map(id);
+  const homeUp = walk(where.home);
+  const appUps = (where.appHomes ?? []).map(walk);
+  if (homeUp.includes(null) || appUps.some((up) => up.includes(null))) return "unproved";
+  const mine = walk(dir);
+  if (mine.includes(null)) return "unproved";
+  const self = mine[0];
+  if (homeUp.includes(self)) return "refused";
+  if (appUps.some((up) => up.includes(self) || mine.includes(up[0]))) return "refused";
+  if (general.some((g) => chain(g).some((p) => id(p) === self))) return "refused";
+  return "ok";
+}
+
 /**
- * The same rules by object identity (#1142), for an alias the paths don't show (a bind mount,
- * another spelling on a case-insensitive disk): `where.same(a, b)` answers true, false, or null
- * when it can't tell, and anything but false counts as the same. `dir` may not be the home folder
- * or a folder above it, an app home or above one, a general folder or above one, nor have an app
- * home among itself and the folders above it. Only existing objects can be told apart: a path
- * that isn't there is weighed by the folders above it that are.
+ * The one warning a Codex launch gives when folders it would pass were withheld (#1142):
+ * `withheld` folders it couldn't prove outside the app home, `granted` folders it still passes
+ * (counted once each). Null when nothing was withheld.
  */
-function sameAllowed(dir, where, general) {
-  const same = (a, b) => where.same(a, b) !== false;
-  const above = new Set([...(where.home ? chain(where.home) : []), ...(where.appHomes ?? []).flatMap(chain), ...general.flatMap(chain)]);
-  if ([...above].some((p) => same(dir, p))) return false;
-  return !chain(dir).some((x) => (where.appHomes ?? []).some((app) => same(x, app)));
+export function codexWithheldWarning(withheld, granted) {
+  if (!(withheld > 0)) return null;
+  const tail = "writes outside permitted locations may require automatic review or fail. See #1151.";
+  return granted > 0
+    ? `Codex extra folders withheld: the pack cannot prove ${withheld} of them are outside the Herdr app home and passes no grant for those; ${tail}`
+    : `Codex extra folders withheld: the pack cannot prove they are outside the Herdr app home. It passes no additional folder grants; ${tail}`;
 }
 
 /** `where` as codexWhere gives it, from one: a codexWhere result, a home folder (compared as written), or nothing. */
@@ -619,12 +654,17 @@ const whereOf = (where) => (where && typeof where === "object" && typeof where.c
  * absolute `--add-dir` stays as cleanPath leaves it, `..` included, because only that machine can
  * resolve it; codexOn weighs each there and passes that machine's canonical value.
  */
-export const codexWhereThere = () => ({ home: null, appHomes: [], canon: cleanPath });
+export const codexWhereThere = () => ({ home: null, appHomes: [], canon: cleanPath, deferred: true });
 
-/** An `--add-dir` value's canonical form under `where` when it is allowed there, else null: the value a launch passes (#1142). */
-const allowedDir = (value, where) => {
+/**
+ * An `--add-dir` value under `where` (#1142): { c, verdict }: its canonical form there (the value
+ * a launch passes) and codexDirVerdict's answer. A relative value is refused; one that can't be
+ * resolved there (a dangling link, an error) is unproved.
+ */
+const weighDir = (value, where) => {
+  if (cleanPath(value) === null) return { c: null, verdict: "refused" };
   const c = where.canon(value);
-  return c !== null && codexDirAllowed(c, where) ? c : null;
+  return c === null ? { c: cleanPath(value), verdict: "unproved" } : { c, verdict: codexDirVerdict(c, where) };
 };
 
 /**
@@ -637,18 +677,22 @@ const allowedDir = (value, where) => {
 export function codexKeepDirs(argv, where) {
   const w = whereOf(where);
   const words = Array.isArray(argv) ? argv.map(String) : [];
-  const out = [];
+  const out = [], unproved = [];
   let dropped = false;
   for (let i = 0; i < words.length; i += 1) {
     const x = words[i];
     if (x === "--") { out.push(...words.slice(i)); break; }
     const value = x === "--add-dir" ? words[i + 1] : x.startsWith("--add-dir=") ? x.slice("--add-dir=".length) : undefined;
     if (value === undefined) { out.push(x); continue; }
-    const c = allowedDir(value, w);
-    if (c === null) { dropped = true; if (x === "--add-dir") i += 1; continue; }
+    const { c, verdict } = weighDir(value, w);
+    if (verdict !== "ok") {
+      if (verdict === "unproved") { if (!unproved.includes(c)) unproved.push(c); } else dropped = true;
+      if (x === "--add-dir") i += 1;
+      continue;
+    }
     if (x === "--add-dir") { out.push(x, c); i += 1; } else out.push(`--add-dir=${c}`);
   }
-  return { argv: out, dropped };
+  return { argv: out, dropped, unproved };
 }
 
 /**
@@ -661,7 +705,7 @@ export function codexDirsExact(args, where) {
   const cut = words.indexOf("--");
   const options = cut < 0 ? words : words.slice(0, cut);
   const kept = codexKeepDirs(options, where);
-  return !kept.dropped && kept.argv.length === options.length && kept.argv.every((w, i) => w === options[i]);
+  return !kept.dropped && !kept.unproved.length && kept.argv.length === options.length && kept.argv.every((w, i) => w === options[i]);
 }
 
 /**
@@ -675,13 +719,14 @@ export function codexDirsExact(args, where) {
  * one checked. `where` may also be a home folder, compared as written.
  * The pack's own --approve-for-me, --no-daemon and network word go quietly (launchRun puts them
  * back once). Every other word stays as it is, after a `--` too.
- * Returns { argv, dropped } (`dropped`: the flags left out, by name, `-c sandbox_mode` style:
- * never a value).
+ * Returns { argv, dropped, unproved } (`dropped`: the flags left out, by name, `-c sandbox_mode`
+ * style: never a value; `unproved`: the --add-dir folders withheld because an observation they
+ * need failed, #1142, which the launch's one withheld warning counts instead).
  */
 export function codexClean(run, where = null) {
   const at = whereOf(where);
   const words = Array.isArray(run) ? run.map(String) : [];
-  const argv = [], dropped = [];
+  const argv = [], dropped = [], unproved = [];
   const drop = (name) => { if (!dropped.includes(name)) dropped.push(name); };
   for (let i = 0; i < words.length; i += 1) {
     const w = words[i];
@@ -702,25 +747,24 @@ export function codexClean(run, where = null) {
     }
     const addDir = w === "--add-dir" ? words[i + 1] : w.startsWith("--add-dir=") ? w.slice("--add-dir=".length) : undefined;
     if (addDir !== undefined) {
-      const c = allowedDir(addDir, at);
-      if (c === null) { drop("--add-dir"); if (w === "--add-dir") i += 1; continue; }
+      const { c, verdict } = weighDir(addDir, at);
+      if (verdict !== "ok") {
+        if (verdict === "unproved") { if (!unproved.includes(c)) unproved.push(c); } else drop("--add-dir");
+        if (w === "--add-dir") i += 1;
+        continue;
+      }
       if (w === "--add-dir") { argv.push(w, c); i += 1; } else argv.push(`--add-dir=${c}`);
       continue;
     }
     argv.push(w);
     if (CODEX_TAKES_VALUE.has(w) && i + 1 < words.length) argv.push(words[++i]);
   }
-  return { argv, dropped };
+  return { argv, dropped, unproved };
 }
 
 /** One line naming what codexClean left out of `run` (flag names only), or null when nothing. */
 export function codexCleanNote(run, where = null, source = "programs.json's Codex command") {
-  const w = whereOf(where);
-  if (w.unproved?.length) {
-    return `Codex's folders can't be weighed: ${w.unproved.join(" and ")} can't be resolved, so it starts with its working folder only: `
-      + "no --add-dir and no derived folder (#1142).";
-  }
-  const { dropped } = codexClean(run, w);
+  const { dropped } = codexClean(run, whereOf(where));
   return dropped.length ? `${source} names ${dropped.join(", ")}: left out. Every Codex seat and worker runs in auto mode `
     + "(--approve-for-me) with its sandbox on (#1125)." : null;
 }
@@ -769,28 +813,38 @@ export function codexGrants(opts) {
 }
 
 /**
- * codexGrants with what it withheld: { dirs, withheld }. One inventory (#1142): `paths`, the
+ * codexGrants with what it withheld: { dirs, unproved }. One inventory (#1142): `paths`, the
  * codexGrantPaths result the resolver was asked about (codexOn passes the one it probed), else one
  * built from `home` as the launch spells it, else from where.spelled (codexWhere keeps the home as
  * given): never rebuilt from the canonical home, whose paths a resolver may not have been asked about.
- * A general folder that can't be resolved there can't be kept out, so nothing is derived
- * (`withheld` names those folders): never a wider grant.
+ * Each candidate is judged on its own (codexDirVerdict): one that isn't a folder there is not
+ * granted; one that can't be resolved there, or whose observations fail, is withheld and named in
+ * `unproved` (counted by the launch's warning); the others are granted. A general folder that can't
+ * be resolved there (absent behind a dangling link, say) keeps no candidate out by its path and
+ * withholds nothing; the candidates under it can't be resolved either.
  */
 export function codexGrantPlan({ where = null, home = null, appHome = null, env = {}, gitDir = null, gitCommonDir = null, isDir = () => false,
   paths = null }) {
   const w = where ?? codexWhere({ home, appHome });
   const { candidates, general } = paths ?? codexGrantPaths({ home: home ?? w.spelled ?? w.home, env, gitDir, gitCommonDir });
-  const whole = general.map((g) => w.canon(g));
-  if (whole.some((g) => g === null)) return { dirs: [], withheld: general.filter((_, i) => whole[i] === null) };
-  const out = [];
+  const whole = general.map((g) => w.canon(g)).filter(Boolean);
+  const out = [], unproved = [];
+  const withhold = (d) => { if (d && !unproved.includes(d)) unproved.push(d); };
   for (const raw of candidates) {
     const dir = w.canon(raw);
-    if (!dir || out.includes(dir) || !codexDirAllowed(dir, w, whole)) continue;
-    let there = false;
-    try { there = isDir(dir) === true; } catch { there = false; }
-    if (there) out.push(dir);
+    if (dir === null) { withhold(cleanPath(raw)); continue; }
+    if (out.includes(dir)) continue;
+    // isDir: true (a folder), false (not there, or not a folder: nothing to grant), anything else
+    // or a throw: it couldn't be observed, so the candidate is withheld and counted.
+    let there = null;
+    try { there = isDir(dir); } catch { there = null; }
+    if (there === false) continue;
+    if (there !== true) { withhold(dir); continue; }
+    const verdict = codexDirVerdict(dir, w, whole);
+    if (verdict === "ok") out.push(dir);
+    else if (verdict === "unproved") withhold(dir);
   }
-  return { dirs: out, withheld: [] };
+  return { dirs: out, unproved };
 }
 
 /**

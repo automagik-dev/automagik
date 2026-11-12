@@ -13,11 +13,12 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { AGENTS, CODEX_MODE_ARGS, CODEX_NETWORK, absPath, cleanPath, codexClean, codexGrantPlan, codexGrantPaths, codexCleanNote, codexDirAllowed, codexGrants, codexKeepDirs, codexWhere,
-  homeWide, launchRun, withCodexGrants, withoutBriefing } from "../mods/am-sidebar/models.js";
+import { AGENTS, CODEX_MODE_ARGS, CODEX_NETWORK, absPath, cleanPath, codexClean, codexGrantPlan, codexGrantPaths, codexCleanNote, codexDirAllowed,
+  codexDirVerdict, codexGrants, codexKeepDirs, codexWhere, codexWithheldWarning, homeWide, launchRun, withCodexGrants, withoutBriefing }
+  from "../mods/am-sidebar/models.js";
 import { helperPlan, restartPlan } from "../mods/am-sidebar/restart.js";
 import { codexCommandCheck, codexForwards, codexTemplateRefusal, codexTemplateWarning, workerPlan } from "../mods/am-sidebar/workers.js";
-import { IDENTITY_PROBE, RESOLVE_PROBE, canonHere, resolvedThere, sameHere, sameThere } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
+import { IDENTITY_PROBE, RESOLVE_PROBE, canonHere, dirHere, idHere, idsThere, resolvedThere } from "../mods/am-sidebar/bin/automagik-herdr.mjs";
 import { readJsonLines } from "./log-lines.mjs";
 import { scratchProject, scratchRoot } from "./scratch-project.mjs";
 
@@ -30,6 +31,18 @@ const git = (cwd, ...args) => execFileSync("git", ["-c", "user.name=t", "-c", "u
 const count = (words, w) => words.filter((x) => x === w).length;
 // The flags that turn Codex's sandbox or approvals off: none may reach a seat or an ordinary worker.
 const BYPASS = ["--dangerously-bypass-approvals-and-sandbox", "--yolo"];
+// TEST-ONLY synthetic identity observer (#1142), for fixture paths that are on no disk ("/home/u",
+// "/r/.git"): each distinct path its own numeric dev:ino, so only the path rules decide. It proves
+// nothing about a real filesystem; the #1142 tests on real folders observe them with idHere and
+// IDENTITY_PROBE instead.
+const MODEL_IDS = new Map();
+const MODEL_ID = (p) => { if (!MODEL_IDS.has(p)) MODEL_IDS.set(p, MODEL_IDS.size + 1); return `1:${MODEL_IDS.get(p)}`; };
+const modelWhere = (opts) => codexWhere({ ...opts, id: MODEL_ID });
+// The launch's one withheld warning (#1142), word for word: every folder withheld, or some of them.
+const ALL_WITHHELD = "Codex extra folders withheld: the pack cannot prove they are outside the Herdr app home. It passes no additional folder "
+  + "grants; writes outside permitted locations may require automatic review or fail. See #1151.";
+const someWithheld = (n) => `Codex extra folders withheld: the pack cannot prove ${n} of them are outside the Herdr app home and passes no grant `
+  + "for those; writes outside permitted locations may require automatic review or fail. See #1151.";
 
 // ---- the source's own words (codexClean) ----
 
@@ -62,9 +75,13 @@ test("codexClean leaves out every approval and sandbox form it knows, by flag na
   // Unrelated words stay as written, a value that looks like a flag included; the pack's own words go quietly.
   const kept = ["codex", "-m", "-a", "-c", 'model="o3"', "--profile", "p", "--add-dir", "/srv/cache", "--enable", "x", "--disable", "hooks",
     "-C", "/w", "--worktree"];
-  assert.deepEqual(codexClean([...kept, "--approve-for-me", "--no-daemon", "-c", CODEX_NETWORK], home), { argv: kept, dropped: [] });
+  // #1142: an --add-dir is kept only when its observations prove it (here the test-only model observer).
+  assert.deepEqual(codexClean([...kept, "--approve-for-me", "--no-daemon", "-c", CODEX_NETWORK], modelWhere({ home })),
+    { argv: kept, dropped: [], unproved: [] });
+  // Without observations it is withheld and counted for the launch's warning, never named as left out.
+  assert.deepEqual(codexClean(["codex", "--add-dir", "/srv/cache", "-m", "x"], home), { argv: ["codex", "-m", "x"], dropped: [], unproved: ["/srv/cache"] });
   // After `--` nothing is a flag.
-  assert.deepEqual(codexClean(["codex", "--", "-a", "--yolo"], home), { argv: ["codex", "--", "-a", "--yolo"], dropped: [] });
+  assert.deepEqual(codexClean(["codex", "--", "-a", "--yolo"], home), { argv: ["codex", "--", "-a", "--yolo"], dropped: [], unproved: [] });
 });
 
 test("codexCleanNote names flags only, never a value", () => {
@@ -119,24 +136,34 @@ test("codexGrants: the git dirs, herdr-core's state and data folders and the too
   const there = new Set(["/r/.git/worktrees/w", "/r/.git", "/x/state/herdr-core", "/home/u/.local/share/herdr-core", "/home/u/go/pkg/mod", "/home/u/.cache/go-build",
     "/home/u/.npm", "/home/u/.local/share/pnpm/store", "/home/u/.cache/pnpm", "/home/u/.bun/install/cache"]);
   const env = { XDG_STATE_HOME: "/x/state" };
-  assert.deepEqual(codexGrants({ home, env, gitDir: "/r/.git/worktrees/w", gitCommonDir: "/r/.git", isDir: (d) => there.has(d) }), [...there]);
+  // These paths are on no disk: the test-only model observer stands for the launch machine's observations.
+  const where = modelWhere({ home });
+  assert.deepEqual(codexGrants({ where, env, gitDir: "/r/.git/worktrees/w", gitCommonDir: "/r/.git", isDir: (d) => there.has(d) }), [...there]);
   // A main checkout's git dir is its common dir: granted once.
-  assert.deepEqual(codexGrants({ home, env, gitDir: "/r/.git", gitCommonDir: "/r/.git", isDir: (d) => d === "/r/.git" }), ["/r/.git"]);
+  assert.deepEqual(codexGrants({ where, env, gitDir: "/r/.git", gitCommonDir: "/r/.git", isDir: (d) => d === "/r/.git" }), ["/r/.git"]);
   // Only what is there; no git dir when there is none.
-  assert.deepEqual(codexGrants({ home, env: {}, gitCommonDir: null, isDir: (d) => d === "/home/u/.npm" }), ["/home/u/.npm"]);
+  assert.deepEqual(codexGrants({ where, env: {}, gitCommonDir: null, isDir: (d) => d === "/home/u/.npm" }), ["/home/u/.npm"]);
   // The environment names each cache; a relative XDG value is ignored for its default (the XDG rule).
   const named = { GOMODCACHE: "/m", GOCACHE: "/b", npm_config_cache: "/n", BUN_INSTALL_CACHE_DIR: "/c", XDG_DATA_HOME: "rel" };
-  assert.deepEqual(codexGrants({ home, env: named, isDir: () => true }).filter((d) => !d.includes("herdr-core") && !d.includes("pnpm")),
+  assert.deepEqual(codexGrants({ where, env: named, isDir: () => true }).filter((d) => !d.includes("herdr-core") && !d.includes("pnpm")),
     ["/m", "/b", "/n", "/c"]);
-  // #1142: a general folder whose place can't be proved (a .. with no resolver) can't be kept out: nothing is derived.
-  assert.deepEqual(codexGrantPlan({ home, env: { ...named, XDG_CACHE_HOME: "/q/../q" }, isDir: () => true }), { dirs: [], withheld: ["/q/../q"] });
+  // #1142, each candidate on its own: a general folder whose place can't be proved (a .. with no resolver) withholds only
+  // the candidate under it, counted; the others are granted.
+  assert.deepEqual(codexGrantPlan({ where, env: { ...named, XDG_CACHE_HOME: "/q/../q" }, isDir: () => true }), {
+    dirs: ["/home/u/.local/state/herdr-core", "/home/u/.local/share/herdr-core", "/m", "/b", "/n", "/home/u/.local/share/pnpm/store", "/c"],
+    unproved: ["/q/../q/pnpm"] });
+  // Without observations nothing is proved: every derived folder there is withheld and counted.
+  const blind = codexGrantPlan({ home, env: named, isDir: () => true });
+  assert.deepEqual(blind.dirs, []);
+  assert.equal(blind.unproved.length, codexGrantPaths({ home, env: named }).candidates.length);
 });
 
 test("codexGrants never grants the root, the home folder, a folder above it, or a whole XDG, cache, GOPATH or Bun folder", () => {
   const home = "/home/u";
   const wide = { GOMODCACHE: home, GOCACHE: "/", npm_config_cache: "/home", BUN_INSTALL_CACHE_DIR: `${home}/.cache`,
     XDG_STATE_HOME: home, XDG_DATA_HOME: "/", GOPATH: `${home}/.local` };
-  const got = codexGrants({ home, env: wide, gitDir: home, gitCommonDir: "/", isDir: () => true });
+  const got = codexGrants({ where: modelWhere({ home }), env: wide, gitDir: home, gitCommonDir: "/", isDir: () => true });
+  assert.ok(got.length > 0, "the narrow ones are still granted: this checks something");
   for (const d of got) {
     assert.equal(homeWide(d, home), false, d);
     for (const general of [`${home}/.cache`, `${home}/.local`, `${home}/.local/share`, `${home}/.local/state`, `${home}/.config`, `${home}/go`, `${home}/.bun`]) {
@@ -259,22 +286,43 @@ const probe = (paths) => {
   assert.equal(r.status, 0, r.stderr);
   return resolvedThere(r.stdout);
 };
-/** The launch rules for a tree, every path in `paths` (and the roots) resolved there by the probe. */
-const whereOn = (paths, home, appHome) => codexWhere({ home, appHome, resolve: probe([home, appHome, `${home}/.config/herdr-app`, ...paths]).resolve });
+/** Canonical `p` and each folder above it, up to the root. */
+const chainOf = (p) => { const out = []; for (let c = p; ; c = c.slice(0, c.lastIndexOf("/")) || "/") { out.push(c); if (c === "/") return out; } };
+/** IDENTITY_PROBE run by a real sh on `paths` and every folder above each, read back by idsThere: that machine's dev:ino per path. */
+const observe = (home, paths) => {
+  const all = [...new Set(paths.flatMap(chainOf))];
+  const r = spawnSync("sh", ["-c", IDENTITY_PROBE, "sh", home, ...all], { encoding: "utf8" });
+  assert.equal(r.status, 0, r.stderr);
+  return idsThere(r.stdout, all);
+};
+/**
+ * codexOn's two probes for a tree: RESOLVE_PROBE on `paths` and the roots, then IDENTITY_PROBE on each canonical answer
+ * and every folder above it. { where, resolve, isDir }.
+ */
+const machineWhere = (paths, home, appHome = null) => {
+  const asked = [home, ...(appHome ? [appHome] : []), `${home}/.config/herdr-app`, ...paths];
+  const { resolve, isDir } = probe(asked);
+  const plain = codexWhere({ home, appHome, resolve });
+  const id = plain.home ? observe(plain.home, asked.map((q) => plain.canon(q)).filter(Boolean)) : null;
+  return { where: codexWhere({ home, appHome, resolve, id }), resolve, isDir };
+};
+/** The launch rules for a tree, every path in `paths` (and the roots) resolved and observed there by the probes. */
+const whereOn = (paths, home, appHome) => machineWhere(paths, home, appHome).where;
 
 test("#1142 an --add-dir naming the home folder or an app home by any alias (dot, parent, symlink, inside, above) goes; ordinary folders stay", (t) => {
   const { root, home, app } = tree(t);
   const blocked = [`${home}/.`, `${home}/`, `${home}/work/..`, join(root, "to-home"), `${join(root, "to-home")}/`, app, join(app, "sub"),
-    join(root, "to-app"), join(root, "to-app", "sub"), join(home, ".config"), join(root, "dangling"), join(root, "dangling", "x"),
-    join(root, "file", "x"), root, "/", "..", "sub"];
-  const allowed = [join(home, "work"), join(home, ".config/other"), join(home, ".npm"), join(root, "to-home", "work"), join(home, "new-folder"),
-    join(root, "shared")];
-  const where = whereOn([...blocked, ...allowed], home, app);
-  const { argv, dropped } = codexClean(["codex", ...[...blocked, ...allowed].flatMap((d) => ["--add-dir", d]), "-m", "x"], where);
+    join(root, "to-app"), join(root, "to-app", "sub"), join(home, ".config"), root, "/", "..", "sub"];
+  // Places that can't be proved there (a dangling link, a file in the way, a folder that isn't there to observe): withheld.
+  const unknown = [join(root, "dangling"), join(root, "dangling", "x"), join(root, "file", "x"), join(home, "new-folder")];
+  const allowed = [join(home, "work"), join(home, ".config/other"), join(home, ".npm"), join(root, "to-home", "work"), join(root, "shared")];
+  const where = whereOn([...blocked, ...unknown, ...allowed], home, app);
+  const { argv, dropped, unproved } = codexClean(["codex", ...[...blocked, ...unknown, ...allowed].flatMap((d) => ["--add-dir", d]), "-m", "x"], where);
   // Each kept one is passed as the canonical value it was checked as (#1142): the path through a link as its target.
   assert.deepEqual(addDirs(argv), allowed.map((d) => (d === join(root, "to-home", "work") ? join(home, "work") : d)),
-    "positive controls: a project folder, an app home's sibling, a cache, a path through a link, a new folder");
+    "positive controls: a project folder, an app home's sibling, a cache, a path through a link");
   assert.deepEqual(dropped, ["--add-dir"], "named by flag, never by value");
+  assert.deepEqual(unproved, unknown, "withheld and counted by the launch's warning, never named as left out");
   assert.deepEqual(codexClean(["codex", `--add-dir=${home}/.`, `--add-dir=${join(home, "work")}`], where).argv, ["codex", `--add-dir=${join(home, "work")}`]);
   // launchRun the same way; a word after -- is no option and stays as written.
   assert.deepEqual(launchRun("codex", ["codex", "--add-dir", join(root, "to-home"), "--", "--add-dir", home], {}, where), ["codex", ...MODE, "--", "--add-dir", home]);
@@ -283,19 +331,20 @@ test("#1142 an --add-dir naming the home folder or an app home by any alias (dot
   // The default app home under the home folder stays protected whatever the effective one is.
   assert.equal(codexDirAllowed(app, whereOn([], home, join(root, "shared"))), false);
   // A finished argv (a linked machine's): the same rule, by codexKeepDirs.
-  assert.deepEqual(codexKeepDirs(["codex", ...MODE, "--add-dir", `${home}/.`, "--add-dir", join(home, "work"), "resume", "--last"], where),
-    { argv: ["codex", ...MODE, "--add-dir", join(home, "work"), "resume", "--last"], dropped: true });
+  assert.deepEqual(codexKeepDirs(["codex", ...MODE, "--add-dir", `${home}/.`, "--add-dir", join(home, "work"), "--add-dir", join(root, "dangling"),
+    "resume", "--last"], where), { argv: ["codex", ...MODE, "--add-dir", join(home, "work"), "resume", "--last"], dropped: true,
+    unproved: [join(root, "dangling")] });
 });
 
 test("#1142 codexGrants: a cache or XDG override naming the home folder or an app home by any alias is never granted; real caches are", (t) => {
   const { root, home, app } = tree(t);
   const env = { GOCACHE: app, npm_config_cache: `${home}/.`, GOMODCACHE: join(root, "to-home"), XDG_CACHE_HOME: join(root, "to-app"),
     BUN_INSTALL_CACHE_DIR: join(home, ".npm"), XDG_STATE_HOME: join(root, "state") };
-  const { resolve, isDir } = probe([home, app, `${home}/.config/herdr-app`, ...Object.values(env), join(root, "to-app/pnpm"), join(root, "to-app/go-build"),
+  const { where, isDir } = machineWhere([...Object.values(env), join(root, "to-app/pnpm"), join(root, "to-app/go-build"),
     join(root, "state/herdr-core"), join(home, ".local/share"), join(home, ".local/share/herdr-core"), join(home, ".local/share/pnpm/store"),
-    join(home, ".config"), join(home, ".local"), join(home, "go"), join(home, ".bun"), join(home, ".bun/install/cache")]);
-  const where = codexWhere({ home, appHome: app, resolve });
-  assert.deepEqual(codexGrants({ where, env, isDir }), [join(root, "state/herdr-core"), join(home, ".npm")]);
+    join(home, ".config"), join(home, ".local"), join(home, "go"), join(home, ".bun"), join(home, ".bun/install/cache")], home, app);
+  // The folders that aren't there (the data folder's) are just not granted; nothing is withheld.
+  assert.deepEqual(codexGrantPlan({ where, env, isDir }), { dirs: [join(root, "state/herdr-core"), join(home, ".npm")], unproved: [] });
 });
 
 test("#1142 a linked machine's folders are resolved there: the probe answers per path; a path it wasn't asked about proves nothing", (t) => {
@@ -310,9 +359,10 @@ test("#1142 a linked machine's folders are resolved there: the probe answers per
   assert.equal(isDir(join(home, "new-folder")), false);
   assert.equal(resolve(join(root, "to-app", "sub")), join(app, "sub"));
   assert.equal(isDir(join(app, "sub")), true);
-  // Never this computer's answer: a path the machine wasn't asked about resolves to nothing, so it goes.
+  // Never this computer's answer: a path the machine wasn't asked about resolves to nothing, so it is withheld and counted.
   assert.equal(resolve(join(home, "work")), null);
-  assert.deepEqual(codexKeepDirs(["codex", "--add-dir", join(home, "work")], codexWhere({ home, appHome: app, resolve })), { argv: ["codex"], dropped: true });
+  assert.deepEqual(codexKeepDirs(["codex", "--add-dir", join(home, "work")], codexWhere({ home, appHome: app, resolve, id: idHere })),
+    { argv: ["codex"], dropped: false, unproved: [join(home, "work")] });
   // A root it can't resolve is still protected as written.
   assert.equal(codexDirAllowed(app, codexWhere({ home, appHome: app, resolve: () => null })), false);
 });
@@ -357,8 +407,8 @@ test("#1142 a seat's Codex template is kept only when Codex provably gets the pa
     assert.match(p.templateNote, why, command);
     modeAsOptions(codexReceives(t, p.argv), command);
   }
-  // A template naming the home folder or an app home is set aside too (the launch's rules).
-  const where = codexWhere({ home: "/home/u", appHome: "/home/u/.config/herdr-app" });
+  // A template naming the home folder or an app home is set aside too (the launch's rules; the test-only model observer).
+  const where = modelWhere({ home: "/home/u", appHome: "/home/u/.config/herdr-app" });
   for (const command of ["codex --add-dir /home/u/.", "codex --add-dir /home/u/.config/herdr-app", "codex --add-dir /home/u/.config"]) {
     const p = plan(command, { where });
     assert.deepEqual([p.template, p.granted], [null, false], command);
@@ -398,7 +448,6 @@ function linkTree(t) {
 }
 /** This computer's resolver, as canonHere answers it: the realpath of the exact form (kernel semantics), null when it isn't there. */
 const realHere = (p) => canonHere(p);
-const isDirHere = (p) => { try { return statSync(p).isDirectory(); } catch { return false; } };
 
 test("#1142 a symlink's .. is resolved the filesystem's way, never as text; each --add-dir passed is the value checked (source, probe, grants)", (t) => {
   const { home, app, S, up } = linkTree(t);
@@ -422,27 +471,27 @@ test("#1142 a symlink's .. is resolved the filesystem's way, never as text; each
   assert.equal(codexWhere({ home, resolve: () => `${S}/real/..` }).canon(S), null);
   const words = ["codex", "--add-dir", up("home-link"), "--add-dir", up("app-link"), "--add-dir", up("real"), "--add-dir", join(S, "home-link"),
     `--add-dir=${up("app-link")}`, `--add-dir=${up("real")}`, "-m", "x"];
-  const local = codexWhere({ home, appHome: app, resolve: realHere });
+  const local = codexWhere({ home, appHome: app, resolve: realHere, id: idHere });
   const remote = whereOn([...words.slice(1)].map((w) => w.replace(/^--add-dir=/, "")).filter((w) => w.startsWith("/")), home, app);
   for (const [name, where] of [["here", local], ["through the probe", remote]]) {
-    const { argv, dropped } = codexClean(words, where);
+    const { argv, dropped, unproved } = codexClean(words, where);
     // S/real/.. is passed as S and the link as its target; the two whose .. reaches the home folder or the app home go.
     assert.deepEqual(argv, ["codex", "--add-dir", S, "--add-dir", join(home, "work"), `--add-dir=${S}`, "-m", "x"], name);
-    assert.deepEqual(dropped, ["--add-dir"], name);
+    assert.deepEqual([dropped, unproved], [["--add-dir"], []], name);
     for (const v of [...addDirs(argv), S]) assert.equal(realpathSync.native(v), v, `${name}: passed as its canonical value`);
     assert.deepEqual(addDirs(launchRun("codex", words, {}, where)), [S, join(home, "work")], name);
-    assert.deepEqual(codexKeepDirs(words, where), { argv, dropped: true }, name);
+    assert.deepEqual(codexKeepDirs(words, where), { argv, dropped: true, unproved: [] }, name);
   }
   // A derived folder whose .. leads to the home folder or the app home is never granted; one whose .. leads to S is, as S.
   const env = { GOCACHE: up("home-link"), XDG_CACHE_HOME: up("app-link"), GOMODCACHE: up("real") };
-  const grants = codexGrants({ where: local, env, isDir: isDirHere });
+  const grants = codexGrants({ where: local, env, isDir: dirHere });
   assert.deepEqual(grants, [S, join(home, ".npm")]);
   for (const g of grants) assert.ok(![home, app].includes(realpathSync.native(g)), g);
 });
 
 test("#1142 a template's --add-dir is kept only when written as the canonical value it is checked as: the seat falls back, the helper is refused", (t) => {
   const { root, home, app, S, up } = linkTree(t);
-  const where = codexWhere({ home, appHome: app, resolve: realHere });
+  const where = codexWhere({ home, appHome: app, resolve: realHere, id: idHere });
   const bot = { agent: "codex" };
   const run = launchRun("codex", ["codex"], bot, where);
   const plan = (command) => restartPlan({ bot, run, runningAgent: "codex", session: "s-1", template: { name: "seat-tpl", command }, grants: [], where });
@@ -533,25 +582,33 @@ test("#1142 a template's words are proved to reach Codex only for one literal sh
   assert.equal(codexForwards('/opt/tools/codex "$@" -m x'), true);
 });
 
-/** A home folder H with both herdr-core folders, caches, a repo and a cache root inside a data folder; spellings of it. */
+/**
+ * A home folder H with its default app home, both herdr-core folders, caches, a repo and a cache root inside a data
+ * folder; spellings of it; and a home B like it but without an app home (none installed there).
+ */
 function homeTree(t) {
   const root = realpathSync(scratchRoot(t, "hb-1142-h-"));
-  const H = join(root, "home");
-  for (const d of [".local/state/herdr-core", ".local/share/herdr-core", ".npm", "go-mod", "proj/.git", "data/cache", "plain"]) mkdirSync(join(H, d), { recursive: true });
+  const H = join(root, "home"), B = join(root, "bare");
+  for (const d of [".config/herdr-app", ".local/state/herdr-core", ".local/share/herdr-core", ".npm", "go-mod", "proj/.git", "data/cache", "plain"]) {
+    mkdirSync(join(H, d), { recursive: true });
+  }
+  for (const d of [".local/state/herdr-core", ".npm", "plain"]) mkdirSync(join(B, d), { recursive: true });
   mkdirSync(join(root, "x"));
   symlinkSync(H, join(root, "alias"));
   symlinkSync(root, join(root, "up"));
   symlinkSync(join(root, "nowhere"), join(H, "gp"));
   // H as written, through a symlink, through a .., and under a symlinked folder above it.
-  return { root, H, spellings: [H, join(root, "alias"), `${root}/x/../home`, join(root, "up", "home")] };
+  return { root, H, B, spellings: [H, join(root, "alias"), `${root}/x/../home`, join(root, "up", "home")] };
 }
-/** codexOn's pipeline for a machine whose HOME is spelled `home`: one inventory, probed by a real sh, weighed by codexGrantPlan. */
+/** codexOn's pipeline for a machine whose HOME is spelled `home`: one inventory, probed by a real sh (both probes), weighed by codexGrantPlan. */
 const linkedGrants = (home, env, extra = {}) => {
   const inventory = codexGrantPaths({ home, env, ...extra });
-  const there = probe([home, `${home}/.config/herdr-app`, ...inventory.candidates, ...inventory.general]);
-  return codexGrantPlan({ where: codexWhere({ home, resolve: there.resolve }), env, isDir: there.isDir, paths: inventory });
+  const { where, isDir } = machineWhere([...inventory.candidates, ...inventory.general], home);
+  return codexGrantPlan({ where, env, isDir, paths: inventory });
 };
-const localGrants = (home, env, extra = {}) => codexGrantPlan({ where: codexWhere({ home, resolve: canonHere, same: sameHere }), home, env, isDir: isDirHere, ...extra });
+/** localCodexGrantPlan's: this computer's resolver, stat and folder check. */
+const localGrants = (home, env, extra = {}) => codexGrantPlan({ where: codexWhere({ home, resolve: canonHere, id: idHere }), home, env, isDir: dirHere,
+  ...extra });
 
 test("#1142 one inventory: a HOME spelled through a symlink, a .. or a linked folder keeps both core folders and every general folder out, here and there", (t) => {
   const { H, spellings } = homeTree(t);
@@ -567,80 +624,188 @@ test("#1142 one inventory: a HOME spelled through a symlink, a .. or a linked fo
     for (const [env, extra, want] of cases) {
       // "there, where only": the rules and no inventory, as a direct call gives them; built from the home as spelled (where.spelled).
       const inventory = codexGrantPaths({ home, env, ...extra });
-      const asked = probe([home, `${home}/.config/herdr-app`, ...inventory.candidates, ...inventory.general]);
-      const whereOnly = codexGrantPlan({ where: codexWhere({ home, resolve: asked.resolve }), env, isDir: asked.isDir, ...extra });
+      const asked = machineWhere([...inventory.candidates, ...inventory.general], home);
+      const whereOnly = codexGrantPlan({ where: asked.where, env, isDir: asked.isDir, ...extra });
       for (const [name, plan] of [["there", linkedGrants(home, env, extra)], ["here", localGrants(home, env, extra)], ["there, where only", whereOnly]]) {
-        assert.deepEqual(plan, { dirs: want, withheld: [] }, `${name} ${home} ${JSON.stringify(env)}`);
+        assert.deepEqual(plan, { dirs: want, unproved: [] }, `${name} ${home} ${JSON.stringify(env)}`);
       }
     }
-    // A general folder that can't be resolved (a dangling GOPATH) can't be kept out: nothing is derived.
-    for (const plan of [linkedGrants(home, { GOPATH: `${home}/gp` }), localGrants(home, { GOPATH: `${home}/gp` })]) {
-      assert.deepEqual(plan.dirs, [], home);
-      assert.equal(plan.withheld.length, 1, home);
+    // #1142, each candidate on its own: a general folder that can't be resolved (a dangling GOPATH) withholds only the
+    // candidate under it (Go's module cache), counted once; the other folders are granted.
+    for (const [name, plan] of [["there", linkedGrants(home, { GOPATH: `${home}/gp` })], ["here", localGrants(home, { GOPATH: `${home}/gp` })]]) {
+      assert.deepEqual(plan, { dirs: [...core, join(H, ".npm")], unproved: [cleanPath(`${home}/gp/pkg/mod`)] }, `${name} ${home}`);
+      assert.equal(codexWithheldWarning(plan.unproved.length, plan.dirs.length), someWithheld(1), `${name} ${home}`);
     }
   }
 });
 
-test("#1142 a protected root that can't be resolved withholds every --add-dir and every derived folder, with a note; resolved roots keep the narrow ones", (t) => {
+test("#1142 a protected root that can't be resolved withholds every --add-dir and every derived folder, with the warning; resolved roots keep the narrow ones", (t) => {
   const { H } = homeTree(t);
   const narrow = ["codex", "--add-dir", join(H, "plain")];
   for (const [label, opts] of [["a relative HOME", { home: "rel/home" }], ["an empty HOME", { home: "" }], ["a relative app home", { home: H, appHome: "rel/app" }],
     ["a resolver error", { home: H, resolve: () => { throw new Error("no"); } }]]) {
-    const where = codexWhere({ resolve: canonHere, same: sameHere, ...opts });
+    const where = codexWhere({ resolve: canonHere, id: idHere, ...opts });
     assert.ok(where.unproved.length, label);
     assert.equal(where.canon(join(H, "plain")), null, `${label}: canon proves nothing`);
-    assert.equal(codexDirAllowed(join(H, "plain"), where), false, `${label}: nor does the folder rule allow a canonical folder`);
-    assert.deepEqual(codexClean(narrow, where).argv, ["codex"], `${label}: even a narrow folder`);
-    assert.deepEqual(codexGrantPlan({ where, home: opts.home, env: {}, isDir: isDirHere }).dirs, [], label);
-    assert.match(codexCleanNote(["codex"], where), /can't be resolved, so it starts with its working folder only: no --add-dir and no derived folder/, label);
+    assert.equal(codexDirVerdict(join(H, "plain"), where), "unproved", `${label}: nor does the folder rule allow a canonical folder`);
+    const cleaned = codexClean(narrow, where);
+    assert.deepEqual(cleaned, { argv: ["codex"], dropped: [], unproved: [join(H, "plain")] }, `${label}: even a narrow folder, withheld and counted`);
+    const plan = codexGrantPlan({ where, home: opts.home, env: {}, isDir: dirHere });
+    assert.deepEqual(plan.dirs, [], label);
+    // The launch's one warning: nothing passed, so no additional grants at all; never named as a flag left out.
+    assert.equal(codexWithheldWarning(new Set([...cleaned.unproved, ...plan.unproved]).size, 0), ALL_WITHHELD, label);
+    assert.equal(codexCleanNote(narrow, where), null, label);
   }
-  const ok = codexWhere({ home: H, resolve: canonHere, same: sameHere });
+  const ok = codexWhere({ home: H, resolve: canonHere, id: idHere });
   assert.deepEqual(ok.unproved, []);
-  assert.deepEqual(codexClean(narrow, ok).argv, narrow, "the narrow folder stays");
+  assert.deepEqual(codexClean(narrow, ok), { argv: narrow, dropped: [], unproved: [] }, "the narrow folder stays");
   assert.equal(codexCleanNote(narrow, ok), null);
 });
 
-test("#1142 by object identity: an alias the paths don't show is refused, here (stat) and there (test -ef); an unknown answer refuses", (t) => {
+test("#1142 a home whose default app home isn't there, or can't be observed: every folder withheld, here and there, with the full warning", (t) => {
+  const { B } = homeTree(t);
+  const narrow = ["codex", "--add-dir", join(B, "plain")];
+  const want = { dirs: [], unproved: [join(B, ".local/state/herdr-core"), join(B, ".npm")] };
+  // Resolved (its folder above is there), but nothing there to observe: the app home walk fails, so nothing is proved.
+  for (const [name, where, plan] of [["here", codexWhere({ home: B, resolve: canonHere, id: idHere }), localGrants(B, {})],
+    ["there", whereOn([join(B, "plain")], B, null), linkedGrants(B, {})]]) {
+    assert.deepEqual(where.unproved, [], `${name}: resolved`);
+    assert.equal(codexDirVerdict(join(B, "plain"), where), "unproved", name);
+    const cleaned = codexClean(narrow, where);
+    assert.deepEqual(cleaned, { argv: ["codex"], dropped: [], unproved: [join(B, "plain")] }, name);
+    assert.deepEqual(plan, want, name);
+    assert.equal(codexWithheldWarning(new Set([...cleaned.unproved, ...plan.unproved]).size, plan.dirs.length), ALL_WITHHELD, name);
+  }
+  // Positive control: made, the same home's folders are granted.
+  mkdirSync(join(B, ".config/herdr-app"), { recursive: true });
+  for (const [name, plan] of [["here", localGrants(B, {})], ["there", linkedGrants(B, {})]]) {
+    assert.deepEqual(plan, { dirs: want.unproved, unproved: [] }, `${name}: with its app home`);
+  }
+});
+
+test("#1142 each candidate on its own: one that isn't there is just not granted, one whose folder check fails after it resolved is withheld and counted", (t) => {
+  const { H } = homeTree(t);
+  const env = { XDG_CACHE_HOME: join(H, "no-cache"), GOMODCACHE: join(H, "go-mod"), GOCACHE: join(H, "no-go-build"), npm_config_cache: join(H, ".npm") };
+  const core = [join(H, ".local/state/herdr-core"), join(H, ".local/share/herdr-core")];
+  const where = codexWhere({ home: H, resolve: canonHere, id: idHere });
+  // Positive control: the absent cache root (and everything under it) withholds nothing.
+  assert.deepEqual(codexGrantPlan({ where, env, isDir: dirHere }), { dirs: [...core, join(H, "go-mod"), join(H, ".npm")], unproved: [] });
+  // Each resolved here; then the folder check of one answers neither yes nor no, and another's throws.
+  for (const [label, bad] of [["unknown", () => null], ["undefined", () => undefined], ["a throw", () => { throw Object.assign(new Error("EACCES"), { code: "EACCES" }); }]]) {
+    const isDir = (p) => (p === join(H, "go-mod") || p === join(H, ".npm") ? bad() : dirHere(p));
+    const plan = codexGrantPlan({ where, env, isDir });
+    assert.deepEqual(plan, { dirs: core, unproved: [join(H, "go-mod"), join(H, ".npm")] }, label);
+    assert.equal(codexWithheldWarning(plan.unproved.length, plan.dirs.length), someWithheld(2), label);
+  }
+  // Only those: every check failing withholds them all, counted once each, and says no additional grants.
+  const none = codexGrantPlan({ where, env, isDir: () => null });
+  assert.deepEqual(none.dirs, []);
+  assert.equal(codexWithheldWarning(none.unproved.length, none.dirs.length), ALL_WITHHELD);
+  assert.equal(codexWithheldWarning(0, 3), null, "nothing withheld: no warning");
+});
+
+test("#1142 an unreadable candidate (EACCES) is withheld and counted beside a missing one and the granted ones, here and there; an unreadable app home withholds all",
+  { skip: process.getuid?.() === 0 ? "root reads every folder: no EACCES to observe" : false }, (t) => {
+  const { H } = homeTree(t);
+  const locked = join(H, "locked");
+  mkdirSync(join(locked, "cache"), { recursive: true });
+  const env = { XDG_CACHE_HOME: join(H, "no-cache"), GOCACHE: join(locked, "cache"), GOMODCACHE: join(H, "no-such-mod"), npm_config_cache: join(H, ".npm") };
+  const extra = { gitDir: join(H, "proj/.git") };
+  const want = [join(H, "proj/.git"), join(H, ".local/state/herdr-core"), join(H, ".local/share/herdr-core"), join(H, ".npm")];
+  chmodSync(locked, 0);
+  try {
+    for (const [name, plan] of [["there", linkedGrants(H, env, extra)], ["here", localGrants(H, env, extra)]]) {
+      assert.deepEqual(plan, { dirs: want, unproved: [join(locked, "cache")] }, name);
+      assert.equal(codexWithheldWarning(plan.unproved.length, plan.dirs.length), someWithheld(1), name);
+    }
+    // t29q at f9bfba1a: EACCES read as unknown here and as "different" there. Now both are unknown: that folder is
+    // withheld (compared as written, so identity alone decides), and a readable one beside it is not.
+    const ids = observe(H, [join(locked, "cache"), join(H, "plain"), join(H, ".config/herdr-app")]);
+    assert.deepEqual([idHere(join(locked, "cache")), ids(join(locked, "cache"))], [null, null], "a stat that fails is no identity, here or there");
+    for (const [name, id] of [["here", idHere], ["there", ids]]) {
+      const where = codexWhere({ home: H, id });
+      assert.equal(codexDirVerdict(join(locked, "cache"), where), "unproved", name);
+      assert.equal(codexDirVerdict(join(H, "plain"), where), "ok", `${name}: only that folder`);
+    }
+  } finally {
+    chmodSync(locked, 0o755);
+  }
+  // The folder above the app home unreadable: that root can't be proved, so every folder is withheld.
+  chmodSync(join(H, ".config"), 0);
+  try {
+    for (const [name, plan] of [["there", linkedGrants(H, {}, extra)], ["here", localGrants(H, {}, extra)]]) {
+      assert.deepEqual(plan.dirs, [], name);
+      assert.ok(plan.unproved.length >= 3, `${name}: ${JSON.stringify(plan.unproved)}`);
+      assert.equal(codexWithheldWarning(plan.unproved.length, 0), ALL_WITHHELD, name);
+    }
+  } finally {
+    chmodSync(join(H, ".config"), 0o755);
+  }
+});
+
+test("#1142 by object identity: an alias the paths don't show is refused, here (stat) and there (IDENTITY_PROBE); a failed observation withholds", (t) => {
   const { root, home, app } = tree(t);
   mkdirSync(join(home, ".local"));
-  for (const [link, to] of [["h-alias", home], ["a-alias", app], ["above-app", join(home, ".config")], ["l-alias", join(home, ".local")]]) symlinkSync(to, join(root, link));
-  const weighed = ["h-alias", "a-alias", "a-alias/sub", "above-app", "l-alias", "shared"].map((d) => join(root, d));
+  for (const [link, to] of [["h-alias", home], ["a-alias", app], ["above-app", join(home, ".config")], ["l-alias", join(home, ".local")],
+    ["dangling-id", join(root, "nowhere")], ["loop-a", join(root, "loop-b")], ["loop-b", join(root, "loop-a")]]) symlinkSync(to, join(root, link));
+  const weighed = ["h-alias", "a-alias", "a-alias/sub", "above-app", "l-alias", "shared", "missing", "dangling-id", "loop-a"].map((d) => join(root, d));
   const general = [join(home, ".local")];
-  // Paths compared as written (no resolver): only identity can see these aliases.
-  const chainOf = (p) => { const out = []; for (let c = p; ; c = c.slice(0, c.lastIndexOf("/")) || "/") { out.push(c); if (c === "/") return out; } };
+  // Paths compared as written (no resolver): only identity can see these aliases. Observed as codexOn does: each
+  // folder weighed, the home folder, each app home and each general folder, with every folder above them.
   const apps = codexWhere({ home, appHome: app }).appHomes;
-  const protectedDirs = [...new Set([home, ...apps, ...general].flatMap(chainOf))];
-  const pairs = weighed.flatMap((c) => [...protectedDirs.filter((p) => p !== c).map((p) => [c, p]), ...chainOf(c).flatMap((x) => apps.filter((a) => a !== x).map((a) => [x, a]))]);
-  const r = spawnSync("sh", ["-c", IDENTITY_PROBE, "sh", home, ...pairs.flat()], { encoding: "utf8" });
+  const observed = [...new Set([home, ...apps, ...general, ...weighed].flatMap(chainOf))];
+  const r = spawnSync("sh", ["-c", IDENTITY_PROBE, "sh", home, ...observed], { encoding: "utf8" });
   assert.equal(r.status, 0, r.stderr);
-  for (const [name, same] of [["here", sameHere], ["there", sameThere(r.stdout, pairs)]]) {
-    const where = codexWhere({ home, appHome: app, same });
-    for (const d of ["h-alias", "a-alias", "a-alias/sub", "above-app"]) assert.equal(codexDirAllowed(join(root, d), where), false, `${name} ${d}`);
-    assert.equal(codexDirAllowed(join(root, "l-alias"), where, general), false, `${name}: a general folder, for a derived one`);
-    assert.equal(codexDirAllowed(join(root, "l-alias"), where), true, `${name}: an --add-dir may name it`);
-    assert.equal(codexDirAllowed(join(root, "shared"), where, general), true, `${name}: an ordinary folder`);
+  for (const [name, id] of [["here", idHere], ["there", idsThere(r.stdout, observed)]]) {
+    const where = codexWhere({ home, appHome: app, id });
+    for (const d of ["h-alias", "a-alias", "a-alias/sub", "above-app"]) assert.equal(codexDirVerdict(join(root, d), where), "refused", `${name} ${d}`);
+    assert.equal(codexDirVerdict(join(root, "l-alias"), where, general), "refused", `${name}: a general folder, for a derived one`);
+    assert.equal(codexDirVerdict(join(root, "l-alias"), where), "ok", `${name}: an --add-dir may name it`);
+    assert.equal(codexDirVerdict(join(root, "shared"), where, general), "ok", `${name}: an ordinary folder`);
+    // A failed stat (missing, a dangling link, a loop) is unknown, never "different": that folder alone is withheld.
+    for (const d of ["missing", "dangling-id", "loop-a"]) assert.equal(codexDirVerdict(join(root, d), where), "unproved", `${name} ${d}`);
   }
-  assert.equal(codexDirAllowed(join(root, "shared"), codexWhere({ home, appHome: app, same: () => null })), false, "an unknown answer refuses");
-  // The probe proves test -ef first, and never reads a failed test as "different".
-  assert.equal(sameThere("unsupported\n", pairs)(join(root, "shared"), home), null);
-  assert.equal(sameThere("1\n", pairs)(join(root, "shared"), home), null, "an answer that doesn't cover every pair proves nothing");
-  assert.equal(sameThere("1\n", pairs)(...pairs[0]), null, "not even for the pair it would answer");
-  // A dangling link is unknown (never "different"); a missing path is another object, here and there.
-  symlinkSync(join(root, "nowhere"), join(root, "dangling-id"));
-  const edge = [[join(root, "dangling-id"), home], [join(root, "missing"), home], [join(root, "missing"), join(root, "missing-too")]];
-  const e = spawnSync("sh", ["-c", IDENTITY_PROBE, "sh", home, ...edge.flat()], { encoding: "utf8" });
-  assert.deepEqual(edge.map(([a, b]) => sameThere(e.stdout, edge)(a, b)), [null, false, false], "there");
-  assert.deepEqual(edge.slice(1).map(([a, b]) => sameHere(a, b)), [false, false], "here: two missing paths are not one object");
+  // The answer there: only what it observed, as observed. One "?" or malformed line withholds that folder; a root's
+  // withholds every folder; an answer that is unsupported, short, longer, headless or empty (a failed hc exec) proves nothing.
+  const lines = r.stdout.split("\n");
+  const edited = (p, v) => lines.map((l, i) => (i === observed.indexOf(p) + 1 ? v : l)).join("\n");
+  const verdict = (stdout, d = join(root, "shared")) => codexDirVerdict(d, codexWhere({ home, appHome: app, id: idsThere(stdout, observed) }), general);
+  assert.equal(verdict(r.stdout), "ok", "positive control");
+  for (const bad of ["?", "12:34:56", "1:x", "", "1"]) {
+    assert.equal(verdict(edited(join(root, "shared"), bad)), "unproved", `its own line ${JSON.stringify(bad)}`);
+    assert.equal(verdict(edited(join(root, "shared"), bad), join(root, "h-alias")), "refused", `${JSON.stringify(bad)}: another folder's answer stands`);
+  }
+  for (const p of [home, app, join(home, ".config"), root]) assert.equal(verdict(edited(p, "?")), "unproved", `a protected root's walk: ${p}`);
+  for (const [label, stdout] of [["unsupported", "unsupported\n"], ["short", lines.slice(0, -2).join("\n")], ["longer", `${r.stdout}1:1\n`],
+    ["headless", lines.slice(1).join("\n")], ["empty", ""]]) {
+    assert.equal(verdict(stdout), "unproved", label);
+    assert.equal(verdict(stdout, join(root, "h-alias")), "unproved", `${label}: nothing is proved either way`);
+  }
+  assert.equal(idsThere(r.stdout, observed)(join(root, "not-asked")), null, "a path it wasn't asked about: no answer, no shortcut");
   const odd = spawnSync("sh", ["-c", IDENTITY_PROBE, "sh", join(root, "nowhere"), join(root, "shared"), home], { encoding: "utf8" });
-  assert.equal(odd.stdout.trim(), "unsupported", "no folder to prove test -ef on");
+  assert.equal(odd.stdout.trim(), "unsupported", "no folder to pick stat's form on");
+  // Its symlink form is refused: the path is resolved first (realpath), and an app home is above it.
+  assert.equal(codexDirVerdict(canonHere(join(root, "a-alias", "sub")), codexWhere({ home, appHome: app, resolve: canonHere, id: idHere })), "refused");
+  // A bind mount (modelled: a folder with another's dev:ino) of an app home itself, or of a folder above one, is refused.
+  const bindOf = (target) => (p) => (p === join(root, "shared") ? idHere(target) : idHere(p));
+  for (const target of [app, join(home, ".config"), home]) {
+    assert.equal(codexDirVerdict(join(root, "shared"), codexWhere({ home, appHome: app, id: bindOf(target) })), "refused", target);
+  }
+  // KNOWN LIMIT (#1151, owner-accepted; t29q's model at f9bfba1a): a bind mount that shows a folder INSIDE an app home
+  // under another path has that folder's dev:ino, and no folder above it is an app home, so the walk can't tell: it is
+  // still allowed. A model result, recorded as it is: not fixed, and not a mount test.
+  assert.equal(codexDirVerdict(join(root, "shared"), codexWhere({ home, appHome: app, id: bindOf(join(app, "sub")) })), "ok",
+    "KNOWN LIMIT #1151: a bind of an app home's descendant is still allowed");
 });
 
 test("#1142 a Codex seat on a linked machine whose HOME is an alias: both core folders and the caches it names are granted as canonical values, .local stays out, start and restart", (t) => {
   const root = realpathSync(scratchRoot(t, "hb-1142-va-"));
   const bin = join(root, "bin"), home = join(root, "home"), app = join(root, "app"), vm = join(root, "vm"), vmBin = join(root, "vm-bin"), alias = join(root, "vm-alias");
-  for (const d of [bin, home, app, vmBin, join(vm, ".local/state/herdr-core"), join(vm, ".local/share/herdr-core"), join(vm, "go-mod")]) mkdirSync(d, { recursive: true });
+  for (const d of [bin, home, app, vmBin, join(home, ".config/herdr-app"), join(vm, ".config/herdr-app"), join(vm, ".local/state/herdr-core"),
+    join(vm, ".local/share/herdr-core"), join(vm, "go-mod")]) mkdirSync(d, { recursive: true });
   symlinkSync(vm, alias);
   symlinkSync(join(root, "nowhere"), join(vm, "gp"));
+  symlinkSync(join(root, "nowhere"), join(vm, "dangling"));
   exe(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
   exe(join(bin, "herdr-app"), "#!/bin/sh\nexit 1\n");
   exe(join(vmBin, "codex"), "#!/bin/sh\nexit 0\n");
@@ -667,20 +832,33 @@ test("#1142 a Codex seat on a linked machine whose HOME is an alias: both core f
   modeAsOptions(start.argv.slice(1), "the linked seat");
   const again = cli("restart", "Dev", "--fresh", "--force");
   assert.deepEqual(addDirs(again.argv), want, "its restart: the same");
-  // A general folder there that can't be resolved (a dangling GOPATH): nothing derived, said once.
+  for (const r of [start.r, again.r]) assert.equal(r.stderr.includes("Codex extra folders withheld"), false, "nothing withheld: no warning");
+  // #1142, each candidate on its own: a general folder there that can't be resolved (a dangling GOPATH) withholds only
+  // Go's module cache under it, and an --add-dir through a dangling link only itself (written twice: one folder); the
+  // other folders are granted. One warning per launch, counting each withheld folder once.
+  const once = (stderr, text) => stderr.split(text).length - 1;
+  writeFileSync(join(app, "programs.json"), `${JSON.stringify({ programs: { codex: { run: ["codex", "--add-dir", `${alias}/dangling/x`,
+    `--add-dir=${alias}/dangling/x`] } } })}\n`);
   machine({ GOPATH: `${alias}/gp` });
-  const held = cli("start", "Dev");
-  assert.deepEqual(addDirs(held.argv), []);
-  assert.match(held.r.stderr, /vm: Codex's derived folders were withheld: 1 folder\(s\) they must stay out of can't be resolved there/);
-  // The same seat started on this computer, its GOPATH a dangling link here.
+  const kept = [realpathSync(join(project, ".git")), join(vm, ".local/state/herdr-core"), join(vm, ".local/share/herdr-core")];
+  for (const verb of [["start", "Dev"], ["restart", "Dev", "--fresh", "--force"]]) {
+    const held = cli(...verb);
+    assert.deepEqual(addDirs(held.argv), kept, verb[0]);
+    modeAsOptions(held.argv.slice(1), verb[0]);
+    assert.equal(once(held.r.stderr, `vm: ${someWithheld(2)}`), 1, `${verb[0]}: ${held.r.stderr}`);
+    assert.equal(once(held.r.stderr, "Codex extra folders withheld"), 1, `${verb[0]}: one warning for the launch`);
+    assert.equal(/working folder only/.test(held.r.stderr), false);
+  }
+  // The same seat started on this computer, its GOPATH a dangling link here, the same --add-dir (dangling here through the alias).
   exe(join(bin, "codex"), "#!/bin/sh\nexit 0\n");
   symlinkSync(join(root, "nowhere"), join(root, "gp-here"));
   writeFileSync(logPath, "");
   const here = spawnSync(process.execPath, [CLI, "start", "Dev", "--project", project, "--json"], { cwd: root, encoding: "utf8",
     env: { ...env, ...blank, HERDR_APP_HOME: app, GOPATH: join(root, "gp-here") } });
   assert.equal(here.status, 0, here.stderr);
-  assert.deepEqual(addDirs(launched(readJsonLines(logPath).find((c) => c[0] === "run"))), []);
-  assert.match(here.stderr, /Codex's derived folders were withheld: 1 folder\(s\) they must stay out of can't be resolved here/);
+  assert.deepEqual(addDirs(launched(readJsonLines(logPath).find((c) => c[0] === "run"))), [realpathSync(join(project, ".git"))]);
+  assert.equal(once(here.stderr, someWithheld(2)), 1, here.stderr);
+  assert.equal(once(here.stderr, "Codex extra folders withheld"), 1);
 });
 
 test("#1142 a template worker keeps the owner's command as written, never with the pack's folders; a Codex option after its -- is refused", (t) => {
@@ -721,14 +899,16 @@ test("#1142 a template worker keeps the owner's command as written, never with t
 // ---- the CLI: starts, workers and hc's answers ----
 
 /** A scratch world: a git project whose Codex Dev plays t1, a fake hc and an app home; XDG folders under the root. */
-function scene(t, { programs = null, templates = [] } = {}) {
+function scene(t, { programs = null, templates = [], env: more = {} } = {}) {
   const root = scratchRoot(t, "hb-codexmode-");
   const bots = { version: 1, categories: [], bots: [
     { id: ID.main, name: "Genie", kind: "main", agent: "claude", look: { character: "star", colour: "blue" }, role: "r", instructions: "i" },
     { id: ID.dev, name: "Dev", kind: "member", agent: "codex", look: { character: "star", colour: "blue" }, role: "r", instructions: "i" }] };
   const project = scratchProject(root, "proj", { branch: "main", commit: true, bots });
   const bin = join(root, "bin"), home = join(root, "home"), app = join(root, "app");
-  for (const d of [bin, join(home, ".npm"), join(root, "state/herdr-core"), join(root, "data/herdr-core"), join(app, "mods/am-sidebar")]) {
+  // The default app home under the home folder is there too, as on an installed machine (#1142: one that isn't withholds every folder).
+  for (const d of [bin, join(home, ".npm"), join(home, ".config/herdr-app"), join(root, "state/herdr-core"), join(root, "data/herdr-core"),
+    join(app, "mods/am-sidebar")]) {
     mkdirSync(d, { recursive: true });
   }
   exe(join(bin, "hc"), `#!/bin/sh\nexec "${process.execPath}" "${FAKE_HC}" "$@"\n`);
@@ -744,7 +924,7 @@ function scene(t, { programs = null, templates = [] } = {}) {
   // No attach ledger yet: its one-time import ties t1 to Dev by its bot label, as worker.test.mjs's scenes do.
   const env = { PATH: `${bin}:/usr/bin:/bin`, HOME: home, HERDR_APP_HOME: app, HC_FAKE_STATE: statePath, HC_FAKE_LOG: logPath, LANG: "C",
     GIT_CEILING_DIRECTORIES: root, XDG_STATE_HOME: join(root, "state"), XDG_DATA_HOME: join(root, "data"), XDG_CACHE_HOME: join(root, "cache"),
-    HC_SOCKET: join(root, "unproxied.sock"), AUTOMAGIK_HERDR_TAB_WAIT_MS: "0", AUTOMAGIK_HERDR_RESTART_STABLE_MS: "1" };
+    HC_SOCKET: join(root, "unproxied.sock"), AUTOMAGIK_HERDR_TAB_WAIT_MS: "0", AUTOMAGIK_HERDR_RESTART_STABLE_MS: "1", ...more };
   env.HC_TERMINAL_SOCKET = env.HC_SOCKET;
   const cli = (args, { from = "t1" } = {}) => {
     const r = spawnSync(process.execPath, [CLI, ...args], { cwd: project, env: { ...env, ...(from ? { HC_TERMINAL_ID: from } : {}) }, encoding: "utf8" });
@@ -754,7 +934,7 @@ function scene(t, { programs = null, templates = [] } = {}) {
   const setState = (f) => { const now = state(); f(now); writeFileSync(statePath, JSON.stringify(now)); };
   const runs = () => readJsonLines(logPath).filter((c) => c[0] === "run");
   const grants = [realpathSync(join(project, ".git")), join(root, "state/herdr-core"), join(root, "data/herdr-core"), join(home, ".npm")];
-  return { root, project, home, cli, runs, setState, grants };
+  return { root, project, home, app, cli, runs, setState, grants };
 }
 /** What an `hc run` call launches, past `/usr/bin/env NAME=value…` and the seat's briefing. */
 const launched = (call) => {
@@ -851,6 +1031,8 @@ test("#1142 a Codex seat's start resolves programs.json's --add-dir here: a syml
   assert.deepEqual(addDirs(launched(s.runs()[0])), [join(s.root, "shared"), join(s.root, "shared/real"), ...s.grants],
     "ordinary folders stay, each as its canonical value, before the derived ones");
   assert.match(r.err, /programs\.json's Codex command names --add-dir: left out/);
+  // The two whose place can't be proved here (a dangling link; a .. after a folder that isn't there): withheld, counted, said once.
+  assert.equal(r.err.split(someWithheld(2)).length - 1, 1, r.err);
 });
 
 test("#1142 the CLI refuses a worker template that puts a Codex option after its --, before anything starts; the owner's flags before -- run", (t) => {
@@ -868,6 +1050,41 @@ test("#1142 the CLI refuses a worker template that puts a Codex option after its
   assert.deepEqual(call.slice(-2), ["mac-dev", "task"]);
   assert.equal(call.includes("--add-dir"), false, "no pack-injected --add-dir for a template worker");
   assert.equal("granted" in JSON.parse(mac.out), false);
+});
+
+test("#1142 the CLI says what a Codex launch withheld once per launch, counting each folder once: start, restart, --tree helpers, workers; never for a template worker", (t) => {
+  const out = realpathSync(scratchRoot(t, "hb-1142-out-"));
+  symlinkSync(join(out, "nowhere"), join(out, "dangling"));
+  symlinkSync(join(out, "nowhere"), join(out, "gp"));
+  // Withheld: an --add-dir through a dangling link (written twice: one folder) and Go's module cache under a dangling GOPATH.
+  const s = scene(t, { programs: { codex: { run: ["codex", "--add-dir", join(out, "dangling/x"), `--add-dir=${join(out, "dangling/x")}`] } },
+    templates: [{ name: "mac-dev", command: "codex --no-daemon --dangerously-bypass-approvals-and-sandbox -m gpt-6.1-sol" }],
+    env: { GOPATH: join(out, "gp") } });
+  const text = someWithheld(2);
+  const times = (stderr, x) => stderr.split(x).length - 1;
+  const said = (r, label, n = 1) => {
+    assert.equal(r.code, 0, `${label}: ${r.err}`);
+    assert.equal(times(r.err, text), n, `${label}: ${r.err}`);
+    assert.equal(times(r.err, "Codex extra folders withheld"), n, `${label}: one warning per launch`);
+    assert.equal(/working folder only/.test(r.err), false, label);
+  };
+  // A worker in the launch mode: its launch's warning; the folders that are proved still granted.
+  said(s.cli(["worker", "task one", "--branch", "fix/1142-w", "--agent", "codex", "--json"]), "worker");
+  const own = realpathSync(join(s.project, ".git/worktrees/fix-1142-w"));
+  assert.deepEqual(addDirs(launched(s.runs().at(-1))), [own, ...s.grants], "worker");
+  // A template worker runs its own command: nothing of the pack's, no warning.
+  said(s.cli(["worker", "task two", "--branch", "fix/1142-t", "--template", "mac-dev", "--json"]), "template worker", 0);
+  // Restart --tree: the seat's launch and its Codex worker's, one warning each (the worker's by its name); the template worker none.
+  const tree = s.cli(["restart", "Dev", "--tree", "--fresh", "--force", "--json"], { from: null });
+  said(tree, "restart --tree", 2);
+  assert.equal(times(tree.err, `fix-1142-w: ${text}`), 1, "the helper's, by its name");
+  // A restart alone, then two starts: one each.
+  said(s.cli(["restart", "Dev", "--fresh", "--force", "--json"], { from: null }), "restart");
+  for (const n of [1, 2]) {
+    s.setState((st) => { st.terminals = []; });
+    said(s.cli(["start", "Dev", "--json"], { from: null }), `start ${n}`);
+    assert.deepEqual(addDirs(launched(s.runs().at(-1))), s.grants, `start ${n}`);
+  }
 });
 
 test("#1142 a Codex seat on a linked machine: its --add-dir words and derived folders are weighed by that machine's home and app home", (t) => {
@@ -908,7 +1125,8 @@ test("#1142 a Codex seat on a linked machine: its --add-dir words and derived fo
   assert.deepEqual(addDirs(argv), [join(vm, "shared"), join(vm, "shared/real"), realpathSync(join(project, ".git")), join(vm, ".local/state/herdr-core"),
     join(vm, ".npm")]);
   modeAsOptions(argv.slice(1), "the linked seat");
-  assert.match(r.stderr, /vm: an --add-dir in Codex's command names the home folder, an app home or a folder whose place there can't be proved: left out/);
+  assert.match(r.stderr, /vm: an --add-dir in Codex's command names the home folder, an app home, a folder above one or a relative path: left out \(#1142\)\./);
+  assert.equal(r.stderr.includes("Codex extra folders withheld"), false, "each one is refused by a rule: nothing withheld, no warning");
   assert.ok(readJsonLines(logPath).some((c) => c[0] === "exec" && c.includes("vm") && c.some((w) => typeof w === "string" && w.includes("pwd -P"))),
     "resolved there, through hc exec");
   // Its restart there weighs the same words there: the same folders, each as its canonical value.

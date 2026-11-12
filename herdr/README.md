@@ -1399,8 +1399,8 @@ a worker and a Restart --tree helper:
   followed through the nearest folder that is there, then each `..` from where they led (never
   as text: `link/..` is the parent of the link's target), so an alias of the home folder or the app
   home goes too; a path whose place can't be proved (a dangling link, a file in the way, a `..`
-  after a part that isn't there) goes as well. Codex is passed that canonical value, the one
-  checked, never the path as written. The app home is
+  after a part that isn't there) is withheld (below). Codex is passed that canonical value, the
+  one checked, never the path as written. The app home is
   the launch's effective one (`HERDR_APP_HOME`, a linked project's pane-env) and the default under
   the home folder both. A linked machine's folders are read and resolved there (its environment,
   git and realpaths, through `hc exec`), never against this computer. Anything else the sandbox
@@ -1411,29 +1411,44 @@ a worker and a Restart --tree helper:
   folders granted and the assignments a seat's template may not make (below), and the folders are
   derived once, from the home folder as the launch spells it, then resolved. An XDG, cache or
   `GOPATH` value that isn't an absolute path is ignored and its default used, as the XDG spec says.
-- A protected root that can't be resolved where the launch runs (an empty or relative `HOME` or
-  app home, one the machine doesn't answer for, a resolver error) is never guessed: that launch
-  gets no `--add-dir` and no derived folder, its own included, and one note says so. A general
-  folder (a whole XDG, cache, `GOPATH` or Bun folder) that can't be resolved there can't be kept
-  out either, so nothing is derived and a warning names how many; a source `--add-dir` still
-  stands on its own. A cache folder named at or above a general folder (`GOCACHE` set to the XDG
-  cache's parent, say) is no cache and is not granted.
-- Besides the canonical paths, each folder is weighed by object identity, for an alias the paths
-  don't show: here by `stat` (device and inode), on a linked machine by `test -ef`, after the
-  probe has shown `test -ef` works there on the home folder itself. A folder may not be the same
-  object as the home folder, an app home, a general folder or any folder above one, nor have an
-  app home among itself and the folders above it. An answer that isn't a clear "different" (a
-  missing pair, an error, a dangling link, a shell without `test -ef`) counts as the same, and a
-  machine that can't run the probe gets no `--add-dir` and no derived folder. Only folders that
-  are there can be told apart. That is the mechanism only: bind mounts and case-insensitive
-  disks are not tested; on them the pack relies on the identity answer and refuses when it
-  can't get one.
+- Each folder is then proved outside the app home on its own (#1142), by object identity as well
+  as by path: the folder and every folder above it, the home folder and every folder above it,
+  and each app home and every folder above it are observed where the launch runs with `stat`
+  (device and inode, symlinks followed: here by the pack's own `stat`, on a linked machine by its
+  `stat -L` through `hc exec`). A folder may not be the same object as the home folder or a folder
+  above it, an app home or a folder above one, or a general folder (a whole XDG, cache, `GOPATH` or
+  Bun folder) or a folder above one, nor have an app home among the folders above it. A cache
+  folder named at or above a general folder (`GOCACHE` set to the XDG cache's parent, say) is no
+  cache and is not granted.
+- A failed observation proves nothing and is never read as "different": any `stat` that fails (a
+  missing folder, permission denied, a dangling link, a loop), and a linked machine's answer that
+  is unsupported, short, malformed or missing. A folder whose own resolution or observation fails
+  is withheld alone, and the others are still granted. A derived folder that isn't there is just
+  not granted, and an optional general folder that isn't there or can't be resolved keeps nothing
+  else out: only a folder derived under one that can't be resolved is withheld. The home folder
+  or an app home that can't be resolved or observed (an empty or relative `HOME`, a machine that
+  doesn't answer for it, a resolver error, an app home that isn't there, the default
+  `~/.config/herdr-app` included) withholds every folder: that launch passes no `--add-dir` and no
+  derived folder. Unsupported or unproven layouts get no extra folders.
+- A launch that withheld folders says so once, counting each folder once. When it still passes
+  some: "Codex extra folders withheld: the pack cannot prove N of them are outside the Herdr app
+  home and passes no grant for those; writes outside permitted locations may require automatic
+  review or fail. See #1151." When it passes none: "Codex extra folders withheld: the pack cannot
+  prove they are outside the Herdr app home. It passes no additional folder grants; writes outside
+  permitted locations may require automatic review or fail. See #1151." The mode words,
+  `--no-daemon` and the network switch stay either way. A template worker runs its own command
+  and gets neither the pack's folders nor this warning.
+- Known limit (#1151, accepted by the owner): a bind mount that shows a folder inside an app home
+  under another path has that folder's own device and inode, and no folder above it is an app
+  home, so the pack can't tell it apart and may grant it. The pack claims no bind containment. (A
+  bind of an app home itself, or of a folder above one, is the same object and is refused.)
+  Case-insensitive disks are not tested.
 
 A source that picks its own approvals or sandbox loses those words, named in one warning with
 flag names only (never a value): a `programs.json` Codex run naming the bypass flag or `--yolo`,
 `-a`/`--ask-for-approval` or `-s`/`--sandbox` (separate, joined or `=` forms), `--remote` (another
 app server, outside the pane), an `--add-dir` the folder rules above refuse (by any alias, or a
-relative one, whose place can't be proved), or a `-c`/`--config`
+relative one; one only withheld is counted by the warning above instead), or a `-c`/`--config`
 for `sandbox_mode`, `approval_policy`, `approvals_reviewer`, `sandbox_workspace_write`,
 `default_permissions`, `permission_profile` or `permissions` (on 0.167 a
 `-c default_permissions=":danger-full-access"` overrides `--approve-for-me`). Every other word stays.

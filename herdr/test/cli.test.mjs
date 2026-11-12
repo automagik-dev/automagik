@@ -105,6 +105,7 @@ function scene(t, { terminals = [], briefing = true, amPart = false, window = { 
   writeFileSync(agyLog, "");
   const home = join(root, "home");
   mkdirSync(join(home, ".claude"), { recursive: true });
+  mkdirSync(join(home, ".config/herdr-app"), { recursive: true });
   writeFileSync(join(home, ".claude/settings.json"), JSON.stringify({ model: "sonnet" }));
   // The am part's installed store (RFC 0012), for a CLI-only host: no pack under the app home.
   if (amPart) {
