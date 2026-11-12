@@ -440,6 +440,28 @@ test('an uncertain remote turn never falls back to another model', () => {
   assert.equal(fallbackFor({ failure: { code: 'REMOTE_HERMES', message: LOST }, failed: { provider: 'hermes-remote', model: 'sample' }, fallback: { provider: 'native', model: 'sample' } }), undefined)
 })
 
+test('a paired Bot Chat opens on whatever Hermes runs: no approval setting is read, required or waited for', async t => {
+  for (const info of [{ approval_mode: 'off', yolo: true }, { approval_mode: 'smart', yolo: false }, {}]) {
+    let asked = 0
+    const f = fixture(t, {
+      question: async () => { asked++; return 'deny' },
+      handle: (frame, socket) => {
+        if (frame.method !== 'session.resume') return false
+        const { approval_mode: _mode, yolo: _yolo, ...rest } = f.live.info
+        socket.reply(frame, { ...f.live, info: { ...rest, ...info } })
+        return true
+      },
+    })
+    f.identity.canonicalBot = true
+    await f.wire.connect()
+    await f.run.prepare()
+    const methods = f.sent.map(frame => frame.method)
+    assert.ok(methods.includes('session.list') && methods.includes('session.resume'), JSON.stringify(info))
+    assert.ok(!methods.some(method => ['session.create', 'config.set', 'prompt.submit'].includes(method)), 'the existing Bot Chat is used as it is')
+    assert.equal(asked, 0)
+  }
+})
+
 test('pairing binds one Bot own-chat across segments without remote creation', async t => {
   const f = fixture(t)
   const ctx = fakeContext(), endpoints = new Map()

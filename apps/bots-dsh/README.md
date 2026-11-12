@@ -508,10 +508,13 @@ Setup is three things: **choose a computer, Connect, chat.**
 - **A profile is asked for only when Hermes has more than one.** The picker opens on the one
   Hermes runs as (then its active one, then the first). With one profile the chat opens at once.
 - Everything optional is behind **More** (Bot settings → Remote Hermes → More, or **More
-  options** on a failure): another user, port, identity-file path or Hermes executable path,
-  and a Hermes reached by its **Remote address** over HTTPS (reverse-proxy path prefix
+  options** on a failure): another user, port, identity-file path, Hermes executable path or
+  Hermes home (its data folder), and a Hermes reached by its **Remote address** over HTTPS (reverse-proxy path prefix
   included) with its session token, or the dashboard's user and password. That password is
   used for the sign-in only and is never saved.
+- **Pair Hermes Bot** (Bot settings → Remote Hermes) binds one Bot's own chat to that
+  profile's existing Bot Chat: see [`docs/hermes-bot-pairing.md`](../../docs/hermes-bot-pairing.md).
+  A paired chat opens the same way: no approval setting is read or waited for.
 
 Remote Hermes connects to whatever profile and approval setting that Hermes has, and never
 changes a Hermes setting. The only refusals are real failures, each with what went wrong and

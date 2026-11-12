@@ -109,6 +109,25 @@ test('Settings names the saved computer and profile, shows no key, and More open
   assert.deepEqual(failures, [])
 })
 
+test('Settings keeps the Bot pairing beside the computer, and the Hermes home is asked only under More', async t => {
+  const view = () => ({ ...connectedView(), bots: [{ id: 'sample-bot', name: 'Sample Bot' }], pairedBotId: '' })
+  const settings = await renderSettings(t, async () => view())
+  const pair = settings.document.querySelector('select[aria-label="Pair Hermes Bot"]')
+  assert.ok(pair, 'the pairing row is in Settings')
+  assert.deepEqual([...pair.options].map(option => option.textContent), ['Not paired', 'Sample Bot'])
+  assert.deepEqual([...settings.document.querySelectorAll('section button')].map(node => node.textContent), ['Change computer', 'More', 'Disconnect'])
+  const first = await startWizard(t, {}, { props: { more: false } })
+  assert.ok(first.document.querySelector('[data-step=host]'))
+  assert.equal(first.document.querySelectorAll('input[aria-label="Hermes home (optional)"]').length, 0, 'not in front of the person')
+  const more = await startWizard(t, { 'hermes-remote-test': oneProfile })
+  assert.ok(more.document.querySelector('[data-step=more]'))
+  await more.fill('SSH host or config name', 'sample-box')
+  await more.fill('Hermes home (optional)', '/srv/sample-hermes')
+  await more.click('Connect')
+  await waitFor(() => more.calls.some(call => call.endpoint === 'hermes-remote-test'), 'the connection request')
+  assert.equal(more.calls.find(call => call.endpoint === 'hermes-remote-test').payload.ssh.hermesHome, '/srv/sample-hermes')
+})
+
 test('new setup opens on the computer list; an address and its token are behind More', async t => {
   const { document, click } = await renderSettings(t, async () => ({ ...sampleView(), credentialSet: false, profile: '' }))
   assert.match(document.body.textContent, /No connection saved/)
@@ -316,7 +335,7 @@ test('first use is three things: pick an SSH host, Connect, and the chat opens',
     assert.match(document.querySelector('.bt-hw-content h2').textContent, /Choose a computer/)
     // No route choice, no address or sign-in fields, no optional SSH fields, no test button.
     assert.doesNotMatch(document.body.textContent, /How would you like to connect|Remote address|Session token|Test connection|Test SSH connection/)
-    for (const label of ['User (optional)', 'Port (optional)', 'Key file path', 'Hermes path (optional)', 'Remote address', 'Session token']) assert.equal(document.querySelectorAll(`input[aria-label="${label}"]`).length, 0, label)
+    for (const label of ['User (optional)', 'Port (optional)', 'Key file path', 'Hermes path (optional)', 'Hermes home (optional)', 'Remote address', 'Session token']) assert.equal(document.querySelectorAll(`input[aria-label="${label}"]`).length, 0, label)
     await waitFor(() => document.querySelectorAll('.bt-hw-host-choice').length === 2, 'hosts from the SSH config')
     assert.equal([...document.querySelectorAll('.bt-hw-foot button')].at(-1).disabled, true, 'nothing to connect to yet')
     await click('Use SSH host sample-box')
@@ -333,7 +352,7 @@ test('first use is three things: pick an SSH host, Connect, and the chat opens',
   } finally { saving.resolve(connectedView()) }
   const tested = calls.find(call => call.endpoint === 'hermes-remote-test').payload
   assert.equal(tested.mode, 'ssh')
-  assert.deepEqual(tested.ssh, { host: 'sample-box', user: 'sample-user', port: 2200, identityFile: '', hermesPath: '' })
+  assert.deepEqual(tested.ssh, { host: 'sample-box', user: 'sample-user', port: 2200, identityFile: '', hermesPath: '', hermesHome: '' })
   assert.deepEqual(Object.keys(calls.find(call => call.endpoint === 'hermes-remote-save').payload).sort(), ['profile', 'testId'])
   assert.equal(calls.find(call => call.endpoint === 'hermes-remote-save').payload.profile, 'sample-profile')
   assert.equal(opened[0].modelRef, 'hermes-remote/sample-model')
@@ -448,7 +467,7 @@ test('a typed host starts from its own SSH defaults, not the user and port of a 
   await waitFor(() => calls.some(call => call.endpoint === 'hermes-remote-test'), 'the connection request')
   const tested = calls.find(call => call.endpoint === 'hermes-remote-test').payload
   assert.equal(tested.mode, 'ssh')
-  assert.deepEqual(tested.ssh, { host: 'typed-box', user: '', identityFile: '', hermesPath: '' })
+  assert.deepEqual(tested.ssh, { host: 'typed-box', user: '', identityFile: '', hermesPath: '', hermesHome: '' })
 })
 
 test('dashboard sign-in is masked and a refused test clears the password before editing', async t => {
@@ -875,7 +894,7 @@ test('the computer list shows fourteen searchable aliases and keeps the larger k
   await render.click('Connect')
   await waitFor(() => render.calls.some(call => call.endpoint === 'hermes-remote-test'), 'manually typed SSH test')
   // A typed host carries nothing over from a host picked before it.
-  assert.deepEqual(render.calls.find(call => call.endpoint === 'hermes-remote-test').payload.ssh, { host: 'manual.example.invalid', user: '', identityFile: '', hermesPath: '' })
+  assert.deepEqual(render.calls.find(call => call.endpoint === 'hermes-remote-test').payload.ssh, { host: 'manual.example.invalid', user: '', identityFile: '', hermesPath: '', hermesHome: '' })
   assert.ok(!JSON.stringify(render.calls.find(call => call.endpoint === 'hermes-remote-test').payload).includes('knownHosts'))
 })
 
@@ -890,7 +909,7 @@ test('the SSH host picker projects only four fields and never takes an identity 
   await render.click('Connect')
   await waitFor(() => render.calls.some(call => call.endpoint === 'hermes-remote-test'), 'selected alias test')
   const draft = render.calls.find(call => call.endpoint === 'hermes-remote-test').payload
-  assert.deepEqual(draft.ssh, { host: 'sample-alias', user: 'sample-user', port: 2200, identityFile: '', hermesPath: '' })
+  assert.deepEqual(draft.ssh, { host: 'sample-alias', user: 'sample-user', port: 2200, identityFile: '', hermesPath: '', hermesHome: '' })
   assert.ok(!JSON.stringify(draft).includes(forbidden))
 })
 
