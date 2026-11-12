@@ -543,7 +543,14 @@ export class BotForm {
     cx.spawn(async (cx) => {
       // On a linked machine: past Herdr's 30 s exec limit, or refused where Herdr has only that (#444).
       const args = restartArgs({ botId: bot.id, projectKey: project.key, agent, force, fresh, machine: project.machine ?? null });
-      const r = restartAnswer(await (project.machine ? machineCli(args, "restart") : runCli(args)));
+      let result;
+      try { result = await (project.machine ? machineCli(args, "restart") : runCli(args)); }
+      catch (e) {
+        console.error(e?.stack ?? e);
+        result = { code: 1, err: String(e?.message ?? e) };
+      }
+      if (result.code !== 0) console.error(`automagik-herdr restart: ${result.err}`);
+      const r = restartAnswer(result);
       this.busy = false;
       if (r.refused) {
         this.error = r.refused;

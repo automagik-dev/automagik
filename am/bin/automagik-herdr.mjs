@@ -10,13 +10,14 @@
 
 import { execFile, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { accessSync, chmodSync, closeSync, constants, existsSync, fchmodSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync,
+import { accessSync, appendFileSync, chmodSync, closeSync, constants, existsSync, fchmodSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync,
   renameSync, statSync, unlinkSync, utimesSync, writeFileSync, writeSync } from "node:fs";
 import { homedir, uptime } from "node:os";
 import { dirname, isAbsolute, join, resolve as resolvePath } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { hermesPairEnv } from "../hermesPair.js";
+import { actionError } from "../actionError.js";
 
 import { BOT_LABEL, BOTS_PATH, CHARACTERS, COLOURS, KINDS, MAX_INSTRUCTIONS, OMNI_LOOK, applyBotEdit, checkBots,
   CATEGORY_ID, PROJECTS_FILE, RANKS, cleanProjectPath, collectProjectMap, crossMemberWarnings, crossMembersOf, defaultLook, descendantsOf, effectiveLead, leadsBackTo, listedProjects, mainBotOf, newBotId, newCategoryId,
@@ -3138,8 +3139,9 @@ async function restartOnMachine(opts, project, bot, entry) {
   let cwd = key;
   const oldCwd = old?.foreground?.cwd ?? old?.cwd ?? null;
   if (oldCwd && oldCwd !== key) { try { if ((await remoteProjectOf(machine, oldCwd)).key === key) cwd = oldCwd; } catch { /* the project's */ } }
-  // A session counts only when the command really resumes it by id (--resume <id> in its argv).
-  let session = plan.mode === "resume" && plan.resume[0] === "--resume" && plan.argv.includes(plan.resume[1]) ? plan.resume[1] : null;
+  // Each agent spells resume differently (Codex: resume ID, omp: --resume=ID).
+  // Use the same validated identity as a local restart, rather than Claude's flag spelling.
+  let session = plan.mode === "resume" && !plan.canonicalBot && resumesById(plan.agent) ? sessionFor(plan.agent, label) : null;
   // #598: dsh-tui's id-less -c only once a turn has finished in the old pane (hc's turn counter;
   // missing or unreadable is 0): else a new conversation, and why, in --json's warnings too (F3).
   let turnNote = null;
@@ -4424,7 +4426,7 @@ async function cmdRestart(opts, [ref]) {
       + `or pick a folder whose slug is the same.`);
   }
   const place = opts.space ? { space: opts.space, tab: opts.tab ?? null, from: null } : (old ? placementFrom([old]) ?? undefined : undefined);
-  let resumeId = plan.mode === "resume" && resumesById(plan.agent) ? sessionFor(plan.agent, known?.session) : null;
+  let resumeId = plan.mode === "resume" && !plan.canonicalBot && resumesById(plan.agent) ? sessionFor(plan.agent, known?.session) : null;
   // With no id, a resume takes the folder's latest conversation (--continue, codex resume
   // --last), for every agent: beside another bot on that agent there, a new conversation, and
   // why (#328: an omp --continue picked up a teammate's). Alone there, the resume as before.
@@ -7127,7 +7129,16 @@ export async function main(argv = process.argv.slice(2), io = {}) {
     if (TIDIES.has(command) && opts.machine === undefined) { await tidyQuietly(); await recordSessions(); }
     return exitAfter.code;
   } catch (e) {
-    const message = e instanceof CliError ? e.message : `${e?.stack ?? e}`;
+    const botAction = command === "start" || command === "restart";
+    if (botAction) {
+      try {
+        const dir = join(appHome(), "automagik-herdr");
+        mkdirSync(dir, { recursive: true, mode: 0o700 });
+        appendFileSync(join(dir, "actions.log"), unprinted(`${new Date().toISOString()} ${command}: ${e?.stack ?? e}\n`), { mode: 0o600 });
+      } catch { /* A log that cannot be written must not hide the original failure. */ }
+    }
+    const message = e instanceof CliError ? e.message : botAction
+      ? actionError(e, command === "start" ? "Start" : "Restart") : `${e?.stack ?? e}`;
     process.stderr.write(unprinted(`automagik-herdr: ${message}\n`));
     if (opts.json && e instanceof CliError && e.detail) process.stdout.write(unprinted(`${JSON.stringify({ error: message, ...e.detail }, null, 2)}\n`));
     return e instanceof CliError ? e.code : 1;

@@ -9,6 +9,7 @@ import { installHook, runnerPath } from "./briefingText.mjs";
 import { spareTab } from "./launchArgs.js";
 import { configPaths } from "./models.js";
 import { PACK_NAME } from "./release.js";
+import { actionError } from "./actionError.js";
 
 const local = (address) => typeof address === "string" && !address.includes("/");
 const cliPath = (dir) => `${dir.replace(/\/+$/, "")}/mods/${PACK_NAME}/bin/automagik-herdr.mjs`;
@@ -25,6 +26,7 @@ export async function runCli(args, { timeout, env = [] } = {}) {
   try {
     r = await exec("env", [`HERDR_APP_HOME=${dir}`, ...env, "sh", runnerPath(dir), cliPath(dir), ...args, "--json"], ...(timeout ? [{ timeout }] : []));
   } catch (e) {
+    console.error(e?.stack ?? e);
     return { code: 127, out: null, err: String(e?.message ?? e), thrown: true };
   }
   let out = null;
@@ -102,7 +104,11 @@ export async function machineCli(args, what) {
       + `Then ${what} it from a terminal if it isn't running: ${command}` };
 }
 
-const refusedBy = (r, what) => ({ refused: r.err || `automagik-herdr ${what} failed (exit ${r.code}).` });
+const refusedBy = (r, what) => {
+  if (what !== "start") return { refused: r.err || `automagik-herdr ${what} failed (exit ${r.code}).` };
+  console.error(`automagik-herdr ${what}: ${r.err || `exit ${r.code}`}`);
+  return { refused: actionError(r.err, what === "start" ? "Start" : "Attach") };
+};
 const warn = (bodies) => { for (const body of bodies ?? []) notify({ title: "Bots", body, level: "warning", timeout: 15000 }); };
 
 /**
@@ -266,7 +272,11 @@ const starting = new Set();
 export async function startBot(projectKey, botId, place = {}, machine = null) {
   if (starting.has(botId)) return { refused: `${botId} is already starting.` };
   starting.add(botId);
-  try { return await (machine ? startOn(projectKey, botId, machine) : startOnce(projectKey, botId, place)); } finally { starting.delete(botId); }
+  try { return await (machine ? startOn(projectKey, botId, machine) : startOnce(projectKey, botId, place)); }
+  catch (e) {
+    console.error(e?.stack ?? e);
+    return { refused: actionError(e, "Start") };
+  } finally { starting.delete(botId); }
 }
 
 // Start on a linked machine (automagik#206): the CLI finds the window place there itself.

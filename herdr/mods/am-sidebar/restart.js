@@ -8,7 +8,8 @@ import { agentKeyOfArgv, agyGuarded, agyModeArgs, agyModeProblem, agySettingsArg
 import { SQUAD_LABEL, SQUAD_MARK } from "./launchArgs.js";
 import { ENV, WORKER_AGY_MODE_LABEL, WORKER_EFFORT_LABEL, WORKER_MODEL_LABEL, WORKER_OF_LABEL, WORKER_ROLE_LABEL, WORKER_TEMPLATE_LABEL, templateAgent } from "./workers.js";
 import { CONFIG_VAR, envWords } from "./logins.js";
-import { hermesPairArgs } from "./hermesPair.js";
+import { hermesPairRun } from "./hermesPair.js";
+import { actionError } from "./actionError.js";
 
 /** The pane label the briefing hook sets to the Claude session a terminal runs (workers.js SESSION_LABEL). */
 const SESSION = "agent.session";
@@ -130,10 +131,8 @@ export function withoutPrompt(args) {
 export function restartPlan({ bot, run, runningAgent = null, session = null, fresh = false, agent, model, template = null,
   agy = null, newSession = null }) {
   if (bot.agent === "hermes" && bot.hermes !== undefined) {
-    const pair = hermesPairArgs(bot);
-    if (fresh || agent !== undefined || model !== undefined || template) throw new Error("This Hermes bot is paired: unpair it before a fresh session, agent/model swap or template launch.");
-    const argv = run.length === 1 ? [...run, ...pair] : run;
-    if (JSON.stringify(argv.slice(1)) !== JSON.stringify(pair)) throw new Error("The paired Hermes launch does not match its stored binding.");
+    if (fresh || (agent !== undefined && agent !== "hermes") || model || template) throw new Error("This Hermes bot is paired; unpair it before a fresh session, agent/model swap or template launch.");
+    const argv = hermesPairRun(run, bot);
     return { mode: "resume", agent: "hermes", model: null, resume: ["--continue", "Bot Chat"], argv,
       source: argv, template: null, agySettings: null, sessionId: null, canonicalBot: true, note: "paired Bot Chat, resolved by exact title" };
   }
@@ -667,8 +666,8 @@ export function restartAnswer(r) {
   }
   if (r?.code === 0 && r.out?.running) return { refused: `It is already running in ${r.out.running}.`, forceable: false, freshable: false };
   // Not run, or ended by Herdr (launch.js machineCli, #444): neither --force nor --fresh is the answer.
-  if (r?.asIs) return { refused: r.err, forceable: false, freshable: false };
+  if (r?.asIs) return { refused: actionError(r.err, "Restart"), forceable: false, freshable: false };
   // The CLI's refusal is its last stderr line (warnings come before it).
-  const refused = String(r?.err ?? "").split("\n").map((l) => l.trim()).filter(Boolean).pop() ?? `Restart failed (exit ${r?.code ?? "?"}).`;
-  return { refused, forceable: /pass --force/.test(refused), freshable: /--fresh\b/.test(refused) };
+  const raw = String(r?.err ?? "");
+  return { refused: actionError(raw, "Restart"), forceable: /pass --force/.test(raw), freshable: /--fresh\b/.test(raw) };
 }

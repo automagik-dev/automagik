@@ -5,7 +5,7 @@
 // `read(path) => string | null`, so `node --test` runs it and the CLI and the mod share it.
 // Apache-2.0.
 import { LEGACY_AGENTS } from "./retired.js";
-import { hermesPairArgs } from "./hermesPair.js";
+import { hermesPairRun } from "./hermesPair.js";
 
 /**
  * The agents people start, keyed as Herdr's shipped programs table keys them (the table in
@@ -504,9 +504,8 @@ export function autoModeArgs(agentKey, bot = null, run = []) {
  * its restart and its workers all take them from the definition, never from an old pane's command.
  */
 export function launchRun(agentKey, run, bot) {
-  const pair = agentKey === "hermes" ? hermesPairArgs(bot) : [];
-  if (pair.length && run.length !== 1) throw new Error("A paired Hermes bot cannot use a command override; use its explicit pairing.");
-  return [...run, ...pair, ...autoModeArgs(agentKey, bot, run)];
+  const words = agentKey === "hermes" ? hermesPairRun(run, bot) : run;
+  return [...words, ...autoModeArgs(agentKey, bot, run)];
 }
 
 /**

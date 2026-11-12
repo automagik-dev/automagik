@@ -652,6 +652,11 @@ automagik-herdr dsh-tui install | update | uninstall | doctor
   lists the queue; `restart --cancel <bot>` (or `restart <bot> --cancel`) cancels one. Both
   accept `--project DIR` and `--json`. A second request replaces that bot's queued options.
   `--force` restarts immediately; helpers still require `--tree` or `--force`.
+- A paired Hermes bot keeps its `programs.json` command, including wrapper scripts and
+  `--tui`, and adds its profile and Bot Chat options once; a different `--profile` must be
+  corrected to match the pairing. Start and Restart errors show a short explanation in the
+  menu. The CLI records the diagnostic and trace in `automagik-herdr/actions.log` under the
+  app home; failures in the sidebar itself go to Herdr's app log.
 - `restart` runs the bot's agent again in its pane's place: the new pane starts in the same
   space, tab and folder with the same labels, and the old one is ended (`hc kill`) only once the
   new one has kept its agent in front at every check for 5 seconds (1.5 once the agent reports

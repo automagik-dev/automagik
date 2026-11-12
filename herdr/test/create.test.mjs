@@ -1507,3 +1507,31 @@ test("menu Restart queued: an info toast names the pane and who must answer", as
   assert.deepEqual(state.notes[0], { title: "Bots", level: "info", timeout: 15000,
     body: `${OMP.name}: restart queued for t5 (blocked on "Do you want to proceed?" — the owner must answer); it will restart at its next idle.` });
 });
+
+for (const machine of [null, "vm"]) for (const action of ["start", "restart", "restart-on"]) for (const failure of ["throw", "exit"]) {
+  test(`menu ${action} ${machine ?? "local"} ${failure}: a failed command shows one sentence, logs its trace and clears busy`, async (t) => {
+    seed([MAIN, OMP]);
+    fakeCli({});
+    const { form, cx } = await menu({ machine });
+    const trace = "Error: launch failed\n    at launchRun (models.js:508:3)\n    at startOnMachine (cli.mjs:42:1)";
+    const logs = [];
+    t.mock.method(console, "error", (...words) => logs.push(words.join(" ")));
+    state.timeoutProbe = "honours";
+    if (failure === "throw") state.execFault = (command) => command === "env" ? new Error(trace) : null;
+    else {
+      const bin = join(state.appHome, "mods/am-sidebar/bin");
+      writeFileSync(join(bin, "error.txt"), trace);
+      writeFileSync(join(bin, "run.sh"), `cat "${bin}/error.txt" >&2\nexit 1\n`);
+    }
+    t.after(() => { delete state.execFault; delete state.timeoutProbe; });
+    if (action === "start") form.start({ key: project, machine }, OMP, cx);
+    else form.restart({ key: project, machine }, OMP, cx, action === "restart-on" ? { agent: "codex" } : {});
+    await cx.settle();
+    assert.equal(form.busy, false);
+    assert.ok(form.error);
+    assert.doesNotMatch(form.error, /\n|Error:|at launchRun|models\.js/);
+    assert.match(form.error, /; (?:check|retry)/);
+    assert.ok(logs.some((line) => line.includes("at launchRun")), logs.join("\n"));
+    assert.equal(state.closed.length, 0);
+  });
+}

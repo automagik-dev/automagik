@@ -138,8 +138,8 @@ test("the sidebar's Restart: the CLI's restart through launch.js runCli; its ans
   assert.match(working.refused, /^Genie is working in t5/);
   assert.equal(working.forceable, true);
   assert.equal(restartAnswer({ code: 1, err: "Genie has no recorded Claude session ... restart with --fresh for a new conversation." }).freshable, true);
-  assert.deepEqual(restartAnswer({ code: 1, out: null, err: "No bot x in this project." }), { refused: "No bot x in this project.", forceable: false, freshable: false });
-  assert.deepEqual(restartAnswer({ code: 127, out: null, err: "" }), { refused: "Restart failed (exit 127).", forceable: false, freshable: false });
+  assert.deepEqual(restartAnswer({ code: 1, out: null, err: "No bot x in this project." }), { refused: "No bot x in this project; check the log and try again.", forceable: false, freshable: false });
+  assert.deepEqual(restartAnswer({ code: 127, out: null, err: "" }), { refused: "Restart failed; check the log and try again.", forceable: false, freshable: false });
 });
 
 test("session ids: only UUID-shaped ones resume; a flag-like value never reaches --resume; the ledger's last row for the terminal stands in", () => {
