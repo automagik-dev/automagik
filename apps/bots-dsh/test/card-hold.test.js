@@ -212,10 +212,10 @@ test('what Remote Hermes asks reads in the interface language, and the answer st
   const pt = JSON.parse(readFileSync(new URL('../../locale-pt-br-dsh/src/client/locales/pt-BR/omni-ui.json', import.meta.url), 'utf8'))
   const written = node => all(node, child => ['bt-q-title', 'bt-q-label', 'bt-q-detail'].includes(child.props?.className)).map(child => [child.props.children].flat(Infinity).join(''))
   // The question exactly as the host sends it at a level with no approval card.
-  const ask = async (press) => {
+  const ask = async (press, params = { request_id: 'approval-1', description: 'Delete the folder build' }) => {
     let seen
     const userQuestions = { ask: ({ questions }) => new Promise((resolve) => { seen = { questions, answer: resolve } }) }
-    const answer = remoteApproval({ get: name => (name === 'userQuestions' ? userQuestions : undefined) }, { session: { id: 'ada' } }, { request_id: 'approval-1', description: 'Delete the folder build' })
+    const answer = remoteApproval({ get: name => (name === 'userQuestions' ? userQuestions : undefined) }, { session: { id: 'ada' } }, params)
     const card = mount(QuestionCard, { matched: seen }), shown = card.render(), view = mount(shown.type, shown.props)
     try { return [await press(view.render(), seen.questions[0]), await answer] } finally { view.unmount(); card.unmount() }
   }
@@ -239,6 +239,13 @@ test('what Remote Hermes asks reads in the interface language, and the answer st
     assert.deepEqual(texts, [zh['Remote Hermes asks before it runs this. Allow it?'], 'Delete the folder build', zh['Allow once'], zh.Deny])
     assert.equal(allowed, 'once', 'the translated Allow once still sends the label the host checks')
     assert.equal((await ask((form) => { options(form)[1].props.onClick() }))[1], 'deny')
+    // A step Hermes sent with no words of its own: the host's stand-in is worded too.
+    const [unnamed] = await ask((form, question) => {
+      assert.ok(zh[question.detail] && pt[question.detail] && pt[question.detail] !== question.detail, `both languages word ${question.detail}`)
+      options(form)[1].props.onClick()
+      return written(form)[1]
+    }, { request_id: 'approval-2' })
+    assert.equal(unnamed, zh['Run a remote tool'])
     // The answered card in the transcript reads the same way.
     const question = { id: 'approval-1', question: 'Remote Hermes asks before it runs this. Allow it?', options: [{ label: 'Allow once' }, { label: 'Deny' }], intent: { kind: 'approval' } }
     const card = node => find(node, child => typeof child.type === 'function')

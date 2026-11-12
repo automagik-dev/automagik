@@ -502,6 +502,7 @@ const pack = createPack({
     "Reject": "Recusar",
     "Allow once": "Permitir uma vez",
     "Deny": "Negar",
+    "Run a remote tool": "Executar uma ferramenta remota",
     "Remote Hermes asks before it runs this. Allow it?": "O Hermes remoto pergunta antes de executar isto. Permitir?",
     "Couldn't message {name}": "Não foi possível mandar mensagem para {name}",
     "Messaged": "Mandou mensagem para",

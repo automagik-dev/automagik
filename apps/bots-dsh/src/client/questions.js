@@ -11,10 +11,12 @@ import { createSource, heldCardKey } from './sources.js'
 
 export const keyLetter = index => String.fromCharCode(65 + index)
 // A permission question is this app's own wording, not the Bot's: its text and its answers
-// read in the interface language. The answer sent back stays the label the host gave.
+// read in the interface language. The answer sent back stays the label the host gave. The
+// detail is what the other side wrote, kept word for word; only the host's stand-in for a
+// step that came with no words of its own is worded here.
 const wordingOf = question => question?.intent?.kind === 'approval'
-  ? { prompt: hostText(question.question ?? ''), label: label => t(label) }
-  : { prompt: question?.question ?? '', label: label => label }
+  ? { prompt: hostText(question.question ?? ''), label: label => t(label), detail: question.detail === 'Run a remote tool' ? t('Run a remote tool') : question.detail }
+  : { prompt: question?.question ?? '', label: label => label, detail: question?.detail }
 const optionsOf = question => (question?.options ?? []).map(option => (typeof option === 'string' ? { label: option } : option))
 const isTypingTarget = node => node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement
   || node instanceof HTMLSelectElement || (node instanceof HTMLElement && node.isContentEditable)
@@ -133,7 +135,7 @@ function QuestionView({ question, onAnswer, onDismiss, onInteract, busy = false,
     h('div', { className: 'bt-q-head' },
       h('div', { className: 'bt-q-text' },
         h('p', { className: 'bt-q-title', id: titleId }, question.header ? `${question.header} · ` : '', wording.prompt),
-        question.detail ? h('div', { className: 'bt-q-detail' }, question.detail) : null,
+        wording.detail ? h('div', { className: 'bt-q-detail' }, wording.detail) : null,
         raised && multi ? h('div', { className: 'bt-q-detail' }, t('Choose all that apply')) : null),
       h('button', { type: 'button', className: 'bt-q-x', 'aria-label': t('Dismiss question'), title: t('Dismiss'), onClick: onDismiss, disabled: busy }, h(CloseIcon))),
     rows.length > 0 ? h('div', { className: 'bt-q-list', role: 'group' }, rows) : null,

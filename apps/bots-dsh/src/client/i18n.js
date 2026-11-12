@@ -1331,6 +1331,7 @@ const ZH = {
   Reject: '拒绝',
   'Allow once': '允许一次',
   Deny: '拒绝',
+  'Run a remote tool': '运行远程工具',
   'Remote Hermes asks before it runs this. Allow it?': '远程 Hermes 在运行此操作前询问。是否允许？',
   "Couldn't message {name}": '没能给 {name} 发消息',
   Messaged: '已发消息给',

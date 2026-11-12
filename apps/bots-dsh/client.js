@@ -1376,6 +1376,7 @@ var ZH = {
   Reject: "拒绝",
   "Allow once": "允许一次",
   Deny: "拒绝",
+  "Run a remote tool": "运行远程工具",
   "Remote Hermes asks before it runs this. Allow it?": "远程 Hermes 在运行此操作前询问。是否允许？",
   "Couldn't message {name}": "没能给 {name} 发消息",
   Messaged: "已发消息给",
@@ -7008,7 +7009,7 @@ var import_dsh_client_ui_primitives = require("@deepseek-ai/dsh-client-ui-primit
 // src/client/questions.js
 var import_react18 = require("react");
 var keyLetter = (index) => String.fromCharCode(65 + index);
-var wordingOf = (question) => question?.intent?.kind === "approval" ? { prompt: hostText(question.question ?? ""), label: (label) => t(label) } : { prompt: question?.question ?? "", label: (label) => label };
+var wordingOf = (question) => question?.intent?.kind === "approval" ? { prompt: hostText(question.question ?? ""), label: (label) => t(label), detail: question.detail === "Run a remote tool" ? t("Run a remote tool") : question.detail } : { prompt: question?.question ?? "", label: (label) => label, detail: question?.detail };
 var optionsOf = (question) => (question?.options ?? []).map((option) => typeof option === "string" ? { label: option } : option);
 var isTypingTarget = (node) => node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement || node instanceof HTMLSelectElement || node instanceof HTMLElement && node.isContentEditable;
 var optionKeyCards = createSource(0);
@@ -7152,7 +7153,7 @@ function QuestionView({ question, onAnswer, onDismiss, onInteract, busy = false,
         "div",
         { className: "bt-q-text" },
         (0, import_react18.createElement)("p", { className: "bt-q-title", id: titleId }, question.header ? `${question.header} · ` : "", wording.prompt),
-        question.detail ? (0, import_react18.createElement)("div", { className: "bt-q-detail" }, question.detail) : null,
+        wording.detail ? (0, import_react18.createElement)("div", { className: "bt-q-detail" }, wording.detail) : null,
         raised2 && multi ? (0, import_react18.createElement)("div", { className: "bt-q-detail" }, t("Choose all that apply")) : null
       ),
       (0, import_react18.createElement)("button", { type: "button", className: "bt-q-x", "aria-label": t("Dismiss question"), title: t("Dismiss"), onClick: onDismiss, disabled: busy }, (0, import_react18.createElement)(CloseIcon))
