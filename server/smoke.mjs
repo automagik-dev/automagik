@@ -13,6 +13,8 @@ const run = promisify(execFile)
 const image = process.argv[2] || 'automagik-server:local'
 const name = `automagik-server-smoke-${process.pid}`
 const volume = `${name}-data`
+const gateName = `${name}-gate`
+const gateVolume = `${name}-gate-data`
 const START_TIMEOUT_MS = 240_000
 
 const docker = async (args, options = {}) => {
@@ -92,6 +94,10 @@ async function main() {
   const token = new URL(launch).searchParams.get('token')
   check(token && token.length >= 16, `launch-url carries no token: ${launch}`)
   check(!logs.includes(token), 'the real launch token is in the log')
+  const report = JSON.parse((await docker(['exec', name, '/nodejs/bin/node', '/opt/automagik/healthcheck.mjs', '--json'])).stdout)
+  check(report.schemaVersion === 1 && report.healthy && report.followsImage && report.reason === 'matching-image', 'fresh image report does not match installed plugins')
+  check(Object.values(report.plugins).every(version => version === report.image.version), 'installed versions differ from the image report')
+  check(!JSON.stringify(report).includes(token), 'health report contains the launch credential')
 
   await docker(['exec', name, '/bin/bash', '-c', 'test -f /data/dsh/profiles/automagik-web/package.json'])
   await docker(['exec', name, '/bin/bash', '-c', 'test -f /data/dsh/profiles/automagik-web/node_modules/@automagik/bots-dsh/package.json'])
@@ -128,6 +134,49 @@ async function main() {
   check(/automagik-web: profile present at \/data\/dsh\/profiles\/automagik-web/.test(after), 'a restart did not find the profile')
   say(`restart: 401 after ${restarted401} ms, profile kept`)
 
+  // The opt-in gate shares the namespace, never its writable state. No public port.
+  await docker(['volume', 'create', gateVolume])
+  await docker(['run', '--detach', '--name', gateName, '--network', `container:${name}`,
+    '--volume', `${gateVolume}:/data`, '--volume', `${volume}:/dsh:ro`,
+    '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true',
+    '--env', 'AUTOMAGIK_GATE_ENABLED=1', '--env', 'AUTOMAGIK_GATE_ORIGIN=http://localhost:3082',
+    '--health-interval', '2s', '--health-start-period', '0s',
+    '--entrypoint', '/nodejs/bin/node', image, '/opt/automagik/gate-entrypoint.mjs'])
+  const gateDeadline = Date.now() + 30_000
+  let gateHealthy = false
+  while (Date.now() < gateDeadline) {
+    const status = (await docker(['inspect', gateName, '--format', '{{.State.Health.Status}}'])).stdout.trim()
+    if (status === 'healthy') { gateHealthy = true; break }
+    check((await docker(['inspect', gateName, '--format', '{{.State.Status}}'])).stdout.trim() === 'running', 'gate stopped')
+    await sleep(200)
+  }
+  check(gateHealthy, 'gate health never reached healthy 401')
+  const gateConfig = JSON.parse((await docker(['inspect', gateName])).stdout)[0]
+  const dshConfig = JSON.parse((await docker(['inspect', name])).stdout)[0]
+  check(gateConfig.HostConfig.NetworkMode === `container:${dshConfig.Id}`, 'gate does not share only the DSH network namespace')
+  check(gateConfig.Mounts.some(m => m.Name === volume && m.Destination === '/dsh' && !m.RW), 'gate DSH mount is not read-only')
+  check(gateConfig.Mounts.some(m => m.Name === gateVolume && m.Destination === '/data' && m.RW), 'gate has no separate writable store')
+  check(!dshConfig.Mounts.some(m => m.Name === gateVolume), 'DSH mounts the gate store')
+  await docker(['exec', gateName, '/nodejs/bin/node', '-e', 'const fs=require("fs");fs.accessSync("/dsh/dsh/launch-url");fs.writeFileSync("/data/gate-only", "private");try{fs.writeFileSync("/dsh/gate-write-probe", "bad");process.exit(1)}catch(e){if(e.code!=="EROFS")throw e}'])
+  await docker(['exec', name, '/nodejs/bin/node', '-e', 'const fs=require("fs");try{fs.readFileSync("/data/gate-only");process.exit(1)}catch(e){if(e.code!=="ENOENT")throw e}'])
+  await docker(['exec', gateName, '/nodejs/bin/node', '/opt/automagik/healthcheck.mjs'])
+  const gateReport = JSON.parse((await docker(['exec', gateName, '/nodejs/bin/node', '/opt/automagik/healthcheck.mjs', '--json'])).stdout)
+  check(gateReport.healthy && gateReport.gate.enabled && gateReport.gate.status === 401 && gateReport.dsh.status === 401 && gateReport.followsImage, 'gate report did not inspect both fences and the read-only DSH profile')
+  const claimCode = (await docker(['exec', gateName, '/nodejs/bin/node', '-e', 'const fs=require("fs");for(const p of ["/data/claim-code","/data/claim-state.json","/data/control.sock"]){if((fs.statSync(p).mode&0o777)!==0o600)process.exit(1)}process.stdout.write(fs.readFileSync("/data/claim-code","utf8").trim())'])).stdout.trim()
+  check(/^[a-f0-9]{32}$/.test(claimCode), 'image claim code is not 128 bits')
+  const gateLogs = await docker(['logs', gateName])
+  check(!`${gateLogs.stdout}${gateLogs.stderr}`.includes(claimCode), 'image claim code reached the application log')
+  const claimBoundary = 'const http=require("http"),fs=require("fs");const code=fs.readFileSync("/data/claim-code","utf8").trim();for(const port of [3082,3083])http.get({host:"127.0.0.1",port,path:"/_gate/claim",headers:{host:"localhost:3082"}},r=>{let text="";r.on("data",c=>text+=c);r.on("end",()=>{if(r.statusCode!==(port===3083?200:404)||text.includes(code)||(port===3083&&!text.includes("Claim with a passkey")))process.exit(1)})}).on("error",()=>process.exit(1))'
+  await docker(['exec', gateName, '/nodejs/bin/node', '-e', claimBoundary])
+  await docker(['exec', gateName, '/nodejs/bin/node', '/opt/automagik/gate-control.mjs', 'reset'])
+  const resetCode = (await docker(['exec', gateName, '/nodejs/bin/node', '-e', 'process.stdout.write(require("fs").readFileSync("/data/claim-code","utf8").trim())'])).stdout.trim()
+  check(resetCode !== claimCode && /^[a-f0-9]{32}$/.test(resetCode), 'host reset did not rotate the private image claim code')
+  await docker(['exec', gateName, '/nodejs/bin/node', '-e', claimBoundary])
+  await docker(['exec', gateName, '/nodejs/bin/node', '/opt/automagik/healthcheck.mjs'])
+  say('gate: 401 healthy, separate store invisible to DSH, DSH mount read-only')
+  say('claim: private 0600 files/socket, no code in logs or HTTP, local reset works in the image')
+  await docker(['rm', '--force', gateName])
+
   // The key file: 0400 is taken, anything group- or other-readable stops the start.
   await docker(['exec', name, '/nodejs/bin/node', '-e', 'const fs=require("fs"); fs.writeFileSync("/data/secrets/deepseek-api-key", "sk-smoke\\n", { mode: 0o400 }); fs.chmodSync("/data/secrets/deepseek-api-key", 0o400)'])
   await docker(['restart', name])
@@ -157,6 +206,8 @@ try {
   } catch {}
   process.exitCode = 1
 } finally {
+  await docker(['rm', '--force', gateName]).catch(() => {})
+  await docker(['volume', 'rm', '--force', gateVolume]).catch(() => {})
   await docker(['rm', '--force', name]).catch(() => {})
   await docker(['volume', 'rm', '--force', volume]).catch(() => {})
 }

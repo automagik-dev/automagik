@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { runInNewContext } from 'node:vm'
 import { build } from 'esbuild'
 import { OMNI_PLUGINS, OMNI_TOOLS } from '../src/host/bot-types.js'
+import { whereOf } from '../src/client/where.js'
 import { fakeLocale } from './fake-locale.js'
 
 const PLUGIN = dirname(dirname(fileURLToPath(import.meta.url)))
@@ -76,6 +77,7 @@ function sample() {
 }
 
 const locale = fakeLocale()
+locale.addLanguage({ id: 'pt', label: 'Português', fallback: 'en' })
 const uninstall = team.installLocale(locale)
 
 test('the team step registers its copy as welcome.team, in English, Portuguese and Brazilian Portuguese', () => {
@@ -98,7 +100,7 @@ test('in English, the team step reads as before', () => {
     capsRow: 'Read channels and chats',
     capsDefault: 'Ask first (DSH\'s default)',
     omniStatus: 'Powered off · not on your team',
-    tiles: ['Run Omni on this computer', 'An Omni somewhere else'],
+    tiles: ['Install Omni here', 'An Omni somewhere else'],
     joined: 'Continue with Omni and Unfold',
     alone: 'Continue with just Pip',
     lede: 'Pip leads. Who comes along?Code work goes to a Bot with Computer.',
@@ -106,18 +108,38 @@ test('in English, the team step reads as before', () => {
   })
 })
 
-// Every place the choices can name DSH's machine: [where, found sandbox, found local, already, new tile],
-// in English and in pt-BR.
+// Each location's whole sentences, including the new tile's subtitle.
+const MAC_COPY = [
+  ['Your Omni on this Mac', 'Omni on this Mac', 'Already on this Mac', 'On this Mac'],
+  ['Seu Omni neste Mac', 'Omni neste Mac', 'Já está neste Mac', 'Neste Mac'],
+]
+const PC_COPY = [
+  ['Your Omni on this PC', 'Omni on this PC', 'Already on this PC', 'On this PC'],
+  ['Seu Omni neste PC', 'Omni neste PC', 'Já está neste PC', 'Neste PC'],
+]
+const COMPUTER_COPY = [
+  ['Your Omni on this computer', 'Omni on this computer',
+    'Already on this computer', 'On this computer'],
+  ['Seu Omni neste computador', 'Omni neste computador',
+    'Já está neste computador', 'Neste computador'],
+]
+const WORKSPACE_COPY = [
+  ['Your Omni on the computer this workspace runs on',
+    'Omni on the computer this workspace runs on',
+    'Already on the computer this workspace runs on', 'On the computer this workspace runs on'],
+  ['Seu Omni no computador onde este workspace funciona',
+    'Omni no computador onde este workspace funciona',
+    'Já está no computador onde este workspace funciona',
+    'No computador onde este workspace funciona'],
+]
 const PLACES = [
-  [{ at: 'here', os: 'macos' }, ['Your Omni on this Mac', 'Omni on this Mac', 'Already on this Mac', 'Run Omni on this Mac'], ['Seu Omni neste Mac', 'Omni neste Mac', 'Já está neste Mac', 'Rodar o Omni neste Mac']],
-  [{ at: 'here', os: 'windows' }, ['Your Omni on this PC', 'Omni on this PC', 'Already on this PC', 'Run Omni on this PC'], ['Seu Omni neste PC', 'Omni neste PC', 'Já está neste PC', 'Rodar o Omni neste PC']],
-  [{ at: 'here', os: 'linux' }, ['Your Omni on this computer', 'Omni on this computer', 'Already on this computer', 'Run Omni on this computer'], ['Seu Omni neste computador', 'Omni neste computador', 'Já está neste computador', 'Rodar o Omni neste computador']],
-  [{ at: 'here', os: 'other' }, ['Your Omni on this computer', 'Omni on this computer', 'Already on this computer', 'Run Omni on this computer'], ['Seu Omni neste computador', 'Omni neste computador', 'Já está neste computador', 'Rodar o Omni neste computador']],
-  [{ at: 'remote', os: 'linux' }, ['Your Omni on your Linux server', 'Omni on your Linux server', 'Already on your Linux server', 'Run Omni on your Linux server'], ['Seu Omni no seu servidor Linux', 'Omni no seu servidor Linux', 'Já está no seu servidor Linux', 'Rodar o Omni no seu servidor Linux']],
-  [{ at: 'remote', os: 'macos' }, ['Your Omni on your Mac', 'Omni on your Mac', 'Already on your Mac', 'Run Omni on your Mac'], ['Seu Omni no seu Mac', 'Omni no seu Mac', 'Já está no seu Mac', 'Rodar o Omni no seu Mac']],
-  [{ at: 'remote', os: 'windows' }, ['Your Omni on your Windows PC', 'Omni on your Windows PC', 'Already on your Windows PC', 'Run Omni on your Windows PC'], ['Seu Omni no seu PC com Windows', 'Omni no seu PC com Windows', 'Já está no seu PC com Windows', 'Rodar o Omni no seu PC com Windows']],
-  [{ at: 'remote', os: 'other' }, ['Your Omni on your server', 'Omni on your server', 'Already on your server', 'Run Omni on your server'], ['Seu Omni no seu servidor', 'Omni no seu servidor', 'Já está no seu servidor', 'Rodar o Omni no seu servidor']],
-  [{ at: 'unknown' }, ['Your Omni on DSH\'s computer', 'Omni on DSH\'s computer', 'Already on DSH\'s computer', 'Run Omni on DSH\'s computer'], ['Seu Omni no computador do DSH', 'Omni no computador do DSH', 'Já está no computador do DSH', 'Rodar o Omni no computador do DSH']],
+  [{ at: 'here', os: 'macos' }, MAC_COPY],
+  [{ at: 'here', os: 'windows' }, PC_COPY],
+  [{ at: 'here', os: 'linux' }, COMPUTER_COPY],
+  [{ at: 'here', os: 'other' }, COMPUTER_COPY],
+  ...['linux', 'macos', 'windows', 'other'].map(os => [{ at: 'remote', os }, WORKSPACE_COPY]),
+  [{ at: 'unknown' }, WORKSPACE_COPY],
+  [undefined, WORKSPACE_COPY],
 ]
 // What the choices show for one place: a found Omni of its own and a found local one (as their
 // titles, and inside "Use …"), the line under the local one, and the new tile.
@@ -131,30 +153,71 @@ function choicesAt(where) {
     tiles: plain(tiles.map(tile => tile.title)),
     already: team.destinyOf([{ ...local, url: 'http://127.0.0.1' }], { where }).tiles[0].sub,
     run: bare[0].title,
+    on: bare[0].sub,
   }
 }
 
-test('the choices name DSH\'s machine by where it is and its OS, in English and in pt-BR', () => {
+function assertChoices(where, [sandbox, local, already, on], language) {
+  const shown = choicesAt(where)
+  const use = language === 'en' ? 'Use' : 'Usar'
+  const lower = text => text.charAt(0).toLowerCase() + text.slice(1)
+  assert.deepEqual(shown.titles, [sandbox, local], `${language} ${JSON.stringify(where)}`)
+  assert.deepEqual(shown.tiles.slice(0, 2), [`${use} ${lower(sandbox)}`, `${use} ${local}`])
+  assert.equal(shown.already, already)
+  assert.equal(shown.run, language === 'en' ? 'Install Omni here' : 'Instalar o Omni aqui')
+  assert.equal(shown.on, on)
+  const place = team.placeOf(where)
+  assert.deepEqual(plain(place), { sandbox, local, already, run: shown.run, on })
+}
+
+// DSH's Portuguese plugin uses pt; pt-BR is registered as an alias of the same dictionary.
+const LANGUAGES = ['en', 'pt', 'pt-BR']
+test('placeOf and the choices name only a known local machine, in en, pt and pt-BR', () => {
   locale.addLanguage({ id: 'pt-BR', label: 'Português (Brasil)', fallback: 'en' })
-  for (const [where, en, ptBr] of PLACES) {
-    for (const [language, [sandbox, local, already, run]] of [['en', en], ['pt-BR', ptBr]]) {
+  for (const [where, copy] of PLACES) {
+    for (const language of LANGUAGES) {
       locale.setLocale(language)
       try {
-        const shown = choicesAt(where)
-        const use = language === 'en' ? 'Use' : 'Usar'
-        const lower = text => text.charAt(0).toLowerCase() + text.slice(1)
-        assert.deepEqual(shown.titles, [sandbox, local], `${language} ${JSON.stringify(where)}`)
-        // titleIn: the sandbox title inside "Use …" starts lower case; a local one keeps its own.
-        assert.deepEqual(shown.tiles.slice(0, 2), [`${use} ${lower(sandbox)}`, `${use} ${local}`])
-        assert.equal(shown.already, already)
-        assert.equal(shown.run, run)
+        assertChoices(where, copy[language === 'en' ? 0 : 1], language)
       } finally {
         locale.setLocale('en')
       }
     }
   }
-  // A caller that does not say where reads "this computer", as before.
-  assert.equal(team.destinyOf([]).tiles[0].title, 'Run Omni on this computer')
+})
+
+test('whereOf reaches placeOf without naming a remote viewer, in en, pt and pt-BR', () => {
+  const macBrowser = { platform: 'MacIntel', userAgentData: { platform: 'macOS' } }
+  const page = hostname => ({ location: { hostname }, navigator: macBrowser })
+  const cases = [
+    [{ machine: { os: 'linux' }, scope: page('workspace.example') }, WORKSPACE_COPY],
+    [{ machine: { os: 'macos' }, scope: page('workspace.example') }, WORKSPACE_COPY],
+    [{ scope: page('workspace.example') }, WORKSPACE_COPY],
+    [{ machine: { os: 'linux' }, scope: page('localhost') }, WORKSPACE_COPY],
+    [{ machine: { os: 'macos', remoteHint: true }, scope: page('localhost') }, WORKSPACE_COPY],
+    [{ machine: { os: 'macos' }, scope: page('localhost') }, MAC_COPY],
+    [{ machine: { os: 'linux' }, scope: {
+      location: { hostname: 'localhost' }, navigator: { platform: 'Linux x86_64' },
+    } }, COMPUTER_COPY],
+    [{ scope: page('localhost') }, WORKSPACE_COPY],
+    [{ machine: { os: 'linux' }, scope: {
+      ...page('localhost'), omniDesktop: { platform: 'darwin' },
+    } }, MAC_COPY],
+    [{ machine: { os: 'linux' }, scope: {
+      ...page('localhost'), omniDesktop: { platform: 'win32' },
+    } }, PC_COPY],
+    [{ scope: {} }, WORKSPACE_COPY],
+  ]
+  for (const [input, copy] of cases) {
+    for (const language of LANGUAGES) {
+      locale.setLocale(language)
+      try {
+        assertChoices(whereOf(input), copy[language === 'en' ? 0 : 1], language)
+      } finally {
+        locale.setLocale('en')
+      }
+    }
+  }
 })
 
 test('under a pt-BR locale, the team step renders in Brazilian Portuguese', () => {
@@ -173,7 +236,7 @@ test('under a pt-BR locale, the team step renders in Brazilian Portuguese', () =
       capsRow: 'Ler canais e chats',
       capsDefault: 'Ask first (padrão do DSH)',
       omniStatus: 'Energia desligada · fora da sua equipe',
-      tiles: ['Rodar o Omni neste computador', 'Um Omni em outro lugar'],
+      tiles: ['Instalar o Omni aqui', 'Um Omni em outro lugar'],
       joined: 'Continuar com Omni e Unfold',
       alone: 'Continuar só com Pip',
       lede: 'Pip lidera. Quem vem junto?Trabalho de código vai para um Bot com Computador.',
