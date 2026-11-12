@@ -14,9 +14,9 @@ That row is gone. The Language list shows DSH's **Português** alone, and DSH's 
 
 | Namespace | Keys | Why |
 |---|---|---|
-| `omni-ui` | all 1,450 | The Bot team's namespace (`@automagik/bots-dsh`), which DSH does not have; registered under `pt` |
+| `omni-ui` | all | The Bot team's namespace (`@automagik/bots-dsh`), which DSH does not have; registered under `pt` |
 
-`omni-ui` holds all 1,450 Bot team keys. A few keep their English text on purpose: brand and product names (`Omni`, `DSH`, `Automagik`, `DeepSeek`, `Claude`, `Codex`, `ChatGPT`, `OpenAI`, `Anthropic`, `Google`, `GitHub`, `Namastex`, `Kimi`, `MCP`, `API`), code-like strings (`cookies.txt, JSON, storageState`, `MEMORY.md`, `GITHUB_TOKEN`, `~/.codex/pets`, `#rrggbb`, `@Name`, `/side`, `/feedback`), words Brazilian Portuguese uses unchanged (`Chat`, `Bots`, `Plugins`, `Admin`, `Site`, `Terminal`, `Endpoint`, `Feedback`, `Skill`, `status`, `tokens`, `Pets`), and strings that are only a value (`{count}`, `{n}h`, `1 item`). `test/coverage.test.js` requires every Bot key to have an entry and at least 95% of them to differ from the English text.
+`omni-ui` holds every Bot team key. A few keep their English text on purpose: brand and product names (`Omni`, `DSH`, `Automagik`, `DeepSeek`, `Claude`, `Codex`, `ChatGPT`, `OpenAI`, `Anthropic`, `Google`, `GitHub`, `Namastex`, `Kimi`, `MCP`, `API`), code-like strings (`cookies.txt, JSON, storageState`, `MEMORY.md`, `GITHUB_TOKEN`, `~/.codex/pets`, `#rrggbb`, `@Name`, `/side`, `/feedback`), words Brazilian Portuguese uses unchanged (`Chat`, `Bots`, `Plugins`, `Admin`, `Site`, `Terminal`, `Endpoint`, `Feedback`, `Skill`, `status`, `tokens`, `Pets`), and strings that are only a value (`{count}`, `{n}h`, `1 item`). `test/coverage.test.js` requires every Bot key to have an entry and at least 95% of them to differ from the English text.
 
 A plugin can add its own words to `omni-ui` through the Bot team's `addStrings` (Unfold session's model-menu messages, `apps/unfold-session-dsh/src/client/strings.js`); `scripts/copy-check.mjs` lists those modules in `OMNI_PLUGIN_STRINGS`, so their keys are checked and covered like the Bot team's. The Bot team words a host message with any language pack's entry for it.
 
