@@ -1,18 +1,21 @@
-// The outer wall of browser_exec (src/host/browser/script-runner.js): what the script's
-// process cannot do even when the script owns all of its JavaScript. So the checks are
-// not scripts: fixtures/browser-script-wall-child.mjs is plain Node code, started by the
-// real runner in place of script-child.js, and each check is one ordinary call that must
-// be refused. One test for each thing the wall closes, on each runtime the Bot team ships
-// on: Node, and Electron as Node (the desktop app). A runtime that takes the flags and
-// enforces nothing answers 'allowed' and turns its test red.
+// The outer wall of browser_exec (src/host/browser/script-runner.js): what Node refuses
+// the script's process, as if the script had got out of its interpreter and owned all of
+// that process's JavaScript. So the checks are not scripts: a fixture of plain Node code
+// (fixtures/browser-script-wall-child.mjs) is started by the real runner in place of
+// script-child.js, and each check is a handful of ordinary, documented calls that must be
+// refused. One test for each line of the runner's list, on each runtime the Bot team
+// ships on: Node, and Electron as Node (the desktop app). A runtime that takes the flags
+// and enforces nothing answers 'allowed' and turns its test red.
 //
-// The network has no test: this wall does not close it (see script-runner.js).
+// What the runner lists as not refused has no test here: the network, signals to the
+// same user's processes, facts about the machine, V8's flags.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 
 const HOST = fileURLToPath(new URL('./fixtures/browser-script-wall-host.mjs', import.meta.url))
@@ -66,45 +69,99 @@ function scratch(t) {
   return dir
 }
 
-const denied = (result, code) => {
+// Every call of the check was refused with this code.
+const refused = (result, code) => {
   assert.equal(result.error, undefined)
-  assert.equal(JSON.parse(result.answer), code)
+  const calls = JSON.parse(result.answer)
+  assert.ok(Object.keys(calls).length > 0)
+  assert.deepEqual(calls, Object.fromEntries(Object.keys(calls).map(name => [name, code])))
 }
 
 for (const runtime of RUNTIMES) {
-  test(`${runtime.name}: the script's process cannot read a file`, async (t) => {
+  test(`${runtime.name}: Node refuses the script's process a file to read`, async (t) => {
     // A file the host can read. (The process's own entry file is the one it may read.)
-    const path = join(scratch(t), 'readable.txt')
-    writeFileSync(path, 'host file')
+    const path = join(scratch(t), 'readable.json')
+    writeFileSync(path, '{"host":"file"}')
     const result = await check(t, runtime, { check: 'readFile', path })
-    if (result) denied(result, 'ERR_ACCESS_DENIED')
+    if (result) refused(result, 'ERR_ACCESS_DENIED')
   })
 
-  test(`${runtime.name}: the script's process cannot write a file`, async (t) => {
-    const path = join(scratch(t), 'written.txt')
+  test(`${runtime.name}: Node refuses the script's process a file to write or change`, async (t) => {
+    const dir = scratch(t)
+    const path = join(dir, 'kept.txt')
+    writeFileSync(path, 'host file')
     const result = await check(t, runtime, { check: 'writeFile', path })
     if (!result) return
-    denied(result, 'ERR_ACCESS_DENIED')
-    assert.equal(existsSync(path), false)
+    refused(result, 'ERR_ACCESS_DENIED')
+    assert.deepEqual(readdirSync(dir), ['kept.txt'])
+    assert.equal(readFileSync(path, 'utf8'), 'host file')
   })
 
-  test(`${runtime.name}: the script's process cannot start another process`, async (t) => {
+  test(`${runtime.name}: the script's process has no database module to reach files with`, async (t) => {
+    const dir = scratch(t)
+    const path = join(dir, 'kept.db')
+    const database = new DatabaseSync(path)
+    database.exec("create table kept (value); insert into kept values ('host row')")
+    database.close()
+    const before = readFileSync(path)
+    const result = await check(t, runtime, { check: 'sqlite', path, fresh: join(dir, 'made.db') })
+    if (!result) return
+    assert.equal(result.error, undefined)
+    const calls = JSON.parse(result.answer)
+    assert.equal(calls.import, 'ERR_UNKNOWN_BUILTIN_MODULE')
+    assert.equal(Object.values(calls).includes('allowed'), false, JSON.stringify(calls))
+    assert.deepEqual(readdirSync(dir), ['kept.db'])
+    assert.deepEqual(readFileSync(path), before)
+  })
+
+  test(`${runtime.name}: Node refuses the script's process another process`, async (t) => {
     const result = await check(t, runtime, { check: 'spawn' })
-    if (result) denied(result, 'ERR_ACCESS_DENIED')
+    if (result) refused(result, 'ERR_ACCESS_DENIED')
   })
 
-  test(`${runtime.name}: the script's process cannot start a worker thread`, async (t) => {
+  test(`${runtime.name}: Node refuses the script's process a worker thread`, async (t) => {
     const result = await check(t, runtime, { check: 'worker' })
-    if (result) denied(result, 'ERR_ACCESS_DENIED')
+    if (result) refused(result, 'ERR_ACCESS_DENIED')
   })
 
-  test(`${runtime.name}: the script's process cannot load a native addon`, async (t) => {
+  test(`${runtime.name}: Node refuses the script's process a native addon`, async (t) => {
     // No such file: without the wall the load is tried and fails with another code.
     const result = await check(t, runtime, { check: 'addon', path: join(scratch(t), 'missing.node') })
-    if (result) denied(result, 'ERR_DLOPEN_DISABLED')
+    if (result) refused(result, 'ERR_DLOPEN_DISABLED')
   })
 
-  test(`${runtime.name}: the script's process has none of the host's environment`, async (t) => {
+  test(`${runtime.name}: Node refuses the script's process WASI`, async (t) => {
+    const result = await check(t, runtime, { check: 'wasi' })
+    if (result) refused(result, 'ERR_ACCESS_DENIED')
+  })
+
+  test(`${runtime.name}: Node refuses the script's process its own inspector`, async (t) => {
+    const result = await check(t, runtime, { check: 'inspector' })
+    if (result) refused(result, 'ERR_ACCESS_DENIED')
+  })
+
+  test(`${runtime.name}: Node refuses to write a report or a heap snapshot for the script's process`, async (t) => {
+    const dir = scratch(t)
+    const result = await check(t, runtime, { check: 'diagnostics', path: dir })
+    if (!result) return
+    refused(result, 'ERR_ACCESS_DENIED')
+    assert.deepEqual(readdirSync(dir), [])
+  })
+
+  test(`${runtime.name}: the script's process works in an empty folder of the run's own, and cannot leave it`, async (t) => {
+    const elsewhere = scratch(t)
+    const result = await check(t, runtime, { check: 'folder', path: elsewhere })
+    if (!result) return
+    assert.equal(result.error, undefined)
+    const { cwd, chdir } = JSON.parse(result.answer)
+    assert.equal(chdir, 'ERR_ACCESS_DENIED')
+    assert.match(basename(cwd), /^browser-exec-/)
+    assert.notEqual(cwd, result.hostCwd)
+    // Whatever Node wrote there for the process went with it.
+    assert.equal(existsSync(cwd), false)
+  })
+
+  test(`${runtime.name}: the script's process has none of the host's environment variables`, async (t) => {
     const result = await check(t, runtime, { check: 'env' })
     if (!result) return
     assert.equal(result.error, undefined)
@@ -134,6 +191,18 @@ for (const runtime of RUNTIMES) {
       assert.equal(result.helperCalls, 0, line)
       assert.notEqual(result.exit, 'survived', line)
     }
+  })
+
+  test(`${runtime.name}: helper arguments longer than the host takes end the run`, async (t) => {
+    // One character past script-runner.js MAX_ARGS, in a line well under its MAX_LINE.
+    const over = await check(t, runtime, { check: 'argsTooLong', length: 4_000_000 - 3, timeout: 3_000 })
+    if (!over) return
+    assert.match(over.error ?? `answered ${over.answer}`, REFUSED)
+    assert.equal(over.helperCalls, 0)
+    // At the limit the helper is called; the fixture then says nothing more.
+    const at = await check(t, runtime, { check: 'argsTooLong', length: 4_000_000 - 4, timeout: 1_000 })
+    assert.match(at.error, /longer than 1 seconds/)
+    assert.equal(at.helperCalls, 1)
   })
 
   test(`${runtime.name}: a message with no end ends the run`, async (t) => {

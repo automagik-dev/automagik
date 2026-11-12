@@ -19,7 +19,7 @@ const { runIsolatedScript } = await import('../../src/host/browser/script-runner
 
 let helperCalls = 0
 const helpers = { goto: async () => { helperCalls += 1; return 'ok' } }
-const result = { node: process.versions.node, electron: process.versions.electron ?? null }
+const result = { node: process.versions.node, electron: process.versions.electron ?? null, hostCwd: process.cwd() }
 try {
   result.answer = await runIsolatedScript(JSON.stringify(request), helpers, { timeout: request.timeout, entry })
 } catch (error) {
