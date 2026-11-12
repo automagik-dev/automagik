@@ -39,7 +39,11 @@ export function callArguments(tool) {
   }
 }
 
+// The text of a call Auto's judge refused (bots-dsh auto-judge.js): it names the judge, never the person.
+const judgedText = tool => `Auto's judge refused ${tool.title}: ${tool.judgeReason}.`.replace(/\s+/g, ' ').slice(0, 300)
+
 function resultText(tool) {
+  if (typeof tool.judgeReason === 'string') return judgedText(tool)
   const text = contentText(tool.content) || tool.output || (tool.rawOutput === undefined ? '' : typeof tool.rawOutput === 'string' ? tool.rawOutput : JSON.stringify(tool.rawOutput))
   return text.length > OUTPUT_LIMIT ? `${text.slice(0, OUTPUT_LIMIT)}…` : text
 }
@@ -104,7 +108,7 @@ async function imageResult(host, live, tool, exec) {
   if (exec.signal?.aborted) return failed('The image was stopped before it was finished.')
   const base64 = agentImageOf(tool)
   if (base64 === undefined) {
-    return failed(tool.status === 'failed'
+    return failed(typeof tool.judgeReason === 'string' ? judgedText(tool) : tool.status === 'failed'
       ? `${live.name} could not make this image. Try again, or describe it differently.`
       : `${live.name} ended without an image. Try again.`)
   }
@@ -335,7 +339,15 @@ async function ask(host, live, tool, exec, permission) {
   const asking = tool.permission?.title
   const reason = `${live.name}: ${asking && asking !== tool.title ? `${asking.replace(/\?$/, '')}: ` : ''}${tool.title}`
   try {
-    return await approval.request({ agent: exec.agent, toolName: TOOL_NAME, callId: exec.callId, reason, displayReason: { en: reason }, signal: exec.signal })
+    const { title, kind, input, locations } = callArguments(tool)
+    // Plain JSON: DSH passes an approval nobody here answers on to its remote approval card only as lossless JSON (dsh-api-gateway
+    // projectRemoteEventRequest), and a member left undefined (`locations` of a call that has none) fails that dispatch: the call
+    // would be cancelled with no card.
+    const mirrorCall = JSON.parse(JSON.stringify({ title, kind, input, locations, allowOnce: tool.permission?.options?.some(option => option.kind === 'allow_once') === true }))
+    const outcome = await approval.request({ agent: exec.agent, toolName: TOOL_NAME, callId: exec.callId, reason, displayReason: { en: reason }, signal: exec.signal, mirrorCall })
+    // Auto's judge refused it (bots-dsh auto-judge.js sets `mirrorCall.judged`): the call's result says so (section 4).
+    tool.judgeReason = outcome === 'rejected' && typeof mirrorCall.judged?.reason === 'string' ? mirrorCall.judged.reason : undefined
+    return outcome
   } catch {
     return 'unavailable'
   }

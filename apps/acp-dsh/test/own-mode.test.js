@@ -24,6 +24,11 @@ import { AGENTS } from '../src/host/agents.js'
 import { PermissionDiagnostics } from '../src/host/permission-diagnostics.js'
 import { apply, SERVICE } from '../index.js'
 import { Backchannel } from '../src/host/backchannel.js'
+import { isRemoteJsonValue } from '@deepseek-ai/dsh-typert-protocol'
+import { mirrorTool } from '../src/host/tool.js'
+
+// What DSH's gateway sends a remote approval card (dsh-api-gateway projectRemoteEventRequest): every own key but agent and signal, as lossless JSON.
+const remoteJson = request => isRemoteJsonValue(Object.fromEntries(Object.entries(request).filter(([key]) => key !== 'agent' && key !== 'signal')))
 
 const FAKE = join(import.meta.dirname, '..', 'dev', 'fake-agent.mjs')
 const PROVIDER = 'acp-fake'
@@ -245,12 +250,12 @@ for (const verdict of ['allowed-once', 'rejected', 'unavailable', 'throw', 'stop
   else assert.equal(outcome?.outcome, 'cancelled')
 })
 
-test('own mode: bridged Workspace never asks and keeps cached strict mode', async t => {
+test('own mode: bridged Workspace asks and takes its own mode', async t => {
   let asks = 0
   const w = await world(t, { level: WRITE, modes: MODES, bridge: true, modeFor: AGENTS['acp-codex'].modeFor, spec: { ownMode: 'agent' }, ownMode: () => { asks++; return true } })
   const c = w.chat('bridge'); c.say('hi'); await c.step()
-  assert.equal(asks, 0)
-  assert.deepEqual(w.events('set-mode'), [])
+  assert.equal(asks, 2)
+  assert.deepEqual(w.events('set-mode').map(row => row.modeId), ['agent'])
 })
 for (const [level, mode] of [['read-only', 'read-only'], [FULL, 'agent-full-access'], ['auto', 'agent']]) test(`own mode: ${level} keeps its existing mode`, async t => {
   let asks = 0
@@ -400,16 +405,16 @@ for (const level of ['read-only', FULL, 'auto']) test(`own mode: no record at ${
   const c = w.chat('other'); c.say('hi'); await c.step()
   assert.equal(w.adapter.diagnostics.read(c.id).ownMode, undefined)
 })
-test('own mode: a bridged Workspace prompt has no own-mode record', async t => {
+test('own mode: a bridged Workspace prompt records its own mode', async t => {
   const w = await world(t, { level: WRITE, modes: MODES, bridge: true, modeFor: AGENTS['acp-codex'].modeFor, spec: { ownMode: 'agent' }, ownMode: () => true })
   const c = w.chat('kept'); c.say('plain'); await c.step()
-  assert.equal(w.adapter.diagnostics.read(c.id).ownMode, undefined)
+  assert.equal(w.adapter.diagnostics.read(c.id).ownMode.taken, true)
 })
 for (const [name, options] of [['no answerer', {}], ['bridged', { bridge: true, ownMode: () => true }]]) test(`own mode: a busy strict prompt is not in its own mode (${name})`, async t => {
   const w = await world(t, { level: WRITE, modes: MODES, modeFor: AGENTS['acp-codex'].modeFor, spec: { ownMode: 'agent' }, ...options })
   const c = w.chat('strict'); c.say('hi'); await c.step()
   assert.equal(w.adapter.live.get(c.id).run.busy, true)
-  assert.equal(w.adapter.ownModeIn(c.id), false)
+  assert.equal(w.adapter.ownModeIn(c.id), name === 'bridged')
 })
 test('own mode: idle does not end a busy strict prompt', async t => {
   const w = await world(t, { level: WRITE, modes: MODES, modeFor: AGENTS['acp-codex'].modeFor, spec: { ownMode: 'agent' } })
@@ -442,4 +447,113 @@ test('own mode service disposers are scoped and competing registrations disable 
   service.ownMode(() => true)
   assert.equal(h.registered.adapter.ownMode(), undefined)
   assert.equal(h.logs.filter(([kind]) => kind === 'warn').length, 1)
+})
+
+for (const answer of [undefined, false, 'true', true]) test(`Claude own mode requires exact true: ${answer}`, async t => {
+  const w = await world(t, { level: WRITE, modes: ['default', 'auto', 'bypassPermissions'], modeFor: AGENTS['acp-claude'].modeFor, spec: { ownMode: 'auto' }, ownMode: answer === undefined ? undefined : () => answer })
+  const c = w.chat('ada'); c.say('x'); await c.step()
+  assert.deepEqual(w.events('set-mode').map(row => row.modeId), answer === true ? ['auto'] : [])
+})
+test('Claude own mode restores strict mode when its answer changes', async t => {
+  let calls = 0
+  const w = await world(t, { level: WRITE, modes: ['default', 'auto', 'bypassPermissions'], modeFor: AGENTS['acp-claude'].modeFor, spec: { ownMode: 'auto' }, ownMode: () => ++calls === 1 })
+  const c = w.chat('ada'); c.say('x'); await c.step()
+  assert.deepEqual(w.events('set-mode').map(row => row.modeId), ['auto', 'default'])
+})
+for (const prompt of ['bridge bash', 'bridge-permit bash']) test(`bridged own asks carry agentAsked: ${prompt}`, async t => {
+  const w = await world(t, { level: WRITE, modes: MODES, bridge: true, modeFor: AGENTS['acp-codex'].modeFor, spec: { ownMode: 'agent' }, ownMode: () => true })
+  const c = w.chat('ada'); c.say(prompt); await c.step()
+  assert.equal(w.asked[0].bridgeCall.agentAsked, prompt.includes('permit'))
+  assert.equal(remoteJson(w.asked[0]), true)
+  c.say('bridge bash'); await c.step()
+  assert.equal(w.asked.at(-1).bridgeCall.agentAsked, false)
+})
+test('bridge judge refusals identify the judge', async t => {
+  const w = await world(t, { level: WRITE, modes: MODES, bridge: true, modeFor: AGENTS['acp-codex'].modeFor, spec: { ownMode: 'agent' }, ownMode: () => true, answer: request => { request.bridgeCall.judged = { reason: 'not needed' }; return 'rejected' } })
+  const c = w.chat('ada'); c.say('bridge bash'); await c.step()
+  assert.match(JSON.stringify(c.messages), /Auto's judge refused bash: not needed\./)
+})
+for (const own of [true, false]) test(`reviewer refusal stop notice only in own mode: ${own}`, async t => {
+  const w = await world(t, { level: WRITE, modes: MODES, modeFor: AGENTS['acp-codex'].modeFor, spec: { ownMode: 'agent' }, ownMode: () => own })
+  const c = w.chat('ada'); c.say('reviewer denies 3'); let chunks = await c.step()
+  while (chunks.findLast(chunk => chunk.type === 'finish').reason.kind === 'tool-calls') {
+    for (const chunk of chunks.filter(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call')) await c.run(chunk.block)
+    chunks = await c.step()
+  }
+  const notices = c.session.snapshotEvents().filter(e => e.type === 'user/message' && e.data.source?.stop === 'refusals')
+  assert.equal(notices.length, own ? 1 : 0)
+  assert.equal(chunks.findLast(chunk => chunk.type === 'finish').reason.kind, own ? 'stop' : 'aborted', JSON.stringify(chunks))
+})
+test('one reviewer refusal followed by text does not claim a refusal stop', async t => {
+  const w = await world(t, { level: WRITE, modes: MODES, modeFor: AGENTS['acp-codex'].modeFor, spec: { ownMode: 'agent' }, ownMode: () => true })
+  const c = w.chat('ada'); c.say('reviewer denies 1 then text'); let chunks = await c.step()
+  while (chunks.findLast(chunk => chunk.type === 'finish').reason.kind === 'tool-calls') {
+    for (const chunk of chunks.filter(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call')) await c.run(chunk.block)
+    chunks = await c.step()
+  }
+  assert.equal(chunks.findLast(chunk => chunk.type === 'finish').reason.kind, 'aborted', JSON.stringify(chunks))
+  assert.equal(c.session.snapshotEvents().some(e => e.data?.source?.stop === 'refusals'), false)
+})
+for (const always of [false, true]) test(`mirror asks carry current input and one-shot availability: ${always}`, async t => {
+  const w = await world(t, { level: WRITE, modes: MODES, modeFor: AGENTS['acp-codex'].modeFor, env: { FAKE_ACP_ALWAYS_ONLY: always ? '1' : '0' } })
+  const c = w.chat('ada'); c.say('ask edited'); const chunks = await c.step()
+  const block = chunks.find(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call').block
+  await c.run(block)
+  assert.equal(w.asked[0].mirrorCall.input.command, 'echo second')
+  assert.equal(w.asked[0].mirrorCall.allowOnce, !always)
+  assert.equal(remoteJson(w.asked[0]), true)
+  assert.equal(Object.hasOwn(w.asked[0].mirrorCall, 'locations'), false)
+  await c.step()
+  assert.match(JSON.stringify(c.messages), /It printed/)
+})
+
+for (const [answer, text] of [['rejected', 'The person rejected bash.'], ['unavailable', 'DSH could not approve bash.']]) test(`plain bridge ${answer} keeps its existing text`, async t => {
+  const w = await world(t, { level: WRITE, modes: MODES, bridge: true, modeFor: AGENTS['acp-codex'].modeFor, spec: { ownMode: 'agent' }, ownMode: () => true, answer })
+  const c = w.chat('ada'); c.say('bridge bash'); await c.step()
+  assert.ok(JSON.stringify(c.messages).includes(text))
+  assert.doesNotMatch(JSON.stringify(c.messages), /Auto's judge refused/)
+  assert.equal(w.executed.length, 0)
+})
+
+test('a judged mirror refusal names the judge and answers the agent with its own reject', async t => {
+  const w = await world(t, { level: WRITE, modes: MODES, modeFor: AGENTS['acp-codex'].modeFor, answer: request => { request.mirrorCall.judged = { reason: 'not needed' }; return 'rejected' } })
+  const c = w.chat('ada'); c.say('hi'); const chunks = await c.step()
+  await c.run(chunks.find(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call').block)
+  await c.step()
+  assert.match(JSON.stringify(c.messages), /Auto's judge refused Run echo hello 1: not needed\./)
+  assert.match(JSON.stringify(c.messages), /I was not allowed to run it/)
+  assert.equal(remoteJson(w.asked[0]), true)
+})
+
+// The mirror's body over a stand-in run: one asking call; the approval service answers through `answer`.
+async function mirrorAsk({ title = 'Run echo x', locations = [], answer = async () => 'rejected' } = {}) {
+  let seen
+  const approval = { effectivePolicy: () => 'ask', request: async request => { seen = request; return answer(request) } }
+  const tool = {
+    id: 'x', title, kind: 'execute', status: 'pending', content: [], locations, rawInput: { command: 'echo x' }, listeners: new Set(),
+    permission: { options: [{ optionId: 'yes', kind: 'allow_once' }, { optionId: 'no', kind: 'reject_once' }], answer(value) { tool.answered = value; tool.permission = undefined } },
+  }
+  const live = { name: 'x', run: { tools: new Map([['x', tool]]), busy: false, cancel: async () => {} } }
+  const host = { runOf: () => live, approval: () => approval, sandboxPolicy: () => ({ resolve: () => ({ mode: WRITE }) }), permissionPresets: () => ({ current: () => WRITE }) }
+  const exec = { callId: 'x', agent: { session: { id: 'x', snapshotEvents: () => [] } }, signal: new AbortController().signal }
+  const result = await mirrorTool(host).execute({ id: 'x', title, kind: 'execute' }, exec)
+  return { seen, result, tool }
+}
+for (const locations of [[], [{ path: 'x' }]]) test(`mirror approval requests are lossless JSON: ${locations.length} locations`, async () => {
+  const { seen } = await mirrorAsk({ locations })
+  assert.equal(remoteJson(seen), true)
+  if (locations.length) assert.deepEqual(seen.mirrorCall.locations, [{ path: 'x' }])
+  else assert.equal(Object.hasOwn(seen.mirrorCall, 'locations'), false)
+})
+for (const [name, title, judged] of [['judged', 'Run echo x', true], ['plain', 'Run echo x', false], ['judged image', 'generate_image x', true]]) test(`a mirror refusal names Auto's judge only when it refused: ${name}`, async () => {
+  const { result, tool } = await mirrorAsk({ title, answer: async request => { if (judged) request.mirrorCall.judged = { reason: 'not needed' }; return 'rejected' } })
+  assert.deepEqual(tool.answered, { outcome: { outcome: 'selected', optionId: 'no' } })
+  if (judged) assert.equal(result.text, `Auto's judge refused ${title}: not needed.`)
+  else assert.doesNotMatch(result.text, /Auto's judge/)
+})
+
+test('a judged refusal that is answered cancelled does not name the judge', async () => {
+  const { result, tool } = await mirrorAsk({ answer: async request => { request.mirrorCall.judged = { reason: 'not needed' }; return 'cancelled' } })
+  assert.deepEqual(tool.answered, { outcome: { outcome: 'cancelled' } })
+  assert.doesNotMatch(result.text, /Auto's judge/)
 })

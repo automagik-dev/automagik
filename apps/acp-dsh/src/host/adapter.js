@@ -1028,6 +1028,7 @@ export class AcpAdapter extends LlmAdapter {
                 : {}),
               dshTools: this.bridgeOn(agent),
               onReady: state.bridge === undefined ? undefined : () => this.ready(agent, state),
+              onAsked: () => { if (state.own === true && state.bridge !== undefined) state.bridge.agentAsked = true },
               onToolCall: tool => this.checkDrift(sessionId, agent, tool),
               onMode: seen => this.diagnostics?.mode(sessionId, state, seen),
               ...(agent.startMs === undefined ? {} : { startMs: agent.startMs }),
@@ -1140,7 +1141,7 @@ export class AcpAdapter extends LlmAdapter {
       const modes = agent.modeFor?.(level)
       const strict = modes?.at(-1)
       const possible = agent.ownMode !== undefined && level.sandbox === 'workspace-write' && level.policy === 'ask' && !level.full && !level.auto
-      const candidate = possible && !this.bridgeOn(agent) && live.bridge === undefined && live.run.modes?.availableModes?.some(mode => mode.id === agent.ownMode)
+      const candidate = possible && live.run.modes?.availableModes?.some(mode => mode.id === agent.ownMode)
       let own = 'none'
       if (candidate) {
         own = await this.ownAnswer(sessionId, dshAgent, options.provider)
@@ -1222,6 +1223,7 @@ export class AcpAdapter extends LlmAdapter {
       live.own = own === 'yes'
       // Ordinary strict sessions have no Auto record until an own-mode attempt or a late answer.
       this.diagnostics?.own(sessionId, live, live.ownSent === true || ['yes', 'late', 'changed', 'refused'].includes(own) ? { answer: own, taken: live.own } : undefined)
+      if (live.bridge !== undefined) live.bridge.agentAsked = false
       live.run.prompt(prompt).catch(() => {})
     }
     // The turn stays open until its end is drained here: the agent may finish it before DSH
@@ -1276,7 +1278,17 @@ export class AcpAdapter extends LlmAdapter {
         yield* blocks.toolCall(id, TOOL_NAME, JSON.stringify(callArguments(tool)))
         return yield finish('tool-calls')
       } else if (event.type === 'end') {
+        const wasOwn = live.own
         live.own = false
+        const r = live.run.reviews
+        if (wasOwn && r?.denied > 0 && (r.inRow >= 3 || r.denied >= 10 || (r.last === 'denied' && !r.after))) {
+          try { dshAgent?.session?.append?.('user/message', reviewerStopNotice(agent.name, r.denied), { surfaceOp: 'append' }) } catch (error) {
+            try { this.ctx.logger?.warn?.(`acp-dsh: the reviewer notice was not written: ${error?.message ?? error}`) } catch {}
+          }
+          yield* shown()
+          yield* blocks.close()
+          return yield finish('stop')
+        }
         yield* shown()
         yield* blocks.close()
         if (event.stopReason === 'cancelled') return yield finish('aborted', 'Stopped', 'ABORTED')
@@ -1330,4 +1342,9 @@ export class AcpAdapter extends LlmAdapter {
     for (const agent of this.agents.values()) agent.catalog?.dispose()
     for (const [sessionId, live] of this.live) this.end(sessionId, live)
   }
+}
+
+export function reviewerStopNotice(name, n) {
+  const summary = `${name} stopped after its own reviewer refused ${n === 1 ? 'a step' : `${n} steps`}. Reply to let it go on; refused steps stay refused`
+  return createUserMessage({ content: [{ type: 'text', text: `[${summary}.]` }], source: { kind: NOTICE_KIND, form: 'notice', stop: 'refusals', summary } })
 }

@@ -179,7 +179,7 @@ export function install(rt) {
         botId: facts.botId,
         roomId: facts.roomId,
         open: session !== undefined,
-        auto: plain(facts.auto) ? kept({ counts: flag(facts.auto.counts), why: pick(new Set(['lock', 'level', 'deny', 'session', 'preset', 'route', 'agent']), facts.auto.why) }) : undefined,
+        auto: plain(facts.auto) ? kept({ counts: flag(facts.auto.counts), why: pick(new Set(['lock', 'level', 'deny', 'session', 'preset', 'route', 'agent', 'judge']), facts.auto.why), by: pick(new Set(['codex', 'claude', 'own', 'team']), facts.auto.by) }) : undefined,
         presets: facts.presets === false ? false : undefined,
         // `unknown`: a task's level cannot be told without DSH's levels.
         source: saved !== undefined ? facts.source : facts.kind === 'task' && facts.presets === false ? 'unknown' : 'none',

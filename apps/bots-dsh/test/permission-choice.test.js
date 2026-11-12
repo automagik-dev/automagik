@@ -31,7 +31,7 @@ const tick = () => new Promise(resolve => setTimeout(resolve, 10))
 const act = async (fn = () => {}) => { flushSync(fn); await tick() }
 const { outputFiles } = await build({
   stdin: { contents: [
-    "export { PermissionPicker, PermissionList, PermissionExplanations, presetText } from './src/client/permission-picker.js'",
+    "export { PermissionPicker, PermissionList, PermissionExplanations, presetText, autoQuestion } from './src/client/permission-picker.js'",
     "export { PermissionChoiceDock, reopenPermissionChoice } from './src/client/permission-card.js'",
     "export { BotPanel } from './src/client/browser-pane.js'",
     "export { GroupSettingsForm } from './src/client/group-settings.js'",
@@ -861,4 +861,18 @@ test('Auto question explains the reviewer and retains the revision at opening ac
   rev = 9; await act(render)
   await click(button(document, 'Use Auto'))
   assert.equal(JSON.stringify(picks), JSON.stringify([['workspace-write:auto', { id: 'ada', rev: 3 }]]))
+})
+
+test('Auto questions explain each route and preserve Codex wording', t => {
+  const w = mount(t)
+  const own = w.autoQuestion('ada', 'Workspace', { by: 'own', model: 'x' }).join(' ')
+  for (const word of ['x', 'separate request', 'sandbox', 'plugin']) assert.ok(own.includes(word))
+  const claude = w.autoQuestion('ada', 'Workspace', { by: 'claude', bridged: true, model: 'x' }).join(' ')
+  for (const word of ['auto mode', 'x', 'sandbox']) assert.ok(claude.includes(word))
+  const team = w.autoQuestion('ada', 'Workspace', { by: 'team', agent: 'acp-hermes', model: 'x' }).join(' ')
+  assert.match(team, /Hermes/); assert.match(team, /x/); assert.doesNotMatch(team, /sandbox/)
+  const codex = w.autoQuestion('ada', 'Workspace')
+  assert.equal(codex.length, 3)
+  assert.match(codex[2], /Codex 0.167.0/)
+  assert.equal(w.autoQuestion('ada', 'Workspace', { by: 'codex', bridged: true, model: 'x' }).length, 5)
 })

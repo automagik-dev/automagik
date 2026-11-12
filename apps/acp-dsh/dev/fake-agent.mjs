@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// "reviewer denies N" emits reviews; "then text" continues afterward. FAKE_ACP_REVIEW_STOP overrides cancelled.
+// "ask edited" changes input at the ask. FAKE_ACP_ALWAYS_ONLY=1 offers only lasting allows.
 // A fake ACP agent for tests. Each prompt: two text chunks, one shell-like tool call that asks
 // permission first, then a line saying whether it ran. A prompt that says "twice" makes two
 // calls; one that says "hang" waits until it is cancelled; one that says "bridge <tool>" calls
@@ -272,6 +274,16 @@ const implementation = {
     // What the client actually sent this turn (a replayed transcript, for a crossing).
     trace({ event: 'prompt', sessionId, turns: session.turns, text: said })
     const update = u => conn.sessionUpdate({ sessionId, update: u })
+    const denies = /reviewer denies (\d+)/.exec(said)
+    if (denies) {
+      for (let n = 0; n < Number(denies[1]); n++) {
+        const toolCallId = `guardian_assessment:${session.turns}-${n}`
+        await update({ sessionUpdate: 'tool_call', toolCallId, title: 'Guardian Review', kind: 'think', status: 'pending' })
+        await update({ sessionUpdate: 'tool_call_update', toolCallId, status: 'completed', rawOutput: { review: { status: 'denied' } } })
+      }
+      if (/then text/.test(said)) await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Continuing.' } })
+      return { stopReason: process.env.FAKE_ACP_REVIEW_STOP ?? 'cancelled' }
+    }
     if (OFFERS || SESSION_MODELS) await update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: `On ${session.model} at ${session.effort ?? 'no'} effort. ` } })
     await update({ sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: 'Thinking it over.' } })
     await update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: `Fake agent, turn ${session.turns}: ` } })
@@ -292,7 +304,7 @@ const implementation = {
       const asked = conn.requestPermission({
         sessionId,
         toolCall: { toolCallId, title: 'Run command?' },
-        options: [{ optionId: 'yes', name: 'Allow', kind: 'allow_once' }, { optionId: 'no', name: 'Reject', kind: 'reject_once' }],
+        options: [{ optionId: 'yes', name: 'Allow', kind: process.env.FAKE_ACP_ALWAYS_ONLY === '1' ? 'allow_always' : 'allow_once' }, { optionId: 'no', name: 'Reject', kind: 'reject_once' }],
       }, { cancellationSignal: controller.signal })
       setTimeout(() => controller.abort(), Number(process.env.FAKE_ACP_WITHDRAW_MS ?? 50))
       const answer = await asked.then(value => value.outcome?.outcome, error => `error ${error?.code}`)
@@ -381,7 +393,7 @@ const implementation = {
           sessionId,
           toolCall,
           options: [
-            { optionId: 'yes', name: 'Allow', kind: 'allow_once' },
+            { optionId: 'yes', name: 'Allow', kind: process.env.FAKE_ACP_ALWAYS_ONLY === '1' ? 'allow_always' : 'allow_once' },
             { optionId: 'no', name: 'Reject', kind: 'reject_once' },
           ],
         })
@@ -435,13 +447,13 @@ const implementation = {
     const calls = /twice/.test(said) ? 2 : 1
     for (let n = 1; n <= calls; n++) {
       const toolCallId = `call-${session.turns}-${n}`
-      const command = `echo hello ${n}`
+      const command = /ask edited/.test(said) ? 'echo first' : `echo hello ${n}`
       await update({ sessionUpdate: 'tool_call', toolCallId, title: `Run ${command}`, kind: 'execute', status: 'pending', rawInput: { command } })
       const answer = await conn.requestPermission({
         sessionId,
-        toolCall: { toolCallId, title: `Run ${command}`, kind: 'execute', rawInput: { command } },
+        toolCall: { toolCallId, title: `Run ${command}`, kind: 'execute', rawInput: { command: /ask edited/.test(said) ? 'echo second' : command } },
         options: [
-          { optionId: 'yes', name: 'Allow', kind: 'allow_once' },
+          { optionId: 'yes', name: 'Allow', kind: process.env.FAKE_ACP_ALWAYS_ONLY === '1' ? 'allow_always' : 'allow_once' },
           { optionId: 'no', name: 'Reject', kind: 'reject_once' },
         ],
       })

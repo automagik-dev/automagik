@@ -51,7 +51,7 @@ function PermissionRow({ bot, roster, actions, run }) {
     h('div', { className: 'bt-section-title' }, t('Permissions')),
     // A Bot without its own preset may run on another one set in DSH, so its first pick always applies.
     // The select explains the current level; its menu lets even a view-only window read every level.
-    h(PermissionSelect, { catalog: levelsOf(catalog, bot), name: bot.name, saved: savedLevelOf(bot, catalog), askedOf: () => ({ id: bot.id, rev: bot.permissionRev ?? 0 }), replaced: presetName(bot.permission ?? catalog.defaultPreset, catalog), repick: bot.permission === undefined, disabled: Boolean(roster.readOnly), cli: cliOfBot(bot), onPick: (permission, asked) => run(pickLevel(actions, bot, permission, asked)) }),
+    h(PermissionSelect, { judge: { ...bot.autoJudge, agent: String(bot.model ?? '').split('/')[0] }, catalog: levelsOf(catalog, bot), name: bot.name, saved: savedLevelOf(bot, catalog), askedOf: () => ({ id: bot.id, rev: bot.permissionRev ?? 0 }), replaced: presetName(bot.permission ?? catalog.defaultPreset, catalog), repick: bot.permission === undefined, disabled: Boolean(roster.readOnly), cli: cliOfBot(bot), onPick: (permission, asked) => run(pickLevel(actions, bot, permission, asked)) }),
     h(PermissionFallback, { fallback: bot.permissionFallback, owner: bot, catalog }),
     roster.readOnly ? null : h('button', { type: 'button', className: 'bt-more', onClick: () => reopenPermissionChoice(bot.id) }, t('Choose in the chat')))
 }

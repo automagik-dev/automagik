@@ -141,7 +141,7 @@ export function ComposerPermission({ sessionId, useRoster, actions }) {
     shownPlace ? createPortal(h('div', {
       ref: menu, className: `bt-menu bt-menu-up bt-permission-menu${shownPlace.bottom !== undefined ? ' bt-menu-up' : ''}`,
       role: 'menu', 'aria-label': t('Permissions'), style: shownPlace, 'data-leaving': leaving || undefined,
-    }, h(PermissionList, { catalog, saved, onPick: pick, name: bot.name, cli, askedOf: () => ({ id: bot.id, rev: bot.permissionRev ?? 0 }), replaced: presetName(bot.permission ?? catalog.defaultPreset, catalog) }), bot.permissionAuto ? h(PermissionFallback, { fallback: bot.permissionFallback, owner: bot, catalog }) : null), document.body) : null)
+    }, h(PermissionList, { judge: { ...bot.autoJudge, agent: String(bot.model ?? '').split('/')[0] }, catalog, saved, onPick: pick, name: bot.name, cli, askedOf: () => ({ id: bot.id, rev: bot.permissionRev ?? 0 }), replaced: presetName(bot.permission ?? catalog.defaultPreset, catalog) }), bot.permissionAuto ? h(PermissionFallback, { fallback: bot.permissionFallback, owner: bot, catalog }) : null), document.body) : null)
 }
 
 export function ComposerPlus({ sessionId, inputActions, useRoster, actions }) {

@@ -664,3 +664,12 @@ the bridge's first tool list, and Codex's fork and close. It is skipped unless
 The plugin id `@automagik/acp-dsh`, the row id and storage prefix `acp-dsh`, the provider ids
 `acp-<agent>` (never `claude-code*`, which the Bot team reads as the Claude Code plugin) and the
 tool name `acp_tool` are public: Sessions keep them.
+
+
+### Auto on every route
+
+`acpAgents.ownMode` can request Claude Code's `auto` mode or Codex's `agent` mode, including bridged sessions. Two exact `true` answers are required before a prompt. Strict sessions retain their existing mode handling.
+
+A bridge approval carries `bridgeCall: { agentAsked }`. This is false at the start of each prompt and becomes true when a CLI in its own mode asks permission. A judge may set `bridgeCall.judged = { reason }` when rejecting; the bridge reports `Auto's judge refused <tool>: <reason>.` without attributing it to the person. A mirror approval carries `mirrorCall: { title, kind, input, allowOnce }`, plus `locations` when the call has some, captured from the current permission request immediately before asking. It is plain JSON: DSH passes an approval it does not answer on to its remote approval card only as lossless JSON, so no member is ever `undefined`. A judge may set `mirrorCall.judged = { reason }` when rejecting; the call's result then reads `Auto's judge refused <title>: <reason>.` and the agent gets its own reject option. Only an offered `allow_once` permits an automatic one-shot decision. The person's answer retains the existing `allow_always` fallback.
+
+Codex review events are counted per prompt. When an own-mode prompt ends after three consecutive or ten total refusals, or immediately after a refusal without subsequent activity, an `acp-session` notice with `stop: 'refusals'` explains that replying can continue; refused steps stay refused. The turn finishes as `stop`. Strict prompts keep their existing ending.
