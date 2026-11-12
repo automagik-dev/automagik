@@ -14,8 +14,10 @@ this delivery. The service does not provide a passkey recovery mechanism.
 Better Auth's user schema requires a unique email. Accounts receive a random
 address under the reserved `.invalid` domain solely for that database field.
 It is never mailed or returned by this service, and the provider offers no email
-scope. Public WebAuthn options use the display name instead. The page contract
-uses phone codes for sign-in and does not offer account linking.
+scope. The JWT plugin's session response header is disabled. Public WebAuthn
+options use the display name instead. Phone verification accepts only
+`phoneNumber`, `code` and `oauth_query`; the Worker rejects linking flags and all
+other extra fields. A phone code cannot add phone authentication to a passkey account.
 
 Phone verification routes are absent until `OMNI_OTP_URL` is configured. Delivery
 posts `{phoneNumber, code}` over HTTPS, with an optional `OMNI_API_TOKEN` bearer
@@ -80,11 +82,11 @@ a missing browser a failure. `ID_PAGES_SHOTS=<folder> bun run test -- pages` als
 writes a picture of every state (1440 and 390 wide, light and dark; 320 light)
 with an `INDEX.md`.
 
-Mutation checks disable PKCE, relax redirects, enable public registration,
-move rate limits to memory, serve a page file directly as `.html` and let CI
-skip the page browser tests, one at a time. Each must fail its targeted test;
-source files are restored afterward. An optional terminal argument sends each
-mutation's name through `hc send` before it runs.
+Mutation checks restore the session JWT header, allow phone linking, disable
+PKCE, relax redirects, enable public registration, move rate limits to memory,
+serve a page file directly as `.html` and let CI skip the page browser tests,
+one at a time. Each must fail its targeted test; source files are restored
+afterward. Announcements and results are printed to stdout.
 `bun scripts/generate-migration.ts` regenerates the initial schema for review;
 never replace an already applied migration when upgrading a deployed database.
 

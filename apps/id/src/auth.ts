@@ -59,7 +59,7 @@ export function createAuth(env: Env, ctx: Pick<ExecutionContext, 'waitUntil'>, s
           },
         },
       }),
-      jwt(),
+      jwt({ disableSettingJwtHeader: true }),
       oauthProvider({
         loginPage: '/sign-in',
         consentPage: '/consent',
