@@ -85,6 +85,17 @@ beforeEach(async () => {
 });
 afterEach(async () => { await Promise.all(runtimes.map(mf => mf.dispose())); });
 
+function expectNoInternalEmail(value: string) {
+  expect(value).not.toContain('@id.invalid');
+  // A signed JWT still discloses its payload. Check encoded header/body tokens too.
+  for (const match of value.matchAll(/[A-Za-z0-9_-]+\.([A-Za-z0-9_-]+)\.[A-Za-z0-9_-]+/g)) {
+    let payload: unknown;
+    try { payload = JSON.parse(Buffer.from(match[1], 'base64url').toString('utf8')); }
+    catch { continue; }
+    expect(JSON.stringify(payload)).not.toContain('@id.invalid');
+  }
+}
+
 async function request(path: string, body?: unknown, options: {
   mf?: Miniflare; method?: string; form?: boolean; cookie?: string; ip?: string;
   headers?: Record<string, string>;
@@ -102,6 +113,12 @@ async function request(path: string, body?: unknown, options: {
       new URLSearchParams(body as Record<string, string>).toString() : JSON.stringify(body),
     redirect: 'manual',
   });
+  // Every route exercised by this suite checks both the wire body and all response headers.
+  for (const [name, value] of response.headers) {
+    expectNoInternalEmail(name);
+    expectNoInternalEmail(value);
+  }
+  expectNoInternalEmail(await response.clone().text());
   const cookies = response.headers.getSetCookie();
   const jar = new Map(cookie.split('; ').filter(Boolean).map(entry => {
     const at = entry.indexOf('=');
@@ -172,6 +189,21 @@ function exchange(authorizationCode: string, extra: Record<string, string> = {})
 }
 
 describe('Worker + D1 identity', () => {
+  test('internal email stays out of response headers and bodies, including encoded JWTs', async () => {
+    const { userId } = await signup();
+    const db = await runtime.getD1Database('DB');
+    const stored = await db.prepare('SELECT email FROM user WHERE id = ?').bind(userId)
+      .first<{ email: string }>();
+    expect(stored!.email).toMatch(/@id\.invalid$/);
+    const session = await request('/api/auth/get-session');
+    expect(session.status).toBe(200);
+    expect(session.headers.get('set-auth-jwt')).toBeNull();
+    expect(session.headers.get('access-control-expose-headers') ?? '').not.toContain('set-auth-jwt');
+    expect((await session.json() as any).user.email).toBeUndefined();
+    // Existing-account registration options must not use the internal email as a display name.
+    await jsonOK(await request('/api/auth/passkey/generate-register-options'));
+  });
+
   test('software passkey signup, sign-in, native S256 code flow, JWKS, ID token and userinfo', async () => {
     const { authenticator, userId } = await signup();
     cookie = '';
@@ -475,6 +507,47 @@ describe('Worker + D1 identity', () => {
     expect((await request('/api/auth/phone-number/verify', {
       phoneNumber: lockedNumber, code: goodCode,
     }, { mf: phoneRuntime })).status).toBe(403);
+  });
+
+  test('phone linking flags cannot add phone sign-in to a passkey identity', async () => {
+    const { userId } = await signup();
+    const deliveries: { phoneNumber: string; code: string }[] = [];
+    const phoneRuntime = await instance(true, data => { deliveries.push(data); });
+    const phoneNumber = '+15555550126';
+    await jsonOK(await request('/api/auth/phone-number/send-otp', { phoneNumber }, { mf: phoneRuntime }));
+    const code = deliveries[0].code;
+    const rejection = {
+      code: 'UNSUPPORTED_PHONE_OPERATION', message: 'Phone verification supports sign-in only',
+    };
+    for (const flags of [
+      { updatePhoneNumber: true }, { updatePhoneNumber: false },
+      { linkAccount: true }, { linkPhoneNumber: true }, { userId }, { disableSession: true },
+    ]) {
+      const response = await request('/api/auth/phone-number/verify', {
+        phoneNumber, code, ...flags,
+      }, { mf: phoneRuntime });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual(rejection);
+    }
+    const queryFlag = await request('/api/auth/phone-number/verify?updatePhoneNumber=true', {
+      phoneNumber, code,
+    }, { mf: phoneRuntime });
+    expect(queryFlag.status).toBe(400);
+    expect(await queryFlag.json()).toEqual(rejection);
+    const db = await phoneRuntime.getD1Database('DB');
+    expect(await db.prepare('SELECT phoneNumber FROM user WHERE id = ?').bind(userId).first())
+      .toEqual({ phoneNumber: null });
+    const originalSession = await jsonOK(await request('/api/auth/get-session', undefined, { mf: phoneRuntime }));
+    expect(originalSession.user.id).toBe(userId);
+
+    cookie = '';
+    await jsonOK(await request('/api/auth/phone-number/send-otp', { phoneNumber }, { mf: phoneRuntime }));
+    const phoneSession = await jsonOK(await request('/api/auth/phone-number/verify', {
+      phoneNumber, code: deliveries[1].code,
+    }, { mf: phoneRuntime }));
+    expect(phoneSession.user.id).not.toBe(userId);
+    expect(await db.prepare('SELECT phoneNumber FROM user WHERE id = ?').bind(userId).first())
+      .toEqual({ phoneNumber: null });
   });
 
   test('OTP response completes while the Omni waitUntil delivery is still pending', async () => {

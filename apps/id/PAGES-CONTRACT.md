@@ -143,8 +143,11 @@ Phone flow, only when enabled:
    HTTP 200: `{status: true, token: string, user: {id, name, phoneNumber,
    phoneNumberVerified, ...}}`, plus the session cookie. Ignore the body token.
    A provider flow can instead return `{redirect: true, url}`.
-   Keep `disableSession` and `updatePhoneNumber` absent. The page offers no
-   password or account-linking flow. Successful verification can create an account.
+   The Worker accepts only `phoneNumber`, `code` and `oauth_query`: it rejects
+   `updatePhoneNumber`, `disableSession`, all other extra fields and query
+   parameters with HTTP 400 `{code: "UNSUPPORTED_PHONE_OPERATION", message:
+   "Phone verification supports sign-in only"}`. The page offers no password or
+   account-linking flow. Successful verification can create a separate phone account.
 3. Continue the provider query. Show an invalid-code state, an expired-code state,
    and a locked-challenge state after three incorrect guesses. Codes expire after
    five minutes. A locked challenge needs a new send, subject to rate limits.

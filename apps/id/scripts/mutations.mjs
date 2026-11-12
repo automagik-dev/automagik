@@ -3,6 +3,16 @@ import { spawnSync } from 'node:child_process';
 
 const mutations = [
   {
+    name: 'restore the email-bearing session JWT header',
+    test: 'internal email stays out',
+    edits: [['src/auth.ts', 'disableSettingJwtHeader: true', 'disableSettingJwtHeader: false']],
+  },
+  {
+    name: 'allow phone-number linking flags',
+    test: 'phone linking flags cannot',
+    edits: [['src/index.ts', 'if (!isSignInOnly)', 'if (false)']],
+  },
+  {
     name: 'drop PKCE enforcement',
     test: 'plain and missing PKCE',
     edits: [['scripts/client-seed.ts', 'requirePKCE: true', 'requirePKCE: false']],
@@ -28,15 +38,9 @@ const mutations = [
   },
 ];
 
-const reportTo = process.argv[2];
 await mkdir('.wrangler', { recursive: true });
 for (const [index, mutation] of mutations.entries()) {
-  // The owner's terminal receives the mutation's name before any source is changed.
   const announcement = `Mutation check: ${mutation.name}.`;
-  if (reportTo) {
-    const notice = spawnSync('hc', ['send', reportTo, announcement], { encoding: 'utf8' });
-    if (notice.status !== 0) throw new Error(`Could not report mutation: ${notice.stderr}`);
-  }
   process.stdout.write(`${announcement}\n`);
   const originals = new Map();
   try {
