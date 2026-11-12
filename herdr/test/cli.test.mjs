@@ -1292,7 +1292,7 @@ test("ls --json: kind, lead, category, planned, agent, model detected → pinned
   for (const key of ["id", "name", "kind", "lead", "category", "code", "planned", "agent", "model", "modelSource", "terminal", "status", "duplicate"]) assert.ok(key in by.Dev, key);
   assert.equal(by.Dev.code, true);
   const text = s.cli(["ls"]);
-  assert.match(text.out, /Captain {2}→ Genie \[eng\] {2}code true {2}claude {2}claude-opus-5-5 \(detected\) {2}working in t5/);
+  assert.match(text.out, /Captain {2}→ Genie \[eng\] {2}claude {2}claude-opus-5-5 \(detected\) {2}working in t5/);
   const show = s.cli(["show", "dev", "--json"]).json();
   assert.equal(show.id, ID.dev);
   assert.equal(show.code, true);
@@ -4017,7 +4017,9 @@ test("code setting: create, edit, unrelated edits and invalid input preserve the
   assert.equal(enabled.code, 0, enabled.err);
   assert.equal(writer().code, true);
   assert.equal(s.cli(["ls", "--json"]).json().projects[0].bots.find((b) => b.name === "Writer").code, true);
-  assert.match(s.cli(["ls"]).out, /Writer {2}→ Genie {2}code true {2}claude/);
+  const listed = s.cli(["ls"]).out;
+  assert.match(listed, /Writer {2}→ Genie {2}claude/);
+  assert.doesNotMatch(listed, /code true/);
   assert.equal(s.cli(["show", "Writer", "--json"]).json().code, true);
   assert.match(s.cli(["show", "Writer"]).out, /code {9}true/);
   assert.ok(s.cli(["brief", "Writer", "--json"]).json().briefing.includes(WORKER_LINE));

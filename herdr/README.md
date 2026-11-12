@@ -1272,11 +1272,12 @@ on this computer are labelled. The lead's pane is the one the attach ledger ties
 - `code` is an optional boolean, defaulting to `true`. Set `code: false` for a bot whose
   work is not code with the **Code bot** toggle in the bot editor or
   `automagik-herdr edit <bot> --code false`; `--code true` restores it.
-  Create accepts the same option, and `show` and `ls` print it. Both launch and full briefings
+  Create accepts the same option; `show` prints it and `ls` marks code opt-outs. Both launch and full briefings
   include the instruction to start a worker only for code bots in a Git working tree,
   including linked projects; if the per-turn hook's Git check times out, it reuses the
-  recorded Git answer from the session's start or prior turn so the briefing does not
-  reprint. Otherwise that instruction is omitted, leaving the bot's own instructions to lead.
+  Git answer recorded by an earlier hook call. On the first hook call there is no recorded
+  answer; a matching launch briefing hash can establish that the project was in Git.
+  Without either, the worker instruction is omitted, leaving the bot's own instructions to lead.
   Other edits, installs and updates keep the setting in the project's roster.
 - `model` is an optional pin, picked from the agent's known models (never typed freely).
   Start passes it with the agent's own model flag; a pin the agent doesn't list (an old
