@@ -124,7 +124,7 @@ try {
           beside: tagBox.top < licence.bottom && tagBox.bottom > licence.top, under: tagBox.top >= licence.bottom,
           colour: getComputedStyle(tagLink.querySelector('text')).fill, text: getComputedStyle(document.querySelector('.site-footer nav a')).color,
           holds: [...tagLink.childNodes].map(node => node.nodeName), href: tagLink.href, words: tagLink.querySelector('text').textContent,
-          font: document.fonts.check('600 18px "IBM Plex Mono"'), logo: document.querySelector('.footer-brand .brand img').getBoundingClientRect().width,
+          font: document.fonts.check('600 18px "IBM Plex Mono"'), logo: document.querySelector('.footer-brand .brand-word').getBoundingClientRect().width,
         }
         return { tag, brokenWords, unsized, film: film ? area(film) : 0, largest: Math.max(0, ...shown.filter(image => !image.closest('[data-film]')).map(area)), themed, bubble: box('.bubble'), heroWindow: box('.scene-window img') }
       })
@@ -138,8 +138,8 @@ try {
       assert.ok(layout.tag.width === 170 && layout.tag.height === 32 && layout.tag.colour === layout.tag.text && layout.tag.font && layout.tag.words === 'OPEN INTELLIGENCE', `The Open Intelligence tag is 170 by 32 px, in the footer's text colour and its own type: ${label} ${JSON.stringify(layout.tag)}`)
       assert.ok(layout.tag.holds.length === 1 && layout.tag.holds[0] === 'svg' && layout.tag.href === 'https://weunfold.ai/', `The tag's link holds nothing but the tag: ${label} ${JSON.stringify(layout.tag.holds)}`)
       assert.ok(width > 700 ? layout.tag.right === 0 && layout.tag.beside : layout.tag.left === 0 && layout.tag.under, `The tag ends the footer's last row on a wide screen and sits under it, at the left, on a phone: ${label} ${JSON.stringify(layout.tag)}`)
-      assert.ok(layout.tag.logo * 676 / 902 >= layout.tag.width, `The tag is never bigger than the logo's word: ${label} ${layout.tag.logo}`)
-      assert.deepEqual(layout.themed.filter(source => (/(?:-dark(?:-2x)?\.webp|\/arca-icon-ivory\.svg|\/automagik-lockup-oi-cream\.svg)$/.test(source) || rowDark.some(file => source.endsWith(file))) !== (colorScheme === 'dark')), [], `App pictures follow the theme: ${label}`)
+      assert.ok(layout.tag.logo * 1325 / 1333 >= layout.tag.width, `The tag is never bigger than the logo's word: ${label} ${layout.tag.logo}`)
+      assert.deepEqual(layout.themed.filter(source => (/(?:-dark(?:-2x)?\.webp|\/arca-icon-ivory\.svg|\/automagik-lockup-oi-cream\.svg|\/automagik-wordmark-cream\.svg)$/.test(source) || rowDark.some(file => source.endsWith(file))) !== (colorScheme === 'dark')), [], `App pictures follow the theme: ${label}`)
       if (route === '/') {
         assert.ok(layout.themed.length >= 4, `The home's app pictures have dark captures: ${label}`)
         assert.ok(layout.bubble.bottom <= layout.heroWindow.top && layout.bubble.left >= 0 && layout.bubble.right <= width, `The speech bubble stays off the app window: ${label} ${JSON.stringify([layout.bubble, layout.heroWindow])}`)
@@ -332,6 +332,67 @@ try {
       } finally { await phone.close() }
     }
     console.log(`PASS menus ${label}: click, keyboard, Escape and focus return, hover, one panel at a time, active page, links, phone sheet`)
+  }
+  // The logo in the header and the footer: the clay triskle the site had, not one pixel of
+  // it changed, and the lowercase wordmark's own file for the theme, placed as the logo
+  // kit's lockup places them (in 222nds of the triskle's height). The triskle keeps the size
+  // and the centred place it had in the header, and nothing in the header is pushed aside.
+  for (const colorScheme of ['light', 'dark']) for (const [width, header, footer] of [[1440, 32, 40], [1024, 32, 40], [390, 26, 34], [320, 23, 34]]) {
+    const label = `${colorScheme} ${width}px`
+    const context = await browser.newContext({ viewport: { width, height: 900 }, deviceScaleFactor: 1, colorScheme, reducedMotion: 'reduce' })
+    try {
+      const outside = await guard(context)
+      const page = await context.newPage()
+      await page.goto(origin + '/', { waitUntil: 'load' })
+      await page.evaluate(() => Promise.all([...document.images].map(image => { image.loading = 'eager'; return image.decode() })).then(() => document.fonts.ready))
+      const logo = await page.evaluate(async () => {
+        const pixels = async (source, columns) => {
+          const image = new Image(); image.src = source; await image.decode()
+          const canvas = new OffscreenCanvas(columns ?? image.naturalWidth, image.naturalHeight), paint = canvas.getContext('2d')
+          paint.drawImage(image, 0, 0)
+          return { size: [image.naturalWidth, image.naturalHeight], data: paint.getImageData(0, 0, canvas.width, canvas.height).data }
+        }
+        const cut = await pixels('/assets/brand/triskle.webp'), whole = await pixels('/assets/brand/lockup.webp', 225)
+        let changed = cut.data.length === whole.data.length ? 0 : -1, solid = 0
+        for (let at = 0; changed >= 0 && at < cut.data.length; at += 4) {
+          if (cut.data[at + 3]) solid += 1
+          if (cut.data[at] !== whole.data[at] || cut.data[at + 1] !== whole.data[at + 1] || cut.data[at + 2] !== whole.data[at + 2] || cut.data[at + 3] !== whole.data[at + 3]) changed += 1
+        }
+        const place = scope => {
+          const link = document.querySelector(`${scope} .brand`), mark = link.querySelector('.brand-mark').getBoundingClientRect(), word = link.querySelector('.brand-word'), box = word.getBoundingClientRect()
+          return {
+            mark: [mark.width, mark.height], word: [box.width, box.height], gap: box.left - mark.right, drop: box.top - mark.top, hang: box.bottom - mark.bottom,
+            middle: mark.top + mark.height / 2, file: word.currentSrc.split('/').pop(), right: box.right,
+            effects: [link, ...link.querySelectorAll('img')].map(node => { const style = getComputedStyle(node); return [style.filter, style.opacity, style.transform, style.mixBlendMode].join(' ') }),
+          }
+        }
+        const row = document.querySelector('.top-inner').getBoundingClientRect(), after = document.querySelector('.top .brand').nextElementSibling
+        const shown = [...document.querySelectorAll('.top-inner > *')].filter(node => node.getClientRects().length).map(node => node.getBoundingClientRect()).sort((one, other) => one.left - other.left)
+        return {
+          cut: cut.size, changed, solid, top: place('.top'), foot: place('.footer-brand'), rowMiddle: row.top + row.height / 2, after: after?.className ?? '',
+          apart: shown.every((box, index) => index === 0 || box.left >= shown[index - 1].right), inside: shown.at(-1).right <= innerWidth && shown[0].left >= 0,
+          column: document.querySelector('.footer-brand').getBoundingClientRect().right, over: document.documentElement.scrollWidth - innerWidth,
+        }
+      })
+      assert.deepEqual([logo.cut, logo.changed], [[225, 192], 0], `The triskle is the old logo's triskle, pixel for pixel: ${label} ${logo.changed}`)
+      assert.ok(logo.solid > 225 * 192 / 4, `The triskle's pixels were compared: ${label} ${logo.solid}`)
+      for (const [name, spot, mark] of [['header', logo.top, header], ['footer', logo.foot, footer]]) {
+        const unit = mark / 222, near = (value, wanted) => Math.abs(value - wanted) <= 0.6
+        assert.equal(spot.file, `automagik-wordmark-${colorScheme === 'dark' ? 'cream' : 'ink'}.svg`, `The word's file follows the theme: ${name} ${label}`)
+        assert.ok(near(spot.mark[1], mark) && near(spot.mark[0], mark * 225 / 192), `The triskle's size, unstretched: ${name} ${label} ${spot.mark}`)
+        assert.ok(near(spot.word[1], 257 * unit) && near(spot.word[0], 1333 * unit), `The word's size, unstretched: ${name} ${label} ${spot.word}`)
+        assert.ok(near(spot.gap, 46 * unit) && near(spot.drop, 7 * unit) && near(spot.hang, 42 * unit), `The word sits as in the kit's lockup: ${name} ${label} ${[spot.gap, spot.drop, spot.hang]}`)
+        assert.deepEqual([...new Set(spot.effects)], ['none 1 none normal'], `Nothing is drawn over the logo: ${name} ${label}`)
+      }
+      assert.ok(Math.abs(logo.top.middle - logo.rowMiddle) <= 0.6, `The triskle stays centred in the header: ${label} ${[logo.top.middle, logo.rowMiddle]}`)
+      assert.ok(logo.apart && logo.inside && logo.over <= 0, `The wider logo pushes nothing aside: ${label} ${JSON.stringify([logo.apart, logo.inside, logo.over])}`)
+      assert.ok(logo.foot.right <= logo.column, `The footer's logo stays in its column: ${label} ${[logo.foot.right, logo.column]}`)
+      await page.keyboard.press('Tab'); await page.keyboard.press('Tab')
+      const ring = await page.evaluate(() => { const link = document.activeElement, style = getComputedStyle(link), box = link.getBoundingClientRect(), word = link.querySelector('.brand-word')?.getBoundingClientRect(); return { link: link.className, clears: word && box.bottom + parseFloat(style.outlineOffset) >= word.bottom, style: style.outlineStyle } })
+      assert.deepEqual(ring, { link: 'brand', clears: true, style: 'solid' }, `The focus ring goes round the whole word: ${label} ${JSON.stringify(ring)}`)
+      assert.deepEqual(outside, [], `No outside request: ${label}`)
+      console.log(`PASS logo ${label}: the old triskle unchanged, the word's file for the theme, kit placement, header and footer in place`)
+    } finally { await context.close() }
   }
   // The download hook, with real clicks and keys. A live platform opens its sheet: in the
   // middle of a wide window, rising from the bottom edge of a phone. A platform that is

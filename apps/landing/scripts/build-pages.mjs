@@ -223,7 +223,9 @@ function getSheets(route) {
   }
   return (offered[route] ?? []).filter(id => !platforms[id].soon).map(sheet).join('\n')
 }
-const brand = '<a class="brand" href="/" aria-label="Automagik home"><img src="/assets/brand/lockup.webp" width="170" height="36" alt="Automagik"></a>'
+// The logo in the header and the footer: the clay triskle, then the lowercase wordmark as its
+// own unchanged file, dark letters on the light page and cream letters on the dark one.
+const brand = '<a class="brand" href="/" aria-label="Automagik home"><img class="brand-mark" src="/assets/brand/triskle.webp" width="225" height="192" alt="" aria-hidden="true"><picture><source media="(prefers-color-scheme: dark)" srcset="/assets/brand/automagik-wordmark-cream.svg"><img class="brand-word" src="/assets/brand/automagik-wordmark-ink.svg" width="1333" height="257" alt="Automagik"></picture></a>'
 const entry = route => ({ href, name, line, image, mark, glyph: sign, external }) => `<li><a class="menu-item" href="${href}"${href === route ? ' aria-current="page"' : ''}><span class="menu-icon">${image ? art(image, '', { cls: 'menu-art' }) : mark ?? glyph(sign)}</span><span class="menu-text"><strong>${name}${external ? ` ${out}` : ''}</strong><span>${line}</span></span></a></li>`
 // OPEN INTELLIGENCE TAG: we unfold's horizontal tag, the only Open Intelligence mark this
 // site uses, applied the way Arca's site applies it. The file is pasted inline as given

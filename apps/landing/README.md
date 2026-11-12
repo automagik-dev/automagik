@@ -51,8 +51,8 @@ SemiBold, which `styles.css` loads). No round seal anywhere. In every footer the
 by 32 px, in the footer's text colour, at the right end of the last row (under it, at the
 left, on a phone), and it is a link to we unfold that holds nothing but the tag: no words
 in the link, no sentence beside it. The tag is never bigger than the logo it sits with, so
-the footer's logo is 228 px wide (its word alone passes 170 px). Never redraw, stretch,
-outline, shadow or recolour the tag; its words never change; it never stands in the header,
+the footer's triskle is never under 34 px tall (its word alone then passes 170 px). Never
+redraw, stretch, outline, shadow or recolour the tag; its words never change; it never stands in the header,
 a hero, the favicon or a share picture. The tag is we unfold's mark: it is not under this
 site's Apache-2.0 grant, and nothing here calls it open-licensed.
 
@@ -95,6 +95,20 @@ credit: no ranking, and no partnership, sponsorship or endorsement wording.
   while it drifts and is out of reach of the keyboard and of assistive technology.
 - `assets/brand/LICENSES.md` lists every file's source, the rule read and its SHA-256, and the
   standing rule: if a project's owner asks, its logo comes down the same day.
+
+## The logo in the header and the footer
+
+The clay triskle, then the lowercase wordmark with the pink dot. They are two files:
+`assets/brand/triskle.webp`, the triskle of the logo the site had (cut out of
+`lockup.webp` without a changed pixel), and the logo kit's wordmark, unchanged, as
+`automagik-wordmark-ink.svg` on the light page and `automagik-wordmark-cream.svg` on the
+dark one. `styles.css` places them as the kit's own lockup does, in 222nds of the triskle's
+height (`--mark`): the word's file is 257 tall, starts 7 down and 46 to the right, and its
+g hangs 42 under the triskle. The triskle is 32 px tall in the header (26 on a phone, 23
+under 360 px), as before, and 40 px in the footer (34 on a phone). Never recolour, stretch
+or redraw either file, and never set the word in type. `LICENSES.md` records each file's
+source and SHA-256; `landing.test.mjs` and the browser gate check them. The official lockup
+with the tag (above) still shows the capitals; it changes in its own pass.
 
 ## Arca's logo
 
