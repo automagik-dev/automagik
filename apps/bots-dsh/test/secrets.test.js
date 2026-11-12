@@ -91,8 +91,8 @@ const TEAM = {
   questions: {},
 }
 
-function start({ home = mkdtempSync(join(tmpdir(), 'ds-bot-secrets-')), warnings } = {}) {
-  writeFileSync(join(home, 'state.json'), JSON.stringify(TEAM))
+function start({ home = mkdtempSync(join(tmpdir(), 'ds-bot-secrets-')), warnings, team = TEAM } = {}) {
+  writeFileSync(join(home, 'state.json'), JSON.stringify(team))
   const contributors = []
   const shellEnv = {
     register(contributor) {
@@ -387,7 +387,9 @@ test('a restarted host resolves team Sessions and scoped keys before the first s
     { name: 'DENIED', value: denied, scope: [] },
     { name: 'HELD', value: 'abc', scope: 'all' },
   ] }))
-  const bench = start({ home })
+  // Unnamed groups need the group helpers during roster adoption.
+  const team = { ...TEAM, rooms: { r1: { ...TEAM.rooms.r1, named: false } } }
+  const bench = start({ home, team })
   t.after(bench.stop)
   // No await, endpoint or tool call can give asynchronous loaders time to finish.
   assert.deepEqual(bench.env('b2'), { DSH_SECRET_SHARED: shared, DSH_SECRET_SCOPED: scoped })

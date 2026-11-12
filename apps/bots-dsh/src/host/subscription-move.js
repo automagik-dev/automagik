@@ -600,6 +600,7 @@ export function install(rt) {
   // team's subscription Bots. A sign-in acp-dsh announces (`acp-dsh/login-ready`) arrives through
   // cli-login.js, which already hears it and calls `moveSubscriptionBots`. `loader/volatile-update`
   // is not here: DSH keeps it inside the plugin whose config changed, so it never arrives.
-  void rt.load().then(() => migrate())
+  // The roster now loads synchronously; let the remaining modules install its helpers first.
+  void Promise.resolve().then(() => rt.load()).then(() => migrate())
   for (const event of ['llm/adapters-updated', 'settings/document-updated']) ctx.on?.(event, heard)
 }
