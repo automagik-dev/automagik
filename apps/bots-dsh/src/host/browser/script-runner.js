@@ -1,6 +1,13 @@
 // Runs a browser_exec body away from the host process. The model writes the body, and a
-// page can talk the model into writing anything, so the body is treated as owning the
-// whole process it runs in. That process is therefore started with nothing to give:
+// page can talk the model into writing anything. Two walls stand around it.
+//
+// The inner wall is the interpreter (src/script-child/sandbox.js): the body runs in
+// QuickJS compiled to WebAssembly, inside the child process. It shares no object with
+// that process's Node, and what crosses is two functions that take text. It has no
+// file, process or network API, because nothing gives it one.
+//
+// The outer wall is the process, started with nothing to give, as if the body owned all
+// of its JavaScript after all:
 //
 //   closed    files (read and write), child processes, worker threads, native addons:
 //             Node's permission model, with nothing granted
@@ -8,13 +15,13 @@
 //             the host itself: the one channel is JSON lines on the child's stdin and
 //             stdout, and a line the host does not accept ends the run
 //             time: at the deadline the child is killed, not asked
-//   NOT closed  the network. The permission model of the Node this runs on (24, and the
-//             desktop app's Electron as Node) has no network permission. The vm context
-//             in script-child.js gives the script no network API, and that context is
-//             the only thing between a script and a socket until the script moves to
-//             an interpreter that shares nothing with Node.
+//   NOT closed  the network, by this wall. The permission model of the Node this runs
+//             on (24, and the desktop app's Electron as Node) has no network
+//             permission; from Node 26 the same flags deny it. Until then the network
+//             is closed by the inner wall alone.
 //
-// test/browser-script-wall.test.js checks each closed line on both runtimes.
+// test/browser-script-wall.test.js checks each closed line of the outer wall on both
+// runtimes; test/browser-script-sandbox.test.js checks the inner wall's two functions.
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
@@ -22,11 +29,10 @@ export const SCRIPT_TIMEOUT = 20_000
 const CHILD = fileURLToPath(new URL('./script-child.js', import.meta.url))
 
 // The child's flags and no others: the host's own (loaders, --expose-internals) are not
-// the child's. --permission with no --allow-* flag is the wall. The heap is bounded, and
-// script-child.js needs the vm modules flag for its import hook.
-const CHILD_FLAGS = ['--permission', '--max-old-space-size=128', '--experimental-vm-modules']
+// the child's. --permission with no --allow-* flag is the wall, and the heap is bounded.
+const CHILD_FLAGS = ['--permission', '--max-old-space-size=128']
 
-// The longest helper arguments a script may send (script-child.js refuses more before
+// The longest helper arguments a script may send (the child refuses more before
 // sending), and the longest line that can carry them: JSON escaping makes at most six
 // characters of one.
 const MAX_ARGS = 4_000_000
@@ -42,7 +48,7 @@ function childEnv() {
   return env
 }
 
-// What script-child.js sends and nothing else: a call of one of the helpers, or the one
+// What the child sends and nothing else: a call of one of the helpers, or the one
 // answer. Anything else comes from a child that is no longer ours.
 function readMessage(line, helpers) {
   let message
