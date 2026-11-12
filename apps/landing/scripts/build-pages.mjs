@@ -9,6 +9,7 @@ export const routes = ['/', '/desktop/', '/mobile/', '/omni/', '/genie/', '/clou
 const repo = 'https://github.com/automagik-si/automagik'
 const mac = `${repo}/releases/latest/download/Automagik-Mac.dmg`
 const linux = `${repo}/releases/latest/download/Automagik-Linux.deb`
+const appImage = `${repo}/releases/latest/download/Automagik-Linux.AppImage`
 // LINKS OUT: guides and help live on the docs site (no deep paths yet). GitHub is linked for
 // the downloads and once, quietly, in the footer; nothing links to a design document.
 const docs = 'https://docs.automagik.dev'
@@ -116,8 +117,76 @@ const icon = {
   menu: '<path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/>',
   close: '<path d="M6 6l12 12"/><path d="M18 6L6 18"/>',
   chevron: '<path d="M6.5 9.5l5.5 5.5 5.5-5.5"/>',
+  terminal: '<rect x="3.5" y="5" width="17" height="14" rx="2.6"/><path d="M7.5 10l3 2.4-3 2.4"/><path d="M13 15h3.5"/>',
+  plug: '<path d="M9 3.5v4"/><path d="M15 3.5v4"/><path d="M6.5 7.5h11v3.8a5.5 5.5 0 0 1-11 0z"/><path d="M12 16.8v3.7"/>',
 }
 const glyph = (name, cls = 'glyph') => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${icon[name]}</svg>`
+
+// GET AUTOMAGIK: one download hook for the whole site. A row of platforms, each with its
+// own sign; a live one opens a sheet with what you get, the exact file, how to install it
+// and its guide. Windows and iPhone are named and marked Soon, and are neither a link nor a
+// button: nothing here points at a file that does not exist. The sheets are popovers, so
+// they open, close on Escape or a click outside and hand the focus back with no script.
+// GUIDES: each platform's guide is one address here; they all open the docs' front page
+// until the docs have a page for each.
+const guide = { mac: docs, linux: docs, android: docs, herdr: docs, dsh: docs }
+// The platforms' signs are drawn here as plain shapes in the text colour. The Apple, Linux,
+// Android and Windows signs name those systems; each belongs to its owner.
+const sign = {
+  mac: '<path d="M12.15 6.9c-.95 0-2.42-1.08-3.96-1.04-2.04.03-3.91 1.18-4.96 3.01-2.12 3.68-.55 9.1 1.52 12.09 1.01 1.45 2.2 3.09 3.79 3.04 1.52-.07 2.09-.99 3.93-.99 1.83 0 2.35.99 3.96.95 1.64-.03 2.68-1.48 3.68-2.95 1.16-1.69 1.64-3.33 1.66-3.42-.04-.01-3.18-1.22-3.22-4.86-.03-3.04 2.48-4.49 2.6-4.56-1.43-2.09-3.62-2.32-4.39-2.38-2-.16-3.68 1.09-4.61 1.09zM15.53 3.83c.84-1.01 1.4-2.43 1.25-3.83-1.21.05-2.66.8-3.53 1.82-.78.9-1.46 2.34-1.28 3.71 1.34.1 2.72-.69 3.56-1.7"/>',
+  linux: '<path fill-rule="evenodd" d="M12 1.6c-2.2 0-3.7 1.8-3.7 4.2 0 1.1.1 2-.3 3-.5 1.3-2.3 3-3 5.2-.5 1.6-.5 3.1-.1 4.3-.9.3-1.7.9-1.7 1.7 0 1 1.1 1.3 2.3 1.5 1.2.2 1.9.9 3.1.9.9 0 1.4-.4 1.8-.9h3.2c.4.5.9.9 1.8.9 1.2 0 1.9-.7 3.1-.9 1.2-.2 2.3-.5 2.3-1.5 0-.8-.8-1.4-1.7-1.7.4-1.2.4-2.7-.1-4.3-.7-2.2-2.5-3.9-3-5.2-.4-1-.3-1.9-.3-3 0-2.4-1.5-4.2-3.7-4.2zm0 7.3c1.4 0 2 1.6 2.7 3.3.7 1.6 1 3.5.3 4.9-.5 1-1.7 1.3-3 1.3s-2.5-.3-3-1.3c-.7-1.4-.4-3.3.3-4.9.7-1.7 1.3-3.3 2.7-3.3zM10.5 4.9a.8.8 0 1 0 0 1.6.8.8 0 0 0 0-1.6zm3 0a.8.8 0 1 0 0 1.6.8.8 0 0 0 0-1.6zM12 6.7l-1.3.9 1.3.9 1.3-.9z"/>',
+  android: '<path fill-rule="evenodd" d="M6.3 9.3 4.7 6.5a.6.6 0 0 1 1-.6l1.7 2.9A11.3 11.3 0 0 1 12 7.8c1.6 0 3.2.4 4.6 1l1.7-2.9a.6.6 0 0 1 1 .6l-1.6 2.8a10.4 10.4 0 0 1 5.3 8.5H1a10.4 10.4 0 0 1 5.3-8.5zM7.5 13a1.1 1.1 0 1 0 0 2.2 1.1 1.1 0 0 0 0-2.2zm9 0a1.1 1.1 0 1 0 0 2.2 1.1 1.1 0 0 0 0-2.2z"/>',
+  windows: '<path d="M3 3h8.5v8.5H3zM12.5 3H21v8.5h-8.5zM3 12.5h8.5V21H3zM12.5 12.5H21V21h-8.5z"/>',
+  iphone: '<path fill-rule="evenodd" d="M8.2 1.5h7.6a2.6 2.6 0 0 1 2.6 2.6v15.8a2.6 2.6 0 0 1-2.6 2.6H8.2a2.6 2.6 0 0 1-2.6-2.6V4.1a2.6 2.6 0 0 1 2.6-2.6zm0 1.8a.8.8 0 0 0-.8.8v15.8c0 .4.4.8.8.8h7.6c.4 0 .8-.4.8-.8V4.1a.8.8 0 0 0-.8-.8zm2.3 1.5h3a.7.7 0 0 1 0 1.4h-3a.7.7 0 0 1 0-1.4z"/>',
+}
+const platformSign = id => `<svg class="platform-sign" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${sign[id]}</svg>`
+const desktopGets = 'Your agent team in one window. Talk with your Bots, hand work over and review what comes back.'
+export const platforms = {
+  mac: { name: 'Mac', kind: '.dmg', product: 'Automagik Desktop', page: '/desktop/', gets: desktopGets,
+    file: 'Automagik-Mac.dmg', needs: 'A Mac with Apple silicon, on macOS 13 or newer.',
+    steps: ['Open Automagik-Mac.dmg.', 'Drag the Automagik icon to Applications.', 'Open Automagik from Applications.'],
+    download: ['Download for Mac', mac] },
+  linux: { name: 'Linux', kind: '.deb', product: 'Automagik Desktop', page: '/desktop/', gets: desktopGets,
+    file: 'Automagik-Linux.deb', needs: 'A 64-bit PC. The .deb is for Debian and Ubuntu.',
+    steps: ['Open Automagik-Linux.deb and choose Install. Or, in a terminal: <code>sudo apt install ./Automagik-Linux.deb</code>', 'Open Automagik from your apps.'],
+    download: ['Download for Linux', linux], other: ['On another Linux, use the', 'AppImage', appImage] },
+  android: { name: 'Android', kind: '.apk', product: 'Automagik Mobile', page: '/mobile/',
+    gets: 'Your coding agents on your phone. See which ones need you, open their terminals and answer. It pairs with your own machines.',
+    file: releases.pocket.url.split('/').pop(), needs: 'Android 8.0 or newer.', sha256: releases.pocket.sha256,
+    steps: ['Open the APK on your phone.', 'Allow your browser to install apps when Android asks.', 'Pair it with Pocket Link on your computer.'],
+    download: ['Download for Android', releases.pocket.url] },
+  windows: { name: 'Windows', product: 'Automagik Desktop', soon: true },
+  iphone: { name: 'iPhone', product: 'Automagik Mobile', soon: true },
+}
+// Which platforms a page offers: all five on the home page, a product's own on its page.
+export const offered = { '/': ['mac', 'linux', 'android', 'windows', 'iphone'], '/desktop/': ['mac', 'linux', 'windows'], '/mobile/': ['android', 'iphone'] }
+const steps = list => `<ol class="steps">${list.map(step => `<li>${step}</li>`).join('')}</ol>`
+// The row. A browser without popovers gets a plain link in each button's place: to the
+// product's page from the home page, straight to the file on the product's own page.
+function getHook(route, label) {
+  const chip = (id) => {
+    const { name, kind, soon, page, download } = platforms[id]
+    if (soon) return `<li class="get-chip soon">${platformSign(id)}<span class="get-name">${name}</span><small class="get-kind">Soon</small></li>`
+    const inside = `${platformSign(id)}<span class="get-name">${name}</span><small class="get-kind">${kind}</small>`
+    return `<li><button class="get-chip" type="button" popovertarget="get-${id}" aria-label="${name}: what you get and how to install it">${inside}</button><a class="get-chip get-fallback" href="${route === '/' ? `${page}#install` : download[1]}">${inside}</a></li>`
+  }
+  return `<div${route === '/' ? '' : ' id="install"'} class="get"><p class="get-label">${label}</p><ul class="get-row">${offered[route].map(chip).join('')}</ul></div>`
+}
+function getSheets(route) {
+  const sheet = (id) => {
+    const { name, product, page, gets, file, needs, sha256, steps: list, download, other } = platforms[id]
+    const facts = [['File', `<code>${file}</code>`], ['Needs', needs], ...(sha256 ? [['SHA-256', `<code class="sum">${sha256.slice(0, 32)}<wbr>${sha256.slice(32)}</code>`]] : [])]
+    return `<div class="sheet" id="get-${id}" popover role="dialog" aria-labelledby="get-${id}-title">
+<div class="sheet-head"><span class="sheet-sign">${platformSign(id)}</span><div class="sheet-title"><p class="sheet-kicker">${product}</p><h2 id="get-${id}-title" tabindex="-1" autofocus>For ${name}</h2></div><button class="sheet-close" type="button" popovertarget="get-${id}" popovertargetaction="hide" aria-label="Close">${glyph('close')}</button></div>
+<p class="sheet-gets">${gets}</p>
+<dl class="sheet-facts">${facts.map(([term, value]) => `<div><dt>${term}</dt><dd>${value}</dd></div>`).join('')}</dl>
+<h3 class="sheet-how">How to install</h3>${steps(list)}${other ? `<p class="fine">${other[0]} <a href="${other[2]}">${other[1]}</a>.</p>` : ''}
+<div class="sheet-actions"><a class="button primary" href="${download[1]}">${download[0]} ${down}</a><a class="detail-link" href="${guide[id]}">${name} guide ${out}</a></div>${route === page ? '' : `
+<p class="sheet-more"><a href="${page}">About ${product} ${arrow}</a></p>`}
+</div>`
+  }
+  return (offered[route] ?? []).filter(id => !platforms[id].soon).map(sheet).join('\n')
+}
 const brand = '<a class="brand" href="/" aria-label="Automagik home"><img src="/assets/brand/lockup.webp" width="170" height="36" alt="Automagik"></a>'
 const entry = route => ({ href, name, line, image, mark, glyph: sign, external }) => `<li><a class="menu-item" href="${href}"${href === route ? ' aria-current="page"' : ''}><span class="menu-icon">${image ? art(image, '', { cls: 'menu-art' }) : mark ?? glyph(sign)}</span><span class="menu-text"><strong>${name}${external ? ` ${out}` : ''}</strong><span>${line}</span></span></a></li>`
 // OPEN INTELLIGENCE TAG: we unfold's horizontal tag, the only Open Intelligence mark this
@@ -163,7 +232,7 @@ function frame(route, title, body) {
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>${title} · Automagik</title><meta name="description" content="Automagik: open building blocks of superintelligence. Desktop, Mobile, Omni, Genie, Cloud, Arca and Mykes."><meta name="theme-color" content="#f6eee2" media="(prefers-color-scheme: light)"><meta name="theme-color" content="#1e1923" media="(prefers-color-scheme: dark)"><link rel="canonical" href="https://automagik.si${route}"><link rel="icon" type="image/png" href="/assets/brand/app-icon.png"><link rel="preload" href="/assets/brand/manrope-latin.woff2" as="font" type="font/woff2" crossorigin><link rel="preload" href="/assets/brand/dm-sans-latin.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="/theme.css"><link rel="stylesheet" href="/styles.css"></head>
 <body><a class="skip" href="#main">Skip to content</a>${header(route)}
 <main id="main">${route === '/' ? '' : crumbs(route)}${body}</main>
-${footer(route)}</body></html>\n`
+${footer(route)}${getSheets(route) ? `\n${getSheets(route)}` : ''}</body></html>\n`
 }
 // The other blocks, each with its own art: the way on from every page.
 function more(route) {
@@ -187,7 +256,7 @@ export function pages() {
   const openLine = `<span class="ink-grad">${term}</span> ${rest}`
   const phone = (screen, cls, eager = false) => `<div class="phone ${cls}">${art(`pocket-${screen}`, phoneAlt[screen], { dark: true, sizes: '(max-width: 700px) 220px, 300px', eager })}</div>`
 
-  const home = `<section class="hero home-hero">${constellation()}<div class="wrap home-hero-inner"><div class="hero-heading center">${heading('Automagik', 'Open building blocks of <span class="ink-grad">superintelligence.</span>', 'Tools that put your own agents to work. Use one, or bring them together.')}<div class="actions center"><a class="button primary" href="#blocks">Choose a block ${down}</a><a class="button secondary" href="/desktop/">Get Automagik Desktop ${arrow}</a></div></div>
+  const home = `<section class="hero home-hero">${constellation()}<div class="wrap home-hero-inner"><div class="hero-heading center">${heading('Automagik', 'Open building blocks of <span class="ink-grad">superintelligence.</span>', 'Tools that put your own agents to work. Use one, or bring them together.')}${getHook('/', 'Get Automagik for')}<p class="hero-also"><a href="#blocks">Or see every block ${down}</a></p></div>
 <div class="scene"><div class="cast">${art('genie', 'Genie, Automagik’s clay character: a dark round face with a swirl of magenta hair.', { cls: 'scene-genie', eager: true })}<p class="bubble">A team of AI helpers that lives in your chats.</p>${art('omni', 'Omni, Automagik’s clay octopus, smiling.', { cls: 'scene-omni', eager: true })}</div><figure class="window scene-window">${art('team-chat', 'The real Automagik app: a fictional team’s chat. Pip, who leads the team, passes a request for a CSV export on to Genie and reports that it is running.', { dark: true, narrow: 'team-chat-phone', sizes: '(max-width: 700px) 94vw, (max-width: 1140px) 92vw, 1040px', eager: true })}</figure></div></div></div></section>
 <section id="blocks" class="blocks wrap" aria-labelledby="blocks-title"><div class="section-heading"><p class="eyebrow">Choose a building block</p><h2 id="blocks-title">Start where your work is.</h2><p class="lede">Open a block to see what it does and how to use it.</p></div>
 <div class="bento">
@@ -203,13 +272,13 @@ export function pages() {
 <section id="film" class="made wrap" aria-labelledby="made-title"><div class="made-copy"><p class="eyebrow">Made by this team</p><h2 id="made-title">From inside Automagik.</h2><p>This page began as Genie’s draft, in a group chat with our launch team.</p></div><figure class="film-still" data-film="placeholder">${art('team-step', 'The Automagik app’s team step, recorded: Pip leads, Omni sleeps until powered on, and Genie is ready for a wish.', { dark: true })}<figcaption><strong>A short film is coming.</strong> It shows our launch team at work.</figcaption></figure></section>
 <section id="brand" class="wrap kit" aria-labelledby="kit-title"><figure class="kit-logo"><picture><source media="(prefers-color-scheme: dark)" srcset="${lockup}-cream.svg"><img src="${lockup}-ink.svg" width="902" height="340" alt="The Automagik logo, with the Open Intelligence tag under it at the right" loading="lazy" decoding="async"></picture></figure><div class="kit-copy"><p class="eyebrow">Brand</p><h2 id="kit-title">The Automagik logo</h2><p>The official logo, for print and press. Use it as it is.</p><dl class="kit-files"><div><dt>For light grounds</dt><dd><a href="${lockup}-ink.svg" download>SVG ${down}</a><a href="${lockup}-ink.png" download>PNG ${down}</a></dd></div><div><dt>For dark grounds</dt><dd><a href="${lockup}-cream.svg" download>SVG ${down}</a><a href="${lockup}-cream.png" download>PNG ${down}</a></dd></div></dl></div></section>`
 
-  const desktop = `<section class="hero split-hero desktop-hero"><div class="wrap split"><div class="hero-heading">${art('app-icon', '', { cls: 'hero-icon', eager: true })}${heading('Your team, at your desk', 'Automagik Desktop', 'Bots that stay, each with its own name, role, model and memory. Talk with them, hand work over and keep the decisions that matter.')}<div id="install" class="distribution"><a class="button primary" href="${mac}">Download for Mac ${down}</a><a class="button secondary" href="${linux}">Download for Linux ${down}</a><div class="unavailable"><strong>Download for Windows</strong><span>Soon</span></div></div><p class="fine">Mac with Apple silicon, macOS 13 or newer. Linux on a 64-bit PC.</p></div></div>
+  const desktop = `<section class="hero split-hero desktop-hero"><div class="wrap split"><div class="hero-heading">${art('app-icon', '', { cls: 'hero-icon', eager: true })}${heading('Your team, at your desk', 'Automagik Desktop', 'Bots that stay, each with its own name, role, model and memory. Talk with them, hand work over and keep the decisions that matter.')}${getHook('/desktop/', 'Download for')}<p class="fine">Mac with Apple silicon, macOS 13 or newer. Linux on a 64-bit PC.</p></div></div>
 <div class="wrap stage-frame">${constellation()}<figure class="window wide-window">${art('app-review', 'The real Automagik app: a fictional team in the sidebar, a finished wish’s report with its four edited files, and the new file open for review.', { dark: true, narrow: 'thread-phone', sizes: '(max-width: 700px) 92vw, (max-width: 1100px) 92vw, 1040px', eager: true })}</figure></div><p class="wrap caption">The real app, with a fictional team and project. The AI’s replies are scripted; the commands, tests and file changes are real.</p></section>
-<section class="wrap channels" aria-labelledby="channels-title"><div class="section-heading"><p class="eyebrow">Two more ways in</p><h2 id="channels-title">Code mode and Team mode.</h2><p class="lede">The app’s switch still says Work for Team mode. Code mode installs separately.</p></div><div class="channel-grid"><article id="herdr" class="channel code"><div class="channel-copy"><h2>Install on Herdr</h2><p>Your code agents in the Herdr window, with the Automagik pack. Code mode needs Herdr and the pack; the app download alone does not set it up.</p><a class="detail-link" href="${docs}">Install Herdr and the pack ${out}</a></div><div class="channel-art">${art('code-tree', 'The Automagik pack’s sidebar in Herdr: a demo shop’s main Bot with build and quality squads.')}</div></article><article id="dsh" class="channel team"><div class="channel-copy"><h2>Install on DSH</h2><p>Already use DeepSeek Harness? Add the Automagik Bot team to your DSH through its plugin installer.</p><a class="detail-link" href="${docs}">Install the Bot team on DSH ${out}</a></div><div class="channel-art">${art('team-step', 'The Automagik Bot team’s welcome: Pip leads, and Omni and Genie can join the team.', { dark: true })}</div></article></div></section>
+<section class="wrap ways" aria-labelledby="ways-title"><div class="section-heading"><p class="eyebrow">Two more ways in</p><h2 id="ways-title">Code mode and Team mode.</h2><p class="lede">The app’s switch still says Work for Team mode. Code mode installs separately.</p></div><ul class="way-list"><li id="herdr"><span class="glyph-chip cyan">${glyph('terminal')}</span><div class="way-copy"><h3>Install on Herdr</h3><p>Code mode: your code agents in the Herdr window. It needs Herdr and the Automagik pack; the app alone does not set it up.</p></div><a class="detail-link" href="${guide.herdr}">Herdr guide ${out}</a></li><li id="dsh"><span class="glyph-chip lilac">${glyph('plug')}</span><div class="way-copy"><h3>Install on DSH</h3><p>Already on DeepSeek Harness? Add the Automagik Bot team through its plugin installer.</p></div><a class="detail-link" href="${guide.dsh}">DSH guide ${out}</a></li></ul></section>
 <section class="wrap principles-section" aria-labelledby="yours-title"><div class="section-heading"><p class="eyebrow">Make it yours</p><h2 id="yours-title">Your model. Your files. Your team.</h2></div><div class="principles"><article><span class="glyph-chip cyan">${glyph('ai')}</span><h3>Bring your AI.</h3><p>Connect an AI account or an API key. Each Bot runs on the model you give it. Omni and an AI account can wait until you are ready.</p></article><article><span class="glyph-chip lilac">${glyph('files')}</span><h3>Keep your files and memory.</h3><p>The team keeps its files in your computer’s <code>.automagik</code> folder. What Bots read and write goes to your connected AI provider under its terms.</p></article><article><span class="glyph-chip pink">${glyph('secret')}</span><h3>Secrets the Bots never see.</h3><p>Type keys and passwords into a card in the chat. The Bot never sees the value.</p></article><article><span class="glyph-chip cream">${glyph('ask')}</span><h3>Permission, with clear limits.</h3><p>It asks before sending as you to a person, deleting something or disconnecting a channel. Main and Omni Bots can read chats and post to groups, WhatsApp channels and your own chat without asking. Other Bots ask for chat access; an Always grant lets them post to that group again.</p></article></div></section>
-<section class="wrap first-steps" aria-labelledby="steps-title"><div class="section-heading"><p class="eyebrow">First steps</p><h2 id="steps-title">Install the app.</h2></div><div class="install-grid"><article><h3>Mac</h3><ol class="steps"><li>Open Automagik-Mac.dmg.</li><li>Drag the Automagik icon to Applications.</li><li>Open Automagik from Applications.</li></ol></article><article><h3>Linux</h3><ol class="steps"><li>Open Automagik-Linux.deb and choose Install, or run <code>sudo apt install ./Automagik-Linux.deb</code>.</li><li>Open Automagik from your apps.</li></ol><p class="fine">On another Linux, use the <a href="${repo}/releases/latest/download/Automagik-Linux.AppImage">AppImage</a>.</p></article></div></section>${more('/desktop/')}`
+<section class="wrap first-steps" aria-labelledby="steps-title"><div class="section-heading"><p class="eyebrow">First steps</p><h2 id="steps-title">Install the app.</h2></div><div class="install-grid"><article><h3>Mac</h3>${steps(platforms.mac.steps)}</article><article><h3>Linux</h3>${steps(platforms.linux.steps)}<p class="fine">On another Linux, use the <a href="${appImage}">AppImage</a>.</p></article></div></section>${more('/desktop/')}`
 
-  const mobile = `<section class="hero split-hero mobile-hero"><div class="wrap split"><div class="hero-heading">${heading('Pocket, with your team', 'Automagik Mobile', 'Your coding agents on your Android phone, paired to your own machines.')}<div id="install" class="distribution"><a class="button primary" href="${releases.pocket.url}">Download for Android ${down}</a><div class="unavailable"><strong>Download for iPhone</strong><span>Soon</span></div></div><p class="fine">Android 8.0 or newer.</p></div><div class="hero-visual stage-disc">${constellation()}${phone('home', 'hero-phone', true)}</div></div></section>
+  const mobile = `<section class="hero split-hero mobile-hero"><div class="wrap split"><div class="hero-heading">${heading('Pocket, with your team', 'Automagik Mobile', 'Your coding agents on your Android phone, paired to your own machines.')}${getHook('/mobile/', 'Download for')}<p class="fine">Android 8.0 or newer.</p></div><div class="hero-visual stage-disc">${constellation()}${phone('home', 'hero-phone', true)}</div></div></section>
 <section class="wrap close" aria-labelledby="close-title"><div class="close-copy"><p class="eyebrow">On your phone</p><h2 id="close-title">Keep your agents close.</h2><p class="lede">See which agents need you, open their terminals and answer from your phone. Teams and code spaces come from your own machines.</p></div><div class="close-phones">${phone('chat', 'close-phone')}${phone('code', 'close-phone')}</div></section>
 <section class="wrap pair" aria-labelledby="pair-title"><div class="pair-card"><div class="pair-steps"><h2 id="pair-title">Pair with Pocket Link.</h2><ol class="steps"><li>Add Pocket Link to Herdr on your computer.</li><li>Choose Pair a phone.</li><li>Scan the QR code in Automagik Mobile.</li></ol></div><div class="pair-notes"><p class="pair-free">No Cloud account is needed.</p><p class="fine">Open the APK on your phone and allow your browser to install apps when Android asks. Pocket Link needs Herdr desktop and herdr-core on macOS or Linux.</p><a class="detail-link" href="${docs}">Set up Pocket Link ${out}</a></div></div></section>${more('/mobile/')}`
 

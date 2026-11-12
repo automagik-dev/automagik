@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { fileText, scan } from '../../herdr/scripts/privacy-check.mjs'
 import { supportPrivacy } from './waitlist/lib/ui.js'
 import { themeCss } from './scripts/sync-theme.mjs'
-import { pages, routes, rootFiles, weUnfold, arca, oiTag } from './scripts/build-pages.mjs'
+import { pages, routes, rootFiles, weUnfold, arca, oiTag, platforms, offered } from './scripts/build-pages.mjs'
 import { GEOMETRY, LOGO, TONES, tagInner } from './scripts/build-lockup.mjs'
 
 const root = resolve(fileURLToPath(new URL('.', import.meta.url)))
@@ -56,21 +56,73 @@ test('approved umbrella map, one h1 per page, generated sources current, no clie
   assert.match(home, /data-film="placeholder"/)
 })
 
-test('distribution order, real release links, no links for Windows or iPhone soon', () => {
-  const desktop = htmlAt('/desktop/'), mobile = htmlAt('/mobile/')
-  const desktopOrder = ['Download for Mac', 'Download for Linux', 'Download for Windows', 'Install on Herdr', 'Install on DSH'].map(text => desktop.indexOf(text))
-  assert.ok(desktopOrder.every(index => index >= 0)); assert.deepEqual(desktopOrder, [...desktopOrder].sort((a, b) => a - b))
-  assert.ok(mobile.indexOf('Download for Android') < mobile.indexOf('Download for iPhone'))
-  for (const html of [desktop, mobile]) assert.doesNotMatch(html, /<a[^>]+>Download for (?:Windows|iPhone)/)
-  assert.match(desktop, /Download for Windows<\/strong><span>Soon/)
-  assert.match(mobile, /Download for iPhone<\/strong><span>Soon/)
-  assert.ok(mobile.includes(release.url))
+test('the download hook: live platforms open a sheet with the exact file, soon ones are not controls', () => {
+  assert.deepEqual(Object.keys(offered), ['/', '/desktop/', '/mobile/'])
+  assert.deepEqual(Object.keys(platforms).filter(id => platforms[id].soon), ['windows', 'iphone'])
+  for (const [route, ids] of Object.entries(offered)) {
+    const html = htmlAt(route)
+    const row = html.match(/<ul class="get-row">(.*?)<\/ul>/)[1]
+    const chips = row.split('</li>').slice(0, -1)
+    assert.equal((html.match(/class="get-row"/g) ?? []).length, 1, route)
+    assert.deepEqual(chips.map(chip => chip.match(/class="get-name">([^<]+)</)[1]), ids.map(id => platforms[id].name), route)
+    const sheets = new Map([...html.matchAll(/<div class="sheet" id="get-([a-z]+)" popover role="dialog" aria-labelledby="get-\1-title">([\s\S]*?)(?=<div class="sheet" id=|<\/body>)/g)].map(match => [match[1], match[2]]))
+    assert.deepEqual([...sheets.keys()], ids.filter(id => !platforms[id].soon), route)
+    ids.forEach((id, index) => {
+      const chip = chips[index], platform = platforms[id]
+      if (platform.soon) {
+        // Coming later: a label, never a link or a button, and no file is named for it.
+        assert.match(chip, /^<li class="get-chip soon">/, `${route} ${id}`)
+        assert.doesNotMatch(chip, /<a\b|<button\b|href=|popovertarget/, `${route} ${id}`)
+        assert.match(chip, /<small class="get-kind">Soon<\/small>$/, `${route} ${id}`)
+        return
+      }
+      // One button that opens this platform's sheet, and a plain link for a browser without popovers.
+      assert.equal((chip.match(/<button\b/g) ?? []).length, 1, `${route} ${id}`)
+      assert.match(chip, new RegExp(`<button class="get-chip" type="button" popovertarget="get-${id}" aria-label="${platform.name}: `), `${route} ${id}`)
+      const fallback = chip.match(/<a class="get-chip get-fallback" href="([^"]+)">/)[1]
+      assert.equal(fallback, route === '/' ? `${platform.page}#install` : platform.download[1], `${route} ${id}`)
+      const sheet = sheets.get(id)
+      assert.match(sheet, new RegExp(`<h2 id="get-${id}-title" tabindex="-1" autofocus>For ${platform.name}</h2>`))
+      assert.match(sheet, /<button class="sheet-close" type="button" popovertarget="get-[a-z]+" popovertargetaction="hide" aria-label="Close">/)
+      assert.ok(sheet.includes(`<p class="sheet-gets">${platform.gets}</p>`), `${route} ${id}`)
+      // The file the sheet names is the file its one download button fetches.
+      const links = [...sheet.matchAll(/<a\b[^>]*href="([^"]+)"/g)].map(match => match[1])
+      const files = links.filter(href => downloads.includes(href))
+      assert.deepEqual(files.sort(), [platform.download[1], ...(platform.other ? [platform.other[2]] : [])].sort(), `${route} ${id}`)
+      assert.deepEqual([...sheet.matchAll(/<a class="button primary" href="([^"]+)"/g)].map(match => match[1]), [platform.download[1]], `${route} ${id}`)
+      assert.equal(platform.download[1].split('/').pop(), platform.file, id)
+      assert.ok(sheet.includes(`<dt>File</dt><dd><code>${platform.file}</code></dd>`), `${route} ${id}`)
+      assert.ok(sheet.includes(`>${platform.download[0]} `), `${route} ${id}`)
+      // How to install, here, and one link to the guide on the docs site.
+      assert.ok((sheet.match(/<ol class="steps">(.*?)<\/ol>/)[1].match(/<li>/g) ?? []).length >= 2, `${route} ${id}`)
+      assert.deepEqual(links.filter(href => href.startsWith(docs)).length, 1, `${route} ${id}`)
+      assert.match(sheet, new RegExp(`<a class="detail-link" href="${docs}[^"]*">${platform.name} guide `))
+      assert.equal(links.includes(platform.page), route === '/', `${route} ${id}`)
+    })
+    // Nothing on a page offers a download for a platform that has none.
+    assert.doesNotMatch(html, /Download for (?:Windows|iPhone)|\.exe\b|\.msi\b|\.ipa\b|apps\.apple\.com/i, route)
+  }
+  for (const route of routes.filter(route => !(route in offered))) assert.doesNotMatch(htmlAt(route), /class="get-row"|class="sheet"/, route)
+  const mobile = htmlAt('/mobile/'), desktop = htmlAt('/desktop/')
+  assert.equal(platforms.android.download[1], release.url)
   assert.match(release.url, /^https:\/\/github.com\/automagik-si\/automagik\/releases\/download\/v[0-9.]+\/automagik-pocket-[0-9.]+\.apk$/)
   assert.match(release.sha256, /^[a-f0-9]{64}$/)
-  assert.match(desktop, /Code mode needs Herdr and the pack; the app download alone does not set it up/)
+  for (const html of [mobile, htmlAt('/')]) assert.ok(html.replaceAll('<wbr>', '').includes(`<code class="sum">${release.sha256}</code>`))
+  // Herdr and DSH: two short entries after the downloads, each with one link to its guide and no commands.
+  const ways = desktop.match(/<ul class="way-list">(.*?)<\/ul>/)[1]
+  assert.ok(desktop.indexOf('class="get-row"') < desktop.indexOf('class="way-list"'))
+  assert.deepEqual([...ways.matchAll(/<h3>([^<]+)<\/h3>/g)].map(match => match[1]), ['Install on Herdr', 'Install on DSH'])
+  assert.deepEqual([...ways.matchAll(/<a class="detail-link" href="([^"]+)">(\w+) guide /g)].map(match => [match[1].startsWith(docs), match[2]]), [[true, 'Herdr'], [true, 'DSH']])
+  assert.equal((ways.match(/<a\b/g) ?? []).length, 2)
+  assert.doesNotMatch(ways, /<code\b|<pre\b/)
+  assert.match(ways, /It needs Herdr and the Automagik pack; the app alone does not set it up\./)
   assert.match(desktop, /switch still says Work/)
   assert.match(htmlAt('/cloud/'), /Cloud is not live/)
   for (const route of ['/mykes/']) assert.match(htmlAt(route), /Coming soon\./)
+  // The sheet is a popover: no script. It moves only for visitors who allow motion, and a
+  // browser without popovers gets the plain links instead of dead buttons.
+  assert.match(css, /@supports not selector\(:popover-open\)\{[^}]*\n?\s*button\.get-chip,\.sheet\{display:none !important\}/)
+  assert.match(css, /\.get-fallback\{display:none\}/)
 })
 
 test('every href/action points locally or to an exact reviewed destination', () => {
@@ -84,7 +136,7 @@ test('every href/action points locally or to an exact reviewed destination', () 
         } else local(url.pathname)
       }
     }
-    for (const [, action] of html.matchAll(/action="([^"]+)"/g)) assert.equal(action, '/api/waitlist')
+    for (const [, action] of html.matchAll(/\saction="([^"]+)"/g)) assert.equal(action, '/api/waitlist')
     // Guides and help are on the docs site. GitHub is linked for the downloads and once,
     // quietly, at the end of the footer; no page links to a design document or to the
     // capture notes, which stay in the repository.

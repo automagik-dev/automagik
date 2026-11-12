@@ -6,7 +6,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright-core'
-import { routes, rootFiles } from './scripts/build-pages.mjs'
+import { routes, rootFiles, platforms, offered } from './scripts/build-pages.mjs'
 import { fixture } from './waitlist/d1-fixture.mjs'
 import { onRequest as waitlist } from './functions/api/waitlist.js'
 import { onRequest as emailLink } from './functions/api/waitlist/email-confirm.js'
@@ -331,6 +331,119 @@ try {
     }
     console.log(`PASS menus ${label}: click, keyboard, Escape and focus return, hover, one panel at a time, active page, links, phone sheet`)
   }
+  // The download hook, with real clicks and keys. A live platform opens its sheet: in the
+  // middle of a wide window, rising from the bottom edge of a phone. A platform that is
+  // coming later is a label: no click, no focus, no file.
+  const sheetBehind = page => page.evaluate(() => ({ scroll: getComputedStyle(document.documentElement).overflowY, inert: [...document.querySelectorAll('.top, main, .site-footer')].map(part => getComputedStyle(part).interactivity) }))
+  for (const colorScheme of ['light', 'dark']) for (const [route, ids] of Object.entries(offered)) for (const [width, height] of [[1440, 900], [390, 844], [320, 700]]) {
+    const label = `${route} ${colorScheme} ${width}px`, slug = route === '/' ? 'home' : route.split('/')[1]
+    const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, colorScheme, reducedMotion: 'reduce' })
+    try {
+      const outside = await guard(context)
+      await watchShift(context)
+      const page = await context.newPage(), cdp = await context.newCDPSession(page)
+      await page.goto(origin + route, { waitUntil: 'load' })
+      await page.evaluate(() => document.fonts.ready)
+      const chips = await page.evaluate(() => [...document.querySelectorAll('.get-row > li')].map(item => {
+        const chip = item.matches('.get-chip') ? item : item.querySelector('button.get-chip'), fallback = item.querySelector('.get-fallback')
+        const box = chip.getBoundingClientRect(), top = selector => Math.round(chip.querySelector(selector).getBoundingClientRect().top)
+        return { name: chip.querySelector('.get-name').textContent, target: chip.getAttribute('popovertarget'), controls: item.querySelectorAll('a, button').length, left: box.left, right: box.right, top: Math.round(box.top), width: box.width, height: Math.round(box.height), sign: top('.platform-sign'), word: top('.get-name'), kind: chip.querySelector('.get-kind').textContent, fallback: fallback && getComputedStyle(fallback).display }
+      }))
+      assert.deepEqual(chips.map(chip => [chip.name, chip.target, chip.controls, chip.kind === 'Soon']), ids.map(id => platforms[id].soon ? [platforms[id].name, null, 0, true] : [platforms[id].name, `get-${id}`, 2, false]), `The tray offers its platforms in order, and the ones coming later are not controls: ${label}`)
+      for (const chip of chips) {
+        assert.ok(chip.left >= 0 && chip.right <= width && chip.width >= 44 && chip.height >= 44, `Each platform is a full tap target inside the screen: ${label} ${JSON.stringify(chip)}`)
+        assert.deepEqual([chip.top, chip.height, chip.sign, chip.word], [chips[0].top, chips[0].height, chips[0].sign, chips[0].word], `Live and coming platforms line up: ${label} ${chip.name}`)
+        if (chip.target) assert.equal(chip.fallback, 'none', `The plain link is only for a browser without popovers: ${label}`)
+      }
+      // The keyboard stops on the live platforms, in order, and on nothing else in the tray
+      // (a short page comes round to them again; each stop counts once).
+      const stops = []
+      for (let press = 0; press < 40; press++) {
+        await page.keyboard.press('Tab')
+        const stop = await page.evaluate(() => document.activeElement.closest('.get-row') ? document.activeElement.getAttribute('popovertarget') ?? document.activeElement.outerHTML.slice(0, 60) : null)
+        if (stop && !stops.includes(stop)) stops.push(stop)
+      }
+      assert.deepEqual(stops, chips.filter(chip => chip.target).map(chip => chip.target), `Tab reaches the live platforms only: ${label}`)
+      await page.locator('.get-chip.soon').first().click()
+      assert.equal(await page.locator(':popover-open').count(), 0, `A platform that is coming later opens nothing: ${label}`)
+      for (const id of ids.filter(id => !platforms[id].soon)) {
+        const platform = platforms[id], button = page.locator(`.get-row [popovertarget="get-${id}"]`), sheet = page.locator(`#get-${id}`), about = `${label} ${id}`
+        assert.equal(await expanded(cdp, `${platform.name}: `), false, `The platform starts collapsed: ${about}`)
+        await button.click()
+        let state = await panelState(page, `get-${id}`)
+        assert.ok(state.open && state.shown && state.overflow === 0, `A click opens the sheet: ${about}`)
+        // The page behind an open sheet is inert, the platform's button with it: it is not announced at all.
+        assert.equal(await expanded(cdp, `${platform.name}: `), undefined, `The platform is out of reach behind its sheet: ${about}`)
+        assert.ok(state.box.left >= 0 && state.box.right <= width && state.box.top >= 0 && state.box.bottom <= height, `The sheet is inside the screen: ${about} ${JSON.stringify(state.box)}`)
+        if (width > 700) assert.ok(Math.abs(state.box.left + state.box.width / 2 - width / 2) <= 1 && Math.abs(state.box.top + state.box.height / 2 - height / 2) <= 1, `The sheet sits in the middle of the window: ${about} ${JSON.stringify(state.box)}`)
+        else assert.ok(state.box.left === 0 && state.box.width === width && Math.abs(state.box.bottom - height) <= 1, `The sheet rises from the bottom edge: ${about} ${JSON.stringify(state.box)}`)
+        assert.ok(state.focusInside, `The focus moves into the sheet: ${about}`)
+        assert.equal(await sheet.getAttribute('role'), 'dialog')
+        assert.equal(await page.evaluate(id => document.getElementById(document.getElementById(id).getAttribute('aria-labelledby')).textContent, `get-${id}`), `For ${platform.name}`)
+        assert.deepEqual(await sheetBehind(page), { scroll: width > 700 ? 'visible' : 'hidden', inert: ['inert', 'inert', 'inert'] }, `The page behind the sheet is out of reach: ${about}`)
+        // What the sheet says: the exact file, how to install it, the download, one guide.
+        assert.equal(await sheet.locator('.sheet-facts code').first().innerText(), platform.file, `The sheet names the file: ${about}`)
+        assert.ok(await sheet.locator('.steps > li').count() >= 2, `The sheet says how to install: ${about}`)
+        const download = sheet.locator('a.button.primary')
+        assert.equal(await download.getAttribute('href'), platform.download[1], `The button fetches that file: ${about}`)
+        assert.equal(await sheet.locator('.detail-link').count(), 1)
+        // Every part of the sheet can be brought onto the screen, on the smallest phone too.
+        for (const part of [download, sheet.locator('.detail-link'), sheet.locator('.sheet-close')]) {
+          await part.scrollIntoViewIfNeeded()
+          const box = await part.boundingBox()
+          assert.ok(box.x >= 0 && box.x + box.width <= width && box.y >= 0 && box.y + box.height <= height && box.height >= 44, `The sheet's controls are reachable, full tap targets: ${about} ${JSON.stringify(box)}`)
+        }
+        assert.equal(await sheet.evaluate(node => node.scrollWidth - node.clientWidth), 0, `Nothing in the sheet is wider than it: ${about}`)
+        if (width !== 320) await page.screenshot({ path: join(evidence, `hook-${slug}-${id}-${colorScheme}-${width}.png`) })
+        // The keyboard stays in the sheet and reaches its close button, download and guide.
+        const inside = new Set()
+        for (let press = 0; press < 12; press++) {
+          await page.keyboard.press('Tab')
+          inside.add(await page.evaluate(id => { const active = document.activeElement; return active === document.body ? 'page' : active.closest(`#${id}`) ? `sheet:${active.getAttribute('href') ?? active.className}` : `behind:${active.outerHTML.slice(0, 60)}` }, `get-${id}`))
+        }
+        assert.deepEqual([...inside].filter(stop => stop.startsWith('behind:')), [], `Tab never lands behind the sheet: ${about}`)
+        for (const stop of ['sheet:sheet-close', `sheet:${platform.download[1]}`]) assert.ok(inside.has(stop), `Tab reaches ${stop}: ${about} ${[...inside]}`)
+        // Escape, from anywhere in the sheet, closes it and the focus goes back to the platform.
+        await sheet.locator('.sheet-close').focus()
+        await page.keyboard.press('Escape')
+        state = await panelState(page, `get-${id}`)
+        assert.ok(!state.open && !state.shown && state.focusButton === `get-${id}`, `Escape closes the sheet and returns the focus: ${about} ${JSON.stringify(state)}`)
+        assert.equal(await expanded(cdp, `${platform.name}: `), false)
+        assert.deepEqual(await sheetBehind(page), { scroll: 'visible', inert: ['auto', 'auto', 'auto'] }, `The page is back in reach: ${about}`)
+        // Enter opens it from the keyboard; its own button and a click beside it close it.
+        await page.keyboard.press('Enter')
+        assert.ok((await panelState(page, `get-${id}`)).open, `Enter opens the sheet: ${about}`)
+        await sheet.locator('.sheet-close').click()
+        state = await panelState(page, `get-${id}`)
+        assert.ok(!state.open && state.focusButton === `get-${id}`, `The close button closes the sheet and returns the focus: ${about}`)
+        await button.click(); await page.mouse.click(6, 6)
+        assert.ok(!(await panelState(page, `get-${id}`)).shown, `A click beside the sheet closes it: ${about}`)
+      }
+      assert.equal(await page.evaluate(() => window.__shift), 0, `The sheets never shift the page: ${label}`)
+      assert.deepEqual(outside, [], `No external request from the download hook: ${label}`)
+    } finally { await context.close() }
+    console.log(`PASS download hook ${label}: order, alignment, tap targets, soon is a label, sheet in place, file and download, keyboard, Escape, focus return`)
+  }
+  // For a visitor who allows motion the sheet eases in (opacity and a short rise) and ends
+  // fully shown, in place; with reduced motion it simply appears.
+  for (const reducedMotion of ['no-preference', 'reduce']) for (const [width, height] of [[1440, 900], [390, 844]]) {
+    const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, colorScheme: 'light', reducedMotion })
+    try {
+      const page = await context.newPage()
+      await page.goto(origin + '/', { waitUntil: 'load' })
+      const eased = await page.evaluate(async () => {
+        const sheet = document.getElementById('get-mac')
+        document.querySelector('[popovertarget="get-mac"]').click()
+        await new Promise(done => requestAnimationFrame(done))
+        const running = sheet.getAnimations(), moved = running.map(animation => animation.transitionProperty).sort()
+        await Promise.all(running.map(animation => animation.finished))
+        const style = getComputedStyle(sheet)
+        return { open: sheet.matches(':popover-open'), moved, opacity: style.opacity, translate: style.translate }
+      })
+      assert.deepEqual(eased, { open: true, moved: reducedMotion === 'reduce' ? [] : ['opacity', 'translate'], opacity: '1', translate: 'none' }, `The sheet's entrance: ${reducedMotion} ${width}px ${JSON.stringify(eased)}`)
+    } finally { await context.close() }
+  }
+  console.log('PASS download hook motion: the sheet eases in for visitors who allow motion, appears at once otherwise, and ends in place')
   // Motion, for a visitor who allows it. Every page is scrolled from top to bottom at desktop
   // and phone width: something moves, nothing shifts the layout (the browser's own layout-shift
   // score stays 0), nothing overflows, and everything that rises into view ends fully shown,
