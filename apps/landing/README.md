@@ -150,6 +150,28 @@ Desktop uses the repository's release aliases. Mobile links directly to the APK 
 Pocket's rolling release manifest. Its verified URL/digest/date are in `assets/releases.json`;
 refresh from that manifest before publishing. Windows and iPhone are soon text without links.
 
+### The download hook
+
+The home's hero has one action: a tray of platforms (`getHook` in `scripts/build-pages.mjs`,
+from the one `platforms` table). The Desktop and Mobile pages open with the same tray for
+their own platforms. Mac, Linux and Android are live: each is a button that opens that
+platform's sheet through the browser's popover, with no script. Windows and iPhone say Soon
+and are labels: not a link, not a button, and no file is named for them. A platform moves
+from soon to live in `platforms`, with a real file, and never before that file exists.
+
+A sheet says what you get, the exact file, what it needs, how to install it, and carries one
+download button for that file and one link to the platform's guide on the docs site. On the
+home it also links to the product's page. In a wide window the sheet sits in the middle; on
+a phone it rises from the bottom edge and the page behind it does not scroll. The page behind
+an open sheet is inert, Escape or the close button shuts it and the focus goes back to the
+platform. A browser without popovers gets plain links in the tray instead: to the product
+page from the home, to the file from a product page.
+
+Herdr and DSH are two short entries on the Desktop page, each with one link to its guide.
+The guide links (`guide` in `scripts/build-pages.mjs`) all point at the docs front page
+until the docs site has a page for each; a link moves to its page only once that page is
+live, and `landing.test.mjs` lists every destination a page may link to.
+
 Owner's Cloudflare Pages settings: root `apps/landing`, no build, output `.`. The root must
 include `functions/` for the confirmation routes to compile. The production site is indexable
 (the owner's OK, 2026-11-12): the pages carry no robots meta and `_headers` sends no
