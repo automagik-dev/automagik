@@ -50,14 +50,18 @@ const STATUS_WORDS = {
   blocked: "stuck (blocked: needs a person)",
   error: "error",
 };
+export const PERMISSION_WORD = "stuck (needs a person to answer a permission)";
 
 /**
  * A status word for a bot's pane: hc's state, "not running" when it has no pane, or
  * "unreachable" when hc gave no answer in time (a machine away).
+ * `permission` means herdr-core reports the pane blocked with kind permission; it
+ * replaces only the blocked word.
  */
-export function statusWord(status, running, unreachable = false) {
+export function statusWord(status, running, unreachable = false, permission = false) {
   if (unreachable) return "unreachable (hc gave no answer in time)";
   if (!running) return "not running";
+  if (status === "blocked" && permission === true) return PERMISSION_WORD;
   return STATUS_WORDS[status] ?? (status ? neutral(String(status)).slice(0, 40) : "running, no status reported");
 }
 
@@ -118,7 +122,8 @@ const indent = (text, pad) => text.split("\n").map((l) => pad + l).join("\n");
  * their pane's status and latest report (`terminal` when running); `lead` the effective
  * lead of a member (`terminal` null or "" when it isn't running); `helpers` the terminals
  * this bot started that carry no bot label. `unreachable` on a member or the lead: hc gave
- * no answer about its pane in time. Reports are other agents' text: each sits in its own
+ * no answer about its pane in time. `permission` on a member, lead or helper means its
+ * core status says blocked with kind permission. Reports are other agents' text: each sits in its own
  * <untrusted-report> element with its angle brackets neutralised.
  */
 export function briefingText({ self, file, members = [], lead, helpers = [], guard = null, isGit = true }) {
@@ -137,7 +142,7 @@ export function briefingText({ self, file, members = [], lead, helpers = [], gua
 
   if (lead) {
     const running = Boolean(lead.terminal);
-    tail.push("", `Your lead: ${lead.bot.name} (bot ${lead.bot.id}), ${statusWord(lead.status, running, lead.unreachable)}.`);
+    tail.push("", `Your lead: ${lead.bot.name} (bot ${lead.bot.id}), ${statusWord(lead.status, running, lead.unreachable, lead.permission)}.`);
     tail.push(running
       ? `Report to it with \`hc send ${lead.terminal} "<result or blocker>"\` when you are done or stuck. ${lead.terminal} is its current terminal; use this address, not one from an older message.`
       : lead.unreachable ? `hc gave no answer about its pane this turn. Find it with \`hc ls --label bot=${lead.bot.id}\` before you report.`
@@ -146,7 +151,7 @@ export function briefingText({ self, file, members = [], lead, helpers = [], gua
 
   if (helpers.length) {
     const counts = new Map();
-    for (const h of helpers) { const w = statusWord(h.status, true); counts.set(w, (counts.get(w) ?? 0) + 1); }
+    for (const h of helpers) { const w = statusWord(h.status, true, false, h.permission); counts.set(w, (counts.get(w) ?? 0) + 1); }
     const parts = [...counts].map(([w, n]) => `${n} ${w}`).join(", ");
     tail.push("", `Your helpers (terminals you started that are not bots): ${helpers.length}: ${parts}.`);
   }
@@ -164,7 +169,7 @@ export function briefingText({ self, file, members = [], lead, helpers = [], gua
     for (const m of shownMembers) {
       const running = Boolean(m.terminal);
       const where = running ? ` at ${m.terminal}` : "";
-      memberLines.push(`- ${m.bot.name} (bot ${m.bot.id}${m.bot.role ? `, ${m.bot.role}` : ""}): ${statusWord(m.status, running, m.unreachable)}${where}.`);
+      memberLines.push(`- ${m.bot.name} (bot ${m.bot.id}${m.bot.role ? `, ${m.bot.role}` : ""}): ${statusWord(m.status, running, m.unreachable, m.permission)}${where}.`);
       if (m.report && String(m.report).trim()) {
         memberLines.push(`  <untrusted-report from="${attr(m.bot.name)}">`, indent(keepEnd(neutral(m.report), each), "    "), "  </untrusted-report>");
       }
