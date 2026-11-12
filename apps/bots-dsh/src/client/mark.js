@@ -64,7 +64,11 @@ const FIDGETS = ['hop', 'sway', 'stretch', 'look']
 // teams already keep.
 export const GENIE_PET = Object.freeze({ source: 'builtin', id: 'genie-clay', version: 2, sleep: true })
 export const UNFOLD_PET = Object.freeze({ source: 'builtin', id: 'unfold', version: 2, sleep: true })
-const petUrl = (pet, part) => `api/omni-ui/pet?${new URLSearchParams({ source: pet.source, id: pet.id, ...(part ? { part } : {}) })}`
+// The pet's version is part of its address (`v`; the route does not read it). The host lets
+// the browser keep a sheet for an hour, and the app comes back on the same origin after an
+// update: without it, a new atlas under an id teams keep (Genie's v2 over its v1) would be
+// drawn with its new rows from the old sheet still in the cache.
+const petUrl = (pet, part) => `api/omni-ui/pet?${new URLSearchParams({ source: pet.source, id: pet.id, ...(part ? { part } : {}), ...(pet.version ? { v: pet.version } : {}) })}`
 // Genie's version and sleep strip are the shipped ones, never a kept look's: a v2 atlas read
 // as the v1 it replaced would draw the wrong cells.
 const shipped = pet => (pet.source === GENIE_PET.source && pet.id === GENIE_PET.id ? GENIE_PET : pet)

@@ -181,7 +181,30 @@ test('reduced motion shows one frame of every state, and a row that plays once s
 
 test('a look kept from Genie\'s v1 atlas is served as the v2 Genie shipped now', () => {
   const kept = servedPet({ source: 'builtin', id: 'genie-clay', version: 1 })
-  assert.deepEqual({ ...kept }, { sheet: 'api/omni-ui/pet?source=builtin&id=genie-clay', sleep: 'api/omni-ui/pet?source=builtin&id=genie-clay&part=sleep', version: 2 })
+  assert.deepEqual({ ...kept }, { sheet: 'api/omni-ui/pet?source=builtin&id=genie-clay&v=2', sleep: 'api/omni-ui/pet?source=builtin&id=genie-clay&part=sleep&v=2', version: 2 })
   // Another pet is served as it was kept.
-  assert.deepEqual({ ...servedPet({ source: 'team', id: 'genie-clay', version: 1 }) }, { sheet: 'api/omni-ui/pet?source=team&id=genie-clay', sleep: undefined, version: 1 })
+  assert.deepEqual({ ...servedPet({ source: 'team', id: 'genie-clay', version: 1 }) }, { sheet: 'api/omni-ui/pet?source=team&id=genie-clay&v=1', sleep: undefined, version: 1 })
+})
+
+// The host lets the browser keep a pet's sheet for an hour (channel.js: max-age=3600), and
+// the desktop app comes back on the same origin after an update. An address without the
+// version would hand the v2 player the v1 sheet still in the cache: nine rows drawn as eleven.
+test('a pet\'s sheet and its sleep strip are asked for at an address that carries the pet\'s version', () => {
+  const asked = part => new URL(part, 'http://host.test/').searchParams
+  const genie = servedPet(GENIE_PET)
+  // What the app asked for while Genie was the v1 atlas: never asked for again.
+  const before = ['api/omni-ui/pet?source=builtin&id=genie-clay', 'api/omni-ui/pet?source=builtin&id=genie-clay&part=sleep']
+  for (const address of [genie.sheet, genie.sleep]) {
+    assert.ok(!before.includes(address), `${address} is the address the v1 sheet was cached under`)
+    assert.equal(asked(address).get('v'), String(GENIE_PET.version))
+  }
+  // What the route reads (source, id, part) is as it was: the sheet has no part, the strip 'sleep'.
+  assert.deepEqual([...asked(genie.sheet)], [['source', 'builtin'], ['id', 'genie-clay'], ['v', '2']])
+  assert.deepEqual([...asked(genie.sleep)], [['source', 'builtin'], ['id', 'genie-clay'], ['part', 'sleep'], ['v', '2']])
+  // Any pet: two versions of one id never share an address, for either file.
+  const one = servedPet({ source: 'team', id: 'rover', version: 1, sleep: true })
+  const two = servedPet({ source: 'team', id: 'rover', version: 2, sleep: true })
+  assert.notEqual(one.sheet, two.sheet)
+  assert.notEqual(one.sleep, two.sleep)
+  assert.deepEqual([asked(one.sheet).get('v'), asked(one.sleep).get('v'), asked(two.sheet).get('v'), asked(two.sleep).get('v')], ['1', '1', '2', '2'])
 })
