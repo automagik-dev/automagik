@@ -41,8 +41,9 @@ Each line names where the README says it. When this file and the README differ, 
 
 ## When the folder does not have it
 
-The README's "Not here" lists what this folder leaves out on purpose. If what you need is there, or
-is in no file, do not make it up: say what is missing and ask.
+The README's "Not here" lists what this folder leaves out on purpose, and for some of it says where
+it is: motion, the stage gradient and the tile colours are in the component stylesheet. Follow that
+list. Use the place it names, and do not treat a thing it leaves out as part of this set.
 
 ## In a repository that carries a copy
 

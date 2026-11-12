@@ -1,10 +1,10 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { FOLDERS, RECORD, SOURCE, TOOL, check, staleness, write } from './brand-sync.mjs';
+import { FOLDERS, RECORD, SOURCE, TOOL, check, replaceFile, staleness, write } from './brand-sync.mjs';
 
 // docs/brand is the brand's source; Genie, Omni and Arca carry a byte copy made by
 // scripts/brand-sync.mjs (docs/brand/README.md, "Using this in another repository"). No test here
@@ -155,6 +155,121 @@ describe('the brand copy tool (scripts/brand-sync.mjs)', () => {
     expect(check({ to: target }).problems[0]).toStartWith(`${RECORD} is not JSON`);
   });
 
+  test('the record must list the README, the skill and the tool: a copy that drops one, with its lines, fails', () => {
+    const { source, target } = small();
+    write({ to: target, from: source });
+    const whole = readFileSync(join(target, RECORD), 'utf8');
+    const without = (path: string) => {
+      const record = JSON.parse(whole);
+      delete record.files[path];
+      writeFileSync(join(target, RECORD), `${JSON.stringify(record, null, 2)}\n`);
+    };
+    // The skill folder and its line both go: every file still listed matches, and nothing unlisted is left.
+    rmSync(join(target, '.claude'), { recursive: true });
+    without(SKILL);
+    expect(check({ to: target }).problems).toEqual([`${RECORD} does not list ${SKILL}`]);
+    expect(run(target, '--check', '--remote', source).status).toBe(1);
+    for (const path of ['docs/brand/README.md', TOOL]) {
+      write({ to: target, from: source });
+      rmSync(join(target, path));
+      without(path);
+      expect(check({ to: target }).problems).toEqual([`${RECORD} does not list ${path}`]);
+    }
+  });
+
+  test('--write copies the commit: an edit in the checkout that is not committed is not copied, and a note says so', () => {
+    const { source, target, first } = small();
+    const clean = run(target, '--write', '--from', source, '--remote', source);
+    expect(clean.status).toBe(0);
+    expect(clean.stdout).not.toContain('not committed');
+
+    writeFileSync(join(source, 'docs/brand/tokens/tokens.css'), ':root{--bt-main:#123456}\n');
+    put(source, 'docs/brand/logo/untracked.svg', '<svg/>\n');
+    const wrote = run(target, '--write', '--from', source, '--remote', source);
+    expect(wrote.status).toBe(0);
+    expect(wrote.stdout).toContain('brand-sync: note: that checkout has brand changes that are not committed. They were not copied: the copy is the commit.');
+    expect(readFileSync(join(target, 'docs/brand/tokens/tokens.css'), 'utf8')).toBe(':root{--bt-main:#fff}\n');
+    expect(existsSync(join(target, 'docs/brand/logo/untracked.svg'))).toBe(false);
+    expect(JSON.parse(readFileSync(join(target, RECORD), 'utf8')).commit).toBe(first);
+    expect(check({ to: target }).problems).toEqual([]);
+    // An edit outside the brand is not the brand's business: no note.
+    git(source, 'checkout', '-q', '--', 'docs/brand/tokens/tokens.css');
+    rmSync(join(source, 'docs/brand/logo/untracked.svg'));
+    writeFileSync(join(source, 'README.md'), '# automagik, edited\n');
+    expect(run(target, '--write', '--from', source, '--remote', source).stdout).not.toContain('not committed');
+  });
+
+  test("a copy made from a commit that is not on dev is told so, and is never advised to copy dev over it", () => {
+    const { source, target, first } = small();
+    // A branch ahead of dev changes the brand; the copy is made from it.
+    git(source, 'checkout', '-q', '-b', 'new-cream');
+    put(source, 'docs/brand/tokens/tokens.css', ':root{--bt-main:#fffaf0}\n');
+    const ahead = commit(source, 'a new cream, not merged yet');
+    git(source, 'checkout', '-q', 'dev');
+    const wrote = run(target, '--write', '--from', ahead, '--remote', source);
+    expect(wrote.status).toBe(0);
+    expect(staleness({ commit: ahead, remote: source })).toEqual({ state: 'apart', dev: first });
+    for (const said of [wrote, run(target, '--check', '--remote', source)]) {
+      expect(said.status).toBe(0);
+      expect(said.stdout).toContain(`this copy's commit (${ahead.slice(0, 12)}) is not on Automagik's dev (${first})`);
+      expect(said.stdout).not.toContain('--write --from');
+      expect(said.stdout).not.toContain('Copy it again');
+    }
+    expect(run(target, '--check', '--remote', source).stdout).toContain('brand-sync: warning: ');
+
+    // dev moves without the branch: still not on dev, still no advice to copy dev.
+    put(source, 'docs/brand/README.md', '# Brand, edited on dev\n');
+    const moved = commit(source, 'dev moves');
+    expect(staleness({ commit: ahead, remote: source })).toEqual({ state: 'apart', dev: moved });
+    // While a copy of dev's own older commit is behind: dev is ahead of it, and that one is advised.
+    expect(staleness({ commit: first, remote: source })).toEqual({ state: 'behind', dev: moved });
+
+    // The branch is merged: the copy's commit is on dev now. dev also holds the README edit, so it is ahead.
+    git(source, 'merge', '-q', '--no-ff', '-m', 'merge the cream', 'new-cream');
+    const merged = git(source, 'rev-parse', 'HEAD');
+    expect(staleness({ commit: ahead, remote: source })).toEqual({ state: 'behind', dev: merged });
+    const after = run(target, '--check', '--remote', source);
+    expect(after.status).toBe(0);
+    expect(after.stdout).toContain(`Copy it again: node scripts/brand-sync.mjs --write --from ${merged}`);
+  });
+
+  test("the look at dev and a commit's fetch use a scratch repository of their own: the target's refs, remotes and objects are untouched, and the scratch is gone", () => {
+    const { source, target, first } = small();
+    write({ to: target, from: source });
+    commit(target, 'the copy');
+    put(source, 'docs/brand/tokens/tokens.css', ':root{--bt-main:#fffaf0}\n');
+    const newer = commit(source, 'a new cream');
+    // The tool's own temp folder, so what it leaves there can be seen.
+    const scratch = join(dirname(target), 'scratch');
+    mkdirSync(scratch);
+    const tool = (...args: string[]) => spawnSync('node', [join(ROOT, TOOL), ...args], { cwd: target, encoding: 'utf8', env: { ...process.env, GITHUB_ACTIONS: '', TMPDIR: scratch } });
+    const gitState = () => [git(target, 'for-each-ref'), git(target, 'config', '--local', '--list'), git(target, 'count-objects', '-v'),
+      String(existsSync(join(target, '.git/FETCH_HEAD'))), String(existsSync(join(target, '.git/shallow'))), readdirSync(join(target, '.git')).sort().join(' ')].join('\n--\n');
+    const before = gitState();
+
+    // Behind: the look runs both fetches (the two trees, then dev's commits).
+    const checked = tool('--check', '--remote', source);
+    expect(checked.status).toBe(0);
+    expect(checked.stdout).toContain(`--write --from ${newer}`);
+    expect(gitState()).toBe(before);
+    expect(git(target, 'status', '--porcelain')).toBe('');
+    expect(readdirSync(scratch)).toEqual([]);
+
+    // --write from a commit id fetches that commit too, and the look runs again after it.
+    const wrote = tool('--write', '--from', first, '--remote', source);
+    expect(wrote.status).toBe(0);
+    expect(wrote.stdout).toContain(`--write --from ${newer}`);
+    expect(gitState()).toBe(before);
+    expect(readdirSync(scratch)).toEqual([]);
+
+    // A fetch that fails cleans up as well.
+    const failed = tool('--write', '--from', '0'.repeat(40), '--remote', source);
+    expect(failed.status).toBe(1);
+    expect(failed.stderr).toContain('could not read 0000000000000000000000000000000000000000');
+    expect(gitState()).toBe(before);
+    expect(readdirSync(scratch)).toEqual([]);
+  });
+
   test("the look at Automagik's dev: quiet while the brand there is the copy's, a warning that never fails once it is not", () => {
     const { source, target, first } = small();
     write({ to: target, from: source });
@@ -206,7 +321,8 @@ describe('the brand copy tool (scripts/brand-sync.mjs)', () => {
     const newer = commit(source, 'the note');
     const warned = spawnSync('node', [join(ROOT, TOOL), '--check', '--remote', source], { cwd: target, encoding: 'utf8', env: { ...process.env, GITHUB_ACTIONS: 'true' } });
     expect(warned.status).toBe(0);
-    expect(warned.stdout).toContain(`::warning title=The brand copy is behind Automagik::the brand on Automagik's dev (${newer})`);
+    expect(warned.stdout).toContain(`::warning title=The brand copy is behind Automagik::the brand changed on Automagik's dev after this copy's commit`);
+    expect(warned.stdout).toContain(`dev is at ${newer}. Copy it again: node scripts/brand-sync.mjs --write --from ${newer}`);
   });
 
   test('with no network both modes say so and go on', () => {
@@ -220,10 +336,16 @@ describe('the brand copy tool (scripts/brand-sync.mjs)', () => {
     expect(checked.status).toBe(0);
     expect(checked.stdout).toContain("could not reach Automagik's repository (offline?)");
     expect(checked.stdout).toContain(`5 files match ${RECORD}`);
+    // The reason is git's own first `fatal:` line, not the advice it prints after it.
+    const why = staleness({ commit: first, remote: nowhere }).why;
+    expect(why).toStartWith('fatal: ');
+    expect(why).toContain('no-such-remote');
+    expect(checked.stdout).toContain(`was skipped: ${why}`);
+    expect(checked.stdout).not.toContain('and the repository exists');
   });
 
-  test('--write refuses the source itself, a copy as the source, a commit older than the skill, and a linked folder', () => {
-    const { source, target, first } = small();
+  test('--write refuses the source itself, a copy as the source and a commit older than the skill', () => {
+    const { source, target } = small();
     expect(() => write({ to: source, from: source })).toThrow('this is the source');
     expect(existsSync(join(source, RECORD))).toBe(false);
 
@@ -239,17 +361,153 @@ describe('the brand copy tool (scripts/brand-sync.mjs)', () => {
     expect(() => write({ to: other, from: source })).toThrow(`commit ${noSkill.slice(0, 12)} holds no ${SKILL}`);
     expect(readdirSync(other)).toEqual([]);
 
-    const elsewhere = join(dirname(target), 'elsewhere');
-    mkdirSync(join(elsewhere, 'brand'), { recursive: true });
-    mkdirSync(join(other, 'docs'));
-    symlinkSync(join(elsewhere, 'brand'), join(other, 'docs/brand'));
-    expect(() => write({ to: other, from: first, remote: source })).toThrow('docs/brand is a symbolic link');
-    expect(readdirSync(join(elsewhere, 'brand'))).toEqual([]);
-
     const wrong = run(target, '--write');
     expect(wrong.status).toBe(2);
     expect(wrong.stderr).toContain('Usage:');
     expect(run(target, '--check', '--write', '--from', source).status).toBe(2);
+  });
+});
+
+// A copy holds real folders and files only. A link planted in the repository that carries it must
+// never make the tool write, or read, somewhere else (PR 1166, review finding H1).
+describe('the brand copy tool and symbolic links', () => {
+  const LINK = 'is a symbolic link: a copy holds real folders and files only';
+  /** Every file and link under `folder`, with a file's bytes or a link's own text: a picture to compare. */
+  const picture = (folder: string): Record<string, string> => Object.fromEntries(readdirSync(folder, { withFileTypes: true, recursive: true })
+    .filter(entry => !entry.isDirectory() && !`${entry.parentPath}/`.includes('/.git/'))
+    .map(entry => join(entry.parentPath, entry.name))
+    .sort()
+    .map(path => [path.slice(folder.length + 1), lstatSync(path).isSymbolicLink() ? 'a link' : sha256(readFileSync(path))]));
+  /** A repository that carries a good copy, and a folder outside it holding files that must never change. */
+  const carried = () => {
+    const made = small();
+    write({ to: made.target, from: made.source });
+    commit(made.target, 'the copy');
+    const outside = join(dirname(made.target), 'outside');
+    put(outside, 'sentinel.txt', 'not the brand\n');
+    return { ...made, outside };
+  };
+
+  test('a record that is a link: --write refuses, the file it points at keeps its bytes, and --check names the link', () => {
+    const { source, target, outside } = carried();
+    rmSync(join(target, RECORD));
+    symlinkSync(join(outside, 'sentinel.txt'), join(target, RECORD));
+    const before = { target: picture(target), outside: picture(outside) };
+
+    expect(() => write({ to: target, from: source })).toThrow(`${RECORD} ${LINK}. Nothing was changed`);
+    const wrote = run(target, '--write', '--from', source, '--remote', source);
+    expect(wrote.status).toBe(1);
+    expect(wrote.stderr).toContain(`brand-sync: ${RECORD} ${LINK}`);
+    expect(readFileSync(join(outside, 'sentinel.txt'), 'utf8')).toBe('not the brand\n');
+    expect({ target: picture(target), outside: picture(outside) }).toEqual(before);
+
+    // The check does not read a record through a link, even one that points at a true record.
+    expect(check({ to: target }).problems).toEqual([`${RECORD} ${LINK}`]);
+    rmSync(join(target, RECORD));
+    put(outside, 'SOURCE.json', git(target, 'show', `HEAD:${RECORD}`) + '\n');
+    symlinkSync(join(outside, 'SOURCE.json'), join(target, RECORD));
+    expect(check({ to: target }).problems).toEqual([`${RECORD} ${LINK}`]);
+    const checked = run(target, '--check', '--remote', source);
+    expect(checked.status).toBe(1);
+    expect(checked.stderr).toContain(`brand-sync: ${RECORD} ${LINK}`);
+  });
+
+  test('a copied file that is a link: --write refuses with nothing changed, and --check names it even when the bytes match', () => {
+    const { source, target, outside } = carried();
+    const file = 'docs/brand/tokens/tokens.css';
+    // The link points at a file with the very bytes the record holds: only the link gives it away.
+    renameSync(join(target, file), join(outside, 'tokens.css'));
+    symlinkSync(join(outside, 'tokens.css'), join(target, file));
+    expect(check({ to: target }).problems).toEqual([`${file} ${LINK}`]);
+    expect(run(target, '--check', '--remote', source).status).toBe(1);
+
+    // The source moves on, so a write through the link would change the outside file.
+    put(source, file, ':root{--bt-main:#fffaf0}\n');
+    commit(source, 'a new cream');
+    const before = { target: picture(target), outside: picture(outside) };
+    expect(() => write({ to: target, from: source })).toThrow(`${file} ${LINK}. Nothing was changed`);
+    expect(run(target, '--write', '--from', source, '--remote', source).status).toBe(1);
+    expect(readFileSync(join(outside, 'tokens.css'), 'utf8')).toBe(':root{--bt-main:#fff}\n');
+    expect({ target: picture(target), outside: picture(outside) }).toEqual(before);
+
+    // The same for the skill and for the tool's own copy.
+    for (const path of [SKILL, TOOL]) {
+      const { source: from, target: to, outside: out } = carried();
+      renameSync(join(to, path), join(out, 'moved'));
+      symlinkSync(join(out, 'moved'), join(to, path));
+      const was = { target: picture(to), outside: picture(out) };
+      expect(() => write({ to, from })).toThrow(`${path} ${LINK}`);
+      expect({ target: picture(to), outside: picture(out) }).toEqual(was);
+      expect(check({ to }).problems).toEqual([`${path} ${LINK}`]);
+    }
+  });
+
+  test('docs/brand itself, a folder inside it, or a folder on the way that is a link: refused, nothing outside written, and --check names it', () => {
+    for (const folder of ['docs/brand', 'docs/brand/tokens', 'docs', '.claude', '.claude/skills/automagik-brand', 'scripts']) {
+      const { source, target, outside } = carried();
+      // The real folder moves outside and a link takes its place: every byte still matches the record.
+      renameSync(join(target, folder), join(outside, 'moved'));
+      symlinkSync(join(outside, 'moved'), join(target, folder));
+      expect(check({ to: target }).problems).toEqual([`${folder} ${LINK}`]);
+      expect(run(target, '--check', '--remote', source).status).toBe(1);
+
+      put(source, 'docs/brand/tokens/tokens.css', ':root{--bt-main:#fffaf0}\n');
+      put(source, SKILL, '---\nname: automagik-brand\n---\nRead the README.\n');
+      put(source, 'docs/brand/logo/new.svg', '<svg/>\n');
+      commit(source, 'the brand moves on');
+      const before = { target: picture(target), outside: picture(outside) };
+      expect(() => write({ to: target, from: source })).toThrow(`${folder} ${LINK}. Nothing was changed`);
+      expect(run(target, '--write', '--from', source, '--remote', source).status).toBe(1);
+      expect({ target: picture(target), outside: picture(outside) }).toEqual(before);
+    }
+  });
+
+  test('a first copy into a repository where docs/brand is already a link is refused, and the linked folder stays empty', () => {
+    const { source, target } = small();
+    const outside = join(dirname(target), 'outside');
+    mkdirSync(join(outside, 'brand'), { recursive: true });
+    mkdirSync(join(target, 'docs'));
+    symlinkSync(join(outside, 'brand'), join(target, 'docs/brand'));
+    expect(() => write({ to: target, from: source })).toThrow(`docs/brand ${LINK}. Nothing was changed`);
+    expect(readdirSync(join(outside, 'brand'))).toEqual([]);
+    expect(existsSync(join(target, '.claude'))).toBe(false);
+    expect(existsSync(join(target, 'scripts'))).toBe(false);
+  });
+
+  test('a stale link inside the copy is refused too, not followed and not silently removed', () => {
+    const { source, target, outside } = carried();
+    symlinkSync(join(outside, 'sentinel.txt'), join(target, 'docs/brand/old-note.md'));
+    expect(check({ to: target }).problems).toEqual([`docs/brand/old-note.md ${LINK}`]);
+    const before = { target: picture(target), outside: picture(outside) };
+    expect(() => write({ to: target, from: source })).toThrow(`docs/brand/old-note.md ${LINK}`);
+    expect({ target: picture(target), outside: picture(outside) }).toEqual(before);
+  });
+
+  test('the writer itself: a rename over the path, never a write through a link, and never into a folder that resolves outside', () => {
+    const { target, outside } = carried();
+    // Past the checks (called alone): a link at the path is replaced by the file; what it pointed at keeps its bytes.
+    symlinkSync(join(outside, 'sentinel.txt'), join(target, 'docs/brand/late.md'));
+    replaceFile(target, 'docs/brand/late.md', 'the new bytes\n');
+    expect(lstatSync(join(target, 'docs/brand/late.md')).isFile()).toBe(true);
+    expect(readFileSync(join(target, 'docs/brand/late.md'), 'utf8')).toBe('the new bytes\n');
+    expect(readFileSync(join(outside, 'sentinel.txt'), 'utf8')).toBe('not the brand\n');
+    // No file beside it is left behind.
+    expect(readdirSync(join(target, 'docs/brand')).filter(name => name.startsWith('.brand-sync-'))).toEqual([]);
+
+    // Past the checks: a folder on the way that leads outside is refused, and nothing lands there.
+    mkdirSync(join(outside, 'folder'));
+    symlinkSync(join(outside, 'folder'), join(target, 'docs/brand/linked'));
+    expect(() => replaceFile(target, 'docs/brand/linked/file.md', 'x\n')).toThrow('resolves outside this repository');
+    expect(readdirSync(join(outside, 'folder'))).toEqual([]);
+  });
+
+  test('a repository reached through a link is still its real folder: the copy is written and checks', () => {
+    const { source, target } = small();
+    const alias = join(dirname(target), 'alias');
+    symlinkSync(target, alias);
+    write({ to: alias, from: source });
+    expect(check({ to: alias }).problems).toEqual([]);
+    expect(check({ to: target }).problems).toEqual([]);
   });
 });
 

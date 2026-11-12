@@ -11,16 +11,21 @@
 //
 // --write copies the files as committed at that commit, removes the files the source no longer has
 // and records the copy. --check (for the other repository's CI) exits 1 naming each file that
-// differs from the record, is missing, or is not recorded. Both then look at Automagik's dev branch
-// and say when the brand there is no longer this copy's; that never fails a check, and with no
-// network they say so and go on.
+// differs from the record, is missing, or is not recorded. Both then look at Automagik's dev branch.
+// When the brand changed there after the copy's commit they name dev's commit to copy; when the
+// copy was made from a commit that is not on dev they say that instead, and do not advise copying
+// dev over it. Neither fails a check, and with no network they say so and go on.
+//
+// The copy holds real folders and files only. Neither mode reads or writes through a symbolic
+// link: --write refuses, before it changes anything, when a file it would write or remove, the
+// record, or a folder on the way to one is a link, and --check names the link as a problem.
 //
 // Plain Node 22.7 or later and git: no dependencies, no install.
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, rmdirSync, writeFileSync } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /** Automagik's repository, as SOURCE.json names it; with `.git`, the remote the look at dev reads. */
@@ -48,7 +53,11 @@ Options:
 
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 const short = commit => commit.slice(0, 12);
-const reason = error => String(error?.stderr || error?.message || error).trim().split('\n').pop();
+// Why a git call failed, in one line: git's first `fatal:` line (the lines after it are advice), else its last line.
+const reason = error => {
+  const lines = String(error?.stderr || error?.message || error).split('\n').map(line => line.trim()).filter(Boolean);
+  return lines.find(line => line.startsWith('fatal:')) ?? lines.pop() ?? 'no reason given';
+};
 
 function git(args, { cwd, timeout, buffer = false } = {}) {
   // A hook's own GIT_DIR must not point these calls at another repository.
@@ -66,7 +75,9 @@ function scratchRepo(remote) {
   return repo;
 }
 
-const isFolder = path => lstatSync(path, { throwIfNoEntry: false })?.isDirectory() === true;
+/** What is at `path` itself, a link not followed; undefined when nothing is, or a file is on the way. */
+const lstatOf = path => { try { return lstatSync(path, { throwIfNoEntry: false }); } catch { return undefined; } };
+const isFolder = path => lstatOf(path)?.isDirectory() === true;
 
 /** Whether a recorded path is one the copy may hold: inside the brand's folders, or the tool. */
 const inScope = path => path !== RECORD && !path.split('/').some(part => part === '' || part === '.' || part === '..') && !path.includes('\\')
@@ -91,12 +102,67 @@ function pruneEmpty(folder) {
   if (!readdirSync(folder).length) rmdirSync(folder);
 }
 
-/** The copy is written into real folders only: a link on the way would write somewhere else. */
-function refuseLinks(root) {
-  const onTheWay = new Set();
-  for (const path of [...FOLDERS, dirname(TOOL)]) path.split('/').forEach((_, at, parts) => onTheWay.add(parts.slice(0, at + 1).join('/')));
-  for (const path of onTheWay) {
-    if (lstatSync(join(root, path), { throwIfNoEntry: false })?.isSymbolicLink()) throw new Error(`${path} is a symbolic link in this repository: the copy is only written into real folders`);
+/**
+ * The first part of `path` that is a symbolic link in `root`: a folder on the way, or the path
+ * itself. Nothing is read through it. Undefined when every part that exists is real.
+ */
+function linkOn(root, path) {
+  const parts = path.split('/');
+  for (let at = 1; at <= parts.length; at += 1) {
+    const part = parts.slice(0, at).join('/');
+    const now = lstatOf(join(root, part));
+    if (!now) return undefined;
+    if (now.isSymbolicLink()) return part;
+    if (!now.isDirectory()) return undefined;
+  }
+  return undefined;
+}
+
+const LINK = 'is a symbolic link: a copy holds real folders and files only';
+
+/**
+ * Before --write changes anything: no path it will write or remove, and no folder on the way to
+ * one, may be a symbolic link (writing through one would write somewhere else), and a folder it
+ * needs may not be a file it is not about to remove.
+ */
+function refuseUnsafe(root, writes, removes) {
+  const going = new Set(removes);
+  for (const path of [...writes, ...removes]) {
+    const link = linkOn(root, path);
+    if (link) throw new Error(`${link} ${LINK}. Nothing was changed: remove the link and run again.`);
+    const parts = path.split('/');
+    for (let at = 1; at < parts.length; at += 1) {
+      const part = parts.slice(0, at).join('/');
+      const now = lstatOf(join(root, part));
+      if (!now) break;
+      if (!now.isDirectory() && !going.has(part)) throw new Error(`${part} is a file here, where the copy needs a folder. Nothing was changed.`);
+      if (!now.isDirectory()) break;
+    }
+  }
+}
+
+/**
+ * Writes one file of the copy: into a new file beside it, then a rename over it. A rename replaces
+ * what is at the path, a link included, and never writes through it; and the folder it lands in
+ * must resolve inside the repository, whatever the checks before found.
+ */
+export function replaceFile(root, path, bytes, mode = 0o644) {
+  const target = join(root, path);
+  const folder = dirname(target);
+  mkdirSync(folder, { recursive: true });
+  const inside = realpathSync(root);
+  const real = realpathSync(folder);
+  if (real !== inside && !real.startsWith(`${inside}${sep}`)) throw new Error(`${path} resolves outside this repository (${dirname(path)} leads elsewhere): not written`);
+  // A folder left where a file goes: its files were stale and are gone, so it is empty or it stays.
+  if (isFolder(target)) pruneEmpty(target);
+  const temp = join(folder, `.brand-sync-${process.pid}-${randomBytes(6).toString('hex')}.tmp`);
+  try {
+    writeFileSync(temp, bytes, { flag: 'wx', mode });
+    chmodSync(temp, mode);
+    renameSync(temp, target);
+  } catch (error) {
+    rmSync(temp, { force: true });
+    throw new Error(`could not write ${path}: ${reason(error)}`);
   }
 }
 
@@ -147,30 +213,26 @@ export function sourceFiles({ repo, commit }) {
  * files the source no longer has, and writes the record. Returns what it did.
  */
 export function write({ to, from, remote }) {
-  const root = resolve(to);
-  if (!isFolder(root)) throw new Error(`${to} is not a folder`);
+  if (!statSync(to, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`${to} is not a folder`);
+  const root = realpathSync(resolve(to));
   const source = openSource(from, remote);
   try {
-    if (source.top && realpathSync(source.top) === realpathSync(root)) throw new Error("this is the source: Automagik's own repository carries no copy. Run it in the repository that does (or pass --to).");
+    if (source.top && realpathSync(source.top) === root) throw new Error("this is the source: Automagik's own repository carries no copy. Run it in the repository that does (or pass --to).");
     const files = sourceFiles(source);
-    refuseLinks(root);
     const kept = new Set(files.map(file => file.path));
+    // The folders and the record first: `present` walks the folders, and must not walk through a link.
+    refuseUnsafe(root, [...FOLDERS, TOOL, RECORD], []);
     const removed = present(root).filter(path => path !== RECORD && !kept.has(path));
+    refuseUnsafe(root, [...kept, RECORD], removed);
     for (const path of removed) rmSync(join(root, path));
     const hashes = {};
     for (const file of files) {
       const bytes = git(['cat-file', 'blob', file.oid], { cwd: source.repo, buffer: true });
-      const target = join(root, file.path);
-      mkdirSync(dirname(target), { recursive: true });
-      // Whatever sits there that is not a plain file (a link, a folder) goes: writing through a link would write elsewhere.
-      const now = lstatSync(target, { throwIfNoEntry: false });
-      if (now && !now.isFile()) rmSync(target, { recursive: true, force: true });
-      writeFileSync(target, bytes);
-      chmodSync(target, file.mode === '100755' ? 0o755 : 0o644);
+      replaceFile(root, file.path, bytes, file.mode === '100755' ? 0o755 : 0o644);
       hashes[file.path] = sha256(bytes);
     }
     for (const folder of FOLDERS) pruneEmpty(join(root, folder));
-    writeFileSync(join(root, RECORD), `${JSON.stringify({ note: NOTE, source: SOURCE, commit: source.commit, files: hashes }, null, 2)}\n`);
+    replaceFile(root, RECORD, `${JSON.stringify({ note: NOTE, source: SOURCE, commit: source.commit, files: hashes }, null, 2)}\n`);
     return { commit: source.commit, files: files.length, removed, dirty: source.dirty };
   } finally {
     source.close();
@@ -179,7 +241,11 @@ export function write({ to, from, remote }) {
 
 /** Compares the copy at `to` with its record. Returns `{ commit, files, problems }`; no problems is a pass. */
 export function check({ to }) {
-  const root = resolve(to);
+  if (!statSync(to, { throwIfNoEntry: false })?.isDirectory()) return { problems: [`${to} is not a folder`] };
+  const root = realpathSync(resolve(to));
+  // Links first, and nothing is read through one: a linked record or folder can show any bytes.
+  const links = new Set([RECORD, ...FOLDERS, TOOL].map(path => linkOn(root, path)).filter(Boolean));
+  if (links.size) return { problems: [...links].sort().map(link => `${link} ${LINK}`) };
   let record;
   try {
     record = JSON.parse(readFileSync(join(root, RECORD), 'utf8'));
@@ -193,20 +259,29 @@ export function check({ to }) {
   const problems = [];
   for (const path of Object.keys(files).sort()) {
     if (!inScope(path)) { problems.push(`${RECORD} lists ${path}, which is outside the brand's folders`); continue; }
-    const now = lstatSync(join(root, path), { throwIfNoEntry: false });
+    const link = linkOn(root, path);
+    if (link) { links.add(link); continue; }
+    const now = lstatOf(join(root, path));
     if (!now) problems.push(`${path} is missing`);
     else if (!now.isFile()) problems.push(`${path} is not a plain file`);
     else if (sha256(readFileSync(join(root, path))) !== files[path]) problems.push(`${path} differs from ${RECORD}`);
   }
   for (const path of REQUIRED) if (!Object.hasOwn(files, path)) problems.push(`${RECORD} does not list ${path}`);
-  for (const path of present(root)) if (path !== RECORD && !Object.hasOwn(files, path)) problems.push(`${path} is not in ${RECORD}: a stale or added file`);
+  for (const path of present(root)) {
+    if (path === RECORD || Object.hasOwn(files, path)) continue;
+    if (lstatOf(join(root, path))?.isSymbolicLink()) links.add(path);
+    else problems.push(`${path} is not in ${RECORD}: a stale or added file`);
+  }
+  for (const link of [...links].sort()) problems.push(`${link} ${LINK}`);
   return { commit: record.commit, files: Object.keys(files).length, problems };
 }
 
 /**
  * Looks at Automagik's dev: is the brand there still the one at `commit`? Never throws.
- * `current` (the same files), `behind` (dev's differ; `dev` is its commit), `offline` (the remote
- * did not answer) or `unknown` (it answered, but the two could not be compared).
+ * `current`: the same files. `behind`: they differ and `commit` is in dev's history, so dev is
+ * ahead and a fresh copy brings it. `apart`: they differ and `commit` is not on dev (a copy made
+ * from a branch), so copying dev would undo it. `offline`: the remote did not answer. `unknown`:
+ * it answered, but the two could not be compared. `dev` is dev's commit.
  */
 export function staleness({ commit, remote = `${SOURCE}.git`, branch = BRANCH }) {
   if (remote.startsWith('-')) return { state: 'offline', why: `not a remote: ${remote}` };
@@ -224,11 +299,23 @@ export function staleness({ commit, remote = `${SOURCE}.git`, branch = BRANCH })
     // The two commits and their trees are enough: no file's bytes are fetched.
     git(['fetch', '-q', '--depth', '1', '--filter=blob:none', 'origin', dev, commit], { cwd: repo, timeout: NETWORK_MS });
     const brandAt = at => git(['ls-tree', '-r', at, '--', ...FOLDERS, TOOL], { cwd: repo });
-    return { state: brandAt(dev) === brandAt(commit) ? 'current' : 'behind', dev };
+    if (brandAt(dev) === brandAt(commit)) return { state: 'current', dev };
   } catch (error) {
     return { state: 'unknown', dev, why: reason(error) };
   } finally {
     if (repo) rmSync(repo, { recursive: true, force: true });
+  }
+  // The brand differs. Which way: is this copy's commit in dev's history? Commits alone answer that.
+  let history;
+  try {
+    history = scratchRepo(remote);
+    git(['fetch', '-q', '--filter=tree:0', 'origin', dev], { cwd: history, timeout: NETWORK_MS });
+    const onDev = git(['rev-list', dev], { cwd: history }).split('\n').includes(commit);
+    return { state: onDev ? 'behind' : 'apart', dev };
+  } catch (error) {
+    return { state: 'unknown', dev, why: reason(error) };
+  } finally {
+    if (history) rmSync(history, { recursive: true, force: true });
   }
 }
 
@@ -237,7 +324,10 @@ export function stalenessLine(found, commit) {
   if (found.state === 'offline') return { line: `could not reach Automagik's repository (offline?), so the look at its ${BRANCH} was skipped: ${found.why}`, warn: false };
   if (found.state === 'unknown') return { line: `could not compare this copy (${short(commit)}) with Automagik's ${BRANCH}: ${found.why}`, warn: false };
   if (found.state === 'behind') {
-    return { line: `the brand on Automagik's ${BRANCH} (${found.dev}) is no longer this copy's (${short(commit)}). Copy it again: node scripts/brand-sync.mjs --write --from ${found.dev}`, warn: true };
+    return { line: `the brand changed on Automagik's ${BRANCH} after this copy's commit (${short(commit)}): ${BRANCH} is at ${found.dev}. Copy it again: node scripts/brand-sync.mjs --write --from ${found.dev}`, warn: true };
+  }
+  if (found.state === 'apart') {
+    return { line: `this copy's commit (${short(commit)}) is not on Automagik's ${BRANCH} (${found.dev}), and the brand differs between the two. It was copied from a branch: copy from ${BRANCH} once that branch is merged there, not before.`, warn: true };
   }
   return { line: `the brand on Automagik's ${BRANCH} (${short(found.dev)}) is the same as this copy's`, warn: false };
 }

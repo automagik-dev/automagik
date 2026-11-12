@@ -157,5 +157,6 @@ node scripts/brand-sync.mjs --check
 
 - `--write` copies the files as they are committed at that commit, removes the files the source no longer has, and writes `SOURCE.json`. A repository with no copy yet runs the tool from an Automagik checkout, from its own folder: `node <checkout>/scripts/brand-sync.mjs --write --from <checkout>`.
 - `--check` is for that repository's CI. It exits 1 and names each file that differs from `SOURCE.json`, is missing, or is not recorded.
-- Both then look at Automagik's `dev`. When the brand there is no longer the copy's, they name the newer commit; `--check` warns and does not fail. With no network they say so and go on.
+- Both then look at Automagik's `dev`. When the brand changed there after the copy's commit, they name `dev`'s commit to copy. When the copy was made from a commit that is not on `dev` (a branch), they say that and do not advise copying `dev` over it. `--check` warns for either and does not fail. With no network they say so and go on.
+- A copy holds real folders and files only. When a file of the copy, `SOURCE.json`, or a folder on the way to one is a symbolic link, `--write` refuses before it changes anything and `--check` fails naming the link.
 - The two type files are not in this folder (see "Type"), so a copy has none: `tokens/tokens.css` falls back to the reader's own faces until the repository carries the two files at the path it names.
