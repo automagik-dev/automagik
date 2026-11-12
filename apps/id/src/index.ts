@@ -70,6 +70,19 @@ export default {
     if (!url.pathname.startsWith('/api/auth/') || !allowed.has(path)) {
       return new Response('Not found', { status: 404 });
     }
+    if (path === '/phone-number/verify' && request.method === 'POST') {
+      let body: unknown;
+      try { body = await request.clone().json(); } catch { body = null; }
+      const signInFields = new Set(['phoneNumber', 'code', 'oauth_query']);
+      const isSignInOnly = body !== null && typeof body === 'object' && !Array.isArray(body) &&
+        Object.keys(body).every(key => signInFields.has(key)) && !url.search;
+      if (!isSignInOnly) {
+        return Response.json({
+          code: 'UNSUPPORTED_PHONE_OPERATION',
+          message: 'Phone verification supports sign-in only',
+        }, { status: 400 });
+      }
+    }
     const response = await auth.handler(request);
     if (response.headers.get('content-type')?.includes('application/json')) {
       const text = await response.text();

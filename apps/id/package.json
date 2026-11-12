@@ -19,7 +19,7 @@
     "miniflare": "4.20251118.1",
     "playwright-core": "1.58.2",
     "typescript": "5.9.3",
-    "vitest": "3.2.4",
+    "vitest": "4.1.12",
     "wrangler": "4.50.0"
   }
 }
