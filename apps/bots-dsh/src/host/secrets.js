@@ -4,7 +4,8 @@
 // has it replaced by [secret:<NAME>] before it leaves.
 import { randomUUID } from 'node:crypto'
 import { refusal } from './refusal.js'
-import { chmod, copyFile, mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
+import { chmodSync, copyFileSync, readFileSync } from 'node:fs'
+import { chmod, mkdir, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { GITHUB_TOKEN_DAYS, GITHUB_WORK, cleanGitHubWork, githubPermissions, isGitHubTokenName } from '../shared/github-token.js'
@@ -137,23 +138,18 @@ export function install(rt) {
   // A reading host reloads on every request, so a held value is reported once per change,
   // not once per read.
   let heldWarned = ''
-  // Reads may overlap (each load of an unreadable file starts one). Only the newest may change
-  // the store: an older one that lands late (it opened what was there before) would undo it,
-  // clearing a key just saved or blocking a file just fixed; it waits for the newest instead.
-  let readGen = 0
   const loadSecrets = () => {
     if (loaded !== null && (loadedReadOnly || rt.readOnly() !== undefined || blocked !== undefined)) loaded = null
     return loaded ??= readSecrets()
   }
+  // Shell environments resolve synchronously, so loading must fill the map and
+  // register its variables before the first shell call after startup.
   const readSecrets = async () => {
-    const gen = ++readGen
-    const superseded = () => gen !== readGen
     loadedReadOnly = rt.readOnly() !== undefined
     let contents
     try {
-      contents = await readFile(path, 'utf8')
+      contents = readFileSync(path, 'utf8')
     } catch (error) {
-      if (superseded()) return loaded
       if (error?.code === 'ENOENT') {
         blocked = undefined
         secrets.clear()
@@ -165,7 +161,6 @@ export function install(rt) {
       changed()
       return
     }
-    if (superseded()) return loaded
     let parsed
     try {
       parsed = JSON.parse(contents)
@@ -177,7 +172,7 @@ export function install(rt) {
       // the store goes on with an empty one.
       const backup = `${path}.broken-${Date.now()}`
       try {
-        await copyFile(path, backup)
+        copyFileSync(path, backup)
         blocked = undefined
         secrets.clear()
         heldWarned = ''
@@ -208,7 +203,7 @@ export function install(rt) {
         ...(Number.isFinite(entry.lastUsedAt) ? { lastUsedAt: entry.lastUsedAt } : {}),
       })
     }
-    if (!loadedReadOnly) await chmod(path, 0o600).catch(() => {})
+    if (!loadedReadOnly) try { chmodSync(path, 0o600) } catch {}
     const heldNotice = heldNames.join(',')
     if (heldNotice !== heldWarned) {
       heldWarned = heldNotice
@@ -560,22 +555,12 @@ export function install(rt) {
     },
   }))
 
-  // Tool results lose the values before the registry renders and saves them: a fresh
-  // result object is re-rendered from its value, so the model content, the saved
-  // `tool/result`, and the tool card's presentation all come from the redacted value.
+  // Keep the whole result for wrappers that read content before the registry
+  // re-renders it. Auxiliary fields must lose secrets before they can be saved too.
   ctx.on('tools/execute', async (exec, next) => {
     const result = await next()
     if (secrets.size === 0 || result === null || typeof result !== 'object') return result
-    if (result.isError) {
-      const content = redactDeep(result.content, redact)
-      const meta = redactDeep(result.meta, redact)
-      const error = redactDeep(result.error, redact)
-      if (content === result.content && meta === result.meta && error === result.error) return result
-      return { ...result, content, error, ...(meta !== undefined ? { meta } : {}) }
-    }
-    const value = redactDeep(result.value, redact)
-    if (value === result.value) return result
-    return { isError: false, value, ...(result.additionalContexts !== undefined ? { additionalContexts: result.additionalContexts } : {}) }
+    return redactDeep(result, redact)
   })
 
   // Anything that still carries a value (the user pasted it, an earlier part kept it)

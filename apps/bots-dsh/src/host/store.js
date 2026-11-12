@@ -2,8 +2,8 @@
 // host on the same data from writing it, and the indexes that map a Session to the Bot
 // or group chat it belongs to.
 import { createHash } from 'node:crypto'
-import { constants, mkdirSync, statSync } from 'node:fs'
-import { copyFile, mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
+import { constants, copyFileSync, mkdirSync, readFileSync, statSync } from 'node:fs'
+import { mkdir, unlink, writeFile } from 'node:fs/promises'
 
 // The saved team's format. A file may carry an older version this build still reads and
 // migrates (the formats before the stamp count as LEGACY_VERSION); any other value means a
@@ -83,15 +83,15 @@ export function install(rt) {
   // The name is the content's hash, so a restart that sees the same corrupt bytes finds and
   // reuses that one copy instead of adding a timestamped backup on every restart.
   let aside = false
-  const setAside = async (error, bytes) => {
+  const setAside = (error, bytes) => {
     aside = true
     const digest = createHash('sha256').update(bytes).digest('hex').slice(0, 16)
     const backup = `${statePath}.broken-${digest}`
     // What is at the backup's name: a complete copy of exactly these bytes, readable bytes
     // that differ (a torn or foreign copy), or something that cannot be read at all.
-    const classify = async () => {
+    const classify = () => {
       try {
-        return { case: (await readFile(backup)).equals(bytes) ? 'same' : 'torn' }
+        return { case: readFileSync(backup).equals(bytes) ? 'same' : 'torn' }
       } catch (readError) {
         const reason = readError?.code ?? readError?.message ?? String(readError)
         return { case: 'unreadable', reason }
@@ -99,7 +99,7 @@ export function install(rt) {
     }
     try {
       // COPYFILE_EXCL: a complete copy an earlier load made is reused, never rewritten.
-      await copyFile(statePath, backup, constants.COPYFILE_EXCL)
+      copyFileSync(statePath, backup, constants.COPYFILE_EXCL)
     } catch (copyError) {
       // A copy that failed for another reason keeps the team read-only, as before.
       if (copyError?.code !== 'EEXIST') {
@@ -109,7 +109,7 @@ export function install(rt) {
       }
       // Reuse only a complete copy of exactly these bytes. A torn or foreign copy is the
       // incomplete case readOnly() names; one that cannot be read is named apart from it.
-      const existing = await classify()
+      const existing = classify()
       if (existing.case !== 'same') {
         stuck = existing.case === 'torn'
           ? 'the set-aside backup is incomplete'
@@ -123,11 +123,12 @@ export function install(rt) {
     return undefined
   }
 
-  const readFileState = async () => {
+  // Populate the roster and Session indexes before a synchronous shell env resolve.
+  const readFileState = () => {
     aside = false
     let contents
     try {
-      contents = await readFile(statePath)
+      contents = readFileSync(statePath)
     } catch (error) {
       seen = stamp()
       if (error?.code === 'ENOENT') {
@@ -362,7 +363,7 @@ export function install(rt) {
   const load = () => loaded ??= (async () => {
     claimLock()
     if (holder !== undefined) warn('ds-bot: %s', readOnly())
-    const { migrated, stale } = adopt(await readFileState())
+    const { migrated, stale } = adopt(readFileState())
     if (holder !== undefined) return
     // A file set aside just now stays where it is: the person's bytes were copied, and the
     // fresh team reaches the disk on the next real save rather than within this read.
@@ -396,7 +397,7 @@ export function install(rt) {
           warn('ds-bot: %s changed while no host held the team; it is adopted, and this host\'s state is lost because it could not be kept aside: %s', statePath, error)
         }
       }
-      adopt(await readFileState())
+      adopt(readFileState())
     })
     writing = run.catch(() => {})
     const tracked = run.finally(() => { if (adopting === tracked) adopting = undefined })
@@ -423,7 +424,7 @@ export function install(rt) {
       if (holder === undefined) {
         warn('ds-bot: the other dsh has closed; this one now saves the Bot team')
         warnedReadOnly = false
-        adopt(await readFileState())
+        adopt(readFileState())
         return
       }
     } else if (!lockBroken && !lock.owns()) {
@@ -439,7 +440,7 @@ export function install(rt) {
       warn('ds-bot: %s', readOnly())
     }
     if (adopting !== undefined) return adopting
-    if ((stuck !== undefined || holder !== undefined) && stamp() !== seen) adopt(await readFileState())
+    if ((stuck !== undefined || holder !== undefined) && stamp() !== seen) adopt(readFileState())
   }
 
   const warnReadOnly = () => {

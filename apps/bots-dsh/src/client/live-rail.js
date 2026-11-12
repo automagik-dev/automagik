@@ -120,7 +120,7 @@ export function LiveRail({ roster, actions, useWork }) {
 export const LIVE_CSS = `
 .bt-live{box-sizing:border-box;width:100%;height:100%;min-width:0;display:flex;flex-direction:column;gap:6px;padding:20px;overflow-y:auto;background:var(--bt-main);font-family:var(--bt-font);color:var(--bt-ink)}
 .bt-live-top{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-bottom:8px}
-.bt-live-title{font:700 20px/26px var(--bt-head-font,var(--bt-font));letter-spacing:-.01em;margin:0}
+.bt-live-title{font:var(--bt-weight-title,700) 20px/26px var(--bt-head-font,var(--bt-font));letter-spacing:-.01em;margin:0}
 .bt-live-sum{font-size:12px;line-height:16px;color:var(--bt-ink-2);text-align:right}
 .bt-live-sec{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
 .bt-live-label{display:flex;align-items:center;gap:6px;margin:6px 0 0;font-size:12px;line-height:16px;font-weight:600;color:var(--bt-ink-2)}

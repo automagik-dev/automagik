@@ -173,15 +173,30 @@ export function install(rt) {
 
   let modelsSynced = null
   let catalogCache = { at: 0, value: [] }
+  let catalogEpoch = 0
+  let signInsRead = false
+  let signInsDirty = false
   // A model's thinking levels, resolved once and kept for a short while: they change
   // only with the provider, which also drops the catalog cache.
   const reasoningCache = new Map()
-  ctx.on?.('llm/adapters-updated', () => { catalogCache = { at: 0, value: [] }; reasoningCache.clear() })
-  for (const name of ['credentials/reference-updated', 'settings/document-updated']) ctx.on?.(name, () => { catalogCache = { at: 0, value: [] } })
+  const invalidate = () => {
+    catalogEpoch += 1
+    catalogCache.at = 0
+  }
+  ctx.on?.('llm/adapters-updated', () => {
+    invalidate()
+    reasoningCache.clear()
+    // Invalidate a status already requested, including one still being read. Until the
+    // first request, keep the ordinary catalog's lazy sign-in check.
+    signInsDirty = signInsRead
+  })
+  for (const name of ['credentials/reference-updated', 'settings/document-updated']) {
+    ctx.on?.(name, invalidate)
+  }
 
   // The thinking levels a model serves: `{efforts: [{id, name, description?}],
   // defaultEffort?}`, or undefined when it has none or the provider cannot say.
-  async function reasoningOf(ref) {
+  async function reasoningOf(ref, epoch = catalogEpoch) {
     const cached = reasoningCache.get(ref)
     if (cached !== undefined && Date.now() - cached.at < CATALOG_TTL_MS) return cached.value
     const route = splitRef(ref)
@@ -190,14 +205,15 @@ export function install(rt) {
       efforts: (info.reasoning.efforts ?? []).map(effort => ({ id: effort.id, name: effort.name ?? effort.id, ...(effort.description ? { description: effort.description } : {}) })),
       ...(info.reasoning.defaultEffort === undefined ? {} : { defaultEffort: info.reasoning.defaultEffort }),
     }
-    reasoningCache.set(ref, { at: Date.now(), value })
+    if (epoch === catalogEpoch) reasoningCache.set(ref, { at: Date.now(), value })
     return value
   }
 
   // Each agent's sign-in as acp-dsh last saw it: true, false, or absent while unknown. A
   // fresh catalog (a menu about to open) reads acp-dsh's `status()`, which spawns nothing; any
-  // other catalog keeps the last answer. An unknown agent ready to run is checked once in the
-  // background (acp-dsh's `inspect`, one `auth status`), at most every SIGN_IN_CHECK_MS.
+  // other catalog keeps the last answer unless adapters changed. An unknown agent ready to run
+  // is checked once in the background (acp-dsh's `inspect`, one `auth status`), at most every
+  // SIGN_IN_CHECK_MS.
   const agentSignIn = new Map()
   // The agents signed in to an account the person has not confirmed (acp-dsh's `consent`). An
   // older acp-dsh says nothing, and nothing is asked.
@@ -211,14 +227,16 @@ export function install(rt) {
   }
   const signInChecks = new Map()
   const acpAgents = () => { try { return ctx.get?.('acpAgents') } catch { return undefined } }
-  async function readAgentSignIns() {
+  async function readAgentSignIns(epoch) {
     const agents = acpAgents()
     if (typeof agents?.status !== 'function') return
+    signInsRead = true
     let timer
     const late = new Promise((resolve) => { timer = setTimeout(resolve, STATUS_WAIT_MS) })
     let rows
     try { rows = (await Promise.race([Promise.resolve().then(() => agents.status()), late]))?.agents } catch {} finally { clearTimeout(timer) }
-    if (!Array.isArray(rows)) return
+    if (epoch !== catalogEpoch || !Array.isArray(rows)) return
+    signInsDirty = false
     for (const row of rows) {
       if (typeof row?.id !== 'string') continue
       noteConsent(row)
@@ -228,7 +246,7 @@ export function install(rt) {
       if (row.on === false || row.connector?.state !== 'ready' || typeof agents.inspect !== 'function' || (last !== undefined && Date.now() - last < SIGN_IN_CHECK_MS)) continue
       signInChecks.set(row.id, Date.now())
       void Promise.resolve().then(() => agents.inspect(row.id)).then((seen) => {
-        if (typeof seen?.signedIn !== 'boolean') return
+        if (epoch !== catalogEpoch || typeof seen?.signedIn !== 'boolean') return
         noteConsent({ ...seen, id: row.id })
         agentSignIn.set(row.id, seen.signedIn)
         catalogCache = { at: 0, value: [] }
@@ -241,6 +259,7 @@ export function install(rt) {
   // also carry their `reasoning`, so the picker can offer thinking levels.
   async function catalog({ fresh = false, remember = true } = {}) {
     if (!fresh && Date.now() - catalogCache.at < CATALOG_TTL_MS && catalogCache.value.length > 0) return catalogCache.value
+    const epoch = catalogEpoch
     const listed = []
     let directory = []
     try { directory = ctx.llm.listConfigurableProviders?.() ?? [] } catch {}
@@ -277,7 +296,7 @@ export function install(rt) {
     const agentsListed = entries.some(entry => routeOf(entry.provider).connectedBy === 'acp')
     const [auth] = await Promise.all([
       Promise.resolve().then(() => rt.routeAuth?.(providers)).catch(() => undefined).then(value => value ?? new Map()),
-      fresh && agentsListed ? readAgentSignIns() : undefined,
+      (fresh || signInsDirty) && agentsListed ? readAgentSignIns(epoch) : undefined,
     ])
     for (const entry of entries) {
       const how = routeOf(entry.provider).connectedBy === 'acp' ? { via: 'cli', ...(agentSignIn.get(entry.provider) === false ? { needsSignIn: true } : {}) } : auth.get(entry.provider)
@@ -290,10 +309,10 @@ export function install(rt) {
     for (const entry of entries) if (coveredBy(entry) !== undefined) entry.covered = true
     if (remember) noteConnected(entries)
     await Promise.all(entries.filter(entry => used.has(entry.ref)).map(async (entry) => {
-      const reasoning = await reasoningOf(entry.ref)
+      const reasoning = await reasoningOf(entry.ref, epoch)
       if (reasoning !== undefined) entry.reasoning = reasoning
     }))
-    catalogCache = { at: Date.now(), value: entries }
+    if (epoch === catalogEpoch) catalogCache = { at: Date.now(), value: entries }
     return entries
   }
 
@@ -638,6 +657,7 @@ export function install(rt) {
 
   Object.assign(rt, {
     assembleLlm,
+    modelsEpoch: () => catalogEpoch,
     catalog, cachedCatalog: () => catalogCache.value, cachedDefault: () => pickDefault(catalogCache.value),
     defaultRef, defaultModel, defaultEffort, resolveModel, modelAccess, assertModelAccess, desiredModel, assertNotOffCli, reasoningOf, resolveEffort, desiredEffort,
     backgroundModel, cachedBackground: () => pickBackground(catalogCache.value), answersAside: answersAsideRef,
