@@ -366,3 +366,102 @@ test('reset can sign in fresh after its old in-memory login cannot prove a stopp
       'fresh-after-failed-drain@example.test')
     assert.equal(h.auth.get(old.CODEX_HOME), 'late-old-login@example.test')
   })
+
+for (const id of ['acp-codex', 'acp-claude']) {
+  test(`${id}: Bot sign-in refreshes immediately, including after switch and reset`, async t => {
+    const { Catalog } = await import('../src/host/catalog.js')
+    const original = Catalog.prototype.refresh
+    const refreshed = []
+    t.mock.method(Catalog.prototype, 'refresh', function () {
+      refreshed.push(this)
+      this.spec.spawn = () => ({ command: process.execPath,
+        args: [join(import.meta.dirname, '..', 'dev', 'fake-agent.mjs')] })
+      return original.call(this)
+    })
+    const h = fixture(t)
+    const first = h.adapter.agents.get(id).catalog
+    first.spec.spawn = () => { throw new Error('signed out') }
+    await original.call(first)
+    refreshed.length = 0
+    await h.login(id)
+    const signedIn = h.adapter.agents.get(id).catalog
+    assert.deepEqual(refreshed, [signedIn])
+    await signedIn.probing
+    assert.ok(signedIn.current().some(row => row.id === 'fake-large'))
+    assert.ok(h.events.includes('acp-dsh/login-ready'))
+    await h.service.accountSwitch(id)
+    for (let i = 0; i < 30 && refreshed.length < 2; i++) await tick()
+    const switched = h.adapter.agents.get(id).catalog
+    assert.notEqual(switched, signedIn)
+    assert.equal(refreshed.at(-1), switched)
+    await switched.probing
+    await h.service.accountReset(id)
+    const reset = h.adapter.agents.get(id).catalog
+    assert.notEqual(reset, switched)
+    await h.login(id)
+    const current = h.adapter.agents.get(id).catalog
+    assert.equal(refreshed.at(-1), current)
+    await current.probing
+    assert.ok(current.current().some(row => row.id === 'fake-large'))
+  })
+
+  test(`${id}: confirming an existing account refreshes and a read failure keeps consent`,
+    async t => {
+      const h = fixture(t)
+      const agent = h.adapter.agents.get(id)
+      const env = agent.spawn().env
+      h.auth.set(env[id === 'acp-codex' ? 'CODEX_HOME' : 'CLAUDE_CONFIG_DIR'],
+        'ada@example.test')
+      let probes = 0
+      agent.catalog.spec.spawn = () => { probes++; throw new Error('model read failed') }
+      await agent.catalog.refresh()
+      const account = await h.service.account(id, { fresh: true })
+      assert.equal(account.consent, 'needed')
+      const confirmed = await h.service.accountConfirm(id, { ref: account.ref })
+      assert.equal(probes, 2)
+      await agent.catalog.probing
+      assert.equal(confirmed.signedIn, true)
+      assert.equal(confirmed.consent, 'given')
+      assert.ok(h.events.includes('acp-dsh/login-ready'))
+    })
+
+  test(`${id}: a failing catalog refresh leaves Bot sign-in successful`, async t => {
+    const { Catalog } = await import('../src/host/catalog.js')
+    const original = Catalog.prototype.refresh
+    let probes = 0
+    t.mock.method(Catalog.prototype, 'refresh', function () {
+      this.spec.spawn = () => { probes++; throw new Error('model read failed') }
+      return original.call(this)
+    })
+    const h = fixture(t)
+    await h.adapter.agents.get(id).catalog.refresh()
+    await h.login(id)
+    await h.adapter.agents.get(id).catalog.probing
+    assert.equal(probes, 2)
+    assert.equal((await h.service.inspect(id)).signedIn, true)
+    assert.ok(h.events.includes('acp-dsh/login-ready'))
+  })
+}
+
+test('a stale sign-in completion cannot refresh the catalog after an account reset', async t => {
+  const { CliLogins } = await import('../src/host/login.js')
+  const active = CliLogins.prototype.activeAttempts
+  let logins
+  t.mock.method(CliLogins.prototype, 'activeAttempts', function () {
+    logins = this
+    return active.call(this)
+  })
+  const h = fixture(t)
+  h.service.loginActive()
+  const id = 'acp-codex'
+  const selected = { cli: '/fake/codex', env: h.adapter.agents.get(id).spawn().env }
+  await h.service.accountReset(id)
+  const catalog = h.adapter.agents.get(id).catalog
+  let probes = 0
+  catalog.spec.spawn = () => { probes++; throw new Error('unexpected probe') }
+  const before = h.events.length
+  await logins.onReady(id, selected)
+  assert.equal(probes, 0)
+  assert.equal(h.events.length, before)
+  assert.notEqual((await h.service.inspect(id)).signedIn, true)
+})

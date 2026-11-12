@@ -91,8 +91,8 @@ const TEAM = {
   questions: {},
 }
 
-function start({ home = mkdtempSync(join(tmpdir(), 'ds-bot-secrets-')), warnings } = {}) {
-  writeFileSync(join(home, 'state.json'), JSON.stringify(TEAM))
+function start({ home = mkdtempSync(join(tmpdir(), 'ds-bot-secrets-')), warnings, team = TEAM } = {}) {
+  writeFileSync(join(home, 'state.json'), JSON.stringify(team))
   const contributors = []
   const shellEnv = {
     register(contributor) {
@@ -314,7 +314,7 @@ test('tool results and model requests lose the values', async (t) => {
   // The team tools' listener (working_directory) registers first.
   const execute = bench.listeners['tools/execute'].at(-1)
   const ok = await execute({}, async () => ({ isError: false, value: { kind: 'foreground', stdout: { text: `${value}\n`, truncated: false } }, content: [{ type: 'text', text: value }], meta: { stdout: value } }))
-  assert.deepEqual(ok, { isError: false, value: { kind: 'foreground', stdout: { text: '[secret:DEMO_TOKEN]\n', truncated: false } } })
+  assert.deepEqual(ok, { isError: false, value: { kind: 'foreground', stdout: { text: '[secret:DEMO_TOKEN]\n', truncated: false } }, content: [{ type: 'text', text: '[secret:DEMO_TOKEN]' }], meta: { stdout: '[secret:DEMO_TOKEN]' } })
   const failed = await execute({}, async () => ({ isError: true, error: { message: `bad ${value}` }, content: [{ type: 'text', text: `bad ${value}` }] }))
   assert.equal(failed.content[0].text, 'bad [secret:DEMO_TOKEN]')
   assert.equal(failed.error.message, 'bad [secret:DEMO_TOKEN]')
@@ -341,6 +341,62 @@ test('tool results and model requests lose the values', async (t) => {
   assert.equal(passed.length, 1)
   stream({ ...options, system: 'clean', messages: [] }, next)
   assert.equal(passed.length, 2)
+})
+
+test('whole tool results preserve fields and redact auxiliary values on success and error', async (t) => {
+  const bench = start()
+  t.after(bench.stop)
+  const value = fresh()
+  await bench.call('secret-set', { name: 'DEMO_TOKEN', value })
+  const execute = bench.listeners['tools/execute'].at(-1)
+  for (const isError of [false, true]) {
+    for (const primary of ['clean', value]) {
+      const result = {
+        isError,
+        value: { text: primary },
+        ...(isError ? { error: { message: primary } } : {}),
+        content: [{ type: 'text', text: `out ${value}` }],
+        meta: { nested: [value], count: 3 },
+        additionalContexts: [{ role: 'user', content: [{ type: 'text', text: value }] }],
+        extension: { detail: value, keep: true },
+      }
+      // An outer wrapper sees the complete redacted result before re-rendering.
+      const actual = await execute({}, async () => result)
+      assert.deepEqual(actual, {
+        isError,
+        value: { text: primary === value ? '[secret:DEMO_TOKEN]' : primary },
+        ...(isError ? { error: { message: primary === value ? '[secret:DEMO_TOKEN]' : primary } } : {}),
+        content: [{ type: 'text', text: 'out [secret:DEMO_TOKEN]' }],
+        meta: { nested: ['[secret:DEMO_TOKEN]'], count: 3 },
+        additionalContexts: [{ role: 'user', content: [{ type: 'text', text: '[secret:DEMO_TOKEN]' }] }],
+        extension: { detail: '[secret:DEMO_TOKEN]', keep: true },
+      })
+      assert.equal(result.content[0].text, `out ${value}`, 'the original is not mutated')
+    }
+  }
+  const clean = { isError: false, value: 'clean', content: [], meta: { count: 3 } }
+  assert.equal(await execute({}, async () => clean), clean)
+})
+
+test('a restarted host resolves team Sessions and scoped keys before the first shell call', (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'ds-bot-secrets-'))
+  const shared = fresh(), scoped = fresh(), denied = fresh()
+  writeFileSync(join(home, 'secrets.json'), JSON.stringify({ version: 1, secrets: [
+    { name: 'SHARED', value: shared, scope: 'all' },
+    { name: 'SCOPED', value: scoped, scope: ['b2'] },
+    { name: 'DENIED', value: denied, scope: [] },
+    { name: 'HELD', value: 'abc', scope: 'all' },
+  ] }))
+  // Unnamed groups need the group helpers during roster adoption.
+  const team = { ...TEAM, rooms: { r1: { ...TEAM.rooms.r1, named: false } } }
+  const bench = start({ home, team })
+  t.after(bench.stop)
+  // No await, endpoint or tool call can give asynchronous loaders time to finish.
+  assert.deepEqual(bench.env('b2'), { DSH_SECRET_SHARED: shared, DSH_SECRET_SCOPED: scoped })
+  assert.deepEqual(bench.env('g-b2'), { DSH_SECRET_SHARED: shared, DSH_SECRET_SCOPED: scoped })
+  assert.deepEqual(bench.env('c3'), { DSH_SECRET_SHARED: shared })
+  assert.deepEqual(bench.env('elsewhere'), {})
+  assert.ok(bench.contributors.filter(entry => entry.live).every(entry => !('DSH_SECRET_HELD' in entry.variables)))
 })
 
 test('a secrets file that cannot be read blocks every write instead of being overwritten', async (t) => {
