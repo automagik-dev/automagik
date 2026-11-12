@@ -718,6 +718,10 @@ test("#1142 an unreadable candidate (EACCES) is withheld and counted beside a mi
       assert.deepEqual(plan, { dirs: want, unproved: [join(locked, "cache")] }, name);
       assert.equal(codexWithheldWarning(plan.unproved.length, plan.dirs.length), someWithheld(1), name);
     }
+    // The folder check here (dirHere): a stat that fails but not as "not there" (EACCES) is unknown, never "not there".
+    writeFileSync(join(H, "a-file"), "x");
+    assert.deepEqual([dirHere(join(locked, "cache")), dirHere(join(H, "no-such")), dirHere(join(H, "a-file")), dirHere(join(H, "a-file", "x")),
+      dirHere(join(H, "plain"))], [null, false, false, false, true]);
     // t29q at f9bfba1a: EACCES read as unknown here and as "different" there. Now both are unknown: that folder is
     // withheld (compared as written, so identity alone decides), and a readable one beside it is not.
     const ids = observe(H, [join(locked, "cache"), join(H, "plain"), join(H, ".config/herdr-app")]);
@@ -777,11 +781,20 @@ test("#1142 by object identity: an alias the paths don't show is refused, here (
   }
   for (const p of [home, app, join(home, ".config"), root]) assert.equal(verdict(edited(p, "?")), "unproved", `a protected root's walk: ${p}`);
   for (const [label, stdout] of [["unsupported", "unsupported\n"], ["short", lines.slice(0, -2).join("\n")], ["longer", `${r.stdout}1:1\n`],
-    ["headless", lines.slice(1).join("\n")], ["empty", ""]]) {
+    ["headless", lines.slice(1).join("\n")], ["empty", ""],
+    // The right number of lines under a first line that isn't "ok" (say, a shell's own line): read as nothing.
+    ["not ok first", ["ko", ...lines.slice(1)].join("\n")], ["unsupported first", ["unsupported", ...lines.slice(1)].join("\n")]]) {
     assert.equal(verdict(stdout), "unproved", label);
     assert.equal(verdict(stdout, join(root, "h-alias")), "unproved", `${label}: nothing is proved either way`);
   }
   assert.equal(idsThere(r.stdout, observed)(join(root, "not-asked")), null, "a path it wasn't asked about: no answer, no shortcut");
+  // Only a dev:ino is an identity: an observer's other answer (for the folder, or for an app home) is unknown.
+  for (const bad of ["?", "", "unsupported", "12", "1:2:3", "a:b", 7]) {
+    for (const [whose, at] of [["the folder", join(root, "shared")], ["an app home", app]]) {
+      const where = codexWhere({ home, appHome: app, id: (p) => (p === at ? bad : idHere(p)) });
+      assert.equal(codexDirVerdict(join(root, "shared"), where), "unproved", `${whose}: ${JSON.stringify(bad)}`);
+    }
+  }
   const odd = spawnSync("sh", ["-c", IDENTITY_PROBE, "sh", join(root, "nowhere"), join(root, "shared"), home], { encoding: "utf8" });
   assert.equal(odd.stdout.trim(), "unsupported", "no folder to pick stat's form on");
   // Its symlink form is refused: the path is resolved first (realpath), and an app home is above it.
@@ -835,10 +848,11 @@ test("#1142 a Codex seat on a linked machine whose HOME is an alias: both core f
   for (const r of [start.r, again.r]) assert.equal(r.stderr.includes("Codex extra folders withheld"), false, "nothing withheld: no warning");
   // #1142, each candidate on its own: a general folder there that can't be resolved (a dangling GOPATH) withholds only
   // Go's module cache under it, and an --add-dir through a dangling link only itself (written twice: one folder); the
-  // other folders are granted. One warning per launch, counting each withheld folder once.
+  // other folders are granted. One warning per launch, counting each withheld folder once (the module cache is named
+  // in programs.json too: one folder).
   const once = (stderr, text) => stderr.split(text).length - 1;
   writeFileSync(join(app, "programs.json"), `${JSON.stringify({ programs: { codex: { run: ["codex", "--add-dir", `${alias}/dangling/x`,
-    `--add-dir=${alias}/dangling/x`] } } })}\n`);
+    `--add-dir=${alias}/dangling/x`, "--add-dir", `${alias}/gp/pkg/mod`] } } })}\n`);
   machine({ GOPATH: `${alias}/gp` });
   const kept = [realpathSync(join(project, ".git")), join(vm, ".local/state/herdr-core"), join(vm, ".local/share/herdr-core")];
   for (const verb of [["start", "Dev"], ["restart", "Dev", "--fresh", "--force"]]) {
@@ -849,12 +863,11 @@ test("#1142 a Codex seat on a linked machine whose HOME is an alias: both core f
     assert.equal(once(held.r.stderr, "Codex extra folders withheld"), 1, `${verb[0]}: one warning for the launch`);
     assert.equal(/working folder only/.test(held.r.stderr), false);
   }
-  // The same seat started on this computer, its GOPATH a dangling link here, the same --add-dir (dangling here through the alias).
+  // The same seat started on this computer, its GOPATH the same dangling link (here too, through the alias), the same --add-dirs.
   exe(join(bin, "codex"), "#!/bin/sh\nexit 0\n");
-  symlinkSync(join(root, "nowhere"), join(root, "gp-here"));
   writeFileSync(logPath, "");
   const here = spawnSync(process.execPath, [CLI, "start", "Dev", "--project", project, "--json"], { cwd: root, encoding: "utf8",
-    env: { ...env, ...blank, HERDR_APP_HOME: app, GOPATH: join(root, "gp-here") } });
+    env: { ...env, ...blank, HERDR_APP_HOME: app, GOPATH: `${alias}/gp` } });
   assert.equal(here.status, 0, here.stderr);
   assert.deepEqual(addDirs(launched(readJsonLines(logPath).find((c) => c[0] === "run"))), [realpathSync(join(project, ".git"))]);
   assert.equal(once(here.stderr, someWithheld(2)), 1, here.stderr);
@@ -1056,8 +1069,10 @@ test("#1142 the CLI says what a Codex launch withheld once per launch, counting 
   const out = realpathSync(scratchRoot(t, "hb-1142-out-"));
   symlinkSync(join(out, "nowhere"), join(out, "dangling"));
   symlinkSync(join(out, "nowhere"), join(out, "gp"));
-  // Withheld: an --add-dir through a dangling link (written twice: one folder) and Go's module cache under a dangling GOPATH.
-  const s = scene(t, { programs: { codex: { run: ["codex", "--add-dir", join(out, "dangling/x"), `--add-dir=${join(out, "dangling/x")}`] } },
+  // Withheld: an --add-dir through a dangling link (written twice: one folder) and Go's module cache under a dangling GOPATH,
+  // which programs.json names too (one folder, named and derived: counted once).
+  const s = scene(t, { programs: { codex: { run: ["codex", "--add-dir", join(out, "dangling/x"), `--add-dir=${join(out, "dangling/x")}`,
+    "--add-dir", join(out, "gp/pkg/mod")] } },
     templates: [{ name: "mac-dev", command: "codex --no-daemon --dangerously-bypass-approvals-and-sandbox -m gpt-6.1-sol" }],
     env: { GOPATH: join(out, "gp") } });
   const text = someWithheld(2);
