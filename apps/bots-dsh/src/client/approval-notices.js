@@ -28,7 +28,7 @@ export function noticeApprovals({ work, roster, shownSession, openSession, since
       const { byId, roomsById } = roster.getSnapshot()
       const room = entry.roomId ? roomsById[entry.roomId] : undefined
       const note = new Notification(t('{name} is waiting for your approval', { name: byId[entry.botId]?.name ?? t('A Bot') }), {
-        body: [room?.name, entry.child ? t('A subagent wants to use {tool}', { tool: entry.tool }) : entry.tool].filter(Boolean).join(' · '),
+        body: [room?.name, entry.tool === 'keep_working' ? t('Let it keep working?') : entry.child ? t('A subagent wants to use {tool}', { tool: entry.tool }) : entry.tool].filter(Boolean).join(' · '),
         tag: `omni-ui-approval-${entry.id}`,
       })
       note.onclick = () => {

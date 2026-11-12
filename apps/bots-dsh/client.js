@@ -1985,6 +1985,12 @@ var HOST_ZH = {
   "This host cannot save the Bot team.": "这台主机无法保存 Bot 团队。",
   "Only the person turns Auto on, from the Bot's permission choice.": "只有用户本人能在 Bot 的权限选择中开启自动模式。"
 };
+Object.assign(ZH, {
+  "This step is hard to undo: {step}. Allow it once?": "这一步难以撤销：{step}。允许这一次吗？",
+  "{name} was refused {count} times in this turn, the last time on {tool}. Let it keep working?": "{name} 在本轮被拒绝了 {count} 次，最近一次是 {tool}。让它继续工作吗？",
+  "Let it keep working?": "让它继续工作吗？",
+  "Allow once lets it keep working: nothing that was refused runs. Reject stops it here.": "“允许一次”让它继续工作：被拒绝的步骤都不会执行。“拒绝”让它在这里停止。"
+});
 Object.assign(ZH, HOST_ZH);
 var fill = (text2, params) => params ? text2.replace(/\{(\w+)\}/g, (match, name) => name in params ? String(params[name]) : match) : text2;
 var service = null;
@@ -2025,6 +2031,8 @@ function t(key, params) {
   return bound ? bound(key, params) : fill(key, params);
 }
 var HOST_TEMPLATES = [
+  "This step is hard to undo: {step}. Allow it once?",
+  "{name} was refused {count} times in this turn, the last time on {tool}. Let it keep working?",
   "Turn on {connection} in Settings → Claude Code and Codex before using this model.",
   "Wait for {connection} to finish installing, or retry it in Settings → Claude Code and Codex.",
   "Sign in to {connection} before using this model.",
@@ -2049,12 +2057,15 @@ var HOST_TEMPLATES = [
   }).join("");
   return { template, names, host, pattern: new RegExp(`^${source}$`) };
 });
+function hostTemplateOf(message) {
+  return HOST_TEMPLATES.find(({ pattern }) => pattern.test(message))?.template;
+}
 function hostTemplate(message) {
-  for (const { template, names, host, pattern } of HOST_TEMPLATES) {
-    const found = pattern.exec(message);
-    if (found !== null) return t(template, Object.fromEntries(names.map((name, index) => [name, host.includes(name) ? hostText(found[index + 1]) : found[index + 1]])));
-  }
-  return void 0;
+  const matched = hostTemplateOf(message);
+  if (matched === void 0) return void 0;
+  const { template, names, host, pattern } = HOST_TEMPLATES.find((entry) => entry.template === matched);
+  const found = pattern.exec(message);
+  return t(template, Object.fromEntries(names.map((name, index) => [name, host.includes(name) ? hostText(found[index + 1]) : found[index + 1]])));
 }
 function hostText(message) {
   if (typeof message === "string" && (bound || language().startsWith("zh"))) {
@@ -5913,7 +5924,7 @@ function TaskCard({ sessionId, title, task, onOpen, useSessionStatus, useWork })
       status === "waiting" ? ask ? (0, import_react14.createElement)(
         "div",
         { className: "op-task-ask" },
-        (0, import_react14.createElement)("span", { className: "op-task-ask-text" }, t("Task {title} is waiting for approval: {tool}", { title, tool: ask.toolName || t("a tool") })),
+        (0, import_react14.createElement)("span", { className: "op-task-ask-text" }, ask.toolName === "keep_working" ? hostText(ask.reason) : t("Task {title} is waiting for approval: {tool}", { title, tool: ask.toolName || t("a tool") })),
         (0, import_react14.createElement)(
           "span",
           { className: "op-task-ask-actions" },
@@ -19065,7 +19076,9 @@ var VOICE_SETTINGS_CSS = `
 var import_react49 = require("react");
 var teamToolOf = (name) => String(name ?? "").replace(/^mcp__dsh__/, "");
 var TEAM_TOOLS = /* @__PURE__ */ new Set(["message_bot", "start_task", "stop_bot", "create_bot", "update_bot", "delete_bot", "create_group", "update_group", "delete_group", "post_to_group", "group_relay", "remember", "forget", "save_capability", "delete_capability", "show_view"]);
-var isTeamApproval = (pending) => pending?.kind === "approval" && TEAM_TOOLS.has(teamToolOf(pending.toolName));
+var KEEP_WORKING = "keep_working";
+var ladderOf = (pending) => teamToolOf(pending.toolName) === KEEP_WORKING ? "keep" : hostTemplateOf(pending.reason) === "This step is hard to undo: {step}. Allow it once?" ? "hard" : void 0;
+var isTeamApproval = (pending) => pending?.kind === "approval" && (TEAM_TOOLS.has(teamToolOf(pending.toolName)) || ladderOf(pending) !== void 0);
 function argsOf(reason) {
   try {
     const value = JSON.parse(String(reason ?? ""));
@@ -19113,7 +19126,8 @@ function TeamApproval({ matched, useRoster }) {
   const [answered, setAnswered] = (0, import_react49.useState)(false);
   const root = (0, import_react49.useRef)(null);
   const fromBot = roster.byId?.[pending.botId] ?? roster.byId?.[pending.sessionId] ?? roster.byId?.[roster.tasks?.[pending.sessionId]?.from];
-  const view = approvalView(pending.toolName, argsOf(pending.reason), fromBot?.name);
+  const ladder = ladderOf(pending);
+  const view = ladder ? { title: hostText(pending.reason), rows: [], ...ladder === "keep" ? { note: t("Allow once lets it keep working: nothing that was refused runs. Reject stops it here.") } : {} } : approvalView(pending.toolName, argsOf(pending.reason), fromBot?.name);
   const quote = view.quote || (pending.child === true ? pending.detail?.code : "");
   const note = view.note || (pending.child === true ? [pending.detail?.text, Object.keys(argsOf(pending.reason)).length === 0 ? pending.reason : ""].filter(Boolean).join(" · ") : "");
   const toBot = findBot(roster, view.to);
@@ -27862,7 +27876,7 @@ function noticeApprovals({ work, roster, shownSession, openSession, since: since
       const { byId, roomsById } = roster.getSnapshot();
       const room2 = entry.roomId ? roomsById[entry.roomId] : void 0;
       const note = new Notification(t("{name} is waiting for your approval", { name: byId[entry.botId]?.name ?? t("A Bot") }), {
-        body: [room2?.name, entry.child ? t("A subagent wants to use {tool}", { tool: entry.tool }) : entry.tool].filter(Boolean).join(" · "),
+        body: [room2?.name, entry.tool === "keep_working" ? t("Let it keep working?") : entry.child ? t("A subagent wants to use {tool}", { tool: entry.tool }) : entry.tool].filter(Boolean).join(" · "),
         tag: `omni-ui-approval-${entry.id}`
       });
       note.onclick = () => {

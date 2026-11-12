@@ -1,6 +1,6 @@
 import { createElement as h, useEffect, useRef, useState } from 'react'
 import { BotMark } from './mark.js'
-import { t } from './i18n.js'
+import { t, hostText, hostTemplateOf } from './i18n.js'
 
 // -------------------------------------------------------------------------
 // The approval card for the team's own tools, in place of DSH's (whose text is the call's
@@ -11,7 +11,10 @@ import { t } from './i18n.js'
 
 export const teamToolOf = name => String(name ?? '').replace(/^mcp__dsh__/, '')
 const TEAM_TOOLS = new Set(['message_bot', 'start_task', 'stop_bot', 'create_bot', 'update_bot', 'delete_bot', 'create_group', 'update_group', 'delete_group', 'post_to_group', 'group_relay', 'remember', 'forget', 'save_capability', 'delete_capability', 'show_view'])
-export const isTeamApproval = pending => pending?.kind === 'approval' && TEAM_TOOLS.has(teamToolOf(pending.toolName))
+export const KEEP_WORKING = 'keep_working'
+const ladderOf = pending => teamToolOf(pending.toolName) === KEEP_WORKING ? 'keep'
+  : hostTemplateOf(pending.reason) === 'This step is hard to undo: {step}. Allow it once?' ? 'hard' : undefined
+export const isTeamApproval = pending => pending?.kind === 'approval' && (TEAM_TOOLS.has(teamToolOf(pending.toolName)) || ladderOf(pending) !== undefined)
 
 /** The call's arguments from the request's reason: the bridge's JSON, else none. */
 export function argsOf(reason) {
@@ -56,7 +59,9 @@ export function TeamApproval({ matched, useRoster }) {
   const root = useRef(null)
   // The Bot whose chat asks; a task asks for the Bot that started it.
   const fromBot = roster.byId?.[pending.botId] ?? roster.byId?.[pending.sessionId] ?? roster.byId?.[roster.tasks?.[pending.sessionId]?.from]
-  const view = approvalView(pending.toolName, argsOf(pending.reason), fromBot?.name)
+  const ladder = ladderOf(pending)
+  const view = ladder ? { title: hostText(pending.reason), rows: [], ...(ladder === 'keep' ? { note: t('Allow once lets it keep working: nothing that was refused runs. Reject stops it here.') } : {}) }
+    : approvalView(pending.toolName, argsOf(pending.reason), fromBot?.name)
   const quote = view.quote || (pending.child === true ? pending.detail?.code : '')
   const note = view.note || (pending.child === true ? [pending.detail?.text, Object.keys(argsOf(pending.reason)).length === 0 ? pending.reason : ''].filter(Boolean).join(' · ') : '')
   const toBot = findBot(roster, view.to)

@@ -20,6 +20,7 @@ import * as subscriptionMove from './src/host/subscription-move.js'
 import * as providers from './src/host/providers.js'
 import * as permissions from './src/host/permissions.js'
 import * as auto from './src/host/auto.js'
+import * as ladder from './src/host/ladder.js'
 import * as autoJudge from './src/host/auto-judge.js'
 import * as permissionDiagnostics from './src/host/permission-diagnostics.js'
 import * as turns from './src/host/turns.js'
@@ -71,7 +72,7 @@ export const inject = ['llm', 'tools', 'systemPrompt', 'sessionController', 'ses
 // install. Listeners run and tools are listed in registration order, so this order holds:
 // usage meters model requests after every listener that rewrites them.
 const MODULES = [
-  diagnostics, extend, store, addressPolicy, models, acpAdoption, subscriptionMove, providers, permissions, auto, autoJudge, permissionDiagnostics,
+  diagnostics, extend, store, addressPolicy, models, acpAdoption, subscriptionMove, providers, permissions, auto, ladder, autoJudge, permissionDiagnostics,
   turns, handoffs, requests, delivery, roster, folders, agents, toolDeny, prompt, timeContext,
   tools, chatIndex, groups, approvals, stops, subagentAsks, resume, memory, parts, fallback, modelState, modelAccessHooks, cliLogin, images, imagegen,
   avatarLibrary, secrets, connectors, capabilities, schedules, browser, browserPlugins, usage,

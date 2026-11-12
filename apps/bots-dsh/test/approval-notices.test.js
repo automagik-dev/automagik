@@ -122,3 +122,10 @@ test('child asks notify away from the owner chat, with the subagent in the body'
     }
   }
 })
+
+test('D client: a refusal-ladder notification asks whether to keep working', () => {
+  const page = windowWith()
+  page.noticeApprovals({ work: page.work, roster: page.roster, shownSession: () => 'ada', openSession: page.openSession, since: 100 })
+  page.work.set({ approvals: [{ id: 'x', botId: 'ada', sessionId: 'someone', tool: 'keep_working', at: 200 }] })
+  assert.equal(page.shown[0].body, 'Let it keep working?')
+})

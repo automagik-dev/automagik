@@ -20,7 +20,7 @@ import { Session } from '@deepseek-ai/dsh-session'
 import { ToolsService } from '@deepseek-ai/dsh-tools'
 import * as native from '@deepseek-ai/dsh-tool-executor-native'
 import { AcpAdapter } from '../src/host/adapter.js'
-import { AGENTS } from '../src/host/agents.js'
+import { AGENTS, CLAUDE_HARD_ASK } from '../src/host/agents.js'
 import { PermissionDiagnostics } from '../src/host/permission-diagnostics.js'
 import { apply, SERVICE } from '../index.js'
 import { Backchannel } from '../src/host/backchannel.js'
@@ -564,4 +564,42 @@ test('a judged refusal that is answered cancelled does not name the judge', asyn
   const { result, tool } = await mirrorAsk({ answer: async request => { request.mirrorCall.judged = { reason: 'not needed' }; return 'cancelled' } })
   assert.deepEqual(tool.answered, { outcome: { outcome: 'cancelled' } })
   assert.doesNotMatch(result.text, /Auto's judge/)
+})
+
+
+test('D14 unbridged Claude receives session-only hard ask rules at Workspace', async t => {
+  const w = await world(t, { level: WRITE, modes: ['default', 'auto', 'bypassPermissions'], modeFor: AGENTS['acp-claude'].modeFor, spec: { hardAsk: AGENTS['acp-claude'].hardAsk } })
+  const c = w.chat('ada'); c.say('x'); await c.step()
+  assert.deepEqual(w.events('new-session')[0].meta.claudeCode.options.settings.permissions.ask, CLAUDE_HARD_ASK)
+})
+test('D15 crossing Full access restarts Claude with the current ask rules', async t => {
+  const w = await world(t, { level: FULL, modes: ['default', 'auto', 'bypassPermissions'], modeFor: AGENTS['acp-claude'].modeFor, spec: { hardAsk: AGENTS['acp-claude'].hardAsk }, env: { FAKE_ACP_SKIP_MCP: '1' } })
+  const c = w.chat('ada')
+  // End each fake prompt through its mirror before starting the next turn.
+  const turn = async () => {
+    c.say('x')
+    let chunks = await c.step()
+    while (chunks.findLast(chunk => chunk.type === 'finish').reason.kind === 'tool-calls') {
+      for (const chunk of chunks.filter(chunk => chunk.type === 'block-end' && chunk.block.type === 'tool-call')) await c.run(chunk.block)
+      chunks = await c.step()
+    }
+  }
+  await turn()
+  assert.equal(w.events('new-session')[0].meta, undefined)
+  w.setLevel(WRITE); await turn()
+  assert.deepEqual(w.events('new-session')[1].meta.claudeCode.options.settings.permissions.ask, CLAUDE_HARD_ASK)
+  await turn()
+  assert.equal(w.events('new-session').length, 2)
+  w.setLevel(FULL); await turn()
+  assert.equal(w.events('new-session').length, 3)
+  assert.equal(w.events('new-session')[2].meta, undefined)
+})
+test('D16 Claude wildcard rules catch recursive delete without matching ordinary rm', () => {
+  const matches = command => CLAUDE_HARD_ASK.filter(rule => rule.startsWith('Bash(')).some(rule => {
+    const pattern = rule.slice(5, -1).split('*').map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')
+    return new RegExp(`^${pattern}$`).test(command)
+  })
+  assert.equal(matches('rm -rf build'), true)
+  assert.equal(matches('rm x'), false)
+  assert.equal(CLAUDE_HARD_ASK.some(rule => rule.endsWith(':*)')), false)
 })

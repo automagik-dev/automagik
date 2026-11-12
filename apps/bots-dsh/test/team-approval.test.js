@@ -87,3 +87,14 @@ test('the child dock selects the oldest answerable child of this Session and sho
   TeamApproval({ useRoster, matched: { key: 'team', kind: 'approval', sessionId: 'ada', toolName: 'start_task', reason: '{}', answerable: true, answer: () => {} } })
   assert.equal(focused.length, 1, 'a team-tool card still focuses')
 })
+
+test('D client: keep-working uses the team card and explains that no refused step runs', async () => {
+  const { KEEP_WORKING: hostKeep, questionText } = await import('../src/host/ladder.js')
+  const { KEEP_WORKING, TeamApproval } = module.exports
+  assert.equal(KEEP_WORKING, hostKeep)
+  const pending = { kind: 'approval', toolName: KEEP_WORKING, sessionId: 'ada', reason: questionText('ada', 4, 'bash') }
+  assert.equal(isTeamApproval(pending), true)
+  const tree = TeamApproval({ matched: pending, useRoster: select => select({ byId: { ada: { id: 'ada', name: 'ada' } } }) })
+  assert.ok(JSON.stringify(tree).includes(pending.reason))
+  assert.ok(JSON.stringify(tree).includes('Allow once lets it keep working: nothing that was refused runs. Reject stops it here.'))
+})

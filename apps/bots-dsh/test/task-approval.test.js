@@ -153,3 +153,12 @@ test('a task child opens its task for the full ask, without inline approval butt
   button(tree, 'Answer it').props.onClick()
   assert.equal(opened, 1)
 })
+
+test('D client: the task card displays the keep-working question', () => {
+  hookState.length = 0
+  const { pending } = pendingOf()
+  pending.toolName = 'keep_working'
+  pending.reason = 'ada was refused 4 times in this turn, the last time on bash. Let it keep working?'
+  const tree = render(props('x', pending, { approvals: [] }))
+  assert.ok(text(tree).includes(pending.reason))
+})
