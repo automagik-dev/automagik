@@ -2179,6 +2179,46 @@ test("worker #1135: launch never removes or prunes another repository's ended wo
   assert.equal(existsSync(w.worktree), true);
   assert.equal(git(foreign, "worktree", "list", "--porcelain"), before);
   assert.deepEqual(calls(), [], "no foreign remove or prune was even attempted");
+  assert.deepEqual(reapFile(s), [], "foreign candidates never enter cleanup outcomes");
+});
+
+test("worker #1135: ownership backup rejects a foreign launcher at its own boundary", (t) => {
+  const s = scene(t);
+  withOrigin(s);
+  const foreign = foreignReapProject(s);
+  const w = seedReapTree(s, { project: foreign });
+  const calls = watchReapGit(s);
+  // Exercise the scene's isolation preflight before importing the helper in this same env.
+  const ready = s.cli(["--help"]);
+  assert.equal(ready.code, 0, ready.err);
+  assertScratchProject(foreign, { ceiling: s.root, env: s.env });
+  const target = new URL("../mods/am-sidebar/bin/automagik-herdr.mjs", import.meta.url).href;
+  const hook = join(s.root, "ownership-hook.mjs");
+  const child = join(s.root, "ownership-child.mjs");
+  // Add only a test-process export to the real module; its main guard remains off.
+  writeFileSync(hook, 'import { registerHooks } from "node:module";\n'
+    + `const target = ${JSON.stringify(target)};\n`
+    + 'registerHooks({ load(url, context, nextLoad) {\n'
+    + '  const loaded = nextLoad(url, context);\n'
+    + '  return url === target\n'
+    + '    ? { ...loaded, source: String(loaded.source) + "\\nexport { reapOwnership };\\n" }\n'
+    + '    : loaded;\n'
+    + '} });\n');
+  writeFileSync(child, `const { reapOwnership } = await import(${JSON.stringify(target)});\n`
+    + `const candidate = ${JSON.stringify(w.row)};\n`
+    + `const own = await reapOwnership(candidate, ${JSON.stringify(foreign)});\n`
+    + `const other = await reapOwnership(candidate, ${JSON.stringify(s.project)});\n`
+    + 'console.log(JSON.stringify({ own, other }));\n');
+  const result = spawnSync(process.execPath,
+    ["--max-old-space-size=2048", "--import", hook, child], {
+      cwd: s.project, env: { ...s.env, NODE_OPTIONS: "--max-old-space-size=2048" },
+      encoding: "utf8",
+    });
+  assert.equal(result.status, 0, result.stderr);
+  const proof = JSON.parse(result.stdout);
+  assert.equal(proof.own, null, "the same candidate is valid in its recorded repository");
+  assert.equal(proof.other, "worktree belongs to another launching repository");
+  assert.deepEqual(calls(), [], "the helper only observes repository ownership");
 });
 
 test("worker #1135: a gone foreign checkout is not pruned by another project's launch", (t) => {
