@@ -1,0 +1,333 @@
+{
+  "v": 1,
+  "generated_at": "2026-11-08T20:00:05Z",
+  "meter_version": "3.107.0",
+  "schema_version": 3,
+  "machine": "machine-a1b2c3",
+  "store": {
+    "schema_version": 3,
+    "location": "current"
+  },
+  "counted_from": "2026-09-10T00:00:00Z",
+  "records_from": "2026-10-01T00:00:00Z",
+  "evidence_from": "2026-10-20T00:00:00Z",
+  "complete": true,
+  "stale": false,
+  "as_of": "2026-11-08T19:52:41Z",
+  "all_vouch": true,
+  "incomplete_sources": [],
+  "truncated": false,
+  "windows": [
+    {
+      "window": "d1",
+      "requested_start": "2026-11-07T20:00:05Z",
+      "start": "2026-11-07T20:00:05Z",
+      "end": "2026-11-08T20:00:05Z",
+      "clipped": false,
+      "evidence": "full",
+      "evidence_from": "2026-10-20T00:00:00Z",
+      "complete": true,
+      "stale": false,
+      "totals": {
+        "attributed": 0,
+        "ambiguous": 0,
+        "unlinked": 0,
+        "before_evidence": 0,
+        "total": 0
+      },
+      "bot_coverage": null,
+      "inspected": null,
+      "parts": [
+        {
+          "state": "ambiguous",
+          "reason": "claimants_differ",
+          "tokens": 0,
+          "share": null,
+          "vouched": true,
+          "harnesses": []
+        },
+        {
+          "state": "unlinked",
+          "reason": "no_record",
+          "tokens": 0,
+          "share": null,
+          "vouched": true,
+          "harnesses": []
+        },
+        {
+          "state": "unlinked",
+          "reason": "dsh_tui_seat",
+          "tokens": 0,
+          "share": null,
+          "vouched": true,
+          "harnesses": []
+        },
+        {
+          "state": "unlinked",
+          "reason": "other_machine",
+          "tokens": 0,
+          "share": null,
+          "vouched": true,
+          "harnesses": []
+        },
+        {
+          "state": "before_evidence",
+          "reason": "before_evidence",
+          "tokens": 0,
+          "share": null,
+          "vouched": true,
+          "harnesses": []
+        }
+      ],
+      "before_evidence_tagged": 0,
+      "no_repo": {
+        "tokens": 0,
+        "note": "store-wide, even with --repo: usage with no repo belongs to no query answer, so it is outside the denominator"
+      },
+      "repos": [
+        {
+          "repo": "example.com/acme/widgets",
+          "state": "no_usage",
+          "totals": {
+            "attributed": 0,
+            "ambiguous": 0,
+            "unlinked": 0,
+            "before_evidence": 0,
+            "total": 0
+          },
+          "bot_coverage": null
+        }
+      ],
+      "repos_shown": 1,
+      "repos_omitted": 0,
+      "repos_other": null,
+      "bots": [],
+      "bots_shown": 0,
+      "bots_omitted": 0,
+      "bots_other": null,
+      "truncated": false
+    },
+    {
+      "window": "d7",
+      "requested_start": "2026-11-01T20:00:05Z",
+      "start": "2026-11-01T20:00:05Z",
+      "end": "2026-11-08T20:00:05Z",
+      "clipped": false,
+      "evidence": "full",
+      "evidence_from": "2026-10-20T00:00:00Z",
+      "complete": true,
+      "stale": false,
+      "totals": {
+        "attributed": 60,
+        "ambiguous": 10,
+        "unlinked": 30,
+        "before_evidence": 0,
+        "total": 100
+      },
+      "bot_coverage": 0.6,
+      "inspected": 0.6,
+      "parts": [
+        {
+          "state": "ambiguous",
+          "reason": "claimants_differ",
+          "tokens": 10,
+          "share": 0.1,
+          "vouched": true,
+          "harnesses": [
+            "claude-code"
+          ]
+        },
+        {
+          "state": "unlinked",
+          "reason": "no_record",
+          "tokens": 30,
+          "share": 0.3,
+          "vouched": true,
+          "harnesses": [
+            "claude-code"
+          ]
+        },
+        {
+          "state": "unlinked",
+          "reason": "dsh_tui_seat",
+          "tokens": 0,
+          "share": 0.0,
+          "vouched": true,
+          "harnesses": []
+        },
+        {
+          "state": "unlinked",
+          "reason": "other_machine",
+          "tokens": 0,
+          "share": 0.0,
+          "vouched": true,
+          "harnesses": []
+        },
+        {
+          "state": "before_evidence",
+          "reason": "before_evidence",
+          "tokens": 0,
+          "share": 0.0,
+          "vouched": true,
+          "harnesses": []
+        }
+      ],
+      "before_evidence_tagged": 0,
+      "no_repo": {
+        "tokens": 0,
+        "note": "store-wide, even with --repo: usage with no repo belongs to no query answer, so it is outside the denominator"
+      },
+      "repos": [
+        {
+          "repo": "example.com/acme/widgets",
+          "state": "measured",
+          "totals": {
+            "attributed": 60,
+            "ambiguous": 10,
+            "unlinked": 30,
+            "before_evidence": 0,
+            "total": 100
+          },
+          "bot_coverage": 0.6
+        }
+      ],
+      "repos_shown": 1,
+      "repos_omitted": 0,
+      "repos_other": null,
+      "bots": [
+        {
+          "bot": "otter",
+          "tokens": 60,
+          "share": 0.6,
+          "tokens_by_basis": {
+            "session": 60,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        }
+      ],
+      "bots_shown": 1,
+      "bots_omitted": 0,
+      "bots_other": null,
+      "truncated": false
+    },
+    {
+      "window": "d30",
+      "requested_start": "2026-10-09T20:00:05Z",
+      "start": "2026-10-09T20:00:05Z",
+      "end": "2026-11-08T20:00:05Z",
+      "clipped": false,
+      "evidence": "partial",
+      "evidence_from": "2026-10-20T00:00:00Z",
+      "complete": true,
+      "stale": false,
+      "totals": {
+        "attributed": 60,
+        "ambiguous": 10,
+        "unlinked": 30,
+        "before_evidence": 100,
+        "total": 200
+      },
+      "bot_coverage": 0.3,
+      "inspected": 0.6,
+      "parts": [
+        {
+          "state": "ambiguous",
+          "reason": "claimants_differ",
+          "tokens": 10,
+          "share": 0.05,
+          "vouched": true,
+          "harnesses": [
+            "claude-code"
+          ]
+        },
+        {
+          "state": "unlinked",
+          "reason": "no_record",
+          "tokens": 30,
+          "share": 0.15,
+          "vouched": true,
+          "harnesses": [
+            "claude-code"
+          ]
+        },
+        {
+          "state": "unlinked",
+          "reason": "dsh_tui_seat",
+          "tokens": 0,
+          "share": 0.0,
+          "vouched": true,
+          "harnesses": []
+        },
+        {
+          "state": "unlinked",
+          "reason": "other_machine",
+          "tokens": 0,
+          "share": 0.0,
+          "vouched": true,
+          "harnesses": []
+        },
+        {
+          "state": "before_evidence",
+          "reason": "before_evidence",
+          "tokens": 100,
+          "share": 0.5,
+          "vouched": true,
+          "harnesses": [
+            "claude-code"
+          ]
+        }
+      ],
+      "before_evidence_tagged": 0,
+      "no_repo": {
+        "tokens": 0,
+        "note": "store-wide, even with --repo: usage with no repo belongs to no query answer, so it is outside the denominator"
+      },
+      "repos": [
+        {
+          "repo": "example.com/acme/widgets",
+          "state": "measured",
+          "totals": {
+            "attributed": 60,
+            "ambiguous": 10,
+            "unlinked": 30,
+            "before_evidence": 100,
+            "total": 200
+          },
+          "bot_coverage": 0.3
+        }
+      ],
+      "repos_shown": 1,
+      "repos_omitted": 0,
+      "repos_other": null,
+      "bots": [
+        {
+          "bot": "otter",
+          "tokens": 60,
+          "share": 0.3,
+          "tokens_by_basis": {
+            "session": 60,
+            "label": 0,
+            "worktree": 0
+          },
+          "unrecorded": [],
+          "tokens_unrecorded": 0,
+          "harnesses": [
+            "claude-code"
+          ],
+          "lower_bound": false
+        }
+      ],
+      "bots_shown": 1,
+      "bots_omitted": 0,
+      "bots_other": null,
+      "truncated": false
+    }
+  ]
+}

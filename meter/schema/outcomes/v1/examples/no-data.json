@@ -1,0 +1,347 @@
+{
+  "v": 1,
+  "generated_at": "2026-11-08T20:00:05Z",
+  "meter_version": "3.107.0",
+  "schema_version": 3,
+  "machine": "machine-a1b2c3",
+  "store": {
+    "schema_version": 3,
+    "location": "current"
+  },
+  "counted_from": "2026-09-10T00:00:00Z",
+  "recorded": true,
+  "errors_from": "2026-11-06T00:00:00Z",
+  "api_errors_from": "2026-11-06T00:00:00Z",
+  "complete": true,
+  "stale": false,
+  "note": "raw counts of failures a harness or hc recorded, including expected ones (a red test run while working test-first, a grep with no match) and usage-limit stops (written after a harness's own retries, so a count of model calls that failed for the session, not each retried attempt); not a quality verdict on their own",
+  "error_kinds": {
+    "tool_error": {
+      "source": "harness_log",
+      "rule": "harness-flagged failures, including expected ones",
+      "markers": {
+        "claude-code": "a tool_result block with is_error: true, once per tool_use_id",
+        "codex": "an item_completed event whose item has status \"failed\" or a non-zero exit_code, once per item id"
+      },
+      "unsupported_harnesses": [
+        "agy",
+        "dsh-tui",
+        "omp"
+      ]
+    },
+    "api_error": {
+      "source": "harness_log",
+      "rule": "harness-flagged model-call failures after the harness's own retries (model calls that failed for the session, not each retried attempt, including usage-limit stops; not a quality verdict on their own)",
+      "markers": {
+        "claude-code": "a type \"assistant\" line with top-level isApiErrorMessage: true (written after Claude Code's own retries, including usage-limit stops), once per line uuid"
+      },
+      "unsupported_harnesses": [
+        "agy",
+        "codex",
+        "dsh-tui",
+        "omp"
+      ]
+    },
+    "run_failed": {
+      "source": "hc_snapshot,workers_ledger",
+      "rule": "a launch whose terminal ended on its own with a non-zero exit status or on a signal, as hc's list of finished terminals gave it (hc_snapshot) or as an end row of the workers ledger copied it (workers_ledger); killed and stopped_by_restart are ends, never errors"
+    }
+  },
+  "truncated": false,
+  "windows": [
+    {
+      "window": "d1",
+      "start": "2026-11-07T20:00:05Z",
+      "end": "2026-11-08T20:00:05Z",
+      "requested_start": "2026-11-07T20:00:05Z",
+      "clipped": false,
+      "state": "no_data",
+      "errors": {
+        "tool_error": {
+          "state": "no_data",
+          "source": "harness_log",
+          "count": null
+        },
+        "api_error": {
+          "state": "no_data",
+          "source": "harness_log",
+          "count": null
+        },
+        "run_failed": {
+          "state": "no_data",
+          "source": "hc_snapshot",
+          "count": null
+        },
+        "unsupported_harnesses": [
+          "agy",
+          "dsh-tui",
+          "omp"
+        ],
+        "api_error_unsupported_harnesses": [
+          "agy",
+          "codex",
+          "dsh-tui",
+          "omp"
+        ],
+        "rows": [],
+        "rows_omitted": 0,
+        "omitted_count": 0,
+        "unattributed": []
+      },
+      "run_ends": null,
+      "time_to_pr": {
+        "state": "no_data",
+        "all": {
+          "to_open_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          },
+          "to_merge_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          },
+          "launch_to_open_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          },
+          "launch_to_merge_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          }
+        },
+        "repos": [],
+        "repos_omitted": 0,
+        "attribution": "full",
+        "bots": [],
+        "bots_omitted": 0,
+        "unattributed": {
+          "to_open_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          },
+          "to_merge_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          },
+          "launch_to_open_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          },
+          "launch_to_merge_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          }
+        },
+        "branches": [],
+        "branches_omitted": 0,
+        "branches_no_pr": 0,
+        "no_first_commit": 0,
+        "no_launch": 0
+      }
+    },
+    {
+      "window": "d7",
+      "start": "2026-11-01T20:00:05Z",
+      "end": "2026-11-08T20:00:05Z",
+      "requested_start": "2026-11-01T20:00:05Z",
+      "clipped": false,
+      "state": "no_data",
+      "errors": {
+        "tool_error": {
+          "state": "no_data",
+          "source": "harness_log",
+          "count": null
+        },
+        "api_error": {
+          "state": "no_data",
+          "source": "harness_log",
+          "count": null
+        },
+        "run_failed": {
+          "state": "no_data",
+          "source": "hc_snapshot",
+          "count": null
+        },
+        "unsupported_harnesses": [
+          "agy",
+          "dsh-tui",
+          "omp"
+        ],
+        "api_error_unsupported_harnesses": [
+          "agy",
+          "codex",
+          "dsh-tui",
+          "omp"
+        ],
+        "rows": [],
+        "rows_omitted": 0,
+        "omitted_count": 0,
+        "unattributed": []
+      },
+      "run_ends": null,
+      "time_to_pr": {
+        "state": "no_data",
+        "all": {
+          "to_open_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          },
+          "to_merge_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          },
+          "launch_to_open_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          },
+          "launch_to_merge_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          }
+        },
+        "repos": [],
+        "repos_omitted": 0,
+        "attribution": "full",
+        "bots": [],
+        "bots_omitted": 0,
+        "unattributed": {
+          "to_open_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          },
+          "to_merge_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          },
+          "launch_to_open_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          },
+          "launch_to_merge_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          }
+        },
+        "branches": [],
+        "branches_omitted": 0,
+        "branches_no_pr": 0,
+        "no_first_commit": 0,
+        "no_launch": 0
+      }
+    },
+    {
+      "window": "d30",
+      "start": "2026-10-09T20:00:05Z",
+      "end": "2026-11-08T20:00:05Z",
+      "requested_start": "2026-10-09T20:00:05Z",
+      "clipped": false,
+      "state": "no_data",
+      "errors": {
+        "tool_error": {
+          "state": "no_data",
+          "source": "harness_log",
+          "count": null
+        },
+        "api_error": {
+          "state": "no_data",
+          "source": "harness_log",
+          "count": null
+        },
+        "run_failed": {
+          "state": "no_data",
+          "source": "hc_snapshot",
+          "count": null
+        },
+        "unsupported_harnesses": [
+          "agy",
+          "dsh-tui",
+          "omp"
+        ],
+        "api_error_unsupported_harnesses": [
+          "agy",
+          "codex",
+          "dsh-tui",
+          "omp"
+        ],
+        "rows": [],
+        "rows_omitted": 0,
+        "omitted_count": 0,
+        "unattributed": []
+      },
+      "run_ends": null,
+      "time_to_pr": {
+        "state": "no_data",
+        "all": {
+          "to_open_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          },
+          "to_merge_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          },
+          "launch_to_open_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          },
+          "launch_to_merge_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          }
+        },
+        "repos": [],
+        "repos_omitted": 0,
+        "attribution": "full",
+        "bots": [],
+        "bots_omitted": 0,
+        "unattributed": {
+          "to_open_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          },
+          "to_merge_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          },
+          "launch_to_open_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          },
+          "launch_to_merge_s": {
+            "n": 0,
+            "p50_s": null,
+            "p90_s": null
+          }
+        },
+        "branches": [],
+        "branches_omitted": 0,
+        "branches_no_pr": 0,
+        "no_first_commit": 0,
+        "no_launch": 0
+      }
+    }
+  ]
+}

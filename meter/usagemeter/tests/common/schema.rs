@@ -1,6 +1,6 @@
-//! A JSON Schema 2020-12 checker for the keywords `meter/schema/query/v1/envelope.schema.json`
-//! uses, so the crate's contract test needs no new dependency. A keyword or a pattern it does
-//! not know is a panic, never a pass: the schema cannot grow past what this checks unnoticed.
+//! A JSON Schema 2020-12 checker for the query, outcomes and coverage v1 schemas under
+//! `meter/schema`, so the crate's contract tests need no new dependency. A keyword or a pattern
+//! it does not know is a panic, never a pass: the schema cannot grow past what this checks unnoticed.
 #![allow(dead_code)]
 
 use serde_json::Value;
@@ -97,12 +97,19 @@ impl Schema {
                     }
                 }
                 "additionalProperties" => {
-                    assert_eq!(sv, &Value::Bool(false), "only additionalProperties: false");
+                    assert!(
+                        sv.is_object() || sv == &Value::Bool(false),
+                        "additionalProperties must be false or an object schema"
+                    );
                     if let Some(o) = v.as_object() {
                         let known = obj.get("properties").and_then(Value::as_object);
-                        for p in o.keys() {
+                        for (p, pv) in o {
                             if !known.is_some_and(|k| k.contains_key(p)) {
-                                out.push(format!("{at}: unknown property {p}"));
+                                if sv.is_object() {
+                                    self.check(sv, pv, &format!("{at}.{p}"), out);
+                                } else {
+                                    out.push(format!("{at}: unknown property {p}"));
+                                }
                             }
                         }
                     }
@@ -127,11 +134,13 @@ impl Schema {
                         }
                     }
                 }
-                "minimum" => {
-                    if let Some(x) = v.as_f64()
-                        && x < sv.as_f64().unwrap()
-                    {
-                        out.push(format!("{at}: {x} under {sv}"));
+                "minimum" | "maximum" => {
+                    if let Some(x) = v.as_f64() {
+                        let bound = sv.as_f64().unwrap();
+                        let bad = if k == "minimum" { x < bound } else { x > bound };
+                        if bad {
+                            out.push(format!("{at}: {x}, {k} {sv}"));
+                        }
                     }
                 }
                 "minLength" | "maxLength" => {
@@ -296,4 +305,27 @@ fn pattern(p: &str) -> fn(&str) -> bool {
         },
         other => panic!("the checker has no matcher for the pattern {other}"),
     }
+}
+
+#[test]
+fn schema_valued_additional_properties_only_checks_undeclared_fields() {
+    use serde_json::json;
+
+    let s = Schema::new(json!({
+        "type": "object",
+        "properties": {"known": {"type": "boolean"}},
+        "additionalProperties": {"type": "integer", "minimum": 0, "maximum": 1}
+    }));
+    assert!(s.valid(&json!({"known": true, "low": 0, "high": 1})));
+    assert!(!s.valid(&json!({"known": 0})));
+    assert!(!s.valid(&json!({"extra": "invalid"})));
+    assert!(!s.valid(&json!({"extra": -1})));
+    assert!(!s.valid(&json!({"extra": 2})));
+
+    let s = Schema::new(json!({
+        "type": "object",
+        "additionalProperties": {"type": "string"}
+    }));
+    assert!(s.valid(&json!({"marker": "a recorded rule"})));
+    assert!(!s.valid(&json!({"marker": 1})));
 }
