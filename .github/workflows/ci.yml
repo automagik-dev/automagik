@@ -1286,6 +1286,13 @@ jobs:
           hash=64bcc99c32e434b4bcb0508a97df9b7aeecdb97e956d976fb13661096ec4e3e2
           echo "${hash}  ${dir}/codex.tgz" | sha256sum --check --strict
           tar -xzf "${dir}/codex.tgz" -C "${dir}"
+          curl -fsSL "${release}/bwrap-x86_64-unknown-linux-musl.tar.gz" -o "${dir}/bwrap.tgz"
+          hash=eb799e781a9ffd37b1ee46280fda10212a6efaf3cccfb8bf7603a00520355ac7
+          echo "${hash}  ${dir}/bwrap.tgz" | sha256sum --check --strict
+          mkdir -p "${dir}/codex-resources"
+          tar -xzf "${dir}/bwrap.tgz" -C "${dir}/codex-resources"
+          mv "${dir}/codex-resources/bwrap-x86_64-unknown-linux-musl" \
+            "${dir}/codex-resources/bwrap"
           # A public 1x1 PNG, installed only in this disposable runner's runtime read root.
           png='iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9aw'
           printf '%s' "${png}AAAABJRU5ErkJggg==" | base64 --decode > "${dir}/runtime.png"
