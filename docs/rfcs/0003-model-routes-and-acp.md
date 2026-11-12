@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| Status | In delivery (deliveries 1-4, 6 and 7: #187, #189, #537, #557, #558, #559, #563, #569, #585, #594; 5 (Gemini) open; amended 2026-11-06, 2026-11-08, 2026-11-09 and 2026-11-10) |
+| Status | In delivery (deliveries 1-4, 6 and 7: #187, #189, #537, #557, #558, #559, #563, #569, #585, #594; 5 (Gemini) open; amended 2026-11-06, 2026-11-08, 2026-11-09 and 2026-11-10; delivery 7's replay at a harness change to be replaced by [RFC 0030](0030-code-mode-in-the-app.md)'s handoff note, owner 2026-11-10, its Q7) |
 | Milestone | 2. One message box (route descriptor); 3. Other agents in the same chat (ACP) |
 | Lanes | plugin (3.N.P), desktop (3.N) |
 | Created | 2026-10-30 |

@@ -6,6 +6,7 @@
 //   endpoint(name, fn, { read })   one POST /api/omni-ui endpoint; `read` lets a host that
 //                                  only reads the team (store.js) answer it too
 //   view(fn)                       fields merged into the team view (revisioned)
+//   sessionOwner(fn)               the team Bot and label of an external run Session
 //   live(fn)                       fields merged into every state answer (no revision)
 //   mainRules(fn, { order })       a part of the Main Bot's rules, text or nothing, inside
 //                                  the bot-identity section (prompt.js)
@@ -18,6 +19,7 @@ export function install(rt) {
   const endpoints = new Map()
   const views = []
   const lives = []
+  const sessionOwners = []
   const rules = []
   const botModels = new Map()
   const add = (list, item) => {
@@ -46,6 +48,7 @@ export function install(rt) {
       return () => { if (endpoints.get(name) === entry) endpoints.delete(name) }
     },
     view: fn => add(views, fn),
+    sessionOwner: fn => add(sessionOwners, fn),
     live: fn => add(lives, fn),
     mainRules(fn, { order = 0 } = {}) {
       const dispose = add(rules, { fn, order })
@@ -64,6 +67,17 @@ export function install(rt) {
   // What channel.js and prompt.js read.
   rt.extended = {
     endpointOf: name => (endpoints.has(name) ? endpoints.get(name) : undefined),
+    sessionOwner(sessionId) {
+      for (const fn of sessionOwners) {
+        try {
+          const owner = fn(sessionId)
+          if (owner && rt.botOf?.(owner.botId) !== undefined) return { botId: owner.botId, label: String(owner.label ?? '').trim().slice(0, 80) }
+        } catch (error) {
+          rt.warn?.('ds-bot: a Session owner hook failed: %s', error?.message ?? error)
+        }
+      }
+      return undefined
+    },
     view: () => merged(views),
     live: () => merged(lives),
     // The plugin that owns the model menu of a Bot kind, if one does.

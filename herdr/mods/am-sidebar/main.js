@@ -28,7 +28,7 @@ import { startBot, attachBot, botOfTerminal, modelTexts, sleepOf } from "./launc
 import { parseCommand } from "./launchArgs.js";
 import { characterSvg, characterFile, inkOf, isDark } from "./characters.js";
 import { workerClick, rowWorker, openWorkerTab } from "./workerTab.js";
-import { liveFrom, buildTree, placeTrees, placesOf, withSpaceless, knownBots, nextWake, projectId, secondLine, modelTextsUpdate, argvToAsk, argvAfter, argvReader, spaceRowOrder, clickActionOf, heldTerminalOf, heldClickOf, listedKeyOf, parentMarkText, orderMachines, movedToTop, readMachineOrder, programForApp } from "./rows.js";
+import { liveFrom, buildTree, placeTrees, placesOf, withSpaceless, knownBots, nextWake, projectId, secondLine, modelTextsUpdate, argvToAsk, argvAfter, argvReader, spaceRowOrder, clickActionOf, heldTerminalOf, heldClickOf, listedKeyOf, parentMarkText, orderMachines, movedToTop, readMachineOrder, programForApp, needsYouText } from "./rows.js";
 
 // The pack itself as a dialog: the bot form (create.js), or the attach picker, the Bots list
 // and a bot row's menu as a popup (a popup is as tall as its items; height is only the most).
@@ -339,6 +339,9 @@ export default class Spaces extends View {
     this.children = groupBy(this.all, (k) => k.parent, (k) => k.state === "live");
   }
 
+  // This render's terminals(), first row per address.
+  reportOf(address) { return this.byAddress?.get(address)?.report ?? null; }
+
   // Agents agents() misses because of that rename: their pane joins no terminal there.
   // Shown with the core's own reported status; never one that reports nothing.
   aliased(ps) {
@@ -386,11 +389,12 @@ export default class Spaces extends View {
     return rows;
   }
 
-  // The agents mod's status marks.
-  status(t, a) {
+  // The agents mod's status marks. `report` is herdr-core's status object for the row's
+  // terminal; a blocked mark names a permission when it says so.
+  status(t, a, report = null) {
     const color = t[a.status] ?? t.dim;
     if (a.status === "working") return svg("mods/workspace-chrome/spinner.svg").size(12).mx(1).flex_none().text_color(t.working).spin(900);
-    if (a.status === "blocked") return div().flex_none().px(6).h(18).rounded(5).bg(t.blocked + "26").text_size(10.5).font_semibold().text_color(t.blocked).flex().items_center().child("Needs you");
+    if (a.status === "blocked") return div().flex_none().px(6).h(18).rounded(5).bg(t.blocked + "26").text_size(10.5).font_semibold().text_color(t.blocked).flex().items_center().child(needsYouText(report));
     if (a.status === "idle") return div().size(7).mx(3).flex_none().rounded(4).border(1.5).border_color(t.idle ?? t.dim);
     return div().size(7).mx(3).flex_none().rounded(4).bg(a.status === "done" ? color : t.dim + "00");
   }
@@ -438,7 +442,7 @@ export default class Spaces extends View {
       .when(Boolean(machine), (el) => el.child(div().flex_none().text_size(10).text_color(t.dim).child(machine)))
       .child(a.extra && !a.status
         ? div().id(`unknown-${a.address}`).size(7).mx(3).flex_none().rounded(4).bg(t.unknown).tooltip("No status reported")
-        : this.status(t, a));
+        : this.status(t, a, this.reportOf(a.core ?? a.address)));
   }
 
   // A plain agent's sub-agent, with the tree lines in front of it.
@@ -455,7 +459,7 @@ export default class Spaces extends View {
         .when(l === "└" || l === "├", (el) => el.border_b(1.5).rounded_bl(6))))
       .when(Boolean(kpic), (el) => el.child(div().mr(7).child(kpic)))
       .child(div().flex_1().min_w(0).truncate().text_color(on ? t.foreground : t.muted).child(k.name || k.template || k.program?.name || k.address))
-      .child(this.status(t, { status: kidStatus(k, this.listed) }));
+      .child(this.status(t, { status: kidStatus(k, this.listed) }, k.report ?? null));
   }
 
   // The agents list's grouped-view name: a tab someone named or the agent's own
@@ -726,7 +730,7 @@ export default class Spaces extends View {
         .when(Boolean(h.template || h.model || h.effort), (el) => el.child(div().flex_none().max_w(110).truncate().text_size(10)
           .text_color(t.dim).child([h.template, h.model, h.effort].filter(Boolean).join(" · "))))
         .when(h.terminal.includes("/"), (el) => el.child(div().flex_none().text_size(10).text_color(t.dim).child(h.terminal.split("/")[0])))
-        .child(this.status(t, { status: kidStatus({ address: h.terminal, status: h.status }, this.listed) })));
+        .child(this.status(t, { status: kidStatus({ address: h.terminal, status: h.status }, this.listed) }, this.reportOf(h.terminal))));
   }
 
   // A helper, worker or live bot row's click (workerTab.js rowWorker): its pane; else a tab
@@ -790,7 +794,7 @@ export default class Spaces extends View {
         .text_size(10).font_semibold().text_color(t.muted).child(`Wave ${b.planned.wave}`));
     } else {
       row = row.child(this.agentIcon(n, main ? 16 : 15, t))
-        .child(live ? this.status(t, { status: s }) : div().w(13).flex_none());
+        .child(live ? this.status(t, { status: s }, this.reportOf(live.terminal)) : div().w(13).flex_none());
     }
     const box = this.rowEvents(row, r, t, onClick, onMenu).rounded(main ? 10 : 8);
     const styled = main

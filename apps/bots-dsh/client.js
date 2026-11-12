@@ -1311,6 +1311,21 @@ var ZH = {
   "{first} and {second} are waiting for your approval": "{first}、{second} 等你批准",
   "{first}, {second} and {count} more are waiting for your approval": "{first}、{second} 等 {total} 个等你批准",
   "Waiting for your approval": "等你批准",
+  "A step stopped on a permission": "一个步骤因权限限制而停止",
+  "{name} stopped on a permission": "{name} 因权限限制而停止",
+  "{name} stopped on a permission: {why}": "{name} 因权限限制而停止：{why}",
+  "{tool} did not run: {why}": "{tool} 未执行：{why}",
+  "{count} steps did not run: {why}": "{count} 个步骤未执行：{why}",
+  "A subagent step did not run: {why}": "一个子代理步骤未执行：{why}",
+  "A step did not run: {why}": "一个步骤未执行：{why}",
+  "approvals are off here, so you were not asked": "这里关闭了审批，所以没有询问你",
+  "it needed your approval, but nothing here could ask you": "需要你的批准，但这里无法向你请求批准",
+  "this Bot does not have that tool": "这个 Bot 没有该工具",
+  "its permission level could not be set here": "无法在这里设置它的权限级别",
+  "the address list blocks that site": "地址列表阻止了该网站",
+  "Auto review refused it": "自动审查拒绝了它",
+  "the sandbox blocked it": "沙箱阻止了它",
+  "a rule here refused it": "这里的一条规则拒绝了它",
   "A task needs your approval": "有任务等你批准",
   "Task {title} is waiting for approval: {tool}": "任务 {title} 等你批准：{tool}",
   "a tool": "一个工具",
@@ -6706,6 +6721,34 @@ var COMPOSER_PACK_CSS = `
 [data-composer-card] [class*="_trailing"]:has(>[class*="_standardControls"]:not([hidden]) .bt-composer-model),[data-composer-card] [class*="_standardControls"]:has(.bt-composer-model){flex:0 1 auto!important;min-width:0!important}
 `;
 
+// src/client/stops.js
+function whyText(why) {
+  switch (why) {
+    case "never":
+      return t("approvals are off here, so you were not asked");
+    case "unavailable":
+      return t("it needed your approval, but nothing here could ask you");
+    case "tool":
+      return t("this Bot does not have that tool");
+    case "level":
+      return t("its permission level could not be set here");
+    case "address":
+      return t("the address list blocks that site");
+    case "review":
+      return t("Auto review refused it");
+    case "sandbox":
+      return t("the sandbox blocked it");
+    default:
+      return t("a rule here refused it");
+  }
+}
+function stopLine(entry) {
+  const why = whyText(entry.why);
+  return entry.count > 1 ? t("{count} steps did not run: {why}", { count: entry.count, why }) : entry.child ? t("A subagent step did not run: {why}", { why }) : entry.tool ? t("{tool} did not run: {why}", { tool: entry.tool, why }) : t("A step did not run: {why}", { why });
+}
+var openStops = (work) => (work?.stops ?? []).filter((entry) => entry.open);
+var stopOfCall = (stops, sessionId, callId) => (stops ?? []).find((entry) => callId !== void 0 && entry.calls?.find((call2) => call2.sessionId === sessionId)?.callId === callId);
+
 // src/client/task-card.js
 var import_react17 = require("react");
 function useNow(on) {
@@ -6755,6 +6798,10 @@ function TaskCard({ sessionId, title, task, onOpen, useSessionStatus, useWork })
   const pending = useSessionStatus && sessionId ? useSessionStatus((map) => map.get(sessionId)?.pendingInteraction) : void 0;
   const ask = pending?.kind === "approval" && typeof pending.answer === "function" ? pending : void 0;
   const approval = useWork && sessionId ? useWork((work) => approvalFor(work, sessionId)) : false;
+  const stop3 = useWork && sessionId ? useWork((work) => {
+    const entry = openStops(work).filter((item) => item.taskId === sessionId).sort((a, b) => b.at - a.at)[0];
+    return entry ? stopLine(entry) : "";
+  }) : "";
   const waiting = asked2 || approval;
   const status = taskState(task, waiting);
   const working = status === "working" || status === "waiting";
@@ -6806,7 +6853,7 @@ function TaskCard({ sessionId, title, task, onOpen, useSessionStatus, useWork })
         (0, import_react17.createElement)(
           "div",
           { className: "op-task-live" },
-          task?.said ? (0, import_react17.createElement)("span", { key: task.said, className: "op-task-said" }, task.said) : (0, import_react17.createElement)("span", { className: "op-task-said op-task-quiet" }, t("Getting started…")),
+          stop3 || task?.said ? (0, import_react17.createElement)("span", { key: stop3 || task.said, className: "op-task-said" }, stop3 || task.said) : (0, import_react17.createElement)("span", { className: "op-task-said op-task-quiet" }, t("Getting started…")),
           task?.steps ? (0, import_react17.createElement)("span", { className: "op-task-steps" }, t("step {count}", { count: task.steps })) : null
         ),
         (0, import_react17.createElement)("div", { className: "op-task-bar", "aria-hidden": true }, (0, import_react17.createElement)("i"))
@@ -11588,6 +11635,13 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
           Number.isFinite(time) ? (0, import_react27.createElement)("div", { className: "bt-utime", title: clockLabel(time) }, messageClock(time)) : null
         ));
       }
+      if (reply.kind === "permission-stop") {
+        return (0, import_react27.createElement)(
+          "div",
+          { key: `${reply.botId}-${index}`, className: "bt-event bt-event-error", role: "status", title: reply.why },
+          t("{name} stopped on a permission: {why}", { name: bot.name, why: whyText(reply.why) })
+        );
+      }
       if (reply.kind === "failed") {
         return (0, import_react27.createElement)(
           "div",
@@ -11792,14 +11846,27 @@ function ToolCell({ node, sessionId, useRoster, useUi, useWork, useSessionStatus
   const findBot2 = (nameOrId) => roster.byId[nameOrId] ?? roster.bots.find((bot) => bot.name.toLowerCase() === String(nameOrId ?? "").toLowerCase());
   (0, import_react27.useSyncExternalStore)(toolCards.source.subscribe, toolCards.source.getSnapshot);
   const calls = hidden ? [] : callTree(root);
-  const drawn = calls.filter((call2) => DRAWN.has(toolName(call2)) || toolCards.renderer(toolName(call2)) || agentImage(call2));
+  const stopKeys = useWork ? useWork((work) => JSON.stringify(calls.flatMap((call2) => {
+    const entry = stopOfCall(work.stops, sessionId, call2.callId);
+    return entry ? [[call2.callId, stopLine(entry), entry.why]] : [];
+  }))) : "[]";
+  const stops = new Map(JSON.parse(stopKeys).map(([id, line, why]) => [id, { line, why }]));
+  const drawn = calls.filter((call2) => DRAWN.has(toolName(call2)) || toolCards.renderer(toolName(call2)) || agentImage(call2) || stops.has(call2.callId));
   const running2 = root.kind === "tool-result" ? void 0 : calls.findLast((call2) => call2.kind !== "tool-result");
   const note = running2 ? toolActivity(toolName(running2), toolArgs(running2).text, findBot2, roster.byId[sessionId]) : null;
   useLiveNote(actions, sessionId, `tool:${root.callId ?? node.key}`, note);
   useShownCards(actions, sessionId, drawn.filter((call2) => (CARDS.has(toolName(call2)) || toolCards.asks(toolName(call2))) && call2.callId).map((call2) => call2.callId));
   if (drawn.length === 0) return null;
   const env = { sessionId, roster, actions, useUi, useWork, useSessionStatus, findBot: findBot2, heldCards, hooks: { useBrowserHolds, useBrowserTabs, useBrowserPages } };
-  return (0, import_react27.createElement)(import_react27.Fragment, null, drawn.map((call2, index) => (0, import_react27.createElement)(import_react27.Fragment, { key: call2.callId ?? index }, renderCall(call2, env))));
+  return (0, import_react27.createElement)(import_react27.Fragment, null, drawn.map((call2, index) => {
+    const stop3 = stops.get(call2.callId);
+    return (0, import_react27.createElement)(
+      import_react27.Fragment,
+      { key: call2.callId ?? index },
+      renderCall(call2, env),
+      stop3 ? (0, import_react27.createElement)("div", { className: "bt-event bt-event-error", role: "status", title: stop3.why }, stop3.line) : null
+    );
+  }));
 }
 
 // src/client/live-rail.js
@@ -11822,6 +11889,17 @@ function liveOf(work, roster, now = Date.now()) {
       open: entry.taskId ?? entry.roomId ?? entry.botId
     };
   });
+  for (const entry of openStops(work)) {
+    if (!byId[entry.botId]) continue;
+    needs.push({
+      key: `stop:${entry.id}`,
+      bot: byId[entry.botId],
+      place: roomsById[entry.roomId]?.name ?? tasks[entry.taskId]?.title ?? entry.label,
+      line: stopLine(entry),
+      open: entry.taskId ?? entry.roomId ?? entry.botId,
+      face: "idle"
+    });
+  }
   const waitingTasks = new Set((work?.approvals ?? []).map((entry) => entry.taskId).filter(Boolean));
   const working = [];
   for (const [id, doing] of Object.entries(work?.bots ?? {})) {
@@ -11864,7 +11942,7 @@ function Entry({ item, tone, line, actions }) {
   return (0, import_react28.createElement)(
     "button",
     { type: "button", className: `bt-live-card${tone ? ` bt-live-${tone}` : ""}`, onClick: () => actions.openSession(item.open) },
-    (0, import_react28.createElement)("span", { className: "bt-live-face" }, (0, import_react28.createElement)(BotMark, { bot: item.bot, size: 28, state: tone === "need" ? "alert" : tone === "work" ? "working" : "idle" })),
+    (0, import_react28.createElement)("span", { className: "bt-live-face" }, (0, import_react28.createElement)(BotMark, { bot: item.bot, size: 28, state: item.face ?? (tone === "need" ? "alert" : tone === "work" ? "working" : "idle") })),
     (0, import_react28.createElement)(
       "span",
       { className: "bt-live-text" },
@@ -11902,7 +11980,7 @@ function LiveRail({ roster, actions, useWork }) {
     (0, import_react28.createElement)(
       Section,
       { label: t("Needs you"), dot: "need", empty: t("Nothing waiting for you.") },
-      live.needs.map((item) => (0, import_react28.createElement)(Entry, { key: item.key, item, tone: "need", actions, line: item.tool ? t("Wants to use {tool}", { tool: item.tool }) : t("Waiting for your answer") }))
+      live.needs.map((item) => (0, import_react28.createElement)(Entry, { key: item.key, item, tone: "need", actions, line: item.line ?? (item.tool ? t("Wants to use {tool}", { tool: item.tool }) : t("Waiting for your answer")) }))
     ),
     (0, import_react28.createElement)(
       Section,
@@ -14129,6 +14207,8 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   const approval = useApproval(useWork, (entry) => entry.botId === id);
   const blockedTask = useWork ? useWork((work) => (work.approvals ?? []).some((entry) => entry.taskId !== void 0 && entry.botId === id)) : false;
   const blockedLine = blockedTask ? t("A task needs your approval") : "";
+  const stopped = useWork ? useWork((work) => openStops(work).some((entry) => entry.botId === id)) : false;
+  const stoppedLine = stopped ? t("A step stopped on a permission") : "";
   const alert = roster.questions?.[part] !== void 0 || approval;
   const doing = useActivity((map) => map[id]);
   const groups = workKeys(useGroupWork(useWork, (rooms) => Object.entries(rooms).flatMap(([roomId, entries2]) => entries2.filter((entry) => entry.botId === id).map((entry) => ({ id: roomId, ...doingOf(entry) })))));
@@ -14149,7 +14229,7 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
   };
   const pinned = bot.pinned === true && !crowned;
   const role = crowned ? bot.role : "";
-  const label = [bot.name, role, main ? t("Main Bot") : "", ...pillLabels(roster, bot), pinned ? t("Pinned") : "", running2 || away ? t("Working") : "", waitsFor, approval ? t("Waiting for your approval") : alert ? t("Waiting for your answer") : "", unread ? t("Unread activity") : ""].filter(Boolean).join(", ");
+  const label = [bot.name, role, main ? t("Main Bot") : "", ...pillLabels(roster, bot), pinned ? t("Pinned") : "", running2 || away ? t("Working") : "", waitsFor, stoppedLine, approval ? t("Waiting for your approval") : alert ? t("Waiting for your answer") : "", unread ? t("Unread activity") : ""].filter(Boolean).join(", ");
   return (0, import_react33.createElement)(
     "button",
     {
@@ -14170,7 +14250,7 @@ function BotRow({ bot, roster, actions, useSessions, useSessionStatus, useSessio
       (0, import_react33.createElement)("span", { className: "bt-row-name" }, (0, import_react33.createElement)("span", { className: "bt-row-title" }, bot.name), role ? (0, import_react33.createElement)("span", { className: "bt-role" }, role) : null, pinned ? (0, import_react33.createElement)(PinMark) : null),
       // What to ask this Bot for, on a line of its own: the name line has no room for it.
       (0, import_react33.createElement)(BotPills, { roster, bot, className: "bt-row-caps" }),
-      blockedLine ? (0, import_react33.createElement)("span", { className: "bt-row-preview bt-row-preview-ask" }, blockedLine) : runningLine ? (0, import_react33.createElement)("span", { className: "bt-row-preview" }, runningLine) : awayLine ? (0, import_react33.createElement)("span", { className: "bt-row-preview" }, awayLine) : waitsFor ? (0, import_react33.createElement)("span", { className: "bt-row-preview" }, waitsFor) : threadsLine ? (0, import_react33.createElement)("span", { className: "bt-row-preview" }, threadsLine) : preview ? (0, import_react33.createElement)("span", { className: "bt-row-preview" }, preview) : null
+      blockedLine || stoppedLine ? (0, import_react33.createElement)("span", { className: "bt-row-preview bt-row-preview-ask" }, blockedLine || stoppedLine) : runningLine ? (0, import_react33.createElement)("span", { className: "bt-row-preview" }, runningLine) : awayLine ? (0, import_react33.createElement)("span", { className: "bt-row-preview" }, awayLine) : waitsFor ? (0, import_react33.createElement)("span", { className: "bt-row-preview" }, waitsFor) : threadsLine ? (0, import_react33.createElement)("span", { className: "bt-row-preview" }, threadsLine) : preview ? (0, import_react33.createElement)("span", { className: "bt-row-preview" }, preview) : null
     ) : null,
     // Badges other Omni plugins add (extend.js): Omni's row counts the automation runs waiting for you.
     wide ? (0, import_react33.createElement)(RowBadges, { bot, roster, useWork }) : null,
@@ -28619,8 +28699,14 @@ var USER_MESSAGE_CSS = `
 // src/client/approval-notices.js
 function noticeApprovals({ work, roster, shownSession, openSession, since: since2 = Date.now() }) {
   const told = /* @__PURE__ */ new Set();
+  const stopsTold = /* @__PURE__ */ new Set();
   const notify = () => {
-    const approvals = work.getSnapshot().approvals ?? [];
+    const snapshot = work.getSnapshot();
+    const approvals = snapshot.approvals ?? [];
+    const stops = openStops(snapshot);
+    for (const id of stopsTold) {
+      if (!(snapshot.stops ?? []).some((entry) => entry.id === id)) stopsTold.delete(id);
+    }
     for (const id of told) {
       if (!approvals.some((entry) => entry.id === id)) told.delete(id);
     }
@@ -28636,6 +28722,23 @@ function noticeApprovals({ work, roster, shownSession, openSession, since: since
       const note = new Notification(t("{name} is waiting for your approval", { name: byId[entry.botId]?.name ?? t("A Bot") }), {
         body: [room2?.name, entry.tool].filter(Boolean).join(" · "),
         tag: `omni-ui-approval-${entry.id}`
+      });
+      note.onclick = () => {
+        window.focus();
+        openSession(entry.taskId ?? entry.roomId ?? entry.botId);
+        note.close();
+      };
+    }
+    for (const entry of stops) {
+      if (stopsTold.has(entry.id)) continue;
+      stopsTold.add(entry.id);
+      if ((entry.at ?? 0) < since2) continue;
+      const drawsHere = entry.roomId !== void 0 ? entry.inRound === true : entry.calls?.some((call2) => call2.sessionId === entry.sessionId);
+      if (drawsHere && document.visibilityState === "visible" && shownSession() === (entry.roomId ?? entry.sessionId)) continue;
+      const { byId, roomsById } = roster.getSnapshot();
+      const note = new Notification(t("{name} stopped on a permission", { name: byId[entry.botId]?.name ?? t("A Bot") }), {
+        body: [roomsById[entry.roomId]?.name ?? entry.label, stopLine(entry)].filter(Boolean).join(" · "),
+        tag: `omni-ui-stop-${entry.id}`
       });
       note.onclick = () => {
         window.focus();

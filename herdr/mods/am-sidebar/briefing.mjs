@@ -27,7 +27,7 @@ import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { BOT_LABEL, BOTS_PATH, collectProjectMap, effectiveLead, parseBots, projectKeyOf } from "./model.js";
-import { UNANSWERED, paneOf, rowsOf, unwrapKeep } from "./launchArgs.js";
+import { UNANSWERED, paneOf, rowsOf, unwrapKeep, waitsOnPermission } from "./launchArgs.js";
 import { attachKey, attachPath, confirmBindings, foldAttach, modeProblem, readAttach, verdictOf } from "./attach.js";
 import { botOfBriefingFile, briefDecision, briefedPath, briefingText, directMembers, latestReport, launchBriefingText, textHash }
   from "./briefingText.mjs";
@@ -119,12 +119,12 @@ export async function gatherBriefing({ file, bot, address, ask, locate = (id) =>
       const p = panes[i];
       if (p.unreachable) return { bot: m, unreachable: true };
       if (!p.get) return { bot: m };
-      return { bot: m, terminal: p.get.address, status: p.get.status?.state, report: await latestReport(p.get, ask) };
+      return { bot: m, terminal: p.get.address, status: p.get.status?.state, permission: waitsOnPermission(p.get.status), report: await latestReport(p.get, ask) };
     })),
     helpersOf(all, address, known, ask),
   ]);
   const lead = leadBot
-    ? { bot: leadBot, terminal: leadPane?.get?.address ?? "", status: leadPane?.get?.status?.state, unreachable: Boolean(leadPane?.unreachable) }
+    ? { bot: leadBot, terminal: leadPane?.get?.address ?? "", status: leadPane?.get?.status?.state, permission: waitsOnPermission(leadPane?.get?.status), unreachable: Boolean(leadPane?.unreachable) }
     : undefined;
   return briefingText({ self: bot, file, members, lead, helpers, guard, isGit });
 }
@@ -304,17 +304,22 @@ export function compactedSince(path, offset) {
 }
 
 /**
- * Its children (`hc ls` rows whose parent is its terminal, status from the row), never one
+ * Its children (`hc ls` rows whose parent is its terminal), never one
  * that carries a bot label. A row the team's label queries above named is a bot; any other
  * child (a helper, or a bot of another team or project) is asked with `hc get` for its
- * labels, at most MAX_HELPERS of them, and one that gives no answer is left out.
+ * labels, at most MAX_HELPERS of them, and one that gives no answer is left out. A permission
+ * wait takes both state and kind from that child's get; otherwise status stays the row's word.
  */
 async function helpersOf(all, address, known, ask) {
   if (!address || !all || all === UNANSWERED) return [];
   const kids = rowsOf(all).filter((r) => r?.parent === address && r.address && r.state !== "finished" && !known.has(r.address)).slice(0, MAX_HELPERS);
   const gets = await Promise.all(kids.map((r) => ask(["get", r.address])));
-  return kids.filter((_, i) => gets[i] && typeof gets[i] === "object" && !gets[i].labels?.[BOT_LABEL])
-    .map((r) => ({ status: typeof r.status === "string" ? r.status : r.status?.state }));
+  return kids.flatMap((r, i) => {
+    if (!gets[i] || typeof gets[i] !== "object" || gets[i].labels?.[BOT_LABEL]) return [];
+    return [waitsOnPermission(gets[i].status)
+      ? { status: "blocked", permission: true }
+      : { status: typeof r.status === "string" ? r.status : r.status?.state, permission: false }];
+  });
 }
 
 // The hook's stdin (Claude Code's JSON, with session_id and transcript_path), or "" when

@@ -193,3 +193,19 @@ test('a stopped task whose Session has no record is listed with nothing invented
   assert.deepEqual(plain(liveOf({}, team, 10 * HOUR).ended), [])
   assert.deepEqual(plain(agentRowSessions(tasksRecord, team, 10 * HOUR)), ['no-record'])
 })
+
+test('open stops use the needs card with an idle face; run approvals keep the alert face', () => {
+  const team = { byId: { ada: { id: 'ada', name: 'ada' } }, roomsById: {}, tasks: {} }
+  const work = {
+    approvals: [{ id: 'ask', botId: 'ada', sessionId: 'run', taskId: 'run', label: 'someone' }],
+    stops: [{ id: 'x', botId: 'ada', taskId: 'x', label: 'someone', open: true, why: 'tool', tool: 'bash', count: 1 }, { id: 'closed', botId: 'ada', open: false }],
+  }
+  const live = liveOf(work, team)
+  assert.deepEqual(plain(live.needs.map(item => [item.open, item.place])), [['run', 'someone'], ['x', 'someone']])
+  assert.equal(live.needs[1].line, 'bash did not run: this Bot does not have that tool')
+  const body = LiveRail({ roster: team, actions: {}, useWork: select => select(work) })
+  const section = body.children.find(node => node?.props?.dot === 'need')
+  const cards = section.children.map(node => node.type(node.props))
+  assert.equal(cards[0].children[0].children[0].props.state, 'alert')
+  assert.equal(cards[1].children[0].children[0].props.state, 'idle')
+})

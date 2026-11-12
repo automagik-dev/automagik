@@ -34,6 +34,7 @@ import * as tools from './src/host/tools.js'
 import * as chatIndex from './src/host/chat-index.js'
 import * as groups from './src/host/groups.js'
 import * as approvals from './src/host/approvals.js'
+import * as stops from './src/host/stops.js'
 import * as resume from './src/host/resume.js'
 import * as memory from './src/host/memory.js'
 import * as parts from './src/host/parts.js'
@@ -70,7 +71,7 @@ export const inject = ['llm', 'tools', 'systemPrompt', 'sessionController', 'ses
 const MODULES = [
   diagnostics, extend, store, addressPolicy, models, acpAdoption, subscriptionMove, providers, permissions, permissionDiagnostics,
   turns, handoffs, requests, delivery, roster, folders, agents, toolDeny, prompt, timeContext,
-  tools, chatIndex, groups, approvals, resume, memory, parts, fallback, modelState, modelAccessHooks, cliLogin, images, imagegen,
+  tools, chatIndex, groups, approvals, stops, resume, memory, parts, fallback, modelState, modelAccessHooks, cliLogin, images, imagegen,
   avatarLibrary, secrets, connectors, capabilities, schedules, browser, browserPlugins, usage,
   update, dshUpdate, thinking, agentSpace, feed, channel, appManifest, pocketChat, hermesRemote,
 ]

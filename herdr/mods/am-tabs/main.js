@@ -1,6 +1,6 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { spaces, panes, run, openOverlay, closeOverlay, props, theme, window, shared, layout, settings } from "herdr";
+import { spaces, panes, terminals, run, openOverlay, closeOverlay, props, theme, window, shared, layout, settings } from "herdr";
 import { syncNames } from "./names.js";
 
 function find(node, id) {
@@ -10,6 +10,16 @@ function find(node, id) {
     if (found) return found;
   }
   return null;
+}
+
+// Copies of am-sidebar rows.js's words and launchArgs.js's predicate; am-tabs.test.mjs
+// holds them equal without importing another mod's file here.
+export const NEEDS_YOU = "Needs you";
+export const NEEDS_YOU_PERMISSION = "Permission";
+export const waitsOnPermission = (report) => report?.state === "blocked" && report?.kind === "permission";
+export function needsText(tabId, paneList, byAddress) {
+  return paneList.some((p) => p.tab === tabId && p.terminal && waitsOnPermission(byAddress.get(p.terminal)?.report))
+    ? NEEDS_YOU_PERMISSION : NEEDS_YOU;
 }
 
 export default class Tabs extends View {
@@ -80,6 +90,15 @@ export default class Tabs extends View {
     const stop = (_e, cx) => cx.stop_propagation();
     const button = (id, label, action) => div().id(id).size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
       .on_mouse_down("left", stop).on_click(action).child(label);
+    let core = null;
+    const chipText = (c) => {
+      if (!core) {
+        const byAddress = new Map();
+        for (const k of terminals()) if (typeof k?.address === "string" && !byAddress.has(k.address)) byAddress.set(k.address, k);
+        core = { panes: panes(), byAddress };
+      }
+      return needsText(c.id, core.panes, core.byAddress);
+    };
     const item = (c, i) => {
       const program = panes().find(p => p.tab === c.id && p.program?.agent)?.program ?? panes().find(p => p.tab === c.id)?.program;
       const name = /^tb\d+$/.test(c.name) ? program?.name ?? "Terminal" : c.name;
@@ -109,7 +128,7 @@ export default class Tabs extends View {
         .child(div().max_w(280).truncate().child(c.zoomed ? `${name} Z` : name))
         .when(c.status === "working", el => el.child(svg("mods/workspace-chrome/spinner.svg").size(12).flex_none().text_color(t.working).spin(900)))
         .when(c.status === "blocked", el => el.child(div().flex_none().px(5).h(16).rounded(4).bg(t.blocked + "26")
-          .text_size(9.5).font_semibold().text_color(t.blocked).flex().items_center().child("Needs you")))
+          .text_size(9.5).font_semibold().text_color(t.blocked).flex().items_center().child(chipText(c))))
         .when(c.status === "done", el => el.child(div().size(6).rounded(3).bg(t.done)))
         // The ✕ is drawn out of the row's flow, inside padding the pill always reserves: the
         // active tab shows it, any other shows it on hover, and the pill never changes size.
