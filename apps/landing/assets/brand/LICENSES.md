@@ -28,7 +28,9 @@ used. No customer marks or new drawings are included.
   three sizes, ink and cream letters) and the Omni and Genie wordmarks are Automagik's own
   logo kit, Apache-2.0 as the files above. The word "mykes" is we unfold's file for its
   product; like the Open Intelligence tag it is not under this site's Apache-2.0 grant, and
-  nothing here calls it open-licensed.
+  nothing here calls it open-licensed. Arca's logo (`arca-logo-b.svg`, the ark with its
+  word) is from the same package, used unchanged. Like Arca's icon below it belongs to Arca,
+  is shown here for Arca, and is not covered by this grant.
 
 | File | In the kit | SHA-256 |
 | --- | --- | --- |

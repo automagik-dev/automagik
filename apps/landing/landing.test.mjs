@@ -645,7 +645,7 @@ test('Open Intelligence is applied as on Arca\'s site: the horizontal tag in the
 })
 
 // THE FAMILY DRAWER: the menu the product family shares, from Arca's drawer package, issue
-// 11, as the owner approved it on 2026-11-12: Automagik's lockup; omni, genie and mykes as
+// 11 (11b adds the case where the host is Automagik), as the owner approved it on 2026-11-12: Automagik's lockup; omni, genie and mykes as
 // words in the lettering with no mark; "Coming soon." under Mykes; no pet, no Genie head, and
 // the triskle beside nothing but Automagik. The package's own checksums, for the files taken:
 const familyFiles = {
@@ -665,6 +665,7 @@ const familyFiles = {
   'genie-wordmark-ink.svg': '481008dcd0b1281308e22474cebef71a20f78b247e51095896bebec9561d647d',
   'mykes-wordmark-cream.svg': '9099d9566ebee75e3cc683987f5b69bfc8c1c41873871f5415654a1efbc12752',
   'mykes-wordmark-ink.svg': '28c80ac26bea923146094869fafe032a9397d85c4fd0ad6432a885ceb24219dc',
+  'arca-logo-b.svg': 'ea2cfc8b60be3fe0b064e11b6238b290a1545a654e8fe44a190ebc0a623db116',
 }
 const digest = path => createHash('sha256').update(readFileSync(resolve(root, path))).digest('hex')
 const uncommented = html => html.replace(/<!--[\s\S]*?-->\n?/g, '').trim()
@@ -675,8 +676,8 @@ test('the family drawer: the piece and its art are byte copies of the package, a
   for (const [file, sum] of Object.entries(familyFiles)) assert.equal(digest(`assets/family/${file}`), sum, `${file} is not the package's file`)
   // The note names the issue, the package's own checksum list and every file's digest.
   const note = read('assets/family/SOURCE.md')
-  assert.match(note, /issue 11/)
-  assert.ok(note.includes('`6dcfbe6f8e6d0737019320ddb883cb85986abe738a68c726b2104f816844bad8`'))
+  assert.match(note, /issue 11b/)
+  assert.ok(note.includes('`61c4b94c8ce6c9b21a37ac2c751a2977b57f18c7e7b4172dd86ed9c86f39c8cf`'))
   const listed = Object.fromEntries([...note.matchAll(/^\| `([^`]+)` \| `(?:piece|art)\/[^`]+` \| `([0-9a-f]{64})` \|$/gm)].map(([, file, sum]) => [file, sum]))
   assert.deepEqual(listed, familyFiles)
   // The three words are the brand folder's files: Omni's and Genie's were there, and the
@@ -688,11 +689,18 @@ test('the family drawer: the piece and its art are byte copies of the package, a
     assert.doesNotMatch(read(`assets/family/${file}`), /<script|<foreignObject|<image|<text|href=|url\(/i, file)
     assert.match(read(`assets/family/${file}`), new RegExp(`color="${tone === 'ink' ? '#3c3049' : '#f3e9dd'}"`), `${file} has ${tone} letters`)
   }
+  // Arca's logo is the package's file: shapes and letters in the text colour, nothing that
+  // could load or run. The builder writes it into the page as it is.
+  const ark = read('assets/family/arca-logo-b.svg')
+  assert.match(ark, /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" viewBox="0 0 2041\.97 488\.4" fill="currentColor" role="img" aria-label="arca">(?:<path d="[^"]+"\/>)+<\/svg>\n$/)
   // Every picture in the folder is one the drawer shows, and the drawer shows no other.
-  assert.deepEqual(Object.values(familyArt).sort(), Object.keys(familyFiles).filter(file => /\.(?:png|svg)$/.test(file)).sort())
+  assert.deepEqual([...Object.values(familyArt), 'arca-logo-b.svg'].sort(), Object.keys(familyFiles).filter(file => /\.(?:png|svg)$/.test(file)).sort())
 })
 
 test('the family drawer on every page: the piece\'s markup with Automagik in the top block, three words and no mark beside them', () => {
+  // Arca's row, written here from the piece's own Arca item (its top block's link): a logo
+  // row without "You are here", holding the package's logo file.
+  const arcaRow = current => `<a class="fam-item is-logo" href="/arca/"${current ? ' aria-current="page"' : ''} data-family-product="Arca" data-family-line="${arca.line}"><span class="fam-words"><span class="fam-logo">${read('assets/family/arca-logo-b.svg').trim()}</span><span>${arca.line}</span></span></a>`
   const piece = uncommented(read('assets/family/family.html')), pieceButton = uncommented(read('assets/family/header-button.html')).split('\n')[0]
   const slots = Object.fromEntries(Object.entries(familyArt).map(([slot, file]) => [`/assets/family/${file}`, slot]))
   // The button is the piece's own; only its script-off address is this site's.
@@ -727,35 +735,44 @@ test('the family drawer on every page: the piece\'s markup with Automagik in the
     let back = drawer
     const undo = (from, to, times = 1) => { assert.equal(back.split(from).length - 1, times, `${route}: ${from}`); back = back.replaceAll(from, to) }
     // 1. The mark on the page being read.
-    if (!['/', '/cloud/', '/arca/'].includes(route)) undo(`href="${route}" aria-current="page" data-family-product=`, `href="${route}" data-family-product=`)
+    if (!['/', '/cloud/'].includes(route)) undo(`href="${route}" aria-current="page" data-family-product=`, `href="${route}" data-family-product=`)
     // 2. The list under the top block: this site's pages, where the piece has Arca's sections.
     const links = familyLinks.map(([href, name]) => { const [path, place] = href.split('#'); return `<li><a href="${place && path === route ? `#${place}` : href}"${href === route ? ' aria-current="page"' : ''}>${name}</a></li>` }).join('')
     undo(`<ul class="fam-links" data-family-links aria-label="Sections">${links}</ul>`, piece.match(/<ul class="fam-links" data-family-links aria-label="Sections">.*?<\/ul>/)[0])
     // 3. The pictures: each address back to its slot.
     for (const [file, slot] of Object.entries(slots)) back = back.replaceAll(file, slot)
-    // 4. The top block: Automagik, its lockup (the piece's own lockup markup, named) and its line.
+    // 4. Arca's row leaves Products: it is the piece's own Arca item, which goes back to the top block below.
+    undo(`<ul class="fam-list">\n    <li>${arcaRow(false)}</li>\n`, '<ul class="fam-list">\n')
+    // 5. The top block: Automagik, its lockup (the piece's own lockup markup, named) and its line.
     const lockup = piece.match(/<span class="fam-lockup"><picture class="fam-lock-cream">.*?<\/picture><picture class="fam-lock-ink">.*?<\/picture><\/span>/)[0]
     undo(`<span class="fam-logo">${lockup.replaceAll('alt=""', 'alt="Automagik"')}</span>`, '<span class="fam-logo">__FAM_ARCA__</span>')
     undo(`<a class="fam-item is-here" href="/" data-family-product="Automagik" data-family-line="${familyHost.line}" aria-current="${route === '/' ? 'page' : 'true'}">`, `<a class="fam-item is-here" href="https://automagik.si/arca/" data-family-product="Arca" data-family-line="${arca.line}" aria-current="page">`)
     undo(`</span><span>${familyHost.line}</span></span><span class="fam-here">`, `</span><span>${arca.line}</span></span><span class="fam-here">`)
-    // 5. Addresses: this site's own pages are written from its root.
-    undo('href="/', 'href="https://automagik.si/', 6)
+    // 6. Addresses: this site's own pages are written from its root.
+    undo('href="/', 'href="https://automagik.si/', 5)
+    // 7. The host is Automagik: Desktop and Mobile go back from the top block to the
+    // Automagik row, and the row itself (the piece's own lines) goes back in.
+    const apps = piece.match(/<span class="fam-apps" role="group" aria-label="The Automagik app">.*?<\/span>/)[0]
+    const row = piece.match(/\n  <div class="fam-top">\n    <a class="fam-home" .*<\/a>\n    .*\n  <\/div>/)[0]
+    assert.ok(row.endsWith(`\n    ${apps}\n  </div>`))
+    undo(`</a>\n    ${apps}\n    <ul class="fam-links"`, '</a>\n    <ul class="fam-links"')
+    undo('\n  </div>\n  <span class="eyebrow">Products</span>', `\n  </div>${row}\n  <span class="eyebrow">Products</span>`)
     assert.equal(back, piece, `${route}: the drawer is the piece's markup`)
 
     // WHAT IT SHOWS, said outright so a later issue of the piece cannot change it unseen.
     const rows = [...drawer.matchAll(/data-family-product="([^"]+)" data-family-line="([^"]*)"/g)].map(([, name, line]) => [name, line])
-    assert.deepEqual(rows, [['Automagik', 'Open building blocks of superintelligence.'], ['Desktop', 'Your agent team, in your chats.'], ['Mobile', 'Your agents on your Android phone.'], ['Omni', 'Your chat apps, connected.'], ['Genie', 'A wish, a branch, a report.'], ['Mykes', 'Coming soon.']], route)
+    assert.deepEqual(rows, [['Automagik', 'Open building blocks of superintelligence.'], ['Desktop', 'Your agent team, in your chats.'], ['Mobile', 'Your agents on your Android phone.'], ['Arca', 'Be your own cloud. Infrastructure for AI agents.'], ['Omni', 'Your chat apps, connected.'], ['Genie', 'A wish, a branch, a report.'], ['Mykes', 'Coming soon.']], route)
     // Each product's line is the one the site's own menu gives it.
     for (const [name, line] of rows.slice(1)) assert.ok(html.includes(`<strong>${name}</strong><span>${line}</span>`), `${route} ${name}`)
     assert.ok(html.slice(html.indexOf('<footer')).includes(`<p>${familyHost.line}</p>`), route)
     // Omni, Genie and Mykes: the word alone, cream and ink, then the line. "Coming soon." under Mykes.
     const list = drawer.match(/<ul class="fam-list">([\s\S]*?)<\/ul>/)[1].trim().split('\n').map(row => row.trim())
-    assert.deepEqual(list, [['omni', 'Omni', 'Your chat apps, connected.', ''], ['genie', 'Genie', 'A wish, a branch, a report.', ''], ['mykes', 'Mykes', 'Coming soon.', ' is-mykes']].map(([file, name, line, own]) =>
+    assert.deepEqual(list.slice(1), [['omni', 'Omni', 'Your chat apps, connected.', ''], ['genie', 'Genie', 'A wish, a branch, a report.', ''], ['mykes', 'Mykes', 'Coming soon.', ' is-mykes']].map(([file, name, line, own]) =>
       `<li><a class="fam-item is-word" href="/${file}/"${route === `/${file}/` ? ' aria-current="page"' : ''} data-family-product="${name}" data-family-line="${line}"><span class="fam-words"><span class="fam-lockup fam-word${own}"><img class="fam-lock-cream" src="/assets/family/${file}-wordmark-cream.svg" alt="${name}" loading="lazy" decoding="async"><img class="fam-lock-ink" src="/assets/family/${file}-wordmark-ink.svg" alt="${name}" loading="lazy" decoding="async"></span><span>${line}</span></span></a></li>`), route)
     // No pet, no Genie head, no mark beside a product: the only pictures are Automagik's
     // lockup and the three words, and nothing comes from the site's art or logo folders.
     const pictures = [...drawer.matchAll(/(?:src|srcset)="([^"]+)"/g)].map(match => match[1])
-    assert.ok(pictures.length === 16 && pictures.every(file => /^\/assets\/family\/(?:automagik-lockup-three-colours-(?:cream|ink)-(?:48|64|128)\.png|(?:omni|genie|mykes)-wordmark-(?:cream|ink)\.svg)$/.test(file)), `${route} ${pictures}`)
+    assert.ok(pictures.length === 12 && pictures.every(file => /^\/assets\/family\/(?:automagik-lockup-three-colours-(?:cream|ink)-(?:48|64|128)\.png|(?:omni|genie|mykes)-wordmark-(?:cream|ink)\.svg)$/.test(file)), `${route} ${pictures}`)
     assert.doesNotMatch(drawer, /assets\/(?:art|brand)\/|triskle|(?:genie|omni|mykes)-lockup|\.webp/, route)
     // The drawer reaches every page of the site, the docs, the app and the privacy note. A
     // place on the page being read is a bare #name, so the piece shuts the drawer first.
@@ -765,6 +782,63 @@ test('the family drawer on every page: the piece\'s markup with Automagik in the
     for (const place of reach.filter(href => href.startsWith('#'))) assert.ok(html.includes(`id="${place.slice(1)}"`), `${route} ${place}`)
     assert.ok(reach.every(href => href === docs || href.startsWith('/') || href.startsWith('#')), `${route}: every other address is this site's own`)
   }
+})
+
+// THE HOST IS AUTOMAGIK (the package's issue 11b, "A case of its own"). On Automagik's own
+// pages the "You are here" block and the Automagik row would show the same lockup, one under
+// the other. The rule: Automagik appears once, as the "You are here" block; the Automagik row
+// is left out; Desktop and Mobile move into that block, right under the link and above the
+// page list; Products lists Arca first, by its own logo, then omni, genie and mykes.
+test('the family drawer, the host is Automagik: its lockup once, Desktop and Mobile in the top block, Arca first in Products', () => {
+  const piece = uncommented(read('assets/family/family.html'))
+  const lockup = piece.match(/<span class="fam-lockup"><picture class="fam-lock-cream">.*?<\/picture><picture class="fam-lock-ink">.*?<\/picture><\/span>/)[0]
+  const apps = piece.match(/<span class="fam-apps" role="group" aria-label="The Automagik app">.*?<\/span>/)[0].replaceAll('href="https://automagik.si/', 'href="/')
+  for (const [route] of generated) {
+    const drawer = family(route), menu = drawer.slice(drawer.indexOf('<nav class="fam"'), drawer.indexOf('</nav>'))
+    const mark = route === '/desktop/' || route === '/mobile/' ? apps.replace(`href="${route}" data-family-product=`, `href="${route}" aria-current="page" data-family-product=`) : apps
+    // ONCE: the menu holds Automagik's lockup one time, in the top block's link, and has
+    // no Automagik row. (The layer that opens on the way to another product keeps the
+    // piece's large lockup: it is not in the menu, and shows only then.)
+    assert.equal(menu.split('<span class="fam-lockup">').length, 2, `${route}: Automagik's lockup stands once in the menu`)
+    assert.equal(menu.split('data-family-product="Automagik"').length, 2, route)
+    assert.doesNotMatch(drawer, /fam-top|fam-home/, `${route}: the Automagik row is left out`)
+    // THE TOP BLOCK, in order: the link (lockup, line, "You are here"), Desktop and Mobile
+    // right under it, then the list of pages.
+    const block = menu.match(/<div class="fam-here-block" data-family-here>\n([\s\S]*?)\n  <\/div>/)[1].split('\n').map(line => line.trim())
+    assert.equal(block.length, 3, route)
+    assert.ok(block[0].startsWith('<a class="fam-item is-here" href="/" data-family-product="Automagik"') && block[0].includes(`<span class="fam-logo">${lockup.replaceAll('alt=""', 'alt="Automagik"')}</span><span>${familyHost.line}</span>`.replace(/__FAM_LOCKUP_(CREAM|INK)_(48|64)__/g, (slot, tone, size) => `/assets/family/automagik-lockup-three-colours-${tone.toLowerCase()}-${size}.png`)) && block[0].endsWith('<span class="fam-here">You are here</span></a>'), `${route}: the top block's link`)
+    assert.equal(block[1], mark, `${route}: Desktop and Mobile stand in the top block, right under the link`)
+    assert.ok(block[2].startsWith('<ul class="fam-links" data-family-links aria-label="Sections">'), `${route}: the page list comes after them`)
+    // PRODUCTS: Arca first, by its own logo (the package's file, inline, in the text colour)
+    // and its own line; then the three words.
+    const names = [...menu.slice(menu.indexOf('<ul class="fam-list">')).matchAll(/data-family-product="([^"]+)"/g)].map(match => match[1])
+    assert.deepEqual(names, ['Arca', 'Omni', 'Genie', 'Mykes'], `${route}: Arca is the first of the products`)
+    const first = menu.match(/<ul class="fam-list">\n\s*<li>(.*)<\/li>\n/)[1]
+    assert.ok(first.startsWith('<a class="fam-item is-logo" href="/arca/"') && first.includes(`<span class="fam-logo">${read('assets/family/arca-logo-b.svg').trim()}</span><span>${arca.line}</span>`), `${route}: Arca's row is its logo and its line`)
+    assert.equal(first.includes(' aria-current="page"'), route === '/arca/', route)
+    assert.equal(menu.split('<svg').length, 2, `${route}: the ark is the menu's one drawing`)
+    // NEVER REPEATED LOWER DOWN: each thing has one place in the menu, and the page list
+    // holds only pages with no row or button of their own.
+    const places = [...menu.matchAll(/data-family-product="([^"]+)"/g)].map(match => match[1])
+    assert.deepEqual(places, ['Automagik', 'Desktop', 'Mobile', 'Arca', 'Omni', 'Genie', 'Mykes'], route)
+    const own = [...menu.matchAll(/<a class="fam-(?:item|chip)[^"]*" href="([^"]+)"/g)].map(match => match[1])
+    for (const [href] of familyLinks) assert.ok(!own.includes(href), `${route}: ${href} already has its place in the menu`)
+  }
+  assert.deepEqual(familyLinks.map(([href]) => href), ['/cloud/', '/desktop/#install', '/cloud/#privacy'])
+  assert.equal(familyHost.arcaLine, arca.line)
+  // The two rules this case needs are in the package's README, not in family.css: the host
+  // adds them. Here they are, word for word, and this site's stylesheet holds both.
+  const squeeze = text => text.replace(/\s+/g, '')
+  const css = squeeze(read('styles.css')), given = squeeze(read('assets/family/family.css'))
+  for (const rule of [
+    '.fam-here-block .fam-apps { padding: var(--space-8) var(--space-13) 0; }',
+    '.fam-item.is-logo .fam-words > span:last-child { padding-left: calc(var(--lock) * 321.34 / 264); }',
+  ]) {
+    assert.equal(css.split(squeeze(rule).replace(/;}$/, '}')).length, 2, `this site's stylesheet holds ${rule}`)
+    assert.ok(!given.includes(squeeze(rule).split('{')[0] + '{'), `the piece's stylesheet does not set ${rule.split(' {')[0]}`)
+  }
+  // The label over Products and Arca's line stand in the same column: the piece's own measure.
+  assert.ok(read('assets/family/family.css').includes('.fam > .eyebrow { padding-left: calc(var(--lock) * 321.34 / 264); }'))
 })
 
 test('the family drawer wears this site: every name the piece reads is given, and the light page takes the piece\'s own day values', () => {

@@ -42,21 +42,31 @@ everywhere; it is the `products` list in `scripts/build-pages.mjs`.
 ## The family drawer
 
 The menu button and the drawer it opens are the product family's shared piece: Arca's
-drawer package, issue 11, approved by the owner on 2026-11-12. `assets/family/` holds the
+drawer package, issue 11, approved by the owner on 2026-11-12, as issue 11b gives it (the
+same piece, with the case where the host is Automagik answered). `assets/family/` holds the
 piece as it was given (`family.html`, `header-button.html`, `family.css`, `family.js`) and
 its art, all byte copies; `assets/family/SOURCE.md` lists each file's source and SHA-256,
 and `landing.test.mjs` pins them. Never edit a copy: a change is asked of the piece's
 author and arrives as a new issue, which is a file swap with new digests.
 
-- **What it shows**, top to bottom: where you are (Automagik, with its lockup and line);
-  Automagik's lockup with Desktop and Mobile; then Omni, Genie and Mykes, each as its word
-  in the lettering with no mark, "Coming soon." under Mykes; Support and Close. No pet, no
-  Genie head, and the triskle beside nothing but Automagik.
+- **What it shows**, top to bottom: where you are (Automagik, with its lockup and line),
+  with Desktop and Mobile right under it; then Products: Arca by its own logo, and Omni,
+  Genie and Mykes, each as its word in the lettering with no mark, "Coming soon." under
+  Mykes; Support and Close. No pet, no Genie head, and the triskle beside nothing but
+  Automagik.
+- **The host is Automagik** (the package's own rule for this case): Automagik appears once,
+  as the "You are here" block, never again lower down. So the piece's Automagik row is left
+  out, its Desktop and Mobile buttons move into the top block, and Arca, which the piece
+  has in the top block on Arca's site, is the first row of Products, by its logo
+  (`arca-logo-b.svg`, written into the page so it takes the text colour). The two style
+  rules this needs are in the package's README, not in `family.css`; they are in
+  `styles.css`, word for word.
 - **How it is built in**: `family(route)` in `scripts/build-pages.mjs` reads the piece's
   file and writes it into every page with its comments left out, its slots filled, and this
   site's own parts in the places the piece gives a host: the top block, the list under it
-  (`familyLinks`: Cloud, Arca, Get the app, Privacy; it shows below 860 px, where the
-  header's menus fold away), addresses written from this site's root, and
+  (`familyLinks`: Cloud, Get the app, Privacy, the pages with no row of their own; it
+  shows below 860 px, where the header's menus fold away), the three moves above,
+  addresses written from this site's root, and
   `aria-current="page"` on the page being read. A link to a place on the page being read
   is a bare `#name`, so the piece shuts the drawer before going there. The contract test
   undoes those parts one by one and compares what is left with the piece's file.
@@ -238,8 +248,10 @@ time, the active page, and every menu, drawer and footer link answering. It driv
 drawer the same way at 1440, 390 and 320 px: the button at the window's edge with its three
 lines in this ground's colours, the logo clear of it; a click, Enter or Space opens it, and
 it pushes the page aside without widening the window; the page behind is inert and only the
-drawer is offered to assistive technology; the lockup and the three words are the files
-for this ground, at one letter size, and no other picture is fetched; Tab stays inside;
+drawer is offered to assistive technology; the lockup, shown once, and the three words are
+the files for this ground, at one letter size, and no other picture is fetched; Desktop and
+Mobile stand in the top block under its link; Arca is the first product, by its logo, with
+its line in the names' column; Tab stays inside;
 Escape, Close, a press beside it or on the button shut it and the focus returns to the
 button; a product goes to its page, and a place on the page being read shuts the drawer
 first. With script off the button leads to the footer's sitemap. Every page run is in reduced motion and checks

@@ -262,6 +262,10 @@ export const oiTag = readFileSync(new URL('../assets/brand/open-intelligence/ope
 // The rows are the approved ones: Automagik's lockup with Desktop and Mobile, then omni,
 // genie and mykes, each as its word in the lettering with no mark, "Coming soon." under
 // Mykes. No pet, no Genie head, and the triskle beside nothing but Automagik.
+// THE HOST IS AUTOMAGIK (the package's issue 11b, "A case of its own"): Automagik appears
+// once, as the "You are here" block; the Automagik row is left out; Desktop and Mobile move
+// into that block, right under the link and above the list of pages; and Products lists
+// Arca first, by its own logo, then omni, genie and mykes.
 const familyFile = name => readFileSync(new URL(`../assets/family/${name}`, import.meta.url), 'utf8')
 const once = (text, from, to, times = 1) => {
   assert.equal(text.split(from).length - 1, times, `the family piece holds ${from} ${times} time(s)`)
@@ -279,7 +283,7 @@ export const familyArt = {
 export const familyHost = { name: 'Automagik', line: 'Open building blocks of superintelligence.', arcaLine: 'Be your own cloud. Infrastructure for AI agents.' }
 // This site's pages with no row in the drawer, for a window whose header has no room for
 // the menus. Docs is the drawer's own Support link; the phone app is on Mobile's page.
-export const familyLinks = [['/cloud/', 'Cloud'], ['/arca/', 'Arca'], ['/desktop/#install', 'Get the app'], ['/cloud/#privacy', 'Privacy']]
+export const familyLinks = [['/cloud/', 'Cloud'], ['/desktop/#install', 'Get the app'], ['/cloud/#privacy', 'Privacy']]
 const withoutComments = html => html.replace(/<!--[\s\S]*?-->\n?/g, '').trim()
 // The button: the piece's own markup. With script off it is a plain link, and on this site
 // that link goes to the page's own sitemap, the footer, where every page is listed.
@@ -289,6 +293,14 @@ export function family(route) {
   // The piece's own lockup markup, as it stands in the Automagik row, for the top block too:
   // there the link has no name of its own, so the picture carries it.
   const lockup = html.match(/<span class="fam-lockup"><picture class="fam-lock-cream">.*?<\/picture><picture class="fam-lock-ink">.*?<\/picture><\/span>/)[0]
+  // Arca's row in Products: the piece's own Arca item, as it stands in the piece's top block,
+  // without "You are here", as a logo row. The logo is the package's file, inline, so it
+  // takes the text colour.
+  let arcaRow = html.match(/<a class="fam-item is-here" .*?<\/a>/)[0]
+  arcaRow = once(arcaRow, 'class="fam-item is-here"', 'class="fam-item is-logo"')
+  arcaRow = once(arcaRow, ' aria-current="page"', '')
+  arcaRow = once(arcaRow, '<span class="fam-here">You are here</span>', '')
+  arcaRow = once(arcaRow, '__FAM_ARCA__', familyFile('arca-logo-b.svg').trim())
   html = once(html, '__FAM_ARCA__', once(lockup, 'alt=""', `alt="${familyHost.name}"`, 2))
   html = once(html, 'href="https://automagik.si/arca/" data-family-product="Arca"', `href="/" data-family-product="${familyHost.name}"`)
   html = once(html, familyHost.arcaLine, familyHost.line, 2)
@@ -300,9 +312,17 @@ export function family(route) {
   }).join('')
   const list = html.match(/(<ul class="fam-links" data-family-links aria-label="Sections">)(.*?)(<\/ul>)/)
   html = once(html, list[0], list[1] + links + list[3])
+  // The host is Automagik: its row is left out, Desktop and Mobile stand in the top block
+  // right under the link, and Arca is the first of the products.
+  const apps = html.match(/<span class="fam-apps" role="group" aria-label="The Automagik app">.*?<\/span>/)[0]
+  const row = html.match(/\n  <div class="fam-top">\n    <a class="fam-home" .*<\/a>\n    (.*)\n  <\/div>/)
+  assert.equal(row[1], apps, 'the Automagik row holds the lockup and the two app buttons')
+  html = once(html, row[0], '')
+  html = once(html, '\n    <ul class="fam-links"', `\n    ${apps}\n    <ul class="fam-links"`)
+  html = once(html, '<ul class="fam-list">\n', `<ul class="fam-list">\n    <li>${arcaRow}</li>\n`)
   for (const [slot, name] of Object.entries(familyArt)) html = html.replaceAll(slot, `/assets/family/${name}`)
   html = once(html, 'href="https://automagik.si/', 'href="/', 6)
-  assert.doesNotMatch(html, /__FAM_|automagik\.si|data-family-product="Arca"/, 'every slot is filled, every address is this site\'s own, and the top block is Automagik')
+  assert.doesNotMatch(html, /__FAM_|automagik\.si|fam-top|fam-home/, 'every slot is filled, every address is this site\'s own, and Automagik has no row of its own')
   if (route !== '/' && html.includes(`href="${route}" data-family-product=`)) html = once(html, `href="${route}" data-family-product=`, `href="${route}" aria-current="page" data-family-product=`)
   return html
 }

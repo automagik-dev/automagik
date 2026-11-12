@@ -1,11 +1,17 @@
 # The family drawer: where these files come from
 
 Every file in this folder is a byte copy from one package: **the menu drawer and its button,
-issue 11** ("the right names in the drawer"), written by Arca's designer on 2026-11-12 and
-approved by the owner that day ("thats better now, approved. coming soon under mykes").
+issue 11b**, written by Arca's designer on 2026-11-12. Issue 11 ("the right names in the
+drawer") was approved by the owner that day ("thats better now, approved. coming soon under
+mykes"). Issue 11b is the same piece with one answer added, asked from this site: what the
+drawer holds when the host is Automagik (below).
 
 - The package's own `SHA256SUMS` has the sha256
-  `6dcfbe6f8e6d0737019320ddb883cb85986abe738a68c726b2104f816844bad8`.
+  `61c4b94c8ce6c9b21a37ac2c751a2977b57f18c7e7b4172dd86ed9c86f39c8cf`.
+- Issue 11's list had `6dcfbe6f8e6d0737019320ddb883cb85986abe738a68c726b2104f816844bad8`. Between
+  the two issues only the package's `README.md`, its `SHA256SUMS` and one new picture
+  (`shots/case-host-is-automagik.jpg`) changed: every file taken here has the same digest in
+  both.
 - Nothing here is edited. A change is asked of the piece's author and arrives as a new issue:
   replace the files, put the new digests in this table and in `landing.test.mjs`.
 - `scripts/build-pages.mjs` reads `family.html` and `header-button.html` and writes the
@@ -30,6 +36,31 @@ approved by the owner that day ("thats better now, approved. coming soon under m
 | `genie-wordmark-ink.svg` | `art/genie-wordmark-ink.svg` | `481008dcd0b1281308e22474cebef71a20f78b247e51095896bebec9561d647d` |
 | `mykes-wordmark-cream.svg` | `art/mykes-word-night.svg` | `9099d9566ebee75e3cc683987f5b69bfc8c1c41873871f5415654a1efbc12752` |
 | `mykes-wordmark-ink.svg` | `art/mykes-word-day.svg` | `28c80ac26bea923146094869fafe032a9397d85c4fd0ad6432a885ceb24219dc` |
+| `arca-logo-b.svg` | `art/arca-logo-b.svg` | `ea2cfc8b60be3fe0b064e11b6238b290a1545a654e8fe44a190ebc0a623db116` |
+
+## The host is Automagik (issue 11b, "A case of its own")
+
+On Automagik's own pages the "You are here" block and the Automagik row would both show the
+Automagik lockup, one under the other. The package's rule, which the builder follows:
+
+- **Automagik appears once**, as the "You are here" block: its lockup (the Automagik row's own
+  pictures and classes, inside `.fam-logo`), its line, "You are here".
+- **The Automagik row (`.fam-top`) is not in the page.**
+- **Desktop and Mobile (`.fam-apps`) stand in that block**, right under the link and above the
+  list of pages.
+- **Products lists Arca first**, by its own logo: `arca-logo-b.svg`, the ark with its word,
+  inline in a `.fam-logo` inside a row with the class `is-logo`; then omni, genie, mykes.
+- **Two style rules for this case are in the package's README, not in `family.css`**, for the
+  host to add. They are in `styles.css`, word for word:
+
+  ```css
+  .fam-here-block .fam-apps { padding: var(--space-8) var(--space-13) 0; }
+  .fam-item.is-logo .fam-words > span:last-child { padding-left: calc(var(--lock) * 321.34 / 264); }
+  ```
+
+The package's picture of this case is a mock on Arca's draft page; its line and section names
+are stand-ins. The line here is this site's own ("Open building blocks of
+superintelligence."), and the list holds this site's pages with no row of their own.
 
 ## The words
 
@@ -41,11 +72,11 @@ approved by the owner that day ("thats better now, approved. coming soon under m
   and `-ink` (ink letters, for a light ground) is its `mykes-word-day.svg`. The same two files
   are in `docs/brand/logo/wordmark/` under these names.
 - No mark is approved for Omni, Genie or Mykes: each shows its word alone. The triskle stands
-  in Automagik's lockup and nowhere else in the drawer. The Genie and Omni lockups, which
-  carry the triskle, are not used here.
+  in Automagik's lockup and nowhere else in the drawer. Arca's logo is Arca's own: the ark.
+  The Genie and Omni lockups, which carry the triskle, are not used here.
 
 ## Not taken from the package
 
 - `piece/family-bar-values.css`: Arca's own four colours.
-- `art/arca-logo-a.svg` and `art/arca-logo-b.svg`: Arca's logo for Arca's own top block.
+- `art/arca-logo-a.svg`: Arca's other logo, for Arca's own page A.
 - `shots/` and the package's `README.md`.

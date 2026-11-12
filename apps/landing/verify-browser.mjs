@@ -352,7 +352,7 @@ try {
         assert.ok(now.inert && now.ariaHidden === 'true' && now.expanded === 'true' && now.scroll === 'hidden' && now.focus === 'drawer', `The page behind is out of reach and the focus is in the drawer: ${about} ${JSON.stringify(now)}`)
         // What assistive technology is offered: the drawer's own things and nothing of the page.
         const phone = width <= 860
-        const names = ['Automagik', ...(phone ? ['Cloud', 'Arca', 'Get the app', 'Privacy'] : []), 'Automagik', 'Desktop', 'Mobile', 'Omni', 'Genie', 'Mykes', 'Support', 'Close']
+        const names = ['Automagik', 'Desktop', 'Mobile', ...(phone ? ['Cloud', 'Get the app', 'Privacy'] : []), 'Arca', 'Omni', 'Genie', 'Mykes', 'Support', 'Close']
         // (The tree lists them in its own order, with a label's capitals as they are drawn.)
         const offered = (await cdp.send('Accessibility.getFullAXTree')).nodes.filter(node => !node.ignored && ['link', 'button'].includes(node.role?.value)).map(node => (node.name?.value ?? '').toLowerCase())
         const unmatched = [...offered]
@@ -370,21 +370,39 @@ try {
             every: [...drawer.querySelectorAll('img, source')].map(node => node.getAttribute('src') ?? node.getAttribute('srcset')),
             rows: [...drawer.querySelectorAll('.fam-list > li')].map(row => row.innerText.trim()), here: drawer.querySelector('[data-family-here] .fam-item').textContent.trim(), hereCurrent: drawer.querySelector('[data-family-here] .fam-item').getAttribute('aria-current'),
             links: [...drawer.querySelectorAll('[data-family-links] a')].filter(link => link.getClientRects().length).map(link => link.getAttribute('href')),
+            // The host is Automagik: what stands in the top block, in order; whether the Automagik
+            // row is there; where Desktop and Mobile stand against the block's link; and where
+            // the label, Arca's line and Omni's line begin.
+            block: [...drawer.querySelector('[data-family-here]').children].map(node => node.className), row: drawer.querySelectorAll('.fam-top, .fam-home').length,
+            chips: (() => { const link = drawer.querySelector('[data-family-here] .fam-item').getBoundingClientRect(), first = drawer.querySelector('[data-family-here] .fam-apps .fam-chip').getBoundingClientRect(), mark = shown[0].getBoundingClientRect(); return { side: first.left - mark.left, under: first.top - link.bottom, hrefs: [...drawer.querySelectorAll('[data-family-here] .fam-apps .fam-chip')].map(chip => chip.getAttribute('href')) } })(),
+            starts: ['.fam > .eyebrow', '.fam-item.is-logo .fam-words > span:last-child', '.fam-item[href="/omni/"] .fam-words > span:last-child'].map(selector => { const node = drawer.querySelector(selector); return node.getBoundingClientRect().left + parseFloat(getComputedStyle(node).paddingLeft) }),
+            ark: (() => { const ark = drawer.querySelector('.fam-list > li:first-child .fam-item.is-logo .fam-logo svg'); return ark && { height: ark.getBoundingClientRect().height, name: ark.getAttribute('aria-label'), ink: getComputedStyle(ark).fill, text: getComputedStyle(drawer.querySelector('.fam-item.is-logo')).color, href: ark.closest('a').getAttribute('href') } })(),
             current: [...drawer.querySelectorAll('[aria-current="page"]')].filter(node => !node.matches('.is-here')).map(node => node.getAttribute('href')),
             inside: drawer.scrollWidth - drawer.clientWidth,
           }
         })
         const tone = colorScheme === 'dark' ? 'cream' : 'ink', lockup = `automagik-lockup-three-colours-${tone}-${width <= 480 ? 48 : 64}.png`
         assert.equal(seen.lock, width <= 480 ? 24 : 30)
-        assert.deepEqual(seen.files, [lockup, lockup, `omni-wordmark-${tone}.svg`, `genie-wordmark-${tone}.svg`, `mykes-wordmark-${tone}.svg`], `The drawer shows the lockup and the three words for this ground: ${about}`)
-        assert.deepEqual(seen.alts, ['Automagik', '', 'Omni', 'Genie', 'Mykes'], `Each picture has its name: ${about}`)
-        assert.ok(Math.abs(seen.heights[0] - seen.lock) <= 0.5 && seen.heights[1] <= seen.lock + 0.5 && seen.heights[1] >= seen.lock * 0.6, `The lockup is drawn at its row's height: ${about} ${seen.heights}`)
-        assert.ok(Math.abs(seen.heights[2] - seen.lock) <= 0.5 && Math.abs(seen.heights[3] - seen.lock) <= 0.5 && Math.abs(seen.heights[4] - seen.lock * 257 / 264) <= 0.5, `The three words are one letter size: ${about} ${seen.heights}`)
+        // The host is Automagik: its lockup is shown once, in the top block, and it has no row.
+        assert.deepEqual(seen.files, [lockup, `omni-wordmark-${tone}.svg`, `genie-wordmark-${tone}.svg`, `mykes-wordmark-${tone}.svg`], `The drawer shows the lockup once and the three words for this ground: ${about}`)
+        assert.deepEqual(seen.alts, ['Automagik', 'Omni', 'Genie', 'Mykes'], `Each picture has its name: ${about}`)
+        assert.equal(seen.row, 0, `Automagik has no row under its own block: ${about}`)
+        assert.ok(Math.abs(seen.heights[0] - seen.lock) <= 0.5, `The lockup is drawn at its row's height: ${about} ${seen.heights}`)
+        assert.ok(Math.abs(seen.heights[1] - seen.lock) <= 0.5 && Math.abs(seen.heights[2] - seen.lock) <= 0.5 && Math.abs(seen.heights[3] - seen.lock * 257 / 264) <= 0.5, `The three words are one letter size: ${about} ${seen.heights}`)
+        // Desktop and Mobile stand in the top block, right under the link, in the block's side room.
+        assert.deepEqual(seen.block, ['fam-item is-here', 'fam-apps', 'fam-links'], `The top block holds the link, the two app buttons, then the pages: ${about}`)
+        assert.deepEqual(seen.chips.hrefs, ['/desktop/', '/mobile/'], about)
+        assert.ok(Math.abs(seen.chips.side) <= 0.5 && Math.abs(seen.chips.under - 8) <= 0.5, `Desktop and Mobile stand in the block's side room, under the link: ${about} ${JSON.stringify(seen.chips)}`)
+        // Arca is the first product, by its own logo in the text colour, and its line stands in
+        // the names' column with the label and the other lines.
+        assert.deepEqual(seen.ark && [seen.ark.name, seen.ark.href, seen.ark.ink === seen.ark.text], ['arca', '/arca/', true], `Arca is the first of the products, by its logo: ${about} ${JSON.stringify(seen.ark)}`)
+        assert.ok(Math.abs(seen.ark.height - seen.lock * 0.7) <= 0.5, `Arca's logo at the piece's height: ${about} ${seen.ark.height}`)
+        assert.ok(Math.abs(seen.starts[1] - seen.starts[0]) <= 0.5 && Math.abs(seen.starts[1] - seen.starts[2]) <= 0.5, `Arca's line stands in the names' column: ${about} ${seen.starts}`)
         assert.ok(seen.every.every(file => /^\/assets\/family\/(?:automagik-lockup-three-colours-(?:cream|ink)-(?:48|64)\.png|(?:omni|genie|mykes)-wordmark-(?:cream|ink)\.svg)$/.test(file)), `No pet, no head and no mark beside a product: ${about} ${seen.every}`)
-        assert.deepEqual(seen.rows, ['Your chat apps, connected.', 'A wish, a branch, a report.', 'Coming soon.'], `Each product's line, "Coming soon." under Mykes: ${about}`)
+        assert.deepEqual(seen.rows, ['Be your own cloud. Infrastructure for AI agents.', 'Your chat apps, connected.', 'A wish, a branch, a report.', 'Coming soon.'], `Each product's line, "Coming soon." under Mykes: ${about}`)
         assert.equal(seen.here, 'Open building blocks of superintelligence.You are here', `The top block is Automagik: ${about}`)
         assert.equal(seen.hereCurrent, route === '/' ? 'page' : 'true')
-        assert.deepEqual(seen.links, phone ? ['/cloud/', '/arca/', '/desktop/#install', '/cloud/#privacy'] : [], `The site's other pages show in the drawer only where the header has no room: ${about}`)
+        assert.deepEqual(seen.links, phone ? ['/cloud/', '/desktop/#install', '/cloud/#privacy'] : [], `The site's other pages show in the drawer only where the header has no room: ${about}`)
         assert.deepEqual(seen.current, route === '/' ? [] : [route], `The drawer marks the page being read: ${about}`)
         assert.equal(seen.inside, 0, `Nothing in the drawer is wider than it: ${about}`)
         assert.deepEqual(art.filter(file => !file.includes(tone)), [], `Only the art for this ground is fetched: ${about}`)
