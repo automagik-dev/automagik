@@ -9,25 +9,35 @@ export const MISSING_TOOLS = 'Remote Hermes has no Automagik team tools: message
 const finish = (kind, message) => ({ type: 'finish', reason: { kind, ...(message ? { failure: { code: 'REMOTE_HERMES', message } } : {}) } })
 const service = (ctx, name) => { try { return ctx.get?.(name) } catch { return undefined } }
 
-export async function remoteApproval(ctx, agent, params, signal) {
-  const approval = service(ctx, 'approval')
-  let policy, sandbox, preset
+// What Hermes asks is the person's to answer at every chat level: nothing here says yes or
+// no for them. A level that asks shows the chat's approval card. A level that never asks has
+// no such card, so the same question goes to the chat as a question with these two answers.
+const ALLOW = 'Allow once', DENY = 'Deny'
+const asked = params => String(params?.description || params?.command || params?.tool_name || 'Run a remote tool')
+
+async function askInChat(ctx, agent, params, signal) {
+  const questions = service(ctx, 'userQuestions')
+  if (!questions?.ask) return 'deny'
   try {
-    policy = approval?.effectivePolicy?.(agent?.session)
-    sandbox = service(ctx, 'sandboxPolicy')?.resolve?.({ session: agent?.session })?.mode
-    preset = service(ctx, 'permissionPresets')?.current?.(agent?.session)
-    if (sandbox === undefined) sandbox = agent?.session?.snapshotEvents?.().filter(event => event.type === 'sandbox/mode').at(-1)?.data?.mode
-    if (preset === undefined) preset = agent?.session?.snapshotEvents?.().filter(event => event.type === 'permission/preset').at(-1)?.data?.preset
+    const answer = await questions.ask({ agent, signal, questions: [{
+      id: String(params?.request_id ?? 'remote-hermes-approval'),
+      question: 'Remote Hermes asks before it runs this. Allow it?', detail: asked(params),
+      options: [{ label: ALLOW }, { label: DENY }],
+      intent: { kind: 'approval', approve: ALLOW, reject: DENY, subject: { name: 'Remote Hermes' } },
+    }] })
+    const [picked] = answer?.answers ?? []
+    return !picked?.custom && picked?.selected?.length === 1 && picked.selected[0] === ALLOW ? 'once' : 'deny'
   } catch { return 'deny' }
-  if (!agent || !approval) return 'deny'
-  if (preset !== 'auto' && policy === 'never' && sandbox === 'danger-full-access') return 'once'
-  if (policy === 'never') return 'deny'
+}
+
+export async function remoteApproval(ctx, agent, params, signal) {
+  if (!agent) return 'deny'
+  const approval = service(ctx, 'approval')
+  let policy
+  try { policy = approval?.effectivePolicy?.(agent.session) } catch { policy = undefined }
+  if (!approval?.request || policy === undefined || policy === 'never') return askInChat(ctx, agent, params, signal)
   try {
-    const answer = await approval.request({
-      agent, toolName: REMOTE_TOOL, callId: params.request_id,
-      reason: `Remote Hermes: ${params.description || params.command || params.tool_name || 'Run a remote tool'}`,
-      signal,
-    })
+    const answer = await approval.request({ agent, toolName: REMOTE_TOOL, callId: params.request_id, reason: `Remote Hermes: ${asked(params)}`, signal })
     return answer === 'allowed-once' || answer === 'allowed' ? 'once' : 'deny'
   } catch { return 'deny' }
 }
@@ -102,7 +112,7 @@ export class RemoteChatAdapter extends LlmAdapter {
       if (options.signal?.aborted) return yield finish('aborted', 'Stopped before a remote submit.')
       if (!entry) {
         const identity = this.identity(options.sessionId)
-        const run = await this.open({ identity, save: this.save, signal: options.signal, question: params => remoteApproval(this.rt.ctx, agent, params, options.signal) })
+        const run = await this.open({ identity, save: this.save, signal: options.signal, question: (params, withdrawn) => remoteApproval(this.rt.ctx, agent, params, AbortSignal.any([options.signal, withdrawn].filter(Boolean))) })
         entry = { run, calls: new Set() }
         this.live.set(options.sessionId, entry)
         if (options.signal?.aborted) return yield finish('aborted', 'Stopped before a remote submit.')

@@ -78,43 +78,43 @@ var ZH = {
   "Hermes on {host} stopped before it was ready": "{host} 上的 Hermes 还没就绪就停止了",
   "SSH signed in and started Hermes, but Hermes exited with code {code}.": "SSH 已登录并启动了 Hermes，但 Hermes 以退出码 {code} 退出。",
   "SSH signed in and started Hermes, but Hermes stopped right away.": "SSH 已登录并启动了 Hermes，但 Hermes 立刻停止了。",
-  "Run “hermes serve” on {host} to see the full error, fix it there, then test again.": "在 {host} 上运行“hermes serve”查看完整错误，在那里修复后重新测试。",
+  "Run “hermes serve” on {host} to see the full error, fix it there, then try again.": "在 {host} 上运行“hermes serve”查看完整错误，在那里修复后重试。",
   "Hermes took too long to start": "Hermes 启动时间过长",
   "Hermes on {host} was not ready in time": "{host} 上的 Hermes 未能及时就绪",
   "SSH signed in and started Hermes, but Hermes did not say it was ready before the deadline.": "SSH 已登录并启动了 Hermes，但 Hermes 没有在期限内报告就绪。",
-  "Check that Hermes starts normally on {host}, then test again.": "检查 Hermes 能否在 {host} 上正常启动，然后重新测试。",
+  "Check that Hermes starts normally on {host}, then try again.": "检查 Hermes 能否在 {host} 上正常启动，然后重试。",
   "Hermes did not report its port": "Hermes 没有报告端口",
   "Hermes on {host} started without a port": "{host} 上的 Hermes 启动了，但没有报告端口",
   "Hermes is running there, but it never said which port it listens on, so there is nothing to connect to.": "Hermes 正在那里运行，但一直没有说明监听哪个端口，因此无从连接。",
-  "Update Hermes on {host}, then test again.": "更新 {host} 上的 Hermes，然后重新测试。",
+  "Update Hermes on {host}, then try again.": "更新 {host} 上的 Hermes，然后重试。",
   "The one-time token was not accepted": "一次性令牌未被接受",
   "Automagik and {host} could not agree on this connection": "Automagik 与 {host} 未能就此连接达成一致",
   "The start script or Hermes on {host} did not accept the one-time token made for this connection.": "{host} 上的启动脚本或 Hermes 没有接受为此连接生成的一次性令牌。",
-  "Test again. If it keeps failing, update Hermes on {host} and check that signing in there prints no extra text.": "请重新测试。如果仍然失败，请更新 {host} 上的 Hermes，并检查登录那台电脑时没有输出多余的文字。",
+  "Try again. If it keeps failing, update Hermes on {host} and check that signing in there prints no extra text.": "请重试。如果仍然失败，请更新 {host} 上的 Hermes，并检查登录那台电脑时没有输出多余的文字。",
   "The tunnel did not open": "隧道未能打开",
   "SSH could not open a tunnel to Hermes on {host}": "SSH 无法打开通往 {host} 上 Hermes 的隧道",
   "Hermes started, but the SSH tunnel from this computer to it did not start listening, or carried no answer.": "Hermes 已启动，但从这台电脑通往它的 SSH 隧道没有开始监听，或没有传回任何应答。",
-  "Check that {host} allows port forwarding, then test again.": "检查 {host} 是否允许端口转发，然后重新测试。",
+  "Check that {host} allows port forwarding, then try again.": "检查 {host} 是否允许端口转发，然后重试。",
   "A port from your SSH config is in use": "SSH 配置中的端口已被占用",
   "Port {port} from the SSH config for {host} is busy": "{host} 的 SSH 配置中的端口 {port} 已被占用",
   "A port forward in the SSH config for {host} could not start": "{host} 的 SSH 配置中的端口转发无法启动",
   "The SSH config entry for {host} forwards its own ports. One is already in use on this computer, usually by another SSH session to the same host, so SSH closed the tunnel.": "{host} 的 SSH 配置条目会转发自己的端口。其中一个端口已在这台电脑上被占用（通常是连接同一主机的另一个 SSH 会话），因此 SSH 关闭了隧道。",
-  "Close the other SSH session to {host}, or remove the forward from its config entry, then test again.": "关闭连接 {host} 的另一个 SSH 会话，或从其配置条目中移除该转发，然后重新测试。",
+  "Close the other SSH session to {host}, or remove the forward from its config entry, then try again.": "关闭连接 {host} 的另一个 SSH 会话，或从其配置条目中移除该转发，然后重试。",
   "The start script stopped": "启动脚本停止了",
   "Automagik’s start script failed on {host}": "Automagik 的启动脚本在 {host} 上失败了",
   "SSH signed in, but the small script that finds and starts Hermes stopped with an error.": "SSH 已登录，但用于查找并启动 Hermes 的小脚本因错误而停止。",
-  "Check that Python 3 works on {host} and that this user can run Hermes, then test again.": "检查 {host} 上的 Python 3 可用，且此用户可以运行 Hermes，然后重新测试。",
+  "Check that Python 3 works on {host} and that this user can run Hermes, then try again.": "检查 {host} 上的 Python 3 可用，且此用户可以运行 Hermes，然后重试。",
   "Check the SSH details": "检查 SSH 信息",
   "These SSH details can’t be used": "这些 SSH 信息无法使用",
   "The host, user, port, key path or Hermes path has characters SSH does not accept.": "主机、用户名、端口、密钥路径或 Hermes 路径中含有 SSH 不接受的字符。",
-  "Edit the SSH details, then test again.": "修改 SSH 信息，然后重新测试。",
+  "Edit the SSH details, then try again.": "修改 SSH 信息，然后重试。",
   "Trust this SSH host?": "信任此 SSH 主机？",
   "{host} is new to this computer": "这台电脑第一次连接 {host}",
   "This computer has not connected to {host} before. Compare this key with one you trust. If it matches, trust the host to continue.": "这台电脑以前没有连接过 {host}。请将此密钥与你信任的密钥比对；如果一致，信任此主机即可继续。",
   "This computer has not connected to {host} before, and Automagik cannot save its key for you.": "这台电脑以前没有连接过 {host}，Automagik 无法替你保存它的密钥。",
   "Only this exact key is saved to your known hosts. If {host} ever shows a different key, the connection is refused.": "只有这一个密钥会保存到你的已知主机中。如果 {host} 之后出示不同的密钥，连接将被拒绝。",
-  "The SSH config for {host} does not keep host keys. Change that config entry, then test again.": "{host} 的 SSH 配置不保存主机密钥。请修改该配置条目，然后重新测试。",
-  "Connect to {host} once in a terminal and accept its key, then test again.": "先在终端中连接一次 {host} 并接受其密钥，然后重新测试。",
+  "The SSH config for {host} does not keep host keys. Change that config entry, then try again.": "{host} 的 SSH 配置不保存主机密钥。请修改该配置条目，然后重试。",
+  "Connect to {host} once in a terminal and accept its key, then try again.": "先在终端中连接一次 {host} 并接受其密钥，然后重试。",
   "Key type": "密钥类型",
   "Fingerprint": "指纹",
   "This host’s key has changed": "此主机的密钥已更改",
@@ -127,8 +127,7 @@ var ZH = {
   "Hermes did not answer": "Hermes 没有应答",
   "Hermes on {host} started but did not answer correctly": "{host} 上的 Hermes 已启动，但没有正确应答",
   "SSH signed in and the tunnel opened, but Hermes did not complete the connection check.": "SSH 已登录，隧道也已打开，但 Hermes 没有完成连接检查。",
-  "Check that Hermes works on {host}, then test again.": "检查 Hermes 在 {host} 上能否正常工作，然后重新测试。",
-  "Settings → Feedback keeps a line about this test for a report.": "设置 → 反馈 中保留了关于此次测试的一行记录，可用于报告问题。",
+  "Check that Hermes works on {host}, then try again.": "检查 Hermes 在 {host} 上能否正常工作，然后重试。",
   "Trusting…": "正在信任…",
   "Trust this host": "信任此主机",
   "A chat is still running on this connection; stop it or wait.": "此连接上仍有聊天正在运行；请停止聊天或等待。",
@@ -137,10 +136,9 @@ var ZH = {
   "Connection cleanup is unconfirmed": "无法确认连接已清理",
   "Check {host} before reconnecting": "重新连接前请检查 {host}",
   "Automagik could not confirm that the owned Hermes process group stopped. Remote work may continue.": "Automagik 无法确认其管理的 Hermes 进程组已停止。远程任务可能仍在继续。",
-  "Check the remote Hermes process before testing or connecting again.": "再次测试或连接前，请检查远程 Hermes 进程。",
-  "On {host}, update Hermes through the Nix source that installed it (nix profile upgrade, or update your flake input and rebuild), then test again.": "在 {host} 上，通过安装 Hermes 的 Nix 来源进行更新（nix profile upgrade，或更新 flake 输入并重新构建），然后重新测试。",
-  "On {host}, run “{command}” and restart the Hermes container, then test again.": "在 {host} 上运行“{command}”并重启 Hermes 容器，然后重新测试。",
-  "On {host}, run “{command}”, then test again.": "在 {host} 上运行“{command}”，然后重新测试。",
+  "On {host}, update Hermes through the Nix source that installed it (nix profile upgrade, or update your flake input and rebuild), then try again.": "在 {host} 上，通过安装 Hermes 的 Nix 来源进行更新（nix profile upgrade，或更新 flake 输入并重新构建），然后重试。",
+  "On {host}, run “{command}” and restart the Hermes container, then try again.": "在 {host} 上运行“{command}”并重启 Hermes 容器，然后重试。",
+  "On {host}, run “{command}”, then try again.": "在 {host} 上运行“{command}”，然后重试。",
   "Hermes there": "那里的 Hermes",
   "Needed": "需要",
   "v{version} or newer": "v{version} 或更新版本",
@@ -151,71 +149,79 @@ var ZH = {
   "Automagik could not read the Hermes version on {host}": "Automagik 无法读取 {host} 上的 Hermes 版本",
   "“hermes --version” on {host} named no release, so Automagik cannot tell whether it is new enough. This connection needs v{version} or newer.": "{host} 上的“hermes --version”没有给出发行版本，因此 Automagik 无法判断它是否足够新。此连接需要 v{version} 或更新版本。",
   "“hermes --version” on {host} named no release, so Automagik cannot tell whether it is new enough.": "{host} 上的“hermes --version”没有给出发行版本，因此 Automagik 无法判断它是否足够新。",
+  "Change computer": "更换电脑",
+  "Check that Hermes on {host} has a profile, then try again.": "确认 {host} 上的 Hermes 有可用的配置，然后重试。",
+  "Check the remote Hermes process before connecting again.": "重新连接前，请检查远程 Hermes 进程。",
+  "Choose Try again to connect.": "选择“重试”即可连接。",
+  "Choose a computer": "选择一台电脑",
+  "Connect again": "重新连接",
+  "Connect once in a terminal and complete the required check. Then connect again.": "先在终端中连接一次并完成所需的检查，然后重新连接。",
+  "Connect to a Hermes started with “hermes serve”.": "请连接用“hermes serve”启动的 Hermes。",
+  "Connecting to {address}": "正在连接 {address}",
+  "Enter a valid session token, then try again.": "输入有效的会话令牌，然后重试。",
+  "Hermes on {host} is run by a gateway that owns its sessions": "{host} 上的 Hermes 由管理其会话的网关运行",
+  "Hermes on {host} offered no profile to chat with": "{host} 上的 Hermes 没有提供可聊天的配置",
+  "Hermes’s default": "Hermes 的默认配置",
+  "Install Hermes on {host}, or enter its path under More options, then try again.": "请在 {host} 上安装 Hermes，或在“更多选项”中填写它的路径，然后重试。",
+  "No profiles are available. Check the connection and try again.": "没有可用配置。请检查连接后重试。",
+  "More options": "更多选项",
+  "Opening the chat…": "正在打开聊天…",
+  "Opening…": "正在打开…",
+  "Pick one of your SSH hosts. Automagik finds the Hermes there and opens a chat.": "选择一台 SSH 主机。Automagik 会找到那里的 Hermes 并打开聊天。",
+  "Profile: {profile}": "配置：{profile}",
+  "Settings → Feedback keeps a line about this failure for a report.": "设置 → 反馈 中保留了关于此次失败的一行记录，可用于报告问题。",
+  "The Hermes on {address} has more than one profile.": "{address} 上的 Hermes 有多个配置。",
+  "The connection waited too long and was closed": "连接等待太久，已关闭",
+  "This Hermes can’t be used here": "这个 Hermes 无法在这里使用",
+  "This Hermes is run by a gateway that owns its sessions. Connect to a Hermes started with “hermes serve”.": "这个 Hermes 由管理其会话的网关运行。请连接用“hermes serve”启动的 Hermes。",
+  "Remote Hermes is too old for this connection. Update Hermes, then connect again.": "远程 Hermes 版本太旧，无法使用此连接。请更新 Hermes，然后重新连接。",
   "Hermes needs an update": "Hermes 需要更新",
   "Update Hermes on {host}": "更新 {host} 上的 Hermes",
   "This Hermes installation lacks the server ownership options needed for an SSH connection.": "此 Hermes 安装缺少通过 SSH 连接所需的服务器进程归属选项。",
   "This computer cannot run the SSH connection yet": "这台电脑暂时无法运行此 SSH 连接",
   "Check the remote system and Python": "检查远程系统和 Python",
   "The remote computer needs Linux or macOS, Python 3, and a supported Hermes installation.": "远程电脑需要 Linux 或 macOS、Python 3，以及受支持的 Hermes 安装。",
-  "Check Python and the supported system on the other computer, then test again.": "检查另一台电脑上的 Python 和受支持的系统，然后重试。",
+  "Check Python and the supported system on the other computer, then try again.": "检查另一台电脑上的 Python 和受支持的系统，然后重试。",
   "The connection timed out": "连接超时",
   "The other computer did not become ready in time": "另一台电脑未能及时准备就绪",
-  "Check that the other computer is reachable and Hermes can start, then test again.": "检查能否连接另一台电脑，以及 Hermes 是否可以启动，然后重试。",
-  "Check the connection and remote Hermes startup before trying again.": "再次尝试前，请检查连接和远程 Hermes 的启动情况。",
+  "Check that the other computer is reachable and Hermes can start, then try again.": "检查能否连接另一台电脑，以及 Hermes 是否可以启动，然后重试。",
   "We could not reach the other computer": "无法连接另一台电脑",
   "Check the SSH address and connection": "检查 SSH 地址和连接",
   "Check the host or config name, network, and SSH access to the other computer.": "检查主机名或配置名、网络，以及对另一台电脑的 SSH 访问。",
-  "Confirm that SSH can reach this computer, then test again.": "确认 SSH 能连接这台电脑，然后重试。",
+  "Confirm that SSH can reach this computer, then try again.": "确认 SSH 能连接这台电脑，然后重试。",
   "SSH needs a check in a terminal": "SSH 需要在终端中完成检查",
   "Complete the SSH check once": "先完成一次 SSH 检查",
-  "Connect once in a terminal and complete the required check. Then test this connection again.": "先在终端中连接一次并完成所需检查，然后重新测试此连接。",
   "Complete the terminal check without changing SSH host-key protection.": "完成终端检查时，请勿更改 SSH 主机密钥保护。",
-  "Check the remote approval setting": "检查远程审批设置",
-  "Choose a profile that asks before running tools": "选择运行工具前会询问的配置",
-  "Set this profile to manual approvals in Hermes. Automagik does not change its global approval setting.": "请在 Hermes 中将此配置设为手动审批。Automagik 不会更改其全局审批设置。",
-  "Check this Hermes profile’s approval rules, then test again.": "检查此 Hermes 配置的审批规则，然后重试。",
-  "Hermes returned an unsupported response": "Hermes 返回了不受支持的响应",
-  "Check the Hermes version": "检查 Hermes 版本",
-  "This connection needs the tested standalone Hermes contract.": "此连接需要经过测试的独立版 Hermes 协议。",
-  "Check the Hermes version and test the connection again.": "检查 Hermes 版本，然后重新测试连接。",
   "The SSH connection could not start": "无法启动 SSH 连接",
   "SSH to {host} stopped with an unexpected error": "连接 {host} 的 SSH 因意外错误而停止",
   "This is not one of the failures Automagik knows. What SSH said is shown below.": "这不是 Automagik 能识别的故障。SSH 的输出见下方。",
   "This is not one of the failures Automagik knows, and SSH said nothing more.": "这不是 Automagik 能识别的故障，SSH 也没有给出更多信息。",
-  "Run “ssh {host}” in a terminal to see the full error. Fix it there, then test again.": "在终端中运行“ssh {host}”查看完整错误，在那里修复后重新测试。",
+  "Run “ssh {host}” in a terminal to see the full error. Fix it there, then try again.": "在终端中运行“ssh {host}”查看完整错误，在那里修复后重试。",
   "Remote Hermes has no Automagik team tools: message_bot, list_bots, create_bot, request_secret, or Automagik memory and schedules. Its tools run remotely under the remote profile’s rules.": "Remote Hermes 没有 Automagik 团队工具：message_bot、list_bots、create_bot、request_secret，以及 Automagik 记忆和计划任务。其工具在远端按照远程配置的规则运行。",
   "Displays a remote Hermes tool and waits for its result. Does not run an Automagik tool.": "显示远程 Hermes 工具并等待其结果。不会运行 Automagik 工具。",
   "Remote Hermes needs a live Automagik chat to show its tools and approvals.": "Remote Hermes 需要一个正在运行的 Automagik 聊天来显示工具和审批请求。",
-  "Set this remote profile to manual approvals in Hermes before connecting. Automagik does not change its global approval setting.": "连接前，请在 Hermes 中将此远程配置设为手动审批。Automagik 不会更改其全局审批设置。",
   "On Remote Hermes, these local file permissions do not apply.": "使用 Remote Hermes 时，这些本地文件权限不适用。",
   "Automagik asks you before answering each Hermes approval question.": "Automagik 会在回答每个 Hermes 审批请求前询问你。",
-  "Automagik answers yes to each Hermes approval question once, without asking you.": "Automagik 会对每个 Hermes 审批请求回答一次“是”，不再询问你。",
+  "Automagik still asks you before answering each Hermes approval question. Full access does not answer for you.": "Automagik 仍会在回答每个 Hermes 审批请求前询问你。完全权限不会替你回答。",
   "Automagik asks you before answering each Hermes approval question. Auto review does not review Hermes approval questions.": "Automagik 会在回答每个 Hermes 审批请求前询问你。自动审查不会审查 Hermes 的审批请求。",
-  "Automagik handles Hermes approval questions according to this level.": "Automagik 会按照此级别处理 Hermes 的审批请求。",
   "Read only and Workspace differ only for files on this computer. Remote chats do not use those files.": "只读与工作区级别的区别仅涉及本机文件。远程聊天不使用这些文件。",
   "Hermes runs tools on the other computer under its own rules. This computer’s file sandbox does not protect that computer.": "Hermes 按照自身规则在另一台电脑上运行工具。本机的文件沙箱无法保护那台电脑。",
   "While this chat changes routes, Automagik asks you before answering each Hermes approval question. On a local route, this level’s file rules apply on this computer.": "此聊天切换路径期间，Automagik 会在回答每个 Hermes 审批请求前询问你。使用本地路径时，此级别的文件规则适用于本机。",
-  "While this chat changes routes, Automagik answers yes to each Hermes approval question once without asking you, or lets a local route run commands and change files without asking.": "此聊天切换路径期间，Automagik 会对每个 Hermes 审批请求回答一次“是”而不再询问你，或允许本地路径不经询问运行命令和修改文件。",
+  "While this chat changes routes, Automagik still asks you before answering each Hermes approval question. A local route runs commands and changes files without asking.": "此聊天切换路径期间，Automagik 仍会在回答每个 Hermes 审批请求前询问你。本地路径会不经询问运行命令和修改文件。",
   "While this chat changes routes, Automagik asks you before answering each Hermes approval question. Auto review does not review Hermes approval questions. On a local route, a model reviews each action first, and you decide on the ones it stops.": "此聊天切换路径期间，Automagik 会在回答每个 Hermes 审批请求前询问你。自动审查不会审查 Hermes 的审批请求。使用本地路径时，模型先审查每项操作，被拦下的操作由你决定。",
-  "This chat is changing routes. Automagik handles approval questions according to this level on the route still running.": "此聊天正在切换路径。Automagik 会按照此级别处理仍在运行的路径上的审批请求。",
+  "This chat is changing routes. Automagik asks you before answering each Hermes approval question. On a local route, this level decides.": "此聊天正在切换路径。Automagik 会在回答每个 Hermes 审批请求前询问你。使用本地路径时，由此级别决定。",
   "On a local route, Auto review is experimental and can allow or stop the wrong action.": "在本地路径上，自动审查处于实验阶段，可能错误地放行或拦截操作。",
   "Path on the computer running Automagik": "运行 Automagik 的电脑上的路径",
-  "Connect once in a terminal to verify the SSH host key, then test again.": "先在终端中连接一次并核对 SSH 主机密钥，然后重试。",
-  "Run a new connection test before choosing or saving a profile.": "选择或保存配置前，请重新测试连接。",
-  "Check the profile on the other computer, then test again.": "检查另一台电脑上的配置，然后重试。",
-  "Check the Hermes version and this profile’s approval settings, then test again.": "检查 Hermes 版本和此配置的审批设置，然后重试。",
-  "Check the SSH user and key, then test again.": "检查 SSH 用户名和密钥，然后重试。",
-  "Check that SSH can reach the other computer and use your key.": "检查 SSH 是否能连接另一台电脑并使用你的密钥。",
+  "Connect once in a terminal to verify the SSH host key, then try again.": "先在终端中连接一次并核对 SSH 主机密钥，然后重试。",
+  "Check the SSH user and key, then try again.": "检查 SSH 用户名和密钥，然后重试。",
   "Enter your dashboard user and password again, then sign in.": "重新输入控制台用户名和密码，然后登录。",
-  "Enter a valid session token and test the connection again.": "输入有效的会话令牌，并重新测试连接。",
   "Check that Hermes is running at this address and try again.": "检查 Hermes 是否在此地址运行，然后重试。",
   "Set up": "设置",
-  "1 profile available": "1 个可用配置",
   "Your sign-in was accepted": "登录已接受",
   "SSH couldn’t sign in": "SSH 无法登录",
   "SSH couldn’t open Hermes": "SSH 无法打开 Hermes",
   "Check the Hermes installation": "检查 Hermes 安装",
-  "Install or update Hermes on the other computer, or enter its executable path. Then test again.": "在另一台电脑上安装或更新 Hermes，或填写可执行文件路径，然后重试。",
+  "Install or update Hermes on the other computer, or enter its executable path. Then try again.": "在另一台电脑上安装或更新 Hermes，或填写可执行文件路径，然后重试。",
   "Check your SSH details": "检查 SSH 连接信息",
   "Check the host and user. If your key is locked, unlock it in your SSH agent, or choose another key.": "检查主机和用户名。如果密钥已锁定，请在 SSH 代理中解锁，或选择另一把密钥。",
   "We couldn’t sign in": "无法登录",
@@ -223,30 +229,14 @@ var ZH = {
   "The token wasn’t accepted": "令牌未被接受",
   "Check your user and password, then sign in again.": "检查用户名和密码，然后重新登录。",
   "Check the token, or choose user and password if this Hermes asks you to sign in.": "检查令牌；如果此 Hermes 要求登录，请选择用户名和密码。",
-  "Test this connection again": "重新测试此连接",
-  "The connection test expired": "连接测试已过期",
-  "Test again before choosing and saving a profile.": "选择并保存配置前，请重新测试。",
   "We couldn’t list the profiles": "无法列出配置",
-  "Check this Hermes profile list": "检查此 Hermes 的配置列表",
-  "Refresh the list, or check that the profile is available on this Hermes.": "刷新列表，或检查此配置是否在此 Hermes 上可用。",
-  "This Hermes can’t connect yet": "此 Hermes 暂时无法连接",
-  "Check this Hermes version and profile": "检查此 Hermes 的版本和配置",
-  "Use a supported Hermes version and a profile that asks before running tools. Then test again.": "请使用受支持的 Hermes 版本，以及运行工具前会请求确认的配置，然后重试。",
   "We couldn’t connect": "无法连接",
   "Check the remote address": "检查远程地址",
-  "Check the address and that Hermes is running, then test again.": "检查地址并确认 Hermes 正在运行，然后重试。",
+  "Check the address and that Hermes is running, then try again.": "检查地址并确认 Hermes 正在运行，然后重试。",
   "SSH host or config name": "SSH 主机或配置名称",
   "Remote address": "远程地址",
-  "Status": "状态",
   "How would you like to connect?": "你想如何连接？",
-  "Hermes is already running. Connect with its address and sign in.": "Hermes 已在运行。使用地址连接并登录。",
-  "Use an address": "使用地址",
   "Through SSH": "通过 SSH",
-  "Start Hermes on the other computer and connect through SSH.": "在另一台电脑上启动 Hermes，并通过 SSH 连接。",
-  "Use SSH": "使用 SSH",
-  "You can change the connection later from Bot settings.": "之后可以在 Bot 设置中更改连接。",
-  "Connect through SSH": "通过 SSH 连接",
-  "We’ll find Hermes on the other computer and start the connection.": "我们将在另一台电脑上查找 Hermes 并启动连接。",
   "You can also use a name from your SSH config.": "也可以使用 SSH 配置中的名称。",
   "User (optional)": "用户名（可选）",
   "From SSH config": "使用 SSH 配置",
@@ -261,10 +251,6 @@ var ZH = {
   "Hermes path (optional)": "Hermes 路径（可选）",
   "Find Hermes automatically": "自动查找 Hermes",
   "Hermes must already be installed on the other computer.": "另一台电脑必须已安装 Hermes。",
-  "Sign in to your Hermes": "登录你的 Hermes",
-  "Connect to your Hermes": "连接你的 Hermes",
-  "Use the sign-in set up on this Hermes instance.": "使用此 Hermes 实例配置的登录方式。",
-  "Enter the address of the Hermes you want to use.": "输入想要使用的 Hermes 的地址。",
   "A path after the address is okay.": "地址后可以包含路径。",
   "How do you sign in?": "你使用什么方式登录？",
   "Session token": "会话令牌",
@@ -277,49 +263,18 @@ var ZH = {
   "Key saved — enter a new token to replace it": "密钥已保存，输入新令牌可替换",
   "Use the session token from this Hermes instance.": "使用此 Hermes 实例提供的会话令牌。",
   "The saved token stays hidden. You can replace it later.": "已保存的令牌保持隐藏。之后可以替换。",
-  "Test SSH connection": "测试 SSH 连接",
-  "Sign in and test": "登录并测试",
-  "Test connection": "测试连接",
-  "Your connection details are still here. Edit them and test again.": "连接信息仍保留在此处。修改后可重新测试。",
-  "Test again": "重新测试",
-  "Edit SSH details": "修改 SSH 信息",
-  "Edit sign-in": "修改登录信息",
-  "Hermes is ready": "Hermes 已就绪",
-  "Connection works": "连接正常",
-  "Now choose a profile from this Hermes.": "现在请选择此 Hermes 的一个配置。",
-  "Nothing has been sent to a chat.": "尚未向聊天发送任何内容。",
-  "Edit connection": "修改连接",
-  "Choose a profile": "选择配置",
-  "Testing your connection": "正在测试连接",
-  "Checking {address}. This can take a moment.": "正在检查 {address}，可能需要片刻。",
   "Reach the computer": "连接电脑",
   "Checking your sign-in…": "正在检查登录…",
   "Open Hermes": "打开 Hermes",
   "Opening the connection…": "正在打开连接…",
-  "Next, we’ll list the profiles you can use.": "接下来会列出可用的配置。",
-  "Testing…": "正在测试…",
   "Which profile would you like?": "你想使用哪个配置？",
-  "Profiles available from {address}.": "来自 {address} 的可用配置。",
-  "Available on this Hermes": "在此 Hermes 上可用",
   "{count} profiles available": "{count} 个可用配置",
   "Refresh list": "刷新列表",
-  "No profiles are available. Check the connection and test again.": "没有可用配置。请检查连接后重新测试。",
-  "This profile’s tools run on the other computer under its own rules.": "此配置的工具按照自身规则在另一台电脑上运行。",
   "Use this profile": "使用此配置",
-  "You’re connected": "已连接",
-  "Ready to chat": "可以开始聊天",
-  "Next time, choose Remote Hermes to connect in one click.": "下次选择远程 Hermes，即可一键连接。",
-  "Connection and profile remembered": "已记住连接和配置",
-  "Your bots’ team tools — messages to other bots, secrets, memory and schedules — aren’t available in these chats. This computer’s sandbox does not protect the remote computer.": "这些聊天无法使用 Bot 团队工具，包括向其他 Bot 发消息、密钥、记忆和计划任务。本机沙箱无法保护远程电脑。",
-  "Connection settings": "连接设置",
-  "Open chat": "打开聊天",
   "Connect Remote Hermes": "连接远程 Hermes",
-  "A connection to another computer": "连接另一台电脑",
   "Close connection setup": "关闭连接设置",
   "No connection saved": "未保存连接",
   "Set up connection": "设置连接",
-  "Test": "测试",
-  "Key saved": "密钥已保存",
   "Your bots’ team tools (messages to other bots, secrets, memory, schedules) are not available in these chats.": "这些聊天无法使用 Bot 团队工具（向其他 Bot 发送消息、密钥、记忆、计划任务）。",
   "Its own tools run there under its own rules; this computer’s sandbox does not protect that machine.": "它的工具按照它的规则在那台电脑上运行；本机沙箱无法保护那台电脑。",
   "Chat with a Hermes agent on another computer.": "与另一台电脑上的 Hermes 智能体聊天。",
@@ -333,7 +288,7 @@ var ZH = {
   "Reconnect and reconcile": "重新连接并核对状态",
   "Remote session reconciled. Review the remote transcript before sending again.": "远程会话状态已核对。再次发送前请查看远程记录。",
   "Replay gap: showing a fresh remote snapshot.": "重放存在缺口：显示新的远程快照。",
-  "Full access: each remote approval is answered once. Remote profile rules still apply.": "完全访问：每项远程审批仅允许一次。远程配置规则仍然有效。",
+  "Full access: Hermes still asks you in the chat when it wants an approval. Its own rules apply there.": "完全权限：Hermes 需要审批时仍会在聊天中询问你。那台电脑上适用它自己的规则。",
   "Agent access": "智能体访问",
   "Let an agent outside Automagik, like Claude Code on your laptop, read your chats and set up your Bots. Each agent gets a key of its own, and you can revoke it at any time.": "让 Automagik 之外的智能体（比如你笔记本上的 Claude Code）读取你的对话并配置你的 Bot。每个智能体有自己的密钥，你可以随时撤销。",
   "Agent keys": "访问密钥",
@@ -3269,13 +3224,13 @@ var stepShows = (step2) => (step2?.blocks ?? []).some((block) => {
 });
 var stepHasReasoning = (step2) => (step2?.blocks ?? []).some((block) => block?.kind === "reasoning" && String(block.text ?? "").trim() !== "");
 var relayPart = (data, groupPart) => groupPart === void 0 || (stepHasReasoning(data) ? groupPart === "reasoning" : groupPart === "response");
-function relaysBefore(contexts, steps2, step2) {
-  const index = steps2.findIndex((entry) => entry?.step === step2?.step);
+function relaysBefore(contexts, steps, step2) {
+  const index = steps.findIndex((entry) => entry?.step === step2?.step);
   if (index === -1) return [];
   let prev = -Infinity;
   for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
-    if (stepShows(steps2[cursor])) {
-      prev = steps2[cursor].time;
+    if (stepShows(steps[cursor])) {
+      prev = steps[cursor].time;
       break;
     }
   }
@@ -4130,11 +4085,11 @@ function liveSprings(apply2) {
   const step2 = (now) => {
     const dt = Math.min(0.5, Math.max(1e-3, (now - last) / 1e3));
     last = now;
-    const steps2 = Math.ceil(dt * 240);
-    const h74 = dt / steps2;
+    const steps = Math.ceil(dt * 240);
+    const h74 = dt / steps;
     let moving = false;
     for (const value of values.values()) {
-      for (let index = 0; index < steps2; index += 1) {
+      for (let index = 0; index < steps; index += 1) {
         value.v += (-value.k * (value.x - value.to) - value.c * value.v) * h74;
         value.x += value.v * h74;
       }
@@ -5107,11 +5062,10 @@ function usePaneLeft() {
 var import_react14 = require("react");
 var import_react_dom2 = require("react-dom");
 var EMPTY_SSH = { host: "", user: "", port: "", identityFile: "", hermesPath: "", hermesHome: "" };
-var draftOf = (view) => ({ mode: view?.mode === "ssh" ? "ssh" : "remote", address: view?.address ?? "", authMode: view?.authMode === "password" ? "password" : "token", credentialRef: view?.credentialRef ?? "", credential: "", username: view?.username ?? "", password: "", ssh: { ...EMPTY_SSH, ...view?.ssh } });
+var draftOf = (view) => ({ mode: view?.mode === "remote" && view?.address ? "remote" : "ssh", address: view?.address ?? "", authMode: view?.authMode === "password" ? "password" : "token", credentialRef: view?.credentialRef ?? "", credential: "", username: view?.username ?? "", password: "", ssh: { ...EMPTY_SSH, ...view?.ssh } });
 var configured = (view) => view?.enabled === true && Boolean(view?.profile);
 var freshSecrets = (draft) => ({ ...draft, credential: "", password: "" });
 var connectionLabel = (draft) => draft.mode === "ssh" ? draft.ssh.host : draft.address.replace(/^https?:\/\//, "").replace(/\/$/, "");
-var steps = ["Connection", "Details", "Test", "Profile", "Ready"];
 function Field({ label, value, onChange, placeholder: placeholder2, hint, secret = false, type = "text" }) {
   return (0, import_react14.createElement)(
     "label",
@@ -5187,10 +5141,10 @@ var shortText = (value, max = 255) => typeof value === "string" && value.length 
 var lineRows = (value) => (Array.isArray(value) ? value : []).map((line) => shortText(line, 240)).filter(Boolean).slice(-8);
 var release = (value) => /^\d{1,4}\.\d{1,4}\.\d{1,4}$/.test(value ?? "") ? value : "";
 function updateStep(install, host) {
-  if (["nix", "nixos", "home-manager"].includes(install)) return { hint: t("On {host}, update Hermes through the Nix source that installed it (nix profile upgrade, or update your flake input and rebuild), then test again.", { host }) };
-  if (install === "docker") return { command: "docker pull nousresearch/hermes-agent:latest", hint: t("On {host}, run “{command}” and restart the Hermes container, then test again.", { host, command: "docker pull nousresearch/hermes-agent:latest" }) };
+  if (["nix", "nixos", "home-manager"].includes(install)) return { hint: t("On {host}, update Hermes through the Nix source that installed it (nix profile upgrade, or update your flake input and rebuild), then try again.", { host }) };
+  if (install === "docker") return { command: "docker pull nousresearch/hermes-agent:latest", hint: t("On {host}, run “{command}” and restart the Hermes container, then try again.", { host, command: "docker pull nousresearch/hermes-agent:latest" }) };
   const command = install === "apt" ? "pkg upgrade hermes-agent" : "hermes update";
-  return { command, hint: t("On {host}, run “{command}”, then test again.", { host, command }) };
+  return { command, hint: t("On {host}, run “{command}”, then try again.", { host, command }) };
 }
 function updateRows(facts, step2) {
   return [
@@ -5234,11 +5188,13 @@ var STAGES = {
   profiles: () => t("Listing profiles"),
   chat: () => t("Opening a chat connection")
 };
-function errorFor(error, draft, detail) {
+function errorFor(error, draft, detail, minimum) {
   const code = error?.code ?? "";
-  const base = screenFor(code, draft, failureFacts(detail));
+  const facts = failureFacts(detail);
+  if (!facts.minimum) facts.minimum = release(minimum);
+  const base = screenFor(code, draft, facts);
   if (!base.ssh) return base;
-  const facts = failureFacts(detail), host = shortText(draft?.ssh?.host?.trim?.() ?? "");
+  const host = shortText(draft?.ssh?.host?.trim?.() ?? "");
   const rows2 = [...base.rows ?? []];
   if (host) rows2.unshift({ label: t("SSH host"), value: host });
   if (STAGES[facts.stage] && !base.trust) rows2.push({ label: t("Stopped while"), value: STAGES[facts.stage]() });
@@ -5249,7 +5205,7 @@ function errorFor(error, draft, detail) {
 function screenFor(code, draft, facts) {
   const host = shortText(draft?.ssh?.host?.trim?.() ?? "") || t("the other computer");
   if (code === "bot/hermes-busy") return { heading: t("Remote Hermes"), title: t("A chat is still running on this connection; stop it or wait."), text: t("Your connection settings were not changed."), hint: t("Stop the chat or wait") };
-  if (code === "bot/hermes-ssh-cleanup") return { heading: t("Connection cleanup is unconfirmed"), title: t("Check {host} before reconnecting", { host }), text: t("Automagik could not confirm that the owned Hermes process group stopped. Remote work may continue."), hint: t("Check the remote Hermes process before testing or connecting again."), ssh: true };
+  if (code === "bot/hermes-ssh-cleanup") return { heading: t("Connection cleanup is unconfirmed"), title: t("Check {host} before reconnecting", { host }), text: t("Automagik could not confirm that the owned Hermes process group stopped. Remote work may continue."), hint: t("Check the remote Hermes process before connecting again."), ssh: true };
   if (code === "bot/hermes-ssh-update") {
     const step2 = updateStep(facts.install, host);
     return {
@@ -5272,20 +5228,22 @@ function screenFor(code, draft, facts) {
       ssh: true
     };
   }
-  if (code === "bot/hermes-ssh-platform") return { heading: t("This computer cannot run the SSH connection yet"), title: t("Check the remote system and Python"), text: t("The remote computer needs Linux or macOS, Python 3, and a supported Hermes installation."), hint: t("Check Python and the supported system on the other computer, then test again."), ssh: true };
-  if (code === "bot/hermes-ssh-exited") return { heading: t("Hermes stopped while starting"), title: t("Hermes on {host} stopped before it was ready", { host }), text: facts.exit !== void 0 ? t("SSH signed in and started Hermes, but Hermes exited with code {code}.", { code: facts.exit }) : t("SSH signed in and started Hermes, but Hermes stopped right away."), hint: t("Run “hermes serve” on {host} to see the full error, fix it there, then test again.", { host }), ssh: true };
-  if (code === "bot/hermes-ssh-not-ready") return { heading: t("Hermes took too long to start"), title: t("Hermes on {host} was not ready in time", { host }), text: t("SSH signed in and started Hermes, but Hermes did not say it was ready before the deadline."), hint: t("Check that Hermes starts normally on {host}, then test again.", { host }), ssh: true };
-  if (code === "bot/hermes-ssh-port") return { heading: t("Hermes did not report its port"), title: t("Hermes on {host} started without a port", { host }), text: t("Hermes is running there, but it never said which port it listens on, so there is nothing to connect to."), hint: t("Update Hermes on {host}, then test again.", { host }), ssh: true };
-  if (code === "bot/hermes-ssh-handshake" || draft.mode === "ssh" && code === "bot/hermes-auth") return { heading: t("The one-time token was not accepted"), title: t("Automagik and {host} could not agree on this connection", { host }), text: t("The start script or Hermes on {host} did not accept the one-time token made for this connection.", { host }), hint: t("Test again. If it keeps failing, update Hermes on {host} and check that signing in there prints no extra text.", { host }), ssh: true };
-  if (code === "bot/hermes-ssh-tunnel") return { heading: t("The tunnel did not open"), title: t("SSH could not open a tunnel to Hermes on {host}", { host }), text: t("Hermes started, but the SSH tunnel from this computer to it did not start listening, or carried no answer."), hint: t("Check that {host} allows port forwarding, then test again.", { host }), ssh: true };
-  if (code === "bot/hermes-ssh-forward") return { heading: t("A port from your SSH config is in use"), title: facts.port ? t("Port {port} from the SSH config for {host} is busy", { port: facts.port, host }) : t("A port forward in the SSH config for {host} could not start", { host }), text: t("The SSH config entry for {host} forwards its own ports. One is already in use on this computer, usually by another SSH session to the same host, so SSH closed the tunnel.", { host }), hint: t("Close the other SSH session to {host}, or remove the forward from its config entry, then test again.", { host }), ssh: true };
-  if (code === "bot/hermes-ssh-script") return { heading: t("The start script stopped"), title: t("Automagik’s start script failed on {host}", { host }), text: t("SSH signed in, but the small script that finds and starts Hermes stopped with an error."), hint: t("Check that Python 3 works on {host} and that this user can run Hermes, then test again.", { host }), ssh: true };
-  if (code === "bot/hermes-ssh-details") return { heading: t("Check the SSH details"), title: t("These SSH details can’t be used"), text: t("The host, user, port, key path or Hermes path has characters SSH does not accept."), hint: t("Edit the SSH details, then test again."), ssh: true };
-  if (code === "bot/hermes-ssh-timeout" || code === "bot/hermes-timeout") return { heading: t("The connection timed out"), title: t("The other computer did not become ready in time"), text: t("Check that the other computer is reachable and Hermes can start, then test again."), hint: t("Check the connection and remote Hermes startup before trying again."), ssh: draft.mode === "ssh" };
-  if (code === "bot/hermes-ssh-unreachable") return { heading: t("We could not reach the other computer"), title: t("Check the SSH address and connection"), text: t("Check the host or config name, network, and SSH access to the other computer."), hint: t("Confirm that SSH can reach this computer, then test again."), ssh: true };
-  if (code === "bot/hermes-ssh-interactive") return { heading: t("SSH needs a check in a terminal"), title: t("Complete the SSH check once"), text: t("Connect once in a terminal and complete the required check. Then test this connection again."), hint: t("Complete the terminal check without changing SSH host-key protection."), ssh: true };
-  if (code === "bot/hermes-approvals") return { heading: t("Check the remote approval setting"), title: t("Choose a profile that asks before running tools"), text: t("Set this profile to manual approvals in Hermes. Automagik does not change its global approval setting."), hint: t("Check this Hermes profile’s approval rules, then test again.") };
-  if (code === "bot/hermes-protocol") return { heading: t("Hermes returned an unsupported response"), title: t("Check the Hermes version"), text: t("This connection needs the tested standalone Hermes contract."), hint: t("Check the Hermes version and test the connection again.") };
+  if (code === "bot/hermes-ssh-platform") return { heading: t("This computer cannot run the SSH connection yet"), title: t("Check the remote system and Python"), text: t("The remote computer needs Linux or macOS, Python 3, and a supported Hermes installation."), hint: t("Check Python and the supported system on the other computer, then try again."), ssh: true };
+  if (code === "bot/hermes-ssh-exited") return { heading: t("Hermes stopped while starting"), title: t("Hermes on {host} stopped before it was ready", { host }), text: facts.exit !== void 0 ? t("SSH signed in and started Hermes, but Hermes exited with code {code}.", { code: facts.exit }) : t("SSH signed in and started Hermes, but Hermes stopped right away."), hint: t("Run “hermes serve” on {host} to see the full error, fix it there, then try again.", { host }), ssh: true };
+  if (code === "bot/hermes-ssh-not-ready") return { heading: t("Hermes took too long to start"), title: t("Hermes on {host} was not ready in time", { host }), text: t("SSH signed in and started Hermes, but Hermes did not say it was ready before the deadline."), hint: t("Check that Hermes starts normally on {host}, then try again.", { host }), ssh: true };
+  if (code === "bot/hermes-ssh-port") return { heading: t("Hermes did not report its port"), title: t("Hermes on {host} started without a port", { host }), text: t("Hermes is running there, but it never said which port it listens on, so there is nothing to connect to."), hint: t("Update Hermes on {host}, then try again.", { host }), ssh: true };
+  if (code === "bot/hermes-ssh-handshake" || draft.mode === "ssh" && code === "bot/hermes-auth") return { heading: t("The one-time token was not accepted"), title: t("Automagik and {host} could not agree on this connection", { host }), text: t("The start script or Hermes on {host} did not accept the one-time token made for this connection.", { host }), hint: t("Try again. If it keeps failing, update Hermes on {host} and check that signing in there prints no extra text.", { host }), ssh: true };
+  if (code === "bot/hermes-ssh-tunnel") return { heading: t("The tunnel did not open"), title: t("SSH could not open a tunnel to Hermes on {host}", { host }), text: t("Hermes started, but the SSH tunnel from this computer to it did not start listening, or carried no answer."), hint: t("Check that {host} allows port forwarding, then try again.", { host }), ssh: true };
+  if (code === "bot/hermes-ssh-forward") return { heading: t("A port from your SSH config is in use"), title: facts.port ? t("Port {port} from the SSH config for {host} is busy", { port: facts.port, host }) : t("A port forward in the SSH config for {host} could not start", { host }), text: t("The SSH config entry for {host} forwards its own ports. One is already in use on this computer, usually by another SSH session to the same host, so SSH closed the tunnel.", { host }), hint: t("Close the other SSH session to {host}, or remove the forward from its config entry, then try again.", { host }), ssh: true };
+  if (code === "bot/hermes-ssh-script") return { heading: t("The start script stopped"), title: t("Automagik’s start script failed on {host}", { host }), text: t("SSH signed in, but the small script that finds and starts Hermes stopped with an error."), hint: t("Check that Python 3 works on {host} and that this user can run Hermes, then try again.", { host }), ssh: true };
+  if (code === "bot/hermes-ssh-details") return { heading: t("Check the SSH details"), title: t("These SSH details can’t be used"), text: t("The host, user, port, key path or Hermes path has characters SSH does not accept."), hint: t("Edit the SSH details, then try again."), ssh: true };
+  if (code === "bot/hermes-ssh-timeout" || code === "bot/hermes-timeout") return { heading: t("The connection timed out"), title: t("The other computer did not become ready in time"), hint: t("Check that the other computer is reachable and Hermes can start, then try again."), ssh: draft.mode === "ssh" };
+  if (code === "bot/hermes-ssh-unreachable") return { heading: t("We could not reach the other computer"), title: t("Check the SSH address and connection"), text: t("Check the host or config name, network, and SSH access to the other computer."), hint: t("Confirm that SSH can reach this computer, then try again."), ssh: true };
+  if (code === "bot/hermes-ssh-interactive") return { heading: t("SSH needs a check in a terminal"), title: t("Complete the SSH check once"), text: t("Connect once in a terminal and complete the required check. Then connect again."), hint: t("Complete the terminal check without changing SSH host-key protection."), ssh: true };
+  if (code === "bot/hermes-outdated" || code === "bot/hermes-protocol") {
+    const step2 = updateStep(facts.install, host);
+    return { heading: t("Hermes needs an update"), title: facts.minimum ? t("Update Hermes on {host} to v{version} or newer", { host, version: facts.minimum }) : t("Update Hermes on {host}", { host }), hint: step2.hint, rows: updateRows(facts, step2), ssh: draft.mode === "ssh" };
+  }
   if (code === "bot/hermes-ssh-host-key-unknown") {
     const trust = Boolean(facts.keyType && facts.fingerprint && !facts.unsaved);
     return {
@@ -5294,35 +5252,35 @@ function screenFor(code, draft, facts) {
       ssh: true,
       trust,
       text: trust ? t("This computer has not connected to {host} before. Compare this key with one you trust. If it matches, trust the host to continue.", { host }) : t("This computer has not connected to {host} before, and Automagik cannot save its key for you.", { host }),
-      hint: trust ? t("Only this exact key is saved to your known hosts. If {host} ever shows a different key, the connection is refused.", { host }) : facts.unsaved ? t("The SSH config for {host} does not keep host keys. Change that config entry, then test again.", { host }) : t("Connect to {host} once in a terminal and accept its key, then test again.", { host }),
+      hint: trust ? t("Only this exact key is saved to your known hosts. If {host} ever shows a different key, the connection is refused.", { host }) : facts.unsaved ? t("The SSH config for {host} does not keep host keys. Change that config entry, then try again.", { host }) : t("Connect to {host} once in a terminal and accept its key, then try again.", { host }),
       rows: trust ? [{ label: t("Key type"), value: facts.keyType, mono: true }, { label: t("Fingerprint"), value: facts.fingerprint, mono: true }] : []
     };
   }
-  if (code.includes("host-key")) return { heading: t("This host’s key has changed"), title: t("The key for {host} is not the one this computer saved", { host }), text: t("The host may have been reinstalled, or something may be between you and it. Automagik will not connect and cannot trust the new key for you."), hint: t("Connect once in a terminal to verify the SSH host key, then test again."), ssh: true };
-  if (draft.mode === "ssh" && code === "bot/hermes-ssh-missing") return { heading: t("SSH couldn’t open Hermes"), title: t("Check the Hermes installation"), text: t("Install or update Hermes on the other computer, or enter its executable path. Then test again."), hint: t("Hermes must already be installed on the other computer."), ssh: true };
-  if (code === "bot/hermes-expired") return { heading: t("Test this connection again"), title: t("The connection test expired"), text: t("Test again before choosing and saving a profile."), hint: t("Run a new connection test before choosing or saving a profile.") };
-  if (code === "bot/hermes-profiles") return { heading: t("We couldn’t list the profiles"), title: t("Check this Hermes profile list"), text: t("Refresh the list, or check that the profile is available on this Hermes."), hint: t("Check the profile on the other computer, then test again.") };
-  if (code === "bot/hermes" || code === "bot/hermes-unsupported") return { heading: t("This Hermes can’t connect yet"), title: t("Check this Hermes version and profile"), text: t("Use a supported Hermes version and a profile that asks before running tools. Then test again."), hint: t("Check the Hermes version and this profile’s approval settings, then test again.") };
+  if (code.includes("host-key")) return { heading: t("This host’s key has changed"), title: t("The key for {host} is not the one this computer saved", { host }), text: t("The host may have been reinstalled, or something may be between you and it. Automagik will not connect and cannot trust the new key for you."), hint: t("Connect once in a terminal to verify the SSH host key, then try again."), ssh: true };
+  if (draft.mode === "ssh" && code === "bot/hermes-ssh-missing") return { heading: t("SSH couldn’t open Hermes"), title: t("Check the Hermes installation"), text: t("Install or update Hermes on the other computer, or enter its executable path. Then try again."), hint: t("Install Hermes on {host}, or enter its path under More options, then try again.", { host }), ssh: true };
+  if (code === "bot/hermes-expired") return { heading: t("Connect again"), title: t("The connection waited too long and was closed"), hint: t("Choose Try again to connect.") };
+  if (code === "bot/hermes-profiles") return { heading: t("We couldn’t list the profiles"), title: t("Hermes on {host} offered no profile to chat with", { host }), hint: t("Check that Hermes on {host} has a profile, then try again.", { host }) };
+  if (code === "bot/hermes-unsupported") return { heading: t("This Hermes can’t be used here"), title: t("Hermes on {host} is run by a gateway that owns its sessions", { host }), hint: t("Connect to a Hermes started with “hermes serve”.") };
   if (code === "bot/hermes-ssh-auth") {
     const keys = [...facts.identities, ...facts.agentKeys ? [facts.agentKeys === 1 ? t("1 key from your SSH agent") : t("{count} keys from your SSH agent", { count: facts.agentKeys })] : []];
-    return keys.length ? { heading: t("SSH couldn’t sign in"), title: t("{host} refused your SSH key", { host }), text: t("SSH offered {keys}, and {host} accepted none of them.", { keys: keys.join(", "), host }), hint: t("Check the SSH user and key, then test again."), ssh: true } : { heading: t("SSH couldn’t sign in"), title: t("Check your SSH details"), text: t("Check the host and user. If your key is locked, unlock it in your SSH agent, or choose another key."), hint: t("Check the SSH user and key, then test again."), ssh: true };
+    return keys.length ? { heading: t("SSH couldn’t sign in"), title: t("{host} refused your SSH key", { host }), text: t("SSH offered {keys}, and {host} accepted none of them.", { keys: keys.join(", "), host }), hint: t("Check the SSH user and key, then try again."), ssh: true } : { heading: t("SSH couldn’t sign in"), title: t("Check your SSH details"), text: t("Check the host and user. If your key is locked, unlock it in your SSH agent, or choose another key."), hint: t("Check the SSH user and key, then try again."), ssh: true };
   }
-  if (draft.mode === "ssh" && code === "bot/hermes-connection") return { heading: t("Hermes did not answer"), title: t("Hermes on {host} started but did not answer correctly", { host }), text: t("SSH signed in and the tunnel opened, but Hermes did not complete the connection check."), hint: t("Check that Hermes works on {host}, then test again.", { host }), ssh: true };
-  if (draft.mode === "ssh") return { heading: t("The SSH connection could not start"), title: t("SSH to {host} stopped with an unexpected error", { host }), text: facts.ssh.length ? t("This is not one of the failures Automagik knows. What SSH said is shown below.") : t("This is not one of the failures Automagik knows, and SSH said nothing more."), hint: t("Run “ssh {host}” in a terminal to see the full error. Fix it there, then test again.", { host }), ssh: true, generic: true };
-  if (code === "bot/hermes-auth") return { heading: t("We couldn’t sign in"), title: draft.authMode === "password" ? t("The sign-in wasn’t accepted") : t("The token wasn’t accepted"), text: draft.authMode === "password" ? t("Check your user and password, then sign in again.") : t("Check the token, or choose user and password if this Hermes asks you to sign in."), hint: draft.authMode === "password" ? t("Enter your dashboard user and password again, then sign in.") : t("Enter a valid session token and test the connection again.") };
-  return { heading: t("We couldn’t connect"), title: t("Check the remote address"), text: t("Check the address and that Hermes is running, then test again."), hint: t("Check that Hermes is running at this address and try again.") };
+  if (draft.mode === "ssh" && (code === "bot/hermes-connection" || code === "bot/hermes")) return { heading: t("Hermes did not answer"), title: t("Hermes on {host} started but did not answer correctly", { host }), text: t("SSH signed in and the tunnel opened, but Hermes did not complete the connection check."), hint: t("Check that Hermes works on {host}, then try again.", { host }), ssh: true };
+  if (draft.mode === "ssh") return { heading: t("The SSH connection could not start"), title: t("SSH to {host} stopped with an unexpected error", { host }), text: facts.ssh.length ? t("This is not one of the failures Automagik knows. What SSH said is shown below.") : t("This is not one of the failures Automagik knows, and SSH said nothing more."), hint: t("Run “ssh {host}” in a terminal to see the full error. Fix it there, then try again.", { host }), ssh: true, generic: true };
+  if (code === "bot/hermes-auth") return { heading: t("We couldn’t sign in"), title: draft.authMode === "password" ? t("The sign-in wasn’t accepted") : t("The token wasn’t accepted"), text: draft.authMode === "password" ? t("Check your user and password, then sign in again.") : t("Check the token, or choose user and password if this Hermes asks you to sign in."), hint: draft.authMode === "password" ? t("Enter your dashboard user and password again, then sign in.") : t("Enter a valid session token, then try again.") };
+  return { heading: t("We couldn’t connect"), title: t("Check the remote address"), text: t("Check the address and that Hermes is running, then try again."), hint: t("Check that Hermes is running at this address and try again.") };
 }
-function HermesRemoteConnect({ onClose, onConnected, edit = false, initialView, onSaved }) {
+function HermesRemoteConnect({ onClose, onConnected, edit = false, more = false, initialView, onSaved }) {
   const [view, setView] = (0, import_react14.useState)(initialView ?? null);
   const [draft, setDraft] = (0, import_react14.useState)(() => draftOf(initialView));
-  const [step2, setStep] = (0, import_react14.useState)(edit ? "details" : "connection");
+  const [step2, setStep] = (0, import_react14.useState)(more ? "more" : "host");
   const [status, setStatus] = (0, import_react14.useState)("loading");
   const [stage, setStage] = (0, import_react14.useState)("reach");
   const [error, setError] = (0, import_react14.useState)(null);
   const [test, setTest] = (0, import_react14.useState)(null);
   const [profile, setProfile] = (0, import_react14.useState)("");
-  const [saved, setSaved] = (0, import_react14.useState)(null);
   const [choosingKey, setChoosingKey] = (0, import_react14.useState)(false);
+  const [details, setDetails] = (0, import_react14.useState)(false);
   const request = (0, import_react14.useRef)(null);
   const testLease = (0, import_react14.useRef)(null);
   const testRequest = (0, import_react14.useRef)(null);
@@ -5337,8 +5295,15 @@ function HermesRemoteConnect({ onClose, onConnected, edit = false, initialView, 
   const epoch = (0, import_react14.useRef)(0);
   const live = (0, import_react14.useRef)(true);
   const dialog = (0, import_react14.useRef)(null);
-  const callbacks = (0, import_react14.useRef)({ onConnected, onSaved });
-  callbacks.current = { onConnected, onSaved };
+  const callbacks = (0, import_react14.useRef)({ onConnected, onSaved, onClose });
+  callbacks.current = { onConnected, onSaved, onClose };
+  const minimum = view?.minimum ?? initialView?.minimum;
+  const failed = (failure, shown, detail, requestId) => {
+    setDetails(false);
+    setError({ ...errorFor(failure, shown, detail, minimum), ...requestId ? { requestId } : {} });
+    setStep("error");
+    setStatus("error");
+  };
   const discardTest = (testId, requestId = testRequest.current) => {
     if (!testId && !requestId) return;
     if (testId && testLease.current === testId) testLease.current = null;
@@ -5382,7 +5347,7 @@ function HermesRemoteConnect({ onClose, onConnected, edit = false, initialView, 
       setView(next);
       setDraft(loadedDraft);
       if (!edit && configured(next)) {
-        setStep("test");
+        setStep("working");
         setStatus("connecting");
         const connected = await run2("hermes-remote-connect");
         if (!live.current || generation !== epoch.current) return;
@@ -5392,9 +5357,7 @@ function HermesRemoteConnect({ onClose, onConnected, edit = false, initialView, 
       if (!live.current || generation !== epoch.current || failure?.name === "AbortError") return;
       const detail = loadedDraft.mode === "ssh" ? await failureDetail({ connect: true }) : void 0;
       if (!live.current || generation !== epoch.current) return;
-      setStep("test");
-      setStatus("error");
-      setError({ ...errorFor(failure, loadedDraft, detail), requestId: "connect" });
+      failed(failure, loadedDraft, detail, "connect");
     });
     return () => {
       live.current = false;
@@ -5407,7 +5370,7 @@ function HermesRemoteConnect({ onClose, onConnected, edit = false, initialView, 
   const change = (key, value) => {
     if (saving.current) return;
     discardTest(testLease.current);
-    setDraft((current2) => ({ ...current2, [key]: value }));
+    setDraft((current) => ({ ...current, [key]: value }));
     setTest(null);
     setError(null);
   };
@@ -5415,16 +5378,46 @@ function HermesRemoteConnect({ onClose, onConnected, edit = false, initialView, 
     if (saving.current) return;
     discardTest(testLease.current);
     setTest(null);
-    setDraft((current2) => ({ ...current2, ssh: { ...current2.ssh, [key]: value } }));
+    setDraft((current) => ({ ...current, ssh: { ...current.ssh, [key]: value } }));
   };
   const pickSshHost = (item) => {
     if (saving.current) return;
     discardTest(testLease.current);
     setTest(null);
     setError(null);
-    setDraft((current2) => ({ ...current2, ssh: { ...current2.ssh, host: item.alias, user: item.user, port: item.port } }));
+    setDraft((current) => ({ ...current, mode: "ssh", ssh: { ...EMPTY_SSH, host: item.alias, user: item.user, port: item.port } }));
   };
-  const testConnection = async () => {
+  const typeSshHost = (value) => {
+    if (saving.current) return;
+    discardTest(testLease.current);
+    setTest(null);
+    setError(null);
+    setDraft((current) => ({ ...current, mode: "ssh", ssh: { ...EMPTY_SSH, host: value } }));
+  };
+  const save = async (testId, chosen, shown = draft) => {
+    if (saving.current) return;
+    saving.current = true;
+    const generation = ++epoch.current;
+    setStatus("saving");
+    setError(null);
+    try {
+      const next = await run2("hermes-remote-save", { testId, profile: chosen });
+      if (!live.current || generation !== epoch.current) return;
+      testLease.current = null;
+      testRequest.current = null;
+      setView(next);
+      callbacks.current.onSaved?.(next);
+      saving.current = false;
+      if (callbacks.current.onConnected) await callbacks.current.onConnected(next);
+      else callbacks.current.onClose();
+    } catch (failure) {
+      if (!live.current || generation !== epoch.current || failure?.name === "AbortError") return;
+      failed(failure, shown);
+    } finally {
+      saving.current = false;
+    }
+  };
+  const connect = async () => {
     if (saving.current) return;
     discardTest(testLease.current);
     const generation = ++epoch.current;
@@ -5432,8 +5425,8 @@ function HermesRemoteConnect({ onClose, onConnected, edit = false, initialView, 
     testRequest.current = requestId;
     const payload = { ...draft, ssh: { ...draft.ssh, port: draft.ssh.port === "" ? void 0 : Number(draft.ssh.port) }, requestId };
     stopProgress();
-    setStep("test");
-    setStatus("testing");
+    setStep("working");
+    setStatus("connecting");
     setStage("reach");
     setError(null);
     setTest(null);
@@ -5441,33 +5434,42 @@ function HermesRemoteConnect({ onClose, onConnected, edit = false, initialView, 
     progress.current = polling;
     const poll = async () => {
       try {
-        const answer = await call("hermes-remote-test-status", { requestId }, polling.controller.signal);
-        if (live.current && generation === epoch.current && !polling.controller.signal.aborted && ["reach", "sign-in", "open", "connected"].includes(answer.stage)) setStage(answer.stage);
+        const answer2 = await call("hermes-remote-test-status", { requestId }, polling.controller.signal);
+        if (live.current && generation === epoch.current && !polling.controller.signal.aborted && ["reach", "sign-in", "open", "connected"].includes(answer2.stage)) setStage(answer2.stage);
       } catch {
       }
       if (live.current && generation === epoch.current && !polling.controller.signal.aborted) polling.timer = setTimeout(poll, 200);
     };
     polling.timer = setTimeout(poll, 200);
+    let answer;
     try {
-      const answer = await run2("hermes-remote-test", payload);
+      answer = await run2("hermes-remote-test", payload);
       if (!live.current || generation !== epoch.current) {
         discardTest(answer.testId, requestId);
         return;
       }
       testLease.current = answer.testId;
-      setTest(answer);
-      setProfile(answer.profiles?.[0]?.id ?? "");
-      setStatus("connected");
     } catch (failure) {
       if (!live.current || generation !== epoch.current || failure?.name === "AbortError") return;
       const detail = payload.mode === "ssh" ? await failureDetail({ requestId }) : void 0;
       if (!live.current || generation !== epoch.current) return;
-      setError({ ...errorFor(failure, payload, detail), requestId });
-      setStatus("error");
+      failed(failure, payload, detail, requestId);
+      return;
     } finally {
       if (progress.current === polling) stopProgress();
       if (live.current && generation === epoch.current) setDraft(freshSecrets);
     }
+    const profiles = answer.profiles ?? [];
+    const chosen = profiles.some((item) => item.id === answer.defaultProfile) ? answer.defaultProfile : profiles[0]?.id ?? "";
+    setTest(answer);
+    setProfile(chosen);
+    setStage("connected");
+    if (profiles.length > 1) {
+      setStep("profile");
+      setStatus("idle");
+      return;
+    }
+    await save(answer.testId, chosen, payload);
   };
   const trustHost = async () => {
     if (saving.current || !error?.trust || !error.requestId) return;
@@ -5476,38 +5478,12 @@ function HermesRemoteConnect({ onClose, onConnected, edit = false, initialView, 
     try {
       await run2("hermes-remote-ssh-trust", { requestId });
       if (!live.current || generation !== epoch.current) return;
-      await testConnection();
+      await connect();
     } catch (failure) {
       if (!live.current || generation !== epoch.current || failure?.name === "AbortError") return;
       const detail = await failureDetail({ requestId });
       if (!live.current || generation !== epoch.current) return;
-      setError({ ...errorFor(failure, shown, detail), requestId });
-      setStatus("error");
-    }
-  };
-  const save = async () => {
-    if (saving.current) return;
-    saving.current = true;
-    const generation = ++epoch.current;
-    setStatus("saving");
-    setError(null);
-    try {
-      const next = await run2("hermes-remote-save", { testId: test.testId, profile });
-      if (!live.current || generation !== epoch.current) return;
-      testLease.current = null;
-      testRequest.current = null;
-      setSaved(next);
-      setView(next);
-      setStep("ready");
-      setStatus("idle");
-      callbacks.current.onSaved?.(next);
-    } catch (failure) {
-      if (!live.current || generation !== epoch.current || failure?.name === "AbortError") return;
-      setError(errorFor(failure, draft));
-      setStep("test");
-      setStatus("error");
-    } finally {
-      saving.current = false;
+      failed(failure, shown, detail, requestId);
     }
   };
   const refreshProfiles = async () => {
@@ -5519,130 +5495,102 @@ function HermesRemoteConnect({ onClose, onConnected, edit = false, initialView, 
       const next = await run2("hermes-remote-test-profiles", { testId });
       if (!live.current || generation !== epoch.current) return;
       const profiles = next.profiles ?? [];
-      setTest((current2) => current2?.testId === testId ? { ...current2, profiles } : current2);
-      setProfile((current2) => profiles.some((item) => item.id === current2) ? current2 : profiles[0]?.id ?? "");
-      setStatus("connected");
+      setTest((current) => current?.testId === testId ? { ...current, profiles } : current);
+      setProfile((current) => profiles.some((item) => item.id === current) ? current : profiles[0]?.id ?? "");
+      setStatus("idle");
     } catch (failure) {
       if (!live.current || generation !== epoch.current || failure?.name === "AbortError") return;
-      setError(errorFor(failure, draft));
-      setStep("test");
-      setStatus("error");
+      failed(failure, draft);
     }
   };
   const validDetails = draft.mode === "ssh" ? draft.ssh.host.trim().length > 0 && (draft.ssh.port === "" || /^\d+$/.test(String(draft.ssh.port)) && Number(draft.ssh.port) > 0 && Number(draft.ssh.port) <= 65535) : draft.address.trim().length > 0 && (draft.authMode === "password" ? draft.username.trim().length > 0 && draft.password.length > 0 : draft.credential.length > 0 || view?.credentialSet === true && draft.address === view.address && draft.authMode === (view.authMode ?? "token"));
-  const current = Math.max(0, ["connection", "details", "test", "profile", "ready"].indexOf(step2));
-  const summary = (0, import_react14.createElement)("div", { className: "bt-hw-summary" }, (0, import_react14.createElement)(Pair, { label: draft.mode === "ssh" ? t("SSH host or config name") : t("Remote address"), value: connectionLabel(draft) }), (0, import_react14.createElement)(Pair, { label: t("Status"), value: t("Connected") }));
+  const label = connectionLabel(draft) || t("the other computer");
   let heading, content, footer;
-  if (step2 === "connection") {
-    heading = t("How would you like to connect?");
+  if (step2 === "host") {
+    heading = t("Choose a computer");
     content = (0, import_react14.createElement)(
       import_react14.Fragment,
       null,
-      (0, import_react14.createElement)("p", { className: "bt-hw-lead" }, t("Chat with a Hermes agent on another computer.")),
-      (0, import_react14.createElement)(
-        "div",
-        { className: "bt-hw-cards" },
-        [["remote", GlobeIcon, t("Remote address"), t("Hermes is already running. Connect with its address and sign in."), t("Use an address")], ["ssh", TerminalIcon, t("Through SSH"), t("Start Hermes on the other computer and connect through SSH."), t("Use SSH")]].map(([id, Icon, title, text2, action]) => (0, import_react14.createElement)("button", { key: id, type: "button", className: "bt-hw-card", "aria-label": title, "aria-pressed": draft.mode === id, onClick: () => change("mode", id) }, (0, import_react14.createElement)("span", { className: "bt-hw-card-icon" }, (0, import_react14.createElement)(Icon)), (0, import_react14.createElement)("strong", null, title), (0, import_react14.createElement)("span", { className: "bt-hw-card-description" }, text2), (0, import_react14.createElement)("span", { className: "bt-hw-card-action" }, action, " →")))
-      ),
-      (0, import_react14.createElement)("p", { className: "bt-hw-quiet" }, t("You can change the connection later from Bot settings."))
+      (0, import_react14.createElement)("p", { className: "bt-hw-lead" }, t("Pick one of your SSH hosts. Automagik finds the Hermes there and opens a chat.")),
+      (0, import_react14.createElement)(SshHostPicker, { host: draft.ssh.host, onPick: pickSshHost }),
+      (0, import_react14.createElement)(Field, { label: t("SSH host or config name"), value: draft.ssh.host, onChange: typeSshHost, hint: t("You can also use a name from your SSH config.") })
     );
-    footer = (0, import_react14.createElement)(import_react14.Fragment, null, (0, import_react14.createElement)(Button, { onClick: close }, t("Cancel")), (0, import_react14.createElement)(Button, { primary: true, disabled: status === "loading", onClick: () => setStep("details") }, t("Continue"), " →"));
-  } else if (step2 === "details") {
-    if (draft.mode === "ssh") {
-      heading = t("Connect through SSH");
-      content = (0, import_react14.createElement)(
-        import_react14.Fragment,
-        null,
-        (0, import_react14.createElement)("p", { className: "bt-hw-lead" }, t("We’ll find Hermes on the other computer and start the connection.")),
-        (0, import_react14.createElement)(SshHostPicker, { host: draft.ssh.host, onPick: pickSshHost }),
-        (0, import_react14.createElement)(Field, { label: t("SSH host or config name"), value: draft.ssh.host, onChange: (value) => ssh("host", value), hint: t("You can also use a name from your SSH config.") }),
-        (0, import_react14.createElement)("div", { className: "bt-hw-two" }, (0, import_react14.createElement)(Field, { label: t("User (optional)"), value: draft.ssh.user, onChange: (value) => ssh("user", value), placeholder: t("From SSH config") }), (0, import_react14.createElement)(Field, { label: t("Port (optional)"), value: draft.ssh.port, onChange: (value) => ssh("port", value), placeholder: t("From SSH config"), type: "text" })),
-        (0, import_react14.createElement)("div", { className: "bt-hw-field" }, (0, import_react14.createElement)("span", null, t("SSH key (optional)")), (0, import_react14.createElement)("div", { className: "bt-hw-file-choice" }, (0, import_react14.createElement)("span", null, draft.ssh.identityFile || t("Use SSH agent or SSH config")), (0, import_react14.createElement)(Button, { onClick: () => setChoosingKey((on) => !on) }, t("Choose file…"))), (0, import_react14.createElement)("small", null, t("The key stays on this computer.")), choosingKey ? (0, import_react14.createElement)("div", { className: "bt-hw-key-path" }, (0, import_react14.createElement)(Field, { label: t("Key file path"), value: draft.ssh.identityFile, onChange: (value) => ssh("identityFile", value), placeholder: t("Path on the computer running Automagik"), hint: t("Enter a local path. The key is never uploaded or copied.") }), (0, import_react14.createElement)(Button, { onClick: () => setChoosingKey(false) }, t("Use this path"))) : null),
-        (0, import_react14.createElement)(Field, { label: t("Hermes path (optional)"), value: draft.ssh.hermesPath, onChange: (value) => ssh("hermesPath", value), placeholder: t("Find Hermes automatically"), hint: t("Hermes must already be installed on the other computer.") }),
-        (0, import_react14.createElement)(Field, { label: t("Hermes home (optional)"), value: draft.ssh.hermesHome, onChange: (value) => ssh("hermesHome", value), hint: t("Absolute data folder on the remote computer. Leave empty for its default Hermes home.") })
-      );
-    } else {
-      heading = draft.authMode === "password" ? t("Sign in to your Hermes") : t("Connect to your Hermes");
-      content = (0, import_react14.createElement)(
-        import_react14.Fragment,
-        null,
-        (0, import_react14.createElement)("p", { className: "bt-hw-lead" }, draft.authMode === "password" ? t("Use the sign-in set up on this Hermes instance.") : t("Enter the address of the Hermes you want to use.")),
-        (0, import_react14.createElement)(Field, { label: t("Remote address"), value: draft.address, onChange: (value) => change("address", value), hint: t("A path after the address is okay.") }),
-        (0, import_react14.createElement)("div", { className: "bt-hw-field" }, (0, import_react14.createElement)("span", null, t("How do you sign in?")), (0, import_react14.createElement)("div", { className: "bt-hw-segments", role: "group", "aria-label": t("How do you sign in?") }, [["token", t("Session token")], ["password", t("User and password")]].map(([id, label]) => (0, import_react14.createElement)("button", { key: id, type: "button", "aria-pressed": draft.authMode === id, onClick: () => setDraft((current2) => ({ ...freshSecrets(current2), authMode: id })) }, label)))),
-        draft.authMode === "password" ? (0, import_react14.createElement)(import_react14.Fragment, null, (0, import_react14.createElement)("div", { className: "bt-hw-two" }, (0, import_react14.createElement)(Field, { label: t("User"), value: draft.username, onChange: (value) => change("username", value), placeholder: t("Your dashboard user") }), (0, import_react14.createElement)(Field, { label: t("Password"), value: draft.password, onChange: (value) => change("password", value), placeholder: t("Enter password"), secret: true })), (0, import_react14.createElement)(Note, null, t("Your password is used to sign in and is not saved."))) : (0, import_react14.createElement)(import_react14.Fragment, null, (0, import_react14.createElement)(Field, { label: t("Session token"), value: draft.credential, onChange: (value) => change("credential", value), placeholder: view?.credentialSet ? t("Key saved — enter a new token to replace it") : "", secret: true, hint: t("Use the session token from this Hermes instance.") }), (0, import_react14.createElement)(Note, null, t("The saved token stays hidden. You can replace it later.")))
-      );
-    }
+    footer = (0, import_react14.createElement)(import_react14.Fragment, null, (0, import_react14.createElement)(Button, { onClick: close }, t("Cancel")), (0, import_react14.createElement)(Button, { primary: true, disabled: status === "loading" || draft.mode !== "ssh" || !validDetails, onClick: connect }, t("Connect"), " →"));
+  } else if (step2 === "more") {
+    heading = t("More options");
+    const route = (0, import_react14.createElement)("div", { className: "bt-hw-field" }, (0, import_react14.createElement)("span", null, t("How would you like to connect?")), (0, import_react14.createElement)("div", { className: "bt-hw-segments", role: "group", "aria-label": t("How would you like to connect?") }, [["ssh", t("Through SSH")], ["remote", t("Remote address")]].map(([id, name]) => (0, import_react14.createElement)("button", { key: id, type: "button", "aria-pressed": draft.mode === id, onClick: () => change("mode", id) }, name))));
+    content = draft.mode === "ssh" ? (0, import_react14.createElement)(
+      import_react14.Fragment,
+      null,
+      route,
+      (0, import_react14.createElement)(Field, { label: t("SSH host or config name"), value: draft.ssh.host, onChange: (value) => ssh("host", value), hint: t("You can also use a name from your SSH config.") }),
+      (0, import_react14.createElement)("div", { className: "bt-hw-two" }, (0, import_react14.createElement)(Field, { label: t("User (optional)"), value: draft.ssh.user, onChange: (value) => ssh("user", value), placeholder: t("From SSH config") }), (0, import_react14.createElement)(Field, { label: t("Port (optional)"), value: draft.ssh.port, onChange: (value) => ssh("port", value), placeholder: t("From SSH config"), type: "text" })),
+      (0, import_react14.createElement)("div", { className: "bt-hw-field" }, (0, import_react14.createElement)("span", null, t("SSH key (optional)")), (0, import_react14.createElement)("div", { className: "bt-hw-file-choice" }, (0, import_react14.createElement)("span", null, draft.ssh.identityFile || t("Use SSH agent or SSH config")), (0, import_react14.createElement)(Button, { onClick: () => setChoosingKey((on) => !on) }, t("Choose file…"))), (0, import_react14.createElement)("small", null, t("The key stays on this computer.")), choosingKey ? (0, import_react14.createElement)("div", { className: "bt-hw-key-path" }, (0, import_react14.createElement)(Field, { label: t("Key file path"), value: draft.ssh.identityFile, onChange: (value) => ssh("identityFile", value), placeholder: t("Path on the computer running Automagik"), hint: t("Enter a local path. The key is never uploaded or copied.") }), (0, import_react14.createElement)(Button, { onClick: () => setChoosingKey(false) }, t("Use this path"))) : null),
+      (0, import_react14.createElement)(Field, { label: t("Hermes path (optional)"), value: draft.ssh.hermesPath, onChange: (value) => ssh("hermesPath", value), placeholder: t("Find Hermes automatically"), hint: t("Hermes must already be installed on the other computer.") }),
+      (0, import_react14.createElement)(Field, { label: t("Hermes home (optional)"), value: draft.ssh.hermesHome, onChange: (value) => ssh("hermesHome", value), hint: t("Absolute data folder on the remote computer. Leave empty for its default Hermes home.") })
+    ) : (0, import_react14.createElement)(
+      import_react14.Fragment,
+      null,
+      route,
+      (0, import_react14.createElement)(Field, { label: t("Remote address"), value: draft.address, onChange: (value) => change("address", value), hint: t("A path after the address is okay.") }),
+      (0, import_react14.createElement)("div", { className: "bt-hw-field" }, (0, import_react14.createElement)("span", null, t("How do you sign in?")), (0, import_react14.createElement)("div", { className: "bt-hw-segments", role: "group", "aria-label": t("How do you sign in?") }, [["token", t("Session token")], ["password", t("User and password")]].map(([id, name]) => (0, import_react14.createElement)("button", { key: id, type: "button", "aria-pressed": draft.authMode === id, onClick: () => setDraft((current) => ({ ...freshSecrets(current), authMode: id })) }, name)))),
+      draft.authMode === "password" ? (0, import_react14.createElement)(import_react14.Fragment, null, (0, import_react14.createElement)("div", { className: "bt-hw-two" }, (0, import_react14.createElement)(Field, { label: t("User"), value: draft.username, onChange: (value) => change("username", value), placeholder: t("Your dashboard user") }), (0, import_react14.createElement)(Field, { label: t("Password"), value: draft.password, onChange: (value) => change("password", value), placeholder: t("Enter password"), secret: true })), (0, import_react14.createElement)(Note, null, t("Your password is used to sign in and is not saved."))) : (0, import_react14.createElement)(import_react14.Fragment, null, (0, import_react14.createElement)(Field, { label: t("Session token"), value: draft.credential, onChange: (value) => change("credential", value), placeholder: view?.credentialSet ? t("Key saved — enter a new token to replace it") : "", secret: true, hint: t("Use the session token from this Hermes instance.") }), (0, import_react14.createElement)(Note, null, t("The saved token stays hidden. You can replace it later.")))
+    );
     footer = (0, import_react14.createElement)(import_react14.Fragment, null, (0, import_react14.createElement)(Button, { onClick: () => {
-      setDraft(freshSecrets);
-      setStep("connection");
-    } }, t("Back")), (0, import_react14.createElement)(Button, { primary: true, disabled: !validDetails, onClick: testConnection }, draft.mode === "ssh" ? t("Test SSH connection") : draft.authMode === "password" ? t("Sign in and test") : t("Test connection"), " →"));
-  } else if (step2 === "test") {
-    if (status === "error" || status === "trusting") {
-      heading = error?.heading ?? t("We couldn’t connect");
-      const facts = error?.rows?.length ? (0, import_react14.createElement)("div", { className: "bt-hw-summary bt-hw-facts" }, error.rows.map((row) => (0, import_react14.createElement)(Pair, { key: row.label, ...row }))) : null;
-      const said = (error?.lines ?? []).map((block) => (0, import_react14.createElement)(Lines, { key: block.label, ...block }));
-      content = error?.trust ? (0, import_react14.createElement)(import_react14.Fragment, null, (0, import_react14.createElement)("div", { className: "bt-hw-result bt-hw-ask", role: "alert" }, (0, import_react14.createElement)("span", { className: "bt-hw-result-icon" }, (0, import_react14.createElement)(ShieldIcon)), (0, import_react14.createElement)("h3", null, error.title), (0, import_react14.createElement)("p", null, error.text)), facts, (0, import_react14.createElement)(Note, null, error.hint)) : (0, import_react14.createElement)(
-        import_react14.Fragment,
-        null,
-        (0, import_react14.createElement)("div", { className: "bt-hw-result bt-hw-failed", role: "alert" }, (0, import_react14.createElement)("span", { className: "bt-hw-result-icon" }, "!"), (0, import_react14.createElement)("h3", null, error?.title), (0, import_react14.createElement)("p", null, error?.text)),
+      setDraft((current) => ({ ...freshSecrets(current), mode: "ssh" }));
+      setStep("host");
+    } }, t("Back")), (0, import_react14.createElement)(Button, { primary: true, disabled: status === "loading" || !validDetails, onClick: connect }, t("Connect"), " →"));
+  } else if (step2 === "error") {
+    heading = error?.heading ?? t("We couldn’t connect");
+    const facts = error?.rows?.length ? (0, import_react14.createElement)("div", { className: "bt-hw-summary bt-hw-facts" }, error.rows.map((row) => (0, import_react14.createElement)(Pair, { key: row.label, ...row }))) : null;
+    const said = (error?.lines ?? []).map((block) => (0, import_react14.createElement)(Lines, { key: block.label, ...block }));
+    content = error?.trust ? (0, import_react14.createElement)(import_react14.Fragment, null, (0, import_react14.createElement)("div", { className: "bt-hw-result bt-hw-ask", role: "alert" }, (0, import_react14.createElement)("span", { className: "bt-hw-result-icon" }, (0, import_react14.createElement)(ShieldIcon)), (0, import_react14.createElement)("h3", null, error.title), (0, import_react14.createElement)("p", null, error.text)), facts, (0, import_react14.createElement)(Note, null, error.hint)) : (0, import_react14.createElement)(
+      import_react14.Fragment,
+      null,
+      (0, import_react14.createElement)("div", { className: "bt-hw-result bt-hw-failed", role: "alert" }, (0, import_react14.createElement)("span", { className: "bt-hw-result-icon" }, "!"), (0, import_react14.createElement)("h3", null, error?.title)),
+      (0, import_react14.createElement)(Note, { error: true }, error?.hint),
+      error?.text || facts || said.length ? (0, import_react14.createElement)("button", { type: "button", className: "bt-hw-details-toggle", "aria-expanded": details, onClick: () => setDetails((on) => !on) }, t("Details"), (0, import_react14.createElement)("span", { "aria-hidden": true }, details ? "−" : "+")) : null,
+      details ? (0, import_react14.createElement)(
+        "div",
+        { className: "bt-hw-details" },
+        error?.text ? (0, import_react14.createElement)("p", { className: "bt-hw-quiet" }, error.text) : null,
         facts,
         said,
-        (0, import_react14.createElement)(Note, { error: true }, error?.hint),
-        error?.ssh ? (0, import_react14.createElement)("p", { className: "bt-hw-quiet" }, t("Settings → Feedback keeps a line about this test for a report.")) : null
-      );
-      footer = error?.trust ? (0, import_react14.createElement)(import_react14.Fragment, null, (0, import_react14.createElement)(Button, { disabled: status === "trusting", onClick: () => setStep("details") }, t("Edit SSH details")), (0, import_react14.createElement)(Button, { primary: true, disabled: status === "trusting", onClick: trustHost }, status === "trusting" ? t("Trusting…") : t("Trust this host"), " →")) : (0, import_react14.createElement)(import_react14.Fragment, null, (0, import_react14.createElement)(Button, { onClick: testConnection, disabled: !validDetails }, t("Test again")), (0, import_react14.createElement)(Button, { primary: true, onClick: () => setStep("details") }, draft.mode === "ssh" ? t("Edit SSH details") : t("Edit sign-in"), " ←"));
-    } else if (status === "connected") {
-      heading = t("Hermes is ready");
-      content = (0, import_react14.createElement)(import_react14.Fragment, null, (0, import_react14.createElement)("div", { className: "bt-hw-result bt-hw-success", role: "status" }, (0, import_react14.createElement)("span", { className: "bt-hw-result-icon" }, (0, import_react14.createElement)(CheckIcon)), (0, import_react14.createElement)("h3", null, t("Connection works")), (0, import_react14.createElement)("p", null, t("Now choose a profile from this Hermes."))), summary, (0, import_react14.createElement)("p", { className: "bt-hw-quiet" }, t("Nothing has been sent to a chat.")));
-      footer = (0, import_react14.createElement)(import_react14.Fragment, null, (0, import_react14.createElement)(Button, { onClick: () => setStep("details") }, t("Edit connection")), (0, import_react14.createElement)(Button, { primary: true, onClick: () => setStep("profile") }, t("Choose a profile"), " →"));
-    } else {
-      heading = t("Testing your connection");
-      content = (0, import_react14.createElement)(import_react14.Fragment, null, (0, import_react14.createElement)("p", { className: "bt-hw-lead" }, t("Checking {address}. This can take a moment.", { address: connectionLabel(draft) })), (0, import_react14.createElement)(
-        "div",
-        { className: "bt-hw-checks", role: "status" },
-        [[t("Reach the computer"), connectionLabel(draft)], [t("Sign in"), stage === "open" || stage === "connected" ? t("Your sign-in was accepted") : t("Checking your sign-in…")], [t("Open Hermes"), t("Opening the connection…")]].map(([title, description], index) => {
-          const at = ["reach", "sign-in", "open", "connected"].indexOf(stage);
-          const done = index < at;
-          const working = index === at;
-          return (0, import_react14.createElement)("div", { key: title, className: "bt-hw-check-row" }, (0, import_react14.createElement)("span", { className: `bt-hw-status${working ? " bt-hw-working" : !done ? " bt-hw-pending" : ""}` }, done ? (0, import_react14.createElement)(CheckIcon) : working ? (0, import_react14.createElement)("span", { className: "bt-hw-spinner" }) : "·"), (0, import_react14.createElement)("div", null, (0, import_react14.createElement)("strong", null, title), (0, import_react14.createElement)("small", null, description)));
-        })
-      ), (0, import_react14.createElement)("p", { className: "bt-hw-quiet" }, t("Next, we’ll list the profiles you can use.")));
-      footer = (0, import_react14.createElement)(import_react14.Fragment, null, (0, import_react14.createElement)(Button, { onClick: close }, t("Cancel")), (0, import_react14.createElement)(Button, { disabled: true }, t("Testing…")));
-    }
+        error?.ssh ? (0, import_react14.createElement)("p", { className: "bt-hw-quiet" }, t("Settings → Feedback keeps a line about this failure for a report.")) : null
+      ) : null
+    );
+    footer = error?.trust ? (0, import_react14.createElement)(import_react14.Fragment, null, (0, import_react14.createElement)(Button, { disabled: status === "trusting", onClick: () => setStep("host") }, t("Back")), (0, import_react14.createElement)(Button, { primary: true, disabled: status === "trusting", onClick: trustHost }, status === "trusting" ? t("Trusting…") : t("Trust this host"), " →")) : validDetails ? (0, import_react14.createElement)(import_react14.Fragment, null, (0, import_react14.createElement)(Button, { onClick: () => setStep("more") }, t("More options")), (0, import_react14.createElement)(Button, { primary: true, onClick: connect }, t("Try again"), " →")) : (0, import_react14.createElement)(import_react14.Fragment, null, (0, import_react14.createElement)(Button, { onClick: close }, t("Cancel")), (0, import_react14.createElement)(Button, { primary: true, onClick: () => setStep(draft.mode === "ssh" ? "host" : "more") }, draft.mode === "ssh" ? t("Back") : t("More options"), " →"));
   } else if (step2 === "profile") {
     heading = t("Which profile would you like?");
     const profiles = test?.profiles ?? [];
     content = (0, import_react14.createElement)(
       import_react14.Fragment,
       null,
-      (0, import_react14.createElement)("p", { className: "bt-hw-lead" }, t("Profiles available from {address}.", { address: connectionLabel(draft) })),
-      (0, import_react14.createElement)("div", { className: "bt-hw-profiles", role: "radiogroup", "aria-label": t("Profile") }, profiles.map((item) => (0, import_react14.createElement)("button", { key: item.id, type: "button", className: "bt-hw-profile", role: "radio", "aria-checked": profile === item.id, disabled: status === "saving", onClick: () => {
+      (0, import_react14.createElement)("p", { className: "bt-hw-lead" }, t("The Hermes on {address} has more than one profile.", { address: label })),
+      profiles.length === 0 ? (0, import_react14.createElement)(Note, { error: true }, t("No profiles are available. Check the connection and try again.")) : (0, import_react14.createElement)("div", { className: "bt-hw-profiles", role: "radiogroup", "aria-label": t("Profile") }, profiles.map((item) => (0, import_react14.createElement)("button", { key: item.id, type: "button", className: "bt-hw-profile", role: "radio", "aria-checked": profile === item.id, disabled: status === "saving", onClick: () => {
         if (!saving.current) setProfile(item.id);
-      } }, (0, import_react14.createElement)("span", { className: "bt-hw-radio" }), (0, import_react14.createElement)("span", null, (0, import_react14.createElement)("strong", null, item.name), (0, import_react14.createElement)("small", null, t("Available on this Hermes"))), profile === item.id ? (0, import_react14.createElement)("span", { className: "bt-hw-tag" }, t("Selected")) : null))),
-      (0, import_react14.createElement)("div", { className: "bt-hw-profile-tools" }, (0, import_react14.createElement)("span", null, profiles.length === 1 ? t("1 profile available") : t("{count} profiles available", { count: profiles.length })), (0, import_react14.createElement)("button", { type: "button", disabled: status === "refreshing" || status === "saving", onClick: refreshProfiles }, t("Refresh list"))),
-      profiles.length === 0 ? (0, import_react14.createElement)("p", { role: "alert", className: "bt-hw-quiet" }, t("No profiles are available. Check the connection and test again.")) : null,
-      (0, import_react14.createElement)(Note, null, t("This profile’s tools run on the other computer under its own rules."))
+      } }, (0, import_react14.createElement)("span", { className: "bt-hw-radio" }), (0, import_react14.createElement)("span", null, (0, import_react14.createElement)("strong", null, item.name), item.id === test?.defaultProfile ? (0, import_react14.createElement)("small", null, t("Hermes’s default")) : null), profile === item.id ? (0, import_react14.createElement)("span", { className: "bt-hw-tag" }, t("Selected")) : null))),
+      (0, import_react14.createElement)("div", { className: "bt-hw-profile-tools" }, (0, import_react14.createElement)("span", null, t("{count} profiles available", { count: profiles.length })), (0, import_react14.createElement)("button", { type: "button", disabled: status === "refreshing" || status === "saving", onClick: refreshProfiles }, t("Refresh list")))
     );
     footer = (0, import_react14.createElement)(import_react14.Fragment, null, (0, import_react14.createElement)(Button, { disabled: status === "saving", onClick: () => {
       if (!saving.current) {
-        setStatus("connected");
-        setStep("test");
+        discardTest(testLease.current);
+        setTest(null);
+        setStep(draft.mode === "ssh" ? "host" : "more");
       }
-    } }, t("Back")), (0, import_react14.createElement)(Button, { primary: true, disabled: !profile || status === "saving" || status === "refreshing", onClick: save }, status === "saving" ? t("Saving…") : t("Use this profile"), " →"));
+    } }, t("Back")), (0, import_react14.createElement)(Button, { primary: true, disabled: !profile || status === "saving" || status === "refreshing", onClick: () => save(test.testId, profile) }, status === "saving" ? t("Opening…") : t("Use this profile"), " →"));
   } else {
-    heading = t("You’re connected");
+    heading = t("Connecting to {address}", { address: label });
+    const at = status === "saving" ? 3 : ["reach", "sign-in", "open", "connected"].indexOf(stage);
     content = (0, import_react14.createElement)(
-      import_react14.Fragment,
-      null,
-      (0, import_react14.createElement)("div", { className: "bt-hw-result bt-hw-success bt-hw-compact", role: "status" }, (0, import_react14.createElement)("span", { className: "bt-hw-result-icon" }, (0, import_react14.createElement)(CheckIcon)), (0, import_react14.createElement)("h3", null, t("Ready to chat")), (0, import_react14.createElement)("p", null, t("Next time, choose Remote Hermes to connect in one click."))),
-      (0, import_react14.createElement)("div", { className: "bt-hw-summary" }, (0, import_react14.createElement)(Pair, { label: t("Connection"), value: connectionLabel(draft) }), (0, import_react14.createElement)(Pair, { label: t("Profile"), value: saved?.profile ?? profile })),
-      (0, import_react14.createElement)("p", { className: "bt-hw-remember" }, (0, import_react14.createElement)(CheckIcon), t("Connection and profile remembered")),
-      (0, import_react14.createElement)("p", { className: "bt-hw-limits" }, t("Your bots’ team tools — messages to other bots, secrets, memory and schedules — aren’t available in these chats. This computer’s sandbox does not protect the remote computer."))
+      "div",
+      { className: "bt-hw-checks", role: "status" },
+      [[t("Reach the computer"), label], [t("Sign in"), at >= 2 ? t("Your sign-in was accepted") : t("Checking your sign-in…")], [t("Open Hermes"), at >= 3 ? t("Opening the chat…") : t("Opening the connection…")]].map(([title, description], index) => {
+        const done = index < at, working = index === at || at >= 3 && index === 2;
+        return (0, import_react14.createElement)("div", { key: title, className: "bt-hw-check-row" }, (0, import_react14.createElement)("span", { className: `bt-hw-status${working ? " bt-hw-working" : !done ? " bt-hw-pending" : ""}` }, working ? (0, import_react14.createElement)("span", { className: "bt-hw-spinner" }) : done ? (0, import_react14.createElement)(CheckIcon) : "·"), (0, import_react14.createElement)("div", null, (0, import_react14.createElement)("strong", null, title), (0, import_react14.createElement)("small", null, description)));
+      })
     );
-    footer = (0, import_react14.createElement)(import_react14.Fragment, null, (0, import_react14.createElement)(Button, { onClick: () => {
-      setTest(null);
-      setStep("details");
-    } }, t("Connection settings")), (0, import_react14.createElement)(Button, { primary: true, onClick: () => onConnected ? onConnected(saved) : onClose() }, t("Open chat"), " →"));
+    footer = (0, import_react14.createElement)(import_react14.Fragment, null, (0, import_react14.createElement)(Button, { disabled: status === "saving", onClick: close }, t("Cancel")), (0, import_react14.createElement)(Button, { disabled: true }, t("Connecting…")));
   }
   const trap = (event) => {
     if (event.key !== "Tab") return;
@@ -5669,12 +5617,7 @@ function HermesRemoteConnect({ onClose, onConnected, edit = false, initialView, 
     (0, import_react14.createElement)(
       "div",
       { ref: dialog, role: "dialog", "aria-modal": true, "aria-label": t("Connect Remote Hermes"), "aria-busy": status === "saving" || status === "trusting" || void 0, tabIndex: -1, className: "bt-hermes-wizard", "data-step": step2, "data-status": status, onKeyDown: trap },
-      (0, import_react14.createElement)(
-        "header",
-        { className: "bt-hw-head" },
-        (0, import_react14.createElement)("div", { className: "bt-hw-identity" }, (0, import_react14.createElement)(HermesMark, { size: 36 }), (0, import_react14.createElement)("div", null, (0, import_react14.createElement)("strong", null, t("Connect Remote Hermes")), (0, import_react14.createElement)("small", null, t("A connection to another computer"))), (0, import_react14.createElement)("button", { type: "button", className: "bt-hw-close", "aria-label": t("Close connection setup"), disabled: status === "saving", onClick: close }, (0, import_react14.createElement)(CloseIcon))),
-        (0, import_react14.createElement)("ol", { className: "bt-hw-steps" }, steps.map((label, index) => (0, import_react14.createElement)("li", { key: label, "aria-current": current === index ? "step" : void 0, "data-complete": index < current || void 0 }, (0, import_react14.createElement)("span", null, index < current ? (0, import_react14.createElement)(CheckIcon) : index + 1), t(label))))
-      ),
+      (0, import_react14.createElement)("header", { className: "bt-hw-head" }, (0, import_react14.createElement)("div", { className: "bt-hw-identity" }, (0, import_react14.createElement)(HermesMark, { size: 36 }), (0, import_react14.createElement)("div", null, (0, import_react14.createElement)("strong", null, t("Connect Remote Hermes")), (0, import_react14.createElement)("small", null, t("Chat with a Hermes agent on another computer."))), (0, import_react14.createElement)("button", { type: "button", className: "bt-hw-close", "aria-label": t("Close connection setup"), disabled: status === "saving", onClick: close }, (0, import_react14.createElement)(CloseIcon)))),
       (0, import_react14.createElement)("main", { className: "bt-hw-content" }, (0, import_react14.createElement)("h2", null, heading), content),
       (0, import_react14.createElement)("footer", { className: "bt-hw-foot" }, footer)
     )
@@ -5683,7 +5626,7 @@ function HermesRemoteConnect({ onClose, onConnected, edit = false, initialView, 
 function HermesRemoteSettings({ run: run2, Section: Section2, actions }) {
   const [view, setView] = (0, import_react14.useState)(null);
   const [pairing, setPairing] = (0, import_react14.useState)(false);
-  const [editing, setEditing] = (0, import_react14.useState)(false);
+  const [editing, setEditing] = (0, import_react14.useState)(null);
   const [reconciliation, setReconciliation] = (0, import_react14.useState)(null);
   (0, import_react14.useEffect)(() => {
     let on = true;
@@ -5695,6 +5638,7 @@ function HermesRemoteSettings({ run: run2, Section: Section2, actions }) {
     };
   }, []);
   if (!view) return null;
+  const where = view.mode === "ssh" ? view.ssh?.host : view.address;
   return (0, import_react14.createElement)(
     import_react14.Fragment,
     null,
@@ -5703,8 +5647,13 @@ function HermesRemoteSettings({ run: run2, Section: Section2, actions }) {
       Section2,
       null,
       (0, import_react14.createElement)("div", { className: "bt-set-row" }, (0, import_react14.createElement)("div", { className: "bt-set-copy" }, (0, import_react14.createElement)("span", null, t("Chat with a Hermes agent on another computer.")), (0, import_react14.createElement)("span", { className: "bt-set-hint" }, t("Your bots’ team tools (messages to other bots, secrets, memory, schedules) are not available in these chats.")))),
-      (0, import_react14.createElement)("div", { className: "bt-set-row" }, (0, import_react14.createElement)("div", { className: "bt-set-copy" }, (0, import_react14.createElement)("span", null, view.profile || t("No connection saved")), (0, import_react14.createElement)("span", { className: "bt-set-hint" }, view.mode === "ssh" ? view.ssh?.host : view.address)), (0, import_react14.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: () => setEditing(true) }, configured(view) ? t("Edit connection") : t("Set up connection"))),
-      view.credentialSet ? (0, import_react14.createElement)("div", { className: "bt-set-row" }, (0, import_react14.createElement)("span", { className: "bt-set-hint" }, t("Key saved")), (0, import_react14.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: () => setEditing(true) }, t("Replace"))) : null,
+      (0, import_react14.createElement)(
+        "div",
+        { className: "bt-set-row" },
+        (0, import_react14.createElement)("div", { className: "bt-set-copy" }, (0, import_react14.createElement)("span", null, configured(view) ? where : t("No connection saved")), configured(view) ? (0, import_react14.createElement)("span", { className: "bt-set-hint" }, t("Profile: {profile}", { profile: view.profile })) : null),
+        (0, import_react14.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: () => setEditing("host") }, configured(view) ? t("Change computer") : t("Set up connection")),
+        (0, import_react14.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: () => setEditing("more") }, t("More"))
+      ),
       configured(view) ? (0, import_react14.createElement)(
         "div",
         { className: "bt-set-row" },
@@ -5734,23 +5683,23 @@ function HermesRemoteSettings({ run: run2, Section: Section2, actions }) {
       })) }, t("Reconnect and reconcile")))),
       reconciliation ? (0, import_react14.createElement)("div", { role: "status", className: "bt-set-hint" }, reconciliation.unknown ? t("Connection lost; remote outcome unknown") : t("Remote session reconciled. Review the remote transcript before sending again."), reconciliation.gap ? (0, import_react14.createElement)("p", null, t("Replay gap: showing a fresh remote snapshot.")) : null, (0, import_react14.createElement)("pre", null, (reconciliation.messages ?? []).map((message) => `${message.role}: ${typeof message.text === "string" ? message.text : typeof message.content === "string" ? message.content : ""}`).join("\n")), reconciliation.inflight?.assistant ? (0, import_react14.createElement)("p", null, reconciliation.inflight.assistant) : null) : null
     ),
-    editing ? (0, import_react14.createElement)(HermesRemoteConnect, { edit: true, initialView: view, onClose: () => setEditing(false), onSaved: (next) => {
+    editing ? (0, import_react14.createElement)(HermesRemoteConnect, { key: editing, edit: true, more: editing === "more", initialView: view, onClose: () => setEditing(null), onSaved: (next) => {
       setView(next);
       void actions?.refreshModels?.();
-    }, onConnected: () => setEditing(false) }) : null
+    }, onConnected: () => setEditing(null) }) : null
   );
 }
 var HERMES_REMOTE_CSS = `${HERMES_MARK_CSS}
 .bt-hermes-layer{position:fixed;inset:var(--dsh-frame-chrome-top,0px) 0 0;z-index:90;display:flex;align-items:center;justify-content:center;font-family:var(--bt-font);color:var(--bt-ink)}
 .bt-hermes-wizard{position:relative;width:min(736px,calc(100vw - 40px));max-height:calc(100dvh - 48px);display:flex;flex-direction:column;background:var(--st-raised,var(--bt-main));border:1px solid var(--st-line,var(--bt-line-2));border-radius:var(--st-r-dialog,24px);box-shadow:var(--st-lift,0 18px 60px rgba(0,0,0,.267));overflow:hidden}
-.bt-hw-head{padding:24px 28px 18px;border-bottom:1px solid var(--st-line,var(--bt-line));background:var(--bt-card)}.bt-hw-identity{display:flex;align-items:center;gap:12px}.bt-hw-identity>div{display:flex;flex-direction:column;gap:2px}.bt-hw-identity strong{font:700 16px var(--bt-head-font,var(--bt-font))}.bt-hw-identity small{font-size:12px;color:var(--bt-ink-2)}.bt-hw-close{margin-left:auto;width:30px;height:30px;border:0;border-radius:8px;display:grid;place-items:center;color:var(--bt-ink-2);background:var(--st-sunk,var(--bt-hover));cursor:pointer}.bt-hw-steps{display:flex;list-style:none;margin:22px 0 0;padding:0}.bt-hw-steps li{flex:1;display:flex;align-items:center;gap:6px;color:var(--bt-ink-2);font-size:11px}.bt-hw-steps li>span{width:20px;height:20px;display:grid;place-items:center;border-radius:50%;border:1px solid var(--st-line,var(--bt-line-2));font-size:10px}.bt-hw-steps li[aria-current]{color:var(--bt-ink);font-weight:700}.bt-hw-steps li[aria-current]>span{background:var(--st-lilac,var(--bt-active));border-color:transparent;color:var(--st-lilac-ink,var(--bt-ink))}.bt-hw-steps li[data-complete]>span{color:var(--st-ok,var(--bt-green));background:color-mix(in srgb,var(--bt-green) 10%,var(--bt-card));border-color:transparent}.bt-hw-steps svg{width:11px;height:11px}
-.bt-hw-content{padding:26px 28px;background:var(--bt-card);overflow:auto}.bt-hw-content h2{font:700 23px/30px var(--bt-head-font,var(--bt-font));margin:0 0 10px;letter-spacing:-.025em}.bt-hw-lead{color:var(--bt-ink-2);margin:0 0 22px;font-size:14px;line-height:21px}.bt-hw-cards{display:grid;grid-template-columns:1fr 1fr;gap:14px}.bt-hw-card{border:1px solid var(--st-line,var(--bt-line-2));border-radius:var(--st-r-menu,14px);padding:20px;min-height:224px;display:flex;flex-direction:column;align-items:flex-start;text-align:left;color:var(--bt-ink);font:inherit;background:var(--st-raised,var(--bt-main));cursor:pointer}.bt-hw-card[aria-pressed=true]{box-shadow:inset 0 0 0 1px var(--st-cyan,var(--bt-accent));border-color:var(--st-cyan,var(--bt-accent))}.bt-hw-card-icon{height:44px;width:44px;display:grid;place-items:center;border-radius:12px;background:var(--st-lilac,var(--bt-active));color:var(--st-lilac-ink,var(--bt-ink))}.bt-hw-card-icon svg{width:26px;height:26px}.bt-hw-card>strong{margin:14px 0 8px;font-size:16px;line-height:22px}.bt-hw-card-description{font-size:13px;line-height:20px;color:var(--bt-ink-2);margin-bottom:20px}.bt-hw-card-action{margin-top:auto;font-size:12px;font-weight:700;color:var(--st-cyan-ink,var(--bt-accent))}body[data-ds-dark-theme] .bt-hw-card-action{color:var(--st-cyan,var(--bt-accent))}.bt-hw-quiet{color:var(--bt-ink-2);font-size:12px;line-height:18px;margin:18px 0 0}
+.bt-hw-head{padding:24px 28px 18px;border-bottom:1px solid var(--st-line,var(--bt-line));background:var(--bt-card)}.bt-hw-identity{display:flex;align-items:center;gap:12px}.bt-hw-identity>div{display:flex;flex-direction:column;gap:2px}.bt-hw-identity strong{font:700 16px var(--bt-head-font,var(--bt-font))}.bt-hw-identity small{font-size:12px;color:var(--bt-ink-2)}.bt-hw-close{margin-left:auto;width:30px;height:30px;border:0;border-radius:8px;display:grid;place-items:center;color:var(--bt-ink-2);background:var(--st-sunk,var(--bt-hover));cursor:pointer}
+.bt-hw-content{padding:26px 28px;background:var(--bt-card);overflow:auto}.bt-hw-content h2{font:700 23px/30px var(--bt-head-font,var(--bt-font));margin:0 0 10px;letter-spacing:-.025em}.bt-hw-lead{color:var(--bt-ink-2);margin:0 0 22px;font-size:14px;line-height:21px}.bt-hw-quiet{color:var(--bt-ink-2);font-size:12px;line-height:18px;margin:18px 0 0}
 .bt-hw-field{display:flex;flex-direction:column;gap:8px;margin:0 0 18px;font-size:13px}.bt-hw-field>span:first-child{font-weight:600}.bt-hw-field small{color:var(--bt-ink-2);font-size:12px;line-height:17px}.bt-hw-field input{height:42px;width:100%;box-sizing:border-box;border:1px solid var(--st-line,var(--bt-line-2));border-radius:8px;padding:0 12px;background:var(--st-raised,var(--bt-main));color:var(--bt-ink);font:14px var(--bt-font);outline:none}.bt-hw-field input::placeholder{color:var(--bt-ink-2);opacity:1}.bt-hw-field input:focus-visible,.bt-hermes-wizard button:focus-visible{outline:2px solid var(--st-ring,var(--bt-accent));outline-offset:2px}.bt-hw-segments{display:flex;gap:4px;padding:4px;border-radius:10px;align-self:flex-start;background:var(--st-sunk,var(--bt-hover))}.bt-hw-segments button{border:0;border-radius:var(--bt-hw-choice-radius,7px);background:transparent;color:var(--bt-ink-2);padding:8px 13px;font:12px var(--bt-font);cursor:pointer}.bt-hw-segments button[aria-pressed=true]{background:var(--bt-card);color:var(--bt-ink);box-shadow:0 1px 3px rgba(0,0,0,.067);font-weight:600}.bt-hw-file-choice{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid var(--st-line,var(--bt-line-2));border-radius:8px;padding:8px 10px;background:var(--st-raised,var(--bt-main));color:var(--bt-ink-2);font-size:13px}.bt-hw-file-choice>span{overflow-wrap:anywhere;min-width:0}.bt-hw-file-choice .bt-hw-button{height:30px;padding:0 10px;font-size:12px}.bt-hw-key-path{border:1px solid var(--bt-line-2);padding:14px;border-radius:10px;background:var(--bt-card)}.bt-hw-key-path .bt-hw-field{margin-bottom:10px}.bt-hw-two{display:grid;grid-template-columns:1fr 1fr;gap:16px}.bt-hw-note{display:flex;gap:10px;padding:13px 14px;border:1px solid var(--st-line,var(--bt-line));border-radius:10px;background:var(--st-raised,var(--bt-main));color:var(--bt-ink-2);font-size:12px;line-height:19px}.bt-hw-note svg{flex:none;margin-top:1px}.bt-hw-error-note{background:color-mix(in srgb,var(--bt-danger) 10%,var(--bt-card));border-color:transparent;color:var(--bt-danger)}
 .bt-hw-foot{padding:18px 28px;display:flex;justify-content:space-between;gap:12px;border-top:1px solid var(--st-line,var(--bt-line));background:var(--st-raised,var(--bt-main))}.bt-hw-button{height:38px;border:1px solid transparent;border-radius:8px;font:600 13px var(--bt-font);padding:0 15px;display:inline-flex;gap:10px;align-items:center;justify-content:center;white-space:nowrap;cursor:pointer}.bt-hw-primary{background:var(--st-cyan,var(--bt-accent));color:var(--st-cyan-ink,var(--bt-accent-ink,var(--bt-card)));box-shadow:var(--st-clay,none)}.bt-hw-secondary{background:var(--bt-card);border-color:var(--st-line,var(--bt-line-2));color:var(--bt-ink)}.bt-hw-button:disabled{background:var(--st-sunk,var(--bt-hover));color:var(--bt-ink-2);box-shadow:none;cursor:default}
 .bt-hw-checks{border:1px solid var(--st-line,var(--bt-line));border-radius:12px;overflow:hidden}.bt-hw-check-row{display:flex;gap:12px;align-items:center;padding:17px;border-bottom:1px solid var(--st-line,var(--bt-line))}.bt-hw-check-row:last-child{border:0}.bt-hw-check-row>div{display:flex;flex-direction:column;gap:4px}.bt-hw-check-row strong{font-size:13px}.bt-hw-check-row small{font-size:12px;color:var(--bt-ink-2)}.bt-hw-status{width:30px;height:30px;border-radius:50%;display:grid;place-items:center;background:color-mix(in srgb,var(--bt-green) 10%,var(--bt-card));color:var(--bt-green)}.bt-hw-pending{background:var(--bt-hover);color:var(--bt-ink-2)}.bt-hw-working{background:var(--st-lilac,var(--bt-active));color:var(--st-lilac-ink,var(--bt-ink))}.bt-hw-spinner{width:17px;height:17px;border-radius:50%;border:2px solid var(--bt-line-2);border-top-color:var(--st-lilac-ink,var(--bt-ink));animation:bt-hw-spin .8s linear infinite}@keyframes bt-hw-spin{to{transform:rotate(360deg)}}
-.bt-hw-result{text-align:center;padding:10px 28px 28px}.bt-hw-result-icon{display:grid;place-items:center;width:58px;height:58px;margin:8px auto 16px;border-radius:50%}.bt-hw-result-icon svg{width:30px;height:30px}.bt-hw-success .bt-hw-result-icon{background:color-mix(in srgb,var(--bt-green) 10%,var(--bt-card));color:var(--bt-green)}.bt-hw-failed .bt-hw-result-icon{background:color-mix(in srgb,var(--bt-danger) 10%,var(--bt-card));color:var(--bt-danger);font-size:30px}.bt-hw-result h3{font:700 20px var(--bt-head-font,var(--bt-font));margin:0 0 10px}.bt-hw-result p{margin:0;color:var(--bt-ink-2);font-size:14px;line-height:22px}.bt-hw-summary{border:1px solid var(--st-line,var(--bt-line));border-radius:var(--bt-hw-summary-radius,11px);overflow:hidden;background:var(--st-raised,var(--bt-main))}.bt-hw-pair{display:flex;justify-content:space-between;gap:20px;padding:14px 16px;border-bottom:1px solid var(--st-line,var(--bt-line));font-size:13px}.bt-hw-pair:last-child{border:0}.bt-hw-pair span{color:var(--bt-ink-2);flex:none}.bt-hw-pair strong{font-weight:500;overflow-wrap:anywhere;min-width:0;text-align:right}.bt-hw-mono{font:12px/18px ui-monospace,SFMono-Regular,Menlo,monospace}.bt-hw-facts{margin:0 0 14px}.bt-hw-result+.bt-hw-facts{margin-top:-6px}.bt-hw-ask .bt-hw-result-icon{background:var(--st-lilac,var(--bt-active));color:var(--st-lilac-ink,var(--bt-ink))}.bt-hw-lines{margin:0 0 14px;border:1px solid var(--st-line,var(--bt-line));border-radius:var(--bt-hw-summary-radius,11px);background:color-mix(in srgb,var(--st-sunk,var(--bt-hover)) 55%,var(--bt-card));overflow:hidden}.bt-hw-lines>span{display:block;padding:11px 16px 0;font-size:11px;font-weight:600;color:var(--bt-ink-2)}.bt-hw-lines pre{margin:0;padding:6px 16px 12px;max-height:126px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--bt-ink);font:12px/18px ui-monospace,SFMono-Regular,Menlo,monospace}.bt-hw-profiles{border:1px solid var(--st-cyan,var(--bt-accent));border-radius:12px;background:var(--st-raised,var(--bt-main));overflow:hidden}.bt-hw-profile{display:flex;align-items:center;gap:14px;width:100%;padding:20px;border:0;border-bottom:1px solid var(--bt-line);background:transparent;color:var(--bt-ink);text-align:left;cursor:pointer}.bt-hw-profile:last-child{border-bottom:0}.bt-hw-profile[aria-checked=true]{box-shadow:inset 0 0 0 1px var(--st-cyan,var(--bt-accent))}.bt-hw-profile>span:nth-child(2){display:flex;flex-direction:column;gap:5px}.bt-hw-profile strong{font-size:15px}.bt-hw-profile small{font-size:12px;color:var(--bt-ink-2)}.bt-hw-radio{width:18px;height:18px;box-sizing:border-box;border:1px solid var(--bt-line-2);border-radius:50%;background:var(--bt-card)}[aria-checked=true]>.bt-hw-radio{border:5px solid var(--st-cyan,var(--bt-accent))}.bt-hw-tag{margin-left:auto;padding:4px 8px;border-radius:6px;background:var(--st-lilac,var(--bt-active));color:var(--st-lilac-ink,var(--bt-ink));font-size:11px}.bt-hw-profile-tools{display:flex;justify-content:space-between;font-size:12px;color:var(--bt-ink-2);margin:14px 0 22px}.bt-hw-profile-tools button{border:0;background:none;padding:0;color:var(--bt-ink);font:inherit;text-decoration:underline;text-underline-offset:3px;cursor:pointer}.bt-hw-remember{display:flex;gap:9px;align-items:center;font-size:12px;color:var(--bt-green);margin:16px 0}.bt-hw-limits{font-size:12px;line-height:19px;color:var(--bt-ink-2);margin:18px 0 0}.bt-hw-compact{padding-top:0;padding-bottom:18px}.bt-hw-compact .bt-hw-result-icon{margin-top:0}
-.bt-hw-host-picker{margin:0 0 20px;padding:14px;border:1px solid var(--st-line,var(--bt-line-2));border-radius:12px;background:var(--st-raised,var(--bt-main));min-width:0}.bt-hw-host-title{display:block;font-size:13px;margin-bottom:10px}.bt-hw-host-picker .bt-hw-field{margin:0 0 10px;gap:6px}.bt-hw-host-picker .bt-hw-field>span{font-size:12px;font-weight:400;color:var(--bt-ink-2)}.bt-hw-host-picker .bt-hw-field input{height:34px;font-size:13px}.bt-hw-host-list{max-height:176px;overflow:auto;overscroll-behavior:contain;border:1px solid var(--st-line,var(--bt-line));border-radius:8px}.bt-hw-host-choice{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;border:0;border-bottom:1px solid var(--st-line,var(--bt-line));padding:9px 10px;background:transparent;color:var(--bt-ink);font:inherit;text-align:left;cursor:pointer}.bt-hw-host-choice:last-child{border-bottom:0}.bt-hw-host-choice:hover,.bt-hw-host-choice[aria-pressed=true]{background:var(--bt-hover)}.bt-hw-host-choice>span{display:flex;flex-direction:column;gap:3px;min-width:0}.bt-hw-host-choice strong{font-size:13px;font-weight:600;overflow-wrap:anywhere}.bt-hw-host-choice small{font-size:11px;color:var(--bt-ink-2);overflow-wrap:anywhere}.bt-hw-host-choice svg{flex:none;width:14px;height:14px;color:var(--st-cyan,var(--bt-accent))}.bt-hw-host-hint{margin:0;font-size:12px;line-height:18px;color:var(--bt-ink-2)}.bt-hw-other-hosts{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;border:0;background:none;color:var(--bt-ink-2);font:12px var(--bt-font);padding:12px 0 0;text-align:left;cursor:pointer}.bt-hw-other-hosts+ .bt-hw-host-list{margin-top:10px}
-@media(max-width:640px){.bt-hermes-wizard{width:calc(100vw - 20px);max-height:calc(100dvh - 20px)}.bt-hw-head,.bt-hw-content{padding:18px}.bt-hw-foot{padding:14px 18px}.bt-hw-cards,.bt-hw-two{grid-template-columns:1fr}.bt-hw-card{min-height:160px}.bt-hw-steps{gap:4px}.bt-hw-steps li{font-size:9px;gap:3px}.bt-hw-steps li>span{width:16px;height:16px}.bt-hw-card-action{margin-top:8px}}
+.bt-hw-result{text-align:center;padding:10px 28px 28px}.bt-hw-result-icon{display:grid;place-items:center;width:58px;height:58px;margin:8px auto 16px;border-radius:50%}.bt-hw-result-icon svg{width:30px;height:30px}.bt-hw-success .bt-hw-result-icon{background:color-mix(in srgb,var(--bt-green) 10%,var(--bt-card));color:var(--bt-green)}.bt-hw-failed .bt-hw-result-icon{background:color-mix(in srgb,var(--bt-danger) 10%,var(--bt-card));color:var(--bt-danger);font-size:30px}.bt-hw-result h3{font:700 20px var(--bt-head-font,var(--bt-font));margin:0 0 10px}.bt-hw-result p{margin:0;color:var(--bt-ink-2);font-size:14px;line-height:22px}.bt-hw-details-toggle{display:flex;align-items:center;justify-content:center;gap:8px;margin:14px auto;border:0;background:none;color:var(--bt-ink-2);font:12px var(--bt-font);padding:4px 8px;cursor:pointer;text-decoration:underline;text-underline-offset:3px}.bt-hw-details>.bt-hw-quiet{margin:0 0 14px}.bt-hw-summary{border:1px solid var(--st-line,var(--bt-line));border-radius:var(--bt-hw-summary-radius,11px);overflow:hidden;background:var(--st-raised,var(--bt-main))}.bt-hw-pair{display:flex;justify-content:space-between;gap:20px;padding:14px 16px;border-bottom:1px solid var(--st-line,var(--bt-line));font-size:13px}.bt-hw-pair:last-child{border:0}.bt-hw-pair span{color:var(--bt-ink-2);flex:none}.bt-hw-pair strong{font-weight:500;overflow-wrap:anywhere;min-width:0;text-align:right}.bt-hw-mono{font:12px/18px ui-monospace,SFMono-Regular,Menlo,monospace}.bt-hw-facts{margin:0 0 14px}.bt-hw-result+.bt-hw-facts{margin-top:-6px}.bt-hw-ask .bt-hw-result-icon{background:var(--st-lilac,var(--bt-active));color:var(--st-lilac-ink,var(--bt-ink))}.bt-hw-lines{margin:0 0 14px;border:1px solid var(--st-line,var(--bt-line));border-radius:var(--bt-hw-summary-radius,11px);background:color-mix(in srgb,var(--st-sunk,var(--bt-hover)) 55%,var(--bt-card));overflow:hidden}.bt-hw-lines>span{display:block;padding:11px 16px 0;font-size:11px;font-weight:600;color:var(--bt-ink-2)}.bt-hw-lines pre{margin:0;padding:6px 16px 12px;max-height:126px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--bt-ink);font:12px/18px ui-monospace,SFMono-Regular,Menlo,monospace}.bt-hw-profiles{border:1px solid var(--st-cyan,var(--bt-accent));border-radius:12px;background:var(--st-raised,var(--bt-main));overflow:hidden}.bt-hw-profile{display:flex;align-items:center;gap:14px;width:100%;padding:20px;border:0;border-bottom:1px solid var(--bt-line);background:transparent;color:var(--bt-ink);text-align:left;cursor:pointer}.bt-hw-profile:last-child{border-bottom:0}.bt-hw-profile[aria-checked=true]{box-shadow:inset 0 0 0 1px var(--st-cyan,var(--bt-accent))}.bt-hw-profile>span:nth-child(2){display:flex;flex-direction:column;gap:5px}.bt-hw-profile strong{font-size:15px}.bt-hw-profile small{font-size:12px;color:var(--bt-ink-2)}.bt-hw-radio{width:18px;height:18px;box-sizing:border-box;border:1px solid var(--bt-line-2);border-radius:50%;background:var(--bt-card)}[aria-checked=true]>.bt-hw-radio{border:5px solid var(--st-cyan,var(--bt-accent))}.bt-hw-tag{margin-left:auto;padding:4px 8px;border-radius:6px;background:var(--st-lilac,var(--bt-active));color:var(--st-lilac-ink,var(--bt-ink));font-size:11px}.bt-hw-profile-tools{display:flex;justify-content:space-between;font-size:12px;color:var(--bt-ink-2);margin:14px 0 22px}.bt-hw-profile-tools button{border:0;background:none;padding:0;color:var(--bt-ink);font:inherit;text-decoration:underline;text-underline-offset:3px;cursor:pointer}.bt-hw-remember{display:flex;gap:9px;align-items:center;font-size:12px;color:var(--bt-green);margin:16px 0}.bt-hw-limits{font-size:12px;line-height:19px;color:var(--bt-ink-2);margin:18px 0 0}.bt-hw-compact{padding-top:0;padding-bottom:18px}.bt-hw-compact .bt-hw-result-icon{margin-top:0}
+.bt-hw-host-picker{margin:0 0 20px;padding:14px;border:1px solid var(--st-line,var(--bt-line-2));border-radius:12px;background:var(--st-raised,var(--bt-main));min-width:0}.bt-hw-host-title{display:block;font-size:13px;margin-bottom:10px}.bt-hw-host-picker .bt-hw-field{margin:0 0 10px;gap:6px}.bt-hw-host-picker .bt-hw-field>span{font-size:12px;font-weight:400;color:var(--bt-ink-2)}.bt-hw-host-picker .bt-hw-field input{height:34px;font-size:13px}.bt-hw-host-list{max-height:248px;overflow:auto;overscroll-behavior:contain;border:1px solid var(--st-line,var(--bt-line));border-radius:8px}.bt-hw-host-choice{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;border:0;border-bottom:1px solid var(--st-line,var(--bt-line));padding:9px 10px;background:transparent;color:var(--bt-ink);font:inherit;text-align:left;cursor:pointer}.bt-hw-host-choice:last-child{border-bottom:0}.bt-hw-host-choice:hover,.bt-hw-host-choice[aria-pressed=true]{background:var(--bt-hover)}.bt-hw-host-choice>span{display:flex;flex-direction:column;gap:3px;min-width:0}.bt-hw-host-choice strong{font-size:13px;font-weight:600;overflow-wrap:anywhere}.bt-hw-host-choice small{font-size:11px;color:var(--bt-ink-2);overflow-wrap:anywhere}.bt-hw-host-choice svg{flex:none;width:14px;height:14px;color:var(--st-cyan,var(--bt-accent))}.bt-hw-host-hint{margin:0;font-size:12px;line-height:18px;color:var(--bt-ink-2)}.bt-hw-other-hosts{display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;border:0;background:none;color:var(--bt-ink-2);font:12px var(--bt-font);padding:12px 0 0;text-align:left;cursor:pointer}.bt-hw-other-hosts+ .bt-hw-host-list{margin-top:10px}
+@media(max-width:640px){.bt-hermes-wizard{width:calc(100vw - 20px);max-height:calc(100dvh - 20px)}.bt-hw-head,.bt-hw-content{padding:18px}.bt-hw-foot{padding:14px 18px}.bt-hw-two{grid-template-columns:1fr}}
 @media(prefers-reduced-motion:reduce){.bt-hw-spinner{animation:none}}
 `;
 
@@ -6201,7 +6150,7 @@ function RouteConfirm({ bot, roster, current, target, onCancel, onConfirm }) {
   const to = modelRoute(roster, target.ref);
   const routeChanged = from?.route !== to.route;
   const fullAccess = bot.permission === "danger-full-access";
-  const fullAccessLine = !fullAccess ? void 0 : to.route === "native" ? t("Full access: DSH's own tools run without asking.") : to.route === "hermes-remote" ? t("Full access: each remote approval is answered once. Remote profile rules still apply.") : to.provider === "acp-claude" || to.provider === "acp-codex" ? t("Full access: the CLI's own no-ask mode.") : t("Full access: the agent's actions run without asking.");
+  const fullAccessLine = !fullAccess ? void 0 : to.route === "native" ? t("Full access: DSH's own tools run without asking.") : to.route === "hermes-remote" ? t("Full access: Hermes still asks you in the chat when it wants an approval. Its own rules apply there.") : to.provider === "acp-claude" || to.provider === "acp-codex" ? t("Full access: the CLI's own no-ask mode.") : t("Full access: the agent's actions run without asking.");
   return (0, import_react15.createElement)(
     "div",
     { className: "bt-model-step bt-model-confirm", role: "group", "aria-label": t("Start a new conversation?") },
@@ -7262,7 +7211,7 @@ function QuestionCard({ matched }) {
     }
     pending.answer({ answers: next });
   };
-  return (0, import_react18.createElement)(QuestionView, { key: index, question, onAnswer, onDismiss: () => pending.dismiss(), ownAnswer: true, raised: true });
+  return (0, import_react18.createElement)(QuestionView, { key: index, question, onAnswer, onDismiss: () => pending.dismiss(), ownAnswer: question.intent?.kind !== "approval", raised: true });
 }
 function PendingQuestion({ sessionId, question, actions, inline }) {
   const [answered, setAnswered] = (0, import_react18.useState)(null);
@@ -9941,17 +9890,17 @@ function ImagesSection({ Section: Section2, Row: Row3 }) {
 }
 
 // src/client/turn-reasoning.js
-function turnReasoning(steps2, current) {
-  const members = steps2.length ? steps2 : [current];
+function turnReasoning(steps, current) {
+  const members = steps.length ? steps : [current];
   if (members.findLast((step2) => stepReasoning(step2) !== "")?.step !== current.step) return "";
   return members.map(stepReasoning).filter(Boolean).join("\n\n");
 }
-function opensReply(steps2, current, withReasoning = true) {
-  const members = steps2.length ? steps2 : [current];
+function opensReply(steps, current, withReasoning = true) {
+  const members = steps.length ? steps : [current];
   const reasoner = withReasoning ? members.findLast((step2) => stepReasoning(step2) !== "") : void 0;
   return members.find((step2) => texts(step2).length > 0 || step2 === reasoner)?.step === current.step;
 }
-var thinkingStep = (steps2) => steps2.find(thinkingLive);
+var thinkingStep = (steps) => steps.find(thinkingLive);
 var thinkingLive = (step2) => step2.status === "running" && texts(step2).length === 0 && step2.blocks.some((block) => block.kind === "reasoning");
 var texts = (step2) => step2.blocks.filter((block) => block.kind === "text" && block.text.trim() !== "");
 var stepReasoning = (step2) => step2.blocks.filter((block) => block.kind === "reasoning").map((block) => block.text).join("\n").trim();
@@ -11075,24 +11024,24 @@ function useFileMentions({ node, openFile, fileMentions, useTurnData }) {
 function AssistantCell({ node, groupPart, sessionId, openFile, fileMentions, useTurnData, useRoster, useUi, useTurnSteps, useTurnContext, actions }) {
   const roster = useRoster((value) => value);
   const data = node.data;
-  const steps2 = useTurnSteps(String(data.turn));
+  const steps = useTurnSteps(String(data.turn));
   const contexts = useTurnContext(String(data.turn));
   const mentions = useFileMentions({ node, openFile, fileMentions, useTurnData });
   const hidden = Boolean(roster.roomsById[sessionId]) || isHiddenTurn(roster, sessionId, data.turn);
   const texts2 = groupPart === "reasoning" ? [] : data.blocks.filter((block) => block.kind === "text" && block.text.trim() !== "").map((block) => heldText(block.text));
   const running2 = data.status === "running";
-  const members = steps2.length ? steps2 : [data];
+  const members = steps.length ? steps : [data];
   const shown = thinkingShown(roster.prefs);
-  const reasoning = groupPart === "response" || !shown ? "" : turnReasoning(steps2, data);
+  const reasoning = groupPart === "response" || !shown ? "" : turnReasoning(steps, data);
   const thinking = groupPart === "response" || !shown ? void 0 : thinkingStep(members);
   const ms = useThinkingMs({ sessionId, turn: data.turn, settledSteps: members.filter((step2) => step2.status !== "running").length, skip: hidden || reasoning === "" });
   useLiveNote(actions, sessionId, `text:${node.key ?? data.seq}`, !hidden && running2 && texts2.length > 0 ? { text: true } : null);
   if (hidden) return null;
-  const relays = relayPart(data, groupPart) ? relaysBefore(contexts, steps2, data) : [];
+  const relays = relayPart(data, groupPart) ? relaysBefore(contexts, steps, data) : [];
   if (texts2.length === 0 && !reasoning && relays.length === 0) return null;
   const selfId = roster.byId[sessionId]?.id ?? sessionId;
   const speaker = layoutOf(roster.prefs) === "flat" ? roster.byId[sessionId] : void 0;
-  const head = speaker !== void 0 && opensReply(steps2, data, shown) && (reasoning !== "" || texts2.length > 0 && !(groupPart === "response" && shown && turnReasoning(steps2, data) !== ""));
+  const head = speaker !== void 0 && opensReply(steps, data, shown) && (reasoning !== "" || texts2.length > 0 && !(groupPart === "response" && shown && turnReasoning(steps, data) !== ""));
   return (0, import_react27.createElement)(
     import_react27.Fragment,
     null,
@@ -15678,16 +15627,16 @@ var TEXTS = {
   "danger-full-access": "Runs commands and changes files anywhere without asking you. Choose it only when you trust what you asked for."
 };
 var REMOTE_ASK = "Automagik asks you before answering each Hermes approval question.";
-var REMOTE_FULL = "Automagik answers yes to each Hermes approval question once, without asking you.";
+var REMOTE_FULL = "Automagik still asks you before answering each Hermes approval question. Full access does not answer for you.";
 var REMOTE_AUTO = "Automagik asks you before answering each Hermes approval question. Auto review does not review Hermes approval questions.";
-var REMOTE_CUSTOM = "Automagik handles Hermes approval questions according to this level.";
+var REMOTE_CUSTOM = REMOTE_ASK;
 var REMOTE_FILES = "Read only and Workspace differ only for files on this computer. Remote chats do not use those files.";
 var MIXED_FILES = "On Remote Hermes, these local file permissions do not apply.";
 var REMOTE_LIMITS = "Hermes runs tools on the other computer under its own rules. This computer’s file sandbox does not protect that computer.";
 var MIXED_ASK = "While this chat changes routes, Automagik asks you before answering each Hermes approval question. On a local route, this level’s file rules apply on this computer.";
-var MIXED_FULL = "While this chat changes routes, Automagik answers yes to each Hermes approval question once without asking you, or lets a local route run commands and change files without asking.";
+var MIXED_FULL = "While this chat changes routes, Automagik still asks you before answering each Hermes approval question. A local route runs commands and changes files without asking.";
 var MIXED_AUTO = "While this chat changes routes, Automagik asks you before answering each Hermes approval question. Auto review does not review Hermes approval questions. On a local route, a model reviews each action first, and you decide on the ones it stops.";
-var MIXED_CUSTOM = "This chat is changing routes. Automagik handles approval questions according to this level on the route still running.";
+var MIXED_CUSTOM = "This chat is changing routes. Automagik asks you before answering each Hermes approval question. On a local route, this level decides.";
 var MIXED_EXPERIMENTAL = "On a local route, Auto review is experimental and can allow or stop the wrong action.";
 var remoteConfirmText = (remote) => t(remote === "mixed" ? MIXED_FULL : REMOTE_FULL);
 var autoConfirmText = (remote = false) => remote === "mixed" ? `${t(MIXED_AUTO)} ${t(MIXED_EXPERIMENTAL)}` : t(remote ? REMOTE_AUTO : "Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.");

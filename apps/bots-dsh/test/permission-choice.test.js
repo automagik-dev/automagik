@@ -107,7 +107,7 @@ const hook = value => select => select(value)
 const BOT = { id: 'omni', name: 'Omni', sessionId: 'omni', model: 'deepseek/v3' }
 const REMOTE_BOT = { ...BOT, model: 'hermes-remote/sample:model', appliedModel: 'hermes-remote/sample:model' }
 const ASK_REMOTE = 'Automagik asks you before answering each Hermes approval question.'
-const FULL_REMOTE = 'Automagik answers yes to each Hermes approval question once, without asking you.'
+const FULL_REMOTE = 'Automagik still asks you before answering each Hermes approval question. Full access does not answer for you.'
 const AUTO_REMOTE = `${ASK_REMOTE} Auto review does not review Hermes approval questions.`
 const remoteWords = scope => {
   assert.match(scope.textContent, /Hermes.*approval question/)
@@ -875,7 +875,7 @@ test('Remote Hermes chat levels and both confirmations describe remote approvals
   await click(rowOf(document, 'danger-full-access'))
   await click(button(card(document), 'Save'))
   remoteWords(card(document))
-  assert.match(card(document).textContent, /once, without asking you/)
+  assert.match(card(document).textContent, /still asks you before answering each Hermes approval question\. Full access does not answer for you/)
   assert.deepEqual(saves, [])
   await click(button(card(document), 'Cancel'))
   await click(rowOf(document, 'auto'))
@@ -899,10 +899,10 @@ test('Remote Hermes Details explains remote limits and its full-access confirmat
   assert.equal(document.querySelectorAll('.bt-remote-permission-note').length, 1)
   await click(rowOf(popup(), 'danger-full-access'))
   remoteWords(popup())
-  assert.match(popup().textContent, /once, without asking you/)
+  assert.match(popup().textContent, /still asks you before answering each Hermes approval question\. Full access does not answer for you/)
   await click(button(popup(), 'Give full access'))
   assert.deepEqual(saves, [{ id: BOT.id, patch: { permission: 'danger-full-access' } }])
-  assert.equal(document.querySelector('.bt-perm-confirm'), null)
+  assert.equal(document.querySelectorAll('.bt-perm-confirm').length, 0)
 })
 
 test('Remote Hermes composer levels use the remote explanation for known and custom restrictive levels', async t => {
@@ -914,7 +914,8 @@ test('Remote Hermes composer levels use the remote explanation for known and cus
   await click(document.querySelector('.bt-perm-chip'))
   remoteWords(document.querySelector('.bt-permission-menu'))
   remoteList(document.querySelector('.bt-permission-menu'))
-  assert.match(rowOf(document, 'no-ask-custom').textContent, /according to this level/)
+  assert.match(rowOf(document, 'no-ask-custom').textContent, /asks you before answering each Hermes approval question/)
+  assert.doesNotMatch(document.querySelector('.bt-permission-menu').textContent, /answers yes|according to this level/)
   assert.deepEqual(saves, [])
 })
 
@@ -934,8 +935,8 @@ for (const [direction, bot] of [
     await click(rowOf(document, 'danger-full-access'))
     await click(button(card(document), 'Save'))
     remoteWords(card(document))
-    assert.match(card(document).textContent, /local route run commands and change files/)
-    assert.match(card(document).textContent, /Hermes approval question once/)
+    assert.match(card(document).textContent, /still asks you before answering each Hermes approval question\. A local route runs commands and changes files without asking/)
+    assert.match(card(document).textContent, /still asks you before answering each Hermes approval question/)
     await click(button(card(document), 'Cancel'))
     await click(rowOf(document, 'auto'))
     await click(button(card(document), 'Save'))
@@ -953,8 +954,8 @@ for (const [direction, bot] of [
     await open()
     remoteWords(popup())
     await click(rowOf(popup(), 'danger-full-access'))
-    assert.match(popup().textContent, /local route run commands and change files/)
-    assert.match(popup().textContent, /Hermes approval question once/)
+    assert.match(popup().textContent, /still asks you before answering each Hermes approval question\. A local route runs commands and changes files without asking/)
+    assert.match(popup().textContent, /still asks you before answering each Hermes approval question/)
     assert.deepEqual(saves, [])
   })
 
@@ -979,13 +980,13 @@ test('Choose in the chat is a visible link that reopens the real permission card
   await act(() => page.root.render(React.createElement(React.Fragment, null,
     React.createElement(page.BotPanel, { pane: { id: bot.id, view: 'details' }, leaving: false, roster, actions, ...panelProps }),
     React.createElement(page.PermissionChoiceDock, { sessionId: bot.id, useRoster: hook(roster), actions }))))
-  assert.equal(card(page.document), null, 'a saved level has no card until requested')
+  assert.equal(Boolean(card(page.document)), false, 'a saved level has no card until requested')
   const choose = button(page.document.querySelector('.bt-drawer-permission'), 'Choose in the chat')
   assert.equal(choose.style.textDecoration, 'underline')
   await page.click(choose)
   remoteList(card(page.document))
   await page.click(button(card(page.document), 'Not now'))
-  assert.equal(card(page.document), null)
+  assert.equal(Boolean(card(page.document)), false)
   await page.click(choose)
   assert.ok(card(page.document), 'the Details control also reopens a dismissed card')
   assert.deepEqual(saves, [], 'reopening never changes the saved level')

@@ -12,7 +12,7 @@ const { outputFiles } = await build({
   stdin: {
     contents: [
       "export { useDockHold } from './src/client/card-hold.js'",
-      "export { PendingQuestion } from './src/client/questions.js'",
+      "export { PendingQuestion, QuestionCard } from './src/client/questions.js'",
       "export { SecretCard } from './src/client/secret-card.js'",
       "export { PendingView, AnsweredReply } from './src/client/widget-cell.js'",
       "export { AnsweredCell } from './src/client/questions.js'",
@@ -61,7 +61,7 @@ runInNewContext(outputFiles[0].text, {
   HTMLInputElement: class {}, HTMLTextAreaElement: class {}, HTMLSelectElement: class {}, HTMLElement: class {},
   URL,
 })
-const { useDockHold, PendingQuestion, SecretCard, PendingView, AnsweredReply, AnsweredCell, HandoffCall, HandoffDock, PendingHandoff, SettledHandoff } = module.exports
+const { useDockHold, PendingQuestion, QuestionCard, SecretCard, PendingView, AnsweredReply, AnsweredCell, HandoffCall, HandoffDock, PendingHandoff, SettledHandoff } = module.exports
 const mount = (Component, props) => {
   const instance = {
     slots: [], effects: [], props,
@@ -185,6 +185,22 @@ test('a question keeps its custom answer and selection while submitting, after f
   view.unmount()
   pending.unmount()
   assert.equal(count('chief', 'question', question.id), 0)
+})
+
+test('a permission question offers its fixed answers and nothing to type; any other question keeps its own answer', () => {
+  const answers = []
+  const ask = (intent, check) => {
+    const matched = { questions: [{ id: 'sample-question', question: 'Allow it?', detail: 'rm sample.txt', options: [{ label: 'Allow once' }, { label: 'Deny' }], ...(intent ? { intent } : {}) }], answer: value => answers.push(plain(value)), dismiss() {} }
+    const card = mount(QuestionCard, { matched }), shown = card.render(), view = mount(shown.type, shown.props)
+    try { check(view.render()) } finally { view.unmount(); card.unmount() }
+  }
+  ask({ kind: 'approval', approve: 'Allow once', reject: 'Deny' }, form => {
+    assert.equal(Boolean(field(form)), false, 'no typed answer can stand in for yes or no')
+    assert.equal(options(form).length, 2)
+    options(form)[1].props.onClick()
+  })
+  assert.deepEqual(answers, [{ answers: [{ id: 'sample-question', selected: ['Deny'] }] }])
+  ask(undefined, form => assert.ok(field(form), 'a plain question still takes a typed answer'))
 })
 
 test('keyboard selection owns a dock card and busy questions cannot submit or dismiss twice', async () => {
