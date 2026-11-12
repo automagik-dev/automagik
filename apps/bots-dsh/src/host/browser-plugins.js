@@ -1,5 +1,6 @@
 // The whole team uses one browser plugin. Each Bot still gets its own profile
 // directory, including the group Sessions where that Bot speaks.
+import { approvalPolicyOf } from './approval-policy.js'
 import { isAbsolute, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -94,6 +95,7 @@ async function authorizeBrowserAction(rt, exec, botId, action) {
     zh: `允许${bot.name}在 ${action.host} 上${verb.zh}“${action.label}”吗？`,
   }
   let outcome
+  const approvalPolicy = approvalPolicyOf(approval, agent.session)
   try {
     outcome = await approval.request({
       agent,
@@ -107,6 +109,8 @@ async function authorizeBrowserAction(rt, exec, botId, action) {
     throw new Error('The approval service was unavailable. Nothing was done.')
   }
   if (outcome === 'allowed-once') return
+  if (outcome === 'rejected' && approvalPolicy === 'never') throw new Error(`Nobody was asked to approve ${action.label} on ${action.host}: approval prompts are off in this conversation (a subagent, or Full access), so nothing was done. Trying again here is refused the same way. The person can allow it in Settings -> Browser -> Allow an action, or do it themselves.`)
+  if (outcome === 'unavailable') throw new Error(`${action.label} on ${action.host} needs the person's approval, but nobody could answer, so nothing was done.`)
   if (outcome === 'rejected') {
     throw new Error(`The user did not approve ${action.label} on ${action.host}. Do not try this action again unless the user asks. Nothing was done.`)
   }
@@ -136,6 +140,7 @@ export function install(rt) {
   const mounted = {}
   mountBrowserPlugin(rt.ctx, {
     api: mounted,
+    onAddressRefused: (exec, tool) => rt.noteStop?.(exec.agent?.id ?? exec.agent?.session?.id, { why: 'address', tool, callId: exec.callId }, exec.agent),
     toolDefs: plugin.tools ?? plugin.toolDefs,
     defineTool,
     profileRoot: join(rt.home, 'browser-profiles'),

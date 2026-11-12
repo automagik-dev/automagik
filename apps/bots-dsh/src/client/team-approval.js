@@ -1,6 +1,6 @@
 import { createElement as h, useEffect, useRef, useState } from 'react'
 import { BotMark } from './mark.js'
-import { t } from './i18n.js'
+import { t, hostText, hostTemplateOf } from './i18n.js'
 
 // -------------------------------------------------------------------------
 // The approval card for the team's own tools, in place of DSH's (whose text is the call's
@@ -11,7 +11,10 @@ import { t } from './i18n.js'
 
 export const teamToolOf = name => String(name ?? '').replace(/^mcp__dsh__/, '')
 const TEAM_TOOLS = new Set(['message_bot', 'start_task', 'stop_bot', 'create_bot', 'update_bot', 'delete_bot', 'create_group', 'update_group', 'delete_group', 'post_to_group', 'group_relay', 'remember', 'forget', 'save_capability', 'delete_capability', 'show_view'])
-export const isTeamApproval = pending => pending?.kind === 'approval' && TEAM_TOOLS.has(teamToolOf(pending.toolName))
+export const KEEP_WORKING = 'keep_working'
+const ladderOf = pending => teamToolOf(pending.toolName) === KEEP_WORKING ? 'keep'
+  : hostTemplateOf(pending.reason) === 'This step is hard to undo: {step}. Allow it once?' ? 'hard' : undefined
+export const isTeamApproval = pending => pending?.kind === 'approval' && (TEAM_TOOLS.has(teamToolOf(pending.toolName)) || ladderOf(pending) !== undefined)
 
 /** The call's arguments from the request's reason: the bridge's JSON, else none. */
 export function argsOf(reason) {
@@ -55,15 +58,19 @@ export function TeamApproval({ matched, useRoster }) {
   const [answered, setAnswered] = useState(false)
   const root = useRef(null)
   // The Bot whose chat asks; a task asks for the Bot that started it.
-  const fromBot = roster.byId?.[pending.sessionId] ?? roster.byId?.[roster.tasks?.[pending.sessionId]?.from]
-  const view = approvalView(pending.toolName, argsOf(pending.reason), fromBot?.name)
+  const fromBot = roster.byId?.[pending.botId] ?? roster.byId?.[pending.sessionId] ?? roster.byId?.[roster.tasks?.[pending.sessionId]?.from]
+  const ladder = ladderOf(pending)
+  const view = ladder ? { title: hostText(pending.reason), rows: [], ...(ladder === 'keep' ? { note: t('Allow once lets it keep working: nothing that was refused runs. Reject stops it here.') } : {}) }
+    : approvalView(pending.toolName, argsOf(pending.reason), fromBot?.name)
+  const quote = view.quote || (pending.child === true ? pending.detail?.code : '')
+  const note = view.note || (pending.child === true ? [pending.detail?.text, Object.keys(argsOf(pending.reason)).length === 0 ? pending.reason : ''].filter(Boolean).join(' · ') : '')
   const toBot = findBot(roster, view.to)
   const answer = (outcome) => {
     if (answered || !pending.answerable) return
     setAnswered(true)
     void Promise.resolve(pending.answer(outcome)).catch(() => setAnswered(false))
   }
-  useEffect(() => { root.current?.focus({ preventScroll: true }) }, [pending.key])
+  useEffect(() => { if (pending.child !== true) root.current?.focus({ preventScroll: true }) }, [pending.key, pending.child])
   const onKeyDown = (event) => {
     if (event.defaultPrevented || event.target.closest?.('input, textarea, [contenteditable]')) return
     if (event.key === 'Escape') { event.preventDefault(); answer('rejected') }
@@ -76,16 +83,26 @@ export function TeamApproval({ matched, useRoster }) {
         toBot ? h('span', { className: 'bt-apr-arrow' }, '→') : null,
         toBot ? h(BotMark, { bot: toBot, size: 36, state: 'idle' }) : null),
       h('div', { className: 'bt-apr-heading' },
-        h('span', { className: 'bt-apr-kicker' }, t('Waiting for your approval')),
+        h('span', { className: 'bt-apr-kicker' }, pending.child === true ? t('A subagent is waiting for your approval') : t('Waiting for your approval')),
         h('p', { className: 'bt-apr-title' }, view.title))),
-    view.quote ? h('blockquote', { className: 'bt-apr-quote' }, view.quote) : null,
+    quote ? h('blockquote', { className: 'bt-apr-quote' }, quote) : null,
     view.rows.length > 0
       ? h('dl', { className: 'bt-apr-rows' }, view.rows.flatMap(([key, value]) => [h('dt', { key: `k:${key}` }, key), h('dd', { key: `v:${key}` }, value)]))
       : null,
-    view.note ? h('p', { className: 'bt-apr-note' }, view.note) : null,
+    note ? h('p', { className: 'bt-apr-note' }, note) : null,
     h('div', { className: 'bt-apr-actions' },
       h('button', { type: 'button', className: 'bt-q-btn', disabled: answered, onClick: () => answer('rejected') }, t('Reject'), h('kbd', null, 'Esc')),
       h('button', { type: 'button', className: 'bt-q-submit', disabled: answered, onClick: () => answer('allowed-once') }, toBot && teamToolOf(pending.toolName) === 'message_bot' ? t('Send to {name}', { name: toBot.name }) : t('Allow once'), h('kbd', null, '↵'))))
+}
+
+export function ChildApprovalDock({ sessionId, useRoster, useWork, actions }) {
+  const entry = useWork(work => (work.approvals ?? []).find(item => item.child === true && item.answerable === true && item.ownerSessionId === sessionId))
+  if (!entry) return null
+  return h(TeamApproval, { key: entry.id, useRoster, matched: {
+    key: entry.id, kind: 'approval', child: true, botId: entry.botId, sessionId: entry.ownerSessionId,
+    toolName: entry.tool, reason: entry.reason, detail: entry.detail, answerable: true,
+    answer: outcome => actions.answerApproval(entry.id, outcome === 'allowed-once' ? 'allow' : 'reject'),
+  } })
 }
 
 export const TEAM_APPROVAL_CSS = `

@@ -2,6 +2,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 use meter::coverage;
+use meter::fleet;
 use meter::outcomes;
 use meter::query::{self, Located};
 use meter::store::{SCHEMA_VERSION, Store};
@@ -15,11 +16,17 @@ Usage:
   usagemeter sync --evidence-backfill --days N [--budget-secs N] [--no-publish] [--doc NAME]
   usagemeter status
   usagemeter query --repo HOST/OWNER/REPO --branch B [--branch B ...] --json
-                   [--window d1|d7|d30] [--contract 1] [--stale-after SECONDS]
+                   [--repo-alias <host/owner/repo>]...
+                   [--window d1|d7|d30|d90 | --since <rfc3339> --until <rfc3339>]
+                   [--contract 1] [--stale-after SECONDS]
   usagemeter query --repo HOST/OWNER/REPO --by bot [--branch B ...] --json [...]
   usagemeter query --repo HOST/OWNER/REPO --by task [--branch B ...] --json [...]
   usagemeter coverage [--window d1|d7|d30 ...] [--repo HOST/OWNER/REPO ...] [--json]
+                      [--repo-alias <host/owner/repo>]...
   usagemeter outcomes [--window d1|d7|d30 ...] [--repo HOST/OWNER/REPO ...] [--json]
+                      [--repo-alias <host/owner/repo>]...
+  usagemeter fleet usage --json [--missing MACHINE:REASON[:MESSAGE] ...] FILE [FILE ...]
+  usagemeter fleet outcomes --json [--missing MACHINE:REASON[:MESSAGE] ...] FILE [FILE ...]
   usagemeter --version
 
 sync      Read new harness usage (omp, Claude Code, Codex, dsh-tui, Antigravity) into the store and
@@ -40,6 +47,9 @@ status    Print the store's state as JSON. It never writes the store: the databa
 query     Usage and estimated cost per branch of one repo, as the contract 1 envelope (RFC 0018,
           meter/schema/query/v1/) on stdout, for every exit below. It opens the store as status
           does; only sync refreshes the store. Capability meter.usage@1.
+  --repo-alias <host/owner/repo>
+                  Include a previous repo name; repeat for more aliases (at most 16).
+                  Coverage and outcomes require a single --repo when aliases are given.
   --by bot        One row per bot (RFC 0021): bot, kind, role, squad and harness, from the
                   usage tied to a launch; any --branch is then a filter, and none is needed.
   --by task       One row per task id (RFC 0018 M3, RFC 0021 D4): the task's usage and cost,
@@ -49,6 +59,9 @@ query     Usage and estimated cost per branch of one repo, as the contract 1 env
                   to more than one checkout of the repo is missing with reason task_ambiguous,
                   and no checkout path is printed. A window with no task labels is an empty ok
                   answer, and the branch row stays the fallback.
+fleet     Roll up local query/outcomes JSON files; no collection, network calls or store writes.
+          Missing machines and non-ok queries make the answer partial; unknown is never zero.
+          Exit status: 0 ok or partial, 2 bad request, 1 invalid input or incompatible queries.
 coverage  The store's bot-tag coverage (RFC 0026 (a)): text by default, or one JSON record with
           --json. Every window's counted usage splits into attributed, ambiguous, unlinked and
           before_evidence, per repo (50 shown, the rest counted and summed) and per bot (50 shown,
@@ -478,8 +491,11 @@ fn reply(a: coverage::Reply) -> ExitCode {
 }
 
 fn cmd_query(args: &[String]) -> ExitCode {
+    write_answer(query::run(args, &query::Ctx::from_env()))
+}
+
+fn write_answer(a: query::Answer) -> ExitCode {
     use std::io::Write;
-    let a = query::run(args, &query::Ctx::from_env());
     let mut out = std::io::stdout().lock();
     if out
         .write_all(a.stdout.as_bytes())
@@ -498,6 +514,9 @@ fn main() -> ExitCode {
     let r = match cmd.as_deref() {
         Some("sync") => cmd_sync(rest),
         Some("query") => return cmd_query(&rest),
+        Some("fleet") => {
+            return write_answer(fleet::run(&rest, now_ms(), env!("CARGO_PKG_VERSION")));
+        }
         Some("coverage") => return cmd_coverage(&rest),
         Some("outcomes") => return cmd_outcomes(&rest),
         Some("status") if rest.is_empty() => cmd_status(),

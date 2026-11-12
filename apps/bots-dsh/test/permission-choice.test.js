@@ -31,7 +31,7 @@ const tick = () => new Promise(resolve => setTimeout(resolve, 10))
 const act = async (fn = () => {}) => { flushSync(fn); await tick() }
 const { outputFiles } = await build({
   stdin: { contents: [
-    "export { PermissionPicker, PermissionList, PermissionExplanations, presetText } from './src/client/permission-picker.js'",
+    "export { PermissionPicker, PermissionList, PermissionExplanations, presetText, autoQuestion } from './src/client/permission-picker.js'",
     "export { PermissionChoiceDock, reopenPermissionChoice } from './src/client/permission-card.js'",
     "export { ComposerPermission } from './src/client/composer.js'",
     "export { BotPanel } from './src/client/browser-pane.js'",
@@ -91,6 +91,7 @@ function recorder({ fail, hold } = {}) {
   // `hold` keeps each save open until the test settles it (`held`).
   const held = []
   const actions = new Proxy({
+    setBotAuto: (...args) => { other.push(['setBotAuto', args]); return Promise.resolve() },
     updateBot: (id, patch) => {
       saves.push(JSON.parse(JSON.stringify({ id, patch })))
       if (hold) return new Promise((resolve) => { held.push(resolve) })
@@ -1004,3 +1005,65 @@ test('Remote Hermes Details Auto review note matches its row and asks for explic
   await click(button(popup(), 'Use Auto review'))
   assert.deepEqual(saves, [{ id: BOT.id, patch: { permission: 'workspace-write' } }, { id: BOT.id, patch: { permission: 'auto' } }])
 })
+
+test('Auto question explains the reviewer and retains the revision at opening across renders', async t => {
+  const { document, root, click, PermissionList } = mount(t)
+  const catalog = { ...THREE, options: [READ, WORK, { value: 'workspace-write:auto', name: 'Auto' }, FULL] }
+  const picks = []
+  let rev = 3
+  const render = () => root.render(React.createElement(PermissionList, { catalog, saved: 'read-only', name: 'Ada', replaced: 'Read only', askedOf: () => ({ id: 'ada', rev }), onPick: async (value, asked) => { picks.push([value, asked]); return true } }))
+  await act(render)
+  await click(rowOf(document, 'workspace-write:auto'))
+  for (const words of ['Codex', 'reviewer', 'outside', 'Automagik does not review', 'another Bot', 'schedule', 'Read only']) assert.ok(document.body.textContent.includes(words), words)
+  await click(button(document, 'Cancel'))
+  assert.deepEqual(picks, [])
+  await click(rowOf(document, 'workspace-write:auto'))
+  rev = 9; await act(render)
+  await click(button(document, 'Use Auto'))
+  assert.equal(JSON.stringify(picks), JSON.stringify([['workspace-write:auto', { id: 'ada', rev: 3 }]]))
+})
+
+test('Auto questions explain each route and preserve Codex wording', t => {
+  const w = mount(t)
+  const own = w.autoQuestion('ada', 'Workspace', { by: 'own', model: 'x' }).join(' ')
+  for (const word of ['x', 'separate request', 'sandbox', 'plugin']) assert.ok(own.includes(word))
+  const claude = w.autoQuestion('ada', 'Workspace', { by: 'claude', bridged: true, model: 'x' }).join(' ')
+  for (const word of ['auto mode', 'x', 'sandbox']) assert.ok(claude.includes(word))
+  const team = w.autoQuestion('ada', 'Workspace', { by: 'team', agent: 'acp-hermes', model: 'x' }).join(' ')
+  assert.match(team, /Hermes/); assert.match(team, /x/); assert.doesNotMatch(team, /sandbox/)
+  const codex = w.autoQuestion('ada', 'Workspace')
+  assert.equal(codex.length, 3)
+  assert.match(codex[2], /Codex 0.167.0/)
+  assert.equal(w.autoQuestion('ada', 'Workspace', { by: 'codex', bridged: true, model: 'x' }).length, 5)
+})
+
+for (const surface of ['chat', 'Details', 'composer']) {
+  test(`${surface} keeps Auto separate from Auto review and sends the revision confirmed before a roster update`, async t => {
+    const page = mount(t)
+    const { document, root, click } = page
+    const { actions, saves, other } = recorder()
+    const bot = { ...BOT, permission: 'read-only', permissionRev: 3, autoOffered: true, autoJudge: { by: 'own', model: 'Test reviewer' } }
+    let roster = teamOf(page.indexRoster, { bot, catalog: FOUR })
+    const render = () => root.render(surface === 'Details'
+      ? React.createElement(page.BotPanel, { pane: { id: bot.id, view: 'details' }, leaving: false, roster, actions, ...panelProps })
+      : React.createElement(surface === 'chat' ? page.PermissionChoiceDock : page.ComposerPermission, { sessionId: bot.id, useRoster: select => select(roster), actions }))
+    if (surface === 'chat') page.reopenPermissionChoice(bot.id)
+    await act(render)
+    if (surface !== 'chat') await click(document.querySelector(surface === 'Details' ? '.bt-drawer-permission .bt-model-trigger' : '.bt-perm-chip'))
+    const auto = rowOf(document, 'workspace-write:auto')
+    assert.ok(auto)
+    assert.match(auto.querySelector('.bt-q-desc').textContent, /Test reviewer, this Bot's own model/)
+    assert.ok(rowOf(document, 'auto'), 'Auto review remains a separate offered level')
+    await click(auto)
+    if (surface === 'chat') await click(button(card(document), 'Save'))
+    assert.match(document.body.textContent, /Test reviewer.*separate request/)
+    assert.deepEqual(saves, [])
+    const autoCalls = () => other.filter(([name]) => name === 'setBotAuto')
+    assert.deepEqual(autoCalls(), [])
+    roster = teamOf(page.indexRoster, { bot: { ...bot, permissionRev: 9 }, catalog: FOUR })
+    await act(render)
+    await click(button(document, 'Use Auto'))
+    assert.deepEqual(saves, [], 'Auto is never persisted as an ordinary permission preset')
+    assert.deepEqual(autoCalls(), [['setBotAuto', [bot.id, 3]]], 'the host receives the original revision fence')
+  })
+}

@@ -388,6 +388,22 @@ const ZH = {
   "members": "成员",
   "admin": "管理员",
   "mode": "模式",
+  "Works as Workspace. Where Workspace would ask you, Claude Code decides first, with its auto mode: it runs the step, refuses it, or asks you.": "按工作区权限运行。工作区需要询问你的步骤，由 Claude Code 的 auto 模式先决定：执行、拒绝或询问你。",
+  "Works as Workspace. Where Workspace would ask you, {model}, this Bot's own model, decides first: it runs the step, refuses it, or asks you.": "按工作区权限运行。工作区需要询问你的步骤，由此 Bot 自己的模型 {model} 先决定：执行、拒绝或询问你。",
+  "Works as Workspace. Where Workspace would ask you, {model}, the team's background model, decides first: it runs the step, refuses it, or asks you.": "按工作区权限运行。工作区需要询问你的步骤，由团队的后台模型 {model} 先决定：执行、拒绝或询问你。",
+  "On Auto, {model}, {name}'s own model, decides in a separate request each step Workspace would ask you about, except plugin, folder and website changes: it runs the step, refuses it with a reason, or asks you. Commands and file changes stay in the sandbox, except a step it allows to leave it: that step may change files outside {name}'s folder without asking you.": "在 Auto 下，{name} 自己的模型 {model} 通过独立请求决定工作区会询问你的每个步骤，插件、文件夹和网站变更除外：执行、说明理由并拒绝，或询问你。命令和文件变更留在沙箱中，但获准离开沙箱的步骤可能无需询问你就修改 {name} 文件夹以外的文件。",
+  "On Auto, Claude Code decides by itself, with its auto mode, which steps it runs, refuses or asks you about. Steps it runs with its own tools may change files outside {name}'s folder without asking you, and Automagik does not review them.": "在 Auto 下，Claude Code 通过自己的 auto 模式决定执行、拒绝或询问你。使用自有工具执行的步骤可能无需询问你就修改 {name} 文件夹以外的文件，Automagik 不会审查这些步骤。",
+  "On Auto, {model}, the team's background model, decides each step {agent} asks you about: it runs the step, refuses it with a reason, or asks you. {agent} runs its own tools, so a step it allows may change files outside {name}'s folder without asking you.": "在 Auto 下，团队的后台模型 {model} 决定 {agent} 询问你的每个步骤：执行、说明理由并拒绝，或询问你。{agent} 运行自己的工具，因此获准的步骤可能无需询问你就修改 {name} 文件夹以外的文件。",
+  "When it uses DeepSeek Harness's tools, {model}, the team's background model, decides each call first and asks you when unsure. Those tools stay in the sandbox.": "使用 DeepSeek Harness 的工具时，团队的后台模型 {model} 先决定每次调用，不确定时询问你。这些工具留在沙箱中。",
+  "{model} never decides hard-to-undo steps, such as deleting many files or a force push: they come to you, and so does the rest of a turn after three refusals in a row or ten in all.": "{model} 从不决定难以撤销的步骤，例如删除大量文件或强制推送：这些步骤由你决定。连续拒绝三次或累计拒绝十次后，本轮剩余步骤也由你决定。",
+  "This replaces {level}.": "这会替换 {level}。",
+  "Auto counts here.": "Auto 在这里生效。",
+  "the agent here does not offer its own mode, or nothing answers for Auto": "此处的代理不提供自己的模式，或没有服务为 Auto 回答",
+  "no background model is available to decide": "没有可用于决定的后台模型",
+  "For the last prompt {name} was put in its own mode.": "上次提示中，{name} 被设为自己的模式。",
+  "For the last prompt {name} was put in its strict mode: {why}.": "上次提示中，{name} 被设为严格模式：{why}。",
+  "{name} refused its own mode": "{name} 拒绝了自己的模式",
+
   "Bot sign-in recovery is needed. Reset Bot sign-in to start fresh.":
     "需要恢复 Bot 登录。重置 Bot 登录以重新开始。",
   "Reset Bot sign-in": "重置 Bot 登录",
@@ -974,6 +990,27 @@ const ZH = {
   'Workspace': '工作区内修改',
   'Full access': '完全权限',
   'Auto review': '自动审查',
+  "Works as Workspace. Where Workspace would ask you, Codex decides first, with its own reviewer: it runs the step, refuses it, or asks you.": "按工作区内修改运行。需要询问你时，Codex 会先由自己的审查器决定：执行、拒绝或询问你。",
+  "Put {name} on Auto?": "让{name}使用自动模式？",
+  "Use Auto": "使用自动模式",
+  "On Auto, Codex decides by itself, with its own reviewer, which steps it runs, refuses or asks you about. It may change files outside {name}'s folder without asking you, and Automagik does not review those steps.": "在自动模式下，Codex 通过自己的审查器决定执行哪些步骤、拒绝哪些步骤或询问你。它可能不经询问就修改{name}文件夹之外的文件，Automagik 不会审查这些步骤。",
+  "Any message that reaches {name}'s chat can lead to such a step: yours, another Bot's or a schedule's. Tasks and Bots it starts from that chat while on Auto start on Auto too.": "任何到达{name}聊天的消息都可能引发这样的步骤：你的消息、其他 Bot 的消息或定时任务的消息。在自动模式下从该聊天启动的任务和 Bot 也以自动模式启动。",
+  "This replaces {level}. Based on Codex 0.167.0; a later Codex may decide differently.": "这将替换{level}。基于 Codex 0.167.0；后续版本可能作出不同决定。",
+  "Auto counts here: Codex decides on its own.": "自动模式在此生效：Codex 自行决定。",
+  "Auto is saved, but here it runs as Workspace: {why}.": "已保存自动模式，但这里按工作区内修改运行：{why}。",
+  "this window does not hold the team": "此窗口未持有团队锁",
+  "the saved level is not Workspace": "保存的级别不是工作区内修改",
+  "the Bot has a tool deny list": "此 Bot 有工具禁用列表",
+  "this is not the Bot's own current chat": "这不是该 Bot 当前自己的聊天",
+  "this conversation is not at Workspace now": "此对话当前不是工作区内修改",
+  "this conversation runs on another model": "此对话使用另一个模型",
+  "Codex here gets DeepSeek Harness's tools, or does not offer its own mode": "这里的 Codex 使用 DeepSeek Harness 的工具，或不提供自己的模式",
+  "For the last prompt Codex was put in its own mode.": "上一次提示使用了 Codex 自己的模式。",
+  "For the last prompt Codex was put in its strict mode: {why}.": "上一次提示使用了 Codex 的严格模式：{why}。",
+  "Auto does not count here": "自动模式在此不生效",
+  "no answer came in time": "未及时收到回答",
+  "the answer changed before the prompt": "发送提示前回答发生变化",
+  "Codex refused its own mode": "Codex 拒绝了自己的模式",
   Experimental: '实验性',
   'Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.': '自动审查不使用沙箱：每次工具调用前先由模型审查，被拦下的调用由你决定。此功能仍属实验性，可能误放行或误拦截，并会消耗更多 token。',
   'Use Auto review': '启用自动审查',
@@ -1312,6 +1349,26 @@ const ZH = {
   '{first} and {second} are waiting for your approval': '{first}、{second} 等你批准',
   '{first}, {second} and {count} more are waiting for your approval': '{first}、{second} 等 {total} 个等你批准',
   'Waiting for your approval': '等你批准',
+  "A subagent is waiting for your approval": "一个子代理在等你批准",
+  "A subagent wants to use {tool}": "一个子代理想要使用 {tool}",
+  "A step stopped on a permission": "一个步骤因权限限制而停止",
+  "{name} stopped on a permission": "{name} 因权限限制而停止",
+  "{name} stopped on a permission: {why}": "{name} 因权限限制而停止：{why}",
+  "{tool} did not run: {why}": "{tool} 未执行：{why}",
+  "{count} steps did not run: {why}": "{count} 个步骤未执行：{why}",
+  "A subagent step did not run: {why}": "一个子代理步骤未执行：{why}",
+  "A step did not run: {why}": "一个步骤未执行：{why}",
+  "approvals are off here, so you were not asked": "这里关闭了审批，所以没有询问你",
+  "it needed your approval, but nothing here could ask you": "需要你的批准，但这里无法向你请求批准",
+  "this Bot does not have that tool": "这个 Bot 没有该工具",
+  "its permission level could not be set here": "无法在这里设置它的权限级别",
+  "the address list blocks that site": "地址列表阻止了该网站",
+  "Auto review refused it": "自动审查拒绝了它",
+  "the sandbox blocked it": "沙箱阻止了它",
+  "a rule here refused it": "这里的一条规则拒绝了它",
+  "The permission level of this conversation could not be set, so the agent is not running here. Restarting DeepSeek Harness, or changing the permission level, tries again.": "无法为这个对话设置权限级别，所以代理没有在这里运行。重启 DeepSeek Harness 或更改权限级别会再试一次。",
+  "DeepSeek Harness could not check where this conversation comes from, so the agent is not running here. Send the message again; if this goes on, restart DeepSeek Harness.": "DeepSeek Harness 无法确认这个对话来自哪里，所以代理没有在这里运行。请再发一次消息；如果一直这样，请重启 DeepSeek Harness。",
+  "This conversation is on hold while its permission level is checked, so the agent is not running here. Send the message again in a moment.": "正在检查这个对话的权限级别，所以代理暂时没有在这里运行。请稍后再发一次消息。",
   'A task needs your approval': '有任务等你批准',
   'Task {title} is waiting for approval: {tool}': '任务 {title} 等你批准：{tool}',
   'a tool': '一个工具',
@@ -2182,7 +2239,17 @@ const HOST_ZH = {
   'Nothing to cancel': '没有要取消的内容',
   'Nothing to close': '没有要关闭的内容',
   'Omni is still loading this chat.': 'Omni 还在加载这个对话。',
+  "{name}'s permissions changed meanwhile, so nothing was saved. Look again and choose.": '{name} 的权限在此期间已经改变，因此没有保存任何内容。请重新查看后再选择。',
+  'Auto is not offered for {name} here.': '这里不为 {name} 提供自动模式。',
+  'This host cannot save the Bot team.': '这台主机无法保存 Bot 团队。',
+  "Only the person turns Auto on, from the Bot's permission choice.": '只有用户本人能在 Bot 的权限选择中开启自动模式。',
 }
+Object.assign(ZH, {
+  "This step is hard to undo: {step}. Allow it once?": "这一步难以撤销：{step}。允许这一次吗？",
+  "{name} was refused {count} times in this turn, the last time on {tool}. Let it keep working?": "{name} 在本轮被拒绝了 {count} 次，最近一次是 {tool}。让它继续工作吗？",
+  "Let it keep working?": "让它继续工作吗？",
+  "Allow once lets it keep working: nothing that was refused runs. Reject stops it here.": "“允许一次”让它继续工作：被拒绝的步骤都不会执行。“拒绝”让它在这里停止。"
+})
 Object.assign(ZH, HOST_ZH)
 
 const fill = (text, params) => (params
@@ -2239,6 +2306,8 @@ export function t(key, params) {
 // a model switch DSH turned down, roster.js): the template is the dictionary key, worded with
 // the values the message carried.
 const HOST_TEMPLATES = [
+  'This step is hard to undo: {step}. Allow it once?',
+  '{name} was refused {count} times in this turn, the last time on {tool}. Let it keep working?',
   'Turn on {connection} in Settings → Claude Code and Codex before using this model.',
   'Wait for {connection} to finish installing, or retry it in Settings → Claude Code and Codex.',
   'Sign in to {connection} before using this model.',
@@ -2249,6 +2318,9 @@ const HOST_TEMPLATES = [
   { template: 'Session {session} cannot join {bot} because this window cannot change the Bot team now. {reason}', host: ['reason'] },
   '{bot} changed while Session {session} was joining it (another window or an edit). For the Bot team: Nothing was changed; try again. The native preset of Session {session} was set to "{preset}" before this refusal.',
   '{bot} changed while Session {session} was being saved. For the Bot team: Nothing was changed; try again. The native preset of Session {session} was set to "{preset}" before this refusal.',
+  // Auto's refusals that name the Bot (auto.js setBotAuto).
+  "{name}'s permissions changed meanwhile, so nothing was saved. Look again and choose.",
+  'Auto is not offered for {name} here.',
 ].map((entry) => {
   const { template, host = [] } = typeof entry === 'string' ? { template: entry } : entry
   const names = []
@@ -2260,12 +2332,15 @@ const HOST_TEMPLATES = [
   }).join('')
   return { template, names, host, pattern: new RegExp(`^${source}$`) }
 })
+export function hostTemplateOf(message) {
+  return HOST_TEMPLATES.find(({ pattern }) => pattern.test(message))?.template
+}
 function hostTemplate(message) {
-  for (const { template, names, host, pattern } of HOST_TEMPLATES) {
-    const found = pattern.exec(message)
-    if (found !== null) return t(template, Object.fromEntries(names.map((name, index) => [name, host.includes(name) ? hostText(found[index + 1]) : found[index + 1]])))
-  }
-  return undefined
+  const matched = hostTemplateOf(message)
+  if (matched === undefined) return undefined
+  const { template, names, host, pattern } = HOST_TEMPLATES.find(entry => entry.template === matched)
+  const found = pattern.exec(message)
+  return t(template, Object.fromEntries(names.map((name, index) => [name, host.includes(name) ? hostText(found[index + 1]) : found[index + 1]])))
 }
 
 // A message from the host, in the interface language.

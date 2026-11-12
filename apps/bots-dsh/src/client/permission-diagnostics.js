@@ -8,7 +8,7 @@ import { quietly } from './diagnostics.js'
 import { dateLocale, t } from './i18n.js'
 import { cliAuto, cliOfBot, presetName } from './permission-picker.js'
 
-const PERMISSION_ANSWER = 1
+const PERMISSION_ANSWER = 2
 
 // As the error rows tell a time (feedback.js whenText).
 function permWhen(time) {
@@ -90,8 +90,11 @@ export function noAskMissed(acp) {
   return { mode: current }
 }
 
+const AUTO_WHY = {"lock": "this window does not hold the team", "level": "the saved level is not Workspace", "deny": "the Bot has a tool deny list", "session": "this is not the Bot's own current chat", "preset": "this conversation is not at Workspace now", "route": "this conversation runs on another model", "agent": "the agent here does not offer its own mode, or nothing answers for Auto", "judge": "no background model is available to decide"}
 function levelFacts(row, cli) {
   const out = []
+  if (row.auto?.counts === true) out.push(t(!row.auto.by || row.auto.by === 'codex' ? 'Auto counts here: Codex decides on its own.' : 'Auto counts here.'))
+  else if (row.auto && AUTO_WHY[row.auto.why]) out.push(t('Auto is saved, but here it runs as Workspace: {why}.', { why: t(AUTO_WHY[row.auto.why]) }))
   if (row.presets === false) out.push(t('Permissions are not available in this DeepSeek Harness'))
   const saved = levelName(row.saved)
   if (saved !== undefined && PERM_SAVED[row.source]) out.push(t(PERM_SAVED[row.source], { level: saved }))
@@ -124,6 +127,11 @@ function agentFacts(acp) {
   if (acp === null || typeof acp !== 'object') return []
   const out = []
   const name = CLI_NAMES[acp.agent] ?? t('Another agent')
+  if (acp.ownMode?.taken === true) out.push(t('For the last prompt {name} was put in its own mode.', { name }))
+  else if (acp.ownMode) {
+    const why = { late: 'no answer came in time', changed: 'the answer changed before the prompt', refused: '{name} refused its own mode' }[acp.ownMode.answer] ?? 'Auto does not count here'
+    out.push(t('For the last prompt {name} was put in its strict mode: {why}.', { name, why: t(why, { name }) }))
+  }
   out.push(acp.active === true ? name : t('{name}, not running now: this is from its last run', { name }))
   const modes = acp.modes
   if (modes && typeof modes === 'object') {

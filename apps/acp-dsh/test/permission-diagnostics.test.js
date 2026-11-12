@@ -538,3 +538,16 @@ test('no recorder throws, whatever it is given', () => {
   })
   assert.equal(diagnostics.read('s1').active, false)
 })
+
+test('version 2 ownMode is bounded and returned as a fresh copy', () => {
+  const w = world(); const state = w.begin('own', 'acp-codex')
+  w.diagnostics.own('own', state, { answer: 'yes', taken: true })
+  const first = w.diagnostics.read('own')
+  assert.equal(first.version, 2)
+  assert.deepEqual(first.ownMode, { answer: 'yes', taken: true, at: 1001 })
+  first.ownMode.taken = false
+  assert.equal(w.diagnostics.read('own').ownMode.taken, true)
+  w.diagnostics.own('own', state, { answer: 'private text', taken: 1 })
+  assert.equal(JSON.stringify(w.diagnostics.read('own')).includes('private text'), false)
+  assert.equal(w.diagnostics.read('own').ownMode.taken, false)
+})

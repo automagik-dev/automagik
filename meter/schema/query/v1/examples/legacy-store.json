@@ -148,6 +148,24 @@
         "unpriced_models": [],
         "unpriced_models_omitted": 0
       },
+      "models": [
+        {
+          "model": "claude-opus-5-5",
+          "calls": 9,
+          "tokens": {
+            "input": 60000,
+            "cache_read": 1100000,
+            "cache_write_5m": 90000,
+            "cache_write_1h": 0,
+            "output": 31000,
+            "reasoning": 6000,
+            "unsplit": 0,
+            "total": 1281000
+          },
+          "cost_usd": 1.53
+        }
+      ],
+      "models_omitted": 0,
       "token_precision": "exact",
       "attribution": {
         "precision": "branch_window",
@@ -190,6 +208,8 @@
       "reason": "source_incomplete",
       "tokens": null,
       "cost": null,
+      "models": [],
+      "models_omitted": 0,
       "token_precision": null,
       "attribution": {
         "precision": "branch_window",

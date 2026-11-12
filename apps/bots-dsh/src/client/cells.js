@@ -1,3 +1,4 @@
+import { heldText, stopOfCall, stopLine, whyText } from './stops.js'
 import { createElement as h, Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { MarkdownText } from './dsh-primitives.js'
@@ -240,7 +241,7 @@ export function AssistantCell({ node, groupPart, sessionId, openFile, fileMentio
   const contexts = useTurnContext(String(data.turn))
   const mentions = useFileMentions({ node, openFile, fileMentions, useTurnData })
   const hidden = Boolean(roster.roomsById[sessionId]) || isHiddenTurn(roster, sessionId, data.turn)
-  const texts = groupPart === 'reasoning' ? [] : data.blocks.filter(block => block.kind === 'text' && block.text.trim() !== '').map(block => block.text)
+  const texts = groupPart === 'reasoning' ? [] : data.blocks.filter(block => block.kind === 'text' && block.text.trim() !== '').map(block => heldText(block.text))
   const running = data.status === 'running'
   const members = steps.length ? steps : [data]
   const shown = thinkingShown(roster.prefs)
@@ -967,6 +968,10 @@ function GroupReplies({ sessionId, callId, done, content, roster, actions, useUi
           h(MarkdownText, { text: reply.text, labels: mdLabels(), variant: 'compact' }),
           Number.isFinite(time) ? h('div', { className: 'bt-utime', title: clockLabel(time) }, messageClock(time)) : null))
       }
+      if (reply.kind === 'permission-stop') {
+        return h('div', { key: `${reply.botId}-${index}`, className: 'bt-event bt-event-error', role: 'status', title: reply.why },
+          t('{name} stopped on a permission: {why}', { name: bot.name, why: whyText(reply.why) }))
+      }
       if (reply.kind === 'failed') {
         return h('div', { key: `${reply.botId}-${index}`, className: 'bt-event bt-event-error', role: 'status', title: [reply.code, reply.status, reply.text].filter(Boolean).join(' · ') },
           t('{name} could not answer: {reason}', { name: bot.name, reason: failureLabel(reply.code, reply.text) }))
@@ -1169,7 +1174,12 @@ export function ToolCell({ node, sessionId, useRoster, useUi, useWork, useSessio
   // A plugin that loads after the transcript drew still gets its cards drawn.
   useSyncExternalStore(toolCards.source.subscribe, toolCards.source.getSnapshot)
   const calls = hidden ? [] : callTree(root)
-  const drawn = calls.filter(call => DRAWN.has(toolName(call)) || toolCards.renderer(toolName(call)) || agentImage(call))
+  const stopKeys = useWork ? useWork(work => JSON.stringify(calls.flatMap(call => {
+    const entry = stopOfCall(work.stops, sessionId, call.callId)
+    return entry ? [[call.callId, stopLine(entry), entry.why]] : []
+  }))) : '[]'
+  const stops = new Map(JSON.parse(stopKeys).map(([id, line, why]) => [id, { line, why }]))
+  const drawn = calls.filter(call => DRAWN.has(toolName(call)) || toolCards.renderer(toolName(call)) || agentImage(call) || stops.has(call.callId))
   // The newest call still running names the work, so a program reads as the tool it is in.
   const running = root.kind === 'tool-result' ? undefined : calls.findLast(call => call.kind !== 'tool-result')
   const note = running ? toolActivity(toolName(running), toolArgs(running).text, findBot, roster.byId[sessionId]) : null
@@ -1178,5 +1188,9 @@ export function ToolCell({ node, sessionId, useRoster, useUi, useWork, useSessio
   useShownCards(actions, sessionId, drawn.filter(call => (CARDS.has(toolName(call)) || toolCards.asks(toolName(call))) && call.callId).map(call => call.callId))
   if (drawn.length === 0) return null
   const env = { sessionId, roster, actions, useUi, useWork, useSessionStatus, findBot, heldCards, hooks: { useBrowserHolds, useBrowserTabs, useBrowserPages } }
-  return h(Fragment, null, drawn.map((call, index) => h(Fragment, { key: call.callId ?? index }, renderCall(call, env))))
+  return h(Fragment, null, drawn.map((call, index) => {
+    const stop = stops.get(call.callId)
+    return h(Fragment, { key: call.callId ?? index }, renderCall(call, env),
+      stop ? h('div', { className: 'bt-event bt-event-error', role: 'status', title: stop.why }, stop.line) : null)
+  }))
 }

@@ -174,6 +174,39 @@
         "unpriced_models": [],
         "unpriced_models_omitted": 0
       },
+      "models": [
+        {
+          "model": "gpt-6.1-sol",
+          "calls": 4,
+          "tokens": {
+            "input": 25200,
+            "cache_read": 240000,
+            "cache_write_5m": 0,
+            "cache_write_1h": 0,
+            "output": 18000,
+            "reasoning": 7000,
+            "unsplit": 0,
+            "total": 283200
+          },
+          "cost_usd": 0.2544
+        },
+        {
+          "model": "gpt-6.1-terra",
+          "calls": 1,
+          "tokens": {
+            "input": 4800,
+            "cache_read": 0,
+            "cache_write_5m": 0,
+            "cache_write_1h": 0,
+            "output": 0,
+            "reasoning": 0,
+            "unsplit": 0,
+            "total": 4800
+          },
+          "cost_usd": 0.0048
+        }
+      ],
+      "models_omitted": 0,
       "token_precision": "exact",
       "attribution": {
         "precision": "actor_interval",
@@ -237,6 +270,39 @@
         "unpriced_models": [],
         "unpriced_models_omitted": 0
       },
+      "models": [
+        {
+          "model": "claude-opus-5-5",
+          "calls": 13,
+          "tokens": {
+            "input": 80000,
+            "cache_read": 1499987,
+            "cache_write_5m": 110000,
+            "cache_write_1h": 0,
+            "output": 36595,
+            "reasoning": 8000,
+            "unsplit": 0,
+            "total": 1726582
+          },
+          "cost_usd": 1.9019
+        },
+        {
+          "model": "claude-haiku-5-5",
+          "calls": 1,
+          "tokens": {
+            "input": 0,
+            "cache_read": 13,
+            "cache_write_5m": 0,
+            "cache_write_1h": 0,
+            "output": 4405,
+            "reasoning": 0,
+            "unsplit": 0,
+            "total": 4418
+          },
+          "cost_usd": 0.0022
+        }
+      ],
+      "models_omitted": 0,
       "token_precision": "exact",
       "attribution": {
         "precision": "actor_interval",
@@ -300,6 +366,39 @@
         "unpriced_models": [],
         "unpriced_models_omitted": 0
       },
+      "models": [
+        {
+          "model": "gpt-6.1-terra",
+          "calls": 8,
+          "tokens": {
+            "input": 149999,
+            "cache_read": 1299998,
+            "cache_write_5m": 0,
+            "cache_write_1h": 0,
+            "output": 46578,
+            "reasoning": null,
+            "unsplit": 0,
+            "total": 1496575
+          },
+          "cost_usd": 0.4479
+        },
+        {
+          "model": "claude-haiku-5-5",
+          "calls": 1,
+          "tokens": {
+            "input": 1,
+            "cache_read": 2,
+            "cache_write_5m": 0,
+            "cache_write_1h": 0,
+            "output": 5422,
+            "reasoning": null,
+            "unsplit": 0,
+            "total": 5425
+          },
+          "cost_usd": 0.0027
+        }
+      ],
+      "models_omitted": 0,
       "token_precision": "exact",
       "attribution": {
         "precision": "actor_interval",

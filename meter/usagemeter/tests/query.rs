@@ -1705,6 +1705,8 @@ fn the_schema_refuses_what_the_attribution_contract_forbids() {
         ("reason", json!("backlog")),
         ("tokens", json!(null)),
         ("cost", json!(null)),
+        ("models", json!([])),
+        ("models_omitted", json!(0)),
         ("token_precision", json!(null)),
         ("activity", json!(null)),
     ] {
@@ -1985,6 +1987,16 @@ fn rows_metadata_and_refusals_stay_within_the_budget_table() {
     );
     // Ten unpriced models: two are left out of the list, and the row says so.
     assert_eq!(row["cost"]["unpriced_models_omitted"], 2);
+    let models = row["models"].as_array().unwrap();
+    assert!(models.len() < query::MODELS_MAX, "the row budget must bind");
+    assert_eq!(
+        models.len() + row["models_omitted"].as_u64().unwrap() as usize,
+        11
+    );
+    for model in models {
+        assert!(len(&model["model"]) <= query::MODEL_NAME_BYTES);
+        assert!(model["calls"].as_i64().unwrap() >= 1);
+    }
     // genie's I4: a name takes at most 40 bytes as JSON, its quotes and escapes included, and a
     // cut name ends with the 3-byte ellipsis inside those 40.
     for m in row["cost"]["unpriced_models"].as_array().unwrap() {
@@ -3684,4 +3696,664 @@ fn the_schema_refuses_what_the_task_contract_forbids() {
     for (what, v) in bad {
         assert!(!s.errors(&v).is_empty(), "the schema accepts {what}: {v}");
     }
+}
+
+#[test]
+fn repo_alias_merges_usage_and_tasks_under_primary_repo() {
+    use sha2::{Digest, Sha256};
+
+    const OLD: &str = "example.com/old-acme/widgets";
+    const OLDER: &str = "example.com/older-acme/widgets";
+    let s = scenes::tasks();
+    let requests: Vec<Vec<String>> = ["branch", "bot", "task"]
+        .iter()
+        .map(|by| {
+            let mut a = args(&["feat/gn-41-pager", "feat/gn-42-cache"]);
+            a.extend(["--by".into(), (*by).into()]);
+            a
+        })
+        .collect();
+    let baseline: Vec<Value> = requests
+        .iter()
+        .map(|a| {
+            let (code, raw) = s.query(a);
+            assert_eq!(code, 0, "{raw}");
+            serde_json::from_str(&raw).unwrap()
+        })
+        .collect();
+    // Split one task's actors and usage across names, leaving the other task on the primary.
+    let st = s.store();
+    for table in ["usage", "ev_dim"] {
+        let changed = st
+            .conn
+            .execute(
+                &format!(
+                    "UPDATE {table} SET repo = ?1 WHERE repo = ?2 AND branch = 'feat/gn-41-pager'"
+                ),
+                params![OLD, REPO],
+            )
+            .unwrap();
+        assert!(changed > 0);
+    }
+    drop(st);
+    for (a, before) in requests.iter().zip(&baseline) {
+        let (code, raw) = s.query(a);
+        assert_eq!(code, 0, "{raw}");
+        let without: Value = serde_json::from_str(&raw).unwrap();
+        assert_ne!(without["rows"], before["rows"]);
+        let mut a = a.clone();
+        for alias in [OLD, OLD, REPO, OLDER, OLDER] {
+            a.extend(["--repo-alias".into(), alias.into()]);
+        }
+        let (code, raw) = s.query(&a);
+        assert_eq!(code, 0, "{raw}");
+        let v: Value = serde_json::from_str(&raw).unwrap();
+        assert!(schema().valid(&v), "{:#?}", schema().errors(&v));
+        assert_eq!(v["rows"], before["rows"]);
+        assert_eq!(v["actor_unattributed"], before["actor_unattributed"]);
+        assert_eq!(v["query"]["repo"], REPO);
+        assert_eq!(v["query"]["repo_aliases"], json!([OLD, OLDER]));
+        let by = before["query"]["by"].as_str();
+        let mut hash_input = format!("{REPO}\nalias {OLD}\nalias {OLDER}\nd30\n");
+        if let Some(by) = by {
+            hash_input.push_str(&format!("by {by}\n"));
+        }
+        hash_input.push_str("feat/gn-41-pager\nfeat/gn-42-cache\n");
+        assert_eq!(
+            v["query"]["request_sha256"],
+            format!("{:x}", Sha256::digest(hash_input))
+        );
+
+        let mut same = a[..a.len() - 10].to_vec();
+        same.extend(["--repo-alias".into(), REPO.into()]);
+        let (_, raw) = s.query(&same);
+        let same: Value = serde_json::from_str(&raw).unwrap();
+        assert!(same["query"].get("repo_aliases").is_none());
+        assert_eq!(
+            same["query"]["request_sha256"],
+            before["query"]["request_sha256"]
+        );
+    }
+
+    // No primary rows, and the alias only has historical usage outside d1: repo_seen must
+    // consult all names even when the window's scan returns no rows.
+    let st = s.store();
+    st.conn
+        .execute(
+            "UPDATE usage SET repo = ?1, hour_ms = ?2 WHERE repo = ?3",
+            params![OLD, t("2026-10-22T09:00:00Z"), REPO],
+        )
+        .unwrap();
+    st.conn
+        .execute(
+            "UPDATE usage SET hour_ms = ?1 WHERE repo = ?2",
+            params![t("2026-10-22T09:00:00Z"), OLD],
+        )
+        .unwrap();
+    drop(st);
+    let mut a = args(&["feat/gn-41-pager"]);
+    a.extend(["--window".into(), "d1".into()]);
+    let (_, raw) = s.query(&a);
+    let without: Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(without["rows"][0]["reason"], "repo_not_seen");
+    a.extend(["--repo-alias".into(), OLD.into()]);
+    let (code, raw) = s.query(&a);
+    assert_eq!(code, 0, "{raw}");
+    let v: Value = serde_json::from_str(&raw).unwrap();
+    assert_ne!(v["rows"][0]["reason"], "repo_not_seen");
+}
+
+#[test]
+fn repo_alias_validation_refuses_bad_or_excessive_names() {
+    let fx = Fx::new(SYNCED);
+    let long = format!("example.com/acme/{}", "w".repeat(query::MAX_REPO_BYTES));
+    for (extra, message, error) in [
+        (
+            vec!["--repo-alias".to_string()],
+            "--repo-alias needs a value",
+            "usage",
+        ),
+        (
+            vec![
+                "--repo-alias".into(),
+                "https://example.com/acme/widgets".into(),
+            ],
+            "--repo-alias takes host/owner/repo",
+            "usage",
+        ),
+        (
+            vec!["--repo-alias".into(), long],
+            "--repo-alias takes",
+            "request_too_large",
+        ),
+        (
+            (0..17)
+                .flat_map(|i| ["--repo-alias".into(), format!("example.com/acme/old-{i}")])
+                .collect(),
+            "at most 16 --repo-alias values may be given",
+            "usage",
+        ),
+    ] {
+        let mut a = args(&["main"]);
+        a.extend(extra);
+        let (code, v) = fx.query(&a);
+        assert_eq!(code, query::exit::USAGE, "{v}");
+        assert!(
+            v["error"]["message"].as_str().unwrap().starts_with(message),
+            "{v}"
+        );
+        assert_eq!(v["error"]["code"], error, "{v}");
+    }
+    // Sixteen distinct aliases fit, and repetitions do not consume the cap.
+    let mut a = args(&["main"]);
+    for i in (0..16).chain(0..16) {
+        a.extend(["--repo-alias".into(), format!("example.com/acme/old-{i}")]);
+    }
+    let (code, v) = fx.query(&a);
+    assert_ne!(code, query::exit::USAGE, "{v}");
+    assert_eq!(v["query"]["repo_aliases"].as_array().unwrap().len(), 16);
+}
+
+/// A single worker/task/branch with several models, including calls sharing an hourly rollup.
+fn models_scene(many: bool) -> scenes::Scene {
+    use scenes::{H, Scene, Start, Usage, worker};
+    let mut s = Scene::migrated("2026-09-11T23:30:00Z", &[]);
+    let cwd = scenes::wt("models");
+    s.start(Start {
+        task: Some("gn-models"),
+        session: Some("s-models"),
+        ..worker(
+            "t-models",
+            "kite",
+            "dev",
+            "lark",
+            "claude",
+            &cwd,
+            "feat/models",
+            t("2026-11-07T09:00:00Z"),
+        )
+    });
+    let hour = t("2026-11-08T10:00:00Z");
+    let names: &[&str] = if many {
+        &[
+            "model-k", "model-j", "model-i", "model-h", "model-g", "model-f", "model-e", "model-d",
+            "model-c", "model-b", "model-a",
+        ]
+    } else {
+        &[CLAUDE_MODEL, "acme-local-z", "acme-local-a"]
+    };
+    for (i, model) in names.iter().enumerate() {
+        let repeated = !many && i == 0;
+        s.add(
+            Usage::new(
+                H::Claude,
+                "s-models",
+                &cwd,
+                Some("feat/models"),
+                if repeated {
+                    vec![hour, hour]
+                } else {
+                    vec![hour]
+                },
+            )
+            .model(model)
+            .tokens(if repeated {
+                [20, 40, 60, 80, 100, 4]
+            } else {
+                [10, 20, 30, 40, 50, 2]
+            }),
+        );
+    }
+    s.sync();
+    s
+}
+
+fn models_query(s: &scenes::Scene, by: &str) -> Value {
+    let mut a = scenes::args(false, &["feat/models"]);
+    a.extend(["--by".into(), by.into()]);
+    let (code, raw) = s.query(&a);
+    assert_eq!(code, 0, "{raw}");
+    let v: Value = serde_json::from_str(&raw).unwrap();
+    assert!(schema().valid(&v), "{:#?}", schema().errors(&v));
+    assert_eq!(rows_of(&v).len(), 1, "{v}");
+    v
+}
+
+#[test]
+fn models_conserve_every_bucket_and_count_calls_on_branch_bot_and_task_rows() {
+    let s = models_scene(false);
+    for by in ["branch", "bot", "task"] {
+        let v = models_query(&s, by);
+        let row = &v["rows"][0];
+        assert_eq!(row["models_omitted"], 0, "{by}: {row}");
+        let models = row["models"].as_array().unwrap();
+        assert_eq!(models.len(), 3);
+        assert_eq!(models[0]["model"], CLAUDE_MODEL);
+        assert_eq!(models[1]["model"], "acme-local-a");
+        assert_eq!(models[2]["model"], "acme-local-z");
+        for (i, m) in models.iter().enumerate() {
+            let factor = if i == 0 { 2 } else { 1 };
+            assert_eq!(m["calls"], factor, "{by}: {m}");
+            for (bucket, n) in [
+                ("input", 10),
+                ("cache_read", 20),
+                ("cache_write_5m", 30),
+                ("cache_write_1h", 40),
+                ("output", 50),
+                ("reasoning", 2),
+                ("unsplit", 0),
+                ("total", 150),
+            ] {
+                assert_eq!(m["tokens"][bucket], n * factor, "{by}: {m}");
+            }
+        }
+        for bucket in [
+            "input",
+            "cache_read",
+            "cache_write_5m",
+            "cache_write_1h",
+            "output",
+            "reasoning",
+            "unsplit",
+            "total",
+        ] {
+            let sum: i64 = models.iter().map(|m| int(&m["tokens"][bucket])).sum();
+            assert_eq!(sum, int(&row["tokens"][bucket]), "{by}: {bucket}");
+        }
+        assert!(models[0]["cost_usd"].as_f64().unwrap() > 0.0);
+        assert_eq!(models[0]["cost_usd"], row["cost"]["usd"]);
+        assert!(models[1]["cost_usd"].is_null());
+        assert!(models[2]["cost_usd"].is_null());
+    }
+}
+
+#[test]
+fn model_cost_is_unknown_for_unpriced_and_unsplit_calls() {
+    let (_, v) = scenario("partial-priced");
+    let row = &v["rows"][0];
+    let models = row["models"].as_array().unwrap();
+    assert_eq!(models.len(), 3);
+    let priced = models.iter().find(|m| m["model"] == CLAUDE_MODEL).unwrap();
+    assert!(priced["cost_usd"].as_f64().unwrap() > 0.0);
+    assert_eq!(priced["cost_usd"], row["cost"]["usd"]);
+    assert_eq!(priced["calls"], 21);
+    let unsplit = models.iter().find(|m| m["model"] == CODEX_MODEL).unwrap();
+    assert_eq!(unsplit["tokens"]["unsplit"], 260000);
+    assert!(unsplit["cost_usd"].is_null());
+    assert!(
+        models
+            .iter()
+            .find(|m| m["model"] == "acme-local-7b")
+            .unwrap()["cost_usd"]
+            .is_null()
+    );
+    let (_, v) = scenario("unpriced-cost");
+    assert_eq!(v["rows"][0]["models"][0]["calls"], 5);
+    assert!(v["rows"][0]["models"][0]["cost_usd"].is_null());
+}
+
+#[test]
+fn model_caps_and_row_budget_count_every_omission_in_all_groupings() {
+    assert_eq!(query::MODELS_MAX, 8);
+    let s = models_scene(true);
+    for by in ["branch", "bot", "task"] {
+        let v = models_query(&s, by);
+        let row = &v["rows"][0];
+        let models = row["models"].as_array().unwrap();
+        assert!(!models.is_empty());
+        assert!(models.len() <= query::MODELS_MAX);
+        assert_eq!(
+            models.len() + row["models_omitted"].as_u64().unwrap() as usize,
+            11
+        );
+        assert!(len(row) <= query::ROW_BYTES, "{by}: {row}");
+        for (i, m) in models.iter().enumerate() {
+            assert_eq!(m["model"], format!("model-{}", (b'a' + i as u8) as char));
+            assert_eq!(m["calls"], 1);
+        }
+        assert_eq!(models_query(&s, by), v, "{by}: stable order and truncation");
+    }
+}
+
+#[test]
+fn empty_usage_models_and_schema_preserve_unknown_and_zero() {
+    let schema = schema();
+    let model = scenario("priced").1["rows"][0]["models"][0].clone();
+    let mut empty_states = std::collections::BTreeSet::new();
+    for name in [
+        "zero-usage",
+        "missing-branch",
+        "unsupported-source",
+        "stale-source",
+        "task-ambiguous",
+    ] {
+        let (_, v) = scenario(name);
+        for (i, row) in rows_of(&v).iter().enumerate() {
+            let state = row["state"].as_str().unwrap();
+            if state == "zero" || row["tokens"].is_null() {
+                empty_states.insert(state.to_string());
+                assert_eq!(row["models"], json!([]), "{name}: {row}");
+                assert_eq!(row["models_omitted"], 0, "{name}: {row}");
+                for (key, value) in [("models", json!([model])), ("models_omitted", json!(1))] {
+                    let mut bad = v.clone();
+                    bad["rows"][i][key] = value;
+                    assert!(!schema.valid(&bad), "{name}: {key}");
+                }
+            }
+        }
+    }
+    for state in ["zero", "missing", "unsupported", "stale"] {
+        assert!(empty_states.contains(state), "no fixture checks {state}");
+    }
+    for name in ["priced", "by-bot", "task-rows"] {
+        let (_, mut v) = scenario(name);
+        v["rows"][0]["models"] = json!([]);
+        v["rows"][0]["models_omitted"] = json!(0);
+        assert!(!schema.valid(&v), "{name}: silently omitted all models");
+    }
+}
+
+#[test]
+fn models_keep_reported_costs_and_default_event_counts() {
+    let fx = plain_store();
+    let c = Connection::open(fx.db()).unwrap();
+    for reported in [0.0, 2.5] {
+        c.execute("UPDATE usage SET events = 0, reported_usd = ?1", [reported])
+            .unwrap();
+        let (code, v) = fx.query(&args(&["feat/gn-12-cache"]));
+        assert_eq!(code, 0, "{v}");
+        let row = &v["rows"][0];
+        assert_eq!(row["models"][0]["calls"], 1);
+        assert_eq!(row["models"][0]["tokens"], row["tokens"]);
+        assert_eq!(row["models"][0]["cost_usd"], reported);
+        assert_eq!(row["models"][0]["cost_usd"], row["cost"]["usd_reported"]);
+    }
+}
+
+#[test]
+fn query_d90_includes_usage_older_than_d30() {
+    let mut s = scenes::Scene::migrated(
+        "2026-09-16T00:30:00Z",
+        &[scenes::Frozen {
+            bot: None,
+            harness: "claude-code",
+            model: CLAUDE_MODEL,
+            branch: Some("feat/history"),
+            hour: t("2026-09-15T10:00:00Z"),
+            tokens: [100, 0, 0, 0, 20, 0],
+        }],
+    );
+    s.sync();
+    for (window, expected) in [("d30", 0), ("d90", 120)] {
+        let mut a = scenes::args(false, &["feat/history"]);
+        a.extend(["--window".into(), window.into()]);
+        let (code, raw) = s.query(&a);
+        assert_eq!(code, 0, "{raw}");
+        let v: Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(v["window"]["name"], window);
+        assert_eq!(v["query"]["window"], window);
+        assert!(v["query"].get("since").is_none());
+        assert!(v["query"].get("until").is_none());
+        assert_eq!(v["rows"][0]["tokens"]["total"], expected, "{v}");
+        if expected > 0 {
+            assert_eq!(v["rows"][0]["state"], "measured");
+        }
+        assert!(schema().valid(&v), "{:#?}", schema().errors(&v));
+    }
+}
+
+fn interval_args(by: &str, since: &str, until: &str) -> Vec<String> {
+    let mut a = scenes::args(false, &["feat/interval"]);
+    a.extend([
+        "--by".into(),
+        by.into(),
+        "--since".into(),
+        since.into(),
+        "--until".into(),
+        until.into(),
+    ]);
+    a
+}
+
+/// Two calls sharing an hourly rollup, distinguishable only by their evidence timestamps.
+fn interval_scene(logged_branch: bool) -> scenes::Scene {
+    use scenes::{H, Scene, Start, Usage, worker};
+    let mut s = Scene::migrated(
+        "2026-11-08T09:30:00Z",
+        &[scenes::Frozen {
+            bot: None,
+            harness: "claude-code",
+            model: CLAUDE_MODEL,
+            branch: Some("feat/history"),
+            hour: t("2026-11-08T09:00:00Z"),
+            tokens: [70, 0, 0, 0, 7, 0],
+        }],
+    );
+    let cwd = scenes::wt("interval");
+    s.start(Start {
+        task: Some("gn-interval"),
+        session: Some("s-interval"),
+        ..worker(
+            "t-interval",
+            "kite",
+            "dev",
+            "lark",
+            if logged_branch { "claude" } else { "dsh-tui" },
+            &cwd,
+            "feat/interval",
+            t("2026-11-08T09:40:00Z"),
+        )
+    });
+    // Scene writers offset the supplied time; keep both calls in the same hour.
+    let offset = if logged_branch { 15 } else { 20 } * 60_000;
+    for (at, tokens) in [
+        ("2026-11-08T10:05:00Z", [10, 90, 0, 0, 50, 0]),
+        ("2026-11-08T10:45:00Z", [100, 900, 0, 0, 500, 0]),
+    ] {
+        s.add(
+            Usage::new(
+                if logged_branch { H::Claude } else { H::Dsh },
+                "s-interval",
+                &cwd,
+                logged_branch.then_some("feat/interval"),
+                vec![t(at) - offset],
+            )
+            .tokens(tokens),
+        );
+    }
+    s.sync();
+    s
+}
+
+#[test]
+fn custom_interval_reads_exact_calls_for_branch_bot_and_task() {
+    for logged in [true, false] {
+        let s = interval_scene(logged);
+        for by in ["branch", "bot", "task"] {
+            let a = interval_args(by, "2026-11-08T10:00:00Z", "2026-11-08T10:30:00Z");
+            let before = folder(&s.env.state());
+            let (code, raw) = s.query(&a);
+            assert_eq!(code, 0, "{by}: {raw}");
+            let v: Value = serde_json::from_str(&raw).unwrap();
+            assert_eq!(v["rows"].as_array().unwrap().len(), 1, "{by}: {v}");
+            let row = &v["rows"][0];
+            assert_eq!(row["state"], "measured", "logged={logged} by={by}: {v}");
+            assert_eq!(row["tokens"]["total"], 150, "{by}: {v}");
+            assert_eq!(row["models"][0]["calls"], 1);
+            assert_eq!(row["models"][0]["tokens"], row["tokens"]);
+            let basis = if logged { "log" } else { "ledger" };
+            assert_eq!(
+                row["attribution"]["actor"]["tokens_by_branch_basis"][basis],
+                150
+            );
+            assert_eq!(v["window"]["name"], "custom");
+            assert_eq!(v["query"]["window"], "custom");
+            assert_eq!(v["query"]["since"], "2026-11-08T10:00:00Z");
+            assert_eq!(v["query"]["until"], "2026-11-08T10:30:00Z");
+            assert_eq!(v["window"]["requested_start"], "2026-11-08T10:00:00Z");
+            assert_eq!(v["window"]["start"], "2026-11-08T10:00:00Z");
+            assert_eq!(v["window"]["end"], "2026-11-08T10:30:00Z");
+            assert_eq!(v["window"]["clipped"], false);
+            same_folder(&folder(&s.env.state()), &before, "custom query");
+            assert!(schema().valid(&v), "{:#?}", schema().errors(&v));
+
+            // Inclusive since, exclusive until, including two calls in the same hour.
+            let (code, raw) = s.query(&interval_args(
+                by,
+                "2026-11-08T10:05:00Z",
+                "2026-11-08T10:45:00Z",
+            ));
+            assert_eq!(code, 0, "{raw}");
+            let boundary: Value = serde_json::from_str(&raw).unwrap();
+            assert_eq!(boundary["rows"][0]["tokens"]["total"], 150);
+            assert_ne!(
+                boundary["query"]["request_sha256"],
+                v["query"]["request_sha256"]
+            );
+            let (_, raw) = s.query(&interval_args(
+                by,
+                "2026-11-08T10:45:00Z",
+                "2026-11-08T11:00:00Z",
+            ));
+            let later: Value = serde_json::from_str(&raw).unwrap();
+            assert_eq!(later["rows"][0]["tokens"]["total"], 1500);
+
+            // Offset spelling normalizes to the same echo and request hash.
+            let (_, raw) = s.query(&interval_args(
+                by,
+                "2026-11-08T11:00:00+01:00",
+                "2026-11-08T11:30:00+01:00",
+            ));
+            assert_eq!(serde_json::from_str::<Value>(&raw).unwrap(), v);
+            let mut bad = v.clone();
+            bad["query"].as_object_mut().unwrap().remove("since");
+            assert!(!schema().valid(&bad));
+            let mut bad = v.clone();
+            bad["query"]["window"] = json!("d30");
+            assert!(!schema().valid(&bad));
+        }
+    }
+}
+
+#[test]
+fn custom_interval_rejects_invalid_cli_before_opening_store() {
+    let s = scenes::Scene::migrated("2026-11-08T09:30:00Z", &[]);
+    let since = "2026-11-08T10:00:00Z";
+    let until = "2026-11-08T11:00:00Z";
+    let cases: Vec<(Vec<&str>, &str)> = vec![
+        (
+            vec!["--since", since],
+            "--since and --until must be given together",
+        ),
+        (
+            vec!["--until", until],
+            "--since and --until must be given together",
+        ),
+        (
+            vec!["--window", "d7", "--since", since, "--until", until],
+            "--window cannot be combined with --since and --until",
+        ),
+        (
+            vec!["--window", "d7", "--until", until],
+            "--window cannot be combined with --since and --until",
+        ),
+        (
+            vec!["--since", since, "--until", since],
+            "--since must be earlier than --until",
+        ),
+        (
+            vec!["--since", until, "--until", since],
+            "--since must be earlier than --until",
+        ),
+        (
+            vec!["--since", "bad", "--until", until],
+            "--since takes an RFC 3339 timestamp, not \"bad\"",
+        ),
+        (
+            vec!["--since", since, "--until", "bad"],
+            "--until takes an RFC 3339 timestamp, not \"bad\"",
+        ),
+        (
+            vec!["--since", since, "--since", since, "--until", until],
+            "--since is given twice",
+        ),
+        (
+            vec!["--since", since, "--until", until, "--until", until],
+            "--until is given twice",
+        ),
+        (vec!["--since"], "--since needs a value"),
+        (vec!["--until"], "--until needs a value"),
+        (
+            vec!["--window", "d91"],
+            "--window takes d1, d7, d30 or d90, not \"d91\"",
+        ),
+    ];
+    fs::remove_file(s.env.state().join("meter.db")).unwrap();
+    for (extra, message) in cases {
+        let mut a = scenes::args(false, &["feat/interval"]);
+        a.extend(extra.into_iter().map(String::from));
+        let (code, raw) = s.query(&a);
+        assert_eq!(code, 2, "{raw}");
+        let v: Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(v["status"], "usage");
+        assert_eq!(v["error"]["message"], message);
+        assert!(schema().valid(&v), "{:#?}", schema().errors(&v));
+    }
+}
+
+#[test]
+fn custom_interval_clips_evidence_and_keeps_historical_actor_totals() {
+    let s = interval_scene(true);
+    let mut a = interval_args("branch", "2026-11-08T09:10:00Z", "2026-11-08T10:30:00Z");
+    a.extend(["--branch".into(), "feat/history".into()]);
+    let (code, raw) = s.query(&a);
+    assert_eq!(code, 0, "{raw}");
+    let v: Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(v["ingestion"]["evidence_from"], "2026-11-08T10:00:00Z");
+    assert_eq!(v["window"]["requested_start"], "2026-11-08T09:10:00Z");
+    assert_eq!(v["window"]["start"], v["ingestion"]["evidence_from"]);
+    assert_eq!(v["window"]["clipped"], true);
+    assert_eq!(v["rows"][0]["tokens"]["total"], 150);
+    assert_eq!(v["rows"][1]["state"], "missing");
+    assert_eq!(v["rows"][1]["reason"], "before_evidence");
+    assert!(v["rows"][1]["tokens"].is_null());
+    assert_eq!(v["actor_unattributed"]["tokens_before_evidence"], 77);
+    assert_eq!(
+        v["actor_unattributed"]["parts"][0]["reason"],
+        "before_evidence"
+    );
+    assert!(schema().valid(&v), "{:#?}", schema().errors(&v));
+
+    // Entirely before evidence: clamp the effective start to until, keep only actor history.
+    let (_, raw) = s.query(&interval_args(
+        "branch",
+        "2026-11-08T09:00:00Z",
+        "2026-11-08T09:30:00Z",
+    ));
+    let v: Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(v["window"]["start"], v["window"]["end"]);
+    assert_eq!(v["rows"][0]["reason"], "before_evidence");
+    assert_eq!(v["actor_unattributed"]["tokens_before_evidence"], 77);
+    assert!(schema().valid(&v), "{:#?}", schema().errors(&v));
+
+    // No evidence floor: no exact rows, even if evidence table entries exist.
+    s.store()
+        .conn
+        .execute(
+            "DELETE FROM meta WHERE k = ?1",
+            [meter::evidence::FROM_META],
+        )
+        .unwrap();
+    let (_, raw) = s.query(&a);
+    let v: Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(v["window"]["start"], v["window"]["end"]);
+    assert_eq!(v["rows"][0]["state"], "missing");
+    assert_eq!(v["rows"][0]["reason"], "before_evidence");
+    assert!(
+        v["actor_unattributed"]["tokens_before_evidence"]
+            .as_i64()
+            .unwrap()
+            > 0
+    );
+    assert!(schema().valid(&v), "{:#?}", schema().errors(&v));
 }

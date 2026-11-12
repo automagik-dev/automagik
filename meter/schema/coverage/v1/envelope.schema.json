@@ -1,0 +1,774 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://automagik.si/schema/meter/coverage/v1/envelope.schema.json",
+  "title": "usagemeter coverage, version 1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "generated_at",
+    "meter_version",
+    "schema_version",
+    "machine",
+    "store",
+    "counted_from",
+    "records_from",
+    "evidence_from",
+    "complete",
+    "stale",
+    "as_of",
+    "all_vouch",
+    "incomplete_sources",
+    "truncated",
+    "windows"
+  ],
+  "properties": {
+    "v": {
+      "const": 1
+    },
+    "generated_at": {
+      "$ref": "#/$defs/time"
+    },
+    "meter_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+([-+][0-9A-Za-z.-]+)?$"
+    },
+    "schema_version": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "machine": {
+      "type": "string",
+      "minLength": 1
+    },
+    "store": {
+      "$ref": "#/$defs/store"
+    },
+    "counted_from": {
+      "$ref": "#/$defs/time"
+    },
+    "records_from": {
+      "$ref": "#/$defs/timeOrNull"
+    },
+    "evidence_from": {
+      "$ref": "#/$defs/timeOrNull"
+    },
+    "complete": {
+      "type": "boolean"
+    },
+    "stale": {
+      "type": "boolean"
+    },
+    "as_of": {
+      "$ref": "#/$defs/timeOrNull"
+    },
+    "all_vouch": {
+      "type": "boolean"
+    },
+    "incomplete_sources": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/harness"
+      }
+    },
+    "truncated": {
+      "type": "boolean"
+    },
+    "windows": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/window"
+      },
+      "minItems": 1,
+      "maxItems": 3
+    }
+  },
+  "$defs": {
+    "time": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$"
+    },
+    "timeOrNull": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/time"
+        }
+      ]
+    },
+    "repo": {
+      "type": "string",
+      "pattern": "^[a-z0-9.-]+(/[^/\\s]+)+$"
+    },
+    "harness": {
+      "enum": [
+        "claude-code",
+        "codex",
+        "omp",
+        "dsh-tui",
+        "agy"
+      ]
+    },
+    "store": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "location"
+      ],
+      "properties": {
+        "schema_version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "location": {
+          "enum": [
+            "current",
+            "legacy",
+            "override"
+          ]
+        }
+      }
+    },
+    "totals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attributed",
+        "ambiguous",
+        "unlinked",
+        "before_evidence",
+        "total"
+      ],
+      "properties": {
+        "attributed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ambiguous": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unlinked": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "before_evidence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "ratio": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "ratioOrNull": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/ratio"
+        }
+      ]
+    },
+    "part": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "state",
+        "reason",
+        "tokens",
+        "share",
+        "vouched",
+        "harnesses"
+      ],
+      "properties": {
+        "state": {
+          "enum": [
+            "ambiguous",
+            "unlinked",
+            "before_evidence"
+          ]
+        },
+        "reason": {
+          "enum": [
+            "claimants_differ",
+            "no_record",
+            "dsh_tui_seat",
+            "other_machine",
+            "before_evidence"
+          ]
+        },
+        "tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "share": {
+          "$ref": "#/$defs/ratioOrNull"
+        },
+        "vouched": {
+          "type": "boolean"
+        },
+        "harnesses": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/harness"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "reason": {
+                "const": "claimants_differ"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "state": {
+                "const": "ambiguous"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "reason": {
+                "const": "no_record"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "state": {
+                "const": "unlinked"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "reason": {
+                "const": "dsh_tui_seat"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "state": {
+                "const": "unlinked"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "reason": {
+                "const": "other_machine"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "state": {
+                "const": "unlinked"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "reason": {
+                "const": "before_evidence"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "state": {
+                "const": "before_evidence"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "noRepo": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tokens",
+        "note"
+      ],
+      "properties": {
+        "tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "repoLine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repo",
+        "state",
+        "totals",
+        "bot_coverage"
+      ],
+      "properties": {
+        "repo": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/repo"
+            },
+            {
+              "const": "other"
+            }
+          ]
+        },
+        "state": {
+          "enum": [
+            "measured",
+            "no_usage",
+            "unknown",
+            "other"
+          ]
+        },
+        "totals": {
+          "$ref": "#/$defs/totals"
+        },
+        "bot_coverage": {
+          "$ref": "#/$defs/ratioOrNull"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "totals": {
+                "properties": {
+                  "total": {
+                    "const": 0
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "bot_coverage": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "totals": {
+                "properties": {
+                  "total": {
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "bot_coverage": {
+                "$ref": "#/$defs/ratio"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "state": {
+                "const": "other"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "repo": {
+                "const": "other"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "basis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "session",
+        "label",
+        "worktree"
+      ],
+      "properties": {
+        "session": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "label": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "worktree": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "botLine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bot",
+        "tokens",
+        "share",
+        "tokens_by_basis",
+        "unrecorded",
+        "tokens_unrecorded",
+        "harnesses",
+        "lower_bound"
+      ],
+      "properties": {
+        "bot": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tokens": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "share": {
+          "$ref": "#/$defs/ratio"
+        },
+        "tokens_by_basis": {
+          "$ref": "#/$defs/basis"
+        },
+        "unrecorded": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "role",
+              "squad"
+            ]
+          },
+          "maxItems": 2
+        },
+        "tokens_unrecorded": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "harnesses": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/harness"
+          }
+        },
+        "lower_bound": {
+          "type": "boolean"
+        }
+      }
+    },
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "window",
+        "requested_start",
+        "start",
+        "end",
+        "clipped",
+        "evidence",
+        "evidence_from",
+        "complete",
+        "stale",
+        "totals",
+        "bot_coverage",
+        "inspected",
+        "parts",
+        "before_evidence_tagged",
+        "no_repo",
+        "repos",
+        "repos_shown",
+        "repos_omitted",
+        "repos_other",
+        "bots",
+        "bots_shown",
+        "bots_omitted",
+        "bots_other",
+        "truncated"
+      ],
+      "properties": {
+        "window": {
+          "enum": [
+            "d1",
+            "d7",
+            "d30"
+          ]
+        },
+        "requested_start": {
+          "$ref": "#/$defs/time"
+        },
+        "start": {
+          "$ref": "#/$defs/time"
+        },
+        "end": {
+          "$ref": "#/$defs/time"
+        },
+        "clipped": {
+          "type": "boolean"
+        },
+        "evidence": {
+          "enum": [
+            "full",
+            "partial",
+            "none"
+          ]
+        },
+        "evidence_from": {
+          "$ref": "#/$defs/timeOrNull"
+        },
+        "complete": {
+          "type": "boolean"
+        },
+        "stale": {
+          "type": "boolean"
+        },
+        "totals": {
+          "$ref": "#/$defs/totals"
+        },
+        "bot_coverage": {
+          "$ref": "#/$defs/ratioOrNull"
+        },
+        "inspected": {
+          "$ref": "#/$defs/ratioOrNull"
+        },
+        "parts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/part"
+          },
+          "minItems": 5,
+          "maxItems": 5
+        },
+        "before_evidence_tagged": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "no_repo": {
+          "$ref": "#/$defs/noRepo"
+        },
+        "repos": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/repoLine"
+          },
+          "maxItems": 50
+        },
+        "repos_shown": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 50
+        },
+        "repos_omitted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "repos_other": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/repoLine"
+            }
+          ]
+        },
+        "bots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/botLine"
+          },
+          "maxItems": 50
+        },
+        "bots_shown": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 50
+        },
+        "bots_omitted": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "bots_other": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/botLine"
+            }
+          ]
+        },
+        "truncated": {
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "totals": {
+                "properties": {
+                  "total": {
+                    "const": 0
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "bot_coverage": {
+                "type": "null"
+              },
+              "inspected": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "totals": {
+                "properties": {
+                  "total": {
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "bot_coverage": {
+                "$ref": "#/$defs/ratio"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "repos_omitted": {
+                "const": 0
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "repos_other": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "repos_omitted": {
+                "minimum": 1
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "repos_other": {
+                "properties": {
+                  "state": {
+                    "const": "other"
+                  }
+                },
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/repoLine"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "bots_omitted": {
+                "const": 0
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "bots_other": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "bots_omitted": {
+                "minimum": 1
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "bots_other": {
+                "properties": {
+                  "lower_bound": {
+                    "const": true
+                  }
+                },
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/botLine"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

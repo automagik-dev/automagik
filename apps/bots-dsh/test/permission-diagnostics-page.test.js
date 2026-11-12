@@ -52,7 +52,7 @@ const ACP = {
   review: { code: 'AUTO_REVIEW_TIMEOUT', at: AT },
 }
 const REPORT = {
-  version: 1,
+  version: 2,
   sessions: [
     { kind: 'group', botId: 'b2', roomId: 'r1', open: true, source: 'group', saved: { value: 'workspace-write' }, effective: { value: 'danger-full-access' }, differs: true, unapplied: { level: { value: 'workspace-write' }, at: AT }, acp: ACP },
     { kind: 'chat', botId: 'b2', open: true, source: 'bot', saved: { value: 'auto' }, effective: { value: 'workspace-write' }, differs: true, fallback: true },
@@ -94,7 +94,7 @@ test('each Session is one row: who, its level facts, and what its agent last did
 
 test('an agent state that does not hold now is said as such, never as running', () => {
   const { permissionRows } = load()
-  const agent = acp => permissionRows({ version: 1, sessions: [{ kind: 'chat', botId: 'b2', open: true, source: 'none', acp }] }, ROSTER)[0].agent
+  const agent = acp => permissionRows({ version: 2, sessions: [{ kind: 'chat', botId: 'b2', open: true, source: 'none', acp }] }, ROSTER)[0].agent
   assert.match(agent({ ...ACP, active: false, bridge: { on: true, why: 'setting' }, modes: { wanted: ['auto'], offered: [], chosen: 'auto', fellToStrict: false } }),
     /^Claude Code, not running now: this is from its last run · Mode asked of the agent: "auto", not confirmed now · Modes asked for, in order: auto · Tools of DeepSeek Harness: on in its last run \(chosen in the settings\)/)
   assert.match(agent({ ...ACP, modes: { wanted: ['auto', 'default'], offered: ['default'], chosen: 'auto', current: 'default', applied: false, fellToStrict: false } }), /The agent is in its mode "default", not the one asked for, "auto"/)
@@ -114,7 +114,7 @@ test('an agent state that does not hold now is said as such, never as running', 
 
 test('without the levels of DSH the row says so and claims no running level', () => {
   const { permissionRows } = load()
-  const rows = permissionRows({ version: 1, sessions: [
+  const rows = permissionRows({ version: 2, sessions: [
     { kind: 'chat', botId: 'b2', open: true, presets: false, source: 'bot', saved: { value: 'custom' }, unapplied: { level: { value: 'custom' }, at: AT } },
     { kind: 'task', botId: 'b2', open: true, presets: false, source: 'unknown' },
     { kind: 'other', open: false, source: 'none', unapplied: { level: { value: 'read-only' }, at: AT } },
@@ -177,20 +177,20 @@ test('it asks the host once, on mount, and shows what the answer brings', async 
 })
 
 test('no open conversation shows one line; an answer it cannot read shows nothing', () => {
-  const empty = render({ version: 1, sessions: [] }).tree
+  const empty = render({ version: 2, sessions: [] }).tree
   assert.deepEqual(nodes(empty).map(node => node.props.label).filter(Boolean), ['No Bot conversation is open.'])
-  for (const report of [null, undefined, 'x', [], {}, { version: 2, sessions: [] }, { version: 2, unavailable: true }, { version: 1, sessions: 'x' }]) assert.equal(render(report).tree, null)
+  for (const report of [null, undefined, 'x', [], {}, { version: 3, sessions: [] }, { version: 3, unavailable: true }, { version: 2, sessions: 'x' }]) assert.equal(render(report).tree, null)
   // Rows of an unknown kind or shape are skipped; the rest still shows.
   const { permissionRows } = load()
-  assert.deepEqual(permissionRows({ version: 1, sessions: [null, 'x', { kind: 'new' }, { kind: 'chat', botId: 'b2', saved: 7, effective: {}, unapplied: 'x', acp: 'x' }] }, undefined).map(row => row.label), ['A Bot'])
+  assert.deepEqual(permissionRows({ version: 2, sessions: [null, 'x', { kind: 'new' }, { kind: 'chat', botId: 'b2', saved: 7, effective: {}, unapplied: 'x', acp: 'x' }] }, undefined).map(row => row.label), ['A Bot'])
 })
 
 test('a read that failed is said, never shown as nothing open', async () => {
   const labels = tree => nodes(tree).map(node => node.props.label).filter(Boolean)
   // The host could not read it at all.
-  assert.deepEqual(labels(render({ version: 1, unavailable: true }).tree), ['This could not be read just now.'])
+  assert.deepEqual(labels(render({ version: 2, unavailable: true }).tree), ['This could not be read just now.'])
   // It read no row and says a part failed: not "No Bot conversation is open."
-  assert.deepEqual(labels(render({ version: 1, sessions: [], partial: true }).tree), ['This could not be read just now.'])
+  assert.deepEqual(labels(render({ version: 2, sessions: [], partial: true }).tree), ['This could not be read just now.'])
   // It read some rows and says a part failed.
   const some = render({ ...REPORT, partial: true }).tree
   assert.deepEqual(labels(some), ['Some of this could not be read just now.'])
@@ -213,11 +213,27 @@ test('a read that failed is said, never shown as nothing open', async () => {
 
 test('two levels the host found different are said so, also when both are custom', () => {
   const { permissionRows } = load()
-  const level = row => permissionRows({ version: 1, sessions: [{ kind: 'chat', botId: 'b2', open: true, source: 'bot', ...row }] }, ROSTER)[0].level
+  const level = row => permissionRows({ version: 2, sessions: [{ kind: 'chat', botId: 'b2', open: true, source: 'bot', ...row }] }, ROSTER)[0].level
   const custom = { saved: { value: 'custom' }, effective: { value: 'custom' } }
   assert.equal(level({ ...custom, differs: true }), 'Saved level: A custom level, set for the Bot · Running as: A custom level · The level in force here is not the saved one.')
   assert.equal(level({ ...custom, differs: false }), 'Saved level: A custom level, set for the Bot · Running as: A custom level')
   assert.equal(level(custom), 'Saved level: A custom level, set for the Bot · Running as: A custom level')
+})
+
+test('the Auto lines say what was recorded, and nothing where nothing was', () => {
+  const { permissionRows } = load()
+  const row = extra => permissionRows({ version: 2, sessions: [{ kind: 'chat', botId: 'b2', open: true, source: 'bot', saved: { value: 'workspace-write' }, effective: { value: 'workspace-write' }, ...extra }] }, ROSTER)[0]
+  const codex = ownMode => row({ acp: { agent: 'acp-codex', active: true, ownMode } }).agent
+  assert.equal(codex({ answer: 'yes', taken: true, at: AT }), 'For the last prompt Codex was put in its own mode. · Codex')
+  for (const [answer, why] of [['no', 'Auto does not count here'], ['none', 'Auto does not count here'], ['late', 'no answer came in time'], ['changed', 'the answer changed before the prompt'], ['refused', 'Codex refused its own mode']]) {
+    assert.equal(codex({ answer, taken: false, at: AT }), `For the last prompt Codex was put in its strict mode: ${why}. · Codex`)
+  }
+  // A Claude Code row and a Codex row at Full access carry no record, so no line.
+  const full = { wanted: ['agent-full-access'], offered: ['agent-full-access'], chosen: 'agent-full-access', current: 'agent-full-access', applied: true, fellToStrict: false }
+  for (const acp of [ACP, { agent: 'acp-codex', active: true, modes: full }]) assert.doesNotMatch(row({ acp }).agent, /For the last prompt/)
+  assert.equal(row({ auto: { counts: true } }).level, 'Auto counts here: Codex decides on its own. · Saved level: Workspace, set for the Bot · Running as: Workspace')
+  assert.equal(row({ auto: { counts: false, why: 'session' } }).level, "Auto is saved, but here it runs as Workspace: this is not the Bot's own current chat. · Saved level: Workspace, set for the Bot · Running as: Workspace")
+  assert.equal(row({ auto: { counts: false, why: 'other' } }).level, 'Saved level: Workspace, set for the Bot · Running as: Workspace')
 })
 
 test('every string of the section has its Chinese and its pt-BR text', () => {

@@ -16,6 +16,8 @@ import SystemPrompt from '@deepseek-ai/dsh-system-prompt'
 import ToolRuntime, { defineTool } from '@deepseek-ai/dsh-tools'
 import { apply as applyToolExecutor, inject as toolExecutorInject } from '@deepseek-ai/dsh-tool-executor-native'
 import { apply } from '../index.js'
+import { install as installStops } from '../src/host/stops.js'
+import { install as installWhoRefused } from '../src/host/who-refused.js'
 import { fakeContext } from './fake-ctx.js'
 import { until } from './until.js'
 
@@ -123,6 +125,9 @@ async function autoReviewPipeline(tool, agent, decision = 'deny') {
   ctx.provide('workingDirectory', { ensure: async () => '/tmp' })
   ctx.provide('llm', { stream: () => reviewer(decision === 'allow' ? REVIEW_ALLOW : REVIEW_DENY) })
   applyAutoReview(ctx)
+  const rt = { ctx, chatOwners: new Map([[agent.id, 'ada'], [agent.session.id, 'ada']]), botOf: id => id === 'ada' ? { id, name: 'ada' } : undefined, state: {} }
+  installStops(rt)
+  installWhoRefused(rt)
   let ran = false
   ctx.tools.register(defineTool({
     name: tool.name,
@@ -139,6 +144,7 @@ async function autoReviewPipeline(tool, agent, decision = 'deny') {
   }))
   return {
     ran: () => ran,
+    stops: () => rt.stopsView(),
     async execute(args) {
       const id = 'bridge-1'
       const parameters = { type: 'object', properties: { group: { type: 'string' }, message: { type: 'string' } } }
@@ -196,6 +202,7 @@ test('an Auto Bot\'s team tool goes through auto-review: allow runs, deny refuse
   const allowed = await allow.execute({ group: 'Ops', message: 'reviewed post' })
   assert.equal(allowed.isError, false)
   assert.equal(allow.ran(), true)
+  assert.deepEqual(allow.stops(), [])
   assert.match(JSON.stringify(host.agents.get('r1')?.calls ?? []), /reviewed post/)
 
   const denySession = Session.create('b-deny')
@@ -206,7 +213,13 @@ test('an Auto Bot\'s team tool goes through auto-review: allow runs, deny refuse
   const refused = await deny.execute({ group: 'Ops', message: 'denied post' })
   assert.equal(refused.isError, true)
   assert.equal(refused.error.info.code, 'AUTO_REVIEW_DENIED')
+  assert.deepEqual(refused.content, [{ type: 'text', text: 'Error: Auto review refused tool "post_to_group" and nobody was asked, because approval prompts are off in this conversation; its body was not executed. The reviewer\'s reason: no' }])
+  assert.equal(refused.error.message, 'Auto review rejected tool "post_to_group"; its body was not executed')
+  assert.deepEqual(refused.error.info, { name: 'AutoReviewDeniedError', code: 'AUTO_REVIEW_DENIED', reason: 'no' })
   assert.equal(deny.ran(), false)
+  assert.equal(deny.stops().length, 1)
+  assert.equal(deny.stops()[0].why, 'review')
+  assert.equal(deny.stops()[0].text, refused.error.info.reason)
   assert.equal(JSON.stringify(host.agents.get('r1')?.calls ?? []).includes('denied post'), false)
   assert.deepEqual((await host.call('state', {})).value.work.approvals, [])
 })

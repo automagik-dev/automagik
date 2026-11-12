@@ -82,6 +82,10 @@ export function fakeContext({ services = {} } = {}) {
       schemas: () => [],
     },
     systemPrompt: {
+      context(context) {
+        calls.push(`prompt context ${context.name} ${context.order}`)
+        return () => {}
+      },
       section(section) {
         calls.push(`prompt ${section.name} ${section.order}`)
         sections.set(section.name, section)

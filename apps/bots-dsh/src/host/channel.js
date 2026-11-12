@@ -84,6 +84,7 @@ export function install(rt) {
       ...bot, sessionId: rt.chatOf(bot.id), parts: (segments ?? []).map(segment => segment.sessionId), ...(kickoff ? { waiting: true } : {}),
       ...(bot.dshAgentId === undefined ? {} : { adoptionHistoryMatches: rt.adoptionHistoryMatches(bot.id) }),
       ...rt.permissionFallbackOf('bot', bot),
+      ...rt.autoViewOf?.(bot),
     })),
     // `parts`: the members' hidden group Sessions and their earlier segments, for usage.
     rooms: Object.values(state.rooms).map(({ log, seen, lateRounds, relays, sessions, segments, ...room }) => {
@@ -130,11 +131,11 @@ export function install(rt) {
   // What changes without a new revision, sent with every state answer. `memoryNews`:
   // per Bot or group chat, its latest memory change; `memoryReviews`: memory reviews waiting or
   // running; `work`: per Bot, the turn it runs and its tool; per group, the members whose
-  // turn there runs; the approvals waiting; per Bot, who it waits for to hand back work;
+  // turn there runs; the approvals waiting; permission stops; per Bot, who it waits for to hand back work;
   // and per Session, when its running turn began.
   const live = () => ({
     activity: rt.activityView(),
-    work: { bots: rt.workView(), rooms: rt.roomWorkView(), approvals: rt.approvalsView(), waiting: rt.waitingView?.() ?? {}, turns: rt.turnsView?.() ?? {}, failed: rt.failedView?.() ?? {}, steered: rt.steeredView?.() ?? {}, models: rt.modelStateView?.() ?? {} },
+    work: { bots: rt.workView(), rooms: rt.roomWorkView(), approvals: rt.approvalsView(), stops: rt.stopsView?.() ?? [], waiting: rt.waitingView?.() ?? {}, turns: rt.turnsView?.() ?? {}, failed: rt.failedView?.() ?? {}, steered: rt.steeredView?.() ?? {}, models: rt.modelStateView?.() ?? {} },
     memoryNews: rt.memoryNews(),
     memoryReviews: rt.memoryReviews(),
     connectors: rt.connectorsView(),
@@ -462,6 +463,9 @@ export function install(rt) {
           const bot = await rt.createBot({ name: body.name, role: body.role, color: body.color, instructions: body.instructions, brief: body.brief, avatar: body.avatar, model: body.model, effort: body.effort, workDir: body.workDir })
           return ok(bot)
         }
+        case 'set-bot-auto':
+          await rt.load()
+          return ok(await rt.setBotAuto(String(body.id ?? ''), body.rev))
         case 'update-bot':
           await rt.load()
           return ok(await rt.updateBot(body.id, body))

@@ -239,7 +239,7 @@ export function install(rt) {
     const approval = (rt.approvalsView?.() ?? []).find(entry => entry.botId === botId)
     const switching = [...(rt.switchJobs?.() ?? [])].find(job => job.botId === botId)
     const running = sessions.filter(sessionId => rt.live.get(sessionId)?.turn !== undefined)
-    if (approval !== undefined) lines.push(`waiting for the user's approval to run ${approval.tool || 'a tool'} ${place(approval.sessionId)} (${minutes(approval.at)})`)
+    if (approval !== undefined) lines.push(`waiting for the user's approval to run ${approval.tool || 'a tool'} ${place(approval.ownerSessionId ?? approval.sessionId)} (${minutes(approval.at)})`)
     else if (switching !== undefined) lines.push(`moving on to a fresh part of its ${switching.roomId ? `conversation in group "${rt.roomOf(switching.roomId)?.name ?? '?'}"` : 'own chat'}`)
     for (const sessionId of approval === undefined && switching === undefined ? running : []) {
       const entry = rt.live.get(sessionId)

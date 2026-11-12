@@ -20,6 +20,14 @@ import { bridgeImages, nestedPlaceholder, readMsOf, readStoredImage, refMediaTyp
 import { levelOf, TOOL_NAME } from './tool.js'
 import { guardSession } from './write-guard.js'
 
+export function bridgeRefusalText(name, outcome, policy) {
+  if (outcome === 'rejected') return policy === 'never'
+    ? `Nobody was asked about ${name}: approval prompts are off in this conversation, so DSH refused it.`
+    : `The person rejected ${name}.`
+  if (outcome === 'unavailable') return `DSH could not approve ${name}: nobody could answer its approval request.`
+  return `DSH could not approve ${name}.`
+}
+
 /** How long a bridge's long-poll waits before answering "nothing changed". */
 export const WAIT_MS = 20_000
 const MAX_BODY = 16 * 1024 * 1024
@@ -760,15 +768,19 @@ export class Backchannel {
       // pipeline's pre-execute is auto-review's gate, and its ask (if any) is the one dialog.
       if (!level.full && !level.auto) {
         let outcome = 'unavailable'
-        try {
-          outcome = await approval.request({
+        let policy
+        try { policy = approval?.effectivePolicy?.(session) } catch {}
+        const request = {
             agent: record.agent,
             toolName: name,
             callId: id,
             reason: `${record.name}: ${name}`,
             displayReason: { en: `${record.name} wants to run ${name}` },
             signal: stopped,
-          })
+            bridgeCall: { agentAsked: record.agentAsked === true },
+        }
+        try {
+          outcome = await approval.request(request)
         } catch (cause) {
           outcome = 'unavailable'
           this.log(`approval for ${name} failed: ${cause?.message ?? cause}`)
@@ -783,8 +795,9 @@ export class Backchannel {
           }
           // Stop (or a caller that went away) withdrew the dialog: nobody refused the call.
           if (own.signal.aborted) return await cancelled()
-          const why = outcome === 'rejected' ? 'The person rejected' : 'DSH could not approve'
-          const text = `${why} ${name}.`
+          const text = outcome === 'rejected' && typeof request.bridgeCall.judged?.reason === 'string'
+            ? `Auto's judge refused ${name}: ${request.bridgeCall.judged.reason}.`.replace(/\s+/g, ' ').slice(0, 300)
+            : bridgeRefusalText(name, outcome, policy)
           return await settle([{ type: 'text', text }], true, { name: 'ApprovalDeniedError', code: String(outcome).toUpperCase() })
         }
       }

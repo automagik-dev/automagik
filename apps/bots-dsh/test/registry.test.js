@@ -522,3 +522,11 @@ test('v1 reader: a Bot with no look gets Herdr\'s default look, and its pet', ()
     'bots[1] (b-cccccccccc): no look, the default is used',
   ])
 })
+
+test('parse: permissionAuto is never imported from bots.json', () => {
+  const raw = repoFile()
+  raw.bots[0].permissionAuto = 'acp-codex'
+  const parsed = parseRegistry(text(raw), { kind: 'repo' })
+  assert.equal(parsed.file.bots[0].permissionAuto, undefined)
+  assert.match(JSON.stringify(parsed.warnings), /permissionAuto/)
+})

@@ -1707,6 +1707,16 @@ test("detach unties the bot from its ledger pane and takes the label off every l
 
 // ---- brief, errors ----
 
+test("brief: a member blocked on a permission reads 'stuck (waiting for a permission answer)'", (t) => {
+  const t3 = term("t3", { bot: ID.dev, status: "blocked" });
+  t3.status.kind = "permission";
+  const s = scene(t, { terminals: [t3, term("t2", { bot: ID.cap })] });
+  s.seed(team());
+  const r = s.cli(["brief", "Captain"]);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.out, /^- Dev .*: stuck \(needs a person to answer a permission\) at t3\.$/m);
+});
+
 test("brief prints the bot's briefing: a lead sees its members' status and reports; planned bots get none", (t) => {
   const s = scene(t, { terminals: [term("t3", { bot: ID.dev, status: "blocked", msg: "waiting on the schema" }), term("t2", { bot: ID.cap })] });
   s.seed(team());

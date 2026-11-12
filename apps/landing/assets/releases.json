@@ -1,0 +1,9 @@
+{
+  "pocket": {
+    "manifest": "https://github.com/automagik-si/automagik/releases/download/pocket-lane/latest.json",
+    "version": "3.127.8",
+    "url": "https://github.com/automagik-si/automagik/releases/download/v3.127.8/automagik-pocket-3.127.8.apk",
+    "sha256": "6596e290f27482fd9c88a3dd939ae247a0b50b6b8ab3fdb3abadaec3ef8548bb",
+    "checkedAt": "2026-11-11"
+  }
+}

@@ -51,7 +51,7 @@ const NOW = Date.now()
 const pip = { id: 'pip', name: 'Pip', role: 'Orchestrator', sessionId: 'pip', createdAt: 1 }
 const omni = { id: 'omni', name: 'Omni', kind: 'omni', sessionId: 'omni', createdAt: 2 }
 
-function sidebar({ tasks, waiting = [], approvals = [], wide = true, agents = [] }) {
+function sidebar({ tasks, waiting = [], approvals = [], stops = [], wide = true, agents = [] }) {
   const roster = {
     bots: [pip, omni], rooms: [], agents, byId: { pip, omni }, roomsById: {}, agentOf: {},
     mainBotId: 'pip', mainBotIds: ['pip'], exchangeTurns: {}, questions: {}, ready: true, tasks,
@@ -65,7 +65,7 @@ function sidebar({ tasks, waiting = [], approvals = [], wide = true, agents = []
     useSessionStatus: pick => pick(status),
     useSessionRetainInfo: (_id, pick) => pick(undefined),
     useActivity: pick => pick({}),
-    useWork: pick => pick({ approvals, rooms: {}, waiting: {} }),
+    useWork: pick => pick({ approvals, stops, rooms: {}, waiting: {} }),
   })
   const threadsOf = id => find(tree, named('BotThreads')).find(node => node.props.bot.id === id)
   const rowOf = id => find(tree, named('BotRow')).find(node => node.props.bot.id === id)
@@ -245,4 +245,20 @@ test('a blank Session opened on purpose stays on screen; a blank one nobody open
   assert.equal(staysInView('unrelated', true, roster, transitioning), false)
   pending.delete('picked')
   assert.equal(staysInView('picked', true, roster, transitioning), false)
+})
+
+test('an open stop previews in amber without changing the face; a task approval wins', () => {
+  const draw = options => {
+    const { rowOf } = sidebar({ tasks: {}, ...options })
+    const node = rowOf('pip')
+    return node.type(node.props)
+  }
+  const stopped = draw({ stops: [{ botId: 'pip', open: true }] })
+  const idle = draw({ stops: [{ botId: 'pip', open: false }] })
+  assert.equal(textOf(find(stopped, node => node.props?.className === 'bt-row-preview bt-row-preview-ask')), 'A step stopped on a permission')
+  assert.match(stopped.props['aria-label'], /A step stopped on a permission/)
+  assert.doesNotMatch(idle.props['aria-label'], /A step stopped/)
+  assert.equal(find(stopped, named('BotAvatar'))[0].props.state, find(idle, named('BotAvatar'))[0].props.state)
+  const waiting = draw({ stops: [{ botId: 'pip', open: true }], approvals: [{ id: 'x', botId: 'pip', taskId: 'x' }] })
+  assert.equal(textOf(find(waiting, node => node.props?.className === 'bt-row-preview bt-row-preview-ask')), 'A task needs your approval')
 })

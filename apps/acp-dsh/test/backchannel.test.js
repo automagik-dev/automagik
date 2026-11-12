@@ -20,7 +20,7 @@ const TOOLS = [
   { name: 'read', description: 'Read a file', parameters: { type: 'object', properties: { file_path: { type: 'string' } } } },
 ]
 
-function host({ sandbox = 'workspace-write', policy = 'ask', answer = 'allowed-once', tools = TOOLS, preset = 'standard', definitions = tools, turn = 3, fail, content, attachments } = {}) {
+function host({ sandbox = 'workspace-write', policy = 'ask', policyThrows = false, answer = 'allowed-once', tools = TOOLS, preset = 'standard', definitions = tools, turn = 3, fail, content, attachments } = {}) {
   const session = Session.create('s1')
   session.append('turn/start', { turn })
   session.append('step/start', { turn, step: 1 })
@@ -47,7 +47,8 @@ function host({ sandbox = 'workspace-write', policy = 'ask', answer = 'allowed-o
       }
       if (name === 'approval') {
         return {
-          effectivePolicy: () => policy,
+          // DSH reads the policy of the exact Session asked about; any other object reads the default.
+          effectivePolicy: (s) => { if (policyThrows) throw new Error('x'); return s === session ? policy : 'ask' },
           request: async (request) => {
             asked.push(request)
             // The real service rejects every ask deterministically under `never`.
@@ -484,33 +485,34 @@ test('text and resource results keep their single text block', async () => {
 })
 
 test('a refusal or an unavailable approval never runs the tool, and the agent gets an error', async () => {
-  for (const answer of ['rejected', 'unavailable', 'cancelled']) {
-    const run = host({ answer })
-    await run.backchannel.listen()
-    const record = run.backchannel.mint({ sessionId: 's1', agent: run.agent, name: 'Fake agent' })
-    const response = await fetch(run.backchannel.urlFor(record), {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${record.credential}` },
-      body: JSON.stringify({ op: 'call', name: 'bash', arguments: {}, callId: 'c1' }),
-    })
-    const body = await response.json()
-    assert.equal(body.isError, true)
-    assert.match(body.content[0].text, /bash/)
-    assert.equal(run.executed.length, 0, `${answer} never runs the tool`)
-    const result = run.session.snapshotEvents().find(event => event.type === 'tool/result')
-    assert.equal(result.data.message.isError, true)
-    run.backchannel.dispose()
+  for (const [options, text, code] of [
+    [{ policy: 'never', sandbox: 'read-only' }, 'Nobody was asked about bash: approval prompts are off in this conversation, so DSH refused it.', 'REJECTED'],
+    [{ answer: 'rejected' }, 'The person rejected bash.', 'REJECTED'],
+    [{ answer: 'unavailable' }, 'DSH could not approve bash: nobody could answer its approval request.', 'UNAVAILABLE'],
+    [{ answer: 'cancelled' }, 'DSH could not approve bash.', 'CANCELLED'],
+    [{ answer: 'rejected', policyThrows: true }, 'The person rejected bash.', 'REJECTED'],
+  ]) {
+    const run = host(options)
+    try {
+      await run.backchannel.listen()
+      const record = run.backchannel.mint({ sessionId: 's1', agent: run.agent, name: 'someone' })
+      const response = await fetch(run.backchannel.urlFor(record), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${record.credential}` },
+        body: JSON.stringify({ op: 'call', name: 'bash', arguments: {}, callId: 'c1' }),
+      })
+      const body = await response.json()
+      assert.equal(body.isError, true)
+      assert.deepEqual(body.content, [{ type: 'text', text }])
+      assert.deepEqual(body.error, { name: 'ApprovalDeniedError', code })
+      assert.equal(run.asked.length, 1)
+      assert.equal(run.executed.length, 0)
+      const result = run.session.snapshotEvents().find(event => event.type === 'tool/result')
+      assert.equal(result.data.message.isError, true)
+      assert.deepEqual(result.data.message.content, [{ type: 'text', text }])
+      assert.deepEqual(result.data.error, { name: 'ApprovalDeniedError', code })
+    } finally { run.backchannel.dispose() }
   }
-  // Under a non-Auto `never` the service rejects without prompting: the credential alone cannot
-  // approve. (Auto routes through the pipeline instead; the Auto test below covers it.)
-  const never = host({ policy: 'never', sandbox: 'read-only' })
-  await never.backchannel.listen()
-  const record = never.backchannel.mint({ sessionId: 's1', agent: never.agent, name: 'Fake agent' })
-  const response = await fetch(never.backchannel.urlFor(record), { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${record.credential}` }, body: JSON.stringify({ op: 'call', name: 'bash' }) })
-  assert.equal((await response.json()).isError, true)
-  assert.equal(never.asked.length, 1)
-  assert.equal(never.executed.length, 0)
-  never.backchannel.dispose()
 })
 
 test('each level gates a bridge call as DSH gates its own tools: Manual asks, Full does not', async () => {

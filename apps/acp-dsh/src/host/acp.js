@@ -309,6 +309,7 @@ export class AgentRun {
   prompt(prompt) {
     if (this.busy) throw new Error(`${this.spec.name} is still answering`)
     this.queue = []
+    this.reviews = { denied: 0, inRow: 0, last: undefined, after: false }
     this.promptEnded = false
     // The calls of the prompts before this one are over for DSH too: their cards ran in turns
     // that have ended, and a call already known never gets a second card. A question for one
@@ -347,14 +348,14 @@ export class AgentRun {
    * @param {string | string[] | undefined} modeIds
    * @param {{ signal?: AbortSignal }} [options] the turn's Stop
    */
-  async setMode(modeIds, { signal } = {}) {
+  async setMode(modeIds, { signal, force = false } = {}) {
     if (modeIds === undefined) return
     const wanted = [modeIds].flat()
     const offered = new Set((this.modes?.availableModes ?? []).map(mode => mode.id))
     const modeId = wanted.find(id => offered.has(id))
     try { this.spec.onMode?.({ wanted, offered: [...offered], chosen: modeId }) } catch {}
     if (modeId === undefined) throw new Error(`it offers none of the modes ${wanted.join(', ')} (it offers ${[...offered].join(', ') || 'no modes'})`)
-    if (this.modes?.currentModeId === modeId) return
+    if (!force && this.modes?.currentModeId === modeId) return
     await this.held(() => this.conn.setSessionMode({ sessionId: this.sessionId, modeId }), { signal, what: 'taking its permission mode' })
     this.modes = { ...this.modes, currentModeId: modeId }
   }
@@ -496,11 +497,13 @@ export class AgentRun {
     switch (update?.sessionUpdate) {
       case 'agent_message_chunk': {
         const text = contentText(update.content)
+        if (text && this.reviews?.last) this.reviews.after = true
         if (text) this.push({ type: 'text', text })
         break
       }
       case 'agent_thought_chunk': {
         const text = contentText(update.content)
+        if (text && this.reviews?.last) this.reviews.after = true
         if (text) this.push({ type: 'thought', text })
         break
       }
@@ -529,6 +532,7 @@ export class AgentRun {
       this.changeTool(known, update)
       return known
     }
+    if (this.reviews?.last) this.reviews.after = true
     const tool = { id: update.toolCallId, title: update.title ?? 'Tool', kind: update.kind ?? 'other', status: update.status ?? 'pending', content: update.content ?? [], locations: update.locations ?? [], rawInput: update.rawInput, rawOutput: update.rawOutput, listeners: new Set() }
     // First seen after its prompt ended: its event lands behind the prompt's end, where no step
     // reads it, and the next prompt drops it. No card will ever ask its question.
@@ -568,6 +572,14 @@ export class AgentRun {
     for (const key of ['title', 'kind', 'status', 'content', 'locations', 'rawInput', 'rawOutput', 'ended']) {
       if (update[key] !== undefined && update[key] !== null) tool[key] = update[key]
     }
+    const status = tool.rawOutput?.review?.status
+    if (this.reviews && tool.id.startsWith('guardian_assessment:') && typeof status === 'string' && !tool.reviewed) {
+      tool.reviewed = true
+      if (status === 'denied') { this.reviews.denied++; this.reviews.inRow++ }
+      if (status === 'approved') this.reviews.inRow = 0
+      this.reviews.last = status
+      this.reviews.after = false
+    }
     this.markCall(tool, update)
     for (const listener of tool.listeners) listener()
   }
@@ -598,6 +610,7 @@ export class AgentRun {
     // The question's own title ("Run command?") names the question, not the call the card shows.
     const { title, ...details } = params.toolCall ?? {}
     this.changeTool(tool, { ...details, status: undefined })
+    try { this.spec.onAsked?.(tool) } catch {}
     // The bridge's call is not the mirror's: acp-dsh answers this ACP request itself with
     // `allow-once` and raises no DSH dialog from it. The bridge's own `approval/request` is the
     // one dialog the person sees (RFC 0003, amendment, "One dialog per call").
@@ -632,6 +645,12 @@ export class AgentRun {
         },
       }
       permission.title = title
+      // A later call update must not change what an answer to this question allows
+      // (tool.js reviewHolds). A failed copy leaves this question to be asked as before.
+      try {
+        const { id, title, kind, rawInput, content, locations, structuredName } = tool
+        permission.call = structuredClone({ id, title, kind, rawInput, content, locations, structuredName })
+      } catch {}
       tool.permission = permission
       // The agent took its question back (it cancelled the request, or the connection closed):
       // nothing waits for an answer any more, so the dialog must not stay up for it.

@@ -140,6 +140,8 @@
         "unpriced_models": [],
         "unpriced_models_omitted": 0
       },
+      "models": [],
+      "models_omitted": 0,
       "token_precision": null,
       "attribution": {
         "precision": "branch_window",

@@ -1,3 +1,4 @@
+import { markOf } from '../shared/permission-levels.js'
 // Roster: creating, changing, and deleting Bots and group chats, the Main Bot role, and
 // the first Main Bot of a new team.
 import { mkdir } from 'node:fs/promises'
@@ -201,7 +202,8 @@ export function install(rt) {
     }
   }
 
-  async function buildBot(cleanName, { role = '', instructions = '', color, brief = '', createdBy, main = false, avatar, model, effort, workDir, copyOf, pickModel = false, kind, existingSessionId, denyTools: denyToolsInput }) {
+  async function buildBot(cleanName, { role = '', instructions = '', color, brief = '', createdBy, main = false, avatar, model, effort, workDir, copyOf, pickModel = false, kind, existingSessionId, inheritAuto, denyTools: denyToolsInput }) {
+    const opener = createdBy === undefined ? undefined : { level: rt.callerLevel?.(), roomId: rt.callerGroup?.() }
     const cleanAvatarValue = cleanAvatar(avatar)
     const roleText = cleanRole(role)
     // Checked before the Session exists, so a bad list creates no Bot and leaves no orphan.
@@ -222,8 +224,10 @@ export function install(rt) {
     // A Bot made by another Bot takes its creator's level, before its Session is made; else
     // the team default. A Session adopted from a host keeps its own.
     const creator = rt.botOf(createdBy)
+    const carried = Array.isArray(creator?.denyTools) ? creator.denyTools : []
+    const denied = carried.length === 0 ? denyTools : cleanDenyTools([...new Set([...carried, ...(denyTools ?? [])])])
     const permission = existingSessionId !== undefined ? undefined
-      : creator !== undefined ? rt.inheritedPermission(creator) ?? state.prefs.permission
+      : creator !== undefined ? rt.inheritedPermission(creator, opener) ?? state.prefs.permission
         : state.prefs.permission
     // A host adapter may already own a configured root Session. Adopt it without creating
     // another Session or moving its workspace; this option is internal, not a user payload.
@@ -254,7 +258,7 @@ export function install(rt) {
         // What a team member brought in by its own plugin is for (omni: Omni's channels).
         ...(BOT_KINDS.includes(kind) ? { kind } : {}),
         // The tools this Bot never gets, enforced on every Session it speaks from.
-        ...(denyTools ? { denyTools } : {}),
+        ...(denied ? { denyTools: denied } : {}),
         instructions: String(instructions).trim(),
         createdAt: Date.now(),
         createdBy: createdBy ?? null,
@@ -294,7 +298,7 @@ export function install(rt) {
       } else {
         await rt.applyPermission(bot, id, undefined, undefined, { start: true })
       }
-      if (denyTools) {
+      if (denied) {
         await rt.applyToolDeny(bot)
           .catch(error => rt.warn('ds-bot: the denied tools of %s not applied: %s', cleanName, error))
       }
@@ -304,6 +308,7 @@ export function install(rt) {
         return bot
       }
       await rt.save()
+      if (inheritAuto !== undefined && existingSessionId === undefined) await rt.markInherited?.(bot, inheritAuto.route)
       // The greeting runs on the Bot's own model, once its provider is registered.
       void rt.waitForModel(bot)
         .then(() => rt.applyModel(bot).then(() => false, (error) => {
@@ -365,6 +370,7 @@ export function install(rt) {
   }
 
   async function updateBot(id, patch, actorId, fromSessionId) {
+    if (['permissionAuto', 'permissionRev', 'autoStamp'].some(key => Object.hasOwn(patch, key))) throw refusal('Only the person turns Auto on, from the Bot\'s permission choice.')
     const bot = rt.botOf(id)
     if (bot === undefined) throw refusal('Unknown Bot')
     // A Bot whose model menu its plugin owns (host-models.js): the model and level are the
@@ -447,6 +453,11 @@ export function install(rt) {
     if (patch.permission !== undefined) rt.checkPreset(patch.permission)
     // The model goes first: checked above, applied to the Session now, and only then part of
     // the record. A selection DSH turns down refuses the whole update, with nothing written.
+    const markBefore = markOf(bot.model)
+    const revBefore = bot.permissionRev
+    if (patch.permission !== undefined || patch.denyTools !== undefined || (patch.model !== undefined && (bot.permissionAuto
+      ? markOf(String(patch.model)) !== bot.permissionAuto
+      : String(patch.model).split('/')[0] !== 'acp-codex'))) await rt.clearAuto?.(bot)
     const modelChanged = patch.model !== undefined || patch.effort !== undefined
     const modelBefore = modelChanged ? modelFields(bot) : undefined
     if (modelChanged) await switchModel(bot, patch, modelRef, effortId)
@@ -502,6 +513,7 @@ export function install(rt) {
       if (value === null) delete bot[key]
       else bot[key] = value
     }
+    if (!bot.permissionAuto && markOf(bot.model) !== markBefore && bot.permissionRev === revBefore) rt.movePermissionRev(bot)
     await rt.save()
     // The list changed: every Session of this Bot is lifted and re-set from the new one, so
     // a name added now disappears at once and a name removed comes back.
@@ -967,6 +979,7 @@ export function install(rt) {
     deleting.delete(id)
     // Its tasks keep the level they run at as a cap, so the default cannot raise them.
     rt.capTasks(task => task.from === id)
+    if (bot.permissionAuto) rt.endAuto?.(bot)
     delete state.bots[id]
     for (const part of parts) {
       delete state.questions[part]

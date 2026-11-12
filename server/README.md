@@ -34,8 +34,21 @@ a plugin update cannot keep a stale manifest.
 docker pull ghcr.io/automagik-dev/automagik-server@sha256:…
 ```
 
-The publish job prints the manifest digest in its summary and saves it as `image-digest.txt`; pin
-that digest, not a tag. `:<content>-<short sha>` identifies one build of one content release from
+Every run that pushes writes the manifest digest into the release's own record: the asset
+`server-image.json` on the content release (`server/image-record.mjs`), on a release event and
+on a dispatch alike. Pin a workspace by that digest, never by `:latest` or another tag (RFC 0024
+(g)):
+
+```sh
+gh release download v3.93.0 --pattern server-image.json --output - | jq -r .ref
+```
+
+The record holds `image`, `digest`, `ref` (`image@digest`), `version` (the content release),
+`revision` (the workflow commit) and `tag`. The `record` job builds it only from the digest the
+push printed, refuses anything that is not a `sha256:` manifest digest, reads the asset back from
+the release, and is the only job that may write to a release (it has no registry access). A
+later push for the same content release replaces the record; a desktop rebuild keeps it. The
+publish job also prints the digest in its summary and saves it as `image-digest.txt`. `:<content>-<short sha>` identifies one build of one content release from
 one commit; the version label is the content release and the revision label the commit. `:latest`
 moves only when the content release is not a prerelease and its version is not older than the
 published `:latest` (compared by that label). GitHub creates a new package private, so the first
@@ -338,6 +351,43 @@ image bakes no profile, bot/team state, workspace or secret), a home or `/mnt/ai
 credential URL, an archive (not opened by this scan), or an environment variable named like a
 secret. The image's config is scanned too. A hit fails the job.
 
+### Billing rules
+
+The same scan is the static scan of RFC 0025's Decided 12: the open-source image has no billing
+code, gateway address or credential, and Cloud supplies only configuration at run time. It reads
+the image's dependencies and imports and fails on:
+
+| Rule | What | Where |
+|---|---|---|
+| `stripe-sdk` | a `stripe` or `@stripe/*` package folder, package, dependency (not a development one) or import | every file |
+| `stripe-client` | a Stripe host | every text file |
+| `stripe-key`, `stripe-id` | a Stripe secret, restricted or webhook key; a price, product, account, customer, subscription, plan or publishable-key id | every text file |
+| `gateway-address` | an address on one of this product's hosts that names a gateway | every text file |
+| `gateway-address` | a gateway-named setting with a URL default (a reserved example host is a placeholder) | our own code, the image config |
+| `gateway-credential` | a gateway-named token, key or secret with a literal value | our own code, the image config |
+| `billing-import`, `billing-route` | an import or a route literal with a `billing` or `ledger` segment | our own code |
+| `gateway-address`, `billing-config` | an environment variable named for a gateway, Stripe, billing or a ledger, with a value | the image config |
+
+"Our own code" is the image's scripts, the seed profile and every `@automagik` package, wherever
+the installer put it; a dependency under another `node_modules` folder is third-party. A
+provider preset's third-party address (a user-chosen model provider) is not a built-in gateway.
+A billing hit in our own code or the config may never be allowlisted, nor may `stripe-sdk`,
+`gateway-credential` or `billing-config` anywhere; another dependency's hit needs an exact entry.
+Every finding, billing or not, prints one constant from a fixed table in `secrecy.mjs`
+(`LABELS`): `sk-***`, `a home path`, `gateway default https://***`, `/***/billing/***`. Nothing
+is copied from what was scanned: not a matched string, a URL's userinfo, host, path or query, a
+route, an import, a package name, a setting's key, an environment variable's name or value, or
+the privacy grep's own text. So a credential carried in any of them never reaches the log or
+the uploaded inventory. No hash of a match or of a flagged file is written either (stdout,
+stderr, the step summary, `secrecy.txt`, `secrecy-hits.json`): an unkeyed sha256 of a short
+value can be guessed offline. The file and the line place a finding. For an allowlist entry,
+read the match in the file itself and take the digests locally (`sha256sum` for `fileSha256`).
+The inventory still lists every file path and symlink target in the image, and the image's
+layer ids, by design.
+The rules are shapes: this repository writes no Stripe key, price or account id, and
+`node server/secrecy.mjs --repo .` (CI's `privacy` job) fails on one in any tracked file. A price
+written as a plain amount is not a shape a scan can know; that stays a review rule.
+
 The only exceptions are exact entries in `server/secrecy-allowlist.json`: one file, one rule and
 the exact matched string (or its sha256), each with a reason. There are no path patterns, and a
 key, `/data`, this repository's own code, `/etc` or a config file may never be allowlisted. A
@@ -379,7 +429,8 @@ node server/secrecy.mjs --rootfs /tmp/rootfs --inventory secrecy
 | `profile-follow.mjs`, `profile-state.mjs` | ownership, staged offline update, backup and live version state |
 | `plugin-payload.mjs`, `offline-store.mjs` | local install inputs from scanned files; build-only dependency-cache preparation |
 | `healthcheck.mjs` | compact Docker health check and keeper JSON report |
-| `secrecy.mjs`, `secrecy-allowlist.json` | pre-push scan: rootfs extraction, inventory, rules and the exact reviewed exceptions |
+| `secrecy.mjs`, `secrecy-allowlist.json` | pre-push scan: rootfs extraction, inventory, rules (billing included) and the exact reviewed exceptions; `--repo` for the tracked files |
+| `image-record.mjs` | the release's record of the pushed image digest (`server-image.json`) |
 | `passwd` | the image's account record (no `/home/<user>`; `automagik` is uid 1000) |
 | `bin/dsh`, `bin/pnpm` | the image's pinned commands for `docker exec` |
 | `profile/` | the seed profile: `package.json`, `cordis.patch.yml`, `pnpm-workspace.yaml` |
@@ -402,7 +453,12 @@ homes, a private name, credentials, `.env`, `launch-url`, `/data` state, an arch
 that the allowlist may never excuse), that a bare PEM label is not a key while a short final
 line and a `Proc-Type`/`DEK-Info` header are, that a private-key entry is allowed only for the
 gnutls library, that the Node build account is excused only for the pinned binary hash, the exact
-allowlist, and that the image's own redaction regex is not mistaken for a token. The smoke is
+allowlist, that the image's own redaction regex is not mistaken for a token, the billing rules
+(the Stripe SDK as a folder, package, dependency and import; Stripe hosts, keys and ids; billing
+imports and routes; a built-in gateway address or credential against a provider preset and a
+placeholder; the image config; what may never be allowlisted; the repository's own tracked
+files), and the digest record (what it refuses, the CLI, and the workflow's wiring: every
+pushing run records, only the `record` job writes to a release, a desktop rebuild keeps it). The smoke is
 the real check of the image; the workflow runs the scan on the real rootfs before pushing.
 
 ## Gate foundation (C2.1, #907)

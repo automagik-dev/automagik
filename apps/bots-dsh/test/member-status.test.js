@@ -140,3 +140,15 @@ test('a member\'s line runs a clock from its turn\'s start or its approval\'s', 
   assert.equal(stateText({ state: 'ask', approvals: [{ at: 2_000 }] }), 'Waiting for your approval{2000}')
   assert.equal(flat(MemberState({ entry: { state: 'idle' }, bot: { id: 'a', name: 'Anvil', role: 'Writer' }, room: { id: 'r1' }, roster: team })), 'Writer')
 })
+
+test('a child approval names the subagent before the tool and keeps its decisions', () => {
+  const answers = []
+  const tree = module.exports.MemberApprovals({ entry: { state: 'ask', approvals: [{ id: 'x', child: true, tool: 'bash', detail: { code: 'ls x' }, reason: 'someone', answerable: true }] }, bot: { id: 'ada', name: 'ada' }, actions: { answerApproval: (...args) => answers.push(args) } })
+  const card = tree.children[0].type(tree.children[0].props)
+  assert.equal(card.children[0].props.className, 'bt-mw-text')
+  assert.equal(card.children[0].children[0], 'A subagent is waiting for your approval')
+  const buttons = card.children.at(-1).children
+  buttons[0].props.onClick()
+  buttons[1].props.onClick()
+  assert.deepEqual(answers, [['x', 'reject'], ['x', 'allow']])
+})

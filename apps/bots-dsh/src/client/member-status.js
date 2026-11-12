@@ -137,6 +137,7 @@ function ApprovalCard({ approval, bot, actions }) {
       .finally(() => setBusy(false))
   }
   return h('div', { className: 'bt-mw-card', role: 'group', 'aria-label': t('{name} is waiting for your approval', { name: bot.name }) },
+    approval.child ? h('div', { className: 'bt-mw-text' }, t('A subagent is waiting for your approval')) : null,
     h('div', { className: 'bt-mw-tool' }, approval.tool),
     approval.detail?.text ? h('div', { className: 'bt-mw-text' }, approval.detail.text) : null,
     approval.reason ? h('div', { className: 'bt-mw-reason' }, approval.reason) : null,

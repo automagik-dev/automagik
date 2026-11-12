@@ -43,6 +43,8 @@ function team(t, { auto = true, bots = {}, room = {}, tasks, closed = [], preset
   const presetOf = new Map(Object.entries(levels))
   const failing = new Set(failingAtStart)
   const sets = []
+  const policies = new Map()
+  const modes = new Map()
   const service = {
     auto,
     names: () => [...Object.keys(STOCK), ...(service.auto ? ['auto'] : [])],
@@ -57,9 +59,11 @@ function team(t, { auto = true, bots = {}, room = {}, tasks, closed = [], preset
       sets.push(`${session.id}=${name}`)
       if (failing.has(session.id)) throw new Error('permission: the Session log refused the write')
       presetOf.set(session.id, name)
+      policies.set(session.id, service.resolve(name).approval)
+      modes.set(session.id, service.resolve(name).sandbox)
     },
   }
-  const ctx = fakeContext({ services: presets ? { permissionPresets: service } : {} })
+  const ctx = fakeContext({ services: presets ? { permissionPresets: service, approval: { config: { policy: 'ask' }, overrideOf: session => policies.get(session.id) }, sandboxPolicy: { defaultMode: WRITE, overrideOf: session => modes.get(session.id) } } : {} })
   const open = new Set()
   const headers = {}
   let sessions = 0
@@ -85,7 +89,7 @@ function team(t, { auto = true, bots = {}, room = {}, tasks, closed = [], preset
       selectModel: async () => {},
     },
     sessionTitle: { rename: async () => {} },
-    sessions: { flush: async () => {}, list: () => [...open].map(id => ({ id })), get: id => (headers[id] ? { header: headers[id] } : undefined) },
+    sessions: { flush: async () => {}, list: () => [...open].map(id => ({ id })), get: id => (headers[id] ? { id, header: headers[id] } : undefined) },
   })
   let route
   const register = ctx.connection.fetch.register
@@ -112,11 +116,11 @@ function team(t, { auto = true, bots = {}, room = {}, tasks, closed = [], preset
     for (const listener of ctx.listeners.get('session/created') ?? []) void Promise.resolve(listener({ id: sessionId })).catch(() => {})
     await settle()
   }
-  return { ctx, rt, service, call, settle, failing, sets, headers, tool, opens, levelOf: id => presetOf.get(id) }
+  return { ctx, rt, service, call, settle, failing, sets, headers, policies, modes, tool, opens, levelOf: id => presetOf.get(id) }
 }
 
 test('no tool runs on a Session that did not take a lowered level, until it does', async (t) => {
-  const { call, settle, failing, sets, tool, levelOf } = team(t, { room: { permission: FULL }, levels: { g1: FULL, g2: FULL } })
+  const { rt, call, settle, failing, sets, tool, levelOf } = team(t, { room: { permission: FULL }, levels: { g1: FULL, g2: FULL } })
   await call('state', {})
   failing.add('g2')
   await call('update-room', { id: 'r1', permission: WRITE })
@@ -124,6 +128,9 @@ test('no tool runs on a Session that did not take a lowered level, until it does
   assert.deepEqual([levelOf('g1'), levelOf('g2')], [WRITE, FULL])
   // The Session still at full access is refused, with the level it was to take.
   await assert.rejects(tool('g2'), refused(WRITE))
+  assert.equal(rt.stopsView().length, 1)
+  assert.equal(rt.stopsView()[0].why, 'level')
+  assert.equal(rt.stopsView()[0].count, 1)
   await assert.rejects(tool('g2', { name: 'read_file' }), refused(WRITE), 'every tool, a read-only one too')
   // The Session that took it, and any other, runs and is not looked at.
   const before = sets.length
@@ -398,4 +405,24 @@ test('a Session whose parents cannot be read is refused while a Session is marke
   assert.equal(await tool('g2'), 'ran')
   ctx.sessions.get = unreadable
   assert.equal(await tool('child'), 'ran')
+})
+
+test('a child switched to Workspace still obeys its Bot deny list and its seat level hold', async t => {
+  const b = team(t, { bots: { b2: { denyTools: ['bash'] } }, room: { permission: WRITE }, levels: { g2: WRITE, child: 'custom' } })
+  await b.call('state', {})
+  b.headers.g2 = {}
+  b.headers.child = { origin: 'subagent', parentSession: 'g2' }
+  b.policies.set('g2', 'ask')
+  b.policies.set('child', 'never')
+  b.modes.set('child', WRITE)
+  for (const listener of b.ctx.listeners.get('agent/created') ?? []) await listener({ agent: { id: 'child', session: { id: 'child', header: b.headers.child } }, source: 'startup' })
+  assert.ok(b.sets.includes('child=workspace-write'))
+  assert.equal(b.policies.get('child'), 'ask')
+  await assert.rejects(b.tool('child'), /Ada does not have the bash tool/)
+  assert.equal(await b.tool('child', { name: 'read_file' }), 'ran')
+  b.failing.add('g2')
+  await b.call('update-room', { id: 'r1', permission: 'auto' })
+  await b.settle()
+  await assert.rejects(b.tool('child'), refused('auto'))
+  await assert.rejects(b.tool('child', { name: 'read_file' }), refused('auto'))
 })

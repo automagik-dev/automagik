@@ -5,7 +5,7 @@ import { BotMark } from './mark.js'
 import { useLinger, useViewport, viewBottom } from './motion.js'
 import { t } from './i18n.js'
 import { useAnchoredMenu } from './model-menu.js'
-import { remoteOfBot, cliOfBot, PermissionList, presetName } from './permission-picker.js'
+import { remoteOfBot, cliOfBot, PermissionList, PermissionFallback, savedLevelOf, levelsOf, pickLevel, presetName } from './permission-picker.js'
 import { currentPart } from './text.js'
 
 // -------------------------------------------------------------------------
@@ -118,21 +118,22 @@ export function menuIcons(roster) {
 export function ComposerPermission({ sessionId, useRoster, actions }) {
   const roster = useRoster(value => value)
   const bot = roster.byId[sessionId]
-  const catalog = roster.permissions
+  const catalog = levelsOf(roster.permissions, bot)
   const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu({ minWidth: 320 })
   if (!bot || !catalog?.options?.length || roster.readOnly || currentPart(bot) !== sessionId) return null
-  const saved = bot.permission ?? catalog.defaultPreset
+  const saved = savedLevelOf(bot, catalog)
   const cli = cliOfBot(bot)
   const name = presetName(saved, catalog)
+  const title = t('Permissions: {level}', { level: name }) + (bot.permissionAuto && bot.permissionFallback ? ` · ${t('Runs as Workspace here')}` : '')
   const toggle = () => { if (isOpen) close(); else open() }
-  const pick = value => Promise.resolve(actions.updateBot(bot.id, { permission: value })).then(
+  const pick = (value, asked) => Promise.resolve(pickLevel(actions, bot, value, asked)).then(
     () => { close(); return true },
     (failure) => { actions.reportError?.(failure, 'permission'); return false },
   )
   return h(Fragment, null,
     h('button', {
       ref: button, type: 'button', className: 'bt-perm-chip', 'aria-haspopup': 'menu', 'aria-expanded': isOpen,
-      'aria-label': t('Permissions: {level}', { level: name }), title: t('Permissions: {level}', { level: name }),
+      'aria-label': title, title,
       onMouseDown: keepComposerFocus, onClick: toggle,
     },
     h(ShieldIcon, { size: 14 }),
@@ -140,7 +141,7 @@ export function ComposerPermission({ sessionId, useRoster, actions }) {
     shownPlace ? createPortal(h('div', {
       ref: menu, className: `bt-menu bt-menu-up bt-permission-menu${shownPlace.bottom !== undefined ? ' bt-menu-up' : ''}`,
       role: 'menu', 'aria-label': t('Permissions'), style: shownPlace, 'data-leaving': leaving || undefined,
-    }, h(PermissionList, { catalog, saved, onPick: pick, name: bot.name, cli, remote: remoteOfBot(bot) })), document.body) : null)
+    }, h(PermissionList, { judge: { ...bot.autoJudge, agent: String(bot.model ?? '').split('/')[0] }, catalog, saved, onPick: pick, name: bot.name, cli, remote: remoteOfBot(bot), askedOf: () => ({ id: bot.id, rev: bot.permissionRev ?? 0 }), replaced: presetName(bot.permission ?? catalog.defaultPreset, catalog) }), bot.permissionAuto ? h(PermissionFallback, { fallback: bot.permissionFallback, owner: bot, catalog }) : null), document.body) : null)
 }
 
 export function ComposerPlus({ sessionId, inputActions, useRoster, actions }) {

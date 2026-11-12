@@ -1,26 +1,26 @@
 {
   "capturedBy": "node apps/landing/capture/capture.mjs --run",
-  "checkout": "98191cfbf875e9b589284a80e1654ef063448e2f",
+  "checkout": "46a13abaa6ed205591d299e8fedf0ddd556b0814",
   "captureScriptsClean": true,
   "runtime": {
     "package": "@deepseek-ai/dsh",
-    "version": "0.2.1-rc.5"
+    "version": "0.2.2-rc.1"
   },
   "model": "apps/landing/capture/scripted-model.mjs (scripted replies; no AI provider was called)",
   "plugins": {
     "@automagik/bots-dsh": {
-      "version": "3.52.1",
+      "version": "3.127.14",
       "repository": "https://github.com/automagik-si/automagik",
-      "commit": "9f81aeed5740953b8b8ba41cad747d2cfc036f22",
+      "commit": "c57acbed50e96593dda4197cd6e2af37e2cc5778",
       "path": "apps/bots-dsh",
-      "tree": "3a1055c45e408545b2c7a833c53e5f7e77691870"
+      "tree": "11e8aacb41c98c2fc10a5def2f4aea729a26e6ec"
     },
     "@automagik/welcome-dsh": {
-      "version": "3.52.1",
+      "version": "3.127.14",
       "repository": "https://github.com/automagik-si/automagik",
-      "commit": "9f81aeed5740953b8b8ba41cad747d2cfc036f22",
+      "commit": "c57acbed50e96593dda4197cd6e2af37e2cc5778",
       "path": "apps/welcome-dsh",
-      "tree": "9c7cafa10fd0987bd4a781df643361d751657732"
+      "tree": "2ac63613dd0d486595d8aba68c05b9c36d1034ef"
     },
     "@automagik/genie-dsh": {
       "version": "0.1.4",
@@ -31,12 +31,126 @@
     }
   },
   "images": {
-    "genie-report-phone.png": "2c717664c3380b5a69cc55dfb2d856c90622c40439c8a58cb9fd2a1b44572ae1",
-    "genie-report.png": "1c7c934b1e22df8b384b6f5a153ee5da8eeca18e15706c9d236bb3ce4d743e7d",
-    "pip-delegates-phone.png": "19f61a9a641eaa52ab80d5762d4a16716864bb79311abec340126cc18b1df772",
-    "pip-delegates.png": "5621587264b57581d0604f2f7b2e7bd277a59052d1416f081c08aef8a4a29510",
-    "team-step.png": "fe5dd8a9750845b2b8b9d5f484703177114d0bd135de5317ecaf9848508f1d1f",
-    "wish-checks.png": "f70f49db400ff16df291cb1c1e48dd359def6b767eb471c3761f96180c5cbb06",
-    "wish-diff.png": "964eeee4ecb776574e0a41de574a67c1c2027993ca06969d1eff9e612be46c59"
+    "app-stage-dark-1440.png": "323a3e2846cad29ac9dcfe089b8509616b761d569cda119e253790c2a81591ab",
+    "app-stage-dark-390.png": "9008aec909bbf9d82d6b04b8cd5368d3e8b7aab5a5cc3b6d798055ca773714a4",
+    "app-stage-light-1440.png": "b61f6dd2112c09d0dee41df04c2d3e7d7cd575cc39b2b2f2b5180d7876c64b09",
+    "app-stage-light-390.png": "8528443ecf2f453ae7c96e7faecbcfbb1235c7e394644ac39e8d54b7b3549b6f",
+    "code-sidebar.png": "b623f219e94013dcf8ca296e8b98cd1d627110b0527fec3cd9f98472399c2479",
+    "genie-report-dark.png": "26f4c6a139374a8d82405b38b928dac8bc8388e705719191183c44f93d1d11c4",
+    "genie-report-phone-dark.png": "a343a29e34b0ac2dc7be3368b5352a7865b21351daa215c1406a6a816820238d",
+    "genie-report-phone.png": "2ef8fa96f00b7225bd8cab2962b5cfa0ae372fbf5d773d7287800aa0a3af99bc",
+    "genie-report.png": "a2211be5aa367878ffde6b9a85da1b9de2911f6f53b9f6ff1bd52e85ce875c73",
+    "pip-delegates-dark.png": "be03acb47cf1305a6269a0851b313e34c202aa90b937a9a7ca8fb4674969ed86",
+    "pip-delegates-phone-dark.png": "bc5bb6f3f9bb9920079cd177eedb3ef9b44d9d2733ac27bc0f9f0ce3cdd8fe55",
+    "pip-delegates-phone.png": "2920ba877c294f78fd009a985bc0697ccb608f0e826f201a82f3ac3687f28766",
+    "pip-delegates.png": "8c830dada3ae80633c504da10fd4b107faccdf57dd4f6405999d112fa82208e9",
+    "pocket-chat-dark.png": "e79b119d0d23cbf0f63c2c7030c83c5cfd9d0878ce0a414084ea5e36944ec80f",
+    "pocket-chat-light.png": "b163b77b6ad772280fe64c41a12077fd0b01f108e6d92c9ebacdc6bb4e5aa089",
+    "pocket-code-dark.png": "dce71f2736091472f4c8cb0e9250c05992fb58accc40bb262caf5fd728f71fbe",
+    "pocket-code-light.png": "17c8a45d5fc58995d1073987c21223f6e84e5af4628a2d485dbb795116fe9ebb",
+    "pocket-home-dark.png": "cb14941d9ca680c32dd2848e69a1eca9151ce3e024a030d0266df49a2f9c721c",
+    "pocket-home-light.png": "2ec75812212dc05c3d1483396e50acb6478045f35025a668f3a48b269201ed60",
+    "team-step-dark.png": "2503c01210ccdebd5e631cce6fe83f9e7962b1fb61f21b6e67f64a816b694026",
+    "team-step.png": "558d74f200056735142efa883c7031d81fc4fdba69fcd71c5051746cd491e517",
+    "wish-checks-dark.png": "297b7d3efb6fc8aca557d013d802b45915e8f52bebe7d2039b5e6ad16402e88f",
+    "wish-checks-phone-dark.png": "316b46f1127e4efa7b6dd5dc782b5aa6e83ad2a088adc5b13ceb47693d0916a9",
+    "wish-checks-phone.png": "2df482aa743f0974edb67730fe81d6f19a383cfc039d3dc206c2f532d7bd69bb",
+    "wish-checks.png": "275699f686118831a2f2272fb1ea843f6f75b2674a3ba221f77d3cd330d6b821",
+    "wish-diff-dark.png": "44522e83f793bf70a97e1b60e96be17a769fc8171f32f3c20cd27c9cd650df5b",
+    "wish-diff.png": "0d4764a374656e289ac254a99ebf38ddf9693deaf741c052c10bd13d392b693d"
+  },
+  "additionalCaptures": {
+    "code-sidebar.png": {
+      "source": "herdr/mods/am-sidebar/preview.png",
+      "introducedBy": "6e116024aa760694bfc6af81111eb99c2fa1428a",
+      "kind": "herdr-app share image",
+      "edits": "Cropped to the bot tree; overlay scrollbar painted out in the original share image. Copied without further changes."
+    }
+  },
+  "themeCapture": {
+    "capturedBy": "node apps/landing/capture/theme.mjs --run",
+    "runtime": {
+      "package": "@deepseek-ai/dsh",
+      "version": "0.2.2-rc.1"
+    },
+    "plugin": {
+      "version": "3.127.14",
+      "repository": "https://github.com/automagik-si/automagik",
+      "commit": "c57acbed50e96593dda4197cd6e2af37e2cc5778",
+      "path": "apps/bots-dsh",
+      "tree": "11e8aacb41c98c2fc10a5def2f4aea729a26e6ec"
+    },
+    "scenario": "Fictional Pip, Rowan and Sage created through the real Bot API. No AI model, channel, messages or work result is simulated. The real app shows its model connection prompt.",
+    "themeSource": "apps/bots-dsh/src/client/stage.js",
+    "reports": [
+      {
+        "name": "app-stage-light-1440.png",
+        "colorScheme": "light",
+        "width": 1440,
+        "background": "#f6eee2",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        }
+      },
+      {
+        "name": "app-stage-light-390.png",
+        "colorScheme": "light",
+        "width": 390,
+        "background": "#f6eee2",
+        "viewport": {
+          "width": 390,
+          "height": 900
+        }
+      },
+      {
+        "name": "app-stage-dark-1440.png",
+        "colorScheme": "dark",
+        "width": 1440,
+        "background": "#1e1923",
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        }
+      },
+      {
+        "name": "app-stage-dark-390.png",
+        "colorScheme": "dark",
+        "width": 390,
+        "background": "#1e1923",
+        "viewport": {
+          "width": 390,
+          "height": 900
+        }
+      }
+    ],
+    "captureScriptSha256": "4b2fcad7eaa7b2dfd7e6bcb9223fb9f8e19d0291335ad851f8deab1403ee8f47"
+  },
+  "pocketCapture": {
+    "capturedBy": "apps/landing/capture/pocket/PocketDemoShotsTest.kt (Robolectric, steps in assets/CAPTURES.md)",
+    "checkout": "9777efcabbef89cf1d97e4528089c7e88e2ef620",
+    "scratchOnly": "local.properties with the SDK path; pocket.updateUrl set to a closed loopback address so the updater made no request",
+    "app": {
+      "path": "apps/pocket/android",
+      "applicationId": "ai.namastex.automagik",
+      "version": "3.127.14"
+    },
+    "renderer": {
+      "robolectric": "4.14.1",
+      "graphicsMode": "NATIVE",
+      "pixelCopyRenderMode": "hardware",
+      "sdk": 35,
+      "qualifiers": "w393dp-h852dp-xxhdpi, +notnight / +night"
+    },
+    "scenario": "The real MainActivity in the app’s own interface preview (PocketViewModel.enterDemo): made-up sample machines, projects and Bots, labelled in the app as Interface preview · sample data. No machine, network or account is reached. Home, Code and the sample Bot chat, each in light and dark. Unchanged PixelCopy of the window; Robolectric draws no Android status bar.",
+    "images": [
+      "pocket-chat-dark.png",
+      "pocket-chat-light.png",
+      "pocket-code-dark.png",
+      "pocket-code-light.png",
+      "pocket-home-dark.png",
+      "pocket-home-light.png"
+    ],
+    "checkoutNote": "apps/pocket is unchanged between this checkout and the one the app captures above record."
   }
 }

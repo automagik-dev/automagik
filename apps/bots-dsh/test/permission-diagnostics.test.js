@@ -138,7 +138,7 @@ const record = (over = {}) => ({
 
 test('before the team is loaded the answer is unavailable, and nothing is loaded for it', async (t) => {
   const { rt } = team(t)
-  assert.deepEqual(rt.permissionDiagnostics(), { version: 1, unavailable: true })
+  assert.deepEqual(rt.permissionDiagnostics(), { version: 2, unavailable: true })
 })
 
 test('the route answers from memory: no refresh, no load, no lock, no set, no Session opened', async (t) => {
@@ -180,7 +180,7 @@ test('the saved level and where it comes from: the Bot, the group, a task, none'
   await call('state', {})
   for (const id of ['m1', 'b2', 'g1', 'g2', 't1', 't2']) await opens(id)
   const report = await read(call)
-  assert.equal(report.version, 1)
+  assert.equal(report.version, 2)
   assert.deepEqual(report.sessions.map(row => row.kind), ['chat', 'chat', 'group', 'group', 'task', 'task'])
   const own = rowOf(report, 'chat', 'b2')
   assert.deepEqual([own.source, own.saved, own.effective, own.open], ['bot', level(FULL), level(FULL), true])
@@ -405,7 +405,7 @@ test('a part that cannot be read is said, never passed off as nothing to show', 
   const gap = await read(call)
   assert.deepEqual([gap.sessions.map(row => row.botId), gap.partial], [['b2'], true])
   rt.permissionFactsOf = () => { throw new Error('/home/alice/secret') }
-  assert.deepEqual(await read(call), { version: 1, sessions: [], partial: true })
+  assert.deepEqual(await read(call), { version: 2, sessions: [], partial: true })
   rt.permissionFactsOf = facts
 
   // The marks cannot be listed: the open Sessions are told, and the gap is said.
@@ -418,7 +418,7 @@ test('a part that cannot be read is said, never passed off as nothing to show', 
   // The Session list alone throws, with everything else reading: not "nothing is open".
   const list = ctx.sessions.list
   ctx.sessions.list = () => { throw new Error('boom') }
-  assert.deepEqual(await read(call), { version: 1, sessions: [], partial: true })
+  assert.deepEqual(await read(call), { version: 2, sessions: [], partial: true })
   // A marked Session is still told from its mark.
   ctx.sessions.list = list
   failing.add('g2')
@@ -431,7 +431,7 @@ test('a part that cannot be read is said, never passed off as nothing to show', 
 
   // Anything else that throws: the whole answer is unavailable, which the page says.
   ctx.sessions.list = () => ({ filter: () => { throw new Error('boom') } })
-  assert.deepEqual(await call('diagnostics-permissions', {}), { ok: true, value: { version: 1, unavailable: true } })
+  assert.deepEqual(await call('diagnostics-permissions', {}), { ok: true, value: { version: 2, unavailable: true } })
   assert.equal(noted.mock.callCount(), 0)
 })
 
@@ -446,7 +446,7 @@ test('no name, Session id or folder leaves: only the Bot\'s and the group\'s ids
 })
 
 test('the ACP record: absent, old, failing or of another shape gives a row without it', async (t) => {
-  const answers = [undefined, {}, { permissionDiagnostics: () => undefined }, { permissionDiagnostics: () => { throw new Error('boom') } }, { permissionDiagnostics: () => record({ version: 2 }) }, { permissionDiagnostics: () => 'text' }, { permissionDiagnostics: () => [record()] }]
+  const answers = [undefined, {}, { permissionDiagnostics: () => undefined }, { permissionDiagnostics: () => { throw new Error('boom') } }, { permissionDiagnostics: () => record({ version: 3 }) }, { permissionDiagnostics: () => 'text' }, { permissionDiagnostics: () => [record()] }]
   for (const acpAgents of answers) {
     const { call, opens } = team(t, { bots: { b2: { permission: FULL } }, services: acpAgents === undefined ? {} : { acpAgents } })
     await call('state', {})
@@ -519,10 +519,25 @@ test('acpView lets nothing free-form through, whatever the record holds', () => 
 })
 
 test('acpView never throws: wrong types, hostile getters and long lists', () => {
-  for (const raw of [undefined, null, 0, 'v1', [], [{ version: 1 }], { version: '1' }, { version: 2, agent: 'acp-claude' }, () => {}]) assert.equal(acpView(raw), undefined)
+  for (const raw of [undefined, null, 0, 'v1', [], [{ version: 1 }], { version: '1' }, { version: 3, agent: 'acp-claude' }, () => {}]) assert.equal(acpView(raw), undefined)
   const hostile = { version: 1, get agent() { throw new Error('no') } }
   assert.equal(acpView(hostile), undefined)
   assert.deepEqual(acpView({ version: 1, bridge: 'on', modes: [], lastCall: 4, reviewer: null, review: 'x' }), { agent: 'other', active: false })
   assert.deepEqual(acpView({ version: 1, bridge: { on: 'yes' }, lastCall: { path: 'cli' }, reviewer: { ok: 'yes', at: 1 }, review: { code: 'AUTO_REVIEW_DENIED', at: Infinity } }), { agent: 'other', active: false })
   assert.equal(acpView({ version: 1, modes: { wanted: Array.from({ length: 500 }, () => 'default'), offered: 'default' } }).modes.wanted.length, 16)
+})
+
+test('acpView reads both versions and only version 2 carries bounded ownMode', () => {
+  assert.equal(acpView(record()).agent, 'acp-claude')
+  assert.deepEqual(acpView(record({ version: 2, ownMode: { answer: 'changed', taken: false, at: 123 } })).ownMode, { answer: 'changed', taken: false, at: 123 })
+  assert.equal(acpView(record({ ownMode: { answer: 'yes', taken: true } })).ownMode, undefined)
+})
+test('permission diagnostics version 2 includes Auto facts for a chat', async t => {
+  const { rt, opens } = team(t)
+  await rt.load()
+  await opens(rt.chatOf('m1'))
+  t.mock.method(rt, 'autoFactsOf', () => ({ counts: false, why: 'judge', by: 'team' }))
+  const report = rt.permissionDiagnostics()
+  assert.equal(report.version, 2)
+  assert.deepEqual(rowOf(report, 'chat', 'm1').auto, { counts: false, why: 'judge', by: 'team' })
 })

@@ -343,6 +343,7 @@ export function install(rt) {
         const served = creator?.model && (await rt.catalog()).some(entry => entry.ref === creator.model)
         const model = args.model || (served ? creator.model : undefined)
         const denyTools = args.deny_tools ?? args.denyTools
+        const inheritAuto = rt.autoOpener?.()
         // Only the parameters declared above reach createBot. Its other options (an
         // existing Session to adopt, a Main Bot, a copy, a held model, a kind) are the
         // host's and the user's to give, never a model's: an undeclared argument is dropped.
@@ -356,12 +357,16 @@ export function install(rt) {
           workDir,
           avatar: avatar === undefined ? undefined : { image: avatar },
           createdBy: creator?.id,
+          ...(inheritAuto === undefined ? {} : { inheritAuto }),
           // Only when asked: an older call keeps the exact payload it had.
           ...(denyTools === undefined ? {} : { denyTools }),
         })
         // A level taken from the creator is said, so the creator knows what the Bot may do.
-        const inherited = creator && rt.permissionCatalog() && bot.permission ? ` Permission inherited from ${creator.name} (${bot.permission}).` : ''
-        return `Created ${bot.name}${workDir ? `, working in ${workDir}` : ''}.${inherited} It is greeting the user now.`
+        const inherited = creator && rt.permissionCatalog() && bot.permission
+          ? ` Permission inherited from ${creator.name} (${bot.permissionAuto ? 'Auto' : bot.permission})${bot.permission === (creator.permission ?? rt.permissionCatalog()?.defaultPreset) ? '.' : ', no wider than this conversation.'}` : ''
+        const denied = Array.isArray(creator?.denyTools) && creator.denyTools.length > 0
+          ? ` It never gets the tools ${creator.name} does not have: ${creator.denyTools.join(', ')}.` : ''
+        return `Created ${bot.name}${workDir ? `, working in ${workDir}` : ''}.${inherited}${denied} It is greeting the user now.`
       } catch (error) {
         return `Could not create the Bot: ${error.message}`
       }

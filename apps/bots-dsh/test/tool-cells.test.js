@@ -1134,3 +1134,25 @@ test('every other Bot paints with the Automagik mark, and so does a chat with no
   assert.equal(painterOf(kept).props['data-painter'], 'genie')
   assert.equal(find(kept, node => node.type === 'img' && node.props.className === 'bt-img-final').props.src, 'api/omni-ui/image?id=img-1234abcd-ef')
 })
+
+test('a refused bash call draws the reason once, on its first call in that Session', () => {
+  const entry = { why: 'sandbox', tool: 'bash', count: 2, calls: [{ sessionId: 'ada', callId: 'x' }, { sessionId: 'ada', callId: 'y' }] }
+  const draw = (callId, stops) => expand(ToolCell({ ...props(call('bash', callId, { isError: true }), { sessionId: 'ada' }), useWork: select => select({ stops }) }))
+  const tree = draw('x', [entry])
+  const lines = findAll(tree, node => node.props?.className === 'bt-event bt-event-error')
+  assert.equal(lines.length, 1)
+  assert.equal(text(lines[0]), '2 steps did not run: the sandbox blocked it')
+  assert.equal(lines[0].props.role, 'status')
+  assert.equal(lines[0].props.title, 'sandbox')
+  assert.equal(draw('y', [entry]), null)
+  assert.equal(draw('x', []), null)
+  effects = []
+})
+
+test('a permission-stop group reply draws the round reason', () => {
+  const replies = [{ kind: 'permission-stop', botId: 'ada', name: 'ada', why: 'review', count: 2, time: 1 }]
+  const tree = show(call('group_relay', 'x', { content: { replies } }), { sessionId: 'room' })
+  const lines = findAll(tree, node => node.props?.className === 'bt-event bt-event-error')
+  assert.equal(lines.length, 1)
+  assert.equal(text(lines[0]), 'ada stopped on a permission: Auto review refused it')
+})

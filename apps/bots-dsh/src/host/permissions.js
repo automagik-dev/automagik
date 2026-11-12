@@ -5,6 +5,7 @@
 // its layer is loaded (../shared/permission-levels.js).
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { createHash } from 'node:crypto'
+import { HELD_NOT_SET, HELD_UNREAD } from '../shared/held.js'
 import { AUTO, AUTO_FALLBACK } from '../shared/permission-levels.js'
 import { refusal } from './refusal.js'
 import { narrowerLevel, narrowestOffered, rankOf } from './permission-rank.js'
@@ -48,7 +49,7 @@ export function install(rt) {
       const level = levelRead(rt.chatOf(bot.id))
       return `${bot.id}~${level === undefined ? '-' : `${rankOf(service, level) ?? '?'}${offers(level) ? 'o' : 'x'}${digest(level)}`}`
     })
-    return `${options}:${[...fellBack].sort().join(',')}:${[...goneOf].map(([id, outcome]) => `${id}=${outcome}`).sort().join(',')}:${runs.sort().join(',')}`
+    return `${options}:${[...fellBack].sort().join(',')}:${[...goneOf].map(([id, outcome]) => `${id}=${outcome}`).sort().join(',')}:${runs.sort().join(',')}:${rt.autoKey?.() ?? ''}`
   }
   const digest = text => createHash('sha256').update(text).digest('hex').slice(0, 16)
   // The level DSH reports for a Session it has loaded, or undefined: nothing is opened.
@@ -131,7 +132,7 @@ export function install(rt) {
     unapplied.set(sessionId, { level, at: Date.now() })
     const acp = acpAgents()
     if (typeof acp?.endSession !== 'function') return
-    const why = notSet(level)
+    const why = HELD_NOT_SET
     try { acp.endSession(sessionId, why) } catch {}
     let open = []
     try { open = ctx.sessions?.list?.() ?? [] } catch {}
@@ -256,6 +257,9 @@ export function install(rt) {
   // task no Bot asked for keeps DSH's default. When its Bot or its group is deleted, the
   // task keeps the level it ran at as a cap (`permissionCap`, capTasks): what governs it
   // afterwards (the default, the Bot's own level) can lower it, never raise it.
+  // Work opened by a tool call also keeps its opener's current Session level as a cap,
+  // but only when it narrows the level above. An uncapped task still follows later changes
+  // of its Bot's level; a capped one can only run at or below that cap.
   // A task started from a group Session's tool call without a `roomId` (another plugin's
   // tool that forgot the group) remembers that group as `levelRoomId`: its level is the
   // narrower of the one above and that group's, read live, so a Bot with a wide level does
@@ -370,7 +374,7 @@ export function install(rt) {
   function inToolCall(exec, next) {
     const sessionId = exec?.agent?.id ?? exec?.agent?.session?.id
     if (typeof sessionId !== 'string') return next()
-    const call = { sessionId, header: exec.agent?.session?.header, active: true }
+    const call = { sessionId, session: exec.agent?.session, header: exec.agent?.session?.header, active: true }
     const owner = ownerOfSession(call)
     call.roomId = owner?.roomId
     call.taskId = owner?.taskId
@@ -416,10 +420,64 @@ export function install(rt) {
   // The task Session whose tool call this runs in, or undefined: as the group, only while
   // the call runs. What the call left running (a timer, a queue another start drains) is
   // not the task's: a store that outlives its call would bind starts that are not its own.
+  rt.callerSessionId = () => {
+    const call = callers.getStore()
+    return call?.active === true ? call.sessionId : undefined
+  }
+  rt.levelHeld = sessionId => unapplied.has(sessionId)
+
   function callerTask() {
     const call = callers.getStore()
     if (call?.active !== true) return undefined
     return call.taskId ?? ownerOfSession(call)?.taskId
+  }
+  // What the calling Session runs at now. An unreadable opener is still an opener:
+  // it gives the narrowest offered level, never the wider saved level of its owner.
+  function callerLevel() {
+    const call = callers.getStore()
+    const service = presets()
+    if (call?.active !== true || service === undefined) return undefined
+    try {
+      const session = call.session ?? (ctx.sessions?.list?.() ?? []).find(loaded => loaded?.id === call.sessionId)
+      if (session === undefined) return narrowestOffered(service)
+      const level = service.current(session)
+      return typeof level === 'string' && level !== '' ? level : undefined
+    } catch {
+      return narrowestOffered(service)
+    }
+  }
+  // Save only a narrowing: an opener at the same or a wider level adds no lasting cap.
+  function capTaskByOpener(task, opener) {
+    const service = presets()
+    if (service === undefined || !opener || task.from === undefined) return
+    const run = taskRun(task, service)
+    if (run.unproven === true || run.level === undefined) return
+    const capped = narrowedTo(run.level, opener, service)
+    if (capped !== run.level) task.permissionCap = capped
+  }
+  // A schedule's arming Session and each loaded parent, plus the team owner's level.
+  // The last id owns the lineage even when the child or an earlier part is unloaded.
+  function armedLevels(ids, bot) {
+    const service = presets()
+    if (service === undefined) return []
+    const last = ids.at(-1)
+    const task = taskOf(last)
+    const roomId = (rt.groupOwners.get(last) ?? rt.pastOwners.get(last))?.roomId
+    const owner = task === undefined ? rt.roomOf(roomId)?.permission ?? bot?.permission : taskLevel(task, service)
+    return [...ids.map(levelRead), owner].filter(level => typeof level === 'string' && level !== '')
+  }
+  // Read and lower in the same queue as every other apply: an earlier lowering must
+  // land before this comparison, so no stale read can raise the Session back up.
+  async function lowerScheduledSession(session, levels) {
+    const service = presets()
+    if (service === undefined || levels.length === 0) return
+    await serial(session.id, async () => {
+      const has = service.current(session)
+      if (typeof has !== 'string' || runRank(service, has) === undefined) throw new Error('The scheduled Session has no comparable permission level')
+      let level = has
+      for (const bound of levels) level = narrowedTo(level, bound, service)
+      if (level !== has) await applyLevel(session.id, level, session)
+    })
   }
   // How many tasks deep a task started from `sessionId` would be; a loop counts as too deep.
   function taskDepth(sessionId) {
@@ -607,7 +665,7 @@ export function install(rt) {
         header ??= ctx.sessions?.get?.(current)?.header
       } catch (error) {
         rt.warn('ds-bot: the Session %s could not be read while a permission level is not set: %s', current, error)
-        throw refusal(UNREAD, { cause: error })
+        throw Object.assign(refusal(UNREAD, { cause: error }), { held: HELD_UNREAD })
       }
       if (header?.origin !== 'subagent') return undefined
       current = header.parentSession
@@ -696,7 +754,7 @@ export function install(rt) {
     }
     const left = unapplied.get(sessionId)
     if (left === undefined) return
-    throw refusal(notSet(left.level))
+    throw Object.assign(refusal(notSet(left.level)), { held: HELD_NOT_SET })
   }
   // The same rule for an ACP agent's turn (acp-dsh's `holdTurns`, when that plugin is here):
   // no turn starts and no step goes on in a marked Session. It answers the refusal's own
@@ -706,7 +764,10 @@ export function install(rt) {
       try {
         await levelHolds({ agent })
       } catch (error) {
-        if (error?.code === 'bot/refused') return error.message
+        if (error?.code === 'bot/refused') {
+          rt.noteStop?.(agent?.id ?? agent?.session?.id, { why: 'level' }, agent)
+          return typeof error.held === 'string' ? error.held : error.message
+        }
         throw error
       }
       return undefined
@@ -761,7 +822,11 @@ export function install(rt) {
   // back would save the wider level again, so it stays and the chat is reported.
   async function setPermission(bot, name) {
     const wanted = checkPreset(name)
-    const before = bot.permission
+    await rt.clearAuto?.(bot)
+    return levelTo(bot, wanted)
+  }
+
+  async function levelTo(bot, wanted, { before = bot.permission } = {}) {
     // Read before the apply: whether the Bot's saved Auto last ran as workspace-write.
     const fell = fellBack.has(`bot:${bot.id}`)
     bot.permission = wanted
@@ -802,18 +867,25 @@ export function install(rt) {
     if (left.length > 0) throw notEverywhere(bot.name, left)
   }
 
-  // The level a Bot made by another Bot starts at (#315): its creator's own, or else the
-  // default the creator's chat runs at; never the team default, which may be wider. A
-  // level DSH cannot rank (stale, custom) gives the narrowest level the catalog offers.
-  // When nothing ranks, no level is known to be no wider, so the create fails rather than
-  // start the Bot at DSH's default. Undefined without the presets service.
-  function inheritedPermission(creator) {
+  // A new Bot takes its creator's level, narrowed by the opening Session and group.
+  // Without a saved level, its loaded chat can only narrow the catalog default. A level
+  // DSH cannot rank gives the narrowest offered (#315); when none ranks, creation fails.
+  // Without presets nothing is inherited, as before.
+  function inheritedPermission(creator, { level, roomId } = {}) {
     const service = presets()
     if (service === undefined) return undefined
-    const own = creator.permission ?? service.catalog().defaultPreset
-    const level = narrowerLevel(service, own, own)
-    if (level === undefined) throw refusal(`no permission level of ${creator.name} can be given to a new Bot`)
-    return level
+    let own = creator.permission
+    if (own === undefined) {
+      own = service.catalog().defaultPreset
+      const chat = levelRead(rt.chatOf(creator.id))
+      if (chat !== undefined) own = narrowedTo(own, chat, service)
+    }
+    let result = narrowerLevel(service, own, own)
+    for (const bound of [level, rt.roomOf(roomId)?.permission]) {
+      if (result !== undefined && bound) result = narrowedTo(result, bound, service)
+    }
+    if (result === undefined) throw refusal(`no permission level of ${creator.name} can be given to a new Bot`)
+    return result
   }
 
   // A group's level, or null when each member uses its own.
@@ -853,7 +925,7 @@ export function install(rt) {
   // is left out; any other failure is told as `failed`. Without the presets service the saved level of a Bot or a group is still
   // told (`presets: false`); a task's needs the catalog, so it is left out.
   function permissionFactsOf(sessionId, session) {
-    const out = { kind: 'other', source: 'none' }
+    const out = { kind: 'other', source: 'none', auto: rt.autoFactsOf?.(sessionId, session) }
     try {
       const service = presets()
       if (service === undefined) out.presets = false
@@ -927,5 +999,5 @@ export function install(rt) {
   // The Sessions that carry the mark now, as a fresh list.
   const unappliedSessions = () => [...unapplied.keys()]
 
-  Object.assign(rt, { sessionWide, permissionFactsOf, unappliedSessions, permissionCatalog, permissionFallbackOf, permissionKey, autoClosed, applyPermission, applyTaskPermission, levelHolds, reapplyTasks, capTasks, taskOfRoom, inToolCall, callerGroup, callerTask, assertTaskDepth, taskForebears, taskLevelOf, forgetTaskPermission, checkPreset, startingSession, assertLevelOffered, setPermission, inheritedPermission, cleanRoomPermission, setRoomPermission })
+  Object.assign(rt, { sessionWide, permissionFactsOf, unappliedSessions, permissionCatalog, permissionFallbackOf, permissionKey, autoClosed, applyPermission, applyTaskPermission, levelHolds, reapplyTasks, capTasks, taskOfRoom, inToolCall, callerGroup, callerTask, callerLevel, capTaskByOpener, armedLevels, lowerScheduledSession, assertTaskDepth, taskForebears, taskLevelOf, forgetTaskPermission, checkPreset, startingSession, assertLevelOffered, setPermission, levelTo, inheritedPermission, cleanRoomPermission, setRoomPermission })
 }

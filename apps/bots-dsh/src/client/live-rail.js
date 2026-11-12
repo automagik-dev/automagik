@@ -1,3 +1,4 @@
+import { openStops, stopLine } from './stops.js'
 import { createElement as h, useEffect, useState } from 'react'
 import { BotMark } from './mark.js'
 import { workPhrase } from './cells.js'
@@ -27,9 +28,15 @@ export function liveOf(work, roster, now = Date.now()) {
         bot: byId[entry.botId],
         place: entry.roomId ? roomsById[entry.roomId]?.name : task?.title ?? entry.label,
         tool: entry.tool,
+        ...(entry.child ? { line: t('A subagent wants to use {tool}', { tool: entry.tool }) } : {}),
         open: entry.taskId ?? entry.roomId ?? entry.botId,
       }
     })
+  for (const entry of openStops(work)) {
+    if (!byId[entry.botId]) continue
+    needs.push({ key: `stop:${entry.id}`, bot: byId[entry.botId], place: roomsById[entry.roomId]?.name ?? tasks[entry.taskId]?.title ?? entry.label,
+      line: stopLine(entry), open: entry.taskId ?? entry.roomId ?? entry.botId, face: 'idle' })
+  }
   const waitingTasks = new Set((work?.approvals ?? []).map(entry => entry.taskId).filter(Boolean))
   const working = []
   for (const [id, doing] of Object.entries(work?.bots ?? {})) {
@@ -68,7 +75,7 @@ const since = (at, now) => {
 
 function Entry({ item, tone, line, actions }) {
   return h('button', { type: 'button', className: `bt-live-card${tone ? ` bt-live-${tone}` : ''}`, onClick: () => actions.openSession(item.open) },
-    h('span', { className: 'bt-live-face' }, h(BotMark, { bot: item.bot, size: 28, state: tone === 'need' ? 'alert' : tone === 'work' ? 'working' : 'idle' })),
+    h('span', { className: 'bt-live-face' }, h(BotMark, { bot: item.bot, size: 28, state: item.face ?? (tone === 'need' ? 'alert' : tone === 'work' ? 'working' : 'idle') })),
     h('span', { className: 'bt-live-text' },
       h('span', { className: 'bt-live-name' }, item.bot.name, item.place ? h('span', { className: 'bt-live-place' }, ` · ${item.place}`) : null),
       h('span', { className: 'bt-live-line' }, line)),
@@ -94,7 +101,7 @@ export function LiveRail({ roster, actions, useWork }) {
       h('h2', { className: 'bt-live-title' }, t('Live')),
       h('span', { className: 'bt-live-sum' }, liveSummary(live))),
     h(Section, { label: t('Needs you'), dot: 'need', empty: t('Nothing waiting for you.') },
-      live.needs.map(item => h(Entry, { key: item.key, item, tone: 'need', actions, line: item.tool ? t('Wants to use {tool}', { tool: item.tool }) : t('Waiting for your answer') }))),
+      live.needs.map(item => h(Entry, { key: item.key, item, tone: 'need', actions, line: item.line ?? (item.tool ? t('Wants to use {tool}', { tool: item.tool }) : t('Waiting for your answer')) }))),
     h(Section, { label: t('Working'), dot: 'work', empty: t('Nothing running right now.') },
       live.working.map(item => h(Entry, { key: item.key, item, tone: 'work', actions, line: item.task && item.at ? `${item.phrase} · ${since(item.at, now)}` : item.phrase }))),
     live.ended.length > 0
