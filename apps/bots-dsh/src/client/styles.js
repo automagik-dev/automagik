@@ -165,11 +165,12 @@ body[data-bt-motion=quiet] .bt-mark[data-poke]{cursor:default}
 .bt-row-title{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bt-tag{flex:none;max-width:96px;font-size:12px;line-height:16px;font-weight:400;padding:1px 6px;border-radius:4px;background:var(--bt-tag-bg);color:var(--bt-tag-ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* A Bot's capability pills (capability-pills.js). In a sidebar row they have a line of their
-   own, and a pill that does not fit wraps out of sight whole rather than cut mid-word. */
+   own, and a pill that does not fit beside the others goes on to a line below, whole: the row
+   grows by that line, so no pill is cut or left out of sight (issue 1157). */
 .bt-caps{display:flex;align-items:center;gap:4px;min-width:0}
 .bt-cap{cursor:default}
-.bt-row-caps{flex-wrap:wrap;height:16px;overflow:hidden;margin-top:2px}
-.bt-row-caps>.bt-cap{font-size:11px;line-height:14px;padding:1px 5px}
+.bt-row-caps{flex-wrap:wrap;row-gap:2px;margin-top:2px}
+.bt-row-caps>.bt-cap{font-size:11px;line-height:14px;padding:1px 4px}
 .bt-drawer-caps{flex-wrap:wrap;justify-content:center;max-width:100%;margin-top:8px}
 .bt-row-preview{font-size:13px;line-height:18px;color:var(--bt-ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bt-row-preview-ask{color:var(--st-warn,var(--bt-ink-2));font-weight:500}
