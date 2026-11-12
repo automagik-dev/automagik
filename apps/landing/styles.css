@@ -30,7 +30,7 @@ code{font:500 .88em/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;background:v
 .eyebrow{display:flex;align-items:center;gap:10px;font:800 .74rem/1.4 var(--head);letter-spacing:.18em;text-transform:uppercase;color:var(--eyebrow,var(--ring));margin-bottom:18px}
 /* On the stage gradient, small text darkens a step to keep 4.5:1 in both themes. */
 .home-hero,.canvas-card,.coming-card,[data-block="cloud"]{--eyebrow:color-mix(in srgb,var(--ring) 78%,var(--bt-ink));--muted:color-mix(in srgb,var(--bt-ink) 84%,transparent)}
-.intro{font-size:clamp(1.15rem,1rem + .55vw,1.4rem);line-height:1.5;letter-spacing:-.012em;margin-top:20px;max-width:46ch;color:color-mix(in srgb,var(--text) 88%,transparent)}
+.intro{font-size:clamp(1.15rem,1rem + .55vw,1.4rem);line-height:1.5;letter-spacing:-.012em;margin-top:20px;max-width:31.8em;color:color-mix(in srgb,var(--text) 88%,transparent)}
 .lede{color:var(--muted);font-size:1.08rem;line-height:1.65;margin-top:16px;max-width:60ch}
 .fine{font-size:.86rem;line-height:1.6;color:var(--muted);margin-top:14px;max-width:72ch}
 .caption{font-size:.86rem;line-height:1.6;color:var(--muted);margin-top:18px;max-width:90ch}
@@ -141,7 +141,7 @@ body:has(.drawer:popover-open) :is(main,.site-footer,.skip){visibility:hidden}
 .home-hero{background:var(--st-stage);padding-block:clamp(44px,5.6vw,84px) clamp(56px,8vw,120px);overflow:clip}
 .home-hero::after{content:"";position:absolute;left:0;right:0;bottom:0;height:clamp(56px,8vw,120px);background:linear-gradient(to bottom,transparent,var(--bg));z-index:0;pointer-events:none}
 .home-hero h1{font-size:clamp(1.95rem,.62rem + 5.5vw,5.6rem);max-width:15ch;margin-inline:auto}
-.home-hero .intro{max-width:40ch}
+.home-hero .intro{max-width:27.7em}
 /* The cast stands behind the window's top edge, in a band of its own: nothing covers the app. */
 .scene{--band:clamp(118px,12.5vw,158px);position:relative;z-index:1;max-width:1040px;margin:clamp(10px,1.6vw,22px) auto 0;padding-top:var(--band)}
 .cast{position:absolute;inset:0 0 auto;height:var(--band)}
@@ -203,11 +203,31 @@ body:has(.drawer:popover-open) :is(main,.site-footer,.skip){visibility:hidden}
 .also .product-card h3 a:hover{text-decoration:underline}
 .also .product-card p{margin:0;font-size:.92rem}
 
-/* Open Intelligence: the movement Automagik is part of, in its own words */
-.open{padding-block:clamp(36px,5vw,72px) clamp(28px,4vw,56px);text-align:center}
-.open-line{max-width:24ch;margin-inline:auto;font-size:clamp(1.7rem,1.05rem + 2.4vw,3.1rem);line-height:1.12}
+/* Open Intelligence: the stamp (Automagik's own mark for the movement it is part of, and
+   the link to we unfold) beside the movement's line. The seal is the home page's cut, the
+   tag is the footer's. */
+.open{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:clamp(28px,5.5vw,80px);padding-block:clamp(48px,6.5vw,96px) clamp(36px,5vw,64px)}
+.open-line{max-width:22ch;font-size:clamp(1.7rem,1.05rem + 2.4vw,3.1rem);line-height:1.12}
 .open-part{margin-top:20px;color:var(--muted);font-size:1.05rem}
 .open-part a{color:var(--text);font-weight:600}
+@media (max-width:760px){
+  .open{grid-template-columns:minmax(0,1fr);justify-items:center;text-align:center}
+  .open-line{margin-inline:auto}
+}
+.stamp{color:var(--text);text-decoration:none}
+.stamp.seal{position:relative;display:block;width:clamp(148px,17vw,212px);aspect-ratio:1;margin-inline:clamp(0px,2vw,28px);border-radius:50%;background:var(--paper);box-shadow:var(--st-clay);rotate:-8deg}
+.stamp.seal:focus-visible{outline:3px solid var(--ring);outline-offset:6px}
+.seal-art,.seal-art svg{position:absolute;inset:0;width:100%;height:100%}
+.seal-ring{transition:rotate .9s cubic-bezier(.2,.7,.2,1)}
+.seal-ring text{font:800 19.5px/1 var(--head);fill:var(--text)}
+.seal-inner{stroke:var(--line-2)}
+.stamp.seal:hover .seal-ring{rotate:24deg}
+.stamp.tag{display:inline-flex;align-items:center;gap:12px;margin-top:20px;padding:7px 20px 7px 7px;border-radius:999px;background:var(--paper);border:1px solid var(--line-2);transition:border-color .2s ease}
+.stamp.tag:hover{border-color:var(--ring);color:var(--text)}
+.stamp-core{flex:none;width:42px;height:42px;transition:rotate .7s cubic-bezier(.2,.7,.2,1)}
+.stamp.tag:hover .stamp-core{rotate:62deg}
+.stamp-text{font:400 .8rem/1.3 var(--body);color:var(--muted)}
+.stamp-text strong{display:block;font:800 .94rem/1.25 var(--head);letter-spacing:-.01em;color:var(--text)}
 
 /* Made by this team, with the film's quiet slot */
 .made{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,.9fr);gap:clamp(28px,5vw,72px);align-items:center;padding-block:clamp(40px,5vw,72px) clamp(64px,8vw,112px)}
@@ -347,6 +367,24 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:var(--ring);box-s
 /* Coming soon */
 .coming{padding-block:clamp(40px,6vw,88px) clamp(24px,3vw,40px)}
 .coming-card{position:relative;isolation:isolate;overflow:clip;border-radius:36px;background:var(--st-stage);padding:clamp(48px,8vw,112px) clamp(20px,4vw,48px)}
+.install-line{margin:32px auto 0;max-width:min(100%,560px);text-align:center}
+.install-line pre{display:inline-block;max-width:100%;margin:0;padding:14px 20px;border-radius:14px;background:var(--code-bg);text-align:left;white-space:pre-wrap;overflow-wrap:anywhere}
+.install-line code{padding:0;border:0;background:none;color:#f3e9dd;font-size:.92rem;user-select:all;-webkit-user-select:all}
+.install-line code::before{content:"$ ";color:#8fe3f3;user-select:none;-webkit-user-select:none}
+.install-line p{margin-top:14px;color:var(--muted);font-size:.95rem}
+.install-line h2{margin-bottom:14px;font:800 .74rem/1.4 var(--head);letter-spacing:.18em;text-transform:uppercase;color:var(--eyebrow,var(--ring))}
+.install-line+.actions{margin-top:26px}
+/* Arca's logo, a slot. With Arca's kit in assets/brand/arca the tile carries its icon: ink
+   on sand in light, ivory on night in dark, Arca's own two grounds, with no effect on it.
+   Without the kit the tile is an empty dashed placeholder. */
+.arca-mark{display:block;flex:none;aspect-ratio:1;border-radius:26%;background:#e6d3b3}
+.arca-mark img{width:100%;height:100%}
+.arca-mark[data-arca-logo="placeholder"]{background:none;border:1.5px dashed color-mix(in srgb,var(--text) 36%,transparent)}
+.arca-mark.at-menu{width:44px}
+.menu-icon:has(.arca-mark){border:0;background:none}
+.arca-mark.at-card{width:56px;margin-bottom:18px}
+.arca-mark.at-hero{width:112px;margin:0 auto 28px}
+@media (prefers-color-scheme:dark){.arca-mark{background:#0b0d12}.arca-mark[data-arca-logo="placeholder"]{background:none}}
 .coming-mark{width:120px;margin:0 auto 28px;filter:drop-shadow(0 18px 22px rgba(60,48,73,.28))}
 
 /* The way on, on every block page */
@@ -372,14 +410,13 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:var(--ring);box-s
 .site-footer{background:var(--raised);border-top:1px solid var(--line)}
 .footer-grid{display:grid;grid-template-columns:minmax(0,1.5fr) repeat(3,minmax(0,1fr));gap:32px 48px;padding-block:clamp(40px,5vw,64px) 36px}
 .footer-brand p{margin-top:14px;color:var(--muted);font-size:.94rem;max-width:30ch}
-.footer-brand .footer-part{margin-top:10px;max-width:34ch}
-.footer-part a{color:var(--text);font-weight:600}
 .site-footer nav a[aria-current="page"]{font-weight:700}
 .site-footer nav{display:flex;flex-direction:column;align-items:flex-start;gap:10px;font-size:.94rem}
 .site-footer nav a{text-decoration:none}
 .site-footer nav a:hover{text-decoration:underline}
 .footer-head{font:800 .7rem/1.5 var(--head);letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
 .footer-license{grid-column:1/-1;padding-top:22px;border-top:1px solid var(--line);font-size:.84rem;color:var(--muted)}
+.footer-license a{color:inherit;white-space:nowrap}
 
 /* Function responses (registration, confirmation) share the frame */
 .response{max-width:840px;padding-block:56px}
@@ -463,6 +500,8 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:var(--ring);box-s
 @media (max-width:480px){
   .top-cta{display:none}
   .menu-open{margin-left:auto}
+  .install-line pre{padding:12px 14px}
+  .install-line code{font-size:clamp(.72rem,3.6vw,.8rem)}
 }
 @media (max-width:360px){
   .brand img{width:108px}
@@ -470,5 +509,90 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:var(--ring);box-s
   .scene-omni{width:78px}
   .bubble{right:calc(1% + 82px)}
 }
+/* Motion. All of it sits behind prefers-reduced-motion:no-preference, and the parts driven
+   by scrolling also behind @supports: without either, the page is simply still and whole.
+   Only translate, scale, rotate, transform and opacity move, so nothing shifts the layout.
+   No script: the browser's own timelines drive it. */
+@media (prefers-reduced-motion:no-preference){
+  /* Page to page: a short cross-fade, the header holds still, a character travels to its page. */
+  @view-transition{navigation:auto}
+  ::view-transition-old(root){animation:page-out .16s ease-in both}
+  ::view-transition-new(root){animation:page-in .38s cubic-bezier(.2,.7,.2,1) both}
+  .top{view-transition-name:site-top}
+  .tile-genie,.hero-genie,.more-genie{view-transition-name:genie}
+  .tile-omni,.hero-omni,.more-omni{view-transition-name:omni}
+  .tile-pet,.hero-pet,.more-pet{view-transition-name:pet}
+  ::view-transition-group(genie),::view-transition-group(omni),::view-transition-group(pet){animation-duration:.5s;animation-timing-function:cubic-bezier(.3,.8,.3,1)}
+  /* Menus and the phone sheet ease in. */
+  .menu-card{transition:opacity .18s ease,translate .26s cubic-bezier(.2,.8,.2,1)}
+  .drawer{transition:opacity .2s ease,translate .3s cubic-bezier(.2,.8,.2,1)}
+  .drawer-group,.drawer-foot{transition:opacity .32s ease,translate .42s cubic-bezier(.2,.8,.2,1)}
+  .drawer-group:nth-child(2){transition-delay:.05s}
+  .drawer-group:nth-child(3){transition-delay:.1s}
+  .drawer-foot{transition-delay:.15s}
+  @starting-style{
+    .menu-card{opacity:0;translate:0 -10px}
+    .drawer{opacity:0;translate:0 14px}
+    .drawer-group,.drawer-foot{opacity:0;translate:0 18px}
+  }
+  /* A page arrives: the heading's lines rise in turn, then its picture. Arca's logo is never moved. */
+  .hero-heading>:not(.arca-mark){animation:rise-in .7s cubic-bezier(.2,.7,.2,1) backwards}
+  .hero-heading>:nth-child(2){animation-delay:.07s}
+  .hero-heading>:nth-child(3){animation-delay:.14s}
+  .hero-heading>:nth-child(4){animation-delay:.21s}
+  .hero-heading>:nth-child(n+5){animation-delay:.28s}
+  .split .hero-visual,.scene-window{animation:rise-in .9s .2s cubic-bezier(.2,.7,.2,1) backwards}
+  .crumbs{animation:fade-in .5s ease backwards}
+  /* The home's cast: the two pop up behind the app's window, then Genie speaks. */
+  .scene-genie{animation:float 7s ease-in-out infinite,pop .6s .75s cubic-bezier(.3,1.5,.5,1) backwards}
+  .scene-omni{animation:float 8s ease-in-out .8s infinite,pop .6s .95s cubic-bezier(.3,1.5,.5,1) backwards}
+  .bubble{transform-origin:0 100%;animation:pop .5s 1.35s cubic-bezier(.3,1.5,.5,1) backwards}
+  .constellation{animation:drift 26s ease-in-out infinite alternate}
+  /* Cards answer the pointer. */
+  .tile-omni,.tile-genie,.tile-pet,.tile-phone{transition:scale .5s cubic-bezier(.2,.7,.2,1)}
+  .bento .product-card:hover :is(.tile-omni,.tile-genie,.tile-pet,.tile-phone){scale:1.05}
+  @supports (animation-timeline:view()){
+    /* Sections and cards rise into place as they come onto the screen; neighbours follow in turn. */
+    :is(.section-heading,.bento>.product-card,.also,.open-copy,.made-copy,.film-still,.channel,.principles>article,.install-grid>article,.flow-steps>li,.close-copy,.close-phones,.pair-card,.story-copy,.story-art,.canvas-card,.wide-window,.genie-faces,.more-title,.more-list>li,.pager){animation:rise linear both;animation-timeline:view();animation-range:entry 0% entry 240px}
+    :is(.bento>.product-card,.principles>article):nth-child(2n),:is(.channel,.install-grid>article,.flow-steps>li,.more-list>li):nth-child(2){animation-range:entry 60px entry 300px}
+    :is(.flow-steps>li,.more-list>li):nth-child(3){animation-range:entry 110px entry 350px}
+    .more-list>li:nth-child(4){animation-range:entry 150px entry 390px}
+    .more-list>li:nth-child(5){animation-range:entry 190px entry 430px}
+    /* The stamp is pressed onto the page, and its ring of words turns as the page moves. */
+    .stamp.seal{animation:press linear both;animation-timeline:view();animation-range:entry 20% entry 260px}
+    .seal-ring{animation:turn linear both;animation-timeline:view();animation-range:cover}
+    /* Inside a card, its picture moves a little more than the card. */
+    .bento>.product-card{view-timeline:--card block}
+    .tile-omni,.tile-pet{animation:sway linear both;animation-timeline:--card;animation-range:cover}
+    .tile-genie{animation:sway-back linear both;animation-timeline:--card;animation-range:cover}
+    .tile-phone{animation:climb linear both;animation-timeline:--card;animation-range:cover}
+    [data-block="desktop"] .tile-art{animation:settle linear both;animation-timeline:--card;animation-range:entry 0% cover 45%}
+    /* The home's stage as the page leaves it: the cast peeks higher, the bubble lifts away,
+       the dots fall behind. */
+    .scene-genie{animation:float 7s ease-in-out infinite,pop .6s .75s cubic-bezier(.3,1.5,.5,1) backwards,peek-genie linear both;animation-timeline:auto,auto,scroll(root);animation-range:normal,normal,0px 640px}
+    .scene-omni{animation:float 8s ease-in-out .8s infinite,pop .6s .95s cubic-bezier(.3,1.5,.5,1) backwards,peek-omni linear both;animation-timeline:auto,auto,scroll(root);animation-range:normal,normal,0px 640px}
+    .bubble{animation:pop .5s 1.35s cubic-bezier(.3,1.5,.5,1) backwards,lift-away linear both;animation-timeline:auto,scroll(root);animation-range:normal,120px 460px}
+    .home-hero>.constellation{animation:drift 26s ease-in-out infinite alternate,fall-behind linear both;animation-timeline:auto,scroll(root);animation-range:normal,0px 900px}
+    /* The header gains a soft edge once the page has moved under it. */
+    .top::after{content:"";position:absolute;inset:100% 0 auto;height:22px;background:linear-gradient(to bottom,color-mix(in srgb,var(--text) 10%,transparent),transparent);opacity:0;pointer-events:none;animation:fade-in linear both;animation-timeline:scroll(root);animation-range:0px 140px}
+  }
+}
+@keyframes page-out{to{opacity:0;transform:translateY(-8px)}}
+@keyframes page-in{from{opacity:0;transform:translateY(16px)}}
+@keyframes rise-in{from{opacity:0;translate:0 22px}}
+@keyframes fade-in{from{opacity:0}to{opacity:1}}
+@keyframes pop{from{opacity:0;scale:.55}}
+@keyframes drift{from{transform:translate(-6px,4px)}to{transform:translate(8px,-6px)}}
+@keyframes rise{from{opacity:0;translate:0 40px}}
+@keyframes press{from{opacity:0;scale:1.4;rotate:-34deg}}
+@keyframes turn{from{rotate:-80deg}to{rotate:80deg}}
+@keyframes sway{from{translate:0 16px;rotate:-7deg}to{translate:0 -16px;rotate:7deg}}
+@keyframes sway-back{from{translate:0 16px;rotate:6deg}to{translate:0 -14px;rotate:-6deg}}
+@keyframes climb{from{translate:0 34px}to{translate:0 -10px}}
+@keyframes settle{from{translate:0 36px}}
+@keyframes peek-genie{to{translate:0 calc(4% - 2.4vw)}}
+@keyframes peek-omni{to{translate:0 calc(17% - 3.3vw)}}
+@keyframes lift-away{to{opacity:0;translate:0 -18px}}
+@keyframes fall-behind{to{translate:0 130px}}
 @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{animation:none!important;transition:none!important}}
 @media (forced-colors:active){.ink-grad{color:CanvasText;background:none}}

@@ -307,8 +307,8 @@ No account routing or redirect is changed by this delivery.
 **Stand-in, 2026-11-12.** Arca's own site is not deployed yet and has no date. Until it is
 served at this address, Pages carries exactly one stand-in page at `/arca/` and nothing under
 it: Arca's name, the owner's one line for it ("Be your own cloud. Infrastructure for AI
-agents."), a Get Arca button
-to `https://get.automagik.si/arca`, and the way back to all products. Arca is a product in
+agents."), Get Arca as the install command, shown as text to copy (the installer's address
+answers with a shell script, so it is never a link), and the way back to all products. Arca is a product in
 the site's menus, the home blocks and the footer. The root `robots.txt`, `sitemap.xml` and
 `llms.txt` keep Arca's supplied lines unchanged. When Arca's Worker takes the routes above,
 the stand-in page is removed; nothing else changes.
@@ -323,8 +323,18 @@ product. The pages still carry no client JavaScript: the menus use the browser's
 
 Automagik is part of we unfold, the home of the Open Intelligence movement. The link
 (`https://weunfold.ai/`) and both lines of wording live in one constant in
-`apps/landing/scripts/build-pages.mjs` and appear in the footer's brand line, the Company
-menu and once on the home page. The owner approves the two lines before the site goes live.
+`apps/landing/scripts/build-pages.mjs` and appear in the Company menu and once on the home
+page. The owner approves the two lines before the site goes live.
+
+### Stamp, links, logo slot and motion, 2026-11-12
+
+The owner on the next preview. The Open Intelligence line gets a designed stamp that carries
+the we unfold link: a seal on the home page and a tag in every footer. Guides and help link
+to `https://docs.automagik.dev`; GitHub is linked for the downloads and once in the footer;
+no page links to an RFC. Arca's own logo stands wherever Arca does; until Arca's kit is
+published the pages hold a placeholder slot. The public copy is shortened without changing
+its meaning; approved copy is untouched. The pages move: scroll-driven reveals, page
+transitions and menu entrances, in CSS only, off for reduced motion, with no layout shift.
 
 Arca's supplied sitemap entries are included verbatim:
 

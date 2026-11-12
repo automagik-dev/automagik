@@ -13,7 +13,7 @@ import { onRequest as emailLink } from './functions/api/waitlist/email-confirm.j
 
 const root = dirname(fileURLToPath(import.meta.url))
 const evidence = resolve(process.env.LANDING_EVIDENCE ?? join(root, '../../.cache/landing-evidence'))
-const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.png': 'image/png', '.webp': 'image/webp', '.woff2': 'font/woff2', '.mp4': 'video/mp4', '.txt': 'text/plain; charset=utf-8', '.xml': 'application/xml' }
+const types = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.png': 'image/png', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.mp4': 'video/mp4', '.txt': 'text/plain; charset=utf-8', '.xml': 'application/xml' }
 const isolated = fixture()
 let bindingMode = 'missing', origin
 const server = createServer(async (req, res) => {
@@ -35,6 +35,12 @@ const server = createServer(async (req, res) => {
 })
 let browser
 const reports = []
+// Layout shift, as the browser itself scores it (shifts right after a click or key do not
+// count). The observer is the test's; the pages carry no script.
+const watchShift = context => context.addInitScript(() => {
+  window.__shift = 0
+  new PerformanceObserver(list => { for (const entry of list.getEntries()) if (!entry.hadRecentInput) window.__shift += entry.value }).observe({ type: 'layout-shift', buffered: true })
+})
 async function guard(context) {
   const outside = []
   await context.route('**/*', route => (new URL(route.request().url()).origin === origin ? route.continue() : (outside.push(route.request().url()), route.abort())))
@@ -56,6 +62,7 @@ try {
     const context = await browser.newContext({ viewport: { width, height: 900 }, deviceScaleFactor: 1, colorScheme, reducedMotion: 'reduce' })
     try {
       const outside = await guard(context)
+      await watchShift(context)
       const page = await context.newPage(), responses = [], errors = []
       page.on('response', response => responses.push({ url: response.url().replace(origin, ''), status: response.status(), type: response.request().resourceType(), contentType: response.headers()['content-type'] }))
       page.on('pageerror', error => errors.push(error.message))
@@ -133,7 +140,10 @@ try {
       assert.ok(report.images.every(image => image.ok), `Every image decodes: ${label}`)
       assert.ok(report.fonts, `Both bundled fonts loaded: ${label}`)
       assert.equal(report.robots, 'noindex, nofollow'); assert.equal(report.h1, 1)
+      // Reduced motion: nothing runs, nothing is held back from view, and nothing shifts.
       assert.ok(report.reducedMotion)
+      assert.equal(await page.evaluate(() => document.getAnimations().length), 0, `Reduced motion runs no animation: ${label}`)
+      assert.equal(await page.evaluate(() => window.__shift), 0, `No layout shift: ${label}`)
       assert.equal(report.background, colorScheme === 'dark' ? 'rgb(30, 25, 35)' : 'rgb(246, 238, 226)')
       for (const src of new Set(report.images.map(image => image.src))) assert.ok(responses.some(response => response.url === src && response.status === 200), `${src} answered 200: ${label}`)
       assert.deepEqual(responses.filter(response => response.status >= 400), [], `No failed request: ${label}`)
@@ -251,6 +261,12 @@ try {
       if (route === '/') assert.deepEqual(here, { button: null, current: null, crumb: null })
       else assert.ok(here.button && here.button === here.crumb && here.current === route, `The header shows the active page: ${label} ${JSON.stringify(here)}`)
       await linkCheck(page)
+      if (route === '/arca/') {
+        // Get Arca is the install command as text: one click selects the whole line, and
+        // nothing on the page links to the installer or to Arca's repository.
+        const get = await page.evaluate(() => { const code = document.querySelector('.install-line code'); return { text: code.textContent, select: getComputedStyle(code).userSelect, links: [...document.links].map(link => link.href).filter(href => /get\.automagik\.si|automagik-si\/arca/.test(href)) } })
+        assert.deepEqual(get, { text: 'curl -fsSL https://get.automagik.si/arca | sh', select: 'all', links: [] }, `The install line is text to copy: ${label}`)
+      }
       await button('products').click(); await page.locator('#menu-products .menu-item[href="/omni/"]').click()
       await page.waitForURL(origin + '/omni/')
       assert.equal(await page.locator('.menu-button[data-here] .menu-here').evaluate(node => node.lastChild.textContent), 'Omni')
@@ -274,7 +290,7 @@ try {
         assert.ok(state.box.left === 0 && state.box.width === width && Math.abs(state.box.top - (header.y + header.height)) <= 1 && Math.abs(state.box.bottom - 844) <= 1, `The sheet fills the screen under the header: ${label} ${width}px ${JSON.stringify(state.box)}`)
         assert.deepEqual(await behind(), { main: 'hidden', footer: 'hidden', scroll: 'hidden' }, `The page behind the sheet is out of reach: ${label} ${width}px`)
         assert.deepEqual(await page.locator('#site-menu .drawer-label').allInnerTexts().then(labels => labels.map(text => text.toLowerCase())), ['products', 'resources', 'company'])
-        assert.equal(await page.locator('#site-menu .menu-item').count(), 14)
+        assert.equal(await page.locator('#site-menu .menu-item').count(), 13)
         if (route !== '/') assert.equal(await page.locator('#site-menu [aria-current="page"]').getAttribute('href'), route, `The sheet marks the active page: ${label}`)
         if (width === 390) await page.screenshot({ path: join(evidence, `menu-phone-${slug}-${colorScheme}.png`) })
         // The keyboard stays in the header and the sheet, and reaches every link of the sheet.
@@ -284,7 +300,7 @@ try {
           stops.add(await page.evaluate(() => { const active = document.activeElement; return active === document.body ? 'page' : active.closest('#site-menu') ? `sheet:${active.getAttribute('href')}` : active.closest('.top') ? 'header' : `behind:${active.outerHTML.slice(0, 60)}` }))
         }
         assert.deepEqual([...stops].filter(stop => stop.startsWith('behind:')), [], `Tab never lands behind the sheet: ${label} ${width}px`)
-        assert.equal([...stops].filter(stop => stop.startsWith('sheet:')).length, 15, `Tab reaches every link of the sheet: ${label} ${width}px`)
+        assert.equal([...stops].filter(stop => stop.startsWith('sheet:')).length, 12, `Tab reaches every link of the sheet: ${label} ${width}px`)
         await page.keyboard.press('Escape')
         state = await panelState(page, 'site-menu')
         assert.ok(!state.open && state.focusButton === 'site-menu', `Escape closes the sheet and returns focus to Menu: ${label} ${width}px`)
@@ -299,6 +315,75 @@ try {
       } finally { await phone.close() }
     }
     console.log(`PASS menus ${label}: click, keyboard, Escape and focus return, hover, one panel at a time, active page, links, phone sheet`)
+  }
+  // Motion, for a visitor who allows it. Every page is scrolled from top to bottom at desktop
+  // and phone width: something moves, nothing shifts the layout (the browser's own layout-shift
+  // score stays 0), nothing overflows, and everything that rises into view ends fully shown,
+  // down to the last section. Then a link is followed: the page-to-page transition runs to
+  // its end, and the menu eases in.
+  for (const [width, height] of [[1440, 900], [390, 844]]) {
+    const context = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 1, colorScheme: 'light' })
+    try {
+      const outside = await guard(context)
+      await watchShift(context)
+      await context.addInitScript(() => addEventListener('pagereveal', event => {
+        window.__arrived = event.viewTransition ? 'running' : 'plain'
+        event.viewTransition?.finished.then(() => { window.__arrived = 'finished' }, () => { window.__arrived = 'skipped' })
+      }))
+      const page = await context.newPage(), errors = []
+      page.on('pageerror', error => errors.push(error.message))
+      for (const route of routes) {
+        const label = `${route} ${width}px`
+        await page.goto(origin + route, { waitUntil: 'load' })
+        await page.evaluate(() => Promise.all([...document.images].map(image => { image.loading = 'eager'; return image.decode() })).then(() => document.fonts.ready))
+        const seen = { held: 0, driven: 0, timed: 0 }
+        for (let top = 0, last = false; !last; top += 160) {
+          const step = await page.evaluate(async top => {
+            scrollTo({ top, behavior: 'instant' })
+            await new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)))
+            const animations = document.getAnimations(), driven = animations.filter(animation => animation.timeline instanceof ScrollTimeline)
+            const rising = driven.filter(animation => ['rise', 'press'].includes(animation.animationName))
+            const end = scrollY + innerHeight >= document.documentElement.scrollHeight - 1
+            // Held back: the rise has not finished, so the element is still dim or low.
+            const held = animation => (animation.effect.getComputedTiming().progress ?? 1) < 1
+            const name = ({ effect: { target } }) => `${target.tagName.toLowerCase()}.${target.className}`.slice(0, 60)
+            return {
+              end, driven: driven.length, timed: animations.length - driven.length, held: rising.filter(held).length,
+              // Well inside the screen, or anywhere on it at the page's end: fully shown.
+              stuck: rising.filter(animation => held(animation) && animation.effect.target.getBoundingClientRect().top < innerHeight - (end ? 0 : 520)).map(name),
+              overflow: document.documentElement.scrollWidth - innerWidth,
+            }
+          }, top)
+          assert.deepEqual(step.stuck, [], `Everything that rises into view ends fully shown: ${label} at ${top}px`)
+          assert.equal(step.overflow, 0, `Motion never widens the page: ${label} at ${top}px`)
+          seen.held = Math.max(seen.held, step.held); seen.driven = Math.max(seen.driven, step.driven); seen.timed = Math.max(seen.timed, step.timed)
+          last = step.end
+        }
+        assert.ok(seen.driven > 0 && seen.held > 0, `Scrolling drives the page's motion: ${label} ${JSON.stringify(seen)}`)
+        if (route === '/') assert.ok(seen.timed > 0, `The home's stage moves on its own: ${label}`)
+        assert.equal(await page.evaluate(() => window.__shift), 0, `No layout shift with motion: ${label}`)
+        // Arca's logo and its placeholder are never animated.
+        assert.deepEqual(await page.evaluate(() => document.getAnimations().map(animation => animation.effect.target).filter(element => element.closest?.('.arca-mark')).length), 0, `Arca's logo stays still: ${label}`)
+      }
+      // Page to page: the browser's cross-document transition runs to its end (a name used
+      // twice on a page would skip it), and the character named on both pages is one of a kind.
+      await page.goto(origin + '/', { waitUntil: 'load' })
+      const names = () => page.evaluate(() => { const count = {}; for (const element of document.querySelectorAll('*')) { const name = getComputedStyle(element).viewTransitionName; if (name !== 'none') count[name] = (count[name] ?? 0) + 1 } return count })
+      assert.deepEqual(await names(), { root: 1, 'site-top': 1, genie: 1, omni: 1, pet: 1 }, `Transition names are unique on the home: ${width}px`)
+      if (width > 860) { await page.locator('[popovertarget="menu-products"]').click(); await page.locator('#menu-products .menu-item[href="/genie/"]').click() }
+      else { await page.locator('.menu-open').click(); await page.locator('#site-menu .menu-item[href="/genie/"]').click() }
+      await page.waitForURL(origin + '/genie/')
+      await page.waitForFunction(() => window.__arrived === 'finished' || window.__arrived === 'skipped' || window.__arrived === 'plain')
+      assert.equal(await page.evaluate(() => window.__arrived), 'finished', `The page-to-page transition runs: ${width}px`)
+      assert.deepEqual(await names(), { root: 1, 'site-top': 1, genie: 1, omni: 1, pet: 1 }, `Transition names are unique on a product page: ${width}px`)
+      // The menu eases in and settles fully shown, in place.
+      const opener = width > 860 ? '[popovertarget="menu-products"]' : '.menu-open', eased = width > 860 ? '#menu-products .menu-card' : '#site-menu'
+      await page.locator(opener).click()
+      assert.notEqual(await page.locator(eased).evaluate(node => getComputedStyle(node).transitionDuration), '0s', `The menu has an entrance: ${width}px`)
+      await page.waitForFunction(selector => { const style = getComputedStyle(document.querySelector(selector)); return style.opacity === '1' && style.translate === 'none' }, eased)
+      assert.deepEqual(outside, []); assert.deepEqual(errors, [])
+      console.log(`PASS motion ${width}px: every page scrolled; scroll-driven and timed motion run; layout shift 0; nothing left dim; page transition and menu entrance`)
+    } finally { await context.close() }
   }
   // Native form submissions against the actual function, with no real binding/provider.
   const context = await browser.newContext({ viewport: { width: 390, height: 900 } })

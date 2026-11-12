@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { fileText, scan } from '../../herdr/scripts/privacy-check.mjs'
 import { supportPrivacy } from './waitlist/lib/ui.js'
 import { themeCss } from './scripts/sync-theme.mjs'
-import { pages, routes, rootFiles, weUnfold, arca } from './scripts/build-pages.mjs'
+import { pages, routes, rootFiles, weUnfold, arca, arcaKit } from './scripts/build-pages.mjs'
 
 const root = resolve(fileURLToPath(new URL('.', import.meta.url)))
 const read = path => readFileSync(resolve(root, path), 'utf8')
@@ -20,15 +20,9 @@ const privacy = JSON.parse(read('../../herdr/scripts/privacy-list.json'))
 const generated = pages()
 const htmlAt = route => read(`${route.slice(1)}index.html`)
 const repo = 'https://github.com/automagik-si/automagik'
-const allowed = new Set([
-  repo, 'https://github.com/automagik-si/genie', 'https://github.com/automagik-si/omni',
-  ...routes.map(route => `https://automagik.si${route}`), 'mailto:privacy@automagik.si',
-  ...['Mac.dmg', 'Linux.deb', 'Linux.AppImage'].map(name => `${repo}/releases/latest/download/Automagik-${name}`),
-  `${repo}/tree/dev/herdr#install`, `${repo}/tree/dev/apps/bots-dsh#install`, `${repo}/tree/dev/apps/pocket`,
-  `${repo}/tree/dev/herdr/mods/pocket-link`, `${repo}/tree/dev/apps/desktop`,
-  `${repo}/blob/dev/docs/rfcs/0024-automagik-cloud.md`, `${repo}/blob/dev/apps/landing/assets/CAPTURES.md`, release.url,
-  `${repo}/issues`, weUnfold.url, arca.get,
-])
+const docs = 'https://docs.automagik.dev'
+const downloads = [...['Mac.dmg', 'Linux.deb', 'Linux.AppImage'].map(name => `${repo}/releases/latest/download/Automagik-${name}`), release.url]
+const allowed = new Set([repo, docs, ...downloads, ...routes.map(route => `https://automagik.si${route}`), 'mailto:privacy@automagik.si', weUnfold.url])
 // Text as a reader gets it: inline tags vanish, block tags become a space.
 const plain = html => html.replace(/<\/?(?:a|span|strong)\b[^>]*>/g, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ')
 const productOrder = ['/desktop/', '/mobile/', '/omni/', '/genie/', '/cloud/', '/arca/', '/mykes/']
@@ -47,7 +41,8 @@ test('approved umbrella map, one h1 per page, generated sources current, no clie
     assert.match(html, /<html lang="en">/)
     assert.match(html, /name="robots" content="noindex, nofollow"/)
     assert.match(html, /href="\/theme.css"/)
-    assert.doesNotMatch(html, /<(?:script|iframe)\b|\bon\w+\s*=|javascript:|automagik\.dev|automagik-dev|\.pages\.dev/i)
+    // The docs site is the one automagik.dev address the pages name, and only as a link.
+    assert.doesNotMatch(html.replaceAll(`href="${docs}"`, ''), /<(?:script|iframe)\b|\bon\w+\s*=|javascript:|automagik\.dev|automagik-dev|\.pages\.dev/i)
     const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map(match => match[1])
     assert.equal(new Set(ids).size, ids.length)
     assert.match(html, /class="skip" href="#main"/)
@@ -88,13 +83,19 @@ test('every href/action points locally or to an exact reviewed destination', () 
       }
     }
     for (const [, action] of html.matchAll(/action="([^"]+)"/g)) assert.equal(action, '/api/waitlist')
-    // The capture notes stay in the repository; the public footer does not link to them.
-    assert.ok(!html.slice(html.indexOf('<footer')).includes('CAPTURES.md'), route)
+    // Guides and help are on the docs site. GitHub is linked for the downloads and once,
+    // quietly, at the end of the footer; no page links to a design document or to the
+    // capture notes, which stay in the repository.
+    const github = [...html.matchAll(/href="(https:\/\/github\.com[^"]*)"/g)].map(match => match[1]).filter(href => !downloads.includes(href))
+    assert.deepEqual(github, [repo], route)
+    assert.ok(html.slice(html.indexOf('class="footer-license"')).includes(`<a href="${repo}">Source code `), route)
+    assert.doesNotMatch(html, /href="[^"]*(?:\/rfcs\/|CAPTURES\.md|raw\.githubusercontent)/, route)
   }
 })
 
 test('images are reviewed brand assets, unchanged captures or recorded crops of them', () => {
-  const brand = new Set(['/assets/brand/lockup.webp', '/assets/brand/mark.webp', '/assets/brand/omni-pleased.png'])
+  // Arca's icon files count only once Arca's kit is published into assets/brand/arca.
+  const brand = new Set(['/assets/brand/lockup.webp', '/assets/brand/mark.webp', '/assets/brand/omni-pleased.png', ...(arcaKit ? ['ink', 'ivory'].map(tone => `/assets/brand/arca/arca-icon-${tone}.svg`) : [])])
   for (const html of generated.values()) {
     for (const [, value] of html.matchAll(/(?:src|srcset|poster)="([^"]+)"/g)) {
       for (const source of value.split(',').map(candidate => candidate.trim().split(/\s+/)[0])) {
@@ -179,6 +180,30 @@ test('theme primitives match the app source, with keyboard and motion support', 
   assert.doesNotMatch(css, /overflow-x:\s*hidden/)
 })
 
+test('motion: only for visitors who allow it, only transform and opacity, and never Arca\'s logo', () => {
+  // Scroll-driven motion, page transitions and the entrances all sit inside the one
+  // no-preference block; a visitor who asks for reduced motion gets none of it.
+  const start = css.indexOf('@media (prefers-reduced-motion:no-preference){'), end = css.indexOf('@keyframes page-out')
+  assert.ok(start > 0 && end > start)
+  const outside = css.slice(0, start) + css.slice(end)
+  assert.doesNotMatch(outside, /animation-timeline|view-timeline|@view-transition|@starting-style|view-transition-name/)
+  const motion = css.slice(start, end)
+  for (const feature of ['@view-transition{navigation:auto}', '@supports (animation-timeline:view())', 'animation-timeline:view()', 'animation-timeline:scroll(root)', '@starting-style']) assert.ok(motion.includes(feature), feature)
+  assert.match(css, /@media \(prefers-reduced-motion:reduce\)\{html\{scroll-behavior:auto\}\*,\*::before,\*::after\{animation:none!important;transition:none!important\}\}/)
+  // Nothing that moves can shift the layout: keyframes and transitions touch only these.
+  const still = new Set(['opacity', 'translate', 'scale', 'rotate', 'transform'])
+  const frames = [...css.matchAll(/@keyframes ([\w-]+)\{((?:[^{}]*\{[^{}]*\})+)\}/g)]
+  assert.ok(frames.length >= 15)
+  for (const [, name, body] of frames) for (const [, property] of body.matchAll(/[{;]\s*([a-z-]+):/g)) assert.ok(still.has(property), `@keyframes ${name} animates ${property}`)
+  for (const [, list] of css.matchAll(/transition:([^;}]+)/g)) {
+    for (const part of list.replace(/\([^)]*\)/g, '').split(',')) assert.match(part.trim(), /^(?:opacity|translate|scale|rotate|transform|box-shadow|border-color|background|color|none)\b/, `transition: ${part}`)
+  }
+  // Arca's rule: its logo is never animated here. No motion rule names it, and the heading's
+  // entrance skips it.
+  assert.ok(motion.includes('.hero-heading>:not(.arca-mark){animation:'))
+  assert.equal(motion.split('arca-mark').length, 2)
+})
+
 test('all landing files pass privacy; no tracking or preview URL is committed', () => {
   const walk = folder => {
     for (const entry of readdirSync(resolve(root, folder), { withFileTypes: true })) {
@@ -208,14 +233,30 @@ test('Arca has exactly one stand-in page here; home links to its same-tab canoni
     const said = [...html.matchAll(/<strong>Arca<\/strong><span>([^<]*)<\/span>/g)].map(match => match[1])
     assert.deepEqual(said, [arca.line, arca.line], `${route}: the menu and the sheet say Arca's line`)
   }
-  assert.equal(arca.get, 'https://get.automagik.si/arca')
-  assert.ok(page.includes(`<a class="button primary" href="${arca.get}">Get Arca `))
+  // Get Arca opens this page, where the install command is text to copy. The installer's
+  // address answers with a shell script, so no link anywhere points at it.
+  assert.equal(arca.install, 'curl -fsSL https://get.automagik.si/arca | sh')
+  assert.equal(arca.needs, 'Today it needs a Linux machine (x86_64) with Incus, and a person comfortable with a terminal.')
+  assert.ok(page.includes(`<div class="install-line"><h2 id="get">Get Arca</h2><pre><code>${arca.install}</code></pre><p>${arca.needs}</p></div>`))
+  for (const [route, html] of generated) assert.doesNotMatch(html, /href="[^"]*(?:get\.automagik\.si|automagik-si\/arca)/, `${route}: neither the installer nor Arca's repository is a link`)
   assert.match(page, /<a class="button secondary" href="\/#blocks">All products /)
   assert.doesNotMatch(page, /Coming soon\.<\/p><p class="lede">/)
   const card = htmlAt('/').match(/<article class="product-card" data-block="arca">[\s\S]*?<\/article>/)?.[0]
-  assert.ok(card?.includes(`<h3><a href="/arca/">Arca</a></h3><p>${arca.line}</p>`))
+  assert.ok(card?.includes(`<h3><a href="/arca/">Arca</a></h3><p>${arca.line}</p><span class="detail-link" aria-hidden="true">Get Arca →</span>`))
   // The card says only Arca's name and the owner's line: no tag of guessed wording.
   assert.doesNotMatch(card, /tile-tag/)
+  // Arca's own logo stands wherever Arca does, never another product's mark: its kit's icon
+  // once published here, an empty placeholder until then. The two menus, the home card and
+  // the page's heading each carry one; nothing else does, and the stamp never holds it.
+  const slot = arcaKit ? /<span class="arca-mark at-(\w+)" data-arca-logo="kit"><picture><source media="\(prefers-color-scheme: dark\)" srcset="\/assets\/brand\/arca\/arca-icon-ivory\.svg"><img src="\/assets\/brand\/arca\/arca-icon-ink\.svg" width="64" height="64" alt="" aria-hidden="true" decoding="async"><\/picture><\/span>/g : /<span class="arca-mark at-(\w+)" data-arca-logo="placeholder" aria-hidden="true"><\/span>/g
+  for (const [route, html] of generated) {
+    const places = [...html.matchAll(slot)].map(match => match[1])
+    assert.deepEqual(places, ['menu', 'menu', ...(route === '/' ? ['card'] : route === '/arca/' ? ['hero'] : [])], route)
+    assert.equal((html.match(/arca-mark/g) ?? []).length, places.length, route)
+    for (const [item] of html.matchAll(/<a class="menu-item" href="\/arca\/"[\s\S]*?<\/a>/g)) assert.doesNotMatch(item, /<img[^>]*\/assets\/(?:art|brand\/(?:mark|lockup))/, route)
+    for (const [mark] of html.matchAll(/<a class="stamp[\s\S]*?<\/a>/g)) assert.doesNotMatch(mark, /arca|<img/, route)
+  }
+  assert.doesNotMatch(page.match(/<main[\s\S]*<\/main>/)[0].split('class="more ')[0], /<img[^>]*\/assets\/(?:art|brand\/(?:mark|lockup))/)
   for (const html of generated.values()) for (const [link] of html.matchAll(/<a\b[^>]*href="\/arca\/"[^>]*>/g)) assert.doesNotMatch(link, /target=/)
   // The root sitemap lists Arca only through Arca's own supplied line.
   assert.equal(read('sitemap.xml').split('https://automagik.si/arca/</loc>').length, 2)
@@ -227,8 +268,12 @@ test('we unfold and Open Intelligence: the approved wording, from one constant, 
   assert.equal(weUnfold.openIntelligence, 'Open Intelligence: a future more people can understand, question, and shape.')
   for (const [route, html] of generated) {
     const text = plain(html)
-    // The footer's brand line and the Company menu carry the part-of line on every page.
-    assert.ok(plain(html.slice(html.indexOf('<footer'))).includes(weUnfold.partOf), route)
+    // Every footer carries the Open Intelligence stamp, which is the link to we unfold; the
+    // Company menu carries the part-of line.
+    const footer = html.slice(html.indexOf('<footer'))
+    assert.equal(footer.split(`<a class="stamp tag" href="${weUnfold.url}">`).length, 2, route)
+    assert.match(footer, /<span class="stamp-text"><strong>Open Intelligence<\/strong><span>Part of we unfold /, route)
+    assert.equal(html.split('class="stamp seal"').length, route === '/' ? 2 : 1, route)
     assert.ok(plain(html.match(/id="menu-company"[\s\S]*?<\/div><\/div>/)[0]).includes(weUnfold.partOf), route)
     assert.ok(html.includes(`<a href="${weUnfold.url}">we unfold</a>`), route)
     // Open Intelligence keeps both capitals and is never shortened; we unfold is lower case
@@ -241,6 +286,8 @@ test('we unfold and Open Intelligence: the approved wording, from one constant, 
   }
   const home = plain(htmlAt('/').match(/<main[\s\S]*<\/main>/)[0])
   assert.ok(home.includes(weUnfold.openIntelligence) && home.includes(weUnfold.partOf))
+  // The seal: Automagik's own drawing with the movement's name around it, linked to we unfold.
+  assert.match(htmlAt('/'), new RegExp(`<a class="stamp seal" href="${weUnfold.url}">[\\s\\S]*?>Open Intelligence · part of we unfold · </textPath>[\\s\\S]*?<span class="sr">Open Intelligence\\. Part of we unfold</span></a>`))
 })
 
 test('navigation: menus, phone menu, footer sitemap, breadcrumb and previous/next on every page', () => {
@@ -260,18 +307,17 @@ test('navigation: menus, phone menu, footer sitemap, breadcrumb and previous/nex
     assert.deepEqual(hrefs(panel('products')).slice(0, 7), productOrder, route)
     assert.deepEqual(hrefs(group(sheet, 'Products', 'Resources')), productOrder, route)
     assert.deepEqual(hrefs(group(footer, 'Products', 'Resources')), productOrder, route)
-    // Resources and Company: the same links in the menu and the phone menu; the footer has
-    // the same groups without the capture notes.
+    // Resources and Company: the same links in the menu, the phone menu and the footer.
     const resources = hrefs(panel('resources')), company = hrefs(panel('company')).slice(0, 3)
-    assert.equal(resources.length, 4, route); assert.ok(resources.at(-1).endsWith('/CAPTURES.md'), route)
-    assert.deepEqual(company, [weUnfold.url, `${repo}/issues`, '/cloud/#privacy'], route)
+    assert.deepEqual(resources, [docs, '/desktop/#install', '/mobile/#install'], route)
+    assert.deepEqual(company, [weUnfold.url, docs, '/cloud/#privacy'], route)
     assert.deepEqual(hrefs(group(sheet, 'Resources', 'Company')), resources, route)
     assert.deepEqual(hrefs(group(sheet, 'Company')).slice(0, 3), company, route)
-    assert.deepEqual(hrefs(group(footer, 'Resources', 'Company')), resources.slice(0, 3), route)
-    assert.deepEqual(hrefs(group(footer, 'Company')), company, route)
+    assert.deepEqual(hrefs(group(footer, 'Resources', 'Company')), resources, route)
+    assert.deepEqual(hrefs(group(footer, 'Company')).slice(0, 3), company, route)
     // Every menu entry has a one-line description and its character, mark or glyph.
     for (const source of [panel('products'), panel('resources'), panel('company'), sheet]) {
-      for (const [item] of source.matchAll(/<a class="menu-item"[\s\S]*?<\/a>/g)) assert.match(item, /<span class="menu-icon">(?:<img|<svg)[\s\S]*<strong>[^<]+[\s\S]*<\/strong><span>[^<]{8,}<\/span>/, `${route} ${item.slice(0, 80)}`)
+      for (const [item] of source.matchAll(/<a class="menu-item"[\s\S]*?<\/a>/g)) assert.match(item, /<span class="menu-icon">(?:<img|<svg|<span class="arca-mark)[\s\S]*<strong>[^<]+[\s\S]*<\/strong><span>[^<]{8,}<\/span>/, `${route} ${item.slice(0, 80)}`)
     }
     // The active page: marked in the header button, the menu, the phone menu and the footer.
     const current = (html.match(/aria-current="page"/g) ?? []).length

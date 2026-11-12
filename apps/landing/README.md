@@ -18,8 +18,10 @@ The committed HTML needs no Pages build step and contains no client JavaScript. 
 has one small film slot: a real still with one quiet line until the film exists. Cloud is coming soon and carries intent, consent and removal
 forms, with email or inbound-first WhatsApp confirmation. No launch or marketing email.
 The meter is not a product or page. Herdr and DSH are Desktop installation channels.
-Pages carries exactly one Arca page, the stand-in at `/arca/` (name, one line, Get Arca, the
-way back), and nothing under it; Arca's own site takes that address over later.
+Pages carries exactly one Arca page, the stand-in at `/arca/` (name, one line, Get Arca as
+the install command to copy, the way back), and nothing under it; Arca's own site takes that
+address over later. The installer's address answers with a shell script, so no link points
+at it; Get Arca on the home page and in the menus opens `/arca/`.
 
 ## Navigation
 
@@ -32,8 +34,7 @@ browser keeps the button's expanded state for assistive technology (so the HTML 
 860 px one Menu button opens a sheet under the header with the same three groups; while it
 is open the page behind it is hidden from the keyboard and from assistive technology. A
 browser without popovers opens the panels on hover or focus and gets a link to the footer's
-sitemap on a phone. The footer is the sitemap with the same groups (without the capture
-notes). Every product page shows where it is (the header's Products button and a breadcrumb
+sitemap on a phone. The footer is the sitemap with the same groups. Every product page shows where it is (the header's Products button and a breadcrumb
 back to all products) and links to the previous and next product. Products keep one order
 everywhere; it is the `products` list in `scripts/build-pages.mjs`.
 
@@ -41,11 +42,41 @@ everywhere; it is the `products` list in `scripts/build-pages.mjs`.
 
 Automagik is part of we unfold. The link and both lines of wording are one constant,
 `weUnfold` in `scripts/build-pages.mjs`: change them there and regenerate. They appear in the
-footer's brand line, in the Company menu and once on the home page. The contract test holds
+Company menu and once on the home page, and the Open Intelligence stamp carries the link:
+the seal beside the line on the home page, the tag in every footer. The stamp is Automagik's
+own drawing, not we unfold's logo, and never holds another product's logo. The contract test holds
 the rules from the we unfold team: Open Intelligence keeps both capitals and is never
 shortened; we unfold is lower case in running text; "part of" means the movement, never
 ownership; no logo, the text is the link. The owner approves both lines before the site
 goes live.
+
+## Links out
+
+Guides and help link to the docs site, `https://docs.automagik.dev`, with no deep paths
+while that site is being redone. GitHub is linked for the downloads and once, quietly, at
+the end of the footer. No page links to an RFC or to the capture notes; both stay in the
+repository.
+
+## Arca's logo
+
+Arca's logo kit is not published yet. Wherever Arca's logo belongs (the two menus, the home
+card, the heading of `/arca/`) the committed pages show an empty dashed placeholder. When
+Arca's kit is published, its icon files go in `assets/brand/arca/` (`arca-icon-ink.svg`,
+`arca-icon-ivory.svg`), the pages are regenerated and they carry the icon: ink on sand in
+light, ivory on night in dark. Arca's rules hold here: one colour, never redrawn or tinted,
+never animated by this site, never inside the Open Intelligence stamp, no tagline locked to
+it. Name any retina file `name-2x`, since the privacy check reads the usual at-sign form as
+an address.
+
+## Motion
+
+Motion is CSS only and sits in one block of `styles.css`, for visitors who have not asked
+for reduced motion: sections and cards rise as they scroll into view, a card's picture
+moves a little within it, the home's cast pops up and peeks higher as the page leaves, the
+stamp is pressed on and its ring of words turns, pages cross-fade with a character
+travelling to its own page, and the menus ease in. It moves only `translate`, `scale`,
+`rotate`, `transform` and `opacity`, so the layout never shifts. With reduced motion, or in
+a browser without scroll-driven animation, the page is whole and still.
 
 ## Source and checks
 
@@ -74,7 +105,12 @@ and close by click, Enter and Space, Escape with the focus returning to the butt
 expanded state in the accessibility tree, hover in the same place as click, one panel at a
 time, the active page, every menu and footer link answering, and the phone sheet (it fills
 the screen under the header, the keyboard never lands behind it, Escape and the Menu button
-close it, a link in it goes to its page). It writes full-page images and a JSON report to ignored
+close it, a link in it goes to its page). Every page run is in reduced motion and checks
+that no animation runs and the browser's layout-shift score is 0. A separate run with
+motion scrolls every page top to bottom at 1440 and 390: something moves, the layout-shift
+score stays 0, nothing widens the page, everything that rises ends fully shown down to the
+last section, the page-to-page transition runs to its end and the menu's entrance settles.
+It writes full-page images and a JSON report to ignored
 `.cache/landing-evidence/`; set `LANDING_EVIDENCE` to another absolute report directory.
 At 1440 and 390 it also renders equal-width side-by-side site/app comparisons in each theme.
 The `landing` CI job runs the same gates and retains the images/report as an artifact.
