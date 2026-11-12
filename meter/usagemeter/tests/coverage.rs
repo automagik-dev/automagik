@@ -1787,3 +1787,104 @@ fn the_coverage_schema_accepts_every_example_and_refuses_bad_records() {
     v["windows"][0].as_object_mut().unwrap().remove("inspected");
     assert!(!s.valid(&v), "inspected is required even when null");
 }
+
+#[test]
+fn repo_alias_folds_coverage_into_primary_repo() {
+    const OLD: &str = "example.com/old-acme/widgets";
+    let s = classes();
+    let before = report(&s, &["--repo", REPO, "--json"]);
+    let st = s.store();
+    let changed = st
+        .conn
+        .execute(
+            "UPDATE usage SET repo = ?1 WHERE repo = ?2 AND rowid % 2 = 0",
+            rusqlite::params![OLD, REPO],
+        )
+        .unwrap();
+    assert!(changed > 0);
+    drop(st);
+    let without = report(&s, &["--repo", REPO, "--json"]);
+    assert_ne!(without["windows"], before["windows"]);
+    let v = report(
+        &s,
+        &[
+            "--repo",
+            REPO,
+            "--repo-alias",
+            OLD,
+            "--repo-alias",
+            OLD,
+            "--repo-alias",
+            REPO,
+            "--json",
+        ],
+    );
+    assert_eq!(v["windows"], before["windows"]);
+    for name in ["d1", "d7", "d30"] {
+        let w = window(&v, name);
+        assert_eq!(w["repos"].as_array().unwrap().len(), 1);
+        assert_eq!(w["repos"][0]["repo"], REPO);
+        assert_eq!(w["repos"][0]["totals"], w["totals"]);
+        assert!(w["totals"]["total"].as_i64().unwrap() > 0);
+    }
+}
+
+#[test]
+fn repo_alias_requires_one_repo_and_bounded_normalized_names() {
+    let s = Scene::migrated(COUNTED_FROM, &[]);
+    let long = format!("example.com/acme/{}", "w".repeat(query::MAX_REPO_BYTES));
+    for (a, expected) in [
+        (
+            args(&["--repo-alias", REPO]),
+            "--repo-alias requires --repo",
+        ),
+        (
+            args(&[
+                "--repo",
+                REPO,
+                "--repo",
+                "example.com/acme/other",
+                "--repo-alias",
+                REPO,
+            ]),
+            "--repo-alias requires a single --repo",
+        ),
+        (
+            args(&["--repo", REPO, "--repo-alias"]),
+            "--repo-alias needs a value",
+        ),
+        (
+            args(&[
+                "--repo",
+                REPO,
+                "--repo-alias",
+                "https://example.com/acme/widgets",
+            ]),
+            "--repo-alias takes host/owner/repo",
+        ),
+        (
+            args(&["--repo", REPO, "--repo-alias", &long]),
+            "--repo-alias takes",
+        ),
+        (
+            {
+                let mut a = args(&["--repo", REPO]);
+                a.extend(
+                    (0..17)
+                        .flat_map(|i| ["--repo-alias".into(), format!("example.com/acme/old-{i}")]),
+                );
+                a
+            },
+            "at most 16 --repo-alias values may be given",
+        ),
+    ] {
+        let r = coverage::run(&a, &ctx(&s));
+        assert_eq!(r.code, query::exit::USAGE);
+        assert!(r.stderr.unwrap().contains(expected));
+    }
+    let mut a = args(&["--repo", REPO]);
+    for i in (0..16).chain(0..16) {
+        a.extend(["--repo-alias".into(), format!("example.com/acme/old-{i}")]);
+    }
+    assert_ne!(coverage::run(&a, &ctx(&s)).code, query::exit::USAGE);
+}

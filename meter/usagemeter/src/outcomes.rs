@@ -154,6 +154,7 @@ impl Failure {
 struct Request {
     windows: Vec<Window>,
     repos: Vec<String>,
+    repo_aliases: Vec<String>,
     json: bool,
 }
 
@@ -161,6 +162,7 @@ struct Request {
 fn parse(args: &[String]) -> Result<Request, String> {
     let mut windows: Vec<Window> = Vec::new();
     let mut repos: Vec<String> = Vec::new();
+    let mut repo_aliases: Vec<String> = Vec::new();
     let mut json = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -202,12 +204,43 @@ fn parse(args: &[String]) -> Result<Request, String> {
                     repos.push(v.clone());
                 }
             }
+            "--repo-alias" => {
+                let v = it.next().ok_or("--repo-alias needs a value")?;
+                if !query::repo_ok(v) {
+                    return Err(format!(
+                        "--repo-alias takes host/owner/repo as the meter normalizes a remote, not {}",
+                        query::quoted(v)
+                    ));
+                }
+                if v.len() > query::MAX_REPO_BYTES {
+                    return Err(format!(
+                        "--repo-alias takes {} bytes; the most it takes is {}",
+                        v.len(),
+                        query::MAX_REPO_BYTES
+                    ));
+                }
+                if !repo_aliases.contains(v) {
+                    repo_aliases.push(v.clone());
+                }
+            }
             other => {
                 return Err(format!(
                     "unknown option {} for outcomes; see usagemeter --help",
                     query::quoted(other)
                 ));
             }
+        }
+    }
+    if !repo_aliases.is_empty() {
+        if repos.is_empty() {
+            return Err("--repo-alias requires --repo".into());
+        }
+        if repos.len() > 1 {
+            return Err("--repo-alias requires a single --repo".into());
+        }
+        repo_aliases.retain(|a| a != &repos[0]);
+        if repo_aliases.len() > query::MAX_REPO_ALIASES {
+            return Err("at most 16 --repo-alias values may be given".into());
         }
     }
     if windows.is_empty() {
@@ -218,8 +251,18 @@ fn parse(args: &[String]) -> Result<Request, String> {
     Ok(Request {
         windows,
         repos,
+        repo_aliases,
         json,
     })
+}
+
+/// Fold a renamed repository into the primary name before filtering or grouping.
+fn canon_repo(repo: Option<String>, req: &Request) -> Option<String> {
+    if repo.as_ref().is_some_and(|r| req.repo_aliases.contains(r)) {
+        Some(req.repos[0].clone())
+    } else {
+        repo
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1046,7 +1089,7 @@ fn tool_errors(
             record::API_ERROR if rd.api_errors_from.is_some() => record::API_ERROR,
             _ => continue,
         };
-        let repo: Option<String> = r.get(1)?;
+        let repo = canon_repo(r.get(1)?, rd.req);
         if !rd.named.is_empty() && !repo.as_deref().is_some_and(|r| rd.named.contains(r)) {
             continue;
         }
@@ -1233,13 +1276,17 @@ fn run_ends(
     ends
 }
 
-fn has_usage(c: &Connection, b: &query::Bounds, named: &BTreeSet<&str>) -> rusqlite::Result<bool> {
+fn has_usage(c: &Connection, b: &query::Bounds, req: &Request) -> rusqlite::Result<bool> {
     let mut st =
         c.prepare_cached("SELECT DISTINCT repo FROM usage WHERE hour_ms >= ?1 AND hour_ms < ?2")?;
     let mut q = st.query([b.start, b.end])?;
     while let Some(r) = q.next()? {
         let repo: Option<String> = r.get(0)?;
-        if named.is_empty() || repo.as_deref().is_some_and(|r| named.contains(r)) {
+        if req.repos.is_empty()
+            || repo
+                .as_ref()
+                .is_some_and(|r| req.repos.contains(r) || req.repo_aliases.contains(r))
+        {
             return Ok(true);
         }
     }
@@ -1305,6 +1352,7 @@ struct Read<'a> {
     branches: &'a [Branch<'a>],
     with_pr: &'a BTreeSet<(&'a str, &'a str)>,
     named: &'a BTreeSet<&'a str>,
+    req: &'a Request,
     errors_from: Option<i64>,
     api_errors_from: Option<i64>,
     complete: bool,
@@ -1334,7 +1382,7 @@ fn window_out(
         && acc.api_errors == 0
         && !any_launch
         && ttp.state == "no_data"
-        && !has_usage(c, b, rd.named)?
+        && !has_usage(c, b, rd.req)?
     {
         // Nothing ran, failed or opened here, as far as the store knows: no count is a 0.
         return Ok(not_recorded(window, b, "no_data"));
@@ -1525,8 +1573,14 @@ fn report(
         .map(|w| (*w, query::bounds(&meta, *w, ctx.now_ms)))
         .collect();
     let windows: Vec<WindowOut> = if recorded {
-        let launches = launches(c).map_err(Failure::sql)?;
-        let prs = prs(c).map_err(Failure::sql)?;
+        let mut launches = launches(c).map_err(Failure::sql)?;
+        for l in &mut launches {
+            l.repo = canon_repo(l.repo.take(), req);
+        }
+        let mut prs = prs(c).map_err(Failure::sql)?;
+        for p in &mut prs {
+            p.repo = canon_repo(p.repo.take(), req);
+        }
         let branches = branches(&prs, &launches);
         let with_pr: BTreeSet<(&str, &str)> = prs
             .iter()
@@ -1538,6 +1592,7 @@ fn report(
             branches: &branches,
             with_pr: &with_pr,
             named: &named,
+            req,
             errors_from,
             api_errors_from,
             complete,
