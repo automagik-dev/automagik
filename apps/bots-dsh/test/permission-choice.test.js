@@ -845,3 +845,20 @@ test('in the list, Full access confirmed while another save is open waits its tu
   assert.equal(open.length, 2)
   assert.equal(rowOf(document, 'danger-full-access').getAttribute('aria-pressed'), 'true')
 })
+
+test('Auto question explains the reviewer and retains the revision at opening across renders', async t => {
+  const { document, root, click, PermissionList } = mount(t)
+  const catalog = { ...THREE, options: [READ, WORK, { value: 'workspace-write:auto', name: 'Auto' }, FULL] }
+  const picks = []
+  let rev = 3
+  const render = () => root.render(React.createElement(PermissionList, { catalog, saved: 'read-only', name: 'Ada', replaced: 'Read only', askedOf: () => ({ id: 'ada', rev }), onPick: async (value, asked) => { picks.push([value, asked]); return true } }))
+  await act(render)
+  await click(rowOf(document, 'workspace-write:auto'))
+  for (const words of ['Codex', 'reviewer', 'outside', 'Automagik does not review', 'another Bot', 'schedule', 'Read only']) assert.ok(document.body.textContent.includes(words), words)
+  await click(button(document, 'Cancel'))
+  assert.deepEqual(picks, [])
+  await click(rowOf(document, 'workspace-write:auto'))
+  rev = 9; await act(render)
+  await click(button(document, 'Use Auto'))
+  assert.equal(JSON.stringify(picks), JSON.stringify([['workspace-write:auto', { id: 'ada', rev: 3 }]]))
+})

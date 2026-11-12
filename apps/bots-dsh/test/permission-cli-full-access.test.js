@@ -15,7 +15,7 @@ const { outputFiles } = await build({
   stdin: { contents: [
     "export { PermissionPicker, PermissionList, PermissionOptions, presetName, presetText, cliOfBot } from './src/client/permission-picker.js'",
     "export { ComposerPermission } from './src/client/composer.js'",
-    "export { PermissionChoiceDock } from './src/client/permission-card.js'",
+    "export { PermissionChoiceDock, reopenPermissionChoice } from './src/client/permission-card.js'",
     "export { permissionRows, noAskMissed } from './src/client/permission-diagnostics.js'",
   ].join('\n'), resolveDir: plugin },
   bundle: true, format: 'cjs', platform: 'browser', write: false, logLevel: 'silent',
@@ -48,9 +48,10 @@ function load() {
   const localStorage = { getItem: key => store.get(key) ?? null, setItem: (key, value) => { store.set(key, String(value)) }, removeItem: key => store.delete(key) }
   const module = { exports: {} }
   runInNewContext(outputFiles[0].text, {
-    module, exports: module.exports, window: { localStorage, addEventListener() {}, removeEventListener() {} }, localStorage,
+    module, exports: module.exports, window: { localStorage, innerWidth: 1024, innerHeight: 768, addEventListener() {}, removeEventListener() {} }, localStorage,
+    document: { body: {} },
     URL, URLSearchParams, setTimeout, clearTimeout, navigator: {}, Date, Promise, Intl, console,
-    require: name => (name === 'react' ? react : {}),
+    require: name => (name === 'react' ? react : name === 'react-dom' ? { createPortal: child => child } : {}),
   })
   // One component kept across renders: its own hooks only, children expanded without hooks.
   const render = (component, props) => {
@@ -207,6 +208,41 @@ test('the composer chip of a CLI Bot reads Full access, including its tooltip an
   }
 })
 
+for (const [name, patch, fallback] of [
+  ['without Auto', {}, false],
+  ['without Auto and with a missing saved level', { permission: 'gone', permissionNotOffered: true, permissionRuns: 'workspace-write' }, false],
+  ['on Auto', { permissionAuto: 'acp-codex' }, true],
+]) {
+  const bot = { ...CODEX, permission: 'workspace-write', permissionFallback: 'workspace-write', ...patch }
+  const roster = { byId: { [bot.sessionId]: bot }, permissions: CATALOG, ready: true, readOnly: false }
+  const props = { sessionId: bot.sessionId, useRoster: pick => pick(roster), actions: {} }
+  const check = tree => {
+    const text = textOf(tree)
+    assert.equal(text.includes('Runs as Workspace here'), fallback)
+    assert.doesNotMatch(text, /Saved level:|DeepSeek Harness no longer offers it|This conversation runs as|Pick a level to settle it/)
+  }
+  test(`the composer menu ${name} ${fallback ? 'shows' : 'omits'} the fallback note`, () => {
+    const { ComposerPermission, render } = load()
+    let tree = render(ComposerPermission, props)
+    const chip = buttons(tree).find(button => button.props.className === 'bt-perm-chip')
+    chip.props.ref.current = { getBoundingClientRect: () => ({ width: 160, right: 800, top: 600, bottom: 640 }) }
+    chip.props.onClick()
+    // The anchor, placement and linger effects each settle on the next render.
+    for (let i = 0; i < 3; i++) tree = render(ComposerPermission, props)
+    const menu = nodes(tree).find(node => node?.props?.role === 'menu' && node.props['aria-label'] === 'Permissions')
+    assert.ok(menu, 'the composer menu is open')
+    check(menu)
+  })
+  test(`the chat card ${name} ${fallback ? 'shows' : 'omits'} the fallback note`, () => {
+    const { PermissionChoiceDock, reopenPermissionChoice, render } = load()
+    reopenPermissionChoice(bot.id)
+    const dock = PermissionChoiceDock(props)
+    const card = dock.props.children.find(child => typeof child?.type === 'function')
+    assert.ok(card, 'the card is reopened for a Bot with a saved level')
+    check(render(card.type, card.props))
+  })
+}
+
 test('the card in the chat of a CLI Bot shows Full access, asks in the CLI\'s words and sends Full access', async () => {
   const { PermissionChoiceDock, render } = load()
   const bot = { ...CODEX, permission: undefined }
@@ -236,7 +272,7 @@ test('the card in the chat of a CLI Bot shows Full access, asks in the CLI\'s wo
 const row = (bot, acp, extra = {}) => ({ kind: 'chat', botId: bot.id, open: true, source: 'bot', saved: { value: FULL }, effective: { value: FULL }, ...(acp ? { acp } : {}), ...extra })
 const record = (agent, modes) => ({ agent, active: true, modes })
 const ROSTER = { bots: [CLAUDE, CODEX, NATIVE], rooms: [] }
-const report = sessions => ({ version: 1, sessions })
+const report = sessions => ({ version: 2, sessions })
 
 test('the diagnostics section names the level Full access on every route', () => {
   const { permissionRows } = load()

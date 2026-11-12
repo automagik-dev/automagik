@@ -683,6 +683,27 @@ const ZH = {
   'Workspace': '工作区内修改',
   'Full access': '完全权限',
   'Auto review': '自动审查',
+  "Works as Workspace. Where Workspace would ask you, Codex decides first, with its own reviewer: it runs the step, refuses it, or asks you.": "按工作区内修改运行。需要询问你时，Codex 会先由自己的审查器决定：执行、拒绝或询问你。",
+  "Put {name} on Auto?": "让{name}使用自动模式？",
+  "Use Auto": "使用自动模式",
+  "On Auto, Codex decides by itself, with its own reviewer, which steps it runs, refuses or asks you about. It may change files outside {name}'s folder without asking you, and Automagik does not review those steps.": "在自动模式下，Codex 通过自己的审查器决定执行哪些步骤、拒绝哪些步骤或询问你。它可能不经询问就修改{name}文件夹之外的文件，Automagik 不会审查这些步骤。",
+  "Any message that reaches {name}'s chat can lead to such a step: yours, another Bot's or a schedule's. Tasks and Bots it starts from that chat while on Auto start on Auto too.": "任何到达{name}聊天的消息都可能引发这样的步骤：你的消息、其他 Bot 的消息或定时任务的消息。在自动模式下从该聊天启动的任务和 Bot 也以自动模式启动。",
+  "This replaces {level}. Based on Codex 0.167.0; a later Codex may decide differently.": "这将替换{level}。基于 Codex 0.167.0；后续版本可能作出不同决定。",
+  "Auto counts here: Codex decides on its own.": "自动模式在此生效：Codex 自行决定。",
+  "Auto is saved, but here it runs as Workspace: {why}.": "已保存自动模式，但这里按工作区内修改运行：{why}。",
+  "this window does not hold the team": "此窗口未持有团队锁",
+  "the saved level is not Workspace": "保存的级别不是工作区内修改",
+  "the Bot has a tool deny list": "此 Bot 有工具禁用列表",
+  "this is not the Bot's own current chat": "这不是该 Bot 当前自己的聊天",
+  "this conversation is not at Workspace now": "此对话当前不是工作区内修改",
+  "this conversation runs on another model": "此对话使用另一个模型",
+  "Codex here gets DeepSeek Harness's tools, or does not offer its own mode": "这里的 Codex 使用 DeepSeek Harness 的工具，或不提供自己的模式",
+  "For the last prompt Codex was put in its own mode.": "上一次提示使用了 Codex 自己的模式。",
+  "For the last prompt Codex was put in its strict mode: {why}.": "上一次提示使用了 Codex 的严格模式：{why}。",
+  "Auto does not count here": "自动模式在此不生效",
+  "no answer came in time": "未及时收到回答",
+  "the answer changed before the prompt": "发送提示前回答发生变化",
+  "Codex refused its own mode": "Codex 拒绝了自己的模式",
   Experimental: '实验性',
   'Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.': '自动审查不使用沙箱：每次工具调用前先由模型审查，被拦下的调用由你决定。此功能仍属实验性，可能误放行或误拦截，并会消耗更多 token。',
   'Use Auto review': '启用自动审查',
@@ -1908,6 +1929,10 @@ const HOST_ZH = {
   'Nothing to cancel': '没有要取消的内容',
   'Nothing to close': '没有要关闭的内容',
   'Omni is still loading this chat.': 'Omni 还在加载这个对话。',
+  "{name}'s permissions changed meanwhile, so nothing was saved. Look again and choose.": '{name} 的权限在此期间已经改变，因此没有保存任何内容。请重新查看后再选择。',
+  'Auto is not offered for {name} here.': '这里不为 {name} 提供自动模式。',
+  'This host cannot save the Bot team.': '这台主机无法保存 Bot 团队。',
+  "Only the person turns Auto on, from the Bot's permission choice.": '只有用户本人能在 Bot 的权限选择中开启自动模式。',
 }
 Object.assign(ZH, HOST_ZH)
 
@@ -1975,6 +2000,9 @@ const HOST_TEMPLATES = [
   { template: 'Session {session} cannot join {bot} because this window cannot change the Bot team now. {reason}', host: ['reason'] },
   '{bot} changed while Session {session} was joining it (another window or an edit). For the Bot team: Nothing was changed; try again. The native preset of Session {session} was set to "{preset}" before this refusal.',
   '{bot} changed while Session {session} was being saved. For the Bot team: Nothing was changed; try again. The native preset of Session {session} was set to "{preset}" before this refusal.',
+  // Auto's refusals that name the Bot (auto.js setBotAuto).
+  "{name}'s permissions changed meanwhile, so nothing was saved. Look again and choose.",
+  'Auto is not offered for {name} here.',
 ].map((entry) => {
   const { template, host = [] } = typeof entry === 'string' ? { template: entry } : entry
   const names = []

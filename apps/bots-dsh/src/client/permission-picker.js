@@ -1,13 +1,13 @@
 import { createElement as h, Fragment, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { AUTO } from '../shared/permission-levels.js'
+import { AUTO, AUTO_MARK, AUTO_ROW, MARK_LEVEL } from '../shared/permission-levels.js'
 import { Segmented } from './motion.js'
 import { CheckIcon } from './icons.js'
 import { CLI_NAMES, cliProviderOf } from './cli-login-model.js'
 import { Caret, useAnchoredMenu } from './model-menu.js'
 import { t } from './i18n.js'
 
-const LABELS = { 'read-only': 'Read only', 'workspace-write': 'Workspace', 'danger-full-access': 'Full access', [AUTO]: 'Auto review' }
+const LABELS = { [AUTO_ROW]: 'Auto', 'read-only': 'Read only', 'workspace-write': 'Workspace', 'danger-full-access': 'Full access', [AUTO]: 'Auto review' }
 const DANGER = new Set(['danger-full-access'])
 
 export const presetDanger = value => DANGER.has(value)
@@ -56,6 +56,7 @@ export function PermissionFallback({ fallback, owner, catalog }) {
 // wider access. The file rules cover writes, not the network. A level these do not name (a
 // custom preset) shows what DSH's catalog says of it, or its name alone: nothing is made up.
 const TEXTS = {
+  [AUTO_ROW]: 'Works as Workspace. Where Workspace would ask you, Codex decides first, with its own reviewer: it runs the step, refuses it, or asks you.',
   'read-only': 'It cannot change files unless you allow that one action. It can still run commands and use the network and its other tools.',
   'workspace-write': 'Changes files inside its folder and a temporary folder without asking. For other files it asks you first. It can still run commands and use the network and its other tools.',
   [AUTO]: 'A model reviews each action first. You are asked only about the ones it stops. The rest run with full access, and it can let a wrong one through.',
@@ -67,7 +68,8 @@ export const presetText = (value, catalog, cli) => (cliAuto(value, cli) ? t(CLI_
 // `onPick` resolves false. `repick` lets the shown preset be picked again. Auto review is
 // experimental: picking it asks once before it is sent, and so does Full access where
 // `confirmFull` is set. `confirming` is the level waiting for that answer.
-export function usePermissionPick({ saved, onPick, repick = false, confirmFull = false }) {
+export function usePermissionPick({ saved, onPick, askedOf, repick = false, confirmFull = false }) {
+  const asked = useRef()
   const [pending, setPending] = useState(null)
   const [confirming, setConfirming] = useState(false)
   // One save runs at a time. A pick made while one is in flight waits as `latest`
@@ -80,7 +82,7 @@ export function usePermissionPick({ saved, onPick, repick = false, confirmFull =
   }, [pending, saved])
   const send = (value) => {
     flight.current.value = value
-    void Promise.resolve(onPick(value)).then(done => done !== false, () => false).then((ok) => {
+    void Promise.resolve(onPick(value, asked.current)).then(done => done !== false, () => false).then((ok) => {
       const wanted = flight.current.latest
       flight.current.latest = undefined
       if (wanted !== undefined && !(wanted === value && ok)) { send(wanted); return }
@@ -89,10 +91,10 @@ export function usePermissionPick({ saved, onPick, repick = false, confirmFull =
     })
   }
   const current = pending ?? saved
-  const asks = value => value === AUTO || (confirmFull && presetDanger(value))
+  const asks = value => value === AUTO_ROW || value === AUTO || (confirmFull && presetDanger(value))
   const pick = (value, confirmed = false) => {
     if (value === current && !repick) return
-    if (asks(value) && !confirmed) { setConfirming(value); return }
+    if (asks(value) && !confirmed) { asked.current = askedOf?.(); setConfirming(value); return }
     setConfirming(false)
     setPending(value)
     if (flight.current.value !== undefined) { flight.current.latest = value; return }
@@ -102,7 +104,14 @@ export function usePermissionPick({ saved, onPick, repick = false, confirmFull =
 }
 
 // The question asked before Auto review or Full access is sent; `name` is the Bot it is for.
-function PermissionConfirm({ value, name, cli, onConfirm, onCancel }) {
+export function PermissionConfirm({ value, name, replaced, cli, onConfirm, onCancel }) {
+  if (value === AUTO_ROW) {
+    return h('div', { className: 'bt-perm-confirm', role: 'alert' },
+      h('span', { className: 'bt-note' }, t('Put {name} on Auto?', { name })),
+      ...autoQuestion(name, replaced).map(text => h('span', { className: 'bt-note' }, text)),
+      h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: onConfirm }, t('Use Auto')),
+      h('button', { type: 'button', className: 'bt-soft bt-soft-sm', onClick: onCancel }, t('Cancel')))
+  }
   if (value === AUTO) {
     return h('div', { className: 'bt-perm-confirm', role: 'alert' },
       h('span', { className: 'bt-note' }, t('Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.')),
@@ -161,16 +170,16 @@ export function PermissionOptions({ catalog, current, onPick, disabled = false, 
 
 // The explained list as the picker itself (Details): a click saves, as a segment did, through
 // the same one-save-at-a-time path; Auto review and Full access ask once first.
-export function PermissionList({ catalog, saved, onPick, repick = false, disabled = false, name, cli }) {
-  const { current, pick, confirming, cancel } = usePermissionPick({ saved, onPick, repick, confirmFull: true })
+export function PermissionList({ catalog, saved, onPick, repick = false, disabled = false, name, cli, askedOf, replaced }) {
+  const { current, pick, confirming, cancel } = usePermissionPick({ saved, onPick, askedOf, repick, confirmFull: true })
   return h(Fragment, null,
     h(PermissionOptions, { catalog, current, onPick: value => pick(value), disabled, cli }),
-    confirming && !disabled ? h(PermissionConfirm, { value: confirming, name, cli, onConfirm: (event) => { if (event?.detail > 1) return; pick(confirming, true) }, onCancel: cancel }) : null)
+    confirming && !disabled ? h(PermissionConfirm, { value: confirming, name, replaced, cli, onConfirm: (event) => { if (event?.detail > 1) return; pick(confirming, true) }, onCancel: cancel }) : null)
 }
 
 // Details keeps the pick and its save queue mounted while the explained menu opens and closes.
-export function PermissionSelect({ catalog, saved, onPick, repick = false, disabled = false, name, cli }) {
-  const { current, pick, confirming, asks, cancel } = usePermissionPick({ saved, onPick, repick, confirmFull: true })
+export function PermissionSelect({ catalog, saved, onPick, repick = false, disabled = false, name, cli, askedOf, replaced }) {
+  const { current, pick, confirming, asks, cancel } = usePermissionPick({ saved, onPick, askedOf, repick, confirmFull: true })
   const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu({ minWidth: Math.min(380, window.innerWidth - 24) })
   useEffect(() => {
     if (!isOpen && menu.current?.contains(document.activeElement)) button.current?.focus({ preventScroll: true })
@@ -230,7 +239,7 @@ export function PermissionSelect({ catalog, saved, onPick, repick = false, disab
       role: 'dialog', 'aria-label': t('Permissions'), tabIndex: -1, style: shownPlace, 'data-leaving': leaving || undefined, onKeyDown,
       onClickCapture: (event) => { if (event.detail > 1 && event.target.closest('.bt-q-opt')) event.stopPropagation() },
     }, h(PermissionOptions, { catalog, current, onPick: choose, disabled, cli }),
-    confirming && !disabled ? h(PermissionConfirm, { value: confirming, name, cli, onConfirm, onCancel }) : null), document.body) : null)
+    confirming && !disabled ? h(PermissionConfirm, { value: confirming, name, replaced, cli, onConfirm, onCancel }) : null), document.body) : null)
 }
 
 // What every offered level does, as plain lines: for the places that keep the segmented choice.
@@ -241,3 +250,16 @@ export function PermissionExplanations({ catalog }) {
       h('span', { className: presetDanger(option.value) ? 'bt-danger' : undefined }, presetName(option.value, catalog)), text ? `: ${text}` : null)
   }))
 }
+
+export const savedLevelOf = (bot, catalog) => bot.permission === MARK_LEVEL && bot.permissionAuto === AUTO_MARK ? AUTO_ROW : bot.permission ?? catalog.defaultPreset
+export function levelsOf(catalog, bot) {
+  if (!catalog) return catalog
+  if (bot?.autoOffered !== true && bot?.permissionAuto !== AUTO_MARK) return catalog
+  return { ...catalog, options: catalog.options.flatMap(option => option.value === MARK_LEVEL ? [option, { value: AUTO_ROW, name: 'Auto' }] : [option]) }
+}
+export const pickLevel = (actions, bot, value, asked) => value === AUTO_ROW ? actions.setBotAuto(asked.id, asked.rev) : actions.updateBot(bot.id, { permission: value })
+export const autoQuestion = (name, level) => [
+  t("On Auto, Codex decides by itself, with its own reviewer, which steps it runs, refuses or asks you about. It may change files outside {name}'s folder without asking you, and Automagik does not review those steps.", { name }),
+  t("Any message that reaches {name}'s chat can lead to such a step: yours, another Bot's or a schedule's. Tasks and Bots it starts from that chat while on Auto start on Auto too.", { name }),
+  t('This replaces {level}. Based on Codex 0.167.0; a later Codex may decide differently.', { level }),
+]

@@ -851,6 +851,7 @@ export function install(rt) {
   async function startFlagged({ title, text, from, cwd, agentPreset, roomId }, starting) {
     // Read before the first await: the tool call this runs in may return before the rest.
     const opener = from === undefined ? undefined : rt.callerLevel?.()
+    const autoOpener = rt.autoOpener?.()
     const levelTaskId = rt.callerTask?.()
     const parent = levelTaskId === undefined ? undefined : state.tasks?.[levelTaskId]
     if (levelTaskId !== undefined) rt.assertTaskDepth(levelTaskId)
@@ -862,6 +863,7 @@ export function install(rt) {
     starting(sessionId)
     tasks()[sessionId] = { title: String(title).slice(0, AGENT_SESSION_TITLE_MAX), from, at: Date.now(), status: 'working', ...(roomId ? { roomId } : {}), ...(levelRoomId ? { levelRoomId } : {}), ...(levelTaskId ? { levelTaskId } : {}) }
     rt.capTaskByOpener?.(tasks()[sessionId], opener)
+    if (autoOpener !== undefined && autoOpener.botId === from && !roomId && !levelRoomId && !levelTaskId) Object.assign(tasks()[sessionId], { auto: autoOpener.route, autoRev: autoOpener.rev })
     // Only TASKS_KEPT ended tasks are remembered for their reports. The ended ones go first,
     // the one that ended longest ago first: a long task that just ended is fresh news.
     // A working record is never evicted, whatever its age or whether DSH still holds its

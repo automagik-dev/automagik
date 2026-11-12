@@ -1868,7 +1868,32 @@ const pack = createPack({
     "admin": "admin",
     "mode": "modo",
     "The agent used a wrong address.": "O agente usou um endereço errado.",
-    "The agent used a wrong address, or came from a web page that is not allowed.": "O agente usou um endereço errado, ou veio de uma página web sem permissão."
+    "The agent used a wrong address, or came from a web page that is not allowed.": "O agente usou um endereço errado, ou veio de uma página web sem permissão.",
+    "Works as Workspace. Where Workspace would ask you, Codex decides first, with its own reviewer: it runs the step, refuses it, or asks you.": "Funciona como Área de trabalho. Quando a Área de trabalho perguntaria a você, o Codex decide primeiro, com seu próprio revisor: executa a etapa, recusa ou pergunta a você.",
+    "Put {name} on Auto?": "Colocar {name} em Automático?",
+    "Use Auto": "Usar Automático",
+    "On Auto, Codex decides by itself, with its own reviewer, which steps it runs, refuses or asks you about. It may change files outside {name}'s folder without asking you, and Automagik does not review those steps.": "No Automático, o Codex decide por conta própria, com seu próprio revisor, quais etapas executa, recusa ou pergunta a você. Pode alterar arquivos fora da pasta de {name} sem perguntar, e o Automagik não revisa essas etapas.",
+    "Any message that reaches {name}'s chat can lead to such a step: yours, another Bot's or a schedule's. Tasks and Bots it starts from that chat while on Auto start on Auto too.": "Qualquer mensagem que chegue à conversa de {name} pode levar a uma dessas etapas: sua, de outro Bot ou de um agendamento. Tarefas e Bots iniciados por essa conversa no Automático também começam no Automático.",
+    "This replaces {level}. Based on Codex 0.167.0; a later Codex may decide differently.": "Isso substitui {level}. Baseado no Codex 0.167.0; versões posteriores podem decidir de outra forma.",
+    "Auto counts here: Codex decides on its own.": "O Automático está em vigor aqui: o Codex decide por conta própria.",
+    "Auto is saved, but here it runs as Workspace: {why}.": "O Automático está salvo, mas aqui funciona como Área de trabalho: {why}.",
+    "this window does not hold the team": "esta janela não detém o controle da equipe",
+    "the saved level is not Workspace": "o nível salvo não é Área de trabalho",
+    "the Bot has a tool deny list": "o Bot tem uma lista de ferramentas negadas",
+    "this is not the Bot's own current chat": "esta não é a conversa atual do próprio Bot",
+    "this conversation is not at Workspace now": "esta conversa não está em Área de trabalho agora",
+    "this conversation runs on another model": "esta conversa usa outro modelo",
+    "Codex here gets DeepSeek Harness's tools, or does not offer its own mode": "o Codex aqui recebe as ferramentas do DeepSeek Harness ou não oferece seu próprio modo",
+    "For the last prompt Codex was put in its own mode.": "No último prompt, o Codex foi colocado em seu próprio modo.",
+    "For the last prompt Codex was put in its strict mode: {why}.": "No último prompt, o Codex foi colocado no modo estrito: {why}.",
+    "Auto does not count here": "o Automático não está em vigor aqui",
+    "no answer came in time": "nenhuma resposta chegou a tempo",
+    "the answer changed before the prompt": "a resposta mudou antes do prompt",
+    "Codex refused its own mode": "o Codex recusou seu próprio modo",
+    "{name}'s permissions changed meanwhile, so nothing was saved. Look again and choose.": "As permissões de {name} mudaram nesse meio-tempo, então nada foi salvo. Confira de novo e escolha.",
+    "Auto is not offered for {name} here.": "O Automático não é oferecido para {name} aqui.",
+    "This host cannot save the Bot team.": "Este host não pode salvar a equipe de Bots.",
+    "Only the person turns Auto on, from the Bot's permission choice.": "Só a pessoa ativa o Automático, na escolha de permissão do Bot."
   }
 })
 return Object.defineProperty({ ...pack }, Symbol.toStringTag, { value: 'Module' })

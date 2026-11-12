@@ -44,6 +44,8 @@ export const AGENTS = Object.freeze({
     refresh: 'list',
   }),
   'acp-codex': Object.freeze({
+    // RFC 0031: asked only through acpAgents.ownMode.
+    ownMode: 'agent',
     key: 'codex',
     name: 'Codex (ACP)',
     defaultName: 'Codex',

@@ -48,7 +48,7 @@ export function install(rt) {
       const level = levelRead(rt.chatOf(bot.id))
       return `${bot.id}~${level === undefined ? '-' : `${rankOf(service, level) ?? '?'}${offers(level) ? 'o' : 'x'}${digest(level)}`}`
     })
-    return `${options}:${[...fellBack].sort().join(',')}:${[...goneOf].map(([id, outcome]) => `${id}=${outcome}`).sort().join(',')}:${runs.sort().join(',')}`
+    return `${options}:${[...fellBack].sort().join(',')}:${[...goneOf].map(([id, outcome]) => `${id}=${outcome}`).sort().join(',')}:${runs.sort().join(',')}:${rt.autoKey?.() ?? ''}`
   }
   const digest = text => createHash('sha256').update(text).digest('hex').slice(0, 16)
   // The level DSH reports for a Session it has loaded, or undefined: nothing is opened.
@@ -419,6 +419,12 @@ export function install(rt) {
   // The task Session whose tool call this runs in, or undefined: as the group, only while
   // the call runs. What the call left running (a timer, a queue another start drains) is
   // not the task's: a store that outlives its call would bind starts that are not its own.
+  rt.callerSessionId = () => {
+    const call = callers.getStore()
+    return call?.active === true ? call.sessionId : undefined
+  }
+  rt.levelHeld = sessionId => unapplied.has(sessionId)
+
   function callerTask() {
     const call = callers.getStore()
     if (call?.active !== true) return undefined
@@ -815,7 +821,11 @@ export function install(rt) {
   // back would save the wider level again, so it stays and the chat is reported.
   async function setPermission(bot, name) {
     const wanted = checkPreset(name)
-    const before = bot.permission
+    await rt.clearAuto?.(bot)
+    return levelTo(bot, wanted)
+  }
+
+  async function levelTo(bot, wanted, { before = bot.permission } = {}) {
     // Read before the apply: whether the Bot's saved Auto last ran as workspace-write.
     const fell = fellBack.has(`bot:${bot.id}`)
     bot.permission = wanted
@@ -914,7 +924,7 @@ export function install(rt) {
   // is left out; any other failure is told as `failed`. Without the presets service the saved level of a Bot or a group is still
   // told (`presets: false`); a task's needs the catalog, so it is left out.
   function permissionFactsOf(sessionId, session) {
-    const out = { kind: 'other', source: 'none' }
+    const out = { kind: 'other', source: 'none', auto: rt.autoFactsOf?.(sessionId, session) }
     try {
       const service = presets()
       if (service === undefined) out.presets = false
@@ -988,5 +998,5 @@ export function install(rt) {
   // The Sessions that carry the mark now, as a fresh list.
   const unappliedSessions = () => [...unapplied.keys()]
 
-  Object.assign(rt, { sessionWide, permissionFactsOf, unappliedSessions, permissionCatalog, permissionFallbackOf, permissionKey, autoClosed, applyPermission, applyTaskPermission, levelHolds, reapplyTasks, capTasks, taskOfRoom, inToolCall, callerGroup, callerTask, callerLevel, capTaskByOpener, armedLevels, lowerScheduledSession, assertTaskDepth, taskForebears, taskLevelOf, forgetTaskPermission, checkPreset, startingSession, assertLevelOffered, setPermission, inheritedPermission, cleanRoomPermission, setRoomPermission })
+  Object.assign(rt, { sessionWide, permissionFactsOf, unappliedSessions, permissionCatalog, permissionFallbackOf, permissionKey, autoClosed, applyPermission, applyTaskPermission, levelHolds, reapplyTasks, capTasks, taskOfRoom, inToolCall, callerGroup, callerTask, callerLevel, capTaskByOpener, armedLevels, lowerScheduledSession, assertTaskDepth, taskForebears, taskLevelOf, forgetTaskPermission, checkPreset, startingSession, assertLevelOffered, setPermission, levelTo, inheritedPermission, cleanRoomPermission, setRoomPermission })
 }

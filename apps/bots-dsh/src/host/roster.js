@@ -201,7 +201,7 @@ export function install(rt) {
     }
   }
 
-  async function buildBot(cleanName, { role = '', instructions = '', color, brief = '', createdBy, main = false, avatar, model, effort, workDir, copyOf, pickModel = false, kind, existingSessionId, denyTools: denyToolsInput }) {
+  async function buildBot(cleanName, { role = '', instructions = '', color, brief = '', createdBy, main = false, avatar, model, effort, workDir, copyOf, pickModel = false, kind, existingSessionId, inheritAuto, denyTools: denyToolsInput }) {
     const opener = createdBy === undefined ? undefined : { level: rt.callerLevel?.(), roomId: rt.callerGroup?.() }
     const cleanAvatarValue = cleanAvatar(avatar)
     const roleText = cleanRole(role)
@@ -307,6 +307,7 @@ export function install(rt) {
         return bot
       }
       await rt.save()
+      if (inheritAuto !== undefined && existingSessionId === undefined) await rt.markInherited?.(bot, inheritAuto.route)
       // The greeting runs on the Bot's own model, once its provider is registered.
       void rt.waitForModel(bot)
         .then(() => rt.applyModel(bot).then(() => false, (error) => {
@@ -368,6 +369,7 @@ export function install(rt) {
   }
 
   async function updateBot(id, patch, actorId, fromSessionId) {
+    if (['permissionAuto', 'permissionRev', 'autoStamp'].some(key => Object.hasOwn(patch, key))) throw refusal('Only the person turns Auto on, from the Bot\'s permission choice.')
     const bot = rt.botOf(id)
     if (bot === undefined) throw refusal('Unknown Bot')
     // A Bot whose model menu its plugin owns (host-models.js): the model and level are the
@@ -450,6 +452,7 @@ export function install(rt) {
     if (patch.permission !== undefined) rt.checkPreset(patch.permission)
     // The model goes first: checked above, applied to the Session now, and only then part of
     // the record. A selection DSH turns down refuses the whole update, with nothing written.
+    if (patch.permission !== undefined || patch.denyTools !== undefined || (patch.model !== undefined && String(patch.model).split('/')[0] !== 'acp-codex')) await rt.clearAuto?.(bot)
     const modelChanged = patch.model !== undefined || patch.effort !== undefined
     const modelBefore = modelChanged ? modelFields(bot) : undefined
     if (modelChanged) await switchModel(bot, patch, modelRef, effortId)
@@ -970,6 +973,7 @@ export function install(rt) {
     deleting.delete(id)
     // Its tasks keep the level they run at as a cap, so the default cannot raise them.
     rt.capTasks(task => task.from === id)
+    if (bot.permissionAuto) rt.endAuto?.(bot)
     delete state.bots[id]
     for (const part of parts) {
       delete state.questions[part]

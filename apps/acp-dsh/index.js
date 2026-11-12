@@ -176,7 +176,10 @@ export function apply(ctx, config = {}, {
   let imageKeeper
   // The turn gates (`holdTurns`): each registrant's own entry, so one never replaces another's.
   const turnGates = new Set()
+  let ownAnswerer
+  let ownContested = false
   const adapter = new AcpAdapter(ctx, agents, {
+    ownMode: () => (ownContested ? undefined : ownAnswerer?.answer),
     holds: () => [...turnGates].map(entry => entry.gate),
     images: () => imageKeeper,
     // The raw tri-state: an absent setting takes each agent's own switch in AcpAdapter.
@@ -375,6 +378,7 @@ export function apply(ctx, config = {}, {
   const agentOf = (spec, cli, id = idOf(spec)) => ({
     name: spec.name,
     modeFor: spec.modeFor,
+    ownMode: spec.ownMode,
     // The adapter reads these off the agent object: without them the bridge default would not
     // find Claude's switch, the drift detector would never run and Codex would never fork.
     ...(spec.disableBuiltInTools === true ? { disableBuiltInTools: true } : {}),
@@ -1173,6 +1177,32 @@ export function apply(ctx, config = {}, {
       return () => { if (imageKeeper === keeper) imageKeeper = undefined }
     },
     /**
+     * Register one answerer for an unbridged Workspace Session's own mode. Before a prompt,
+     * and again before sending it, answer({ sessionId, agent, provider }) must return exactly
+     * true in time. Any other answer keeps strict mode. A second registration disables own
+     * mode for good; the returned disposer clears only its own entry. Non-functions do nothing.
+     */
+    ownMode(answer) {
+      if (typeof answer !== 'function') return () => {}
+      if (ownContested || ownAnswerer !== undefined) {
+        if (!ownContested) ctx.logger?.warn?.('acp-dsh: competing own-mode answerers; own mode is disabled')
+        ownContested = true
+        ownAnswerer = undefined
+        return () => {}
+      }
+      const entry = { answer }
+      ownAnswerer = entry
+      return () => { if (ownAnswerer === entry) ownAnswerer = undefined }
+    },
+    /** Read the provider's own mode, bridge status and answerer availability. */
+    ownModeOf(provider) {
+      const agent = agents.get(provider)
+      if (agent?.ownMode === undefined) return undefined
+      return { mode: agent.ownMode, bridged: adapter.bridgeOn(agent), answerer: ownAnswerer !== undefined && !ownContested }
+    },
+    /** Whether a Session is busy on a prompt in its own mode. */
+    ownModeIn: sessionId => adapter.ownModeIn(sessionId),
+    /**
      * A veto on agent turns, for a plugin that must keep an agent from acting in a Session (the
      * Bot team: a Session whose permission level could not be set). `gate({ sessionId, agent,
      * provider })` is asked before every model step on an agent's route, and again right before
@@ -1202,7 +1232,7 @@ export function apply(ctx, config = {}, {
      * copy, undefined for a Session that ran no agent here): { version, agent, startedAt, active,
      * bridge?: { on, why, at, open? }, modes?: { wanted, offered, chosen?, fellToStrict, at,
      * current?, applied? }, lastCall?: { path, kind, at }, bridgeCall?: { at }, reviewer?:
-     * { provider, model, ok, code?, at }, review?: { code, at } }. Identifiers and fixed values
+     * { provider, model, ok, code?, at }, review?: { code, at }, ownMode?: { answer, taken, at } }. Identifiers and fixed values
      * only: never a credential, a prompt, a file's content or path, or an account.
      */
     permissionDiagnostics: sessionId => diagnostics.read(sessionId),

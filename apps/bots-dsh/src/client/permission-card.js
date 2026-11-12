@@ -1,9 +1,9 @@
 import { createElement as h, useId, useRef, useState, useSyncExternalStore } from 'react'
-import { AUTO } from '../shared/permission-levels.js'
+import { AUTO, AUTO_ROW } from '../shared/permission-levels.js'
 import { CloseIcon } from './icons.js'
 import { t } from './i18n.js'
 import { needsModelPick } from './model-menu.js'
-import { cliAuto, cliConfirmText, cliOfBot, PermissionOptions, presetDanger, presetName } from './permission-picker.js'
+import { autoQuestion, savedLevelOf, levelsOf, pickLevel, PermissionFallback, cliAuto, cliConfirmText, cliOfBot, PermissionOptions, presetDanger, presetName } from './permission-picker.js'
 import { setEntry, sharedMap } from './shared-map.js'
 import { createSource } from './sources.js'
 import { STORAGE } from './storage.js'
@@ -30,7 +30,9 @@ const closeReopened = id => reopened.set(map => setEntry(map, id, undefined))
 const FOOTNOTE = 'You can change this any time in Details.'
 
 function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
-  const saved = bot.permission ?? catalog.defaultPreset
+  catalog = levelsOf(catalog, bot)
+  const saved = savedLevelOf(bot, catalog)
+  const askedAtOpen = useRef()
   // The row marked follows the level in force until the person picks one.
   const [picked, setPicked] = useState(undefined)
   const [confirming, setConfirming] = useState(false)
@@ -43,7 +45,7 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
   const cli = cliOfBot(bot)
   const auto = cliAuto(draft, cli)
   const offered = catalog.options.some(option => option.value === draft)
-  const asks = draft === AUTO || presetDanger(draft)
+  const asks = draft === AUTO_ROW || draft === AUTO || presetDanger(draft)
   // Nothing picked on a Bot that has a level: there is nothing to save, and a level
   // narrowed elsewhere meanwhile is never sent back as it was.
   const unchanged = picked === undefined && bot.permission !== undefined
@@ -53,7 +55,7 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
     busyRef.current = true
     setBusy(true)
     setError('')
-    void Promise.resolve().then(() => actions.updateBot(bot.id, { permission: draft })).then(onSaved, (failure) => {
+    void Promise.resolve().then(() => pickLevel(actions, bot, draft, askedAtOpen.current)).then(onSaved, (failure) => {
       setConfirming(false)
       setError(failure?.message ?? String(failure))
     }).finally(() => {
@@ -69,8 +71,8 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
     return h('form', { className: 'bt-q', role: 'alert', 'aria-labelledby': titleId, 'aria-busy': busy || undefined, 'data-permission-confirm': draft, onSubmit: event => event.preventDefault() },
       h('div', { className: 'bt-q-head' },
         h('div', { className: 'bt-q-text' },
-          h('p', { className: 'bt-q-title', id: titleId }, draft === AUTO ? name : t('Give {name} full access?', { name: bot.name })),
-          draft === AUTO
+          h('p', { className: 'bt-q-title', id: titleId }, draft === AUTO_ROW ? t('Put {name} on Auto?', { name: bot.name }) : draft === AUTO ? name : t('Give {name} full access?', { name: bot.name })),
+          draft === AUTO_ROW ? h('div', { className: 'bt-q-detail' }, ...autoQuestion(bot.name, presetName(bot.permission ?? catalog.defaultPreset, catalog)).map(text => h('div', { className: 'bt-note' }, text))) : draft === AUTO
             ? h('div', { className: 'bt-q-detail' }, t('Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.'))
             : h('div', { className: 'bt-q-detail' },
               h('span', { className: 'bt-danger' }, auto ? cliConfirmText(cli) : t('{name} will run commands and change files anywhere without asking you first.', { name: bot.name })),
@@ -80,14 +82,14 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
         // Focus goes to Cancel, never to the button that gives the access.
         h('button', { type: 'button', className: 'bt-q-btn', autoFocus: true, disabled: busy, onClick: () => setConfirming(false) }, t('Cancel')),
         // Never the second press of a double click on Save, which sat in this place.
-        h('button', { type: 'button', className: 'bt-q-submit', disabled: busy, onClick: (event) => { if (!(event.detail > 1)) send() } }, draft === AUTO ? t('Use Auto review') : t('Give full access'))))
+        h('button', { type: 'button', className: 'bt-q-submit', disabled: busy, onClick: (event) => { if (!(event.detail > 1)) send() } }, draft === AUTO_ROW ? t('Use Auto') : draft === AUTO ? t('Use Auto review') : t('Give full access'))))
   }
   return h('form', {
     className: 'bt-q', 'aria-labelledby': titleId, 'aria-busy': busy || undefined, 'data-permission-card': bot.id,
     onSubmit: (event) => {
       event.preventDefault()
       if (busy || !offered) return
-      if (asks && !unchanged) setConfirming(draft)
+      if (asks && !unchanged) { askedAtOpen.current = { id: bot.id, rev: bot.permissionRev ?? 0 }; setConfirming(draft) }
       else send()
     },
   },
@@ -98,6 +100,7 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
       h('button', { type: 'button', className: 'bt-q-x', 'aria-label': t('Dismiss'), title: t('Dismiss'), onClick: onClose, disabled: busy }, h(CloseIcon))),
     h(PermissionOptions, { catalog, current: draft, onPick: (value) => { setError(''); setPicked(value) }, disabled: busy, cli }),
     errorLine,
+    bot.permissionAuto ? h(PermissionFallback, { fallback: bot.permissionFallback, owner: bot, catalog }) : null,
     note,
     h('div', { className: 'bt-q-foot' },
       h('button', { type: 'button', className: 'bt-q-btn', onClick: onClose, disabled: busy }, t('Not now')),

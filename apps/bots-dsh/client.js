@@ -706,6 +706,27 @@ var ZH = {
   "Workspace": "工作区内修改",
   "Full access": "完全权限",
   "Auto review": "自动审查",
+  "Works as Workspace. Where Workspace would ask you, Codex decides first, with its own reviewer: it runs the step, refuses it, or asks you.": "按工作区内修改运行。需要询问你时，Codex 会先由自己的审查器决定：执行、拒绝或询问你。",
+  "Put {name} on Auto?": "让{name}使用自动模式？",
+  "Use Auto": "使用自动模式",
+  "On Auto, Codex decides by itself, with its own reviewer, which steps it runs, refuses or asks you about. It may change files outside {name}'s folder without asking you, and Automagik does not review those steps.": "在自动模式下，Codex 通过自己的审查器决定执行哪些步骤、拒绝哪些步骤或询问你。它可能不经询问就修改{name}文件夹之外的文件，Automagik 不会审查这些步骤。",
+  "Any message that reaches {name}'s chat can lead to such a step: yours, another Bot's or a schedule's. Tasks and Bots it starts from that chat while on Auto start on Auto too.": "任何到达{name}聊天的消息都可能引发这样的步骤：你的消息、其他 Bot 的消息或定时任务的消息。在自动模式下从该聊天启动的任务和 Bot 也以自动模式启动。",
+  "This replaces {level}. Based on Codex 0.167.0; a later Codex may decide differently.": "这将替换{level}。基于 Codex 0.167.0；后续版本可能作出不同决定。",
+  "Auto counts here: Codex decides on its own.": "自动模式在此生效：Codex 自行决定。",
+  "Auto is saved, but here it runs as Workspace: {why}.": "已保存自动模式，但这里按工作区内修改运行：{why}。",
+  "this window does not hold the team": "此窗口未持有团队锁",
+  "the saved level is not Workspace": "保存的级别不是工作区内修改",
+  "the Bot has a tool deny list": "此 Bot 有工具禁用列表",
+  "this is not the Bot's own current chat": "这不是该 Bot 当前自己的聊天",
+  "this conversation is not at Workspace now": "此对话当前不是工作区内修改",
+  "this conversation runs on another model": "此对话使用另一个模型",
+  "Codex here gets DeepSeek Harness's tools, or does not offer its own mode": "这里的 Codex 使用 DeepSeek Harness 的工具，或不提供自己的模式",
+  "For the last prompt Codex was put in its own mode.": "上一次提示使用了 Codex 自己的模式。",
+  "For the last prompt Codex was put in its strict mode: {why}.": "上一次提示使用了 Codex 的严格模式：{why}。",
+  "Auto does not count here": "自动模式在此不生效",
+  "no answer came in time": "未及时收到回答",
+  "the answer changed before the prompt": "发送提示前回答发生变化",
+  "Codex refused its own mode": "Codex 拒绝了自己的模式",
   Experimental: "实验性",
   "Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.": "自动审查不使用沙箱：每次工具调用前先由模型审查，被拦下的调用由你决定。此功能仍属实验性，可能误放行或误拦截，并会消耗更多 token。",
   "Use Auto review": "启用自动审查",
@@ -1943,7 +1964,11 @@ var HOST_ZH = {
   "Nothing to open": "没有要打开的内容",
   "Nothing to cancel": "没有要取消的内容",
   "Nothing to close": "没有要关闭的内容",
-  "Omni is still loading this chat.": "Omni 还在加载这个对话。"
+  "Omni is still loading this chat.": "Omni 还在加载这个对话。",
+  "{name}'s permissions changed meanwhile, so nothing was saved. Look again and choose.": "{name} 的权限在此期间已经改变，因此没有保存任何内容。请重新查看后再选择。",
+  "Auto is not offered for {name} here.": "这里不为 {name} 提供自动模式。",
+  "This host cannot save the Bot team.": "这台主机无法保存 Bot 团队。",
+  "Only the person turns Auto on, from the Bot's permission choice.": "只有用户本人能在 Bot 的权限选择中开启自动模式。"
 };
 Object.assign(ZH, HOST_ZH);
 var fill = (text2, params) => params ? text2.replace(/\{(\w+)\}/g, (match, name) => name in params ? String(params[name]) : match) : text2;
@@ -1994,7 +2019,10 @@ var HOST_TEMPLATES = [
   // message (the store's read-only reason) is worded in turn.
   { template: "Session {session} cannot join {bot} because this window cannot change the Bot team now. {reason}", host: ["reason"] },
   '{bot} changed while Session {session} was joining it (another window or an edit). For the Bot team: Nothing was changed; try again. The native preset of Session {session} was set to "{preset}" before this refusal.',
-  '{bot} changed while Session {session} was being saved. For the Bot team: Nothing was changed; try again. The native preset of Session {session} was set to "{preset}" before this refusal.'
+  '{bot} changed while Session {session} was being saved. For the Bot team: Nothing was changed; try again. The native preset of Session {session} was set to "{preset}" before this refusal.',
+  // Auto's refusals that name the Bot (auto.js setBotAuto).
+  "{name}'s permissions changed meanwhile, so nothing was saved. Look again and choose.",
+  "Auto is not offered for {name} here."
 ].map((entry) => {
   const { template, host = [] } = typeof entry === "string" ? { template: entry } : entry;
   const names = [];
@@ -4576,7 +4604,7 @@ function HostModelMenu({ bot, roster, actions, run: run2, wide = false, link = f
     close();
     void run2(actions.updateBot(bot.id, { model: entry.id, ...ack ? { ack: true } : {} }));
   };
-  const pickLevel = (id) => {
+  const pickLevel2 = (id) => {
     close();
     if (id !== host.level) void run2(actions.updateBot(bot.id, { effort: id }));
   };
@@ -4664,7 +4692,7 @@ function HostModelMenu({ bot, roster, actions, run: run2, wide = false, link = f
             type: "button",
             role: "menuitemradio",
             "aria-checked": entry.id === host.level,
-            onClick: () => pickLevel(entry.id)
+            onClick: () => pickLevel2(entry.id)
           },
           (0, import_react10.createElement)("span", { className: "bt-menu-label" }, t(entry.name)),
           (0, import_react10.createElement)("span", { className: "bt-model-tick", "aria-hidden": true }, entry.id === host.level ? (0, import_react10.createElement)(CheckIcon) : null)
@@ -11348,6 +11376,7 @@ function teamActions({ call: call2, after, partFor, roster, ui: ui2, live, cards
     importAvatars: (items) => call2("avatar-import", { items }),
     deleteAvatar: (id) => call2("avatar-delete", { id }),
     createRoom: (members, options = {}) => after(call2("create-room", { members, ...options })),
+    setBotAuto: (id, rev) => after(call2("set-bot-auto", { id, rev })),
     updateBot: (id, patch) => after(call2("update-bot", { id, ...patch })),
     // A model on another route: the host starts a new conversation with a handoff note
     // (parts.js). `patch` carries the thinking level picked with it.
@@ -14534,11 +14563,14 @@ function NewMessagePills({ sessionId, useSessions, useUi, useTurnClock }) {
 // src/shared/permission-levels.js
 var AUTO = "auto";
 var AUTO_FALLBACK = "workspace-write";
+var AUTO_MARK = "acp-codex";
+var MARK_LEVEL = "workspace-write";
+var AUTO_ROW = "workspace-write:auto";
 
 // src/client/permission-picker.js
 var import_react33 = require("react");
 var import_react_dom8 = require("react-dom");
-var LABELS = { "read-only": "Read only", "workspace-write": "Workspace", "danger-full-access": "Full access", [AUTO]: "Auto review" };
+var LABELS = { [AUTO_ROW]: "Auto", "read-only": "Read only", "workspace-write": "Workspace", "danger-full-access": "Full access", [AUTO]: "Auto review" };
 var DANGER = /* @__PURE__ */ new Set(["danger-full-access"]);
 var presetDanger = (value) => DANGER.has(value);
 var CLI_MODES = { "acp-claude": "bypass permissions", "acp-codex": "full access" };
@@ -14567,13 +14599,15 @@ function PermissionFallback({ fallback, owner, catalog }) {
   return fallback ? (0, import_react33.createElement)("div", { className: "bt-note" }, t("Runs as Workspace here")) : null;
 }
 var TEXTS = {
+  [AUTO_ROW]: "Works as Workspace. Where Workspace would ask you, Codex decides first, with its own reviewer: it runs the step, refuses it, or asks you.",
   "read-only": "It cannot change files unless you allow that one action. It can still run commands and use the network and its other tools.",
   "workspace-write": "Changes files inside its folder and a temporary folder without asking. For other files it asks you first. It can still run commands and use the network and its other tools.",
   [AUTO]: "A model reviews each action first. You are asked only about the ones it stops. The rest run with full access, and it can let a wrong one through.",
   "danger-full-access": "Runs commands and changes files anywhere without asking you. Choose it only when you trust what you asked for."
 };
 var presetText = (value, catalog, cli) => cliAuto(value, cli) ? t(CLI_TEXT, cliWords(cli)) : Object.hasOwn(TEXTS, value) ? t(TEXTS[value]) : String(catalog?.options?.find((option) => option.value === value)?.description ?? "");
-function usePermissionPick({ saved, onPick, repick = false, confirmFull = false }) {
+function usePermissionPick({ saved, onPick, askedOf, repick = false, confirmFull = false }) {
+  const asked2 = (0, import_react33.useRef)();
   const [pending, setPending] = (0, import_react33.useState)(null);
   const [confirming, setConfirming] = (0, import_react33.useState)(false);
   const flight = (0, import_react33.useRef)({ value: void 0, latest: void 0 });
@@ -14583,7 +14617,7 @@ function usePermissionPick({ saved, onPick, repick = false, confirmFull = false 
   }, [pending, saved]);
   const send = (value) => {
     flight.current.value = value;
-    void Promise.resolve(onPick(value)).then((done) => done !== false, () => false).then((ok) => {
+    void Promise.resolve(onPick(value, asked2.current)).then((done) => done !== false, () => false).then((ok) => {
       const wanted = flight.current.latest;
       flight.current.latest = void 0;
       if (wanted !== void 0 && !(wanted === value && ok)) {
@@ -14595,10 +14629,11 @@ function usePermissionPick({ saved, onPick, repick = false, confirmFull = false 
     });
   };
   const current = pending ?? saved;
-  const asks = (value) => value === AUTO || confirmFull && presetDanger(value);
+  const asks = (value) => value === AUTO_ROW || value === AUTO || confirmFull && presetDanger(value);
   const pick2 = (value, confirmed = false) => {
     if (value === current && !repick) return;
     if (asks(value) && !confirmed) {
+      asked2.current = askedOf?.();
       setConfirming(value);
       return;
     }
@@ -14612,7 +14647,17 @@ function usePermissionPick({ saved, onPick, repick = false, confirmFull = false 
   };
   return { current, pick: pick2, confirming, asks, cancel: () => setConfirming(false) };
 }
-function PermissionConfirm({ value, name, cli, onConfirm, onCancel }) {
+function PermissionConfirm({ value, name, replaced, cli, onConfirm, onCancel }) {
+  if (value === AUTO_ROW) {
+    return (0, import_react33.createElement)(
+      "div",
+      { className: "bt-perm-confirm", role: "alert" },
+      (0, import_react33.createElement)("span", { className: "bt-note" }, t("Put {name} on Auto?", { name })),
+      ...autoQuestion(name, replaced).map((text2) => (0, import_react33.createElement)("span", { className: "bt-note" }, text2)),
+      (0, import_react33.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: onConfirm }, t("Use Auto")),
+      (0, import_react33.createElement)("button", { type: "button", className: "bt-soft bt-soft-sm", onClick: onCancel }, t("Cancel"))
+    );
+  }
   if (value === AUTO) {
     return (0, import_react33.createElement)(
       "div",
@@ -14690,20 +14735,20 @@ function PermissionOptions({ catalog, current, onPick, disabled = false, cli }) 
     })
   );
 }
-function PermissionList({ catalog, saved, onPick, repick = false, disabled = false, name, cli }) {
-  const { current, pick: pick2, confirming, cancel } = usePermissionPick({ saved, onPick, repick, confirmFull: true });
+function PermissionList({ catalog, saved, onPick, repick = false, disabled = false, name, cli, askedOf, replaced }) {
+  const { current, pick: pick2, confirming, cancel } = usePermissionPick({ saved, onPick, askedOf, repick, confirmFull: true });
   return (0, import_react33.createElement)(
     import_react33.Fragment,
     null,
     (0, import_react33.createElement)(PermissionOptions, { catalog, current, onPick: (value) => pick2(value), disabled, cli }),
-    confirming && !disabled ? (0, import_react33.createElement)(PermissionConfirm, { value: confirming, name, cli, onConfirm: (event) => {
+    confirming && !disabled ? (0, import_react33.createElement)(PermissionConfirm, { value: confirming, name, replaced, cli, onConfirm: (event) => {
       if (event?.detail > 1) return;
       pick2(confirming, true);
     }, onCancel: cancel }) : null
   );
 }
-function PermissionSelect({ catalog, saved, onPick, repick = false, disabled = false, name, cli }) {
-  const { current, pick: pick2, confirming, asks, cancel } = usePermissionPick({ saved, onPick, repick, confirmFull: true });
+function PermissionSelect({ catalog, saved, onPick, repick = false, disabled = false, name, cli, askedOf, replaced }) {
+  const { current, pick: pick2, confirming, asks, cancel } = usePermissionPick({ saved, onPick, askedOf, repick, confirmFull: true });
   const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu({ minWidth: Math.min(380, window.innerWidth - 24) });
   (0, import_react33.useEffect)(() => {
     if (!isOpen && menu.current?.contains(document.activeElement)) button.current?.focus({ preventScroll: true });
@@ -14794,7 +14839,7 @@ function PermissionSelect({ catalog, saved, onPick, repick = false, disabled = f
         }
       },
       (0, import_react33.createElement)(PermissionOptions, { catalog, current, onPick: choose, disabled, cli }),
-      confirming && !disabled ? (0, import_react33.createElement)(PermissionConfirm, { value: confirming, name, cli, onConfirm, onCancel }) : null
+      confirming && !disabled ? (0, import_react33.createElement)(PermissionConfirm, { value: confirming, name, replaced, cli, onConfirm, onCancel }) : null
     ), document.body) : null
   );
 }
@@ -14809,6 +14854,18 @@ function PermissionExplanations({ catalog }) {
     );
   }));
 }
+var savedLevelOf = (bot, catalog) => bot.permission === MARK_LEVEL && bot.permissionAuto === AUTO_MARK ? AUTO_ROW : bot.permission ?? catalog.defaultPreset;
+function levelsOf(catalog, bot) {
+  if (!catalog) return catalog;
+  if (bot?.autoOffered !== true && bot?.permissionAuto !== AUTO_MARK) return catalog;
+  return { ...catalog, options: catalog.options.flatMap((option) => option.value === MARK_LEVEL ? [option, { value: AUTO_ROW, name: "Auto" }] : [option]) };
+}
+var pickLevel = (actions, bot, value, asked2) => value === AUTO_ROW ? actions.setBotAuto(asked2.id, asked2.rev) : actions.updateBot(bot.id, { permission: value });
+var autoQuestion = (name, level) => [
+  t("On Auto, Codex decides by itself, with its own reviewer, which steps it runs, refuses or asks you about. It may change files outside {name}'s folder without asking you, and Automagik does not review those steps.", { name }),
+  t("Any message that reaches {name}'s chat can lead to such a step: yours, another Bot's or a schedule's. Tasks and Bots it starts from that chat while on Auto start on Auto too.", { name }),
+  t("This replaces {level}. Based on Codex 0.167.0; a later Codex may decide differently.", { level })
+];
 
 // src/client/composer.js
 var import_react34 = require("react");
@@ -14935,17 +14992,18 @@ function menuIcons(roster) {
 function ComposerPermission({ sessionId, useRoster, actions }) {
   const roster = useRoster((value) => value);
   const bot = roster.byId[sessionId];
-  const catalog = roster.permissions;
+  const catalog = levelsOf(roster.permissions, bot);
   const { isOpen, shownPlace, leaving, button, menu, open, close } = useAnchoredMenu({ minWidth: 320 });
   if (!bot || !catalog?.options?.length || roster.readOnly || currentPart(bot) !== sessionId) return null;
-  const saved = bot.permission ?? catalog.defaultPreset;
+  const saved = savedLevelOf(bot, catalog);
   const cli = cliOfBot(bot);
   const name = presetName(saved, catalog);
+  const title = t("Permissions: {level}", { level: name }) + (bot.permissionAuto && bot.permissionFallback ? ` · ${t("Runs as Workspace here")}` : "");
   const toggle = () => {
     if (isOpen) close();
     else open();
   };
-  const pick2 = (value) => Promise.resolve(actions.updateBot(bot.id, { permission: value })).then(
+  const pick2 = (value, asked2) => Promise.resolve(pickLevel(actions, bot, value, asked2)).then(
     () => {
       close();
       return true;
@@ -14966,8 +15024,8 @@ function ComposerPermission({ sessionId, useRoster, actions }) {
         className: "bt-perm-chip",
         "aria-haspopup": "menu",
         "aria-expanded": isOpen,
-        "aria-label": t("Permissions: {level}", { level: name }),
-        title: t("Permissions: {level}", { level: name }),
+        "aria-label": title,
+        title,
         onMouseDown: keepComposerFocus,
         onClick: toggle
       },
@@ -14981,7 +15039,7 @@ function ComposerPermission({ sessionId, useRoster, actions }) {
       "aria-label": t("Permissions"),
       style: shownPlace,
       "data-leaving": leaving || void 0
-    }, (0, import_react34.createElement)(PermissionList, { catalog, saved, onPick: pick2, name: bot.name, cli })), document.body) : null
+    }, (0, import_react34.createElement)(PermissionList, { catalog, saved, onPick: pick2, name: bot.name, cli, askedOf: () => ({ id: bot.id, rev: bot.permissionRev ?? 0 }), replaced: presetName(bot.permission ?? catalog.defaultPreset, catalog) }), bot.permissionAuto ? (0, import_react34.createElement)(PermissionFallback, { fallback: bot.permissionFallback, owner: bot, catalog }) : null), document.body) : null
   );
 }
 function ComposerPlus({ sessionId, inputActions, useRoster, actions }) {
@@ -22153,7 +22211,7 @@ function BrowserPage({ roster, actions, run: run2, Section: Section2, Row: Row3 
 
 // src/client/permission-diagnostics.js
 var import_react61 = require("react");
-var PERMISSION_ANSWER = 1;
+var PERMISSION_ANSWER = 2;
 function permWhen(time) {
   const date = new Date(time);
   const clock4 = date.toLocaleTimeString(dateLocale(), { hour: "2-digit", minute: "2-digit" });
@@ -22216,8 +22274,11 @@ function noAskMissed(acp) {
   if (current === void 0 || current === "other" || NO_ASK.has(current)) return void 0;
   return { mode: current };
 }
+var AUTO_WHY = { "lock": "this window does not hold the team", "level": "the saved level is not Workspace", "deny": "the Bot has a tool deny list", "session": "this is not the Bot's own current chat", "preset": "this conversation is not at Workspace now", "route": "this conversation runs on another model", "agent": "Codex here gets DeepSeek Harness's tools, or does not offer its own mode" };
 function levelFacts(row, cli) {
   const out = [];
+  if (row.auto?.counts === true) out.push(t("Auto counts here: Codex decides on its own."));
+  else if (row.auto && AUTO_WHY[row.auto.why]) out.push(t("Auto is saved, but here it runs as Workspace: {why}.", { why: t(AUTO_WHY[row.auto.why]) }));
   if (row.presets === false) out.push(t("Permissions are not available in this DeepSeek Harness"));
   const saved = levelName(row.saved);
   if (saved !== void 0 && PERM_SAVED[row.source]) out.push(t(PERM_SAVED[row.source], { level: saved }));
@@ -22244,6 +22305,11 @@ var modeList = (list) => Array.isArray(list) ? list.filter((item) => typeof item
 function agentFacts(acp) {
   if (acp === null || typeof acp !== "object") return [];
   const out = [];
+  if (acp.ownMode?.taken === true) out.push(t("For the last prompt Codex was put in its own mode."));
+  else if (acp.ownMode) {
+    const why = { late: "no answer came in time", changed: "the answer changed before the prompt", refused: "Codex refused its own mode" }[acp.ownMode.answer] ?? "Auto does not count here";
+    out.push(t("For the last prompt Codex was put in its strict mode: {why}.", { why: t(why) }));
+  }
   const name = CLI_NAMES[acp.agent] ?? t("Another agent");
   out.push(acp.active === true ? name : t("{name}, not running now: this is from its last run", { name }));
   const modes = acp.modes;
@@ -23902,7 +23968,9 @@ var reopenPermissionChoice = (id) => reopened.set((map) => setEntry(map, id, tru
 var closeReopened = (id) => reopened.set((map) => setEntry(map, id, void 0));
 var FOOTNOTE = "You can change this any time in Details.";
 function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
-  const saved = bot.permission ?? catalog.defaultPreset;
+  catalog = levelsOf(catalog, bot);
+  const saved = savedLevelOf(bot, catalog);
+  const askedAtOpen = (0, import_react68.useRef)();
   const [picked, setPicked] = (0, import_react68.useState)(void 0);
   const [confirming, setConfirming] = (0, import_react68.useState)(false);
   const [busy, setBusy] = (0, import_react68.useState)(false);
@@ -23913,7 +23981,7 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
   const cli = cliOfBot(bot);
   const auto = cliAuto(draft, cli);
   const offered = catalog.options.some((option) => option.value === draft);
-  const asks = draft === AUTO || presetDanger(draft);
+  const asks = draft === AUTO_ROW || draft === AUTO || presetDanger(draft);
   const unchanged = picked === void 0 && bot.permission !== void 0;
   const send = () => {
     if (busyRef.current || !offered) return;
@@ -23924,7 +23992,7 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
     busyRef.current = true;
     setBusy(true);
     setError("");
-    void Promise.resolve().then(() => actions.updateBot(bot.id, { permission: draft })).then(onSaved, (failure) => {
+    void Promise.resolve().then(() => pickLevel(actions, bot, draft, askedAtOpen.current)).then(onSaved, (failure) => {
       setConfirming(false);
       setError(failure?.message ?? String(failure));
     }).finally(() => {
@@ -23945,8 +24013,8 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
         (0, import_react68.createElement)(
           "div",
           { className: "bt-q-text" },
-          (0, import_react68.createElement)("p", { className: "bt-q-title", id: titleId }, draft === AUTO ? name : t("Give {name} full access?", { name: bot.name })),
-          draft === AUTO ? (0, import_react68.createElement)("div", { className: "bt-q-detail" }, t("Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.")) : (0, import_react68.createElement)(
+          (0, import_react68.createElement)("p", { className: "bt-q-title", id: titleId }, draft === AUTO_ROW ? t("Put {name} on Auto?", { name: bot.name }) : draft === AUTO ? name : t("Give {name} full access?", { name: bot.name })),
+          draft === AUTO_ROW ? (0, import_react68.createElement)("div", { className: "bt-q-detail" }, ...autoQuestion(bot.name, presetName(bot.permission ?? catalog.defaultPreset, catalog)).map((text2) => (0, import_react68.createElement)("div", { className: "bt-note" }, text2))) : draft === AUTO ? (0, import_react68.createElement)("div", { className: "bt-q-detail" }, t("Auto review runs tools without a sandbox: a model reviews each call first, and you decide on the ones it stops. It is experimental, can let through or stop the wrong call, and uses more tokens.")) : (0, import_react68.createElement)(
             "div",
             { className: "bt-q-detail" },
             (0, import_react68.createElement)("span", { className: "bt-danger" }, auto ? cliConfirmText(cli) : t("{name} will run commands and change files anywhere without asking you first.", { name: bot.name })),
@@ -23964,7 +24032,7 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
         // Never the second press of a double click on Save, which sat in this place.
         (0, import_react68.createElement)("button", { type: "button", className: "bt-q-submit", disabled: busy, onClick: (event) => {
           if (!(event.detail > 1)) send();
-        } }, draft === AUTO ? t("Use Auto review") : t("Give full access"))
+        } }, draft === AUTO_ROW ? t("Use Auto") : draft === AUTO ? t("Use Auto review") : t("Give full access"))
       )
     );
   }
@@ -23978,8 +24046,10 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
       onSubmit: (event) => {
         event.preventDefault();
         if (busy || !offered) return;
-        if (asks && !unchanged) setConfirming(draft);
-        else send();
+        if (asks && !unchanged) {
+          askedAtOpen.current = { id: bot.id, rev: bot.permissionRev ?? 0 };
+          setConfirming(draft);
+        } else send();
       }
     },
     (0, import_react68.createElement)(
@@ -23998,6 +24068,7 @@ function PermissionCard({ bot, catalog, actions, onClose, onSaved }) {
       setPicked(value);
     }, disabled: busy, cli }),
     errorLine,
+    bot.permissionAuto ? (0, import_react68.createElement)(PermissionFallback, { fallback: bot.permissionFallback, owner: bot, catalog }) : null,
     note,
     (0, import_react68.createElement)(
       "div",
@@ -24059,7 +24130,7 @@ function PermissionRow({ bot, roster, actions, run: run2 }) {
     (0, import_react69.createElement)("div", { className: "bt-section-title" }, t("Permissions")),
     // A Bot without its own preset may run on another one set in DSH, so its first pick always applies.
     // The select explains the current level; its menu lets even a view-only window read every level.
-    (0, import_react69.createElement)(PermissionSelect, { catalog, name: bot.name, saved: bot.permission ?? catalog.defaultPreset, repick: bot.permission === void 0, disabled: Boolean(roster.readOnly), cli: cliOfBot(bot), onPick: (permission) => run2(actions.updateBot(bot.id, { permission })) }),
+    (0, import_react69.createElement)(PermissionSelect, { catalog: levelsOf(catalog, bot), name: bot.name, saved: savedLevelOf(bot, catalog), askedOf: () => ({ id: bot.id, rev: bot.permissionRev ?? 0 }), replaced: presetName(bot.permission ?? catalog.defaultPreset, catalog), repick: bot.permission === void 0, disabled: Boolean(roster.readOnly), cli: cliOfBot(bot), onPick: (permission, asked2) => run2(pickLevel(actions, bot, permission, asked2)) }),
     (0, import_react69.createElement)(PermissionFallback, { fallback: bot.permissionFallback, owner: bot, catalog }),
     roster.readOnly ? null : (0, import_react69.createElement)("button", { type: "button", className: "bt-more", onClick: () => reopenPermissionChoice(bot.id) }, t("Choose in the chat"))
   );

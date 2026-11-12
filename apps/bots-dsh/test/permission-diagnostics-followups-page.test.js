@@ -40,18 +40,18 @@ const labels = tree => nodes(tree).filter(node => node.type === 'row').map(node 
 const VIEW_ONLY = 'This window only views the team: the saved levels here are as of its last refresh.'
 const MORE = 'More conversations are open than fit here.'
 const ROW = { kind: 'chat', botId: 'b2', open: true, source: 'bot', saved: { value: 'workspace-write' }, effective: { value: 'workspace-write' } }
-const REPORT = { version: 1, sessions: [ROW] }
+const REPORT = { version: 2, sessions: [ROW] }
 
 test('a window that only views the team says its levels are as of its last refresh', () => {
   assert.deepEqual(labels(render({ ...REPORT, viewOnly: true })), [VIEW_ONLY])
   // With nothing open too, after the empty line.
-  assert.deepEqual(labels(render({ version: 1, sessions: [], viewOnly: true })), ['No Bot conversation is open.', VIEW_ONLY])
+  assert.deepEqual(labels(render({ version: 2, sessions: [], viewOnly: true })), ['No Bot conversation is open.', VIEW_ONLY])
   // After the other closing lines' first one, before the partial one.
   assert.deepEqual(labels(render({ ...REPORT, more: true, viewOnly: true, partial: true })), [MORE, VIEW_ONLY, 'Some of this could not be read just now.'])
   // Not without the flag, not for another value, and not when nothing could be read.
   assert.deepEqual(labels(render(REPORT)), [])
   assert.deepEqual(labels(render({ ...REPORT, viewOnly: 'yes' })), [])
-  assert.deepEqual(labels(render({ version: 1, unavailable: true, viewOnly: true })), ['This could not be read just now.'])
+  assert.deepEqual(labels(render({ version: 2, unavailable: true, viewOnly: true })), ['This could not be read just now.'])
 })
 
 test('marked conversations the host left out are counted, in place of the general line', () => {
