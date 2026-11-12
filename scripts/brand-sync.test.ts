@@ -876,6 +876,44 @@ describe('the brand copy tool and symbolic links', () => {
   });
 });
 
+// The skill is for agents working in a repository that holds the brand, not a skill that repository
+// offers its users. The skills CLI lists every folder under .claude/skills as the repository's own
+// skills (its inventory, and `npx skills add <repository>`) unless the skill's frontmatter says
+// `metadata.internal: true`. The copy is byte for byte, so the flag is set here, in the source.
+describe("the brand skill is internal: a carrying repository's skill list leaves it out", () => {
+  /** `metadata.internal` from a SKILL.md's frontmatter, read as the skills CLI reads it: YAML between the two `---` lines. */
+  const internal = (text: string) => {
+    const front = /^---\n([\s\S]*?)\n---\n/.exec(text)?.[1] ?? '';
+    const metadata = /^metadata:\n((?:[ \t]+.*\n?)+)/m.exec(`${front}\n`)?.[1] ?? '';
+    return /^[ \t]+internal:[ \t]*true[ \t]*$/m.test(metadata);
+  };
+
+  test('the reader finds the flag only as metadata.internal: true in the frontmatter', () => {
+    expect(internal('---\nname: a\nmetadata:\n  internal: true\n---\nbody\n')).toBe(true);
+    expect(internal('---\nname: a\nmetadata:\n  version: 1\n  internal: true\n---\n')).toBe(true);
+    expect(internal('---\nname: a\n---\nmetadata:\n  internal: true\n')).toBe(false);
+    expect(internal('---\nname: a\ninternal: true\n---\n')).toBe(false);
+    expect(internal('---\nname: a\nmetadata:\n  internal: false\n---\n')).toBe(false);
+  });
+
+  test("Automagik's skill carries the flag, and a copy of it does too, byte for byte", () => {
+    const ours = readFileSync(join(ROOT, SKILL), 'utf8');
+    expect(internal(ours)).toBe(true);
+    expect(ours).toStartWith('---\nname: automagik-brand\n');
+    const { source, target } = repositories(source => {
+      for (const folder of FOLDERS) cpSync(join(ROOT, folder), join(source, folder), { recursive: true });
+      put(source, TOOL, readFileSync(join(ROOT, TOOL)));
+    });
+    for (const into of [undefined, 'brand']) {
+      write({ to: target, from: source, into });
+      const copied = readFileSync(join(target, SKILL), 'utf8');
+      expect(copied).toBe(ours);
+      expect(internal(copied)).toBe(true);
+      expect(check({ to: target }).problems).toEqual([]);
+    }
+  }, 60_000);
+});
+
 describe('.gitignore and the .claude folder', () => {
   test('only the skills are ever tracked: local settings and worktrees under .claude are ignored', () => {
     const repo = mkdtempSync(join(tmpdir(), 'brand-sync-ignore-'));
