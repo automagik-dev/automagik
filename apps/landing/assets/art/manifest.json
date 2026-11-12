@@ -30,29 +30,29 @@
     },
     "genie.webp": {
       "source": "apps/desktop/assets/dmg-source/genie.png",
-      "sourceSha256": "679f15ef33e0b9670f610fba12af2e79b12d31342717d3bb1b2553336e32f37f",
+      "sourceSha256": "b4f5a874c1373db0f1cfcb26e7ac3ceb2f2ae22f234324df6234abd1754481f6",
       "rect": [
-        185,
-        102,
-        653,
-        820
+        158,
+        60,
+        708,
+        904
       ],
       "width": 220,
-      "height": 276,
-      "sha256": "53e5f7a5e077e11d60ff7b4b79bc65bcd2a1303d04739edbad21aa557600909e"
+      "height": 281,
+      "sha256": "68c89af47d53dc57996e0fba2e29661a5def0517e6efc0905dcf317f9c21b78b"
     },
     "genie-2x.webp": {
       "source": "apps/desktop/assets/dmg-source/genie.png",
-      "sourceSha256": "679f15ef33e0b9670f610fba12af2e79b12d31342717d3bb1b2553336e32f37f",
+      "sourceSha256": "b4f5a874c1373db0f1cfcb26e7ac3ceb2f2ae22f234324df6234abd1754481f6",
       "rect": [
-        185,
-        102,
-        653,
-        820
+        158,
+        60,
+        708,
+        904
       ],
       "width": 440,
-      "height": 553,
-      "sha256": "e4c73cc7ba096c60fabd1fb4096cedddf1b61a2136e979b29cb9f15c9a6e44b9"
+      "height": 562,
+      "sha256": "ce64462bbcf0b5a1f809892dabbc90a5865411d4e2a117d42dabbfea2252ac86"
     },
     "omni.webp": {
       "source": "apps/landing/assets/brand/omni-pleased.png",
@@ -160,29 +160,29 @@
     },
     "genie-faces.webp": {
       "source": "apps/bots-dsh/src/client/art/genie-expressions.webp",
-      "sourceSha256": "d143b4b2230b421db237f9fc2b37208af505abd2a013f80460c96760440fa87f",
+      "sourceSha256": "9df7083cca4a14afc804875b87d9f9cdd18c032f725084f2424434e502bac926",
       "rect": [
-        33,
-        22,
-        1269,
-        178
+        20,
+        5,
+        1293,
+        199
       ],
       "width": 504,
-      "height": 71,
-      "sha256": "4b48b49da8cacb9cd7e7a43972b4bb368c7fc28ead43c8dcfff1121b74972dd9"
+      "height": 78,
+      "sha256": "c127de98b3989a1fbb002c7f10f04d50172dba95626cedf256665bf7cd279a14"
     },
     "genie-faces-2x.webp": {
       "source": "apps/bots-dsh/src/client/art/genie-expressions.webp",
-      "sourceSha256": "d143b4b2230b421db237f9fc2b37208af505abd2a013f80460c96760440fa87f",
+      "sourceSha256": "9df7083cca4a14afc804875b87d9f9cdd18c032f725084f2424434e502bac926",
       "rect": [
-        33,
-        22,
-        1269,
-        178
+        20,
+        5,
+        1293,
+        199
       ],
       "width": 1008,
-      "height": 141,
-      "sha256": "f4fe1b88d90c761fd6a98faa5e6a8fc9aa88d8b8a2395e06394d0a6d5732062d"
+      "height": 155,
+      "sha256": "6d69d9df7bbe0e353508b76441f27541bb54e9b5d9a5badd983d17007b448d70"
     },
     "omni-faces.webp": {
       "source": "apps/bots-dsh/src/client/art/omni-expressions.webp",

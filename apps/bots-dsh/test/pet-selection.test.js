@@ -63,6 +63,6 @@ test('selecting Automagik persists through plugin reload without changing other 
   app = start(home)
   const restored = await app.call('state')
   assert.deepEqual(restored.bots.find(bot => bot.id === logo.id).avatar, expected)
-  assert.deepEqual(restored.bots.find(bot => bot.id === genie.id).avatar, { pet: { source: 'builtin', id: 'genie-clay', version: 1, sleep: true } })
+  assert.deepEqual(restored.bots.find(bot => bot.id === genie.id).avatar, { pet: { source: 'builtin', id: 'genie-clay', version: 2, sleep: true } })
   assert.deepEqual(restored.bots.find(bot => bot.id === main.id).avatar, main.avatar)
 })

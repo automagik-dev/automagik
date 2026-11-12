@@ -60,10 +60,22 @@ const FIDGETS = ['hop', 'sway', 'stretch', 'look']
 
 // Pets (pet.js) in the Codex format: a pet the team installed or ships, served by the host
 // (pets.js), or a character baked into one (pet-bake.js) for the marks that move.
-export const GENIE_PET = Object.freeze({ source: 'builtin', id: 'genie-clay', version: 1, sleep: true })
+// Genie is the approved full-body figure (dev/art/genie-approved-v5): a v2 atlas under the id
+// teams already keep.
+export const GENIE_PET = Object.freeze({ source: 'builtin', id: 'genie-clay', version: 2, sleep: true })
 export const UNFOLD_PET = Object.freeze({ source: 'builtin', id: 'unfold', version: 2, sleep: true })
-const petUrl = (pet, part) => `api/omni-ui/pet?${new URLSearchParams({ source: pet.source, id: pet.id, ...(part ? { part } : {}) })}`
-export const servedPet = pet => ({ sheet: petUrl(pet), sleep: pet.sleep ? petUrl(pet, 'sleep') : undefined, version: pet.version })
+// The pet's version is part of its address (`v`; the route does not read it). The host lets
+// the browser keep a sheet for an hour, and the app comes back on the same origin after an
+// update: without it, a new atlas under an id teams keep (Genie's v2 over its v1) would be
+// drawn with its new rows from the old sheet still in the cache.
+const petUrl = (pet, part) => `api/omni-ui/pet?${new URLSearchParams({ source: pet.source, id: pet.id, ...(part ? { part } : {}), ...(pet.version ? { v: pet.version } : {}) })}`
+// Genie's version and sleep strip are the shipped ones, never a kept look's: a v2 atlas read
+// as the v1 it replaced would draw the wrong cells.
+const shipped = pet => (pet.source === GENIE_PET.source && pet.id === GENIE_PET.id ? GENIE_PET : pet)
+export const servedPet = (pet) => {
+  const worn = shipped(pet)
+  return { sheet: petUrl(worn), sleep: worn.sleep ? petUrl(worn, 'sleep') : undefined, version: worn.version }
+}
 /** The pet a mark wears: its own, Genie's or Unfold's, or (moving marks only) its character baked; else null. */
 export function petOf(bot, look, { live, size }) {
   if (look.image) return null
@@ -144,7 +156,7 @@ function DrawnMark({ bot, look, size = 36, state = 'idle', live = false, gaze = 
   }
   if (image) return h('span', common, h('img', { className: 'bt-mark-img', src: image, alt: '', draggable: false, onError: () => setBroken(image) }))
   // A clay character is one picture: the body motions of its state move it whole (.bt-b),
-  // and its face follows the state. Small marks frame Genie's head, under the plume.
+  // and its face follows the state. Small marks frame Genie's head.
   const art = clayArtOf(bot, look)
   if (art) {
     const face = faceOf(common['data-state'], poked)

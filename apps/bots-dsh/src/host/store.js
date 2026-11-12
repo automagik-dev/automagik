@@ -16,7 +16,7 @@ import { piAiClaudeOf } from './claude-models.js'
 import { LEGACY_THEMES, MAX_EXCHANGES, ROOM_MODES, TEXT_KEPT } from './constants.js'
 import { replaceFile } from './files.js'
 import { homeLock } from './home-lock.js'
-import { GENIE_CLAY, shipsPet } from './pets.js'
+import { GENIE_CLAY, shippedPet, shipsPet } from './pets.js'
 import { currentColor, headOf, normalize, unquote } from './text.js'
 
 // A table read that sees only the keys the table holds itself. Ids that come from
@@ -242,8 +242,8 @@ export function install(rt) {
       state.octopusStored = true
       migrated = true
     }
-    // Genie's pet moved from genie-cosmic to genie-clay (the clay kit's Genie). Once, every
-    // Bot wearing genie-cosmic changes to it.
+    // Genie's pet moved from genie-cosmic to genie-clay. Once, every Bot wearing genie-cosmic
+    // changes to it.
     if (state.genieClayStored !== true) {
       for (const bot of Object.values(state.bots)) {
         const pet = bot?.avatar?.pet
@@ -273,10 +273,14 @@ export function install(rt) {
       migrated = true
     }
     // A builtin pet the plugin no longer ships would draw nothing: its Bot wears Genie instead.
+    // Genie kept from before its approved figure names the old atlas's version: it reads as
+    // the Genie shipped now (pets.js shippedPet), whatever the file says, every time.
     for (const bot of Object.values(state.bots)) {
       const pet = bot?.avatar?.pet
-      if (pet?.source !== 'builtin' || shipsPet(pet.id)) continue
-      bot.avatar = { ...bot.avatar, pet: { ...GENIE_CLAY } }
+      if (pet?.source !== 'builtin') continue
+      const worn = shipsPet(pet.id) ? shippedPet(pet) : { ...GENIE_CLAY }
+      if (worn.id === pet.id && worn.version === pet.version && worn.sleep === pet.sleep) continue
+      bot.avatar = { ...bot.avatar, pet: worn }
       migrated = true
     }
     if (Object.hasOwn(LEGACY_THEMES, state.prefs.theme ?? '')) {
