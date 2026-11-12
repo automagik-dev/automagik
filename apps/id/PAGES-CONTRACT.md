@@ -1,9 +1,9 @@
 # Sign-in and consent page contract
 
-The owner builds `pages/sign-in.html` and `pages/consent.html`, with any supporting
-assets in that directory. The Worker serves them at `/sign-in` and `/consent`.
-An absent page returns plain text `501 page not built yet`. No UI is included in
-delivery 1. Serve scripts and styles from the same origin. No third-party scripts,
+The sign-in and consent pages are `pages/sign-in.html` and `pages/consent.html`,
+with supporting assets in that directory. The Worker serves them at `/sign-in`
+and `/consent`. An absent page returns plain text `501 page not built yet`.
+Scripts and styles are served from the same origin. No third-party scripts,
 analytics, external fonts, or tokens in browser storage are needed.
 
 ## HTTP conventions
@@ -76,10 +76,11 @@ the signed-in state and no invented destination.
 
 ## Sign-in page
 
-On load, call `GET /api/id/config`. Response: `{phoneEnabled: false, whatsappEnabled: boolean}`. The legacy phone action
-stays hidden. New WhatsApp controls use `whatsappEnabled`.
-The phone option must be absent when false. A config failure should leave the
-passkey option usable and the phone option hidden.
+On load, call `GET /api/id/config`. Response:
+`{phoneEnabled: false, whatsappEnabled: boolean}`. Show the WhatsApp option only
+when `whatsappEnabled` is true. The person sends a prefilled message from the
+returned link or QR code; the page collects no phone number or code. A config
+failure should leave the passkey option usable and the WhatsApp option hidden.
 
 Optionally call `GET /api/auth/get-session`. Response is `null` when signed out,
 or `{session: {id, userId, expiresAt, ...}, user: {id, name, ...}}`. No email
@@ -97,10 +98,8 @@ Authentication:
    timeout?, userVerification, allowCredentials?, extensions?}`. With no session,
    `allowCredentials` is omitted or empty, enabling discoverable credentials.
 2. Convert the JSON options' base64url byte fields to ArrayBuffers and call
-   `navigator.credentials.get({publicKey})`. For browsers supporting conditional
-   mediation, the same endpoint supports `mediation: "conditional"` and a form
-   field marked `autocomplete="username webauthn"`. No username is sent to the
-   service. Abort the pending conditional request before starting another ceremony.
+   `navigator.credentials.get({publicKey})` from the explicit passkey action.
+   These pages have no username field and do not start conditional mediation.
 3. Serialize the credential with `credential.toJSON()` where supported, or the
    equivalent base64url WebAuthn JSON shape. `POST /api/auth/passkey/verify-authentication`
    with `{response: AuthenticationResponseJSON, oauth_query?: string}`. The normal
@@ -165,8 +164,8 @@ WhatsApp inbound proof, only when `whatsappEnabled` is true:
 The legacy `/api/auth/phone-number/send-otp`, `/api/auth/phone-number/verify` and
 `/api/auth/sign-in/phone-number` endpoints always return 404. There is no phone
 number input, code-to-browser delivery, resend-code action or linking flag in the
-new flow. Existing page files are updated in the separate page delivery; this
-service deliberately reports `phoneEnabled: false` during that transition.
+new flow. The pages use `whatsappEnabled`; `phoneEnabled` remains false for
+compatibility with the retired outbound flow.
 
 WhatsApp states: unavailable/hidden, starting, link and code ready, waiting for the
 person's message, pending proof, expiry with restart, verified, redirecting,
@@ -176,7 +175,7 @@ message is required. An invalid or unrecognized sender identifier gets no reply
 and cannot complete proof.
 
 Required visible states: loading/config, passkey offered, authenticator prompt
-pending, conditional mediation pending when supported, passkey cancelled,
+pending, passkey cancelled,
 passkey unavailable, passkey failed with retry, account created, signed in,
 continuing to product, WhatsApp offered only when enabled, waiting for a message,
 expired proof, restart wait, rate limited, service/network error,

@@ -5,10 +5,10 @@ its matching passkey and OAuth provider plugins, and a Cloudflare Worker with D1
 This service deploys independently; repository releases never package it.
 
 Passkey registration creates an account without a prior session. The authenticator
-must support a discoverable credential and user verification. Authentication can
-use browser conditional mediation; the API returns discoverable credential options
-without requiring a username. No email, password, social login or public OAuth
-client registration is exposed. There is no account management or recovery UI in
+must support a discoverable credential and user verification. Authentication uses
+discoverable credential options without requiring a username. The pages start the
+authenticator from an explicit passkey action. No email, password, social login
+or public OAuth client registration is exposed. There is no account management or recovery UI in
 this delivery. The service does not provide a passkey recovery mechanism.
 
 Better Auth's user schema requires a unique email. Accounts receive a random
@@ -58,10 +58,12 @@ future third-party entries must keep `skipConsent: false`.
 
 The sign-in and consent pages live in `pages/` and follow [PAGES-CONTRACT.md](PAGES-CONTRACT.md):
 `sign-in.html`, `consent.html`, one stylesheet (`id.css`), one script (`id.js`) and
-`assets/` (fonts, wordmark, the pet, their licences). They are plain files with no
-build step; nothing is loaded from another origin, and a meta Content-Security-Policy
-allows same-origin files only. Passkey is the main action. The existing outbound-phone action stays hidden;
-its replacement WhatsApp controls are a separate page delivery. Copy is English only, in one table in `id.js`.
+`assets/` (fonts, wordmark, Genie and Omni face artwork, the app icon and licences).
+They are plain files with no build step; nothing is loaded from another origin,
+and a meta Content-Security-Policy allows same-origin files only. Passkey is the
+main action. When enabled, WhatsApp lets the person send the prefilled message
+from a link or QR code; the page has no phone-number or code-entry fields. Copy
+is English only, in one table in `id.js`.
 
 The Worker serves a page only at `/sign-in` and `/consent`, where it adds
 `referrer-policy`, `cache-control: no-store` and `x-frame-options`. Any direct
