@@ -5,11 +5,8 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, open, readFile, realpath, stat, unlink, writeFile } from 'node:fs/promises'
 import { basename, extname, isAbsolute, join, relative as relativePath } from 'node:path'
 import { gateScope } from './gate.js'
-<<<<<<< HEAD
 import { keepTabs, restoreTabs } from './tabs.js'
-=======
 import { runIsolatedScript } from './script-runner.js'
->>>>>>> vendor/ds-bot-0.3.6-prepared
 
 const ACTION_TIMEOUT = 5_000
 const SNAPSHOT_LIMIT = 40_000

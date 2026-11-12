@@ -237,11 +237,7 @@ export function pageText(page, { from = 0, size = TEXT_PAGE, itemsMax = ITEMS_MA
   return lines.join('\n')
 }
 
-<<<<<<< HEAD
 export const NO_BROWSER = 'Your browser panel is not open. It exists only in the desktop apps (DSH Desktop and the Automagik app): ask the user to click your name at the top of your chat, open the browser from there, and load the page.'
-=======
-export const NO_BROWSER = 'Your browser panel is not open. It exists only in the desktop apps (DSH Desktop and Omni): ask the user to click your name at the top of your chat, open the browser from there, and load the page.'
->>>>>>> vendor/ds-bot-0.3.6-prepared
 export const NO_PAGE = 'Your browser panel has no page open yet. Ask the user to load the page there first.'
 
 const OPEN_MAX = 64
@@ -266,7 +262,6 @@ export function install(rt) {
     return
   }
   const channel = createBrowserChannel()
-<<<<<<< HEAD
   ctx.effect(() => () => channel.dispose(), 'omni-ui: browser channel')
   // A hold changes what every window shows (the handoff card, take over and give back). The
   // team view carries the holds and a save bumps its revision, so a window without the
@@ -284,9 +279,6 @@ export function install(rt) {
   }
   Object.assign(rt, { browserEnabled: panel, browserChannel: channel, browserOpen: panel ? openOf : () => ({}) })
   if (!reads) return
-=======
-  ctx.effect(() => () => channel.dispose(), 'omni-ui: browser channel')
->>>>>>> vendor/ds-bot-0.3.6-prepared
 
   rt.teamTools.push(defineTool({
     name: 'read_browser',

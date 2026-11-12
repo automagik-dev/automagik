@@ -106,7 +106,7 @@ export function install(rt) {
   let stopped = false
 
   const enabled = () => state.computer?.enabled === true
-  const levelOf = bot => (LEVELS.includes(bot?.computer?.level) ? bot.computer.level : 'background')
+  const levelOf = bot => (LEVELS.includes(bot?.computer?.level) ? bot.computer.level : 'off')
   const grantsOf = bot => (bot?.computer?.apps ?? {})
   const controlOf = (botId) => {
     let entry = control.get(botId)

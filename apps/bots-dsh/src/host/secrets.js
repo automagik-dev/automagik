@@ -3,13 +3,9 @@
 // their shell, tool results lose it before they are saved, and every model request
 // has it replaced by [secret:<NAME>] before it leaves.
 import { randomUUID } from 'node:crypto'
-<<<<<<< HEAD
 import { refusal } from './refusal.js'
-import { chmod, copyFile, mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
-=======
-import { chmodSync, copyFileSync, readFileSync } from 'node:fs'
+import { copyFileSync, readFileSync } from 'node:fs'
 import { chmod, mkdir, unlink, writeFile } from 'node:fs/promises'
->>>>>>> vendor/ds-bot-0.3.6-prepared
 import { join } from 'node:path'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { GITHUB_TOKEN_DAYS, GITHUB_WORK, cleanGitHubWork, githubPermissions, isGitHubTokenName } from '../shared/github-token.js'
@@ -187,12 +183,8 @@ export function install(rt) {
         copyFileSync(path, backup)
         blocked = undefined
         secrets.clear()
-<<<<<<< HEAD
         heldWarned = ''
         rt.warn('omni-ui: unreadable secrets file %s; backed up as %s', path, backup)
-=======
-        rt.warn('omni-ui: unreadable secrets file %s; backed up as %s', path, backup)
->>>>>>> vendor/ds-bot-0.3.6-prepared
       } catch (error) {
         blocked = reason(error)
         rt.warn('omni-ui: unreadable secrets file %s; backup failed: %s', path, error)
@@ -219,26 +211,18 @@ export function install(rt) {
         ...(Number.isFinite(entry.lastUsedAt) ? { lastUsedAt: entry.lastUsedAt } : {}),
       })
     }
-<<<<<<< HEAD
     if (!loadedReadOnly) await chmod(path, 0o600).catch(() => {})
     const heldNotice = heldNames.join(',')
     if (heldNotice !== heldWarned) {
       heldWarned = heldNotice
       for (const name of heldNames) rt.warn('omni-ui: secret %s in %s is held: its saved value is shorter than the %d-character minimum; nothing uses it until a longer value is saved', name, path, MIN_VALUE)
     }
-=======
-    if (!loadedReadOnly) try { chmodSync(path, 0o600) } catch {}
->>>>>>> vendor/ds-bot-0.3.6-prepared
     changed()
   }
 
   // Resolves once secrets.json holds the current map; rejects when the write failed.
   const persist = () => {
-<<<<<<< HEAD
     if (blocked !== undefined) return Promise.reject(refusal(`The secrets file could not be read (${blocked}). Omni does not change it; fix or move it and reload.`))
-=======
-    if (blocked !== undefined) return Promise.reject(new Error(`The secrets file ${path} could not be read (${blocked}). Omni does not change it; fix or move the file and reload.`))
->>>>>>> vendor/ds-bot-0.3.6-prepared
     const readOnly = rt.readOnly()
     if (readOnly !== undefined) return Promise.reject(refusal(readOnly))
     const snapshot = JSON.stringify({ version: 1, secrets: [...secrets.values()] }, null, 2)
@@ -664,13 +648,8 @@ export function install(rt) {
 
   ctx.effect(() => {
     void loadSecrets()
-<<<<<<< HEAD
     return () => { stopped = true; if (usedTimer !== null) clearTimeout(usedTimer) }
   }, 'omni-ui: load secrets')
-=======
-    return () => { if (usedTimer !== null) clearTimeout(usedTimer) }
-  }, 'omni-ui: load secrets')
->>>>>>> vendor/ds-bot-0.3.6-prepared
 
   Object.assign(rt, {
     secretsView,

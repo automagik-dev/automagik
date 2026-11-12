@@ -24,13 +24,8 @@ const PROBE_BODY = JSON.stringify({
 export const CONNECTOR_IDS = new Set(['github', 'mail'])
 export function validateCapabilityName(value, reserved = CONNECTOR_IDS) {
   const name = String(value ?? '').trim()
-<<<<<<< HEAD
-  if (name.length > 32 || !NAME.test(name) || name === 'github') {
-    throw refusal('Use a capability name with lowercase letters, digits, and single hyphens; "github" is reserved.')
-=======
   if (name.length > 32 || !NAME.test(name) || name === 'github' || reserved.has(name)) {
-    throw new Error('Use a capability name with lowercase letters, digits, and single hyphens; connector names are reserved.')
->>>>>>> vendor/ds-bot-0.3.6-prepared
+    throw refusal('Use a capability name with lowercase letters, digits, and single hyphens; connector names are reserved.')
   }
   return name
 }
