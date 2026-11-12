@@ -328,8 +328,11 @@ page. The owner approves the two lines before the site goes live.
 
 ### Stamp, links, logo slot and motion, 2026-11-12
 
-The owner on the next preview. The Open Intelligence line gets a designed stamp that carries
-the we unfold link: a seal on the home page and a tag in every footer. Guides and help link
+The owner on the next preview. The Open Intelligence line first got a stamp drawn for this
+site; the owner then asked for we unfold's official Open Intelligence seal instead, so the
+site's own stamp is gone. The official seal (we unfold's site embed, used as given) stands
+in every footer beside the licence line, with the link text Support Open Intelligence next
+to it: it marks the parts built in the open (Apache-2.0), not the whole offer. Guides and help link
 to `https://docs.automagik.dev`; GitHub is linked for the downloads and once in the footer;
 no page links to an RFC. Arca's own logo stands wherever Arca does: the icon from Arca's
 logo kit, published here with the owner's and Arca's agreement on 2026-11-12. The public

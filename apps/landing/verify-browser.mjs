@@ -113,7 +113,13 @@ try {
         const unsized = [...document.images].filter(image => !image.getAttribute('width') || !image.getAttribute('height')).map(image => image.src)
         const themed = [...document.querySelectorAll('picture')].filter(picture => picture.querySelector('source[media*="prefers-color-scheme: dark"]')).map(picture => picture.querySelector('img').currentSrc.replace(location.origin, ''))
         const box = selector => { const node = document.querySelector(selector); return node ? node.getBoundingClientRect().toJSON() : null }
-        return { brokenWords, unsized, film: film ? area(film) : 0, largest: Math.max(0, ...shown.filter(image => !image.closest('[data-film]')).map(area)), themed, bubble: box('.bubble'), heroWindow: box('.scene-window img') }
+        // The official seal: its own size, and how much room each side keeps free of other things.
+        const sealBox = document.querySelector('.footer-open > a svg').getBoundingClientRect()
+        const near = [...document.querySelectorAll('.footer-open-copy, .site-footer nav, .footer-brand')].map(node => node.getBoundingClientRect())
+        const gap = (a, b) => Math.max(b.left - a.right, a.left - b.right, b.top - a.bottom, a.top - b.bottom)
+        const footerBox = document.querySelector('.site-footer').getBoundingClientRect()
+        const seal = { width: sealBox.width, height: sealBox.height, clear: Math.min(sealBox.left, innerWidth - sealBox.right, footerBox.bottom - sealBox.bottom, ...near.map(box => gap(sealBox, box))) }
+        return { seal, brokenWords, unsized, film: film ? area(film) : 0, largest: Math.max(0, ...shown.filter(image => !image.closest('[data-film]')).map(area)), themed, bubble: box('.bubble'), heroWindow: box('.scene-window img') }
       })
       await page.keyboard.press('Tab')
       const focus = await page.evaluate(() => ({ skip: document.activeElement?.classList.contains('skip'), outline: getComputedStyle(document.activeElement).outlineStyle }))
@@ -122,6 +128,7 @@ try {
       const label = `${route} ${colorScheme} ${width}px`
       assert.deepEqual(layout.brokenWords, [], `A heading word breaks across lines: ${label}`)
       assert.deepEqual(layout.unsized, [], `Images without width/height: ${label}`)
+      assert.ok(layout.seal.width >= 84 && layout.seal.width === layout.seal.height && layout.seal.clear >= layout.seal.width / 4, `The Open Intelligence seal is 84 px or larger with a quarter of its width clear: ${label} ${JSON.stringify(layout.seal)}`)
       assert.deepEqual(layout.themed.filter(source => /(?:-dark(?:-2x)?\.webp|\/arca-icon-ivory\.svg)$/.test(source) !== (colorScheme === 'dark')), [], `App pictures follow the theme: ${label}`)
       if (route === '/') {
         assert.ok(layout.themed.length >= 4, `The home's app pictures have dark captures: ${label}`)

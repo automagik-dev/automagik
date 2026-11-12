@@ -203,31 +203,11 @@ body:has(.drawer:popover-open) :is(main,.site-footer,.skip){visibility:hidden}
 .also .product-card h3 a:hover{text-decoration:underline}
 .also .product-card p{margin:0;font-size:.92rem}
 
-/* Open Intelligence: the stamp (Automagik's own mark for the movement it is part of, and
-   the link to we unfold) beside the movement's line. The seal is the home page's cut, the
-   tag is the footer's. */
-.open{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:clamp(28px,5.5vw,80px);padding-block:clamp(48px,6.5vw,96px) clamp(36px,5vw,64px)}
-.open-line{max-width:22ch;font-size:clamp(1.7rem,1.05rem + 2.4vw,3.1rem);line-height:1.12}
+/* Open Intelligence: the movement's line, centred. */
+.open{padding-block:clamp(36px,5vw,72px) clamp(28px,4vw,56px);text-align:center}
+.open-line{max-width:24ch;margin-inline:auto;font-size:clamp(1.7rem,1.05rem + 2.4vw,3.1rem);line-height:1.12}
 .open-part{margin-top:20px;color:var(--muted);font-size:1.05rem}
 .open-part a{color:var(--text);font-weight:600}
-@media (max-width:760px){
-  .open{grid-template-columns:minmax(0,1fr);justify-items:center;text-align:center}
-  .open-line{margin-inline:auto}
-}
-.stamp{color:var(--text);text-decoration:none}
-.stamp.seal{position:relative;display:block;width:clamp(148px,17vw,212px);aspect-ratio:1;margin-inline:clamp(0px,2vw,28px);border-radius:50%;background:var(--paper);box-shadow:var(--st-clay);rotate:-8deg}
-.stamp.seal:focus-visible{outline:3px solid var(--ring);outline-offset:6px}
-.seal-art,.seal-art svg{position:absolute;inset:0;width:100%;height:100%}
-.seal-ring{transition:rotate .9s cubic-bezier(.2,.7,.2,1)}
-.seal-ring text{font:800 19.5px/1 var(--head);fill:var(--text)}
-.seal-inner{stroke:var(--line-2)}
-.stamp.seal:hover .seal-ring{rotate:24deg}
-.stamp.tag{display:inline-flex;align-items:center;gap:12px;margin-top:20px;padding:7px 20px 7px 7px;border-radius:999px;background:var(--paper);border:1px solid var(--line-2);transition:border-color .2s ease}
-.stamp.tag:hover{border-color:var(--ring);color:var(--text)}
-.stamp-core{flex:none;width:42px;height:42px;transition:rotate .7s cubic-bezier(.2,.7,.2,1)}
-.stamp.tag:hover .stamp-core{rotate:62deg}
-.stamp-text{font:400 .8rem/1.3 var(--body);color:var(--muted)}
-.stamp-text strong{display:block;font:800 .94rem/1.25 var(--head);letter-spacing:-.01em;color:var(--text)}
 
 /* Made by this team, with the film's quiet slot */
 .made{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,.9fr);gap:clamp(28px,5vw,72px);align-items:center;padding-block:clamp(40px,5vw,72px) clamp(64px,8vw,112px)}
@@ -413,7 +393,18 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:var(--ring);box-s
 .site-footer nav a{text-decoration:none}
 .site-footer nav a:hover{text-decoration:underline}
 .footer-head{font:800 .7rem/1.5 var(--head);letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
-.footer-license{grid-column:1/-1;padding-top:22px;border-top:1px solid var(--line);font-size:.84rem;color:var(--muted)}
+.footer-brand .footer-part{margin-top:10px;max-width:34ch}
+.footer-part a{color:var(--text);font-weight:600}
+/* The part built in the open: we unfold's official seal, as given, beside the licence line.
+   A quarter of the seal's width stays clear on every side. */
+.footer-open{grid-column:1/-1;display:flex;align-items:center;gap:24px;padding-top:26px;border-top:1px solid var(--line);color:var(--text)}
+.footer-open>a{flex:none;margin-left:max(0px,24px - var(--gutter))}
+.footer-open>a:focus-visible{border-radius:50%}
+@media (max-width:520px){.footer-open{flex-direction:column;align-items:flex-start}}
+.footer-open-label{font:800 .94rem/1.3 var(--head);letter-spacing:-.01em}
+.footer-open-label a{text-decoration:none}
+.footer-open-label a:hover{text-decoration:underline}
+.footer-license{margin-top:6px;font-size:.84rem;color:var(--muted);max-width:76ch}
 .footer-license a{color:inherit;white-space:nowrap}
 
 /* Function responses (registration, confirmation) share the frame */
@@ -556,9 +547,6 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:var(--ring);box-s
     :is(.flow-steps>li,.more-list>li):nth-child(3){animation-range:entry 110px entry 350px}
     .more-list>li:nth-child(4){animation-range:entry 150px entry 390px}
     .more-list>li:nth-child(5){animation-range:entry 190px entry 430px}
-    /* The stamp is pressed onto the page, and its ring of words turns as the page moves. */
-    .stamp.seal{animation:press linear both;animation-timeline:view();animation-range:entry 20% entry 260px}
-    .seal-ring{animation:turn linear both;animation-timeline:view();animation-range:cover}
     /* Inside a card, its picture moves a little more than the card. */
     .bento>.product-card{view-timeline:--card block}
     .tile-omni,.tile-pet{animation:sway linear both;animation-timeline:--card;animation-range:cover}
@@ -582,8 +570,6 @@ input:focus,textarea:focus,select:focus{outline:0;border-color:var(--ring);box-s
 @keyframes pop{from{opacity:0;scale:.55}}
 @keyframes drift{from{transform:translate(-6px,4px)}to{transform:translate(8px,-6px)}}
 @keyframes rise{from{opacity:0;translate:0 40px}}
-@keyframes press{from{opacity:0;scale:1.4;rotate:-34deg}}
-@keyframes turn{from{rotate:-80deg}to{rotate:80deg}}
 @keyframes sway{from{translate:0 16px;rotate:-7deg}to{translate:0 -16px;rotate:7deg}}
 @keyframes sway-back{from{translate:0 16px;rotate:6deg}to{translate:0 -14px;rotate:-6deg}}
 @keyframes climb{from{translate:0 34px}to{translate:0 -10px}}

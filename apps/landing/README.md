@@ -42,12 +42,19 @@ everywhere; it is the `products` list in `scripts/build-pages.mjs`.
 
 Automagik is part of we unfold. The link and both lines of wording are one constant,
 `weUnfold` in `scripts/build-pages.mjs`: change them there and regenerate. They appear in the
-Company menu and once on the home page, and the Open Intelligence stamp carries the link:
-the seal beside the line on the home page, the tag in every footer. The stamp is Automagik's
-own drawing, not we unfold's logo, and never holds another product's logo. The contract test holds
+Company menu, once on the home page and once in every footer. Beside the footer's licence
+line (the Apache-2.0 parts, since the seal marks the part built in the open and not the
+whole offer) stands we unfold's official Open Intelligence seal, with the link text Support
+Open Intelligence next to it, never drawn into it. The seal is
+`assets/brand/open-intelligence/site-seal-full-colour.snippet.html`, we unfold's own site
+embed, placed byte for byte: its words, ring weights and mark are never changed, it links
+`https://weunfold.ai` with its own title, it is never smaller than 84 px, it keeps a quarter
+of its width clear on every side and it never moves. A newer seal replaces the file and the
+digest pinned in the contract test. No other product's logo stands with it. The contract test holds
 the rules from the we unfold team: Open Intelligence keeps both capitals and is never
 shortened; we unfold is lower case in running text; "part of" means the movement, never
-ownership; no logo, the text is the link. The owner approves both lines before the site
+ownership; no we unfold logo, the text is the link, and the only mark is the official
+seal. The owner approves both lines before the site
 goes live.
 
 ## Links out
@@ -64,7 +71,7 @@ Arca's own icon from Arca's logo kit: `assets/brand/arca/svg/arca-icon-ink.svg` 
 `arca-icon-ivory.svg`, copied unchanged under the kit's own names. A newer kit replaces the
 files at the same paths; never edit a copy. Ink on Arca's sand ground in light, ivory on its
 night ground in dark. Arca's rules hold here: one colour, never redrawn or tinted, never
-animated by this site, never inside the Open Intelligence stamp, no tagline locked to it,
+animated by this site, never locked up with the Open Intelligence seal, no tagline locked to it,
 and the small cut for any size under 24 px (no place here is that small). Name any retina
 file `name-2x`, since the privacy check reads the usual at-sign form as an address.
 
@@ -72,8 +79,8 @@ file `name-2x`, since the privacy check reads the usual at-sign form as an addre
 
 Motion is CSS only and sits in one block of `styles.css`, for visitors who have not asked
 for reduced motion: sections and cards rise as they scroll into view, a card's picture
-moves a little within it, the home's cast pops up and peeks higher as the page leaves, the
-stamp is pressed on and its ring of words turns, pages cross-fade with a character
+moves a little within it, the home's cast pops up and peeks higher as the page leaves,
+pages cross-fade with a character
 travelling to its own page, and the menus ease in. It moves only `translate`, `scale`,
 `rotate`, `transform` and `opacity`, so the layout never shifts. With reduced motion, or in
 a browser without scroll-driven animation, the page is whole and still.

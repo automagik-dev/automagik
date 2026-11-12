@@ -1,6 +1,7 @@
 // Static multi-page source. No build step is needed on Pages; generated HTML is committed.
 import assert from 'node:assert/strict'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { waitlistForm, privacyNote } from '../waitlist/lib/ui.js'
 
@@ -116,17 +117,13 @@ const icon = {
 const glyph = (name, cls = 'glyph') => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${icon[name]}</svg>`
 const brand = '<a class="brand" href="/" aria-label="Automagik home"><img src="/assets/brand/lockup.webp" width="170" height="36" alt="Automagik"></a>'
 const entry = route => ({ href, name, line, image, mark, glyph: sign, external }) => `<li><a class="menu-item" href="${href}"${href === route ? ' aria-current="page"' : ''}><span class="menu-icon">${image ? art(image, '', { cls: 'menu-art' }) : mark ?? glyph(sign)}</span><span class="menu-text"><strong>${name}${external ? ` ${out}` : ''}</strong><span>${line}</span></span></a></li>`
-// OPEN INTELLIGENCE STAMP: Automagik's own mark for the movement it is part of, and the link
-// to we unfold. Two cuts: the seal (the home page) and the tag (every footer). It is not
-// we unfold's logo, and it never carries another product's logo.
-const spark = 'M12 1.8l2.5 7 7.2 2.2-7.2 2.4L12 20.6l-2.5-7.2L2.3 11l7.2-2.2z'
-const stampInk = id => `<linearGradient id="${id}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1aa9cc"/><stop offset=".55" stop-color="#8457e0"/><stop offset="1" stop-color="#d63384"/></linearGradient>`
-function stamp(cut) {
-  const words = `<span class="stamp-text"><strong>Open Intelligence</strong><span>Part of ${weUnfold.name} ${out}</span></span>`
-  if (cut === 'tag') return `<a class="stamp tag" href="${weUnfold.url}"><svg class="stamp-core" viewBox="0 0 48 48" aria-hidden="true" focusable="false"><defs>${stampInk('stamp-ink-tag')}</defs><circle cx="24" cy="24" r="21" fill="none" stroke="url(#stamp-ink-tag)" stroke-width="2.6" stroke-linecap="round" stroke-dasharray="112 20" transform="rotate(-62 24 24)"/><path fill="url(#stamp-ink-tag)" transform="translate(10.2 10.6) scale(1.15)" d="${spark}"/></svg>${words}</a>`
-  const ring = `Open Intelligence · part of ${weUnfold.name} · `
-  return `<a class="stamp seal" href="${weUnfold.url}"><span class="seal-art" aria-hidden="true"><svg class="seal-ring" viewBox="0 0 200 200" focusable="false"><defs><path id="seal-path" d="M100 27a73 73 0 1 1-.01 0"/></defs><text><textPath href="#seal-path" textLength="452" lengthAdjust="spacing">${ring}</textPath></text></svg><svg class="seal-core" viewBox="0 0 200 200" focusable="false"><defs>${stampInk('stamp-ink-seal')}</defs><circle cx="100" cy="100" r="97" fill="none" stroke="url(#stamp-ink-seal)" stroke-width="2.4"/><circle class="seal-inner" cx="100" cy="100" r="58" fill="none" stroke-width="1.4" stroke-dasharray="2 7" stroke-linecap="round"/><path fill="url(#stamp-ink-seal)" transform="translate(58 60) scale(3.5)" d="${spark}"/><path fill="url(#stamp-ink-seal)" transform="translate(128 50) scale(1.05)" d="${spark}"/></svg></span><span class="sr">Open Intelligence. Part of ${weUnfold.name}</span></a>`
-}
+// OPEN INTELLIGENCE SEAL: we unfold's official site embed, pasted as given from
+// assets/brand/open-intelligence/ (plain inline SVG, words in the page's text colour, its own
+// link and title). Never change its words, ring weights or the mark's position; 84 px or
+// larger; a quarter of its width kept clear on every side. It marks the part built in the
+// open, so it sits by the Apache-2.0 line, with "Support Open Intelligence" beside it as
+// link text, never drawn into the seal.
+export const seal = readFileSync(new URL('../assets/brand/open-intelligence/site-seal-full-colour.snippet.html', import.meta.url), 'utf8').trim()
 // Menus without client scripting: each button opens its panel through the browser's own
 // popover. The browser keeps the button's expanded state, closes the panel on Escape or a
 // click outside, and returns focus to the button. Hover opens the same panel in CSS. On a
@@ -149,7 +146,7 @@ function header(route) {
 function footer(route) {
   const column = (label, items) => `<nav aria-label="${label}"><p class="footer-head">${label}</p>${items.map(({ href, name, external }) => `<a href="${href}"${href === route ? ' aria-current="page"' : ''}>${name}${external ? ` ${out}` : ''}</a>`).join('')}</nav>`
   // The one link to the repository on a page is the quiet one at the end of the footer.
-  return `<footer class="site-footer"><div id="sitemap" class="wrap footer-grid"><div class="footer-brand">${brand}<p>Open building blocks of superintelligence.</p>${stamp('tag')}</div>${column('Products', products)}${column('Resources', resources)}${column('Company', company)}<p class="footer-license">${licensing} <a href="${repo}">Source code ${out}</a></p></div></footer>`
+  return `<footer class="site-footer"><div id="sitemap" class="wrap footer-grid"><div class="footer-brand">${brand}<p>Open building blocks of superintelligence.</p><p class="footer-part">${partOf()}</p></div>${column('Products', products)}${column('Resources', resources)}${column('Company', company)}<div class="footer-open">${seal}<div class="footer-open-copy"><p class="footer-open-label"><a href="${weUnfold.url}">Support Open Intelligence ${out}</a></p><p class="footer-license">${licensing} <a href="${repo}">Source code ${out}</a></p></div></div></div></footer>`
 }
 // Every product page says where it is and leads back to all products.
 function crumbs(route) {
@@ -197,7 +194,7 @@ export function pages() {
 <article class="product-card" data-block="arca"><div class="tile-copy">${arcaMark('card')}<h3><a href="/arca/">Arca</a></h3><p>${arca.line}</p><span class="detail-link" aria-hidden="true">Get Arca →</span></div></article>
 </div>
 <div class="also"><p class="also-label">Also on the way</p><article class="product-card"><h3><a href="/mykes/">Mykes</a></h3><p>Coming soon.</p></article></div></section>
-<section class="wrap open" aria-labelledby="open-title">${stamp('seal')}<div class="open-copy"><h2 id="open-title" class="open-line">${openLine}</h2><p class="open-part">${partOf()}</p></div></section>
+<section class="wrap open" aria-labelledby="open-title"><div class="open-copy"><h2 id="open-title" class="open-line">${openLine}</h2><p class="open-part">${partOf()}</p></div></section>
 <section id="film" class="made wrap" aria-labelledby="made-title"><div class="made-copy"><p class="eyebrow">Made by this team</p><h2 id="made-title">From inside Automagik.</h2><p>This page began as Genie’s draft, in a group chat with our launch team.</p></div><figure class="film-still" data-film="placeholder">${art('team-step', 'The Automagik app’s team step, recorded: Pip leads, Omni sleeps until powered on, and Genie is ready for a wish.', { dark: true })}<figcaption><strong>A short film is coming.</strong> It shows our launch team at work.</figcaption></figure></section>`
 
   const desktop = `<section class="hero split-hero desktop-hero"><div class="wrap split"><div class="hero-heading">${art('app-icon', '', { cls: 'hero-icon', eager: true })}${heading('Your team, at your desk', 'Automagik Desktop', 'Bots that stay, each with its own name, role, model and memory. Talk with them, hand work over and keep the decisions that matter.')}<div id="install" class="distribution"><a class="button primary" href="${mac}">Download for Mac ${down}</a><a class="button secondary" href="${linux}">Download for Linux ${down}</a><div class="unavailable"><strong>Download for Windows</strong><span>Soon</span></div></div><p class="fine">Mac with Apple silicon, macOS 13 or newer. Linux on a 64-bit PC.</p></div></div>

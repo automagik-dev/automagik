@@ -1,7 +1,7 @@
 # Brand assets
 
-Only Automagik's own marks and character art are used. No third-party customer marks or
-new drawings are included.
+Automagik's own marks and character art, Arca's icon and we unfold's Open Intelligence seal
+are used. No third-party customer marks or new drawings are included.
 
 - `mark.webp`, `wordmark.webp`, `lockup.webp`, `app-icon.png`: Automagik
   brand files copied from the owner's Genie landing draft for RFC 0027 D3, 2026-11-11.
@@ -16,6 +16,11 @@ new drawings are included.
   kit (draft 3), copied unchanged under the kit's file names. Arca's mark belongs to Arca;
   it is shown here for Arca with Arca's agreement, by its kit's rules, and is not covered by
   this site's Apache-2.0 grant. A newer kit replaces these files at the same paths.
+- `open-intelligence/site-seal-full-colour.snippet.html`: we unfold's official Open
+  Intelligence seal, the full-colour site embed, supplied by the we unfold team (rendered
+  from the drawing code of the weunfold.ai site, commit `df162c96`) and placed unchanged.
+  The seal belongs to we unfold; it is shown by its usage rules and is not covered by this
+  site's Apache-2.0 grant.
 - `manrope-latin.woff2`: Manrope, Copyright 2018 The Manrope Project Authors.
   SIL Open Font License 1.1, reproduced in `OFL-Manrope.txt`.
 - `dm-sans-latin.woff2`: DM Sans, Copyright 2014 The DM Sans Project Authors.
