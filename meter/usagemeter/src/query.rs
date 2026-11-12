@@ -1449,7 +1449,7 @@ enum TaskArm<'a> {
 
 /// A task id the contract can print: not empty, no control character (no blank row, no row
 /// carrying an escape), and within the tag bound. Only that is checked; Genie's id shape is not.
-fn task_id_fits(task: &str) -> bool {
+pub(crate) fn task_id_fits(task: &str) -> bool {
     !task.is_empty() && !task.chars().any(char::is_control) && crate::ledger::tag_fits(task)
 }
 

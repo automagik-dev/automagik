@@ -86,7 +86,13 @@
         "rows": [],
         "rows_omitted": 0,
         "omitted_count": 0,
-        "unattributed": []
+        "unattributed": [],
+        "by_branch": [],
+        "by_branch_omitted": 0,
+        "by_branch_omitted_count": 0,
+        "by_task": [],
+        "by_task_omitted": 0,
+        "by_task_omitted_count": 0
       },
       "run_ends": null,
       "time_to_pr": {
@@ -184,7 +190,13 @@
         "rows": [],
         "rows_omitted": 0,
         "omitted_count": 0,
-        "unattributed": []
+        "unattributed": [],
+        "by_branch": [],
+        "by_branch_omitted": 0,
+        "by_branch_omitted_count": 0,
+        "by_task": [],
+        "by_task_omitted": 0,
+        "by_task_omitted_count": 0
       },
       "run_ends": null,
       "time_to_pr": {
@@ -282,7 +294,13 @@
         "rows": [],
         "rows_omitted": 0,
         "omitted_count": 0,
-        "unattributed": []
+        "unattributed": [],
+        "by_branch": [],
+        "by_branch_omitted": 0,
+        "by_branch_omitted_count": 0,
+        "by_task": [],
+        "by_task_omitted": 0,
+        "by_task_omitted_count": 0
       },
       "run_ends": null,
       "time_to_pr": {
