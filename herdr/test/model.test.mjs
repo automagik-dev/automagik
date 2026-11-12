@@ -340,6 +340,24 @@ test("lead: a cycle falls back to the main bot for every bot in it, not for thos
   assert.ok(checkBots(file).some((e) => /leads back to this bot/.test(e)));
 });
 
+test("lead #741: saves refuse cycles through planned bots while reads keep their fallback", () => {
+  for (const allPlanned of [false, true]) {
+    const file = sample((f) => {
+      f.bots[1].lead = ID.dev;
+      f.bots[2].lead = ID.plan;
+      f.bots[4].lead = ID.cap;
+      if (allPlanned) for (const i of [1, 2]) f.bots[i].planned = { wave: 1 };
+      return f;
+    });
+    assert.match(effectiveLead(file, ID.dev).warning, /is planned/);
+    for (const id of [ID.cap, ID.dev, ID.plan]) {
+      assert.ok(checkBots(file).some((e) => e.startsWith(id) && /leads back to this bot/.test(e)), id);
+    }
+    delete file.bots[4].lead;
+    assert.deepEqual(checkBots(file), [], "an acyclic planned lead stays writable");
+  }
+});
+
 test("ids: b- plus 10 lowercase base32 characters, and random", () => {
   const ids = new Set(Array.from({ length: 200 }, () => newBotId()));
   assert.equal(ids.size, 200);

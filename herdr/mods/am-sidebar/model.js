@@ -437,7 +437,7 @@ export function inferProjectOf(file, botId, project, projects) {
   return byBot ? byBot[0] : "";
 }
 
-export function leadsBackTo(startProj, startFile, startBot, originProj, originId, projects) {
+export function leadsBackTo(startProj, startFile, startBot, originProj, originId, projects, { includePlanned = false } = {}) {
   const seen = new Set();
   let curProj = startProj;
   let curFile = startFile;
@@ -447,14 +447,14 @@ export function leadsBackTo(startProj, startFile, startBot, originProj, originId
     const key = `${curProj ?? ""}\0${curBot.id}`;
     if (seen.has(key)) return false;
     seen.add(key);
-    if (curBot.planned) return false;
+    if (curBot.planned && !includePlanned) return false;
     const curMain = mainBotOf(curFile);
     const nextCross = isText(curBot.leadProject) ? cleanProjectPath(curBot.leadProject) : "";
     if (nextCross && (!curProj || nextCross !== curProj)) {
       if (!projects || !isText(curBot.lead)) return false;
       const nextFile = projectFileOf(projects, nextCross);
       const nextBot = nextFile?.bots?.find((b) => b.id === curBot.lead);
-      if (!nextBot || nextBot.planned) {
+      if (!nextBot || (nextBot.planned && !includePlanned)) {
         if (curBot === curMain || !curMain) return false;
         curBot = curMain;
         continue;
@@ -674,6 +674,15 @@ export function checkBots(file, before = null, { project = null, projects = null
       if (b.kind !== "member" && !b.leadProject) continue;
       const isCross = Boolean(b.leadProject && (!ownProject || cleanProjectPath(b.leadProject) !== ownProject));
       if (isCross && !projects) continue;
+      // Validate the stored graph too: planning a bot must not hide a dormant cycle.
+      // Reads still use effectiveLead's fallback for a planned lead.
+      const targetProject = isCross ? cleanProjectPath(b.leadProject) : ownProject;
+      const targetFile = isCross ? projectFileOf(projects, targetProject) : file;
+      const storedLead = targetFile?.bots.find((row) => row.id === (b.lead ?? mainBotOf(file)?.id));
+      if (leadsBackTo(targetProject, targetFile, storedLead, ownProject, b.id, projects, { includePlanned: true })) {
+        errors.push(`${b.id}: lead ${storedLead.id} leads back to this bot`);
+        continue;
+      }
       const { warning } = effectiveLead(file, b.id, { project, projects });
       const target = !isCross ? byId.get(b.lead) : null;
       if (warning && !/is one-sided/.test(warning) && (isCross || b.lead === b.id || !target?.planned)) {
